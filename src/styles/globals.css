@@ -1,0 +1,127 @@
+@import "tailwindcss";
+
+/* ===== Dark Mode (Default) ===== */
+:root {
+  color-scheme: dark;
+  --bg-primary: #0A0A0B;
+  --bg-secondary: #141416;
+  --bg-tertiary: #1C1C1F;
+  --bg-glass: rgba(255, 255, 255, 0.05);
+
+  --text-primary: #F5F5F7;
+  --text-secondary: #8E8E93;
+  --text-tertiary: #636366;
+
+  --accent: #FF453A;
+  --accent-gold: #FFD60A;
+  --accent-green: #30D158;
+
+  --border: rgba(255, 255, 255, 0.08);
+  --glass-blur: 20px;
+
+  /* Team Colors */
+  --team-lg: #C60C30;
+  --team-doosan: #131230;
+  --team-kt: #000000;
+  --team-ssg: #CE0E2D;
+  --team-nc: #315288;
+  --team-kia: #EA0029;
+  --team-lotte: #002856;
+  --team-samsung: #074CA1;
+  --team-hanwha: #FF6600;
+  --team-kiwoom: #820024;
+}
+
+/* ===== Light Mode ===== */
+/* Light mode disabled — always dark */
+
+@theme inline {
+  --color-bg-primary: var(--bg-primary);
+  --color-bg-secondary: var(--bg-secondary);
+  --color-bg-tertiary: var(--bg-tertiary);
+  --color-bg-glass: var(--bg-glass);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-accent: var(--accent);
+  --color-accent-gold: var(--accent-gold);
+  --color-accent-green: var(--accent-green);
+  --color-border: var(--border);
+
+  --color-team-lg: var(--team-lg);
+  --color-team-doosan: var(--team-doosan);
+  --color-team-kt: var(--team-kt);
+  --color-team-ssg: var(--team-ssg);
+  --color-team-nc: var(--team-nc);
+  --color-team-kia: var(--team-kia);
+  --color-team-lotte: var(--team-lotte);
+  --color-team-samsung: var(--team-samsung);
+  --color-team-hanwha: var(--team-hanwha);
+  --color-team-kiwoom: var(--team-kiwoom);
+
+  --font-pretendard: "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+}
+
+/* ===== Base Styles ===== */
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-pretendard);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ===== Glass Card ===== */
+.glass-card {
+  background: var(--bg-glass);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+
+/* ===== Scrollbar ===== */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--text-tertiary);
+  border-radius: 2px;
+}
+
+/* ===== No scrollbar for horizontal scroll containers ===== */
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* ===== Skeleton animation ===== */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-tertiary) 25%,
+    var(--bg-secondary) 50%,
+    var(--bg-tertiary) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* ===== Tab bar safe area ===== */
+.pb-tab-bar {
+  padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+}
