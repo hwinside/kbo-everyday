@@ -142,8 +142,12 @@ function LeaderSection({ title, leaders }: { title: string; leaders: TitleLeader
             )}>
               {l.rank}
             </span>
-            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-white p-0.5">
-              <Image src={getTeamLogo(l.teamId)} alt="" width={14} height={14} unoptimized className="object-contain" />
+            <div className="relative flex h-7 w-7 items-center justify-center rounded-full overflow-hidden" style={{ backgroundColor: getTeamColor(l.teamId) + "30" }}>
+              {/* TODO: 선수 사진 추가 시 Image src={l.photoUrl} 로 교체 */}
+              <span className="text-[10px] font-bold" style={{ color: getTeamColor(l.teamId) }}>{l.name.charAt(0)}</span>
+              <div className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white p-0.5">
+                <Image src={getTeamLogo(l.teamId)} alt="" width={10} height={10} unoptimized className="object-contain" />
+              </div>
             </div>
             <span className="flex-1 text-sm text-text-primary">{l.name}</span>
             <span className="text-sm font-bold tabular-nums" style={{ color: getTeamColor(l.teamId) }}>{l.value}</span>
