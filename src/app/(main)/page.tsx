@@ -109,30 +109,30 @@ export default function HomePage() {
         <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto hide-scrollbar -mx-4 px-4">
           {MOCK_GAMES.map((game) => (
             <Link key={game.id} href={`/games/${game.id}`}>
-              <GlassCard pressable className="w-[220px] flex-shrink-0 snap-start p-3 overflow-hidden">
+              <GlassCard pressable className="w-[200px] h-[150px] flex-shrink-0 snap-start p-3 flex flex-col justify-between">
                 <StatusBadge status={game.status} inning={game.inning} />
-                <div className="mt-2 flex items-center justify-between">
-                  <div className="flex flex-col items-center gap-1">
+                <div className="flex items-center justify-between flex-1">
+                  <div className="flex flex-col items-center gap-1 flex-1">
                     <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white p-1">
                       <Image src={getTeamLogo(game.awayTeamId)} alt={getTeamName(game.awayTeamId)} width={24} height={24} unoptimized className="object-contain" />
                     </div>
-                    <span className="text-xs font-bold" style={{ color: getTeamColor(game.awayTeamId) }}>
+                    <span className="text-[11px] font-bold" style={{ color: getTeamColor(game.awayTeamId) }}>
                       {getTeamShortName(game.awayTeamId)}
                     </span>
-                    {game.status !== "scheduled" && <span className="text-2xl font-bold tabular-nums text-text-primary">{game.awayScore}</span>}
+                    <span className="text-xl font-bold tabular-nums text-text-primary">{game.status === "scheduled" ? "-" : game.awayScore}</span>
                   </div>
                   <span className="text-xs text-text-tertiary">vs</span>
-                  <div className="flex flex-col items-center gap-1">
+                  <div className="flex flex-col items-center gap-1 flex-1">
                     <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white p-1">
                       <Image src={getTeamLogo(game.homeTeamId)} alt={getTeamName(game.homeTeamId)} width={24} height={24} unoptimized className="object-contain" />
                     </div>
-                    <span className="text-xs font-bold" style={{ color: getTeamColor(game.homeTeamId) }}>
+                    <span className="text-[11px] font-bold" style={{ color: getTeamColor(game.homeTeamId) }}>
                       {getTeamShortName(game.homeTeamId)}
                     </span>
-                    {game.status !== "scheduled" && <span className="text-2xl font-bold tabular-nums text-text-primary">{game.homeScore}</span>}
+                    <span className="text-xl font-bold tabular-nums text-text-primary">{game.status === "scheduled" ? "-" : game.homeScore}</span>
                   </div>
                 </div>
-                <p className="mt-2 text-center text-[11px] text-text-tertiary">
+                <p className="text-center text-[11px] text-text-tertiary">
                   {game.time} · {game.stadium}
                 </p>
               </GlassCard>
