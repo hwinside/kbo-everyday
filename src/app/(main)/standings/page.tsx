@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { clsx } from "clsx";
 import { TEAMS } from "@/lib/constants/teams";
@@ -205,12 +206,12 @@ export default function StandingsPage() {
                 const team = getTeam(standing.teamId);
                 const isMyTeam = standing.teamId === 1;
                 return (
+                  <Link key={standing.teamId} href={`/teams/${standing.teamId}`} className="contents">
                   <motion.tr
-                    key={standing.teamId}
                     initial={{ opacity: 0, x: -8 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.03 }}
-                    className={`border-b border-border/30 last:border-0 ${isMyTeam ? "bg-white/5" : ""}`}
+                    className={`border-b border-border/30 last:border-0 cursor-pointer hover:bg-white/5 ${isMyTeam ? "bg-white/5" : ""}`}
                   >
                     <td className="py-2.5 text-center font-bold text-text-primary">{standing.rank}</td>
                     <td className="py-2.5 pl-2">
@@ -226,6 +227,7 @@ export default function StandingsPage() {
                     <td className="py-2.5 text-center tabular-nums font-semibold text-text-primary">{standing.pct.toFixed(3).slice(1)}</td>
                     <td className="py-2.5 text-center tabular-nums text-text-secondary">{standing.gb === 0 ? "-" : standing.gb}</td>
                   </motion.tr>
+                  </Link>
                 );
               })}
             </tbody>
