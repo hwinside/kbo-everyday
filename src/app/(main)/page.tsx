@@ -259,11 +259,11 @@ export default function HomePage() {
 
       {/* ===== 5. Hot Player Boards ===== */}
       <motion.section variants={item} className="mb-6">
-        <SectionHeader title="인기 선수게시판" href="/teams" icon="⭐" />
+        <SectionHeader title="인기 선수게시판" href="/boards/players" icon="⭐" />
         <GlassCard className="p-3">
           <div className="space-y-3">
             {MOCK_HOT_PLAYER_BOARDS.map((player, i) => (
-              <div key={player.playerId} className="flex items-center gap-3">
+              <Link key={player.playerId} href={`/teams/${player.teamId}/players/${player.playerId}`}><div className="flex items-center gap-3">
                 <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
                   i === 0 ? "bg-yellow-500/20 text-yellow-400" :
                   i === 1 ? "bg-gray-400/20 text-gray-300" :
@@ -286,7 +286,7 @@ export default function HomePage() {
                 <span className="text-sm">
                   {player.trend === "up" ? "🔥" : player.trend === "down" ? "📉" : "➖"}
                 </span>
-              </div>
+              </div></Link>
             ))}
           </div>
         </GlassCard>
