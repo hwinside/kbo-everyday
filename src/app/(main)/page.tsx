@@ -19,6 +19,15 @@ const MOCK_GAMES = [
   { id: "20260328-SS-KW", homeTeamId: 8, awayTeamId: 10, time: "18:30", stadium: "대구", homeScore: 1, awayScore: 1, status: "live" as const, inning: "3회초" },
 ];
 
+
+const MOCK_HOT_PLAYER_BOARDS = [
+  { playerId: "p1", name: "오스틴", teamId: 1, teamName: "LG", postsToday: 47, totalPosts: 1284, trend: "up" as const },
+  { playerId: "p2", name: "양현종", teamId: 6, teamName: "KIA", postsToday: 38, totalPosts: 956, trend: "up" as const },
+  { playerId: "p3", name: "구자욱", teamId: 8, teamName: "삼성", postsToday: 35, totalPosts: 1102, trend: "same" as const },
+  { playerId: "p4", name: "김도영", teamId: 6, teamName: "KIA", postsToday: 33, totalPosts: 2341, trend: "up" as const },
+  { playerId: "p5", name: "문동주", teamId: 9, teamName: "한화", postsToday: 28, totalPosts: 876, trend: "down" as const },
+];
+
 const MOCK_POPULAR_POSTS = [
   { id: 1, title: "오늘의 선발 라인업 예상", boardId: "lg", author: "엘지골드", likeCount: 42, commentCount: 18, teamId: 1 },
   { id: 2, title: "올해 우승은 반드시 우리가 한다", boardId: "kia", author: "타이거팬", likeCount: 38, commentCount: 24, teamId: 6 },
@@ -247,6 +256,41 @@ export default function HomePage() {
         </div>
       </motion.section>
 
+
+      {/* ===== 5. Hot Player Boards ===== */}
+      <motion.section variants={item} className="mb-6">
+        <SectionHeader title="인기 선수게시판" href="/teams" icon="⭐" />
+        <GlassCard className="p-3">
+          <div className="space-y-3">
+            {MOCK_HOT_PLAYER_BOARDS.map((player, i) => (
+              <div key={player.playerId} className="flex items-center gap-3">
+                <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
+                  i === 0 ? "bg-yellow-500/20 text-yellow-400" :
+                  i === 1 ? "bg-gray-400/20 text-gray-300" :
+                  i === 2 ? "bg-amber-700/20 text-amber-600" :
+                  "bg-bg-tertiary text-text-tertiary"
+                }`}>
+                  {i + 1}
+                </span>
+                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-white p-0.5">
+                  <Image src={getTeamLogo(player.teamId)} alt={player.teamName} width={18} height={18} unoptimized className="object-contain" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-semibold text-text-primary">{player.name}</span>
+                  <span className="ml-1.5 text-[11px] text-text-tertiary">{player.teamName}</span>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs font-bold text-accent">오늘 {player.postsToday}글</div>
+                  <div className="text-[10px] text-text-tertiary">총 {player.totalPosts.toLocaleString()}글</div>
+                </div>
+                <span className="text-sm">
+                  {player.trend === "up" ? "🔥" : player.trend === "down" ? "📉" : "➖"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      </motion.section>
       {/* Bottom spacer */}
       <div className="h-4" />
     </motion.div>
