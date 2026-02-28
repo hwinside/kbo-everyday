@@ -263,7 +263,7 @@ export default function HomePage() {
         <GlassCard className="p-3">
           <div className="space-y-3">
             {MOCK_HOT_PLAYER_BOARDS.map((player, i) => (
-              <Link key={player.playerId} href={`/teams/${player.teamId}/players/${player.playerId}`}><div className="flex items-center gap-3">
+              <Link key={player.playerId} href={`/boards/players/${player.playerId}`}><div className="flex items-center gap-3">
                 <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
                   i === 0 ? "bg-yellow-500/20 text-yellow-400" :
                   i === 1 ? "bg-gray-400/20 text-gray-300" :

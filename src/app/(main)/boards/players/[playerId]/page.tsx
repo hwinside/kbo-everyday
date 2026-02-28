@@ -1,0 +1,148 @@
+"use client";
+
+import { useState } from "react";
+import { useParams } from "next/navigation";
+import { motion } from "framer-motion";
+import { ArrowLeft, Heart, MessageCircle, Share2, PenLine } from "lucide-react";
+import Link from "next/link";
+import Image from "next/image";
+import GlassCard from "@/components/ui/GlassCard";
+import { TEAMS } from "@/lib/constants/teams";
+
+const PLAYER_DATA: Record<string, { name: string; teamId: number; number: number; position: string; totalPosts: number }> = {
+  p1: { name: "오스틴", teamId: 1, number: 31, position: "외야수", totalPosts: 1284 },
+  p2: { name: "양현종", teamId: 6, number: 1, position: "투수", totalPosts: 956 },
+  p3: { name: "구자욱", teamId: 8, number: 10, position: "외야수", totalPosts: 1102 },
+  p4: { name: "김도영", teamId: 6, number: 5, position: "내야수", totalPosts: 2341 },
+  p5: { name: "문동주", teamId: 9, number: 29, position: "투수", totalPosts: 876 },
+  p6: { name: "이정후", teamId: 10, number: 51, position: "외야수", totalPosts: 834 },
+  p7: { name: "박동원", teamId: 1, number: 27, position: "포수", totalPosts: 745 },
+  p8: { name: "나성범", teamId: 3, number: 47, position: "외야수", totalPosts: 698 },
+  p9: { name: "최형우", teamId: 6, number: 34, position: "지명타자", totalPosts: 654 },
+  p10: { name: "김하성", teamId: 2, number: 7, position: "내야수", totalPosts: 612 },
+  p11: { name: "페르난데스", teamId: 4, number: 37, position: "투수", totalPosts: 589 },
+  p12: { name: "소형준", teamId: 5, number: 11, position: "투수", totalPosts: 534 },
+  p13: { name: "한석현", teamId: 7, number: 18, position: "외야수", totalPosts: 478 },
+  p14: { name: "안우진", teamId: 6, number: 26, position: "투수", totalPosts: 445 },
+  p15: { name: "이의리", teamId: 2, number: 17, position: "투수", totalPosts: 398 },
+};
+
+const MOCK_POSTS = [
+  { id: 1, title: "오늘 경기 미쳤다 진짜 ㄷㄷ", author: "야구팬123", timeAgo: "5분 전", likes: 42, comments: 18 },
+  { id: 2, title: "타격폼 분석해봤는데 올해 달라진 점", author: "분석맨", timeAgo: "23분 전", likes: 87, comments: 34 },
+  { id: 3, title: "응원가 가사 정리 (최신버전)", author: "응원단장", timeAgo: "1시간 전", likes: 156, comments: 22 },
+  { id: 4, title: "직관 후기 + 사인볼 인증 🔥", author: "직관러", timeAgo: "2시간 전", likes: 234, comments: 56 },
+  { id: 5, title: "커리어 하이 가능할까?", author: "스탯덕후", timeAgo: "3시간 전", likes: 67, comments: 41 },
+  { id: 6, title: "팬미팅 후기 (사진 다수)", author: "덕후일기", timeAgo: "4시간 전", likes: 312, comments: 89 },
+  { id: 7, title: "vs 상대투수 상성 정리", author: "기록맨", timeAgo: "5시간 전", likes: 94, comments: 27 },
+  { id: 8, title: "굿즈 어디서 사야 하나요?", author: "뉴비팬", timeAgo: "6시간 전", likes: 23, comments: 15 },
+];
+
+function getTeamLogo(teamId: number) {
+  return TEAMS.find((t) => t.id === teamId)?.logoPath ?? "";
+}
+function getTeamColor(teamId: number) {
+  return TEAMS.find((t) => t.id === teamId)?.colorPrimary ?? "#888";
+}
+function getTeamShortName(teamId: number) {
+  return TEAMS.find((t) => t.id === teamId)?.shortName ?? "";
+}
+
+export default function PlayerBoardPage() {
+  const { playerId } = useParams();
+  const player = PLAYER_DATA[playerId as string];
+  const [activeTab, setActiveTab] = useState<"latest" | "hot">("latest");
+
+  if (!player) {
+    return (
+      <div className="flex items-center justify-center h-screen text-text-secondary">
+        선수를 찾을 수 없습니다
+      </div>
+    );
+  }
+
+  const teamColor = getTeamColor(player.teamId);
+
+  return (
+    <div className="min-h-screen bg-bg-primary pb-20">
+      {/* Header */}
+      <div
+        className="sticky top-0 z-30 border-b border-border backdrop-blur-xl"
+        style={{ background: `linear-gradient(135deg, ${teamColor}15, transparent)` }}
+      >
+        <div className="flex items-center gap-3 px-4 py-3">
+          <Link href="/boards/players" className="p-1 -ml-1">
+            <ArrowLeft className="w-5 h-5 text-text-secondary" />
+          </Link>
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white p-1">
+            <Image src={getTeamLogo(player.teamId)} alt="" width={24} height={24} unoptimized className="object-contain" />
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-bold text-text-primary">{player.name}</h1>
+              <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ backgroundColor: teamColor + "20", color: teamColor }}>
+                #{player.number}
+              </span>
+            </div>
+            <p className="text-[11px] text-text-tertiary">{getTeamShortName(player.teamId)} · {player.position} · 게시글 {player.totalPosts.toLocaleString()}개</p>
+          </div>
+          <Share2 className="w-5 h-5 text-text-tertiary" />
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-t border-border">
+          {(["latest", "hot"] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`flex-1 py-2.5 text-sm font-medium transition-colors relative ${
+                activeTab === tab ? "text-text-primary" : "text-text-tertiary"
+              }`}
+            >
+              {tab === "latest" ? "최신" : "인기"}
+              {activeTab === tab && (
+                <motion.div
+                  layoutId="board-tab"
+                  className="absolute bottom-0 left-0 right-0 h-0.5"
+                  style={{ backgroundColor: teamColor }}
+                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                />
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Posts */}
+      <div className="px-4 py-3 space-y-2">
+        {MOCK_POSTS.map((post, i) => (
+          <motion.div
+            key={post.id}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.03 }}
+          >
+            <GlassCard pressable className="p-3">
+              <p className="text-sm font-medium text-text-primary">{post.title}</p>
+              <div className="mt-2 flex items-center justify-between text-[11px] text-text-tertiary">
+                <span>{post.author} · {post.timeAgo}</span>
+                <div className="flex items-center gap-3">
+                  <span className="flex items-center gap-1"><Heart size={12} /> {post.likes}</span>
+                  <span className="flex items-center gap-1"><MessageCircle size={12} /> {post.comments}</span>
+                </div>
+              </div>
+            </GlassCard>
+          </motion.div>
+        ))}
+      </div>
+
+      {/* FAB - Write */}
+      <button
+        className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
+        style={{ backgroundColor: teamColor }}
+      >
+        <PenLine className="w-6 h-6 text-white" />
+      </button>
+    </div>
+  );
+}

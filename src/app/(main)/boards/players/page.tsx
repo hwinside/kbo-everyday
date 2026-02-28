@@ -52,7 +52,7 @@ export default function PlayerBoardRankingPage() {
 
       <div className="px-4 py-4 space-y-2">
         {MOCK_PLAYER_BOARD_RANKING.map((player, i) => (
-          <Link key={player.playerId} href={`/teams/${player.teamId}/players/${player.playerId}`}>
+          <Link key={player.playerId} href={`/boards/players/${player.playerId}`}>
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
