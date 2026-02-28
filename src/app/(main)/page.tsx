@@ -263,7 +263,7 @@ export default function HomePage() {
       <motion.section variants={item} className="mb-6">
         <SectionHeader title="인기 선수게시판" href="/boards/players" icon="⭐" />
         <GlassCard className="p-4">
-          <div className="space-y-4">
+          <div className="space-y-6">
             {MOCK_HOT_PLAYER_BOARDS.map((player, i) => (
               <Link key={player.playerId} href={`/boards/players/${player.playerId}`}><div className="flex items-center gap-4">
                 <span className={`flex h-7 w-7 items-center justify-center rounded-full text-base font-bold ${
