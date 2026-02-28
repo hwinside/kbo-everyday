@@ -118,7 +118,7 @@ export default function PlayerBoardPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.03 }}
           >
-            <GlassCard pressable className="p-4">
+            <Link href={`/boards/players/${playerId}/posts/${post.id}`}><GlassCard pressable className="p-4">
               <p className="text-base font-medium text-text-primary">{post.title}</p>
               <div className="mt-2 flex items-center justify-between text-base text-text-tertiary">
                 <span>{post.author} · {post.timeAgo}</span>
@@ -127,7 +127,7 @@ export default function PlayerBoardPage() {
                   <span className="flex items-center gap-1"><MessageCircle size={22} /> {post.comments}</span>
                 </div>
               </div>
-            </GlassCard>
+            </GlassCard></Link>
           </motion.div>
         ))}
       </div>
