@@ -61,7 +61,7 @@ export default function CountIndicator({
         <CountDots label="O" count={outs} max={3} activeColor="#FF453A" />
       </div>
       {(currentBatter || currentPitcher) && (
-        <div className="flex items-center gap-4 text-base">
+        <div className="flex items-center gap-4 text-base whitespace-nowrap">
           {currentPitcher && (
             <span className="text-text-tertiary">
               <span className="text-text-secondary">P</span> {currentPitcher}

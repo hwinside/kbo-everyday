@@ -76,7 +76,7 @@ export default function ScoreBoard({
             <td className="py-1.5 text-left pl-1">
               <div className="flex items-center gap-2">
                 <TeamLogo team={awayTeam} size={24} />
-                <span className="font-semibold text-text-primary text-base">
+                <span className="font-semibold text-text-primary text-base whitespace-nowrap">
                   {awayTeam.shortName}
                 </span>
               </div>
@@ -117,7 +117,7 @@ export default function ScoreBoard({
             <td className="py-1.5 text-left pl-1">
               <div className="flex items-center gap-2">
                 <TeamLogo team={homeTeam} size={24} />
-                <span className="font-semibold text-text-primary text-base">
+                <span className="font-semibold text-text-primary text-base whitespace-nowrap">
                   {homeTeam.shortName}
                 </span>
               </div>
