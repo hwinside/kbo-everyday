@@ -16,14 +16,14 @@ export default function TeamBadge({
   const team = getTeamById(teamId);
   if (!team) return null;
 
-  const logoSize = size === "sm" ? 14 : 18;
+  const logoSize = size === "sm" ? 16 : 20;
 
   return (
     <span
       className={clsx(
         "inline-flex items-center gap-1 rounded-full font-semibold text-white",
-        size === "sm" && "py-0.5 pl-0.5 pr-2 text-xs",
-        size === "md" && "py-1 pl-1 pr-3 text-sm",
+        size === "sm" && "py-1 pl-0.5 pr-2.5 text-base",
+        size === "md" && "py-1.5 pl-1 pr-3.5 text-base",
         className,
       )}
       style={{ backgroundColor: team.colorPrimary }}

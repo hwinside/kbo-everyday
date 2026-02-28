@@ -33,10 +33,10 @@ export default function LeaderboardPage() {
       variants={container}
       initial="hidden"
       animate="show"
-      className="mx-auto max-w-lg px-4 pt-safe"
+      className="mx-auto max-w-lg px-5 pt-safe"
     >
       {/* Header */}
-      <motion.header variants={item} className="flex items-center gap-2 py-4">
+      <motion.header variants={item} className="flex items-center gap-4 py-5">
         <Link href="/predict" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
           <ChevronLeft size={24} />
         </Link>
@@ -44,12 +44,12 @@ export default function LeaderboardPage() {
       </motion.header>
 
       {/* Tabs */}
-      <motion.div variants={item} className="mb-4 flex gap-2">
+      <motion.div variants={item} className="mb-5 flex gap-3">
         {tabs.map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
-            className={`rounded-full px-4 py-1.5 text-sm font-semibold transition-all ${
+            className={`rounded-full px-5 py-2 text-base font-semibold transition-all ${
               activeTab === tab.key
                 ? "bg-accent text-white"
                 : "bg-bg-tertiary text-text-secondary hover:text-text-primary"

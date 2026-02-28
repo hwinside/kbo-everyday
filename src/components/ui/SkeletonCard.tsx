@@ -10,7 +10,7 @@ export default function SkeletonCard({
   lines = 3,
 }: SkeletonCardProps) {
   return (
-    <div className={clsx("glass-card p-4 space-y-3", className)}>
+    <div className={clsx("glass-card p-5 space-y-4", className)}>
       {Array.from({ length: lines }).map((_, i) => (
         <div
           key={i}

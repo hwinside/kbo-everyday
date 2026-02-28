@@ -45,12 +45,12 @@ export default function NewsFeed({ news, videos }: NewsFeedProps) {
   return (
     <div>
       {/* Tabs */}
-      <div className="mb-3 flex gap-2">
+      <div className="mb-4 flex gap-3">
         {tabs.map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
-            className={`rounded-full px-4 py-1.5 text-sm font-semibold transition-all ${
+            className={`rounded-full px-5 py-2 text-base font-semibold transition-all ${
               activeTab === tab.key
                 ? "bg-accent text-white"
                 : "bg-bg-tertiary text-text-secondary hover:text-text-primary"
@@ -62,10 +62,10 @@ export default function NewsFeed({ news, videos }: NewsFeedProps) {
       </div>
 
       {/* Team filter chips */}
-      <div className="mb-4 flex gap-2 overflow-x-auto hide-scrollbar -mx-4 px-4">
+      <div className="mb-5 flex gap-4 overflow-x-auto hide-scrollbar -mx-4 px-4">
         <button
           onClick={() => setSelectedTeam(null)}
-          className={`flex-shrink-0 rounded-full px-3 py-1 text-sm font-medium transition-all ${
+          className={`flex-shrink-0 rounded-full px-4 py-1 text-base font-medium transition-all ${
             selectedTeam === null
               ? "bg-text-primary text-bg-primary"
               : "bg-bg-tertiary text-text-secondary"
@@ -77,7 +77,7 @@ export default function NewsFeed({ news, videos }: NewsFeedProps) {
           <button
             key={team.id}
             onClick={() => setSelectedTeam(team.id === selectedTeam ? null : team.id)}
-            className="flex-shrink-0 rounded-full px-3 py-1 text-sm font-semibold text-white transition-all"
+            className="flex-shrink-0 rounded-full px-4 py-1 text-base font-semibold text-white transition-all"
             style={{
               backgroundColor:
                 selectedTeam === team.id
@@ -99,7 +99,7 @@ export default function NewsFeed({ news, videos }: NewsFeedProps) {
           variants={container}
           initial="hidden"
           animate="show"
-          className="space-y-3"
+          className="space-y-4"
         >
           {(activeTab === "all" || activeTab === "news") &&
             filteredNews.map((n) => (
@@ -123,7 +123,7 @@ export default function NewsFeed({ news, videos }: NewsFeedProps) {
               filteredVideos.length === 0)) && (
             <div className="py-12 text-center text-text-tertiary">
               <p className="text-3xl">📭</p>
-              <p className="mt-2 text-sm">아직 소식이 없습니다</p>
+              <p className="mt-2 text-base">아직 소식이 없습니다</p>
             </div>
           )}
         </motion.div>

@@ -74,7 +74,7 @@ export default function GameDetailPage() {
         }}
       >
         {/* Back button + game info */}
-        <div className="flex items-center gap-2 px-3 pt-2">
+        <div className="flex items-center gap-4 px-4 pt-2">
           <Link href="/games" className="p-1 -ml-1">
             <ArrowLeft className="w-5 h-5 text-text-secondary" />
           </Link>
@@ -82,19 +82,19 @@ export default function GameDetailPage() {
             {game.status === "live" && (
               <div className="flex items-center gap-1.5">
                 <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
-                <span className="text-xs font-semibold text-accent">LIVE</span>
-                <span className="text-xs text-text-tertiary ml-1">
+                <span className="text-base font-semibold text-accent">LIVE</span>
+                <span className="text-base text-text-tertiary ml-1">
                   {game.stadium}
                 </span>
               </div>
             )}
             {game.status === "final" && (
-              <span className="text-xs text-text-tertiary">
+              <span className="text-base text-text-tertiary">
                 경기 종료 · {game.stadium}
               </span>
             )}
             {game.status === "scheduled" && (
-              <span className="text-xs text-text-tertiary">
+              <span className="text-base text-text-tertiary">
                 {game.time} 예정 · {game.stadium}
               </span>
             )}
@@ -103,28 +103,28 @@ export default function GameDetailPage() {
 
         {/* Radio player */}
         {game.status === "live" && (
-          <div className="px-3 pt-2">
+          <div className="px-4 pt-2">
             <RadioPlayer />
           </div>
         )}
 
         {/* Score header */}
-        <div className="flex items-center justify-center gap-4 px-4 py-3">
+        <div className="flex items-center justify-center gap-4 px-5 py-4">
           {/* Away team */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <TeamLogo
               team={awayTeam}
-              size={40}
+              size={64}
               className="shadow-lg"
               style={{ boxShadow: `0 0 20px ${awayTeam.colorPrimary}40` }}
             />
-            <span className="text-sm font-semibold text-text-primary">
+            <span className="text-base font-semibold text-text-primary">
               {awayTeam.shortName}
             </span>
           </div>
 
           {/* Score */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
             <motion.span
               key={`away-${game.awayScore}`}
               initial={{ scale: 1.5, opacity: 0 }}
@@ -134,9 +134,9 @@ export default function GameDetailPage() {
               {game.awayScore}
             </motion.span>
             <div className="flex flex-col items-center">
-              <span className="text-xs text-text-tertiary">:</span>
+              <span className="text-base text-text-tertiary">:</span>
               {game.inning && (
-                <span className="text-xs text-text-secondary mt-0.5">
+                <span className="text-base text-text-secondary mt-0.5">
                   {game.inning}
                 </span>
               )}
@@ -152,13 +152,13 @@ export default function GameDetailPage() {
           </div>
 
           {/* Home team */}
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-text-primary">
+          <div className="flex items-center gap-3">
+            <span className="text-base font-semibold text-text-primary">
               {homeTeam.shortName}
             </span>
             <TeamLogo
               team={homeTeam}
-              size={40}
+              size={64}
               className="shadow-lg"
               style={{ boxShadow: `0 0 20px ${homeTeam.colorPrimary}40` }}
             />
@@ -167,7 +167,7 @@ export default function GameDetailPage() {
 
         {/* Diamond + Count (only for live games) */}
         {game.status === "live" && gameState && (
-          <div className="flex items-center gap-4 px-4 pb-2">
+          <div className="flex items-center gap-4 px-5 pb-2">
             <Diamond
               runner1b={gameState.runner1b}
               runner2b={gameState.runner2b}
@@ -188,7 +188,7 @@ export default function GameDetailPage() {
 
         {/* Inning score table */}
         {innings.length > 0 && (
-          <div className="px-3 pb-2">
+          <div className="px-4 pb-2">
             <ScoreBoard
               awayTeam={awayTeam}
               homeTeam={homeTeam}
@@ -207,7 +207,7 @@ export default function GameDetailPage() {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={clsx(
-                "flex-1 py-2.5 text-sm font-medium transition-colors relative",
+                "flex-1 py-3 text-base font-medium transition-colors relative",
                 activeTab === tab.id
                   ? "text-text-primary"
                   : "text-text-tertiary"
@@ -268,7 +268,7 @@ export default function GameDetailPage() {
                   homeTeam={homeTeam}
                 />
               ) : (
-                <div className="flex items-center justify-center h-32 text-text-tertiary text-sm">
+                <div className="flex items-center justify-center h-32 text-text-tertiary text-base">
                   라인업 정보가 없습니다
                 </div>
               )}
@@ -290,7 +290,7 @@ export default function GameDetailPage() {
                   homeTeam={homeTeam}
                 />
               ) : (
-                <div className="flex items-center justify-center h-32 text-text-tertiary text-sm">
+                <div className="flex items-center justify-center h-32 text-text-tertiary text-base">
                   스탯 정보가 없습니다
                 </div>
               )}

@@ -50,7 +50,7 @@ export default function ScoreBoard({
 
   return (
     <div className="overflow-x-auto hide-scrollbar">
-      <table className="w-full min-w-[360px] text-center text-xs tabular-nums">
+      <table className="w-full min-w-[360px] text-center text-sm tabular-nums">
         <thead>
           <tr className="text-text-tertiary">
             <th className="w-14 py-1.5 text-left pl-1 font-medium">팀</th>
@@ -74,9 +74,9 @@ export default function ScoreBoard({
           {/* Away team */}
           <tr>
             <td className="py-1.5 text-left pl-1">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
                 <TeamLogo team={awayTeam} size={24} />
-                <span className="font-semibold text-text-primary text-xs">
+                <span className="font-semibold text-text-primary text-base">
                   {awayTeam.shortName}
                 </span>
               </div>
@@ -115,9 +115,9 @@ export default function ScoreBoard({
           {/* Home team */}
           <tr>
             <td className="py-1.5 text-left pl-1">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
                 <TeamLogo team={homeTeam} size={24} />
-                <span className="font-semibold text-text-primary text-xs">
+                <span className="font-semibold text-text-primary text-base">
                   {homeTeam.shortName}
                 </span>
               </div>

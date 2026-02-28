@@ -45,7 +45,7 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
 
   return (
     <GlassCard
-      className={`relative overflow-hidden p-4 ${
+      className={`relative overflow-hidden p-5 ${
         isCorrect ? "ring-1 ring-accent-gold/40" : ""
       } ${isWrong ? "opacity-80" : ""}`}
     >
@@ -55,26 +55,26 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
       )}
 
       {/* Header: time + status */}
-      <div className="mb-3 flex items-center justify-between relative">
-        <div className="flex items-center gap-1.5 text-sm text-text-secondary">
-          <Clock size={14} />
+      <div className="mb-4 flex items-center justify-between relative">
+        <div className="flex items-center gap-4 text-base text-text-secondary">
+          <Clock size={22} />
           <span>{prediction.time} · {prediction.stadium}</span>
         </div>
         {isLocked && (
-          <span className="flex items-center gap-1 text-sm text-text-tertiary">
-            <Lock size={14} />
+          <span className="flex items-center gap-1 text-base text-text-tertiary">
+            <Lock size={22} />
             진행중
           </span>
         )}
         {isFinished && prediction.homeScore !== null && prediction.awayScore !== null && (
-          <span className="text-sm font-semibold text-text-secondary">
+          <span className="text-base font-semibold text-text-secondary">
             {prediction.awayScore} : {prediction.homeScore}
           </span>
         )}
       </div>
 
       {/* Teams and vote buttons */}
-      <div className="relative flex items-center gap-3">
+      <div className="relative flex items-center gap-4">
         {/* Away team */}
         <button
           onClick={() => handleVote(prediction.awayTeamId)}
@@ -101,7 +101,7 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
             transition={{ duration: 0.3 }}
             className="flex flex-col items-center"
           >
-            <TeamLogo team={awayTeam} size={44} className="mb-1" />
+            <TeamLogo team={awayTeam} size={52} className="mb-1" />
             <div
               className="text-lg font-bold"
               style={{
@@ -113,14 +113,14 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
             >
               {awayTeam.shortName}
             </div>
-            <div className="mt-0.5 text-xs text-text-secondary">
+            <div className="mt-0.5 text-base text-text-secondary">
               {isFinished && prediction.winnerTeamId === prediction.awayTeamId && "👑 "}
               승리
             </div>
           </motion.div>
         </button>
 
-        <span className="text-sm font-semibold text-text-tertiary">VS</span>
+        <span className="text-base font-semibold text-text-tertiary">VS</span>
 
         {/* Home team */}
         <button
@@ -148,7 +148,7 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
             transition={{ duration: 0.3 }}
             className="flex flex-col items-center"
           >
-            <TeamLogo team={homeTeam} size={44} className="mb-1" />
+            <TeamLogo team={homeTeam} size={52} className="mb-1" />
             <div
               className="text-lg font-bold"
               style={{
@@ -160,7 +160,7 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
             >
               {homeTeam.shortName}
             </div>
-            <div className="mt-0.5 text-xs text-text-secondary">
+            <div className="mt-0.5 text-base text-text-secondary">
               {isFinished && prediction.winnerTeamId === prediction.homeTeamId && "👑 "}
               승리
             </div>
@@ -169,7 +169,7 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
       </div>
 
       {/* Prediction bar */}
-      <div className="mt-3">
+      <div className="mt-4">
         <div className="flex h-2.5 overflow-hidden rounded-full">
           <motion.div
             className="rounded-l-full"
@@ -186,12 +186,12 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
             style={{ backgroundColor: homeTeam.colorPrimary }}
           />
         </div>
-        <div className="mt-1.5 flex items-center justify-between text-sm">
+        <div className="mt-1.5 flex items-center justify-between text-base">
           <span style={{ color: awayTeam.colorPrimary }} className="font-semibold">
             {awayTeam.shortName} {awayPercent}%
           </span>
           <span className="flex items-center gap-1 text-text-tertiary">
-            <Users size={14} />
+            <Users size={22} />
             {totalVotes.toLocaleString()}명
           </span>
           <span style={{ color: homeTeam.colorPrimary }} className="font-semibold">
@@ -206,7 +206,7 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mt-3 flex items-center justify-center gap-2 rounded-lg bg-accent-gold/10 py-2 text-sm font-semibold text-accent-gold"
+            className="mt-4 flex items-center justify-center gap-4 rounded-lg bg-accent-gold/10 py-2 text-base font-semibold text-accent-gold"
           >
             ✅ 적중! +10 포인트
           </motion.div>
@@ -215,7 +215,7 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mt-3 flex items-center justify-center gap-2 rounded-lg bg-bg-tertiary py-2 text-sm text-text-secondary"
+            className="mt-4 flex items-center justify-center gap-4 rounded-lg bg-bg-tertiary py-2 text-base text-text-secondary"
           >
             ❌ 오답
           </motion.div>

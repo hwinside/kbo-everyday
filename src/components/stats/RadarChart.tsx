@@ -58,7 +58,7 @@ export default function RadarChart({ stats, teamColor, isPitcher }: RadarChartPr
         animate={true}
         motionConfig="gentle"
         theme={{
-          text: { fill: "#8E8E93", fontSize: 12 },
+          text: { fill: "#8E8E93", fontSize: 13 },
           grid: { line: { stroke: "rgba(255,255,255,0.08)" } },
           tooltip: {
             container: {
@@ -66,12 +66,12 @@ export default function RadarChart({ stats, teamColor, isPitcher }: RadarChartPr
               color: "#F5F5F7",
               borderRadius: "8px",
               border: "1px solid rgba(255,255,255,0.08)",
-              fontSize: 12,
+              fontSize: 13,
             },
           },
         }}
         sliceTooltip={({ index, data: sliceData }) => (
-          <div className="rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-xs">
+          <div className="rounded-lg border border-border bg-bg-tertiary px-4 py-3 text-base">
             <p className="font-semibold text-text-primary">{index}</p>
             {sliceData.map((d) => (
               <p key={d.id} style={{ color: d.id === "player" ? teamColor : "#8E8E93" }}>

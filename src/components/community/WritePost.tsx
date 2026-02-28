@@ -50,41 +50,41 @@ export default function WritePost({ isOpen, onClose, teamName }: WritePostProps)
             </div>
 
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3">
+            <div className="flex items-center justify-between px-5 py-3">
               <button onClick={onClose} className="text-text-secondary p-1">
                 <X size={24} />
               </button>
-              <h2 className="text-base font-semibold text-text-primary">
+              <h2 className="text-lg font-semibold text-text-primary">
                 {teamName ? `${teamName} 글쓰기` : "글쓰기"}
               </h2>
               <button
                 onClick={handleSubmit}
                 disabled={!title.trim() || !content.trim()}
-                className="rounded-full bg-accent px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-40 transition-opacity"
+                className="rounded-full bg-accent px-4 py-1.5 text-base font-semibold text-white disabled:opacity-40 transition-opacity"
               >
                 등록
               </button>
             </div>
 
             {/* Form */}
-            <div className="px-4 pb-8 space-y-3">
+            <div className="px-5 pb-8 space-y-4">
               <input
                 type="text"
                 placeholder="제목"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 maxLength={100}
-                className="w-full rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+                className="w-full rounded-xl bg-bg-tertiary px-5 py-4 text-base text-text-primary placeholder:text-text-tertiary outline-none"
               />
               <textarea
                 placeholder="내용을 입력하세요"
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
                 rows={8}
-                className="w-full resize-none rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+                className="w-full resize-none rounded-xl bg-bg-tertiary px-5 py-4 text-base text-text-primary placeholder:text-text-tertiary outline-none"
               />
-              <button className="flex items-center gap-2 rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-secondary hover:text-text-primary transition-colors">
-                <ImageIcon size={20} />
+              <button className="flex items-center gap-4 rounded-xl bg-bg-tertiary px-5 py-4 text-base text-text-secondary hover:text-text-primary transition-colors">
+                <ImageIcon size={22} />
                 사진 첨부 (최대 5장)
               </button>
             </div>

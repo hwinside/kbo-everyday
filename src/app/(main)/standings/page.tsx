@@ -126,12 +126,12 @@ type MainTab = "team" | "batter" | "pitcher";
 
 function LeaderSection({ title, leaders }: { title: string; leaders: TitleLeader[] }) {
   return (
-    <div className="glass-card p-3">
-      <h3 className="text-xs font-semibold text-text-tertiary mb-2">{title}</h3>
-      <div className="space-y-2">
+    <div className="glass-card p-4">
+      <h3 className="text-base font-semibold text-text-tertiary mb-3">{title}</h3>
+      <div className="space-y-3">
         {leaders.map((l) => (
-          <div key={l.rank} className="flex items-center gap-2">
-            <span className={clsx("flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold",
+          <div key={l.rank} className="flex items-center gap-3">
+            <span className={clsx("flex h-6 w-6 items-center justify-center rounded-full text-base font-bold",
               l.rank === 1 ? "bg-yellow-500/20 text-yellow-400" :
               l.rank === 2 ? "bg-gray-400/20 text-gray-300" :
               l.rank === 3 ? "bg-amber-700/20 text-amber-600" :
@@ -139,9 +139,9 @@ function LeaderSection({ title, leaders }: { title: string; leaders: TitleLeader
             )}>
               {l.rank}
             </span>
-            <PlayerAvatar name={l.name} teamId={l.teamId} photoUrl={getPlayerPhotoUrl(l.name)} size={44} />
-            <span className="flex-1 text-sm text-text-primary">{l.name}</span>
-            <span className="text-sm font-bold tabular-nums" style={{ color: getTeamColor(l.teamId) }}>{l.value}</span>
+            <PlayerAvatar name={l.name} teamId={l.teamId} photoUrl={getPlayerPhotoUrl(l.name)} size={52} />
+            <span className="flex-1 text-base text-text-primary">{l.name}</span>
+            <span className="text-base font-bold tabular-nums" style={{ color: getTeamColor(l.teamId) }}>{l.value}</span>
           </div>
         ))}
       </div>
@@ -153,14 +153,14 @@ export default function StandingsPage() {
   const [mainTab, setMainTab] = useState<MainTab>("team");
 
   return (
-    <div className="mx-auto max-w-lg px-4">
-      <header className="py-4">
-        <h1 className="text-lg font-bold text-text-primary">순위</h1>
-        <p className="text-xs text-text-secondary">2026 시즌</p>
+    <div className="mx-auto max-w-lg px-5">
+      <header className="py-5">
+        <h1 className="text-xl font-bold text-text-primary">순위</h1>
+        <p className="text-base text-text-secondary">2026 시즌</p>
       </header>
 
       {/* Main tabs */}
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-4 mb-5">
         {([
           { id: "team" as MainTab, label: "구단 순위" },
           { id: "batter" as MainTab, label: "타자 타이틀" },
@@ -170,7 +170,7 @@ export default function StandingsPage() {
             key={tab.id}
             onClick={() => setMainTab(tab.id)}
             className={clsx(
-              "flex-1 py-2.5 text-sm font-medium rounded-full transition-all",
+              "flex-1 py-3 text-base font-medium rounded-full transition-all",
               mainTab === tab.id
                 ? "bg-accent text-white"
                 : "bg-bg-tertiary text-text-tertiary"
@@ -188,9 +188,9 @@ export default function StandingsPage() {
           animate={{ opacity: 1, y: 0 }}
           className="glass-card overflow-hidden"
         >
-          <table className="w-full text-sm">
+          <table className="w-full text-base">
             <thead>
-              <tr className="border-b border-border text-xs font-semibold text-text-tertiary">
+              <tr className="border-b border-border text-base font-semibold text-text-tertiary">
                 <th className="w-8 py-2 text-center">#</th>
                 <th className="py-2 text-left pl-2">팀</th>
                 <th className="w-9 py-2 text-center">승</th>
@@ -214,10 +214,10 @@ export default function StandingsPage() {
                   >
                     <td className="py-2.5 text-center font-bold text-text-primary">{standing.rank}</td>
                     <td className="py-2.5 pl-2">
-                      <div className="flex items-center gap-1.5">
-                        <TeamLogo team={team} size={24} />
+                      <div className="flex items-center gap-2">
+                        <TeamLogo team={team} size={28} />
                         <span className="font-medium text-text-primary whitespace-nowrap">{team.shortName}</span>
-                        {getStreakIcon(standing.streak) && <span className="text-xs">{getStreakIcon(standing.streak)}</span>}
+                        {getStreakIcon(standing.streak) && <span className="text-base">{getStreakIcon(standing.streak)}</span>}
                       </div>
                     </td>
                     <td className="py-2.5 text-center tabular-nums text-text-primary">{standing.wins}</td>
@@ -238,7 +238,7 @@ export default function StandingsPage() {
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          className="space-y-3"
+          className="space-y-4"
         >
           {BATTER_TITLES.map((cat) => (
             <LeaderSection key={cat.id} title={cat.label} leaders={cat.leaders} />
@@ -251,7 +251,7 @@ export default function StandingsPage() {
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          className="space-y-3"
+          className="space-y-4"
         >
           {PITCHER_TITLES.map((cat) => (
             <LeaderSection key={cat.id} title={cat.label} leaders={cat.leaders} />

@@ -47,12 +47,12 @@ export default function TeamDashboard({
   const teamStats = TEAM_STATS[standing.teamId] ?? LEAGUE_AVG;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {/* Record */}
-      <motion.div variants={item} className="glass-card p-4">
+      <motion.div variants={item} className="glass-card p-5">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-semibold text-text-secondary">2026 시즌</h3>
+            <h3 className="text-base font-semibold text-text-secondary">2026 시즌</h3>
             <p className="mt-1 text-2xl font-bold text-text-primary">
               {standing.rank}위
             </p>
@@ -61,7 +61,7 @@ export default function TeamDashboard({
             <p className="text-lg font-bold tabular-nums text-text-primary">
               {standing.wins}승 {standing.losses}패 {standing.draws}무
             </p>
-            <p className="text-sm tabular-nums text-text-secondary">
+            <p className="text-base tabular-nums text-text-secondary">
               승률 {standing.pct.toFixed(3).slice(1)} · {standing.streak}
             </p>
           </div>
@@ -69,9 +69,9 @@ export default function TeamDashboard({
       </motion.div>
 
       {/* Team vs League */}
-      <motion.div variants={item} className="glass-card p-4">
-        <h3 className="mb-3 text-sm font-semibold text-text-secondary">팀 vs 리그 평균</h3>
-        <div className="space-y-3">
+      <motion.div variants={item} className="glass-card p-5">
+        <h3 className="mb-4 text-base font-semibold text-text-secondary">팀 vs 리그 평균</h3>
+        <div className="space-y-4">
           <CompareBar
             label="타율"
             team={teamStats.avg}
@@ -106,9 +106,9 @@ export default function TeamDashboard({
       </motion.div>
 
       {/* Recent 10 Games */}
-      <motion.div variants={item} className="glass-card p-4">
-        <h3 className="mb-3 text-sm font-semibold text-text-secondary">최근 10경기</h3>
-        <div className="flex gap-1.5">
+      <motion.div variants={item} className="glass-card p-5">
+        <h3 className="mb-4 text-base font-semibold text-text-secondary">최근 10경기</h3>
+        <div className="flex gap-2">
           {RECENT_10.map((game, i) => (
             <div
               key={i}
@@ -119,14 +119,14 @@ export default function TeamDashboard({
               }}
             >
               <span
-                className="text-xs font-bold"
+                className="text-base font-bold"
                 style={{
                   color: game.result === "W" ? teamColor : "#8E8E93",
                 }}
               >
                 {game.result}
               </span>
-              <span className="text-[10px] tabular-nums text-text-tertiary">{game.score}</span>
+              <span className="text-base tabular-nums text-text-tertiary">{game.score}</span>
             </div>
           ))}
         </div>
@@ -157,9 +157,9 @@ function CompareBar({
 
   return (
     <div>
-      <div className="mb-1 flex items-center justify-between text-sm">
+      <div className="mb-1 flex items-center justify-between text-base">
         <span className="text-text-secondary">{label}</span>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <span className="font-bold text-text-primary" style={{ color: isBetter ? teamColor : undefined }}>
             {format(team)}
           </span>

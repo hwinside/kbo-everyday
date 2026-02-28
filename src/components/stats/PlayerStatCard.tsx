@@ -38,10 +38,10 @@ export default function PlayerStatCard({
   const highlights = getSeasonHighlights(player.id);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {/* Profile Header */}
-      <motion.div variants={item} className="glass-card p-4">
-        <div className="flex items-center gap-4">
+      <motion.div variants={item} className="glass-card p-5">
+        <div className="flex items-center gap-5">
           <div
             className="flex h-16 w-16 items-center justify-center rounded-2xl text-xl font-bold text-white"
             style={{
@@ -52,7 +52,7 @@ export default function PlayerStatCard({
           </div>
           <div>
             <h2 className="text-xl font-bold text-text-primary">{player.name}</h2>
-            <p className="text-sm text-text-secondary">
+            <p className="text-base text-text-secondary">
               {teamName} · {POSITION_LABELS[player.position] ?? player.position}
             </p>
           </div>
@@ -60,9 +60,9 @@ export default function PlayerStatCard({
       </motion.div>
 
       {/* Key Numbers */}
-      <motion.div variants={item} className="glass-card p-4">
-        <h3 className="mb-3 text-sm font-semibold text-text-secondary">핵심 스탯</h3>
-        <div className="grid grid-cols-3 gap-3">
+      <motion.div variants={item} className="glass-card p-5">
+        <h3 className="mb-4 text-base font-semibold text-text-secondary">핵심 스탯</h3>
+        <div className="grid grid-cols-3 gap-4">
           {isPitcher ? (
             <>
               <StatNumber label="ERA" value={stats.era?.toFixed(2) ?? "-"} />
@@ -86,8 +86,8 @@ export default function PlayerStatCard({
       </motion.div>
 
       {/* Radar Chart */}
-      <motion.div variants={item} className="glass-card p-4">
-        <h3 className="mb-1 text-sm font-semibold text-text-secondary">
+      <motion.div variants={item} className="glass-card p-5">
+        <h3 className="mb-1 text-base font-semibold text-text-secondary">
           리그 평균 대비 {isPitcher ? "투구" : "타격"} 능력
         </h3>
         <RadarChart stats={stats} teamColor={teamColor} isPitcher={isPitcher} />
@@ -95,8 +95,8 @@ export default function PlayerStatCard({
 
       {/* Trend Chart */}
       {gameLog && (
-        <motion.div variants={item} className="glass-card p-4">
-          <h3 className="mb-3 text-sm font-semibold text-text-secondary">
+        <motion.div variants={item} className="glass-card p-5">
+          <h3 className="mb-4 text-base font-semibold text-text-secondary">
             최근 10경기 {isPitcher ? "ERA" : "타율"} 추이
           </h3>
           <TrendChart data={gameLog} teamColor={teamColor} isPitcher={isPitcher} />
@@ -105,20 +105,20 @@ export default function PlayerStatCard({
 
       {/* Season Highlights */}
       {highlights.length > 0 && (
-        <motion.div variants={item} className="glass-card p-4">
-          <h3 className="mb-3 text-sm font-semibold text-text-secondary">시즌 하이라이트</h3>
-          <div className="space-y-2">
+        <motion.div variants={item} className="glass-card p-5">
+          <h3 className="mb-4 text-base font-semibold text-text-secondary">시즌 하이라이트</h3>
+          <div className="space-y-3">
             {highlights.map((h, i) => (
               <div
                 key={i}
-                className="flex items-center gap-3 rounded-xl bg-bg-tertiary/50 px-3 py-2.5"
+                className="flex items-center gap-4 rounded-xl bg-bg-tertiary/50 px-4 py-3"
               >
                 <span className="text-lg text-accent-gold">🏆</span>
                 <div className="flex-1">
-                  <p className="text-sm font-medium text-text-primary">{h.label}</p>
-                  <p className="text-xs text-text-tertiary">{h.date}</p>
+                  <p className="text-base font-medium text-text-primary">{h.label}</p>
+                  <p className="text-base text-text-tertiary">{h.date}</p>
                 </div>
-                <span className="text-sm font-bold text-accent-gold">{h.value}</span>
+                <span className="text-base font-bold text-accent-gold">{h.value}</span>
               </div>
             ))}
           </div>
@@ -139,7 +139,7 @@ function StatNumber({
 }) {
   return (
     <div className="text-center">
-      <p className="text-xs font-medium text-text-tertiary">{label}</p>
+      <p className="text-base font-medium text-text-tertiary">{label}</p>
       <p
         className={`mt-0.5 text-2xl font-bold tabular-nums ${
           highlight ? "text-text-primary" : "text-text-primary"

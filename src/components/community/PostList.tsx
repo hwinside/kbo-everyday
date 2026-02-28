@@ -22,8 +22,8 @@ export default function PostList({ posts }: PostListProps) {
   if (posts.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-text-tertiary">
-        <p className="text-sm">아직 글이 없습니다</p>
-        <p className="mt-1 text-sm">첫 번째 글을 작성해보세요!</p>
+        <p className="text-base">아직 글이 없습니다</p>
+        <p className="mt-1 text-base">첫 번째 글을 작성해보세요!</p>
       </div>
     );
   }
@@ -33,7 +33,7 @@ export default function PostList({ posts }: PostListProps) {
       variants={container}
       initial="hidden"
       animate="show"
-      className="space-y-2"
+      className="space-y-3"
     >
       {posts.map((post) => (
         <motion.div key={post.id} variants={item}>

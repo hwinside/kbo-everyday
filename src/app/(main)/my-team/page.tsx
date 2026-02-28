@@ -69,16 +69,16 @@ export default function MyTeamPage() {
       {/* Team Header with Gradient */}
       <motion.div
         variants={item}
-        className="relative px-4 pb-6 pt-safe"
+        className="relative px-5 pb-6 pt-safe"
         style={{
           background: `linear-gradient(180deg, ${team.colorPrimary}40 0%, ${team.colorPrimary}10 40%, transparent 100%)`,
         }}
       >
-        <div className="flex items-center gap-4 py-4">
+        <div className="flex items-center gap-4 py-5">
           <TeamLogo team={team} size={64} className="shadow-lg" />
           <div>
             <h1 className="text-xl font-bold text-text-primary">{team.name}</h1>
-            <div className="mt-1 flex items-center gap-2 text-sm text-text-secondary">
+            <div className="mt-1 flex items-center gap-4 text-base text-text-secondary">
               <span className="font-semibold" style={{ color: team.colorPrimary }}>
                 {MOCK_STANDING.rank}위
               </span>
@@ -91,25 +91,25 @@ export default function MyTeamPage() {
         </div>
       </motion.div>
 
-      <div className="space-y-6 px-4 pb-6">
+      <div className="space-y-7 px-5 pb-6">
         {/* News Section */}
         <motion.section variants={item}>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-base font-semibold text-text-primary">
-              <Newspaper size={18} className="text-text-secondary" />
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="flex items-center gap-4 text-lg font-semibold text-text-primary">
+              <Newspaper size={22} className="text-text-secondary" />
               최신 뉴스
             </h2>
-            <button className="flex items-center text-xs text-text-secondary">
-              전체보기 <ChevronRight size={16} />
+            <button className="flex items-center text-base text-text-secondary">
+              전체보기 <ChevronRight size={20} />
             </button>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-3">
             {MOCK_NEWS.map((news) => (
-              <GlassCard key={news.id} pressable className="!p-3">
-                <p className="text-sm font-medium text-text-primary line-clamp-1">
+              <GlassCard key={news.id} pressable className="!p-4">
+                <p className="text-base font-medium text-text-primary line-clamp-1">
                   {news.title}
                 </p>
-                <p className="mt-1 text-xs text-text-tertiary">
+                <p className="mt-1 text-base text-text-tertiary">
                   {news.source} · {news.timeAgo}
                 </p>
               </GlassCard>
@@ -119,26 +119,26 @@ export default function MyTeamPage() {
 
         {/* Starting Lineup */}
         <motion.section variants={item}>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-base font-semibold text-text-primary">
-              <Users size={18} className="text-text-secondary" />
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="flex items-center gap-4 text-lg font-semibold text-text-primary">
+              <Users size={22} className="text-text-secondary" />
               주전 라인업
             </h2>
             <Link
               href={`/teams/${team.slug}`}
-              className="flex items-center text-xs text-text-secondary"
+              className="flex items-center text-base text-text-secondary"
             >
-              전체 선수 <ChevronRight size={16} />
+              전체 선수 <ChevronRight size={20} />
             </Link>
           </div>
 
           {/* SP */}
-          <div className="mb-2">
+          <div className="mb-3">
             <Link href={`/teams/${team.slug}/players/201`}>
-              <GlassCard pressable className="!p-3">
-                <div className="flex items-center gap-3">
+              <GlassCard pressable className="!p-4">
+                <div className="flex items-center gap-4">
                   <div
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold text-white"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-base font-bold text-white"
                     style={{
                       background: `linear-gradient(135deg, ${team.colorPrimary}, ${team.colorSecondary})`,
                     }}
@@ -146,11 +146,11 @@ export default function MyTeamPage() {
                     SP
                   </div>
                   <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold text-text-primary">#29 케이시 켈리</span>
-                      <span className="text-xs text-text-tertiary">선발</span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-base font-bold text-text-primary">#29 케이시 켈리</span>
+                      <span className="text-base text-text-tertiary">선발</span>
                     </div>
-                    <p className="text-xs tabular-nums text-text-secondary">
+                    <p className="text-base tabular-nums text-text-secondary">
                       ERA 3.12 · 15승 7패 · WHIP 1.15
                     </p>
                   </div>
@@ -160,24 +160,24 @@ export default function MyTeamPage() {
           </div>
 
           {/* Batting Order */}
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {STARTING_LINEUP.map(({ order, player }) => (
               <Link key={player.id} href={`/teams/${team.slug}/players/${player.id}`}>
-                <GlassCard pressable className="!p-2.5">
-                  <div className="flex items-center gap-3">
-                    <span className="w-5 text-center text-xs font-bold text-text-tertiary">
+                <GlassCard pressable className="!p-3">
+                  <div className="flex items-center gap-4">
+                    <span className="w-5 text-center text-base font-bold text-text-tertiary">
                       {order}
                     </span>
                     <span
-                      className="w-7 text-center text-xs font-semibold"
+                      className="w-7 text-center text-base font-semibold"
                       style={{ color: team.colorPrimary }}
                     >
                       {POSITION_LABELS[player.position] ?? player.position}
                     </span>
-                    <span className="flex-1 text-sm font-medium text-text-primary">
+                    <span className="flex-1 text-base font-medium text-text-primary">
                       #{player.number} {player.name}
                     </span>
-                    <span className="text-xs tabular-nums text-text-secondary">
+                    <span className="text-base tabular-nums text-text-secondary">
                       {player.seasonStats.avg?.toFixed(3).slice(1)} / {player.seasonStats.hr}HR / {player.seasonStats.rbi}RBI
                     </span>
                   </div>
@@ -189,13 +189,13 @@ export default function MyTeamPage() {
 
         {/* Team Content (YouTube) */}
         <motion.section variants={item}>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-base font-semibold text-text-primary">
-              <Play size={18} className="text-text-secondary" />
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="flex items-center gap-4 text-lg font-semibold text-text-primary">
+              <Play size={22} className="text-text-secondary" />
               팀 콘텐츠
             </h2>
           </div>
-          <div className="flex gap-3 overflow-x-auto hide-scrollbar -mx-4 px-4">
+          <div className="flex gap-4 overflow-x-auto hide-scrollbar -mx-5 px-5">
             {MOCK_YOUTUBE.map((video) => (
               <GlassCard key={video.id} pressable className="min-w-[220px] flex-shrink-0 !p-0 overflow-hidden">
                 {/* Thumbnail placeholder */}
@@ -205,11 +205,11 @@ export default function MyTeamPage() {
                 >
                   <Play size={34} className="text-text-tertiary" />
                 </div>
-                <div className="p-3">
-                  <p className="text-xs font-medium text-text-primary line-clamp-2">
+                <div className="p-4">
+                  <p className="text-base font-medium text-text-primary line-clamp-2">
                     {video.title}
                   </p>
-                  <p className="mt-1 text-xs text-text-tertiary">
+                  <p className="mt-1 text-base text-text-tertiary">
                     조회수 {video.views}회
                   </p>
                 </div>
@@ -221,15 +221,15 @@ export default function MyTeamPage() {
         {/* Community Link */}
         <motion.section variants={item}>
           <Link href={`/teams/${team.slug}`}>
-            <GlassCard pressable className="flex items-center justify-between !p-4">
-              <div className="flex items-center gap-3">
-                <MessageSquare size={22} style={{ color: team.colorPrimary }} />
+            <GlassCard pressable className="flex items-center justify-between !p-5">
+              <div className="flex items-center gap-4">
+                <MessageSquare size={24} style={{ color: team.colorPrimary }} />
                 <div>
-                  <p className="text-sm font-semibold text-text-primary">구단 게시판</p>
-                  <p className="text-xs text-text-secondary">{team.name} 팬들의 소통 공간</p>
+                  <p className="text-base font-semibold text-text-primary">구단 게시판</p>
+                  <p className="text-base text-text-secondary">{team.name} 팬들의 소통 공간</p>
                 </div>
               </div>
-              <ChevronRight size={20} className="text-text-tertiary" />
+              <ChevronRight size={22} className="text-text-tertiary" />
             </GlassCard>
           </Link>
         </motion.section>

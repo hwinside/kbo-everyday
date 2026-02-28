@@ -19,32 +19,32 @@ const item = {
 
 export default function TeamsPage() {
   return (
-    <div className="mx-auto max-w-lg px-4">
-      <header className="flex items-center gap-3 py-4">
+    <div className="mx-auto max-w-lg px-5">
+      <header className="flex items-center gap-4 py-5">
         <Link href="/" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
           <ChevronLeft size={24} />
         </Link>
-        <h1 className="text-lg font-bold text-text-primary">구단 게시판</h1>
+        <h1 className="text-xl font-bold text-text-primary">구단 게시판</h1>
       </header>
 
       <motion.div
         variants={container}
         initial="hidden"
         animate="show"
-        className="grid grid-cols-2 gap-3 pb-4"
+        className="grid grid-cols-2 gap-4 pb-5"
       >
         {TEAMS.map((team) => (
           <motion.div key={team.id} variants={item}>
             <Link href={`/teams/${team.slug}`}>
               <GlassCard
                 pressable
-                className="flex flex-col items-center justify-center gap-2 p-5"
+                className="flex flex-col items-center justify-center gap-4 p-6"
               >
                 <TeamLogo team={team} size={64} />
-                <span className="text-sm font-semibold text-text-primary">
+                <span className="text-base font-semibold text-text-primary">
                   {team.name}
                 </span>
-                <span className="text-xs text-text-tertiary">게시판</span>
+                <span className="text-base text-text-tertiary">게시판</span>
               </GlassCard>
             </Link>
           </motion.div>

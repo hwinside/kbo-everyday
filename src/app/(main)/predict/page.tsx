@@ -23,11 +23,11 @@ export default function PredictPage() {
       variants={container}
       initial="hidden"
       animate="show"
-      className="mx-auto max-w-lg px-4 pt-safe"
+      className="mx-auto max-w-lg px-5 pt-safe"
     >
       {/* Header */}
-      <motion.header variants={item} className="flex items-center justify-between py-4">
-        <div className="flex items-center gap-2">
+      <motion.header variants={item} className="flex items-center justify-between py-5">
+        <div className="flex items-center gap-3">
           <Link href="/" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
             <ChevronLeft size={24} />
           </Link>
@@ -35,15 +35,15 @@ export default function PredictPage() {
         </div>
         <Link
           href="/predict/leaderboard"
-          className="flex items-center gap-1.5 rounded-full bg-accent-gold/10 px-3 py-1.5 text-sm font-semibold text-accent-gold transition-colors hover:bg-accent-gold/20"
+          className="flex items-center gap-4 rounded-full bg-accent-gold/10 px-4 py-2 text-base font-semibold text-accent-gold transition-colors hover:bg-accent-gold/20"
         >
-          <Trophy size={16} />
+          <Trophy size={20} />
           랭킹
         </Link>
       </motion.header>
 
       {/* My stats */}
-      <motion.div variants={item} className="mb-4">
+      <motion.div variants={item} className="mb-5">
         <PredictionResult
           totalCorrect={MY_PREDICTION_STATS.totalCorrect}
           totalPredictions={MY_PREDICTION_STATS.totalPredictions}
@@ -54,14 +54,14 @@ export default function PredictPage() {
       </motion.div>
 
       {/* Section header */}
-      <motion.div variants={item} className="mb-3">
-        <h2 className="text-base font-semibold text-text-primary">
-          오늘의 경기 <span className="text-text-tertiary text-sm font-normal">3월 28일</span>
+      <motion.div variants={item} className="mb-4">
+        <h2 className="text-lg font-semibold text-text-primary">
+          오늘의 경기 <span className="text-text-tertiary text-base font-normal">3월 28일</span>
         </h2>
       </motion.div>
 
       {/* Prediction cards */}
-      <div className="space-y-3 pb-8">
+      <div className="space-y-4 pb-8">
         {MOCK_PREDICTIONS.map((pred) => (
           <motion.div key={pred.gameId} variants={item}>
             <PredictionCard prediction={pred} />

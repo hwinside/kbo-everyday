@@ -75,29 +75,29 @@ export default function PlayerDetailPage() {
     <div className="mx-auto max-w-lg">
       {/* Header with gradient */}
       <div
-        className="relative px-4 pb-4 pt-safe"
+        className="relative px-5 pb-5 pt-safe"
         style={{
           background: `linear-gradient(180deg, ${team.colorPrimary}33 0%, transparent 100%)`,
         }}
       >
-        <div className="flex items-center gap-3 py-4">
+        <div className="flex items-center gap-4 py-5">
           <Link
             href={`/teams/${teamSlug}`}
             className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary/50 transition-colors"
           >
             <ChevronLeft size={24} />
           </Link>
-          <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={64} />
-          <h1 className="text-lg font-bold text-text-primary">{player.name}</h1>
+          <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={72} />
+          <h1 className="text-xl font-bold text-text-primary">{player.name}</h1>
         </div>
 
         {/* Tabs: 스탯 / 게시판 */}
-        <div className="flex gap-2">
+        <div className="flex gap-3">
           {(["stats", "board"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+              className={`rounded-full px-5 py-2 text-base font-medium transition-colors ${
                 activeTab === tab
                   ? "bg-text-primary text-bg-primary"
                   : "bg-bg-glass text-text-secondary"
@@ -117,7 +117,7 @@ export default function PlayerDetailPage() {
             initial="hidden"
             animate="show"
             exit={{ opacity: 0, x: -20 }}
-            className="px-4 py-3"
+            className="px-5 py-4"
           >
             <PlayerStatCard
               player={player}
@@ -134,7 +134,7 @@ export default function PlayerDetailPage() {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
             transition={{ duration: 0.2 }}
-            className="px-4 py-3"
+            className="px-5 py-4"
           >
             <PostList posts={posts} />
           </motion.div>

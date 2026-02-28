@@ -37,18 +37,18 @@ export default function PlayerBoardRankingPage() {
   return (
     <div className="min-h-screen bg-bg-primary">
       {/* Header */}
-      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary/80 backdrop-blur-xl px-4 py-3 flex items-center gap-3">
+      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary/80 backdrop-blur-xl px-5 py-4 flex items-center gap-4">
         <Link href="/" className="p-1 -ml-1">
-          <ArrowLeft className="w-5 h-5 text-text-secondary" />
+          <ArrowLeft className="w-10 h-10 text-text-secondary" />
         </Link>
         <div>
-          <h1 className="text-lg font-bold text-text-primary">선수게시판 랭킹</h1>
-          <p className="text-xs text-text-tertiary">게시글 수 기준 인기 선수</p>
+          <h1 className="text-xl font-bold text-text-primary">선수게시판 랭킹</h1>
+          <p className="text-base text-text-tertiary">게시글 수 기준 인기 선수</p>
         </div>
-        <TrendingUp className="ml-auto w-5 h-5 text-accent" />
+        <TrendingUp className="ml-auto w-10 h-10 text-accent" />
       </div>
 
-      <div className="px-4 py-4 space-y-2">
+      <div className="px-5 py-5 space-y-3">
         {MOCK_PLAYER_BOARD_RANKING.map((player, i) => (
           <Link key={player.playerId} href={`/boards/players/${player.playerId}`}>
             <motion.div
@@ -56,9 +56,9 @@ export default function PlayerBoardRankingPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.03 }}
             >
-              <GlassCard pressable className="p-3">
-                <div className="flex items-center gap-3">
-                  <span className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
+              <GlassCard pressable className="p-4">
+                <div className="flex items-center gap-4">
+                  <span className={`flex h-8 w-8 items-center justify-center rounded-full text-base font-bold ${
                     i === 0 ? "bg-yellow-500/20 text-yellow-400" :
                     i === 1 ? "bg-gray-400/20 text-gray-300" :
                     i === 2 ? "bg-amber-700/20 text-amber-600" :
@@ -66,20 +66,20 @@ export default function PlayerBoardRankingPage() {
                   }`}>
                     {player.rank}
                   </span>
-                  <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} size={44} />
+                  <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} size={52} />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-semibold text-text-primary">{player.name}</span>
-                      <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ backgroundColor: getTeamColor(player.teamId) + "20", color: getTeamColor(player.teamId) }}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-base font-semibold text-text-primary">{player.name}</span>
+                      <span className="text-base px-1.5 py-0.5 rounded-full" style={{ backgroundColor: getTeamColor(player.teamId) + "20", color: getTeamColor(player.teamId) }}>
                         {getTeamShortName(player.teamId)}
                       </span>
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-xs font-bold text-accent">오늘 {player.postsToday}글</div>
-                    <div className="text-xs text-text-tertiary">총 {player.totalPosts.toLocaleString()}글</div>
+                    <div className="text-base font-bold text-accent">오늘 {player.postsToday}글</div>
+                    <div className="text-base text-text-tertiary">총 {player.totalPosts.toLocaleString()}글</div>
                   </div>
-                  <span className="text-base w-5 text-center">
+                  <span className="text-lg w-5 text-center">
                     {player.trend === "up" ? "🔥" : player.trend === "down" ? "📉" : "➖"}
                   </span>
                 </div>

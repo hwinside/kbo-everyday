@@ -22,10 +22,10 @@ export default function NewsPage() {
       variants={container}
       initial="hidden"
       animate="show"
-      className="mx-auto max-w-lg px-4 pt-safe"
+      className="mx-auto max-w-lg px-5 pt-safe"
     >
       {/* Header */}
-      <motion.header variants={item} className="flex items-center gap-2 py-4">
+      <motion.header variants={item} className="flex items-center gap-4 py-5">
         <Link href="/" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
           <ChevronLeft size={24} />
         </Link>

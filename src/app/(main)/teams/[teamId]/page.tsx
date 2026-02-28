@@ -100,31 +100,31 @@ export default function TeamBoardPage() {
     <div className="mx-auto max-w-lg">
       {/* Team gradient header */}
       <div
-        className="relative px-4 pb-4 pt-safe"
+        className="relative px-5 pb-5 pt-safe"
         style={{
           background: `linear-gradient(180deg, ${team.colorPrimary}33 0%, transparent 100%)`,
         }}
       >
-        <div className="flex items-center gap-3 py-4">
+        <div className="flex items-center gap-4 py-5">
           <Link
             href="/teams"
             className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary/50 transition-colors"
           >
             <ChevronLeft size={24} />
           </Link>
-          <div className="flex items-center gap-2">
-            <TeamLogo team={team} size={32} />
-            <h1 className="text-lg font-bold text-text-primary">{team.name}</h1>
+          <div className="flex items-center gap-3">
+            <TeamLogo team={team} size={64} />
+            <h1 className="text-xl font-bold text-text-primary">{team.name}</h1>
           </div>
         </div>
 
         {/* Page tabs: 게시판 / 선수 */}
-        <div className="flex gap-2">
+        <div className="flex gap-3">
           {(["board", "players"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setPageTab(tab)}
-              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+              className={`rounded-full px-5 py-2 text-base font-medium transition-colors ${
                 pageTab === tab
                   ? "bg-text-primary text-bg-primary"
                   : "bg-bg-glass text-text-secondary"
@@ -146,12 +146,12 @@ export default function TeamBoardPage() {
             transition={{ duration: 0.2 }}
           >
             {/* Sort tabs */}
-            <div className="flex gap-2 px-4 pt-2">
+            <div className="flex gap-4 px-5 pt-2">
               {(["latest", "popular"] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setSortTab(tab)}
-                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                  className={`rounded-full px-4 py-1.5 text-base font-medium transition-colors ${
                     sortTab === tab
                       ? "bg-bg-tertiary text-text-primary"
                       : "text-text-tertiary"
@@ -163,7 +163,7 @@ export default function TeamBoardPage() {
             </div>
 
             {/* Post list */}
-            <div className="px-4 py-3">
+            <div className="px-5 py-4">
               <PostList posts={sortedPosts} />
             </div>
           </motion.div>
@@ -174,18 +174,18 @@ export default function TeamBoardPage() {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
             transition={{ duration: 0.2 }}
-            className="px-4 py-3"
+            className="px-5 py-4"
           >
             {players.length === 0 ? (
-              <div className="py-20 text-center text-sm text-text-tertiary">
+              <div className="py-20 text-center text-base text-text-tertiary">
                 선수 데이터 준비 중입니다
               </div>
             ) : (
-              <div className="space-y-5">
+              <div className="space-y-6">
                 {grouped.map(({ group, players: groupPlayers }) => (
                   <div key={group}>
-                    <h3 className="mb-2 text-xs font-semibold text-text-tertiary">{group}</h3>
-                    <div className="space-y-1.5">
+                    <h3 className="mb-3 text-base font-semibold text-text-tertiary">{group}</h3>
+                    <div className="space-y-2">
                       {groupPlayers.map((player) => {
                         const isPitcher = ["SP", "RP", "CP"].includes(player.position);
                         return (
@@ -193,19 +193,19 @@ export default function TeamBoardPage() {
                             key={player.id}
                             href={`/teams/${team.slug}/players/${player.id}`}
                           >
-                            <GlassCard pressable className="!p-3">
-                              <div className="flex items-center gap-3">
-                                <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={48} showTeamBadge={false} />
+                            <GlassCard pressable className="!p-4">
+                              <div className="flex items-center gap-4">
+                                <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={64} showTeamBadge={false} />
                                 <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-sm font-bold text-text-primary">
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-base font-bold text-text-primary">
                                       {player.name}
                                     </span>
-                                    <span className="text-xs text-text-tertiary">
+                                    <span className="text-base text-text-tertiary">
                                       {POSITION_LABELS[player.position] ?? player.position}
                                     </span>
                                   </div>
-                                  <p className="mt-0.5 text-xs tabular-nums text-text-secondary">
+                                  <p className="mt-0.5 text-base tabular-nums text-text-secondary">
                                     {isPitcher
                                       ? `ERA ${player.seasonStats.era?.toFixed(2)} · ${player.seasonStats.wins}승${player.seasonStats.losses}패 · WHIP ${player.seasonStats.whip?.toFixed(2)}`
                                       : `${player.seasonStats.avg?.toFixed(3).slice(1)} / ${player.seasonStats.hr}HR / ${player.seasonStats.rbi}RBI · OPS ${player.seasonStats.ops?.toFixed(3).slice(1)}`}

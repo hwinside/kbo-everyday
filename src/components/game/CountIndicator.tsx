@@ -24,7 +24,7 @@ function CountDots({
 }) {
   return (
     <div className="flex items-center gap-1">
-      <span className="text-xs font-bold text-text-tertiary w-3">{label}</span>
+      <span className="text-base font-bold text-text-tertiary w-3">{label}</span>
       <div className="flex gap-0.5">
         {Array.from({ length: max }, (_, i) => (
           <motion.div
@@ -55,13 +55,13 @@ export default function CountIndicator({
 }: CountIndicatorProps) {
   return (
     <div className="flex items-center justify-between">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-4">
         <CountDots label="B" count={balls} max={4} activeColor="#30D158" />
         <CountDots label="S" count={strikes} max={3} activeColor="#FFD60A" />
         <CountDots label="O" count={outs} max={3} activeColor="#FF453A" />
       </div>
       {(currentBatter || currentPitcher) && (
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex items-center gap-4 text-base">
           {currentPitcher && (
             <span className="text-text-tertiary">
               <span className="text-text-secondary">P</span> {currentPitcher}

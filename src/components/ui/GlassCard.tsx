@@ -17,7 +17,7 @@ export default function GlassCard({
 }: GlassCardProps) {
   return (
     <motion.div
-      className={clsx("glass-card p-4", className)}
+      className={clsx("glass-card p-5", className)}
       whileTap={pressable ? { scale: 0.97 } : undefined}
       transition={{ type: "spring", stiffness: 400, damping: 25 }}
       {...props}

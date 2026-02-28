@@ -49,9 +49,9 @@ export default function GameChat({
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-border">
-        <Users className="w-4 h-4 text-text-tertiary" />
-        <span className="text-xs text-text-tertiary">
+      <div className="flex items-center gap-4 px-4 py-3 border-b border-border">
+        <Users className="w-5 h-5 text-text-tertiary" />
+        <span className="text-base text-text-tertiary">
           {participantCount}명 참여 중
         </span>
       </div>
@@ -65,7 +65,7 @@ export default function GameChat({
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.15 }}
-              className="flex items-start gap-1.5 py-1 group"
+              className="flex items-start gap-4 py-1 group"
             >
               {/* Team badge */}
               <TeamBadge teamId={msg.teamId} size="sm" className="mt-0.5 shrink-0" />
@@ -73,18 +73,18 @@ export default function GameChat({
               {/* Message content */}
               <div className="min-w-0 flex-1">
                 <span className="inline">
-                  <span className="text-xs font-semibold text-text-primary mr-1">
+                  <span className="text-base font-semibold text-text-primary mr-1">
                     {msg.nickname}
                   </span>
                   <LevelBadge level={msg.level} className="inline-flex mr-1 align-middle" />
-                  <span className="text-sm text-text-secondary">
+                  <span className="text-base text-text-secondary">
                     {msg.content}
                   </span>
                 </span>
               </div>
 
               {/* Time */}
-              <span className="text-xs text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              <span className="text-sm text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                 {formatTime(msg.createdAt)}
               </span>
             </motion.div>
@@ -93,8 +93,8 @@ export default function GameChat({
       </div>
 
       {/* Input bar */}
-      <div className="px-3 py-2.5 border-t border-border bg-bg-secondary/50 backdrop-blur-lg">
-        <div className="flex items-center gap-2">
+      <div className="px-4 py-3 border-t border-border bg-bg-secondary/50 backdrop-blur-lg">
+        <div className="flex items-center gap-3">
           <input
             type="text"
             value={input}
@@ -103,7 +103,7 @@ export default function GameChat({
             placeholder="메시지 입력..."
             maxLength={200}
             className={clsx(
-              "flex-1 h-9 px-3 rounded-full text-sm",
+              "flex-1 h-10 px-4 rounded-full text-base",
               "bg-bg-tertiary text-text-primary placeholder:text-text-tertiary",
               "border border-border focus:border-accent/50 focus:outline-none",
               "transition-colors"
@@ -114,7 +114,7 @@ export default function GameChat({
             onClick={handleSend}
             disabled={!input.trim()}
             className={clsx(
-              "w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-colors",
+              "w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors",
               input.trim()
                 ? "bg-accent text-white"
                 : "bg-bg-tertiary text-text-tertiary"

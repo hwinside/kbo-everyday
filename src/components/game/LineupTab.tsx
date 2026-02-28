@@ -25,15 +25,15 @@ function PitcherCard({
 }) {
   return (
     <div className="text-center">
-      <div className="text-xs text-text-tertiary mb-1">{label}</div>
+      <div className="text-base text-text-tertiary mb-1">{label}</div>
       <div
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-white text-sm font-semibold"
+        className="inline-flex items-center gap-4 px-4 py-1.5 rounded-full text-white text-base font-semibold"
         style={{ backgroundColor: teamColor }}
       >
         <span>SP</span>
         <span>{name}</span>
       </div>
-      <div className="text-xs text-text-secondary mt-1 tabular-nums">
+      <div className="text-base text-text-secondary mt-1 tabular-nums">
         ERA {era}
       </div>
     </div>
@@ -46,7 +46,7 @@ export default function LineupTab({
   homeTeam,
 }: LineupTabProps) {
   return (
-    <div className="px-4 py-3 space-y-4 overflow-y-auto">
+    <div className="px-4 py-4 space-y-5 overflow-y-auto">
       {/* Starting pitchers */}
       <div className="flex items-start justify-around">
         <PitcherCard
@@ -55,7 +55,7 @@ export default function LineupTab({
           teamColor={awayTeam.colorPrimary}
           label={awayTeam.shortName}
         />
-        <div className="text-text-tertiary text-sm mt-4">VS</div>
+        <div className="text-text-tertiary text-base mt-4">VS</div>
         <PitcherCard
           name={lineup.home.startingPitcher.name}
           era={lineup.home.startingPitcher.era}
@@ -65,8 +65,8 @@ export default function LineupTab({
       </div>
 
       {/* Lineup table */}
-      <div className="glass-card p-3 overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="glass-card p-5 overflow-hidden">
+        <table className="w-full text-base">
           <thead>
             <tr className="text-text-tertiary border-b border-border">
               <th className="py-2 text-left font-medium w-6">#</th>
@@ -102,9 +102,9 @@ export default function LineupTab({
                     {away.order}
                   </td>
                   <td className="py-2">
-                    <div className="flex items-center gap-1.5">
-                      <PlayerAvatar name={away.name} teamId={lineup.away.teamId} photoUrl={getPlayerPhotoUrl(away.name)} size={28} showTeamBadge={false} />
-                      <span className="text-xs text-text-tertiary w-5">
+                    <div className="flex items-center gap-2">
+                      <PlayerAvatar name={away.name} teamId={lineup.away.teamId} photoUrl={getPlayerPhotoUrl(away.name)} size={64} showTeamBadge={false} />
+                      <span className="text-sm text-text-tertiary w-5">
                         {away.position}
                       </span>
                       <span className="text-text-primary font-medium">
@@ -122,14 +122,14 @@ export default function LineupTab({
                     {home.avg}
                   </td>
                   <td className="py-2 text-right">
-                    <div className="flex items-center justify-end gap-1.5">
+                    <div className="flex items-center justify-end gap-2">
                       <span className="text-text-primary font-medium">
                         {home.name}
                       </span>
-                      <span className="text-xs text-text-tertiary w-5 text-right">
+                      <span className="text-sm text-text-tertiary w-5 text-right">
                         {home.position}
                       </span>
-                      <PlayerAvatar name={home.name} teamId={lineup.home.teamId} photoUrl={getPlayerPhotoUrl(home.name)} size={28} showTeamBadge={false} />
+                      <PlayerAvatar name={home.name} teamId={lineup.home.teamId} photoUrl={getPlayerPhotoUrl(home.name)} size={64} showTeamBadge={false} />
                     </div>
                   </td>
                   <td className="py-2 text-right text-text-tertiary tabular-nums">

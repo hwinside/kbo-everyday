@@ -123,5 +123,5 @@ body {
 
 /* ===== Tab bar safe area ===== */
 .pb-tab-bar {
-  padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
 }

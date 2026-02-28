@@ -35,7 +35,7 @@ export default function PlayByPlay({ plays, teamColor }: PlayByPlayProps) {
   });
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+    <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
       <AnimatePresence mode="popLayout">
         {sortedInnings.map((inning) => (
           <motion.div
@@ -46,9 +46,9 @@ export default function PlayByPlay({ plays, teamColor }: PlayByPlayProps) {
             transition={{ duration: 0.2 }}
           >
             {/* Inning header */}
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-4 mb-3">
               <div
-                className="h-5 px-2 rounded-full text-xs font-bold flex items-center text-white"
+                className="h-5 px-2 rounded-full text-base font-bold flex items-center text-white"
                 style={{ backgroundColor: teamColor }}
               >
                 {inning}
@@ -67,14 +67,14 @@ export default function PlayByPlay({ plays, teamColor }: PlayByPlayProps) {
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ duration: 0.3 }}
                     className={clsx(
-                      "flex items-start gap-2 py-1.5 px-2 rounded-lg text-sm",
+                      "flex items-start gap-4 py-1.5 px-2 rounded-lg text-base",
                       play.isHighlight
                         ? "bg-accent-gold/10 border border-accent-gold/20"
                         : "hover:bg-bg-glass"
                     )}
                   >
                     {play.isHighlight && (
-                      <span className="text-sm shrink-0 mt-0.5">⚾</span>
+                      <span className="text-base shrink-0 mt-0.5">⚾</span>
                     )}
                     <span
                       className={clsx(
@@ -93,7 +93,7 @@ export default function PlayByPlay({ plays, teamColor }: PlayByPlayProps) {
       </AnimatePresence>
 
       {plays.length === 0 && (
-        <div className="flex items-center justify-center h-32 text-text-tertiary text-sm">
+        <div className="flex items-center justify-center h-32 text-text-tertiary text-base">
           아직 문자 중계가 없습니다
         </div>
       )}

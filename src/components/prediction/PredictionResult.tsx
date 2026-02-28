@@ -22,7 +22,7 @@ export default function PredictionResult({
   const accuracy = totalPredictions > 0 ? Math.round((totalCorrect / totalPredictions) * 100) : 0;
 
   return (
-    <GlassCard className="relative overflow-hidden p-4">
+    <GlassCard className="relative overflow-hidden p-5">
       {/* Confetti-like particles for streaks */}
       {currentStreak >= 3 && (
         <div className="pointer-events-none absolute inset-0">
@@ -54,13 +54,13 @@ export default function PredictionResult({
 
       <div className="relative flex items-center justify-between">
         <div>
-          <p className="text-sm text-text-secondary">내 예측 현황</p>
+          <p className="text-base text-text-secondary">내 예측 현황</p>
           <div className="mt-1 flex items-baseline gap-1">
             <span className="text-2xl font-bold tabular-nums text-text-primary">
               {totalCorrect}
             </span>
-            <span className="text-sm text-text-tertiary">/ {totalPredictions}</span>
-            <span className="ml-1 text-sm font-semibold text-accent-gold">
+            <span className="text-base text-text-tertiary">/ {totalPredictions}</span>
+            <span className="ml-1 text-base font-semibold text-accent-gold">
               ({accuracy}%)
             </span>
           </div>
@@ -74,8 +74,8 @@ export default function PredictionResult({
               animate={{ scale: 1, opacity: 1 }}
               className="flex items-center gap-1"
             >
-              <Flame size={18} className="text-orange-500" />
-              <span className="text-sm font-bold text-orange-400">
+              <Flame size={22} className="text-orange-500" />
+              <span className="text-base font-bold text-orange-400">
                 {currentStreak}연속 적중
               </span>
             </motion.div>
@@ -87,8 +87,8 @@ export default function PredictionResult({
               transition={{ delay: 0.2 }}
               className="mt-1 flex items-center justify-end gap-1"
             >
-              <Zap size={14} className="text-accent-gold" />
-              <span className="text-xs font-semibold text-accent-gold">
+              <Zap size={22} className="text-accent-gold" />
+              <span className="text-base font-semibold text-accent-gold">
                 오늘 +{todayPoints}p
               </span>
             </motion.div>
@@ -97,22 +97,22 @@ export default function PredictionResult({
       </div>
 
       {/* Stats row */}
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <div className="rounded-lg bg-bg-tertiary/50 p-2 text-center">
-          <p className="text-xs text-text-tertiary">총 포인트</p>
-          <p className="mt-0.5 text-sm font-bold tabular-nums text-text-primary">
+      <div className="mt-4 grid grid-cols-3 gap-3">
+        <div className="rounded-lg bg-bg-tertiary/50 p-5 text-center">
+          <p className="text-base text-text-tertiary">총 포인트</p>
+          <p className="mt-0.5 text-base font-bold tabular-nums text-text-primary">
             {points.toLocaleString()}p
           </p>
         </div>
-        <div className="rounded-lg bg-bg-tertiary/50 p-2 text-center">
-          <p className="text-xs text-text-tertiary">적중률</p>
-          <p className="mt-0.5 text-sm font-bold tabular-nums text-accent-gold">
+        <div className="rounded-lg bg-bg-tertiary/50 p-5 text-center">
+          <p className="text-base text-text-tertiary">적중률</p>
+          <p className="mt-0.5 text-base font-bold tabular-nums text-accent-gold">
             {accuracy}%
           </p>
         </div>
-        <div className="rounded-lg bg-bg-tertiary/50 p-2 text-center">
-          <p className="text-xs text-text-tertiary">연속</p>
-          <p className="mt-0.5 text-sm font-bold tabular-nums text-orange-400">
+        <div className="rounded-lg bg-bg-tertiary/50 p-5 text-center">
+          <p className="text-base text-text-tertiary">연속</p>
+          <p className="mt-0.5 text-base font-bold tabular-nums text-orange-400">
             {currentStreak}회
           </p>
         </div>

@@ -65,29 +65,29 @@ function getTeamName(teamId: number) {
 function StatusBadge({ status, inning }: { status: string; inning: string | null }) {
   if (status === "live") {
     return (
-      <span className="flex items-center gap-1 text-xs font-semibold text-accent-green">
+      <span className="flex items-center gap-1 text-base font-semibold text-accent-green">
         <span className="h-1.5 w-1.5 rounded-full bg-accent-green animate-pulse" />
         {inning}
       </span>
     );
   }
   if (status === "final") {
-    return <span className="text-xs text-text-secondary">종료</span>;
+    return <span className="text-base text-text-secondary">종료</span>;
   }
-  return <span className="text-xs text-text-secondary">예정</span>;
+  return <span className="text-base text-text-secondary">예정</span>;
 }
 
 function SectionHeader({ title, href, icon }: { title: string; href: string; icon: string }) {
   return (
-    <div className="mb-3 flex items-center justify-between">
-      <h2 className="flex items-center gap-1.5 text-base font-semibold text-text-primary">
+    <div className="mb-4 flex items-center justify-between">
+      <h2 className="flex items-center gap-4 text-lg font-semibold text-text-primary">
         <span>{icon}</span> {title}
       </h2>
       <Link
         href={href}
-        className="flex items-center text-xs text-text-secondary hover:text-text-primary transition-colors"
+        className="flex items-center text-base text-text-secondary hover:text-text-primary transition-colors"
       >
-        전체보기 <ChevronRight size={16} />
+        전체보기 <ChevronRight size={20} />
       </Link>
     </div>
   );
@@ -104,46 +104,46 @@ export default function HomePage() {
       variants={container}
       initial="hidden"
       animate="show"
-      className="mx-auto max-w-lg px-4 pt-safe"
+      className="mx-auto max-w-lg px-5 pt-safe"
     >
       {/* Header */}
-      <motion.header variants={item} className="flex items-center justify-between py-4">
+      <motion.header variants={item} className="flex items-center justify-between py-5">
         <h1 className="text-xl font-bold text-text-primary">크보 에브리데이</h1>
         <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
-          <Bell size={22} />
+          <Bell size={24} />
         </button>
       </motion.header>
 
       {/* ===== 1. Today's Games — horizontal scroll with snap ===== */}
       <motion.section variants={item} className="mb-6">
         <SectionHeader title="오늘의 경기" href="/games" icon="⚾" />
-        <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto hide-scrollbar -mx-4 px-4">
+        <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto hide-scrollbar -mx-5 px-5">
           {MOCK_GAMES.map((game) => (
             <Link key={game.id} href={`/games/${game.id}`}>
-              <GlassCard pressable className="w-[200px] h-[150px] flex-shrink-0 snap-start p-3 flex flex-col justify-between">
+              <GlassCard pressable className="w-[210px] h-[160px] flex-shrink-0 snap-start p-5 flex flex-col justify-between">
                 <StatusBadge status={game.status} inning={game.inning} />
                 <div className="flex items-center justify-between flex-1">
                   <div className="flex flex-col items-center gap-1 flex-1">
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white p-1">
                       <Image src={getTeamLogo(game.awayTeamId)} alt={getTeamName(game.awayTeamId)} width={24} height={24} unoptimized className="object-contain" />
                     </div>
-                    <span className="text-xs font-bold" style={{ color: getTeamColor(game.awayTeamId) }}>
+                    <span className="text-base font-bold" style={{ color: getTeamColor(game.awayTeamId) }}>
                       {getTeamShortName(game.awayTeamId)}
                     </span>
                     <span className="text-xl font-bold tabular-nums text-text-primary">{game.status === "scheduled" ? "-" : game.awayScore}</span>
                   </div>
-                  <span className="text-xs text-text-tertiary">vs</span>
+                  <span className="text-base text-text-tertiary">vs</span>
                   <div className="flex flex-col items-center gap-1 flex-1">
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white p-1">
                       <Image src={getTeamLogo(game.homeTeamId)} alt={getTeamName(game.homeTeamId)} width={24} height={24} unoptimized className="object-contain" />
                     </div>
-                    <span className="text-xs font-bold" style={{ color: getTeamColor(game.homeTeamId) }}>
+                    <span className="text-base font-bold" style={{ color: getTeamColor(game.homeTeamId) }}>
                       {getTeamShortName(game.homeTeamId)}
                     </span>
                     <span className="text-xl font-bold tabular-nums text-text-primary">{game.status === "scheduled" ? "-" : game.homeScore}</span>
                   </div>
                 </div>
-                <p className="text-center text-xs text-text-tertiary">
+                <p className="text-center text-base text-text-tertiary">
                   {game.time} · {game.stadium}
                 </p>
               </GlassCard>
@@ -155,22 +155,22 @@ export default function HomePage() {
       {/* ===== 2. Prediction Preview ===== */}
       <motion.section variants={item} className="mb-6">
         <SectionHeader title="승부예측" href="/predict" icon="🔮" />
-        <div className="space-y-3">
+        <div className="space-y-4">
           {previewPredictions.map((pred) => (
             <Link key={pred.gameId} href="/predict">
-              <GlassCard pressable className="p-3">
-                <div className="flex items-center justify-between text-sm font-semibold">
-                  <span className="flex items-center gap-1.5" style={{ color: getTeamColor(pred.awayTeamId) }}>
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white p-0.5">
-                      <Image src={getTeamLogo(pred.awayTeamId)} alt={getTeamName(pred.awayTeamId)} width={18} height={18} unoptimized className="object-contain" />
+              <GlassCard pressable className="p-4">
+                <div className="flex items-center justify-between text-base font-semibold">
+                  <span className="flex items-center gap-2" style={{ color: getTeamColor(pred.awayTeamId) }}>
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white p-0.5">
+                      <Image src={getTeamLogo(pred.awayTeamId)} alt={getTeamName(pred.awayTeamId)} width={22} height={22} unoptimized className="object-contain" />
                     </span>
                     {getTeamShortName(pred.awayTeamId)}
                   </span>
-                  <span className="text-xs text-text-tertiary">vs</span>
-                  <span className="flex items-center gap-1.5" style={{ color: getTeamColor(pred.homeTeamId) }}>
+                  <span className="text-base text-text-tertiary">vs</span>
+                  <span className="flex items-center gap-2" style={{ color: getTeamColor(pred.homeTeamId) }}>
                     {getTeamShortName(pred.homeTeamId)}
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white p-0.5">
-                      <Image src={getTeamLogo(pred.homeTeamId)} alt={getTeamName(pred.homeTeamId)} width={18} height={18} unoptimized className="object-contain" />
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white p-0.5">
+                      <Image src={getTeamLogo(pred.homeTeamId)} alt={getTeamName(pred.homeTeamId)} width={22} height={22} unoptimized className="object-contain" />
                     </span>
                   </span>
                 </div>
@@ -191,12 +191,12 @@ export default function HomePage() {
                     style={{ backgroundColor: getTeamColor(pred.homeTeamId) }}
                   />
                 </div>
-                <div className="mt-1.5 flex justify-between text-xs text-text-secondary">
+                <div className="mt-1.5 flex justify-between text-base text-text-secondary">
                   <span className="font-semibold" style={{ color: getTeamColor(pred.awayTeamId) }}>
                     {getTeamShortName(pred.awayTeamId)} {pred.awayPercent}%
                   </span>
                   <span className="flex items-center gap-1">
-                    <Users size={12} />
+                    <Users size={20} />
                     {pred.totalVotes.toLocaleString()}명
                   </span>
                   <span className="font-semibold" style={{ color: getTeamColor(pred.homeTeamId) }}>
@@ -212,20 +212,20 @@ export default function HomePage() {
       {/* ===== 3. Latest News ===== */}
       <motion.section variants={item} className="mb-6">
         <SectionHeader title="최신 뉴스" href="/news" icon="📰" />
-        <div className="space-y-3">
+        <div className="space-y-4">
           {previewNews.map((news) => (
             <Link key={news.id} href="/news">
-              <GlassCard pressable className="p-3">
-                <div className="flex items-start gap-3">
+              <GlassCard pressable className="p-4">
+                <div className="flex items-start gap-4">
                   {/* Thumbnail placeholder */}
                   <div className="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-lg bg-bg-tertiary text-xl text-text-tertiary">
                     📰
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-text-primary line-clamp-2">{news.title}</p>
-                    <div className="mt-1.5 flex items-center gap-2">
+                    <p className="text-base font-medium text-text-primary line-clamp-2">{news.title}</p>
+                    <div className="mt-1.5 flex items-center gap-3">
                       {news.teamId && <TeamBadge teamId={news.teamId} />}
-                      <span className="text-xs text-text-tertiary">{news.source} · {news.timeAgo}</span>
+                      <span className="text-base text-text-tertiary">{news.source} · {news.timeAgo}</span>
                     </div>
                   </div>
                 </div>
@@ -238,17 +238,17 @@ export default function HomePage() {
       {/* ===== 4. Popular Posts ===== */}
       <motion.section variants={item} className="mb-6">
         <SectionHeader title="인기글" href="/teams" icon="🔥" />
-        <div className="space-y-2">
+        <div className="space-y-3">
           {MOCK_POPULAR_POSTS.map((post, i) => (
-            <GlassCard key={post.id} pressable className="p-3">
-              <div className="flex items-center gap-2">
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent/10 text-xs font-bold text-accent">
+            <GlassCard key={post.id} pressable className="p-4">
+              <div className="flex items-center gap-3">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-accent/10 text-base font-bold text-accent">
                   {i + 1}
                 </span>
                 <TeamBadge teamId={post.teamId} />
-                <span className="flex-1 truncate text-sm text-text-primary">{post.title}</span>
+                <span className="flex-1 truncate text-base text-text-primary">{post.title}</span>
               </div>
-              <div className="mt-1 flex items-center gap-3 pl-7 text-xs text-text-tertiary">
+              <div className="mt-1 flex items-center gap-4 pl-9 text-base text-text-tertiary">
                 <span>{post.author}</span>
                 <span>❤️ {post.likeCount}</span>
                 <span>💬 {post.commentCount}</span>
@@ -262,11 +262,11 @@ export default function HomePage() {
       {/* ===== 5. Hot Player Boards ===== */}
       <motion.section variants={item} className="mb-6">
         <SectionHeader title="인기 선수게시판" href="/boards/players" icon="⭐" />
-        <GlassCard className="p-3">
-          <div className="space-y-3">
+        <GlassCard className="p-4">
+          <div className="space-y-4">
             {MOCK_HOT_PLAYER_BOARDS.map((player, i) => (
-              <Link key={player.playerId} href={`/boards/players/${player.playerId}`}><div className="flex items-center gap-3">
-                <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
+              <Link key={player.playerId} href={`/boards/players/${player.playerId}`}><div className="flex items-center gap-4">
+                <span className={`flex h-7 w-7 items-center justify-center rounded-full text-base font-bold ${
                   i === 0 ? "bg-yellow-500/20 text-yellow-400" :
                   i === 1 ? "bg-gray-400/20 text-gray-300" :
                   i === 2 ? "bg-amber-700/20 text-amber-600" :
@@ -274,16 +274,16 @@ export default function HomePage() {
                 }`}>
                   {i + 1}
                 </span>
-                <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} size={40} />
+                <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} size={64} />
                 <div className="flex-1 min-w-0">
-                  <span className="text-sm font-semibold text-text-primary">{player.name}</span>
-                  <span className="ml-1.5 text-xs text-text-tertiary">{player.teamName}</span>
+                  <span className="text-base font-semibold text-text-primary">{player.name}</span>
+                  <span className="ml-1.5 text-base text-text-tertiary">{player.teamName}</span>
                 </div>
                 <div className="text-right">
-                  <div className="text-xs font-bold text-accent">오늘 {player.postsToday}글</div>
-                  <div className="text-xs text-text-tertiary">총 {player.totalPosts.toLocaleString()}글</div>
+                  <div className="text-base font-bold text-accent">오늘 {player.postsToday}글</div>
+                  <div className="text-base text-text-tertiary">총 {player.totalPosts.toLocaleString()}글</div>
                 </div>
-                <span className="text-sm">
+                <span className="text-base">
                   {player.trend === "up" ? "🔥" : player.trend === "down" ? "📉" : "➖"}
                 </span>
               </div></Link>

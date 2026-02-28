@@ -68,21 +68,21 @@ export default function PlayerBoardPage() {
         className="sticky top-0 z-30 border-b border-border backdrop-blur-xl"
         style={{ background: `linear-gradient(135deg, ${teamColor}15, transparent)` }}
       >
-        <div className="flex items-center gap-3 px-4 py-3">
+        <div className="flex items-center gap-4 px-5 py-4">
           <Link href="/boards/players" className="p-1 -ml-1">
-            <ArrowLeft className="w-5 h-5 text-text-secondary" />
+            <ArrowLeft className="w-10 h-10 text-text-secondary" />
           </Link>
-          <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={56} />
+          <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={64} />
           <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold text-text-primary">{player.name}</h1>
-              <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ backgroundColor: teamColor + "20", color: teamColor }}>
+            <div className="flex items-center gap-3">
+              <h1 className="text-xl font-bold text-text-primary">{player.name}</h1>
+              <span className="text-base px-1.5 py-0.5 rounded-full" style={{ backgroundColor: teamColor + "20", color: teamColor }}>
                 #{player.number}
               </span>
             </div>
-            <p className="text-xs text-text-tertiary">{getTeamShortName(player.teamId)} · {player.position} · 게시글 {player.totalPosts.toLocaleString()}개</p>
+            <p className="text-base text-text-tertiary">{getTeamShortName(player.teamId)} · {player.position} · 게시글 {player.totalPosts.toLocaleString()}개</p>
           </div>
-          <Share2 className="w-5 h-5 text-text-tertiary" />
+          <Share2 className="w-10 h-10 text-text-tertiary" />
         </div>
 
         {/* Tabs */}
@@ -91,7 +91,7 @@ export default function PlayerBoardPage() {
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`flex-1 py-2.5 text-sm font-medium transition-colors relative ${
+              className={`flex-1 py-3 text-base font-medium transition-colors relative ${
                 activeTab === tab ? "text-text-primary" : "text-text-tertiary"
               }`}
             >
@@ -110,7 +110,7 @@ export default function PlayerBoardPage() {
       </div>
 
       {/* Posts */}
-      <div className="px-4 py-3 space-y-2">
+      <div className="px-5 py-4 space-y-3">
         {MOCK_POSTS.map((post, i) => (
           <motion.div
             key={post.id}
@@ -118,13 +118,13 @@ export default function PlayerBoardPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.03 }}
           >
-            <GlassCard pressable className="p-3">
-              <p className="text-sm font-medium text-text-primary">{post.title}</p>
-              <div className="mt-2 flex items-center justify-between text-xs text-text-tertiary">
+            <GlassCard pressable className="p-4">
+              <p className="text-base font-medium text-text-primary">{post.title}</p>
+              <div className="mt-2 flex items-center justify-between text-base text-text-tertiary">
                 <span>{post.author} · {post.timeAgo}</span>
-                <div className="flex items-center gap-3">
-                  <span className="flex items-center gap-1"><Heart size={14} /> {post.likes}</span>
-                  <span className="flex items-center gap-1"><MessageCircle size={14} /> {post.comments}</span>
+                <div className="flex items-center gap-4">
+                  <span className="flex items-center gap-1"><Heart size={22} /> {post.likes}</span>
+                  <span className="flex items-center gap-1"><MessageCircle size={22} /> {post.comments}</span>
                 </div>
               </div>
             </GlassCard>
@@ -137,7 +137,7 @@ export default function PlayerBoardPage() {
         className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
         style={{ backgroundColor: teamColor }}
       >
-        <PenLine className="w-6 h-6 text-white" />
+        <PenLine className="w-9 h-9 text-white" />
       </button>
     </div>
   );

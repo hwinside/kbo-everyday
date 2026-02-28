@@ -35,12 +35,12 @@ export default function TrendChart({ data, teamColor, isPitcher }: TrendChartPro
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis
               dataKey="date"
-              tick={{ fill: "#8E8E93", fontSize: 11 }}
+              tick={{ fill: "#8E8E93", fontSize: 12 }}
               axisLine={{ stroke: "rgba(255,255,255,0.08)" }}
               tickLine={false}
             />
             <YAxis
-              tick={{ fill: "#8E8E93", fontSize: 11 }}
+              tick={{ fill: "#8E8E93", fontSize: 12 }}
               axisLine={false}
               tickLine={false}
               domain={["auto", "auto"]}
@@ -51,7 +51,7 @@ export default function TrendChart({ data, teamColor, isPitcher }: TrendChartPro
                 backgroundColor: "#1C1C1F",
                 border: "1px solid rgba(255,255,255,0.08)",
                 borderRadius: 8,
-                fontSize: 12,
+                fontSize: 13,
                 color: "#F5F5F7",
               }}
               formatter={(value) => [Number(value).toFixed(2), "ERA"]}
@@ -85,12 +85,12 @@ export default function TrendChart({ data, teamColor, isPitcher }: TrendChartPro
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
           <XAxis
             dataKey="date"
-            tick={{ fill: "#8E8E93", fontSize: 11 }}
+            tick={{ fill: "#8E8E93", fontSize: 12 }}
             axisLine={{ stroke: "rgba(255,255,255,0.08)" }}
             tickLine={false}
           />
           <YAxis
-            tick={{ fill: "#8E8E93", fontSize: 11 }}
+            tick={{ fill: "#8E8E93", fontSize: 12 }}
             axisLine={false}
             tickLine={false}
             domain={["auto", "auto"]}
@@ -101,7 +101,7 @@ export default function TrendChart({ data, teamColor, isPitcher }: TrendChartPro
               backgroundColor: "#1C1C1F",
               border: "1px solid rgba(255,255,255,0.08)",
               borderRadius: 8,
-              fontSize: 12,
+              fontSize: 13,
               color: "#F5F5F7",
             }}
             formatter={(value, name) => [

@@ -17,7 +17,7 @@ interface GameStatsTabProps {
 
 type Side = "away" | "home";
 
-/* ── 타자 컬럼 정의 ── */
+/* -- batter columns -- */
 const BATTER_COLUMNS: {
   key: keyof BatterStat;
   label: string;
@@ -37,7 +37,7 @@ const BATTER_COLUMNS: {
   { key: "avg", label: "타율" },
 ];
 
-/* ── 투수 컬럼 정의 ── */
+/* -- pitcher columns -- */
 const PITCHER_COLUMNS: { key: keyof PitcherStat; label: string; sticky?: boolean }[] = [
   { key: "name", label: "투수", sticky: true },
   { key: "ip", label: "이닝" },
@@ -57,7 +57,7 @@ const PITCHER_COLUMNS: { key: keyof PitcherStat; label: string; sticky?: boolean
   { key: "era", label: "평균자책" },
 ];
 
-/* ── 합산 가능한 숫자 키 목록 ── */
+/* -- summable numeric key lists -- */
 const BATTER_SUM_KEYS: (keyof BatterStat)[] = [
   "ab", "r", "h", "rbi", "hr", "bb", "so", "sb",
 ];
@@ -73,7 +73,7 @@ function sumPitcherField(pitchers: PitcherStat[], key: keyof PitcherStat): numbe
   return pitchers.reduce((s, p) => s + (typeof p[key] === "number" ? (p[key] as number) : 0), 0);
 }
 
-/** 이닝 합산: "6.0" + "2.0" + "1.0" → "9.0" */
+/** innings sum: "6.0" + "2.0" + "1.0" -> "9.0" */
 function sumInnings(pitchers: PitcherStat[]): string {
   let thirds = 0;
   for (const p of pitchers) {
@@ -83,7 +83,7 @@ function sumInnings(pitchers: PitcherStat[]): string {
   return `${Math.floor(thirds / 3)}.${thirds % 3}`;
 }
 
-/** 팀 타율 계산 */
+/** team batting avg */
 function teamAvg(batters: BatterStat[]): string {
   const totalAb = sumBatterField(batters, "ab");
   const totalH = sumBatterField(batters, "h");
@@ -91,7 +91,7 @@ function teamAvg(batters: BatterStat[]): string {
   return (totalH / totalAb).toFixed(3).replace(/^0/, "");
 }
 
-/** 팀 ERA 계산 */
+/** team ERA */
 function teamEra(pitchers: PitcherStat[]): string {
   const totalEr = sumPitcherField(pitchers, "er");
   const ipStr = sumInnings(pitchers);
@@ -101,7 +101,7 @@ function teamEra(pitchers: PitcherStat[]): string {
   return ((totalEr * 9) / innings).toFixed(2);
 }
 
-/* ── 결과 뱃지 ── */
+/* -- result badge -- */
 function ResultBadge({ result }: { result: PitcherStat["result"] }) {
   if (!result) return null;
   const map = {
@@ -114,7 +114,7 @@ function ResultBadge({ result }: { result: PitcherStat["result"] }) {
   return (
     <span
       className={clsx(
-        "ml-1 inline-flex items-center justify-center rounded px-1 py-px text-xs font-bold leading-none",
+        "ml-1 inline-flex items-center justify-center rounded px-1 py-px text-sm font-bold leading-none",
         cfg.bg,
         cfg.text
       )}
@@ -124,7 +124,7 @@ function ResultBadge({ result }: { result: PitcherStat["result"] }) {
   );
 }
 
-/* ── 스티키 셀 공용 스타일 ── */
+/* -- sticky cell shared style -- */
 const stickyBase =
   "sticky bg-[#141416] z-[2]";
 
@@ -138,7 +138,7 @@ export default function GameStatsTab({
   const team = side === "away" ? awayTeam : homeTeam;
   const data = side === "away" ? stats.away : stats.home;
 
-  /* 합계 행 미리 계산 */
+  /* pre-compute totals row */
   const batterTotals = useMemo(() => {
     const totals: Record<string, string | number> = {};
     for (const col of BATTER_COLUMNS) {
@@ -167,8 +167,8 @@ export default function GameStatsTab({
   }, [data.pitchers]);
 
   return (
-    <div className="px-4 py-3 space-y-4">
-      {/* ── 팀 전환 탭 ── */}
+    <div className="px-5 py-4 space-y-5">
+      {/* -- team switch tabs -- */}
       <div className="flex gap-1 p-1 rounded-lg bg-bg-glass/40 backdrop-blur-sm">
         {([
           { id: "away" as Side, team: awayTeam },
@@ -178,7 +178,7 @@ export default function GameStatsTab({
             key={id}
             onClick={() => setSide(id)}
             className={clsx(
-              "flex-1 py-2.5 text-sm font-semibold rounded-md transition-all",
+              "flex-1 py-3 text-base font-semibold rounded-md transition-all",
               side === id ? "text-white shadow-md" : "text-text-tertiary"
             )}
             style={
@@ -190,20 +190,20 @@ export default function GameStatsTab({
         ))}
       </div>
 
-      {/* ── 타자 기록 ── */}
-      <section className="glass-card p-3">
-        <div className="flex items-center gap-2 mb-2">
+      {/* -- batter stats -- */}
+      <section className="glass-card p-4">
+        <div className="flex items-center gap-4 mb-3">
           <div
             className="w-1 h-4 rounded-full"
             style={{ backgroundColor: team.colorPrimary }}
           />
-          <span className="text-sm font-semibold text-text-primary">
+          <span className="text-base font-semibold text-text-primary">
             타자 기록
           </span>
         </div>
 
-        <div className="overflow-auto max-h-[45vh] -mx-3 px-3 relative">
-          <table className="w-max min-w-full text-xs border-collapse">
+        <div className="overflow-auto max-h-[45vh] -mx-4 px-4 relative">
+          <table className="w-max min-w-full text-sm border-collapse">
             <thead className="sticky top-0 z-[3] bg-[#141416]">
               <tr className="text-text-tertiary border-b border-border">
                 {BATTER_COLUMNS.map((col) => (
@@ -253,7 +253,7 @@ export default function GameStatsTab({
                           isPos && "text-text-tertiary",
                           !isSticky && "text-center text-text-secondary",
                           col.key === "order" && "text-center text-text-tertiary w-8",
-                          // 하이라이트: 안타/홈런 3+ 이면 강조
+                          // highlight: 3+ hits or 1+ HR
                           col.key === "h" && b.h >= 3 && "text-accent font-semibold",
                           col.key === "hr" && b.hr >= 1 && "text-accent font-semibold"
                         )}
@@ -271,7 +271,7 @@ export default function GameStatsTab({
                   })}
                 </tr>
               ))}
-              {/* 합계 행 */}
+              {/* totals row */}
               <tr className="border-t-2 border-border bg-bg-glass/50 font-semibold">
                 {BATTER_COLUMNS.map((col) => {
                   const isSticky = col.sticky;
@@ -306,20 +306,20 @@ export default function GameStatsTab({
         </div>
       </section>
 
-      {/* ── 투수 기록 ── */}
-      <section className="glass-card p-3">
-        <div className="flex items-center gap-2 mb-2">
+      {/* -- pitcher stats -- */}
+      <section className="glass-card p-4">
+        <div className="flex items-center gap-4 mb-3">
           <div
             className="w-1 h-4 rounded-full"
             style={{ backgroundColor: team.colorPrimary }}
           />
-          <span className="text-sm font-semibold text-text-primary">
+          <span className="text-base font-semibold text-text-primary">
             투수 기록
           </span>
         </div>
 
-        <div className="overflow-auto max-h-[45vh] -mx-3 px-3 relative">
-          <table className="w-max min-w-full text-xs border-collapse">
+        <div className="overflow-auto max-h-[45vh] -mx-4 px-4 relative">
+          <table className="w-max min-w-full text-sm border-collapse">
             <thead className="sticky top-0 z-[3] bg-[#141416]">
               <tr className="text-text-tertiary border-b border-border">
                 {PITCHER_COLUMNS.map((col) => (
@@ -373,7 +373,7 @@ export default function GameStatsTab({
                   })}
                 </tr>
               ))}
-              {/* 합계 행 */}
+              {/* totals row */}
               <tr className="border-t-2 border-border bg-bg-glass/50 font-semibold">
                 {PITCHER_COLUMNS.map((col) => {
                   const isSticky = col.sticky;

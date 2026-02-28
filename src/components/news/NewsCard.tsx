@@ -15,7 +15,7 @@ export default function NewsCard({ news }: NewsCardProps) {
       href={news.sourceUrl}
       target="_blank"
       rel="noopener noreferrer"
-      className="glass-card flex gap-3 p-3 transition-colors hover:bg-white/[0.03]"
+      className="glass-card flex gap-4 p-5 transition-colors hover:bg-white/[0.03]"
       whileTap={{ scale: 0.98 }}
       transition={{ type: "spring", stiffness: 400, damping: 25 }}
     >
@@ -27,19 +27,19 @@ export default function NewsCard({ news }: NewsCardProps) {
       </div>
 
       <div className="flex flex-1 flex-col justify-between min-w-0">
-        <p className="text-sm font-medium leading-snug text-text-primary line-clamp-2">
+        <p className="text-base font-medium leading-snug text-text-primary line-clamp-2">
           {news.title}
         </p>
         <div className="mt-1.5 flex items-center gap-2">
           {news.teamId && <TeamBadge teamId={news.teamId} />}
-          <span className="text-xs text-text-tertiary">
+          <span className="text-base text-text-tertiary">
             {news.source}
           </span>
-          <span className="text-xs text-text-tertiary">·</span>
-          <span className="text-xs text-text-tertiary">
+          <span className="text-base text-text-tertiary">·</span>
+          <span className="text-base text-text-tertiary">
             {news.timeAgo}
           </span>
-          <ExternalLink size={12} className="ml-auto text-text-tertiary" />
+          <ExternalLink size={20} className="ml-auto text-text-tertiary" />
         </div>
       </div>
     </motion.a>
