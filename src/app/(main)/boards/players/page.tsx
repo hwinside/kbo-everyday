@@ -48,7 +48,7 @@ export default function PlayerBoardRankingPage() {
         <TrendingUp className="ml-auto w-10 h-10 text-accent" />
       </div>
 
-      <div className="px-5 py-5 space-y-3">
+      <div className="px-5 py-5 space-y-5">
         {MOCK_PLAYER_BOARD_RANKING.map((player, i) => (
           <Link key={player.playerId} href={`/boards/players/${player.playerId}`}>
             <motion.div

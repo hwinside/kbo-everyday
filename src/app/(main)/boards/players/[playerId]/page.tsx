@@ -110,7 +110,7 @@ export default function PlayerBoardPage() {
       </div>
 
       {/* Posts */}
-      <div className="px-5 py-4 space-y-3">
+      <div className="px-5 py-4 space-y-5">
         {MOCK_POSTS.map((post, i) => (
           <motion.div
             key={post.id}
