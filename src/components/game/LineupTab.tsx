@@ -103,7 +103,7 @@ export default function LineupTab({
                   </td>
                   <td className="py-2">
                     <div className="flex items-center gap-2">
-                      <PlayerAvatar name={away.name} teamId={lineup.away.teamId} photoUrl={getPlayerPhotoUrl(away.name)} size={64} showTeamBadge={false} />
+
                       <span className="text-sm text-text-tertiary w-5">
                         {away.position}
                       </span>
@@ -129,7 +129,7 @@ export default function LineupTab({
                       <span className="text-sm text-text-tertiary w-5 text-right">
                         {home.position}
                       </span>
-                      <PlayerAvatar name={home.name} teamId={lineup.home.teamId} photoUrl={getPlayerPhotoUrl(home.name)} size={64} showTeamBadge={false} />
+
                     </div>
                   </td>
                   <td className="py-2 text-right text-text-tertiary tabular-nums">

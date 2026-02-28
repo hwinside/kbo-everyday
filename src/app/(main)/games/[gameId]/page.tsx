@@ -65,10 +65,10 @@ export default function GameDetailPage() {
     : homeTeam.colorPrimary;
 
   return (
-    <div className="flex flex-col h-[100dvh] bg-bg-primary">
+    <div className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto">
       {/* ===== Sticky top section ===== */}
       <div
-        className="sticky top-0 z-30 border-b border-border bg-bg-primary/80 backdrop-blur-xl"
+        className="border-b border-border bg-bg-primary/80 backdrop-blur-xl"
         style={{
           backgroundImage: `linear-gradient(135deg, ${awayTeam.colorPrimary}08, transparent, ${homeTeam.colorPrimary}08)`,
         }}
@@ -227,7 +227,7 @@ export default function GameDetailPage() {
       </div>
 
       {/* ===== Tab content ===== */}
-      <div className="flex-1 min-h-0 overflow-hidden">
+      <div className="flex-1">
         <AnimatePresence mode="wait">
           {activeTab === "relay" && (
             <motion.div
@@ -259,7 +259,7 @@ export default function GameDetailPage() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="h-full overflow-y-auto"
+              className=""
             >
               {lineup ? (
                 <LineupTab
@@ -281,7 +281,7 @@ export default function GameDetailPage() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="h-full overflow-y-auto"
+              className=""
             >
               {gameStats ? (
                 <GameStatsTab
