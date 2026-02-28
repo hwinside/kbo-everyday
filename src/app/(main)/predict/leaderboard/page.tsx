@@ -38,7 +38,7 @@ export default function LeaderboardPage() {
       {/* Header */}
       <motion.header variants={item} className="flex items-center gap-2 py-4">
         <Link href="/predict" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
-          <ChevronLeft size={22} />
+          <ChevronLeft size={24} />
         </Link>
         <h1 className="text-xl font-bold text-text-primary">예측왕 랭킹</h1>
       </motion.header>

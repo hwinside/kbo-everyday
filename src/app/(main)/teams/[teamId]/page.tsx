@@ -110,7 +110,7 @@ export default function TeamBoardPage() {
             href="/teams"
             className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary/50 transition-colors"
           >
-            <ChevronLeft size={22} />
+            <ChevronLeft size={24} />
           </Link>
           <div className="flex items-center gap-2">
             <TeamLogo team={team} size={32} />
@@ -195,13 +195,13 @@ export default function TeamBoardPage() {
                           >
                             <GlassCard pressable className="!p-3">
                               <div className="flex items-center gap-3">
-                                <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={40} showTeamBadge={false} />
+                                <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={48} showTeamBadge={false} />
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2">
                                     <span className="text-sm font-bold text-text-primary">
                                       {player.name}
                                     </span>
-                                    <span className="text-[11px] text-text-tertiary">
+                                    <span className="text-xs text-text-tertiary">
                                       {POSITION_LABELS[player.position] ?? player.position}
                                     </span>
                                   </div>
@@ -234,7 +234,7 @@ export default function TeamBoardPage() {
           whileTap={{ scale: 0.9 }}
           whileHover={{ scale: 1.05 }}
         >
-          <Pencil size={22} className="text-white" />
+          <Pencil size={24} className="text-white" />
         </motion.button>
       )}
 

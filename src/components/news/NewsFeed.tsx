@@ -65,7 +65,7 @@ export default function NewsFeed({ news, videos }: NewsFeedProps) {
       <div className="mb-4 flex gap-2 overflow-x-auto hide-scrollbar -mx-4 px-4">
         <button
           onClick={() => setSelectedTeam(null)}
-          className={`flex-shrink-0 rounded-full px-3 py-1 text-xs font-medium transition-all ${
+          className={`flex-shrink-0 rounded-full px-3 py-1 text-sm font-medium transition-all ${
             selectedTeam === null
               ? "bg-text-primary text-bg-primary"
               : "bg-bg-tertiary text-text-secondary"
@@ -77,7 +77,7 @@ export default function NewsFeed({ news, videos }: NewsFeedProps) {
           <button
             key={team.id}
             onClick={() => setSelectedTeam(team.id === selectedTeam ? null : team.id)}
-            className="flex-shrink-0 rounded-full px-3 py-1 text-xs font-semibold text-white transition-all"
+            className="flex-shrink-0 rounded-full px-3 py-1 text-sm font-semibold text-white transition-all"
             style={{
               backgroundColor:
                 selectedTeam === team.id

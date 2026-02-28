@@ -58,7 +58,7 @@ export default function RadarChart({ stats, teamColor, isPitcher }: RadarChartPr
         animate={true}
         motionConfig="gentle"
         theme={{
-          text: { fill: "#8E8E93", fontSize: 11 },
+          text: { fill: "#8E8E93", fontSize: 12 },
           grid: { line: { stroke: "rgba(255,255,255,0.08)" } },
           tooltip: {
             container: {

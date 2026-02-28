@@ -56,18 +56,18 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
 
       {/* Header: time + status */}
       <div className="mb-3 flex items-center justify-between relative">
-        <div className="flex items-center gap-1.5 text-xs text-text-secondary">
-          <Clock size={12} />
+        <div className="flex items-center gap-1.5 text-sm text-text-secondary">
+          <Clock size={14} />
           <span>{prediction.time} · {prediction.stadium}</span>
         </div>
         {isLocked && (
-          <span className="flex items-center gap-1 text-xs text-text-tertiary">
-            <Lock size={12} />
+          <span className="flex items-center gap-1 text-sm text-text-tertiary">
+            <Lock size={14} />
             진행중
           </span>
         )}
         {isFinished && prediction.homeScore !== null && prediction.awayScore !== null && (
-          <span className="text-xs font-semibold text-text-secondary">
+          <span className="text-sm font-semibold text-text-secondary">
             {prediction.awayScore} : {prediction.homeScore}
           </span>
         )}
@@ -101,7 +101,7 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
             transition={{ duration: 0.3 }}
             className="flex flex-col items-center"
           >
-            <TeamLogo team={awayTeam} size={36} className="mb-1" />
+            <TeamLogo team={awayTeam} size={44} className="mb-1" />
             <div
               className="text-lg font-bold"
               style={{
@@ -148,7 +148,7 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
             transition={{ duration: 0.3 }}
             className="flex flex-col items-center"
           >
-            <TeamLogo team={homeTeam} size={36} className="mb-1" />
+            <TeamLogo team={homeTeam} size={44} className="mb-1" />
             <div
               className="text-lg font-bold"
               style={{
@@ -186,12 +186,12 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
             style={{ backgroundColor: homeTeam.colorPrimary }}
           />
         </div>
-        <div className="mt-1.5 flex items-center justify-between text-xs">
+        <div className="mt-1.5 flex items-center justify-between text-sm">
           <span style={{ color: awayTeam.colorPrimary }} className="font-semibold">
             {awayTeam.shortName} {awayPercent}%
           </span>
           <span className="flex items-center gap-1 text-text-tertiary">
-            <Users size={11} />
+            <Users size={14} />
             {totalVotes.toLocaleString()}명
           </span>
           <span style={{ color: homeTeam.colorPrimary }} className="font-semibold">

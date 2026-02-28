@@ -87,7 +87,7 @@ function SectionHeader({ title, href, icon }: { title: string; href: string; ico
         href={href}
         className="flex items-center text-xs text-text-secondary hover:text-text-primary transition-colors"
       >
-        전체보기 <ChevronRight size={14} />
+        전체보기 <ChevronRight size={16} />
       </Link>
     </div>
   );
@@ -110,7 +110,7 @@ export default function HomePage() {
       <motion.header variants={item} className="flex items-center justify-between py-4">
         <h1 className="text-xl font-bold text-text-primary">크보 에브리데이</h1>
         <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
-          <Bell size={20} />
+          <Bell size={22} />
         </button>
       </motion.header>
 
@@ -124,26 +124,26 @@ export default function HomePage() {
                 <StatusBadge status={game.status} inning={game.inning} />
                 <div className="flex items-center justify-between flex-1">
                   <div className="flex flex-col items-center gap-1 flex-1">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white p-1">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white p-1">
                       <Image src={getTeamLogo(game.awayTeamId)} alt={getTeamName(game.awayTeamId)} width={24} height={24} unoptimized className="object-contain" />
                     </div>
-                    <span className="text-[11px] font-bold" style={{ color: getTeamColor(game.awayTeamId) }}>
+                    <span className="text-xs font-bold" style={{ color: getTeamColor(game.awayTeamId) }}>
                       {getTeamShortName(game.awayTeamId)}
                     </span>
                     <span className="text-xl font-bold tabular-nums text-text-primary">{game.status === "scheduled" ? "-" : game.awayScore}</span>
                   </div>
                   <span className="text-xs text-text-tertiary">vs</span>
                   <div className="flex flex-col items-center gap-1 flex-1">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white p-1">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white p-1">
                       <Image src={getTeamLogo(game.homeTeamId)} alt={getTeamName(game.homeTeamId)} width={24} height={24} unoptimized className="object-contain" />
                     </div>
-                    <span className="text-[11px] font-bold" style={{ color: getTeamColor(game.homeTeamId) }}>
+                    <span className="text-xs font-bold" style={{ color: getTeamColor(game.homeTeamId) }}>
                       {getTeamShortName(game.homeTeamId)}
                     </span>
                     <span className="text-xl font-bold tabular-nums text-text-primary">{game.status === "scheduled" ? "-" : game.homeScore}</span>
                   </div>
                 </div>
-                <p className="text-center text-[11px] text-text-tertiary">
+                <p className="text-center text-xs text-text-tertiary">
                   {game.time} · {game.stadium}
                 </p>
               </GlassCard>
@@ -191,12 +191,12 @@ export default function HomePage() {
                     style={{ backgroundColor: getTeamColor(pred.homeTeamId) }}
                   />
                 </div>
-                <div className="mt-1.5 flex justify-between text-[11px] text-text-secondary">
+                <div className="mt-1.5 flex justify-between text-xs text-text-secondary">
                   <span className="font-semibold" style={{ color: getTeamColor(pred.awayTeamId) }}>
                     {getTeamShortName(pred.awayTeamId)} {pred.awayPercent}%
                   </span>
                   <span className="flex items-center gap-1">
-                    <Users size={10} />
+                    <Users size={12} />
                     {pred.totalVotes.toLocaleString()}명
                   </span>
                   <span className="font-semibold" style={{ color: getTeamColor(pred.homeTeamId) }}>
@@ -225,7 +225,7 @@ export default function HomePage() {
                     <p className="text-sm font-medium text-text-primary line-clamp-2">{news.title}</p>
                     <div className="mt-1.5 flex items-center gap-2">
                       {news.teamId && <TeamBadge teamId={news.teamId} />}
-                      <span className="text-[11px] text-text-tertiary">{news.source} · {news.timeAgo}</span>
+                      <span className="text-xs text-text-tertiary">{news.source} · {news.timeAgo}</span>
                     </div>
                   </div>
                 </div>
@@ -242,13 +242,13 @@ export default function HomePage() {
           {MOCK_POPULAR_POSTS.map((post, i) => (
             <GlassCard key={post.id} pressable className="p-3">
               <div className="flex items-center gap-2">
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent/10 text-[11px] font-bold text-accent">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent/10 text-xs font-bold text-accent">
                   {i + 1}
                 </span>
                 <TeamBadge teamId={post.teamId} />
                 <span className="flex-1 truncate text-sm text-text-primary">{post.title}</span>
               </div>
-              <div className="mt-1 flex items-center gap-3 pl-7 text-[11px] text-text-tertiary">
+              <div className="mt-1 flex items-center gap-3 pl-7 text-xs text-text-tertiary">
                 <span>{post.author}</span>
                 <span>❤️ {post.likeCount}</span>
                 <span>💬 {post.commentCount}</span>
@@ -274,14 +274,14 @@ export default function HomePage() {
                 }`}>
                   {i + 1}
                 </span>
-                <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} size={32} />
+                <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} size={40} />
                 <div className="flex-1 min-w-0">
                   <span className="text-sm font-semibold text-text-primary">{player.name}</span>
-                  <span className="ml-1.5 text-[11px] text-text-tertiary">{player.teamName}</span>
+                  <span className="ml-1.5 text-xs text-text-tertiary">{player.teamName}</span>
                 </div>
                 <div className="text-right">
                   <div className="text-xs font-bold text-accent">오늘 {player.postsToday}글</div>
-                  <div className="text-[10px] text-text-tertiary">총 {player.totalPosts.toLocaleString()}글</div>
+                  <div className="text-xs text-text-tertiary">총 {player.totalPosts.toLocaleString()}글</div>
                 </div>
                 <span className="text-sm">
                   {player.trend === "up" ? "🔥" : player.trend === "down" ? "📉" : "➖"}

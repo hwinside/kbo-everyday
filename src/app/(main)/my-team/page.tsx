@@ -96,11 +96,11 @@ export default function MyTeamPage() {
         <motion.section variants={item}>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-base font-semibold text-text-primary">
-              <Newspaper size={16} className="text-text-secondary" />
+              <Newspaper size={18} className="text-text-secondary" />
               최신 뉴스
             </h2>
             <button className="flex items-center text-xs text-text-secondary">
-              전체보기 <ChevronRight size={14} />
+              전체보기 <ChevronRight size={16} />
             </button>
           </div>
           <div className="space-y-2">
@@ -109,7 +109,7 @@ export default function MyTeamPage() {
                 <p className="text-sm font-medium text-text-primary line-clamp-1">
                   {news.title}
                 </p>
-                <p className="mt-1 text-[11px] text-text-tertiary">
+                <p className="mt-1 text-xs text-text-tertiary">
                   {news.source} · {news.timeAgo}
                 </p>
               </GlassCard>
@@ -121,14 +121,14 @@ export default function MyTeamPage() {
         <motion.section variants={item}>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-base font-semibold text-text-primary">
-              <Users size={16} className="text-text-secondary" />
+              <Users size={18} className="text-text-secondary" />
               주전 라인업
             </h2>
             <Link
               href={`/teams/${team.slug}`}
               className="flex items-center text-xs text-text-secondary"
             >
-              전체 선수 <ChevronRight size={14} />
+              전체 선수 <ChevronRight size={16} />
             </Link>
           </div>
 
@@ -169,7 +169,7 @@ export default function MyTeamPage() {
                       {order}
                     </span>
                     <span
-                      className="w-7 text-center text-[11px] font-semibold"
+                      className="w-7 text-center text-xs font-semibold"
                       style={{ color: team.colorPrimary }}
                     >
                       {POSITION_LABELS[player.position] ?? player.position}
@@ -191,7 +191,7 @@ export default function MyTeamPage() {
         <motion.section variants={item}>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-base font-semibold text-text-primary">
-              <Play size={16} className="text-text-secondary" />
+              <Play size={18} className="text-text-secondary" />
               팀 콘텐츠
             </h2>
           </div>
@@ -203,13 +203,13 @@ export default function MyTeamPage() {
                   className="flex h-[124px] items-center justify-center"
                   style={{ backgroundColor: `${team.colorPrimary}15` }}
                 >
-                  <Play size={32} className="text-text-tertiary" />
+                  <Play size={34} className="text-text-tertiary" />
                 </div>
                 <div className="p-3">
                   <p className="text-xs font-medium text-text-primary line-clamp-2">
                     {video.title}
                   </p>
-                  <p className="mt-1 text-[11px] text-text-tertiary">
+                  <p className="mt-1 text-xs text-text-tertiary">
                     조회수 {video.views}회
                   </p>
                 </div>
@@ -223,13 +223,13 @@ export default function MyTeamPage() {
           <Link href={`/teams/${team.slug}`}>
             <GlassCard pressable className="flex items-center justify-between !p-4">
               <div className="flex items-center gap-3">
-                <MessageSquare size={20} style={{ color: team.colorPrimary }} />
+                <MessageSquare size={22} style={{ color: team.colorPrimary }} />
                 <div>
                   <p className="text-sm font-semibold text-text-primary">구단 게시판</p>
                   <p className="text-xs text-text-secondary">{team.name} 팬들의 소통 공간</p>
                 </div>
               </div>
-              <ChevronRight size={18} className="text-text-tertiary" />
+              <ChevronRight size={20} className="text-text-tertiary" />
             </GlassCard>
           </Link>
         </motion.section>

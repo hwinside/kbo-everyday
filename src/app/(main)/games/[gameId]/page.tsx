@@ -82,19 +82,19 @@ export default function GameDetailPage() {
             {game.status === "live" && (
               <div className="flex items-center gap-1.5">
                 <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
-                <span className="text-[11px] font-semibold text-accent">LIVE</span>
-                <span className="text-[11px] text-text-tertiary ml-1">
+                <span className="text-xs font-semibold text-accent">LIVE</span>
+                <span className="text-xs text-text-tertiary ml-1">
                   {game.stadium}
                 </span>
               </div>
             )}
             {game.status === "final" && (
-              <span className="text-[11px] text-text-tertiary">
+              <span className="text-xs text-text-tertiary">
                 경기 종료 · {game.stadium}
               </span>
             )}
             {game.status === "scheduled" && (
-              <span className="text-[11px] text-text-tertiary">
+              <span className="text-xs text-text-tertiary">
                 {game.time} 예정 · {game.stadium}
               </span>
             )}
@@ -136,7 +136,7 @@ export default function GameDetailPage() {
             <div className="flex flex-col items-center">
               <span className="text-xs text-text-tertiary">:</span>
               {game.inning && (
-                <span className="text-[10px] text-text-secondary mt-0.5">
+                <span className="text-xs text-text-secondary mt-0.5">
                   {game.inning}
                 </span>
               )}

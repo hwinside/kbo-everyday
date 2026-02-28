@@ -7,7 +7,7 @@ interface PlayerAvatarProps {
   name: string;
   teamId: number;
   photoUrl?: string | null;
-  size?: number;       // px, default 32
+  size?: number;       // px, default 48
   showTeamBadge?: boolean; // default true
   number?: number;
 }
@@ -16,7 +16,7 @@ export default function PlayerAvatar({
   name,
   teamId,
   photoUrl,
-  size = 40,
+  size = 48,
   showTeamBadge = true,
   number,
 }: PlayerAvatarProps) {

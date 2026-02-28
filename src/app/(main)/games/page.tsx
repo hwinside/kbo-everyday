@@ -42,20 +42,20 @@ export default function GamesPage() {
                   <div className="flex items-center justify-between mb-3">
                     {game.status === "live" ? (
                       <span className="flex items-center gap-1.5">
-                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent/15 text-[11px] font-bold text-accent">
+                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent/15 text-xs font-bold text-accent">
                           <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
                           LIVE
                         </span>
-                        <span className="text-[11px] text-accent-green font-medium">
+                        <span className="text-xs text-accent-green font-medium">
                           {game.inning}
                         </span>
                       </span>
                     ) : game.status === "final" ? (
-                      <span className="text-[11px] text-text-secondary font-medium">경기 종료</span>
+                      <span className="text-xs text-text-secondary font-medium">경기 종료</span>
                     ) : (
-                      <span className="text-[11px] text-text-secondary">{game.time} 예정</span>
+                      <span className="text-xs text-text-secondary">{game.time} 예정</span>
                     )}
-                    <span className="text-[11px] text-text-tertiary">{game.stadium}</span>
+                    <span className="text-xs text-text-tertiary">{game.stadium}</span>
                   </div>
 
                   {/* Teams and scores */}

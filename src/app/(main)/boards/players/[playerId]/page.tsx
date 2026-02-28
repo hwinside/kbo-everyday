@@ -72,7 +72,7 @@ export default function PlayerBoardPage() {
           <Link href="/boards/players" className="p-1 -ml-1">
             <ArrowLeft className="w-5 h-5 text-text-secondary" />
           </Link>
-          <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={48} />
+          <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={56} />
           <div className="flex-1">
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-bold text-text-primary">{player.name}</h1>
@@ -80,7 +80,7 @@ export default function PlayerBoardPage() {
                 #{player.number}
               </span>
             </div>
-            <p className="text-[11px] text-text-tertiary">{getTeamShortName(player.teamId)} · {player.position} · 게시글 {player.totalPosts.toLocaleString()}개</p>
+            <p className="text-xs text-text-tertiary">{getTeamShortName(player.teamId)} · {player.position} · 게시글 {player.totalPosts.toLocaleString()}개</p>
           </div>
           <Share2 className="w-5 h-5 text-text-tertiary" />
         </div>
@@ -120,11 +120,11 @@ export default function PlayerBoardPage() {
           >
             <GlassCard pressable className="p-3">
               <p className="text-sm font-medium text-text-primary">{post.title}</p>
-              <div className="mt-2 flex items-center justify-between text-[11px] text-text-tertiary">
+              <div className="mt-2 flex items-center justify-between text-xs text-text-tertiary">
                 <span>{post.author} · {post.timeAgo}</span>
                 <div className="flex items-center gap-3">
-                  <span className="flex items-center gap-1"><Heart size={12} /> {post.likes}</span>
-                  <span className="flex items-center gap-1"><MessageCircle size={12} /> {post.comments}</span>
+                  <span className="flex items-center gap-1"><Heart size={14} /> {post.likes}</span>
+                  <span className="flex items-center gap-1"><MessageCircle size={14} /> {post.comments}</span>
                 </div>
               </div>
             </GlassCard>

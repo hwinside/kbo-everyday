@@ -139,7 +139,7 @@ function StatNumber({
 }) {
   return (
     <div className="text-center">
-      <p className="text-[11px] font-medium text-text-tertiary">{label}</p>
+      <p className="text-xs font-medium text-text-tertiary">{label}</p>
       <p
         className={`mt-0.5 text-2xl font-bold tabular-nums ${
           highlight ? "text-text-primary" : "text-text-primary"

@@ -131,7 +131,7 @@ function LeaderSection({ title, leaders }: { title: string; leaders: TitleLeader
       <div className="space-y-2">
         {leaders.map((l) => (
           <div key={l.rank} className="flex items-center gap-2">
-            <span className={clsx("flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold",
+            <span className={clsx("flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold",
               l.rank === 1 ? "bg-yellow-500/20 text-yellow-400" :
               l.rank === 2 ? "bg-gray-400/20 text-gray-300" :
               l.rank === 3 ? "bg-amber-700/20 text-amber-600" :
@@ -139,7 +139,7 @@ function LeaderSection({ title, leaders }: { title: string; leaders: TitleLeader
             )}>
               {l.rank}
             </span>
-            <PlayerAvatar name={l.name} teamId={l.teamId} photoUrl={getPlayerPhotoUrl(l.name)} size={36} />
+            <PlayerAvatar name={l.name} teamId={l.teamId} photoUrl={getPlayerPhotoUrl(l.name)} size={44} />
             <span className="flex-1 text-sm text-text-primary">{l.name}</span>
             <span className="text-sm font-bold tabular-nums" style={{ color: getTeamColor(l.teamId) }}>{l.value}</span>
           </div>
@@ -170,7 +170,7 @@ export default function StandingsPage() {
             key={tab.id}
             onClick={() => setMainTab(tab.id)}
             className={clsx(
-              "flex-1 py-2 text-sm font-medium rounded-full transition-all",
+              "flex-1 py-2.5 text-sm font-medium rounded-full transition-all",
               mainTab === tab.id
                 ? "bg-accent text-white"
                 : "bg-bg-tertiary text-text-tertiary"
@@ -190,7 +190,7 @@ export default function StandingsPage() {
         >
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border text-[11px] font-semibold text-text-tertiary">
+              <tr className="border-b border-border text-xs font-semibold text-text-tertiary">
                 <th className="w-8 py-2 text-center">#</th>
                 <th className="py-2 text-left pl-2">팀</th>
                 <th className="w-9 py-2 text-center">승</th>
@@ -215,7 +215,7 @@ export default function StandingsPage() {
                     <td className="py-2.5 text-center font-bold text-text-primary">{standing.rank}</td>
                     <td className="py-2.5 pl-2">
                       <div className="flex items-center gap-1.5">
-                        <TeamLogo team={team} size={20} />
+                        <TeamLogo team={team} size={24} />
                         <span className="font-medium text-text-primary whitespace-nowrap">{team.shortName}</span>
                         {getStreakIcon(standing.streak) && <span className="text-xs">{getStreakIcon(standing.streak)}</span>}
                       </div>

@@ -52,7 +52,7 @@ export default function WritePost({ isOpen, onClose, teamName }: WritePostProps)
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3">
               <button onClick={onClose} className="text-text-secondary p-1">
-                <X size={22} />
+                <X size={24} />
               </button>
               <h2 className="text-base font-semibold text-text-primary">
                 {teamName ? `${teamName} 글쓰기` : "글쓰기"}
@@ -84,7 +84,7 @@ export default function WritePost({ isOpen, onClose, teamName }: WritePostProps)
                 className="w-full resize-none rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary outline-none"
               />
               <button className="flex items-center gap-2 rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-secondary hover:text-text-primary transition-colors">
-                <ImageIcon size={18} />
+                <ImageIcon size={20} />
                 사진 첨부 (최대 5장)
               </button>
             </div>

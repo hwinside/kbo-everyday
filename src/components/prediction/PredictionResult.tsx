@@ -54,7 +54,7 @@ export default function PredictionResult({
 
       <div className="relative flex items-center justify-between">
         <div>
-          <p className="text-xs text-text-secondary">내 예측 현황</p>
+          <p className="text-sm text-text-secondary">내 예측 현황</p>
           <div className="mt-1 flex items-baseline gap-1">
             <span className="text-2xl font-bold tabular-nums text-text-primary">
               {totalCorrect}
@@ -74,7 +74,7 @@ export default function PredictionResult({
               animate={{ scale: 1, opacity: 1 }}
               className="flex items-center gap-1"
             >
-              <Flame size={16} className="text-orange-500" />
+              <Flame size={18} className="text-orange-500" />
               <span className="text-sm font-bold text-orange-400">
                 {currentStreak}연속 적중
               </span>
@@ -87,7 +87,7 @@ export default function PredictionResult({
               transition={{ delay: 0.2 }}
               className="mt-1 flex items-center justify-end gap-1"
             >
-              <Zap size={12} className="text-accent-gold" />
+              <Zap size={14} className="text-accent-gold" />
               <span className="text-xs font-semibold text-accent-gold">
                 오늘 +{todayPoints}p
               </span>
@@ -99,19 +99,19 @@ export default function PredictionResult({
       {/* Stats row */}
       <div className="mt-3 grid grid-cols-3 gap-2">
         <div className="rounded-lg bg-bg-tertiary/50 p-2 text-center">
-          <p className="text-[11px] text-text-tertiary">총 포인트</p>
+          <p className="text-xs text-text-tertiary">총 포인트</p>
           <p className="mt-0.5 text-sm font-bold tabular-nums text-text-primary">
             {points.toLocaleString()}p
           </p>
         </div>
         <div className="rounded-lg bg-bg-tertiary/50 p-2 text-center">
-          <p className="text-[11px] text-text-tertiary">적중률</p>
+          <p className="text-xs text-text-tertiary">적중률</p>
           <p className="mt-0.5 text-sm font-bold tabular-nums text-accent-gold">
             {accuracy}%
           </p>
         </div>
         <div className="rounded-lg bg-bg-tertiary/50 p-2 text-center">
-          <p className="text-[11px] text-text-tertiary">연속</p>
+          <p className="text-xs text-text-tertiary">연속</p>
           <p className="mt-0.5 text-sm font-bold tabular-nums text-orange-400">
             {currentStreak}회
           </p>

@@ -17,13 +17,13 @@ export default function RadioPlayer() {
   const channel = CHANNELS[channelIndex];
 
   return (
-    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-bg-glass border border-border backdrop-blur-xl">
-      <Radio className="w-4 h-4 text-accent shrink-0" />
+    <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-bg-glass border border-border backdrop-blur-xl">
+      <Radio className="w-5 h-5 text-accent shrink-0" />
 
       {/* Channel name — tap to switch */}
       <button
         onClick={() => setChannelIndex((i) => (i + 1) % CHANNELS.length)}
-        className="text-[11px] font-medium text-text-primary whitespace-nowrap"
+        className="text-xs font-medium text-text-primary whitespace-nowrap"
       >
         {channel.name}
       </button>
@@ -35,9 +35,9 @@ export default function RadioPlayer() {
         className="w-7 h-7 rounded-full bg-accent/20 flex items-center justify-center shrink-0"
       >
         {isPlaying ? (
-          <Pause className="w-3.5 h-3.5 text-accent" />
+          <Pause className="w-4 h-4 text-accent" />
         ) : (
-          <Play className="w-3.5 h-3.5 text-accent ml-0.5" />
+          <Play className="w-4 h-4 text-accent ml-0.5" />
         )}
       </motion.button>
 
@@ -48,9 +48,9 @@ export default function RadioPlayer() {
           className="shrink-0"
         >
           {volume === 0 ? (
-            <VolumeX className="w-3.5 h-3.5 text-text-tertiary" />
+            <VolumeX className="w-4 h-4 text-text-tertiary" />
           ) : (
-            <Volume2 className="w-3.5 h-3.5 text-text-secondary" />
+            <Volume2 className="w-4 h-4 text-text-secondary" />
           )}
         </button>
         <input

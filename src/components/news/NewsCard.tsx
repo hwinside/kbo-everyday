@@ -32,14 +32,14 @@ export default function NewsCard({ news }: NewsCardProps) {
         </p>
         <div className="mt-1.5 flex items-center gap-2">
           {news.teamId && <TeamBadge teamId={news.teamId} />}
-          <span className="text-[11px] text-text-tertiary">
+          <span className="text-xs text-text-tertiary">
             {news.source}
           </span>
-          <span className="text-[11px] text-text-tertiary">·</span>
-          <span className="text-[11px] text-text-tertiary">
+          <span className="text-xs text-text-tertiary">·</span>
+          <span className="text-xs text-text-tertiary">
             {news.timeAgo}
           </span>
-          <ExternalLink size={10} className="ml-auto text-text-tertiary" />
+          <ExternalLink size={12} className="ml-auto text-text-tertiary" />
         </div>
       </div>
     </motion.a>

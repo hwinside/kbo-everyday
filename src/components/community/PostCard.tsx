@@ -28,7 +28,7 @@ export default function PostCard({ post, onPress }: PostCardProps) {
           {post.author?.nickname ?? "익명"}
         </span>
         {post.author && <LevelBadge level={post.author.level} />}
-        <span className="ml-auto text-[11px] text-text-tertiary">{timeAgo}</span>
+        <span className="ml-auto text-xs text-text-tertiary">{timeAgo}</span>
       </div>
 
       {/* Title */}
@@ -53,12 +53,12 @@ export default function PostCard({ post, onPress }: PostCardProps) {
       )}
 
       {/* Stats */}
-      <div className="mt-3 flex items-center gap-4 text-xs text-text-tertiary">
+      <div className="mt-3 flex items-center gap-4 text-sm text-text-tertiary">
         <span className="flex items-center gap-1">
-          <Heart size={14} /> {post.likeCount}
+          <Heart size={16} /> {post.likeCount}
         </span>
         <span className="flex items-center gap-1">
-          <MessageCircle size={14} /> {post.commentCount}
+          <MessageCircle size={16} /> {post.commentCount}
         </span>
       </div>
     </motion.button>

@@ -49,9 +49,9 @@ export default function GameChat({
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center gap-1.5 px-4 py-2 border-b border-border">
-        <Users className="w-3.5 h-3.5 text-text-tertiary" />
-        <span className="text-[11px] text-text-tertiary">
+      <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-border">
+        <Users className="w-4 h-4 text-text-tertiary" />
+        <span className="text-xs text-text-tertiary">
           {participantCount}명 참여 중
         </span>
       </div>
@@ -73,18 +73,18 @@ export default function GameChat({
               {/* Message content */}
               <div className="min-w-0 flex-1">
                 <span className="inline">
-                  <span className="text-[12px] font-semibold text-text-primary mr-1">
+                  <span className="text-xs font-semibold text-text-primary mr-1">
                     {msg.nickname}
                   </span>
                   <LevelBadge level={msg.level} className="inline-flex mr-1 align-middle" />
-                  <span className="text-[13px] text-text-secondary">
+                  <span className="text-sm text-text-secondary">
                     {msg.content}
                   </span>
                 </span>
               </div>
 
               {/* Time */}
-              <span className="text-[10px] text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              <span className="text-xs text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                 {formatTime(msg.createdAt)}
               </span>
             </motion.div>
@@ -93,7 +93,7 @@ export default function GameChat({
       </div>
 
       {/* Input bar */}
-      <div className="px-3 py-2 border-t border-border bg-bg-secondary/50 backdrop-blur-lg">
+      <div className="px-3 py-2.5 border-t border-border bg-bg-secondary/50 backdrop-blur-lg">
         <div className="flex items-center gap-2">
           <input
             type="text"
@@ -120,7 +120,7 @@ export default function GameChat({
                 : "bg-bg-tertiary text-text-tertiary"
             )}
           >
-            <Send className="w-4 h-4" />
+            <Send className="w-5 h-5" />
           </motion.button>
         </div>
       </div>

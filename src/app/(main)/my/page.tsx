@@ -12,7 +12,7 @@ export default function MyPage() {
       <header className="flex items-center justify-between py-4">
         <h1 className="text-lg font-bold text-text-primary">MY</h1>
         <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
-          <Settings size={20} />
+          <Settings size={22} />
         </button>
       </header>
 
@@ -52,7 +52,7 @@ export default function MyPage() {
                 <TeamBadge teamId={1} />
               </div>
               <LevelBadge level={15} showTitle />
-              <p className="mt-0.5 text-[11px] text-text-tertiary">1,234 포인트</p>
+              <p className="mt-0.5 text-xs text-text-tertiary">1,234 포인트</p>
             </div>
           </div>
         </GlassCard>
@@ -73,13 +73,13 @@ export default function MyPage() {
         ].map(({ icon: Icon, label, count, detail }) => (
           <GlassCard key={label} pressable className="flex items-center justify-between p-4">
             <div className="flex items-center gap-3">
-              <Icon size={18} className="text-text-secondary" />
+              <Icon size={20} className="text-text-secondary" />
               <span className="text-sm text-text-primary">{label}</span>
             </div>
             <div className="flex items-center gap-1 text-text-tertiary">
               {count !== null && <span className="text-xs">{count}</span>}
               {detail && <span className="text-xs text-accent-gold">{detail}</span>}
-              <ChevronRight size={16} />
+              <ChevronRight size={18} />
             </div>
           </GlassCard>
         ))}

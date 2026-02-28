@@ -48,7 +48,7 @@ export default function PlayByPlay({ plays, teamColor }: PlayByPlayProps) {
             {/* Inning header */}
             <div className="flex items-center gap-2 mb-2">
               <div
-                className="h-5 px-2 rounded-full text-[10px] font-bold flex items-center text-white"
+                className="h-5 px-2 rounded-full text-xs font-bold flex items-center text-white"
                 style={{ backgroundColor: teamColor }}
               >
                 {inning}
@@ -67,7 +67,7 @@ export default function PlayByPlay({ plays, teamColor }: PlayByPlayProps) {
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ duration: 0.3 }}
                     className={clsx(
-                      "flex items-start gap-2 py-1.5 px-2 rounded-lg text-[13px]",
+                      "flex items-start gap-2 py-1.5 px-2 rounded-lg text-sm",
                       play.isHighlight
                         ? "bg-accent-gold/10 border border-accent-gold/20"
                         : "hover:bg-bg-glass"

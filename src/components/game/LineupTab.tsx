@@ -25,15 +25,15 @@ function PitcherCard({
 }) {
   return (
     <div className="text-center">
-      <div className="text-[10px] text-text-tertiary mb-1">{label}</div>
+      <div className="text-xs text-text-tertiary mb-1">{label}</div>
       <div
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-white text-xs font-semibold"
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-white text-sm font-semibold"
         style={{ backgroundColor: teamColor }}
       >
         <span>SP</span>
         <span>{name}</span>
       </div>
-      <div className="text-[10px] text-text-secondary mt-1 tabular-nums">
+      <div className="text-xs text-text-secondary mt-1 tabular-nums">
         ERA {era}
       </div>
     </div>
@@ -55,7 +55,7 @@ export default function LineupTab({
           teamColor={awayTeam.colorPrimary}
           label={awayTeam.shortName}
         />
-        <div className="text-text-tertiary text-xs mt-4">VS</div>
+        <div className="text-text-tertiary text-sm mt-4">VS</div>
         <PitcherCard
           name={lineup.home.startingPitcher.name}
           era={lineup.home.startingPitcher.era}
@@ -66,7 +66,7 @@ export default function LineupTab({
 
       {/* Lineup table */}
       <div className="glass-card p-3 overflow-hidden">
-        <table className="w-full text-xs">
+        <table className="w-full text-sm">
           <thead>
             <tr className="text-text-tertiary border-b border-border">
               <th className="py-2 text-left font-medium w-6">#</th>
@@ -103,8 +103,8 @@ export default function LineupTab({
                   </td>
                   <td className="py-2">
                     <div className="flex items-center gap-1.5">
-                      <PlayerAvatar name={away.name} teamId={lineup.away.teamId} photoUrl={getPlayerPhotoUrl(away.name)} size={20} showTeamBadge={false} />
-                      <span className="text-[10px] text-text-tertiary w-5">
+                      <PlayerAvatar name={away.name} teamId={lineup.away.teamId} photoUrl={getPlayerPhotoUrl(away.name)} size={28} showTeamBadge={false} />
+                      <span className="text-xs text-text-tertiary w-5">
                         {away.position}
                       </span>
                       <span className="text-text-primary font-medium">
@@ -126,10 +126,10 @@ export default function LineupTab({
                       <span className="text-text-primary font-medium">
                         {home.name}
                       </span>
-                      <span className="text-[10px] text-text-tertiary w-5 text-right">
+                      <span className="text-xs text-text-tertiary w-5 text-right">
                         {home.position}
                       </span>
-                      <PlayerAvatar name={home.name} teamId={lineup.home.teamId} photoUrl={getPlayerPhotoUrl(home.name)} size={20} showTeamBadge={false} />
+                      <PlayerAvatar name={home.name} teamId={lineup.home.teamId} photoUrl={getPlayerPhotoUrl(home.name)} size={28} showTeamBadge={false} />
                     </div>
                   </td>
                   <td className="py-2 text-right text-text-tertiary tabular-nums">

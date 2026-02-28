@@ -22,7 +22,7 @@ export default function TeamsPage() {
     <div className="mx-auto max-w-lg px-4">
       <header className="flex items-center gap-3 py-4">
         <Link href="/" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
-          <ChevronLeft size={22} />
+          <ChevronLeft size={24} />
         </Link>
         <h1 className="text-lg font-bold text-text-primary">구단 게시판</h1>
       </header>
@@ -40,11 +40,11 @@ export default function TeamsPage() {
                 pressable
                 className="flex flex-col items-center justify-center gap-2 p-5"
               >
-                <TeamLogo team={team} size={56} />
+                <TeamLogo team={team} size={64} />
                 <span className="text-sm font-semibold text-text-primary">
                   {team.name}
                 </span>
-                <span className="text-[11px] text-text-tertiary">게시판</span>
+                <span className="text-xs text-text-tertiary">게시판</span>
               </GlassCard>
             </Link>
           </motion.div>

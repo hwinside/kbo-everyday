@@ -85,9 +85,9 @@ export default function PlayerDetailPage() {
             href={`/teams/${teamSlug}`}
             className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary/50 transition-colors"
           >
-            <ChevronLeft size={22} />
+            <ChevronLeft size={24} />
           </Link>
-          <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={56} />
+          <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={64} />
           <h1 className="text-lg font-bold text-text-primary">{player.name}</h1>
         </div>
 
@@ -150,7 +150,7 @@ export default function PlayerDetailPage() {
           whileTap={{ scale: 0.9 }}
           whileHover={{ scale: 1.05 }}
         >
-          <Pencil size={22} className="text-white" />
+          <Pencil size={24} className="text-white" />
         </motion.button>
       )}
 

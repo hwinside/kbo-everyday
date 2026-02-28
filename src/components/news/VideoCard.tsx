@@ -24,11 +24,11 @@ export default function VideoCard({ video }: VideoCardProps) {
         {/* Play button overlay */}
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-black/60 backdrop-blur-sm">
-            <Play size={20} className="ml-0.5 text-white" fill="white" />
+            <Play size={22} className="ml-0.5 text-white" fill="white" />
           </div>
         </div>
         {/* Duration badge - mock */}
-        <div className="absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-medium text-white">
+        <div className="absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 text-xs font-medium text-white">
           10:24
         </div>
       </div>
@@ -40,11 +40,11 @@ export default function VideoCard({ video }: VideoCardProps) {
         </p>
         <div className="mt-2 flex items-center gap-2">
           <TeamBadge teamId={video.teamId} />
-          <span className="text-[11px] text-text-tertiary">{video.channelName}</span>
+          <span className="text-xs text-text-tertiary">{video.channelName}</span>
         </div>
-        <div className="mt-1 flex items-center gap-2 text-[11px] text-text-tertiary">
+        <div className="mt-1 flex items-center gap-2 text-xs text-text-tertiary">
           <span className="flex items-center gap-0.5">
-            <Eye size={10} />
+            <Eye size={12} />
             조회수 {formatViewCount(video.viewCount)}
           </span>
           <span>·</span>

@@ -35,12 +35,12 @@ export default function TrendChart({ data, teamColor, isPitcher }: TrendChartPro
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis
               dataKey="date"
-              tick={{ fill: "#8E8E93", fontSize: 10 }}
+              tick={{ fill: "#8E8E93", fontSize: 11 }}
               axisLine={{ stroke: "rgba(255,255,255,0.08)" }}
               tickLine={false}
             />
             <YAxis
-              tick={{ fill: "#8E8E93", fontSize: 10 }}
+              tick={{ fill: "#8E8E93", fontSize: 11 }}
               axisLine={false}
               tickLine={false}
               domain={["auto", "auto"]}
@@ -85,12 +85,12 @@ export default function TrendChart({ data, teamColor, isPitcher }: TrendChartPro
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
           <XAxis
             dataKey="date"
-            tick={{ fill: "#8E8E93", fontSize: 10 }}
+            tick={{ fill: "#8E8E93", fontSize: 11 }}
             axisLine={{ stroke: "rgba(255,255,255,0.08)" }}
             tickLine={false}
           />
           <YAxis
-            tick={{ fill: "#8E8E93", fontSize: 10 }}
+            tick={{ fill: "#8E8E93", fontSize: 11 }}
             axisLine={false}
             tickLine={false}
             domain={["auto", "auto"]}

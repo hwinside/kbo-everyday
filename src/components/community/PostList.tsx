@@ -23,7 +23,7 @@ export default function PostList({ posts }: PostListProps) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-text-tertiary">
         <p className="text-sm">아직 글이 없습니다</p>
-        <p className="mt-1 text-xs">첫 번째 글을 작성해보세요!</p>
+        <p className="mt-1 text-sm">첫 번째 글을 작성해보세요!</p>
       </div>
     );
   }

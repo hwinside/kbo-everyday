@@ -126,7 +126,7 @@ export default function TeamDashboard({
               >
                 {game.result}
               </span>
-              <span className="text-[9px] tabular-nums text-text-tertiary">{game.score}</span>
+              <span className="text-[10px] tabular-nums text-text-tertiary">{game.score}</span>
             </div>
           ))}
         </div>
@@ -157,7 +157,7 @@ function CompareBar({
 
   return (
     <div>
-      <div className="mb-1 flex items-center justify-between text-xs">
+      <div className="mb-1 flex items-center justify-between text-sm">
         <span className="text-text-secondary">{label}</span>
         <div className="flex items-center gap-2">
           <span className="font-bold text-text-primary" style={{ color: isBetter ? teamColor : undefined }}>

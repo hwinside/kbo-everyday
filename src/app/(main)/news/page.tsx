@@ -27,7 +27,7 @@ export default function NewsPage() {
       {/* Header */}
       <motion.header variants={item} className="flex items-center gap-2 py-4">
         <Link href="/" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
-          <ChevronLeft size={22} />
+          <ChevronLeft size={24} />
         </Link>
         <h1 className="text-xl font-bold text-text-primary">뉴스 & 영상</h1>
       </motion.header>

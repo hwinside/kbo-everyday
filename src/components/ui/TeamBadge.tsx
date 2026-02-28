@@ -22,8 +22,8 @@ export default function TeamBadge({
     <span
       className={clsx(
         "inline-flex items-center gap-1 rounded-full font-semibold text-white",
-        size === "sm" && "py-0.5 pl-0.5 pr-2 text-[11px]",
-        size === "md" && "py-1 pl-1 pr-3 text-xs",
+        size === "sm" && "py-0.5 pl-0.5 pr-2 text-xs",
+        size === "md" && "py-1 pl-1 pr-3 text-sm",
         className,
       )}
       style={{ backgroundColor: team.colorPrimary }}

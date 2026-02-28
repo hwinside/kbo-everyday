@@ -114,7 +114,7 @@ function ResultBadge({ result }: { result: PitcherStat["result"] }) {
   return (
     <span
       className={clsx(
-        "ml-1 inline-flex items-center justify-center rounded px-1 py-px text-[10px] font-bold leading-none",
+        "ml-1 inline-flex items-center justify-center rounded px-1 py-px text-xs font-bold leading-none",
         cfg.bg,
         cfg.text
       )}
@@ -178,7 +178,7 @@ export default function GameStatsTab({
             key={id}
             onClick={() => setSide(id)}
             className={clsx(
-              "flex-1 py-2 text-xs font-semibold rounded-md transition-all",
+              "flex-1 py-2.5 text-sm font-semibold rounded-md transition-all",
               side === id ? "text-white shadow-md" : "text-text-tertiary"
             )}
             style={
@@ -197,7 +197,7 @@ export default function GameStatsTab({
             className="w-1 h-4 rounded-full"
             style={{ backgroundColor: team.colorPrimary }}
           />
-          <span className="text-xs font-semibold text-text-primary">
+          <span className="text-sm font-semibold text-text-primary">
             타자 기록
           </span>
         </div>
@@ -313,7 +313,7 @@ export default function GameStatsTab({
             className="w-1 h-4 rounded-full"
             style={{ backgroundColor: team.colorPrimary }}
           />
-          <span className="text-xs font-semibold text-text-primary">
+          <span className="text-sm font-semibold text-text-primary">
             투수 기록
           </span>
         </div>

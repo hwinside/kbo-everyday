@@ -67,7 +67,7 @@ export default function Leaderboard({ entries }: LeaderboardProps) {
                   {entry.points.toLocaleString()}
                   <span className="text-xs text-text-tertiary">p</span>
                 </p>
-                <p className="text-[11px] text-text-secondary">
+                <p className="text-xs text-text-secondary">
                   적중률 {Math.round((entry.totalCorrect / entry.totalPredictions) * 100)}%
                 </p>
               </div>
@@ -113,7 +113,7 @@ export default function Leaderboard({ entries }: LeaderboardProps) {
               <p className="text-sm font-bold tabular-nums text-text-primary">
                 {entry.points.toLocaleString()}p
               </p>
-              <p className="text-[11px] text-text-tertiary">
+              <p className="text-xs text-text-tertiary">
                 {Math.round((entry.totalCorrect / entry.totalPredictions) * 100)}%
                 {entry.currentStreak > 0 && (
                   <span className="ml-1 text-orange-400">🔥{entry.currentStreak}</span>
@@ -147,7 +147,7 @@ export default function Leaderboard({ entries }: LeaderboardProps) {
               <p className="text-sm font-bold tabular-nums text-text-primary">
                 {myEntry.points.toLocaleString()}p
               </p>
-              <p className="text-[11px] text-text-tertiary">
+              <p className="text-xs text-text-tertiary">
                 적중률 {Math.round((myEntry.totalCorrect / myEntry.totalPredictions) * 100)}%
               </p>
             </div>

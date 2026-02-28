@@ -29,7 +29,7 @@ export default function PredictPage() {
       <motion.header variants={item} className="flex items-center justify-between py-4">
         <div className="flex items-center gap-2">
           <Link href="/" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
-            <ChevronLeft size={22} />
+            <ChevronLeft size={24} />
           </Link>
           <h1 className="text-xl font-bold text-text-primary">승부예측</h1>
         </div>
@@ -37,7 +37,7 @@ export default function PredictPage() {
           href="/predict/leaderboard"
           className="flex items-center gap-1.5 rounded-full bg-accent-gold/10 px-3 py-1.5 text-sm font-semibold text-accent-gold transition-colors hover:bg-accent-gold/20"
         >
-          <Trophy size={14} />
+          <Trophy size={16} />
           랭킹
         </Link>
       </motion.header>
