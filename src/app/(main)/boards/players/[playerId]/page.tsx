@@ -5,8 +5,8 @@ import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowLeft, Heart, MessageCircle, Share2, PenLine } from "lucide-react";
 import Link from "next/link";
-import Image from "next/image";
 import GlassCard from "@/components/ui/GlassCard";
+import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { TEAMS } from "@/lib/constants/teams";
 
 const PLAYER_DATA: Record<string, { name: string; teamId: number; number: number; position: string; totalPosts: number }> = {
@@ -38,9 +38,6 @@ const MOCK_POSTS = [
   { id: 8, title: "굿즈 어디서 사야 하나요?", author: "뉴비팬", timeAgo: "6시간 전", likes: 23, comments: 15 },
 ];
 
-function getTeamLogo(teamId: number) {
-  return TEAMS.find((t) => t.id === teamId)?.logoPath ?? "";
-}
 function getTeamColor(teamId: number) {
   return TEAMS.find((t) => t.id === teamId)?.colorPrimary ?? "#888";
 }
@@ -74,9 +71,7 @@ export default function PlayerBoardPage() {
           <Link href="/boards/players" className="p-1 -ml-1">
             <ArrowLeft className="w-5 h-5 text-text-secondary" />
           </Link>
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white p-1">
-            <Image src={getTeamLogo(player.teamId)} alt="" width={24} height={24} unoptimized className="object-contain" />
-          </div>
+          <PlayerAvatar name={player.name} teamId={player.teamId} number={player.number} size={48} />
           <div className="flex-1">
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-bold text-text-primary">{player.name}</h1>

@@ -5,6 +5,7 @@ import { Bell, ChevronRight, Flame, Users } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import GlassCard from "@/components/ui/GlassCard";
+import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { TEAMS } from "@/lib/constants/teams";
 import { MOCK_PREDICTIONS } from "@/lib/constants/predictions";
@@ -272,9 +273,7 @@ export default function HomePage() {
                 }`}>
                   {i + 1}
                 </span>
-                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-white p-0.5">
-                  <Image src={getTeamLogo(player.teamId)} alt={player.teamName} width={18} height={18} unoptimized className="object-contain" />
-                </div>
+                <PlayerAvatar name={player.name} teamId={player.teamId} size={32} />
                 <div className="flex-1 min-w-0">
                   <span className="text-sm font-semibold text-text-primary">{player.name}</span>
                   <span className="ml-1.5 text-[11px] text-text-tertiary">{player.teamName}</span>

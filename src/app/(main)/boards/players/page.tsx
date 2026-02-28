@@ -3,8 +3,8 @@
 import { motion } from "framer-motion";
 import { ArrowLeft, TrendingUp } from "lucide-react";
 import Link from "next/link";
-import Image from "next/image";
 import GlassCard from "@/components/ui/GlassCard";
+import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { TEAMS } from "@/lib/constants/teams";
 
 const MOCK_PLAYER_BOARD_RANKING = [
@@ -25,9 +25,6 @@ const MOCK_PLAYER_BOARD_RANKING = [
   { playerId: "p15", name: "이의리", teamId: 2, postsToday: 10, totalPosts: 398, trend: "same" as const, rank: 15 },
 ];
 
-function getTeamLogo(teamId: number) {
-  return TEAMS.find((t) => t.id === teamId)?.logoPath ?? "";
-}
 function getTeamShortName(teamId: number) {
   return TEAMS.find((t) => t.id === teamId)?.shortName ?? "";
 }
@@ -68,9 +65,7 @@ export default function PlayerBoardRankingPage() {
                   }`}>
                     {player.rank}
                   </span>
-                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white p-0.5">
-                    <Image src={getTeamLogo(player.teamId)} alt={getTeamShortName(player.teamId)} width={20} height={20} unoptimized className="object-contain" />
-                  </div>
+                  <PlayerAvatar name={player.name} teamId={player.teamId} size={36} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span className="text-sm font-semibold text-text-primary">{player.name}</span>

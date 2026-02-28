@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, Pencil } from "lucide-react";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import GlassCard from "@/components/ui/GlassCard";
+import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import TeamLogo from "@/components/ui/TeamLogo";
 import PostList from "@/components/community/PostList";
 import WritePost from "@/components/community/WritePost";
@@ -193,15 +194,7 @@ export default function TeamBoardPage() {
                           >
                             <GlassCard pressable className="!p-3">
                               <div className="flex items-center gap-3">
-                                {/* Player avatar placeholder */}
-                                <div
-                                  className="flex h-10 w-10 items-center justify-center rounded-xl text-sm font-bold text-white"
-                                  style={{
-                                    background: `linear-gradient(135deg, ${team.colorPrimary}, ${team.colorSecondary})`,
-                                  }}
-                                >
-                                  {player.number}
-                                </div>
+                                <PlayerAvatar name={player.name} teamId={team.id} number={player.number} size={40} showTeamBadge={false} />
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2">
                                     <span className="text-sm font-bold text-text-primary">

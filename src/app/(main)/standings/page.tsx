@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { clsx } from "clsx";
 import { TEAMS } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
-import Image from "next/image";
+import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import type { TeamStanding } from "@/lib/types";
 
 const MOCK_STANDINGS: TeamStanding[] = [
@@ -110,10 +110,6 @@ function getTeam(id: number) {
   return TEAMS.find((t) => t.id === id)!;
 }
 
-function getTeamLogo(id: number) {
-  return TEAMS.find((t) => t.id === id)?.logoPath ?? "";
-}
-
 function getTeamColor(id: number) {
   return TEAMS.find((t) => t.id === id)?.colorPrimary ?? "#888";
 }
@@ -142,13 +138,7 @@ function LeaderSection({ title, leaders }: { title: string; leaders: TitleLeader
             )}>
               {l.rank}
             </span>
-            <div className="relative flex h-7 w-7 items-center justify-center rounded-full overflow-hidden" style={{ backgroundColor: getTeamColor(l.teamId) + "30" }}>
-              {/* TODO: 선수 사진 추가 시 Image src={l.photoUrl} 로 교체 */}
-              <span className="text-[10px] font-bold" style={{ color: getTeamColor(l.teamId) }}>{l.name.charAt(0)}</span>
-              <div className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white p-0.5">
-                <Image src={getTeamLogo(l.teamId)} alt="" width={10} height={10} unoptimized className="object-contain" />
-              </div>
-            </div>
+            <PlayerAvatar name={l.name} teamId={l.teamId} size={36} />
             <span className="flex-1 text-sm text-text-primary">{l.name}</span>
             <span className="text-sm font-bold tabular-nums" style={{ color: getTeamColor(l.teamId) }}>{l.value}</span>
           </div>

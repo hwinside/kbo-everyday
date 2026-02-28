@@ -6,6 +6,7 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, Pencil } from "lucide-react";
 import { getTeamBySlug } from "@/lib/constants/teams";
+import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerById, getPlayerGameLog } from "@/lib/constants/players";
 import PlayerStatCard from "@/components/stats/PlayerStatCard";
 import PostList from "@/components/community/PostList";
@@ -85,6 +86,7 @@ export default function PlayerDetailPage() {
           >
             <ChevronLeft size={22} />
           </Link>
+          <PlayerAvatar name={player.name} teamId={team.id} number={player.number} size={56} />
           <h1 className="text-lg font-bold text-text-primary">{player.name}</h1>
         </div>
 
