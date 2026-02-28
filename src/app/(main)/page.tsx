@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { Bell, ChevronRight, Flame, Users } from "lucide-react";
 import Link from "next/link";
+import Image from "next/image";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { TEAMS } from "@/lib/constants/teams";
@@ -40,6 +41,14 @@ function getTeamShortName(teamId: number) {
 
 function getTeamColor(teamId: number) {
   return TEAMS.find((t) => t.id === teamId)?.colorPrimary ?? "#666";
+}
+
+function getTeamLogo(teamId: number) {
+  return TEAMS.find((t) => t.id === teamId)?.logoPath ?? "";
+}
+
+function getTeamName(teamId: number) {
+  return TEAMS.find((t) => t.id === teamId)?.name ?? "";
 }
 
 function StatusBadge({ status, inning }: { status: string; inning: string | null }) {
@@ -100,21 +109,27 @@ export default function HomePage() {
         <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto hide-scrollbar -mx-4 px-4">
           {MOCK_GAMES.map((game) => (
             <Link key={game.id} href={`/games/${game.id}`}>
-              <GlassCard pressable className="min-w-[200px] flex-shrink-0 snap-start p-3">
+              <GlassCard pressable className="w-[220px] flex-shrink-0 snap-start p-3 overflow-hidden">
                 <StatusBadge status={game.status} inning={game.inning} />
                 <div className="mt-2 flex items-center justify-between">
                   <div className="flex flex-col items-center gap-1">
-                    <span className="text-sm font-bold" style={{ color: getTeamColor(game.awayTeamId) }}>
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white p-1">
+                      <Image src={getTeamLogo(game.awayTeamId)} alt={getTeamName(game.awayTeamId)} width={24} height={24} unoptimized className="object-contain" />
+                    </div>
+                    <span className="text-xs font-bold" style={{ color: getTeamColor(game.awayTeamId) }}>
                       {getTeamShortName(game.awayTeamId)}
                     </span>
-                    <span className="text-2xl font-bold tabular-nums text-text-primary">{game.awayScore}</span>
+                    {game.status !== "scheduled" && <span className="text-2xl font-bold tabular-nums text-text-primary">{game.awayScore}</span>}
                   </div>
                   <span className="text-xs text-text-tertiary">vs</span>
                   <div className="flex flex-col items-center gap-1">
-                    <span className="text-sm font-bold" style={{ color: getTeamColor(game.homeTeamId) }}>
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white p-1">
+                      <Image src={getTeamLogo(game.homeTeamId)} alt={getTeamName(game.homeTeamId)} width={24} height={24} unoptimized className="object-contain" />
+                    </div>
+                    <span className="text-xs font-bold" style={{ color: getTeamColor(game.homeTeamId) }}>
                       {getTeamShortName(game.homeTeamId)}
                     </span>
-                    <span className="text-2xl font-bold tabular-nums text-text-primary">{game.homeScore}</span>
+                    {game.status !== "scheduled" && <span className="text-2xl font-bold tabular-nums text-text-primary">{game.homeScore}</span>}
                   </div>
                 </div>
                 <p className="mt-2 text-center text-[11px] text-text-tertiary">
@@ -134,9 +149,19 @@ export default function HomePage() {
             <Link key={pred.gameId} href="/predict">
               <GlassCard pressable className="p-3">
                 <div className="flex items-center justify-between text-sm font-semibold">
-                  <span style={{ color: getTeamColor(pred.awayTeamId) }}>{getTeamShortName(pred.awayTeamId)}</span>
+                  <span className="flex items-center gap-1.5" style={{ color: getTeamColor(pred.awayTeamId) }}>
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white p-0.5">
+                      <Image src={getTeamLogo(pred.awayTeamId)} alt={getTeamName(pred.awayTeamId)} width={18} height={18} unoptimized className="object-contain" />
+                    </span>
+                    {getTeamShortName(pred.awayTeamId)}
+                  </span>
                   <span className="text-xs text-text-tertiary">vs</span>
-                  <span style={{ color: getTeamColor(pred.homeTeamId) }}>{getTeamShortName(pred.homeTeamId)}</span>
+                  <span className="flex items-center gap-1.5" style={{ color: getTeamColor(pred.homeTeamId) }}>
+                    {getTeamShortName(pred.homeTeamId)}
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white p-0.5">
+                      <Image src={getTeamLogo(pred.homeTeamId)} alt={getTeamName(pred.homeTeamId)} width={18} height={18} unoptimized className="object-contain" />
+                    </span>
+                  </span>
                 </div>
                 {/* Prediction bar */}
                 <div className="mt-2 flex h-2.5 overflow-hidden rounded-full">

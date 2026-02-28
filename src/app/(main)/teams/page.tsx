@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
+import TeamLogo from "@/components/ui/TeamLogo";
 import { TEAMS } from "@/lib/constants/teams";
 
 const container = {
@@ -39,13 +40,7 @@ export default function TeamsPage() {
                 pressable
                 className="flex flex-col items-center justify-center gap-2 p-5"
               >
-                {/* Team logo placeholder */}
-                <div
-                  className="flex h-14 w-14 items-center justify-center rounded-full text-lg font-bold text-white"
-                  style={{ backgroundColor: team.colorPrimary }}
-                >
-                  {team.shortName.charAt(0)}
-                </div>
+                <TeamLogo team={team} size={56} />
                 <span className="text-sm font-semibold text-text-primary">
                   {team.name}
                 </span>

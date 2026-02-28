@@ -7,6 +7,7 @@ import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { getTeamById } from "@/lib/constants/teams";
+import TeamLogo from "@/components/ui/TeamLogo";
 import {
   getGameById,
   getInningsForGame,
@@ -111,15 +112,12 @@ export default function GameDetailPage() {
         <div className="flex items-center justify-center gap-4 px-4 py-3">
           {/* Away team */}
           <div className="flex items-center gap-2">
-            <div
-              className="h-10 w-10 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-lg"
-              style={{
-                backgroundColor: awayTeam.colorPrimary,
-                boxShadow: `0 0 20px ${awayTeam.colorPrimary}40`,
-              }}
-            >
-              {awayTeam.shortName.charAt(0)}
-            </div>
+            <TeamLogo
+              team={awayTeam}
+              size={40}
+              className="shadow-lg"
+              style={{ boxShadow: `0 0 20px ${awayTeam.colorPrimary}40` }}
+            />
             <span className="text-sm font-semibold text-text-primary">
               {awayTeam.shortName}
             </span>
@@ -158,15 +156,12 @@ export default function GameDetailPage() {
             <span className="text-sm font-semibold text-text-primary">
               {homeTeam.shortName}
             </span>
-            <div
-              className="h-10 w-10 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-lg"
-              style={{
-                backgroundColor: homeTeam.colorPrimary,
-                boxShadow: `0 0 20px ${homeTeam.colorPrimary}40`,
-              }}
-            >
-              {homeTeam.shortName.charAt(0)}
-            </div>
+            <TeamLogo
+              team={homeTeam}
+              size={40}
+              className="shadow-lg"
+              style={{ boxShadow: `0 0 20px ${homeTeam.colorPrimary}40` }}
+            />
           </div>
         </div>
 

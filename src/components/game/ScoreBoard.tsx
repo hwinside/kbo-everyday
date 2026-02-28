@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { clsx } from "clsx";
 import type { GameInning } from "@/lib/types";
 import { type TeamData } from "@/lib/constants/teams";
+import TeamLogo from "@/components/ui/TeamLogo";
 
 interface ScoreBoardProps {
   awayTeam: TeamData;
@@ -74,12 +75,7 @@ export default function ScoreBoard({
           <tr>
             <td className="py-1.5 text-left pl-1">
               <div className="flex items-center gap-1.5">
-                <div
-                  className="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
-                  style={{ backgroundColor: awayTeam.colorPrimary }}
-                >
-                  {awayTeam.shortName.charAt(0)}
-                </div>
+                <TeamLogo team={awayTeam} size={20} />
                 <span className="font-semibold text-text-primary text-[11px]">
                   {awayTeam.shortName}
                 </span>
@@ -120,12 +116,7 @@ export default function ScoreBoard({
           <tr>
             <td className="py-1.5 text-left pl-1">
               <div className="flex items-center gap-1.5">
-                <div
-                  className="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
-                  style={{ backgroundColor: homeTeam.colorPrimary }}
-                >
-                  {homeTeam.shortName.charAt(0)}
-                </div>
+                <TeamLogo team={homeTeam} size={20} />
                 <span className="font-semibold text-text-primary text-[11px]">
                   {homeTeam.shortName}
                 </span>

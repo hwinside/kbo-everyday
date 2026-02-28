@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Clock, Lock, Users } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
+import TeamLogo from "@/components/ui/TeamLogo";
 import { getTeamById } from "@/lib/constants/teams";
 import type { PredictionMock } from "@/lib/constants/predictions";
 
@@ -98,7 +99,9 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
                 : {}
             }
             transition={{ duration: 0.3 }}
+            className="flex flex-col items-center"
           >
+            <TeamLogo team={awayTeam} size={36} className="mb-1" />
             <div
               className="text-lg font-bold"
               style={{
@@ -143,7 +146,9 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
                 : {}
             }
             transition={{ duration: 0.3 }}
+            className="flex flex-col items-center"
           >
+            <TeamLogo team={homeTeam} size={36} className="mb-1" />
             <div
               className="text-lg font-bold"
               style={{

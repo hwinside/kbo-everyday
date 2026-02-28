@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import type { PlayerSeasonStats } from "@/lib/types";
 import { POSITION_LABELS, getSeasonHighlights } from "@/lib/constants/players";
+import { getTeamById } from "@/lib/constants/teams";
 import RadarChart from "./RadarChart";
 import TrendChart from "./TrendChart";
 import type { PlayerGameLog, PitcherGameLog } from "@/lib/constants/players";
@@ -43,9 +44,11 @@ export default function PlayerStatCard({
         <div className="flex items-center gap-4">
           <div
             className="flex h-16 w-16 items-center justify-center rounded-2xl text-xl font-bold text-white"
-            style={{ backgroundColor: teamColor }}
+            style={{
+              background: `linear-gradient(135deg, ${teamColor}, ${getTeamById(player.teamId)?.colorSecondary ?? teamColor})`,
+            }}
           >
-            #{player.number}
+            {player.number}
           </div>
           <div>
             <h2 className="text-xl font-bold text-text-primary">{player.name}</h2>

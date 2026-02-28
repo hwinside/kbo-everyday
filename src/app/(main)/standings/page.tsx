@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import { TEAMS } from "@/lib/constants/teams";
+import TeamLogo from "@/components/ui/TeamLogo";
 import type { TeamStanding } from "@/lib/types";
 
 const MOCK_STANDINGS: TeamStanding[] = [
@@ -71,12 +72,7 @@ export default function StandingsPage() {
                   </td>
                   <td className="py-2.5 pl-2">
                     <div className="flex items-center gap-1.5">
-                      <div
-                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white"
-                        style={{ backgroundColor: team.colorPrimary }}
-                      >
-                        {team.shortName.charAt(0)}
-                      </div>
+                      <TeamLogo team={team} size={20} />
                       <span className="font-medium text-text-primary whitespace-nowrap">
                         {team.shortName}
                       </span>

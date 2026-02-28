@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import GlassCard from "@/components/ui/GlassCard";
+import TeamLogo from "@/components/ui/TeamLogo";
 import { getTeamById } from "@/lib/constants/teams";
 import { MOCK_GAMES } from "@/lib/constants/games";
 
@@ -60,15 +61,12 @@ export default function GamesPage() {
                   {/* Teams and scores */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <div
-                        className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white shadow-md"
-                        style={{
-                          backgroundColor: away.colorPrimary,
-                          boxShadow: game.status === "live" ? `0 0 12px ${away.colorPrimary}40` : undefined,
-                        }}
-                      >
-                        {away.shortName.charAt(0)}
-                      </div>
+                      <TeamLogo
+                        team={away}
+                        size={40}
+                        className="shadow-md"
+                        style={game.status === "live" ? { boxShadow: `0 0 12px ${away.colorPrimary}40` } : undefined}
+                      />
                       <span className="text-sm font-semibold text-text-primary">{away.shortName}</span>
                     </div>
                     <div className="flex items-center gap-3 text-2xl font-bold tabular-nums">
@@ -84,15 +82,12 @@ export default function GamesPage() {
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="text-sm font-semibold text-text-primary">{home.shortName}</span>
-                      <div
-                        className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white shadow-md"
-                        style={{
-                          backgroundColor: home.colorPrimary,
-                          boxShadow: game.status === "live" ? `0 0 12px ${home.colorPrimary}40` : undefined,
-                        }}
-                      >
-                        {home.shortName.charAt(0)}
-                      </div>
+                      <TeamLogo
+                        team={home}
+                        size={40}
+                        className="shadow-md"
+                        style={game.status === "live" ? { boxShadow: `0 0 12px ${home.colorPrimary}40` } : undefined}
+                      />
                     </div>
                   </div>
                 </GlassCard>

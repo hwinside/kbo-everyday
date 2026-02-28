@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ChevronRight, Newspaper, Users, MessageSquare, Play } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
+import TeamLogo from "@/components/ui/TeamLogo";
 import { getTeamById } from "@/lib/constants/teams";
 import { LG_BATTERS, POSITION_LABELS } from "@/lib/constants/players";
 
@@ -74,12 +75,7 @@ export default function MyTeamPage() {
         }}
       >
         <div className="flex items-center gap-4 py-4">
-          <div
-            className="flex h-16 w-16 items-center justify-center rounded-2xl text-lg font-bold text-white shadow-lg"
-            style={{ backgroundColor: team.colorPrimary }}
-          >
-            {team.shortName}
-          </div>
+          <TeamLogo team={team} size={64} className="shadow-lg" />
           <div>
             <h1 className="text-xl font-bold text-text-primary">{team.name}</h1>
             <div className="mt-1 flex items-center gap-2 text-sm text-text-secondary">
@@ -143,7 +139,9 @@ export default function MyTeamPage() {
                 <div className="flex items-center gap-3">
                   <div
                     className="flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold text-white"
-                    style={{ backgroundColor: team.colorPrimary }}
+                    style={{
+                      background: `linear-gradient(135deg, ${team.colorPrimary}, ${team.colorSecondary})`,
+                    }}
                   >
                     SP
                   </div>

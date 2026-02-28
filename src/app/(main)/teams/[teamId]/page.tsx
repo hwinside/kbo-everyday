@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, Pencil } from "lucide-react";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import GlassCard from "@/components/ui/GlassCard";
+import TeamLogo from "@/components/ui/TeamLogo";
 import PostList from "@/components/community/PostList";
 import WritePost from "@/components/community/WritePost";
 import {
@@ -110,12 +111,7 @@ export default function TeamBoardPage() {
             <ChevronLeft size={22} />
           </Link>
           <div className="flex items-center gap-2">
-            <div
-              className="flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold text-white"
-              style={{ backgroundColor: team.colorPrimary }}
-            >
-              {team.shortName.charAt(0)}
-            </div>
+            <TeamLogo team={team} size={32} />
             <h1 className="text-lg font-bold text-text-primary">{team.name}</h1>
           </div>
         </div>
@@ -199,10 +195,12 @@ export default function TeamBoardPage() {
                               <div className="flex items-center gap-3">
                                 {/* Player avatar placeholder */}
                                 <div
-                                  className="flex h-10 w-10 items-center justify-center rounded-xl text-xs font-bold text-white"
-                                  style={{ backgroundColor: team.colorPrimary }}
+                                  className="flex h-10 w-10 items-center justify-center rounded-xl text-sm font-bold text-white"
+                                  style={{
+                                    background: `linear-gradient(135deg, ${team.colorPrimary}, ${team.colorSecondary})`,
+                                  }}
                                 >
-                                  #{player.number}
+                                  {player.number}
                                 </div>
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2">

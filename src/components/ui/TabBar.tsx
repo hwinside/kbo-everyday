@@ -2,8 +2,10 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { clsx } from "clsx";
 import { Home, Gamepad2, BarChart3, User, Circle, type LucideIcon } from "lucide-react";
+import { getTeamById } from "@/lib/constants/teams";
 
 const MY_TEAM_ID = 1; // LG 트윈스 (목업)
 
@@ -47,15 +49,28 @@ export default function TabBar() {
             >
               {tab.isMyTeam ? (
                 MY_TEAM_ID ? (
-                  <div
-                    className={clsx(
-                      "flex h-[22px] w-[22px] items-center justify-center rounded-full text-[9px] font-bold text-white",
-                      active && "ring-2 ring-accent ring-offset-1 ring-offset-bg-primary",
-                    )}
-                    style={{ backgroundColor: "#C60C30" }}
-                  >
-                    LG
-                  </div>
+                  (() => {
+                    const myTeam = getTeamById(MY_TEAM_ID);
+                    return myTeam ? (
+                      <div
+                        className={clsx(
+                          "flex h-[22px] w-[22px] items-center justify-center rounded-full bg-white p-0.5",
+                          active && "ring-2 ring-accent ring-offset-1 ring-offset-bg-primary",
+                        )}
+                      >
+                        <Image
+                          src={myTeam.logoPath}
+                          alt={myTeam.name}
+                          width={18}
+                          height={18}
+                          unoptimized
+                          className="object-contain"
+                        />
+                      </div>
+                    ) : (
+                      <Circle size={22} strokeWidth={active ? 2.5 : 1.5} />
+                    );
+                  })()
                 ) : (
                   <Circle size={22} strokeWidth={active ? 2.5 : 1.5} />
                 )
