@@ -4,6 +4,7 @@ import { clsx } from "clsx";
 import { type TeamData } from "@/lib/constants/teams";
 import type { GameLineup } from "@/lib/constants/games";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
+import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 
 interface LineupTabProps {
   lineup: GameLineup;
@@ -102,7 +103,7 @@ export default function LineupTab({
                   </td>
                   <td className="py-2">
                     <div className="flex items-center gap-1.5">
-                      <PlayerAvatar name={away.name} teamId={lineup.away.teamId} size={20} showTeamBadge={false} />
+                      <PlayerAvatar name={away.name} teamId={lineup.away.teamId} photoUrl={getPlayerPhotoUrl(away.name)} size={20} showTeamBadge={false} />
                       <span className="text-[10px] text-text-tertiary w-5">
                         {away.position}
                       </span>
@@ -128,7 +129,7 @@ export default function LineupTab({
                       <span className="text-[10px] text-text-tertiary w-5 text-right">
                         {home.position}
                       </span>
-                      <PlayerAvatar name={home.name} teamId={lineup.home.teamId} size={20} showTeamBadge={false} />
+                      <PlayerAvatar name={home.name} teamId={lineup.home.teamId} photoUrl={getPlayerPhotoUrl(home.name)} size={20} showTeamBadge={false} />
                     </div>
                   </td>
                   <td className="py-2 text-right text-text-tertiary tabular-nums">

@@ -6,6 +6,7 @@ import { clsx } from "clsx";
 import { TEAMS } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
+import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import type { TeamStanding } from "@/lib/types";
 
 const MOCK_STANDINGS: TeamStanding[] = [
@@ -138,7 +139,7 @@ function LeaderSection({ title, leaders }: { title: string; leaders: TitleLeader
             )}>
               {l.rank}
             </span>
-            <PlayerAvatar name={l.name} teamId={l.teamId} size={36} />
+            <PlayerAvatar name={l.name} teamId={l.teamId} photoUrl={getPlayerPhotoUrl(l.name)} size={36} />
             <span className="flex-1 text-sm text-text-primary">{l.name}</span>
             <span className="text-sm font-bold tabular-nums" style={{ color: getTeamColor(l.teamId) }}>{l.value}</span>
           </div>

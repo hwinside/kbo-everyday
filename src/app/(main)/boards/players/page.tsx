@@ -5,6 +5,7 @@ import { ArrowLeft, TrendingUp } from "lucide-react";
 import Link from "next/link";
 import GlassCard from "@/components/ui/GlassCard";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
+import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
 
 const MOCK_PLAYER_BOARD_RANKING = [
@@ -65,7 +66,7 @@ export default function PlayerBoardRankingPage() {
                   }`}>
                     {player.rank}
                   </span>
-                  <PlayerAvatar name={player.name} teamId={player.teamId} size={36} />
+                  <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} size={36} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span className="text-sm font-semibold text-text-primary">{player.name}</span>

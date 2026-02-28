@@ -8,6 +8,7 @@ import { ChevronLeft, Pencil } from "lucide-react";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import GlassCard from "@/components/ui/GlassCard";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
+import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import TeamLogo from "@/components/ui/TeamLogo";
 import PostList from "@/components/community/PostList";
 import WritePost from "@/components/community/WritePost";
@@ -194,7 +195,7 @@ export default function TeamBoardPage() {
                           >
                             <GlassCard pressable className="!p-3">
                               <div className="flex items-center gap-3">
-                                <PlayerAvatar name={player.name} teamId={team.id} number={player.number} size={40} showTeamBadge={false} />
+                                <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={40} showTeamBadge={false} />
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2">
                                     <span className="text-sm font-bold text-text-primary">

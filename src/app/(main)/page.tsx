@@ -6,6 +6,7 @@ import Link from "next/link";
 import Image from "next/image";
 import GlassCard from "@/components/ui/GlassCard";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
+import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { TEAMS } from "@/lib/constants/teams";
 import { MOCK_PREDICTIONS } from "@/lib/constants/predictions";
@@ -273,7 +274,7 @@ export default function HomePage() {
                 }`}>
                   {i + 1}
                 </span>
-                <PlayerAvatar name={player.name} teamId={player.teamId} size={32} />
+                <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} size={32} />
                 <div className="flex-1 min-w-0">
                   <span className="text-sm font-semibold text-text-primary">{player.name}</span>
                   <span className="ml-1.5 text-[11px] text-text-tertiary">{player.teamName}</span>

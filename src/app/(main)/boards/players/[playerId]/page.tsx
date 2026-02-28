@@ -7,6 +7,7 @@ import { ArrowLeft, Heart, MessageCircle, Share2, PenLine } from "lucide-react";
 import Link from "next/link";
 import GlassCard from "@/components/ui/GlassCard";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
+import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
 
 const PLAYER_DATA: Record<string, { name: string; teamId: number; number: number; position: string; totalPosts: number }> = {
@@ -71,7 +72,7 @@ export default function PlayerBoardPage() {
           <Link href="/boards/players" className="p-1 -ml-1">
             <ArrowLeft className="w-5 h-5 text-text-secondary" />
           </Link>
-          <PlayerAvatar name={player.name} teamId={player.teamId} number={player.number} size={48} />
+          <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={48} />
           <div className="flex-1">
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-bold text-text-primary">{player.name}</h1>
