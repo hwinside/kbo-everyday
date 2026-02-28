@@ -120,7 +120,7 @@ export default function HomePage() {
         <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto hide-scrollbar -mx-5 px-5">
           {MOCK_GAMES.map((game) => (
             <Link key={game.id} href={`/games/${game.id}`}>
-              <GlassCard pressable className="w-[210px] h-[160px] flex-shrink-0 snap-start p-5 flex flex-col justify-between">
+              <GlassCard pressable className="w-[220px] h-[190px] flex-shrink-0 snap-start p-5 flex flex-col justify-between">
                 <StatusBadge status={game.status} inning={game.inning} />
                 <div className="flex items-center justify-between flex-1">
                   <div className="flex flex-col items-center gap-1 flex-1">
