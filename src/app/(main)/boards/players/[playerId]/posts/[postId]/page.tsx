@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { ChevronLeft, Heart, MessageCircle, Share2, MoreHorizontal, Send } from "lucide-react";
 import Image from "next/image";
-import { getTeamColor, getTeamName } from "@/lib/constants/teams";
+import { getTeamById } from "@/lib/constants/teams";
 import TeamBadge from "@/components/ui/TeamBadge";
 
 const MOCK_POST = {
@@ -45,7 +45,7 @@ export default function PostDetailPage() {
   const [comments, setComments] = useState(MOCK_POST.comments);
 
   const post = MOCK_POST;
-  const teamColor = getTeamColor(post.teamId);
+  const teamColor = getTeamById(post.teamId)?.colorPrimary ?? "#666";
 
   function handleLike() {
     setLiked(!liked);
