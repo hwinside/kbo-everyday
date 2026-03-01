@@ -156,7 +156,7 @@ export default function HomePage() {
     >
       {/* Header */}
       <motion.header variants={item} className="flex items-center justify-between py-5">
-        <h1 className="text-xl font-bold text-text-primary">크보 에브리데이</h1>
+        <img src="/logo.png" alt="크보 에브리데이" style={{height: "100px", objectFit: "contain"}} />
         <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
           <Bell size={24} />
         </button>
