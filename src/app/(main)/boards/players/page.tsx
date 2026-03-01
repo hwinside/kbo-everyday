@@ -66,18 +66,18 @@ export default function PlayerBoardRankingPage() {
                   }`}>
                     {player.rank}
                   </span>
-                  <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} size={52} />
+                  <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} size={44} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-base font-semibold text-text-primary">{player.name}</span>
-                      <span className="text-base px-1.5 py-0.5 rounded-full" style={{ backgroundColor: getTeamColor(player.teamId) + "20", color: getTeamColor(player.teamId) }}>
+                      <span className="text-sm font-semibold text-text-primary whitespace-nowrap">{player.name}</span>
+                      <span className="text-xs px-1.5 py-0.5 rounded-full whitespace-nowrap" style={{ backgroundColor: getTeamColor(player.teamId) + "20", color: getTeamColor(player.teamId) }}>
                         {getTeamShortName(player.teamId)}
                       </span>
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-base font-bold text-accent">오늘 {player.postsToday}글</div>
-                    <div className="text-base text-text-tertiary">총 {player.totalPosts.toLocaleString()}글</div>
+                    <div className="text-sm font-bold text-accent whitespace-nowrap">오늘 {player.postsToday}글</div>
+                    <div className="text-xs text-text-tertiary whitespace-nowrap">총 {player.totalPosts.toLocaleString()}글</div>
                   </div>
                   <span className="text-lg w-5 text-center">
                     {player.trend === "up" ? "🔥" : player.trend === "down" ? "📉" : "➖"}
