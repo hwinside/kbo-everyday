@@ -43,7 +43,7 @@ export default function TabBar() {
               key={tab.href}
               href={tab.href}
               className={clsx(
-                "flex flex-col items-center gap-1.5 px-3 py-3 transition-colors",
+                "flex flex-col items-center gap-0.5 px-3 py-1.5 transition-colors",
                 active ? "text-accent" : "text-text-secondary",
               )}
             >
@@ -54,30 +54,30 @@ export default function TabBar() {
                     return myTeam ? (
                       <div
                         className={clsx(
-                          "flex h-[30px] w-[30px] items-center justify-center rounded-full bg-white p-0.5",
+                          "flex h-[24px] w-[24px] items-center justify-center rounded-full bg-white p-0.5",
                           active && "ring-2 ring-accent ring-offset-1 ring-offset-bg-primary",
                         )}
                       >
                         <Image
                           src={myTeam.logoPath}
                           alt={myTeam.name}
-                          width={24}
-                          height={24}
+                          width={18}
+                          height={18}
                           unoptimized
                           className="object-contain"
                         />
                       </div>
                     ) : (
-                      <Circle size={28} strokeWidth={active ? 2.5 : 1.5} />
+                      <Circle size={22} strokeWidth={active ? 2.5 : 1.5} />
                     );
                   })()
                 ) : (
-                  <Circle size={28} strokeWidth={active ? 2.5 : 1.5} />
+                  <Circle size={22} strokeWidth={active ? 2.5 : 1.5} />
                 )
               ) : (
-                Icon && <Icon size={28} strokeWidth={active ? 2.5 : 1.5} />
+                Icon && <Icon size={22} strokeWidth={active ? 2.5 : 1.5} />
               )}
-              <span className="text-base font-medium">{tab.label}</span>
+              <span className="text-xs font-medium">{tab.label}</span>
             </Link>
           );
         })}
