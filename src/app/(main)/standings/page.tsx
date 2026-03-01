@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { clsx } from "clsx";
 import { TEAMS } from "@/lib/constants/teams";
@@ -151,6 +152,7 @@ function LeaderSection({ title, leaders }: { title: string; leaders: TitleLeader
 }
 
 export default function StandingsPage() {
+  const router = useRouter();
   const [mainTab, setMainTab] = useState<MainTab>("team");
 
   return (
@@ -206,8 +208,9 @@ export default function StandingsPage() {
                 const team = getTeam(standing.teamId);
                 const isMyTeam = standing.teamId === 1;
                 return (
-                  <Link key={standing.teamId} href={`/teams/${standing.teamId}`} className="contents">
                   <motion.tr
+                    key={standing.teamId}
+                    onClick={() => router.push(`/teams/${standing.teamId}`)}
                     initial={{ opacity: 0, x: -8 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.03 }}
@@ -227,7 +230,6 @@ export default function StandingsPage() {
                     <td className="py-2.5 text-center tabular-nums font-semibold text-text-primary">{standing.pct.toFixed(3).slice(1)}</td>
                     <td className="py-2.5 text-center tabular-nums text-text-secondary">{standing.gb === 0 ? "-" : standing.gb}</td>
                   </motion.tr>
-                  </Link>
                 );
               })}
             </tbody>
