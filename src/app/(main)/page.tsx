@@ -1,11 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { Bell, ChevronRight, Flame, Users } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import GlassCard from "@/components/ui/GlassCard";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
+import AIAnalysis from "@/components/game/AIAnalysis";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { TEAMS } from "@/lib/constants/teams";
@@ -36,7 +38,8 @@ const MOCK_POPULAR_POSTS = [
   { id: 3, title: "신인 드래프트 1순위 분석", boardId: "samsung", author: "야구박사", likeCount: 31, commentCount: 12, teamId: 8 },
 ];
 
-const container = {
+
+  const container = {
   hidden: {},
   show: { transition: { staggerChildren: 0.06 } },
 };
@@ -94,12 +97,14 @@ function SectionHeader({ title, href, icon }: { title: string; href: string; ico
 }
 
 export default function HomePage() {
+  const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number} | null>(null);
   // Show first 2 predictions for preview
   const previewPredictions = MOCK_PREDICTIONS.filter((p) => p.status === "open").slice(0, 2);
   // Show first 3 news
   const previewNews = MOCK_NEWS.slice(0, 3);
 
   return (
+    <>
     <motion.div
       variants={container}
       initial="hidden"
@@ -146,6 +151,12 @@ export default function HomePage() {
                 <p className="text-center text-base text-text-tertiary">
                   {game.time} · {game.stadium}
                 </p>
+                <button
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setAiGame({ awayTeamId: game.awayTeamId, homeTeamId: game.homeTeamId }); }}
+                  className="mt-2 w-full flex items-center justify-center gap-1 py-1 rounded-lg bg-accent/10 text-accent text-xs font-semibold"
+                >
+                  🤖 AI훈수
+                </button>
               </GlassCard>
             </Link>
           ))}
@@ -294,5 +305,16 @@ export default function HomePage() {
       {/* Bottom spacer */}
       <div className="h-4" />
     </motion.div>
+
+      {/* AI Analysis Modal */}
+      {aiGame && (
+        <AIAnalysis
+          isOpen={true}
+          onClose={() => setAiGame(null)}
+          awayTeamId={aiGame.awayTeamId}
+          homeTeamId={aiGame.homeTeamId}
+        />
+      )}
+    </>
   );
 }
