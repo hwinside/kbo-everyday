@@ -7,6 +7,7 @@ import { Heart, MessageCircle, Share2, ChevronUp, Volume2, VolumeX } from "lucid
 import { getTeamById } from "@/lib/constants/teams";
 import { HIGHLIGHTS, rankHighlights, type Highlight } from "@/lib/constants/highlights";
 import { getMyTeamId } from "@/lib/store/myteam";
+import { getFavoritePlayers } from "@/lib/store/favorites";
 
 function ReelSlide({
   reel,
@@ -121,7 +122,8 @@ export default function HighlightsPage() {
 
   useEffect(() => {
     const teamId = getMyTeamId();
-    setFeed(rankHighlights(HIGHLIGHTS, teamId));
+    const favNames = getFavoritePlayers().map(p => p.name);
+    setFeed(rankHighlights(HIGHLIGHTS, teamId, favNames));
   }, []);
 
   const handleScroll = useCallback(() => {
