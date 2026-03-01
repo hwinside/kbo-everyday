@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import Link from "next/link";
 import { clsx } from "clsx";
 import { type TeamData } from "@/lib/constants/teams";
 import type {
@@ -265,7 +266,11 @@ export default function GameStatsTab({
                               : undefined
                         }
                       >
-                        {String(b[col.key])}
+                        {isName ? (
+                          <Link href={`/boards/players/${b.name}`} className="hover:underline">
+                            {String(b[col.key])}
+                          </Link>
+                        ) : String(b[col.key])}
                       </td>
                     );
                   })}
