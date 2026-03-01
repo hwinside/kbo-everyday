@@ -155,8 +155,8 @@ export default function HomePage() {
       className="mx-auto max-w-lg px-5 pt-safe"
     >
       {/* Header */}
-      <motion.header variants={item} className="flex items-center justify-between py-3">
-        <img src="/logo.png" alt="크보 에브리데이" style={{height: "64px", objectFit: "contain"}} />
+      <motion.header variants={item} className="flex items-center justify-between py-1">
+        <img src="/logo.png" alt="크보 에브리데이" style={{height: "120px", objectFit: "contain"}} />
         <div className="flex items-center gap-1">
           <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
             <Bell size={22} />
@@ -169,7 +169,7 @@ export default function HomePage() {
 
       {/* ===== My Team Hero ===== */}
       {myTeam && myTeamGame && (
-        <div className="mb-5">
+        <div className="mb-3">
           <Link href={`/games/${myTeamGame.id}`}>
             <div
               className="relative rounded-2xl p-5 overflow-hidden border border-white/10 bg-bg-secondary"
@@ -222,7 +222,7 @@ export default function HomePage() {
       )}
 
       {/* ===== News Carousel ===== */}
-      <div className="mb-5">
+      <div className="mb-3">
         <NewsCarousel news={myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 5) : MOCK_NEWS} />
       </div>
 
