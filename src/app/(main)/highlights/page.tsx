@@ -90,10 +90,10 @@ export default function HighlightsPage() {
               key={reel.id}
               className="relative h-full w-full snap-start snap-always flex items-center justify-center"
             >
-              {/* YouTube embed (only active slide) */}
-              {isActive ? (
+              {/* YouTube embed — autoplay on active, preload neighbors */}
+              {Math.abs(idx - currentIdx) <= 1 ? (
                 <iframe
-                  src={`https://www.youtube.com/embed/${reel.youtubeId}?autoplay=1&mute=${muted ? 1 : 0}&loop=1&playlist=${reel.youtubeId}&controls=0&modestbranding=1&rel=0&playsinline=1`}
+                  src={`https://www.youtube.com/embed/${reel.youtubeId}?autoplay=${isActive ? 1 : 0}&mute=${muted ? 1 : 0}&loop=1&playlist=${reel.youtubeId}&controls=0&modestbranding=1&rel=0&playsinline=1&enablejsapi=1`}
                   title={reel.title}
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
@@ -101,7 +101,6 @@ export default function HighlightsPage() {
                   style={{ border: "none" }}
                 />
               ) : (
-                /* Thumbnail for non-active */
                 <img
                   src={reel.thumbnail}
                   alt=""
