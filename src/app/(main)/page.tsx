@@ -265,7 +265,7 @@ export default function HomePage() {
                   {i + 1}
                 </span>
                 <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} size={64} />
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 min-w-0 whitespace-nowrap">
                   <span className="text-base font-semibold text-text-primary">{player.name}</span>
                   <span className="ml-1.5 text-base text-text-tertiary">{player.teamName}</span>
                 </div>
