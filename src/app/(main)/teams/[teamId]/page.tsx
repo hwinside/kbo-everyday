@@ -124,7 +124,7 @@ export default function TeamBoardPage() {
 
       {/* Team News Carousel */}
       <div className="mb-2">
-        <NewsCarousel news={MOCK_NEWS.filter(n => n.teamId === team.id || n.teamId === null).slice(0, 5)} />
+        <NewsCarousel news={MOCK_NEWS.filter(n => n.teamId === team.id).slice(0, 5)} />
       </div>
 
       <div className="px-5 pb-5">
