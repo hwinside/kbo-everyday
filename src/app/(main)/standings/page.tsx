@@ -30,82 +30,83 @@ interface TitleLeader {
   rank: number;
   name: string;
   teamId: number;
+  playerId?: string;
   value: string;
 }
 
 const BATTER_TITLES: { id: TitleCategory; label: string; leaders: TitleLeader[] }[] = [
   { id: "avg", label: "타율", leaders: [
-    { rank: 1, name: "구자욱", teamId: 8, value: ".348" },
-    { rank: 2, name: "오스틴", teamId: 1, value: ".341" },
-    { rank: 3, name: "김도영", teamId: 6, value: ".335" },
-    { rank: 4, name: "나성범", teamId: 3, value: ".328" },
-    { rank: 5, name: "이정후", teamId: 10, value: ".322" },
+    { rank: 1, name: "구자욱", teamId: 8, value: ".348", playerId: "62404" },
+    { rank: 2, name: "오스틴", teamId: 1, value: ".341", playerId: "53123" },
+    { rank: 3, name: "김도영", teamId: 6, value: ".335", playerId: "52605" },
+    { rank: 4, name: "나성범", teamId: 3, value: ".328", playerId: "62947" },
+    { rank: 5, name: "이정후", teamId: 10, value: ".322", playerId: "67341" },
   ]},
   { id: "hr", label: "홈런", leaders: [
-    { rank: 1, name: "오스틴", teamId: 1, value: "35" },
-    { rank: 2, name: "페르난데스", teamId: 4, value: "32" },
-    { rank: 3, name: "김도영", teamId: 6, value: "28" },
-    { rank: 4, name: "나성범", teamId: 3, value: "25" },
-    { rank: 5, name: "최형우", teamId: 6, value: "23" },
+    { rank: 1, name: "오스틴", teamId: 1, value: "35", playerId: "53123" },
+    { rank: 2, name: "페르난데스", teamId: 4, value: "32", playerId: "54400" },
+    { rank: 3, name: "김도영", teamId: 6, value: "28", playerId: "52605" },
+    { rank: 4, name: "나성범", teamId: 3, value: "25", playerId: "62947" },
+    { rank: 5, name: "최형우", teamId: 6, value: "23", playerId: "72443" },
   ]},
   { id: "rbi", label: "타점", leaders: [
-    { rank: 1, name: "오스틴", teamId: 1, value: "108" },
-    { rank: 2, name: "김도영", teamId: 6, value: "98" },
-    { rank: 3, name: "페르난데스", teamId: 4, value: "95" },
-    { rank: 4, name: "구자욱", teamId: 8, value: "87" },
-    { rank: 5, name: "김하성", teamId: 2, value: "82" },
+    { rank: 1, name: "오스틴", teamId: 1, value: "108", playerId: "53123" },
+    { rank: 2, name: "김도영", teamId: 6, value: "98", playerId: "52605" },
+    { rank: 3, name: "페르난데스", teamId: 4, value: "95", playerId: "54400" },
+    { rank: 4, name: "구자욱", teamId: 8, value: "87", playerId: "62404" },
+    { rank: 5, name: "김하성", teamId: 2, value: "82", playerId: "64300" },
   ]},
   { id: "hits", label: "안타", leaders: [
-    { rank: 1, name: "구자욱", teamId: 8, value: "178" },
-    { rank: 2, name: "김도영", teamId: 6, value: "172" },
-    { rank: 3, name: "이정후", teamId: 10, value: "168" },
-    { rank: 4, name: "오스틴", teamId: 1, value: "165" },
-    { rank: 5, name: "나성범", teamId: 3, value: "158" },
+    { rank: 1, name: "구자욱", teamId: 8, value: "178", playerId: "62404" },
+    { rank: 2, name: "김도영", teamId: 6, value: "172", playerId: "52605" },
+    { rank: 3, name: "이정후", teamId: 10, value: "168", playerId: "67341" },
+    { rank: 4, name: "오스틴", teamId: 1, value: "165", playerId: "53123" },
+    { rank: 5, name: "나성범", teamId: 3, value: "158", playerId: "62947" },
   ]},
   { id: "sb", label: "도루", leaders: [
-    { rank: 1, name: "김도영", teamId: 6, value: "42" },
-    { rank: 2, name: "이정후", teamId: 10, value: "28" },
-    { rank: 3, name: "박동원", teamId: 1, value: "22" },
-    { rank: 4, name: "한석현", teamId: 7, value: "20" },
-    { rank: 5, name: "김하성", teamId: 2, value: "18" },
+    { rank: 1, name: "김도영", teamId: 6, value: "42", playerId: "52605" },
+    { rank: 2, name: "이정후", teamId: 10, value: "28", playerId: "67341" },
+    { rank: 3, name: "박동원", teamId: 1, value: "22", playerId: "76305" },
+    { rank: 4, name: "한석현", teamId: 7, value: "20", playerId: "51897" },
+    { rank: 5, name: "김하성", teamId: 2, value: "18", playerId: "64300" },
   ]},
 ];
 
 const PITCHER_TITLES: { id: TitleCategory; label: string; leaders: TitleLeader[] }[] = [
   { id: "era", label: "평균자책", leaders: [
-    { rank: 1, name: "양현종", teamId: 6, value: "2.45" },
-    { rank: 2, name: "안우진", teamId: 6, value: "2.68" },
-    { rank: 3, name: "문동주", teamId: 9, value: "2.87" },
-    { rank: 4, name: "소형준", teamId: 5, value: "3.12" },
-    { rank: 5, name: "이의리", teamId: 2, value: "3.24" },
+    { rank: 1, name: "양현종", teamId: 6, value: "2.45", playerId: "75645" },
+    { rank: 2, name: "안우진", teamId: 6, value: "2.68", playerId: "68341" },
+    { rank: 3, name: "문동주", teamId: 9, value: "2.87", playerId: "51344" },
+    { rank: 4, name: "소형준", teamId: 5, value: "3.12", playerId: "50662" },
+    { rank: 5, name: "이의리", teamId: 2, value: "3.24", playerId: "51648" },
   ]},
   { id: "wins", label: "다승", leaders: [
-    { rank: 1, name: "안우진", teamId: 6, value: "16" },
-    { rank: 2, name: "양현종", teamId: 6, value: "15" },
-    { rank: 3, name: "소형준", teamId: 5, value: "14" },
-    { rank: 4, name: "문동주", teamId: 9, value: "13" },
-    { rank: 5, name: "이의리", teamId: 2, value: "12" },
+    { rank: 1, name: "안우진", teamId: 6, value: "16", playerId: "68341" },
+    { rank: 2, name: "양현종", teamId: 6, value: "15", playerId: "75645" },
+    { rank: 3, name: "소형준", teamId: 5, value: "14", playerId: "50662" },
+    { rank: 4, name: "문동주", teamId: 9, value: "13", playerId: "51344" },
+    { rank: 5, name: "이의리", teamId: 2, value: "12", playerId: "51648" },
   ]},
   { id: "so", label: "탈삼진", leaders: [
-    { rank: 1, name: "안우진", teamId: 6, value: "198" },
-    { rank: 2, name: "문동주", teamId: 9, value: "185" },
-    { rank: 3, name: "소형준", teamId: 5, value: "172" },
-    { rank: 4, name: "이의리", teamId: 2, value: "164" },
-    { rank: 5, name: "양현종", teamId: 6, value: "148" },
+    { rank: 1, name: "안우진", teamId: 6, value: "198", playerId: "68341" },
+    { rank: 2, name: "문동주", teamId: 9, value: "185", playerId: "51344" },
+    { rank: 3, name: "소형준", teamId: 5, value: "172", playerId: "50662" },
+    { rank: 4, name: "이의리", teamId: 2, value: "164", playerId: "51648" },
+    { rank: 5, name: "양현종", teamId: 6, value: "148", playerId: "75645" },
   ]},
   { id: "saves", label: "세이브", leaders: [
-    { rank: 1, name: "정우영", teamId: 1, value: "38" },
-    { rank: 2, name: "박영현", teamId: 6, value: "34" },
-    { rank: 3, name: "고우석", teamId: 2, value: "31" },
-    { rank: 4, name: "이승현", teamId: 8, value: "28" },
-    { rank: 5, name: "조상우", teamId: 3, value: "25" },
+    { rank: 1, name: "정우영", teamId: 1, value: "38", playerId: "69159" },
+    { rank: 2, name: "박영현", teamId: 6, value: "34", playerId: "50106" },
+    { rank: 3, name: "고우석", teamId: 2, value: "31", playerId: "67119" },
+    { rank: 4, name: "이승현", teamId: 8, value: "28", playerId: "51454" },
+    { rank: 5, name: "조상우", teamId: 3, value: "25", playerId: "50859" },
   ]},
   { id: "holds", label: "홀드", leaders: [
-    { rank: 1, name: "김진욱", teamId: 9, value: "28" },
-    { rank: 2, name: "최원준", teamId: 4, value: "25" },
-    { rank: 3, name: "진해수", teamId: 1, value: "22" },
-    { rank: 4, name: "김재열", teamId: 5, value: "20" },
-    { rank: 5, name: "임기영", teamId: 2, value: "18" },
+    { rank: 1, name: "김진욱", teamId: 9, value: "28", playerId: "51111" },
+    { rank: 2, name: "최원준", teamId: 4, value: "25", playerId: "51104" },
+    { rank: 3, name: "진해수", teamId: 1, value: "22", playerId: "50030" },
+    { rank: 4, name: "김재열", teamId: 5, value: "20", playerId: "67449" },
+    { rank: 5, name: "임기영", teamId: 2, value: "18", playerId: "62234" },
   ]},
 ];
 
@@ -126,13 +127,13 @@ function getStreakIcon(streak: string) {
 
 type MainTab = "team" | "batter" | "pitcher";
 
-function LeaderSection({ title, leaders }: { title: string; leaders: TitleLeader[] }) {
+function LeaderSection({ title, leaders, router }: { title: string; leaders: TitleLeader[]; router: ReturnType<typeof useRouter> }) {
   return (
     <div className="glass-card p-4">
       <h3 className="text-base font-semibold text-text-tertiary mb-3">{title}</h3>
       <div className="space-y-3">
         {leaders.map((l) => (
-          <div key={l.rank} className="flex items-center gap-3">
+          <div key={l.rank} onClick={() => l.playerId && router.push(`/boards/players/${l.playerId}`)} className="flex items-center gap-3 cursor-pointer hover:bg-white/5 rounded-lg transition-colors">
             <span className={clsx("flex h-6 w-6 items-center justify-center rounded-full text-base font-bold",
               l.rank === 1 ? "bg-yellow-500/20 text-yellow-400" :
               l.rank === 2 ? "bg-gray-400/20 text-gray-300" :
@@ -214,7 +215,7 @@ export default function StandingsPage() {
                     initial={{ opacity: 0, x: -8 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.03 }}
-                    className={`border-b border-border/30 last:border-0 cursor-pointer hover:bg-white/5 ${isMyTeam ? "bg-white/5" : ""}`}
+                      className={`border-b border-border/30 last:border-0 cursor-pointer hover:bg-white/5 ${isMyTeam ? "bg-white/5" : ""}`}
                   >
                     <td className="py-2.5 text-center font-bold text-text-primary">{standing.rank}</td>
                     <td className="py-2.5 pl-2">
@@ -245,7 +246,7 @@ export default function StandingsPage() {
           className="space-y-4"
         >
           {BATTER_TITLES.map((cat) => (
-            <LeaderSection key={cat.id} title={cat.label} leaders={cat.leaders} />
+            <LeaderSection key={cat.id} router={router} title={cat.label} leaders={cat.leaders} />
           ))}
         </motion.div>
       )}
@@ -258,7 +259,7 @@ export default function StandingsPage() {
           className="space-y-4"
         >
           {PITCHER_TITLES.map((cat) => (
-            <LeaderSection key={cat.id} title={cat.label} leaders={cat.leaders} />
+            <LeaderSection key={cat.id} router={router} title={cat.label} leaders={cat.leaders} />
           ))}
         </motion.div>
       )}
