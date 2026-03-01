@@ -252,7 +252,7 @@ export default function GameDetailPage() {
               exit={{ opacity: 0 }}
               className="h-full"
             >
-              <GameChat messages={MOCK_CHAT_MESSAGES} />
+              <GameChat messages={MOCK_CHAT_MESSAGES} homeTeamId={homeTeam.id} awayTeamId={awayTeam.id} />
             </motion.div>
           )}
 

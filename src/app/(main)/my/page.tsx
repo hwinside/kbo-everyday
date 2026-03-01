@@ -1,9 +1,11 @@
 "use client";
+"use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { Settings, ChevronRight, FileText, MessageCircle, Heart, Trophy, RefreshCw } from "lucide-react";
+import { Settings, ChevronRight, FileText, MessageCircle, Heart, Trophy, RefreshCw, MapPin } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
@@ -14,6 +16,7 @@ import { getMyTeamId, setMyTeamId } from "@/lib/store/myteam";
 export default function MyPage() {
   const [teamId, setTeamId] = useState<number | null>(null);
   const [showTeamSelect, setShowTeamSelect] = useState(false);
+  const router = useRouter();
 
   useEffect(() => {
     setTeamId(getMyTeamId());
@@ -97,8 +100,9 @@ export default function MyPage() {
           { icon: MessageCircle, label: "내 댓글", count: 89 },
           { icon: Heart, label: "좋아요한 글", count: 156 },
           { icon: Trophy, label: "예측 전적", count: null, detail: "67% 적중" },
-        ].map(({ icon: Icon, label, count, detail }) => (
-          <GlassCard key={label} pressable className="flex items-center justify-between p-5">
+          { icon: MapPin, label: "구장 가이드", count: null, detail: "", href: "/stadiums" },
+        ].map(({ icon: Icon, label, count, detail, href }: any) => (
+          <GlassCard key={label} pressable onClick={() => href && router.push(href)} className="flex items-center justify-between p-5">
             <div className="flex items-center gap-4">
               <Icon size={22} className="text-text-secondary" />
               <span className="text-base text-text-primary">{label}</span>
