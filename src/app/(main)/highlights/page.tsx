@@ -75,6 +75,7 @@ export default function HighlightsPage() {
       if (!el) continue;
 
       try {
+        if (!document.getElementById(containerId)) continue;
         const player = new window.YT.Player(containerId, {
           videoId: reel.youtubeId,
           playerVars: {
@@ -89,10 +90,11 @@ export default function HighlightsPage() {
           },
           events: {
             onReady: () => {
-              if (idx === currentIdx) {
-                player.playVideo();
-              }
+              try {
+                if (idx === currentIdx) player.playVideo();
+              } catch {}
             },
+            onError: () => {},
           },
         });
         map.set(idx, player);
@@ -102,20 +104,21 @@ export default function HighlightsPage() {
     // 현재 영상 재생, 나머지 일시정지
     map.forEach((player, idx) => {
       try {
+        if (!player?.getPlayerState) return;
         if (idx === currentIdx) {
-          player.playVideo?.();
-          if (muted) player.mute?.(); else player.unMute?.();
+          player.playVideo();
+          if (muted) player.mute(); else player.unMute();
         } else {
-          player.pauseVideo?.();
+          player.pauseVideo();
         }
       } catch {}
     });
 
     // 먼 슬라이드 플레이어 정리 (메모리)
+    // 먼 슬라이드 정리 (destroy 대신 pause만)
     map.forEach((player, idx) => {
-      if (Math.abs(idx - currentIdx) > 2) {
-        try { player.destroy(); } catch {}
-        map.delete(idx);
+      if (Math.abs(idx - currentIdx) > 3) {
+        try { player.pauseVideo?.(); } catch {}
       }
     });
   }, [currentIdx, ytReady, feed, muted]);
