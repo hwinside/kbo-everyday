@@ -155,25 +155,25 @@ export default function HomePage() {
       className="mx-auto max-w-lg px-5 pt-safe"
     >
       {/* Header */}
-      <motion.header variants={item} className="flex items-center justify-between py-5">
-        <div className="flex items-center justify-between w-full">
-              <img src="/logo.png" alt="크보 에브리데이" style={{height: "100px", objectFit: "contain"}} />
-              <Link href="/my" className="p-2 rounded-full hover:bg-bg-tertiary transition-colors">
-                <User size={24} className="text-text-secondary" />
-              </Link>
-            </div>
-        <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
-          <Bell size={24} />
-        </button>
+      <motion.header variants={item} className="flex items-center justify-between py-3">
+        <img src="/logo.png" alt="크보 에브리데이" style={{height: "64px", objectFit: "contain"}} />
+        <div className="flex items-center gap-1">
+          <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
+            <Bell size={22} />
+          </button>
+          <Link href="/my" className="rounded-full p-2 hover:bg-bg-tertiary transition-colors">
+            <User size={22} className="text-text-secondary" />
+          </Link>
+        </div>
       </motion.header>
 
       {/* ===== My Team Hero ===== */}
       {myTeam && myTeamGame && (
-        <motion.section variants={item} className="mb-5">
+        <div className="mb-5">
           <Link href={`/games/${myTeamGame.id}`}>
             <div
-              className="relative rounded-2xl p-5 overflow-hidden"
-              style={{ background: `linear-gradient(135deg, ${myTeam.colorPrimary}40 0%, ${myTeam.colorPrimary}10 100%)` }}
+              className="relative rounded-2xl p-5 overflow-hidden border border-white/10 bg-bg-secondary"
+              style={{ background: `linear-gradient(135deg, ${myTeam.colorPrimary}30 0%, rgba(20,20,22,1) 60%)` }}
             >
               {/* Team logo watermark */}
               <div className="absolute right-3 top-3 opacity-15">
@@ -218,13 +218,13 @@ export default function HomePage() {
               </div>
             </div>
           </Link>
-        </motion.section>
+        </div>
       )}
 
       {/* ===== News Carousel ===== */}
-      <motion.section variants={item} className="mb-5">
+      <div className="mb-5">
         <NewsCarousel news={myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 5) : MOCK_NEWS} />
-      </motion.section>
+      </div>
 
       {/* ===== 1. Today's Games — horizontal scroll with snap ===== */}
       <motion.section variants={item} className="mb-6">
