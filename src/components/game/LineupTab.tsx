@@ -107,9 +107,9 @@ export default function LineupTab({
                       <span className="text-sm text-text-tertiary w-5">
                         {away.position}
                       </span>
-                      <span className="text-text-primary font-medium">
+                      <Link href={`/boards/players/${away.name}`} className="text-text-primary font-medium hover:underline">
                         {away.name}
-                      </span>
+                      </Link>
                     </div>
                   </td>
                   <td className="py-2 text-center text-text-secondary tabular-nums">
@@ -123,9 +123,9 @@ export default function LineupTab({
                   </td>
                   <td className="py-2 text-right">
                     <div className="flex items-center justify-end gap-2">
-                      <span className="text-text-primary font-medium">
+                      <Link href={`/boards/players/${home.name}`} className="text-text-primary font-medium hover:underline">
                         {home.name}
-                      </span>
+                      </Link>
                       <span className="text-sm text-text-tertiary w-5 text-right">
                         {home.position}
                       </span>

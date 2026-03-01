@@ -241,7 +241,7 @@ export default function StandingsPage() {
                 return (
                   <motion.tr
                     key={standing.teamId}
-                    onClick={() => router.push(`/teams/${standing.teamId}`)}
+                    onClick={() => { const t = TEAMS.find(t => t.id === standing.teamId); if (t) router.push(`/teams/${t.slug}`); }}
                     initial={{ opacity: 0, x: -8 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.03 }}
