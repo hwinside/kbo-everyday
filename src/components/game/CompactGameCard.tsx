@@ -6,7 +6,7 @@ import { getTeamById } from "@/lib/constants/teams";
 
 interface CompactGameCardProps {
   game: {
-    id: number;
+    id: string;
     awayTeamId: number;
     homeTeamId: number;
     awayScore: number;

@@ -18,7 +18,7 @@ import { MOCK_NEWS } from "@/lib/constants/news";
 /* ===== Mock Data ===== */
 const MOCK_GAMES = [
   { id: "20260328-LG-DS", homeTeamId: 2, awayTeamId: 1, time: "18:30", stadium: "잠실", homeScore: 3, awayScore: 5, status: "live" as const, inning: "6회말" },
-  { id: "20260328-SSG-HH", homeTeamId: 4, awayTeamId: 9, time: "18:30", stadium: "인천", homeScore: 0, awayScore: 0, status: "scheduled" as const, inning: null },
+  { id: "20260328-SSG-HW", homeTeamId: 4, awayTeamId: 9, time: "18:30", stadium: "인천", homeScore: 0, awayScore: 0, status: "scheduled" as const, inning: null },
   { id: "20260328-KT-NC", homeTeamId: 3, awayTeamId: 5, time: "18:30", stadium: "수원", homeScore: 2, awayScore: 1, status: "live" as const, inning: "4회초" },
   { id: "20260328-KIA-LT", homeTeamId: 6, awayTeamId: 7, time: "14:00", stadium: "광주", homeScore: 7, awayScore: 3, status: "final" as const, inning: "종료" },
   { id: "20260328-SS-KW", homeTeamId: 8, awayTeamId: 10, time: "18:30", stadium: "대구", homeScore: 1, awayScore: 1, status: "live" as const, inning: "3회초" },

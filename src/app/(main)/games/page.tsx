@@ -9,11 +9,11 @@ import CompactGameCard from "@/components/game/CompactGameCard";
 
 // Mock 경기 데이터 (날짜별)
 const MOCK_GAMES = [
-  { id: 1, awayTeamId: 2, homeTeamId: 1, awayScore: 3, homeScore: 5, status: "final" as const, time: "14:00", stadium: "잠실" },
-  { id: 2, awayTeamId: 6, homeTeamId: 7, awayScore: 7, homeScore: 3, status: "final" as const, time: "14:00", stadium: "사직" },
-  { id: 3, awayTeamId: 4, homeTeamId: 3, awayScore: 2, homeScore: 4, status: "live" as const, inning: "7회초", time: "17:00", stadium: "수원" },
-  { id: 4, awayTeamId: 8, homeTeamId: 5, awayScore: 1, homeScore: 1, status: "live" as const, inning: "5회말", time: "17:00", stadium: "창원" },
-  { id: 5, awayTeamId: 9, homeTeamId: 10, awayScore: 0, homeScore: 0, status: "scheduled" as const, time: "18:30", stadium: "고척" },
+  { id: "20260328-LG-DS", awayTeamId: 1, homeTeamId: 2, awayScore: 5, homeScore: 3, status: "final" as const, time: "18:30", stadium: "잠실" },
+  { id: "20260328-KIA-LT", awayTeamId: 6, homeTeamId: 7, awayScore: 7, homeScore: 3, status: "final" as const, time: "14:00", stadium: "사직" },
+  { id: "20260328-KT-NC", awayTeamId: 4, homeTeamId: 3, awayScore: 2, homeScore: 4, status: "live" as const, inning: "7회초", time: "17:00", stadium: "수원" },
+  { id: "20260328-SS-KW", awayTeamId: 8, homeTeamId: 5, awayScore: 1, homeScore: 1, status: "live" as const, inning: "5회말", time: "17:00", stadium: "창원" },
+  { id: "20260328-SSG-HW", awayTeamId: 9, homeTeamId: 10, awayScore: 0, homeScore: 0, status: "scheduled" as const, time: "18:30", stadium: "고척" },
 ];
 
 const container = {
