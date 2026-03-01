@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -7,7 +8,6 @@ import { clsx } from "clsx";
 import { Home, Gamepad2, BarChart3, User, Circle, type LucideIcon } from "lucide-react";
 import { getTeamById } from "@/lib/constants/teams";
 
-const MY_TEAM_ID = 1; // LG 트윈스 (목업)
 
 interface TabItem {
   href: string;
@@ -26,6 +26,14 @@ const tabs: TabItem[] = [
 
 export default function TabBar() {
   const pathname = usePathname();
+  const [myTeamId, setMyTeamId] = useState<number | null>(null);
+  
+  useEffect(() => {
+    const saved = localStorage.getItem("kbo-my-team");
+    if (saved) setMyTeamId(parseInt(saved, 10));
+  }, []);
+  
+  const MY_TEAM_ID = myTeamId;
 
   function isActive(href: string) {
     if (href === "/") return pathname === "/";

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Bell, ChevronRight, Flame, Users } from "lucide-react";
 import Link from "next/link";
@@ -8,10 +8,12 @@ import Image from "next/image";
 import GlassCard from "@/components/ui/GlassCard";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import AIAnalysis from "@/components/game/AIAnalysis";
+import TeamSelectModal from "@/components/onboarding/TeamSelectModal";
+import { getMyTeamId, setMyTeamId as saveMyTeamId } from "@/lib/store/myteam";
 import NewsCarousel from "@/components/news/NewsCarousel";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import TeamBadge from "@/components/ui/TeamBadge";
-import { TEAMS } from "@/lib/constants/teams";
+import { TEAMS, getTeamById } from "@/lib/constants/teams";
 import { MOCK_PREDICTIONS } from "@/lib/constants/predictions";
 import { MOCK_NEWS } from "@/lib/constants/news";
 
@@ -102,6 +104,26 @@ function SectionHeader({ title, href, icon }: { title: string; href: string; ico
 
 export default function HomePage() {
   const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number} | null>(null);
+  const [myTeamId, setMyTeam] = useState<number | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  useEffect(() => {
+    const saved = getMyTeamId();
+    if (saved) {
+      setMyTeam(saved);
+    } else {
+      setShowOnboarding(true);
+    }
+  }, []);
+
+  function handleTeamSelect(teamId: number) {
+    saveMyTeamId(teamId);
+    setMyTeam(teamId);
+    setShowOnboarding(false);
+  }
+
+  const myTeam = myTeamId ? getTeamById(myTeamId) : null;
+  const myTeamGame = MOCK_GAMES.find(g => g.homeTeamId === myTeamId || g.awayTeamId === myTeamId);
   // Show first 2 predictions for preview
   const previewPredictions = MOCK_PREDICTIONS.filter((p) => p.status === "open").slice(0, 2);
   // Show first 3 news
@@ -123,9 +145,63 @@ export default function HomePage() {
         </button>
       </motion.header>
 
+      {/* ===== My Team Hero ===== */}
+      {myTeam && myTeamGame && (
+        <motion.section variants={item} className="mb-5">
+          <Link href={`/games/${myTeamGame.id}`}>
+            <div
+              className="relative rounded-2xl p-5 overflow-hidden"
+              style={{ background: `linear-gradient(135deg, ${myTeam.colorPrimary}40 0%, ${myTeam.colorPrimary}10 100%)` }}
+            >
+              {/* Team logo watermark */}
+              <div className="absolute right-3 top-3 opacity-15">
+                <Image src={myTeam.logoPath} alt="" width={72} height={72} unoptimized className="object-contain" />
+              </div>
+
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-7 h-7 rounded-full bg-white p-0.5 flex items-center justify-center">
+                  <Image src={myTeam.logoPath} alt="" width={20} height={20} unoptimized className="object-contain" />
+                </div>
+                <span className="text-sm font-bold" style={{ color: myTeam.colorLight }}>MY TEAM</span>
+              </div>
+
+              {/* Score */}
+              <div className="flex items-center justify-between">
+                <div className="flex flex-col items-center gap-1">
+                  <div className="w-12 h-12 rounded-full bg-white p-1 flex items-center justify-center">
+                    <Image src={getTeamLogo(myTeamGame.awayTeamId)} alt="" width={32} height={32} unoptimized className="object-contain" />
+                  </div>
+                  <span className="text-sm font-bold" style={{ color: getTeamColor(myTeamGame.awayTeamId) }}>{getTeamShortName(myTeamGame.awayTeamId)}</span>
+                </div>
+                <div className="text-center">
+                  <div className="flex items-center gap-3">
+                    <span className="text-3xl font-black tabular-nums text-text-primary">{myTeamGame.status === "scheduled" ? "-" : myTeamGame.awayScore}</span>
+                    <span className="text-lg text-text-tertiary">:</span>
+                    <span className="text-3xl font-black tabular-nums text-text-primary">{myTeamGame.status === "scheduled" ? "-" : myTeamGame.homeScore}</span>
+                  </div>
+                  <span className={`text-xs font-semibold mt-1 px-2 py-0.5 rounded-full ${
+                    myTeamGame.status === "live" ? "bg-red-500/20 text-red-400 animate-pulse" :
+                    myTeamGame.status === "final" ? "bg-text-tertiary/20 text-text-tertiary" :
+                    "bg-accent/20 text-accent"
+                  }`}>
+                    {myTeamGame.status === "live" ? `LIVE ${myTeamGame.inning}` : myTeamGame.status === "final" ? "경기 종료" : myTeamGame.time}
+                  </span>
+                </div>
+                <div className="flex flex-col items-center gap-1">
+                  <div className="w-12 h-12 rounded-full bg-white p-1 flex items-center justify-center">
+                    <Image src={getTeamLogo(myTeamGame.homeTeamId)} alt="" width={32} height={32} unoptimized className="object-contain" />
+                  </div>
+                  <span className="text-sm font-bold" style={{ color: getTeamColor(myTeamGame.homeTeamId) }}>{getTeamShortName(myTeamGame.homeTeamId)}</span>
+                </div>
+              </div>
+            </div>
+          </Link>
+        </motion.section>
+      )}
+
       {/* ===== News Carousel ===== */}
       <motion.section variants={item} className="mb-5">
-        <NewsCarousel news={MOCK_NEWS} />
+        <NewsCarousel news={myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 5) : MOCK_NEWS} />
       </motion.section>
 
       {/* ===== 1. Today's Games — horizontal scroll with snap ===== */}
@@ -286,6 +362,8 @@ export default function HomePage() {
     </motion.div>
 
       {/* AI Analysis Modal */}
+      <TeamSelectModal isOpen={showOnboarding} onSelect={handleTeamSelect} />
+
       {aiGame && (
         <AIAnalysis
           isOpen={true}
