@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { Settings, ChevronRight, FileText, MessageCircle, Heart, Trophy, RefreshCw, MapPin, Star } from "lucide-react";
+import { Settings, ChevronRight, FileText, MessageCircle, Heart, Trophy, RefreshCw, MapPin, Star, LogIn, LogOut } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
@@ -16,10 +16,14 @@ import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getTeamById } from "@/lib/constants/teams";
 import { getMyTeamId, setMyTeamId } from "@/lib/store/myteam";
+import { useAuth } from "@/lib/supabase/AuthContext";
+import LoginSheet from "@/components/auth/LoginSheet";
 
 export default function MyPage() {
   const [teamId, setTeamId] = useState<number | null>(null);
   const [showTeamSelect, setShowTeamSelect] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
+  const { user, profile, signOut } = useAuth();
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
   const router = useRouter();
