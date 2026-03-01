@@ -178,7 +178,7 @@ export default function MyPage() {
       >
         <GlassCard className="flex flex-col items-center gap-3 py-6">
           <p className="text-sm text-text-tertiary">로그인하면 데이터가 동기화됩니다</p>
-          <button className="rounded-full bg-accent px-8 py-2.5 text-sm font-semibold text-white">
+          <button onClick={() => setShowLogin(true)} className="rounded-full bg-accent px-8 py-2.5 text-sm font-semibold text-white">
             로그인 / 회원가입
           </button>
         </GlassCard>
@@ -189,6 +189,7 @@ export default function MyPage() {
         isOpen={showTeamSelect}
         onSelect={handleTeamChange}
       />
+      <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
       <PlayerSelectModal
         isOpen={showPlayerSelect}
         teamId={teamId ?? 1}
