@@ -59,15 +59,15 @@ export default function Leaderboard({ entries }: LeaderboardProps) {
               <div className={`absolute inset-0 bg-gradient-to-b ${style.bg}`} />
               <div className="relative">
                 <RankBadge rank={entry.rank} />
-                <p className={`mt-1 text-base font-bold ${style.text}`}>
+                <p className={`mt-1 text-sm font-bold ${style.text} truncate`}>
                   {entry.nickname}
                 </p>
-                <TeamBadge teamId={entry.teamId} className="mt-1" />
-                <p className="mt-2 text-xl font-bold tabular-nums text-text-primary">
+                <TeamBadge teamId={entry.teamId} size="xs" className="mt-1" />
+                <p className="mt-2 text-lg font-bold tabular-nums text-text-primary">
                   {entry.points.toLocaleString()}
-                  <span className="text-base text-text-tertiary">p</span>
+                  <span className="text-xs text-text-tertiary">p</span>
                 </p>
-                <p className="text-base text-text-secondary">
+                <p className="text-xs text-text-secondary">
                   적중률 {Math.round((entry.totalCorrect / entry.totalPredictions) * 100)}%
                 </p>
               </div>
@@ -97,9 +97,9 @@ export default function Leaderboard({ entries }: LeaderboardProps) {
 
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-3">
-                <TeamBadge teamId={entry.teamId} />
+                <TeamBadge teamId={entry.teamId} size="xs" />
                 <span
-                  className={`truncate text-base font-semibold ${
+                  className={`truncate text-sm font-semibold ${
                     entry.isMe ? "text-accent" : "text-text-primary"
                   }`}
                 >
@@ -110,10 +110,10 @@ export default function Leaderboard({ entries }: LeaderboardProps) {
             </div>
 
             <div className="text-right flex-shrink-0">
-              <p className="text-base font-bold tabular-nums text-text-primary">
+              <p className="text-sm font-bold tabular-nums text-text-primary">
                 {entry.points.toLocaleString()}p
               </p>
-              <p className="text-base text-text-tertiary">
+              <p className="text-xs text-text-tertiary">
                 {Math.round((entry.totalCorrect / entry.totalPredictions) * 100)}%
                 {entry.currentStreak > 0 && (
                   <span className="ml-1 text-orange-400">🔥{entry.currentStreak}</span>
@@ -136,18 +136,18 @@ export default function Leaderboard({ entries }: LeaderboardProps) {
             <RankBadge rank={myEntry.rank} />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-3">
-                <TeamBadge teamId={myEntry.teamId} />
-                <span className="truncate text-base font-bold text-accent">
+                <TeamBadge teamId={myEntry.teamId} size="xs" />
+                <span className="truncate text-sm font-bold text-accent">
                   {myEntry.nickname} (나)
                 </span>
                 <LevelBadge level={myEntry.level} />
               </div>
             </div>
             <div className="text-right flex-shrink-0">
-              <p className="text-base font-bold tabular-nums text-text-primary">
+              <p className="text-sm font-bold tabular-nums text-text-primary">
                 {myEntry.points.toLocaleString()}p
               </p>
-              <p className="text-base text-text-tertiary">
+              <p className="text-xs text-text-tertiary">
                 적중률 {Math.round((myEntry.totalCorrect / myEntry.totalPredictions) * 100)}%
               </p>
             </div>
