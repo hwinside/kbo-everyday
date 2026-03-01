@@ -82,19 +82,21 @@ export default function PredictionCard({ prediction: initial }: PredictionCardPr
           } ${isOpen && !hasPicked ? "cursor-pointer active:scale-95" : ""}`}
           style={pred.myPick === pred.awayTeamId && !isFinished ? { borderColor: awayTeam.colorLight } : {}}
         >
-          <div className="flex flex-col items-center gap-2">
+          <div className="flex flex-col items-center gap-1 min-h-[90px] justify-center">
             <div className="w-10 h-10 rounded-full bg-white p-1 flex items-center justify-center">
               <Image src={awayTeam.logoPath} alt="" width={28} height={28} unoptimized className="object-contain" />
             </div>
             <span className="text-sm font-bold" style={{ color: awayTeam.colorLight }}>{awayTeam.shortName}</span>
-            {pred.myPick === pred.awayTeamId && (
-              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="flex items-center gap-1">
-                <Check size={12} className={myPickCorrect || !isFinished ? "text-green-400" : "text-red-400"} />
-                <span className={`text-xs font-semibold ${myPickCorrect || !isFinished ? "text-green-400" : "text-red-400"}`}>
-                  {isFinished ? (myPickCorrect ? "적중!" : "아쉽!") : "내 예측"}
-                </span>
-              </motion.div>
-            )}
+            <div className="h-4 flex items-center">
+              {pred.myPick === pred.awayTeamId && (
+                <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="flex items-center gap-1">
+                  <Check size={10} className={myPickCorrect || !isFinished ? "text-green-400" : "text-red-400"} />
+                  <span className={`text-[10px] font-semibold ${myPickCorrect || !isFinished ? "text-green-400" : "text-red-400"}`}>
+                    {isFinished ? (myPickCorrect ? "적중!" : "아쉽!") : "내 예측"}
+                  </span>
+                </motion.div>
+              )}
+            </div>
           </div>
         </button>
 
@@ -113,19 +115,21 @@ export default function PredictionCard({ prediction: initial }: PredictionCardPr
           } ${isOpen && !hasPicked ? "cursor-pointer active:scale-95" : ""}`}
           style={pred.myPick === pred.homeTeamId && !isFinished ? { borderColor: homeTeam.colorLight } : {}}
         >
-          <div className="flex flex-col items-center gap-2">
+          <div className="flex flex-col items-center gap-1 min-h-[90px] justify-center">
             <div className="w-10 h-10 rounded-full bg-white p-1 flex items-center justify-center">
               <Image src={homeTeam.logoPath} alt="" width={28} height={28} unoptimized className="object-contain" />
             </div>
             <span className="text-sm font-bold" style={{ color: homeTeam.colorLight }}>{homeTeam.shortName}</span>
-            {pred.myPick === pred.homeTeamId && (
-              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="flex items-center gap-1">
-                <Check size={12} className={myPickCorrect || !isFinished ? "text-green-400" : "text-red-400"} />
-                <span className={`text-xs font-semibold ${myPickCorrect || !isFinished ? "text-green-400" : "text-red-400"}`}>
-                  {isFinished ? (myPickCorrect ? "적중!" : "아쉽!") : "내 예측"}
-                </span>
-              </motion.div>
-            )}
+            <div className="h-4 flex items-center">
+              {pred.myPick === pred.homeTeamId && (
+                <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="flex items-center gap-1">
+                  <Check size={10} className={myPickCorrect || !isFinished ? "text-green-400" : "text-red-400"} />
+                  <span className={`text-[10px] font-semibold ${myPickCorrect || !isFinished ? "text-green-400" : "text-red-400"}`}>
+                    {isFinished ? (myPickCorrect ? "적중!" : "아쉽!") : "내 예측"}
+                  </span>
+                </motion.div>
+              )}
+            </div>
           </div>
         </button>
       </div>
