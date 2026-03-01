@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { clsx } from "clsx";
-import { Home, Gamepad2, BarChart3, User, Circle, type LucideIcon } from "lucide-react";
+import { Home, Gamepad2, BarChart3, User, Circle, Play, type LucideIcon } from "lucide-react";
 import { getTeamById } from "@/lib/constants/teams";
 
 
@@ -20,6 +20,7 @@ const tabs: TabItem[] = [
   { href: "/", label: "홈", icon: Home },
   { href: "/games", label: "경기", icon: Gamepad2 },
   { href: "/my-team", label: "마이팀", icon: null, isMyTeam: true },
+  { href: "/highlights", label: "영상", icon: Play },
   { href: "/standings", label: "순위", icon: BarChart3 },
   { href: "/my", label: "MY", icon: User },
 ];
