@@ -9,8 +9,8 @@ interface CompactGameCardProps {
     id: string;
     awayTeamId: number;
     homeTeamId: number;
-    awayScore: number;
-    homeScore: number;
+    awayScore: number | null;
+    homeScore: number | null;
     status: "scheduled" | "live" | "final";
     inning?: string;
     time: string;
@@ -23,8 +23,8 @@ export default function CompactGameCard({ game }: CompactGameCardProps) {
   const home = getTeamById(game.homeTeamId)!;
   const isLive = game.status === "live";
   const isFinal = game.status === "final";
-  const awayWin = isFinal && game.awayScore > game.homeScore;
-  const homeWin = isFinal && game.homeScore > game.awayScore;
+  const awayWin = isFinal && (game.awayScore ?? 0) > (game.homeScore ?? 0);
+  const homeWin = isFinal && (game.homeScore ?? 0) > (game.awayScore ?? 0);
 
   return (
     <Link href={`/games/${game.id}`}>

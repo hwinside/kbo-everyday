@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -153,6 +153,36 @@ function LeaderSection({ title, leaders, router }: { title: string; leaders: Tit
 }
 
 export default function StandingsPage() {
+  const [realStandings, setRealStandings] = useState<TeamStanding[] | null>(null);
+
+  useEffect(() => {
+    fetch("/api/standings")
+      .then(r => r.json())
+      .then(data => {
+        if (data.standings?.length) {
+          const TEAM_NAME_MAP: Record<string, number> = {
+            "LG": 1, "두산": 2, "KT": 3, "SSG": 4, "NC": 5,
+            "KIA": 6, "롯데": 7, "삼성": 8, "한화": 9, "키움": 10,
+          };
+          const mapped: TeamStanding[] = data.standings.map((s: any, i: number) => ({
+            teamId: TEAM_NAME_MAP[s.teamName] ?? 0,
+            season: 2025,
+            rank: i + 1,
+            wins: s.wins,
+            losses: s.losses,
+            draws: s.draws,
+            pct: s.winRate,
+            gb: s.gamesBehind,
+            streak: "",
+            last10: "",
+          }));
+          setRealStandings(mapped);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const standings = realStandings ?? MOCK_STANDINGS;
   const router = useRouter();
   const [mainTab, setMainTab] = useState<MainTab>("team");
 

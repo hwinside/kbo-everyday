@@ -1,103 +1,160 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import DateSelector from "@/components/game/DateSelector";
 import CompactGameCard from "@/components/game/CompactGameCard";
 
-// Mock 경기 데이터 (날짜별)
-const MOCK_GAMES = [
-  { id: "20260328-LG-DS", awayTeamId: 1, homeTeamId: 2, awayScore: 5, homeScore: 3, status: "final" as const, time: "18:30", stadium: "잠실" },
-  { id: "20260328-KIA-LT", awayTeamId: 6, homeTeamId: 7, awayScore: 7, homeScore: 3, status: "final" as const, time: "14:00", stadium: "사직" },
-  { id: "20260328-KT-NC", awayTeamId: 4, homeTeamId: 3, awayScore: 2, homeScore: 4, status: "live" as const, inning: "7회초", time: "17:00", stadium: "수원" },
-  { id: "20260328-SS-KW", awayTeamId: 8, homeTeamId: 5, awayScore: 1, homeScore: 1, status: "live" as const, inning: "5회말", time: "17:00", stadium: "창원" },
-  { id: "20260328-SSG-HW", awayTeamId: 9, homeTeamId: 10, awayScore: 0, homeScore: 0, status: "scheduled" as const, time: "18:30", stadium: "고척" },
-];
+interface GameData {
+  id: string;
+  awayTeamId: number;
+  homeTeamId: number;
+  awayScore: number | null;
+  homeScore: number | null;
+  status: "scheduled" | "live" | "final";
+  time: string;
+  stadium: string;
+  inning?: string;
+  awayStarter?: string;
+  homeStarter?: string;
+}
 
-const container = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.05 } },
-};
-const item = {
-  hidden: { opacity: 0, y: 12 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.3 } },
-};
+const container = { hidden: {}, show: { transition: { staggerChildren: 0.05 } } };
+const item = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.3 } } };
+
+function formatDate(dateStr: string): string {
+  // "2025-05-01" → "20250501"
+  return dateStr.replace(/-/g, "");
+}
 
 export default function GamesPage() {
   const today = new Date().toISOString().slice(0, 10);
   const [selectedDate, setSelectedDate] = useState(today);
+  const [games, setGames] = useState<GameData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const liveGames = MOCK_GAMES.filter(g => g.status === "live");
-  const finalGames = MOCK_GAMES.filter(g => g.status === "final");
-  const scheduledGames = MOCK_GAMES.filter(g => g.status === "scheduled");
+  async function loadGames(date: string) {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/games?date=${formatDate(date)}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      const mapped: GameData[] = (data.games ?? []).map((g: any) => ({
+        id: g.gameId,
+        awayTeamId: g.awayTeamId,
+        homeTeamId: g.homeTeamId,
+        awayScore: g.awayScore,
+        homeScore: g.homeScore,
+        status: g.status === "cancelled" ? "final" as const : g.status,
+        time: g.time,
+        stadium: g.stadium,
+        inning: g.status === "live" ? `${g.inning}회${g.isTop ? "초" : "말"}` : undefined,
+        awayStarter: g.awayStarterName,
+        homeStarter: g.homeStarterName,
+      }));
+      setGames(mapped);
+    } catch (e: any) {
+      setError(e.message);
+      setGames([]);
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    loadGames(selectedDate);
+  }, [selectedDate]);
+
+  // 라이브 경기 있으면 30초마다 자동 새로고침
+  useEffect(() => {
+    const hasLive = games.some(g => g.status === "live");
+    if (!hasLive) return;
+    const interval = setInterval(() => loadGames(selectedDate), 30000);
+    return () => clearInterval(interval);
+  }, [games, selectedDate]);
+
+  const liveGames = games.filter(g => g.status === "live");
+  const finalGames = games.filter(g => g.status === "final");
+  const scheduledGames = games.filter(g => g.status === "scheduled");
 
   return (
     <div className="mx-auto max-w-lg pt-safe">
-      {/* Header */}
       <div className="flex items-center gap-3 px-5 py-4">
         <Link href="/" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
           <ChevronLeft size={24} />
         </Link>
         <h1 className="text-xl font-bold text-text-primary">경기</h1>
+        <button
+          onClick={() => loadGames(selectedDate)}
+          className="ml-auto p-2 rounded-full text-text-tertiary hover:bg-bg-tertiary transition-colors"
+        >
+          <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+        </button>
       </div>
 
-      {/* Date selector */}
       <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
 
-      {/* Games list */}
-      <motion.div
-        variants={container}
-        initial="hidden"
-        animate="show"
-        className="px-5 py-4 space-y-6"
-      >
-        {/* LIVE */}
-        {liveGames.length > 0 && (
-          <motion.section variants={item}>
-            <div className="flex items-center gap-2 mb-3">
-              <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-              <h2 className="text-sm font-bold text-red-400">LIVE</h2>
+      {loading && games.length === 0 ? (
+        <div className="flex items-center justify-center py-20">
+          <RefreshCw size={24} className="animate-spin text-text-tertiary" />
+        </div>
+      ) : error ? (
+        <div className="px-5 py-20 text-center text-text-tertiary text-sm">
+          데이터를 불러올 수 없습니다
+          <button onClick={() => loadGames(selectedDate)} className="block mx-auto mt-2 text-accent text-xs">다시 시도</button>
+        </div>
+      ) : games.length === 0 ? (
+        <div className="px-5 py-20 text-center text-text-tertiary text-sm">
+          경기가 없습니다
+        </div>
+      ) : (
+        <motion.div variants={container} initial="hidden" animate="show" className="px-5 pb-24 space-y-6">
+          {liveGames.length > 0 && (
+            <div>
+              <h2 className="text-sm font-semibold text-red-400 mb-2 flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" /> LIVE
+              </h2>
+              <div className="space-y-2">
+                {liveGames.map(g => (
+                  <motion.div key={g.id} variants={item}>
+                    <CompactGameCard game={g} />
+                  </motion.div>
+                ))}
+              </div>
             </div>
-            <div className="space-y-3">
-              {liveGames.map(game => (
-                <CompactGameCard key={game.id} game={game} />
-              ))}
-            </div>
-          </motion.section>
-        )}
+          )}
 
-        {/* Final */}
-        {finalGames.length > 0 && (
-          <motion.section variants={item}>
-            <h2 className="text-sm font-bold text-text-tertiary mb-3">종료</h2>
-            <div className="space-y-3">
-              {finalGames.map(game => (
-                <CompactGameCard key={game.id} game={game} />
-              ))}
+          {finalGames.length > 0 && (
+            <div>
+              <h2 className="text-sm font-semibold text-text-tertiary mb-2">종료</h2>
+              <div className="space-y-2">
+                {finalGames.map(g => (
+                  <motion.div key={g.id} variants={item}>
+                    <CompactGameCard game={g} />
+                  </motion.div>
+                ))}
+              </div>
             </div>
-          </motion.section>
-        )}
+          )}
 
-        {/* Scheduled */}
-        {scheduledGames.length > 0 && (
-          <motion.section variants={item}>
-            <h2 className="text-sm font-bold text-text-tertiary mb-3">예정</h2>
-            <div className="space-y-3">
-              {scheduledGames.map(game => (
-                <CompactGameCard key={game.id} game={game} />
-              ))}
+          {scheduledGames.length > 0 && (
+            <div>
+              <h2 className="text-sm font-semibold text-text-tertiary mb-2">예정</h2>
+              <div className="space-y-2">
+                {scheduledGames.map(g => (
+                  <motion.div key={g.id} variants={item}>
+                    <CompactGameCard game={g} />
+                  </motion.div>
+                ))}
+              </div>
             </div>
-          </motion.section>
-        )}
-
-        {MOCK_GAMES.length === 0 && (
-          <div className="py-20 text-center text-text-tertiary">
-            경기가 없는 날입니다
-          </div>
-        )}
-      </motion.div>
+          )}
+        </motion.div>
+      )}
     </div>
   );
 }
