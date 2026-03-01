@@ -76,28 +76,28 @@ function getTeamName(teamId: number) {
 function StatusBadge({ status, inning }: { status: string; inning: string | null }) {
   if (status === "live") {
     return (
-      <span className="flex items-center gap-1 text-base font-semibold text-accent-green">
+      <span className="flex items-center gap-1 text-sm font-semibold text-accent-green">
         <span className="h-1.5 w-1.5 rounded-full bg-accent-green animate-pulse" />
         {inning}
       </span>
     );
   }
   if (status === "final") {
-    return <span className="text-base text-text-secondary">종료</span>;
+    return <span className="text-sm text-text-secondary">종료</span>;
   }
-  return <span className="text-base text-text-secondary">예정</span>;
+  return <span className="text-sm text-text-secondary">예정</span>;
 }
 
 function SectionHeader({ title, href, icon }: { title: string; href?: string; icon?: string }) {
   return (
     <div className="mb-4 flex items-center justify-between">
-      <h2 className="flex items-center gap-4 text-lg font-semibold text-text-primary">
+      <h2 className="flex items-center gap-2 text-base font-bold text-text-primary">
         {icon && <span>{icon}</span>} {title}
       </h2>
       {href && (
         <Link
           href={href}
-          className="flex items-center text-base text-text-secondary hover:text-text-primary transition-colors"
+          className="flex items-center text-xs text-text-tertiary hover:text-text-primary transition-colors"
         >
           전체보기 <ChevronRight size={20} />
         </Link>
@@ -192,9 +192,9 @@ export default function HomePage() {
                 </div>
                 <div className="text-center">
                   <div className="flex items-center gap-3">
-                    <span className="text-3xl font-black tabular-nums text-text-primary">{myTeamGame.status === "scheduled" ? "-" : myTeamGame.awayScore}</span>
-                    <span className="text-lg text-text-tertiary">:</span>
-                    <span className="text-3xl font-black tabular-nums text-text-primary">{myTeamGame.status === "scheduled" ? "-" : myTeamGame.homeScore}</span>
+                    <span className="text-2xl font-black tabular-nums text-text-primary">{myTeamGame.status === "scheduled" ? "-" : myTeamGame.awayScore}</span>
+                    <span className="text-sm text-text-tertiary">:</span>
+                    <span className="text-2xl font-black tabular-nums text-text-primary">{myTeamGame.status === "scheduled" ? "-" : myTeamGame.homeScore}</span>
                   </div>
                   <span className={`text-xs font-semibold mt-1 px-2 py-0.5 rounded-full ${
                     myTeamGame.status === "live" ? "bg-red-500/20 text-red-400 animate-pulse" :
@@ -234,23 +234,23 @@ export default function HomePage() {
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white p-1">
                       <Image src={getTeamLogo(game.awayTeamId)} alt={getTeamName(game.awayTeamId)} width={24} height={24} unoptimized className="object-contain" />
                     </div>
-                    <span className="text-base font-bold" style={{ color: getTeamColor(game.awayTeamId) }}>
+                    <span className="text-sm font-bold" style={{ color: getTeamColor(game.awayTeamId) }}>
                       {getTeamShortName(game.awayTeamId)}
                     </span>
-                    <span className="text-xl font-bold tabular-nums text-text-primary">{game.status === "scheduled" ? "-" : game.awayScore}</span>
+                    <span className="text-lg font-bold tabular-nums text-text-primary">{game.status === "scheduled" ? "-" : game.awayScore}</span>
                   </div>
-                  <span className="text-base text-text-tertiary">vs</span>
+                  <span className="text-xs text-text-tertiary">vs</span>
                   <div className="flex flex-col items-center gap-1 flex-1">
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white p-1">
                       <Image src={getTeamLogo(game.homeTeamId)} alt={getTeamName(game.homeTeamId)} width={24} height={24} unoptimized className="object-contain" />
                     </div>
-                    <span className="text-base font-bold" style={{ color: getTeamColor(game.homeTeamId) }}>
+                    <span className="text-sm font-bold" style={{ color: getTeamColor(game.homeTeamId) }}>
                       {getTeamShortName(game.homeTeamId)}
                     </span>
-                    <span className="text-xl font-bold tabular-nums text-text-primary">{game.status === "scheduled" ? "-" : game.homeScore}</span>
+                    <span className="text-lg font-bold tabular-nums text-text-primary">{game.status === "scheduled" ? "-" : game.homeScore}</span>
                   </div>
                 </div>
-                <p className="text-center text-base text-text-tertiary">
+                <p className="text-center text-xs text-text-tertiary">
                   {game.time} · {game.stadium}
                 </p>
 
@@ -267,14 +267,14 @@ export default function HomePage() {
           {previewPredictions.map((pred) => (
             <Link key={pred.gameId} href="/predict">
               <GlassCard pressable className="p-4">
-                <div className="flex items-center justify-between text-base font-semibold">
+                <div className="flex items-center justify-between text-sm font-semibold">
                   <span className="flex items-center gap-2" style={{ color: getTeamColor(pred.awayTeamId) }}>
                     <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white p-0.5">
                       <Image src={getTeamLogo(pred.awayTeamId)} alt={getTeamName(pred.awayTeamId)} width={22} height={22} unoptimized className="object-contain" />
                     </span>
                     {getTeamShortName(pred.awayTeamId)}
                   </span>
-                  <span className="text-base text-text-tertiary">vs</span>
+                  <span className="text-xs text-text-tertiary">vs</span>
                   <span className="flex items-center gap-2" style={{ color: getTeamColor(pred.homeTeamId) }}>
                     {getTeamShortName(pred.homeTeamId)}
                     <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white p-0.5">
@@ -299,7 +299,7 @@ export default function HomePage() {
                     style={{ backgroundColor: getTeamBgColor(pred.homeTeamId) }}
                   />
                 </div>
-                <div className="mt-1.5 flex justify-between text-base text-text-secondary">
+                <div className="mt-1.5 flex justify-between text-xs text-text-tertiary">
                   <span className="font-semibold" style={{ color: getTeamColor(pred.awayTeamId) }}>
                     {getTeamShortName(pred.awayTeamId)} {pred.awayPercent}%
                   </span>
@@ -325,13 +325,13 @@ export default function HomePage() {
           {MOCK_POPULAR_POSTS.map((post, i) => (
             <GlassCard key={post.id} pressable className="p-4">
               <div className="flex items-center gap-3">
-                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-accent/10 text-base font-bold text-accent">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-accent/10 text-sm font-bold text-accent">
                   {i + 1}
                 </span>
                 <TeamBadge teamId={post.teamId} />
-                <span className="flex-1 truncate text-base text-text-primary">{post.title}</span>
+                <span className="flex-1 truncate text-sm text-text-primary">{post.title}</span>
               </div>
-              <div className="mt-1 flex items-center gap-4 pl-9 text-base text-text-tertiary">
+              <div className="mt-1 flex items-center gap-4 pl-9 text-xs text-text-tertiary">
                 <span>{post.author}</span>
                 <span>❤️ {post.likeCount}</span>
                 <span>💬 {post.commentCount}</span>
@@ -426,7 +426,7 @@ export default function HomePage() {
           <div className="space-y-8">
             {MOCK_HOT_PLAYER_BOARDS.map((player, i) => (
               <Link key={player.playerId} href={`/boards/players/${player.playerId}`}><div className="flex items-center gap-4">
-                <span className={`flex h-7 w-7 items-center justify-center rounded-full text-base font-bold ${
+                <span className={`flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold ${
                   i === 0 ? "bg-yellow-500/20 text-yellow-400" :
                   i === 1 ? "bg-gray-400/20 text-gray-300" :
                   i === 2 ? "bg-amber-700/20 text-amber-600" :
@@ -436,12 +436,12 @@ export default function HomePage() {
                 </span>
                 <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} size={64} />
                 <div className="flex-1 min-w-0 whitespace-nowrap">
-                  <span className="text-base font-semibold text-text-primary">{player.name}</span>
-                  <span className="ml-1.5 text-base text-text-tertiary">{player.teamName}</span>
+                  <span className="text-sm font-semibold text-text-primary">{player.name}</span>
+                  <span className="ml-1.5 text-xs text-text-tertiary">{player.teamName}</span>
                 </div>
                 <div className="text-right">
-                  <div className="text-base font-bold text-accent">오늘 {player.postsToday}글</div>
-                  <div className="text-base text-text-tertiary">총 {player.totalPosts.toLocaleString()}글</div>
+                  <div className="text-sm font-bold text-accent">오늘 {player.postsToday}글</div>
+                  <div className="text-xs text-text-tertiary">총 {player.totalPosts.toLocaleString()}글</div>
                 </div>
                 <span className="text-base">
                   {player.trend === "up" ? "🔥" : player.trend === "down" ? "📉" : "➖"}
