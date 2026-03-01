@@ -169,11 +169,11 @@ export default function HomePage() {
 
       {/* ===== My Team Hero ===== */}
       {myTeam && myTeamGame && (
-        <motion.div variants={item} className="mb-3">
+        <div className="mb-3">
           <Link href={`/games/${myTeamGame.id}`}>
             <div
               className="relative rounded-2xl p-5 overflow-hidden border border-white/10 bg-bg-secondary"
-              style={{ background: `linear-gradient(135deg, ${myTeam.colorPrimary}30 0%, rgba(20,20,22,1) 60%)` }}
+              style={{ background: `linear-gradient(135deg, ${myTeam.colorPrimary}50 0%, #1a1a1d 100%)` }}
             >
               {/* Team logo watermark */}
               <div className="absolute right-3 top-3 opacity-15">
@@ -218,13 +218,13 @@ export default function HomePage() {
               </div>
             </div>
           </Link>
-        </motion.div>
+        </div>
       )}
 
       {/* ===== News Carousel ===== */}
-      <motion.div variants={item} className="mb-3">
+      <div className="mb-3">
         <NewsCarousel news={myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 5) : MOCK_NEWS} />
-      </motion.div>
+      </div>
 
       {/* ===== 1. Today's Games — horizontal scroll with snap ===== */}
       <motion.section variants={item} className="mb-6">
