@@ -1,189 +1,177 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
-import { Play, X } from "lucide-react";
+import { Heart, MessageCircle, Share2, ChevronUp, ChevronDown, X, Volume2, VolumeX } from "lucide-react";
 import { getTeamById } from "@/lib/constants/teams";
-import { HIGHLIGHTS, HIGHLIGHT_TYPES, type Highlight } from "@/lib/constants/highlights";
+import { HIGHLIGHTS, rankHighlights, type Highlight } from "@/lib/constants/highlights";
 import { getMyTeamId } from "@/lib/store/myteam";
 
-type FilterTab = "all" | "my" | "highlight" | "interview" | "analysis";
-
-const container = { hidden: {}, show: { transition: { staggerChildren: 0.05 } } };
-const item = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.3 } } };
-
-function ReelCard({ reel, onPlay }: { reel: Highlight; onPlay: () => void }) {
-  const team = reel.teamId ? getTeamById(reel.teamId) : null;
-  const typeInfo = HIGHLIGHT_TYPES[reel.type];
-
-  return (
-    <motion.div variants={item} className="glass-card overflow-hidden">
-      {/* YouTube thumbnail */}
-      <button onClick={onPlay} className="relative w-full aspect-video bg-bg-tertiary group">
-        <img
-          src={reel.thumbnail}
-          alt={reel.title}
-          className="w-full h-full object-cover"
-        />
-        {/* Play overlay */}
-        <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-red-600/90 shadow-lg">
-            <Play size={24} fill="white" className="text-white ml-1" />
-          </div>
-        </div>
-        {/* Type badge */}
-        <span className="absolute top-2 left-2 rounded-full px-2 py-0.5 text-xs font-semibold bg-black/60 text-white backdrop-blur-sm">
-          {typeInfo.emoji} {typeInfo.label}
-        </span>
-        {/* Team badge */}
-        {team && (
-          <div className="absolute top-2 right-2 w-7 h-7 rounded-full bg-white/90 p-0.5 flex items-center justify-center">
-            <Image src={team.logoPath} alt="" width={20} height={20} unoptimized className="object-contain" />
-          </div>
-        )}
-      </button>
-
-      {/* Info */}
-      <div className="p-3.5">
-        <h3 className="text-sm font-bold text-text-primary line-clamp-2 leading-snug">{reel.title}</h3>
-        <p className="mt-1.5 text-xs text-text-tertiary">{reel.channel} · {reel.timeAgo}</p>
-      </div>
-    </motion.div>
-  );
-}
-
 export default function HighlightsPage() {
-  const [filter, setFilter] = useState<FilterTab>("all");
   const [myTeamId, setMyTeam] = useState<number | null>(null);
-  const [playingReel, setPlayingReel] = useState<Highlight | null>(null);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [liked, setLiked] = useState<Set<string>>(new Set());
+  const [muted, setMuted] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [feed, setFeed] = useState<Highlight[]>([]);
 
   useEffect(() => {
-    setMyTeam(getMyTeamId());
+    const teamId = getMyTeamId();
+    setMyTeam(teamId);
+    // 피드 알고리즘 적용
+    const ranked = rankHighlights(HIGHLIGHTS, teamId);
+    setFeed(ranked);
   }, []);
 
-  // body scroll lock
+  // 스크롤 snap으로 현재 인덱스 추적
+  const handleScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const idx = Math.round(el.scrollTop / el.clientHeight);
+    if (idx !== currentIdx && idx >= 0 && idx < feed.length) {
+      setCurrentIdx(idx);
+    }
+  }, [currentIdx, feed.length]);
+
+  // 키보드 네비게이션
   useEffect(() => {
-    if (playingReel) {
-      document.body.style.overflow = "hidden";
-      return () => { document.body.style.overflow = ""; };
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "ArrowDown" && currentIdx < feed.length - 1) {
+        setCurrentIdx(i => i + 1);
+        containerRef.current?.children[currentIdx + 1]?.scrollIntoView({ behavior: "smooth" });
+      }
+      if (e.key === "ArrowUp" && currentIdx > 0) {
+        setCurrentIdx(i => i - 1);
+        containerRef.current?.children[currentIdx - 1]?.scrollIntoView({ behavior: "smooth" });
+      }
     }
-  }, [playingReel]);
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [currentIdx, feed.length]);
 
-  const filtered = HIGHLIGHTS.filter((h) => {
-    if (filter === "my") return h.teamId === myTeamId;
-    if (filter === "highlight") return h.type === "highlight";
-    if (filter === "interview") return h.type === "interview";
-    if (filter === "analysis") return h.type === "analysis" || h.type === "vlog";
-    return true;
-  });
+  const toggleLike = (id: string) => {
+    setLiked(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
-  // 마이팀 우선
-  const sorted = [...filtered].sort((a, b) => {
-    if (filter === "all" && myTeamId) {
-      if (a.teamId === myTeamId && b.teamId !== myTeamId) return -1;
-      if (b.teamId === myTeamId && a.teamId !== myTeamId) return 1;
-    }
-    return 0;
-  });
-
-  const filters: { key: FilterTab; label: string }[] = [
-    { key: "all", label: "전체" },
-    { key: "my", label: "MY팀" },
-    { key: "highlight", label: "🔥 하이라이트" },
-    { key: "interview", label: "🎤 인터뷰" },
-    { key: "analysis", label: "📊 분석" },
-  ];
+  if (feed.length === 0) return null;
+  const current = feed[currentIdx];
+  const team = current?.teamId ? getTeamById(current.teamId) : null;
 
   return (
-    <div className="mx-auto max-w-lg pt-safe">
-      <div className="px-5 py-4">
-        <h1 className="text-xl font-bold text-text-primary">영상</h1>
+    <div className="fixed inset-0 z-40 bg-black">
+      {/* Header overlay */}
+      <div className="absolute top-0 left-0 right-0 z-10 pt-safe">
+        <div className="flex items-center justify-between px-4 py-3">
+          <h1 className="text-lg font-bold text-white drop-shadow-lg">영상</h1>
+          <div className="flex items-center gap-2 text-xs text-white/70">
+            <span className="tabular-nums">{currentIdx + 1} / {feed.length}</span>
+          </div>
+        </div>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto hide-scrollbar px-5 pb-3">
-        {filters.map((f) => (
-          <button
-            key={f.key}
-            onClick={() => setFilter(f.key)}
-            className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
-              filter === f.key ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
+      {/* Vertical snap scroll container */}
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="h-full w-full overflow-y-auto snap-y snap-mandatory hide-scrollbar"
+      >
+        {feed.map((reel, idx) => {
+          const t = reel.teamId ? getTeamById(reel.teamId) : null;
+          const isActive = idx === currentIdx;
+          const isLiked = liked.has(reel.id);
 
-      <motion.div key={filter} variants={container} initial="hidden" animate="show" className="px-5 pb-24 space-y-4">
-        {sorted.map((reel) => (
-          <ReelCard key={reel.id} reel={reel} onPlay={() => setPlayingReel(reel)} />
-        ))}
-        {sorted.length === 0 && (
-          <div className="py-20 text-center text-text-tertiary text-sm">영상이 없습니다</div>
-        )}
-      </motion.div>
-
-      {/* YouTube Player Modal */}
-      <AnimatePresence>
-        {playingReel && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-50 bg-black/95"
-              onClick={() => setPlayingReel(null)}
-            />
-            <motion.div
-              initial={{ y: "100%" }}
-              animate={{ y: 0 }}
-              exit={{ y: "100%" }}
-              transition={{ type: "spring", damping: 30, stiffness: 300 }}
-              className="fixed inset-x-0 bottom-0 z-50 bg-bg-secondary rounded-t-2xl overflow-y-auto overscroll-contain"
-              style={{ maxHeight: "85vh" }}
+          return (
+            <div
+              key={reel.id}
+              className="relative h-full w-full snap-start snap-always flex items-center justify-center"
             >
-              <div className="flex justify-center pt-2 pb-1">
-                <div className="h-1 w-10 rounded-full bg-text-tertiary" />
-              </div>
-
-              {/* YouTube iframe embed */}
-              <div className="w-full aspect-video bg-black">
+              {/* YouTube embed (only active slide) */}
+              {isActive ? (
                 <iframe
-                  src={`https://www.youtube.com/embed/${playingReel.youtubeId}?autoplay=1&rel=0`}
-                  title={playingReel.title}
+                  src={`https://www.youtube.com/embed/${reel.youtubeId}?autoplay=1&mute=${muted ? 1 : 0}&loop=1&playlist=${reel.youtubeId}&controls=0&modestbranding=1&rel=0&playsinline=1`}
+                  title={reel.title}
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
-                  className="w-full h-full"
+                  className="absolute inset-0 w-full h-full"
+                  style={{ border: "none" }}
                 />
-              </div>
+              ) : (
+                /* Thumbnail for non-active */
+                <img
+                  src={reel.thumbnail}
+                  alt=""
+                  className="absolute inset-0 w-full h-full object-cover"
+                />
+              )}
 
-              <div className="p-5">
-                <h2 className="text-base font-bold text-text-primary leading-snug">{playingReel.title}</h2>
-                <div className="mt-2 flex items-center gap-3">
-                  {playingReel.teamId && (() => {
-                    const team = getTeamById(playingReel.teamId);
-                    return team ? (
-                      <div className="w-6 h-6 rounded-full bg-white p-0.5 flex items-center justify-center">
-                        <Image src={team.logoPath} alt="" width={16} height={16} unoptimized className="object-contain" />
-                      </div>
-                    ) : null;
-                  })()}
-                  <p className="text-sm text-text-secondary">{playingReel.channel}</p>
-                  <span className="text-xs text-text-tertiary">{playingReel.timeAgo}</span>
-                </div>
+              {/* Gradient overlays */}
+              <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/60 to-transparent pointer-events-none" />
+              <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/80 to-transparent pointer-events-none" />
 
-                <button
-                  onClick={() => setPlayingReel(null)}
-                  className="mt-4 w-full py-2.5 rounded-xl bg-bg-tertiary text-sm font-medium text-text-secondary hover:bg-bg-tertiary/80 transition-colors"
-                >
-                  닫기
+              {/* Right side actions */}
+              <div className="absolute right-3 bottom-32 flex flex-col items-center gap-5 z-10">
+                {/* Team logo */}
+                {t && (
+                  <div className="w-10 h-10 rounded-full bg-white p-1 flex items-center justify-center shadow-lg">
+                    <Image src={t.logoPath} alt="" width={28} height={28} unoptimized className="object-contain" />
+                  </div>
+                )}
+                {/* Like */}
+                <button onClick={() => toggleLike(reel.id)} className="flex flex-col items-center gap-1">
+                  <Heart size={28} fill={isLiked ? "#FF3B5C" : "none"} className={isLiked ? "text-[#FF3B5C]" : "text-white"} />
+                  <span className="text-xs text-white font-medium">{isLiked ? "좋아요" : "좋아요"}</span>
+                </button>
+                {/* Comment */}
+                <button className="flex flex-col items-center gap-1">
+                  <MessageCircle size={28} className="text-white" />
+                  <span className="text-xs text-white font-medium">댓글</span>
+                </button>
+                {/* Share */}
+                <button className="flex flex-col items-center gap-1">
+                  <Share2 size={28} className="text-white" />
+                  <span className="text-xs text-white font-medium">공유</span>
+                </button>
+                {/* Mute */}
+                <button onClick={() => setMuted(!muted)} className="flex flex-col items-center gap-1">
+                  {muted ? <VolumeX size={24} className="text-white/70" /> : <Volume2 size={24} className="text-white/70" />}
                 </button>
               </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+
+              {/* Bottom info */}
+              <div className="absolute left-4 right-16 bottom-24 z-10">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-sm font-bold text-white">{reel.channel}</span>
+                  {t && (
+                    <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: `${t.colorPrimary}60`, color: t.colorLight }}>
+                      {t.shortName}
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-white/90 leading-snug line-clamp-2">{reel.title}</p>
+                <p className="mt-1 text-xs text-white/50">{reel.timeAgo}</p>
+              </div>
+
+              {/* Scroll hint (first slide only) */}
+              {idx === 0 && isActive && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 2 }}
+                  className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center text-white/40 z-10"
+                >
+                  <ChevronUp size={20} className="animate-bounce" />
+                  <span className="text-xs">위로 스와이프</span>
+                </motion.div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
