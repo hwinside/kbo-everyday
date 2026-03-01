@@ -12,6 +12,8 @@ import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import TeamLogo from "@/components/ui/TeamLogo";
 import PostList from "@/components/community/PostList";
 import WritePost from "@/components/community/WritePost";
+import NewsCarousel from "@/components/news/NewsCarousel";
+import { MOCK_NEWS } from "@/lib/constants/news";
 import {
   ALL_LG_PLAYERS,
   getPositionGroup,
@@ -118,6 +120,14 @@ export default function TeamBoardPage() {
           </div>
         </div>
 
+      </div>
+
+      {/* Team News Carousel */}
+      <div className="mb-2">
+        <NewsCarousel news={MOCK_NEWS.filter(n => n.teamId === team.id || n.teamId === null).slice(0, 5)} />
+      </div>
+
+      <div className="px-5 pb-5">
         {/* Page tabs: 게시판 / 선수 */}
         <div className="flex gap-3">
           {(["board", "players"] as const).map((tab) => (
