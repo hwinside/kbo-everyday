@@ -8,6 +8,7 @@ import Image from "next/image";
 import GlassCard from "@/components/ui/GlassCard";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import AIAnalysis from "@/components/game/AIAnalysis";
+import NewsCarousel from "@/components/news/NewsCarousel";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { TEAMS } from "@/lib/constants/teams";
@@ -119,6 +120,11 @@ export default function HomePage() {
         </button>
       </motion.header>
 
+      {/* ===== News Carousel ===== */}
+      <motion.section variants={item} className="mb-5">
+        <NewsCarousel news={MOCK_NEWS} />
+      </motion.section>
+
       {/* ===== 1. Today's Games — horizontal scroll with snap ===== */}
       <motion.section variants={item} className="mb-6">
         <SectionHeader title="오늘의 경기" href="/games" icon="⚾" />
@@ -211,32 +217,6 @@ export default function HomePage() {
                 </div>
               </GlassCard>
 
-            </Link>
-          ))}
-        </div>
-      </motion.section>
-
-      {/* ===== 3. Latest News ===== */}
-      <motion.section variants={item} className="mb-6">
-        <SectionHeader title="최신 뉴스" href="/news" icon="📰" />
-        <div className="space-y-4">
-          {previewNews.map((news) => (
-            <Link key={news.id} href="/news">
-              <GlassCard pressable className="p-4">
-                <div className="flex items-start gap-4">
-                  {/* Thumbnail placeholder */}
-                  <div className="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-lg bg-bg-tertiary text-xl text-text-tertiary">
-                    📰
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-base font-medium text-text-primary line-clamp-2">{news.title}</p>
-                    <div className="mt-1.5 flex items-center gap-3">
-                      {news.teamId && <TeamBadge teamId={news.teamId} />}
-                      <span className="text-base text-text-tertiary">{news.source} · {news.timeAgo}</span>
-                    </div>
-                  </div>
-                </div>
-              </GlassCard>
             </Link>
           ))}
         </div>
