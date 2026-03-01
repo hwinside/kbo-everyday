@@ -5,7 +5,7 @@ export async function signInWithGoogle() {
   return supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
-      redirectTo: `${window.location.origin}/auth/callback`,
+      redirectTo: typeof window !== "undefined" && !window.location.hostname.includes("localhost") ? `${window.location.origin}/auth/callback` : `http://192.168.219.109:3000/auth/callback`,
     },
   });
 }
@@ -15,7 +15,7 @@ export async function signInWithKakao() {
   return supabase.auth.signInWithOAuth({
     provider: "kakao",
     options: {
-      redirectTo: `${window.location.origin}/auth/callback`,
+      redirectTo: typeof window !== "undefined" && !window.location.hostname.includes("localhost") ? `${window.location.origin}/auth/callback` : `http://192.168.219.109:3000/auth/callback`,
     },
   });
 }
