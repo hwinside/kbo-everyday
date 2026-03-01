@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Brain, TrendingUp, Swords, Zap } from "lucide-react";
 import Image from "next/image";
@@ -82,6 +82,13 @@ ${away.shortName}이 승리하려면 ${ap.cleanup[0]}의 멀티히트와 불펜�
 export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId }: AIAnalysisProps) {
   const [analysis] = useState(() => generateAnalysis(awayTeamId, homeTeamId));
 
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = "hidden";
+      return () => { document.body.style.overflow = ""; };
+    }
+  }, [isOpen]);
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -98,7 +105,7 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId }: 
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
-            className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-bg-secondary overflow-y-auto"
+            className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-bg-secondary overflow-y-auto overscroll-contain touch-pan-y"
             style={{ maxHeight: "85vh" }}
           >
             {/* Handle */}
