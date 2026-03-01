@@ -51,7 +51,7 @@ export default function TeamSelectModal({ isOpen, onSelect }: TeamSelectModalPro
                     <Image src={team.logoPath} alt={team.name} width={36} height={36} unoptimized className="object-contain" />
                   </div>
                   <div className="text-left">
-                    <p className="text-base font-bold" style={{ color: team.colorLight }}>{team.name}</p>
+                    <p className="text-sm font-bold whitespace-nowrap" style={{ color: team.colorLight }}>{team.name}</p>
                     <p className="text-xs text-text-tertiary">{team.shortName}</p>
                   </div>
                 </motion.button>
