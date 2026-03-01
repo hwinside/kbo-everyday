@@ -333,7 +333,7 @@ export default function HomePage() {
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-accent/10 text-sm font-bold text-accent">
                   {i + 1}
                 </span>
-                <TeamBadge teamId={post.teamId} />
+                <TeamBadge teamId={post.teamId} size="xs" />
                 <span className="flex-1 truncate text-sm text-text-primary">{post.title}</span>
               </div>
               <div className="mt-1 flex items-center gap-4 pl-9 text-xs text-text-tertiary">
