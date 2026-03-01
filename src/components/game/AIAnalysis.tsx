@@ -14,31 +14,67 @@ interface AIAnalysisProps {
 }
 
 // Mock AI 분석 데이터 생성
+// 팀별 mock 선수 데이터
+const TEAM_PLAYERS: Record<number, { sp: string; spEra: string; ace: string; cleanup: string[]; closer: string; closerSv: string }> = {
+  1: { sp: "곽빈", spEra: "2.89", ace: "임찬규", cleanup: ["오스틴", "문보경", "김현수"], closer: "고우석", closerSv: "28" },
+  2: { sp: "곽빈", spEra: "3.12", ace: "알칸타라", cleanup: ["양의지", "케이브", "장승현"], closer: "정철원", closerSv: "24" },
+  3: { sp: "소형준", spEra: "3.45", ace: "소형준", cleanup: ["안현민", "허경민", "강백호"], closer: "박영현", closerSv: "22" },
+  4: { sp: "김광현", spEra: "2.76", ace: "김광현", cleanup: ["최지훈", "한유섬", "고명준"], closer: "조병현", closerSv: "19" },
+  5: { sp: "로건", spEra: "3.21", ace: "로건", cleanup: ["박민우", "김주원", "데이비슨"], closer: "전사민", closerSv: "17" },
+  6: { sp: "양현종", spEra: "3.05", ace: "양현종", cleanup: ["김도영", "나성범", "최형우"], closer: "정해영", closerSv: "31" },
+  7: { sp: "레이예스", spEra: "3.67", ace: "레이예스", cleanup: ["전준우", "고승민", "문현빈"], closer: "배재환", closerSv: "15" },
+  8: { sp: "이승현", spEra: "3.33", ace: "이승현", cleanup: ["구자욱", "디아즈", "김성윤"], closer: "이호성", closerSv: "20" },
+  9: { sp: "문동주", spEra: "2.95", ace: "문동주", cleanup: ["채은성", "노시환", "문현빈"], closer: "김서현", closerSv: "18" },
+  10: { sp: "안우진", spEra: "2.68", ace: "안우진", cleanup: ["송성문", "김혜성", "최주환"], closer: "조상우", closerSv: "25" },
+};
+
 function generateAnalysis(awayId: number, homeId: number) {
   const away = getTeamById(awayId)!;
   const home = getTeamById(homeId)!;
+  const ap = TEAM_PLAYERS[awayId] || TEAM_PLAYERS[1];
+  const hp = TEAM_PLAYERS[homeId] || TEAM_PLAYERS[1];
   
-  const awayWinPct = Math.floor(Math.random() * 30) + 35; // 35~65%
+  const awayWinPct = Math.floor(Math.random() * 30) + 35;
   const homeWinPct = 100 - awayWinPct;
-  const confidence = Math.floor(Math.random() * 20) + 65; // 65~85%
+  const confidence = Math.floor(Math.random() * 20) + 65;
 
   return {
     away: {
       team: away,
       winPct: awayWinPct,
-      strengths: ["최근 5경기 4승 1패", "선발투수 ERA 2.89", "득점권 타율 .312"],
-      weaknesses: ["불펜 피로도 누적", "좌투수 상대 타율 부진"],
+      strengths: [
+        `선발 ${ap.sp} 최근 5경기 ERA ${ap.spEra}`,
+        `${ap.cleanup[0]} 최근 10경기 타율 .348, ${ap.cleanup[1]} OPS .912`,
+        `마무리 ${ap.closer} ${ap.closerSv}세이브, 최근 12경기 무실점`,
+      ],
+      weaknesses: [
+        `${ap.cleanup[2]} 좌투수 상대 타율 .198로 부진`,
+        `불펜 5~7이닝 피안타율 .289 취약`,
+      ],
     },
     home: {
       team: home,
       winPct: homeWinPct,
-      strengths: ["홈 경기 승률 .621", "클린업 트리오 OPS .890+", "최근 10경기 7승"],
-      weaknesses: ["선발투수 이닝 소화 불안", "도루 허용률 높음"],
+      strengths: [
+        `선발 ${hp.sp} 홈 ERA ${(parseFloat(hp.spEra) - 0.4).toFixed(2)}, 홈 경기 5연승`,
+        `${hp.cleanup[0]} 시즌 21호 홈런, 득점권 타율 .362`,
+        `${hp.cleanup[1]} 최근 15경기 연속 안타, 타율 .341`,
+      ],
+      weaknesses: [
+        `${hp.closer} 최근 3경기 블론세이브 2회`,
+        `대주자 상황 도루 허용률 78% (리그 하위)`,
+      ],
     },
-    keyMatchup: `${away.shortName} 선발 vs ${home.shortName} 클린업 대결이 승부의 핵심. ${homeWinPct > 50 ? home.shortName : away.shortName}의 홈/원정 이점과 최근 폼을 고려하면 소폭 우세.`,
+    keyMatchup: `🔑 이번 경기의 핵심은 ${away.shortName} ${ap.sp}(ERA ${ap.spEra}) vs ${home.shortName} 클린업 ${hp.cleanup[0]}·${hp.cleanup[1]} 대결입니다.
+
+${ap.sp}은 최근 5경기 평균 6.2이닝을 소화하며 안정적인 투구를 이어가고 있지만, ${hp.cleanup[0]}에게 시즌 상대전적 7타수 4안타(.571)로 크게 밀리고 있습니다.
+
+반면 ${home.shortName} ${hp.sp}은 홈에서 유독 강한 모습(홈 ERA ${(parseFloat(hp.spEra) - 0.4).toFixed(2)})을 보이고 있어 ${away.shortName} 타선이 초반에 흔들 수 있을지가 관건입니다.
+
+${away.shortName}이 승리하려면 ${ap.cleanup[0]}의 멀티히트와 불펜의 안정이 필수이고, ${home.shortName}은 ${hp.cleanup[0]}·${hp.cleanup[1]}의 중심 타선이 선발을 일찍 무너뜨려야 합니다.`,
     prediction: homeWinPct > 50 
-      ? `${home.shortName} ${homeWinPct}% 우세 예측` 
-      : `${away.shortName} ${awayWinPct}% 우세 예측`,
+      ? `${home.shortName} ${homeWinPct}% 우세 (${hp.cleanup[0]}의 홈 타율 + ${hp.sp} 홈 ERA 기반)` 
+      : `${away.shortName} ${awayWinPct}% 우세 (${ap.sp}의 최근 폼 + ${ap.cleanup[0]} 핫스트릭)`,
     confidence,
   };
 }
@@ -167,7 +203,7 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId }: 
                   <Swords size={16} className="text-accent" />
                   <span className="text-sm font-bold text-text-primary">핵심 포인트</span>
                 </div>
-                <p className="text-sm text-text-secondary leading-relaxed">{analysis.keyMatchup}</p>
+                <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-line">{analysis.keyMatchup}</p>
               </div>
 
               {/* Prediction */}
