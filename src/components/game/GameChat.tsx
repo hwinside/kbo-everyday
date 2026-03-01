@@ -250,14 +250,13 @@ export default function GameChat({
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.15 }}
-              className="flex items-start gap-4 py-1 group"
+              className="flex items-start gap-2 py-0.5 group"
             >
-              <TeamBadge teamId={msg.teamId} size="sm" className="mt-0.5 shrink-0" />
+              <TeamBadge teamId={msg.teamId} size="xs" className="shrink-0" />
               <div className="min-w-0 flex-1">
                 <span className="inline">
-                  <span className="text-base font-semibold text-text-primary mr-1">{msg.nickname}</span>
-                  <LevelBadge level={msg.level} className="inline-flex mr-1 align-middle" />
-                  <span className="text-base text-text-secondary">{msg.content}</span>
+                  <span className="text-xs font-semibold text-text-tertiary mr-1">{msg.nickname}</span>
+                  <span className="text-sm text-text-primary">{msg.content}</span>
                 </span>
               </div>
               <span className="text-sm text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">

@@ -4,7 +4,7 @@ import { getTeamById } from "@/lib/constants/teams";
 
 interface TeamBadgeProps {
   teamId: number;
-  size?: "sm" | "md";
+  size?: "xs" | "sm" | "md";
   className?: string;
 }
 
@@ -16,12 +16,13 @@ export default function TeamBadge({
   const team = getTeamById(teamId);
   if (!team) return null;
 
-  const logoSize = size === "sm" ? 16 : 20;
+  const logoSize = size === "xs" ? 12 : size === "sm" ? 16 : 20;
 
   return (
     <span
       className={clsx(
         "inline-flex items-center gap-1 rounded-full font-semibold text-white",
+        size === "xs" && "py-0.5 pl-0.5 pr-1.5 text-[10px]",
         size === "sm" && "py-1 pl-0.5 pr-2.5 text-base",
         size === "md" && "py-1.5 pl-1 pr-3.5 text-base",
         className,
