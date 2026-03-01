@@ -152,10 +152,10 @@ export default function HomePage() {
       variants={container}
       initial="hidden"
       animate="show"
-      className="mx-auto max-w-lg px-5 pt-safe"
+      className="mx-auto max-w-lg px-5"
     >
       {/* Header */}
-      <motion.header variants={item} className="flex items-end justify-between pb-0 pt-1">
+      <motion.header variants={item} className="flex items-end justify-between pb-0 pt-0">
         <img src="/logo.png" alt="크보 에브리데이" style={{height: "120px", objectFit: "contain"}} />
         <div className="flex items-center gap-1 mb-6">
           <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
@@ -169,7 +169,7 @@ export default function HomePage() {
 
       {/* ===== My Team Hero ===== */}
       {myTeam && myTeamGame && (
-        <div className="mb-3">
+        <motion.div variants={item} className="mb-3">
           <Link href={`/games/${myTeamGame.id}`}>
             <div
               className="relative rounded-2xl p-5 overflow-hidden border border-white/10 bg-bg-secondary"
@@ -218,13 +218,13 @@ export default function HomePage() {
               </div>
             </div>
           </Link>
-        </div>
+        </motion.div>
       )}
 
       {/* ===== News Carousel ===== */}
-      <div className="mb-3">
+      <motion.div variants={item} className="mb-3">
         <NewsCarousel news={myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 5) : MOCK_NEWS} />
-      </div>
+      </motion.div>
 
       {/* ===== 1. Today's Games — horizontal scroll with snap ===== */}
       <motion.section variants={item} className="mb-6">
