@@ -23,14 +23,13 @@ export default function LevelBadge({
   }
 
   return (
-    <span className={clsx("inline-flex items-center gap-1 text-base", className)}>
-      <span>{levelData.badge}</span>
+    <span className={clsx("inline-flex items-center gap-1 text-xs", className)}>
       {showTitle && (
         <span style={{ color: levelData.color }} className="font-medium">
           {levelData.title}
         </span>
       )}
-      <span className="text-text-secondary">Lv.{levelData.level}</span>
+      <span className="text-text-tertiary">Lv.{levelData.level}</span>
     </span>
   );
 }
