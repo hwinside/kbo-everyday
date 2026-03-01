@@ -19,3 +19,34 @@
 - PWA manifest + Service Worker
 - GitHub: https://github.com/hwinside/kbo-everyday
 - Vercel: https://kboeveryday.vercel.app/
+
+## Day 2 (2026-03-01)
+### 선수 사진 연결
+- player-photos.ts: 146명 이름→KBO playerId 매핑
+- getPlayerPhotoUrl() → PlayerAvatar 7곳 적용
+- 9명 미매핑 (MLB/군복무): 김도영, 이정후, 나성범, 김하성, 안우진, 이의리, 정우영, 고우석, 이승현
+
+### 가독성 대폭 개선 (2차)
+- 텍스트: xs→sm, sm→base, base→lg (전체 40파일)
+- PlayerAvatar +8px, 팀 로고 한 단계 업, 아이콘 +4px
+- 간격/패딩 넉넉하게 (Yahoo Fantasy 참고)
+
+### 새 페이지/기능
+- 게시글 상세: /boards/players/[playerId]/posts/[postId] (댓글, 좋아요, 공유)
+- 글쓰기 사진 업로드 (최대 5장, 미리보기)
+- 순위 테이블 → 팀 페이지 링크
+
+### UI 개선
+- 라인업 선수 사진 제거 (답답함 해소)
+- 게임 상세 전체 스크롤 (sticky 상단 해제)
+- P/AB, 팀명 줄바꿈 방지 (whitespace-nowrap)
+- 인기 선수게시판 간격 확대 (space-y-8)
+- 게임 카드 높이 160→190px
+
+### 기획
+- 수익화 전략 문서 (constitution.md에 추가)
+- 다크모드 고정 결정
+
+### 빌드/배포
+- Vercel URL 변경: kboeveryday → kbo-everyday
+- 빌드 에러 수정 (getTeamColor import)
