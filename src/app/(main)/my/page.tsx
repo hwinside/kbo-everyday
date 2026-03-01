@@ -5,21 +5,28 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { Settings, ChevronRight, FileText, MessageCircle, Heart, Trophy, RefreshCw, MapPin } from "lucide-react";
+import { Settings, ChevronRight, FileText, MessageCircle, Heart, Trophy, RefreshCw, MapPin, Star } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
 import TeamSelectModal from "@/components/onboarding/TeamSelectModal";
+import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
+import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
+import PlayerAvatar from "@/components/ui/PlayerAvatar";
+import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getTeamById } from "@/lib/constants/teams";
 import { getMyTeamId, setMyTeamId } from "@/lib/store/myteam";
 
 export default function MyPage() {
   const [teamId, setTeamId] = useState<number | null>(null);
   const [showTeamSelect, setShowTeamSelect] = useState(false);
+  const [showPlayerSelect, setShowPlayerSelect] = useState(false);
+  const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
   const router = useRouter();
 
   useEffect(() => {
     setTeamId(getMyTeamId());
+    setFavPlayers(getFavoritePlayers());
   }, []);
 
   const team = teamId ? getTeamById(teamId) : null;
@@ -28,6 +35,16 @@ export default function MyPage() {
     setMyTeamId(newTeamId);
     setTeamId(newTeamId);
     setShowTeamSelect(false);
+    // 팀 변경 시 최애 선수 재선택
+    setFavoritePlayers([]);
+    setFavPlayers([]);
+    setShowPlayerSelect(true);
+  };
+
+  const handlePlayerChange = (players: FavoritePlayer[]) => {
+    setFavoritePlayers(players);
+    setFavPlayers(players);
+    setShowPlayerSelect(false);
   };
 
   return (
@@ -88,6 +105,38 @@ export default function MyPage() {
         </GlassCard>
       </motion.div>
 
+      {/* 최애 선수 */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.12 }}
+        className="mt-3"
+      >
+        <GlassCard
+          pressable
+          className="p-5"
+          onClick={() => setShowPlayerSelect(true)}
+        >
+          <div className="flex items-center gap-4 mb-3">
+            <Star size={22} className="text-yellow-400" />
+            <span className="text-base text-text-primary">최애 선수</span>
+            <ChevronRight size={18} className="ml-auto text-text-tertiary" />
+          </div>
+          {favPlayers.length > 0 ? (
+            <div className="flex gap-3">
+              {favPlayers.map(p => (
+                <div key={p.playerId} className="flex flex-col items-center gap-1">
+                  <PlayerAvatar name={p.name} teamId={p.teamId} photoUrl={getPlayerPhotoUrl(p.name)} number={p.number} size={44} />
+                  <span className="text-xs text-text-secondary">{p.name}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-text-tertiary">선수를 선택해주세요</p>
+          )}
+        </GlassCard>
+      </motion.div>
+
       {/* Menu items */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
@@ -135,6 +184,12 @@ export default function MyPage() {
       <TeamSelectModal
         isOpen={showTeamSelect}
         onSelect={handleTeamChange}
+      />
+      <PlayerSelectModal
+        isOpen={showPlayerSelect}
+        teamId={teamId ?? 1}
+        onComplete={handlePlayerChange}
+        onSkip={() => setShowPlayerSelect(false)}
       />
     </div>
   );

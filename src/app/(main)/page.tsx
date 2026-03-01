@@ -9,6 +9,8 @@ import GlassCard from "@/components/ui/GlassCard";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import AIAnalysis from "@/components/game/AIAnalysis";
 import TeamSelectModal from "@/components/onboarding/TeamSelectModal";
+import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
+import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getMyTeamId, setMyTeamId as saveMyTeamId } from "@/lib/store/myteam";
 import NewsCarousel from "@/components/news/NewsCarousel";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
@@ -106,11 +108,14 @@ export default function HomePage() {
   const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number} | null>(null);
   const [myTeamId, setMyTeam] = useState<number | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showPlayerSelect, setShowPlayerSelect] = useState(false);
+  const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
 
   useEffect(() => {
     const saved = getMyTeamId();
     if (saved) {
       setMyTeam(saved);
+      setFavPlayers(getFavoritePlayers());
     } else {
       setShowOnboarding(true);
     }
@@ -120,6 +125,16 @@ export default function HomePage() {
     saveMyTeamId(teamId);
     setMyTeam(teamId);
     setShowOnboarding(false);
+    // 최애 선수 선택으로 넘어가기
+    if (getFavoritePlayers().length === 0) {
+      setShowPlayerSelect(true);
+    }
+  }
+
+  function handlePlayerSelect(players: FavoritePlayer[]) {
+    setFavoritePlayers(players);
+    setFavPlayers(players);
+    setShowPlayerSelect(false);
   }
 
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
@@ -363,6 +378,12 @@ export default function HomePage() {
 
       {/* AI Analysis Modal */}
       <TeamSelectModal isOpen={showOnboarding} onSelect={handleTeamSelect} />
+      <PlayerSelectModal
+        isOpen={showPlayerSelect}
+        teamId={myTeamId ?? 1}
+        onComplete={handlePlayerSelect}
+        onSkip={() => setShowPlayerSelect(false)}
+      />
 
       {aiGame && (
         <AIAnalysis
