@@ -2,222 +2,172 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Clock, Lock, Users } from "lucide-react";
-import GlassCard from "@/components/ui/GlassCard";
-import TeamLogo from "@/components/ui/TeamLogo";
+import Image from "next/image";
+import { Users, Check, Lock } from "lucide-react";
 import { getTeamById } from "@/lib/constants/teams";
 import type { PredictionMock } from "@/lib/constants/predictions";
+import GlassCard from "@/components/ui/GlassCard";
 
 interface PredictionCardProps {
   prediction: PredictionMock;
 }
 
-export default function PredictionCard({ prediction }: PredictionCardProps) {
-  const [myPick, setMyPick] = useState<number | null>(prediction.myPick);
-  const [totalVotes, setTotalVotes] = useState(prediction.totalVotes);
-  const [homePercent, setHomePercent] = useState(prediction.homePercent);
-  const [awayPercent, setAwayPercent] = useState(prediction.awayPercent);
+export default function PredictionCard({ prediction: initial }: PredictionCardProps) {
+  const [pred, setPred] = useState(initial);
+  const [justPicked, setJustPicked] = useState(false);
 
-  const homeTeam = getTeamById(prediction.homeTeamId);
-  const awayTeam = getTeamById(prediction.awayTeamId);
-  const isLocked = prediction.status === "locked";
-  const isFinished = prediction.status === "finished";
-  const canVote = prediction.status === "open" && myPick === null;
+  const awayTeam = getTeamById(pred.awayTeamId)!;
+  const homeTeam = getTeamById(pred.homeTeamId)!;
+  const isFinished = pred.status === "finished";
+  const isLocked = pred.status === "locked";
+  const isOpen = pred.status === "open";
+  const hasPicked = pred.myPick !== null;
+  const awayCorrect = isFinished && pred.winnerTeamId === pred.awayTeamId;
+  const homeCorrect = isFinished && pred.winnerTeamId === pred.homeTeamId;
+  const myPickCorrect = isFinished && pred.myPick === pred.winnerTeamId;
 
-  if (!homeTeam || !awayTeam) return null;
-
-  function handleVote(teamId: number) {
-    if (!canVote) return;
-    setMyPick(teamId);
-    setTotalVotes((v) => v + 1);
-    // Simulate slight % shift
-    if (teamId === prediction.homeTeamId) {
-      setHomePercent((p) => Math.min(p + 1, 99));
-      setAwayPercent((p) => Math.max(p - 1, 1));
-    } else {
-      setAwayPercent((p) => Math.min(p + 1, 99));
-      setHomePercent((p) => Math.max(p - 1, 1));
-    }
+  function handlePick(teamId: number) {
+    if (!isOpen || hasPicked) return;
+    // 투표 시 퍼센트 살짝 변화 + 투표수 증가
+    const isAway = teamId === pred.awayTeamId;
+    const newTotal = pred.totalVotes + 1;
+    const awayPct = isAway ? pred.awayPercent + 1 : pred.awayPercent - 1;
+    const homePct = 100 - awayPct;
+    
+    setPred({
+      ...pred,
+      myPick: teamId,
+      totalVotes: newTotal,
+      awayPercent: Math.max(1, Math.min(99, awayPct)),
+      homePercent: Math.max(1, Math.min(99, homePct)),
+    });
+    setJustPicked(true);
+    setTimeout(() => setJustPicked(false), 2000);
   }
 
-  const isCorrect = isFinished && myPick === prediction.winnerTeamId;
-  const isWrong = isFinished && myPick !== null && myPick !== prediction.winnerTeamId;
-
   return (
-    <GlassCard
-      className={`relative overflow-hidden p-5 ${
-        isCorrect ? "ring-1 ring-accent-gold/40" : ""
-      } ${isWrong ? "opacity-80" : ""}`}
-    >
-      {/* Correct background glow */}
-      {isCorrect && (
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-accent-gold/10 to-transparent" />
-      )}
-
-      {/* Header: time + status */}
-      <div className="mb-4 flex items-center justify-between relative">
-        <div className="flex items-center gap-4 text-base text-text-secondary">
-          <Clock size={22} />
-          <span>{prediction.time} · {prediction.stadium}</span>
+    <GlassCard className={`p-4 ${isFinished ? "opacity-80" : ""}`}>
+      {/* Status bar */}
+      <div className="flex items-center justify-between mb-3">
+        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+          isLocked ? "bg-yellow-500/20 text-yellow-400" :
+          isFinished ? "bg-text-tertiary/20 text-text-tertiary" :
+          "bg-green-500/20 text-green-400"
+        }`}>
+          {isLocked ? "🔒 투표 마감" : isFinished ? "종료" : "🟢 투표 가능"}
+        </span>
+        <div className="flex items-center gap-1 text-xs text-text-tertiary">
+          <Users size={12} />
+          <span className="tabular-nums">{pred.totalVotes.toLocaleString()}명</span>
+          {isFinished && pred.homeScore !== null && (
+            <span className="ml-2 font-bold text-text-secondary">
+              {pred.awayScore} : {pred.homeScore}
+            </span>
+          )}
         </div>
-        {isLocked && (
-          <span className="flex items-center gap-1 text-base text-text-tertiary">
-            <Lock size={22} />
-            진행중
-          </span>
-        )}
-        {isFinished && prediction.homeScore !== null && prediction.awayScore !== null && (
-          <span className="text-base font-semibold text-text-secondary">
-            {prediction.awayScore} : {prediction.homeScore}
-          </span>
-        )}
       </div>
 
-      {/* Teams and vote buttons */}
-      <div className="relative flex items-center gap-4">
-        {/* Away team */}
+      {/* Team buttons */}
+      <div className="flex gap-3 mb-3">
+        {/* Away */}
         <button
-          onClick={() => handleVote(prediction.awayTeamId)}
-          disabled={!canVote}
-          className="flex-1 rounded-xl py-3 text-center transition-all duration-300"
-          style={{
-            backgroundColor:
-              myPick === prediction.awayTeamId
-                ? `${awayTeam.colorLight}20`
-                : "transparent",
-            border: `2px solid ${
-              myPick === prediction.awayTeamId
-                ? awayTeam.colorLight
-                : "rgba(255,255,255,0.08)"
-            }`,
-          }}
+          onClick={() => handlePick(pred.awayTeamId)}
+          disabled={!isOpen || hasPicked}
+          className={`flex-1 rounded-xl p-3 transition-all border-2 ${
+            pred.myPick === pred.awayTeamId
+              ? awayCorrect ? "border-green-500 bg-green-500/10" :
+                isFinished ? "border-red-500/50 bg-red-500/5" :
+                "border-current bg-white/5"
+              : "border-transparent bg-bg-tertiary/50 hover:bg-bg-tertiary"
+          } ${isOpen && !hasPicked ? "cursor-pointer active:scale-95" : ""}`}
+          style={pred.myPick === pred.awayTeamId && !isFinished ? { borderColor: awayTeam.colorLight } : {}}
         >
-          <motion.div
-            animate={
-              myPick === prediction.awayTeamId
-                ? { scale: [1, 1.05, 1] }
-                : {}
-            }
-            transition={{ duration: 0.3 }}
-            className="flex flex-col items-center"
-          >
-            <TeamLogo team={awayTeam} size={52} className="mb-1" />
-            <div
-              className="text-lg font-bold"
-              style={{
-                color:
-                  myPick === prediction.awayTeamId
-                    ? awayTeam.colorLight
-                    : "var(--text-primary)",
-              }}
-            >
-              {awayTeam.shortName}
+          <div className="flex flex-col items-center gap-2">
+            <div className="w-10 h-10 rounded-full bg-white p-1 flex items-center justify-center">
+              <Image src={awayTeam.logoPath} alt="" width={28} height={28} unoptimized className="object-contain" />
             </div>
-            <div className="mt-0.5 text-base text-text-secondary">
-              {isFinished && prediction.winnerTeamId === prediction.awayTeamId && "👑 "}
-              승리
-            </div>
-          </motion.div>
+            <span className="text-sm font-bold" style={{ color: awayTeam.colorLight }}>{awayTeam.shortName}</span>
+            {pred.myPick === pred.awayTeamId && (
+              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="flex items-center gap-1">
+                <Check size={12} className={myPickCorrect || !isFinished ? "text-green-400" : "text-red-400"} />
+                <span className={`text-xs font-semibold ${myPickCorrect || !isFinished ? "text-green-400" : "text-red-400"}`}>
+                  {isFinished ? (myPickCorrect ? "적중!" : "아쉽!") : "내 예측"}
+                </span>
+              </motion.div>
+            )}
+          </div>
         </button>
 
-        <span className="text-base font-semibold text-text-tertiary">VS</span>
+        <div className="flex items-center text-text-tertiary text-sm font-medium">VS</div>
 
-        {/* Home team */}
+        {/* Home */}
         <button
-          onClick={() => handleVote(prediction.homeTeamId)}
-          disabled={!canVote}
-          className="flex-1 rounded-xl py-3 text-center transition-all duration-300"
-          style={{
-            backgroundColor:
-              myPick === prediction.homeTeamId
-                ? `${homeTeam.colorLight}20`
-                : "transparent",
-            border: `2px solid ${
-              myPick === prediction.homeTeamId
-                ? homeTeam.colorLight
-                : "rgba(255,255,255,0.08)"
-            }`,
-          }}
+          onClick={() => handlePick(pred.homeTeamId)}
+          disabled={!isOpen || hasPicked}
+          className={`flex-1 rounded-xl p-3 transition-all border-2 ${
+            pred.myPick === pred.homeTeamId
+              ? homeCorrect ? "border-green-500 bg-green-500/10" :
+                isFinished ? "border-red-500/50 bg-red-500/5" :
+                "border-current bg-white/5"
+              : "border-transparent bg-bg-tertiary/50 hover:bg-bg-tertiary"
+          } ${isOpen && !hasPicked ? "cursor-pointer active:scale-95" : ""}`}
+          style={pred.myPick === pred.homeTeamId && !isFinished ? { borderColor: homeTeam.colorLight } : {}}
         >
-          <motion.div
-            animate={
-              myPick === prediction.homeTeamId
-                ? { scale: [1, 1.05, 1] }
-                : {}
-            }
-            transition={{ duration: 0.3 }}
-            className="flex flex-col items-center"
-          >
-            <TeamLogo team={homeTeam} size={52} className="mb-1" />
-            <div
-              className="text-lg font-bold"
-              style={{
-                color:
-                  myPick === prediction.homeTeamId
-                    ? homeTeam.colorLight
-                    : "var(--text-primary)",
-              }}
-            >
-              {homeTeam.shortName}
+          <div className="flex flex-col items-center gap-2">
+            <div className="w-10 h-10 rounded-full bg-white p-1 flex items-center justify-center">
+              <Image src={homeTeam.logoPath} alt="" width={28} height={28} unoptimized className="object-contain" />
             </div>
-            <div className="mt-0.5 text-base text-text-secondary">
-              {isFinished && prediction.winnerTeamId === prediction.homeTeamId && "👑 "}
-              승리
-            </div>
-          </motion.div>
+            <span className="text-sm font-bold" style={{ color: homeTeam.colorLight }}>{homeTeam.shortName}</span>
+            {pred.myPick === pred.homeTeamId && (
+              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="flex items-center gap-1">
+                <Check size={12} className={myPickCorrect || !isFinished ? "text-green-400" : "text-red-400"} />
+                <span className={`text-xs font-semibold ${myPickCorrect || !isFinished ? "text-green-400" : "text-red-400"}`}>
+                  {isFinished ? (myPickCorrect ? "적중!" : "아쉽!") : "내 예측"}
+                </span>
+              </motion.div>
+            )}
+          </div>
         </button>
       </div>
 
-      {/* Prediction bar */}
-      <div className="mt-4">
-        <div className="flex h-2.5 overflow-hidden rounded-full">
+      {/* Prediction distribution bar */}
+      <div>
+        <div className="flex h-3 overflow-hidden rounded-full">
           <motion.div
             className="rounded-l-full"
-            initial={{ width: 0 }}
-            animate={{ width: `${awayPercent}%` }}
+            initial={{ width: "50%" }}
+            animate={{ width: `${pred.awayPercent}%` }}
             transition={{ duration: 0.8, ease: "easeOut" }}
-            style={{ backgroundColor: awayTeam.colorPrimary }}
+            style={{ backgroundColor: awayCorrect ? "#22C55E" : awayTeam.colorPrimary }}
           />
           <motion.div
             className="rounded-r-full"
-            initial={{ width: 0 }}
-            animate={{ width: `${homePercent}%` }}
+            initial={{ width: "50%" }}
+            animate={{ width: `${pred.homePercent}%` }}
             transition={{ duration: 0.8, ease: "easeOut", delay: 0.1 }}
-            style={{ backgroundColor: homeTeam.colorPrimary }}
+            style={{ backgroundColor: homeCorrect ? "#22C55E" : homeTeam.colorPrimary }}
           />
         </div>
-        <div className="mt-1.5 flex items-center justify-between text-base">
-          <span style={{ color: awayTeam.colorLight }} className="font-semibold">
-            {awayTeam.shortName} {awayPercent}%
+        <div className="mt-1.5 flex justify-between text-xs tabular-nums">
+          <span className="font-bold" style={{ color: awayTeam.colorLight }}>
+            {awayTeam.shortName} {pred.awayPercent}%
           </span>
-          <span className="flex items-center gap-1 text-text-tertiary">
-            <Users size={22} />
-            {totalVotes.toLocaleString()}명
-          </span>
-          <span style={{ color: homeTeam.colorLight }} className="font-semibold">
-            {homePercent}% {homeTeam.shortName}
+          <span className="font-bold" style={{ color: homeTeam.colorLight }}>
+            {pred.homePercent}% {homeTeam.shortName}
           </span>
         </div>
       </div>
 
-      {/* Result badge */}
+      {/* Just picked animation */}
       <AnimatePresence>
-        {isCorrect && (
+        {justPicked && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mt-4 flex items-center justify-center gap-4 rounded-lg bg-accent-gold/10 py-2 text-base font-semibold text-accent-gold"
+            exit={{ opacity: 0 }}
+            className="mt-2 text-center text-xs font-semibold text-accent"
           >
-            ✅ 적중! +10 포인트
-          </motion.div>
-        )}
-        {isWrong && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mt-4 flex items-center justify-center gap-4 rounded-lg bg-bg-tertiary py-2 text-base text-text-secondary"
-          >
-            ❌ 오답
+            ✅ 예측 완료! +5P
           </motion.div>
         )}
       </AnimatePresence>

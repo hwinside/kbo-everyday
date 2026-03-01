@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { ChevronLeft } from "lucide-react";
 import Link from "next/link";
 import Leaderboard from "@/components/prediction/Leaderboard";
+import { getGradeByPoints } from "@/lib/constants/grades";
 import { MOCK_LEADERBOARD } from "@/lib/constants/predictions";
 
 type TabType = "all" | "team" | "weekly";
