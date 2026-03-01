@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, Heart, MessageCircle, Share2, PenLine } from "lucide-react";
 import Link from "next/link";
 import GlassCard from "@/components/ui/GlassCard";
+import NicheStats from "@/components/player/NicheStats";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
@@ -49,7 +50,7 @@ function getTeamShortName(teamId: number) {
 export default function PlayerBoardPage() {
   const { playerId } = useParams();
   const player = PLAYER_DATA[playerId as string];
-  const [activeTab, setActiveTab] = useState<"latest" | "hot">("latest");
+  const [activeTab, setActiveTab] = useState<"stats" | "latest" | "hot">("stats");
 
   if (!player) {
     return (
@@ -87,7 +88,7 @@ export default function PlayerBoardPage() {
 
         {/* Tabs */}
         <div className="flex border-t border-border">
-          {(["latest", "hot"] as const).map((tab) => (
+          {(["stats", "latest", "hot"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -95,7 +96,7 @@ export default function PlayerBoardPage() {
                 activeTab === tab ? "text-text-primary" : "text-text-tertiary"
               }`}
             >
-              {tab === "latest" ? "최신" : "인기"}
+              {tab === "stats" ? "스탯" : tab === "latest" ? "최신" : "인기"}
               {activeTab === tab && (
                 <motion.div
                   layoutId="board-tab"
@@ -109,8 +110,15 @@ export default function PlayerBoardPage() {
         </div>
       </div>
 
+      {/* Stats tab */}
+      {activeTab === "stats" && (
+        <div className="px-5 py-4">
+          <NicheStats playerId={playerId as string} position={player.position} teamColor={teamColor} />
+        </div>
+      )}
+
       {/* Posts */}
-      <div className="px-5 py-4 space-y-5">
+      {activeTab !== "stats" && <div className="px-5 py-4 space-y-5">
         {MOCK_POSTS.map((post, i) => (
           <motion.div
             key={post.id}
@@ -130,7 +138,7 @@ export default function PlayerBoardPage() {
             </GlassCard></Link>
           </motion.div>
         ))}
-      </div>
+      </div>}
 
       {/* FAB - Write */}
       <button
