@@ -50,3 +50,29 @@
 ### 빌드/배포
 - Vercel URL 변경: kboeveryday → kbo-everyday
 - 빌드 에러 수정 (getTeamColor import)
+
+## 2026-03-01 ~ 03-02 (심야)
+
+### UI 폴리싱
+- 로고 120px + PNG 노이즈 제거
+- 헤더 아이콘 alignment (items-end + mb-6)
+- 마이팀 카드 visibility fix (motion 제거)
+- ✦ 하얀 점 해결 (stagger 꼬임)
+- 경기 아이콘 CalendarDays
+- 텍스트 사이즈 계층 정리 (리더보드, 선수게시판, 예측카드)
+- LevelBadge 색깔 공 제거
+- 예측카드 팀 alignment 고정 높이
+
+### 네비게이션 연결
+- 순위→팀 slug 링크
+- 라인업/스탯 선수이름→선수보드 Link
+
+### 백엔드
+- Supabase 7테이블 + Realtime + Auth
+- Google OAuth Production 배포
+- OAuth callback code→token exchange
+- AuthContext loadProfile 에러 처리
+
+### 배포
+- Vercel 환경변수 JWT 교체
+- Supabase Site URL 프로덕션 설정
