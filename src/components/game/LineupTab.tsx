@@ -71,7 +71,7 @@ export default function LineupTab({
             <tr className="text-text-tertiary border-b border-border">
               <th className="py-2 text-left font-medium w-6">#</th>
               <th className="py-2 text-left font-medium">
-                <span style={{ color: awayTeam.colorPrimary }}>
+                <span style={{ color: awayTeam.colorLight }}>
                   {awayTeam.shortName}
                 </span>
               </th>
@@ -79,7 +79,7 @@ export default function LineupTab({
               <th className="py-2 w-4" />
               <th className="py-2 text-center font-medium w-8">타율</th>
               <th className="py-2 text-right font-medium">
-                <span style={{ color: homeTeam.colorPrimary }}>
+                <span style={{ color: homeTeam.colorLight }}>
                   {homeTeam.shortName}
                 </span>
               </th>

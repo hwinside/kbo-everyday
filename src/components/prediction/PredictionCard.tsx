@@ -83,11 +83,11 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
           style={{
             backgroundColor:
               myPick === prediction.awayTeamId
-                ? `${awayTeam.colorPrimary}20`
+                ? `${awayTeam.colorLight}20`
                 : "transparent",
             border: `2px solid ${
               myPick === prediction.awayTeamId
-                ? awayTeam.colorPrimary
+                ? awayTeam.colorLight
                 : "rgba(255,255,255,0.08)"
             }`,
           }}
@@ -107,7 +107,7 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
               style={{
                 color:
                   myPick === prediction.awayTeamId
-                    ? awayTeam.colorPrimary
+                    ? awayTeam.colorLight
                     : "var(--text-primary)",
               }}
             >
@@ -130,11 +130,11 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
           style={{
             backgroundColor:
               myPick === prediction.homeTeamId
-                ? `${homeTeam.colorPrimary}20`
+                ? `${homeTeam.colorLight}20`
                 : "transparent",
             border: `2px solid ${
               myPick === prediction.homeTeamId
-                ? homeTeam.colorPrimary
+                ? homeTeam.colorLight
                 : "rgba(255,255,255,0.08)"
             }`,
           }}
@@ -154,7 +154,7 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
               style={{
                 color:
                   myPick === prediction.homeTeamId
-                    ? homeTeam.colorPrimary
+                    ? homeTeam.colorLight
                     : "var(--text-primary)",
               }}
             >
@@ -187,14 +187,14 @@ export default function PredictionCard({ prediction }: PredictionCardProps) {
           />
         </div>
         <div className="mt-1.5 flex items-center justify-between text-base">
-          <span style={{ color: awayTeam.colorPrimary }} className="font-semibold">
+          <span style={{ color: awayTeam.colorLight }} className="font-semibold">
             {awayTeam.shortName} {awayPercent}%
           </span>
           <span className="flex items-center gap-1 text-text-tertiary">
             <Users size={22} />
             {totalVotes.toLocaleString()}명
           </span>
-          <span style={{ color: homeTeam.colorPrimary }} className="font-semibold">
+          <span style={{ color: homeTeam.colorLight }} className="font-semibold">
             {homePercent}% {homeTeam.shortName}
           </span>
         </div>

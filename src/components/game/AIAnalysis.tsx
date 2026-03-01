@@ -132,12 +132,12 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId }: 
                     <div className="w-8 h-8 rounded-full bg-white p-1 flex items-center justify-center">
                       <Image src={analysis.away.team.logoPath} alt="" width={24} height={24} unoptimized className="object-contain" />
                     </div>
-                    <span className="text-base font-bold" style={{ color: analysis.away.team.colorPrimary }}>
+                    <span className="text-base font-bold" style={{ color: analysis.away.team.colorLight }}>
                       {analysis.away.team.shortName}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-base font-bold" style={{ color: analysis.home.team.colorPrimary }}>
+                    <span className="text-base font-bold" style={{ color: analysis.home.team.colorLight }}>
                       {analysis.home.team.shortName}
                     </span>
                     <div className="w-8 h-8 rounded-full bg-white p-1 flex items-center justify-center">
@@ -180,7 +180,7 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId }: 
                       <div className="w-5 h-5 rounded-full bg-white p-0.5 flex items-center justify-center">
                         <Image src={side.team.logoPath} alt="" width={14} height={14} unoptimized className="object-contain" />
                       </div>
-                      <span className="text-sm font-bold" style={{ color: side.team.colorPrimary }}>{side.team.shortName}</span>
+                      <span className="text-sm font-bold" style={{ color: side.team.colorLight }}>{side.team.shortName}</span>
                     </div>
                     <div>
                       <div className="flex items-center gap-1 mb-1">

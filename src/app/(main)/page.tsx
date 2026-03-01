@@ -55,6 +55,9 @@ function getTeamShortName(teamId: number) {
 }
 
 function getTeamColor(teamId: number) {
+  return TEAMS.find((t) => t.id === teamId)?.colorLight ?? "#999";
+}
+function getTeamBgColor(teamId: number) {
   return TEAMS.find((t) => t.id === teamId)?.colorPrimary ?? "#666";
 }
 
@@ -193,14 +196,14 @@ export default function HomePage() {
                     initial={{ width: 0 }}
                     animate={{ width: `${pred.awayPercent}%` }}
                     transition={{ duration: 0.8, ease: "easeOut" }}
-                    style={{ backgroundColor: getTeamColor(pred.awayTeamId) }}
+                    style={{ backgroundColor: getTeamBgColor(pred.awayTeamId) }}
                   />
                   <motion.div
                     className="rounded-r-full"
                     initial={{ width: 0 }}
                     animate={{ width: `${pred.homePercent}%` }}
                     transition={{ duration: 0.8, ease: "easeOut", delay: 0.1 }}
-                    style={{ backgroundColor: getTeamColor(pred.homeTeamId) }}
+                    style={{ backgroundColor: getTeamBgColor(pred.homeTeamId) }}
                   />
                 </div>
                 <div className="mt-1.5 flex justify-between text-base text-text-secondary">

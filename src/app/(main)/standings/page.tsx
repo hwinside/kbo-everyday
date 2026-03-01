@@ -113,7 +113,7 @@ function getTeam(id: number) {
 }
 
 function getTeamColor(id: number) {
-  return TEAMS.find((t) => t.id === id)?.colorPrimary ?? "#888";
+  return TEAMS.find((t) => t.id === id)?.colorLight ?? "#999";
 }
 
 function getStreakIcon(streak: string) {
