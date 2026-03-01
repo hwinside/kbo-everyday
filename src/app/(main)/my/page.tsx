@@ -1,14 +1,34 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Settings, ChevronRight, FileText, MessageCircle, Heart, Trophy } from "lucide-react";
+import Image from "next/image";
+import { Settings, ChevronRight, FileText, MessageCircle, Heart, Trophy, RefreshCw } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
+import TeamSelectModal from "@/components/onboarding/TeamSelectModal";
+import { getTeamById } from "@/lib/constants/teams";
+import { getMyTeamId, setMyTeamId } from "@/lib/store/myteam";
 
 export default function MyPage() {
+  const [teamId, setTeamId] = useState<number | null>(null);
+  const [showTeamSelect, setShowTeamSelect] = useState(false);
+
+  useEffect(() => {
+    setTeamId(getMyTeamId());
+  }, []);
+
+  const team = teamId ? getTeamById(teamId) : null;
+
+  const handleTeamChange = (newTeamId: number) => {
+    setMyTeamId(newTeamId);
+    setTeamId(newTeamId);
+    setShowTeamSelect(false);
+  };
+
   return (
-    <div className="mx-auto max-w-lg px-5">
+    <div className="mx-auto max-w-lg px-5 pb-24">
       <header className="flex items-center justify-between py-5">
         <h1 className="text-xl font-bold text-text-primary">MY</h1>
         <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
@@ -16,31 +36,8 @@ export default function MyPage() {
         </button>
       </header>
 
-      {/* Login prompt (guest state) */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-      >
-        <GlassCard className="flex flex-col items-center gap-4 py-8">
-          <div className="flex h-20 w-20 items-center justify-center rounded-full bg-bg-tertiary text-3xl">
-            👤
-          </div>
-          <div className="text-center">
-            <p className="text-base text-text-secondary">로그인하고 크보 에브리데이를 즐겨보세요!</p>
-          </div>
-          <button className="rounded-full bg-accent px-8 py-2.5 text-base font-semibold text-white">
-            로그인
-          </button>
-        </GlassCard>
-      </motion.div>
-
-      {/* Mock logged-in profile preview */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
-        className="mt-5"
-      >
+      {/* Profile card */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
         <GlassCard className="p-5">
           <div className="flex items-center gap-4">
             <div className="flex h-14 w-14 items-center justify-center rounded-full bg-bg-tertiary text-2xl">
@@ -49,11 +46,41 @@ export default function MyPage() {
             <div className="flex-1">
               <div className="flex items-center gap-3">
                 <span className="text-lg font-semibold text-text-primary">엘지골드</span>
-                <TeamBadge teamId={1} />
+                {team && <TeamBadge teamId={team.id} />}
               </div>
               <LevelBadge level={15} showTitle />
               <p className="mt-0.5 text-base text-text-tertiary">1,234 포인트</p>
             </div>
+          </div>
+        </GlassCard>
+      </motion.div>
+
+      {/* 응원 구단 변경 */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.08 }}
+        className="mt-5"
+      >
+        <GlassCard
+          pressable
+          className="flex items-center justify-between p-5"
+          onClick={() => setShowTeamSelect(true)}
+        >
+          <div className="flex items-center gap-4">
+            <RefreshCw size={22} className="text-text-secondary" />
+            <span className="text-base text-text-primary">응원 구단 변경</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {team && (
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-full bg-white p-0.5 flex items-center justify-center">
+                  <Image src={team.logoPath} alt="" width={20} height={20} unoptimized className="object-contain" />
+                </div>
+                <span className="text-sm font-medium" style={{ color: team.colorLight }}>{team.name}</span>
+              </div>
+            )}
+            <ChevronRight size={22} className="text-text-tertiary" />
           </div>
         </GlassCard>
       </motion.div>
@@ -84,6 +111,27 @@ export default function MyPage() {
           </GlassCard>
         ))}
       </motion.div>
+
+      {/* Login prompt */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.2 }}
+        className="mt-5"
+      >
+        <GlassCard className="flex flex-col items-center gap-3 py-6">
+          <p className="text-sm text-text-tertiary">로그인하면 데이터가 동기화됩니다</p>
+          <button className="rounded-full bg-accent px-8 py-2.5 text-sm font-semibold text-white">
+            로그인 / 회원가입
+          </button>
+        </GlassCard>
+      </motion.div>
+
+      {/* Team select modal (reuse onboarding) */}
+      <TeamSelectModal
+        isOpen={showTeamSelect}
+        onSelect={handleTeamChange}
+      />
     </div>
   );
 }
