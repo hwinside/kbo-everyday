@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Bell, ChevronRight, Flame, Users } from "lucide-react";
+import { Bell, ChevronRight, Flame, User, Users } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import GlassCard from "@/components/ui/GlassCard";
@@ -156,7 +156,12 @@ export default function HomePage() {
     >
       {/* Header */}
       <motion.header variants={item} className="flex items-center justify-between py-5">
-        <img src="/logo.png" alt="크보 에브리데이" style={{height: "100px", objectFit: "contain"}} />
+        <div className="flex items-center justify-between w-full">
+              <img src="/logo.png" alt="크보 에브리데이" style={{height: "100px", objectFit: "contain"}} />
+              <Link href="/my" className="p-2 rounded-full hover:bg-bg-tertiary transition-colors">
+                <User size={24} className="text-text-secondary" />
+              </Link>
+            </div>
         <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
           <Bell size={24} />
         </button>

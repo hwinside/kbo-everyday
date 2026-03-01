@@ -126,7 +126,7 @@ function ResultBadge({ result }: { result: PitcherStat["result"] }) {
 
 /* -- sticky cell shared style -- */
 const stickyBase =
-  "sticky bg-[#141416] z-[2]";
+  "sticky bg-[#0A0A0B] z-[2]";
 
 export default function GameStatsTab({
   stats,
@@ -202,7 +202,7 @@ export default function GameStatsTab({
           </span>
         </div>
 
-        <div className="overflow-auto max-h-[45vh] -mx-4 px-4 relative">
+        <div className="overflow-x-auto max-h-[45vh] relative">
           <table className="w-max min-w-full text-sm border-collapse">
             <thead className="sticky top-0 z-[3] bg-[#141416]">
               <tr className="text-text-tertiary border-b border-border">
@@ -211,7 +211,7 @@ export default function GameStatsTab({
                     key={col.key}
                     className={clsx(
                       "py-2 px-2 font-medium whitespace-nowrap",
-                      col.sticky ? `${stickyBase} left-0 text-left` : "text-center",
+                      col.sticky ? `${stickyBase} text-left ${col.key === "name" ? "left-0 min-w-[72px]" : "left-[72px] min-w-[40px]"}` : "text-center",
                       col.key === "order" && "text-center w-8",
                       col.key === "name" && "left-0 min-w-[56px]",
                       col.key === "position" && "left-[56px] min-w-[36px]"
@@ -318,7 +318,7 @@ export default function GameStatsTab({
           </span>
         </div>
 
-        <div className="overflow-auto max-h-[45vh] -mx-4 px-4 relative">
+        <div className="overflow-x-auto max-h-[45vh] relative">
           <table className="w-max min-w-full text-sm border-collapse">
             <thead className="sticky top-0 z-[3] bg-[#141416]">
               <tr className="text-text-tertiary border-b border-border">

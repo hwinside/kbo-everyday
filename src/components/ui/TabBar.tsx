@@ -1,40 +1,26 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
 import { clsx } from "clsx";
-import { Home, Gamepad2, BarChart3, User, Circle, Play, type LucideIcon } from "lucide-react";
-import { getTeamById } from "@/lib/constants/teams";
-
+import { Home, Gamepad2, BarChart3, Sparkles, Play, type LucideIcon } from "lucide-react";
 
 interface TabItem {
   href: string;
   label: string;
-  icon: LucideIcon | null;
-  isMyTeam?: boolean;
+  icon: LucideIcon;
 }
 
 const tabs: TabItem[] = [
   { href: "/", label: "홈", icon: Home },
   { href: "/games", label: "경기", icon: Gamepad2 },
-  { href: "/my-team", label: "마이팀", icon: null, isMyTeam: true },
-  { href: "/highlights", label: "영상", icon: Play },
   { href: "/standings", label: "순위", icon: BarChart3 },
-  { href: "/my", label: "MY", icon: User },
+  { href: "/predict", label: "예측", icon: Sparkles },
+  { href: "/highlights", label: "영상", icon: Play },
 ];
 
 export default function TabBar() {
   const pathname = usePathname();
-  const [myTeamId, setMyTeamId] = useState<number | null>(null);
-  
-  useEffect(() => {
-    const saved = localStorage.getItem("kbo-my-team");
-    if (saved) setMyTeamId(parseInt(saved, 10));
-  }, []);
-  
-  const MY_TEAM_ID = myTeamId;
 
   function isActive(href: string) {
     if (href === "/") return pathname === "/";
@@ -56,36 +42,7 @@ export default function TabBar() {
                 active ? "text-accent" : "text-text-secondary",
               )}
             >
-              {tab.isMyTeam ? (
-                MY_TEAM_ID ? (
-                  (() => {
-                    const myTeam = getTeamById(MY_TEAM_ID);
-                    return myTeam ? (
-                      <div
-                        className={clsx(
-                          "flex h-[24px] w-[24px] items-center justify-center rounded-full bg-white p-0.5",
-                          active && "ring-2 ring-accent ring-offset-1 ring-offset-bg-primary",
-                        )}
-                      >
-                        <Image
-                          src={myTeam.logoPath}
-                          alt={myTeam.name}
-                          width={18}
-                          height={18}
-                          unoptimized
-                          className="object-contain"
-                        />
-                      </div>
-                    ) : (
-                      <Circle size={22} strokeWidth={active ? 2.5 : 1.5} />
-                    );
-                  })()
-                ) : (
-                  <Circle size={22} strokeWidth={active ? 2.5 : 1.5} />
-                )
-              ) : (
-                Icon && <Icon size={22} strokeWidth={active ? 2.5 : 1.5} />
-              )}
+              <Icon size={22} strokeWidth={active ? 2.5 : 1.5} />
               <span className="text-xs font-medium">{tab.label}</span>
             </Link>
           );
