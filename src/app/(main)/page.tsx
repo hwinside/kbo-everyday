@@ -210,12 +210,7 @@ export default function HomePage() {
                   </span>
                 </div>
               </GlassCard>
-              <button
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setAiGame({ awayTeamId: pred.awayTeamId, homeTeamId: pred.homeTeamId }); }}
-                className="mt-2 w-full flex items-center justify-center gap-1.5 py-2 rounded-xl bg-accent/10 text-accent text-sm font-semibold transition-colors hover:bg-accent/20"
-              >
-                🤖 AI훈수
-              </button>
+
             </Link>
           ))}
         </div>

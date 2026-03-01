@@ -5,6 +5,8 @@ import { ChevronLeft, Trophy } from "lucide-react";
 import Link from "next/link";
 import PredictionCard from "@/components/prediction/PredictionCard";
 import PredictionResult from "@/components/prediction/PredictionResult";
+import { useState } from "react";
+import AIAnalysis from "@/components/game/AIAnalysis";
 import { MOCK_PREDICTIONS, MY_PREDICTION_STATS } from "@/lib/constants/predictions";
 
 const container = {
@@ -18,7 +20,9 @@ const item = {
 };
 
 export default function PredictPage() {
+  const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number} | null>(null);
   return (
+    <>
     <motion.div
       variants={container}
       initial="hidden"
@@ -65,9 +69,25 @@ export default function PredictPage() {
         {MOCK_PREDICTIONS.map((pred) => (
           <motion.div key={pred.gameId} variants={item}>
             <PredictionCard prediction={pred} />
+            <button
+              onClick={() => setAiGame({ awayTeamId: pred.awayTeamId, homeTeamId: pred.homeTeamId })}
+              className="mt-2 w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-accent/10 text-accent text-sm font-semibold transition-colors hover:bg-accent/20"
+            >
+              🤖 AI훈수
+            </button>
           </motion.div>
         ))}
       </div>
     </motion.div>
+
+      {aiGame && (
+        <AIAnalysis
+          isOpen={true}
+          onClose={() => setAiGame(null)}
+          awayTeamId={aiGame.awayTeamId}
+          homeTeamId={aiGame.homeTeamId}
+        />
+      )}
+    </>
   );
 }
