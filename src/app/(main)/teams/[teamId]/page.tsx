@@ -99,7 +99,10 @@ export default function TeamBoardPage() {
       .then(r => r.json())
       .then(d => {
         if (d.items?.length) {
-          setRealNews(d.items.map((item: any, i: number) => ({
+          const teamNames = [team.shortName, team.name, ...(team.id === 1 ? ["LG","엘지","트윈스"] : team.id === 2 ? ["두산","베어스"] : team.id === 3 ? ["KT","위즈"] : team.id === 4 ? ["SSG","랜더스"] : team.id === 5 ? ["NC","다이노스"] : team.id === 6 ? ["KIA","기아","타이거즈"] : team.id === 7 ? ["롯데","자이언츠"] : team.id === 8 ? ["삼성","라이온즈"] : team.id === 9 ? ["한화","이글스"] : team.id === 10 ? ["키움","히어로즈"] : [])];
+          const filtered = d.items.filter((item: any) => teamNames.some((n: string) => item.title.includes(n)));
+          const source = filtered.length > 0 ? filtered : d.items;
+          setRealNews(source.map((item: any, i: number) => ({
             id: 2000 + i,
             teamId: team.id,
             title: item.title,
