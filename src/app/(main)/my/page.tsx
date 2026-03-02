@@ -16,6 +16,7 @@ import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getTeamById } from "@/lib/constants/teams";
 import { getMyTeamId, setMyTeamId } from "@/lib/store/myteam";
+import { usePushNotification } from "@/lib/hooks/usePushNotification";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 
@@ -24,6 +25,7 @@ export default function MyPage() {
   const [showTeamSelect, setShowTeamSelect] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const { user, profile, signOut } = useAuth();
+  const { permission, subscribe } = usePushNotification();
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
   const router = useRouter();

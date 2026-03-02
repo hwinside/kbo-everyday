@@ -1,0 +1,44 @@
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+import webpush from "web-push";
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+webpush.setVapidDetails(
+  "mailto:harinclaw@gmail.com",
+  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY!,
+  process.env.VAPID_PRIVATE_KEY!
+);
+
+export async function POST(req: NextRequest) {
+  const { title, body, url, tag, userIds } = await req.json();
+
+  let query = supabase.from("push_subscriptions").select("subscription");
+  if (userIds?.length) query = query.in("user_id", userIds);
+
+  const { data: subs } = await query;
+  if (!subs || subs.length === 0) return NextResponse.json({ sent: 0 });
+
+  const payload = JSON.stringify({ title, body, url, tag });
+  let sent = 0;
+  let failed = 0;
+
+  await Promise.allSettled(
+    subs.map(async (s: any) => {
+      try {
+        await webpush.sendNotification(s.subscription, payload);
+        sent++;
+      } catch (e: any) {
+        failed++;
+        if (e.statusCode === 410) {
+          await supabase.from("push_subscriptions").delete().eq("endpoint", s.subscription.endpoint);
+        }
+      }
+    })
+  );
+
+  return NextResponse.json({ sent, failed });
+}
