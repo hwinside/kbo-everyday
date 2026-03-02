@@ -8,7 +8,7 @@ import { clsx } from "clsx";
 import { TEAMS } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
+import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import type { TeamStanding } from "@/lib/types";
 
 const MOCK_STANDINGS: TeamStanding[] = [
@@ -323,7 +323,7 @@ export default function StandingsPage() {
             }
             if (!realBatters) return <div className="text-center py-8 text-text-tertiary text-sm">2025 시즌 데이터 로딩 중...</div>;
             if (realBatters.length === 0) return <div className="text-center py-8 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</div>;
-            const toLeader = (b: any, valKey: string) => ({ rank: b.rank, name: b.name, teamId: TEAM_NAME_TO_ID[b.team] ?? 0, value: String(b[valKey]) });
+            const toLeader = (b: any, valKey: string) => ({ rank: b.rank, name: b.name, teamId: TEAM_NAME_TO_ID[b.team] ?? 0, value: String(b[valKey]), playerId: PLAYER_PHOTO_MAP[b.name] });
             const sorted = (key: string, desc = true) => [...realBatters].sort((a, b) => desc ? Number(b[key]) - Number(a[key]) : Number(a[key]) - Number(b[key])).slice(0, 20).map((b, i) => ({ ...toLeader(b, key), rank: i + 1 }));
             const avgTop = [...realBatters].slice(0, 20).map((b, i) => ({ ...toLeader(b, "avg"), rank: i + 1 }));
             const categories = [
@@ -356,7 +356,7 @@ export default function StandingsPage() {
             }
             if (!realPitchers) return <div className="text-center py-8 text-text-tertiary text-sm">2025 시즌 데이터 로딩 중...</div>;
             if (realPitchers.length === 0) return <div className="text-center py-8 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</div>;
-            const toLeader = (p: any, valKey: string) => ({ rank: p.rank, name: p.name, teamId: TEAM_NAME_TO_ID[p.team] ?? 0, value: String(p[valKey]) });
+            const toLeader = (p: any, valKey: string) => ({ rank: p.rank, name: p.name, teamId: TEAM_NAME_TO_ID[p.team] ?? 0, value: String(p[valKey]), playerId: PLAYER_PHOTO_MAP[p.name] });
             const sorted = (key: string, desc = true) => [...realPitchers].sort((a, b) => desc ? Number(b[key]) - Number(a[key]) : Number(a[key]) - Number(b[key])).slice(0, 20).map((p, i) => ({ ...toLeader(p, key), rank: i + 1 }));
             const eraTop = [...realPitchers].slice(0, 20).map((p, i) => ({ ...toLeader(p, "era"), rank: i + 1 }));
             const categories = [
