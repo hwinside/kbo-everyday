@@ -117,16 +117,16 @@ export default function GameDetailPage() {
         )}
 
         {/* Score header */}
-        <div className="flex items-center justify-center gap-4 px-5 py-4">
+        <div className="flex items-center justify-center gap-3 px-4 py-4 whitespace-nowrap">
           {/* Away team */}
           <Link href={`/teams/${awayTeam.slug}`} className="flex items-center gap-3">
             <TeamLogo
               team={awayTeam}
-              size={64}
+              size={52}
               className="shadow-lg"
               style={{ boxShadow: `0 0 20px ${awayTeam.colorPrimary}40` }}
             />
-            <span className="text-base font-semibold text-text-primary">
+            <span className="text-sm font-semibold text-text-primary flex-shrink-0">
               {awayTeam.shortName}
             </span>
           </Link>
@@ -137,14 +137,14 @@ export default function GameDetailPage() {
               key={`away-${game.awayScore}`}
               initial={{ scale: 1.5, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="text-3xl font-bold tabular-nums text-text-primary"
+              className="text-3xl font-bold tabular-nums text-text-primary min-w-[36px] text-center"
             >
               {game.awayScore}
             </motion.span>
             <div className="flex flex-col items-center">
               <span className="text-base text-text-tertiary">:</span>
               {game.inning && (
-                <span className="text-base text-text-secondary mt-0.5">
+                <span className="text-sm text-text-secondary mt-0.5 whitespace-nowrap">
                   {game.inning}
                 </span>
               )}
@@ -153,7 +153,7 @@ export default function GameDetailPage() {
               key={`home-${game.homeScore}`}
               initial={{ scale: 1.5, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="text-3xl font-bold tabular-nums text-text-primary"
+              className="text-3xl font-bold tabular-nums text-text-primary min-w-[36px] text-center"
             >
               {game.homeScore}
             </motion.span>
@@ -161,12 +161,12 @@ export default function GameDetailPage() {
 
           {/* Home team */}
           <Link href={`/teams/${homeTeam.slug}`} className="flex items-center gap-3">
-            <span className="text-base font-semibold text-text-primary">
+            <span className="text-sm font-semibold text-text-primary flex-shrink-0">
               {homeTeam.shortName}
             </span>
             <TeamLogo
               team={homeTeam}
-              size={64}
+              size={52}
               className="shadow-lg"
               style={{ boxShadow: `0 0 20px ${homeTeam.colorPrimary}40` }}
             />
