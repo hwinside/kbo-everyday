@@ -47,6 +47,13 @@ export default function PredictPage() {
   const { myPredictions, communityVotes, loading: predsLoading, savePrediction: savePredictionToDb } = usePredictions(user?.id);
   const [localPicks, setLocalPicks] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState("");
+  const [batterStats, setBatterStats] = useState<any[]>([]);
+  const [pitcherStats, setPitcherStats] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch("/api/stats?type=batter").then(r => r.json()).then(d => setBatterStats(d.stats || []));
+    fetch("/api/stats?type=pitcher").then(r => r.json()).then(d => setPitcherStats(d.stats || []));
+  }, []);
 
   // Merge DB predictions with local picks
   const mergedPredictions = { ...myPredictions, ...localPicks };
@@ -70,9 +77,42 @@ export default function PredictPage() {
   const completedCount = submitted.size;
   const totalCount = CATEGORIES.length;
 
-  const filteredPlayers = searchQuery
-    ? ALL_PLAYERS.filter(p => p.name.includes(searchQuery))
+  const statFilter = selectedCategory?.statFilter;
+  const statsSource = statFilter === "pitcher" ? pitcherStats : statFilter === "batter" ? batterStats : [];
+  const statsNames = new Set(statsSource.map((s: any) => s.name));
+  
+  const basePlayerList = statFilter
+    ? ALL_PLAYERS.filter(p => statsNames.has(p.name))
     : ALL_PLAYERS;
+  
+  const filteredPlayers = searchQuery
+    ? basePlayerList.filter(p => p.name.includes(searchQuery))
+    : basePlayerList;
+  
+  // 순위 매핑
+  const getRank = (name: string): string => {
+    if (!statFilter || !selectedCategory) return "";
+    const source = statsSource;
+    const catId = selectedCategory.id;
+    if (catId === "batting") {
+      const sorted = [...source].sort((a, b) => parseFloat(b.avg || "0") - parseFloat(a.avg || "0"));
+      const idx = sorted.findIndex(s => s.name === name);
+      return idx >= 0 ? `25년 ${idx + 1}위 (${sorted[idx].avg})` : "";
+    } else if (catId === "homerun") {
+      const sorted = [...source].sort((a, b) => parseInt(b.hr || "0") - parseInt(a.hr || "0"));
+      const idx = sorted.findIndex(s => s.name === name);
+      return idx >= 0 ? `25년 ${idx + 1}위 (${sorted[idx].hr}개)` : "";
+    } else if (catId === "wins") {
+      const sorted = [...source].sort((a, b) => parseInt(b.w || "0") - parseInt(a.w || "0"));
+      const idx = sorted.findIndex(s => s.name === name);
+      return idx >= 0 ? `25년 ${idx + 1}위 (${sorted[idx].w}승)` : "";
+    } else if (catId === "era") {
+      const sorted = [...source].filter(s => parseFloat(s.era || "99") < 90).sort((a, b) => parseFloat(a.era || "99") - parseFloat(b.era || "99"));
+      const idx = sorted.findIndex(s => s.name === name);
+      return idx >= 0 ? `25년 ${idx + 1}위 (${sorted[idx].era})` : "";
+    }
+    return "";
+  };
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
@@ -231,8 +271,11 @@ export default function PredictPage() {
                               }`}
                             >
                               <PlayerAvatar name={player.name} teamId={0} photoUrl={`https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2025/${player.playerId}.jpg`} size={36} showTeamBadge={false} />
-                              <div className="text-left">
+                              <div className="text-left flex-1">
                                 <span className="text-sm font-bold text-text-primary">{player.name}</span>
+                                {getRank(player.name) && (
+                                  <p className="text-[11px] text-text-tertiary">{getRank(player.name)}</p>
+                                )}
                               </div>
                               {isSelected && <Check size={16} className="ml-auto text-accent" />}
                             </button>
