@@ -154,6 +154,7 @@ function LeaderSection({ title, leaders, router }: { title: string; leaders: Tit
 
 export default function StandingsPage() {
   const [realStandings, setRealStandings] = useState<TeamStanding[] | null>(null);
+  const [season, setSeason] = useState<2025 | 2026>(2026);
 
   useEffect(() => {
     fetch("/api/standings")
@@ -183,6 +184,20 @@ export default function StandingsPage() {
   }, []);
 
   const standings = realStandings ?? MOCK_STANDINGS;
+  const [realBatters, setRealBatters] = useState<any[] | null>(null);
+  const [realPitchers, setRealPitchers] = useState<any[] | null>(null);
+
+  useEffect(() => {
+    if (season !== 2025) { setRealBatters(null); setRealPitchers(null); return; }
+    fetch("/api/stats?type=batter")
+      .then(r => r.json())
+      .then(d => d.stats?.length && setRealBatters(d.stats))
+      .catch(() => {});
+    fetch("/api/stats?type=pitcher")
+      .then(r => r.json())
+      .then(d => d.stats?.length && setRealPitchers(d.stats))
+      .catch(() => {});
+  }, [season]);
   const router = useRouter();
   const [mainTab, setMainTab] = useState<MainTab>("team");
 
@@ -190,7 +205,20 @@ export default function StandingsPage() {
     <div className="mx-auto max-w-lg px-5">
       <header className="py-5">
         <h1 className="text-xl font-bold text-text-primary">순위</h1>
-        <p className="text-base text-text-secondary">2026 시즌</p>
+        <div className="flex items-center gap-2 mt-1">
+          {([2025, 2026] as const).map(y => (
+            <button
+              key={y}
+              onClick={() => setSeason(y)}
+              className={clsx(
+                "px-3 py-1 rounded-full text-sm font-medium transition-all",
+                season === y ? "bg-accent text-white" : "bg-bg-tertiary text-text-tertiary"
+              )}
+            >
+              {y} 시즌
+            </button>
+          ))}
+        </div>
       </header>
 
       {/* Main tabs */}
@@ -235,7 +263,7 @@ export default function StandingsPage() {
               </tr>
             </thead>
             <tbody>
-              {MOCK_STANDINGS.map((standing, i) => {
+              {(season === 2025 && realStandings ? realStandings : MOCK_STANDINGS).map((standing, i) => {
                 const team = getTeam(standing.teamId);
                 const isMyTeam = standing.teamId === 1;
                 return (
@@ -275,9 +303,48 @@ export default function StandingsPage() {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-4"
         >
-          {BATTER_TITLES.map((cat) => (
-            <LeaderSection key={cat.id} router={router} title={cat.label} leaders={cat.leaders} />
-          ))}
+          {season === 2025 && realBatters ? (
+            <div className="glass-card p-4">
+              <h3 className="text-base font-semibold text-text-tertiary mb-3">타자 기록 (2025)</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-xs text-text-tertiary">
+                      <th className="py-2 text-center w-8">#</th>
+                      <th className="py-2 text-left">이름</th>
+                      <th className="py-2 text-left">팀</th>
+                      <th className="py-2 text-center">타율</th>
+                      <th className="py-2 text-center">홈런</th>
+                      <th className="py-2 text-center">타점</th>
+                      <th className="py-2 text-center">안타</th>
+                      <th className="py-2 text-center">OPS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {realBatters.slice(0, 20).map((b: any) => (
+                      <tr key={b.rank} className="border-b border-border/30">
+                        <td className="py-2 text-center text-text-tertiary">{b.rank}</td>
+                        <td className="py-2 font-medium text-text-primary">{b.name}</td>
+                        <td className="py-2 text-text-secondary">{b.team}</td>
+                        <td className="py-2 text-center tabular-nums font-semibold text-text-primary">{b.avg}</td>
+                        <td className="py-2 text-center tabular-nums">{b.hr}</td>
+                        <td className="py-2 text-center tabular-nums">{b.rbi}</td>
+                        <td className="py-2 text-center tabular-nums">{b.hits}</td>
+                        <td className="py-2 text-center tabular-nums">{b.ops}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {realBatters.length === 0 && <p className="text-center py-4 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</p>}
+            </div>
+          ) : season === 2025 ? (
+            <div className="text-center py-8 text-text-tertiary text-sm">2025 시즌 데이터 로딩 중...</div>
+          ) : (
+            BATTER_TITLES.map((cat) => (
+              <LeaderSection key={cat.id} router={router} title={cat.label} leaders={cat.leaders} />
+            ))
+          )}
         </motion.div>
       )}
 
@@ -288,9 +355,48 @@ export default function StandingsPage() {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-4"
         >
-          {PITCHER_TITLES.map((cat) => (
-            <LeaderSection key={cat.id} router={router} title={cat.label} leaders={cat.leaders} />
-          ))}
+          {season === 2025 && realPitchers ? (
+            <div className="glass-card p-4">
+              <h3 className="text-base font-semibold text-text-tertiary mb-3">투수 기록 (2025)</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-xs text-text-tertiary">
+                      <th className="py-2 text-center w-8">#</th>
+                      <th className="py-2 text-left">이름</th>
+                      <th className="py-2 text-left">팀</th>
+                      <th className="py-2 text-center">ERA</th>
+                      <th className="py-2 text-center">승</th>
+                      <th className="py-2 text-center">패</th>
+                      <th className="py-2 text-center">삼진</th>
+                      <th className="py-2 text-center">WHIP</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {realPitchers.slice(0, 20).map((p: any) => (
+                      <tr key={p.rank} className="border-b border-border/30">
+                        <td className="py-2 text-center text-text-tertiary">{p.rank}</td>
+                        <td className="py-2 font-medium text-text-primary">{p.name}</td>
+                        <td className="py-2 text-text-secondary">{p.team}</td>
+                        <td className="py-2 text-center tabular-nums font-semibold text-text-primary">{p.era}</td>
+                        <td className="py-2 text-center tabular-nums">{p.wins}</td>
+                        <td className="py-2 text-center tabular-nums">{p.losses}</td>
+                        <td className="py-2 text-center tabular-nums">{p.so}</td>
+                        <td className="py-2 text-center tabular-nums">{p.whip}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {realPitchers.length === 0 && <p className="text-center py-4 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</p>}
+            </div>
+          ) : season === 2025 ? (
+            <div className="text-center py-8 text-text-tertiary text-sm">2025 시즌 데이터 로딩 중...</div>
+          ) : (
+            PITCHER_TITLES.map((cat) => (
+              <LeaderSection key={cat.id} router={router} title={cat.label} leaders={cat.leaders} />
+            ))
+          )}
         </motion.div>
       )}
 
