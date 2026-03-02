@@ -88,7 +88,7 @@ export default function PostDetailPage() {
       <div className="px-5 py-4">
         <div className="flex items-center gap-2 mb-3">
           {team && <TeamBadge teamId={team.id} size="xs" />}
-          <span className="text-sm font-semibold text-text-primary">{post.nickname || "익명"}</span>
+          <span className="text-sm font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => post.author_id && router.push(`/profile/${post.author_id}`)}>{post.nickname || "익명"}</span>
           <span className="text-xs text-text-tertiary ml-auto">{timeAgo(post.created_at)}</span>
         </div>
 
@@ -127,7 +127,7 @@ export default function PostDetailPage() {
             <div key={c.id}>
               <div className="flex items-center gap-2 mb-1">
                 {c.team_id && <TeamBadge teamId={c.team_id} size="xs" />}
-                <span className="text-sm font-semibold text-text-primary">{c.nickname || "익명"}</span>
+                <span className="text-sm font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>{c.nickname || "익명"}</span>
                 <span className="text-xs text-text-tertiary">{timeAgo(c.created_at)}</span>
               </div>
               <p className="text-sm text-text-secondary">{c.content}</p>

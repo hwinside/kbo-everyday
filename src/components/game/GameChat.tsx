@@ -173,7 +173,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
                   {msg.team_id && <TeamBadge teamId={msg.team_id} size="xs" className="shrink-0" />}
                   <div className="min-w-0 flex-1">
                     <span className="inline">
-                      <span className={clsx("text-xs font-semibold mr-1", isMe ? "text-accent" : "text-text-tertiary")}>
+                      <span className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")} onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}>
                         {msg.nickname || "익명"}
                       </span>
                       <span className="text-sm text-text-primary">{msg.content}</span>
