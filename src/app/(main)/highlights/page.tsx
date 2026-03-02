@@ -30,7 +30,7 @@ function ReelSlide({
 
   // iframe src — mute=1 필수 (모바일 autoplay 정책)
   const src = isActive
-    ? `https://www.youtube.com/embed/${reel.youtubeId}?autoplay=1&mute=${muted ? 1 : 0}&controls=0&modestbranding=1&rel=0&playsinline=1&loop=1&playlist=${reel.youtubeId}&enablejsapi=1`
+    ? `https://www.youtube.com/embed/${reel.youtubeId}?autoplay=1&mute=${muted ? 1 : 0}&controls=1&modestbranding=1&rel=0&playsinline=1&loop=1&playlist=${reel.youtubeId}&enablejsapi=1`
     : undefined;
 
   // postMessage로 play/pause 제어
@@ -91,9 +91,7 @@ function ReelSlide({
           <Share2 size={28} className="text-white" />
           <span className="text-xs text-white font-medium">공유</span>
         </button>
-        <button onClick={onMute}>
-          {muted ? <VolumeX size={22} className="text-white/70" /> : <Volume2 size={22} className="text-white/70" />}
-        </button>
+        
       </div>
 
       {/* Bottom info */}
