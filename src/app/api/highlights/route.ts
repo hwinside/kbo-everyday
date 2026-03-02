@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const res = await fetch(
-      `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&maxResults=20&order=date&videoDuration=short&key=${YOUTUBE_API_KEY}`
+      `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&maxResults=20&order=date&videoDuration=short&videoEmbeddable=true&key=${YOUTUBE_API_KEY}`
     );
     const data = await res.json();
     if (data.error) {
