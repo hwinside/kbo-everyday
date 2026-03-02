@@ -303,48 +303,29 @@ export default function StandingsPage() {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-4"
         >
-          {season === 2025 && realBatters ? (
-            <div className="glass-card p-4">
-              <h3 className="text-base font-semibold text-text-tertiary mb-3">타자 기록 (2025)</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-xs text-text-tertiary">
-                      <th className="py-2 text-center w-8">#</th>
-                      <th className="py-2 text-left">이름</th>
-                      <th className="py-2 text-left">팀</th>
-                      <th className="py-2 text-center">타율</th>
-                      <th className="py-2 text-center">홈런</th>
-                      <th className="py-2 text-center">타점</th>
-                      <th className="py-2 text-center">안타</th>
-                      <th className="py-2 text-center">OPS</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {realBatters.slice(0, 20).map((b: any) => (
-                      <tr key={b.rank} className="border-b border-border/30">
-                        <td className="py-2 text-center text-text-tertiary">{b.rank}</td>
-                        <td className="py-2 font-medium text-text-primary">{b.name}</td>
-                        <td className="py-2 text-text-secondary">{b.team}</td>
-                        <td className="py-2 text-center tabular-nums font-semibold text-text-primary">{b.avg}</td>
-                        <td className="py-2 text-center tabular-nums">{b.hr}</td>
-                        <td className="py-2 text-center tabular-nums">{b.rbi}</td>
-                        <td className="py-2 text-center tabular-nums">{b.hits}</td>
-                        <td className="py-2 text-center tabular-nums">{b.ops}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {realBatters.length === 0 && <p className="text-center py-4 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</p>}
-            </div>
-          ) : season === 2025 ? (
-            <div className="text-center py-8 text-text-tertiary text-sm">2025 시즌 데이터 로딩 중...</div>
-          ) : (
-            BATTER_TITLES.map((cat) => (
-              <LeaderSection key={cat.id} router={router} title={cat.label} leaders={cat.leaders} />
-            ))
-          )}
+          {(() => {
+            const TEAM_NAME_TO_ID: Record<string, number> = { LG: 1, 두산: 2, KT: 3, SSG: 4, NC: 5, KIA: 6, 롯데: 7, 삼성: 8, 한화: 9, 키움: 10 };
+            if (season === 2026) {
+              return BATTER_TITLES.map((cat) => (
+                <LeaderSection key={cat.id} router={router} title={cat.label} leaders={cat.leaders} />
+              ));
+            }
+            if (!realBatters) return <div className="text-center py-8 text-text-tertiary text-sm">2025 시즌 데이터 로딩 중...</div>;
+            if (realBatters.length === 0) return <div className="text-center py-8 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</div>;
+            const toLeader = (b: any, valKey: string) => ({ rank: b.rank, name: b.name, teamId: TEAM_NAME_TO_ID[b.team] ?? 0, value: String(b[valKey]) });
+            const sorted = (key: string, desc = true) => [...realBatters].sort((a, b) => desc ? Number(b[key]) - Number(a[key]) : Number(a[key]) - Number(b[key])).slice(0, 5).map((b, i) => ({ ...toLeader(b, key), rank: i + 1 }));
+            const avgTop = [...realBatters].slice(0, 5).map((b, i) => ({ ...toLeader(b, "avg"), rank: i + 1 }));
+            const categories = [
+              { id: "avg", label: "타율", leaders: avgTop },
+              { id: "hr", label: "홈런", leaders: sorted("hr") },
+              { id: "rbi", label: "타점", leaders: sorted("rbi") },
+              { id: "hits", label: "안타", leaders: sorted("hits") },
+              { id: "sb", label: "도루", leaders: sorted("sb") },
+            ];
+            return categories.map((cat) => (
+              <LeaderSection key={cat.id} router={router} title={`${cat.label} (2025)`} leaders={cat.leaders} />
+            ));
+          })()}
         </motion.div>
       )}
 
@@ -355,48 +336,29 @@ export default function StandingsPage() {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-4"
         >
-          {season === 2025 && realPitchers ? (
-            <div className="glass-card p-4">
-              <h3 className="text-base font-semibold text-text-tertiary mb-3">투수 기록 (2025)</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-xs text-text-tertiary">
-                      <th className="py-2 text-center w-8">#</th>
-                      <th className="py-2 text-left">이름</th>
-                      <th className="py-2 text-left">팀</th>
-                      <th className="py-2 text-center">ERA</th>
-                      <th className="py-2 text-center">승</th>
-                      <th className="py-2 text-center">패</th>
-                      <th className="py-2 text-center">삼진</th>
-                      <th className="py-2 text-center">WHIP</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {realPitchers.slice(0, 20).map((p: any) => (
-                      <tr key={p.rank} className="border-b border-border/30">
-                        <td className="py-2 text-center text-text-tertiary">{p.rank}</td>
-                        <td className="py-2 font-medium text-text-primary">{p.name}</td>
-                        <td className="py-2 text-text-secondary">{p.team}</td>
-                        <td className="py-2 text-center tabular-nums font-semibold text-text-primary">{p.era}</td>
-                        <td className="py-2 text-center tabular-nums">{p.wins}</td>
-                        <td className="py-2 text-center tabular-nums">{p.losses}</td>
-                        <td className="py-2 text-center tabular-nums">{p.so}</td>
-                        <td className="py-2 text-center tabular-nums">{p.whip}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {realPitchers.length === 0 && <p className="text-center py-4 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</p>}
-            </div>
-          ) : season === 2025 ? (
-            <div className="text-center py-8 text-text-tertiary text-sm">2025 시즌 데이터 로딩 중...</div>
-          ) : (
-            PITCHER_TITLES.map((cat) => (
-              <LeaderSection key={cat.id} router={router} title={cat.label} leaders={cat.leaders} />
-            ))
-          )}
+          {(() => {
+            const TEAM_NAME_TO_ID: Record<string, number> = { LG: 1, 두산: 2, KT: 3, SSG: 4, NC: 5, KIA: 6, 롯데: 7, 삼성: 8, 한화: 9, 키움: 10 };
+            if (season === 2026) {
+              return PITCHER_TITLES.map((cat) => (
+                <LeaderSection key={cat.id} router={router} title={cat.label} leaders={cat.leaders} />
+              ));
+            }
+            if (!realPitchers) return <div className="text-center py-8 text-text-tertiary text-sm">2025 시즌 데이터 로딩 중...</div>;
+            if (realPitchers.length === 0) return <div className="text-center py-8 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</div>;
+            const toLeader = (p: any, valKey: string) => ({ rank: p.rank, name: p.name, teamId: TEAM_NAME_TO_ID[p.team] ?? 0, value: String(p[valKey]) });
+            const sorted = (key: string, desc = true) => [...realPitchers].sort((a, b) => desc ? Number(b[key]) - Number(a[key]) : Number(a[key]) - Number(b[key])).slice(0, 5).map((p, i) => ({ ...toLeader(p, key), rank: i + 1 }));
+            const eraTop = [...realPitchers].slice(0, 5).map((p, i) => ({ ...toLeader(p, "era"), rank: i + 1 }));
+            const categories = [
+              { id: "era", label: "평균자책", leaders: eraTop },
+              { id: "wins", label: "승리", leaders: sorted("wins") },
+              { id: "so", label: "탈삼진", leaders: sorted("so") },
+              { id: "saves", label: "세이브", leaders: sorted("saves") },
+              { id: "holds", label: "홀드", leaders: sorted("holds") },
+            ];
+            return categories.map((cat) => (
+              <LeaderSection key={cat.id} router={router} title={`${cat.label} (2025)`} leaders={cat.leaders} />
+            ));
+          })()}
         </motion.div>
       )}
 
