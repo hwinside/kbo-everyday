@@ -27,6 +27,8 @@ import CountIndicator from "@/components/game/CountIndicator";
 import RadioPlayer from "@/components/game/RadioPlayer";
 import PlayByPlay from "@/components/game/PlayByPlay";
 import GameChat from "@/components/game/GameChat";
+import LiveScoreboard from "@/components/game/LiveScoreboard";
+import { useLiveGame } from "@/lib/hooks/useLiveGame";
 import LineupTab from "@/components/game/LineupTab";
 import GameStatsTab from "@/components/game/GameStatsTab";
 
@@ -43,6 +45,7 @@ export default function GameDetailPage() {
   const params = useParams();
   const gameId = params.gameId as string;
   const [activeTab, setActiveTab] = useState<Tab>("chat");
+  const { game: liveGame } = useLiveGame(gameId, 15000);
 
   const game = getGameById(gameId);
   if (!game) {
@@ -168,29 +171,36 @@ export default function GameDetailPage() {
           </div>
         </div>
 
-        {/* Diamond + Count (only for live games) */}
+        {/* Live Scoreboard */}
         {game.status === "live" && gameState && (
-          <div className="flex items-center gap-4 px-5 pb-2">
-            <Diamond
-              runner1b={gameState.runner1b}
-              runner2b={gameState.runner2b}
-              runner3b={gameState.runner3b}
-              teamColor={battingTeamColor}
+          <div className="px-4 pb-2">
+            <LiveScoreboard
+              gameId={gameId}
+              awayName={awayTeam.shortName}
+              homeName={homeTeam.shortName}
+              awayScore={liveGame?.awayScore ?? game.awayScore}
+              homeScore={liveGame?.homeScore ?? game.homeScore}
+              awayColor={awayTeam.colorLight || awayTeam.colorPrimary}
+              homeColor={homeTeam.colorLight || homeTeam.colorPrimary}
+              currentInning={liveGame?.currentInning || game.inning || ""}
+              state={{
+                gameId,
+                balls: liveGame?.balls ?? gameState.balls,
+                strikes: liveGame?.strikes ?? gameState.strikes,
+                outs: liveGame?.outs ?? gameState.outs,
+                runner1b: liveGame?.runner1b ?? gameState.runner1b,
+                runner2b: liveGame?.runner2b ?? gameState.runner2b,
+                runner3b: liveGame?.runner3b ?? gameState.runner3b,
+                currentBatter: liveGame?.currentBatter ?? gameState.currentBatter,
+                currentPitcher: liveGame?.currentPitcher ?? gameState.currentPitcher,
+              }}
+              isLive={true}
             />
-            <div className="flex-1">
-              <CountIndicator
-                balls={gameState.balls}
-                strikes={gameState.strikes}
-                outs={gameState.outs}
-                currentBatter={gameState.currentBatter}
-                currentPitcher={gameState.currentPitcher}
-              />
-            </div>
           </div>
         )}
 
-        {/* Inning score table */}
-        {innings.length > 0 && (
+        {/* Inning score table (종료/예정 경기) */}
+        {game.status !== "live" && innings.length > 0 && (
           <div className="px-4 pb-2">
             <ScoreBoard
               awayTeam={awayTeam}

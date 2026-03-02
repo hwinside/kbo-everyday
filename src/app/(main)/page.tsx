@@ -13,6 +13,7 @@ import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getMyTeamId, setMyTeamId as saveMyTeamId } from "@/lib/store/myteam";
 import NewsCarousel from "@/components/news/NewsCarousel";
+import LiveGameBanner from "@/components/home/LiveGameBanner";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { TEAMS, getTeamById } from "@/lib/constants/teams";
@@ -223,6 +224,8 @@ export default function HomePage() {
 
       {/* ===== News Carousel ===== */}
       <div className="mb-3">
+        <LiveGameBanner />
+
         <NewsCarousel news={myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 5) : MOCK_NEWS} />
       </div>
 
