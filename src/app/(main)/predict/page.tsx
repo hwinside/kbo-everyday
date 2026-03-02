@@ -103,9 +103,9 @@ export default function PredictPage() {
       const idx = sorted.findIndex(s => s.name === name);
       return idx >= 0 ? `25년 ${idx + 1}위 (${sorted[idx].hr}개)` : "";
     } else if (catId === "wins") {
-      const sorted = [...source].sort((a, b) => parseInt(b.w || "0") - parseInt(a.w || "0"));
+      const sorted = [...source].sort((a, b) => parseInt(b.wins || "0") - parseInt(a.wins || "0"));
       const idx = sorted.findIndex(s => s.name === name);
-      return idx >= 0 ? `25년 ${idx + 1}위 (${sorted[idx].w}승)` : "";
+      return idx >= 0 ? `25년 ${idx + 1}위 (${sorted[idx].wins}승)` : "";
     } else if (catId === "era") {
       const sorted = [...source].filter(s => parseFloat(s.era || "99") < 90).sort((a, b) => parseFloat(a.era || "99") - parseFloat(b.era || "99"));
       const idx = sorted.findIndex(s => s.name === name);
