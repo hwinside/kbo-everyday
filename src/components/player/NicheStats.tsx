@@ -1,7 +1,9 @@
 "use client";
 
 import { motion } from "framer-motion";
+import { useState, useEffect } from "react";
 import GlassCard from "@/components/ui/GlassCard";
+import { calcBatterSaber, calcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
 import {
   BATTER_ADVANCED, PITCHER_ADVANCED,
   getDefaultBatterAdvanced, getDefaultPitcherAdvanced,
@@ -183,8 +185,77 @@ function PitcherStats({ data, teamColor }: { data: PitcherAdvanced; teamColor: s
   );
 }
 
-export default function NicheStats({ playerId, position, teamColor }: { playerId: string; position: string; teamColor: string }) {
+export default function NicheStats({ playerId, position, teamColor, playerName, season = 2026 }: { playerId: string; position: string; teamColor: string; playerName?: string; season?: number }) {
   const isPitcher = position === "투수";
+  const [realSaber, setRealSaber] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (season !== 2025 || !playerName) { setRealSaber(null); return; }
+    setLoading(true);
+    const type = isPitcher ? "pitcher" : "batter";
+    fetch(`/api/stats?type=${type}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.stats) {
+          const found = d.stats.find((s: any) => s.name === playerName);
+          if (found) {
+            const saber = isPitcher
+              ? calcPitcherSaber(found)
+              : calcBatterSaber(found);
+            setRealSaber(saber);
+          }
+        }
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [season, playerName, isPitcher]);
+
+  if (season === 2025) {
+    if (loading) return <div className="text-center py-8 text-text-tertiary text-sm">계산 중...</div>;
+    if (!realSaber) return <div className="glass-card p-4 mb-4 text-center text-text-tertiary text-sm">2025 세이버메트릭스 데이터를 찾을 수 없습니다</div>;
+
+    if (isPitcher) {
+      return (
+        <div className="space-y-4">
+          <GlassCard className="p-4">
+            <h3 className="text-sm font-bold text-text-primary mb-3">📊 2025 세이버메트릭스 (실데이터 기반)</h3>
+            <div className="grid grid-cols-4 gap-3">
+              <StatBox label="FIP" value={realSaber.FIP.toFixed(2)} desc="순수 투구력" />
+              <StatBox label="WHIP" value={typeof realSaber.WHIP === "number" ? realSaber.WHIP.toFixed(2) : realSaber.WHIP} desc="출루 허용" />
+              <StatBox label="K/9" value={realSaber.K9.toFixed(1)} desc="9이닝 삼진" />
+              <StatBox label="BB/9" value={realSaber.BB9.toFixed(1)} desc="9이닝 볼넷" />
+              <StatBox label="HR/9" value={realSaber.HR9.toFixed(1)} desc="9이닝 피홈런" />
+              <StatBox label="K%" value={`${realSaber.K_pct}%`} desc="삼진 비율" />
+              <StatBox label="BB%" value={`${realSaber.BB_pct}%`} desc="볼넷 비율" />
+            </div>
+            <p className="text-[10px] text-text-tertiary mt-3 text-center">※ KBO 공식 기록 기반 계산값</p>
+          </GlassCard>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        <GlassCard className="p-4">
+          <h3 className="text-sm font-bold text-text-primary mb-3">📊 2025 세이버메트릭스 (실데이터 기반)</h3>
+          <div className="grid grid-cols-4 gap-3">
+            <StatBox label="wRC+" value={String(realSaber.wRC_plus)} desc="득점 생산" />
+            <StatBox label="OPS" value={realSaber.OPS.toFixed(3)} desc="출루+장타" />
+            <StatBox label="wOBA" value={realSaber.wOBA.toFixed(3)} desc="가중 출루" />
+            <StatBox label="ISO" value={realSaber.ISO.toFixed(3)} desc="순수 장타력" />
+            <StatBox label="BABIP" value={realSaber.BABIP.toFixed(3)} desc="인플레이 타율" />
+            <StatBox label="BB%" value={`${realSaber.BB_pct}%`} desc="볼넷 비율" />
+            <StatBox label="K%" value={`${realSaber.K_pct}%`} desc="삼진 비율" />
+            <StatBox label="OBP" value={realSaber.OBP.toFixed(3)} desc="출루율" />
+          </div>
+          <p className="text-[10px] text-text-tertiary mt-3 text-center">※ KBO 공식 기록 기반 계산값 (WAR, 핫존, 구종별은 Statiz 연동 예정)</p>
+        </GlassCard>
+      </div>
+    );
+  }
+
+  // 2026 mock
   if (isPitcher) {
     const data = PITCHER_ADVANCED[playerId] ?? getDefaultPitcherAdvanced(playerId);
     return <PitcherStats data={data} teamColor={teamColor} />;

@@ -173,7 +173,7 @@ export default function PlayerBoardPage() {
           </div>
 
           {statSeason === 2026 ? (
-            <NicheStats playerId={playerId as string} position={player.position} teamColor={teamColor} />
+            <NicheStats playerId={playerId as string} position={player.position} teamColor={teamColor} playerName={player.name} season={statSeason} />
           ) : realStats ? (
             <div className="glass-card p-4 mb-4">
               <h3 className="text-sm font-bold text-text-primary mb-3">2025 시즌 기록</h3>
