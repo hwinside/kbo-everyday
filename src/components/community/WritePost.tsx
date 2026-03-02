@@ -39,6 +39,7 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit }: Write
   }
 
   async function handleSubmit() {
+    alert("handleSubmit called: " + title.trim().substring(0,10));
     if (!title.trim() || !content.trim()) return;
     try {
       if (onSubmit) await onSubmit(title.trim(), content.trim(), []);
