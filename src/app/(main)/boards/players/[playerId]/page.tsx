@@ -10,6 +10,7 @@ import NicheStats from "@/components/player/NicheStats";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
+import { usePosts } from "@/lib/supabase/usePosts";
 import CheerSong from "@/components/player/CheerSong";
 import PlayerProfile from "@/components/player/PlayerProfile";
 import PhotoGallery from "@/components/player/PhotoGallery";
@@ -32,16 +33,6 @@ const PLAYER_DATA: Record<string, { name: string; teamId: number; number: number
   p15: { name: "이의리", teamId: 2, number: 17, position: "투수", totalPosts: 398 },
 };
 
-const MOCK_POSTS = [
-  { id: 1, title: "오늘 경기 미쳤다 진짜 ㄷㄷ", author: "야구팬123", timeAgo: "5분 전", likes: 42, comments: 18 },
-  { id: 2, title: "타격폼 분석해봤는데 올해 달라진 점", author: "분석맨", timeAgo: "23분 전", likes: 87, comments: 34 },
-  { id: 3, title: "응원가 가사 정리 (최신버전)", author: "응원단장", timeAgo: "1시간 전", likes: 156, comments: 22 },
-  { id: 4, title: "직관 후기 + 사인볼 인증 🔥", author: "직관러", timeAgo: "2시간 전", likes: 234, comments: 56 },
-  { id: 5, title: "커리어 하이 가능할까?", author: "스탯덕후", timeAgo: "3시간 전", likes: 67, comments: 41 },
-  { id: 6, title: "팬미팅 후기 (사진 다수)", author: "덕후일기", timeAgo: "4시간 전", likes: 312, comments: 89 },
-  { id: 7, title: "vs 상대투수 상성 정리", author: "기록맨", timeAgo: "5시간 전", likes: 94, comments: 27 },
-  { id: 8, title: "굿즈 어디서 사야 하나요?", author: "뉴비팬", timeAgo: "6시간 전", likes: 23, comments: 15 },
-];
 
 function getTeamColor(teamId: number) {
   return TEAMS.find((t) => t.id === teamId)?.colorPrimary ?? "#888";
@@ -54,6 +45,7 @@ export default function PlayerBoardPage() {
   const { playerId } = useParams();
   const player = PLAYER_DATA[playerId as string];
   const [activeTab, setActiveTab] = useState<"stats" | "photo" | "latest" | "hot">("stats");
+  const { posts: livePosts, loading: postsLoading } = usePosts("player", playerId as string);
 
   if (!player) {
     return (
@@ -142,7 +134,12 @@ export default function PlayerBoardPage() {
 
       {/* Posts */}
       {activeTab !== "stats" && activeTab !== "photo" && <div className="px-5 py-4 space-y-5">
-        {MOCK_POSTS.map((post, i) => (
+        {(livePosts.length === 0 && !postsLoading) ? (
+          <div className="text-center py-12 text-text-tertiary">
+            <p className="text-sm">아직 게시글이 없어요</p>
+            <p className="text-xs mt-1">첫 번째 글을 작성해보세요!</p>
+          </div>
+        ) : livePosts.map((post, i) => (
           <motion.div
             key={post.id}
             initial={{ opacity: 0, y: 8 }}
@@ -152,10 +149,10 @@ export default function PlayerBoardPage() {
             <Link href={`/boards/players/${playerId}/posts/${post.id}`}><GlassCard pressable className="p-4">
               <p className="text-base font-medium text-text-primary">{post.title}</p>
               <div className="mt-2 flex items-center justify-between text-base text-text-tertiary">
-                <span>{post.author} · {post.timeAgo}</span>
+                <span>{post.nickname || "익명"} · {new Date(post.created_at).toLocaleDateString("ko-KR")}</span>
                 <div className="flex items-center gap-4">
-                  <span className="flex items-center gap-1"><Heart size={22} /> {post.likes}</span>
-                  <span className="flex items-center gap-1"><MessageCircle size={22} /> {post.comments}</span>
+                  <span className="flex items-center gap-1"><Heart size={22} /> {post.like_count}</span>
+                  <span className="flex items-center gap-1"><MessageCircle size={22} /> {post.comment_count}</span>
                 </div>
               </div>
             </GlassCard></Link>
