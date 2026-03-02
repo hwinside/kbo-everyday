@@ -2,11 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 
 const KBO_BASE = "https://www.koreabaseball.com";
 
-const TEAM_CODE_MAP: Record<string, string> = {
-  LG: "LG", 두산: "OB", KT: "KT", SSG: "SK", NC: "NC",
-  KIA: "HT", 롯데: "LT", 삼성: "SS", 한화: "HH", 키움: "WO",
-};
-
 interface PlayerStat {
   rank: number;
   name: string;
@@ -20,27 +15,23 @@ async function fetchHtml(url: string): Promise<string> {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
       "Referer": KBO_BASE,
     },
-    next: { revalidate: 3600 }, // 1시간 캐시
+    next: { revalidate: 3600 },
   });
   return res.text();
 }
 
 function parseTable(html: string): string[][] {
   const rows: string[][] = [];
-  // tbody 내의 tr 추출
   const tbodyMatch = html.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i);
   if (!tbodyMatch) return rows;
-  
   const tbody = tbodyMatch[1];
   const trMatches = tbody.match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi);
   if (!trMatches) return rows;
-  
   for (const tr of trMatches) {
     const cells: string[] = [];
     const tdMatches = tr.match(/<td[^>]*>([\s\S]*?)<\/td>/gi);
     if (tdMatches) {
       for (const td of tdMatches) {
-        // HTML 태그 제거, 공백 정리
         const text = td.replace(/<[^>]+>/g, "").trim();
         cells.push(text);
       }
@@ -50,71 +41,57 @@ function parseTable(html: string): string[][] {
   return rows;
 }
 
-// 타자 기본 기록
-async function fetchBatterStats(year: string = "2025"): Promise<PlayerStat[]> {
+// 타자 — Basic1: 순위,이름,팀,타율,경기,타석,타수,득점,안타,2루타,3루타,홈런,타점,도루,사사구?,삼진
+async function fetchBatterStats(): Promise<PlayerStat[]> {
   const url = `${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=HRA_RT`;
   const html = await fetchHtml(url);
   const rows = parseTable(html);
-  
-  return rows.slice(0, 30).map((cols, i) => ({
+
+  return rows.slice(0, 30).map((c, i) => ({
     rank: i + 1,
-    name: cols[1] || "",
-    team: cols[2] || "",
-    avg: cols[3] || ".000",
-    games: parseInt(cols[4]) || 0,
-    pa: parseInt(cols[5]) || 0,    // 타석
-    ab: parseInt(cols[6]) || 0,    // 타수
-    runs: parseInt(cols[7]) || 0,  // 득점
-    hits: parseInt(cols[8]) || 0,  // 안타
-    doubles: parseInt(cols[9]) || 0,
-    triples: parseInt(cols[10]) || 0,
-    hr: parseInt(cols[11]) || 0,
-    rbi: parseInt(cols[12]) || 0,  // 타점
-    sb: parseInt(cols[13]) || 0,   // 도루
-    bb: parseInt(cols[14]) || 0,   // 볼넷
-    so: parseInt(cols[15]) || 0,   // 삼진
-    obp: cols[16] || ".000",       // 출루율
-    slg: cols[17] || ".000",       // 장타율
-    ops: cols[18] || ".000",       // OPS
+    name: c[1] || "",
+    team: c[2] || "",
+    avg: c[3] || ".000",
+    games: parseInt(c[4]) || 0,
+    pa: parseInt(c[5]) || 0,
+    ab: parseInt(c[6]) || 0,
+    runs: parseInt(c[7]) || 0,
+    hits: parseInt(c[8]) || 0,
+    doubles: parseInt(c[9]) || 0,
+    triples: parseInt(c[10]) || 0,
+    hr: parseInt(c[11]) || 0,
+    rbi: parseInt(c[12]) || 0,
+    sb: parseInt(c[13]) || 0,
   }));
 }
 
-// 투수 기본 기록
-async function fetchPitcherStats(year: string = "2025"): Promise<PlayerStat[]> {
+// 투수 — Basic1: 순위,이름,팀,ERA,경기,완투,완봉,승,패,세,홀,승률,이닝,피안,피홈,볼넷,사구,삼진,실점,자책,WHIP
+async function fetchPitcherStats(): Promise<PlayerStat[]> {
   const url = `${KBO_BASE}/Record/Player/PitcherBasic/Basic1.aspx?sort=ERA_RT`;
   const html = await fetchHtml(url);
   const rows = parseTable(html);
-  
-  return rows.slice(0, 30).map((cols, i) => ({
+
+  return rows.slice(0, 30).map((c, i) => ({
     rank: i + 1,
-    name: cols[1] || "",
-    team: cols[2] || "",
-    era: cols[3] || "0.00",
-    games: parseInt(cols[4]) || 0,
-    wins: parseInt(cols[5]) || 0,
-    losses: parseInt(cols[6]) || 0,
-    saves: parseInt(cols[7]) || 0,
-    holds: parseInt(cols[8]) || 0,
-    ip: cols[9] || "0.0",          // 이닝
-    hits: parseInt(cols[10]) || 0,
-    hr: parseInt(cols[11]) || 0,
-    bb: parseInt(cols[12]) || 0,    // 볼넷
-    hbp: parseInt(cols[13]) || 0,   // 사구
-    so: parseInt(cols[14]) || 0,    // 삼진
-    runs: parseInt(cols[15]) || 0,  // 실점
-    er: parseInt(cols[16]) || 0,    // 자책
-    whip: cols[17] || "0.00",
+    name: c[1] || "",
+    team: c[2] || "",
+    era: c[3] || "0.00",
+    games: parseInt(c[4]) || 0,
+    wins: parseInt(c[5]) || 0,
+    losses: parseInt(c[6]) || 0,
+    saves: parseInt(c[7]) || 0,
+    holds: parseInt(c[8]) || 0,
+    ip: c[10] || "0",
+    so: parseInt(c[15]) || 0,
+    er: parseInt(c[17]) || 0,
+    whip: c[18] || "0.00",
   }));
 }
 
 export async function GET(req: NextRequest) {
   const type = req.nextUrl.searchParams.get("type") || "batter";
-  
   try {
-    const stats = type === "pitcher" 
-      ? await fetchPitcherStats()
-      : await fetchBatterStats();
-    
+    const stats = type === "pitcher" ? await fetchPitcherStats() : await fetchBatterStats();
     return NextResponse.json({ stats, type, count: stats.length });
   } catch (e: any) {
     return NextResponse.json({ error: e.message, stats: [] }, { status: 500 });
