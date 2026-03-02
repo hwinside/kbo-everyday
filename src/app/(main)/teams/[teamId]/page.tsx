@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -8,7 +8,7 @@ import { ChevronLeft, Pencil } from "lucide-react";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import GlassCard from "@/components/ui/GlassCard";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
+import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import TeamLogo from "@/components/ui/TeamLogo";
 import PostList from "@/components/community/PostList";
 import WritePost from "@/components/community/WritePost";
@@ -23,6 +23,7 @@ import {
 import type { Post } from "@/lib/types";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
+import { PLAYER_PROFILES } from "@/lib/constants/player-profiles";
 import { usePosts, createPost } from "@/lib/supabase/usePosts";
 
 type PageTab = "board" | "players";
@@ -112,8 +113,19 @@ export default function TeamBoardPage() {
       ? [...posts].sort((a, b) => b.likeCount - a.likeCount)
       : posts;
 
-  // 현재는 LG만 선수 데이터 있음
-  const players = team.slug === "lg" ? ALL_LG_PLAYERS : [];
+  // 팀 선수 목록 (KBO API에서 로딩)
+  const [teamPlayers, setTeamPlayers] = useState<{ name: string; position: string; stats: any }[]>([]);
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/stats?type=batter").then(r => r.json()),
+      fetch("/api/stats?type=pitcher").then(r => r.json()),
+    ]).then(([b, p]) => {
+      const batters = (b.stats || []).filter((s: any) => s.team === team.shortName).map((s: any) => ({ name: s.name, position: "타자", stats: s }));
+      const pitchers = (p.stats || []).filter((s: any) => s.team === team.shortName).map((s: any) => ({ name: s.name, position: "투수", stats: s }));
+      setTeamPlayers([...batters, ...pitchers]);
+    });
+  }, [team.shortName]);
+  const players = teamPlayers;
   const grouped = POSITION_ORDER.map((group) => ({
     group,
     players: players.filter((p) => getPositionGroup(p.position) === group),
@@ -209,7 +221,7 @@ export default function TeamBoardPage() {
           >
             {players.length === 0 ? (
               <div className="py-20 text-center text-base text-text-tertiary">
-                선수 데이터 준비 중입니다
+                선수 데이터 로딩 중...
               </div>
             ) : (
               <div className="space-y-6">
@@ -218,28 +230,28 @@ export default function TeamBoardPage() {
                     <h3 className="mb-3 text-base font-semibold text-text-tertiary">{group}</h3>
                     <div className="space-y-2">
                       {groupPlayers.map((player) => {
-                        const isPitcher = ["SP", "RP", "CP"].includes(player.position);
+                        const isPitcher = player.position === "투수";
                         return (
                           <Link
-                            key={player.id}
-                            href={`/teams/${team.slug}/players/${player.id}`}
+                            key={player.name}
+                            href={`/boards/players/${PLAYER_PHOTO_MAP[player.name] || player.name}`}
                           >
                             <GlassCard pressable className="!p-4">
                               <div className="flex items-center gap-4">
-                                <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={64} showTeamBadge={false} />
+                                <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={0} size={64} showTeamBadge={false} />
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-3">
                                     <span className="text-base font-bold text-text-primary">
                                       {player.name}
                                     </span>
                                     <span className="text-base text-text-tertiary">
-                                      {POSITION_LABELS[player.position] ?? player.position}
+                                      {player.position}
                                     </span>
                                   </div>
                                   <p className="mt-0.5 text-base tabular-nums text-text-secondary">
                                     {isPitcher
-                                      ? `ERA ${player.seasonStats.era?.toFixed(2)} · ${player.seasonStats.wins}승${player.seasonStats.losses}패 · WHIP ${player.seasonStats.whip?.toFixed(2)}`
-                                      : `${player.seasonStats.avg?.toFixed(3).slice(1)} / ${player.seasonStats.hr}HR / ${player.seasonStats.rbi}RBI · OPS ${player.seasonStats.ops?.toFixed(3).slice(1)}`}
+                                      ? `ERA ${player.stats?.era || "-"} · ${player.stats?.w || 0}승${player.stats?.l || 0}패 · WHIP ${player.stats?.whip || "-"}`
+                                      : `${player.stats?.avg || "-"} / ${player.stats?.hr || 0}HR / ${player.stats?.rbi || 0}RBI`}
                                   </p>
                                 </div>
                               </div>
