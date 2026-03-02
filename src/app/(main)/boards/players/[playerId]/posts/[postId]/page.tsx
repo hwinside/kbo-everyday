@@ -134,7 +134,7 @@ export default function PostDetailPage() {
       </div>
 
       {/* Comment Input */}
-      <div className="fixed bottom-0 left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40">
+      <div className="fixed bottom-16 left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40">
         <input
           type="text"
           value={comment}
