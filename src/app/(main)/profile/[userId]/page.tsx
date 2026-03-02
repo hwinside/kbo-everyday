@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, Copy, Check, Heart, MessageCircle, Settings } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -188,6 +188,7 @@ function InviteTab({ userId, inviteCount }: { userId: string; inviteCount: numbe
         <p>🤝 10명 초대 → 리크루터 Lv.3</p>
         <p>🎪 30명 초대 → <span className="text-amber-400 font-bold">초대왕</span></p>
       </div>
+
     </div>
   );
 }
@@ -203,6 +204,7 @@ export default function ProfilePage() {
   const [posts, setPosts] = useState<UserPost[]>([]);
   const [inviteCodes, setInviteCodes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedBadge, setSelectedBadge] = useState<BadgeDefinition | null>(null);
   const [activeTab, setActiveTab] = useState<"badges" | "posts" | "invite">("badges");
   const [copied, setCopied] = useState(false);
 
@@ -371,7 +373,8 @@ export default function ProfilePage() {
                       <motion.div
                         key={badge.id}
                         whileTap={{ scale: 0.95 }}
-                        className={`text-center p-2 rounded-xl transition-all ${
+                        onClick={() => setSelectedBadge(badge)}
+                        className={`text-center p-2 rounded-xl transition-all cursor-pointer ${
                           earned ? "bg-white/5" : "opacity-30"
                         }`}
                       >
@@ -443,6 +446,45 @@ export default function ProfilePage() {
       {activeTab === "invite" && isOwn && (
         <InviteTab userId={user!.id} inviteCount={profile.invite_count || 0} />
       )}
+
+      {/* Badge Detail Popup */}
+      <AnimatePresence>
+        {selectedBadge && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center p-8"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setSelectedBadge(null)}
+          >
+            <div className="absolute inset-0 bg-black/60" />
+            <motion.div
+              className="relative bg-bg-secondary rounded-2xl border border-border p-6 text-center max-w-[280px] w-full"
+              initial={{ scale: 0.8, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.8, y: 20 }}
+              onClick={e => e.stopPropagation()}
+            >
+              <span className="text-5xl">{selectedBadge.icon}</span>
+              <h3 className="text-lg font-bold text-text-primary mt-3">{selectedBadge.name}</h3>
+              <p className="text-sm text-text-secondary mt-2">{selectedBadge.description}</p>
+              <div className="mt-3">
+                <span
+                  className="text-xs font-bold px-3 py-1 rounded-full"
+                  style={{ backgroundColor: RARITY_COLORS[selectedBadge.rarity] + "20", color: RARITY_COLORS[selectedBadge.rarity] }}
+                >
+                  {selectedBadge.rarity === "common" ? "일반" : selectedBadge.rarity === "rare" ? "레어" : selectedBadge.rarity === "epic" ? "에픽" : "전설"}
+                </span>
+              </div>
+              {earnedBadgeIds.has(selectedBadge.id)
+                ? <p className="text-xs text-green-400 mt-3">✅ 획득 완료!</p>
+                : <p className="text-xs text-text-tertiary mt-3">🔒 아직 미획득</p>
+              }
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }
