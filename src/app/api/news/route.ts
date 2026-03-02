@@ -35,8 +35,8 @@ export async function GET(req: NextRequest) {
     const data = await res.json();
 
     const items = (data.items || []).map((item: any) => ({
-      title: item.title.replace(/<[^>]+>/g, ""),
-      description: item.description.replace(/<[^>]+>/g, ""),
+      title: item.title.replace(/<[^>]+>/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#039;/g, "'").replace(/&apos;/g, "'"),
+      description: item.description.replace(/<[^>]+>/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#039;/g, "'").replace(/&apos;/g, "'"),
       link: item.originallink || item.link,
       pubDate: item.pubDate,
     }));
