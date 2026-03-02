@@ -203,7 +203,7 @@ export default function PredictPage() {
                           }`}
                         >
                           <TeamBadge teamId={team.id} size="md" />
-                          <span className="text-sm font-bold text-text-primary">{team.shortName}</span>
+                          
                         </button>
                       );
                     })}
