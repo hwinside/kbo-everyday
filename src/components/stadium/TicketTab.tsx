@@ -6,6 +6,7 @@ import { Ticket, AlertTriangle } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { getTeamById } from "@/lib/constants/teams";
 import TeamBadge from "@/components/ui/TeamBadge";
+import DMButton from "@/components/ui/DMButton";
 
 interface TicketData {
   id: number;

@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { Settings, ChevronRight, FileText, MessageCircle, Heart, Trophy, RefreshCw, MapPin, Star, LogIn, LogOut, GraduationCap } from "lucide-react";
+import { Settings, ChevronRight, FileText, MessageCircle, Mail, Heart, Trophy, RefreshCw, MapPin, Star, LogIn, LogOut, GraduationCap } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
@@ -152,6 +152,7 @@ export default function MyPage() {
       >
         {[
           { icon: FileText, label: "내가 쓴 글", count: 23 },
+          { icon: Mail, label: "쪽지함", href: "/messages" },
           { icon: MessageCircle, label: "내 댓글", count: 89 },
           { icon: Heart, label: "좋아요한 글", count: 156 },
           { icon: Trophy, label: "예측 전적", count: null, detail: "67% 적중" },
