@@ -126,7 +126,7 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId }: 
             </div>
 
             {/* Header */}
-            <div className="flex items-center justify-between px-5 py-3">
+            <div className="sticky top-0 z-10 bg-bg-secondary flex items-center justify-between px-5 py-3 border-b border-border">
               <div className="flex items-center gap-2">
                 <Brain size={20} className="text-accent" />
                 <h2 className="text-lg font-bold text-text-primary">AI 분석</h2>
