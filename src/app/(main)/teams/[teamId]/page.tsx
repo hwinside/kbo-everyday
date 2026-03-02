@@ -91,6 +91,29 @@ export default function TeamBoardPage() {
 
   const { user } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
+  const [realNews, setRealNews] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!team) return;
+    fetch(\`/api/news?team=\${team.shortName}\`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.items?.length) {
+          setRealNews(d.items.map((item: any, i: number) => ({
+            id: 2000 + i,
+            teamId: team.id,
+            title: item.title,
+            source: (() => { try { return new URL(item.link).hostname.replace("www.", "").replace("m.", ""); } catch { return "뉴스"; } })(),
+            sourceUrl: item.link,
+            thumbnailUrl: null,
+            timeAgo: new Date(item.pubDate).toLocaleDateString("ko-KR"),
+            type: "news" as const,
+          })));
+        }
+      })
+      .catch(() => {});
+  }, [team]);
+
   const { posts: livePosts, loading: postsLoading, reload } = usePosts("team", teamSlug);
   const realPosts: Post[] = livePosts.map(p => ({
     id: p.id,
@@ -157,7 +180,7 @@ export default function TeamBoardPage() {
 
       {/* Team News Carousel */}
       <div className="mb-2">
-        <NewsCarousel news={MOCK_NEWS.filter(n => n.teamId === team.id).slice(0, 5)} />
+        <NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 5) : MOCK_NEWS.filter(n => n.teamId === team.id).slice(0, 5)} />
       </div>
 
       <div className="px-5 pb-5">
