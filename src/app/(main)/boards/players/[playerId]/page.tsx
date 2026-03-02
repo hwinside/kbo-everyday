@@ -96,7 +96,7 @@ export default function PlayerBoardPage() {
               alert("링크가 복사되었습니다!");
             }
           }}>
-            <Share2 className="w-8 h-8 text-text-tertiary" />
+            <Share2 className="w-5 h-5 text-text-tertiary" />
           </button>
         </div>
 
