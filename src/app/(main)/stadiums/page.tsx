@@ -27,9 +27,9 @@ export default function StadiumsPage() {
             <motion.div key={stadium.id} variants={item}>
               <Link href={`/stadiums/${stadium.id}`}>
                 <GlassCard pressable className="p-4">
-                  <div className="flex items-start gap-4">
+                  <div className="flex items-center gap-4">
                     {/* Teams */}
-                    <div className="flex -space-x-2">
+                    <div className="flex -space-x-2 w-14 flex-shrink-0 justify-center">
                       {teams.map(t => (
                         <div key={t.id} className="w-10 h-10 rounded-full bg-white p-1 flex items-center justify-center border-2 border-bg-primary">
                           <Image src={t.logoPath} alt="" width={28} height={28} unoptimized className="object-contain" />
@@ -43,7 +43,7 @@ export default function StadiumsPage() {
                         <span className="text-xs text-text-tertiary">{stadium.city}</span>
                         <span className="text-xs text-text-tertiary">· {stadium.capacity}석</span>
                       </div>
-                      <div className="flex items-center gap-4 mt-2 text-xs">
+                      <div className="flex items-center flex-wrap gap-x-4 gap-y-1 mt-2 text-xs">
                         <span className="flex items-center gap-1 text-yellow-400">
                           <Star size={12} fill="currentColor" /> {stadium.rating}
                         </span>
