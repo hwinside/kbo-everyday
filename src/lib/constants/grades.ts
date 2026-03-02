@@ -14,7 +14,7 @@ export const GRADES: Grade[] = [
   { id: "rookie", name: "루키", emoji: "🌱", minPoints: 0, color: "#9CA3AF", bgColor: "#9CA3AF20", perks: ["기본 예측 참여"] },
   { id: "regular", name: "레귤러", emoji: "⚾", minPoints: 300, color: "#60A5FA", bgColor: "#60A5FA20", perks: ["프로필 뱃지", "댓글 이모지"] },
   { id: "allstar", name: "올스타", emoji: "⭐", minPoints: 1000, color: "#FBBF24", bgColor: "#FBBF2420", perks: ["닉네임 컬러", "예측 히스토리 열람"] },
-  { id: "mvp", name: "MVP", emoji: "🏆", minPoints: 3000, color: "#F59E0B", bgColor: "#F59E0B20", perks: ["전용 뱃지", "AI훈수 상세 분석", "주간 리포트"] },
+  { id: "mvp", name: "MVP", emoji: "🏆", minPoints: 3000, color: "#F59E0B", bgColor: "#F59E0B20", perks: ["전용 뱃지", "AI분석 상세 분석", "주간 리포트"] },
   { id: "hof", name: "명예의전당", emoji: "👑", minPoints: 8000, color: "#EF4444", bgColor: "#EF444420", perks: ["골드 닉네임", "명예의전당 등재", "시즌 종합 리포트"] },
 ];
 
