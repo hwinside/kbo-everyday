@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const BLOCKED_WORDS = [
-  "시발", "씨발", "좆", "병신", "미친놈", "꺼져", "죽어",
+  "시발", "씨발", "좆", "병신", "미친놈", "꺼져",
   "ㅅㅂ", "ㅂㅅ", "ㅈㄹ", "ㅆㅂ", "지랄", "새끼",
 ];
 
