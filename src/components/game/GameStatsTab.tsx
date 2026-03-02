@@ -24,7 +24,7 @@ const BATTER_COLUMNS: {
   label: string;
   sticky?: boolean;
 }[] = [
-  { key: "order", label: "타순" },
+  { key: "order", label: "타순", sticky: true },
   { key: "name", label: "타자", sticky: true },
   { key: "position", label: "포지션", sticky: true },
   { key: "ab", label: "타수" },
@@ -212,7 +212,7 @@ export default function GameStatsTab({
                     key={col.key}
                     className={clsx(
                       "py-2 px-2 font-medium whitespace-nowrap",
-                      col.sticky ? `${stickyBase} text-left ${col.key === "name" ? "left-0 min-w-[72px]" : "left-[72px] min-w-[40px]"}` : "text-center",
+                      col.sticky ? `${stickyBase} text-left ${col.key === "order" ? "left-0 min-w-[36px]" : col.key === "name" ? "left-[36px] min-w-[72px]" : "left-[108px] min-w-[40px]"}` : "text-center",
                       col.key === "order" && "text-center w-8",
                       col.key === "name" && "left-0 min-w-[56px]",
                       col.key === "position" && "left-[56px] min-w-[36px]"
