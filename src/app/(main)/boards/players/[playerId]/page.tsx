@@ -12,7 +12,6 @@ import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
 import CheerSong from "@/components/player/CheerSong";
 import PlayerProfile from "@/components/player/PlayerProfile";
-import PlayerProfile from "@/components/player/PlayerProfile";
 import PhotoGallery from "@/components/player/PhotoGallery";
 
 const PLAYER_DATA: Record<string, { name: string; teamId: number; number: number; position: string; totalPosts: number }> = {
