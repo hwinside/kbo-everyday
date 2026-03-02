@@ -117,7 +117,7 @@ export default function GameDetailPage() {
         {/* Score header */}
         <div className="flex items-center justify-center gap-4 px-5 py-4">
           {/* Away team */}
-          <div className="flex items-center gap-3">
+          <Link href={`/teams/${awayTeam.slug}`} className="flex items-center gap-3">
             <TeamLogo
               team={awayTeam}
               size={64}
@@ -127,7 +127,7 @@ export default function GameDetailPage() {
             <span className="text-base font-semibold text-text-primary">
               {awayTeam.shortName}
             </span>
-          </div>
+          </Link>
 
           {/* Score */}
           <div className="flex items-center gap-4">
@@ -158,7 +158,7 @@ export default function GameDetailPage() {
           </div>
 
           {/* Home team */}
-          <div className="flex items-center gap-3">
+          <Link href={`/teams/${homeTeam.slug}`} className="flex items-center gap-3">
             <span className="text-base font-semibold text-text-primary">
               {homeTeam.shortName}
             </span>
@@ -168,7 +168,7 @@ export default function GameDetailPage() {
               className="shadow-lg"
               style={{ boxShadow: `0 0 20px ${homeTeam.colorPrimary}40` }}
             />
-          </div>
+          </Link>
         </div>
 
         {/* Live Scoreboard */}
