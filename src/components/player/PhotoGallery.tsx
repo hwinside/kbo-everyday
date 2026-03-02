@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Heart, ChevronLeft, ChevronRight, Camera, Send } from "lucide-react";
+import { X, Heart, ChevronLeft, ChevronRight, Camera, Send, Share2 } from "lucide-react";
 import Image from "next/image";
 
 interface Comment {
@@ -69,6 +69,16 @@ function PhotoViewer({ photos, index, onClose, onNav }: {
         <span className="text-sm font-semibold text-white">{photo.author}</span>
         <div className="flex items-center gap-2">
           <span className="text-xs text-white/40">{photo.timeAgo}</span>
+          
+          <button onClick={async () => {
+            const url = `${window.location.origin}${window.location.pathname}?photo=${photo.id}`;
+            if (navigator.share) {
+              await navigator.share({ title: `${photo.author}의 직찍`, text: photo.caption || "크보 에브리데이 직찍", url });
+            } else {
+              await navigator.clipboard.writeText(url);
+              alert("링크가 복사되었습니다!");
+            }
+          }}><Share2 size={20} className="text-white/70" /></button>
           <button onClick={onClose}><X size={22} className="text-white/70" /></button>
         </div>
       </div>
