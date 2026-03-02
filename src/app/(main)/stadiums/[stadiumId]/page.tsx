@@ -5,7 +5,8 @@ import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowLeft, Star, MapPin, UtensilsCrossed, Armchair, MessageCircle, Heart, PenLine } from "lucide-react";
+import { ArrowLeft, Star, MapPin, UtensilsCrossed, Armchair, MessageCircle, Heart, PenLine, Ticket } from "lucide-react";
+import TicketTab from "@/components/stadium/TicketTab";
 import GlassCard from "@/components/ui/GlassCard";
 import { STADIUMS } from "@/lib/constants/stadiums";
 import { getTeamById } from "@/lib/constants/teams";
@@ -20,7 +21,7 @@ const MOCK_REVIEWS = [
 
 export default function StadiumDetailPage() {
   const { stadiumId } = useParams();
-  const [activeTab, setActiveTab] = useState<"food" | "seats" | "reviews">("food");
+  const [activeTab, setActiveTab] = useState<"food" | "seats" | "tickets" | "reviews">("food");
   const stadium = STADIUMS.find(s => s.id === stadiumId);
 
   if (!stadium) return <div className="flex items-center justify-center h-screen text-text-secondary">구장을 찾을 수 없습니다</div>;
@@ -60,6 +61,7 @@ export default function StadiumDetailPage() {
         {([
           { id: "food" as const, label: "🍗 맛집", icon: UtensilsCrossed },
           { id: "seats" as const, label: "💺 좌석팁", icon: Armchair },
+          { id: "tickets" as const, label: "🎫 양도", icon: Ticket },
           { id: "reviews" as const, label: "💬 후기", icon: MessageCircle },
         ]).map(tab => (
           <button
