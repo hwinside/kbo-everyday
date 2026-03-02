@@ -71,14 +71,15 @@ function getDynamicBadges(stats: UserStats): string[] {
   const earned: string[] = [];
   const thresholds = [5, 15, 30, 60, 100];
 
-  for (const [, count] of Object.entries(stats.playerActivity)) {
+  // fan-player:{playerId}:1~5, fan-team:{teamId}:1~5
+  for (const [playerId, count] of Object.entries(stats.playerActivity)) {
     for (let i = 0; i < thresholds.length; i++) {
-      if (count >= thresholds[i]) earned.push(`fan-player-${i + 1}`);
+      if (count >= thresholds[i]) earned.push(`fan-player:${playerId}:${i + 1}`);
     }
   }
-  for (const [, count] of Object.entries(stats.teamActivity)) {
+  for (const [teamId, count] of Object.entries(stats.teamActivity)) {
     for (let i = 0; i < thresholds.length; i++) {
-      if (count >= thresholds[i]) earned.push(`fan-team-${i + 1}`);
+      if (count >= thresholds[i]) earned.push(`fan-team:${teamId}:${i + 1}`);
     }
   }
   return earned;

@@ -9,6 +9,8 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById } from "@/lib/constants/teams";
 import TeamBadge from "@/components/ui/TeamBadge";
 import GlassCard from "@/components/ui/GlassCard";
+import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
+import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import { BADGES, BADGE_MAP, RARITY_COLORS, CATEGORY_LABELS } from "@/lib/constants/badges";
 import type { BadgeDefinition } from "@/lib/constants/badges";
 
@@ -44,6 +46,31 @@ interface UserPost {
   created_at: string;
 }
 
+
+// 동적 배지 (fan-player:playerId:level, fan-team:teamId:level) 해석
+function parseDynamicBadge(badgeId: string): BadgeDefinition | null {
+  const playerMatch = badgeId.match(/^fan-player:(.+):(\d+)$/);
+  if (playerMatch) {
+    const [, playerId, level] = playerMatch;
+    const playerName = Object.entries(PLAYER_PHOTO_MAP).find(([, id]) => id === playerId)?.[0] || playerId;
+    const lvl = parseInt(level);
+    const rarity = lvl <= 2 ? "common" : lvl <= 3 ? "rare" : lvl <= 4 ? "epic" : "legendary";
+    return { id: badgeId, name: `${playerName} 덕후 Lv.${level}`, icon: "⭐", description: `${playerName} 게시판 활동`, category: "fan", rarity };
+  }
+  const teamMatch = badgeId.match(/^fan-team:(\d+):(\d+)$/);
+  if (teamMatch) {
+    const [, teamId, level] = teamMatch;
+    const teamName = KBO_TEAMS.find(t => String(t.id) === teamId)?.shortName || teamId;
+    const lvl = parseInt(level);
+    const rarity = lvl <= 2 ? "common" : lvl <= 3 ? "rare" : lvl <= 4 ? "epic" : "legendary";
+    return { id: badgeId, name: `${teamName} 광팬 Lv.${level}`, icon: "🏟️", description: `${teamName} 게시판 활동`, category: "fan", rarity };
+  }
+  return null;
+}
+
+function getBadgeInfo(badgeId: string): BadgeDefinition | null {
+  return BADGE_MAP[badgeId] || parseDynamicBadge(badgeId);
+}
 
 function InviteTab({ userId, inviteCount }: { userId: string; inviteCount: number }) {
   const [codes, setCodes] = useState<string[]>([]);
@@ -359,6 +386,27 @@ export default function ProfilePage() {
               </GlassCard>
             );
           })}
+          {/* 동적 배지 (선수/팀 덕후) */}
+          {badges.filter(b => b.badge_id.startsWith("fan-")).length > 0 && (
+            <GlassCard className="p-4">
+              <h3 className="text-sm font-bold text-text-primary mb-3">⚾ 나의 덕질 배지</h3>
+              <div className="grid grid-cols-4 gap-3">
+                {badges.filter(b => b.badge_id.startsWith("fan-")).map(b => {
+                  const info = getBadgeInfo(b.badge_id);
+                  if (!info) return null;
+                  return (
+                    <motion.div key={b.badge_id} className="text-center p-2 rounded-xl bg-white/5">
+                      <span className="text-2xl">{info.icon}</span>
+                      <p className="text-[10px] mt-1 font-medium" style={{ color: RARITY_COLORS[info.rarity] }}>
+                        {info.name}
+                      </p>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            </GlassCard>
+          )}
+
           <p className="text-center text-xs text-text-tertiary">
             {badges.length}개 획득 / {BADGES.length}개 중
           </p>
