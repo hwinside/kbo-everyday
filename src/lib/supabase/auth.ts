@@ -6,6 +6,9 @@ export async function signInWithGoogle() {
     provider: "google",
     options: {
       redirectTo: typeof window !== "undefined" ? `${window.location.origin}/auth/callback` : "https://kbo-everyday.vercel.app/auth/callback",
+      queryParams: {
+        prompt: "select_account",
+      },
     },
   });
 }
