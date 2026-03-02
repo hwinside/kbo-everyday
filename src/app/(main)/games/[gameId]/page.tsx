@@ -13,7 +13,7 @@ import {
   getInningsForGame,
   getPlaysForGame,
   MOCK_GAME_STATE,
-  MOCK_CHAT_MESSAGES,
+
   MOCK_LINEUP,
 } from "@/lib/constants/games";
 import TeamComparisonBar from "@/components/game/TeamComparisonBar";
@@ -252,7 +252,7 @@ export default function GameDetailPage() {
               exit={{ opacity: 0 }}
               className="h-full"
             >
-              <GameChat messages={MOCK_CHAT_MESSAGES} homeTeamId={homeTeam.id} awayTeamId={awayTeam.id} />
+              <GameChat gameId={gameId as string} homeTeamId={homeTeam.id} awayTeamId={awayTeam.id} />
             </motion.div>
           )}
 

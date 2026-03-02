@@ -6,59 +6,17 @@ import { Send, Users, BarChart3, Flame, ChevronDown } from "lucide-react";
 import { clsx } from "clsx";
 import Image from "next/image";
 import TeamBadge from "@/components/ui/TeamBadge";
-import LevelBadge from "@/components/ui/LevelBadge";
 import { getTeamById } from "@/lib/constants/teams";
 import { getMyTeamId } from "@/lib/store/myteam";
-import type { ChatMessage } from "@/lib/constants/games";
+import { useChat } from "@/lib/supabase/useChat";
+import { useAuth } from "@/lib/supabase/AuthContext";
 
 type ChatRoom = "all" | "home" | "away";
 
 interface GameChatProps {
-  messages: ChatMessage[];
+  gameId: string;
   homeTeamId: number;
   awayTeamId: number;
-  participantCount?: number;
-}
-
-/* ===== 인라인 투표 ===== */
-interface PollData {
-  id: number;
-  question: string;
-  options: { label: string; votes: number }[];
-  totalVotes: number;
-  votedIdx: number | null;
-}
-
-function InlinePoll({ poll, onVote }: { poll: PollData; onVote: (idx: number) => void }) {
-  return (
-    <div className="my-2 p-3 rounded-xl bg-bg-tertiary/80 border border-border">
-      <div className="flex items-center gap-2 mb-2">
-        <BarChart3 size={14} className="text-accent" />
-        <span className="text-xs font-bold text-text-primary">{poll.question}</span>
-      </div>
-      <div className="space-y-1.5">
-        {poll.options.map((opt, i) => {
-          const pct = poll.totalVotes > 0 ? Math.round((opt.votes / poll.totalVotes) * 100) : 0;
-          const voted = poll.votedIdx === i;
-          return (
-            <button
-              key={i}
-              onClick={() => poll.votedIdx === null && onVote(i)}
-              disabled={poll.votedIdx !== null}
-              className="w-full relative overflow-hidden rounded-lg h-8 flex items-center px-3 text-xs transition-colors"
-              style={{ background: poll.votedIdx !== null ? `linear-gradient(90deg, rgba(99,102,241,${pct / 200}) ${pct}%, transparent ${pct}%)` : "rgba(255,255,255,0.05)" }}
-            >
-              <span className={clsx("relative z-10 font-medium", voted ? "text-accent" : "text-text-primary")}>{opt.label}</span>
-              {poll.votedIdx !== null && (
-                <span className="relative z-10 ml-auto text-text-tertiary tabular-nums">{pct}%</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-      <p className="text-[10px] text-text-tertiary mt-1.5">{poll.totalVotes}명 참여</p>
-    </div>
-  );
 }
 
 /* ===== 분위기 게이지 ===== */
@@ -95,69 +53,33 @@ function MoodGauge({ homeTeamId, awayTeamId, homePct }: { homeTeamId: number; aw
   );
 }
 
-export default function GameChat({
-  messages: initialMessages,
-  homeTeamId,
-  awayTeamId,
-  participantCount = 142,
-}: GameChatProps) {
-  const [messages, setMessages] = useState(initialMessages);
+export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatProps) {
+  const roomId = `game:${gameId}`;
+  const { messages, loading, sendMessage, isLoggedIn } = useChat(roomId);
+  const { user } = useAuth();
   const [input, setInput] = useState("");
   const [room, setRoom] = useState<ChatRoom>("all");
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const myTeamId = getMyTeamId();
-
-  // mock poll
-  const [poll, setPoll] = useState<PollData>({
-    id: 1,
-    question: "🗳️ 오늘의 MVP는?",
-    options: [
-      { label: "오스틴 (3안타 2타점)", votes: 89 },
-      { label: "임찬규 (7이닝 1실점)", votes: 124 },
-      { label: "김현수 (결승 홈런)", votes: 67 },
-    ],
-    totalVotes: 280,
-    votedIdx: null,
-  });
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages.length, room]);
+  }, [messages.length]);
 
-  // 채팅방 필터링
   const filteredMessages = messages.filter((msg) => {
     if (room === "all") return true;
-    if (room === "home") return msg.teamId === homeTeamId;
-    if (room === "away") return msg.teamId === awayTeamId;
+    if (room === "home") return msg.team_id === homeTeamId;
+    if (room === "away") return msg.team_id === awayTeamId;
     return true;
   });
 
-  function handleSend() {
+  async function handleSend() {
     if (!input.trim()) return;
-    const newMessage: ChatMessage = {
-      id: Date.now(),
-      teamId: myTeamId ?? 1,
-      nickname: "나",
-      level: 5,
-      content: input.trim(),
-      createdAt: new Date().toISOString(),
-    };
-    setMessages((prev) => [...prev, newMessage]);
-    setInput("");
-  }
-
-  function handleVote(idx: number) {
-    setPoll((prev) => ({
-      ...prev,
-      votedIdx: idx,
-      totalVotes: prev.totalVotes + 1,
-      options: prev.options.map((o, i) =>
-        i === idx ? { ...o, votes: o.votes + 1 } : o
-      ),
-    }));
+    if (!isLoggedIn) { alert("로그인이 필요합니다"); return; }
+    const ok = await sendMessage(input.trim());
+    if (ok) setInput("");
   }
 
   function formatTime(dateStr: string) {
@@ -174,29 +96,19 @@ export default function GameChat({
     away: `${awayTeam.shortName} 팬방`,
   };
 
-  const roomCounts: Record<ChatRoom, number> = {
-    all: participantCount,
-    home: Math.round(participantCount * 0.55),
-    away: Math.round(participantCount * 0.38),
-  };
-
   return (
     <div className="flex flex-col h-full">
-      {/* Room selector + mood gauge */}
+      {/* Room selector */}
       <div className="relative">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
-          <button
-            onClick={() => setShowRoomPicker(!showRoomPicker)}
-            className="flex items-center gap-2"
-          >
+          <button onClick={() => setShowRoomPicker(!showRoomPicker)} className="flex items-center gap-2">
             <Users className="w-4 h-4 text-text-tertiary" />
             <span className="text-sm font-semibold text-text-primary">{roomLabels[room]}</span>
             <ChevronDown size={14} className={clsx("text-text-tertiary transition-transform", showRoomPicker && "rotate-180")} />
           </button>
-          <span className="text-xs text-text-tertiary">{roomCounts[room]}명</span>
+          <span className="text-xs text-text-tertiary">{messages.length}개 메시지</span>
         </div>
 
-        {/* Room picker dropdown */}
         <AnimatePresence>
           {showRoomPicker && (
             <motion.div
@@ -226,7 +138,6 @@ export default function GameChat({
                     <span className={clsx("text-sm font-medium", room === r ? "text-accent" : "text-text-primary")}>
                       {roomLabels[r]}
                     </span>
-                    <span className="ml-auto text-xs text-text-tertiary">{roomCounts[r]}명</span>
                   </button>
                 );
               })}
@@ -240,31 +151,42 @@ export default function GameChat({
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-2 space-y-0.5">
-        {/* Pinned poll */}
-        <InlinePoll poll={poll} onVote={handleVote} />
-
-        <AnimatePresence initial={false}>
-          {filteredMessages.map((msg) => (
-            <motion.div
-              key={msg.id}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.15 }}
-              className="flex items-start gap-2 py-0.5 group"
-            >
-              <TeamBadge teamId={msg.teamId} size="xs" className="shrink-0" />
-              <div className="min-w-0 flex-1">
-                <span className="inline">
-                  <span className="text-xs font-semibold text-text-tertiary mr-1">{msg.nickname}</span>
-                  <span className="text-sm text-text-primary">{msg.content}</span>
-                </span>
-              </div>
-              <span className="text-sm text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                {formatTime(msg.createdAt)}
-              </span>
-            </motion.div>
-          ))}
-        </AnimatePresence>
+        {loading ? (
+          <div className="text-center py-8 text-text-tertiary text-sm">로딩 중...</div>
+        ) : messages.length === 0 ? (
+          <div className="text-center py-8 text-text-tertiary">
+            <p className="text-sm">아직 채팅이 없어요</p>
+            <p className="text-xs mt-1">첫 번째 메시지를 보내보세요! 🔥</p>
+          </div>
+        ) : (
+          <AnimatePresence initial={false}>
+            {filteredMessages.map((msg) => {
+              const isMe = user?.id === msg.user_id;
+              return (
+                <motion.div
+                  key={msg.id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="flex items-start gap-2 py-0.5 group"
+                >
+                  {msg.team_id && <TeamBadge teamId={msg.team_id} size="xs" className="shrink-0" />}
+                  <div className="min-w-0 flex-1">
+                    <span className="inline">
+                      <span className={clsx("text-xs font-semibold mr-1", isMe ? "text-accent" : "text-text-tertiary")}>
+                        {msg.nickname || "익명"}
+                      </span>
+                      <span className="text-sm text-text-primary">{msg.content}</span>
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {formatTime(msg.created_at)}
+                  </span>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+        )}
       </div>
 
       {/* Input */}
@@ -275,7 +197,8 @@ export default function GameChat({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            placeholder={room === "all" ? "메시지 입력..." : `${roomLabels[room]}에 메시지...`}
+            placeholder={isLoggedIn ? (room === "all" ? "메시지 입력..." : `${roomLabels[room]}에 메시지...`) : "로그인 후 채팅 가능"}
+            disabled={!isLoggedIn}
             maxLength={200}
             className={clsx(
               "flex-1 h-10 px-4 rounded-full text-base",
@@ -286,7 +209,7 @@ export default function GameChat({
           <motion.button
             whileTap={{ scale: 0.9 }}
             onClick={handleSend}
-            disabled={!input.trim()}
+            disabled={!input.trim() || !isLoggedIn}
             className={clsx(
               "w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors",
               input.trim() ? "bg-accent text-white" : "bg-bg-tertiary text-text-tertiary"
