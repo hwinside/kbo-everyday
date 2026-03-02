@@ -17,7 +17,16 @@ export default function PlayerProfile({ playerName, teamColor }: Props) {
   const profile = PLAYER_PROFILES[playerName];
   const [activeSection, setActiveSection] = useState<"bio" | "career" | "tmi">("bio");
 
-  if (!profile) return null;
+  if (!profile) return (
+    <GlassCard className="p-4 mb-4">
+      <div className="text-center py-4">
+        <Sparkles size={24} className="mx-auto mb-2 text-text-tertiary" />
+        <p className="text-sm font-medium text-text-primary mb-1">아직 프로필이 없어요</p>
+        <p className="text-xs text-text-tertiary">이 선수의 팬이라면 게시판에 소개글을 남겨주세요!</p>
+        <p className="text-xs text-text-tertiary mt-1">채택되면 공식 프로필로 등록됩니다 ✨</p>
+      </div>
+    </GlassCard>
+  );
 
   const sections = [
     { id: "bio" as const, label: "소개", icon: User },
