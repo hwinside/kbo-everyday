@@ -47,7 +47,7 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
   const html = await fetchHtml(url);
   const rows = parseTable(html);
 
-  return rows.slice(0, 30).map((c, i) => ({
+  return rows.map((c, i) => ({
     rank: i + 1,
     name: c[1] || "",
     team: c[2] || "",
@@ -71,7 +71,7 @@ async function fetchPitcherStats(): Promise<PlayerStat[]> {
   const html = await fetchHtml(url);
   const rows = parseTable(html);
 
-  return rows.slice(0, 30).map((c, i) => ({
+  return rows.map((c, i) => ({
     rank: i + 1,
     name: c[1] || "",
     team: c[2] || "",

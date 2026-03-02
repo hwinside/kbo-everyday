@@ -154,8 +154,11 @@ export default function PlayerBoardPage() {
       {/* Stats tab */}
       {activeTab === "stats" && (
         <div className="px-5 py-4">
-          {/* Season toggle */}
-          <div className="flex gap-2 mb-4">
+          <PlayerProfile playerName={player.name} teamColor={teamColor} />
+          <CheerSong playerName={player.name} teamColor={teamColor} />
+
+          {/* Season toggle — 응원가 아래, 세이버메트릭스 위 */}
+          <div className="flex gap-2 mb-4 mt-2">
             {([2025, 2026] as const).map(y => (
               <button
                 key={y}
@@ -168,9 +171,6 @@ export default function PlayerBoardPage() {
               </button>
             ))}
           </div>
-
-          <PlayerProfile playerName={player.name} teamColor={teamColor} />
-          <CheerSong playerName={player.name} teamColor={teamColor} />
 
           {statSeason === 2026 ? (
             <NicheStats playerId={playerId as string} position={player.position} teamColor={teamColor} />
