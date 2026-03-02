@@ -21,7 +21,7 @@ import {
   type PositionGroup,
 } from "@/lib/constants/players";
 import type { Post } from "@/lib/types";
-import { usePosts } from "@/lib/supabase/usePosts";
+import { usePosts, createPost } from "@/lib/supabase/usePosts";
 
 type PageTab = "board" | "players";
 type SortTab = "latest" | "popular";
@@ -269,6 +269,11 @@ export default function TeamBoardPage() {
         isOpen={writeOpen}
         onClose={() => setWriteOpen(false)}
         teamName={team.name}
+        onSubmit={async (title, content, imageUrls) => {
+          await createPost({ boardType: "team", boardId: teamSlug, title, content, imageUrls });
+          reload();
+          setWriteOpen(false);
+        }}
       />
     </div>
   );
