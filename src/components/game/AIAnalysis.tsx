@@ -129,7 +129,7 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId }: 
             <div className="flex items-center justify-between px-5 py-3">
               <div className="flex items-center gap-2">
                 <Brain size={20} className="text-accent" />
-                <h2 className="text-lg font-bold text-text-primary">AI 훈수</h2>
+                <h2 className="text-lg font-bold text-text-primary">AI 분석</h2>
               </div>
               <button onClick={onClose} className="text-text-secondary p-1">
                 <X size={22} />

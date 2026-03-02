@@ -28,6 +28,7 @@ import RadioPlayer from "@/components/game/RadioPlayer";
 import PlayByPlay from "@/components/game/PlayByPlay";
 import GameChat from "@/components/game/GameChat";
 import LiveScoreboard from "@/components/game/LiveScoreboard";
+import AIAnalysis from "@/components/game/AIAnalysis";
 import { useLiveGame } from "@/lib/hooks/useLiveGame";
 import LineupTab from "@/components/game/LineupTab";
 import GameStatsTab from "@/components/game/GameStatsTab";
@@ -45,6 +46,7 @@ export default function GameDetailPage() {
   const params = useParams();
   const gameId = params.gameId as string;
   const [activeTab, setActiveTab] = useState<Tab>("chat");
+  const [aiOpen, setAiOpen] = useState(false);
   const { game: liveGame } = useLiveGame(gameId, 15000);
 
   const game = getGameById(gameId);
@@ -212,6 +214,23 @@ export default function GameDetailPage() {
             />
           </div>
         )}
+
+        {/* AI 분석 버튼 */}
+        <div className="px-4 py-2 flex justify-center">
+          <button
+            onClick={() => setAiOpen(true)}
+            className="px-4 py-2 rounded-full bg-accent/20 text-accent text-sm font-semibold flex items-center gap-1.5 hover:bg-accent/30 transition-colors"
+          >
+            🤖 AI 분석
+          </button>
+        </div>
+
+        <AIAnalysis
+          isOpen={aiOpen}
+          onClose={() => setAiOpen(false)}
+          awayTeamId={game.awayTeamId}
+          homeTeamId={game.homeTeamId}
+        />
 
         {/* Tabs */}
         <div className="flex border-t border-border">
