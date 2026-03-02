@@ -432,7 +432,7 @@ export default function ProfilePage() {
               >
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-text-tertiary">
-                    {post.board_type === "player" ? `⚾ ${post.board_id}` : post.board_type === "team" ? `🏟️ ${post.board_id}` : "💬 자유"}
+                    {post.board_type === "player" ? `⚾ ${Object.entries(PLAYER_PHOTO_MAP).find(([, id]) => id === post.board_id)?.[0] || post.board_id}` : post.board_type === "team" ? `🏟️ ${KBO_TEAMS.find(t => String(t.id) === post.board_id)?.shortName || post.board_id}` : "💬 자유"}
                   </span>
                 </div>
                 <p className="text-sm font-medium text-text-primary">{post.title}</p>
