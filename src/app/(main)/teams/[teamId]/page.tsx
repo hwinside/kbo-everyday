@@ -21,6 +21,8 @@ import {
   type PositionGroup,
 } from "@/lib/constants/players";
 import type { Post } from "@/lib/types";
+import { useAuth } from "@/lib/supabase/AuthContext";
+import LoginSheet from "@/components/auth/LoginSheet";
 import { usePosts, createPost } from "@/lib/supabase/usePosts";
 
 type PageTab = "board" | "players";
@@ -86,6 +88,8 @@ export default function TeamBoardPage() {
     );
   }
 
+  const { user } = useAuth();
+  const [showLogin, setShowLogin] = useState(false);
   const { posts: livePosts, loading: postsLoading, reload } = usePosts("team", teamSlug);
   const realPosts: Post[] = livePosts.map(p => ({
     id: p.id,
@@ -255,7 +259,7 @@ export default function TeamBoardPage() {
       {/* FAB — Write post (only on board tab) */}
       {pageTab === "board" && (
         <motion.button
-          onClick={() => setWriteOpen(true)}
+          onClick={() => { if (!user) { setShowLogin(true); return; } setWriteOpen(true); }}
           className="fixed bottom-20 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
           style={{ backgroundColor: team.colorPrimary }}
           whileTap={{ scale: 0.9 }}
@@ -275,6 +279,7 @@ export default function TeamBoardPage() {
           setWriteOpen(false);
         }}
       />
+      {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
     </div>
   );
 }
