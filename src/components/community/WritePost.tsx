@@ -41,9 +41,9 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit }: Write
   async function handleSubmit() {
     if (!title.trim() || !content.trim()) return;
     try {
-      if (onSubmit) await onSubmit(title.trim(), content.trim(), images);
+      if (onSubmit) await onSubmit(title.trim(), content.trim(), []);
     } catch (e: any) {
-      alert(e.message || "등록 실패");
+      alert("등록 실패: " + (e.message || JSON.stringify(e)));
       return;
     }
     onClose();
