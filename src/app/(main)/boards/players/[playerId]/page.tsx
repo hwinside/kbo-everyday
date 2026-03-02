@@ -62,7 +62,7 @@ export default function PlayerBoardPage() {
   const { posts: livePosts, loading: postsLoading, reload } = usePosts("player", playerId as string);
   const [showWrite, setShowWrite] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
-  const [statSeason, setStatSeason] = useState<2025 | 2026>(2026);
+  const [statSeason, setStatSeason] = useState<2025 | 2026>(2025);
   const [realStats, setRealStats] = useState<any>(null);
   const { user } = useAuth();
   const { newBadges, checkBadges, clearBadges } = useBadgeCheck();
@@ -173,7 +173,11 @@ export default function PlayerBoardPage() {
           </div>
 
           {statSeason === 2026 ? (
-            <NicheStats playerId={playerId as string} position={player.position} teamColor={teamColor} playerName={player.name} season={statSeason} />
+            <div className="glass-card p-6 mb-4 text-center">
+              <p className="text-lg mb-1">⚾</p>
+              <p className="text-sm font-bold text-text-primary">2026 시즌 개막 후 확인 가능합니다</p>
+              <p className="text-xs text-text-tertiary mt-1">개막일: 2026년 3월 28일 (토)</p>
+            </div>
           ) : realStats ? (
             <div className="glass-card p-4 mb-4">
               <h3 className="text-sm font-bold text-text-primary mb-3">2025 시즌 기록</h3>

@@ -255,11 +255,12 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
     );
   }
 
-  // 2026 mock
-  if (isPitcher) {
-    const data = PITCHER_ADVANCED[playerId] ?? getDefaultPitcherAdvanced(playerId);
-    return <PitcherStats data={data} teamColor={teamColor} />;
-  }
-  const data = BATTER_ADVANCED[playerId] ?? getDefaultBatterAdvanced(playerId);
-  return <BatterStats data={data} teamColor={teamColor} />;
+  // 2026 — 시즌 개막 전
+  return (
+    <div className="glass-card p-6 mb-4 text-center">
+      <p className="text-lg mb-1">⚾</p>
+      <p className="text-sm font-bold text-text-primary">2026 시즌 개막 후 확인 가능합니다</p>
+      <p className="text-xs text-text-tertiary mt-1">개막일: 2026년 3월 28일 (토)</p>
+    </div>
+  );
 }
