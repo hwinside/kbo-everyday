@@ -250,7 +250,7 @@ export default function TicketTab({ venueId, teamIds }: Props) {
       )}
       <button
         onClick={() => setWriteOpen(true)}
-        className="fixed bottom-20 right-4 z-40 w-14 h-14 rounded-full bg-accent text-white shadow-lg flex items-center justify-center text-2xl"
+        className="fixed bottom-20 right-4 z-[51] w-14 h-14 rounded-full bg-accent text-white shadow-lg flex items-center justify-center text-2xl"
       >
         🎫
       </button>
