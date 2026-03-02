@@ -53,7 +53,7 @@ export default function GamePredictPage() {
               className={`w-20 h-20 rounded-2xl bg-white/10 flex items-center justify-center p-2 border-2 transition-colors ${voted === "away" ? "border-accent shadow-lg" : "border-transparent"}`}
               style={voted === "away" ? { boxShadow: `0 0 20px ${away.colorPrimary}40` } : {}}
             >
-              <Image src={away.logo} alt={away.name} width={56} height={56} unoptimized />
+              <Image src={away.logoPath} alt={away.name} width={56} height={56} unoptimized />
             </div>
             <span className="text-base font-bold" style={{ color: away.colorLight || away.colorPrimary }}>{away.shortName}</span>
           </button>
@@ -71,7 +71,7 @@ export default function GamePredictPage() {
               className={`w-20 h-20 rounded-2xl bg-white/10 flex items-center justify-center p-2 border-2 transition-colors ${voted === "home" ? "border-accent shadow-lg" : "border-transparent"}`}
               style={voted === "home" ? { boxShadow: `0 0 20px ${home.colorPrimary}40` } : {}}
             >
-              <Image src={home.logo} alt={home.name} width={56} height={56} unoptimized />
+              <Image src={home.logoPath} alt={home.name} width={56} height={56} unoptimized />
             </div>
             <span className="text-base font-bold" style={{ color: home.colorLight || home.colorPrimary }}>{home.shortName}</span>
           </button>
