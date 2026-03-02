@@ -95,7 +95,7 @@ export default function TeamBoardPage() {
 
   useEffect(() => {
     if (!team) return;
-    fetch(\`/api/news?team=\${team.shortName}\`)
+    fetch(`/api/news?team=${team.shortName}`)
       .then(r => r.json())
       .then(d => {
         if (d.items?.length) {

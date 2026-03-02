@@ -123,7 +123,27 @@ export default function HighlightsPage() {
   useEffect(() => {
     const teamId = getMyTeamId();
     const favNames = getFavoritePlayers().map(p => p.name);
-    setFeed(rankHighlights(HIGHLIGHTS, teamId, favNames));
+    // 실시간 YouTube 하이라이트 로딩
+    fetch("/api/highlights")
+      .then(r => r.json())
+      .then(d => {
+        if (d.items?.length) {
+          const ytHighlights: Highlight[] = d.items.map((item: any, i: number) => ({
+            id: `yt-${item.id}`,
+            youtubeId: item.id,
+            title: item.title,
+            date: new Date(item.publishedAt).toLocaleDateString("ko-KR"),
+            teamId: null,
+            tags: [],
+          }));
+          setFeed(ytHighlights);
+        } else {
+          setFeed(rankHighlights(HIGHLIGHTS, teamId, favNames));
+        }
+      })
+      .catch(() => {
+        setFeed(rankHighlights(HIGHLIGHTS, teamId, favNames));
+      });
   }, []);
 
   const handleScroll = useCallback(() => {
