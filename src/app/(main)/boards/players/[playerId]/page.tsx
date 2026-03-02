@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowLeft, Heart, MessageCircle, Share2, PenLine } from "lucide-react";
@@ -44,6 +44,15 @@ function getTeamShortName(teamId: number) {
   return TEAMS.find((t) => t.id === teamId)?.shortName ?? "";
 }
 
+function StatItem({ label, value, color }: { label: string; value: string | number; color: string }) {
+  return (
+    <div className="bg-bg-tertiary rounded-xl p-3 text-center">
+      <p className="text-xs text-text-tertiary mb-1">{label}</p>
+      <p className="text-lg font-bold" style={{ color }}>{value}</p>
+    </div>
+  );
+}
+
 export default function PlayerBoardPage() {
   const { playerId } = useParams();
   const player = PLAYER_DATA[playerId as string];
@@ -51,7 +60,24 @@ export default function PlayerBoardPage() {
   const { posts: livePosts, loading: postsLoading, reload } = usePosts("player", playerId as string);
   const [showWrite, setShowWrite] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+  const [statSeason, setStatSeason] = useState<2025 | 2026>(2026);
+  const [realStats, setRealStats] = useState<any>(null);
   const { user } = useAuth();
+
+  useEffect(() => {
+    if (statSeason !== 2025) { setRealStats(null); return; }
+    const pos = player?.position;
+    const type = pos === "투수" ? "pitcher" : "batter";
+    fetch(`/api/stats?type=${type}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.stats) {
+          const found = d.stats.find((s: any) => s.name === player?.name);
+          setRealStats(found || null);
+        }
+      })
+      .catch(() => {});
+  }, [statSeason, playerId]);
 
   if (!player) {
     return (
@@ -125,9 +151,56 @@ export default function PlayerBoardPage() {
       {/* Stats tab */}
       {activeTab === "stats" && (
         <div className="px-5 py-4">
+          {/* Season toggle */}
+          <div className="flex gap-2 mb-4">
+            {([2025, 2026] as const).map(y => (
+              <button
+                key={y}
+                onClick={() => setStatSeason(y)}
+                className={`px-3 py-1 rounded-full text-sm font-medium transition-all ${
+                  statSeason === y ? "bg-accent text-white" : "bg-bg-tertiary text-text-tertiary"
+                }`}
+              >
+                {y}
+              </button>
+            ))}
+          </div>
+
           <PlayerProfile playerName={player.name} teamColor={teamColor} />
           <CheerSong playerName={player.name} teamColor={teamColor} />
-          <NicheStats playerId={playerId as string} position={player.position} teamColor={teamColor} />
+
+          {statSeason === 2026 ? (
+            <NicheStats playerId={playerId as string} position={player.position} teamColor={teamColor} />
+          ) : realStats ? (
+            <div className="glass-card p-4 mb-4">
+              <h3 className="text-sm font-bold text-text-primary mb-3">2025 시즌 기록</h3>
+              <div className="grid grid-cols-2 gap-3">
+                {player.position === "투수" ? (
+                  <>
+                    <StatItem label="ERA" value={realStats.era} color={teamColor} />
+                    <StatItem label="승-패" value={`${realStats.wins}-${realStats.losses}`} color={teamColor} />
+                    <StatItem label="세이브" value={realStats.saves} color={teamColor} />
+                    <StatItem label="이닝" value={realStats.ip} color={teamColor} />
+                    <StatItem label="삼진" value={realStats.so} color={teamColor} />
+                    <StatItem label="WHIP" value={realStats.whip} color={teamColor} />
+                  </>
+                ) : (
+                  <>
+                    <StatItem label="타율" value={realStats.avg} color={teamColor} />
+                    <StatItem label="홈런" value={realStats.hr} color={teamColor} />
+                    <StatItem label="타점" value={realStats.rbi} color={teamColor} />
+                    <StatItem label="안타" value={realStats.hits} color={teamColor} />
+                    <StatItem label="도루" value={realStats.sb} color={teamColor} />
+                    <StatItem label="득점" value={realStats.runs} color={teamColor} />
+                  </>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="glass-card p-4 mb-4 text-center text-text-tertiary text-sm">
+              {`2025 시즌 데이터를 찾을 수 없습니다`}
+            </div>
+          )}
         </div>
       )}
 
