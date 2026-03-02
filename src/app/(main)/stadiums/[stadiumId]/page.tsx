@@ -120,6 +120,13 @@ export default function StadiumDetailPage() {
         )}
 
         {/* 후기 */}
+
+        {/* 티켓 양도 */}
+        {activeTab === "tickets" && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+            <TicketTab venueId={stadiumId as string} teamIds={stadium.teamIds} />
+          </motion.div>
+        )}
         {activeTab === "reviews" && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
             {MOCK_REVIEWS.map((review) => {
