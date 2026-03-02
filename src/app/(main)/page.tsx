@@ -307,7 +307,7 @@ export default function HomePage() {
 
       {/* ===== 2. Prediction Preview ===== */}
       <motion.section variants={item} className="mb-6">
-        <SectionHeader title="승부예측" href="/predict" icon="🔮" />
+        <SectionHeader title="승부예측" href="/predict/daily" icon="🔮" />
         <div className="space-y-4">
           {previewPredictions.map((pred) => (
             <Link key={pred.gameId} href={`/games/${pred.gameId}/predict`}>
