@@ -110,6 +110,28 @@ function SectionHeader({ title, href, icon }: { title: string; href?: string; ic
 export default function HomePage() {
   const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number} | null>(null);
   const [myTeamId, setMyTeam] = useState<number | null>(null);
+  const [realNews, setRealNews] = useState<any[]>([]);
+
+  useEffect(() => {
+    const team = myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName : "";
+    fetch(`/api/news${team ? `?team=${team}` : ""}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.items?.length) {
+          setRealNews(d.items.map((item: any, i: number) => ({
+            id: 1000 + i,
+            teamId: myTeamId,
+            title: item.title,
+            source: (() => { try { return new URL(item.link).hostname.replace("www.", "").replace("m.", ""); } catch { return "뉴스"; } })(),
+            sourceUrl: item.link,
+            thumbnailUrl: null,
+            timeAgo: new Date(item.pubDate).toLocaleDateString("ko-KR"),
+            type: "news" as const,
+          })));
+        }
+      })
+      .catch(() => {});
+  }, [myTeamId]);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
@@ -226,7 +248,7 @@ export default function HomePage() {
       <div className="mb-3">
         <LiveGameBanner />
 
-        <NewsCarousel news={myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 5) : MOCK_NEWS} />
+        <NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 5) : (myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 5) : MOCK_NEWS)} />
       </div>
 
       {/* ===== 1. Today's Games — horizontal scroll with snap ===== */}
