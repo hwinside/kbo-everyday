@@ -117,7 +117,6 @@ export default function PlayerBoardPage() {
       {activeTab === "stats" && (
         <div className="px-5 py-4">
           <PlayerProfile playerName={player.name} teamColor={teamColor} />
-          <PlayerProfile playerName={player.name} teamColor={teamColor} />
           <CheerSong playerName={player.name} teamColor={teamColor} />
           <NicheStats playerId={playerId as string} position={player.position} teamColor={teamColor} />
         </div>
