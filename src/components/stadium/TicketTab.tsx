@@ -6,7 +6,6 @@ import { Ticket, AlertTriangle } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { getTeamById } from "@/lib/constants/teams";
 import TeamBadge from "@/components/ui/TeamBadge";
-import { useAuth } from "@/lib/supabase/AuthContext";
 
 interface TicketData {
   id: number;
@@ -127,7 +126,7 @@ interface Props {
 export default function TicketTab({ venueId, teamIds }: Props) {
   const [filter, setFilter] = useState<"all" | number>("all");
   const tickets = MOCK_TICKETS.filter(t =>
-    t.venue_id === venueId && (filter === "all" || t.team_id === filter)
+    String(t.venue_id) === String(venueId) && (filter === "all" || t.team_id === filter)
   );
 
   return (
