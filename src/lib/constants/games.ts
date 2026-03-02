@@ -10,7 +10,7 @@ export const MOCK_GAMES: Game[] = [
     awayTeamId: 1,    // LG
     status: "live",
     inning: "5회말",
-    homeScore: 2,
+    homeScore: 20,
     awayScore: 3,
     stadium: "잠실",
     updatedAt: "2026-03-28T19:45:00Z",
