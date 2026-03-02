@@ -9,9 +9,10 @@ interface WritePostProps {
   isOpen: boolean;
   onClose: () => void;
   teamName?: string;
+  onSubmit?: (title: string, content: string, imageUrls: string[]) => Promise<void>;
 }
 
-export default function WritePost({ isOpen, onClose, teamName }: WritePostProps) {
+export default function WritePost({ isOpen, onClose, teamName, onSubmit }: WritePostProps) {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [images, setImages] = useState<string[]>([]);
@@ -37,8 +38,9 @@ export default function WritePost({ isOpen, onClose, teamName }: WritePostProps)
     setImages((prev) => prev.filter((_, i) => i !== index));
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!title.trim() || !content.trim()) return;
+    if (onSubmit) await onSubmit(title.trim(), content.trim(), images);
     onClose();
     setTitle("");
     setContent("");

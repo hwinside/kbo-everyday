@@ -10,7 +10,8 @@ import NicheStats from "@/components/player/NicheStats";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
-import { usePosts } from "@/lib/supabase/usePosts";
+import { usePosts, createPost } from "@/lib/supabase/usePosts";
+import WritePost from "@/components/community/WritePost";
 import CheerSong from "@/components/player/CheerSong";
 import PlayerProfile from "@/components/player/PlayerProfile";
 import PhotoGallery from "@/components/player/PhotoGallery";
@@ -45,7 +46,8 @@ export default function PlayerBoardPage() {
   const { playerId } = useParams();
   const player = PLAYER_DATA[playerId as string];
   const [activeTab, setActiveTab] = useState<"stats" | "photo" | "latest" | "hot">("stats");
-  const { posts: livePosts, loading: postsLoading } = usePosts("player", playerId as string);
+  const { posts: livePosts, loading: postsLoading, reload } = usePosts("player", playerId as string);
+  const [showWrite, setShowWrite] = useState(false);
 
   if (!player) {
     return (
@@ -163,12 +165,25 @@ export default function PlayerBoardPage() {
       {/* FAB - Write (only on post tabs) */}
       {(activeTab === "latest" || activeTab === "hot") && (
       <button
+        onClick={() => setShowWrite(true)}
         className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
         style={{ backgroundColor: teamColor }}
       >
         <PenLine className="w-9 h-9 text-white" />
       </button>
       )}
+
+      {/* Write Post Modal */}
+      <WritePost
+        isOpen={showWrite}
+        onClose={() => setShowWrite(false)}
+        onSubmit={async (title, content, imageUrls) => {
+          await createPost({ boardType: "player", boardId: playerId as string, title, content, imageUrls });
+          setShowWrite(false);
+          reload();
+        }}
+        teamName={player.name}
+      />
     </div>
   );
 }
