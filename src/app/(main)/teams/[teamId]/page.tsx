@@ -21,6 +21,7 @@ import {
   type PositionGroup,
 } from "@/lib/constants/players";
 import type { Post } from "@/lib/types";
+import { usePosts } from "@/lib/supabase/usePosts";
 
 type PageTab = "board" | "players";
 type SortTab = "latest" | "popular";
@@ -85,7 +86,23 @@ export default function TeamBoardPage() {
     );
   }
 
-  const posts = generateMockPosts(teamSlug);
+  const { posts: livePosts, loading: postsLoading, reload } = usePosts("team", teamSlug);
+  const realPosts: Post[] = livePosts.map(p => ({
+    id: p.id,
+    boardType: "team" as any,
+    boardId: teamSlug,
+    authorId: p.author_id,
+    title: p.title,
+    content: p.content,
+    imageUrls: p.image_urls || [],
+    likeCount: p.like_count,
+    commentCount: p.comment_count,
+    isReported: false,
+    createdAt: p.created_at,
+    author: { nickname: p.nickname || "익명", avatarUrl: null, myTeamId: p.team_id || team.id, level: 1, title: "" },
+  }));
+  const mockPosts = generateMockPosts(teamSlug);
+  const posts = [...realPosts, ...mockPosts];
   const sortedPosts =
     sortTab === "popular"
       ? [...posts].sort((a, b) => b.likeCount - a.likeCount)
