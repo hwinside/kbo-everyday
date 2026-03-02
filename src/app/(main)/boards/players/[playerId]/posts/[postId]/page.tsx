@@ -3,17 +3,20 @@
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { ChevronLeft, Heart, MessageCircle, Share2, Send } from "lucide-react";
+import { ChevronLeft, Heart, MessageCircle, Share2, Send , Flag} from "lucide-react";
 import { getTeamById } from "@/lib/constants/teams";
 import TeamBadge from "@/components/ui/TeamBadge";
 
 import { usePostDetail, createComment, toggleLike } from "@/lib/supabase/usePosts";
+import ReportSheet from "@/components/community/ReportSheet";
 import { useAuth } from "@/lib/supabase/AuthContext";
 
 export default function PostDetailPage() {
   const { playerId, postId } = useParams();
   const router = useRouter();
   const { user } = useAuth();
+  const [showReport, setShowReport] = useState(false);
+  const [reportTarget, setReportTarget] = useState<{type: "post"|"comment"; id: number}>({type: "post", id: 0});
   const { post, comments, loading, liked, setLiked, setComments } = usePostDetail(Number(postId));
   const [comment, setComment] = useState("");
   const [likeCount, setLikeCount] = useState(0);
@@ -148,6 +151,7 @@ export default function PostDetailPage() {
           <Send size={20} />
         </button>
       </div>
+      <ReportSheet isOpen={showReport} onClose={() => setShowReport(false)} targetType={reportTarget.type} targetId={reportTarget.id} />
     </div>
   );
 }
