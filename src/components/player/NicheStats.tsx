@@ -248,8 +248,9 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
             <StatBox label="BB%" value={`${realSaber.BB_pct}%`} desc="볼넷 비율" />
             <StatBox label="K%" value={`${realSaber.K_pct}%`} desc="삼진 비율" />
             <StatBox label="OBP" value={realSaber.OBP.toFixed(3)} desc="출루율" />
+            <StatBox label="WAR" value={realSaber.WAR.toFixed(1)} desc="대체 선수 대비 (추정)" />
           </div>
-          <p className="text-[10px] text-text-tertiary mt-3 text-center">※ KBO 공식 기록 기반 계산값 (WAR, 핫존, 구종별은 Statiz 연동 예정)</p>
+          <p className="text-[10px] text-text-tertiary mt-3 text-center">※ KBO 공식 기록 기반 계산값 (WAR는 근사치, 핫존/구종별은 Statiz 연동 예정)</p>
         </GlassCard>
       </div>
     );

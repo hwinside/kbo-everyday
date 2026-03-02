@@ -8,14 +8,34 @@ const LEAGUE = {
   wBB: 0.69, wHBP: 0.72, w1B: 0.89, w2B: 1.27, w3B: 1.62, wHR: 2.10,
 };
 
+// WAR 근사 계산 (Replacement level 기준)
+// 타자 WAR ≈ (Batting Runs + Baserunning Runs + Position Adj + Replacement) / RPW
+// 간이 공식: (wRAA + position_adj + replacement) / 10
+function estimateBatterWAR(woba: number, pa: number): number {
+  const wRAA = ((woba - 0.330) / 1.15) * pa;
+  const replacement = (pa / 600) * 20; // ~20 runs per 600 PA
+  const war = (wRAA + replacement) / 10;
+  return Math.round(Math.max(war, -1) * 10) / 10;
+}
+
+// 투수 WAR ≈ (League ERA - FIP) / 9 * IP / 9 + Replacement
+function estimatePitcherWAR(fip: number, ip: number): number {
+  const leagueEra = 4.50; // KBO 평균 근사
+  const fullIp = Math.floor(ip) + (ip % 1) * 10 / 3;
+  const runsAboveAvg = ((leagueEra - fip) / 9) * fullIp;
+  const replacement = (fullIp / 200) * 12;
+  const war = (runsAboveAvg + replacement) / 10;
+  return Math.round(Math.max(war, -1) * 10) / 10;
+}
+
 export interface CalcBatterSaber {
   OPS: number; OBP: number; SLG: number; ISO: number; BABIP: number;
-  BB_pct: number; K_pct: number; wOBA: number; wRC_plus: number;
+  BB_pct: number; K_pct: number; wOBA: number; wRC_plus: number; WAR: number;
 }
 
 export interface CalcPitcherSaber {
   FIP: number; WHIP: number; K9: number; BB9: number; HR9: number;
-  K_pct: number; BB_pct: number;
+  K_pct: number; BB_pct: number; WAR: number;
 }
 
 export function calcBatterSaber(s: {
@@ -46,6 +66,7 @@ export function calcBatterSaber(s: {
     SLG: Math.round(slg*1000)/1000, ISO: Math.round(iso*1000)/1000,
     BABIP: Math.round(babip*1000)/1000, BB_pct: Math.round(bbPct*10)/10,
     K_pct: Math.round(kPct*10)/10, wOBA: Math.round(woba*1000)/1000, wRC_plus: wrc,
+    WAR: estimateBatterWAR(woba, s.pa),
   };
 }
 
@@ -71,5 +92,6 @@ export function calcPitcherSaber(s: {
     FIP: Math.round(fip*100)/100, WHIP: whip,
     K9: Math.round(k9*10)/10, BB9: Math.round(bb9*10)/10, HR9: Math.round(hr9*10)/10,
     K_pct: Math.round(kPct*10)/10, BB_pct: Math.round(bbPct*10)/10,
+    WAR: estimatePitcherWAR(fip, ip),
   };
 }
