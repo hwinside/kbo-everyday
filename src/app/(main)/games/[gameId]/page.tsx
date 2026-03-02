@@ -329,6 +329,7 @@ export default function GameDetailPage() {
 
         {/* Stadium info */}
         <StadiumInfo
+          stadiumId="jamsil"
           name="잠실야구장"
           location="서울 송파구"
           capacity="25,553"
