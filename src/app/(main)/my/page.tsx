@@ -69,11 +69,11 @@ export default function MyPage() {
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-3">
-                <span className="text-lg font-semibold text-text-primary">엘지골드</span>
+                <span className="text-lg font-semibold text-text-primary">{user ? (profile?.nickname || user.email || "유저") : "게스트"}</span>
                 {team && <TeamBadge teamId={team.id} />}
               </div>
               <LevelBadge level={15} showTitle />
-              <p className="mt-0.5 text-base text-text-tertiary">1,234 포인트</p>
+              <p className="mt-0.5 text-base text-text-tertiary">{user ? `${profile?.points || 0} 포인트` : "로그인 해주세요"}</p>
             </div>
           </div>
         </GlassCard>
@@ -170,6 +170,7 @@ export default function MyPage() {
       </motion.div>
 
       {/* Login prompt */}
+      {!user && (
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
@@ -183,6 +184,20 @@ export default function MyPage() {
           </button>
         </GlassCard>
       </motion.div>
+      )}
+
+      {/* Logged in info */}
+      {user && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="mt-5">
+          <GlassCard className="flex flex-col items-center gap-3 py-6">
+            <p className="text-sm text-green-400">✅ 로그인 완료</p>
+            <p className="text-xs text-text-tertiary">{user.email}</p>
+            <button onClick={() => signOut()} className="rounded-full bg-bg-tertiary px-8 py-2.5 text-sm font-semibold text-text-secondary">
+              로그아웃
+            </button>
+          </GlassCard>
+        </motion.div>
+      )}
 
       {/* Team select modal (reuse onboarding) */}
       <TeamSelectModal
