@@ -26,24 +26,17 @@ interface TicketData {
 }
 
 const MOCK_TICKETS: TicketData[] = [
-  { id: 1, team_id: 1, venue_id: "jamsil", game_date: "2026-03-28", opponent_team_id: 6, seat_area: "1루 응원석", seat_detail: "블록 108 열 15", quantity: 2, price: 25000, original_price: 20000, status: "open", contact_method: "카톡 오픈채팅", contact_info: "https://open.kakao.com/example", description: "개막전 티켓 2장 양도합니다. 연석이에요!", nickname: "엘지빠" },
-  { id: 2, team_id: 1, venue_id: "jamsil", game_date: "2026-03-29", opponent_team_id: 6, seat_area: "테이블석", seat_detail: "T구역 12번", quantity: 4, price: 45000, original_price: 35000, status: "open", contact_method: "댓글", contact_info: null, description: "4인 테이블석 통째로! 치맥하기 최고 자리", nickname: "직관마스터" },
+  { id: 1, team_id: 1, venue_id: "jamsil", game_date: "2026-03-28", opponent_team_id: 6, seat_area: "1루 응원석", seat_detail: "블록 108 열 15", quantity: 2, price: 20000, original_price: 20000, status: "open", contact_method: "카톡 오픈채팅", contact_info: "https://open.kakao.com/example", description: "개막전 티켓 2장 양도합니다. 연석이에요!", nickname: "엘지빠" },
+  { id: 2, team_id: 1, venue_id: "jamsil", game_date: "2026-03-29", opponent_team_id: 6, seat_area: "테이블석", seat_detail: "T구역 12번", quantity: 4, price: 35000, original_price: 35000, status: "open", contact_method: "댓글", contact_info: null, description: "4인 테이블석 통째로! 치맥하기 최고 자리", nickname: "직관마스터" },
   { id: 3, team_id: 2, venue_id: "jamsil", game_date: "2026-04-01", opponent_team_id: 8, seat_area: "3루 내야", seat_detail: "블록 305 열 8", quantity: 1, price: 18000, original_price: 18000, status: "open", contact_method: "카톡 오픈채팅", contact_info: null, description: "정가 양도합니다. 두산 vs 삼성", nickname: "곰돌이" },
   { id: 4, team_id: 1, venue_id: "jamsil", game_date: "2026-04-05", opponent_team_id: 4, seat_area: "외야 잔디석", seat_detail: null, quantity: 3, price: 15000, original_price: 15000, status: "open", contact_method: "댓글", contact_info: null, description: "잔디석 3자리. 돗자리 별도 준비하세요~", nickname: "잔디러버" },
 ];
 
 function PriceBadge({ price, original }: { price: number; original: number | null }) {
-  if (!original) return <span className="text-base font-bold text-text-primary">{price.toLocaleString()}원</span>;
-  const diff = ((price - original) / original) * 100;
-  const isOver = diff > 0;
-  const isWarning = diff > 50;
   return (
     <div className="text-right">
       <span className="text-base font-bold text-text-primary">{price.toLocaleString()}원</span>
-      <div className={`text-xs ${isWarning ? "text-red-400" : isOver ? "text-yellow-400" : "text-green-400"}`}>
-        {isWarning && <AlertTriangle size={10} className="inline mr-0.5" />}
-        정가 {original.toLocaleString()}원 ({isOver ? "+" : ""}{Math.round(diff)}%)
-      </div>
+      <div className="text-xs text-green-400">✅ 정가 양도</div>
     </div>
   );
 }
@@ -150,11 +143,14 @@ export default function TicketTab({ venueId, teamIds }: Props) {
         </div>
       )}
 
-      <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-3 flex items-start gap-2">
-        <AlertTriangle size={16} className="text-yellow-400 mt-0.5 flex-shrink-0" />
-        <p className="text-xs text-yellow-200/80">
-          크보 에브리데이는 양도 매칭만 제공하며, 거래 책임은 당사자에게 있습니다.
-        </p>
+      <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-3 flex items-start gap-2">
+        <Ticket size={16} className="text-green-400 mt-0.5 flex-shrink-0" />
+        <div>
+          <p className="text-xs font-bold text-green-300">✅ 정가 양도 원칙</p>
+          <p className="text-xs text-green-200/70 mt-0.5">
+            크보 에브리데이는 정가 양도만 허용합니다. 웃돈 거래 적발 시 이용이 제한됩니다.
+          </p>
+        </div>
       </div>
 
       {tickets.length === 0 ? (
