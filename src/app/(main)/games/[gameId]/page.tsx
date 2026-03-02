@@ -312,47 +312,6 @@ export default function GameDetailPage() {
         </AnimatePresence>
       </div>
 
-      {/* ===== ESPN-style sections ===== */}
-      <div className="px-4 pb-8 space-y-4">
-        {/* Team comparison */}
-        <TeamComparisonBar
-          awayColor={awayTeam.colorLight}
-          homeColor={homeTeam.colorLight}
-          awayName={awayTeam.shortName}
-          homeName={homeTeam.shortName}
-          stats={[
-            { label: "안타(H)", awayValue: 8, homeValue: 11 },
-            { label: "홈런(HR)", awayValue: 1, homeValue: 2 },
-            { label: "볼넷(BB)", awayValue: 3, homeValue: 5 },
-            { label: "삼진(SO)", awayValue: 7, homeValue: 4 },
-            { label: "잔루(LOB)", awayValue: 6, homeValue: 8 },
-            { label: "루타(TB)", awayValue: 12, homeValue: 18 },
-          ]}
-        />
-
-        {/* Decision pitchers */}
-        <GameDecisionPitchers pitchers={[
-          { name: "임찬규", teamId: homeTeam.id, role: "WIN", record: "10-3", era: "2.89" },
-          { name: "곽빈", teamId: awayTeam.id, role: "LOSS", record: "7-8", era: "4.12" },
-          { name: "고우석", teamId: homeTeam.id, role: "SAVE", record: "2-1", era: "1.85" },
-        ]} />
-
-        {/* Stadium info */}
-        <StadiumInfo
-          stadiumId="jamsil"
-          name="잠실야구장"
-          location="서울 송파구"
-          capacity="25,553"
-          gameTime="3시간 12분"
-          attendance="23,847"
-          umpires={[
-            { role: "주심", name: "김태영" },
-            { role: "1루", name: "박성호" },
-            { role: "2루", name: "이민호" },
-            { role: "3루", name: "최재용" },
-          ]}
-        />
-      </div>
     </div>
   );
 }
