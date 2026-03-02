@@ -185,7 +185,13 @@ export default function LearnPage() {
                 {chapter.lessons[lessonIndex].title}
               </h2>
               <p className="text-sm text-text-secondary whitespace-pre-line leading-relaxed mb-4">
-                {chapter.lessons[lessonIndex].content}
+                {chapter.lessons[lessonIndex].content.split(/(https?:\/\/[^\s]+)/g).map((part, i) =>
+                  part.match(/^https?:\/\//) ? (
+                    <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="text-accent underline break-all">
+                      {part.includes("youtube") ? "🎬 영상 보기" : part}
+                    </a>
+                  ) : part
+                )}
               </p>
               <div className="bg-bg-tertiary rounded-xl p-3">
                 <p className="text-sm text-center text-text-tertiary whitespace-pre-line font-mono">
