@@ -86,7 +86,18 @@ export default function PlayerBoardPage() {
             </div>
             <p className="text-base text-text-tertiary">{getTeamShortName(player.teamId)} · {player.position} · 게시글 {player.totalPosts.toLocaleString()}개</p>
           </div>
-          <Share2 className="w-10 h-10 text-text-tertiary" />
+          
+          <button onClick={async () => {
+            const url = window.location.href;
+            if (navigator.share) {
+              await navigator.share({ title: `${player.name} - 크보 에브리데이`, url });
+            } else {
+              await navigator.clipboard.writeText(url);
+              alert("링크가 복사되었습니다!");
+            }
+          }}>
+            <Share2 className="w-8 h-8 text-text-tertiary" />
+          </button>
         </div>
 
         {/* Tabs */}
@@ -152,13 +163,15 @@ export default function PlayerBoardPage() {
         ))}
       </div>}
 
-      {/* FAB - Write */}
+      {/* FAB - Write (only on post tabs) */}
+      {(activeTab === "latest" || activeTab === "hot") && (
       <button
         className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
         style={{ backgroundColor: teamColor }}
       >
         <PenLine className="w-9 h-9 text-white" />
       </button>
+      )}
     </div>
   );
 }
