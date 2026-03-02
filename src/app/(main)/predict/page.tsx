@@ -33,36 +33,11 @@ const CATEGORIES: PredictionCategory[] = [
   { id: "last", title: "꼴찌팀", icon: <TrendingUp size={20} />, description: "올해 최하위는...?", type: "team" },
 ];
 
-const POPULAR_PLAYERS: { name: string; team: string; teamId: number }[] = [
-  { name: "김도영", team: "KIA", teamId: 6 },
-  { name: "이정후", team: "키움", teamId: 10 },
-  { name: "구자욱", team: "삼성", teamId: 8 },
-  { name: "홍창기", team: "LG", teamId: 1 },
-  { name: "오스틴", team: "LG", teamId: 1 },
-  { name: "박동원", team: "LG", teamId: 1 },
-  { name: "김하성", team: "키움", teamId: 10 },
-  { name: "강백호", team: "KT", teamId: 3 },
-  { name: "최정", team: "SSG", teamId: 4 },
-  { name: "노시환", team: "한화", teamId: 9 },
-  { name: "송성문", team: "키움", teamId: 10 },
-  { name: "문보경", team: "롯데", teamId: 7 },
-  { name: "디아즈", team: "SSG", teamId: 4 },
-  { name: "로하스", team: "KT", teamId: 3 },
-  { name: "나성범", team: "NC", teamId: 5 },
-  { name: "양현종", team: "KIA", teamId: 6 },
-  { name: "안우진", team: "KIA", teamId: 6 },
-  { name: "고우석", team: "LG", teamId: 1 },
-  { name: "임찬규", team: "LG", teamId: 1 },
-  { name: "원태인", team: "삼성", teamId: 8 },
-  { name: "문동주", team: "한화", teamId: 9 },
-  { name: "박세웅", team: "롯데", teamId: 7 },
-  { name: "김광현", team: "SSG", teamId: 4 },
-  { name: "류현진", team: "한화", teamId: 9 },
-  { name: "폰세", team: "NC", teamId: 5 },
-  { name: "소형준", team: "KIA", teamId: 6 },
-  { name: "페르난데스", team: "두산", teamId: 2 },
-  { name: "박영현", team: "두산", teamId: 2 },
-];
+// 전체 선수 목록 (PLAYER_PHOTO_MAP에서 생성)
+const ALL_PLAYERS = Object.entries(PLAYER_PHOTO_MAP).map(([name, id]) => {
+  // 팀 매핑은 player-photos에 없으므로 빈 문자열
+  return { name, playerId: id };
+});
 
 export default function PredictPage() {
   const router = useRouter();
@@ -96,8 +71,8 @@ export default function PredictPage() {
   const totalCount = CATEGORIES.length;
 
   const filteredPlayers = searchQuery
-    ? POPULAR_PLAYERS.filter(p => p.name.includes(searchQuery) || p.team.includes(searchQuery))
-    : POPULAR_PLAYERS;
+    ? ALL_PLAYERS.filter(p => p.name.includes(searchQuery))
+    : ALL_PLAYERS;
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
@@ -244,10 +219,9 @@ export default function PredictPage() {
                     />
                     <div className="space-y-2">
                       {filteredPlayers
-                        .filter(p => !selectedCategory.statFilter || (selectedCategory.statFilter === "pitcher" ? ["양현종","안우진","고우석","임찬규","원태인","문동주","박세웅","김광현","류현진","폰세","소형준","페르난데스","박영현"].includes(p.name) : !["양현종","안우진","고우석","임찬규","원태인","문동주","박세웅","김광현","류현진","폰세","소형준","페르난데스","박영현"].includes(p.name)))
+                        
                         .map(player => {
                           const isSelected = mergedPredictions[selectedCategory.id] === player.name;
-                          const playerId = PLAYER_PHOTO_MAP[player.name];
                           return (
                             <button
                               key={player.name}
@@ -256,10 +230,9 @@ export default function PredictPage() {
                                 isSelected ? "bg-white/10 ring-2 ring-accent" : "bg-bg-tertiary hover:bg-white/5"
                               }`}
                             >
-                              {playerId && <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={`https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2025/${playerId}.jpg`} size={36} showTeamBadge={false} />}
+                              <PlayerAvatar name={player.name} teamId={0} photoUrl={`https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2025/${player.playerId}.jpg`} size={36} showTeamBadge={false} />
                               <div className="text-left">
                                 <span className="text-sm font-bold text-text-primary">{player.name}</span>
-                                <span className="text-xs text-text-tertiary ml-2">{player.team}</span>
                               </div>
                               {isSelected && <Check size={16} className="ml-auto text-accent" />}
                             </button>
