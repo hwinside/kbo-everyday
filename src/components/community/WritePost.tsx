@@ -15,7 +15,7 @@ interface WritePostProps {
 export default function WritePost({ isOpen, onClose, teamName, onSubmit }: WritePostProps) {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
-  const [images, setImages] = useState<string[]>([]);
+  const [images, setImages] = useState<{preview: string; file: File}[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -23,13 +23,8 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit }: Write
     if (!files) return;
     const remaining = 5 - images.length;
     Array.from(files).slice(0, remaining).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        if (ev.target?.result) {
-          setImages((prev) => [...prev, ev.target!.result as string]);
-        }
-      };
-      reader.readAsDataURL(file);
+      const preview = URL.createObjectURL(file);
+      setImages((prev) => [...prev, { preview, file }]);
     });
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
@@ -107,9 +102,9 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit }: Write
               />
               {images.length > 0 && (
                 <div className="flex gap-2 overflow-x-auto hide-scrollbar">
-                  {images.map((src, i) => (
+                  {images.map((img, i) => (
                     <div key={i} className="relative flex-shrink-0 w-20 h-20 rounded-xl overflow-hidden">
-                      <Image src={src} alt={`첨부 ${i + 1}`} fill className="object-cover" unoptimized />
+                      <Image src={img.preview} alt={`첨부 ${i + 1}`} fill className="object-cover" unoptimized />
                       <button
                         onClick={() => removeImage(i)}
                         className="absolute top-1 right-1 text-white drop-shadow-lg"

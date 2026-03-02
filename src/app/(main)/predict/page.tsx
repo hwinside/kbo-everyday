@@ -11,6 +11,7 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { TEAMS } from "@/lib/constants/teams";
 import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import LoginSheet from "@/components/auth/LoginSheet";
+import { usePredictions } from "@/lib/supabase/usePredictions";
 
 interface PredictionCategory {
   id: string;
@@ -68,45 +69,27 @@ export default function PredictPage() {
   const { user } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<PredictionCategory | null>(null);
-  const [myPredictions, setMyPredictions] = useState<Record<string, string>>({});
-  const [communityVotes, setCommunityVotes] = useState<Record<string, Record<string, number>>>({});
-  const [submitted, setSubmitted] = useState<Set<string>>(new Set());
+  const { myPredictions, communityVotes, loading: predsLoading, savePrediction: savePredictionToDb } = usePredictions(user?.id);
+  const [localPicks, setLocalPicks] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState("");
 
-  // localStorage에서 예측 로드
-  useEffect(() => {
-    const saved = localStorage.getItem("kbo-season-predictions-2026");
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      setMyPredictions(parsed.predictions || {});
-      setSubmitted(new Set(parsed.submitted || []));
-    }
-    // 커뮤니티 투표 (mock)
-    setCommunityVotes({
-      champion: { "6": 312, "1": 287, "4": 198, "8": 145, "2": 134, "10": 98, "3": 87, "5": 76, "7": 54, "9": 43 },
-      last: { "9": 287, "7": 231, "3": 156, "5": 112, "2": 98, "10": 76, "8": 54, "6": 23, "4": 19, "1": 12 },
-    });
-  }, []);
+  // Merge DB predictions with local picks
+  const mergedPredictions = { ...myPredictions, ...localPicks };
+  const submitted = new Set(Object.keys(myPredictions));
 
   function savePrediction(categoryId: string, value: string) {
-    const newPreds = { ...myPredictions, [categoryId]: value };
-    setMyPredictions(newPreds);
-    localStorage.setItem("kbo-season-predictions-2026", JSON.stringify({
-      predictions: newPreds,
-      submitted: Array.from(submitted),
-    }));
+    setLocalPicks(prev => ({ ...prev, [categoryId]: value }));
   }
 
-  function submitPrediction(categoryId: string) {
+  async function submitPrediction(categoryId: string) {
     if (!user) { setShowLogin(true); return; }
-    const newSubmitted = new Set(submitted);
-    newSubmitted.add(categoryId);
-    setSubmitted(newSubmitted);
-    localStorage.setItem("kbo-season-predictions-2026", JSON.stringify({
-      predictions: myPredictions,
-      submitted: Array.from(newSubmitted),
-    }));
-    setSelectedCategory(null);
+    const pick = localPicks[categoryId] || mergedPredictions[categoryId];
+    if (!pick) return;
+    const ok = await savePredictionToDb(categoryId, pick);
+    if (ok) {
+      setLocalPicks(prev => { const n = {...prev}; delete n[categoryId]; return n; });
+      setSelectedCategory(null);
+    }
   }
 
   const completedCount = submitted.size;
@@ -141,7 +124,7 @@ export default function PredictPage() {
       <div className="px-5 space-y-3">
         {CATEGORIES.map((cat, i) => {
           const isSubmitted = submitted.has(cat.id);
-          const prediction = myPredictions[cat.id];
+          const prediction = mergedPredictions[cat.id];
           const votes = communityVotes[cat.id];
           const topVote = votes ? Object.entries(votes).sort((a, b) => b[1] - a[1])[0] : null;
 
@@ -233,7 +216,7 @@ export default function PredictPage() {
                 {selectedCategory.type === "team" ? (
                   <div className="grid grid-cols-2 gap-3">
                     {TEAMS.map(team => {
-                      const isSelected = myPredictions[selectedCategory.id] === String(team.id);
+                      const isSelected = mergedPredictions[selectedCategory.id] === String(team.id);
                       return (
                         <button
                           key={team.id}
@@ -263,7 +246,7 @@ export default function PredictPage() {
                       {filteredPlayers
                         .filter(p => !selectedCategory.statFilter || (selectedCategory.statFilter === "pitcher" ? ["양현종","안우진","고우석","임찬규","원태인","문동주","박세웅","김광현","류현진","폰세","소형준","페르난데스","박영현"].includes(p.name) : !["양현종","안우진","고우석","임찬규","원태인","문동주","박세웅","김광현","류현진","폰세","소형준","페르난데스","박영현"].includes(p.name)))
                         .map(player => {
-                          const isSelected = myPredictions[selectedCategory.id] === player.name;
+                          const isSelected = mergedPredictions[selectedCategory.id] === player.name;
                           const playerId = PLAYER_PHOTO_MAP[player.name];
                           return (
                             <button
@@ -290,10 +273,10 @@ export default function PredictPage() {
               <div className="px-5 py-4 border-t border-border">
                 <button
                   onClick={() => submitPrediction(selectedCategory.id)}
-                  disabled={!myPredictions[selectedCategory.id]}
+                  disabled={!mergedPredictions[selectedCategory.id]}
                   className="w-full py-3 rounded-xl bg-accent text-white font-bold text-base disabled:opacity-30 transition-all"
                 >
-                  {myPredictions[selectedCategory.id] ? "예측 확정하기 🔮" : "선택해주세요"}
+                  {mergedPredictions[selectedCategory.id] ? "예측 확정하기 🔮" : "선택해주세요"}
                 </button>
               </div>
             </motion.div>

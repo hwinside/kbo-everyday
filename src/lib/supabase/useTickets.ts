@@ -15,53 +15,62 @@ export interface TicketTransfer {
   quantity: number;
   price: number;
   original_price: number | null;
-  status: "open" | "reserved" | "sold" | "expired";
+  status: string;
   contact_method: string;
   contact_info: string | null;
   description: string | null;
   image_urls: string[];
   created_at: string;
   expires_at: string | null;
-  profiles?: { nickname: string; team_id: number };
+  // joined
+  author_nickname?: string;
 }
 
-export function useTickets(venueId?: string, teamId?: number) {
+export function useTickets(venueId?: string) {
   const [tickets, setTickets] = useState<TicketTransfer[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchTickets = useCallback(async () => {
-    setLoading(true);
-    let query = supabase
+  useEffect(() => {
+    async function load() {
+      let query = supabase
+        .from("ticket_transfers")
+        .select("*, profiles!ticket_transfers_author_id_fkey(nickname)")
+        .eq("status", "open")
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      if (venueId) query = query.eq("venue_id", venueId);
+
+      const { data } = await query;
+      if (data) {
+        setTickets(data.map((d: any) => ({
+          ...d,
+          author_nickname: d.profiles?.nickname,
+        })));
+      }
+      setLoading(false);
+    }
+    load();
+  }, [venueId]);
+
+  const createTicket = useCallback(async (ticket: Partial<TicketTransfer>) => {
+    const { data, error } = await supabase
       .from("ticket_transfers")
-      .select("*, profiles(nickname, team_id)")
-      .eq("status", "open")
-      .order("created_at", { ascending: false })
-      .limit(50);
+      .insert(ticket)
+      .select()
+      .single();
+    if (error) return { error: error.message };
+    if (data) setTickets(prev => [data as TicketTransfer, ...prev]);
+    return { data };
+  }, []);
 
-    if (venueId) query = query.eq("venue_id", venueId);
-    if (teamId) query = query.eq("team_id", teamId);
-
-    const { data } = await query;
-    setTickets((data as TicketTransfer[]) || []);
-    setLoading(false);
-  }, [venueId, teamId]);
-
-  useEffect(() => { fetchTickets(); }, [fetchTickets]);
-
-  async function createTicket(ticket: Omit<TicketTransfer, "id" | "created_at" | "status" | "profiles">) {
-    const { error } = await supabase.from("ticket_transfers").insert(ticket);
-    if (error) throw error;
-    await fetchTickets();
-  }
-
-  async function updateStatus(ticketId: number, status: string) {
-    const { error } = await supabase
+  const closeTicket = useCallback(async (id: number) => {
+    await supabase
       .from("ticket_transfers")
-      .update({ status })
-      .eq("id", ticketId);
-    if (error) throw error;
-    await fetchTickets();
-  }
+      .update({ status: "closed" })
+      .eq("id", id);
+    setTickets(prev => prev.filter(t => t.id !== id));
+  }, []);
 
-  return { tickets, loading, createTicket, updateStatus, refresh: fetchTickets };
+  return { tickets, loading, createTicket, closeTicket };
 }

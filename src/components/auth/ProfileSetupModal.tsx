@@ -17,6 +17,7 @@ export default function ProfileSetupModal({ isOpen }: Props) {
   const [nickname, setNickname] = useState(user?.user_metadata?.name || user?.user_metadata?.full_name || "");
   const [selectedTeam, setSelectedTeam] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [loading, setLoading] = useState(false);
 
   if (!isOpen || !user) return null;
@@ -51,6 +52,19 @@ export default function ProfileSetupModal({ isOpen }: Props) {
     if (!selectedTeam) return;
     setLoading(true);
     try {
+      // 초대코드 검증 (있으면)
+      let inviterId: string | null = null;
+      if (inviteCode.trim()) {
+        const { data: invite } = await supabase
+          .from("invitations")
+          .select("id, inviter_id, used_at")
+          .eq("code", inviteCode.trim().toUpperCase())
+          .maybeSingle();
+        if (!invite) { setError("유효하지 않은 초대코드입니다"); setLoading(false); return; }
+        if (invite.used_at) { setError("이미 사용된 초대코드입니다"); setLoading(false); return; }
+        inviterId = invite.inviter_id;
+      }
+
       const { error: insertError } = await supabase
         .from("profiles")
         .insert({
@@ -58,8 +72,23 @@ export default function ProfileSetupModal({ isOpen }: Props) {
           nickname: nickname.trim(),
           team_id: selectedTeam,
           favorite_players: [],
+          invited_by: inviterId,
+          is_founder: !!inviterId,
+          invite_count: inviterId ? 3 : 0,
+          joined_at: new Date().toISOString(),
         });
       if (insertError) throw insertError;
+
+      // 초대코드 사용 처리 + 파운더 배지
+      if (inviteCode.trim() && inviterId) {
+        await supabase
+          .from("invitations")
+          .update({ invitee_id: user!.id, used_at: new Date().toISOString() })
+          .eq("code", inviteCode.trim().toUpperCase());
+        await supabase
+          .from("user_badges")
+          .insert({ user_id: user!.id, badge_id: "founder" });
+      }
 
       // localStorage도 동기화
       if (typeof window !== "undefined") {
