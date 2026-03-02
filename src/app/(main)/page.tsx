@@ -120,7 +120,22 @@ export default function HomePage() {
         if (d.items?.length) {
           setRealNews(d.items.map((item: any, i: number) => ({
             id: 1000 + i,
-            teamId: myTeamId,
+            teamId: (() => {
+              const teams = [
+                { id: 1, names: ["LG", "엘지", "트윈스"] },
+                { id: 2, names: ["두산", "베어스", "OB"] },
+                { id: 3, names: ["KT", "위즈"] },
+                { id: 4, names: ["SSG", "랜더스"] },
+                { id: 5, names: ["NC", "다이노스"] },
+                { id: 6, names: ["KIA", "기아", "타이거즈"] },
+                { id: 7, names: ["롯데", "자이언츠"] },
+                { id: 8, names: ["삼성", "라이온즈"] },
+                { id: 9, names: ["한화", "이글스"] },
+                { id: 10, names: ["키움", "히어로즈"] },
+              ];
+              const t = teams.find(t => t.names.some(n => item.title.includes(n)));
+              return t?.id || null;
+            })(),
             title: item.title,
             source: (() => { try { return new URL(item.link).hostname.replace("www.", "").replace("m.", ""); } catch { return "뉴스"; } })(),
             sourceUrl: item.link,
