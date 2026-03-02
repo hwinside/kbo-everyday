@@ -143,7 +143,7 @@ export default function TicketTab({ venueId, teamIds }: Props) {
             return (
               <button key={id} onClick={() => setFilter(id)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${filter === id ? "bg-white/10 text-text-primary" : "bg-bg-tertiary text-text-secondary"}`}>
-                <TeamBadge teamId={t.id} size="xs" />{t.name}
+                <TeamBadge teamId={t.id} size="xs" />
               </button>
             );
           })}
