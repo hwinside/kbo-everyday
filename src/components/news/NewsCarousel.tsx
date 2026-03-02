@@ -68,7 +68,8 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
           return (
             <div
               key={item.id}
-              className="w-full flex-shrink-0 snap-start"
+              className="w-full flex-shrink-0 snap-start cursor-pointer"
+              onClick={() => item.sourceUrl && window.open(item.sourceUrl, "_blank")}
             >
               <div
                 className="relative h-[200px] w-full overflow-hidden"
