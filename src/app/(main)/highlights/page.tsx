@@ -91,6 +91,13 @@ function ReelSlide({
           <Share2 size={28} className="text-white" />
           <span className="text-xs text-white font-medium">공유</span>
         </button>
+        <button 
+          className="flex flex-col items-center gap-1"
+          onClick={() => window.open(`https://www.youtube.com/watch?v=${reel.youtubeId}`, "_blank")}
+        >
+          <Volume2 size={28} className="text-white" />
+          <span className="text-xs text-white font-medium">소리</span>
+        </button>
         
       </div>
 
