@@ -10,6 +10,7 @@ import NicheStats from "@/components/player/NicheStats";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
+import PhotoGallery from "@/components/player/PhotoGallery";
 
 const PLAYER_DATA: Record<string, { name: string; teamId: number; number: number; position: string; totalPosts: number }> = {
   p1: { name: "오스틴", teamId: 1, number: 31, position: "외야수", totalPosts: 1284 },
@@ -50,7 +51,7 @@ function getTeamShortName(teamId: number) {
 export default function PlayerBoardPage() {
   const { playerId } = useParams();
   const player = PLAYER_DATA[playerId as string];
-  const [activeTab, setActiveTab] = useState<"stats" | "latest" | "hot">("stats");
+  const [activeTab, setActiveTab] = useState<"stats" | "photo" | "latest" | "hot">("stats");
 
   if (!player) {
     return (
@@ -88,7 +89,7 @@ export default function PlayerBoardPage() {
 
         {/* Tabs */}
         <div className="flex border-t border-border">
-          {(["stats", "latest", "hot"] as const).map((tab) => (
+          {((["stats", "photo", "latest", "hot"] as const)).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -96,7 +97,7 @@ export default function PlayerBoardPage() {
                 activeTab === tab ? "text-text-primary" : "text-text-tertiary"
               }`}
             >
-              {tab === "stats" ? "스탯" : tab === "latest" ? "최신" : "인기"}
+              {tab === "stats" ? "스탯" : tab === "photo" ? "📸 직찍" : tab === "latest" ? "최신" : "인기"}
               {activeTab === tab && (
                 <motion.div
                   layoutId="board-tab"
@@ -117,8 +118,15 @@ export default function PlayerBoardPage() {
         </div>
       )}
 
+      {/* 직찍 갤러리 */}
+      {activeTab === "photo" && (
+        <div className="py-2">
+          <PhotoGallery teamColor={teamColor} />
+        </div>
+      )}
+
       {/* Posts */}
-      {activeTab !== "stats" && <div className="px-5 py-4 space-y-5">
+      {activeTab !== "stats" && activeTab !== "photo" && <div className="px-5 py-4 space-y-5">
         {MOCK_POSTS.map((post, i) => (
           <motion.div
             key={post.id}
