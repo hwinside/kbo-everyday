@@ -7,13 +7,19 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
-webpush.setVapidDetails(
-  "mailto:harinclaw@gmail.com",
-  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY!,
-  process.env.VAPID_PRIVATE_KEY!
-);
+function getWebPush() {
+  if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    webpush.setVapidDetails(
+      "mailto:harinclaw@gmail.com",
+      process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+      process.env.VAPID_PRIVATE_KEY
+    );
+  }
+  return webpush;
+}
 
 export async function POST(req: NextRequest) {
+  const wp = getWebPush();
   const { title, body, url, tag, userIds } = await req.json();
 
   let query = supabase.from("push_subscriptions").select("subscription");
@@ -29,7 +35,7 @@ export async function POST(req: NextRequest) {
   await Promise.allSettled(
     subs.map(async (s: any) => {
       try {
-        await webpush.sendNotification(s.subscription, payload);
+        await wp.sendNotification(s.subscription, payload);
         sent++;
       } catch (e: any) {
         failed++;
