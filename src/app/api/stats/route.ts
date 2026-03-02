@@ -88,11 +88,31 @@ async function fetchPitcherStats(): Promise<PlayerStat[]> {
   }));
 }
 
+
+// 인메모리 캐시 (5분)
+const cache: Record<string, { data: any; ts: number }> = {};
+const CACHE_TTL = 5 * 60 * 1000;
+
+function getCached(key: string) {
+  const entry = cache[key];
+  if (entry && Date.now() - entry.ts < CACHE_TTL) return entry.data;
+  return null;
+}
+function setCache(key: string, data: any) {
+  cache[key] = { data, ts: Date.now() };
+}
+
 export async function GET(req: NextRequest) {
   const type = req.nextUrl.searchParams.get("type") || "batter";
+  const cacheKey = `stats-${type}`;
+  const cached = getCached(cacheKey);
+  if (cached) return NextResponse.json(cached);
+
   try {
     const stats = type === "pitcher" ? await fetchPitcherStats() : await fetchBatterStats();
-    return NextResponse.json({ stats, type, count: stats.length });
+    const result = { stats, type, count: stats.length };
+    setCache(cacheKey, result);
+    return NextResponse.json(result);
   } catch (e: any) {
     return NextResponse.json({ error: e.message, stats: [] }, { status: 500 });
   }

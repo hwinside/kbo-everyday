@@ -41,9 +41,10 @@ export function usePosts(boardType: string, boardId: string) {
     setLoading(true);
     const { data } = await supabase
       .from("posts")
-      .select("*, profiles(nickname, team_id, grade)")
+      .select("id, author_id, board_type, board_id, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
       .eq("board_type", boardType)
       .eq("board_id", boardId)
+      .neq("is_hidden", true)
       .order("created_at", { ascending: false })
       .limit(30);
 
