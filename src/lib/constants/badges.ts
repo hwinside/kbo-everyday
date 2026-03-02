@@ -13,6 +13,13 @@ export const BADGES: BadgeDefinition[] = [
   { id: "wiki", name: "위키 기여자", icon: "📝", description: "선수 프로필 제보 채택", category: "special", rarity: "epic" },
   { id: "bug-hunter", name: "버그헌터", icon: "🐛", description: "버그 제보로 앱 개선에 기여", category: "special", rarity: "epic" },
 
+
+  // === 초대 ===
+  { id: "inviter-1", name: "리크루터 Lv.1", icon: "🤝", description: "친구 1명 초대", category: "special", rarity: "common" },
+  { id: "inviter-3", name: "리크루터 Lv.2", icon: "🤝", description: "친구 3명 초대", category: "special", rarity: "rare" },
+  { id: "inviter-10", name: "리크루터 Lv.3", icon: "🤝", description: "친구 10명 초대", category: "special", rarity: "epic" },
+  { id: "inviter-30", name: "초대왕", icon: "🎪", description: "친구 30명 초대", category: "special", rarity: "legendary" },
+
   // === 커뮤니티 ===
   { id: "debut", name: "데뷔전", icon: "🎬", description: "첫 글 작성", category: "community", rarity: "common" },
   { id: "writer-1", name: "수다쟁이 Lv.1", icon: "💬", description: "글+댓글 10개 달성", category: "community", rarity: "common" },

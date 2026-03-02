@@ -44,6 +44,127 @@ interface UserPost {
   created_at: string;
 }
 
+
+function InviteTab({ userId, inviteCount }: { userId: string; inviteCount: number }) {
+  const [codes, setCodes] = useState<string[]>([]);
+  const [friends, setFriends] = useState<{ id: string; nickname: string }[]>([]);
+  const [totalInvited, setTotalInvited] = useState(0);
+  const [generating, setGenerating] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [remaining, setRemaining] = useState(inviteCount);
+
+  useEffect(() => {
+    fetch(`/api/invite?userId=${userId}`)
+      .then(r => r.json())
+      .then(data => {
+        setCodes((data.invitations || []).filter((i: any) => !i.used_at).map((i: any) => i.code));
+        setFriends(data.friends || []);
+        setTotalInvited(data.totalInvited || 0);
+      });
+  }, [userId]);
+
+  async function generateCode() {
+    if (remaining <= 0) return;
+    setGenerating(true);
+    const res = await fetch("/api/invite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId }),
+    });
+    const data = await res.json();
+    if (data.code) {
+      setCodes(prev => [data.code, ...prev]);
+      setRemaining(prev => prev - 1);
+    }
+    setGenerating(false);
+  }
+
+  function copyCode(code: string) {
+    navigator.clipboard.writeText(code);
+    setCopied(code);
+    setTimeout(() => setCopied(null), 2000);
+  }
+
+  function shareCode(code: string) {
+    const text = `크보 에브리데이에 초대합니다! 🏟️⚾\n\n초대코드: ${code}\n가입하면 파운더 배지를 받아요 👑\n\nhttps://kbo-everyday.vercel.app`;
+    if (navigator.share) {
+      navigator.share({ title: "크보 에브리데이 초대", text });
+    } else {
+      navigator.clipboard.writeText(text);
+      setCopied(code);
+      setTimeout(() => setCopied(null), 2000);
+    }
+  }
+
+  return (
+    <div className="px-5 space-y-4">
+      <GlassCard className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-bold text-text-primary">🎟️ 초대코드</h3>
+          <span className="text-xs px-2 py-1 rounded-full bg-accent/20 text-accent font-bold">
+            남은 초대권: {remaining}장
+          </span>
+        </div>
+
+        {remaining > 0 && (
+          <button
+            onClick={generateCode}
+            disabled={generating}
+            className="w-full mb-3 py-2.5 rounded-xl bg-accent/20 text-accent font-bold text-sm hover:bg-accent/30 transition-all disabled:opacity-50"
+          >
+            {generating ? "생성 중..." : "✨ 초대코드 생성하기"}
+          </button>
+        )}
+
+        {codes.length > 0 ? (
+          <div className="space-y-2">
+            {codes.map(code => (
+              <div key={code} className="flex items-center gap-2 bg-bg-tertiary rounded-xl px-4 py-3">
+                <code className="flex-1 text-sm font-mono text-accent">{code}</code>
+                <button onClick={() => copyCode(code)} className="p-1.5">
+                  {copied === code ? <Check size={16} className="text-green-400" /> : <Copy size={16} className="text-text-tertiary" />}
+                </button>
+                <button onClick={() => shareCode(code)} className="p-1.5 text-text-tertiary text-xs">
+                  공유
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-text-tertiary text-center py-2">
+            초대코드를 생성해서 친구에게 공유하세요!
+          </p>
+        )}
+      </GlassCard>
+
+      <GlassCard className="p-4">
+        <h3 className="text-sm font-bold text-text-primary mb-2">
+          👥 내가 초대한 친구 ({totalInvited}명)
+        </h3>
+        {friends.length > 0 ? (
+          <div className="space-y-2">
+            {friends.map(f => (
+              <div key={f.id} className="flex items-center gap-2 text-sm">
+                <span className="text-base">🤝</span>
+                <span className="text-text-primary">{f.nickname}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-text-tertiary">아직 초대한 친구가 없어요</p>
+        )}
+      </GlassCard>
+
+      <div className="text-center text-xs text-text-tertiary space-y-1">
+        <p>🤝 1명 초대 → 리크루터 Lv.1</p>
+        <p>🤝 3명 초대 → 리크루터 Lv.2</p>
+        <p>🤝 10명 초대 → 리크루터 Lv.3</p>
+        <p>🎪 30명 초대 → <span className="text-amber-400 font-bold">초대왕</span></p>
+      </div>
+    </div>
+  );
+}
+
 export default function ProfilePage() {
   const { userId } = useParams();
   const router = useRouter();
@@ -272,37 +393,7 @@ export default function ProfilePage() {
 
       {/* Invite Tab (own only) */}
       {activeTab === "invite" && isOwn && (
-        <div className="px-5 space-y-4">
-          <GlassCard className="p-4">
-            <h3 className="text-sm font-bold text-text-primary mb-2">🎟️ 나의 초대코드</h3>
-            <p className="text-xs text-text-tertiary mb-3">
-              친구를 초대하면 파운더 배지를 드려요! 남은 초대권: {profile.invite_count || 0}장
-            </p>
-            {inviteCodes.length > 0 ? (
-              <div className="space-y-2">
-                {inviteCodes.map(code => (
-                  <div key={code} className="flex items-center gap-2 bg-bg-tertiary rounded-xl px-4 py-3">
-                    <code className="flex-1 text-sm font-mono text-accent">{code}</code>
-                    <button onClick={() => copyCode(code)}>
-                      {copied ? <Check size={18} className="text-green-400" /> : <Copy size={18} className="text-text-tertiary" />}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-text-tertiary text-center py-4">
-                {(profile.invite_count || 0) > 0 ? "초대코드를 생성해보세요!" : "초대권을 모두 사용했어요"}
-              </p>
-            )}
-          </GlassCard>
-
-          <GlassCard className="p-4">
-            <h3 className="text-sm font-bold text-text-primary mb-2">👥 내가 초대한 친구</h3>
-            <p className="text-xs text-text-tertiary">
-              초대한 친구가 활동할수록 나도 포인트를 받아요!
-            </p>
-          </GlassCard>
-        </div>
+        <InviteTab userId={user!.id} inviteCount={profile.invite_count || 0} />
       )}
     </div>
   );
