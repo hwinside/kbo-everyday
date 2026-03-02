@@ -30,7 +30,7 @@ function ReelSlide({
 
   // iframe src — mute=1 필수 (모바일 autoplay 정책)
   const src = isActive
-    ? `https://www.youtube.com/embed/${reel.youtubeId}?autoplay=1&mute=1&controls=0&modestbranding=1&rel=0&playsinline=1&loop=1&playlist=${reel.youtubeId}&enablejsapi=1`
+    ? `https://www.youtube.com/embed/${reel.youtubeId}?autoplay=1&mute=${muted ? 1 : 0}&controls=0&modestbranding=1&rel=0&playsinline=1&loop=1&playlist=${reel.youtubeId}&enablejsapi=1`
     : undefined;
 
   // postMessage로 play/pause 제어
