@@ -12,6 +12,8 @@ import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
 import { usePosts, createPost } from "@/lib/supabase/usePosts";
 import WritePost from "@/components/community/WritePost";
+import { useBadgeCheck } from "@/lib/hooks/useBadgeCheck";
+import BadgeToast from "@/components/ui/BadgeToast";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import CheerSong from "@/components/player/CheerSong";
@@ -63,6 +65,7 @@ export default function PlayerBoardPage() {
   const [statSeason, setStatSeason] = useState<2025 | 2026>(2026);
   const [realStats, setRealStats] = useState<any>(null);
   const { user } = useAuth();
+  const { newBadges, checkBadges, clearBadges } = useBadgeCheck();
 
   useEffect(() => {
     if (statSeason !== 2025) { setRealStats(null); return; }
@@ -259,6 +262,7 @@ export default function PlayerBoardPage() {
         onSubmit={async (title, content, imageUrls) => {
           await createPost({ boardType: "player", boardId: playerId as string, title, content, imageUrls });
           setShowWrite(false);
+          if (user) checkBadges(user.id);
           reload();
         }}
         teamName={player.name}
