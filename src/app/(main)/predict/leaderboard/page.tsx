@@ -1,70 +1,88 @@
 "use client";
 
 import { useState } from "react";
-import { motion } from "framer-motion";
-import { ChevronLeft } from "lucide-react";
-import Link from "next/link";
-import Leaderboard from "@/components/prediction/Leaderboard";
-import { getGradeByPoints } from "@/lib/constants/grades";
-import { MOCK_LEADERBOARD } from "@/lib/constants/predictions";
+import { ChevronLeft, Trophy, Medal } from "lucide-react";
+import { useRouter } from "next/navigation";
+import GlassCard from "@/components/ui/GlassCard";
+import TeamBadge from "@/components/ui/TeamBadge";
 
-type TabType = "all" | "team" | "weekly";
+interface LeaderEntry {
+  rank: number;
+  nickname: string;
+  teamId: number;
+  score: number;
+  correct: number;
+  total: number;
+}
 
-const container = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.05 } },
-};
+const MOCK_LEADERS: LeaderEntry[] = [
+  { rank: 1, nickname: "야구는인생", teamId: 6, score: 850, correct: 6, total: 8 },
+  { rank: 2, nickname: "잠실의신", teamId: 1, score: 720, correct: 5, total: 8 },
+  { rank: 3, nickname: "사직러버", teamId: 7, score: 680, correct: 5, total: 8 },
+  { rank: 4, nickname: "수원갈매기", teamId: 3, score: 620, correct: 4, total: 8 },
+  { rank: 5, nickname: "대구독수리", teamId: 8, score: 580, correct: 4, total: 8 },
+  { rank: 6, nickname: "인천바다", teamId: 4, score: 540, correct: 4, total: 8 },
+  { rank: 7, nickname: "창원돌풍", teamId: 5, score: 500, correct: 3, total: 8 },
+  { rank: 8, nickname: "광주호랑이", teamId: 6, score: 460, correct: 3, total: 8 },
+  { rank: 9, nickname: "대전독수리", teamId: 9, score: 420, correct: 3, total: 8 },
+  { rank: 10, nickname: "고척히어로", teamId: 10, score: 380, correct: 2, total: 8 },
+];
 
-const item = {
-  hidden: { opacity: 0, y: 12 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.3 } },
-};
+const MEDAL_COLORS = ["text-amber-400", "text-gray-300", "text-amber-700"];
 
 export default function LeaderboardPage() {
-  const [activeTab, setActiveTab] = useState<TabType>("all");
-
-  const tabs: { key: TabType; label: string }[] = [
-    { key: "all", label: "전체" },
-    { key: "team", label: "팀별" },
-    { key: "weekly", label: "주간" },
-  ];
+  const router = useRouter();
 
   return (
-    <motion.div
-      variants={container}
-      initial="hidden"
-      animate="show"
-      className="mx-auto max-w-lg px-5 pt-safe"
-    >
-      {/* Header */}
-      <motion.header variants={item} className="flex items-center gap-4 py-5">
-        <Link href="/predict" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
-          <ChevronLeft size={24} />
-        </Link>
-        <h1 className="text-xl font-bold text-text-primary">예측왕 랭킹</h1>
-      </motion.header>
-
-      {/* Tabs */}
-      <motion.div variants={item} className="mb-5 flex gap-3">
-        {tabs.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            className={`rounded-full px-5 py-2 text-base font-semibold transition-all ${
-              activeTab === tab.key
-                ? "bg-accent text-white"
-                : "bg-bg-tertiary text-text-secondary hover:text-text-primary"
-            }`}
-          >
-            {tab.label}
+    <div className="min-h-screen bg-bg-primary pb-24">
+      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary/80 backdrop-blur-xl">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <button onClick={() => router.back()}>
+            <ChevronLeft size={24} className="text-text-secondary" />
           </button>
-        ))}
-      </motion.div>
+          <span className="text-base font-semibold text-text-primary">🏆 예측 리더보드</span>
+        </div>
+      </div>
 
-      {/* Leaderboard */}
-      <motion.div variants={item} className="pb-8">
-        <Leaderboard entries={MOCK_LEADERBOARD} />
-      </motion.div>
-    </motion.div>
+      <div className="px-5 py-4">
+        <p className="text-sm text-text-tertiary mb-4">
+          시즌 종료 후 예측 결과로 순위가 결정됩니다. 지금은 미리보기!
+        </p>
+
+        <div className="space-y-3">
+          {MOCK_LEADERS.map((entry, i) => (
+            <GlassCard key={entry.rank} className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-8 text-center">
+                  {i < 3 ? (
+                    <Trophy size={20} className={MEDAL_COLORS[i]} />
+                  ) : (
+                    <span className="text-sm font-bold text-text-tertiary">{entry.rank}</span>
+                  )}
+                </div>
+                <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm font-bold" style={{ color: "#fff" }}>
+                  {entry.nickname.charAt(0)}
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-text-primary">{entry.nickname}</span>
+                    <TeamBadge teamId={entry.teamId} size="xs" />
+                  </div>
+                  <span className="text-xs text-text-tertiary">{entry.correct}/{entry.total} 적중</span>
+                </div>
+                <span className="text-base font-black text-accent">{entry.score}P</span>
+              </div>
+            </GlassCard>
+          ))}
+        </div>
+
+        <div className="mt-6 text-center text-xs text-text-tertiary space-y-1">
+          <p>📌 우승팀 적중: +200P</p>
+          <p>📌 MVP/신인왕 적중: +150P</p>
+          <p>📌 타이틀 적중: +100P</p>
+          <p>📌 꼴찌팀 적중: +50P</p>
+        </div>
+      </div>
+    </div>
   );
 }
