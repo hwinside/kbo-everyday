@@ -1,4 +1,5 @@
-import { createClient } from "@supabase/supabase-js";
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
@@ -7,20 +8,25 @@ export async function GET(request: NextRequest) {
   const origin = requestUrl.origin;
 
   if (code) {
-    const supabase = createClient(
+    const cookieStore = await cookies();
+    const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return cookieStore.getAll();
+          },
+          setAll(cookiesToSet) {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            );
+          },
+        },
+      }
     );
-    
-    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-    
-    if (data?.session) {
-      // 세션 토큰을 hash fragment로 전달 → 클라이언트에서 pickup
-      const { access_token, refresh_token } = data.session;
-      return NextResponse.redirect(
-        `${origin}#access_token=${access_token}&refresh_token=${refresh_token}&type=recovery`
-      );
-    }
+
+    await supabase.auth.exchangeCodeForSession(code);
   }
 
   return NextResponse.redirect(origin);

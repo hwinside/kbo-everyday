@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
-export async function createClient() {
+export async function createSupabaseServer() {
   const cookieStore = await cookies();
 
   return createServerClient(
@@ -15,13 +15,13 @@ export async function createClient() {
         setAll(cookiesToSet) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options),
+              cookieStore.set(name, value, options)
             );
           } catch {
-            // Server Component에서 호출될 때는 set 불가
+            // Server Component에서는 set 불가
           }
         },
       },
-    },
+    }
   );
 }
