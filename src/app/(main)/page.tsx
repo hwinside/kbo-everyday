@@ -310,7 +310,7 @@ export default function HomePage() {
         <SectionHeader title="승부예측" href="/predict" icon="🔮" />
         <div className="space-y-4">
           {previewPredictions.map((pred) => (
-            <Link key={pred.gameId} href="/predict">
+            <Link key={pred.gameId} href={`/games/${pred.gameId}/predict`}>
               <GlassCard pressable className="p-4">
                 <div className="flex items-center justify-between text-sm font-semibold">
                   <span className="flex items-center gap-2" style={{ color: getTeamColor(pred.awayTeamId) }}>
