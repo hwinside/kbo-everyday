@@ -117,7 +117,7 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId }: 
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
-            className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-bg-secondary overflow-y-auto overscroll-contain touch-pan-y"
+            className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-bg-secondary overflow-y-auto overscroll-contain touch-pan-y max-h-[85vh]"
             style={{ maxHeight: "85vh" }}
           >
             {/* Handle */}
