@@ -12,6 +12,8 @@ import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
 import { usePosts, createPost } from "@/lib/supabase/usePosts";
 import WritePost from "@/components/community/WritePost";
+import { useAuth } from "@/lib/supabase/AuthContext";
+import LoginSheet from "@/components/auth/LoginSheet";
 import CheerSong from "@/components/player/CheerSong";
 import PlayerProfile from "@/components/player/PlayerProfile";
 import PhotoGallery from "@/components/player/PhotoGallery";
@@ -48,6 +50,8 @@ export default function PlayerBoardPage() {
   const [activeTab, setActiveTab] = useState<"stats" | "photo" | "latest" | "hot">("stats");
   const { posts: livePosts, loading: postsLoading, reload } = usePosts("player", playerId as string);
   const [showWrite, setShowWrite] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
+  const { user } = useAuth();
 
   if (!player) {
     return (
@@ -165,7 +169,7 @@ export default function PlayerBoardPage() {
       {/* FAB - Write (only on post tabs) */}
       {(activeTab === "latest" || activeTab === "hot") && (
       <button
-        onClick={() => setShowWrite(true)}
+        onClick={() => user ? setShowWrite(true) : setShowLogin(true)}
         className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
         style={{ backgroundColor: teamColor }}
       >
@@ -174,6 +178,8 @@ export default function PlayerBoardPage() {
       )}
 
       {/* Write Post Modal */}
+      <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
+
       <WritePost
         isOpen={showWrite}
         onClose={() => setShowWrite(false)}
