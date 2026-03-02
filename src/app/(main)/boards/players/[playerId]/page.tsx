@@ -11,6 +11,8 @@ import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
 import CheerSong from "@/components/player/CheerSong";
+import PlayerProfile from "@/components/player/PlayerProfile";
+import PlayerProfile from "@/components/player/PlayerProfile";
 import PhotoGallery from "@/components/player/PhotoGallery";
 
 const PLAYER_DATA: Record<string, { name: string; teamId: number; number: number; position: string; totalPosts: number }> = {
@@ -115,6 +117,8 @@ export default function PlayerBoardPage() {
       {/* Stats tab */}
       {activeTab === "stats" && (
         <div className="px-5 py-4">
+          <PlayerProfile playerName={player.name} teamColor={teamColor} />
+          <PlayerProfile playerName={player.name} teamColor={teamColor} />
           <CheerSong playerName={player.name} teamColor={teamColor} />
           <NicheStats playerId={playerId as string} position={player.position} teamColor={teamColor} />
         </div>
