@@ -430,6 +430,11 @@ export default function ProfilePage() {
                 className="p-3 cursor-pointer hover:bg-white/5"
                 onClick={() => router.push(`/boards/players/${post.board_id}/posts/${post.id}`)}
               >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-text-tertiary">
+                    {post.board_type === "player" ? `⚾ ${post.board_id}` : post.board_type === "team" ? `🏟️ ${post.board_id}` : "💬 자유"}
+                  </span>
+                </div>
                 <p className="text-sm font-medium text-text-primary">{post.title}</p>
                 <div className="flex items-center gap-4 mt-1 text-xs text-text-tertiary">
                   <span>{timeAgo(post.created_at)}</span>
