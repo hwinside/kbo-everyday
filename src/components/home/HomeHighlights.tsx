@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Play } from "lucide-react";
-import GlassCard from "@/components/ui/GlassCard";
 import { TEAMS } from "@/lib/constants/teams";
 import { getFavoritePlayers } from "@/lib/store/favorites";
 
@@ -24,14 +23,12 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
   const router = useRouter();
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [loading, setLoading] = useState(true);
-  
 
   useEffect(() => {
     if (!team) { setLoading(false); return; }
 
     let favPlayers = getFavoritePlayers().slice(0, 3);
     
-    // fallback 대표선수
     if (favPlayers.length === 0) {
       const defaults: Record<string, string[]> = {
         "LG": ["오스틴", "문보경", "홍창기"],
@@ -75,40 +72,46 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
         return true;
       });
 
-      // 선수별 각 2개씩, 팀으로 나머지 채우기
       const perPlayer = playerResults.map(d => dedup((d.items || []).slice(0, 2)));
       const playerVideos = perPlayer.flat();
-      const teamVideos = dedup((results[0]?.items || []).slice(0, Math.max(6 - playerVideos.length, 1)));
+      const teamVideos = dedup((results[0]?.items || []).slice(0, Math.max(8 - playerVideos.length, 2)));
       const all = [...playerVideos, ...teamVideos];
 
-      // 최신순
       all.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
-      setVideos(all.slice(0, 6));
+      setVideos(all.slice(0, 8));
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [team]);
 
-  if (loading) return <section className="px-5 mt-6"><p className="text-xs text-text-tertiary">영상 로딩 중...</p></section>;
-  if (videos.length === 0) return <section className="px-5 mt-6"><h2 className="text-lg font-bold text-text-primary mb-3">🎬 하이라이트</h2><p className="text-xs text-text-tertiary">영상을 불러오지 못했습니다</p></section>;
+  if (loading) return null;
+  if (videos.length === 0) return null;
 
   return (
-    <section className="px-5 mt-6">
-      <h2 className="text-lg font-bold text-text-primary mb-3">🎬 하이라이트</h2>
-      <div className="grid grid-cols-2 gap-3">
+    <section className="mt-6">
+      <h2 className="text-lg font-bold text-text-primary mb-3 px-5">🎬 하이라이트</h2>
+      <div className="flex gap-3 overflow-x-auto px-5 pb-2 scrollbar-hide" style={{ scrollSnapType: "x mandatory" }}>
         {videos.map(v => (
-          <div key={v.id} className="cursor-pointer" onClick={() => router.push(`/highlights?v=${v.id}`)}>
-            <div className="relative aspect-video rounded-xl overflow-hidden">
+          <div
+            key={v.id}
+            className="flex-shrink-0 cursor-pointer"
+            style={{ width: "140px", scrollSnapAlign: "start" }}
+            onClick={() => router.push(`/highlights?v=${v.id}`)}
+          >
+            <div className="relative rounded-xl overflow-hidden" style={{ aspectRatio: "9/16", width: "140px" }}>
               <img src={v.thumbnail} alt={v.title} className="w-full h-full object-cover" />
-              <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
-                <Play size={32} className="text-white fill-white" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Play size={28} className="text-white fill-white opacity-80" />
               </div>
               {v.label && (
-                <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-full bg-accent/80 text-[10px] font-semibold text-white">
+                <span className="absolute top-2 left-2 px-1.5 py-0.5 rounded-full bg-accent/80 text-[10px] font-semibold text-white">
                   {v.label}
                 </span>
               )}
+              <p className="absolute bottom-2 left-2 right-2 text-[11px] text-white font-medium line-clamp-2 leading-tight">
+                {v.title}
+              </p>
             </div>
-            <p className="text-xs text-text-secondary mt-1.5 line-clamp-2 leading-snug">{v.title}</p>
           </div>
         ))}
       </div>
