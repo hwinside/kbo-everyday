@@ -1,19 +1,21 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { X, Check, Star } from "lucide-react";
+import { motion } from "framer-motion";
+import { Check, Star, Search } from "lucide-react";
 import Image from "next/image";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
+import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getTeamById, TEAMS } from "@/lib/constants/teams";
+import TeamBadge from "@/components/ui/TeamBadge";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 
-// 전체 선수 목록 (PLAYER_PHOTO_MAP 기반, 146명)
-const ALL_PLAYER_LIST = Object.entries(PLAYER_PHOTO_MAP).map(([name, kboId]) => ({
-  id: kboId,
-  name,
-}));
+interface PlayerInfo {
+  id: string;
+  name: string;
+  team: string;
+  teamId: number;
+}
 
 interface PlayerSelectModalProps {
   isOpen: boolean;
@@ -22,28 +24,63 @@ interface PlayerSelectModalProps {
   onSkip: () => void;
 }
 
+// 팀 약칭 → teamId 매핑
+const TEAM_SHORT_MAP: Record<string, number> = {
+  LG: 1, "두산": 2, KT: 3, SSG: 4, NC: 5, KIA: 6, "롯데": 7, "삼성": 8, "한화": 9, "키움": 10,
+};
+
 export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }: PlayerSelectModalProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const team = getTeamById(teamId);
+  const [allPlayers, setAllPlayers] = useState<PlayerInfo[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const players = ALL_PLAYER_LIST.filter(p => !search || p.name.includes(search));
+  const [showAll, setShowAll] = useState(false);
+  const team = getTeamById(teamId);
 
-  const toggle = (id: string) => {
+  useEffect(() => {
+    if (!isOpen) return;
+    setLoading(true);
+    Promise.all([
+      fetch("/api/stats?type=batter").then(r => r.json()),
+      fetch("/api/stats?type=pitcher").then(r => r.json()),
+    ]).then(([b, p]) => {
+      const players: PlayerInfo[] = [];
+      const seen = new Set<string>();
+      for (const s of [...(b.stats || []), ...(p.stats || [])]) {
+        if (!seen.has(s.name)) {
+          seen.add(s.name);
+          players.push({
+            id: s.playerId || s.name,
+            name: s.name,
+            team: s.team,
+            teamId: TEAM_SHORT_MAP[s.team] || 0,
+          });
+        }
+      }
+      setAllPlayers(players);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, [isOpen]);
+
+  const myTeamPlayers = allPlayers.filter(p => p.teamId === teamId);
+  const otherPlayers = allPlayers.filter(p => p.teamId !== teamId);
+  const displayPlayers = search
+    ? allPlayers.filter(p => p.name.includes(search))
+    : showAll ? [...myTeamPlayers, ...otherPlayers] : myTeamPlayers;
+
+  const toggle = (player: PlayerInfo) => {
     setSelected(prev => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else if (next.size < 3) {
-        next.add(id);
-      }
+      if (next.has(player.id)) next.delete(player.id);
+      else if (next.size < 3) next.add(player.id);
       return next;
     });
   };
 
   const handleComplete = () => {
-    const favs: FavoritePlayer[] = players
+    const favs: FavoritePlayer[] = allPlayers
       .filter(p => selected.has(p.id))
-      .map(p => ({ playerId: p.id, name: p.name, teamId: 0, position: "", number: 0 }));
+      .map(p => ({ playerId: p.id, name: p.name, teamId: p.teamId, position: "", number: 0 }));
     onComplete(favs);
   };
 
@@ -57,12 +94,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
       className="fixed inset-0 z-[100] flex items-center justify-center bg-bg-primary"
     >
       <div className="w-full max-w-lg px-6">
-        <motion.div
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.1 }}
-          className="text-center mb-6"
-        >
+        <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} className="text-center mb-4">
           <div className="flex items-center justify-center gap-2 mb-2">
             <Image src={team.logoPath} alt="" width={32} height={32} unoptimized className="object-contain" />
             <h1 className="text-xl font-bold text-text-primary">최애 선수를 골라주세요</h1>
@@ -70,48 +102,58 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
           <p className="text-sm text-text-tertiary">최대 3명 · 선택한 선수 중심으로 피드가 구성됩니다</p>
           <div className="flex justify-center gap-1 mt-3">
             {[0, 1, 2].map(i => (
-              <Star
-                key={i}
-                size={20}
-                fill={i < selected.size ? team.colorLight : "none"}
+              <Star key={i} size={20} fill={i < selected.size ? team.colorLight : "none"}
                 className={i < selected.size ? "" : "text-text-tertiary"}
-                style={i < selected.size ? { color: team.colorLight } : {}}
-              />
+                style={i < selected.size ? { color: team.colorLight } : {}} />
             ))}
           </div>
         </motion.div>
 
-        <motion.div
-          initial={{ y: 30, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.2 }}
-          className="space-y-2 max-h-[50vh] overflow-y-auto"
-        >
-          {players.map((player, i) => {
+        {/* 검색 */}
+        <div className="relative mb-3">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="선수 검색..."
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+          />
+        </div>
+
+        {/* 탭 */}
+        {!search && (
+          <div className="flex gap-2 mb-3">
+            <button onClick={() => setShowAll(false)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${!showAll ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"}`}>
+              {team.shortName} 선수 ({myTeamPlayers.length})
+            </button>
+            <button onClick={() => setShowAll(true)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${showAll ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"}`}>
+              전체 선수 ({allPlayers.length})
+            </button>
+          </div>
+        )}
+
+        <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }}
+          className="space-y-2 max-h-[45vh] overflow-y-auto">
+          {loading ? (
+            <div className="text-center py-8 text-text-tertiary text-sm">선수 목록 로딩 중...</div>
+          ) : displayPlayers.length === 0 ? (
+            <div className="text-center py-8 text-text-tertiary text-sm">검색 결과가 없습니다</div>
+          ) : displayPlayers.map((player) => {
             const isSelected = selected.has(player.id);
             return (
-              <motion.button
-                key={player.id}
-                initial={{ x: -20, opacity: 0 }}
-                animate={{ x: 0, opacity: 1 }}
-                transition={{ delay: 0.3 + i * 0.05 }}
-                onClick={() => toggle(player.id)}
+              <button key={player.id} onClick={() => toggle(player)}
                 className="w-full flex items-center gap-3 p-3 rounded-2xl transition-all"
                 style={{
                   background: isSelected ? `${team.colorPrimary}20` : "rgba(255,255,255,0.03)",
                   border: `2px solid ${isSelected ? team.colorLight : "transparent"}`,
-                }}
-              >
-                <PlayerAvatar
-                  name={player.name}
-                  teamId={undefined}
-                  photoUrl={getPlayerPhotoUrl(player.name)}
-                  number={0}
-                  size={48}
-                />
+                }}>
+                <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} number={0} size={48} />
                 <div className="flex-1 text-left">
                   <p className="text-sm font-bold text-text-primary">{player.name}</p>
-                  <p className="text-xs text-text-tertiary"></p>
+                  {player.teamId !== teamId && <TeamBadge teamId={player.teamId} size="xs" />}
                 </div>
                 {isSelected ? (
                   <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: team.colorLight }}>
@@ -120,31 +162,18 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
                 ) : (
                   <div className="w-7 h-7 rounded-full border-2 border-text-tertiary/30" />
                 )}
-              </motion.button>
+              </button>
             );
           })}
         </motion.div>
 
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.6 }}
-          className="mt-6 space-y-2"
-        >
-          <button
-            onClick={handleComplete}
-            disabled={selected.size === 0}
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="mt-5 space-y-2">
+          <button onClick={handleComplete} disabled={selected.size === 0}
             className="w-full py-3 rounded-xl text-sm font-bold text-white transition-opacity disabled:opacity-30"
-            style={{ backgroundColor: team.colorLight }}
-          >
+            style={{ backgroundColor: team.colorLight }}>
             {selected.size}명 선택 완료
           </button>
-          <button
-            onClick={onSkip}
-            className="w-full py-2 text-sm text-text-tertiary"
-          >
-            나중에 할게요
-          </button>
+          <button onClick={onSkip} className="w-full py-2 text-sm text-text-tertiary">나중에 할게요</button>
         </motion.div>
       </div>
     </motion.div>
