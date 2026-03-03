@@ -21,8 +21,16 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const touchStartY = useRef(0);
   const touchMoved = useRef(false);
+  const prevVideoId = useRef(videos[startIndex].id);
 
   const video = videos[current];
+
+  const postCmd = useCallback((func: string, args: any[] = []) => {
+    iframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ event: "command", func, args }),
+      "*"
+    );
+  }, []);
 
   const goNext = useCallback(() => {
     if (current < videos.length - 1) setCurrent(c => c + 1);
@@ -32,18 +40,10 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
     if (current > 0) setCurrent(c => c - 1);
   }, [current]);
 
-  // YouTube postMessage로 음소거 토글
   const toggleMute = useCallback(() => {
-    const iframe = iframeRef.current;
-    if (iframe?.contentWindow) {
-      const cmd = muted ? "unMute" : "mute";
-      iframe.contentWindow.postMessage(
-        JSON.stringify({ event: "command", func: cmd, args: [] }),
-        "*"
-      );
-    }
+    postCmd(muted ? "unMute" : "mute");
     setMuted(m => !m);
-  }, [muted]);
+  }, [muted, postCmd]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartY.current = e.touches[0].clientY;
@@ -56,7 +56,6 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
 
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (!touchMoved.current) {
-      // 탭 = 음소거 해제
       toggleMute();
       return;
     }
@@ -70,40 +69,29 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
     return () => { document.body.style.overflow = ""; };
   }, []);
 
-  // 영상 바뀌면 자동재생 + 음소거 상태 복원
+  // 영상 변경 시 loadVideoById로 교체 (iframe 재생성 없이!)
   useEffect(() => {
-    const iframe = iframeRef.current;
-    if (!iframe?.contentWindow) return;
+    if (video.id === prevVideoId.current) return;
+    prevVideoId.current = video.id;
     
-    const cmds = ["playVideo"];
-    if (!muted) cmds.push("unMute");
-    
-    // iframe 로드 후 명령 전송
-    const timer = setTimeout(() => {
-      cmds.forEach(cmd => {
-        iframe.contentWindow?.postMessage(
-          JSON.stringify({ event: "command", func: cmd, args: [] }),
-          "*"
-        );
-      });
-    }, 800);
-    
-    return () => clearTimeout(timer);
-  }, [current, muted]);
+    postCmd("loadVideoById", [video.id]);
+    if (!muted) {
+      setTimeout(() => postCmd("unMute"), 300);
+    }
+  }, [video.id, muted, postCmd]);
 
   return (
     <div className="fixed inset-0 z-[100] bg-black">
-      {/* YouTube iframe - enablejsapi=1 필수 */}
+      {/* 단일 iframe — 절대 교체하지 않음 */}
       <iframe
         ref={iframeRef}
-        key={video.id}
-        src={`https://www.youtube.com/embed/${video.id}?autoplay=1&mute=${muted ? 1 : 0}&controls=1&rel=0&playsinline=1&loop=1&playlist=${video.id}&modestbranding=1&enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`}
+        src={`https://www.youtube.com/embed/${videos[startIndex].id}?autoplay=1&mute=1&controls=1&rel=0&playsinline=1&enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`}
         className="absolute inset-0 w-full h-full"
         allow="autoplay; encrypted-media"
         allowFullScreen
       />
 
-      {/* 터치 오버레이 (탭=음소거해제, 스와이프=다음영상) */}
+      {/* 터치 오버레이 */}
       <div
         className="absolute inset-0 z-10"
         onTouchStart={handleTouchStart}
@@ -111,7 +99,7 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
         onTouchEnd={handleTouchEnd}
       />
 
-      {/* 음소거 안내 (처음만) */}
+      {/* 음소거 안내 */}
       {muted && (
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
           <div className="bg-black/60 rounded-full px-4 py-2 flex items-center gap-2 animate-pulse">
