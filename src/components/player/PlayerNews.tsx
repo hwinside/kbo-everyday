@@ -22,8 +22,9 @@ export default function PlayerNews({ playerName, teamId }: PlayerNewsProps) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const team = teamId ? TEAMS.find(t => t.id === teamId)?.shortName : "";
-    const searchQuery = team ? `${team} ${playerName}` : `KBO ${playerName}`;
+    const teamObj = teamId ? TEAMS.find(t => t.id === teamId) : null;
+    const teamName = teamObj ? `${teamObj.shortName} ${teamObj.name}` : "";
+    const searchQuery = teamName ? `${teamName} ${playerName}` : `KBO ${playerName}`;
     
     console.log('[PlayerNews] Search query:', searchQuery);
     

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowLeft, Heart, MessageCircle, Share2, PenLine } from "lucide-react";
@@ -72,6 +73,7 @@ export default function PlayerBoardPage() {
   
   const [player, setPlayer] = useState<PlayerData | null>(null);
   const [loading, setLoading] = useState(true);
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<"stats" | "photo" | "latest" | "hot">("stats");
   const { posts: livePosts, loading: postsLoading, reload } = usePosts("player", rawId);
   const [showWrite, setShowWrite] = useState(false);
@@ -140,9 +142,9 @@ export default function PlayerBoardPage() {
         style={{ background: `linear-gradient(135deg, ${teamColor}15, transparent)` }}
       >
         <div className="flex items-center gap-4 px-5 py-4">
-          <Link href="/boards/players" className="p-1 -ml-1">
+          <button onClick={() => router.back()} className="p-1 -ml-1">
             <ArrowLeft className="w-10 h-10 text-text-secondary" />
-          </Link>
+          </button>
           <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={64} />
           <div className="flex-1">
             <div className="flex items-center gap-3">
