@@ -23,7 +23,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const slides = news.slice(0, 5);
+  const slides = news.slice(0, 10);
 
   // 자동 스크롤
   useEffect(() => {
