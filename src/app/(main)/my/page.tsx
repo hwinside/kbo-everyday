@@ -157,7 +157,7 @@ export default function MyPage() {
               <div>
                 <span className="text-base text-text-primary">푸시 알림</span>
                 <p className="text-xs text-text-tertiary mt-0.5">
-                  {permission === "granted" ? "경기 시작, 득점 알림 수신 중" : typeof window !== "undefined" && !("PushManager" in window) ? "Safari/Chrome에서 홈 화면 추가 후 이용 가능" : "경기 알림을 받아보세요"}
+                  {permission === "granted" ? "경기 시작, 득점 알림 수신 중" : typeof window !== "undefined" && (!("PushManager" in window) || !window.matchMedia("(display-mode: standalone)").matches) ? "홈 화면에 추가하면 알림을 받을 수 있어요 📲" : "경기 알림을 받아보세요"}
                 </p>
               </div>
             </div>
