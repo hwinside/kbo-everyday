@@ -44,20 +44,18 @@ export default function PlayerAvatar({
           style={{
             width: size,
             height: size,
-            background: `linear-gradient(135deg, ${teamColor}40 0%, ${teamColor}15 100%)`,
-            border: `2px solid ${teamColor}50`,
+            background: `linear-gradient(160deg, ${teamColor}30 0%, #1a1a2e 100%)`,
           }}
         >
-          {/* 사람 실루엣 */}
           <svg
             viewBox="0 0 200 200"
             fill="none"
-            style={{ width: size * 0.7, height: size * 0.7 }}
+            style={{ width: size * 0.75, height: size * 0.75, marginTop: size * 0.1 }}
           >
-            <circle cx="100" cy="75" r="30" fill={teamColor + "60"} />
+            <circle cx="100" cy="70" r="28" fill={teamColorLight + "90"} />
             <path
-              d="M100 115c-28 0-50 14-56 35h112c-6-21-28-35-56-35z"
-              fill={teamColor + "60"}
+              d="M100 108c-30 0-54 16-58 38h116c-4-22-28-38-58-38z"
+              fill={teamColorLight + "90"}
             />
           </svg>
         </div>
