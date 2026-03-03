@@ -5,7 +5,7 @@ import { TEAMS } from "@/lib/constants/teams";
 
 interface PlayerAvatarProps {
   name: string;
-  teamId: number;
+  teamId?: number;
   photoUrl?: string | null;
   size?: number;       // px, default 48
   showTeamBadge?: boolean; // default true
