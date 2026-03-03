@@ -181,7 +181,7 @@ export default function PlayerBoardPage() {
                 activeTab === tab ? "text-text-primary" : "text-text-tertiary"
               }`}
             >
-              {tab === "stats" ? "스탯" : tab === "photo" ? "📸 직찍" : tab === "latest" ? "최신" : "인기"}
+              {tab === "stats" ? "기본정보" : tab === "photo" ? "📸 직찍" : tab === "latest" ? "최신" : "인기"}
               {activeTab === tab && (
                 <motion.div
                   layoutId="board-tab"
