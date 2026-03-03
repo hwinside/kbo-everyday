@@ -119,7 +119,7 @@ export default function HomePage() {
     // 팀 뉴스 + 최애선수 뉴스 병렬 호출
     const queries = [
       team 
-        ? fetch(`/api/news?q=${encodeURIComponent(`KBO ${team}`)}`).then(r => r.json()).then(d => ({
+        ? fetch(`/api/news?q=${encodeURIComponent(`프로야구 ${team}`)}`).then(r => r.json()).then(d => ({
             items: (d.items || []).map((item: any) => ({ ...item, _label: team })),
           }))
         : Promise.resolve({ items: [] }),
