@@ -59,8 +59,9 @@ async function fetchPlayerStats(playerId: string, position: string) {
       doubles: parseInt(t0[7]) || 0, triples: parseInt(t0[8]) || 0,
       hr: parseInt(t0[9]) || 0, tb: parseInt(t0[10]) || 0,
       rbi: parseInt(t0[11]) || 0, sb: parseInt(t0[12]) || 0,
-      bb: parseInt(t1?.[0]) || 0, so: parseInt(t1?.[3]) || 0,
-      slg: t1?.[5] || ".000", obp: t1?.[6] || ".000", ops: t1?.[7] || ".000",
+      bb: parseInt(t1?.[0]) || 0, hbp: parseInt(t1?.[2]) || 0,
+      so: parseInt(t1?.[3]) || 0,
+      slg: t1?.[5] || ".000", obp: t1?.[6] || ".000", ops: t1?.[10] || ".000",
     };
   }
 }
