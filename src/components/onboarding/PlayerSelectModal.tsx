@@ -43,7 +43,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
   const handleComplete = () => {
     const favs: FavoritePlayer[] = players
       .filter(p => selected.has(p.id))
-      .map(p => ({ playerId: p.id, name: p.name, teamId, position: "", number: 0 }));
+      .map(p => ({ playerId: p.id, name: p.name, teamId: 0, position: "", number: 0 }));
     onComplete(favs);
   };
 
@@ -104,7 +104,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
               >
                 <PlayerAvatar
                   name={player.name}
-                  teamId={teamId}
+                  teamId={undefined}
                   photoUrl={getPlayerPhotoUrl(player.name)}
                   number={0}
                   size={48}
