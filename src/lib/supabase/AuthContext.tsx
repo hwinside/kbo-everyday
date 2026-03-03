@@ -54,10 +54,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     // 초기 세션 확인
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setUser(session?.user ?? null);
-      if (session?.user) loadProfile(session.user.id);
-      setLoading(false);
+      if (session?.user) {
+        await loadProfile(session.user.id);
+      }
+      setLoading(false); // loadProfile 완료 후에 false
     });
 
     // 인증 상태 변화 구독
