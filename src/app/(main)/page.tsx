@@ -114,12 +114,22 @@ export default function HomePage() {
 
   useEffect(() => {
     const team = myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName : "";
-    const favPlayers = getFavoritePlayers().slice(0, 3).map(p => p.name);
+    const favPlayers = getFavoritePlayers().slice(0, 3);
     
     // 팀 뉴스 + 최애선수 뉴스 병렬 호출
     const queries = [
-      team ? fetch(`/api/news?team=${team}`).then(r => r.json()) : Promise.resolve({ items: [] }),
-      ...favPlayers.map(name => fetch(`/api/news?player=${name}`).then(r => r.json()))
+      team 
+        ? fetch(`/api/news?q=${encodeURIComponent(`KBO ${team}`)}`).then(r => r.json()).then(d => ({
+            items: (d.items || []).map((item: any) => ({ ...item, _label: team })),
+          }))
+        : Promise.resolve({ items: [] }),
+      ...favPlayers.map(p => {
+        const pTeam = TEAMS.find(t => t.id === p.teamId);
+        const pTeamName = pTeam ? `${pTeam.shortName} ${pTeam.name}` : "";
+        return fetch(`/api/news?q=${encodeURIComponent(`${pTeamName} ${p.name}`)}`).then(r => r.json()).then(d => ({
+          items: (d.items || []).map((item: any) => ({ ...item, _label: p.name })),
+        }));
+      })
     ];
     
     Promise.all(queries).then(results => {
@@ -127,44 +137,36 @@ export default function HomePage() {
       
       // 중복 제거 (link 기준)
       const seen = new Set();
-      const unique = allItems.filter(item => {
+      const unique = allItems.filter((item: any) => {
         if (seen.has(item.link)) return false;
         seen.add(item.link);
         return true;
       });
       
       // 최신순 정렬
-      unique.sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
+      unique.sort((a: any, b: any) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
       
       if (unique.length) {
           setRealNews(unique.map((item: any, i: number) => ({
             id: 1000 + i,
-            teamId: (() => {
-              const teams = [
-                { id: 1, names: ["LG", "엘지", "트윈스"] },
-                { id: 2, names: ["두산", "베어스", "OB"] },
-                { id: 3, names: ["KT", "위즈"] },
-                { id: 4, names: ["SSG", "랜더스"] },
-                { id: 5, names: ["NC", "다이노스"] },
-                { id: 6, names: ["KIA", "기아", "타이거즈"] },
-                { id: 7, names: ["롯데", "자이언츠"] },
-                { id: 8, names: ["삼성", "라이온즈"] },
-                { id: 9, names: ["한화", "이글스"] },
-                { id: 10, names: ["키움", "히어로즈"] },
-              ];
-              const t = teams.find(t => t.names.some(n => item.title.includes(n)));
-              return t?.id || null;
-            })(),
             title: item.title,
+            link: item.link,
+            pubDate: item.pubDate,
+            label: item._label || "",
             source: (() => { try { return new URL(item.link).hostname.replace("www.", "").replace("m.", ""); } catch { return "뉴스"; } })(),
             sourceUrl: item.link,
-            thumbnailUrl: null,
-            timeAgo: new Date(item.pubDate).toLocaleDateString("ko-KR"),
-            type: "news" as const,
+            timeAgo: (() => {
+              const diff = Date.now() - new Date(item.pubDate).getTime();
+              const hours = Math.floor(diff / (1000 * 60 * 60));
+              if (hours < 1) return "방금";
+              if (hours < 24) return `${hours}시간 전`;
+              const days = Math.floor(hours / 24);
+              return `${days}일 전`;
+            })(),
+            teamId: myTeamId || null,
           })));
         }
-      })
-      .catch(() => {});
+      }).catch(console.error);
   }, [myTeamId]);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);

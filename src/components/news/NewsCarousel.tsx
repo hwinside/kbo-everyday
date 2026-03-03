@@ -106,6 +106,11 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                       {team.shortName}
                     </span>
                   )}
+                  {item.label && (
+                    <span className="inline-block px-2 py-0.5 mb-1 rounded-full bg-accent/80 text-xs font-semibold text-white">
+                      {item.label}
+                    </span>
+                  )}
                   <h3 className="text-base font-bold text-text-primary leading-snug line-clamp-2">
                     {item.title}
                   </h3>
