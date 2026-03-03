@@ -152,15 +152,20 @@ export default function HomePage() {
     ];
     
     Promise.all(queries).then(results => {
-      const allItems = results.flatMap(d => d.items || []);
+      const teamItems = results[0]?.items || [];
+      const playerItems = results.slice(1).flatMap(d => d.items || []);
       
-      // 중복 제거 (link 기준)
+      // 선수 기사 먼저, 팀 기사로 나머지 채우기
       const seen = new Set();
-      const unique = allItems.filter((item: any) => {
+      const dedup = (items: any[]) => items.filter((item: any) => {
         if (seen.has(item.link)) return false;
         seen.add(item.link);
         return true;
       });
+      
+      const uniquePlayers = dedup(playerItems).slice(0, 7);
+      const uniqueTeam = dedup(teamItems).slice(0, 10 - uniquePlayers.length);
+      const unique = [...uniquePlayers, ...uniqueTeam];
       
       // 최신순 정렬
       unique.sort((a: any, b: any) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
