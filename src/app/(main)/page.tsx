@@ -153,19 +153,23 @@ export default function HomePage() {
     
     Promise.all(queries).then(results => {
       const teamItems = results[0]?.items || [];
-      const playerItems = results.slice(1).flatMap(d => d.items || []);
+      const playerResults = results.slice(1);
       
-      // 선수 기사 먼저, 팀 기사로 나머지 채우기
+      // 선수별 균등 분배 (각 2개씩 먼저, 남은 슬롯은 라운드로빈)
       const seen = new Set();
-      const dedup = (items: any[]) => items.filter((item: any) => {
+      const dedupArr = (items: any[]) => items.filter((item: any) => {
         if (seen.has(item.link)) return false;
         seen.add(item.link);
         return true;
       });
       
-      const uniquePlayers = dedup(playerItems).slice(0, 7);
-      const uniqueTeam = dedup(teamItems).slice(0, 10 - uniquePlayers.length);
-      const unique = [...uniquePlayers, ...uniqueTeam];
+      // 선수별 각 2개씩
+      const perPlayer = playerResults.map(d => dedupArr((d.items || []).slice(0, 3)));
+      const playerNews = perPlayer.flat();
+      
+      // 팀 기사로 나머지 채우기
+      const uniqueTeam = dedupArr(teamItems).slice(0, Math.max(10 - playerNews.length, 2));
+      const unique = [...playerNews, ...uniqueTeam];
       
       // 최신순 정렬
       unique.sort((a: any, b: any) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
