@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { X } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { X, ChevronUp, ChevronDown } from "lucide-react";
 
 interface ReelVideo {
   id: string;
@@ -18,19 +18,34 @@ interface ReelViewerProps {
 export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerProps) {
   const [current, setCurrent] = useState(startIndex);
   const touchStartY = useRef(0);
+  const touchMoved = useRef(false);
 
   const video = videos[current];
 
+  const goNext = useCallback(() => {
+    if (current < videos.length - 1) setCurrent(c => c + 1);
+  }, [current, videos.length]);
+
+  const goPrev = useCallback(() => {
+    if (current > 0) setCurrent(c => c - 1);
+  }, [current]);
+
+  // 터치 이벤트를 overlay div에서 처리
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartY.current = e.touches[0].clientY;
+    touchMoved.current = false;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const diff = Math.abs(e.touches[0].clientY - touchStartY.current);
+    if (diff > 10) touchMoved.current = true;
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
+    if (!touchMoved.current) return;
     const diff = touchStartY.current - e.changedTouches[0].clientY;
-    if (Math.abs(diff) > 80) {
-      if (diff > 0 && current < videos.length - 1) setCurrent(c => c + 1);
-      else if (diff < 0 && current > 0) setCurrent(c => c - 1);
-    }
+    if (diff > 60) goNext();
+    else if (diff < -60) goPrev();
   };
 
   useEffect(() => {
@@ -39,13 +54,26 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
   }, []);
 
   return (
-    <div
-      className="fixed inset-0 z-[100] bg-black flex flex-col"
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
-    >
+    <div className="fixed inset-0 z-[100] bg-black">
+      {/* YouTube iframe (뒤에) - autoplay + mute for mobile policy */}
+      <iframe
+        key={video.id}
+        src={`https://www.youtube.com/embed/${video.id}?autoplay=1&mute=1&controls=0&rel=0&playsinline=1&loop=1&playlist=${video.id}&modestbranding=1`}
+        className="absolute inset-0 w-full h-full"
+        allow="autoplay; encrypted-media"
+        allowFullScreen
+      />
+
+      {/* 터치 감지 overlay (앞에) */}
+      <div
+        className="absolute inset-0 z-10"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      />
+
       {/* Header */}
-      <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4 pt-[env(safe-area-inset-top)] py-3">
+      <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-4 pt-[env(safe-area-inset-top)] py-3">
         <button onClick={onClose} className="p-2 rounded-full bg-black/50">
           <X size={24} className="text-white" />
         </button>
@@ -59,21 +87,23 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
         </div>
       </div>
 
-      {/* Video */}
-      <div className="flex-1">
-        <iframe
-          key={video.id}
-          src={`https://www.youtube.com/embed/${video.id}?autoplay=1&mute=0&controls=1&rel=0&playsinline=1&loop=1&playlist=${video.id}`}
-          className="w-full h-full"
-          allow="autoplay; encrypted-media"
-          allowFullScreen
-        />
+      {/* 네비게이션 버튼 */}
+      <div className="absolute right-4 top-1/2 -translate-y-1/2 z-20 flex flex-col gap-4">
+        {current > 0 && (
+          <button onClick={goPrev} className="p-2 rounded-full bg-black/50">
+            <ChevronUp size={24} className="text-white" />
+          </button>
+        )}
+        {current < videos.length - 1 && (
+          <button onClick={goNext} className="p-2 rounded-full bg-black/50">
+            <ChevronDown size={24} className="text-white" />
+          </button>
+        )}
       </div>
 
-      {/* Title + swipe hint */}
-      <div className="absolute bottom-0 left-0 right-0 z-10 px-4 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-8 bg-gradient-to-t from-black/80 to-transparent pointer-events-none">
+      {/* Title */}
+      <div className="absolute bottom-0 left-0 right-0 z-20 px-4 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-8 bg-gradient-to-t from-black/80 to-transparent pointer-events-none">
         <p className="text-white text-sm font-medium line-clamp-2">{video.title}</p>
-        <p className="text-white/40 text-xs mt-1">↑ 스와이프하여 다음 영상</p>
       </div>
     </div>
   );
