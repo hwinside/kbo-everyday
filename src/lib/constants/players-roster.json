@@ -1,5234 +1,5234 @@
 [
   {
-    "name": "50007",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
-  },
-  {
-    "name": "50030",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
-  },
-  {
-    "name": "50036",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
-  },
-  {
-    "name": "50066",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
-  },
-  {
-    "name": "50092",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
-  },
-  {
-    "name": "50106",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
-  },
-  {
-    "name": "50107",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
-  },
-  {
-    "name": "50126",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
-  },
-  {
-    "name": "50150",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
-  },
-  {
-    "name": "50167",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "강건",
+    "kboId": "53006",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "99"
+  },
+  {
+    "name": "강건우",
+    "kboId": "56769",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "69"
+  },
+  {
+    "name": "강민균",
+    "kboId": "53103",
+    "team": "LG",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "117"
+  },
+  {
+    "name": "강민기",
+    "kboId": "56102",
+    "team": "LG",
+    "teamId": 1,
+    "position": "포수",
+    "backNo": "102"
+  },
+  {
+    "name": "강민성",
+    "kboId": "69064",
+    "team": "KT",
+    "teamId": 3,
+    "position": "내야수",
+    "backNo": "5"
+  },
+  {
+    "name": "강민성",
+    "kboId": "55427",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "내야수",
+    "backNo": "127"
+  },
+  {
+    "name": "강민호",
+    "kboId": "74540",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "포수",
+    "backNo": "47"
+  },
+  {
+    "name": "강백호",
+    "kboId": "68050",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "50"
+  },
+  {
+    "name": "강승구",
+    "kboId": "54506",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "포수",
+    "backNo": "110"
+  },
+  {
+    "name": "강승호",
+    "kboId": "63123",
+    "team": "두산",
+    "teamId": 2,
+    "position": "내야수",
+    "backNo": "23"
+  },
+  {
+    "name": "강이준",
+    "kboId": "67604",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "102"
+  },
+  {
+    "name": "강재민",
+    "kboId": "50705",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "55"
+  },
+  {
+    "name": "강준서",
+    "kboId": "53460",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "외야수",
+    "backNo": "105"
   },
   {
-    "name": "50206",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
-  },
-  {
-    "name": "50208",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
-  },
-  {
-    "name": "50244",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
-  },
-  {
-    "name": "50262",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
-  },
-  {
-    "name": "50304",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
-  },
-  {
-    "name": "50357",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "강현우",
+    "kboId": "50066",
+    "team": "KT",
+    "teamId": 3,
+    "position": "포수",
+    "backNo": "55"
   },
   {
-    "name": "50430",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "고명준",
+    "kboId": "51868",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "18"
   },
   {
-    "name": "50449",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "고승민",
+    "kboId": "69517",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "2"
   },
   {
-    "name": "50464",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "고승완",
+    "kboId": "54908",
+    "team": "NC",
+    "teamId": 5,
+    "position": "외야수",
+    "backNo": "58"
   },
   {
-    "name": "50500",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "고영표",
+    "kboId": "64001",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "1"
   },
   {
-    "name": "50556",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "고종욱",
+    "kboId": "61353",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "외야수",
+    "backNo": "57"
   },
   {
-    "name": "50563",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "고준혁",
+    "kboId": "56068",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "68"
   },
   {
-    "name": "50592",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "고준휘",
+    "kboId": "56949",
+    "team": "NC",
+    "teamId": 5,
+    "position": "외야수",
+    "backNo": "49"
   },
   {
-    "name": "50596",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "고준휘",
+    "kboId": "59372",
+    "team": "NC",
+    "teamId": 5,
+    "position": "외야수",
+    "backNo": null
   },
   {
-    "name": "50600",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "곽도규",
+    "kboId": "53609",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "0"
   },
   {
-    "name": "50604",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "곽동효",
+    "kboId": "56638",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "외야수",
+    "backNo": "138"
   },
   {
-    "name": "50608",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "곽민호",
+    "kboId": "53104",
+    "team": "LG",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "124"
   },
   {
-    "name": "50613",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "구승민",
+    "kboId": "63543",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "22"
   },
   {
-    "name": "50622",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "구자욱",
+    "kboId": "62404",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "외야수",
+    "backNo": "5"
   },
   {
-    "name": "50641",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "구창모",
+    "kboId": "65933",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "59"
   },
   {
-    "name": "50657",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "권광민",
+    "kboId": "52769",
+    "team": "한화",
+    "teamId": 9,
+    "position": "외야수",
+    "backNo": "17"
   },
   {
-    "name": "50704",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "권다결",
+    "kboId": "51640",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "포수",
+    "backNo": "103"
   },
   {
-    "name": "50705",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "권동진",
+    "kboId": "51003",
+    "team": "KT",
+    "teamId": 3,
+    "position": "내야수",
+    "backNo": "52"
   },
   {
-    "name": "50707",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "권동혁",
+    "kboId": "53168",
+    "team": "LG",
+    "teamId": 1,
+    "position": "외야수",
+    "backNo": "132"
   },
   {
-    "name": "50709",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "권민규",
+    "kboId": "55764",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "64"
   },
   {
-    "name": "50710",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "권성준",
+    "kboId": "52003",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "15"
   },
   {
-    "name": "50711",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "권우준",
+    "kboId": "56149",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "49"
   },
   {
-    "name": "50813",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "권현규",
+    "kboId": "56794",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "94"
   },
   {
-    "name": "50840",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "권현우",
+    "kboId": "55441",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "111"
   },
   {
-    "name": "50848",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "권효준",
+    "kboId": "56017",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "117"
   },
   {
-    "name": "50859",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "권희동",
+    "kboId": "63963",
+    "team": "NC",
+    "teamId": 5,
+    "position": "외야수",
+    "backNo": "36"
   },
   {
-    "name": "50868",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김강현",
+    "kboId": "65522",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "19"
   },
   {
-    "name": "50901",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김건",
+    "kboId": "69702",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "56"
   },
   {
-    "name": "50903",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김건",
+    "kboId": "56952",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "52"
   },
   {
-    "name": "50904",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김건",
+    "kboId": "59374",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": null
   },
   {
-    "name": "50906",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김경묵",
+    "kboId": "55618",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "118"
   },
   {
-    "name": "50995",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김경환",
+    "kboId": "56009",
+    "team": "KT",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "109"
   },
   {
-    "name": "50996",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김관우",
+    "kboId": "53701",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "112"
   },
   {
-    "name": "51003",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김광현",
+    "kboId": "77829",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "29"
   },
   {
-    "name": "51007",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김규민",
+    "kboId": "54810",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "포수",
+    "backNo": "44"
   },
   {
-    "name": "51013",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김규성",
+    "kboId": "66614",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "14"
   },
   {
-    "name": "51057",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김기연",
+    "kboId": "66112",
+    "team": "두산",
+    "teamId": 2,
+    "position": "포수",
+    "backNo": "22"
   },
   {
-    "name": "51058",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김기준",
+    "kboId": "53540",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "125"
   },
   {
-    "name": "51100",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김대유",
+    "kboId": "60337",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "69"
   },
   {
-    "name": "51104",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김대한",
+    "kboId": "69238",
+    "team": "두산",
+    "teamId": 2,
+    "position": "외야수",
+    "backNo": "32"
   },
   {
-    "name": "51111",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김대현",
+    "kboId": "66145",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "12"
   },
   {
-    "name": "51154",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김도영",
+    "kboId": "52605",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "5"
   },
   {
-    "name": "51163",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김도현",
+    "kboId": "69745",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "60"
   },
   {
-    "name": "51203",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김도현",
+    "kboId": "52844",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "61"
   },
   {
-    "name": "51264",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김도환",
+    "kboId": "69442",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "포수",
+    "backNo": "24"
   },
   {
-    "name": "51302",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김동규",
+    "kboId": "53164",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "99"
   },
   {
-    "name": "51407",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김동규",
+    "kboId": "69592",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "116"
   },
   {
-    "name": "51408",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김명규",
+    "kboId": "56944",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "144"
   },
   {
-    "name": "51516",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김명규\r\n",
+    "kboId": "59378",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": null
   },
   {
-    "name": "51526",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김명신",
+    "kboId": "67246",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "46"
   },
   {
-    "name": "51528",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김무신",
+    "kboId": "68403",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "48"
   },
   {
-    "name": "51546",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김문수",
+    "kboId": "53205",
+    "team": "두산",
+    "teamId": 2,
+    "position": "외야수",
+    "backNo": "102"
   },
   {
-    "name": "51564",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김민",
+    "kboId": "68043",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "1"
   },
   {
-    "name": "51586",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김민규",
+    "kboId": "56637",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "외야수",
+    "backNo": "37"
   },
   {
-    "name": "51592",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김민규",
+    "kboId": "68200",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "19"
   },
   {
-    "name": "51594",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김민범",
+    "kboId": "56815",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "포수",
+    "backNo": "115"
   },
   {
-    "name": "51603",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김민석",
+    "kboId": "54097",
+    "team": "KT",
+    "teamId": 3,
+    "position": "포수",
+    "backNo": "44"
   },
   {
-    "name": "51604",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김민석",
+    "kboId": "53554",
+    "team": "두산",
+    "teamId": 2,
+    "position": "외야수",
+    "backNo": "2"
   },
   {
-    "name": "51640",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김민성",
+    "kboId": "77564",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "16"
   },
   {
-    "name": "51648",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김민수",
+    "kboId": "65048",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "26"
   },
   {
-    "name": "51665",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김민수",
+    "kboId": "64793",
+    "team": "LG",
+    "teamId": 1,
+    "position": "포수",
+    "backNo": "62"
   },
   {
-    "name": "51702",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김민우",
+    "kboId": "65764",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "53"
   },
   {
-    "name": "51761",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김민준",
+    "kboId": "56840",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "40"
   },
   {
-    "name": "51762",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김민준",
+    "kboId": "53893",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "47"
   },
   {
-    "name": "51767",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김범수",
+    "kboId": "65769",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "49"
   },
   {
-    "name": "51860",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김범준",
+    "kboId": "50710",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "40"
   },
   {
-    "name": "51865",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김범준",
+    "kboId": "69980",
+    "team": "NC",
+    "teamId": 5,
+    "position": "외야수",
+    "backNo": "115"
   },
   {
-    "name": "51868",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김병휘",
+    "kboId": "50304",
+    "team": "키움",
+    "teamId": 10,
+    "position": "내야수",
+    "backNo": "23"
   },
   {
-    "name": "51895",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김사윤",
+    "kboId": "63894",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "21"
   },
   {
-    "name": "51897",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김상민",
+    "kboId": "52402",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "외야수",
+    "backNo": "107"
   },
   {
-    "name": "51903",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김상범",
+    "kboId": "56621",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "121"
   },
   {
-    "name": "51907",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김상수",
+    "kboId": "79402",
+    "team": "KT",
+    "teamId": 3,
+    "position": "내야수",
+    "backNo": "7"
   },
   {
-    "name": "51994",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김서준",
+    "kboId": "55359",
+    "team": "고양",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "59"
   },
   {
-    "name": "52001",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김서현",
+    "kboId": "53754",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "44"
   },
   {
-    "name": "52003",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김석환",
+    "kboId": "67610",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "외야수",
+    "backNo": "35"
   },
   {
-    "name": "52007",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김선기",
+    "kboId": "66018",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "49"
   },
   {
-    "name": "52008",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김선빈",
+    "kboId": "78603",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "3"
   },
   {
-    "name": "52060",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김선우",
+    "kboId": "51604",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "포수",
+    "backNo": "116"
   },
   {
-    "name": "52065",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김성경",
+    "kboId": "54403",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "122"
   },
   {
-    "name": "52103",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김성민",
+    "kboId": "50848",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "11"
   },
   {
-    "name": "52119",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김세민",
+    "kboId": "52514",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "5"
   },
   {
-    "name": "52121",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김세일",
+    "kboId": "53637",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "117"
   },
   {
-    "name": "52123",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김수윤",
+    "kboId": "67900",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "5"
   },
   {
-    "name": "52149",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김승일",
+    "kboId": "50711",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "14"
   },
   {
-    "name": "52154",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김시온",
+    "kboId": "53464",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "100"
   },
   {
-    "name": "52204",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김양수",
+    "kboId": "50613",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "145"
   },
   {
-    "name": "52206",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김영규",
+    "kboId": "68900",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "17"
   },
   {
-    "name": "52294",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김영우",
+    "kboId": "55167",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "67"
   },
   {
-    "name": "52295",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김영웅",
+    "kboId": "52430",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "내야수",
+    "backNo": "30"
   },
   {
-    "name": "52305",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김원중",
+    "kboId": "62528",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "34"
   },
   {
-    "name": "52348",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김유빈",
+    "kboId": "56014",
+    "team": "KT",
+    "teamId": 3,
+    "position": "포수",
+    "backNo": "114"
   },
   {
-    "name": "52392",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김유빈",
+    "kboId": "56317",
+    "team": "고양",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "117"
   },
   {
-    "name": "52395",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김유성",
+    "kboId": "53262",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "55"
   },
   {
-    "name": "52402",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김유영",
+    "kboId": "64596",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "0"
   },
   {
-    "name": "52405",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김유현",
+    "kboId": "55429",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "119"
   },
   {
-    "name": "52430",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김윤하",
+    "kboId": "54319",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "19"
   },
   {
-    "name": "52440",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김인범",
+    "kboId": "69367",
+    "team": "고양",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "67"
   },
   {
-    "name": "52514",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김인태",
+    "kboId": "63257",
+    "team": "두산",
+    "teamId": 2,
+    "position": "외야수",
+    "backNo": "33"
   },
   {
-    "name": "52516",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김재상",
+    "kboId": "53400",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "내야수",
+    "backNo": "14"
   },
   {
-    "name": "52530",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김재성",
+    "kboId": "65132",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "포수",
+    "backNo": "2"
   },
   {
-    "name": "52560",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김재열",
+    "kboId": "64580",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "21"
   },
   {
-    "name": "52565",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김정민",
+    "kboId": "53865",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "04"
   },
   {
-    "name": "52591",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김정엽",
+    "kboId": "55646",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "46"
   },
   {
-    "name": "52605",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김정우",
+    "kboId": "68830",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "16"
   },
   {
-    "name": "52628",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김정율",
+    "kboId": "67504",
+    "team": "LG",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "14"
   },
   {
-    "name": "52634",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김정호",
+    "kboId": "51903",
+    "team": "NC",
+    "teamId": 5,
+    "position": "포수",
+    "backNo": "42"
   },
   {
-    "name": "52641",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김종수",
+    "kboId": "63765",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "38"
   },
   {
-    "name": "52642",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김종운",
+    "kboId": "55122",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "103"
   },
   {
-    "name": "52667",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김주성",
+    "kboId": "66162",
+    "team": "LG",
+    "teamId": 1,
+    "position": "외야수",
+    "backNo": "5"
   },
   {
-    "name": "52701",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김주영",
+    "kboId": "56316",
+    "team": "고양",
+    "teamId": 10,
+    "position": "포수",
+    "backNo": "116"
   },
   {
-    "name": "52702",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김주오",
+    "kboId": "56266",
+    "team": "두산",
+    "teamId": 2,
+    "position": "외야수",
+    "backNo": "66"
   },
   {
-    "name": "52710",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김주온",
+    "kboId": "65411",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "57"
   },
   {
-    "name": "52717",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김주원",
+    "kboId": "51907",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "7"
   },
   {
-    "name": "52764",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김준모",
+    "kboId": "56814",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "114"
   },
   {
-    "name": "52765",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김준상",
+    "kboId": "55226",
+    "team": "두산",
+    "teamId": 2,
+    "position": "내야수",
+    "backNo": "110"
   },
   {
-    "name": "52769",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김준수",
+    "kboId": "56704",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "04"
   },
   {
-    "name": "52804",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김지석",
+    "kboId": "56326",
+    "team": "키움",
+    "teamId": 10,
+    "position": "내야수",
+    "backNo": "26"
   },
   {
-    "name": "52807",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김지성",
+    "kboId": "54397",
+    "team": "고양",
+    "teamId": 10,
+    "position": "포수",
+    "backNo": "105"
   },
   {
-    "name": "52809",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김지용",
+    "kboId": "51104",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "120"
   },
   {
-    "name": "52844",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김진성",
+    "kboId": "75867",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "42"
   },
   {
-    "name": "52868",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김진수",
+    "kboId": "51154",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "45"
   },
   {
-    "name": "52901",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김진욱",
+    "kboId": "51516",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "15"
   },
   {
-    "name": "52902",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김창평",
+    "kboId": "69825",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "64"
   },
   {
-    "name": "52903",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김창훈",
+    "kboId": "51586",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "132"
   },
   {
-    "name": "52908",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김한중",
+    "kboId": "55221",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "95"
   },
   {
-    "name": "52994",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김현도",
+    "kboId": "56509",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "포수",
+    "backNo": "109"
   },
   {
-    "name": "53005",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김현수",
+    "kboId": "56664",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "64"
   },
   {
-    "name": "53006",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김형준",
+    "kboId": "68912",
+    "team": "NC",
+    "teamId": 5,
+    "position": "포수",
+    "backNo": "25"
   },
   {
-    "name": "53008",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김호령",
+    "kboId": "65653",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "외야수",
+    "backNo": "27"
   },
   {
-    "name": "53036",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김호범",
+    "kboId": "56512",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "112"
   },
   {
-    "name": "53057",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김호준",
+    "kboId": "68269",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "56"
   },
   {
-    "name": "53096",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "김화중",
+    "kboId": "56537",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "137"
   },
   {
-    "name": "53100",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "네일",
+    "kboId": "54640",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "40"
   },
   {
-    "name": "53101",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "노경은",
+    "kboId": "73211",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "38"
   },
   {
-    "name": "53103",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "노석진",
+    "kboId": "52717",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "117"
   },
   {
-    "name": "53104",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "노시환",
+    "kboId": "69737",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "8"
   },
   {
-    "name": "53105",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "노재원",
+    "kboId": "53914",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "110"
   },
   {
-    "name": "53123",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "노진혁",
+    "kboId": "62931",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "52"
   },
   {
-    "name": "53139",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "데이비슨",
+    "kboId": "54944",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "24"
   },
   {
-    "name": "53164",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "디아즈",
+    "kboId": "54400",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "내야수",
+    "backNo": "0"
   },
   {
-    "name": "53168",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "레이예스",
+    "kboId": "54529",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "외야수",
+    "backNo": "29"
   },
   {
-    "name": "53202",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "류승민",
+    "kboId": "53404",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "외야수",
+    "backNo": "43"
   },
   {
-    "name": "53204",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "류지혁",
+    "kboId": "62234",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "내야수",
+    "backNo": "16"
   },
   {
-    "name": "53205",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "류진욱",
+    "kboId": "65949",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "41"
   },
   {
-    "name": "53259",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "류현곤",
+    "kboId": "53806",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "104"
   },
   {
-    "name": "53262",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "류현인",
+    "kboId": "53036",
+    "team": "KT",
+    "teamId": 3,
+    "position": "내야수",
+    "backNo": "9"
   },
   {
-    "name": "53267",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "류현준",
+    "kboId": "54219",
+    "team": "두산",
+    "teamId": 2,
+    "position": "포수",
+    "backNo": "67"
   },
   {
-    "name": "53296",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "류효승",
+    "kboId": "50868",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "45"
   },
   {
-    "name": "53301",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "문동주",
+    "kboId": "52701",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "1"
   },
   {
-    "name": "53305",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "문보경",
+    "kboId": "69102",
+    "team": "LG",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "2"
   },
   {
-    "name": "53309",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "문상준",
+    "kboId": "50007",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "53"
   },
   {
-    "name": "53375",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "문상철",
+    "kboId": "64007",
+    "team": "KT",
+    "teamId": 3,
+    "position": "내야수",
+    "backNo": "24"
   },
   {
-    "name": "53400",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "문성주",
+    "kboId": "68119",
+    "team": "LG",
+    "teamId": 1,
+    "position": "외야수",
+    "backNo": "8"
   },
   {
-    "name": "53404",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "문승원",
+    "kboId": "62869",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "42"
   },
   {
-    "name": "53411",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "문정빈",
+    "kboId": "52121",
+    "team": "LG",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "56"
   },
   {
-    "name": "53415",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "문현빈",
+    "kboId": "53764",
+    "team": "한화",
+    "teamId": 9,
+    "position": "외야수",
+    "backNo": "51"
   },
   {
-    "name": "53416",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박건",
+    "kboId": "53597",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "외야수",
+    "backNo": "129"
   },
   {
-    "name": "53455",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박건우",
+    "kboId": "55046",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "46"
   },
   {
-    "name": "53460",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박건우",
+    "kboId": "79215",
+    "team": "NC",
+    "teamId": 5,
+    "position": "외야수",
+    "backNo": "37"
   },
   {
-    "name": "53464",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박관우",
+    "kboId": "55164",
+    "team": "LG",
+    "teamId": 1,
+    "position": "외야수",
+    "backNo": "64"
   },
   {
-    "name": "53504",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박기호",
+    "kboId": "54802",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "66"
   },
   {
-    "name": "53505",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박동수",
+    "kboId": "52994",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "111"
   },
   {
-    "name": "53540",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박동원",
+    "kboId": "79365",
+    "team": "LG",
+    "teamId": 1,
+    "position": "포수",
+    "backNo": "27"
   },
   {
-    "name": "53554",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박로건",
+    "kboId": "50563",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "117"
   },
   {
-    "name": "53562",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박명근",
+    "kboId": "53139",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "39"
   },
   {
-    "name": "53596",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박명현",
+    "kboId": "50592",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "07"
   },
   {
-    "name": "53597",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박민",
+    "kboId": "50657",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "2"
   },
   {
-    "name": "53598",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박민석",
+    "kboId": "55004",
+    "team": "KT",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "104"
   },
   {
-    "name": "53609",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박민우",
+    "kboId": "62907",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "2"
   },
   {
-    "name": "53613",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박민준",
+    "kboId": "53204",
+    "team": "두산",
+    "teamId": 2,
+    "position": "포수",
+    "backNo": "26"
   },
   {
-    "name": "53637",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박상언",
+    "kboId": "66707",
+    "team": "한화",
+    "teamId": 9,
+    "position": "포수",
+    "backNo": "42"
   },
   {
-    "name": "53701",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박상원",
+    "kboId": "67703",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "58"
   },
   {
-    "name": "53703",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박상준",
+    "kboId": "52634",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "50"
   },
   {
-    "name": "53706",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박성빈",
+    "kboId": "53305",
+    "team": "키움",
+    "teamId": 10,
+    "position": "포수",
+    "backNo": "56"
   },
   {
-    "name": "53754",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박세웅",
+    "kboId": "64021",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "21"
   },
   {
-    "name": "53764",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박세직",
+    "kboId": "53800",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "101"
   },
   {
-    "name": "53800",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박세진",
+    "kboId": "66047",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "41"
   },
   {
-    "name": "53806",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박수종",
+    "kboId": "52305",
+    "team": "키움",
+    "teamId": 10,
+    "position": "외야수",
+    "backNo": "87"
   },
   {
-    "name": "53827",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박승규",
+    "kboId": "69418",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "외야수",
+    "backNo": "66"
   },
   {
-    "name": "53865",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박승욱",
+    "kboId": "62802",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "53"
   },
   {
-    "name": "53893",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박시영",
+    "kboId": "60559",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "62"
   },
   {
-    "name": "53898",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박시원",
+    "kboId": "55121",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "58"
   },
   {
-    "name": "53914",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박시원",
+    "kboId": "50996",
+    "team": "NC",
+    "teamId": 5,
+    "position": "외야수",
+    "backNo": "53"
   },
   {
-    "name": "53919",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박신지",
+    "kboId": "68249",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "49"
   },
   {
-    "name": "53988",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박영빈",
+    "kboId": "50906",
+    "team": "NC",
+    "teamId": 5,
+    "position": "외야수",
+    "backNo": "119"
   },
   {
-    "name": "53989",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박영현",
+    "kboId": "52060",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "60"
   },
   {
-    "name": "53995",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박윤성",
+    "kboId": "53301",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "35"
   },
   {
-    "name": "54014",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박인우",
+    "kboId": "54911",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "112"
   },
   {
-    "name": "54063",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박장민",
+    "kboId": "53416",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "내야수",
+    "backNo": "116"
   },
   {
-    "name": "54097",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박재규",
+    "kboId": "53706",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "39"
   },
   {
-    "name": "54148",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박재엽",
+    "kboId": "55563",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "포수",
+    "backNo": "26"
   },
   {
-    "name": "54214",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박정민",
+    "kboId": "56536",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "36"
   },
   {
-    "name": "54219",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박정빈",
+    "kboId": "51860",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "58"
   },
   {
-    "name": "54236",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박정수",
+    "kboId": "65639",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "17"
   },
   {
-    "name": "54301",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박정우",
+    "kboId": "67609",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "외야수",
+    "backNo": "1"
   },
   {
-    "name": "54305",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박정현",
+    "kboId": "50709",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "63"
   },
   {
-    "name": "54307",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박정훈",
+    "kboId": "55394",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "94"
   },
   {
-    "name": "54319",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박종혁",
+    "kboId": "56634",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "133"
   },
   {
-    "name": "54362",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박종훈",
+    "kboId": "60841",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "50"
   },
   {
-    "name": "54363",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박주성",
+    "kboId": "69328",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "0"
   },
   {
-    "name": "54394",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박주영",
+    "kboId": "56438",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "138"
   },
   {
-    "name": "54397",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박주진",
+    "kboId": "56706",
+    "team": "한화",
+    "teamId": 9,
+    "position": "외야수",
+    "backNo": "06"
   },
   {
-    "name": "54400",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박주찬",
+    "kboId": "69900",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "113"
   },
   {
-    "name": "54403",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박주홍",
+    "kboId": "50357",
+    "team": "키움",
+    "teamId": 10,
+    "position": "외야수",
+    "backNo": "57"
   },
   {
-    "name": "54506",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박준건",
+    "kboId": "56314",
+    "team": "고양",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "114"
   },
   {
-    "name": "54529",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박준기",
+    "kboId": "56112",
+    "team": "LG",
+    "teamId": 1,
+    "position": "포수",
+    "backNo": "112"
   },
   {
-    "name": "54640",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박준성",
+    "kboId": "56159",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "59"
   },
   {
-    "name": "54702",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박지성",
+    "kboId": "56337",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "37"
   },
   {
-    "name": "54703",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박지한",
+    "kboId": "69994",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "56"
   },
   {
-    "name": "54729",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박진",
+    "kboId": "69594",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "44"
   },
   {
-    "name": "54768",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박진우",
+    "kboId": "53411",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "포수",
+    "backNo": "12"
   },
   {
-    "name": "54795",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박진형",
+    "kboId": "63512",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "40"
   },
   {
-    "name": "54802",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박찬혁",
+    "kboId": "52348",
+    "team": "키움",
+    "teamId": 10,
+    "position": "외야수",
+    "backNo": "43"
   },
   {
-    "name": "54806",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박찬형",
+    "kboId": "55530",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "60"
   },
   {
-    "name": "54808",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박찬호",
+    "kboId": "64646",
+    "team": "두산",
+    "teamId": 2,
+    "position": "내야수",
+    "backNo": "7"
   },
   {
-    "name": "54809",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "박현우",
+    "kboId": "56108",
+    "team": "LG",
+    "teamId": 1,
+    "position": "외야수",
+    "backNo": "108"
   },
   {
-    "name": "54810",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "배동현",
+    "kboId": "51761",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "61"
   },
   {
-    "name": "54812",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "배민서",
+    "kboId": "69974",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "45"
   },
   {
-    "name": "54903",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "배상호",
+    "kboId": "53988",
+    "team": "NC",
+    "teamId": 5,
+    "position": "외야수",
+    "backNo": "105"
   },
   {
-    "name": "54904",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "배승수",
+    "kboId": "55798",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "98"
   },
   {
-    "name": "54906",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "배인혁",
+    "kboId": "53598",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "127"
   },
   {
-    "name": "54908",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "배재준",
+    "kboId": "63145",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "25"
   },
   {
-    "name": "54911",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "배재환",
+    "kboId": "64995",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "61"
   },
   {
-    "name": "54944",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "배정대",
+    "kboId": "64166",
+    "team": "KT",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "27"
   },
   {
-    "name": "55003",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "배제성",
+    "kboId": "65516",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "19"
   },
   {
-    "name": "55004",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "배찬승",
+    "kboId": "55455",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "55"
   },
   {
-    "name": "55005",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "백승건",
+    "kboId": "69839",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "59"
   },
   {
-    "name": "55007",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "백승현",
+    "kboId": "65109",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "61"
   },
   {
-    "name": "55008",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "백정현",
+    "kboId": "77446",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "29"
   },
   {
-    "name": "55010",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "백진수",
+    "kboId": "52392",
+    "team": "고양",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "91"
   },
   {
-    "name": "55046",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "변건우",
+    "kboId": "54808",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "103"
   },
   {
-    "name": "55109",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "변우혁",
+    "kboId": "69727",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "29"
   },
   {
-    "name": "55111",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "서건창",
+    "kboId": "78168",
+    "team": "키움",
+    "teamId": 10,
+    "position": "내야수",
+    "backNo": "14"
   },
   {
-    "name": "55121",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "서영준",
+    "kboId": "55160",
+    "team": "LG",
+    "teamId": 1,
+    "position": "외야수",
+    "backNo": "60"
   },
   {
-    "name": "55122",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "서유신",
+    "kboId": "53309",
+    "team": "고양",
+    "teamId": 10,
+    "position": "내야수",
+    "backNo": "104"
   },
   {
-    "name": "55130",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "서준오",
+    "kboId": "56241",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "41"
   },
   {
-    "name": "55160",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "서진용",
+    "kboId": "61895",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "22"
   },
   {
-    "name": "55163",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "서하은",
+    "kboId": "56524",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "포수",
+    "backNo": "124"
   },
   {
-    "name": "55164",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "서호철",
+    "kboId": "69995",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "5"
   },
   {
-    "name": "55167",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "석정우",
+    "kboId": "52804",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "52"
   },
   {
-    "name": "55214",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "소이현",
+    "kboId": "67962",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "101"
   },
   {
-    "name": "55215",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "소형준",
+    "kboId": "50030",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "30"
   },
   {
-    "name": "55217",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "손동현",
+    "kboId": "69041",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "41"
   },
   {
-    "name": "55221",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "손민서",
+    "kboId": "56946",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "146"
   },
   {
-    "name": "55224",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "손민석",
+    "kboId": "53057",
+    "team": "KT",
+    "teamId": 3,
+    "position": "내야수",
+    "backNo": "94"
   },
   {
-    "name": "55226",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "손성빈",
+    "kboId": "51528",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "포수",
+    "backNo": "28"
   },
   {
-    "name": "55239",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "손아섭",
+    "kboId": "77532",
+    "team": "한화",
+    "teamId": 9,
+    "position": "외야수",
+    "backNo": "31"
   },
   {
-    "name": "55258",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "손주영",
+    "kboId": "67143",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "29"
   },
   {
-    "name": "55267",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "손주환",
+    "kboId": "54904",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "46"
   },
   {
-    "name": "55268",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "손현기",
+    "kboId": "54363",
+    "team": "고양",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "63"
   },
   {
-    "name": "55359",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "손호영",
+    "kboId": "50150",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "외야수",
+    "backNo": "33"
   },
   {
-    "name": "55370",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "송대현",
+    "kboId": "53105",
+    "team": "LG",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "131"
   },
   {
-    "name": "55377",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "송승기",
+    "kboId": "51111",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "13"
   },
   {
-    "name": "55382",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "송영진",
+    "kboId": "53898",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "90"
+  },
+  {
+    "name": "송재영",
+    "kboId": "51594",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "59"
   },
   {
-    "name": "55383",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "송지후",
+    "kboId": "54394",
+    "team": "키움",
+    "teamId": 10,
+    "position": "내야수",
+    "backNo": "86"
   },
   {
-    "name": "55385",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "송찬의",
+    "kboId": "68110",
+    "team": "LG",
+    "teamId": 1,
+    "position": "외야수",
+    "backNo": "55"
   },
   {
-    "name": "55393",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "송호정",
+    "kboId": "51767",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "120"
   },
   {
-    "name": "55394",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신동건",
+    "kboId": "56567",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "67"
   },
   {
-    "name": "55396",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신명승",
+    "kboId": "52642",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "포수",
+    "backNo": "142"
   },
   {
-    "name": "55412",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신민우",
+    "kboId": "55917",
+    "team": "NC",
+    "teamId": 5,
+    "position": "포수",
+    "backNo": "62"
   },
   {
-    "name": "55417",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신민재",
+    "kboId": "65207",
+    "team": "LG",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "4"
   },
   {
-    "name": "55427",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신민철",
+    "kboId": "52294",
+    "team": "두산",
+    "teamId": 2,
+    "position": "내야수",
+    "backNo": "103"
   },
   {
-    "name": "55428",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신범수",
+    "kboId": "66662",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "포수",
+    "backNo": "25"
   },
   {
-    "name": "55429",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신범준",
+    "kboId": "51057",
+    "team": "KT",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "62"
   },
   {
-    "name": "55438",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신상연",
+    "kboId": "56808",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "108"
   },
   {
-    "name": "55441",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신성호",
+    "kboId": "53989",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "118"
   },
   {
-    "name": "55455",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신영우",
+    "kboId": "53919",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "43"
   },
   {
-    "name": "55503",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신우열",
+    "kboId": "56238",
+    "team": "두산",
+    "teamId": 2,
+    "position": "외야수",
+    "backNo": "38"
   },
   {
-    "name": "55504",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신윤호",
+    "kboId": "53415",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "121"
   },
   {
-    "name": "55515",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신윤후",
+    "kboId": "69508",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "외야수",
+    "backNo": "3"
   },
   {
-    "name": "55530",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신재인",
+    "kboId": "56909",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "9"
   },
   {
-    "name": "55534",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신재인\r\n",
+    "kboId": "59377",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": null
   },
   {
-    "name": "55563",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신정환",
+    "kboId": "52440",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "140"
   },
   {
-    "name": "55618",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "신지환",
+    "kboId": "55860",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "60"
   },
   {
-    "name": "55628",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "심건보",
+    "kboId": "56217",
+    "team": "두산",
+    "teamId": 2,
+    "position": "내야수",
+    "backNo": "117"
   },
   {
-    "name": "55632",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "심우준",
+    "kboId": "64006",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "7"
   },
   {
-    "name": "55646",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "심재훈",
+    "kboId": "55438",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "내야수",
+    "backNo": "6"
   },
   {
-    "name": "55659",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "안민겸",
+    "kboId": "56222",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "122"
   },
   {
-    "name": "55663",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "안민성",
+    "kboId": "56442",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "포수",
+    "backNo": "142"
   },
   {
-    "name": "55704",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "안상현",
+    "kboId": "66864",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "10"
   },
   {
-    "name": "55706",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "안시후",
+    "kboId": "55109",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "109"
   },
   {
-    "name": "55710",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "안우진",
+    "kboId": "68341",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "41"
   },
   {
-    "name": "55743",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "안인산",
+    "kboId": "50901",
+    "team": "KT",
+    "teamId": 3,
+    "position": "내야수",
+    "backNo": "50"
   },
   {
-    "name": "55764",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "안재석",
+    "kboId": "51203",
+    "team": "두산",
+    "teamId": 2,
+    "position": "내야수",
+    "backNo": "62"
   },
   {
-    "name": "55767",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "안재연",
+    "kboId": "56811",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "111"
   },
   {
-    "name": "55798",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "안중열",
+    "kboId": "64022",
+    "team": "NC",
+    "teamId": 5,
+    "position": "포수",
+    "backNo": "22"
   },
   {
-    "name": "55801",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "안지원",
+    "kboId": "56941",
+    "team": "NC",
+    "teamId": 5,
+    "position": "외야수",
+    "backNo": "141"
   },
   {
-    "name": "55860",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "안현민",
+    "kboId": "52001",
+    "team": "KT",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "23"
   },
   {
-    "name": "55893",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "양가온솔",
+    "kboId": "55920",
+    "team": "NC",
+    "teamId": 5,
+    "position": "외야수",
+    "backNo": "120"
   },
   {
-    "name": "55894",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "양경모",
+    "kboId": "52702",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "103"
   },
   {
-    "name": "55896",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "양석환",
+    "kboId": "64153",
+    "team": "두산",
+    "teamId": 2,
+    "position": "내야수",
+    "backNo": "53"
   },
   {
-    "name": "55897",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "양선률",
+    "kboId": "50813",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "101"
   },
   {
-    "name": "55899",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "양수호",
+    "kboId": "55659",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "47"
   },
   {
-    "name": "55913",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "양우진",
+    "kboId": "56165",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "65"
   },
   {
-    "name": "55917",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "양우현",
+    "kboId": "69403",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "내야수",
+    "backNo": "53"
   },
   {
-    "name": "55920",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "양의지",
+    "kboId": "76232",
+    "team": "두산",
+    "teamId": 2,
+    "position": "포수",
+    "backNo": "25"
   },
   {
-    "name": "55925",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "양재훈",
+    "kboId": "55215",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "30"
   },
   {
-    "name": "55927",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "양지율",
+    "kboId": "67365",
+    "team": "고양",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "55"
   },
   {
-    "name": "55993",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "양진혁",
+    "kboId": "52123",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "127"
   },
   {
-    "name": "55996",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "양창섭",
+    "kboId": "68415",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "42"
   },
   {
-    "name": "55997",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "양현",
+    "kboId": "61268",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "19"
   },
   {
-    "name": "56001",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "양현종",
+    "kboId": "77637",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "54"
   },
   {
-    "name": "56005",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "양현종",
+    "kboId": "55370",
+    "team": "키움",
+    "teamId": 10,
+    "position": "내야수",
+    "backNo": "60"
   },
   {
-    "name": "56009",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "어윤성",
+    "kboId": "56414",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "141"
   },
   {
-    "name": "56014",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "엄장윤",
+    "kboId": "52565",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "외야수",
+    "backNo": "123"
   },
   {
-    "name": "56017",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "에레디아",
+    "kboId": "53827",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "27"
   },
   {
-    "name": "56068",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "에르난데스",
+    "kboId": "56712",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "12"
   },
   {
-    "name": "56102",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "여동욱",
+    "kboId": "55393",
+    "team": "키움",
+    "teamId": 10,
+    "position": "내야수",
+    "backNo": "93"
   },
   {
-    "name": "56107",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "여현승",
+    "kboId": "56703",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "03"
   },
   {
-    "name": "56108",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "오규석",
+    "kboId": "50622",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "122"
   },
   {
-    "name": "56111",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "오명진",
+    "kboId": "50208",
+    "team": "두산",
+    "teamId": 2,
+    "position": "내야수",
+    "backNo": "6"
   },
   {
-    "name": "56112",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "오서진",
+    "kboId": "55005",
+    "team": "KT",
+    "teamId": 3,
+    "position": "내야수",
+    "backNo": "25"
   },
   {
-    "name": "56113",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "오석주",
+    "kboId": "67116",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "31"
   },
   {
-    "name": "56149",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "오선우",
+    "kboId": "69636",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "56"
   },
   {
-    "name": "56159",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "오선진",
+    "kboId": "78756",
+    "team": "키움",
+    "teamId": 10,
+    "position": "내야수",
+    "backNo": "6"
   },
   {
-    "name": "56165",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "오스틴",
+    "kboId": "53123",
+    "team": "LG",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "23"
   },
   {
-    "name": "56169",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "오시후",
+    "kboId": "56807",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "107"
   },
   {
-    "name": "56205",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "오영수",
+    "kboId": "68904",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "34"
   },
   {
-    "name": "56215",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "오원석",
+    "kboId": "50859",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "47"
   },
   {
-    "name": "56216",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "오윤석",
+    "kboId": "64504",
+    "team": "KT",
+    "teamId": 3,
+    "position": "내야수",
+    "backNo": "4"
   },
   {
-    "name": "56217",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "오재원",
+    "kboId": "56754",
+    "team": "한화",
+    "teamId": 9,
+    "position": "외야수",
+    "backNo": "54"
   },
   {
-    "name": "56219",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "오정환",
+    "kboId": "68614",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "107"
   },
   {
-    "name": "56221",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "오지환",
+    "kboId": "79109",
+    "team": "LG",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "10"
   },
   {
-    "name": "56222",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "오태곤",
+    "kboId": "60558",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "37"
   },
   {
-    "name": "56235",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "오혜성",
+    "kboId": "55383",
+    "team": "고양",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "106"
   },
   {
-    "name": "56238",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "우강훈",
+    "kboId": "51526",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "20"
   },
   {
-    "name": "56241",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "우규민",
+    "kboId": "73117",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "12"
   },
   {
-    "name": "56266",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "우명현",
+    "kboId": "56169",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "69"
   },
   {
-    "name": "56312",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "우승완",
+    "kboId": "55428",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "128"
   },
   {
-    "name": "56314",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "우정안",
+    "kboId": "55111",
+    "team": "LG",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "110"
   },
   {
-    "name": "56315",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "원상현",
+    "kboId": "54063",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "63"
   },
   {
-    "name": "56316",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "원상훈",
+    "kboId": "53101",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "126"
   },
   {
-    "name": "56317",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "원성준",
+    "kboId": "54307",
+    "team": "고양",
+    "teamId": 10,
+    "position": "외야수",
+    "backNo": "33"
   },
   {
-    "name": "56326",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "원종해",
+    "kboId": "54906",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "63"
   },
   {
-    "name": "56337",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "원종혁",
+    "kboId": "54702",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "48"
   },
   {
-    "name": "56338",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "원종현",
+    "kboId": "76118",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "46"
   },
   {
-    "name": "56345",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "유강남",
+    "kboId": "61102",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "포수",
+    "backNo": "27"
   },
   {
-    "name": "56414",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "유민",
+    "kboId": "52765",
+    "team": "한화",
+    "teamId": 9,
+    "position": "외야수",
+    "backNo": "65"
   },
   {
-    "name": "56433",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "유승철",
+    "kboId": "67640",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "148"
   },
   {
-    "name": "56434",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "유영찬",
+    "kboId": "50106",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "54"
   },
   {
-    "name": "56435",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "유재현",
+    "kboId": "55925",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "125"
   },
   {
-    "name": "56436",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "유정택",
+    "kboId": "56315",
+    "team": "고양",
+    "teamId": 10,
+    "position": "내야수",
+    "backNo": "115"
   },
   {
-    "name": "56437",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "유준규",
+    "kboId": "51013",
+    "team": "KT",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "67"
   },
   {
-    "name": "56438",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "유지성",
+    "kboId": "50604",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "4"
   },
   {
-    "name": "56441",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "윤도현",
+    "kboId": "52667",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "16"
   },
   {
-    "name": "56442",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "윤동희",
+    "kboId": "52591",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "외야수",
+    "backNo": "91"
   },
   {
-    "name": "56443",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "윤상인",
+    "kboId": "55007",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "107"
   },
   {
-    "name": "56444",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "윤서현",
+    "kboId": "59380",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": null
   },
   {
-    "name": "56460",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "윤서현",
+    "kboId": "56945",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "145"
   },
   {
-    "name": "56469",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "윤석원",
+    "kboId": "52395",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "95"
   },
   {
-    "name": "56509",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "윤성보",
+    "kboId": "54809",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "102"
   },
   {
-    "name": "56512",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "윤수녕",
+    "kboId": "53505",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "외야수",
+    "backNo": "126"
   },
   {
-    "name": "56513",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "윤영철",
+    "kboId": "53613",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "13"
   },
   {
-    "name": "56519",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "윤정빈",
+    "kboId": "68463",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "외야수",
+    "backNo": "31"
   },
   {
-    "name": "56520",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "윤준혁",
+    "kboId": "50092",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "31"
   },
   {
-    "name": "56522",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "윤준호",
+    "kboId": "53296",
+    "team": "두산",
+    "teamId": 2,
+    "position": "포수",
+    "backNo": "27"
   },
   {
-    "name": "56524",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "윤중현",
+    "kboId": "68619",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "19"
   },
   {
-    "name": "56536",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "윤현",
+    "kboId": "55396",
+    "team": "고양",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "96"
   },
   {
-    "name": "56537",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "윤형민",
+    "kboId": "56113",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "113"
   },
   {
-    "name": "56563",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이강준",
+    "kboId": "50036",
+    "team": "고양",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "11"
   },
   {
-    "name": "56567",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이건욱",
+    "kboId": "64861",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "16"
   },
   {
-    "name": "56612",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이건희",
+    "kboId": "56520",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "포수",
+    "backNo": "120"
   },
   {
-    "name": "56619",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이기석",
+    "kboId": "53202",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "123"
   },
   {
-    "name": "56621",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이기순",
+    "kboId": "52868",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "4"
   },
   {
-    "name": "56626",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이기창",
+    "kboId": "54703",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "100"
   },
   {
-    "name": "56627",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이도우",
+    "kboId": "55896",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "02"
   },
   {
-    "name": "56628",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이도윤",
+    "kboId": "65703",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "5"
   },
   {
-    "name": "56634",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이도훈",
+    "kboId": "56635",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "포수",
+    "backNo": "135"
   },
   {
-    "name": "56635",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이도훈",
+    "kboId": "56708",
+    "team": "한화",
+    "teamId": 9,
+    "position": "외야수",
+    "backNo": "08"
   },
   {
-    "name": "56637",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이동영",
+    "kboId": "55704",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "104"
   },
   {
-    "name": "56638",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이민석",
+    "kboId": "52530",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "37"
   },
   {
-    "name": "56645",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이민우",
+    "kboId": "65616",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "27"
   },
   {
-    "name": "56647",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이민재",
+    "kboId": "55710",
+    "team": "한화",
+    "teamId": 9,
+    "position": "외야수",
+    "backNo": "68"
   },
   {
-    "name": "56664",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이민호",
+    "kboId": "50126",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "26"
   },
   {
-    "name": "56703",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이병준",
+    "kboId": "51592",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "105"
   },
   {
-    "name": "56704",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이병헌",
+    "kboId": "52204",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "29"
   },
   {
-    "name": "56706",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이병헌",
+    "kboId": "69428",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "포수",
+    "backNo": "23"
   },
   {
-    "name": "56707",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이상규",
+    "kboId": "65117",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "18"
   },
   {
-    "name": "56708",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이상동",
+    "kboId": "69054",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "37"
   },
   {
-    "name": "56712",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이서준",
+    "kboId": "56563",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "63"
   },
   {
-    "name": "56714",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이서준",
+    "kboId": "56433",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "133"
   },
   {
-    "name": "56754",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이서준",
+    "kboId": "56434",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "포수",
+    "backNo": "134"
   },
   {
-    "name": "56769",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이선우",
+    "kboId": "55224",
+    "team": "두산",
+    "teamId": 2,
+    "position": "내야수",
+    "backNo": "108"
   },
   {
-    "name": "56793",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이성규",
+    "kboId": "66409",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "외야수",
+    "backNo": "13"
   },
   {
-    "name": "56794",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이성원",
+    "kboId": "55632",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "58"
   },
   {
-    "name": "56797",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이세민",
+    "kboId": "55997",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "68"
   },
   {
-    "name": "56805",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이승민",
+    "kboId": "54806",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "9"
   },
   {
-    "name": "56807",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이승민",
+    "kboId": "50464",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "28"
   },
   {
-    "name": "56808",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이영빈",
+    "kboId": "51100",
+    "team": "LG",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "7"
   },
   {
-    "name": "56811",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이영재",
+    "kboId": "55503",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "40"
   },
   {
-    "name": "56814",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이우성",
+    "kboId": "63260",
+    "team": "NC",
+    "teamId": 5,
+    "position": "외야수",
+    "backNo": "55"
   },
   {
-    "name": "56815",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이우찬",
+    "kboId": "61145",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "21"
   },
   {
-    "name": "56840",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이원석",
+    "kboId": "68700",
+    "team": "한화",
+    "teamId": 9,
+    "position": "외야수",
+    "backNo": "37"
   },
   {
-    "name": "56849",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이원재",
+    "kboId": "52295",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "64"
   },
   {
-    "name": "56904",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이원준",
+    "kboId": "55893",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "100"
   },
   {
-    "name": "56909",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이유찬",
+    "kboId": "67207",
+    "team": "두산",
+    "teamId": 2,
+    "position": "내야수",
+    "backNo": "13"
   },
   {
-    "name": "56932",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이의리",
+    "kboId": "51648",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "48"
   },
   {
-    "name": "56941",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이인한",
+    "kboId": "50608",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "외야수",
+    "backNo": "102"
   },
   {
-    "name": "56944",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이재상",
+    "kboId": "54305",
+    "team": "고양",
+    "teamId": 10,
+    "position": "내야수",
+    "backNo": "5"
   },
   {
-    "name": "56945",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이재원",
+    "kboId": "56005",
+    "team": "KT",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "105"
   },
   {
-    "name": "56946",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이재원",
+    "kboId": "68106",
+    "team": "LG",
+    "teamId": 1,
+    "position": "외야수",
+    "backNo": "52"
   },
   {
-    "name": "56949",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이정민",
+    "kboId": "56513",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "113"
   },
   {
-    "name": "56952",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이정범",
+    "kboId": "67807",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "33"
   },
   {
-    "name": "56966",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이정용",
+    "kboId": "69134",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "31"
   },
   {
-    "name": "59368",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
+    "name": "이정준",
+    "kboId": "96153",
+    "team": "LG",
+    "teamId": 1,
     "position": "",
     "backNo": ""
   },
   {
-    "name": "59372",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이정현",
+    "kboId": "67048",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "21"
   },
   {
-    "name": "59373",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이정환",
+    "kboId": "55003",
+    "team": "KT",
+    "teamId": 3,
+    "position": "포수",
+    "backNo": "103"
   },
   {
-    "name": "59374",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이정훈",
+    "kboId": "67644",
+    "team": "KT",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "33"
   },
   {
-    "name": "59375",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이종준",
+    "kboId": "50904",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "134"
   },
   {
-    "name": "59377",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이주엽",
+    "kboId": "50262",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "43"
   },
   {
-    "name": "59378",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이주헌",
+    "kboId": "52154",
+    "team": "LG",
+    "teamId": 1,
+    "position": "포수",
+    "backNo": "63"
   },
   {
-    "name": "59380",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이주형",
+    "kboId": "50167",
+    "team": "키움",
+    "teamId": 10,
+    "position": "외야수",
+    "backNo": "2"
   },
   {
-    "name": "60337",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이주형",
+    "kboId": "52901",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "113"
   },
   {
-    "name": "60558",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이주형",
+    "kboId": "51302",
+    "team": "고양",
+    "teamId": 10,
+    "position": "내야수",
+    "backNo": "58"
   },
   {
-    "name": "60559",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이주호",
+    "kboId": "56235",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "35"
   },
   {
-    "name": "60841",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이준기",
+    "kboId": "51702",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "112"
   },
   {
-    "name": "61101",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이준명",
+    "kboId": "53005",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "95"
   },
   {
-    "name": "61102",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이지강",
+    "kboId": "69108",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "32"
   },
   {
-    "name": "61145",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이지백",
+    "kboId": "56111",
+    "team": "LG",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "111"
   },
   {
-    "name": "61268",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이지성",
+    "kboId": "55706",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "106"
   },
   {
-    "name": "61353",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이진영",
+    "kboId": "66657",
+    "team": "한화",
+    "teamId": 9,
+    "position": "외야수",
+    "backNo": "10"
   },
   {
-    "name": "61643",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이진용",
+    "kboId": "55417",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "외야수",
+    "backNo": "117"
   },
   {
-    "name": "61895",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이진하",
+    "kboId": "53562",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "45"
   },
   {
-    "name": "62234",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이창용",
+    "kboId": "51407",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "내야수",
+    "backNo": "50"
   },
   {
-    "name": "62363",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이창진",
+    "kboId": "64560",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "외야수",
+    "backNo": "8"
   },
   {
-    "name": "62404",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이채호",
+    "kboId": "68896",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "17"
   },
   {
-    "name": "62528",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이태준",
+    "kboId": "54301",
+    "team": "고양",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "109"
   },
   {
-    "name": "62700",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이한민",
+    "kboId": "56443",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "내야수",
+    "backNo": "143"
   },
   {
-    "name": "62754",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이현민",
+    "kboId": "54014",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "49"
   },
   {
-    "name": "62802",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이형범",
+    "kboId": "62951",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "28"
   },
   {
-    "name": "62869",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이형종",
+    "kboId": "78135",
+    "team": "키움",
+    "teamId": 10,
+    "position": "외야수",
+    "backNo": "36"
   },
   {
-    "name": "62895",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이호민",
+    "kboId": "55663",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "63"
   },
   {
-    "name": "62907",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이호범",
+    "kboId": "56441",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "41"
   },
   {
-    "name": "62931",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이호성",
+    "kboId": "53455",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "1"
   },
   {
-    "name": "62951",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이희성",
+    "kboId": "56932",
+    "team": "NC",
+    "teamId": 5,
+    "position": "포수",
+    "backNo": "32"
   },
   {
-    "name": "63123",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이희성",
+    "kboId": "59368",
+    "team": "NC",
+    "teamId": 5,
+    "position": "포수",
+    "backNo": null
   },
   {
-    "name": "63145",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "이희성",
+    "kboId": "56221",
+    "team": "두산",
+    "teamId": 2,
+    "position": "포수",
+    "backNo": "121"
   },
   {
-    "name": "63202",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "임근우",
+    "kboId": "52807",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "63"
   },
   {
-    "name": "63257",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "임기영",
+    "kboId": "62754",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "38"
   },
   {
-    "name": "63260",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "임병욱",
+    "kboId": "64346",
+    "team": "키움",
+    "teamId": 10,
+    "position": "외야수",
+    "backNo": "17"
   },
   {
-    "name": "63342",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "임상우",
+    "kboId": "56001",
+    "team": "KT",
+    "teamId": 3,
+    "position": "내야수",
+    "backNo": "101"
   },
   {
-    "name": "63512",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "임정균",
+    "kboId": "53100",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "125"
   },
   {
-    "name": "63543",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "임정호",
+    "kboId": "63959",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "30"
   },
   {
-    "name": "63722",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "임종성",
+    "kboId": "54236",
+    "team": "두산",
+    "teamId": 2,
+    "position": "내야수",
+    "backNo": "3"
   },
   {
-    "name": "63765",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "임종찬",
+    "kboId": "50704",
+    "team": "한화",
+    "teamId": 9,
+    "position": "외야수",
+    "backNo": "9"
   },
   {
-    "name": "63894",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "임종훈",
+    "kboId": "56205",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "115"
   },
   {
-    "name": "63950",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "임주찬",
+    "kboId": "56435",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "내야수",
+    "backNo": "135"
   },
   {
-    "name": "63959",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "임준형",
+    "kboId": "69113",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "14"
   },
   {
-    "name": "63963",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "임지민",
+    "kboId": "52902",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "19"
   },
   {
-    "name": "64001",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "임지열",
+    "kboId": "64340",
+    "team": "키움",
+    "teamId": 10,
+    "position": "외야수",
+    "backNo": "29"
   },
   {
-    "name": "64006",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "임진묵",
+    "kboId": "55382",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "69"
   },
   {
-    "name": "64007",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "임찬규",
+    "kboId": "61101",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "1"
   },
   {
-    "name": "64021",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "임현철",
+    "kboId": "56216",
+    "team": "두산",
+    "teamId": 2,
+    "position": "외야수",
+    "backNo": "116"
   },
   {
-    "name": "64022",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장규빈",
+    "kboId": "50244",
+    "team": "두산",
+    "teamId": 2,
+    "position": "포수",
+    "backNo": "44"
   },
   {
-    "name": "64101",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장규현",
+    "kboId": "51762",
+    "team": "한화",
+    "teamId": 9,
+    "position": "포수",
+    "backNo": "32"
   },
   {
-    "name": "64115",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장두성",
+    "kboId": "68507",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "외야수",
+    "backNo": "7"
   },
   {
-    "name": "64153",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장민기",
+    "kboId": "51665",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "106"
   },
   {
-    "name": "64166",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장민호",
+    "kboId": "55010",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "100"
   },
   {
-    "name": "64202",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장성우",
+    "kboId": "78548",
+    "team": "KT",
+    "teamId": 3,
+    "position": "포수",
+    "backNo": "22"
   },
   {
-    "name": "64340",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장세진",
+    "kboId": "53596",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "131"
   },
   {
-    "name": "64346",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장승현",
+    "kboId": "63202",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "포수",
+    "backNo": "46"
   },
   {
-    "name": "64350",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장시현",
+    "kboId": "51603",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "101"
   },
   {
-    "name": "64504",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장시환",
+    "kboId": "77318",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "28"
   },
   {
-    "name": "64560",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장우진",
+    "kboId": "53267",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "106"
   },
   {
-    "name": "64580",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장유호",
+    "kboId": "69645",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "28"
   },
   {
-    "name": "64596",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장재율",
+    "kboId": "56849",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "49"
   },
   {
-    "name": "64646",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장재혁",
+    "kboId": "50641",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "38"
   },
   {
-    "name": "64768",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장준원",
+    "kboId": "64115",
+    "team": "KT",
+    "teamId": 3,
+    "position": "내야수",
+    "backNo": "56"
   },
   {
-    "name": "64793",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장지훈",
+    "kboId": "51895",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "21"
   },
   {
-    "name": "64861",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장진혁",
+    "kboId": "66706",
+    "team": "KT",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "51"
   },
   {
-    "name": "64995",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장찬희",
+    "kboId": "56460",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "60"
   },
   {
-    "name": "65048",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장창훈",
+    "kboId": "55993",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "123"
   },
   {
-    "name": "65109",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장현식",
+    "kboId": "63950",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "50"
   },
   {
-    "name": "65117",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "장현진",
+    "kboId": "55899",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "05"
   },
   {
-    "name": "65132",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "잭로그",
+    "kboId": "55239",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "39"
   },
   {
-    "name": "65207",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "전경원",
+    "kboId": "68869",
+    "team": "LG",
+    "teamId": 1,
+    "position": "포수",
+    "backNo": "128"
   },
   {
-    "name": "65411",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "전다민",
+    "kboId": "54214",
+    "team": "두산",
+    "teamId": 2,
+    "position": "외야수",
+    "backNo": "9"
   },
   {
-    "name": "65464",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "전루건",
+    "kboId": "69204",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "104"
   },
   {
-    "name": "65516",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "전민재",
+    "kboId": "68205",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "13"
   },
   {
-    "name": "65522",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "전병우",
+    "kboId": "65586",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "내야수",
+    "backNo": "61"
   },
   {
-    "name": "65586",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "전사민",
+    "kboId": "69969",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "57"
   },
   {
-    "name": "65610",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "전상현",
+    "kboId": "66609",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "51"
   },
   {
-    "name": "65616",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "전영준",
+    "kboId": "52809",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "28"
   },
   {
-    "name": "65639",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "전준우",
+    "kboId": "78513",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "외야수",
+    "backNo": "8"
   },
   {
-    "name": "65653",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "전준표",
+    "kboId": "54362",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "62"
   },
   {
-    "name": "65703",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정구범",
+    "kboId": "50995",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "8"
   },
   {
-    "name": "65707",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정다훈",
+    "kboId": "56345",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "45"
   },
   {
-    "name": "65764",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정다훈",
+    "kboId": "56627",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "126"
   },
   {
-    "name": "65769",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정동윤",
+    "kboId": "66858",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "51"
   },
   {
-    "name": "65933",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정동준",
+    "kboId": "55385",
+    "team": "고양",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "107"
   },
   {
-    "name": "65949",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정보근",
+    "kboId": "68518",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "포수",
+    "backNo": "42"
   },
   {
-    "name": "66018",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정선우",
+    "kboId": "55515",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "115"
   },
   {
-    "name": "66047",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정성종",
+    "kboId": "68556",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "18"
   },
   {
-    "name": "66108",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정성헌",
+    "kboId": "56219",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "119"
   },
   {
-    "name": "66112",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정세영",
+    "kboId": "55377",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "64"
   },
   {
-    "name": "66145",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정수빈",
+    "kboId": "79231",
+    "team": "두산",
+    "teamId": 2,
+    "position": "외야수",
+    "backNo": "31"
   },
   {
-    "name": "66162",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정영웅",
+    "kboId": "55008",
+    "team": "KT",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "108"
   },
   {
-    "name": "66209",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정우성",
+    "kboId": "53008",
+    "team": "한화",
+    "teamId": 9,
+    "position": "포수",
+    "backNo": "115"
   },
   {
-    "name": "66233",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정우영",
+    "kboId": "69159",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "18"
   },
   {
-    "name": "66354",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정우주",
+    "kboId": "55743",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "61"
   },
   {
-    "name": "66409",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정우준",
+    "kboId": "51546",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "103"
   },
   {
-    "name": "66606",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정은재",
+    "kboId": "64202",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "102"
   },
   {
-    "name": "66609",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정재훈",
+    "kboId": "56469",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "69"
   },
   {
-    "name": "66614",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정정우",
+    "kboId": "52007",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "92"
   },
   {
-    "name": "66657",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정주영",
+    "kboId": "53995",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "133"
   },
   {
-    "name": "66662",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정준재",
+    "kboId": "54812",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "3"
   },
   {
-    "name": "66706",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정찬화",
+    "kboId": "56645",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "45"
   },
   {
-    "name": "66707",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "정철원",
+    "kboId": "68242",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "65"
   },
   {
-    "name": "66858",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조건호",
+    "kboId": "56612",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "112"
   },
   {
-    "name": "66864",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조건희",
+    "kboId": "51163",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "48"
   },
   {
-    "name": "66920",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조경민",
+    "kboId": "53504",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "128"
+  },
+  {
+    "name": "조대현",
+    "kboId": "68089",
+    "team": "KT",
+    "teamId": 3,
+    "position": "포수",
+    "backNo": "42"
   },
   {
-    "name": "67005",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조동욱",
+    "kboId": "54768",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "57"
   },
   {
-    "name": "67048",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조민석",
+    "kboId": "52903",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "47"
   },
   {
-    "name": "67116",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조민성",
+    "kboId": "52405",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "내야수",
+    "backNo": "132"
   },
   {
-    "name": "67143",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조민영",
+    "kboId": "55534",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "외야수",
+    "backNo": "134"
   },
   {
-    "name": "67207",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조병현",
+    "kboId": "51897",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "19"
   },
   {
-    "name": "67246",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조상우",
+    "kboId": "63342",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "11"
   },
   {
-    "name": "67263",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조세익",
+    "kboId": "56444",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "외야수",
+    "backNo": "144"
   },
   {
-    "name": "67365",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조세진",
+    "kboId": "52516",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "외야수",
+    "backNo": "12"
   },
   {
-    "name": "67421",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조수행",
+    "kboId": "66209",
+    "team": "두산",
+    "teamId": 2,
+    "position": "외야수",
+    "backNo": "51"
   },
   {
-    "name": "67504",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조영건",
+    "kboId": "69360",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "20"
   },
   {
-    "name": "67604",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조영우",
+    "kboId": "55504",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "104"
   },
   {
-    "name": "67609",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조원태",
+    "kboId": "52149",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "38"
   },
   {
-    "name": "67610",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조이현",
+    "kboId": "64768",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "54"
   },
   {
-    "name": "67640",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조재우",
+    "kboId": "56805",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "105"
   },
   {
-    "name": "67644",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조창연",
+    "kboId": "55927",
+    "team": "NC",
+    "teamId": 5,
+    "position": "외야수",
+    "backNo": "127"
   },
   {
-    "name": "67703",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조형우",
+    "kboId": "51865",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "포수",
+    "backNo": "20"
   },
   {
-    "name": "67807",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "조효원",
+    "kboId": "52908",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "129"
   },
   {
-    "name": "67900",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "주성원",
+    "kboId": "69332",
+    "team": "키움",
+    "teamId": 10,
+    "position": "외야수",
+    "backNo": "25"
   },
   {
-    "name": "67962",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "주양준",
+    "kboId": "55217",
+    "team": "두산",
+    "teamId": 2,
+    "position": "외야수",
+    "backNo": "111"
   },
   {
-    "name": "68036",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "주정환",
+    "kboId": "56107",
+    "team": "LG",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "107"
   },
   {
-    "name": "68043",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "주현상",
+    "kboId": "65707",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "66"
   },
   {
-    "name": "68050",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "주효상",
+    "kboId": "66354",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "포수",
+    "backNo": "22"
   },
   {
-    "name": "68089",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "진우영",
+    "kboId": "54148",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "101"
   },
   {
-    "name": "68092",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "채은성",
+    "kboId": "79192",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "22"
   },
   {
-    "name": "68106",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "채현우",
+    "kboId": "69804",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "15"
   },
   {
-    "name": "68110",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최건희",
+    "kboId": "55628",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "128"
   },
   {
-    "name": "68119",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최동환",
+    "kboId": "79140",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "16"
   },
   {
-    "name": "68200",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최동희",
+    "kboId": "52008",
+    "team": "KT",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "69"
   },
   {
-    "name": "68205",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최민석",
+    "kboId": "55268",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "68"
   },
   {
-    "name": "68242",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최민준",
+    "kboId": "68856",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "30"
   },
   {
-    "name": "68249",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최성민",
+    "kboId": "51007",
+    "team": "KT",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "31"
   },
   {
-    "name": "68260",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최성영",
+    "kboId": "66920",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "26"
   },
   {
-    "name": "68269",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최수호",
+    "kboId": "69893",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "62"
   },
   {
-    "name": "68341",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최승용",
+    "kboId": "51264",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "28"
   },
   {
-    "name": "68362",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최우석",
+    "kboId": "54903",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "64"
   },
   {
-    "name": "68403",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최우인",
+    "kboId": "51564",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "101"
   },
   {
-    "name": "68415",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최원영",
+    "kboId": "52103",
+    "team": "LG",
+    "teamId": 1,
+    "position": "외야수",
+    "backNo": "3"
   },
   {
-    "name": "68419",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최원준",
+    "kboId": "66606",
+    "team": "KT",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "3"
   },
   {
-    "name": "68463",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최원준",
+    "kboId": "67263",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "61"
   },
   {
-    "name": "68501",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최유빈",
+    "kboId": "56793",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "93"
   },
   {
-    "name": "68507",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최유찬",
+    "kboId": "56647",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "147"
   },
   {
-    "name": "68518",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최윤석",
+    "kboId": "55894",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "65"
   },
   {
-    "name": "68525",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최윤혁",
+    "kboId": "55913",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "131"
   },
   {
-    "name": "68556",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최윤호",
+    "kboId": "56714",
+    "team": "한화",
+    "teamId": 9,
+    "position": "외야수",
+    "backNo": "114"
   },
   {
-    "name": "68614",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최이준",
+    "kboId": "68036",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "49"
   },
   {
-    "name": "68619",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최인호",
+    "kboId": "50707",
+    "team": "한화",
+    "teamId": 9,
+    "position": "외야수",
+    "backNo": "41"
   },
   {
-    "name": "68639",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최재영",
+    "kboId": "56338",
+    "team": "키움",
+    "teamId": 10,
+    "position": "내야수",
+    "backNo": "38"
   },
   {
-    "name": "68646",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최정",
+    "kboId": "75847",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "14"
   },
   {
-    "name": "68700",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최정용",
+    "kboId": "65464",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "23"
   },
   {
-    "name": "68830",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최정원",
+    "kboId": "69992",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "14"
   },
   {
-    "name": "68856",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최종인",
+    "kboId": "50206",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "40"
   },
   {
-    "name": "68868",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최주형",
+    "kboId": "56215",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "15"
   },
   {
-    "name": "68869",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최주환",
+    "kboId": "76267",
+    "team": "키움",
+    "teamId": 10,
+    "position": "내야수",
+    "backNo": "53"
   },
   {
-    "name": "68896",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최준용",
+    "kboId": "50556",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "56"
   },
   {
-    "name": "68900",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최준우",
+    "kboId": "68868",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "7"
   },
   {
-    "name": "68904",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최준호",
+    "kboId": "53259",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "59"
   },
   {
-    "name": "68912",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최지강",
+    "kboId": "52206",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "42"
   },
   {
-    "name": "69041",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최지광",
+    "kboId": "67421",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "11"
   },
   {
-    "name": "69054",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최지명",
+    "kboId": "68419",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "16"
   },
   {
-    "name": "69064",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최하늘",
+    "kboId": "68501",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "37"
   },
   {
-    "name": "69102",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최현우",
+    "kboId": "56312",
+    "team": "고양",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "112"
   },
   {
-    "name": "69108",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "최형우",
+    "kboId": "72443",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "외야수",
+    "backNo": "34"
   },
   {
-    "name": "69113",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "추세현",
+    "kboId": "55163",
+    "team": "LG",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "35"
   },
   {
-    "name": "69134",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "추재현",
+    "kboId": "68362",
+    "team": "키움",
+    "teamId": 10,
+    "position": "외야수",
+    "backNo": "27"
   },
   {
-    "name": "69159",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "카스트로",
+    "kboId": "56626",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "외야수",
+    "backNo": "26"
   },
   {
-    "name": "69204",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "테일러",
+    "kboId": "56966",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "66"
   },
   {
-    "name": "69238",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "톨허스트",
+    "kboId": "55130",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "30"
   },
   {
-    "name": "69328",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "하동준",
+    "kboId": "56797",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "97"
   },
   {
-    "name": "69332",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "하영민",
+    "kboId": "64350",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "50"
   },
   {
-    "name": "69360",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "하재훈",
+    "kboId": "69813",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "13"
   },
   {
-    "name": "69367",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "하주석",
+    "kboId": "62700",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "16"
   },
   {
-    "name": "69403",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "하준서",
+    "kboId": "56522",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "포수",
+    "backNo": "122"
   },
   {
-    "name": "69418",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "하준영",
+    "kboId": "68639",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "29"
   },
   {
-    "name": "69428",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "하현규",
+    "kboId": "50107",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "119"
   },
   {
-    "name": "69442",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "하혜성",
+    "kboId": "52560",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "118"
   },
   {
-    "name": "69508",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한경빈",
+    "kboId": "52710",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "6"
   },
   {
-    "name": "69517",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한다현",
+    "kboId": "55214",
+    "team": "두산",
+    "teamId": 2,
+    "position": "내야수",
+    "backNo": "109"
   },
   {
-    "name": "69592",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한동희",
+    "kboId": "68525",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "25"
   },
   {
-    "name": "69594",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한두솔",
+    "kboId": "68092",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "34"
   },
   {
-    "name": "69636",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한민우",
+    "kboId": "53096",
+    "team": "고양",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "110"
   },
   {
-    "name": "69645",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한서구",
+    "kboId": "53703",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "67"
   },
   {
-    "name": "69702",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한석현",
+    "kboId": "64101",
+    "team": "NC",
+    "teamId": 5,
+    "position": "외야수",
+    "backNo": "33"
   },
   {
-    "name": "69706",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한수동",
+    "kboId": "56436",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "136"
   },
   {
-    "name": "69727",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한승연",
+    "kboId": "52628",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "외야수",
+    "backNo": "31"
   },
   {
-    "name": "69737",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한승택",
+    "kboId": "63722",
+    "team": "KT",
+    "teamId": 3,
+    "position": "포수",
+    "backNo": "45"
   },
   {
-    "name": "69745",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한유섬",
+    "kboId": "62895",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "35"
   },
   {
-    "name": "69804",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한재승",
+    "kboId": "51994",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "55"
   },
   {
-    "name": "69813",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한재환",
+    "kboId": "50903",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "35"
   },
   {
-    "name": "69825",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한준수",
+    "kboId": "68646",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "포수",
+    "backNo": "25"
   },
   {
-    "name": "69839",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한준희",
+    "kboId": "56619",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "119"
   },
   {
-    "name": "69893",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한지웅",
+    "kboId": "52065",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "93"
   },
   {
-    "name": "69900",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한지윤",
+    "kboId": "55767",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "36"
   },
   {
-    "name": "69969",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한지헌",
+    "kboId": "55801",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "01"
   },
   {
-    "name": "69974",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한차현",
+    "kboId": "51058",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "2"
   },
   {
-    "name": "69980",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "한현희",
+    "kboId": "62363",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "1"
   },
   {
-    "name": "69992",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "허경민",
+    "kboId": "79240",
+    "team": "KT",
+    "teamId": 3,
+    "position": "내야수",
+    "backNo": "13"
   },
   {
-    "name": "69994",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "허관회",
+    "kboId": "69706",
+    "team": "한화",
+    "teamId": 9,
+    "position": "포수",
+    "backNo": "26"
   },
   {
-    "name": "69995",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "허윤",
+    "kboId": "56904",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "4"
   },
   {
-    "name": "72443",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "허윤",
+    "kboId": "59373",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": null
   },
   {
-    "name": "73117",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "허윤동",
+    "kboId": "50449",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "108"
   },
   {
-    "name": "73211",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "허인서",
+    "kboId": "52764",
+    "team": "한화",
+    "teamId": 9,
+    "position": "포수",
+    "backNo": "59"
   },
   {
-    "name": "74540",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "허준혁",
+    "kboId": "52119",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "129"
   },
   {
-    "name": "75847",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "현도훈",
+    "kboId": "68260",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "17"
   },
   {
-    "name": "75867",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "현원회",
+    "kboId": "50840",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "8"
   },
   {
-    "name": "76118",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "홍건희",
+    "kboId": "61643",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "52"
   },
   {
-    "name": "76232",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "홍대인",
+    "kboId": "55897",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "97"
   },
   {
-    "name": "76267",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "홍민규",
+    "kboId": "55267",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "67"
   },
   {
-    "name": "77318",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "홍민기",
+    "kboId": "50596",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "38"
   },
   {
-    "name": "77446",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "홍서연",
+    "kboId": "56519",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "119"
   },
   {
-    "name": "77532",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "홍성호",
+    "kboId": "66233",
+    "team": "두산",
+    "teamId": 2,
+    "position": "외야수",
+    "backNo": "34"
   },
   {
-    "name": "77564",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "홍승원",
+    "kboId": "51408",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "131"
   },
   {
-    "name": "77637",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "홍원표",
+    "kboId": "50430",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "65"
   },
   {
-    "name": "77829",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "홍재문",
+    "kboId": "55996",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "107"
   },
   {
-    "name": "78135",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "홍종표",
+    "kboId": "50600",
+    "team": "NC",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "10"
   },
   {
-    "name": "78168",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "홍준영",
+    "kboId": "55412",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "112"
   },
   {
-    "name": "78513",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "홍창기",
+    "kboId": "66108",
+    "team": "LG",
+    "teamId": 1,
+    "position": "외야수",
+    "backNo": "51"
   },
   {
-    "name": "78548",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "홍현빈",
+    "kboId": "67005",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "외야수",
+    "backNo": "51"
   },
   {
-    "name": "78603",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "황대인",
+    "kboId": "65610",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "34"
   },
   {
-    "name": "78756",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "황동하",
+    "kboId": "52641",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "41"
   },
   {
-    "name": "79109",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "황석민",
+    "kboId": "56628",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "127"
   },
   {
-    "name": "79140",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "황석민",
+    "kboId": "59375",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": null
   },
   {
-    "name": "79192",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "황성빈",
+    "kboId": "50500",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "외야수",
+    "backNo": "0"
   },
   {
-    "name": "79215",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "황영묵",
+    "kboId": "54795",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "95"
   },
   {
-    "name": "79231",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "황정현",
+    "kboId": "56437",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "137"
   },
   {
-    "name": "79240",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "황준서",
+    "kboId": "54729",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "29"
   },
   {
-    "name": "79365",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "황희성",
+    "kboId": "56707",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "07"
   },
   {
-    "name": "79402",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "황희천",
+    "kboId": "55258",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "107"
   },
   {
-    "name": "96153",
-    "kboId": "",
-    "team": "",
-    "teamId": 0,
-    "position": "",
-    "backNo": ""
+    "name": "후라도",
+    "kboId": "53375",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "75"
   }
 ]
