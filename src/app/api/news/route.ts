@@ -28,8 +28,11 @@ export async function GET(req: NextRequest) {
   }
 
   if (!NAVER_CLIENT_ID) {
-    return NextResponse.json({ items: [], error: "Naver API not configured" });
+    console.error('[API/news] Missing NAVER_CLIENT_ID');
+    return NextResponse.json({ items: [], error: "Naver API not configured", _q: searchQuery });
   }
+  
+  console.log('[API/news] Query:', searchQuery);
 
   try {
     const res = await fetch(
@@ -69,6 +72,7 @@ export async function GET(req: NextRequest) {
     cache.set(cacheKey, { data: result, ts: Date.now() });
     return NextResponse.json(result);
   } catch (e: any) {
-    return NextResponse.json({ items: [], error: e.message });
+    console.error('[API/news] Fetch error:', e.message);
+    return NextResponse.json({ items: [], error: e.message, _q: searchQuery });
   }
 }
