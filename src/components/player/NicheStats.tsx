@@ -191,25 +191,21 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (season !== 2025 || !playerName) { setRealSaber(null); return; }
+    if (season !== 2025 || !playerId) { setRealSaber(null); return; }
     setLoading(true);
-    const type = isPitcher ? "pitcher" : "batter";
-    fetch(`/api/stats?type=${type}`)
+    fetch(`/api/player-stats?id=${playerId}&pos=${encodeURIComponent(position)}`)
       .then(r => r.json())
       .then(d => {
         if (d.stats) {
-          const found = d.stats.find((s: any) => s.name === playerName);
-          if (found) {
-            const saber = isPitcher
-              ? calcPitcherSaber(found)
-              : calcBatterSaber(found);
-            setRealSaber(saber);
-          }
+          const saber = isPitcher
+            ? calcPitcherSaber({ ...d.stats, so: d.stats.so ?? 0 })
+            : calcBatterSaber({ ...d.stats, so: d.stats.so ?? 0 });
+          setRealSaber(saber);
         }
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [season, playerName, isPitcher]);
+  }, [season, playerId, isPitcher, position]);
 
   if (season === 2025) {
     if (loading) return <div className="text-center py-8 text-text-tertiary text-sm">계산 중...</div>;
