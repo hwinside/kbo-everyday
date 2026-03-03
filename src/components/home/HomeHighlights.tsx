@@ -20,15 +20,15 @@ interface HomeHighlightsProps {
 }
 
 export default function HomeHighlights({ team }: HomeHighlightsProps) {
+  const [reelIndex, setReelIndex] = useState<number | null>(null);
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [reelIndex, setReelIndex] = useState<number | null>(null);
 
   useEffect(() => {
     if (!team) { setLoading(false); return; }
 
     let favPlayers = getFavoritePlayers().slice(0, 3);
-
+    
     if (favPlayers.length === 0) {
       const defaults: Record<string, string[]> = {
         "LG": ["오스틴", "문보경", "홍창기"],
@@ -76,6 +76,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
       const playerVideos = perPlayer.flat();
       const teamVideos = dedup((results[0]?.items || []).slice(0, Math.max(8 - playerVideos.length, 2)));
       const all = [...playerVideos, ...teamVideos];
+
       all.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
       setVideos(all.slice(0, 8));
       setLoading(false);
