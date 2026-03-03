@@ -18,6 +18,7 @@ interface ReelViewerProps {
 export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerProps) {
   const [current, setCurrent] = useState(startIndex);
   const [muted, setMuted] = useState(true);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const touchStartY = useRef(0);
   const touchMoved = useRef(false);
 
@@ -31,19 +32,34 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
     if (current > 0) setCurrent(c => c - 1);
   }, [current]);
 
-  // 터치 이벤트를 overlay div에서 처리
+  // YouTube postMessage로 음소거 토글
+  const toggleMute = useCallback(() => {
+    const iframe = iframeRef.current;
+    if (iframe?.contentWindow) {
+      const cmd = muted ? "unMute" : "mute";
+      iframe.contentWindow.postMessage(
+        JSON.stringify({ event: "command", func: cmd, args: [] }),
+        "*"
+      );
+    }
+    setMuted(m => !m);
+  }, [muted]);
+
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartY.current = e.touches[0].clientY;
     touchMoved.current = false;
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    const diff = Math.abs(e.touches[0].clientY - touchStartY.current);
-    if (diff > 10) touchMoved.current = true;
+    if (Math.abs(e.touches[0].clientY - touchStartY.current) > 10) touchMoved.current = true;
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
-    if (!touchMoved.current) return;
+    if (!touchMoved.current) {
+      // 탭 = 음소거 해제
+      toggleMute();
+      return;
+    }
     const diff = touchStartY.current - e.changedTouches[0].clientY;
     if (diff > 60) goNext();
     else if (diff < -60) goPrev();
@@ -54,24 +70,48 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
     return () => { document.body.style.overflow = ""; };
   }, []);
 
+  // 영상 바뀌면 mute 유지
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (iframe?.contentWindow && !muted) {
+      setTimeout(() => {
+        iframe.contentWindow?.postMessage(
+          JSON.stringify({ event: "command", func: "unMute", args: [] }),
+          "*"
+        );
+      }, 1000);
+    }
+  }, [current, muted]);
+
   return (
     <div className="fixed inset-0 z-[100] bg-black">
-      {/* YouTube iframe (뒤에) - autoplay + mute for mobile policy */}
+      {/* YouTube iframe - enablejsapi=1 필수 */}
       <iframe
-        key={`${video.id}-${muted}`}
-        src={`https://www.youtube.com/embed/${video.id}?autoplay=1&mute=${muted ? 1 : 0}&controls=0&rel=0&playsinline=1&loop=1&playlist=${video.id}&modestbranding=1`}
+        ref={iframeRef}
+        key={video.id}
+        src={`https://www.youtube.com/embed/${video.id}?autoplay=1&mute=1&controls=0&rel=0&playsinline=1&loop=1&playlist=${video.id}&modestbranding=1&enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`}
         className="absolute inset-0 w-full h-full"
         allow="autoplay; encrypted-media"
         allowFullScreen
       />
 
-      {/* 터치 감지 overlay (앞에) */}
+      {/* 터치 오버레이 (탭=음소거해제, 스와이프=다음영상) */}
       <div
         className="absolute inset-0 z-10"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       />
+
+      {/* 음소거 안내 (처음만) */}
+      {muted && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+          <div className="bg-black/60 rounded-full px-4 py-2 flex items-center gap-2 animate-pulse">
+            <VolumeX size={20} className="text-white" />
+            <span className="text-white text-sm">탭하여 소리 켜기</span>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-4 pt-[env(safe-area-inset-top)] py-3">
@@ -88,9 +128,9 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
         </div>
       </div>
 
-      {/* 사운드 + 네비게이션 버튼 */}
+      {/* 사운드 + 네비게이션 */}
       <div className="absolute right-4 top-1/2 -translate-y-1/2 z-20 flex flex-col gap-4">
-        <button onClick={() => setMuted(m => !m)} className="p-2 rounded-full bg-black/50">
+        <button onClick={toggleMute} className="p-2 rounded-full bg-black/50">
           {muted ? <VolumeX size={24} className="text-white" /> : <Volume2 size={24} className="text-white" />}
         </button>
         {current > 0 && (
