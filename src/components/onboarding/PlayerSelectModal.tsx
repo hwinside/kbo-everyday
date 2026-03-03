@@ -40,35 +40,13 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
   useEffect(() => {
     if (!isOpen) return;
     setLoading(true);
-    Promise.all([
-      fetch("/api/stats?type=batter").then(r => r.json()),
-      fetch("/api/stats?type=pitcher").then(r => r.json()),
-    ]).then(([b, p]) => {
-      const players: PlayerInfo[] = [];
-      const seen = new Set<string>();
-      // API 선수 (팀 정보 있음)
-      for (const s of [...(b.stats || []), ...(p.stats || [])]) {
-        if (!seen.has(s.name)) {
-          seen.add(s.name);
-          players.push({
-            id: s.playerId || s.name,
-            name: s.name,
-            team: s.team,
-            teamId: TEAM_SHORT_MAP[s.team] || 0,
-          });
-        }
-      }
-      // PLAYER_PHOTO_MAP에 있지만 API에 없는 선수 추가 (팀 미상)
-      for (const [name, kboId] of Object.entries(PLAYER_PHOTO_MAP)) {
-        if (!seen.has(name)) {
-          seen.add(name);
-          players.push({ id: kboId, name, team: "", teamId: 0 });
-        }
-      }
+    fetch("/api/player-teams").then(r => r.json()).then(d => {
+      const players: PlayerInfo[] = (d.players || []).map((p: any) => ({
+        id: p.kboId, name: p.name, team: p.team, teamId: p.teamId,
+      }));
       setAllPlayers(players);
       setLoading(false);
     }).catch(() => {
-      // API 실패 시 PLAYER_PHOTO_MAP 전체 사용
       const players = Object.entries(PLAYER_PHOTO_MAP).map(([name, kboId]) => ({
         id: kboId, name, team: "", teamId: 0,
       }));
