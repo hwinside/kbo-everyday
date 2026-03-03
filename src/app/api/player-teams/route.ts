@@ -61,7 +61,17 @@ async function fetchAllPlayerTeams(): Promise<PlayerTeamInfo[]> {
   return results;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const nameQuery = searchParams.get("name");
+
+  // 단건 조회 (이름 지정 시) — 빠름
+  if (nameQuery) {
+    const result = await searchPlayer(nameQuery);
+    return NextResponse.json({ players: result ? [result] : [], count: result ? 1 : 0, cached: false });
+  }
+
+  // 전체 조회 (캐시)
   if (cache && Date.now() - cache.ts < CACHE_TTL) {
     return NextResponse.json({ players: cache.data, count: cache.data.length, cached: true });
   }

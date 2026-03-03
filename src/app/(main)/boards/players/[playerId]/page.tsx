@@ -86,8 +86,9 @@ export default function PlayerBoardPage() {
       setLoading(false);
       return;
     }
-    fetch(`/api/player-teams`).then(r => r.json()).then(d => {
-      const found = (d.players || []).find((p: any) => p.name === playerName);
+    // 개별 선수 조회 (이름 기반)
+    fetch(`/api/player-teams?name=${encodeURIComponent(playerName)}`).then(r => r.json()).then(d => {
+      const found = (d.players || [])[0];
       if (found) {
         setPlayer({
           name: found.name,
@@ -97,7 +98,6 @@ export default function PlayerBoardPage() {
           team: found.team || "",
         });
       } else {
-        // fallback: 이름만으로 기본 데이터
         setPlayer({ name: playerName, teamId: 0, number: 0, position: "", team: "" });
       }
       setLoading(false);
