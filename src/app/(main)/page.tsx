@@ -303,7 +303,7 @@ export default function HomePage() {
       <div className="mb-3">
         <LiveGameBanner />
 
-        <NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 5) : (myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 5) : MOCK_NEWS)} />
+        <NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 10) : (myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 10) : MOCK_NEWS)} />
       </div>
 
       {/* ===== 1. Today's Games — horizontal scroll with snap ===== */}
