@@ -98,14 +98,6 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
 
                 {/* 콘텐츠 */}
                 <div className="absolute inset-x-0 bottom-0 px-5 pb-5">
-                  {team && (
-                    <span
-                      className="mb-1.5 inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold"
-                      style={{ backgroundColor: `${team.colorPrimary}30`, color: team.colorPrimary }}
-                    >
-                      {team.shortName}
-                    </span>
-                  )}
                   {item.label && (
                     <span className="inline-block px-2 py-0.5 mb-1 rounded-full bg-accent/80 text-xs font-semibold text-white">
                       {item.label}
