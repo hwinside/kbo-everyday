@@ -47,17 +47,17 @@ interface PlayerData {
 }
 
 function getTeamColor(teamId: number) {
-  return TEAMS.find((t) => t.id === teamId)?.colorPrimary ?? "#888";
+  return TEAMS.find((t) => t.id === teamId)?.colorLight ?? "#888";
 }
 function getTeamShortName(teamId: number) {
   return TEAMS.find((t) => t.id === teamId)?.shortName ?? "";
 }
 
-function StatItem({ label, value, color }: { label: string; value: string | number; color: string }) {
+function StatItem({ label, value }: { label: string; value: string | number; color?: string }) {
   return (
     <div className="bg-bg-tertiary rounded-xl p-3 text-center">
       <p className="text-xs text-text-tertiary mb-1">{label}</p>
-      <p className="text-lg font-bold" style={{ color }}>{value}</p>
+      <p className="text-lg font-bold" style={{ color: "#E8E8F0" }}>{value}</p>
     </div>
   );
 }
