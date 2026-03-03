@@ -38,6 +38,11 @@ const CHEER_SONGS: Record<string, CheerSongData> = {
     lyrics: "홍창기~ 홍창기~\n달려라 홍창기~\n1번의 자리를~\n홍창기가 지킨다~",
     youtubeUrl: "https://www.youtube.com/results?search_query=LG+홍창기+응원가",
   },
+  "문보경": {
+    title: "문보경 응원가",
+    lyrics: "문보경~ 문보경~\n센터의 수비수~\n빠른 발로 달려라~\n문보경~ 문보경~",
+    youtubeUrl: "https://www.youtube.com/results?search_query=LG+문보경+응원가",
+  },
 
   // KIA 타이거즈
   "김도영": {

@@ -38,13 +38,15 @@ export default function PlayerNews({ playerName }: PlayerNewsProps) {
     );
   }
 
-  if (news.length === 0) return null;
-
   return (
     <div className="mt-6 mb-20">
       <h3 className="text-base font-bold text-text-primary mb-3">관련 기사</h3>
       <div className="space-y-2">
-        {news.map((item, i) => (
+        {news.length === 0 ? (
+          <div className="text-sm text-text-tertiary text-center py-4">
+            관련 기사가 없습니다
+          </div>
+        ) : news.map((item, i) => (
           <a key={i} href={item.link} target="_blank" rel="noopener noreferrer">
             <GlassCard pressable className="p-3">
               <div className="flex items-start gap-3">
@@ -63,7 +65,7 @@ export default function PlayerNews({ playerName }: PlayerNewsProps) {
               </div>
             </GlassCard>
           </a>
-        ))}
+        ))}}
       </div>
     </div>
   );
