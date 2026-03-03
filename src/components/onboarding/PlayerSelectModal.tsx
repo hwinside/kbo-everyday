@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Check, Star, Search } from "lucide-react";
 import Image from "next/image";
@@ -32,20 +32,13 @@ const TEAM_SHORT_MAP: Record<string, number> = {
 
 export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }: PlayerSelectModalProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [allPlayers, setAllPlayers] = useState<PlayerInfo[]>([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [showAll, setShowAll] = useState(false);
   const team = getTeamById(teamId);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const players: PlayerInfo[] = (playersRoster as any[]).map((p) => ({
-      id: p.kboId, name: p.name, team: p.team, teamId: p.teamId,
-    }));
-    setAllPlayers(players);
-    setLoading(false);
-  }, [isOpen]);
+  const allPlayers: PlayerInfo[] = (playersRoster as any[]).map((p) => ({
+    id: p.kboId, name: p.name, team: p.team, teamId: p.teamId,
+  }));
 
   const myTeamPlayers = allPlayers.filter(p => p.teamId === teamId);
   const otherPlayers = allPlayers.filter(p => p.teamId !== teamId);
@@ -122,9 +115,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
 
         <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }}
           className="space-y-2 max-h-[45vh] overflow-y-auto">
-          {loading ? (
-            <div className="text-center py-8 text-text-tertiary text-sm">선수 목록 로딩 중...</div>
-          ) : displayPlayers.length === 0 ? (
+          {displayPlayers.length === 0 ? (
             <div className="text-center py-8 text-text-tertiary text-sm">검색 결과가 없습니다</div>
           ) : displayPlayers.map((player) => {
             const isSelected = selected.has(player.id);
