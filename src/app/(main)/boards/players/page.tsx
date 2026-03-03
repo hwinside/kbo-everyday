@@ -133,7 +133,7 @@ export default function PlayerBoardRankingPage() {
                     {i + 1}
                   </span>
                   <PlayerAvatar
-                    photoUrl={getPlayerPhotoUrl(player.kboId)}
+                    photoUrl={getPlayerPhotoUrl(player.name)}
                     name={player.name}
                     teamId={player.teamId}
                     size={64}
