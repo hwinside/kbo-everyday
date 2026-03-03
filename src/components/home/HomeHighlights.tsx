@@ -95,7 +95,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
             key={v.id}
             className="flex-shrink-0 cursor-pointer"
             style={{ width: "140px", scrollSnapAlign: "start" }}
-            onClick={() => router.push(`/highlights?v=${v.id}`)}
+            onClick={() => window.open(`https://www.youtube.com/shorts/${v.id}`, '_blank')}
           >
             <div className="relative rounded-xl overflow-hidden" style={{ aspectRatio: "9/16", width: "140px" }}>
               <img src={v.thumbnail} alt={v.title} className="w-full h-full object-cover" />
