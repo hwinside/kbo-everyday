@@ -260,6 +260,11 @@ export default function PlayerBoardPage() {
           )}
 
           <NicheStats playerId={rawId} position={player.position} teamColor={teamColor} playerName={player.name} season={statSeason} />
+          
+          {/* 관련 기사 */}
+          <div className="px-5">
+            <PlayerNews playerName={player.name} />
+          </div>
         </div>
       )}
 
