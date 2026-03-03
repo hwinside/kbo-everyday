@@ -159,3 +159,35 @@ CREATE INDEX idx_tickets_venue ON ticket_transfers(venue_id, game_date DESC);
 ---
 
 *Spec by 삼식이 + 하린엄마 (2026-03-02)*
+
+---
+
+## 🎴 예측 공유 카드 (Spotify Wrapped 스타일)
+
+### 개요
+- 예측 확정 시 "나의 예측" 카드 이미지 생성 → IG 스토리/SNS 공유
+- 바이럴 성장 엔진: 유저가 자발적으로 앱 홍보
+
+### Phase 1: 경기별 예측 카드
+- 예측 확정 시 1080x1920 카드 생성
+- 내용: 팀 로고, 예측 선택, 유저 닉네임, 날짜
+- 경기 종료 후: 적중/실패 결과 카드 (🎯 or 💀)
+- Web Share API → IG 스토리, 카카오톡, 트위터
+
+### Phase 2: 시즌 Wrapped
+- 시즌 종료 시 (또는 월별) 개인 통계 영상/카드
+- 내용:
+  - 총 예측 수 / 적중률
+  - 최장 연속 적중 기록
+  - 가장 많이 예측한 팀
+  - "당신의 야구 감은 상위 N%"
+  - 명예 칭호 부여 ("신들린 예언가" / "역배 매니아")
+- 슬라이드 형식 (3-5장) or 애니메이션 영상
+
+### 기술 스택
+- `html2canvas` or `@vercel/og` (이미지 생성)
+- Canvas API (애니메이션 영상)
+- Web Share API (모바일 공유)
+- `navigator.share({ files: [blob] })` → IG 스토리 직접
+
+### 우선순위: P1 (시즌 개막 전 경기별 카드, Wrapped는 시즌 중반)
