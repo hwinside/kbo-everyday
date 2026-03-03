@@ -114,7 +114,26 @@ export default function HomePage() {
 
   useEffect(() => {
     const team = myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName : "";
-    const favPlayers = getFavoritePlayers().slice(0, 3);
+    let favPlayers = getFavoritePlayers().slice(0, 3);
+    
+    // 최애선수 미설정 시 팀의 대표 선수 3명으로 fallback
+    if (favPlayers.length === 0 && team) {
+      const defaultPlayers: Record<string, string[]> = {
+        "LG": ["오스틴", "문보경", "홍창기"],
+        "두산": ["양의지", "허경민", "곽빈"],
+        "KT": ["강백호", "로하스", "소형준"],
+        "SSG": ["최정", "추신수", "김광현"],
+        "NC": ["손아섭", "박건우", "에릭"],
+        "KIA": ["김도영", "나성범", "양현종"],
+        "삼성": ["구자욱", "김영웅", "원태인"],
+        "롯데": ["전준우", "레이예스", "윌커슨"],
+        "한화": ["노시환", "이범호", "주현상"],
+        "키움": ["이정후", "김하성", "송성문"],
+      };
+      const names = defaultPlayers[team] || [];
+      const teamObj = TEAMS.find(t => t.shortName === team);
+      favPlayers = names.map(name => ({ playerId: "", name, teamId: teamObj?.id || 0, position: "", number: 0 }));
+    }
     
     // 팀 뉴스 + 최애선수 뉴스 병렬 호출
     const queries = [
