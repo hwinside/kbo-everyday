@@ -20,16 +20,15 @@ interface PlayerItem {
 
 const PLAYERS: PlayerItem[] = playersRoster as PlayerItem[];
 
-type SortMode = "name" | "team" | "position";
+type FilterMode = "all" | "team" | "position";
+type SortMode = "name" | "posts" | "photos";
+
+const POSITIONS = ["투수", "포수", "내야수", "외야수"];
 
 const SORT_LABELS: Record<SortMode, string> = {
   name: "가나다순",
-  team: "구단별",
-  position: "포지션별",
-};
-
-const POSITION_ORDER: Record<string, number> = {
-  "투수": 1, "포수": 2, "내야수": 3, "외야수": 4,
+  posts: "게시글수",
+  photos: "직찍수",
 };
 
 function sortPlayers(players: PlayerItem[], mode: SortMode): PlayerItem[] {
@@ -37,20 +36,21 @@ function sortPlayers(players: PlayerItem[], mode: SortMode): PlayerItem[] {
   switch (mode) {
     case "name":
       return sorted.sort((a, b) => a.name.localeCompare(b.name, "ko"));
-    case "team":
-      return sorted.sort((a, b) => a.teamId - b.teamId || a.name.localeCompare(b.name, "ko"));
-    case "position":
-      return sorted.sort((a, b) =>
-        (POSITION_ORDER[a.position] ?? 9) - (POSITION_ORDER[b.position] ?? 9) ||
-        a.name.localeCompare(b.name, "ko")
-      );
+    case "posts":
+      // TODO: Supabase 연동 후 실제 게시글수로 소팅
+      return sorted.sort((a, b) => a.name.localeCompare(b.name, "ko"));
+    case "photos":
+      // TODO: Supabase 연동 후 실제 직찍수로 소팅
+      return sorted.sort((a, b) => a.name.localeCompare(b.name, "ko"));
     default:
       return sorted;
   }
 }
 
 export default function PlayersPage() {
+  const [filterMode, setFilterMode] = useState<FilterMode>("all");
   const [filterTeam, setFilterTeam] = useState<number | null>(null);
+  const [filterPosition, setFilterPosition] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("name");
   const [visibleCount, setVisibleCount] = useState(20);
@@ -58,8 +58,11 @@ export default function PlayersPage() {
   const filtered = useMemo(() => {
     let result = PLAYERS;
 
-    if (filterTeam) {
+    if (filterMode === "team" && filterTeam) {
       result = result.filter(p => p.teamId === filterTeam);
+    }
+    if (filterMode === "position" && filterPosition) {
+      result = result.filter(p => p.position === filterPosition);
     }
 
     if (searchQuery.trim()) {
@@ -72,7 +75,14 @@ export default function PlayersPage() {
     }
 
     return sortPlayers(result, sortMode);
-  }, [filterTeam, searchQuery, sortMode]);
+  }, [filterMode, filterTeam, filterPosition, searchQuery, sortMode]);
+
+  function handleFilterMode(mode: FilterMode) {
+    setFilterMode(mode);
+    setFilterTeam(null);
+    setFilterPosition(null);
+    setVisibleCount(20);
+  }
 
   return (
     <div className="mx-auto max-w-lg px-5">
@@ -99,40 +109,82 @@ export default function PlayersPage() {
         </div>
       </div>
 
-      {/* 팀 필터 */}
-      <div className="mb-3 flex gap-2 overflow-x-auto hide-scrollbar pb-2">
-        <button
-          onClick={() => { setFilterTeam(null); setVisibleCount(20); }}
-          className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
-            filterTeam === null
-              ? "bg-accent text-white"
-              : "bg-bg-secondary text-text-secondary"
-          }`}
-        >
-          전체
-        </button>
-        {TEAMS.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => { setFilterTeam(t.id); setVisibleCount(20); }}
-            className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
-              filterTeam === t.id
-                ? "text-white"
-                : "bg-bg-secondary text-text-secondary"
-            }`}
-            style={filterTeam === t.id ? { backgroundColor: t.colorPrimary } : undefined}
-          >
-            {t.shortName}
-          </button>
-        ))}
+      {/* Level 1: 필터 모드 */}
+      <div className="mb-2 flex gap-2">
+        {([["all", "전체"], ["team", "구단별"], ["position", "포지션별"]] as [FilterMode, string][]).map(
+          ([mode, label]) => (
+            <button
+              key={mode}
+              onClick={() => handleFilterMode(mode)}
+              className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
+                filterMode === mode
+                  ? "bg-accent text-white"
+                  : "bg-bg-secondary text-text-secondary"
+              }`}
+            >
+              {label}
+            </button>
+          )
+        )}
       </div>
+
+      {/* Level 2: 구단 또는 포지션 */}
+      {filterMode === "team" && (
+        <div className="mb-3 flex gap-2 overflow-x-auto hide-scrollbar pb-1">
+          <button
+            onClick={() => { setFilterTeam(null); setVisibleCount(20); }}
+            className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${
+              !filterTeam ? "bg-white/15 text-text-primary" : "bg-bg-secondary/50 text-text-tertiary"
+            }`}
+          >
+            전체
+          </button>
+          {TEAMS.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => { setFilterTeam(t.id); setVisibleCount(20); }}
+              className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${
+                filterTeam === t.id ? "text-white" : "bg-bg-secondary/50 text-text-tertiary"
+              }`}
+              style={filterTeam === t.id ? { backgroundColor: t.colorPrimary } : undefined}
+            >
+              {t.shortName}
+            </button>
+          ))}
+        </div>
+      )}
+      {filterMode === "position" && (
+        <div className="mb-3 flex gap-2 pb-1">
+          <button
+            onClick={() => { setFilterPosition(null); setVisibleCount(20); }}
+            className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${
+              !filterPosition ? "bg-white/15 text-text-primary" : "bg-bg-secondary/50 text-text-tertiary"
+            }`}
+          >
+            전체
+          </button>
+          {POSITIONS.map((pos) => (
+            <button
+              key={pos}
+              onClick={() => { setFilterPosition(pos); setVisibleCount(20); }}
+              className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${
+                filterPosition === pos
+                  ? "bg-white/15 text-text-primary"
+                  : "bg-bg-secondary/50 text-text-tertiary"
+              }`}
+            >
+              {pos}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* 소팅 + 결과 수 */}
       <div className="mb-3 flex items-center justify-between">
         <span className="text-xs text-text-tertiary">
           {searchQuery ? `검색 결과 ${filtered.length}명` : `${filtered.length}명`}
         </span>
-        <div className="flex gap-1.5">
+        <div className="flex gap-1">
           {(Object.keys(SORT_LABELS) as SortMode[]).map((mode) => (
             <button
               key={mode}
@@ -171,7 +223,7 @@ export default function PlayersPage() {
                   #{player.backNo} · {player.position}
                 </p>
               </div>
-              <ChevronDown className="h-4 w-4 text-text-tertiary -rotate-90" />
+              <ChevronDown className="h-4 w-4 text-text-tertiary -rotate-90 shrink-0" />
             </div>
           </Link>
         ))}
