@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { Settings, ChevronRight, FileText, MessageCircle, Mail, Heart, Trophy, RefreshCw, MapPin, Star, LogIn, LogOut, GraduationCap } from "lucide-react";
+import { Settings, ChevronRight, FileText, MessageCircle, Mail, Heart, Trophy, RefreshCw, MapPin, Star, LogIn, LogOut, GraduationCap, Bell } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
@@ -25,7 +25,7 @@ export default function MyPage() {
   const [showTeamSelect, setShowTeamSelect] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const { user, profile, signOut } = useAuth();
-  const { permission, subscribe } = usePushNotification();
+  const { permission, subscription, subscribe, unsubscribe } = usePushNotification();
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
   const router = useRouter();
@@ -140,6 +140,44 @@ export default function MyPage() {
           ) : (
             <p className="text-xs text-text-tertiary">선수를 선택해주세요</p>
           )}
+        </GlassCard>
+      </motion.div>
+
+      {/* 알림 설정 */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.13 }}
+        className="mt-3"
+      >
+        <GlassCard className="p-5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Bell size={22} className="text-text-secondary" />
+              <div>
+                <span className="text-base text-text-primary">푸시 알림</span>
+                <p className="text-xs text-text-tertiary mt-0.5">
+                  {permission === "granted" ? "경기 시작, 득점 알림 수신 중" : "경기 알림을 받아보세요"}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={async () => {
+                if (permission === "granted" && subscription) {
+                  await unsubscribe();
+                } else {
+                  await subscribe();
+                }
+              }}
+              className={`relative w-12 h-7 rounded-full transition-colors ${
+                permission === "granted" ? "bg-accent" : "bg-bg-tertiary"
+              }`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${
+                permission === "granted" ? "translate-x-5" : "translate-x-0"
+              }`} />
+            </button>
+          </div>
         </GlassCard>
       </motion.div>
 
