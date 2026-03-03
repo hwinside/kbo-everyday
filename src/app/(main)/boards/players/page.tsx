@@ -31,6 +31,7 @@ export default function PlayerBoardRankingPage() {
   const [players, setPlayers] = useState<PlayerItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterTeam, setFilterTeam] = useState<number | null>(null);
+  const [visibleCount, setVisibleCount] = useState(20);
 
   useEffect(() => {
     fetch("/api/player-teams").then(r => r.json()).then(d => {
@@ -61,7 +62,7 @@ export default function PlayerBoardRankingPage() {
       {/* Team filter */}
       <div className="px-5 py-3 flex gap-2 overflow-x-auto no-scrollbar">
         <button
-          onClick={() => setFilterTeam(null)}
+          onClick={() => { setFilterTeam(null); setVisibleCount(20); }}
           className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
             !filterTeam ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
           }`}
@@ -70,7 +71,7 @@ export default function PlayerBoardRankingPage() {
           const count = players.filter(p => p.teamId === t.id).length;
           if (count === 0) return null;
           return (
-            <button key={t.id} onClick={() => setFilterTeam(t.id)}
+            <button key={t.id} onClick={() => { setFilterTeam(t.id); setVisibleCount(20); }}
               className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
                 filterTeam === t.id ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
               }`}
@@ -83,7 +84,7 @@ export default function PlayerBoardRankingPage() {
       <div className="px-5 pb-24 space-y-2">
         {loading ? (
           <div className="text-center py-12 text-text-tertiary text-sm">선수 목록 로딩 중...</div>
-        ) : filtered.map((player, i) => (
+        ) : filtered.slice(0, visibleCount).map((player, i) => (
           <motion.div
             key={player.playerId}
             initial={{ opacity: 0, y: 8 }}
@@ -109,6 +110,14 @@ export default function PlayerBoardRankingPage() {
             </Link>
           </motion.div>
         ))}
+        {visibleCount < filtered.length && (
+          <button
+            onClick={() => setVisibleCount(v => v + 20)}
+            className="w-full py-3 mt-2 rounded-xl bg-bg-tertiary text-text-secondary text-sm font-medium hover:bg-white/10 transition-colors"
+          >
+            더보기 ({filtered.length - visibleCount}명 남음)
+          </button>
+        )}
       </div>
     </div>
   );
