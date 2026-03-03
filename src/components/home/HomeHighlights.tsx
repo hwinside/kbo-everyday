@@ -86,7 +86,8 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
     }).catch(() => setLoading(false));
   }, [team]);
 
-  if (loading || videos.length === 0) return null;
+  if (loading) return <section className="px-5 mt-6"><p className="text-xs text-text-tertiary">영상 로딩 중...</p></section>;
+  if (videos.length === 0) return <section className="px-5 mt-6"><h2 className="text-lg font-bold text-text-primary mb-3">🎬 하이라이트</h2><p className="text-xs text-text-tertiary">영상을 불러오지 못했습니다</p></section>;
 
   return (
     <section className="px-5 mt-6">
