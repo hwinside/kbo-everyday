@@ -9,6 +9,7 @@ import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-phot
 import { getTeamById, TEAMS } from "@/lib/constants/teams";
 import TeamBadge from "@/components/ui/TeamBadge";
 import type { FavoritePlayer } from "@/lib/store/favorites";
+import playersRoster from "@/lib/constants/players-roster.json";
 
 interface PlayerInfo {
   id: string;
@@ -39,20 +40,11 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
 
   useEffect(() => {
     if (!isOpen) return;
-    setLoading(true);
-    fetch("/api/player-teams").then(r => r.json()).then(d => {
-      const players: PlayerInfo[] = (d.players || []).map((p: any) => ({
-        id: p.kboId, name: p.name, team: p.team, teamId: p.teamId,
-      }));
-      setAllPlayers(players);
-      setLoading(false);
-    }).catch(() => {
-      const players = Object.entries(PLAYER_PHOTO_MAP).map(([name, kboId]) => ({
-        id: kboId, name, team: "", teamId: 0,
-      }));
-      setAllPlayers(players);
-      setLoading(false);
-    });
+    const players: PlayerInfo[] = (playersRoster as any[]).map((p) => ({
+      id: p.kboId, name: p.name, team: p.team, teamId: p.teamId,
+    }));
+    setAllPlayers(players);
+    setLoading(false);
   }, [isOpen]);
 
   const myTeamPlayers = allPlayers.filter(p => p.teamId === teamId);
