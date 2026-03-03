@@ -72,13 +72,13 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
         return true;
       });
 
-      const perPlayer = playerResults.map(d => dedup((d.items || []).slice(0, 2)));
+      const perPlayer = playerResults.map(d => dedup((d.items || []).slice(0, 8)));
       const playerVideos = perPlayer.flat();
-      const teamVideos = dedup((results[0]?.items || []).slice(0, Math.max(8 - playerVideos.length, 2)));
+      const teamVideos = dedup((results[0]?.items || []).slice(0, Math.max(30 - playerVideos.length, 5)));
       const all = [...playerVideos, ...teamVideos];
 
       all.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
-      setVideos(all.slice(0, 8));
+      setVideos(all.slice(0, 30));
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [team]);
@@ -89,7 +89,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
     <section className="mt-6">
       <h2 className="text-lg font-bold text-text-primary mb-3 px-5">🎬 하이라이트</h2>
       <div className="flex gap-3 overflow-x-auto px-5 pb-2 scrollbar-hide" style={{ scrollSnapType: "x mandatory" }}>
-        {videos.map((v, i) => (
+        {videos.slice(0, 10).map((v, i) => (
           <div
             key={v.id}
             className="flex-shrink-0 cursor-pointer"
