@@ -157,12 +157,15 @@ export default function MyPage() {
               <div>
                 <span className="text-base text-text-primary">푸시 알림</span>
                 <p className="text-xs text-text-tertiary mt-0.5">
-                  {permission === "granted" ? "경기 시작, 득점 알림 수신 중" : "경기 알림을 받아보세요"}
+                  {permission === "granted" ? "경기 시작, 득점 알림 수신 중" : typeof window !== "undefined" && !("PushManager" in window) ? "Safari/Chrome에서 홈 화면 추가 후 이용 가능" : "경기 알림을 받아보세요"}
                 </p>
               </div>
             </div>
             <button
               onClick={async () => {
+                if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+                  return; // 미지원 브라우저는 무시
+                }
                 if (permission === "granted" && subscription) {
                   await unsubscribe();
                 } else {
