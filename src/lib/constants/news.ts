@@ -6,6 +6,9 @@ export interface NewsMock {
   title: string;
   source: string;
   sourceUrl: string;
+  link?: string;
+  pubDate?: string;
+  label?: string;
   thumbnailUrl: string | null;
   timeAgo: string;
   type: "news";
