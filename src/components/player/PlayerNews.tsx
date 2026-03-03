@@ -18,15 +18,23 @@ interface PlayerNewsProps {
 export default function PlayerNews({ playerName }: PlayerNewsProps) {
   const [news, setNews] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
+    console.log('[PlayerNews] Fetching for:', playerName);
     fetch(`/api/news?player=${encodeURIComponent(playerName)}`)
       .then(r => r.json())
       .then(d => {
+        console.log('[PlayerNews] Response:', d);
+        console.log('[PlayerNews] Items count:', d.items?.length || 0);
         setNews((d.items || []).slice(0, 5));
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(e => {
+        console.error('[PlayerNews] Error:', e);
+        setError(e.message);
+        setLoading(false);
+      });
   }, [playerName]);
 
   if (loading) {
@@ -41,9 +49,13 @@ export default function PlayerNews({ playerName }: PlayerNewsProps) {
   return (
     <div className="mt-6 mb-20">
       <h3 className="text-base font-bold text-text-primary mb-3">관련 기사</h3>
+      {error && (
+        <div className="text-xs text-red-500 mb-2">Error: {error}</div>
+      )}
       {news.length === 0 ? (
         <div className="text-sm text-text-tertiary text-center py-4">
           관련 기사가 없습니다
+          <div className="text-xs mt-2">검색어: KBO {playerName}</div>
         </div>
       ) : (
         <div className="space-y-2">
