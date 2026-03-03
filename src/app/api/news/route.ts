@@ -3,18 +3,28 @@ import { NextRequest, NextResponse } from "next/server";
 const NAVER_CLIENT_ID = process.env.NAVER_CLIENT_ID || "";
 const NAVER_CLIENT_SECRET = process.env.NAVER_CLIENT_SECRET || "";
 
-// 5분 캐시
-let cache: { data: any; ts: number } | null = null;
-const CACHE_TTL = 5 * 60 * 1000;
+// 1시간 캐시 (player별, team별 독립 캐시)
+const cache = new Map<string, { data: any; ts: number }>();
+const CACHE_TTL = 60 * 60 * 1000;
 
 export async function GET(req: NextRequest) {
-  const query = req.nextUrl.searchParams.get("q") || "KBO 프로야구";
   const team = req.nextUrl.searchParams.get("team");
-  const searchQuery = team ? `KBO ${team}` : query;
+  const player = req.nextUrl.searchParams.get("player");
+  const q = req.nextUrl.searchParams.get("q");
+
+  let searchQuery = "KBO 프로야구";
+  if (player) {
+    searchQuery = `KBO ${player}`;
+  } else if (team) {
+    searchQuery = `KBO ${team}`;
+  } else if (q) {
+    searchQuery = q;
+  }
 
   const cacheKey = searchQuery;
-  if (cache && cache.data._q === cacheKey && Date.now() - cache.ts < CACHE_TTL) {
-    return NextResponse.json(cache.data);
+  const cached = cache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) {
+    return NextResponse.json(cached.data);
   }
 
   if (!NAVER_CLIENT_ID) {
@@ -35,14 +45,28 @@ export async function GET(req: NextRequest) {
     const data = await res.json();
 
     const items = (data.items || []).map((item: any) => ({
-      title: item.title.replace(/<[^>]+>/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#039;/g, "'").replace(/&apos;/g, "'"),
-      description: item.description.replace(/<[^>]+>/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#039;/g, "'").replace(/&apos;/g, "'"),
+      title: item.title
+        .replace(/<[^>]+>/g, "")
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&#039;/g, "'")
+        .replace(/&apos;/g, "'"),
+      description: item.description
+        .replace(/<[^>]+>/g, "")
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&#039;/g, "'")
+        .replace(/&apos;/g, "'"),
       link: item.originallink || item.link,
       pubDate: item.pubDate,
     }));
 
     const result = { items, _q: cacheKey };
-    cache = { data: result, ts: Date.now() };
+    cache.set(cacheKey, { data: result, ts: Date.now() });
     return NextResponse.json(result);
   } catch (e: any) {
     return NextResponse.json({ items: [], error: e.message });

@@ -114,11 +114,30 @@ export default function HomePage() {
 
   useEffect(() => {
     const team = myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName : "";
-    fetch(`/api/news${team ? `?team=${team}` : ""}`)
-      .then(r => r.json())
-      .then(d => {
-        if (d.items?.length) {
-          setRealNews(d.items.map((item: any, i: number) => ({
+    const favPlayers = getFavoritePlayers().slice(0, 3).map(p => p.name);
+    
+    // 팀 뉴스 + 최애선수 뉴스 병렬 호출
+    const queries = [
+      team ? fetch(`/api/news?team=${team}`).then(r => r.json()) : Promise.resolve({ items: [] }),
+      ...favPlayers.map(name => fetch(`/api/news?player=${name}`).then(r => r.json()))
+    ];
+    
+    Promise.all(queries).then(results => {
+      const allItems = results.flatMap(d => d.items || []);
+      
+      // 중복 제거 (link 기준)
+      const seen = new Set();
+      const unique = allItems.filter(item => {
+        if (seen.has(item.link)) return false;
+        seen.add(item.link);
+        return true;
+      });
+      
+      // 최신순 정렬
+      unique.sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
+      
+      if (unique.length) {
+          setRealNews(unique.map((item: any, i: number) => ({
             id: 1000 + i,
             teamId: (() => {
               const teams = [
