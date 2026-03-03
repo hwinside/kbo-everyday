@@ -254,11 +254,11 @@ export default function MyPage() {
       />
       {/* PWA 안내 모달 */}
       {showPwaGuide && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60" onClick={() => setShowPwaGuide(false)}>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-5" onClick={() => setShowPwaGuide(false)}>
           <motion.div
-            initial={{ y: 100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            className="w-full max-w-lg rounded-t-2xl bg-bg-secondary p-6"
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="w-full max-w-sm rounded-2xl bg-bg-secondary p-6"
             onClick={e => e.stopPropagation()}
           >
             <div className="text-center">
