@@ -47,7 +47,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
   const [visibleCount, setVisibleCount] = useState(30);
   const allDisplayPlayers = search
     ? allPlayers.filter(p => p.name.includes(search))
-    : showAll ? [...myTeamPlayers, ...otherPlayers] : myTeamPlayers;
+    : showAll ? [...allPlayers].sort((a, b) => a.name.localeCompare(b.name, 'ko')) : myTeamPlayers;
   const displayPlayers = allDisplayPlayers.slice(0, visibleCount);
 
   const toggle = (player: PlayerInfo) => {
