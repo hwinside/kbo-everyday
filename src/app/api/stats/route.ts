@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import batterStats2025 from "@/lib/constants/stats-2025-batters.json";
+import pitcherStats2025 from "@/lib/constants/stats-2025-pitchers.json";
 
 const KBO_BASE = "https://www.koreabaseball.com";
 
@@ -41,12 +43,10 @@ function parseTable(html: string): string[][] {
   return rows;
 }
 
-// 타자 — Basic1: 순위,이름,팀,타율,경기,타석,타수,득점,안타,2루타,3루타,홈런,타점,도루,사사구?,삼진
 async function fetchBatterStats(): Promise<PlayerStat[]> {
   const url = `${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=HRA_RT`;
   const html = await fetchHtml(url);
   const rows = parseTable(html);
-
   return rows.map((c, i) => ({
     rank: i + 1,
     name: c[1] || "",
@@ -65,12 +65,10 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
   }));
 }
 
-// 투수 — Basic1: 순위,이름,팀,ERA,경기,완투,완봉,승,패,세,홀,승률,이닝,피안,피홈,볼넷,사구,삼진,실점,자책,WHIP
 async function fetchPitcherStats(): Promise<PlayerStat[]> {
   const url = `${KBO_BASE}/Record/Player/PitcherBasic/Basic1.aspx?sort=ERA_RT`;
   const html = await fetchHtml(url);
   const rows = parseTable(html);
-
   return rows.map((c, i) => ({
     rank: i + 1,
     name: c[1] || "",
@@ -88,8 +86,6 @@ async function fetchPitcherStats(): Promise<PlayerStat[]> {
   }));
 }
 
-
-// 인메모리 캐시 (5분)
 const cache: Record<string, { data: any; ts: number }> = {};
 const CACHE_TTL = 5 * 60 * 1000;
 
@@ -104,6 +100,17 @@ function setCache(key: string, data: any) {
 
 export async function GET(req: NextRequest) {
   const type = req.nextUrl.searchParams.get("type") || "batter";
+  const season = req.nextUrl.searchParams.get("season") || "current";
+
+  // 2025 시즌 — static full data (300 batters + 277 pitchers)
+  if (season === "2025") {
+    const stats = type === "pitcher"
+      ? (pitcherStats2025 as unknown as PlayerStat[])
+      : (batterStats2025 as unknown as PlayerStat[]);
+    return NextResponse.json({ stats, type, count: stats.length, season: 2025 });
+  }
+
+  // Current season — live crawl (top 30)
   const cacheKey = `stats-${type}`;
   const cached = getCached(cacheKey);
   if (cached) return NextResponse.json(cached);

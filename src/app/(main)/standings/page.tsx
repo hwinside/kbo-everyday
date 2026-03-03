@@ -200,11 +200,11 @@ export default function StandingsPage() {
 
   useEffect(() => {
     if (season !== 2025) { setRealBatters(null); setRealPitchers(null); return; }
-    fetch("/api/stats?type=batter")
+    fetch("/api/stats?type=batter&season=2025")
       .then(r => r.json())
       .then(d => d.stats?.length && setRealBatters(d.stats))
       .catch(() => {});
-    fetch("/api/stats?type=pitcher")
+    fetch("/api/stats?type=pitcher&season=2025")
       .then(r => r.json())
       .then(d => d.stats?.length && setRealPitchers(d.stats))
       .catch(() => {});
