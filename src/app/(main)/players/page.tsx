@@ -1,9 +1,7 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { ArrowLeft, Search } from "lucide-react";
+import { Search, ChevronDown } from "lucide-react";
 import Link from "next/link";
-import GlassCard from "@/components/ui/GlassCard";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { useState, useMemo } from "react";
 import { TEAMS } from "@/lib/constants/teams";
@@ -22,171 +20,176 @@ interface PlayerItem {
 
 const PLAYERS: PlayerItem[] = playersRoster as PlayerItem[];
 
-function getTeamShortName(teamId: number) {
-  return TEAMS.find((t) => t.id === teamId)?.shortName ?? "";
+type SortMode = "name" | "team" | "position";
+
+const SORT_LABELS: Record<SortMode, string> = {
+  name: "가나다순",
+  team: "구단별",
+  position: "포지션별",
+};
+
+const POSITION_ORDER: Record<string, number> = {
+  "투수": 1, "포수": 2, "내야수": 3, "외야수": 4,
+};
+
+function sortPlayers(players: PlayerItem[], mode: SortMode): PlayerItem[] {
+  const sorted = [...players];
+  switch (mode) {
+    case "name":
+      return sorted.sort((a, b) => a.name.localeCompare(b.name, "ko"));
+    case "team":
+      return sorted.sort((a, b) => a.teamId - b.teamId || a.name.localeCompare(b.name, "ko"));
+    case "position":
+      return sorted.sort((a, b) =>
+        (POSITION_ORDER[a.position] ?? 9) - (POSITION_ORDER[b.position] ?? 9) ||
+        a.name.localeCompare(b.name, "ko")
+      );
+    default:
+      return sorted;
+  }
 }
 
-export default function PlayerBoardRankingPage() {
-  type SortMode = "name" | "position" | "backNo";
+export default function PlayersPage() {
   const [filterTeam, setFilterTeam] = useState<number | null>(null);
-  const [sortMode, setSortMode] = useState<SortMode>("name");
   const [searchQuery, setSearchQuery] = useState("");
+  const [sortMode, setSortMode] = useState<SortMode>("name");
   const [visibleCount, setVisibleCount] = useState(20);
 
   const filtered = useMemo(() => {
-    let result = [...PLAYERS];
-    
-    // 팀 필터
+    let result = PLAYERS;
+
     if (filterTeam) {
       result = result.filter(p => p.teamId === filterTeam);
     }
-    
-    // 검색
+
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(p => p.name.toLowerCase().includes(q));
+      result = result.filter(p =>
+        p.name.toLowerCase().includes(q) ||
+        p.team.toLowerCase().includes(q) ||
+        p.position.includes(q)
+      );
     }
-    
-    // 정렬
-    if (sortMode === "name") {
-      result.sort((a, b) => a.name.localeCompare(b.name, "ko"));
-    } else if (sortMode === "position") {
-      const posOrder: Record<string, number> = { "투수": 1, "포수": 2, "내야수": 3, "외야수": 4 };
-      result.sort((a, b) => (posOrder[a.position] ?? 5) - (posOrder[b.position] ?? 5) || a.name.localeCompare(b.name, "ko"));
-    } else if (sortMode === "backNo") {
-      result.sort((a, b) => (parseInt(a.backNo) || 999) - (parseInt(b.backNo) || 999));
-    }
-    
-    return result;
+
+    return sortPlayers(result, sortMode);
   }, [filterTeam, searchQuery, sortMode]);
 
   return (
-    <div className="min-h-screen bg-bg-primary">
-      <div className="mx-auto max-w-lg px-5">
-        {/* Header */}
-        <header className="py-5 pt-[env(safe-area-inset-top,20px)]">
-          <h1 className="text-xl font-bold text-text-primary">선수</h1>
-          <p className="text-xs text-text-tertiary mt-1">KBO 전 구단 654명</p>
-        </header>
+    <div className="mx-auto max-w-lg px-5">
+      {/* Header */}
+      <header className="py-5 pt-[env(safe-area-inset-top,20px)]">
+        <h1 className="text-xl font-bold text-text-primary">선수</h1>
+        <p className="text-xs text-text-tertiary mt-1">KBO 전 구단 {PLAYERS.length}명</p>
+      </header>
 
-        {/* 검색 */}
-        <div className="mb-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-text-tertiary" />
-            <input
-              type="text"
-              placeholder="선수 이름 검색"
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setVisibleCount(20); // 검색 시 리셋
-              }}
-              className="w-full rounded-xl bg-bg-secondary py-3 pl-10 pr-4 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent"
-            />
-          </div>
+      {/* 검색 */}
+      <div className="mb-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-text-tertiary" />
+          <input
+            type="text"
+            placeholder="선수 이름, 팀, 포지션 검색"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setVisibleCount(20);
+            }}
+            className="w-full rounded-xl bg-bg-secondary py-3 pl-10 pr-4 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent"
+          />
         </div>
+      </div>
 
-        {/* 팀 필터 */}
-        <div className="mb-4 flex gap-2 overflow-x-auto hide-scrollbar pb-2">
+      {/* 팀 필터 */}
+      <div className="mb-3 flex gap-2 overflow-x-auto hide-scrollbar pb-2">
+        <button
+          onClick={() => { setFilterTeam(null); setVisibleCount(20); }}
+          className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+            filterTeam === null
+              ? "bg-accent text-white"
+              : "bg-bg-secondary text-text-secondary"
+          }`}
+        >
+          전체
+        </button>
+        {TEAMS.map((t) => (
           <button
-            onClick={() => { setFilterTeam(null); setVisibleCount(20); }}
-            className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
-              filterTeam === null
-                ? "bg-accent text-white"
-                : "bg-bg-secondary text-text-secondary hover:bg-bg-tertiary"
+            key={t.id}
+            onClick={() => { setFilterTeam(t.id); setVisibleCount(20); }}
+            className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+              filterTeam === t.id
+                ? "text-white"
+                : "bg-bg-secondary text-text-secondary"
             }`}
+            style={filterTeam === t.id ? { backgroundColor: t.colorPrimary } : undefined}
           >
-            전체 ({PLAYERS.length})
+            {t.shortName}
           </button>
-          {TEAMS.map((t) => {
-            const count = PLAYERS.filter(p => p.teamId === t.id).length;
-            return (
-              <button
-                key={t.id}
-                onClick={() => { setFilterTeam(t.id); setVisibleCount(20); }}
-                className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
-                  filterTeam === t.id
-                    ? "text-white"
-                    : "bg-bg-secondary text-text-secondary hover:bg-bg-tertiary"
-                }`}
-                style={
-                  filterTeam === t.id
-                    ? { backgroundColor: t.colorPrimary }
-                    : undefined
-                }
-              >
-                {t.shortName} ({count})
-              </button>
-            );
-          })}
-        </div>
+        ))}
+      </div>
 
-        {/* 정렬 + 결과 수 */}
-        <div className="mb-3 flex items-center justify-between">
-          <span className="text-sm text-text-tertiary">
-            {searchQuery ? `검색 결과: ${filtered.length}명` : `총 ${filtered.length}명`}
-          </span>
-          <div className="flex gap-1">
-            {([
-              { key: "name" as SortMode, label: "이름순" },
-              { key: "position" as SortMode, label: "포지션" },
-              { key: "backNo" as SortMode, label: "등번호" },
-            ]).map(s => (
-              <button
-                key={s.key}
-                onClick={() => setSortMode(s.key)}
-                className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
-                  sortMode === s.key
-                    ? "bg-accent/20 text-accent"
-                    : "text-text-tertiary hover:text-text-secondary"
-                }`}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* 선수 목록 */}
-        <div className="space-y-3 pb-20">
-          {filtered.slice(0, visibleCount).map((player, i) => (
-            <Link key={i} href={`/boards/players/${player.kboId}`}>
-              <GlassCard pressable className="p-4">
-                <div className="flex items-center gap-4">
-                  <span className="text-xl font-bold text-text-tertiary w-8 text-center">
-                    {i + 1}
-                  </span>
-                  <PlayerAvatar
-                    photoUrl={getPlayerPhotoUrl(player.name)}
-                    name={player.name}
-                    teamId={player.teamId}
-                    size={64}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-base font-semibold text-text-primary whitespace-nowrap">
-                        {player.name}
-                      </span>
-                      <TeamBadge teamId={player.teamId} size="xs" />
-                    </div>
-                    <p className="text-xs text-text-tertiary mt-0.5">
-                      {player.team} · {player.position} · #{player.backNo}
-                    </p>
-                  </div>
-                </div>
-              </GlassCard>
-            </Link>
-          ))}
-
-          {visibleCount < filtered.length && (
+      {/* 소팅 + 결과 수 */}
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-xs text-text-tertiary">
+          {searchQuery ? `검색 결과 ${filtered.length}명` : `${filtered.length}명`}
+        </span>
+        <div className="flex gap-1.5">
+          {(Object.keys(SORT_LABELS) as SortMode[]).map((mode) => (
             <button
-              onClick={() => setVisibleCount(v => v + 20)}
-              className="w-full py-3 mt-2 rounded-xl bg-bg-tertiary text-text-secondary text-sm font-medium hover:bg-white/10 transition-colors"
+              key={mode}
+              onClick={() => { setSortMode(mode); setVisibleCount(20); }}
+              className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                sortMode === mode
+                  ? "bg-white/10 text-text-primary"
+                  : "text-text-tertiary"
+              }`}
             >
-              더보기 ({filtered.length - visibleCount}명 남음)
+              {SORT_LABELS[mode]}
             </button>
-          )}
+          ))}
         </div>
+      </div>
+
+      {/* 선수 목록 */}
+      <div className="space-y-2 pb-24">
+        {filtered.slice(0, visibleCount).map((player, i) => (
+          <Link key={player.kboId || i} href={`/boards/players/${player.kboId}`}>
+            <div className="flex items-center gap-3 rounded-xl bg-bg-secondary/50 px-4 py-3 active:bg-bg-tertiary transition-colors">
+              <PlayerAvatar
+                name={player.name}
+                teamId={player.teamId}
+                photoUrl={getPlayerPhotoUrl(player.name)}
+                size={48}
+              />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-text-primary">
+                    {player.name}
+                  </span>
+                  <TeamBadge teamId={player.teamId} size="xs" />
+                </div>
+                <p className="text-xs text-text-tertiary mt-0.5">
+                  #{player.backNo} · {player.position}
+                </p>
+              </div>
+              <ChevronDown className="h-4 w-4 text-text-tertiary -rotate-90" />
+            </div>
+          </Link>
+        ))}
+
+        {visibleCount < filtered.length && (
+          <button
+            onClick={() => setVisibleCount(v => v + 20)}
+            className="w-full py-3 mt-2 rounded-xl bg-bg-tertiary text-text-secondary text-sm font-medium hover:bg-white/10 transition-colors"
+          >
+            더보기 ({filtered.length - visibleCount}명 남음)
+          </button>
+        )}
+
+        {filtered.length === 0 && (
+          <div className="text-center py-12 text-text-tertiary text-sm">
+            검색 결과가 없습니다
+          </div>
+        )}
       </div>
     </div>
   );
