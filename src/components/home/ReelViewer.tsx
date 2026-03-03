@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { X, ChevronUp, ChevronDown } from "lucide-react";
+import { X, ChevronUp, ChevronDown, Volume2, VolumeX } from "lucide-react";
 
 interface ReelVideo {
   id: string;
@@ -17,6 +17,7 @@ interface ReelViewerProps {
 
 export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerProps) {
   const [current, setCurrent] = useState(startIndex);
+  const [muted, setMuted] = useState(true);
   const touchStartY = useRef(0);
   const touchMoved = useRef(false);
 
@@ -57,8 +58,8 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
     <div className="fixed inset-0 z-[100] bg-black">
       {/* YouTube iframe (뒤에) - autoplay + mute for mobile policy */}
       <iframe
-        key={video.id}
-        src={`https://www.youtube.com/embed/${video.id}?autoplay=1&mute=1&controls=0&rel=0&playsinline=1&loop=1&playlist=${video.id}&modestbranding=1`}
+        key={`${video.id}-${muted}`}
+        src={`https://www.youtube.com/embed/${video.id}?autoplay=1&mute=${muted ? 1 : 0}&controls=0&rel=0&playsinline=1&loop=1&playlist=${video.id}&modestbranding=1`}
         className="absolute inset-0 w-full h-full"
         allow="autoplay; encrypted-media"
         allowFullScreen
@@ -87,8 +88,11 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
         </div>
       </div>
 
-      {/* 네비게이션 버튼 */}
+      {/* 사운드 + 네비게이션 버튼 */}
       <div className="absolute right-4 top-1/2 -translate-y-1/2 z-20 flex flex-col gap-4">
+        <button onClick={() => setMuted(m => !m)} className="p-2 rounded-full bg-black/50">
+          {muted ? <VolumeX size={24} className="text-white" /> : <Volume2 size={24} className="text-white" />}
+        </button>
         {current > 0 && (
           <button onClick={goPrev} className="p-2 rounded-full bg-black/50">
             <ChevronUp size={24} className="text-white" />
