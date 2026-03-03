@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Play } from "lucide-react";
 import { TEAMS } from "@/lib/constants/teams";
 import { getFavoritePlayers } from "@/lib/store/favorites";
+import ReelViewer from "@/components/home/ReelViewer";
 
 interface VideoItem {
   id: string;
@@ -20,15 +20,15 @@ interface HomeHighlightsProps {
 }
 
 export default function HomeHighlights({ team }: HomeHighlightsProps) {
-  const router = useRouter();
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [reelIndex, setReelIndex] = useState<number | null>(null);
 
   useEffect(() => {
     if (!team) { setLoading(false); return; }
 
     let favPlayers = getFavoritePlayers().slice(0, 3);
-    
+
     if (favPlayers.length === 0) {
       const defaults: Record<string, string[]> = {
         "LG": ["오스틴", "문보경", "홍창기"],
@@ -76,26 +76,24 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
       const playerVideos = perPlayer.flat();
       const teamVideos = dedup((results[0]?.items || []).slice(0, Math.max(8 - playerVideos.length, 2)));
       const all = [...playerVideos, ...teamVideos];
-
       all.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
       setVideos(all.slice(0, 8));
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [team]);
 
-  if (loading) return null;
-  if (videos.length === 0) return null;
+  if (loading || videos.length === 0) return null;
 
   return (
     <section className="mt-6">
       <h2 className="text-lg font-bold text-text-primary mb-3 px-5">🎬 하이라이트</h2>
       <div className="flex gap-3 overflow-x-auto px-5 pb-2 scrollbar-hide" style={{ scrollSnapType: "x mandatory" }}>
-        {videos.map(v => (
+        {videos.map((v, i) => (
           <div
             key={v.id}
             className="flex-shrink-0 cursor-pointer"
             style={{ width: "140px", scrollSnapAlign: "start" }}
-            onClick={() => window.open(`https://www.youtube.com/shorts/${v.id}`, '_blank')}
+            onClick={() => setReelIndex(i)}
           >
             <div className="relative rounded-xl overflow-hidden" style={{ aspectRatio: "9/16", width: "140px" }}>
               <img src={v.thumbnail} alt={v.title} className="w-full h-full object-cover" />
@@ -115,6 +113,14 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
           </div>
         ))}
       </div>
+
+      {reelIndex !== null && (
+        <ReelViewer
+          videos={videos}
+          startIndex={reelIndex}
+          onClose={() => setReelIndex(null)}
+        />
+      )}
     </section>
   );
 }
