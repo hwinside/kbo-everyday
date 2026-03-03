@@ -1,16 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronUp, User, Trophy, Sparkles } from "lucide-react";
+import { User, Trophy, Sparkles } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
-
 import { PLAYER_PROFILES } from '@/lib/constants/player-profiles';
-
-
 
 interface Props {
   playerName: string;
   teamColor: string;
+}
+
+function renderText(text: string) {
+  // 리터럴 \n을 실제 줄바꿈으로 변환
+  return text.replace(/\\n/g, '\n');
 }
 
 export default function PlayerProfile({ playerName, teamColor }: Props) {
@@ -33,6 +35,10 @@ export default function PlayerProfile({ playerName, teamColor }: Props) {
     { id: "career" as const, label: "커리어", icon: Trophy },
     { id: "tmi" as const, label: "TMI", icon: Sparkles },
   ];
+
+  const content = activeSection === "bio" ? profile.bio
+    : activeSection === "career" ? profile.career
+    : profile.tmi;
 
   return (
     <GlassCard className="p-4 mb-4">
@@ -63,13 +69,9 @@ export default function PlayerProfile({ playerName, teamColor }: Props) {
       {/* Content */}
       <div className="bg-bg-tertiary rounded-xl p-4">
         <p className="text-sm text-text-secondary whitespace-pre-line leading-relaxed">
-          {activeSection === "bio" && profile.bio}
-          {activeSection === "career" && profile.career}
-          {activeSection === "tmi" && profile.tmi}
+          {renderText(content)}
         </p>
       </div>
-
-
     </GlassCard>
   );
 }
