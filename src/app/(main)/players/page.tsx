@@ -27,12 +27,14 @@ function getTeamShortName(teamId: number) {
 }
 
 export default function PlayerBoardRankingPage() {
+  type SortMode = "name" | "position" | "backNo";
   const [filterTeam, setFilterTeam] = useState<number | null>(null);
+  const [sortMode, setSortMode] = useState<SortMode>("name");
   const [searchQuery, setSearchQuery] = useState("");
   const [visibleCount, setVisibleCount] = useState(20);
 
   const filtered = useMemo(() => {
-    let result = PLAYERS;
+    let result = [...PLAYERS];
     
     // 팀 필터
     if (filterTeam) {
@@ -45,25 +47,26 @@ export default function PlayerBoardRankingPage() {
       result = result.filter(p => p.name.toLowerCase().includes(q));
     }
     
+    // 정렬
+    if (sortMode === "name") {
+      result.sort((a, b) => a.name.localeCompare(b.name, "ko"));
+    } else if (sortMode === "position") {
+      const posOrder: Record<string, number> = { "투수": 1, "포수": 2, "내야수": 3, "외야수": 4 };
+      result.sort((a, b) => (posOrder[a.position] ?? 5) - (posOrder[b.position] ?? 5) || a.name.localeCompare(b.name, "ko"));
+    } else if (sortMode === "backNo") {
+      result.sort((a, b) => (parseInt(a.backNo) || 999) - (parseInt(b.backNo) || 999));
+    }
+    
     return result;
-  }, [filterTeam, searchQuery]);
+  }, [filterTeam, searchQuery, sortMode]);
 
   return (
     <div className="min-h-screen bg-bg-primary">
       <div className="mx-auto max-w-lg px-5">
         {/* Header */}
-        <header className="flex items-center justify-between py-5 pt-[env(safe-area-inset-top,20px)]">
-          <div className="flex items-center gap-3">
-            <Link href="/teams">
-              <motion.div whileTap={{ scale: 0.95 }}>
-                <ArrowLeft className="h-6 w-6 text-text-primary" />
-              </motion.div>
-            </Link>
-            <div>
-              <h1 className="text-xl font-bold text-text-primary">선수게시판 랭킹</h1>
-              <p className="text-xs text-text-tertiary">게시글 수 기준 인기 선수</p>
-            </div>
-          </div>
+        <header className="py-5 pt-[env(safe-area-inset-top,20px)]">
+          <h1 className="text-xl font-bold text-text-primary">선수</h1>
+          <p className="text-xs text-text-tertiary mt-1">KBO 전 구단 654명</p>
         </header>
 
         {/* 검색 */}
@@ -118,9 +121,30 @@ export default function PlayerBoardRankingPage() {
           })}
         </div>
 
-        {/* 결과 수 */}
-        <div className="mb-3 text-sm text-text-tertiary">
-          {searchQuery ? `검색 결과: ${filtered.length}명` : `총 ${filtered.length}명`}
+        {/* 정렬 + 결과 수 */}
+        <div className="mb-3 flex items-center justify-between">
+          <span className="text-sm text-text-tertiary">
+            {searchQuery ? `검색 결과: ${filtered.length}명` : `총 ${filtered.length}명`}
+          </span>
+          <div className="flex gap-1">
+            {([
+              { key: "name" as SortMode, label: "이름순" },
+              { key: "position" as SortMode, label: "포지션" },
+              { key: "backNo" as SortMode, label: "등번호" },
+            ]).map(s => (
+              <button
+                key={s.key}
+                onClick={() => setSortMode(s.key)}
+                className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                  sortMode === s.key
+                    ? "bg-accent/20 text-accent"
+                    : "text-text-tertiary hover:text-text-secondary"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* 선수 목록 */}

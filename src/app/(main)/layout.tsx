@@ -9,7 +9,7 @@ export default function MainLayout({
   return (
     <div className="min-h-screen bg-bg-primary">
       <ProfileSetupWrapper />
-      <main className="pb-tab-bar">{children}</main>
+      <main className="pb-tab-bar pt-[env(safe-area-inset-top,0px)]">{children}</main>
       <TabBar />
     </div>
   );

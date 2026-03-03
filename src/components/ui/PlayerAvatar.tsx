@@ -7,8 +7,8 @@ interface PlayerAvatarProps {
   name: string;
   teamId?: number;
   photoUrl?: string | null;
-  size?: number;       // px, default 48
-  showTeamBadge?: boolean; // default true
+  size?: number;
+  showTeamBadge?: boolean;
   number?: number;
 }
 
@@ -22,6 +22,7 @@ export default function PlayerAvatar({
 }: PlayerAvatarProps) {
   const team = TEAMS.find((t) => t.id === teamId);
   const teamColor = team?.colorPrimary ?? "#888";
+  const teamColorLight = team?.colorLight ?? "#aaa";
   const logoPath = team?.logoPath ?? "";
   const badgeSize = Math.max(12, Math.round(size * 0.4));
 
@@ -39,23 +40,26 @@ export default function PlayerAvatar({
         />
       ) : (
         <div
-          className="flex items-center justify-center rounded-full"
+          className="flex items-center justify-center rounded-full overflow-hidden"
           style={{
             width: size,
             height: size,
-            backgroundColor: teamColor + "25",
-            border: `2px solid ${teamColor}40`,
+            background: `linear-gradient(135deg, ${teamColor}40 0%, ${teamColor}15 100%)`,
+            border: `2px solid ${teamColor}50`,
           }}
         >
-          <span
-            className="font-bold leading-none"
-            style={{
-              color: teamColor,
-              fontSize: number != null ? Math.round(size * 0.35) : Math.round(size * 0.4),
-            }}
+          {/* 사람 실루엣 */}
+          <svg
+            viewBox="0 0 200 200"
+            fill="none"
+            style={{ width: size * 0.7, height: size * 0.7 }}
           >
-            {number != null ? number : name.charAt(0)}
-          </span>
+            <circle cx="100" cy="75" r="30" fill={teamColor + "60"} />
+            <path
+              d="M100 115c-28 0-50 14-56 35h112c-6-21-28-35-56-35z"
+              fill={teamColor + "60"}
+            />
+          </svg>
         </div>
       )}
       {showTeamBadge && logoPath && (
