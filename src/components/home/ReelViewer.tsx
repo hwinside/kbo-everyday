@@ -70,17 +70,25 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
     return () => { document.body.style.overflow = ""; };
   }, []);
 
-  // 영상 바뀌면 mute 유지
+  // 영상 바뀌면 자동재생 + 음소거 상태 복원
   useEffect(() => {
     const iframe = iframeRef.current;
-    if (iframe?.contentWindow && !muted) {
-      setTimeout(() => {
+    if (!iframe?.contentWindow) return;
+    
+    const cmds = ["playVideo"];
+    if (!muted) cmds.push("unMute");
+    
+    // iframe 로드 후 명령 전송
+    const timer = setTimeout(() => {
+      cmds.forEach(cmd => {
         iframe.contentWindow?.postMessage(
-          JSON.stringify({ event: "command", func: "unMute", args: [] }),
+          JSON.stringify({ event: "command", func: cmd, args: [] }),
           "*"
         );
-      }, 1000);
-    }
+      });
+    }, 800);
+    
+    return () => clearTimeout(timer);
   }, [current, muted]);
 
   return (
