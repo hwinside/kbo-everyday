@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Play } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { TEAMS } from "@/lib/constants/teams";
@@ -20,9 +21,10 @@ interface HomeHighlightsProps {
 }
 
 export default function HomeHighlights({ team }: HomeHighlightsProps) {
+  const router = useRouter();
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [playingId, setPlayingId] = useState<string | null>(null);
+  
 
   useEffect(() => {
     if (!team) { setLoading(false); return; }
@@ -94,32 +96,18 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
       <h2 className="text-lg font-bold text-text-primary mb-3">🎬 하이라이트</h2>
       <div className="grid grid-cols-2 gap-3">
         {videos.map(v => (
-          <div key={v.id}>
-            {playingId === v.id ? (
-              <div className="relative aspect-video rounded-xl overflow-hidden">
-                <iframe
-                  src={`https://www.youtube.com/embed/${v.id}?autoplay=1&controls=0&rel=0`}
-                  className="absolute inset-0 w-full h-full"
-                  allow="autoplay"
-                  allowFullScreen
-                />
+          <div key={v.id} className="cursor-pointer" onClick={() => router.push(`/highlights?v=${v.id}`)}>
+            <div className="relative aspect-video rounded-xl overflow-hidden">
+              <img src={v.thumbnail} alt={v.title} className="w-full h-full object-cover" />
+              <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                <Play size={32} className="text-white fill-white" />
               </div>
-            ) : (
-              <div
-                className="relative aspect-video rounded-xl overflow-hidden cursor-pointer group"
-                onClick={() => setPlayingId(v.id)}
-              >
-                <img src={v.thumbnail} alt={v.title} className="w-full h-full object-cover" />
-                <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/40 transition">
-                  <Play size={32} className="text-white fill-white" />
-                </div>
-                {v.label && (
-                  <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-full bg-accent/80 text-[10px] font-semibold text-white">
-                    {v.label}
-                  </span>
-                )}
-              </div>
-            )}
+              {v.label && (
+                <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-full bg-accent/80 text-[10px] font-semibold text-white">
+                  {v.label}
+                </span>
+              )}
+            </div>
             <p className="text-xs text-text-secondary mt-1.5 line-clamp-2 leading-snug">{v.title}</p>
           </div>
         ))}
