@@ -1,4 +1,4 @@
-const CACHE_NAME = "kbo-everyday-v3";
+const CACHE_NAME = "kbo-everyday-v4";
 
 const PRECACHE_ASSETS = ["/", "/offline"];
 
