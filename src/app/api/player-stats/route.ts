@@ -2,6 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 
 const KBO_BASE = "https://www.koreabaseball.com";
 
+function parseTables(html: string): string[][][] {
+  const result: string[][][] = [];
+  const tbodies = html.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/gi) || [];
+  for (const tb of tbodies) {
+    const rows: string[][] = [];
+    const trs = tb.match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi) || [];
+    for (const tr of trs) {
+      const cells = (tr.match(/<td[^>]*>([\s\S]*?)<\/td>/gi) || [])
+        .map(td => td.replace(/<[^>]+>/g, "").trim());
+      if (cells.length > 0) rows.push(cells);
+    }
+    result.push(rows);
+  }
+  return result;
+}
+
 async function fetchPlayerStats(playerId: string, position: string) {
   const isPitcher = position === "투수";
   const url = isPitcher
@@ -13,68 +29,47 @@ async function fetchPlayerStats(playerId: string, position: string) {
     next: { revalidate: 3600 },
   });
   const html = await res.text();
+  const tables = parseTables(html);
 
-  const tbody = html.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i);
-  if (!tbody) return null;
-
-  const rows = (tbody[1].match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi) || []);
-  if (rows.length === 0) return null;
-
-  // 마지막 행이 가장 최신 시즌 (또는 '통산')
-  // 2025 시즌 행 찾기
-  for (const tr of rows) {
-    const cells = (tr.match(/<td[^>]*>([\s\S]*?)<\/td>/gi) || [])
-      .map(td => td.replace(/<[^>]+>/g, "").trim());
-
-    if (cells.length < 5) continue;
-
-    // 첫 셀이 팀명 (시즌별) 또는 연도
-    if (isPitcher) {
-      // 투수: 팀, ERA, 경기, 완투, 완봉, 승, 패, 세, 홀, 승률, 이닝, 피안, 피홈, 볼넷, 사구, 삼진, 실점, 자책, WHIP
-      return {
-        team: cells[0],
-        era: cells[1] || "0.00",
-        games: parseInt(cells[2]) || 0,
-        wins: parseInt(cells[5]) || 0,
-        losses: parseInt(cells[6]) || 0,
-        saves: parseInt(cells[7]) || 0,
-        holds: parseInt(cells[8]) || 0,
-        ip: cells[10] || "0",
-        hits: parseInt(cells[11]) || 0,
-        hr: parseInt(cells[12]) || 0,
-        bb: parseInt(cells[13]) || 0,
-        so: parseInt(cells[15]) || 0,
-        er: parseInt(cells[17]) || 0,
-        whip: cells[18] || "0.00",
-      };
-    } else {
-      // 타자: 팀, 타율, 경기, 타석, 타수, 득점, 안타, 2루타, 3루타, 홈런, 타점, 도루, ...
-      return {
-        team: cells[0],
-        avg: cells[1] || ".000",
-        games: parseInt(cells[2]) || 0,
-        pa: parseInt(cells[3]) || 0,
-        ab: parseInt(cells[4]) || 0,
-        runs: parseInt(cells[5]) || 0,
-        hits: parseInt(cells[6]) || 0,
-        doubles: parseInt(cells[7]) || 0,
-        triples: parseInt(cells[8]) || 0,
-        hr: parseInt(cells[9]) || 0,
-        rbi: parseInt(cells[10]) || 0,
-        sb: parseInt(cells[11]) || 0,
-      };
-    }
+  if (isPitcher) {
+    // Table 0: 팀, ERA, G, CG, SHO, W, L, SV, HLD, WPCT, TBF, NP, IP, H, 2B, 3B, HR
+    // Table 1: SAC, SF, BB, IBB, SO, WP, BK, R, ER, BSV, WHIP, AVG, QS
+    const t0 = tables[0]?.[0];
+    const t1 = tables[1]?.[0];
+    if (!t0 || t0[0] === "기록이 없습니다.") return null;
+    return {
+      team: t0[0], era: t0[1], games: parseInt(t0[2]) || 0,
+      cg: parseInt(t0[3]) || 0, sho: parseInt(t0[4]) || 0,
+      wins: parseInt(t0[5]) || 0, losses: parseInt(t0[6]) || 0,
+      saves: parseInt(t0[7]) || 0, holds: parseInt(t0[8]) || 0,
+      wpct: t0[9], ip: t0[12], hits: parseInt(t0[13]) || 0, hr: parseInt(t0[16]) || 0,
+      bb: parseInt(t1?.[2]) || 0, so: parseInt(t1?.[4]) || 0,
+      er: parseInt(t1?.[8]) || 0, whip: t1?.[10] || "0.00",
+    };
+  } else {
+    // Table 0: 팀, AVG, G, PA, AB, R, H, 2B, 3B, HR, TB, RBI, SB, CS, SAC, SF
+    // Table 1: BB, IBB, HBP, SO, GDP, SLG, OBP, OPS, MH, RISP, PH-BA
+    const t0 = tables[0]?.[0];
+    const t1 = tables[1]?.[0];
+    if (!t0 || t0[0] === "기록이 없습니다.") return null;
+    return {
+      team: t0[0], avg: t0[1], games: parseInt(t0[2]) || 0,
+      pa: parseInt(t0[3]) || 0, ab: parseInt(t0[4]) || 0,
+      runs: parseInt(t0[5]) || 0, hits: parseInt(t0[6]) || 0,
+      doubles: parseInt(t0[7]) || 0, triples: parseInt(t0[8]) || 0,
+      hr: parseInt(t0[9]) || 0, tb: parseInt(t0[10]) || 0,
+      rbi: parseInt(t0[11]) || 0, sb: parseInt(t0[12]) || 0,
+      bb: parseInt(t1?.[0]) || 0, so: parseInt(t1?.[3]) || 0,
+      slg: t1?.[5] || ".000", obp: t1?.[6] || ".000", ops: t1?.[7] || ".000",
+    };
   }
-  return null;
 }
 
-// 캐시 (1시간)
 const cache: Record<string, { data: any; ts: number }> = {};
 
 export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("id");
   const pos = req.nextUrl.searchParams.get("pos") || "타자";
-
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
 
   const cacheKey = `player-${id}-${pos}`;
