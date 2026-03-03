@@ -47,7 +47,7 @@ export default function PlayerBoardRankingPage() {
   return (
     <div className="min-h-screen bg-bg-primary">
       {/* Header */}
-      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary/80 backdrop-blur-xl px-5 py-4 flex items-center gap-4">
+      <div className="sticky top-0 z-30 pt-safe border-b border-border bg-bg-primary/80 backdrop-blur-xl pt-safe px-5 py-4 flex items-center gap-4">
         <Link href="/" className="p-1 -ml-1">
           <ArrowLeft className="w-10 h-10 text-text-secondary" />
         </Link>

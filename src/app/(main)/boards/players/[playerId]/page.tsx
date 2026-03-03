@@ -107,20 +107,14 @@ export default function PlayerBoardPage() {
     });
   }, [playerName]);
 
-  // 2025 스탯 로드
+  // 2025 스탯 로드 (개별 선수)
   useEffect(() => {
     if (statSeason !== 2025 || !player) { setRealStats(null); return; }
-    const type = player.position === "투수" ? "pitcher" : "batter";
-    fetch(`/api/stats?type=${type}`)
+    fetch(`/api/player-stats?id=${kboId}&pos=${encodeURIComponent(player.position)}`)
       .then(r => r.json())
-      .then(d => {
-        if (d.stats) {
-          const found = d.stats.find((s: any) => s.name === player.name);
-          setRealStats(found || null);
-        }
-      })
+      .then(d => { setRealStats(d.stats || null); })
       .catch(() => {});
-  }, [statSeason, player]);
+  }, [statSeason, player, kboId]);
 
   if (loading) {
     return <div className="flex items-center justify-center h-screen text-text-secondary">로딩 중...</div>;
@@ -141,7 +135,7 @@ export default function PlayerBoardPage() {
     <div className="min-h-screen bg-bg-primary pb-20">
       {/* Header */}
       <div
-        className="sticky top-0 z-30 border-b border-border backdrop-blur-xl"
+        className="sticky top-0 z-30 pt-safe border-b border-border backdrop-blur-xl pt-safe"
         style={{ background: `linear-gradient(135deg, ${teamColor}15, transparent)` }}
       >
         <div className="flex items-center gap-4 px-5 py-4">
