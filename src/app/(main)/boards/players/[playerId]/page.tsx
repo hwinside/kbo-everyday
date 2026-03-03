@@ -305,13 +305,6 @@ export default function PlayerBoardPage() {
 
       {/* FAB */}
 
-      {/* 관련 기사 - latest/hot 탭에서만 */}
-      {(activeTab === "latest" || activeTab === "hot") && player && (
-        <div className="px-5">
-          <PlayerNews playerName={player.name} />
-        </div>
-      )}
-
       {(activeTab === "latest" || activeTab === "hot") && (
       <button
         onClick={() => user ? setShowWrite(true) : setShowLogin(true)}
