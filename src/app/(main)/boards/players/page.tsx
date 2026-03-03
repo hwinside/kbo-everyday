@@ -5,26 +5,20 @@ import { ArrowLeft, TrendingUp } from "lucide-react";
 import Link from "next/link";
 import GlassCard from "@/components/ui/GlassCard";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
+import { useState, useEffect } from "react";
+import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
+import TeamBadge from "@/components/ui/TeamBadge";
 
-const MOCK_PLAYER_BOARD_RANKING = [
-  { playerId: "p4", name: "김도영", teamId: 6, postsToday: 33, totalPosts: 2341, trend: "up" as const, rank: 1 },
-  { playerId: "p1", name: "오스틴", teamId: 1, postsToday: 47, totalPosts: 1284, trend: "up" as const, rank: 2 },
-  { playerId: "p3", name: "구자욱", teamId: 8, postsToday: 35, totalPosts: 1102, trend: "same" as const, rank: 3 },
-  { playerId: "p2", name: "양현종", teamId: 6, postsToday: 38, totalPosts: 956, trend: "up" as const, rank: 4 },
-  { playerId: "p5", name: "문동주", teamId: 9, postsToday: 28, totalPosts: 876, trend: "down" as const, rank: 5 },
-  { playerId: "p6", name: "이정후", teamId: 10, postsToday: 25, totalPosts: 834, trend: "up" as const, rank: 6 },
-  { playerId: "p7", name: "박동원", teamId: 1, postsToday: 22, totalPosts: 745, trend: "same" as const, rank: 7 },
-  { playerId: "p8", name: "나성범", teamId: 3, postsToday: 20, totalPosts: 698, trend: "down" as const, rank: 8 },
-  { playerId: "p9", name: "최형우", teamId: 6, postsToday: 18, totalPosts: 654, trend: "same" as const, rank: 9 },
-  { playerId: "p10", name: "김하성", teamId: 2, postsToday: 17, totalPosts: 612, trend: "up" as const, rank: 10 },
-  { playerId: "p11", name: "페르난데스", teamId: 4, postsToday: 15, totalPosts: 589, trend: "up" as const, rank: 11 },
-  { playerId: "p12", name: "소형준", teamId: 5, postsToday: 14, totalPosts: 534, trend: "down" as const, rank: 12 },
-  { playerId: "p13", name: "한석현", teamId: 7, postsToday: 12, totalPosts: 478, trend: "same" as const, rank: 13 },
-  { playerId: "p14", name: "안우진", teamId: 6, postsToday: 11, totalPosts: 445, trend: "up" as const, rank: 14 },
-  { playerId: "p15", name: "이의리", teamId: 2, postsToday: 10, totalPosts: 398, trend: "same" as const, rank: 15 },
-];
+interface PlayerItem {
+  playerId: string;
+  name: string;
+  teamId: number;
+  team: string;
+  position: string;
+  backNo: string;
+}
+
 
 function getTeamShortName(teamId: number) {
   return TEAMS.find((t) => t.id === teamId)?.shortName ?? "";
@@ -34,6 +28,22 @@ function getTeamColor(teamId: number) {
 }
 
 export default function PlayerBoardRankingPage() {
+  const [players, setPlayers] = useState<PlayerItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filterTeam, setFilterTeam] = useState<number | null>(null);
+
+  useEffect(() => {
+    fetch("/api/player-teams").then(r => r.json()).then(d => {
+      setPlayers((d.players || []).map((p: any) => ({
+        playerId: p.kboId, name: p.name, teamId: p.teamId,
+        team: p.team, position: p.position, backNo: p.backNo,
+      })));
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, []);
+
+  const filtered = filterTeam ? players.filter(p => p.teamId === filterTeam) : players;
+
   return (
     <div className="min-h-screen bg-bg-primary">
       {/* Header */}
@@ -48,44 +58,56 @@ export default function PlayerBoardRankingPage() {
         <TrendingUp className="ml-auto w-10 h-10 text-accent" />
       </div>
 
-      <div className="px-5 py-5 space-y-5">
-        {MOCK_PLAYER_BOARD_RANKING.map((player, i) => (
-          <Link key={player.playerId} href={`/boards/players/${player.playerId}`}>
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.03 }}
-            >
-              <GlassCard pressable className="p-4">
-                <div className="flex items-center gap-4">
-                  <span className={`flex h-8 w-8 items-center justify-center rounded-full text-base font-bold ${
-                    i === 0 ? "bg-yellow-500/20 text-yellow-400" :
-                    i === 1 ? "bg-gray-400/20 text-gray-300" :
-                    i === 2 ? "bg-amber-700/20 text-amber-600" :
-                    "bg-bg-tertiary text-text-tertiary"
-                  }`}>
-                    {player.rank}
-                  </span>
-                  <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} size={44} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-text-primary whitespace-nowrap">{player.name}</span>
-                      <span className="text-xs px-1.5 py-0.5 rounded-full whitespace-nowrap" style={{ backgroundColor: getTeamColor(player.teamId) + "20", color: getTeamColor(player.teamId) }}>
-                        {getTeamShortName(player.teamId)}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-bold text-accent whitespace-nowrap">오늘 {player.postsToday}글</div>
-                    <div className="text-xs text-text-tertiary whitespace-nowrap">총 {player.totalPosts.toLocaleString()}글</div>
-                  </div>
-                  <span className="text-lg w-5 text-center">
-                    {player.trend === "up" ? "🔥" : player.trend === "down" ? "📉" : "➖"}
-                  </span>
+      {/* Team filter */}
+      <div className="px-5 py-3 flex gap-2 overflow-x-auto no-scrollbar">
+        <button
+          onClick={() => setFilterTeam(null)}
+          className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
+            !filterTeam ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
+          }`}
+        >전체 ({players.length})</button>
+        {TEAMS.map(t => {
+          const count = players.filter(p => p.teamId === t.id).length;
+          if (count === 0) return null;
+          return (
+            <button key={t.id} onClick={() => setFilterTeam(t.id)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
+                filterTeam === t.id ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
+              }`}
+            >{t.shortName} ({count})</button>
+          );
+        })}
+      </div>
+
+      {/* Player list */}
+      <div className="px-5 pb-24 space-y-2">
+        {loading ? (
+          <div className="text-center py-12 text-text-tertiary text-sm">선수 목록 로딩 중...</div>
+        ) : filtered.map((player, i) => (
+          <motion.div
+            key={player.playerId}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: Math.min(i * 0.02, 0.5) }}
+          >
+            <Link href={`/boards/players/${player.playerId}`}>
+              <GlassCard pressable className="flex items-center gap-3 p-4">
+                <span className="text-sm font-bold text-text-tertiary w-6 text-center">{i + 1}</span>
+                <PlayerAvatar
+                  name={player.name}
+                  teamId={player.teamId}
+                  photoUrl={getPlayerPhotoUrl(player.name)}
+                  number={parseInt(player.backNo) || 0}
+                  size={48}
+                />
+                <div className="flex-1">
+                  <p className="text-sm font-bold text-text-primary">{player.name}</p>
+                  <p className="text-xs text-text-tertiary">{player.team} · {player.position}{player.backNo ? ` · #${player.backNo}` : ""}</p>
                 </div>
+                <TeamBadge teamId={player.teamId} size="sm" />
               </GlassCard>
-            </motion.div>
-          </Link>
+            </Link>
+          </motion.div>
         ))}
       </div>
     </div>

@@ -8,7 +8,7 @@ import Link from "next/link";
 import GlassCard from "@/components/ui/GlassCard";
 import NicheStats from "@/components/player/NicheStats";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
+import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
 import { usePosts, createPost } from "@/lib/supabase/usePosts";
 import WritePost from "@/components/community/WritePost";
@@ -20,24 +20,31 @@ import CheerSong from "@/components/player/CheerSong";
 import PlayerProfile from "@/components/player/PlayerProfile";
 import PhotoGallery from "@/components/player/PhotoGallery";
 
-const PLAYER_DATA: Record<string, { name: string; teamId: number; number: number; position: string; totalPosts: number }> = {
-  p1: { name: "오스틴", teamId: 1, number: 31, position: "외야수", totalPosts: 1284 },
-  p2: { name: "양현종", teamId: 6, number: 1, position: "투수", totalPosts: 956 },
-  p3: { name: "구자욱", teamId: 8, number: 10, position: "외야수", totalPosts: 1102 },
-  p4: { name: "김도영", teamId: 6, number: 5, position: "내야수", totalPosts: 2341 },
-  p5: { name: "문동주", teamId: 9, number: 29, position: "투수", totalPosts: 876 },
-  p6: { name: "이정후", teamId: 10, number: 51, position: "외야수", totalPosts: 834 },
-  p7: { name: "박동원", teamId: 1, number: 27, position: "포수", totalPosts: 745 },
-  p8: { name: "나성범", teamId: 3, number: 47, position: "외야수", totalPosts: 698 },
-  p9: { name: "최형우", teamId: 6, number: 34, position: "지명타자", totalPosts: 654 },
-  p10: { name: "김하성", teamId: 2, number: 7, position: "내야수", totalPosts: 612 },
-  p11: { name: "페르난데스", teamId: 4, number: 37, position: "투수", totalPosts: 589 },
-  p12: { name: "소형준", teamId: 5, number: 11, position: "투수", totalPosts: 534 },
-  p13: { name: "한석현", teamId: 7, number: 18, position: "외야수", totalPosts: 478 },
-  p14: { name: "안우진", teamId: 6, number: 26, position: "투수", totalPosts: 445 },
-  p15: { name: "이의리", teamId: 2, number: 17, position: "투수", totalPosts: 398 },
+// kboId → name 역매핑
+const ID_TO_NAME: Record<string, string> = {};
+for (const [name, id] of Object.entries(PLAYER_PHOTO_MAP)) {
+  ID_TO_NAME[id] = name;
+}
+
+// 레거시 pN → kboId 매핑 (기존 링크 호환)
+const LEGACY_MAP: Record<string, string> = {
+  p1: "67430", p2: "77162", p3: "62404", p4: "69650", p5: "68571",
+  p6: "64643", p7: "63905", p8: "61478", p9: "75003", p10: "67100",
+  p11: "55500", p12: "68300", p13: "69200", p14: "67800", p15: "65400",
 };
 
+const TEAM_SHORT_MAP: Record<string, number> = {
+  LG: 1, OB: 2, KT: 3, SK: 4, NC: 5, HT: 6, LT: 7, SS: 8, HH: 9, WO: 10,
+  "두산": 2, SSG: 4, KIA: 6, "롯데": 7, "삼성": 8, "한화": 9, "키움": 10,
+};
+
+interface PlayerData {
+  name: string;
+  teamId: number;
+  number: number;
+  position: string;
+  team: string;
+}
 
 function getTeamColor(teamId: number) {
   return TEAMS.find((t) => t.id === teamId)?.colorPrimary ?? "#888";
@@ -57,9 +64,15 @@ function StatItem({ label, value, color }: { label: string; value: string | numb
 
 export default function PlayerBoardPage() {
   const { playerId } = useParams();
-  const player = PLAYER_DATA[playerId as string];
+  const rawId = playerId as string;
+  // 레거시 pN ID 처리
+  const kboId = LEGACY_MAP[rawId] || rawId;
+  const playerName = ID_TO_NAME[kboId];
+  
+  const [player, setPlayer] = useState<PlayerData | null>(null);
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"stats" | "photo" | "latest" | "hot">("stats");
-  const { posts: livePosts, loading: postsLoading, reload } = usePosts("player", playerId as string);
+  const { posts: livePosts, loading: postsLoading, reload } = usePosts("player", rawId);
   const [showWrite, setShowWrite] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [statSeason, setStatSeason] = useState<2025 | 2026>(2025);
@@ -67,25 +80,57 @@ export default function PlayerBoardPage() {
   const { user } = useAuth();
   const { newBadges, checkBadges, clearBadges } = useBadgeCheck();
 
+  // KBO 검색 API로 선수 정보 로드
   useEffect(() => {
-    if (statSeason !== 2025) { setRealStats(null); return; }
-    const pos = player?.position;
-    const type = pos === "투수" ? "pitcher" : "batter";
+    if (!playerName) {
+      setLoading(false);
+      return;
+    }
+    fetch(`/api/player-teams`).then(r => r.json()).then(d => {
+      const found = (d.players || []).find((p: any) => p.name === playerName);
+      if (found) {
+        setPlayer({
+          name: found.name,
+          teamId: found.teamId,
+          number: parseInt(found.backNo) || 0,
+          position: found.position || "",
+          team: found.team || "",
+        });
+      } else {
+        // fallback: 이름만으로 기본 데이터
+        setPlayer({ name: playerName, teamId: 0, number: 0, position: "", team: "" });
+      }
+      setLoading(false);
+    }).catch(() => {
+      setPlayer({ name: playerName, teamId: 0, number: 0, position: "", team: "" });
+      setLoading(false);
+    });
+  }, [playerName]);
+
+  // 2025 스탯 로드
+  useEffect(() => {
+    if (statSeason !== 2025 || !player) { setRealStats(null); return; }
+    const type = player.position === "투수" ? "pitcher" : "batter";
     fetch(`/api/stats?type=${type}`)
       .then(r => r.json())
       .then(d => {
         if (d.stats) {
-          const found = d.stats.find((s: any) => s.name === player?.name);
+          const found = d.stats.find((s: any) => s.name === player.name);
           setRealStats(found || null);
         }
       })
       .catch(() => {});
-  }, [statSeason, playerId]);
+  }, [statSeason, player]);
 
-  if (!player) {
+  if (loading) {
+    return <div className="flex items-center justify-center h-screen text-text-secondary">로딩 중...</div>;
+  }
+
+  if (!player || !playerName) {
     return (
-      <div className="flex items-center justify-center h-screen text-text-secondary">
-        선수를 찾을 수 없습니다
+      <div className="flex flex-col items-center justify-center h-screen text-text-secondary gap-2">
+        <p>선수를 찾을 수 없습니다</p>
+        <Link href="/boards/players" className="text-accent text-sm">선수 목록으로</Link>
       </div>
     );
   }
@@ -107,11 +152,15 @@ export default function PlayerBoardPage() {
           <div className="flex-1">
             <div className="flex items-center gap-3">
               <h1 className="text-xl font-bold text-text-primary">{player.name}</h1>
-              <span className="text-base px-1.5 py-0.5 rounded-full" style={{ backgroundColor: teamColor + "20", color: teamColor }}>
-                #{player.number}
-              </span>
+              {player.number > 0 && (
+                <span className="text-base px-1.5 py-0.5 rounded-full" style={{ backgroundColor: teamColor + "20", color: teamColor }}>
+                  #{player.number}
+                </span>
+              )}
             </div>
-            <p className="text-base text-text-tertiary">{getTeamShortName(player.teamId)} · {player.position} · 게시글 {player.totalPosts.toLocaleString()}개</p>
+            <p className="text-base text-text-tertiary">
+              {getTeamShortName(player.teamId) || player.team} · {player.position || "선수"}
+            </p>
           </div>
           
           <button onClick={async () => {
@@ -157,7 +206,7 @@ export default function PlayerBoardPage() {
           <PlayerProfile playerName={player.name} teamColor={teamColor} />
           <CheerSong playerName={player.name} teamColor={teamColor} />
 
-          {/* Season toggle — 응원가 아래, 세이버메트릭스 위 */}
+          {/* Season toggle */}
           <div className="flex gap-2 mb-4 mt-2">
             {([2025, 2026] as const).map(y => (
               <button
@@ -205,9 +254,11 @@ export default function PlayerBoardPage() {
             </div>
           ) : (
             <div className="glass-card p-4 mb-4 text-center text-text-tertiary text-sm">
-              {`2025 시즌 데이터를 찾을 수 없습니다`}
+              2025 시즌 데이터를 찾을 수 없습니다
             </div>
           )}
+
+          <NicheStats playerId={rawId} position={player.position} teamColor={teamColor} playerName={player.name} season={statSeason} />
         </div>
       )}
 
@@ -232,7 +283,7 @@ export default function PlayerBoardPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.03 }}
           >
-            <Link href={`/boards/players/${playerId}/posts/${post.id}`}><GlassCard pressable className="p-4">
+            <Link href={`/boards/players/${rawId}/posts/${post.id}`}><GlassCard pressable className="p-4">
               <p className="text-base font-medium text-text-primary">{post.title}</p>
               <div className="mt-2 flex items-center justify-between text-base text-text-tertiary">
                 <span>{post.nickname || "익명"} · {new Date(post.created_at).toLocaleDateString("ko-KR")}</span>
@@ -246,7 +297,7 @@ export default function PlayerBoardPage() {
         ))}
       </div>}
 
-      {/* FAB - Write (only on post tabs) */}
+      {/* FAB */}
       {(activeTab === "latest" || activeTab === "hot") && (
       <button
         onClick={() => user ? setShowWrite(true) : setShowLogin(true)}
@@ -257,14 +308,12 @@ export default function PlayerBoardPage() {
       </button>
       )}
 
-      {/* Write Post Modal */}
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
-
       <WritePost
         isOpen={showWrite}
         onClose={() => setShowWrite(false)}
         onSubmit={async (title, content, imageUrls) => {
-          await createPost({ boardType: "player", boardId: playerId as string, title, content, imageUrls });
+          await createPost({ boardType: "player", boardId: rawId, title, content, imageUrls });
           setShowWrite(false);
           if (user) checkBadges(user.id);
           reload();
