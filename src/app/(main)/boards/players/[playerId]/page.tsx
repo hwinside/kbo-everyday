@@ -263,7 +263,7 @@ export default function PlayerBoardPage() {
           
           {/* 관련 기사 */}
           <div className="px-5">
-            <PlayerNews playerName={player.name} />
+            <PlayerNews playerName={player.name} teamId={player.teamId} />
           </div>
         </div>
       )}
