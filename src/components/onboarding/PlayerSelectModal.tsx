@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { Check, Star, Search } from "lucide-react";
 import Image from "next/image";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
+import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import { getTeamById, TEAMS } from "@/lib/constants/teams";
 import TeamBadge from "@/components/ui/TeamBadge";
 import type { FavoritePlayer } from "@/lib/store/favorites";
@@ -46,6 +46,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
     ]).then(([b, p]) => {
       const players: PlayerInfo[] = [];
       const seen = new Set<string>();
+      // API 선수 (팀 정보 있음)
       for (const s of [...(b.stats || []), ...(p.stats || [])]) {
         if (!seen.has(s.name)) {
           seen.add(s.name);
@@ -57,9 +58,23 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
           });
         }
       }
+      // PLAYER_PHOTO_MAP에 있지만 API에 없는 선수 추가 (팀 미상)
+      for (const [name, kboId] of Object.entries(PLAYER_PHOTO_MAP)) {
+        if (!seen.has(name)) {
+          seen.add(name);
+          players.push({ id: kboId, name, team: "", teamId: 0 });
+        }
+      }
       setAllPlayers(players);
       setLoading(false);
-    }).catch(() => setLoading(false));
+    }).catch(() => {
+      // API 실패 시 PLAYER_PHOTO_MAP 전체 사용
+      const players = Object.entries(PLAYER_PHOTO_MAP).map(([name, kboId]) => ({
+        id: kboId, name, team: "", teamId: 0,
+      }));
+      setAllPlayers(players);
+      setLoading(false);
+    });
   }, [isOpen]);
 
   const myTeamPlayers = allPlayers.filter(p => p.teamId === teamId);
