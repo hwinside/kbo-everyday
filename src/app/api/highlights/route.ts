@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
 
-let cache: { data: any; ts: number } | null = null;
+const cache = new Map<string, { data: any; ts: number }>();
 const CACHE_TTL = 30 * 60 * 1000;
 
 function decodeHtml(s: string) {
@@ -11,10 +11,12 @@ function decodeHtml(s: string) {
 
 export async function GET(req: NextRequest) {
   const team = req.nextUrl.searchParams.get("team");
-  const query = team ? `KBO ${team} 하이라이트` : "KBO 프로야구 하이라이트";
+  const q = req.nextUrl.searchParams.get("q");
+  const query = q || (team ? `KBO ${team} 하이라이트` : "KBO 프로야구 하이라이트");
 
-  if (cache && Date.now() - cache.ts < CACHE_TTL) {
-    return NextResponse.json(cache.data);
+  const cached = cache.get(query);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) {
+    return NextResponse.json(cached.data);
   }
 
   if (!YOUTUBE_API_KEY) {
@@ -39,7 +41,7 @@ export async function GET(req: NextRequest) {
     }));
 
     const result = { items };
-    cache = { data: result, ts: Date.now() };
+    cache.set(query, { data: result, ts: Date.now() });
     return NextResponse.json(result);
   } catch (e: any) {
     return NextResponse.json({ items: [], error: e.message });

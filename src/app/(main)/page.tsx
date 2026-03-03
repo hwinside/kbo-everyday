@@ -13,6 +13,7 @@ import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getMyTeamId, setMyTeamId as saveMyTeamId } from "@/lib/store/myteam";
 import NewsCarousel from "@/components/news/NewsCarousel";
+import HomeHighlights from "@/components/home/HomeHighlights";
 import LiveGameBanner from "@/components/home/LiveGameBanner";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import TeamBadge from "@/components/ui/TeamBadge";
@@ -313,6 +314,9 @@ export default function HomePage() {
         <LiveGameBanner />
 
         <NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 10) : (myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 10) : MOCK_NEWS)} />
+
+        {/* 하이라이트 영상 */}
+        <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
       </div>
 
       {/* ===== 1. Today's Games — horizontal scroll with snap ===== */}
