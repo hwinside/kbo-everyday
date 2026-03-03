@@ -36,15 +36,19 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
   const [showAll, setShowAll] = useState(false);
   const team = getTeamById(teamId);
 
-  const allPlayers: PlayerInfo[] = (playersRoster as any[]).map((p) => ({
-    id: p.kboId, name: p.name, team: p.team, teamId: p.teamId,
-  }));
+  const allPlayers = useMemo<PlayerInfo[]>(() =>
+    (playersRoster as any[]).map((p) => ({
+      id: p.kboId, name: p.name, team: p.team, teamId: p.teamId,
+    })),
+  []);
 
   const myTeamPlayers = allPlayers.filter(p => p.teamId === teamId);
   const otherPlayers = allPlayers.filter(p => p.teamId !== teamId);
-  const displayPlayers = search
+  const [visibleCount, setVisibleCount] = useState(30);
+  const allDisplayPlayers = search
     ? allPlayers.filter(p => p.name.includes(search))
     : showAll ? [...myTeamPlayers, ...otherPlayers] : myTeamPlayers;
+  const displayPlayers = allDisplayPlayers.slice(0, visibleCount);
 
   const toggle = (player: PlayerInfo) => {
     setSelected(prev => {
@@ -102,11 +106,11 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
         {/* 탭 */}
         {!search && (
           <div className="flex gap-2 mb-3">
-            <button onClick={() => setShowAll(false)}
+            <button onClick={() => { setShowAll(false); setVisibleCount(30); }}
               className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${!showAll ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"}`}>
               {team.shortName} 선수 ({myTeamPlayers.length})
             </button>
-            <button onClick={() => setShowAll(true)}
+            <button onClick={() => { setShowAll(true); setVisibleCount(30); }}
               className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${showAll ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"}`}>
               전체 선수 ({allPlayers.length})
             </button>
@@ -141,6 +145,14 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
               </button>
             );
           })}
+          {visibleCount < allDisplayPlayers.length && (
+            <button
+              onClick={() => setVisibleCount(v => v + 30)}
+              className="w-full py-2 mt-1 text-xs text-text-tertiary"
+            >
+              더보기 ({allDisplayPlayers.length - visibleCount}명 남음)
+            </button>
+          )}
         </motion.div>
 
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="mt-5 space-y-2">
