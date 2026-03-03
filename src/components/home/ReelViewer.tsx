@@ -97,7 +97,7 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
       <iframe
         ref={iframeRef}
         key={video.id}
-        src={`https://www.youtube.com/embed/${video.id}?autoplay=1&mute=1&controls=0&rel=0&playsinline=1&loop=1&playlist=${video.id}&modestbranding=1&enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`}
+        src={`https://www.youtube.com/embed/${video.id}?autoplay=1&mute=${muted ? 1 : 0}&controls=1&rel=0&playsinline=1&loop=1&playlist=${video.id}&modestbranding=1&enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`}
         className="absolute inset-0 w-full h-full"
         allow="autoplay; encrypted-media"
         allowFullScreen
