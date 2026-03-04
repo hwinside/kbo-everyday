@@ -1,11 +1,10 @@
 "use client";
-"use client";
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { Settings, ChevronRight, Download, FileText, MessageCircle, Mail, Heart, Trophy, RefreshCw, MapPin, Star, LogIn, LogOut, GraduationCap, Bell } from "lucide-react";
+import { Settings, ChevronRight, Download, FileText, MessageCircle, Mail, Heart, Trophy, RefreshCw, MapPin, Star, LogIn, LogOut, GraduationCap, Bell, MessageSquareHeart } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
@@ -19,6 +18,7 @@ import { getMyTeamId, setMyTeamId } from "@/lib/store/myteam";
 import { usePushNotification } from "@/lib/hooks/usePushNotification";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
+import FeedbackSheet from "@/components/feedback/FeedbackSheet";
 
 export default function MyPage() {
   const [teamId, setTeamId] = useState<number | null>(null);
@@ -28,6 +28,7 @@ export default function MyPage() {
   const { permission, subscription, subscribe, unsubscribe } = usePushNotification();
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
   const [showPwaGuide, setShowPwaGuide] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
   const router = useRouter();
 
@@ -248,6 +249,28 @@ export default function MyPage() {
         ))}
       </motion.div>
 
+      {/* 피드백 보내기 - 로그인 시에만 */}
+      {user && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.17 }}
+          className="mt-3"
+        >
+          <GlassCard
+            pressable
+            className="flex items-center justify-between p-5"
+            onClick={() => setShowFeedback(true)}
+          >
+            <div className="flex items-center gap-4">
+              <MessageSquareHeart size={22} className="text-text-secondary" />
+              <span className="text-base text-text-primary">📮 피드백 보내기</span>
+            </div>
+            <ChevronRight size={22} className="text-text-tertiary" />
+          </GlassCard>
+        </motion.div>
+      )}
+
       {/* Login prompt */}
       {!user && (
       <motion.div
@@ -324,6 +347,7 @@ export default function MyPage() {
       )}
 
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
+      <FeedbackSheet isOpen={showFeedback} onClose={() => setShowFeedback(false)} />
       <PlayerSelectModal
         isOpen={showPlayerSelect}
         teamId={teamId ?? 1}

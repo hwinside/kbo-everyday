@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { ChevronLeft, MessageSquare } from "lucide-react";
+import { ChevronLeft, MessageSquare, Lightbulb } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
@@ -12,11 +12,17 @@ import { getMyTeamId } from "@/lib/store/myteam";
 import { getFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { TEAMS, getTeamById } from "@/lib/constants/teams";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
+import { useAuth } from "@/lib/supabase/AuthContext";
+import FeedbackSheet from "@/components/feedback/FeedbackSheet";
+import LoginSheet from "@/components/auth/LoginSheet";
 
 export default function CommunityPage() {
   const router = useRouter();
+  const { user } = useAuth();
   const [myTeamId, setMyTeamId] = useState<number | null>(null);
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
 
   useEffect(() => {
     setMyTeamId(getMyTeamId());
@@ -55,6 +61,31 @@ export default function CommunityPage() {
             </div>
           </GlassCard>
         </Link>
+      </div>
+
+      {/* 💡 건의함 배너 */}
+      <div className="mx-5 mb-6">
+        <GlassCard
+          pressable
+          className="border-l-4 border-yellow-400 p-5"
+          onClick={() => {
+            if (user) {
+              setShowFeedback(true);
+            } else {
+              setShowLogin(true);
+            }
+          }}
+        >
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-yellow-400/10">
+              <Lightbulb size={24} className="text-yellow-400" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-text-primary">💡 건의함</h3>
+              <p className="text-sm text-text-secondary">버그 신고, 기능 제안, 데이터 수정 요청</p>
+            </div>
+          </div>
+        </GlassCard>
       </div>
 
       {/* 내 팀 */}
@@ -139,6 +170,8 @@ export default function CommunityPage() {
           </GlassCard>
         )}
       </div>
+      <FeedbackSheet isOpen={showFeedback} onClose={() => setShowFeedback(false)} defaultType="feature" />
+      <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
     </div>
   );
 }
