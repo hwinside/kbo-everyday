@@ -56,16 +56,11 @@ export default function PlayerBoardRankingPage() {
       <div className="mx-auto max-w-lg px-5">
         {/* Header */}
         <header className="flex items-center gap-3 py-5">
-          <div className="flex items-center gap-3">
-            <Link href="/teams">
-              <motion.div whileTap={{ scale: 0.95 }}>
-                <ArrowLeft className="h-6 w-6 text-text-primary" />
-              </motion.div>
-            </Link>
-            <div>
-              <h1 className="text-xl font-bold text-text-primary">선수게시판 랭킹</h1>
-              <p className="text-xs text-text-tertiary">게시글 수 기준 인기 선수</p>
-            </div>
+          <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
+            <ChevronLeft size={24} />
+          </button>
+          <div>
+            <h1 className="text-xl font-bold text-text-primary">선수</h1>
           </div>
         </header>
 
