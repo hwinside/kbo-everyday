@@ -1,4 +1,5 @@
 "use client";
+import { PRESEASON_GAMES } from "@/lib/constants/preseason-schedule";
 import { useRouter } from "next/navigation";
 
 import { useState, useEffect } from "react";
@@ -59,10 +60,55 @@ export default function GamesPage() {
         awayStarter: g.awayStarterName,
         homeStarter: g.homeStarterName,
       }));
-      setGames(mapped);
+      // KBO API 결과 없으면 시범경기 데이터 fallback
+      if (mapped.length === 0) {
+        const dateStr = `${date.slice(0,4)}-${date.slice(4,6)}-${date.slice(6,8)}`;
+        const TEAM_ID: Record<string, number> = { LG:1, 두산:2, KT:3, SSG:4, NC:5, KIA:6, 롯데:7, 삼성:8, 한화:9, 키움:10 };
+        const preGames = PRESEASON_GAMES
+          .filter(g => g.date === dateStr)
+          .map((g, i) => ({
+            id: `pre-${dateStr}-${i}`,
+            awayTeamId: TEAM_ID[g.away] ?? 0,
+            homeTeamId: TEAM_ID[g.home] ?? 0,
+            awayScore: 0,
+            homeScore: 0,
+            status: "scheduled" as const,
+            time: "13:00",
+            stadium: g.venue,
+            inning: undefined,
+            awayStarter: "",
+            homeStarter: "",
+          }));
+        setGames(preGames);
+      } else {
+        setGames(mapped);
+      }
     } catch (e: any) {
-      setError(e.message);
-      setGames([]);
+      // 에러 시에도 시범경기 fallback
+      const dateStr = `${date.slice(0,4)}-${date.slice(4,6)}-${date.slice(6,8)}`;
+      const TEAM_ID: Record<string, number> = { LG:1, 두산:2, KT:3, SSG:4, NC:5, KIA:6, 롯데:7, 삼성:8, 한화:9, 키움:10 };
+      const preGames = PRESEASON_GAMES
+        .filter(g => g.date === dateStr)
+        .map((g, i) => ({
+          id: `pre-${dateStr}-${i}`,
+          awayTeamId: TEAM_ID[g.away] ?? 0,
+          homeTeamId: TEAM_ID[g.home] ?? 0,
+          awayScore: 0,
+          homeScore: 0,
+          status: "scheduled" as const,
+          time: "13:00",
+          stadium: g.venue,
+          inning: undefined,
+          awayStarter: "",
+          homeStarter: "",
+        }));
+      if (preGames.length > 0) {
+        setGames(preGames);
+        setError(null);
+      } else {
+        setError(e.message);
+        setGames([]);
+      }
     }
     setLoading(false);
   }
