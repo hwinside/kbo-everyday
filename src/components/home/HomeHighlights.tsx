@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { Play } from "lucide-react";
 import { getFavoritePlayers } from "@/lib/store/favorites";
-import ReelViewer, { preloadYTAPI, createYTPlayer } from "@/components/home/ReelViewer";
+import ReelViewer from "@/components/home/ReelViewer";
 
 interface VideoItem {
   id: string;
@@ -22,31 +22,6 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
   const [reelIndex, setReelIndex] = useState<number | null>(null);
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const ytPlayerRef = useRef<any>(null);
-
-  // YT API 미리 로드
-  useEffect(() => { preloadYTAPI(); }, []);
-
-  // 썸네일 탭: 유저 제스처 안에서 Player 생성
-  const handleThumbnailTap = useCallback(async (index: number) => {
-    // 숨겨진 div를 미리 DOM에 삽입
-    const container = document.createElement("div");
-    container.id = "reel-yt-player";
-    container.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;z-index:99;background:black;";
-    document.body.appendChild(container);
-
-    try {
-      const player = await createYTPlayer(
-        "reel-yt-player",
-        videos[index].id,
-      );
-      ytPlayerRef.current = player;
-    } catch {
-      // fallback: container 제거
-      container.remove();
-    }
-    setReelIndex(index);
-  }, [videos]);
 
   useEffect(() => {
     if (!team) { setLoading(false); return; }
@@ -84,7 +59,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
             key={v.id}
             className="flex-shrink-0 cursor-pointer"
             style={{ width: "140px", scrollSnapAlign: "start" }}
-            onClick={() => handleThumbnailTap(i)}
+            onClick={() => setReelIndex(i)}
           >
             <div className="relative rounded-xl overflow-hidden" style={{ aspectRatio: "9/16", width: "140px" }}>
               <img src={v.thumbnail} alt={v.title} className="w-full h-full object-cover" />
@@ -109,8 +84,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
         <ReelViewer
           videos={videos}
           startIndex={reelIndex}
-          ytPlayer={ytPlayerRef.current}
-          onClose={() => { setReelIndex(null); ytPlayerRef.current = null; }}
+          onClose={() => setReelIndex(null)}
         />
       )}
     </section>
