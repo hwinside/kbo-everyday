@@ -131,8 +131,15 @@ function RankingContent() {
         <div className="text-center py-20 text-text-tertiary">로딩 중...</div>
       ) : (
         <div className="space-y-2">
+          {highlightPlayer && !players.some((p: any) => p.kboId === highlightPlayer || p.playerId === highlightPlayer || p.name === decodeURIComponent(highlightPlayer)) && (
+            <GlassCard className="p-4 mb-4 border border-accent/30">
+              <p className="text-sm text-text-secondary text-center">
+                해당 선수는 현재 Top {players.length} 밖에 위치해 있습니다
+              </p>
+            </GlassCard>
+          )}
           {players.map((p, i) => {
-            const isHighlight = highlightPlayer && (p.kboId === highlightPlayer || p.playerId === highlightPlayer);
+            const isHighlight = highlightPlayer && (p.kboId === highlightPlayer || p.playerId === highlightPlayer || p.name === decodeURIComponent(highlightPlayer));
             const val = getValue(p);
             const teamId = p.teamId || 0;
             
