@@ -5,8 +5,7 @@
     "avg": "1.000",
     "games": 2,
     "playerId": "62558",
-    "rank": 1,
-    "kboId": "62558"
+    "rank": 1
   },
   {
     "name": "이승현",
@@ -14,8 +13,7 @@
     "avg": "1.000",
     "games": 4,
     "playerId": "55712",
-    "rank": 2,
-    "kboId": "55712"
+    "rank": 2
   },
   {
     "name": "장규현",
@@ -23,17 +21,15 @@
     "avg": "1.000",
     "games": 2,
     "playerId": "51762",
-    "rank": 3,
-    "kboId": "51762"
+    "rank": 3
   },
   {
     "name": "박건우",
     "team": "롯데",
     "avg": "0.667",
     "games": 6,
-    "playerId": "55046",
-    "rank": 4,
-    "kboId": "55046"
+    "playerId": "55509",
+    "rank": 4
   },
   {
     "name": "김태윤",
@@ -41,8 +37,7 @@
     "avg": "0.500",
     "games": 8,
     "playerId": "52803",
-    "rank": 5,
-    "kboId": "52803"
+    "rank": 5
   },
   {
     "name": "정현승",
@@ -50,8 +45,7 @@
     "avg": "0.500",
     "games": 3,
     "playerId": "54815",
-    "rank": 6,
-    "kboId": "54815"
+    "rank": 6
   },
   {
     "name": "이재상",
@@ -59,8 +53,7 @@
     "avg": "0.500",
     "games": 2,
     "playerId": "54305",
-    "rank": 7,
-    "kboId": "54305"
+    "rank": 7
   },
   {
     "name": "김정호",
@@ -68,8 +61,7 @@
     "avg": "0.444",
     "games": 8,
     "playerId": "51903",
-    "rank": 8,
-    "kboId": "51903"
+    "rank": 8
   },
   {
     "name": "박지훈",
@@ -77,8 +69,7 @@
     "avg": "0.417",
     "games": 37,
     "playerId": "50204",
-    "rank": 9,
-    "kboId": "50204"
+    "rank": 9
   },
   {
     "name": "김현종",
@@ -86,8 +77,7 @@
     "avg": "0.400",
     "games": 10,
     "playerId": "54166",
-    "rank": 10,
-    "kboId": "54166"
+    "rank": 10
   },
   {
     "name": "홍성호",
@@ -95,8 +85,7 @@
     "avg": "0.346",
     "games": 9,
     "playerId": "66233",
-    "rank": 11,
-    "kboId": "66233"
+    "rank": 11
   },
   {
     "name": "이호연",
@@ -104,8 +93,7 @@
     "avg": "0.343",
     "games": 32,
     "playerId": "68504",
-    "rank": 12,
-    "kboId": "68504"
+    "rank": 12
   },
   {
     "name": "박찬형",
@@ -113,8 +101,7 @@
     "avg": "0.341",
     "games": 48,
     "playerId": "55530",
-    "rank": 13,
-    "kboId": "55530"
+    "rank": 13
   },
   {
     "name": "에레디아",
@@ -122,26 +109,55 @@
     "avg": "0.339",
     "games": 96,
     "playerId": "53827",
-    "rank": 14,
-    "kboId": "53827"
+    "rank": 14
   },
   {
     "name": "양의지",
     "team": "두산",
+    "kboId": "76232",
+    "playerId": "76232",
     "avg": "0.337",
     "games": 130,
-    "playerId": "76232",
-    "rank": 15,
-    "kboId": "76232"
+    "pa": 517,
+    "ab": 454,
+    "runs": 56,
+    "hits": 153,
+    "doubles": 27,
+    "triples": 1,
+    "hr": 20,
+    "rbi": 242,
+    "sb": 89,
+    "bb": 50,
+    "hbp": 7,
+    "so": 63,
+    "slg": "0.533",
+    "obp": "0.406",
+    "ops": "0.939",
+    "rank": 15
   },
   {
     "name": "안현민",
     "team": "KT",
+    "kboId": "52001",
+    "playerId": "52001",
     "avg": "0.334",
     "games": 112,
-    "playerId": "52001",
-    "rank": 16,
-    "kboId": "52001"
+    "pa": 482,
+    "ab": 395,
+    "runs": 72,
+    "hits": 132,
+    "doubles": 19,
+    "triples": 4,
+    "hr": 22,
+    "rbi": 225,
+    "sb": 80,
+    "bb": 75,
+    "hbp": 9,
+    "so": 72,
+    "slg": "0.570",
+    "obp": "0.448",
+    "ops": "1.018",
+    "rank": 16
   },
   {
     "name": "김태근",
@@ -149,8 +165,7 @@
     "avg": "0.333",
     "games": 11,
     "playerId": "69207",
-    "rank": 17,
-    "kboId": "69207"
+    "rank": 17
   },
   {
     "name": "주효상",
@@ -158,26 +173,55 @@
     "avg": "0.333",
     "games": 8,
     "playerId": "66354",
-    "rank": 18,
-    "kboId": "66354"
+    "rank": 18
   },
   {
     "name": "김성윤",
     "team": "삼성",
+    "kboId": "",
+    "playerId": "",
     "avg": "0.331",
     "games": 127,
-    "playerId": "67449",
-    "rank": 19,
-    "kboId": "67449"
+    "pa": 538,
+    "ab": 456,
+    "runs": 92,
+    "hits": 151,
+    "doubles": 29,
+    "triples": 9,
+    "hr": 6,
+    "rbi": 216,
+    "sb": 61,
+    "bb": 65,
+    "hbp": 5,
+    "so": 54,
+    "slg": "0.474",
+    "obp": "0.419",
+    "ops": "0.893",
+    "rank": 19
   },
   {
     "name": "레이예스",
     "team": "롯데",
+    "kboId": "54529",
+    "playerId": "54529",
     "avg": "0.326",
     "games": 144,
-    "playerId": "54529",
-    "rank": 20,
-    "kboId": "54529"
+    "pa": 643,
+    "ab": 573,
+    "runs": 75,
+    "hits": 187,
+    "doubles": 44,
+    "triples": 1,
+    "hr": 13,
+    "rbi": 272,
+    "sb": 107,
+    "bb": 58,
+    "hbp": 3,
+    "so": 66,
+    "slg": "0.475",
+    "obp": "0.386",
+    "ops": "0.861",
+    "rank": 20
   },
   {
     "name": "김선빈",
@@ -185,26 +229,55 @@
     "avg": "0.321",
     "games": 84,
     "playerId": "78603",
-    "rank": 21,
-    "kboId": "78603"
+    "rank": 21
   },
   {
     "name": "문현빈",
     "team": "한화",
+    "kboId": "53764",
+    "playerId": "53764",
     "avg": "0.320",
     "games": 141,
-    "playerId": "53764",
-    "rank": 22,
-    "kboId": "53764"
+    "pa": 592,
+    "ab": 528,
+    "runs": 71,
+    "hits": 169,
+    "doubles": 30,
+    "triples": 2,
+    "hr": 12,
+    "rbi": 239,
+    "sb": 80,
+    "bb": 38,
+    "hbp": 10,
+    "so": 82,
+    "slg": "0.453",
+    "obp": "0.370",
+    "ops": "0.823",
+    "rank": 22
   },
   {
     "name": "구자욱",
     "team": "삼성",
+    "kboId": "62404",
+    "playerId": "62404",
     "avg": "0.319",
     "games": 142,
-    "playerId": "62404",
-    "rank": 23,
-    "kboId": "62404"
+    "pa": 616,
+    "ab": 529,
+    "runs": 106,
+    "hits": 169,
+    "doubles": 43,
+    "triples": 2,
+    "hr": 19,
+    "rbi": 273,
+    "sb": 96,
+    "bb": 73,
+    "hbp": 5,
+    "so": 91,
+    "slg": "0.516",
+    "obp": "0.402",
+    "ops": "0.918",
+    "rank": 23
   },
   {
     "name": "안재석",
@@ -212,35 +285,79 @@
     "avg": "0.319",
     "games": 35,
     "playerId": "51203",
-    "rank": 24,
-    "kboId": "51203"
+    "rank": 24
   },
   {
     "name": "송성문",
     "team": "키움",
+    "kboId": "",
+    "playerId": "",
     "avg": "0.315",
     "games": 144,
-    "playerId": "65357",
-    "rank": 25,
-    "kboId": "65357"
+    "pa": 646,
+    "ab": 574,
+    "runs": 103,
+    "hits": 181,
+    "doubles": 37,
+    "triples": 4,
+    "hr": 26,
+    "rbi": 304,
+    "sb": 90,
+    "bb": 68,
+    "hbp": 1,
+    "so": 96,
+    "slg": "0.530",
+    "obp": "0.387",
+    "ops": "0.917",
+    "rank": 25
   },
   {
     "name": "디아즈",
     "team": "삼성",
+    "kboId": "54400",
+    "playerId": "54400",
     "avg": "0.314",
     "games": 144,
-    "playerId": "54400",
-    "rank": 26,
-    "kboId": "54400"
+    "pa": 628,
+    "ab": 551,
+    "runs": 93,
+    "hits": 173,
+    "doubles": 32,
+    "triples": 0,
+    "hr": 50,
+    "rbi": 355,
+    "sb": 158,
+    "bb": 60,
+    "hbp": 6,
+    "so": 100,
+    "slg": "0.644",
+    "obp": "0.381",
+    "ops": "1.025",
+    "rank": 26
   },
   {
     "name": "신민재",
     "team": "LG",
+    "kboId": "65207",
+    "playerId": "65207",
     "avg": "0.313",
     "games": 135,
-    "playerId": "65207",
-    "rank": 27,
-    "kboId": "65207"
+    "pa": 538,
+    "ab": 463,
+    "runs": 87,
+    "hits": 145,
+    "doubles": 15,
+    "triples": 7,
+    "hr": 1,
+    "rbi": 177,
+    "sb": 61,
+    "bb": 62,
+    "hbp": 3,
+    "so": 57,
+    "slg": "0.382",
+    "obp": "0.395",
+    "ops": "0.777",
+    "rank": 27
   },
   {
     "name": "오스틴 딘",
@@ -248,8 +365,7 @@
     "avg": "0.313",
     "games": 116,
     "playerId": "53123",
-    "rank": 28,
-    "kboId": "53123"
+    "rank": 28
   },
   {
     "name": "리베라토",
@@ -257,8 +373,7 @@
     "avg": "0.313",
     "games": 62,
     "playerId": "55703",
-    "rank": 29,
-    "kboId": "55703"
+    "rank": 29
   },
   {
     "name": "김한별",
@@ -266,17 +381,31 @@
     "avg": "0.313",
     "games": 76,
     "playerId": "50902",
-    "rank": 30,
-    "kboId": "50902"
+    "rank": 30
   },
   {
-    "name": "이주형",
-    "team": "키움",
+    "name": "오스틴",
+    "team": "LG",
+    "kboId": "",
+    "playerId": "",
     "avg": "0.313",
-    "games": 11,
-    "playerId": "52901",
-    "rank": 31,
-    "kboId": "52901"
+    "games": 116,
+    "pa": 499,
+    "ab": 425,
+    "runs": 82,
+    "hits": 133,
+    "doubles": 25,
+    "triples": 1,
+    "hr": 31,
+    "rbi": 253,
+    "sb": 95,
+    "bb": 61,
+    "hbp": 2,
+    "so": 62,
+    "slg": "0.595",
+    "obp": "0.393",
+    "ops": "0.988",
+    "rank": 31
   },
   {
     "name": "김도영",
@@ -284,26 +413,55 @@
     "avg": "0.309",
     "games": 30,
     "playerId": "52605",
-    "rank": 32,
-    "kboId": "52605"
+    "rank": 32
   },
   {
     "name": "최형우",
     "team": "KIA",
+    "kboId": "72443",
+    "playerId": "72443",
     "avg": "0.307",
     "games": 133,
-    "playerId": "72443",
-    "rank": 33,
-    "kboId": "72443"
+    "pa": 549,
+    "ab": 469,
+    "runs": 74,
+    "hits": 144,
+    "doubles": 30,
+    "triples": 1,
+    "hr": 24,
+    "rbi": 248,
+    "sb": 86,
+    "bb": 67,
+    "hbp": 8,
+    "so": 98,
+    "slg": "0.529",
+    "obp": "0.399",
+    "ops": "0.928",
+    "rank": 33
   },
   {
     "name": "문성주",
     "team": "LG",
+    "kboId": "68119",
+    "playerId": "68119",
     "avg": "0.305",
     "games": 135,
-    "playerId": "68119",
-    "rank": 34,
-    "kboId": "68119"
+    "pa": 542,
+    "ab": 475,
+    "runs": 57,
+    "hits": 145,
+    "doubles": 20,
+    "triples": 2,
+    "hr": 3,
+    "rbi": 178,
+    "sb": 70,
+    "bb": 54,
+    "hbp": 4,
+    "so": 59,
+    "slg": "0.375",
+    "obp": "0.375",
+    "ops": "0.750",
+    "rank": 34
   },
   {
     "name": "현원회",
@@ -311,35 +469,79 @@
     "avg": "0.305",
     "games": 21,
     "playerId": "50840",
-    "rank": 35,
-    "kboId": "50840"
+    "rank": 35
   },
   {
     "name": "박민우",
     "team": "NC",
+    "kboId": "62907",
+    "playerId": "62907",
     "avg": "0.302",
     "games": 117,
-    "playerId": "62907",
-    "rank": 36,
-    "kboId": "62907"
+    "pa": 468,
+    "ab": 404,
+    "runs": 64,
+    "hits": 122,
+    "doubles": 25,
+    "triples": 8,
+    "hr": 3,
+    "rbi": 172,
+    "sb": 67,
+    "bb": 44,
+    "hbp": 12,
+    "so": 64,
+    "slg": "0.426",
+    "obp": "0.384",
+    "ops": "0.810",
+    "rank": 36
   },
   {
     "name": "케이브",
     "team": "두산",
+    "kboId": "",
+    "playerId": "",
     "avg": "0.299",
     "games": 136,
-    "playerId": "55208",
-    "rank": 37,
-    "kboId": "55208"
+    "pa": 593,
+    "ab": 538,
+    "runs": 72,
+    "hits": 161,
+    "doubles": 28,
+    "triples": 6,
+    "hr": 16,
+    "rbi": 249,
+    "sb": 87,
+    "bb": 43,
+    "hbp": 4,
+    "so": 116,
+    "slg": "0.463",
+    "obp": "0.351",
+    "ops": "0.814",
+    "rank": 37
   },
   {
     "name": "김현수",
     "team": "LG",
+    "kboId": "76290",
+    "playerId": "76290",
     "avg": "0.298",
     "games": 140,
-    "playerId": "56664",
-    "rank": 38,
-    "kboId": "56664"
+    "pa": 552,
+    "ab": 483,
+    "runs": 66,
+    "hits": 144,
+    "doubles": 24,
+    "triples": 0,
+    "hr": 12,
+    "rbi": 204,
+    "sb": 90,
+    "bb": 64,
+    "hbp": 4,
+    "so": 73,
+    "slg": "0.422",
+    "obp": "0.384",
+    "ops": "0.806",
+    "rank": 38
   },
   {
     "name": "하주석",
@@ -347,8 +549,7 @@
     "avg": "0.297",
     "games": 95,
     "playerId": "62700",
-    "rank": 39,
-    "kboId": "62700"
+    "rank": 39
   },
   {
     "name": "고종욱",
@@ -356,8 +557,7 @@
     "avg": "0.296",
     "games": 46,
     "playerId": "61353",
-    "rank": 40,
-    "kboId": "61353"
+    "rank": 40
   },
   {
     "name": "데이비슨",
@@ -365,35 +565,63 @@
     "avg": "0.293",
     "games": 112,
     "playerId": "54944",
-    "rank": 41,
-    "kboId": "54944"
+    "rank": 41
   },
   {
     "name": "전준우",
     "team": "롯데",
+    "kboId": "78513",
+    "playerId": "78513",
     "avg": "0.293",
     "games": 114,
-    "playerId": "78513",
-    "rank": 42,
-    "kboId": "78513"
+    "pa": 472,
+    "ab": 410,
+    "runs": 50,
+    "hits": 120,
+    "doubles": 26,
+    "triples": 1,
+    "hr": 8,
+    "rbi": 172,
+    "sb": 70,
+    "bb": 44,
+    "hbp": 9,
+    "so": 71,
+    "slg": "0.420",
+    "obp": "0.369",
+    "ops": "0.789",
+    "rank": 42
   },
   {
     "name": "김주원",
     "team": "NC",
+    "kboId": "51907",
+    "playerId": "51907",
     "avg": "0.289",
     "games": 144,
-    "playerId": "51907",
-    "rank": 43,
-    "kboId": "51907"
+    "pa": 624,
+    "ab": 539,
+    "runs": 98,
+    "hits": 156,
+    "doubles": 26,
+    "triples": 8,
+    "hr": 15,
+    "rbi": 243,
+    "sb": 65,
+    "bb": 63,
+    "hbp": 16,
+    "so": 111,
+    "slg": "0.451",
+    "obp": "0.379",
+    "ops": "0.830",
+    "rank": 43
   },
   {
     "name": "박건우",
     "team": "NC",
     "avg": "0.289",
     "games": 124,
-    "playerId": "55046",
-    "rank": 44,
-    "kboId": "55046"
+    "playerId": "79215",
+    "rank": 44
   },
   {
     "name": "손아섭",
@@ -401,17 +629,31 @@
     "avg": "0.288",
     "games": 111,
     "playerId": "77532",
-    "rank": 45,
-    "kboId": "77532"
+    "rank": 45
   },
   {
     "name": "채은성",
     "team": "한화",
+    "kboId": "79192",
+    "playerId": "79192",
     "avg": "0.288",
     "games": 132,
-    "playerId": "79192",
-    "rank": 46,
-    "kboId": "79192"
+    "pa": 527,
+    "ab": 480,
+    "runs": 54,
+    "hits": 138,
+    "doubles": 27,
+    "triples": 1,
+    "hr": 19,
+    "rbi": 224,
+    "sb": 88,
+    "bb": 31,
+    "hbp": 13,
+    "so": 96,
+    "slg": "0.467",
+    "obp": "0.347",
+    "ops": "0.814",
+    "rank": 46
   },
   {
     "name": "홍창기",
@@ -419,8 +661,7 @@
     "avg": "0.287",
     "games": 51,
     "playerId": "66108",
-    "rank": 47,
-    "kboId": "66108"
+    "rank": 47
   },
   {
     "name": "류효승",
@@ -428,8 +669,7 @@
     "avg": "0.287",
     "games": 27,
     "playerId": "50868",
-    "rank": 48,
-    "kboId": "50868"
+    "rank": 48
   },
   {
     "name": "박승규",
@@ -437,8 +677,7 @@
     "avg": "0.287",
     "games": 64,
     "playerId": "69418",
-    "rank": 49,
-    "kboId": "69418"
+    "rank": 49
   },
   {
     "name": "김민혁",
@@ -446,8 +685,7 @@
     "avg": "0.287",
     "games": 106,
     "playerId": "64004",
-    "rank": 50,
-    "kboId": "64004"
+    "rank": 50
   },
   {
     "name": "전민재",
@@ -455,17 +693,31 @@
     "avg": "0.287",
     "games": 101,
     "playerId": "68205",
-    "rank": 51,
-    "kboId": "68205"
+    "rank": 51
   },
   {
     "name": "박찬호",
     "team": "KIA",
+    "kboId": "64646",
+    "playerId": "64646",
     "avg": "0.287",
     "games": 134,
-    "playerId": "64646",
-    "rank": 52,
-    "kboId": "64646"
+    "pa": 595,
+    "ab": 516,
+    "runs": 75,
+    "hits": 148,
+    "doubles": 18,
+    "triples": 2,
+    "hr": 5,
+    "rbi": 185,
+    "sb": 42,
+    "bb": 62,
+    "hbp": 3,
+    "so": 69,
+    "slg": "0.359",
+    "obp": "0.363",
+    "ops": "0.722",
+    "rank": 52
   },
   {
     "name": "구본혁",
@@ -473,8 +725,7 @@
     "avg": "0.286",
     "games": 131,
     "playerId": "69100",
-    "rank": 53,
-    "kboId": "69100"
+    "rank": 53
   },
   {
     "name": "최재훈",
@@ -482,8 +733,7 @@
     "avg": "0.286",
     "games": 121,
     "playerId": "78288",
-    "rank": 54,
-    "kboId": "78288"
+    "rank": 54
   },
   {
     "name": "김도환",
@@ -491,8 +741,7 @@
     "avg": "0.286",
     "games": 6,
     "playerId": "69442",
-    "rank": 55,
-    "kboId": "69442"
+    "rank": 55
   },
   {
     "name": "박재엽",
@@ -500,17 +749,31 @@
     "avg": "0.286",
     "games": 9,
     "playerId": "55563",
-    "rank": 56,
-    "kboId": "55563"
+    "rank": 56
   },
   {
     "name": "최지훈",
     "team": "SSG",
+    "kboId": "",
+    "playerId": "",
     "avg": "0.284",
     "games": 140,
-    "playerId": "50854",
-    "rank": 57,
-    "kboId": "50854"
+    "pa": 574,
+    "ab": 517,
+    "runs": 66,
+    "hits": 147,
+    "doubles": 16,
+    "triples": 4,
+    "hr": 7,
+    "rbi": 192,
+    "sb": 45,
+    "bb": 43,
+    "hbp": 5,
+    "so": 87,
+    "slg": "0.371",
+    "obp": "0.342",
+    "ops": "0.713",
+    "rank": 57
   },
   {
     "name": "박준순",
@@ -518,17 +781,31 @@
     "avg": "0.284",
     "games": 91,
     "playerId": "55252",
-    "rank": 58,
-    "kboId": "55252"
+    "rank": 58
   },
   {
     "name": "허경민",
     "team": "KT",
+    "kboId": "79240",
+    "playerId": "79240",
     "avg": "0.283",
     "games": 114,
-    "playerId": "79240",
-    "rank": 59,
-    "kboId": "79240"
+    "pa": 481,
+    "ab": 420,
+    "runs": 47,
+    "hits": 119,
+    "doubles": 18,
+    "triples": 0,
+    "hr": 4,
+    "rbi": 149,
+    "sb": 44,
+    "bb": 39,
+    "hbp": 15,
+    "so": 35,
+    "slg": "0.355",
+    "obp": "0.362",
+    "ops": "0.717",
+    "rank": 59
   },
   {
     "name": "김호령",
@@ -536,8 +813,7 @@
     "avg": "0.283",
     "games": 105,
     "playerId": "65653",
-    "rank": 60,
-    "kboId": "65653"
+    "rank": 60
   },
   {
     "name": "최원영",
@@ -545,8 +821,7 @@
     "avg": "0.282",
     "games": 119,
     "playerId": "52103",
-    "rank": 61,
-    "kboId": "52103"
+    "rank": 61
   },
   {
     "name": "윤동희",
@@ -554,8 +829,7 @@
     "avg": "0.282",
     "games": 97,
     "playerId": "52591",
-    "rank": 62,
-    "kboId": "52591"
+    "rank": 62
   },
   {
     "name": "김지찬",
@@ -563,26 +837,55 @@
     "avg": "0.281",
     "games": 90,
     "playerId": "50458",
-    "rank": 63,
-    "kboId": "50458"
+    "rank": 63
   },
   {
     "name": "류지혁",
     "team": "삼성",
+    "kboId": "62234",
+    "playerId": "62234",
     "avg": "0.280",
     "games": 129,
-    "playerId": "62234",
-    "rank": 64,
-    "kboId": "62234"
+    "pa": 464,
+    "ab": 400,
+    "runs": 54,
+    "hits": 112,
+    "doubles": 14,
+    "triples": 0,
+    "hr": 1,
+    "rbi": 129,
+    "sb": 37,
+    "bb": 33,
+    "hbp": 13,
+    "so": 73,
+    "slg": "0.323",
+    "obp": "0.351",
+    "ops": "0.674",
+    "rank": 64
   },
   {
     "name": "고명준",
     "team": "SSG",
+    "kboId": "51868",
+    "playerId": "51868",
     "avg": "0.278",
     "games": 130,
-    "playerId": "51868",
-    "rank": 65,
-    "kboId": "51868"
+    "pa": 500,
+    "ab": 471,
+    "runs": 46,
+    "hits": 131,
+    "doubles": 20,
+    "triples": 1,
+    "hr": 17,
+    "rbi": 204,
+    "sb": 64,
+    "bb": 20,
+    "hbp": 2,
+    "so": 99,
+    "slg": "0.433",
+    "obp": "0.306",
+    "ops": "0.739",
+    "rank": 65
   },
   {
     "name": "임종성",
@@ -590,26 +893,55 @@
     "avg": "0.277",
     "games": 33,
     "playerId": "54236",
-    "rank": 66,
-    "kboId": "54236"
+    "rank": 66
   },
   {
     "name": "박해민",
     "team": "LG",
+    "kboId": "67430",
+    "playerId": "67430",
     "avg": "0.276",
     "games": 144,
-    "playerId": "67430",
-    "rank": 67,
-    "kboId": "67430"
+    "pa": 544,
+    "ab": 442,
+    "runs": 80,
+    "hits": 122,
+    "doubles": 18,
+    "triples": 2,
+    "hr": 3,
+    "rbi": 153,
+    "sb": 43,
+    "bb": 68,
+    "hbp": 8,
+    "so": 94,
+    "slg": "0.346",
+    "obp": "0.379",
+    "ops": "0.725",
+    "rank": 67
   },
   {
     "name": "문보경",
     "team": "LG",
+    "kboId": "69102",
+    "playerId": "69102",
     "avg": "0.276",
     "games": 141,
-    "playerId": "69102",
-    "rank": 68,
-    "kboId": "69102"
+    "pa": 607,
+    "ab": 515,
+    "runs": 91,
+    "hits": 142,
+    "doubles": 21,
+    "triples": 1,
+    "hr": 24,
+    "rbi": 237,
+    "sb": 108,
+    "bb": 79,
+    "hbp": 4,
+    "so": 108,
+    "slg": "0.460",
+    "obp": "0.371",
+    "ops": "0.831",
+    "rank": 68
   },
   {
     "name": "최정원",
@@ -617,8 +949,7 @@
     "avg": "0.275",
     "games": 91,
     "playerId": "69992",
-    "rank": 69,
-    "kboId": "69992"
+    "rank": 69
   },
   {
     "name": "황재균",
@@ -626,8 +957,7 @@
     "avg": "0.275",
     "games": 112,
     "playerId": "76313",
-    "rank": 70,
-    "kboId": "76313"
+    "rank": 70
   },
   {
     "name": "윤도현",
@@ -635,17 +965,31 @@
     "avg": "0.275",
     "games": 40,
     "playerId": "52667",
-    "rank": 71,
-    "kboId": "52667"
+    "rank": 71
   },
   {
     "name": "최주환",
     "team": "키움",
+    "kboId": "76267",
+    "playerId": "76267",
     "avg": "0.275",
     "games": 120,
-    "playerId": "76267",
-    "rank": 72,
-    "kboId": "76267"
+    "pa": 506,
+    "ab": 459,
+    "runs": 45,
+    "hits": 126,
+    "doubles": 31,
+    "triples": 1,
+    "hr": 12,
+    "rbi": 195,
+    "sb": 74,
+    "bb": 36,
+    "hbp": 5,
+    "so": 66,
+    "slg": "0.425",
+    "obp": "0.330",
+    "ops": "0.755",
+    "rank": 72
   },
   {
     "name": "이진영",
@@ -653,17 +997,31 @@
     "avg": "0.274",
     "games": 115,
     "playerId": "66657",
-    "rank": 73,
-    "kboId": "66657"
+    "rank": 73
   },
   {
     "name": "박성한",
     "team": "SSG",
+    "kboId": "",
+    "playerId": "",
     "avg": "0.274",
     "games": 127,
-    "playerId": "67893",
-    "rank": 74,
-    "kboId": "67893"
+    "pa": 538,
+    "ab": 452,
+    "runs": 73,
+    "hits": 124,
+    "doubles": 23,
+    "triples": 2,
+    "hr": 7,
+    "rbi": 172,
+    "sb": 48,
+    "bb": 79,
+    "hbp": 3,
+    "so": 93,
+    "slg": "0.381",
+    "obp": "0.384",
+    "ops": "0.765",
+    "rank": 74
   },
   {
     "name": "유강남",
@@ -671,8 +1029,7 @@
     "avg": "0.274",
     "games": 110,
     "playerId": "61102",
-    "rank": 75,
-    "kboId": "61102"
+    "rank": 75
   },
   {
     "name": "한태양",
@@ -680,8 +1037,7 @@
     "avg": "0.274",
     "games": 108,
     "playerId": "52568",
-    "rank": 76,
-    "kboId": "52568"
+    "rank": 76
   },
   {
     "name": "박정우",
@@ -689,8 +1045,7 @@
     "avg": "0.274",
     "games": 53,
     "playerId": "67609",
-    "rank": 77,
-    "kboId": "67609"
+    "rank": 77
   },
   {
     "name": "황영묵",
@@ -698,17 +1053,31 @@
     "avg": "0.273",
     "games": 117,
     "playerId": "54795",
-    "rank": 78,
-    "kboId": "54795"
+    "rank": 78
   },
   {
     "name": "한유섬",
     "team": "SSG",
+    "kboId": "62895",
+    "playerId": "62895",
     "avg": "0.273",
     "games": 128,
-    "playerId": "62895",
-    "rank": 79,
-    "kboId": "62895"
+    "pa": 511,
+    "ab": 455,
+    "runs": 50,
+    "hits": 124,
+    "doubles": 24,
+    "triples": 0,
+    "hr": 15,
+    "rbi": 193,
+    "sb": 71,
+    "bb": 46,
+    "hbp": 7,
+    "so": 120,
+    "slg": "0.424",
+    "obp": "0.347",
+    "ops": "0.771",
+    "rank": 79
   },
   {
     "name": "전병우",
@@ -716,8 +1085,7 @@
     "avg": "0.273",
     "games": 59,
     "playerId": "65586",
-    "rank": 80,
-    "kboId": "65586"
+    "rank": 80
   },
   {
     "name": "플로리얼",
@@ -725,17 +1093,31 @@
     "avg": "0.271",
     "games": 65,
     "playerId": "55734",
-    "rank": 81,
-    "kboId": "55734"
+    "rank": 81
   },
   {
     "name": "고승민",
     "team": "롯데",
+    "kboId": "69517",
+    "playerId": "69517",
     "avg": "0.271",
     "games": 121,
-    "playerId": "69517",
-    "rank": 82,
-    "kboId": "69517"
+    "pa": 538,
+    "ab": 469,
+    "runs": 71,
+    "hits": 127,
+    "doubles": 21,
+    "triples": 2,
+    "hr": 4,
+    "rbi": 164,
+    "sb": 45,
+    "bb": 56,
+    "hbp": 3,
+    "so": 83,
+    "slg": "0.350",
+    "obp": "0.350",
+    "ops": "0.700",
+    "rank": 82
   },
   {
     "name": "노진혁",
@@ -743,17 +1125,31 @@
     "avg": "0.270",
     "games": 28,
     "playerId": "62931",
-    "rank": 83,
-    "kboId": "62931"
+    "rank": 83
   },
   {
     "name": "강민호",
     "team": "삼성",
+    "kboId": "74540",
+    "playerId": "74540",
     "avg": "0.269",
     "games": 127,
-    "playerId": "74540",
-    "rank": 84,
-    "kboId": "74540"
+    "pa": 465,
+    "ab": 412,
+    "runs": 37,
+    "hits": 111,
+    "doubles": 23,
+    "triples": 1,
+    "hr": 12,
+    "rbi": 172,
+    "sb": 71,
+    "bb": 38,
+    "hbp": 7,
+    "so": 69,
+    "slg": "0.417",
+    "obp": "0.336",
+    "ops": "0.753",
+    "rank": 84
   },
   {
     "name": "나성범",
@@ -761,8 +1157,7 @@
     "avg": "0.268",
     "games": 82,
     "playerId": "62947",
-    "rank": 85,
-    "kboId": "62947"
+    "rank": 85
   },
   {
     "name": "김동헌",
@@ -770,8 +1165,7 @@
     "avg": "0.268",
     "games": 49,
     "playerId": "53344",
-    "rank": 86,
-    "kboId": "53344"
+    "rank": 86
   },
   {
     "name": "서호철",
@@ -779,8 +1173,7 @@
     "avg": "0.266",
     "games": 103,
     "playerId": "69995",
-    "rank": 87,
-    "kboId": "69995"
+    "rank": 87
   },
   {
     "name": "석정우",
@@ -788,8 +1181,7 @@
     "avg": "0.265",
     "games": 27,
     "playerId": "52804",
-    "rank": 88,
-    "kboId": "52804"
+    "rank": 88
   },
   {
     "name": "강백호",
@@ -797,17 +1189,31 @@
     "avg": "0.265",
     "games": 95,
     "playerId": "68050",
-    "rank": 89,
-    "kboId": "68050"
+    "rank": 89
   },
   {
     "name": "오선우",
     "team": "KIA",
+    "kboId": "69636",
+    "playerId": "69636",
     "avg": "0.265",
     "games": 124,
-    "playerId": "69636",
-    "rank": 90,
-    "kboId": "69636"
+    "pa": 474,
+    "ab": 437,
+    "runs": 58,
+    "hits": 116,
+    "doubles": 17,
+    "triples": 1,
+    "hr": 18,
+    "rbi": 189,
+    "sb": 56,
+    "bb": 34,
+    "hbp": 3,
+    "so": 158,
+    "slg": "0.432",
+    "obp": "0.323",
+    "ops": "0.755",
+    "rank": 90
   },
   {
     "name": "김석환",
@@ -815,8 +1221,7 @@
     "avg": "0.265",
     "games": 47,
     "playerId": "67610",
-    "rank": 91,
-    "kboId": "67610"
+    "rank": 91
   },
   {
     "name": "박관우",
@@ -824,8 +1229,7 @@
     "avg": "0.264",
     "games": 39,
     "playerId": "55164",
-    "rank": 92,
-    "kboId": "55164"
+    "rank": 92
   },
   {
     "name": "안상현",
@@ -833,17 +1237,15 @@
     "avg": "0.264",
     "games": 102,
     "playerId": "66864",
-    "rank": 93,
-    "kboId": "66864"
+    "rank": 93
   },
   {
     "name": "박민석",
     "team": "KT",
     "avg": "0.263",
     "games": 19,
-    "playerId": "55004",
-    "rank": 94,
-    "kboId": "55004"
+    "playerId": "69056",
+    "rank": 94
   },
   {
     "name": "정현창",
@@ -851,8 +1253,7 @@
     "avg": "0.263",
     "games": 16,
     "playerId": "55926",
-    "rank": 95,
-    "kboId": "55926"
+    "rank": 95
   },
   {
     "name": "박계범",
@@ -860,8 +1261,7 @@
     "avg": "0.263",
     "games": 94,
     "playerId": "64468",
-    "rank": 96,
-    "kboId": "64468"
+    "rank": 96
   },
   {
     "name": "오명진",
@@ -869,8 +1269,7 @@
     "avg": "0.263",
     "games": 107,
     "playerId": "50208",
-    "rank": 97,
-    "kboId": "50208"
+    "rank": 97
   },
   {
     "name": "변상권",
@@ -878,8 +1277,7 @@
     "avg": "0.263",
     "games": 12,
     "playerId": "68305",
-    "rank": 98,
-    "kboId": "68305"
+    "rank": 98
   },
   {
     "name": "스티븐슨",
@@ -887,8 +1285,7 @@
     "avg": "0.262",
     "games": 39,
     "playerId": "55013",
-    "rank": 99,
-    "kboId": "55013"
+    "rank": 99
   },
   {
     "name": "장두성",
@@ -896,8 +1293,7 @@
     "avg": "0.262",
     "games": 118,
     "playerId": "68507",
-    "rank": 100,
-    "kboId": "68507"
+    "rank": 100
   },
   {
     "name": "김태연",
@@ -905,8 +1301,7 @@
     "avg": "0.261",
     "games": 120,
     "playerId": "66704",
-    "rank": 101,
-    "kboId": "66704"
+    "rank": 101
   },
   {
     "name": "이도윤",
@@ -914,17 +1309,31 @@
     "avg": "0.260",
     "games": 113,
     "playerId": "65703",
-    "rank": 102,
-    "kboId": "65703"
+    "rank": 102
   },
   {
     "name": "노시환",
     "team": "한화",
+    "kboId": "69737",
+    "playerId": "69737",
     "avg": "0.260",
     "games": 144,
-    "playerId": "69737",
-    "rank": 103,
-    "kboId": "69737"
+    "pa": 624,
+    "ab": 539,
+    "runs": 97,
+    "hits": 140,
+    "doubles": 28,
+    "triples": 2,
+    "hr": 32,
+    "rbi": 268,
+    "sb": 101,
+    "bb": 70,
+    "hbp": 11,
+    "so": 125,
+    "slg": "0.497",
+    "obp": "0.354",
+    "ops": "0.851",
+    "rank": 103
   },
   {
     "name": "최인호",
@@ -932,8 +1341,7 @@
     "avg": "0.259",
     "games": 78,
     "playerId": "50707",
-    "rank": 104,
-    "kboId": "50707"
+    "rank": 104
   },
   {
     "name": "양도근",
@@ -941,8 +1349,7 @@
     "avg": "0.259",
     "games": 116,
     "playerId": "54408",
-    "rank": 105,
-    "kboId": "54408"
+    "rank": 105
   },
   {
     "name": "이정훈",
@@ -950,8 +1357,7 @@
     "avg": "0.258",
     "games": 59,
     "playerId": "67644",
-    "rank": 106,
-    "kboId": "67644"
+    "rank": 106
   },
   {
     "name": "김태군",
@@ -959,17 +1365,31 @@
     "avg": "0.258",
     "games": 100,
     "playerId": "78122",
-    "rank": 107,
-    "kboId": "78122"
+    "rank": 107
   },
   {
     "name": "정수빈",
     "team": "두산",
+    "kboId": "79231",
+    "playerId": "79231",
     "avg": "0.258",
     "games": 132,
-    "playerId": "79231",
-    "rank": 108,
-    "kboId": "79231"
+    "pa": 546,
+    "ab": 462,
+    "runs": 89,
+    "hits": 119,
+    "doubles": 16,
+    "triples": 4,
+    "hr": 6,
+    "rbi": 161,
+    "sb": 38,
+    "bb": 61,
+    "hbp": 11,
+    "so": 57,
+    "slg": "0.348",
+    "obp": "0.355",
+    "ops": "0.703",
+    "rank": 108
   },
   {
     "name": "오윤석",
@@ -977,8 +1397,7 @@
     "avg": "0.256",
     "games": 77,
     "playerId": "64504",
-    "rank": 109,
-    "kboId": "64504"
+    "rank": 109
   },
   {
     "name": "황성빈",
@@ -986,17 +1405,31 @@
     "avg": "0.256",
     "games": 79,
     "playerId": "50500",
-    "rank": 110,
-    "kboId": "50500"
+    "rank": 110
   },
   {
     "name": "이재현",
     "team": "삼성",
+    "kboId": "",
+    "playerId": "",
     "avg": "0.254",
     "games": 139,
-    "playerId": "52415",
-    "rank": 111,
-    "kboId": "52415"
+    "pa": 555,
+    "ab": 457,
+    "runs": 82,
+    "hits": 116,
+    "doubles": 29,
+    "triples": 1,
+    "hr": 16,
+    "rbi": 195,
+    "sb": 67,
+    "bb": 69,
+    "hbp": 11,
+    "so": 119,
+    "slg": "0.427",
+    "obp": "0.360",
+    "ops": "0.787",
+    "rank": 111
   },
   {
     "name": "김상수",
@@ -1004,26 +1437,55 @@
     "avg": "0.254",
     "games": 113,
     "playerId": "79402",
-    "rank": 112,
-    "kboId": "79402"
+    "rank": 112
   },
   {
     "name": "오지환",
     "team": "LG",
+    "kboId": "79109",
+    "playerId": "79109",
     "avg": "0.253",
     "games": 127,
-    "playerId": "79109",
-    "rank": 113,
-    "kboId": "79109"
+    "pa": 472,
+    "ab": 419,
+    "runs": 57,
+    "hits": 106,
+    "doubles": 24,
+    "triples": 1,
+    "hr": 16,
+    "rbi": 180,
+    "sb": 62,
+    "bb": 37,
+    "hbp": 3,
+    "so": 115,
+    "slg": "0.430",
+    "obp": "0.314",
+    "ops": "0.744",
+    "rank": 113
   },
   {
     "name": "박동원",
     "team": "LG",
+    "kboId": "79365",
+    "playerId": "79365",
     "avg": "0.253",
     "games": 139,
-    "playerId": "79365",
-    "rank": 114,
-    "kboId": "79365"
+    "pa": 523,
+    "ab": 451,
+    "runs": 57,
+    "hits": 114,
+    "doubles": 25,
+    "triples": 0,
+    "hr": 22,
+    "rbi": 205,
+    "sb": 76,
+    "bb": 62,
+    "hbp": 2,
+    "so": 124,
+    "slg": "0.455",
+    "obp": "0.342",
+    "ops": "0.797",
+    "rank": 114
   },
   {
     "name": "카디네스",
@@ -1031,8 +1493,7 @@
     "avg": "0.253",
     "games": 86,
     "playerId": "54444",
-    "rank": 115,
-    "kboId": "54444"
+    "rank": 115
   },
   {
     "name": "박영빈",
@@ -1040,8 +1501,7 @@
     "avg": "0.250",
     "games": 16,
     "playerId": "50906",
-    "rank": 116,
-    "kboId": "50906"
+    "rank": 116
   },
   {
     "name": "오태양",
@@ -1049,8 +1509,7 @@
     "avg": "0.250",
     "games": 14,
     "playerId": "51996",
-    "rank": 117,
-    "kboId": "51996"
+    "rank": 117
   },
   {
     "name": "이우성",
@@ -1058,8 +1517,7 @@
     "avg": "0.250",
     "games": 105,
     "playerId": "63260",
-    "rank": 118,
-    "kboId": "63260"
+    "rank": 118
   },
   {
     "name": "손호영",
@@ -1067,8 +1525,7 @@
     "avg": "0.250",
     "games": 97,
     "playerId": "50150",
-    "rank": 119,
-    "kboId": "50150"
+    "rank": 119
   },
   {
     "name": "김병휘",
@@ -1076,8 +1533,7 @@
     "avg": "0.250",
     "games": 7,
     "playerId": "50304",
-    "rank": 120,
-    "kboId": "50304"
+    "rank": 120
   },
   {
     "name": "주성원",
@@ -1085,26 +1541,55 @@
     "avg": "0.250",
     "games": 58,
     "playerId": "69332",
-    "rank": 121,
-    "kboId": "69332"
+    "rank": 121
   },
   {
     "name": "김영웅",
     "team": "삼성",
+    "kboId": "52430",
+    "playerId": "52430",
     "avg": "0.249",
     "games": 125,
-    "playerId": "52430",
-    "rank": 122,
-    "kboId": "52430"
+    "pa": 499,
+    "ab": 446,
+    "runs": 66,
+    "hits": 111,
+    "doubles": 22,
+    "triples": 2,
+    "hr": 22,
+    "rbi": 203,
+    "sb": 72,
+    "bb": 48,
+    "hbp": 2,
+    "so": 143,
+    "slg": "0.455",
+    "obp": "0.323",
+    "ops": "0.778",
+    "rank": 122
   },
   {
     "name": "김휘집",
     "team": "NC",
+    "kboId": "",
+    "playerId": "",
     "avg": "0.249",
     "games": 142,
-    "playerId": "51344",
-    "rank": 123,
-    "kboId": "51344"
+    "pa": 500,
+    "ab": 429,
+    "runs": 64,
+    "hits": 107,
+    "doubles": 18,
+    "triples": 2,
+    "hr": 17,
+    "rbi": 180,
+    "sb": 56,
+    "bb": 40,
+    "hbp": 27,
+    "so": 89,
+    "slg": "0.420",
+    "obp": "0.349",
+    "ops": "0.769",
+    "rank": 123
   },
   {
     "name": "양석환",
@@ -1112,17 +1597,31 @@
     "avg": "0.248",
     "games": 72,
     "playerId": "64153",
-    "rank": 124,
-    "kboId": "64153"
+    "rank": 124
   },
   {
     "name": "장성우",
     "team": "KT",
+    "kboId": "78548",
+    "playerId": "78548",
     "avg": "0.247",
     "games": 129,
-    "playerId": "78548",
-    "rank": 125,
-    "kboId": "78548"
+    "pa": 480,
+    "ab": 413,
+    "runs": 44,
+    "hits": 102,
+    "doubles": 13,
+    "triples": 0,
+    "hr": 14,
+    "rbi": 157,
+    "sb": 58,
+    "bb": 55,
+    "hbp": 2,
+    "so": 96,
+    "slg": "0.380",
+    "obp": "0.333",
+    "ops": "0.713",
+    "rank": 125
   },
   {
     "name": "김기연",
@@ -1130,17 +1629,31 @@
     "avg": "0.247",
     "games": 100,
     "playerId": "66112",
-    "rank": 126,
-    "kboId": "66112"
+    "rank": 126
   },
   {
     "name": "권희동",
     "team": "NC",
+    "kboId": "63963",
+    "playerId": "63963",
     "avg": "0.246",
     "games": 136,
-    "playerId": "63963",
-    "rank": 127,
-    "kboId": "63963"
+    "pa": 456,
+    "ab": 358,
+    "runs": 56,
+    "hits": 88,
+    "doubles": 24,
+    "triples": 0,
+    "hr": 6,
+    "rbi": 130,
+    "sb": 39,
+    "bb": 77,
+    "hbp": 11,
+    "so": 80,
+    "slg": "0.363",
+    "obp": "0.393",
+    "ops": "0.756",
+    "rank": 127
   },
   {
     "name": "정준재",
@@ -1148,8 +1661,7 @@
     "avg": "0.245",
     "games": 132,
     "playerId": "54812",
-    "rank": 128,
-    "kboId": "54812"
+    "rank": 128
   },
   {
     "name": "최정",
@@ -1157,8 +1669,7 @@
     "avg": "0.244",
     "games": 95,
     "playerId": "75847",
-    "rank": 129,
-    "kboId": "75847"
+    "rank": 129
   },
   {
     "name": "조수행",
@@ -1166,8 +1677,7 @@
     "avg": "0.244",
     "games": 108,
     "playerId": "66209",
-    "rank": 130,
-    "kboId": "66209"
+    "rank": 130
   },
   {
     "name": "임지열",
@@ -1175,8 +1685,7 @@
     "avg": "0.244",
     "games": 102,
     "playerId": "64340",
-    "rank": 131,
-    "kboId": "64340"
+    "rank": 131
   },
   {
     "name": "김민성",
@@ -1184,17 +1693,31 @@
     "avg": "0.243",
     "games": 96,
     "playerId": "77564",
-    "rank": 132,
-    "kboId": "77564"
+    "rank": 132
   },
   {
     "name": "최원준",
     "team": "NC",
+    "kboId": "67263",
+    "playerId": "67263",
     "avg": "0.242",
     "games": 126,
-    "playerId": "66606",
-    "rank": 133,
-    "kboId": "66606"
+    "pa": 449,
+    "ab": 413,
+    "runs": 62,
+    "hits": 100,
+    "doubles": 13,
+    "triples": 3,
+    "hr": 6,
+    "rbi": 137,
+    "sb": 44,
+    "bb": 23,
+    "hbp": 6,
+    "so": 71,
+    "slg": "0.332",
+    "obp": "0.289",
+    "ops": "0.621",
+    "rank": 133
   },
   {
     "name": "이호준",
@@ -1202,8 +1725,7 @@
     "avg": "0.242",
     "games": 99,
     "playerId": "54598",
-    "rank": 134,
-    "kboId": "54598"
+    "rank": 134
   },
   {
     "name": "이유찬",
@@ -1211,8 +1733,7 @@
     "avg": "0.242",
     "games": 89,
     "playerId": "67207",
-    "rank": 135,
-    "kboId": "67207"
+    "rank": 135
   },
   {
     "name": "김건희",
@@ -1220,8 +1741,7 @@
     "avg": "0.242",
     "games": 105,
     "playerId": "53312",
-    "rank": 136,
-    "kboId": "53312"
+    "rank": 136
   },
   {
     "name": "김재환",
@@ -1229,8 +1749,7 @@
     "avg": "0.241",
     "games": 103,
     "playerId": "78224",
-    "rank": 137,
-    "kboId": "78224"
+    "rank": 137
   },
   {
     "name": "스톤",
@@ -1238,17 +1757,55 @@
     "avg": "0.241",
     "games": 22,
     "playerId": "55326",
-    "rank": 138,
-    "kboId": "55326"
+    "rank": 138
   },
   {
     "name": "이주형",
     "team": "키움",
+    "kboId": "50167",
+    "playerId": "50167",
     "avg": "0.240",
     "games": 127,
-    "playerId": "52901",
-    "rank": 139,
-    "kboId": "52901"
+    "pa": 514,
+    "ab": 446,
+    "runs": 55,
+    "hits": 107,
+    "doubles": 22,
+    "triples": 1,
+    "hr": 11,
+    "rbi": 164,
+    "sb": 45,
+    "bb": 37,
+    "hbp": 28,
+    "so": 115,
+    "slg": "0.368",
+    "obp": "0.337",
+    "ops": "0.705",
+    "rank": 140
+  },
+  {
+    "name": "이주형",
+    "team": "키움",
+    "kboId": "50167",
+    "playerId": "50167",
+    "avg": "0.240",
+    "games": 127,
+    "pa": 514,
+    "ab": 446,
+    "runs": 55,
+    "hits": 107,
+    "doubles": 22,
+    "triples": 1,
+    "hr": 11,
+    "rbi": 164,
+    "sb": 45,
+    "bb": 37,
+    "hbp": 28,
+    "so": 115,
+    "slg": "0.368",
+    "obp": "0.337",
+    "ops": "0.705",
+    "rank": 140
   },
   {
     "name": "이지영",
@@ -1256,8 +1813,7 @@
     "avg": "0.239",
     "games": 76,
     "playerId": "79456",
-    "rank": 140,
-    "kboId": "79456"
+    "rank": 141
   },
   {
     "name": "로하스",
@@ -1265,8 +1821,7 @@
     "avg": "0.239",
     "games": 95,
     "playerId": "67025",
-    "rank": 141,
-    "kboId": "67025"
+    "rank": 142
   },
   {
     "name": "조형우",
@@ -1274,8 +1829,7 @@
     "avg": "0.238",
     "games": 102,
     "playerId": "51865",
-    "rank": 142,
-    "kboId": "51865"
+    "rank": 143
   },
   {
     "name": "천재환",
@@ -1283,8 +1837,7 @@
     "avg": "0.238",
     "games": 129,
     "playerId": "67905",
-    "rank": 143,
-    "kboId": "67905"
+    "rank": 144
   },
   {
     "name": "한승택",
@@ -1292,8 +1845,7 @@
     "avg": "0.238",
     "games": 15,
     "playerId": "63722",
-    "rank": 144,
-    "kboId": "63722"
+    "rank": 145
   },
   {
     "name": "오선진",
@@ -1301,8 +1853,7 @@
     "avg": "0.238",
     "games": 99,
     "playerId": "78756",
-    "rank": 145,
-    "kboId": "78756"
+    "rank": 146
   },
   {
     "name": "어준서",
@@ -1310,8 +1861,7 @@
     "avg": "0.238",
     "games": 116,
     "playerId": "55392",
-    "rank": 146,
-    "kboId": "55392"
+    "rank": 147
   },
   {
     "name": "천성호",
@@ -1319,8 +1869,7 @@
     "avg": "0.237",
     "games": 83,
     "playerId": "50054",
-    "rank": 147,
-    "kboId": "50054"
+    "rank": 148
   },
   {
     "name": "김태훈",
@@ -1328,8 +1877,7 @@
     "avg": "0.237",
     "games": 51,
     "playerId": "65040",
-    "rank": 148,
-    "kboId": "65040"
+    "rank": 149
   },
   {
     "name": "김동준",
@@ -1337,17 +1885,31 @@
     "avg": "0.237",
     "games": 36,
     "playerId": "52267",
-    "rank": 149,
-    "kboId": "52267"
+    "rank": 150
   },
   {
     "name": "위즈덤",
     "team": "KIA",
+    "kboId": "",
+    "playerId": "",
     "avg": "0.236",
     "games": 119,
-    "playerId": "55645",
-    "rank": 150,
-    "kboId": "55645"
+    "pa": 486,
+    "ab": 424,
+    "runs": 73,
+    "hits": 100,
+    "doubles": 20,
+    "triples": 1,
+    "hr": 35,
+    "rbi": 227,
+    "sb": 85,
+    "bb": 52,
+    "hbp": 4,
+    "so": 142,
+    "slg": "0.535",
+    "obp": "0.321",
+    "ops": "0.856",
+    "rank": 151
   },
   {
     "name": "강승호",
@@ -1355,8 +1917,7 @@
     "avg": "0.236",
     "games": 115,
     "playerId": "63123",
-    "rank": 151,
-    "kboId": "63123"
+    "rank": 152
   },
   {
     "name": "안주형",
@@ -1364,8 +1925,7 @@
     "avg": "0.235",
     "games": 8,
     "playerId": "66406",
-    "rank": 152,
-    "kboId": "66406"
+    "rank": 153
   },
   {
     "name": "김규성",
@@ -1373,8 +1933,7 @@
     "avg": "0.233",
     "games": 133,
     "playerId": "66614",
-    "rank": 153,
-    "kboId": "66614"
+    "rank": 154
   },
   {
     "name": "임병욱",
@@ -1382,8 +1941,7 @@
     "avg": "0.233",
     "games": 52,
     "playerId": "64346",
-    "rank": 154,
-    "kboId": "64346"
+    "rank": 155
   },
   {
     "name": "김태진",
@@ -1391,8 +1949,7 @@
     "avg": "0.233",
     "games": 94,
     "playerId": "64984",
-    "rank": 155,
-    "kboId": "64984"
+    "rank": 156
   },
   {
     "name": "오영수",
@@ -1400,8 +1957,7 @@
     "avg": "0.232",
     "games": 67,
     "playerId": "68904",
-    "rank": 156,
-    "kboId": "68904"
+    "rank": 157
   },
   {
     "name": "김형준",
@@ -1409,8 +1965,7 @@
     "avg": "0.232",
     "games": 127,
     "playerId": "68912",
-    "rank": 157,
-    "kboId": "68912"
+    "rank": 158
   },
   {
     "name": "심우준",
@@ -1418,8 +1973,7 @@
     "avg": "0.231",
     "games": 94,
     "playerId": "64006",
-    "rank": 158,
-    "kboId": "64006"
+    "rank": 159
   },
   {
     "name": "이율예",
@@ -1427,8 +1981,7 @@
     "avg": "0.231",
     "games": 8,
     "playerId": "55832",
-    "rank": 159,
-    "kboId": "55832"
+    "rank": 160
   },
   {
     "name": "전태현",
@@ -1436,8 +1989,7 @@
     "avg": "0.231",
     "games": 77,
     "playerId": "55397",
-    "rank": 160,
-    "kboId": "55397"
+    "rank": 161
   },
   {
     "name": "나승엽",
@@ -1445,17 +1997,15 @@
     "avg": "0.229",
     "games": 105,
     "playerId": "51551",
-    "rank": 161,
-    "kboId": "51551"
+    "rank": 162
   },
   {
     "name": "김민석",
     "team": "두산",
     "avg": "0.228",
     "games": 95,
-    "playerId": "54097",
-    "rank": 162,
-    "kboId": "54097"
+    "playerId": "53554",
+    "rank": 163
   },
   {
     "name": "안치영",
@@ -1463,8 +2013,7 @@
     "avg": "0.227",
     "games": 47,
     "playerId": "67006",
-    "rank": 163,
-    "kboId": "67006"
+    "rank": 164
   },
   {
     "name": "박주홍",
@@ -1472,8 +2021,7 @@
     "avg": "0.226",
     "games": 102,
     "playerId": "50357",
-    "rank": 164,
-    "kboId": "50357"
+    "rank": 165
   },
   {
     "name": "김헌곤",
@@ -1481,8 +2029,7 @@
     "avg": "0.225",
     "games": 77,
     "playerId": "61404",
-    "rank": 165,
-    "kboId": "61404"
+    "rank": 166
   },
   {
     "name": "권동진",
@@ -1490,8 +2037,7 @@
     "avg": "0.225",
     "games": 123,
     "playerId": "51003",
-    "rank": 166,
-    "kboId": "51003"
+    "rank": 167
   },
   {
     "name": "김동혁",
@@ -1499,8 +2045,7 @@
     "avg": "0.225",
     "games": 93,
     "playerId": "52504",
-    "rank": 167,
-    "kboId": "52504"
+    "rank": 168
   },
   {
     "name": "한준수",
@@ -1508,8 +2053,7 @@
     "avg": "0.225",
     "games": 103,
     "playerId": "68646",
-    "rank": 168,
-    "kboId": "68646"
+    "rank": 169
   },
   {
     "name": "박준영",
@@ -1517,8 +2061,7 @@
     "avg": "0.225",
     "games": 41,
     "playerId": "66928",
-    "rank": 169,
-    "kboId": "66928"
+    "rank": 170
   },
   {
     "name": "추재현",
@@ -1526,8 +2069,7 @@
     "avg": "0.222",
     "games": 34,
     "playerId": "68362",
-    "rank": 170,
-    "kboId": "68362"
+    "rank": 171
   },
   {
     "name": "김동엽",
@@ -1535,8 +2077,7 @@
     "avg": "0.222",
     "games": 9,
     "playerId": "66838",
-    "rank": 171,
-    "kboId": "66838"
+    "rank": 172
   },
   {
     "name": "이주헌",
@@ -1544,8 +2085,7 @@
     "avg": "0.219",
     "games": 76,
     "playerId": "52154",
-    "rank": 172,
-    "kboId": "52154"
+    "rank": 173
   },
   {
     "name": "변우혁",
@@ -1553,8 +2093,7 @@
     "avg": "0.218",
     "games": 47,
     "playerId": "69727",
-    "rank": 173,
-    "kboId": "69727"
+    "rank": 174
   },
   {
     "name": "김성현",
@@ -1562,8 +2101,7 @@
     "avg": "0.217",
     "games": 59,
     "playerId": "76802",
-    "rank": 174,
-    "kboId": "76802"
+    "rank": 175
   },
   {
     "name": "고영우",
@@ -1571,8 +2109,7 @@
     "avg": "0.217",
     "games": 14,
     "playerId": "54344",
-    "rank": 175,
-    "kboId": "54344"
+    "rank": 176
   },
   {
     "name": "정훈",
@@ -1580,8 +2117,7 @@
     "avg": "0.216",
     "games": 77,
     "playerId": "60523",
-    "rank": 176,
-    "kboId": "60523"
+    "rank": 177
   },
   {
     "name": "이용규",
@@ -1589,8 +2125,7 @@
     "avg": "0.216",
     "games": 14,
     "playerId": "74163",
-    "rank": 177,
-    "kboId": "74163"
+    "rank": 178
   },
   {
     "name": "함수호",
@@ -1598,8 +2133,7 @@
     "avg": "0.214",
     "games": 6,
     "playerId": "55440",
-    "rank": 178,
-    "kboId": "55440"
+    "rank": 179
   },
   {
     "name": "문상철",
@@ -1607,8 +2141,7 @@
     "avg": "0.214",
     "games": 79,
     "playerId": "64007",
-    "rank": 179,
-    "kboId": "64007"
+    "rank": 180
   },
   {
     "name": "김인태",
@@ -1616,8 +2149,7 @@
     "avg": "0.213",
     "games": 106,
     "playerId": "63257",
-    "rank": 180,
-    "kboId": "63257"
+    "rank": 181
   },
   {
     "name": "푸이그",
@@ -1625,8 +2157,7 @@
     "avg": "0.212",
     "games": 40,
     "playerId": "52366",
-    "rank": 181,
-    "kboId": "52366"
+    "rank": 182
   },
   {
     "name": "송찬의",
@@ -1634,8 +2165,7 @@
     "avg": "0.211",
     "games": 66,
     "playerId": "68110",
-    "rank": 182,
-    "kboId": "68110"
+    "rank": 183
   },
   {
     "name": "염승원",
@@ -1643,8 +2173,7 @@
     "avg": "0.211",
     "games": 11,
     "playerId": "55339",
-    "rank": 183,
-    "kboId": "55339"
+    "rank": 184
   },
   {
     "name": "장진혁",
@@ -1652,8 +2181,7 @@
     "avg": "0.209",
     "games": 86,
     "playerId": "66706",
-    "rank": 184,
-    "kboId": "66706"
+    "rank": 185
   },
   {
     "name": "이영빈",
@@ -1661,8 +2189,7 @@
     "avg": "0.208",
     "games": 44,
     "playerId": "51100",
-    "rank": 185,
-    "kboId": "51100"
+    "rank": 186
   },
   {
     "name": "김재현",
@@ -1670,8 +2197,7 @@
     "avg": "0.208",
     "games": 62,
     "playerId": "62332",
-    "rank": 186,
-    "kboId": "62332"
+    "rank": 187
   },
   {
     "name": "장준원",
@@ -1679,17 +2205,15 @@
     "avg": "0.207",
     "games": 73,
     "playerId": "64115",
-    "rank": 187,
-    "kboId": "64115"
+    "rank": 188
   },
   {
     "name": "박시원",
     "team": "NC",
     "avg": "0.204",
     "games": 52,
-    "playerId": "55121",
-    "rank": 188,
-    "kboId": "55121"
+    "playerId": "50996",
+    "rank": 189
   },
   {
     "name": "배정대",
@@ -1697,8 +2221,7 @@
     "avg": "0.204",
     "games": 99,
     "playerId": "64166",
-    "rank": 189,
-    "kboId": "64166"
+    "rank": 190
   },
   {
     "name": "이원석",
@@ -1706,8 +2229,7 @@
     "avg": "0.203",
     "games": 129,
     "playerId": "68700",
-    "rank": 190,
-    "kboId": "68700"
+    "rank": 191
   },
   {
     "name": "맥브룸",
@@ -1715,8 +2237,7 @@
     "avg": "0.203",
     "games": 22,
     "playerId": "55844",
-    "rank": 191,
-    "kboId": "55844"
+    "rank": 192
   },
   {
     "name": "박민",
@@ -1724,8 +2245,7 @@
     "avg": "0.202",
     "games": 71,
     "playerId": "50657",
-    "rank": 192,
-    "kboId": "50657"
+    "rank": 193
   },
   {
     "name": "오태곤",
@@ -1733,8 +2253,7 @@
     "avg": "0.201",
     "games": 122,
     "playerId": "60558",
-    "rank": 193,
-    "kboId": "60558"
+    "rank": 194
   },
   {
     "name": "김성우",
@@ -1742,8 +2261,7 @@
     "avg": "0.200",
     "games": 7,
     "playerId": "52105",
-    "rank": 194,
-    "kboId": "52105"
+    "rank": 195
   },
   {
     "name": "김주성",
@@ -1751,8 +2269,7 @@
     "avg": "0.200",
     "games": 16,
     "playerId": "66162",
-    "rank": 195,
-    "kboId": "66162"
+    "rank": 196
   },
   {
     "name": "손용준",
@@ -1760,8 +2277,7 @@
     "avg": "0.200",
     "games": 9,
     "playerId": "54156",
-    "rank": 196,
-    "kboId": "54156"
+    "rank": 197
   },
   {
     "name": "이상혁",
@@ -1769,17 +2285,15 @@
     "avg": "0.200",
     "games": 39,
     "playerId": "52704",
-    "rank": 197,
-    "kboId": "52704"
+    "rank": 198
   },
   {
     "name": "이재원",
     "team": "한화",
     "avg": "0.200",
     "games": 98,
-    "playerId": "56005",
-    "rank": 198,
-    "kboId": "56005"
+    "playerId": "76812",
+    "rank": 199
   },
   {
     "name": "이승민",
@@ -1787,8 +2301,7 @@
     "avg": "0.200",
     "games": 2,
     "playerId": "54806",
-    "rank": 199,
-    "kboId": "54806"
+    "rank": 200
   },
   {
     "name": "홍대인",
@@ -1796,17 +2309,15 @@
     "avg": "0.200",
     "games": 14,
     "playerId": "55897",
-    "rank": 200,
-    "kboId": "55897"
+    "rank": 201
   },
   {
     "name": "이병헌",
     "team": "삼성",
     "avg": "0.200",
     "games": 55,
-    "playerId": "52204",
-    "rank": 201,
-    "kboId": "52204"
+    "playerId": "69428",
+    "rank": 202
   },
   {
     "name": "이창용",
@@ -1814,8 +2325,7 @@
     "avg": "0.200",
     "games": 11,
     "playerId": "51407",
-    "rank": 202,
-    "kboId": "51407"
+    "rank": 203
   },
   {
     "name": "이해승",
@@ -1823,8 +2333,7 @@
     "avg": "0.200",
     "games": 8,
     "playerId": "69416",
-    "rank": 203,
-    "kboId": "69416"
+    "rank": 204
   },
   {
     "name": "고승완",
@@ -1832,8 +2341,7 @@
     "avg": "0.200",
     "games": 17,
     "playerId": "54908",
-    "rank": 204,
-    "kboId": "54908"
+    "rank": 205
   },
   {
     "name": "송승환",
@@ -1841,8 +2349,7 @@
     "avg": "0.200",
     "games": 13,
     "playerId": "69203",
-    "rank": 205,
-    "kboId": "69203"
+    "rank": 206
   },
   {
     "name": "김병준",
@@ -1850,8 +2357,7 @@
     "avg": "0.200",
     "games": 9,
     "playerId": "52002",
-    "rank": 206,
-    "kboId": "52002"
+    "rank": 207
   },
   {
     "name": "김준상",
@@ -1859,8 +2365,7 @@
     "avg": "0.200",
     "games": 9,
     "playerId": "55226",
-    "rank": 207,
-    "kboId": "55226"
+    "rank": 208
   },
   {
     "name": "이형종",
@@ -1868,8 +2373,7 @@
     "avg": "0.200",
     "games": 33,
     "playerId": "78135",
-    "rank": 208,
-    "kboId": "78135"
+    "rank": 209
   },
   {
     "name": "박병호",
@@ -1877,8 +2381,7 @@
     "avg": "0.199",
     "games": 77,
     "playerId": "75125",
-    "rank": 209,
-    "kboId": "75125"
+    "rank": 210
   },
   {
     "name": "이성규",
@@ -1886,17 +2389,15 @@
     "avg": "0.198",
     "games": 68,
     "playerId": "66409",
-    "rank": 210,
-    "kboId": "66409"
+    "rank": 211
   },
   {
     "name": "김성욱",
     "team": "SSG",
     "avg": "0.195",
     "games": 56,
-    "playerId": "TR001",
-    "rank": 211,
-    "kboId": "TR001"
+    "playerId": "62934",
+    "rank": 212
   },
   {
     "name": "한석현",
@@ -1904,8 +2405,7 @@
     "avg": "0.195",
     "games": 61,
     "playerId": "64101",
-    "rank": 212,
-    "kboId": "64101"
+    "rank": 213
   },
   {
     "name": "김대한",
@@ -1913,8 +2413,7 @@
     "avg": "0.194",
     "games": 16,
     "playerId": "69238",
-    "rank": 213,
-    "kboId": "69238"
+    "rank": 214
   },
   {
     "name": "최준우",
@@ -1922,8 +2421,7 @@
     "avg": "0.191",
     "games": 78,
     "playerId": "68868",
-    "rank": 214,
-    "kboId": "68868"
+    "rank": 215
   },
   {
     "name": "박승욱",
@@ -1931,8 +2429,7 @@
     "avg": "0.190",
     "games": 54,
     "playerId": "62802",
-    "rank": 215,
-    "kboId": "62802"
+    "rank": 216
   },
   {
     "name": "황대인",
@@ -1940,8 +2437,7 @@
     "avg": "0.189",
     "games": 18,
     "playerId": "65610",
-    "rank": 216,
-    "kboId": "65610"
+    "rank": 217
   },
   {
     "name": "함창건",
@@ -1949,8 +2445,7 @@
     "avg": "0.188",
     "games": 15,
     "playerId": "50108",
-    "rank": 217,
-    "kboId": "50108"
+    "rank": 218
   },
   {
     "name": "채현우",
@@ -1958,8 +2453,7 @@
     "avg": "0.188",
     "games": 41,
     "playerId": "69804",
-    "rank": 218,
-    "kboId": "69804"
+    "rank": 219
   },
   {
     "name": "양우현",
@@ -1967,8 +2461,7 @@
     "avg": "0.188",
     "games": 14,
     "playerId": "69403",
-    "rank": 219,
-    "kboId": "69403"
+    "rank": 220
   },
   {
     "name": "강현우",
@@ -1976,8 +2469,7 @@
     "avg": "0.188",
     "games": 40,
     "playerId": "50066",
-    "rank": 220,
-    "kboId": "50066"
+    "rank": 221
   },
   {
     "name": "조대현",
@@ -1985,8 +2477,7 @@
     "avg": "0.187",
     "games": 64,
     "playerId": "68089",
-    "rank": 221,
-    "kboId": "68089"
+    "rank": 222
   },
   {
     "name": "정보근",
@@ -1994,8 +2485,7 @@
     "avg": "0.186",
     "games": 93,
     "playerId": "68518",
-    "rank": 222,
-    "kboId": "68518"
+    "rank": 223
   },
   {
     "name": "한재환",
@@ -2003,8 +2493,7 @@
     "avg": "0.185",
     "games": 16,
     "playerId": "50903",
-    "rank": 223,
-    "kboId": "50903"
+    "rank": 224
   },
   {
     "name": "심재훈",
@@ -2012,8 +2501,7 @@
     "avg": "0.184",
     "games": 31,
     "playerId": "55438",
-    "rank": 224,
-    "kboId": "55438"
+    "rank": 225
   },
   {
     "name": "김정율",
@@ -2021,8 +2509,7 @@
     "avg": "0.182",
     "games": 13,
     "playerId": "67504",
-    "rank": 225,
-    "kboId": "67504"
+    "rank": 226
   },
   {
     "name": "신범수",
@@ -2030,8 +2517,7 @@
     "avg": "0.182",
     "games": 29,
     "playerId": "66662",
-    "rank": 226,
-    "kboId": "66662"
+    "rank": 227
   },
   {
     "name": "도태훈",
@@ -2039,8 +2525,7 @@
     "avg": "0.182",
     "games": 61,
     "playerId": "66965",
-    "rank": 227,
-    "kboId": "66965"
+    "rank": 228
   },
   {
     "name": "이선우",
@@ -2048,8 +2533,7 @@
     "avg": "0.182",
     "games": 10,
     "playerId": "55224",
-    "rank": 228,
-    "kboId": "55224"
+    "rank": 229
   },
   {
     "name": "강진성",
@@ -2057,8 +2541,7 @@
     "avg": "0.182",
     "games": 6,
     "playerId": "62925",
-    "rank": 229,
-    "kboId": "62925"
+    "rank": 230
   },
   {
     "name": "김찬형",
@@ -2066,8 +2549,7 @@
     "avg": "0.178",
     "games": 44,
     "playerId": "66917",
-    "rank": 230,
-    "kboId": "66917"
+    "rank": 231
   },
   {
     "name": "윤정빈",
@@ -2075,8 +2557,7 @@
     "avg": "0.175",
     "games": 25,
     "playerId": "68463",
-    "rank": 231,
-    "kboId": "68463"
+    "rank": 232
   },
   {
     "name": "송지후",
@@ -2084,8 +2565,7 @@
     "avg": "0.175",
     "games": 33,
     "playerId": "54394",
-    "rank": 232,
-    "kboId": "54394"
+    "rank": 233
   },
   {
     "name": "원성준",
@@ -2093,8 +2573,7 @@
     "avg": "0.174",
     "games": 24,
     "playerId": "54307",
-    "rank": 233,
-    "kboId": "54307"
+    "rank": 234
   },
   {
     "name": "안치홍",
@@ -2102,8 +2581,7 @@
     "avg": "0.172",
     "games": 66,
     "playerId": "79608",
-    "rank": 234,
-    "kboId": "79608"
+    "rank": 235
   },
   {
     "name": "허인서",
@@ -2111,8 +2589,7 @@
     "avg": "0.172",
     "games": 20,
     "playerId": "52764",
-    "rank": 235,
-    "kboId": "52764"
+    "rank": 236
   },
   {
     "name": "문정빈",
@@ -2120,8 +2597,7 @@
     "avg": "0.167",
     "games": 21,
     "playerId": "52121",
-    "rank": 236,
-    "kboId": "52121"
+    "rank": 237
   },
   {
     "name": "권광민",
@@ -2129,8 +2605,7 @@
     "avg": "0.167",
     "games": 15,
     "playerId": "52769",
-    "rank": 237,
-    "kboId": "52769"
+    "rank": 238
   },
   {
     "name": "임종찬",
@@ -2138,8 +2613,7 @@
     "avg": "0.167",
     "games": 17,
     "playerId": "50704",
-    "rank": 238,
-    "kboId": "50704"
+    "rank": 239
   },
   {
     "name": "신윤후",
@@ -2147,8 +2621,7 @@
     "avg": "0.167",
     "games": 12,
     "playerId": "69508",
-    "rank": 239,
-    "kboId": "69508"
+    "rank": 240
   },
   {
     "name": "최항",
@@ -2156,8 +2629,7 @@
     "avg": "0.167",
     "games": 8,
     "playerId": "62884",
-    "rank": 240,
-    "kboId": "62884"
+    "rank": 241
   },
   {
     "name": "최정용",
@@ -2165,8 +2637,7 @@
     "avg": "0.167",
     "games": 4,
     "playerId": "65464",
-    "rank": 241,
-    "kboId": "65464"
+    "rank": 242
   },
   {
     "name": "홍종표",
@@ -2174,8 +2645,7 @@
     "avg": "0.164",
     "games": 62,
     "playerId": "50600",
-    "rank": 242,
-    "kboId": "50600"
+    "rank": 243
   },
   {
     "name": "박세혁",
@@ -2183,8 +2653,7 @@
     "avg": "0.163",
     "games": 48,
     "playerId": "62244",
-    "rank": 243,
-    "kboId": "62244"
+    "rank": 244
   },
   {
     "name": "이창진",
@@ -2192,8 +2661,7 @@
     "avg": "0.161",
     "games": 37,
     "playerId": "64560",
-    "rank": 244,
-    "kboId": "64560"
+    "rank": 245
   },
   {
     "name": "유로결",
@@ -2201,8 +2669,7 @@
     "avg": "0.154",
     "games": 20,
     "playerId": "69766",
-    "rank": 245,
-    "kboId": "69766"
+    "rank": 246
   },
   {
     "name": "박지환",
@@ -2210,8 +2677,7 @@
     "avg": "0.150",
     "games": 31,
     "playerId": "54805",
-    "rank": 246,
-    "kboId": "54805"
+    "rank": 247
   },
   {
     "name": "손성빈",
@@ -2219,8 +2685,7 @@
     "avg": "0.145",
     "games": 51,
     "playerId": "51528",
-    "rank": 247,
-    "kboId": "51528"
+    "rank": 248
   },
   {
     "name": "최상민",
@@ -2228,8 +2693,7 @@
     "avg": "0.143",
     "games": 23,
     "playerId": "68805",
-    "rank": 248,
-    "kboId": "68805"
+    "rank": 249
   },
   {
     "name": "하재훈",
@@ -2237,8 +2701,7 @@
     "avg": "0.143",
     "games": 18,
     "playerId": "69813",
-    "rank": 249,
-    "kboId": "69813"
+    "rank": 250
   },
   {
     "name": "안중열",
@@ -2246,8 +2709,7 @@
     "avg": "0.143",
     "games": 33,
     "playerId": "64022",
-    "rank": 250,
-    "kboId": "64022"
+    "rank": 251
   },
   {
     "name": "조세진",
@@ -2255,8 +2717,7 @@
     "avg": "0.143",
     "games": 12,
     "playerId": "52516",
-    "rank": 251,
-    "kboId": "52516"
+    "rank": 252
   },
   {
     "name": "박수종",
@@ -2264,8 +2725,7 @@
     "avg": "0.143",
     "games": 38,
     "playerId": "52305",
-    "rank": 252,
-    "kboId": "52305"
+    "rank": 253
   },
   {
     "name": "서건창",
@@ -2273,8 +2733,7 @@
     "avg": "0.136",
     "games": 10,
     "playerId": "78168",
-    "rank": 253,
-    "kboId": "78168"
+    "rank": 254
   },
   {
     "name": "류현준",
@@ -2282,8 +2741,7 @@
     "avg": "0.136",
     "games": 17,
     "playerId": "54219",
-    "rank": 254,
-    "kboId": "54219"
+    "rank": 255
   },
   {
     "name": "김재성",
@@ -2291,8 +2749,7 @@
     "avg": "0.127",
     "games": 43,
     "playerId": "65132",
-    "rank": 255,
-    "kboId": "65132"
+    "rank": 256
   },
   {
     "name": "홍현빈",
@@ -2300,8 +2757,7 @@
     "avg": "0.125",
     "games": 32,
     "playerId": "67005",
-    "rank": 256,
-    "kboId": "67005"
+    "rank": 257
   },
   {
     "name": "박한결",
@@ -2309,8 +2765,7 @@
     "avg": "0.118",
     "games": 8,
     "playerId": "53992",
-    "rank": 257,
-    "kboId": "53992"
+    "rank": 258
   },
   {
     "name": "유준규",
@@ -2318,8 +2773,7 @@
     "avg": "0.118",
     "games": 35,
     "playerId": "51013",
-    "rank": 258,
-    "kboId": "51013"
+    "rank": 259
   },
   {
     "name": "김민혁",
@@ -2327,8 +2781,7 @@
     "avg": "0.118",
     "games": 10,
     "playerId": "65269",
-    "rank": 259,
-    "kboId": "65269"
+    "rank": 260
   },
   {
     "name": "최성민",
@@ -2336,8 +2789,7 @@
     "avg": "0.105",
     "games": 32,
     "playerId": "51007",
-    "rank": 260,
-    "kboId": "51007"
+    "rank": 261
   },
   {
     "name": "여동건",
@@ -2345,8 +2797,7 @@
     "avg": "0.105",
     "games": 19,
     "playerId": "54205",
-    "rank": 261,
-    "kboId": "54205"
+    "rank": 262
   },
   {
     "name": "김수윤",
@@ -2354,8 +2805,7 @@
     "avg": "0.091",
     "games": 7,
     "playerId": "67900",
-    "rank": 262,
-    "kboId": "67900"
+    "rank": 263
   },
   {
     "name": "박헌",
@@ -2363,8 +2813,7 @@
     "avg": "0.083",
     "games": 8,
     "playerId": "55637",
-    "rank": 263,
-    "kboId": "55637"
+    "rank": 264
   },
   {
     "name": "전다민",
@@ -2372,8 +2821,7 @@
     "avg": "0.083",
     "games": 22,
     "playerId": "54214",
-    "rank": 264,
-    "kboId": "54214"
+    "rank": 265
   },
   {
     "name": "박재현",
@@ -2381,8 +2829,7 @@
     "avg": "0.081",
     "games": 58,
     "playerId": "55636",
-    "rank": 265,
-    "kboId": "55636"
+    "rank": 266
   },
   {
     "name": "김인환",
@@ -2390,8 +2837,7 @@
     "avg": "0.080",
     "games": 10,
     "playerId": "66715",
-    "rank": 266,
-    "kboId": "66715"
+    "rank": 267
   },
   {
     "name": "정해원",
@@ -2399,8 +2845,7 @@
     "avg": "0.075",
     "games": 24,
     "playerId": "53659",
-    "rank": 267,
-    "kboId": "53659"
+    "rank": 268
   },
   {
     "name": "윤준혁",
@@ -2408,8 +2853,7 @@
     "avg": "0.059",
     "games": 28,
     "playerId": "50092",
-    "rank": 268,
-    "kboId": "50092"
+    "rank": 269
   },
   {
     "name": "한승현",
@@ -2417,8 +2861,7 @@
     "avg": "0.059",
     "games": 19,
     "playerId": "55506",
-    "rank": 269,
-    "kboId": "55506"
+    "rank": 270
   },
   {
     "name": "강민성",
@@ -2426,8 +2869,7 @@
     "avg": "0.033",
     "games": 25,
     "playerId": "69064",
-    "rank": 270,
-    "kboId": "69064"
+    "rank": 271
   },
   {
     "name": "김영우",
@@ -2435,8 +2877,7 @@
     "avg": "-",
     "games": 4,
     "playerId": "55167",
-    "rank": 271,
-    "kboId": "55167"
+    "rank": 272
   },
   {
     "name": "김진성",
@@ -2444,8 +2885,7 @@
     "avg": "-",
     "games": 5,
     "playerId": "75867",
-    "rank": 272,
-    "kboId": "75867"
+    "rank": 273
   },
   {
     "name": "김진수",
@@ -2453,8 +2893,7 @@
     "avg": "-",
     "games": 1,
     "playerId": "51154",
-    "rank": 273,
-    "kboId": "51154"
+    "rank": 274
   },
   {
     "name": "박명근",
@@ -2462,8 +2901,7 @@
     "avg": "-",
     "games": 5,
     "playerId": "53139",
-    "rank": 274,
-    "kboId": "53139"
+    "rank": 275
   },
   {
     "name": "백승현",
@@ -2471,8 +2909,7 @@
     "avg": "-",
     "games": 3,
     "playerId": "65109",
-    "rank": 275,
-    "kboId": "65109"
+    "rank": 276
   },
   {
     "name": "우강훈",
@@ -2480,8 +2917,7 @@
     "avg": "-",
     "games": 2,
     "playerId": "51526",
-    "rank": 276,
-    "kboId": "51526"
+    "rank": 277
   },
   {
     "name": "김서현",
@@ -2489,8 +2925,7 @@
     "avg": "-",
     "games": 3,
     "playerId": "53754",
-    "rank": 277,
-    "kboId": "53754"
+    "rank": 278
   },
   {
     "name": "김승일",
@@ -2498,8 +2933,7 @@
     "avg": "-",
     "games": 1,
     "playerId": "50711",
-    "rank": 278,
-    "kboId": "50711"
+    "rank": 279
   },
   {
     "name": "김종수",
@@ -2507,8 +2941,7 @@
     "avg": "-",
     "games": 1,
     "playerId": "63765",
-    "rank": 279,
-    "kboId": "63765"
+    "rank": 280
   },
   {
     "name": "박상원",
@@ -2516,8 +2949,7 @@
     "avg": "-",
     "games": 1,
     "playerId": "67703",
-    "rank": 280,
-    "kboId": "67703"
+    "rank": 281
   },
   {
     "name": "박정현",
@@ -2525,8 +2957,7 @@
     "avg": "0.000",
     "games": 2,
     "playerId": "50709",
-    "rank": 281,
-    "kboId": "50709"
+    "rank": 282
   },
   {
     "name": "김대호",
@@ -2534,8 +2965,7 @@
     "avg": "-",
     "games": 1,
     "playerId": "54401",
-    "rank": 282,
-    "kboId": "54401"
+    "rank": 283
   },
   {
     "name": "김재윤",
@@ -2543,8 +2973,7 @@
     "avg": "-",
     "games": 2,
     "playerId": "65062",
-    "rank": 283,
-    "kboId": "65062"
+    "rank": 284
   },
   {
     "name": "김재혁",
@@ -2552,8 +2981,7 @@
     "avg": "0.000",
     "games": 8,
     "playerId": "52424",
-    "rank": 284,
-    "kboId": "52424"
+    "rank": 285
   },
   {
     "name": "김범준",
@@ -2561,8 +2989,7 @@
     "avg": "0.000",
     "games": 1,
     "playerId": "69980",
-    "rank": 285,
-    "kboId": "69980"
+    "rank": 286
   },
   {
     "name": "김영규",
@@ -2570,8 +2997,7 @@
     "avg": "-",
     "games": 1,
     "playerId": "68900",
-    "rank": 286,
-    "kboId": "68900"
+    "rank": 287
   },
   {
     "name": "김태훈",
@@ -2579,8 +3005,7 @@
     "avg": "-",
     "games": 1,
     "playerId": "55995",
-    "rank": 287,
-    "kboId": "55995"
+    "rank": 288
   },
   {
     "name": "김건형",
@@ -2588,8 +3013,7 @@
     "avg": "0.000",
     "games": 2,
     "playerId": "51005",
-    "rank": 288,
-    "kboId": "51005"
+    "rank": 289
   },
   {
     "name": "김민석",
@@ -2597,8 +3021,7 @@
     "avg": "-",
     "games": 2,
     "playerId": "54097",
-    "rank": 289,
-    "kboId": "54097"
+    "rank": 290
   },
   {
     "name": "김민수",
@@ -2606,8 +3029,7 @@
     "avg": "-",
     "games": 1,
     "playerId": "65048",
-    "rank": 290,
-    "kboId": "65048"
+    "rank": 291
   },
   {
     "name": "박건우",
@@ -2615,8 +3037,7 @@
     "avg": "-",
     "games": 2,
     "playerId": "55046",
-    "rank": 291,
-    "kboId": "55046"
+    "rank": 292
   },
   {
     "name": "강성우",
@@ -2624,8 +3045,7 @@
     "avg": "-",
     "games": 1,
     "playerId": "54567",
-    "rank": 292,
-    "kboId": "54567"
+    "rank": 293
   },
   {
     "name": "강승구",
@@ -2633,8 +3053,7 @@
     "avg": "0.000",
     "games": 1,
     "playerId": "54506",
-    "rank": 293,
-    "kboId": "54506"
+    "rank": 294
   },
   {
     "name": "구승민",
@@ -2642,8 +3061,7 @@
     "avg": "-",
     "games": 1,
     "playerId": "63543",
-    "rank": 294,
-    "kboId": "63543"
+    "rank": 295
   },
   {
     "name": "김강현",
@@ -2651,8 +3069,7 @@
     "avg": "-",
     "games": 1,
     "playerId": "65522",
-    "rank": 295,
-    "kboId": "65522"
+    "rank": 296
   },
   {
     "name": "김기훈",
@@ -2660,8 +3077,7 @@
     "avg": "0.000",
     "games": 2,
     "playerId": "69620",
-    "rank": 296,
-    "kboId": "69620"
+    "rank": 297
   },
   {
     "name": "김대유",
@@ -2669,8 +3085,7 @@
     "avg": "-",
     "games": 1,
     "playerId": "60337",
-    "rank": 297,
-    "kboId": "60337"
+    "rank": 298
   },
   {
     "name": "김시훈",
@@ -2678,8 +3093,7 @@
     "avg": "-",
     "games": 4,
     "playerId": "68928",
-    "rank": 298,
-    "kboId": "68928"
+    "rank": 299
   },
   {
     "name": "강현구",
@@ -2687,8 +3101,7 @@
     "avg": "0.000",
     "games": 1,
     "playerId": "51269",
-    "rank": 299,
-    "kboId": "51269"
+    "rank": 300
   },
   {
     "name": "고효준",
@@ -2696,7 +3109,6 @@
     "avg": "-",
     "games": 1,
     "playerId": "72523",
-    "rank": 300,
-    "kboId": "72523"
+    "rank": 301
   }
 ]
