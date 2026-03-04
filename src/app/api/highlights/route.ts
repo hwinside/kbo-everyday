@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
     }));
 
     const result = { items };
-    cache.set(query, { data: result, ts: Date.now() });
+    if (result.items?.length > 0) cache.set(query, { data: result, ts: Date.now() });
     return NextResponse.json(result);
   } catch (e: any) {
     return NextResponse.json({ items: [], error: e.message });
