@@ -112,9 +112,9 @@ function PlayersPageContent() {
   return (
     <div className="mx-auto max-w-lg px-5">
       {/* Header */}
-      <header className="py-5 pt-[env(safe-area-inset-top,20px)]">
+      <header className="py-3 flex items-center gap-3">
+        <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
         <h1 className="text-xl font-bold text-text-primary">선수</h1>
-        <p className="text-xs text-text-tertiary mt-1">KBO 전 구단 {PLAYERS.length}명</p>
       </header>
 
       {/* 검색 */}

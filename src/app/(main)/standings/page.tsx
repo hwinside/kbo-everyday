@@ -215,7 +215,7 @@ export default function StandingsPage() {
 
   return (
     <div className="mx-auto max-w-lg px-5">
-      <header className="py-5 flex items-center gap-3">
+      <header className="py-3 flex items-center gap-3">
         <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
         <h1 className="text-xl font-bold text-text-primary">순위</h1>
         <div className="flex items-center gap-2 mt-1">
@@ -224,7 +224,7 @@ export default function StandingsPage() {
               key={y}
               onClick={() => setSeason(y)}
               className={clsx(
-                "px-3 py-1 rounded-full text-sm font-medium transition-all",
+                "px-3 py-1 rounded-full text-xs font-semibold transition-all",
                 season === y ? "bg-accent text-white" : "bg-bg-tertiary text-text-tertiary"
               )}
             >
@@ -245,7 +245,7 @@ export default function StandingsPage() {
             key={tab.id}
             onClick={() => setMainTab(tab.id)}
             className={clsx(
-              "flex-1 py-3 text-base font-medium rounded-full transition-all",
+              "flex-1 py-2 text-sm font-semibold rounded-full transition-all",
               mainTab === tab.id
                 ? "bg-accent text-white"
                 : "bg-bg-tertiary text-text-tertiary"

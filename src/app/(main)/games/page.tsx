@@ -85,7 +85,7 @@ export default function GamesPage() {
 
   return (
     <div className="mx-auto max-w-lg">
-      <div className="flex items-center gap-3 px-5 py-2">
+      <div className="flex items-center gap-3 px-5 py-3">
         <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
           <ChevronLeft size={24} />
         </button>
