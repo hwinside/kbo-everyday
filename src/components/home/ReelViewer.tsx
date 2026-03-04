@@ -18,7 +18,6 @@ interface ReelViewerProps {
 export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerProps) {
   const [current, setCurrent] = useState(startIndex);
   const [muted, setMuted] = useState(true);
-  const [started, setStarted] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const touchStartY = useRef(0);
   const touchMoved = useRef(false);
@@ -93,30 +92,16 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
         allowFullScreen
       />
 
-      {/* 터치 오버레이 */}
-      {started ? (
-        <div
-          className="absolute inset-0 z-10"
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-        />
-      ) : (
-        <div
-          className="absolute inset-0 z-10 flex items-center justify-center"
-          onClick={() => {
-            postCmd("playVideo");
-            setStarted(true);
-          }}
-        >
-          <div className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center shadow-lg">
-            <svg viewBox="0 0 24 24" className="w-8 h-8 text-black ml-1" fill="currentColor"><polygon points="5,3 19,12 5,21" /></svg>
-          </div>
-        </div>
-      )}
+      {/* 터치 오버레이 — 스와이프 + 탭(음소거 토글) */}
+      <div
+        className="absolute inset-0 z-10"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      />
 
       {/* 음소거 안내 */}
-      {muted && started && (
+      {muted && (
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
           <div className="bg-black/60 rounded-full px-4 py-2 flex items-center gap-2 animate-pulse">
             <VolumeX size={20} className="text-white" />
