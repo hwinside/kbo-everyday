@@ -39,7 +39,7 @@ export const TEAMS: TeamData[] = [
     shortName: "KT",
     slug: "kt",
     colorPrimary: "#000000",
-    colorLight: "#E8946A",
+    colorLight: "#E85050",
     colorSecondary: "#EB1F25",
     logoPath: "/logos/kt.svg",
     youtubeChannelId: "UCvScyjGkBUx2CJDMNAi9Twg",
