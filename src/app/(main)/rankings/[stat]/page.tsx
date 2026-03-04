@@ -75,7 +75,9 @@ function RankingContent() {
           return def.higherIsBetter ? bVal - aVal : aVal - bVal;
         });
         
-        setPlayers(sorted.slice(0, 50));
+        const top50 = sorted.slice(0, 50);
+        console.log("Ranking data sample:", top50[0]);
+        setPlayers(top50);
         setLoading(false);
       })
       .catch((e) => {
@@ -138,11 +140,11 @@ function RankingContent() {
                 key={p.kboId || p.playerId || i}
                 ref={isHighlight ? highlightRef : undefined}
               >
-                <Link href={`/boards/players/${p.kboId || p.playerId}`}>
+                <Link href={`/boards/players/${p.kboId || p.playerId || p.name}`}>
                   <GlassCard
                     pressable
                     className={`p-3 flex items-center gap-3 ${
-                      isHighlight ? "ring-2 ring-accent" : ""
+                      isHighlight ? "ring-2 ring-accent bg-white/10" : ""
                     }`}
                   >
                     {/* 순위 */}
