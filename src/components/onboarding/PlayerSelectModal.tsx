@@ -130,7 +130,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
                   background: isSelected ? `${team.colorPrimary}20` : "rgba(255,255,255,0.03)",
                   border: `2px solid ${isSelected ? team.colorLight : "transparent"}`,
                 }}>
-                <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} number={0} size={48} />
+                <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} number={0} size={48} showTeamBadge={player.teamId !== teamId} />
                 <div className="flex-1 text-left">
                   <p className="text-sm font-bold text-text-primary">{player.name}</p>
                   {player.teamId !== teamId && <TeamBadge teamId={player.teamId} size="xs" />}
