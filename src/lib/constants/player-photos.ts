@@ -536,3 +536,10 @@ export function getPlayerPhotoUrl(name: string): string | null {
   if (!kboId) return null;
   return `/players/${kboId}.jpg`;
 }
+
+export function getPlayerPhotoByKboId(kboId: string): string | null {
+  // PHOTO_MAP의 값(kboId)에 해당하는지 확인
+  const exists = Object.values(PLAYER_PHOTO_MAP).includes(kboId);
+  if (!exists) return null;
+  return `/players/${kboId}.jpg`;
+}
