@@ -124,7 +124,7 @@ const CHEER_SONGS: Record<string, CheerSongData> = {
   },
   "김성욱": {
     title: "김성욱 응원가",
-    lyrics: "NC 김성욱 다이노스 김성욱\nNC 김성욱 다이노스 승리를 위해 [A]\n구단 자작곡[C]\n2025년 6월 7일 2026 시즌 4라운드 지명권 + 5천만원에 SSG 랜더스로 트레이드 되었다.",
+    lyrics: "NC 김성욱 다이노스 김성욱\nNC 김성욱 다이노스 승리를 위해 [A][C]\n2025년 6월 7일 2026 시즌 4라운드 지명권 + 5천만원에 SSG 랜더스로 트레이드 되었다.",
     youtubeUrl: "https://www.youtube.com/results?search_query=NC+김성욱+응원가",
   },
   "김영우": {
@@ -279,7 +279,7 @@ const CHEER_SONGS: Record<string, CheerSongData> = {
   },
   "박민우": {
     title: "박민우 응원가",
-    lyrics: "오오오 NC의 박민우~ 오오오 NC의 박민우~ 오오오 NC의 박민우~ 다! 이! 노! 스! 박! 민! 우![A]\n구단 자작곡[C]\n투트랙으로 사용된다.",
+    lyrics: "오오오 NC의 박민우~ 오오오 NC의 박민우~ 오오오 NC의 박민우~ 다! 이! 노! 스! 박! 민! 우![A][C]\n투트랙으로 사용된다.",
     youtubeUrl: "https://www.youtube.com/results?search_query=NC+박민우+응원가",
   },
   "박상언": {
@@ -499,7 +499,7 @@ const CHEER_SONGS: Record<string, CheerSongData> = {
   },
   "오영수": {
     title: "오영수 응원가",
-    lyrics: "오! 오영수 NC 다이노스 오영수\n안타를 (쌔리라!) 홈런을 (쌔리라!) 다! 이! 노! 스! 오! 영! 수! [A]\n구단 자작곡[C]",
+    lyrics: "오! 오영수 NC 다이노스 오영수\n안타를 (쌔리라!) 홈런을 (쌔리라!) 다! 이! 노! 스! 오! 영! 수! [A][C]",
     youtubeUrl: "https://www.youtube.com/results?search_query=NC+오영수+응원가",
   },
   "오지환": {
