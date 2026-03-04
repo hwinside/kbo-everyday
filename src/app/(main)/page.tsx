@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Bell, ChevronRight, Flame, User, Users } from "lucide-react";
+import { Bell, ChevronRight, Crosshair, Flame, User, Users } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import GlassCard from "@/components/ui/GlassCard";
@@ -21,7 +21,6 @@ import LiveGameBanner from "@/components/home/LiveGameBanner";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { TEAMS, getTeamById } from "@/lib/constants/teams";
-import { MOCK_PREDICTIONS } from "@/lib/constants/predictions";
 import { MOCK_NEWS } from "@/lib/constants/news";
 
 /* ===== Mock Data ===== */
@@ -123,7 +122,7 @@ export default function HomePage() {
 
   useEffect(() => {
     const team = myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName : "";
-    let favPlayers = getFavoritePlayers().slice(0, 3);
+    let favPlayers = getFavoritePlayers().slice(0, 5);
     
     // 최애선수 미설정 시 팀의 대표 선수 3명으로 fallback
     if (favPlayers.length === 0 && team) {
@@ -290,8 +289,6 @@ export default function HomePage() {
 
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
   const myTeamGame = todayGames.find(g => g.homeTeamId === myTeamId || g.awayTeamId === myTeamId);
-  // Show first 2 predictions for preview
-  const previewPredictions = MOCK_PREDICTIONS.filter((p) => p.status === "open").slice(0, 2);
   // Show first 3 news
   const previewNews = MOCK_NEWS.slice(0, 3);
 
@@ -496,62 +493,33 @@ export default function HomePage() {
         </div>
       </motion.section>}
 
-      {/* ===== 2. Prediction Preview ===== */}
+      {/* ===== 2. Prediction Entry Cards ===== */}
       {SEASON_STARTED && <motion.section variants={item} className="mb-6">
-        <SectionHeader title="승부예측" href="/predict/daily" icon="🔮" />
-        <div className="space-y-4">
-          {previewPredictions.map((pred) => (
-            <Link key={pred.gameId} href={`/games/${pred.gameId}/predict`}>
-              <GlassCard pressable className="p-4">
-                <div className="flex items-center justify-between text-sm font-semibold">
-                  <span className="flex items-center gap-2" style={{ color: getTeamColor(pred.awayTeamId) }}>
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white p-0.5">
-                      <Image src={getTeamLogo(pred.awayTeamId)} alt={getTeamName(pred.awayTeamId)} width={22} height={22} unoptimized className="object-contain" />
-                    </span>
-                    {getTeamShortName(pred.awayTeamId)}
-                  </span>
-                  <span className="text-xs text-text-tertiary">vs</span>
-                  <span className="flex items-center gap-2" style={{ color: getTeamColor(pred.homeTeamId) }}>
-                    {getTeamShortName(pred.homeTeamId)}
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white p-0.5">
-                      <Image src={getTeamLogo(pred.homeTeamId)} alt={getTeamName(pred.homeTeamId)} width={22} height={22} unoptimized className="object-contain" />
-                    </span>
-                  </span>
-                </div>
-                {/* Prediction bar */}
-                <div className="mt-2 flex h-2.5 overflow-hidden rounded-full">
-                  <motion.div
-                    className="rounded-l-full"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${pred.awayPercent}%` }}
-                    transition={{ duration: 0.8, ease: "easeOut" }}
-                    style={{ backgroundColor: getTeamBgColor(pred.awayTeamId) }}
-                  />
-                  <motion.div
-                    className="rounded-r-full"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${pred.homePercent}%` }}
-                    transition={{ duration: 0.8, ease: "easeOut", delay: 0.1 }}
-                    style={{ backgroundColor: getTeamBgColor(pred.homeTeamId) }}
-                  />
-                </div>
-                <div className="mt-1.5 flex justify-between text-xs text-text-tertiary">
-                  <span className="font-semibold" style={{ color: getTeamColor(pred.awayTeamId) }}>
-                    {getTeamShortName(pred.awayTeamId)} {pred.awayPercent}%
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Users size={20} />
-                    {pred.totalVotes.toLocaleString()}명
-                  </span>
-                  <span className="font-semibold" style={{ color: getTeamColor(pred.homeTeamId) }}>
-                    {pred.homePercent}% {getTeamShortName(pred.homeTeamId)}
-                  </span>
-                </div>
-              </GlassCard>
+        {/* 시즌예측 이벤트 배너 */}
+        <Link href="/predict">
+          <div className="flex h-20 items-center rounded-2xl bg-gradient-to-r from-accent/20 to-accent/5 px-5 mb-4">
+            <div className="flex-1">
+              <p className="text-base font-bold text-text-primary">🏆 2026 시즌예측</p>
+              <p className="text-xs text-text-secondary">MVP, 우승팀을 예측하세요!</p>
+            </div>
+            <ChevronRight size={20} className="text-text-tertiary" />
+          </div>
+        </Link>
 
-            </Link>
-          ))}
-        </div>
+        {/* 내 승부예측 성적 카드 */}
+        <Link href="/predict/daily">
+          <GlassCard pressable className="p-4">
+            <div className="flex items-center gap-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent/10">
+                <Crosshair size={22} className="text-accent" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-bold text-text-primary">적중률 68% · 12승 6패</p>
+                <p className="text-xs text-text-secondary">승부예측 하러가기 →</p>
+              </div>
+            </div>
+          </GlassCard>
+        </Link>
       </motion.section>}
 
       {/* ===== 4. Popular Posts ===== */}

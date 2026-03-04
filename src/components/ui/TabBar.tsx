@@ -3,7 +3,7 @@
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { Home, CalendarDays, BarChart3, Sparkles, Users, type LucideIcon } from "lucide-react";
+import { Home, CalendarDays, BarChart3, MessageSquare, Users, type LucideIcon } from "lucide-react";
 
 interface TabItem {
   href: string;
@@ -16,7 +16,7 @@ const tabs: TabItem[] = [
   { href: "/games", label: "경기", icon: CalendarDays },
   { href: "/standings", label: "순위", icon: BarChart3 },
   { href: "/players", label: "선수", icon: Users },
-  { href: "/predict", label: "예측", icon: Sparkles },
+  { href: "/community", label: "커뮤니티", icon: MessageSquare },
 ];
 
 export default function TabBar() {
