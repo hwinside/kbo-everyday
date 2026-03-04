@@ -76,6 +76,8 @@ export default function PlayerBoardPage() {
   // 레거시 pN ID 처리
   const kboId = LEGACY_MAP[rawId] || rawId;
   const playerName = ID_TO_NAME[kboId];
+  // 동명이인 대응: roster에서 kboId로 직접 찾기
+  const rosterPlayer = PLAYERS_ROSTER.find((p: any) => p.kboId === kboId);
   
   const [player, setPlayer] = useState<PlayerData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -96,8 +98,10 @@ export default function PlayerBoardPage() {
       return;
     }
     // 개별 선수 조회 (이름 기반)
-    fetch(`/api/player-teams?name=${encodeURIComponent(playerName)}`).then(r => r.json()).then(d => {
-      const found = (d.players || [])[0];
+    fetch(`/api/player-teams?name=${encodeURIComponent(playerName)}${rosterPlayer ? `&team=${encodeURIComponent(rosterPlayer.team)}` : ""}`).then(r => r.json()).then(d => {
+      // 동명이인: kboId 일치하는 선수 우선, 없으면 팀 일치, 없으면 첫 번째
+      const players = d.players || [];
+      const found = players.find((p: any) => p.kboId === kboId) || players.find((p: any) => rosterPlayer && p.team === rosterPlayer.team) || players[0];
       if (found) {
         setPlayer({
           name: found.name,

@@ -31,7 +31,7 @@ export const PLAYER_PROFILES: Record<string, PlayerProfileData> = {
     tmi: "• 이대호 의 유튜브에서 송구와 타격 모두 인정받았다. 송구 타격\n• 같은 고등학교인 우명현 과 같은 팀에 함께 지명받았다.",
   },
   "강민성": {
-    bio: "강민성(야구선수)\n해당 문서를 찾을 수 없습니다.\n[새 문서 만들기]\nPRV V6 엔진\n용량-반응 관계\n신정인\n데이건 게라\n스파키(붕괴: 스타레일)\n게오르기우스(Fate 시리즈)\n한석준\n레알 마드리드 CF/2024-25 시즌\nNintendo Switch/게임 목록/한국어 대응/2020년대\n샌드박스 네트워크\nContáctenos\nTérminos de uso\nHecho con ❤️ en Asunción, República del Paraguay\nSu zona horaria es Asia/Seoul",
+    bio: "📌 기본정보\n  • 이름: 강민성\n  • 포지션: 내야수\n  • 투타: 우투우타\n\n※ 동명이인: KT 위즈 #5 / 삼성 라이온즈 #127",
     career: "",
     tmi: "",
   },
