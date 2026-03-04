@@ -162,7 +162,7 @@ export default function PlayerBoardPage() {
               )}
             </div>
             <p className="text-base text-text-tertiary">
-              {getTeamShortName(player.teamId) || player.team} · {player.position || "선수"}
+              {[getTeamShortName(player.teamId) || player.team, player.position].filter(Boolean).join(" · ") || "선수"}
             </p>
           </div>
           
