@@ -1,5 +1,8 @@
 "use client";
 
+import { useAuth } from "@/lib/supabase/AuthContext";
+import LoginSheet from "@/components/auth/LoginSheet";
+
 import { useState } from "react";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
@@ -21,6 +24,8 @@ const MOCK_REVIEWS = [
 
 export default function StadiumDetailPage() {
   const { stadiumId } = useParams();
+  const { user } = useAuth();
+  const [showLogin, setShowLogin] = useState(false);
   const [activeTab, setActiveTab] = useState<"food" | "seats" | "tickets" | "reviews">("food");
   const stadium = STADIUMS.find(s => s.id === stadiumId);
 
@@ -160,11 +165,13 @@ export default function StadiumDetailPage() {
 
       {/* FAB */}
       <button
+        onClick={() => { if (!user) { setShowLogin(true); return; } /* TODO: write post */ }}
         className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
         style={{ backgroundColor: primaryTeam.colorPrimary }}
       >
         <PenLine className="w-6 h-6 text-white" />
       </button>
+          <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
     </div>
   );
 }

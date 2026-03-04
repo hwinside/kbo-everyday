@@ -1,5 +1,8 @@
 "use client";
 
+import { useAuth } from "@/lib/supabase/AuthContext";
+import LoginSheet from "@/components/auth/LoginSheet";
+
 import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Check, Star, Search } from "lucide-react";
@@ -31,6 +34,9 @@ const TEAM_SHORT_MAP: Record<string, number> = {
 };
 
 export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }: PlayerSelectModalProps) {
+  const { user } = useAuth();
+  const maxPlayers = user ? 5 : 2;
+  const [showLogin, setShowLogin] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -54,7 +60,8 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
     setSelected(prev => {
       const next = new Set(prev);
       if (next.has(player.id)) next.delete(player.id);
-      else if (next.size < 3) next.add(player.id);
+      else if (next.size < maxPlayers) next.add(player.id);
+      else if (!user) { setShowLogin(true); return prev; }
       return next;
     });
   };
@@ -81,6 +88,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
             <Image src={team.logoPath} alt="" width={32} height={32} unoptimized className="object-contain" />
             <h1 className="text-xl font-bold text-text-primary">최애 선수를 골라주세요</h1>
           </div>
+            {!user && <p className="text-xs text-accent mt-1">로그인하면 5명까지 선택 가능!</p>}
           <p className="text-sm text-text-tertiary">최대 3명 · 선택한 선수 중심으로 피드가 구성됩니다</p>
           <div className="flex justify-center gap-1 mt-3">
             {[0, 1, 2].map(i => (

@@ -10,6 +10,8 @@ import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import AIAnalysis from "@/components/game/AIAnalysis";
 import TeamSelectModal from "@/components/onboarding/TeamSelectModal";
 import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
+import { useAuth } from "@/lib/supabase/AuthContext";
+import LoginSheet from "@/components/auth/LoginSheet";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getMyTeamId, setMyTeamId as saveMyTeamId } from "@/lib/store/myteam";
 import NewsCarousel from "@/components/news/NewsCarousel";
@@ -199,6 +201,8 @@ export default function HomePage() {
   }, [myTeamId]);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
+  const { user } = useAuth();
+  const [showLogin, setShowLogin] = useState(false);
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
 
   useEffect(() => {
@@ -548,7 +552,8 @@ export default function HomePage() {
                 </span>
               </div></Link>
             ))}
-          </div>
+                <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
+    </div>
         </GlassCard>
       </motion.section>
       {/* Bottom spacer */}
