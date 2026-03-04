@@ -114,7 +114,7 @@ function PlayersPageContent() {
       {/* Header */}
       <header className="py-3 flex items-center gap-3">
         <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
-        <h1 className="text-2xl font-extrabold text-text-primary tracking-tight">선수</h1>
+        <h1 className="text-3xl font-extrabold text-text-primary tracking-tight">선수</h1>
       </header>
 
       {/* 검색 */}
