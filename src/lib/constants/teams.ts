@@ -20,7 +20,7 @@ export const TEAMS: TeamData[] = [
     colorLight: "#E8697F",
     colorSecondary: "#1D1D1B",
     logoPath: "/logos/lg.svg",
-    youtubeChannelId: "UCWgOCiDVicThVOsRbiBMSLQ",
+    youtubeChannelId: "UCL6QZZxb-HR4hCh_eFAnQWA",
   },
   {
     id: 2,
@@ -31,7 +31,7 @@ export const TEAMS: TeamData[] = [
     colorLight: "#8B8BD8",
     colorSecondary: "#ED1C24",
     logoPath: "/logos/doosan.svg",
-    youtubeChannelId: "UCQbGST4lfDRO27MXfmPejPw",
+    youtubeChannelId: "UCsebzRfMhwYfjeBIxNX1brg",
   },
   {
     id: 3,
@@ -42,7 +42,7 @@ export const TEAMS: TeamData[] = [
     colorLight: "#E8946A",
     colorSecondary: "#EB1F25",
     logoPath: "/logos/kt.svg",
-    youtubeChannelId: "UCwGl_SHd0-3ZN8lGxdiFGIg",
+    youtubeChannelId: "UCvScyjGkBUx2CJDMNAi9Twg",
   },
   {
     id: 4,
@@ -53,7 +53,7 @@ export const TEAMS: TeamData[] = [
     colorLight: "#E87080",
     colorSecondary: "#FFB81C",
     logoPath: "/logos/ssg.svg",
-    youtubeChannelId: "UCReA1yNqFD_T8f8ANRO6e4g",
+    youtubeChannelId: "UCt8iRtgjVqm5rJHNl1TUojg",
   },
   {
     id: 5,
@@ -64,7 +64,7 @@ export const TEAMS: TeamData[] = [
     colorLight: "#7DA3C9",
     colorSecondary: "#C1A260",
     logoPath: "/logos/nc.svg",
-    youtubeChannelId: "UC2sZ1sQaagFtxiB6K7Q8oRg",
+    youtubeChannelId: "UC8_FRgynMX8wlGsU6Jh3zKg",
   },
   {
     id: 6,
@@ -75,7 +75,7 @@ export const TEAMS: TeamData[] = [
     colorLight: "#E8707E",
     colorSecondary: "#07101E",
     logoPath: "/logos/kia.svg",
-    youtubeChannelId: "UCMRo4CkS27ORz9v3UmMffaQ",
+    youtubeChannelId: "UCKp8knO8a6tSI1oaLjfd9XA",
   },
   {
     id: 7,
@@ -86,7 +86,7 @@ export const TEAMS: TeamData[] = [
     colorLight: "#7AAAC9",
     colorSecondary: "#D00F31",
     logoPath: "/logos/lotte.svg",
-    youtubeChannelId: "UCrKGMPyDBh2cGrmYYlTzGqw",
+    youtubeChannelId: "UCAZQZdSY5_YrziMPqXi-Zfw",
   },
   {
     id: 8,
@@ -97,7 +97,7 @@ export const TEAMS: TeamData[] = [
     colorLight: "#7AACD4",
     colorSecondary: "#FFFFFF",
     logoPath: "/logos/samsung.svg",
-    youtubeChannelId: "UCECVliHxjw5QJLfGnHb0dRg",
+    youtubeChannelId: "UCMWAku3a3h65QpLm63Jf2pw",
   },
   {
     id: 9,
@@ -108,7 +108,7 @@ export const TEAMS: TeamData[] = [
     colorLight: "#E8A06A",
     colorSecondary: "#1D1D1B",
     logoPath: "/logos/hanwha.svg",
-    youtubeChannelId: "UCZXHxO1URqAelMRJJ5jKXlw",
+    youtubeChannelId: "UCdq4Ji3772xudYRUatdzRrg",
   },
   {
     id: 10,
@@ -119,7 +119,7 @@ export const TEAMS: TeamData[] = [
     colorLight: "#C97088",
     colorSecondary: "#D4AF37",
     logoPath: "/logos/kiwoom.svg",
-    youtubeChannelId: "UCFv2z_bJkR9IR3SVq0HEiYA",
+    youtubeChannelId: "UC_MA8-XEaVmvyayPzG66IKg",
   },
 ];
 

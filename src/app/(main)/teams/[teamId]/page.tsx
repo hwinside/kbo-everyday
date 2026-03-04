@@ -14,6 +14,7 @@ import PostList from "@/components/community/PostList";
 import WritePost from "@/components/community/WritePost";
 import NewsCarousel from "@/components/news/NewsCarousel";
 import { MOCK_NEWS } from "@/lib/constants/news";
+import TeamVideos from "@/components/team/TeamVideos";
 import {
   ALL_LG_PLAYERS,
   getPositionGroup,
@@ -184,6 +185,11 @@ export default function TeamBoardPage() {
       {/* Team News Carousel */}
       <div className="mb-2">
         <NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 5) : MOCK_NEWS.filter(n => n.teamId === team.id).slice(0, 5)} />
+      </div>
+
+      {/* Team Official Videos */}
+      <div className="px-5">
+        <TeamVideos teamSlug={team.slug} />
       </div>
 
       <div className="px-5 pb-5">
