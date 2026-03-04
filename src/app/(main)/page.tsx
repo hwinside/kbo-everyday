@@ -313,6 +313,7 @@ export default function HomePage() {
       <div className="mb-3">
         <LiveGameBanner />
 
+        <h2 className="text-lg font-bold text-text-primary mb-3">📰 내 팀 뉴스</h2>
         <div className="-mx-5"><NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 10) : (myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 10) : MOCK_NEWS)} /></div>
 
         {/* 하이라이트 영상 */}
@@ -320,7 +321,7 @@ export default function HomePage() {
 
       {favPlayers.length > 0 && (
         <div>
-          <SectionHeader title="⭐ 최애 선수" />
+          <SectionHeader title="⭐ 나의 최애 선수" />
           <div className="flex gap-3 overflow-x-auto hide-scrollbar pb-2">
             {favPlayers.map((player) => {
               const team = getTeamById(player.teamId);
