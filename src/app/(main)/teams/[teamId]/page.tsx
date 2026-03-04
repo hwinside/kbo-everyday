@@ -258,9 +258,10 @@ export default function TeamBoardPage() {
                   onClick={() => setPosFilter(f)}
                   className={`px-3.5 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
                     posFilter === f
-                      ? "bg-white text-black"
+                      ? "text-white"
                       : "bg-bg-secondary text-text-secondary"
                   }`}
+                  style={posFilter === f ? { backgroundColor: team.colorPrimary } : {}}
                 >
                   {f}
                 </button>
@@ -281,7 +282,7 @@ export default function TeamBoardPage() {
                     <GlassCard pressable className="!p-4">
                       <div className="flex items-center gap-4">
                         {/* 등번호 */}
-                        <span className="text-2xl font-black text-text-tertiary w-10 text-center tabular-nums">
+                        <span className="text-2xl font-black w-10 text-center tabular-nums" style={{ color: team.colorLight }}>
                           {player.backNo || "-"}
                         </span>
                         <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={0} size={56} showTeamBadge={false} />
