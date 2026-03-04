@@ -97,7 +97,7 @@ def filter_lines(text):
     for line in text.split('\n'):
         line = line.strip()
         if should_skip_line(line): continue
-        line = re.sub(r'^\d+(\.\d+)*\.?\s*', '', line).strip()
+        line = re.sub(r'^\d+(\.\d+)+\.?\s*', '', line).strip()  # 목차만 제거 (1.2.3), 연도(2019) 보호
         line = re.sub(r'(\S{2,})\s+\1\s*$', r'\1', line)
         if line and len(line) > 2: lines.append(line)
     return '\n'.join(lines)
@@ -194,7 +194,7 @@ def extract_pitches(style_text):
         else: body.append(line)
     return pitches, '\n'.join(body)
 def extract_evaluation_from_tmi(tmi_lines):
-    eval_kw = ['최고의','레전드','대표적','통산','역대','손꼽히','인정받','명실상부','간판','에이스','프랜차이즈','핵심 선수','주축 선수','대표하는','꼽히는','평가받','평가를 받']
+    eval_kw = ['최고의','레전드','대표적','통산','역대','손꼽히','인정받','명실상부','간판','에이스','프랜차이즈','핵심 선수','주축 선수','대표하는','꼽히는','평가받','평가를 받','선수로서','능력을','장점은','강점은','약점은','특징은','스타일은','유형의','타입의','잘하는','뛰어난','우수한','최상위','리그 최고','리그를 대표','KBO를 대표','한국 야구','의 상징','를 대표하는']
     not_eval = ['일화','시트콤','부친상','모친상','조부상','방송','유튜브','인스타']
     ev = []; rest = []
     for l in tmi_lines:
@@ -296,7 +296,32 @@ def build_structured_profile(info, sections, sub_sections=None):
         yedam = sub_sections.get('여담', '') or ''
     yedam_lines = [l.strip() for l in filter_lines(yedam).split('\n') if l.strip() and len(l.strip())>5]
     eval_from_tmi, yedam_lines = extract_evaluation_from_tmi(yedam_lines)
-    if eval_from_tmi: career_parts.append("📌 핵심 요약\n" + cut_at_sentence('\n'.join(eval_from_tmi), 500))
+    # 핵심요약: 개요 → 여담 → 플레이스타일 순으로 평가성 문장 추출
+    summary_lines = []
+    # 1순위: 개요 섹션 (가장 정제된 선수 소개)
+    overview = sections.get('개요', '') or sections.get('소개', '')
+    if overview and '문서를 참고' not in overview.split('\n')[0]:
+        for ol in filter_lines(overview).split('\n')[:8]:
+            ol = ol.strip()
+            if len(ol) > 30 and any(kw in ol for kw in ['선수','활약','기록','대표','핵심','에이스','간판','주축','자리잡','팬들','사랑','등장','바탕으로','투수','타자','야수','포수','소속','이적','기여','우승','유명']):
+                summary_lines.append(ol)
+                if len(summary_lines) >= 3: break
+    # 2순위: 여담에서 평가성 문장
+    if not summary_lines:
+        summary_lines = list(eval_from_tmi)
+    elif eval_from_tmi:
+        # 개요 + 여담 평가 합치기 (최대 4줄)
+        for ev in eval_from_tmi:
+            if ev not in summary_lines and len(summary_lines) < 4:
+                summary_lines.append(ev)
+    # 3순위: 플레이 스타일에서 평가성 문장
+    if not summary_lines and style:
+        for sl in filter_lines(style).split('\n'):
+            sl = sl.strip()
+            if len(sl) > 40 and any(kw in sl for kw in ['선수','타자','투수','야수','능력','장점','강점','스타일','특징','평가','뛰어난','최고','대표','간판','에이스','핵심']):
+                summary_lines.append(sl)
+                if len(summary_lines) >= 3: break
+    if summary_lines: career_parts.append("📌 핵심 요약\n" + cut_at_sentence('\n'.join(summary_lines), 500))
     career = "\n\n".join(career_parts)
     tmi_parts = []
     if info.get('walk_up_song'): tmi_parts.append(f"🎵 등장곡: {info['walk_up_song']}")

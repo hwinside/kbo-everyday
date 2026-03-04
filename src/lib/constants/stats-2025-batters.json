@@ -1,1 +1,2402 @@
-[{"name": "김준태", "team": "LG", "avg": "1.000", "games": 2, "playerId": "62558", "rank": 1}, {"name": "이승현", "team": "한화", "avg": "1.000", "games": 4, "playerId": "55712", "rank": 2}, {"name": "장규현", "team": "한화", "avg": "1.000", "games": 2, "playerId": "51762", "rank": 3}, {"name": "박건우", "team": "롯데", "avg": "0.667", "games": 6, "playerId": "55509", "rank": 4}, {"name": "김태윤", "team": "SSG", "avg": "0.500", "games": 8, "playerId": "52803", "rank": 5}, {"name": "정현승", "team": "SSG", "avg": "0.500", "games": 3, "playerId": "54815", "rank": 6}, {"name": "이재상", "team": "키움", "avg": "0.500", "games": 2, "playerId": "54305", "rank": 7}, {"name": "김정호", "team": "NC", "avg": "0.444", "games": 8, "playerId": "51903", "rank": 8}, {"name": "박지훈", "team": "두산", "avg": "0.417", "games": 37, "playerId": "50204", "rank": 9}, {"name": "김현종", "team": "LG", "avg": "0.400", "games": 10, "playerId": "54166", "rank": 10}, {"name": "홍성호", "team": "두산", "avg": "0.346", "games": 9, "playerId": "66233", "rank": 11}, {"name": "이호연", "team": "KT", "avg": "0.343", "games": 32, "playerId": "68504", "rank": 12}, {"name": "박찬형", "team": "롯데", "avg": "0.341", "games": 48, "playerId": "55530", "rank": 13}, {"name": "에레디아", "team": "SSG", "avg": "0.339", "games": 96, "playerId": "53827", "rank": 14}, {"name": "양의지", "team": "두산", "avg": "0.337", "games": 130, "playerId": "76232", "rank": 15}, {"name": "안현민", "team": "KT", "avg": "0.334", "games": 112, "playerId": "52001", "rank": 16}, {"name": "김태근", "team": "삼성", "avg": "0.333", "games": 11, "playerId": "69207", "rank": 17}, {"name": "주효상", "team": "KIA", "avg": "0.333", "games": 8, "playerId": "66354", "rank": 18}, {"name": "김성윤", "team": "삼성", "avg": "0.331", "games": 127, "playerId": "67449", "rank": 19}, {"name": "레이예스", "team": "롯데", "avg": "0.326", "games": 144, "playerId": "54529", "rank": 20}, {"name": "김선빈", "team": "KIA", "avg": "0.321", "games": 84, "playerId": "78603", "rank": 21}, {"name": "문현빈", "team": "한화", "avg": "0.320", "games": 141, "playerId": "53764", "rank": 22}, {"name": "구자욱", "team": "삼성", "avg": "0.319", "games": 142, "playerId": "62404", "rank": 23}, {"name": "안재석", "team": "두산", "avg": "0.319", "games": 35, "playerId": "51203", "rank": 24}, {"name": "송성문", "team": "키움", "avg": "0.315", "games": 144, "playerId": "65357", "rank": 25}, {"name": "디아즈", "team": "삼성", "avg": "0.314", "games": 144, "playerId": "54400", "rank": 26}, {"name": "신민재", "team": "LG", "avg": "0.313", "games": 135, "playerId": "65207", "rank": 27}, {"name": "오스틴", "team": "LG", "avg": "0.313", "games": 116, "playerId": "53123", "rank": 28}, {"name": "리베라토", "team": "한화", "avg": "0.313", "games": 62, "playerId": "55703", "rank": 29}, {"name": "김한별", "team": "NC", "avg": "0.313", "games": 76, "playerId": "50902", "rank": 30}, {"name": "이주형", "team": "키움", "avg": "0.313", "games": 11, "playerId": "51302", "rank": 31}, {"name": "김도영", "team": "KIA", "avg": "0.309", "games": 30, "playerId": "52605", "rank": 32}, {"name": "최형우", "team": "KIA", "avg": "0.307", "games": 133, "playerId": "72443", "rank": 33}, {"name": "문성주", "team": "LG", "avg": "0.305", "games": 135, "playerId": "68119", "rank": 34}, {"name": "현원회", "team": "SSG", "avg": "0.305", "games": 21, "playerId": "50840", "rank": 35}, {"name": "박민우", "team": "NC", "avg": "0.302", "games": 117, "playerId": "62907", "rank": 36}, {"name": "케이브", "team": "두산", "avg": "0.299", "games": 136, "playerId": "55208", "rank": 37}, {"name": "김현수", "team": "LG", "avg": "0.298", "games": 140, "playerId": "76290", "rank": 38}, {"name": "하주석", "team": "한화", "avg": "0.297", "games": 95, "playerId": "62700", "rank": 39}, {"name": "고종욱", "team": "KIA", "avg": "0.296", "games": 46, "playerId": "61353", "rank": 40}, {"name": "데이비슨", "team": "NC", "avg": "0.293", "games": 112, "playerId": "54944", "rank": 41}, {"name": "전준우", "team": "롯데", "avg": "0.293", "games": 114, "playerId": "78513", "rank": 42}, {"name": "김주원", "team": "NC", "avg": "0.289", "games": 144, "playerId": "51907", "rank": 43}, {"name": "박건우", "team": "NC", "avg": "0.289", "games": 124, "playerId": "79215", "rank": 44}, {"name": "손아섭", "team": "한화", "avg": "0.288", "games": 111, "playerId": "77532", "rank": 45}, {"name": "채은성", "team": "한화", "avg": "0.288", "games": 132, "playerId": "79192", "rank": 46}, {"name": "홍창기", "team": "LG", "avg": "0.287", "games": 51, "playerId": "66108", "rank": 47}, {"name": "류효승", "team": "SSG", "avg": "0.287", "games": 27, "playerId": "50868", "rank": 48}, {"name": "박승규", "team": "삼성", "avg": "0.287", "games": 64, "playerId": "69418", "rank": 49}, {"name": "김민혁", "team": "KT", "avg": "0.287", "games": 106, "playerId": "64004", "rank": 50}, {"name": "전민재", "team": "롯데", "avg": "0.287", "games": 101, "playerId": "68205", "rank": 51}, {"name": "박찬호", "team": "KIA", "avg": "0.287", "games": 134, "playerId": "64646", "rank": 52}, {"name": "구본혁", "team": "LG", "avg": "0.286", "games": 131, "playerId": "69100", "rank": 53}, {"name": "최재훈", "team": "한화", "avg": "0.286", "games": 121, "playerId": "78288", "rank": 54}, {"name": "김도환", "team": "삼성", "avg": "0.286", "games": 6, "playerId": "69442", "rank": 55}, {"name": "박재엽", "team": "롯데", "avg": "0.286", "games": 9, "playerId": "55563", "rank": 56}, {"name": "최지훈", "team": "SSG", "avg": "0.284", "games": 140, "playerId": "50854", "rank": 57}, {"name": "박준순", "team": "두산", "avg": "0.284", "games": 91, "playerId": "55252", "rank": 58}, {"name": "허경민", "team": "KT", "avg": "0.283", "games": 114, "playerId": "79240", "rank": 59}, {"name": "김호령", "team": "KIA", "avg": "0.283", "games": 105, "playerId": "65653", "rank": 60}, {"name": "최원영", "team": "LG", "avg": "0.282", "games": 119, "playerId": "52103", "rank": 61}, {"name": "윤동희", "team": "롯데", "avg": "0.282", "games": 97, "playerId": "52591", "rank": 62}, {"name": "김지찬", "team": "삼성", "avg": "0.281", "games": 90, "playerId": "50458", "rank": 63}, {"name": "류지혁", "team": "삼성", "avg": "0.280", "games": 129, "playerId": "62234", "rank": 64}, {"name": "고명준", "team": "SSG", "avg": "0.278", "games": 130, "playerId": "51868", "rank": 65}, {"name": "임종성", "team": "두산", "avg": "0.277", "games": 33, "playerId": "54236", "rank": 66}, {"name": "박해민", "team": "LG", "avg": "0.276", "games": 144, "playerId": "62415", "rank": 67}, {"name": "문보경", "team": "LG", "avg": "0.276", "games": 141, "playerId": "69102", "rank": 68}, {"name": "최정원", "team": "NC", "avg": "0.275", "games": 91, "playerId": "69992", "rank": 69}, {"name": "황재균", "team": "KT", "avg": "0.275", "games": 112, "playerId": "76313", "rank": 70}, {"name": "윤도현", "team": "KIA", "avg": "0.275", "games": 40, "playerId": "52667", "rank": 71}, {"name": "최주환", "team": "키움", "avg": "0.275", "games": 120, "playerId": "76267", "rank": 72}, {"name": "이진영", "team": "한화", "avg": "0.274", "games": 115, "playerId": "66657", "rank": 73}, {"name": "박성한", "team": "SSG", "avg": "0.274", "games": 127, "playerId": "67893", "rank": 74}, {"name": "유강남", "team": "롯데", "avg": "0.274", "games": 110, "playerId": "61102", "rank": 75}, {"name": "한태양", "team": "롯데", "avg": "0.274", "games": 108, "playerId": "52568", "rank": 76}, {"name": "박정우", "team": "KIA", "avg": "0.274", "games": 53, "playerId": "67609", "rank": 77}, {"name": "황영묵", "team": "한화", "avg": "0.273", "games": 117, "playerId": "54795", "rank": 78}, {"name": "한유섬", "team": "SSG", "avg": "0.273", "games": 128, "playerId": "62895", "rank": 79}, {"name": "전병우", "team": "삼성", "avg": "0.273", "games": 59, "playerId": "65586", "rank": 80}, {"name": "플로리얼", "team": "한화", "avg": "0.271", "games": 65, "playerId": "55734", "rank": 81}, {"name": "고승민", "team": "롯데", "avg": "0.271", "games": 121, "playerId": "69517", "rank": 82}, {"name": "노진혁", "team": "롯데", "avg": "0.270", "games": 28, "playerId": "62931", "rank": 83}, {"name": "강민호", "team": "삼성", "avg": "0.269", "games": 127, "playerId": "74540", "rank": 84}, {"name": "나성범", "team": "KIA", "avg": "0.268", "games": 82, "playerId": "62947", "rank": 85}, {"name": "김동헌", "team": "키움", "avg": "0.268", "games": 49, "playerId": "53344", "rank": 86}, {"name": "서호철", "team": "NC", "avg": "0.266", "games": 103, "playerId": "69995", "rank": 87}, {"name": "석정우", "team": "SSG", "avg": "0.265", "games": 27, "playerId": "52804", "rank": 88}, {"name": "강백호", "team": "KT", "avg": "0.265", "games": 95, "playerId": "68050", "rank": 89}, {"name": "오선우", "team": "KIA", "avg": "0.265", "games": 124, "playerId": "69636", "rank": 90}, {"name": "김석환", "team": "KIA", "avg": "0.265", "games": 47, "playerId": "67610", "rank": 91}, {"name": "박관우", "team": "LG", "avg": "0.264", "games": 39, "playerId": "55164", "rank": 92}, {"name": "안상현", "team": "SSG", "avg": "0.264", "games": 102, "playerId": "66864", "rank": 93}, {"name": "박민석", "team": "KT", "avg": "0.263", "games": 19, "playerId": "69056", "rank": 94}, {"name": "정현창", "team": "KIA", "avg": "0.263", "games": 16, "playerId": "55926", "rank": 95}, {"name": "박계범", "team": "두산", "avg": "0.263", "games": 94, "playerId": "64468", "rank": 96}, {"name": "오명진", "team": "두산", "avg": "0.263", "games": 107, "playerId": "50208", "rank": 97}, {"name": "변상권", "team": "키움", "avg": "0.263", "games": 12, "playerId": "68305", "rank": 98}, {"name": "스티븐슨", "team": "KT", "avg": "0.262", "games": 39, "playerId": "55013", "rank": 99}, {"name": "장두성", "team": "롯데", "avg": "0.262", "games": 118, "playerId": "68507", "rank": 100}, {"name": "김태연", "team": "한화", "avg": "0.261", "games": 120, "playerId": "66704", "rank": 101}, {"name": "이도윤", "team": "한화", "avg": "0.260", "games": 113, "playerId": "65703", "rank": 102}, {"name": "노시환", "team": "한화", "avg": "0.260", "games": 144, "playerId": "69737", "rank": 103}, {"name": "최인호", "team": "한화", "avg": "0.259", "games": 78, "playerId": "50707", "rank": 104}, {"name": "양도근", "team": "삼성", "avg": "0.259", "games": 116, "playerId": "54408", "rank": 105}, {"name": "이정훈", "team": "KT", "avg": "0.258", "games": 59, "playerId": "67644", "rank": 106}, {"name": "김태군", "team": "KIA", "avg": "0.258", "games": 100, "playerId": "78122", "rank": 107}, {"name": "정수빈", "team": "두산", "avg": "0.258", "games": 132, "playerId": "79231", "rank": 108}, {"name": "오윤석", "team": "KT", "avg": "0.256", "games": 77, "playerId": "64504", "rank": 109}, {"name": "황성빈", "team": "롯데", "avg": "0.256", "games": 79, "playerId": "50500", "rank": 110}, {"name": "이재현", "team": "삼성", "avg": "0.254", "games": 139, "playerId": "52415", "rank": 111}, {"name": "김상수", "team": "KT", "avg": "0.254", "games": 113, "playerId": "79402", "rank": 112}, {"name": "오지환", "team": "LG", "avg": "0.253", "games": 127, "playerId": "79109", "rank": 113}, {"name": "박동원", "team": "LG", "avg": "0.253", "games": 139, "playerId": "79365", "rank": 114}, {"name": "카디네스", "team": "키움", "avg": "0.253", "games": 86, "playerId": "54444", "rank": 115}, {"name": "박영빈", "team": "NC", "avg": "0.250", "games": 16, "playerId": "50906", "rank": 116}, {"name": "오태양", "team": "NC", "avg": "0.250", "games": 14, "playerId": "51996", "rank": 117}, {"name": "이우성", "team": "NC", "avg": "0.250", "games": 105, "playerId": "63260", "rank": 118}, {"name": "손호영", "team": "롯데", "avg": "0.250", "games": 97, "playerId": "50150", "rank": 119}, {"name": "김병휘", "team": "키움", "avg": "0.250", "games": 7, "playerId": "50304", "rank": 120}, {"name": "주성원", "team": "키움", "avg": "0.250", "games": 58, "playerId": "69332", "rank": 121}, {"name": "김영웅", "team": "삼성", "avg": "0.249", "games": 125, "playerId": "52430", "rank": 122}, {"name": "김휘집", "team": "NC", "avg": "0.249", "games": 142, "playerId": "51344", "rank": 123}, {"name": "양석환", "team": "두산", "avg": "0.248", "games": 72, "playerId": "64153", "rank": 124}, {"name": "장성우", "team": "KT", "avg": "0.247", "games": 129, "playerId": "78548", "rank": 125}, {"name": "김기연", "team": "두산", "avg": "0.247", "games": 100, "playerId": "66112", "rank": 126}, {"name": "권희동", "team": "NC", "avg": "0.246", "games": 136, "playerId": "63963", "rank": 127}, {"name": "정준재", "team": "SSG", "avg": "0.245", "games": 132, "playerId": "54812", "rank": 128}, {"name": "최정", "team": "SSG", "avg": "0.244", "games": 95, "playerId": "75847", "rank": 129}, {"name": "조수행", "team": "두산", "avg": "0.244", "games": 108, "playerId": "66209", "rank": 130}, {"name": "임지열", "team": "키움", "avg": "0.244", "games": 102, "playerId": "64340", "rank": 131}, {"name": "김민성", "team": "롯데", "avg": "0.243", "games": 96, "playerId": "77564", "rank": 132}, {"name": "최원준", "team": "NC", "avg": "0.242", "games": 126, "playerId": "66606", "rank": 133}, {"name": "이호준", "team": "롯데", "avg": "0.242", "games": 99, "playerId": "54598", "rank": 134}, {"name": "이유찬", "team": "두산", "avg": "0.242", "games": 89, "playerId": "67207", "rank": 135}, {"name": "김건희", "team": "키움", "avg": "0.242", "games": 105, "playerId": "53312", "rank": 136}, {"name": "김재환", "team": "두산", "avg": "0.241", "games": 103, "playerId": "78224", "rank": 137}, {"name": "스톤", "team": "키움", "avg": "0.241", "games": 22, "playerId": "55326", "rank": 138}, {"name": "이주형", "team": "키움", "avg": "0.240", "games": 127, "playerId": "50167", "rank": 139}, {"name": "이지영", "team": "SSG", "avg": "0.239", "games": 76, "playerId": "79456", "rank": 140}, {"name": "로하스", "team": "KT", "avg": "0.239", "games": 95, "playerId": "67025", "rank": 141}, {"name": "조형우", "team": "SSG", "avg": "0.238", "games": 102, "playerId": "51865", "rank": 142}, {"name": "천재환", "team": "NC", "avg": "0.238", "games": 129, "playerId": "67905", "rank": 143}, {"name": "한승택", "team": "KIA", "avg": "0.238", "games": 15, "playerId": "63722", "rank": 144}, {"name": "오선진", "team": "키움", "avg": "0.238", "games": 99, "playerId": "78756", "rank": 145}, {"name": "어준서", "team": "키움", "avg": "0.238", "games": 116, "playerId": "55392", "rank": 146}, {"name": "천성호", "team": "LG", "avg": "0.237", "games": 83, "playerId": "50054", "rank": 147}, {"name": "김태훈", "team": "삼성", "avg": "0.237", "games": 51, "playerId": "65040", "rank": 148}, {"name": "김동준", "team": "두산", "avg": "0.237", "games": 36, "playerId": "52267", "rank": 149}, {"name": "위즈덤", "team": "KIA", "avg": "0.236", "games": 119, "playerId": "55645", "rank": 150}, {"name": "강승호", "team": "두산", "avg": "0.236", "games": 115, "playerId": "63123", "rank": 151}, {"name": "안주형", "team": "삼성", "avg": "0.235", "games": 8, "playerId": "66406", "rank": 152}, {"name": "김규성", "team": "KIA", "avg": "0.233", "games": 133, "playerId": "66614", "rank": 153}, {"name": "임병욱", "team": "키움", "avg": "0.233", "games": 52, "playerId": "64346", "rank": 154}, {"name": "김태진", "team": "키움", "avg": "0.233", "games": 94, "playerId": "64984", "rank": 155}, {"name": "오영수", "team": "NC", "avg": "0.232", "games": 67, "playerId": "68904", "rank": 156}, {"name": "김형준", "team": "NC", "avg": "0.232", "games": 127, "playerId": "68912", "rank": 157}, {"name": "심우준", "team": "한화", "avg": "0.231", "games": 94, "playerId": "64006", "rank": 158}, {"name": "이율예", "team": "SSG", "avg": "0.231", "games": 8, "playerId": "55832", "rank": 159}, {"name": "전태현", "team": "키움", "avg": "0.231", "games": 77, "playerId": "55397", "rank": 160}, {"name": "나승엽", "team": "롯데", "avg": "0.229", "games": 105, "playerId": "51551", "rank": 161}, {"name": "김민석", "team": "두산", "avg": "0.228", "games": 95, "playerId": "53554", "rank": 162}, {"name": "안치영", "team": "KT", "avg": "0.227", "games": 47, "playerId": "67006", "rank": 163}, {"name": "박주홍", "team": "키움", "avg": "0.226", "games": 102, "playerId": "50357", "rank": 164}, {"name": "김헌곤", "team": "삼성", "avg": "0.225", "games": 77, "playerId": "61404", "rank": 165}, {"name": "권동진", "team": "KT", "avg": "0.225", "games": 123, "playerId": "51003", "rank": 166}, {"name": "김동혁", "team": "롯데", "avg": "0.225", "games": 93, "playerId": "52504", "rank": 167}, {"name": "한준수", "team": "KIA", "avg": "0.225", "games": 103, "playerId": "68646", "rank": 168}, {"name": "박준영", "team": "두산", "avg": "0.225", "games": 41, "playerId": "66928", "rank": 169}, {"name": "추재현", "team": "두산", "avg": "0.222", "games": 34, "playerId": "68362", "rank": 170}, {"name": "김동엽", "team": "키움", "avg": "0.222", "games": 9, "playerId": "66838", "rank": 171}, {"name": "이주헌", "team": "LG", "avg": "0.219", "games": 76, "playerId": "52154", "rank": 172}, {"name": "변우혁", "team": "KIA", "avg": "0.218", "games": 47, "playerId": "69727", "rank": 173}, {"name": "김성현", "team": "SSG", "avg": "0.217", "games": 59, "playerId": "76802", "rank": 174}, {"name": "고영우", "team": "키움", "avg": "0.217", "games": 14, "playerId": "54344", "rank": 175}, {"name": "정훈", "team": "롯데", "avg": "0.216", "games": 77, "playerId": "60523", "rank": 176}, {"name": "이용규", "team": "키움", "avg": "0.216", "games": 14, "playerId": "74163", "rank": 177}, {"name": "함수호", "team": "삼성", "avg": "0.214", "games": 6, "playerId": "55440", "rank": 178}, {"name": "문상철", "team": "KT", "avg": "0.214", "games": 79, "playerId": "64007", "rank": 179}, {"name": "김인태", "team": "두산", "avg": "0.213", "games": 106, "playerId": "63257", "rank": 180}, {"name": "푸이그", "team": "키움", "avg": "0.212", "games": 40, "playerId": "52366", "rank": 181}, {"name": "송찬의", "team": "LG", "avg": "0.211", "games": 66, "playerId": "68110", "rank": 182}, {"name": "염승원", "team": "키움", "avg": "0.211", "games": 11, "playerId": "55339", "rank": 183}, {"name": "장진혁", "team": "KT", "avg": "0.209", "games": 86, "playerId": "66706", "rank": 184}, {"name": "이영빈", "team": "LG", "avg": "0.208", "games": 44, "playerId": "51100", "rank": 185}, {"name": "김재현", "team": "키움", "avg": "0.208", "games": 62, "playerId": "62332", "rank": 186}, {"name": "장준원", "team": "KT", "avg": "0.207", "games": 73, "playerId": "64115", "rank": 187}, {"name": "박시원", "team": "NC", "avg": "0.204", "games": 52, "playerId": "50996", "rank": 188}, {"name": "배정대", "team": "KT", "avg": "0.204", "games": 99, "playerId": "64166", "rank": 189}, {"name": "이원석", "team": "한화", "avg": "0.203", "games": 129, "playerId": "68700", "rank": 190}, {"name": "맥브룸", "team": "SSG", "avg": "0.203", "games": 22, "playerId": "55844", "rank": 191}, {"name": "박민", "team": "KIA", "avg": "0.202", "games": 71, "playerId": "50657", "rank": 192}, {"name": "오태곤", "team": "SSG", "avg": "0.201", "games": 122, "playerId": "60558", "rank": 193}, {"name": "김성우", "team": "LG", "avg": "0.200", "games": 7, "playerId": "52105", "rank": 194}, {"name": "김주성", "team": "LG", "avg": "0.200", "games": 16, "playerId": "66162", "rank": 195}, {"name": "손용준", "team": "LG", "avg": "0.200", "games": 9, "playerId": "54156", "rank": 196}, {"name": "이상혁", "team": "한화", "avg": "0.200", "games": 39, "playerId": "52704", "rank": 197}, {"name": "이재원", "team": "한화", "avg": "0.200", "games": 98, "playerId": "76812", "rank": 198}, {"name": "이승민", "team": "SSG", "avg": "0.200", "games": 2, "playerId": "54806", "rank": 199}, {"name": "홍대인", "team": "SSG", "avg": "0.200", "games": 14, "playerId": "55897", "rank": 200}, {"name": "이병헌", "team": "삼성", "avg": "0.200", "games": 55, "playerId": "69428", "rank": 201}, {"name": "이창용", "team": "삼성", "avg": "0.200", "games": 11, "playerId": "51407", "rank": 202}, {"name": "이해승", "team": "삼성", "avg": "0.200", "games": 8, "playerId": "69416", "rank": 203}, {"name": "고승완", "team": "NC", "avg": "0.200", "games": 17, "playerId": "54908", "rank": 204}, {"name": "송승환", "team": "NC", "avg": "0.200", "games": 13, "playerId": "69203", "rank": 205}, {"name": "김병준", "team": "KT", "avg": "0.200", "games": 9, "playerId": "52002", "rank": 206}, {"name": "김준상", "team": "두산", "avg": "0.200", "games": 9, "playerId": "55226", "rank": 207}, {"name": "이형종", "team": "키움", "avg": "0.200", "games": 33, "playerId": "78135", "rank": 208}, {"name": "박병호", "team": "삼성", "avg": "0.199", "games": 77, "playerId": "75125", "rank": 209}, {"name": "이성규", "team": "삼성", "avg": "0.198", "games": 68, "playerId": "66409", "rank": 210}, {"name": "김성욱", "team": "SSG", "avg": "0.195", "games": 56, "playerId": "62934", "rank": 211}, {"name": "한석현", "team": "NC", "avg": "0.195", "games": 61, "playerId": "64101", "rank": 212}, {"name": "김대한", "team": "두산", "avg": "0.194", "games": 16, "playerId": "69238", "rank": 213}, {"name": "최준우", "team": "SSG", "avg": "0.191", "games": 78, "playerId": "68868", "rank": 214}, {"name": "박승욱", "team": "롯데", "avg": "0.190", "games": 54, "playerId": "62802", "rank": 215}, {"name": "황대인", "team": "KIA", "avg": "0.189", "games": 18, "playerId": "65610", "rank": 216}, {"name": "함창건", "team": "LG", "avg": "0.188", "games": 15, "playerId": "50108", "rank": 217}, {"name": "채현우", "team": "SSG", "avg": "0.188", "games": 41, "playerId": "69804", "rank": 218}, {"name": "양우현", "team": "삼성", "avg": "0.188", "games": 14, "playerId": "69403", "rank": 219}, {"name": "강현우", "team": "KT", "avg": "0.188", "games": 40, "playerId": "50066", "rank": 220}, {"name": "조대현", "team": "KT", "avg": "0.187", "games": 64, "playerId": "68089", "rank": 221}, {"name": "정보근", "team": "롯데", "avg": "0.186", "games": 93, "playerId": "68518", "rank": 222}, {"name": "한재환", "team": "NC", "avg": "0.185", "games": 16, "playerId": "50903", "rank": 223}, {"name": "심재훈", "team": "삼성", "avg": "0.184", "games": 31, "playerId": "55438", "rank": 224}, {"name": "김정율", "team": "LG", "avg": "0.182", "games": 13, "playerId": "67504", "rank": 225}, {"name": "신범수", "team": "SSG", "avg": "0.182", "games": 29, "playerId": "66662", "rank": 226}, {"name": "도태훈", "team": "NC", "avg": "0.182", "games": 61, "playerId": "66965", "rank": 227}, {"name": "이선우", "team": "두산", "avg": "0.182", "games": 10, "playerId": "55224", "rank": 228}, {"name": "강진성", "team": "키움", "avg": "0.182", "games": 6, "playerId": "62925", "rank": 229}, {"name": "김찬형", "team": "SSG", "avg": "0.178", "games": 44, "playerId": "66917", "rank": 230}, {"name": "윤정빈", "team": "삼성", "avg": "0.175", "games": 25, "playerId": "68463", "rank": 231}, {"name": "송지후", "team": "키움", "avg": "0.175", "games": 33, "playerId": "54394", "rank": 232}, {"name": "원성준", "team": "키움", "avg": "0.174", "games": 24, "playerId": "54307", "rank": 233}, {"name": "안치홍", "team": "한화", "avg": "0.172", "games": 66, "playerId": "79608", "rank": 234}, {"name": "허인서", "team": "한화", "avg": "0.172", "games": 20, "playerId": "52764", "rank": 235}, {"name": "문정빈", "team": "LG", "avg": "0.167", "games": 21, "playerId": "52121", "rank": 236}, {"name": "권광민", "team": "한화", "avg": "0.167", "games": 15, "playerId": "52769", "rank": 237}, {"name": "임종찬", "team": "한화", "avg": "0.167", "games": 17, "playerId": "50704", "rank": 238}, {"name": "신윤후", "team": "롯데", "avg": "0.167", "games": 12, "playerId": "69508", "rank": 239}, {"name": "최항", "team": "롯데", "avg": "0.167", "games": 8, "playerId": "62884", "rank": 240}, {"name": "최정용", "team": "KIA", "avg": "0.167", "games": 4, "playerId": "65464", "rank": 241}, {"name": "홍종표", "team": "NC", "avg": "0.164", "games": 62, "playerId": "50600", "rank": 242}, {"name": "박세혁", "team": "NC", "avg": "0.163", "games": 48, "playerId": "62244", "rank": 243}, {"name": "이창진", "team": "KIA", "avg": "0.161", "games": 37, "playerId": "64560", "rank": 244}, {"name": "유로결", "team": "한화", "avg": "0.154", "games": 20, "playerId": "69766", "rank": 245}, {"name": "박지환", "team": "SSG", "avg": "0.150", "games": 31, "playerId": "54805", "rank": 246}, {"name": "손성빈", "team": "롯데", "avg": "0.145", "games": 51, "playerId": "51528", "rank": 247}, {"name": "최상민", "team": "SSG", "avg": "0.143", "games": 23, "playerId": "68805", "rank": 248}, {"name": "하재훈", "team": "SSG", "avg": "0.143", "games": 18, "playerId": "69813", "rank": 249}, {"name": "안중열", "team": "NC", "avg": "0.143", "games": 33, "playerId": "64022", "rank": 250}, {"name": "조세진", "team": "롯데", "avg": "0.143", "games": 12, "playerId": "52516", "rank": 251}, {"name": "박수종", "team": "키움", "avg": "0.143", "games": 38, "playerId": "52305", "rank": 252}, {"name": "서건창", "team": "KIA", "avg": "0.136", "games": 10, "playerId": "78168", "rank": 253}, {"name": "류현준", "team": "두산", "avg": "0.136", "games": 17, "playerId": "54219", "rank": 254}, {"name": "김재성", "team": "삼성", "avg": "0.127", "games": 43, "playerId": "65132", "rank": 255}, {"name": "홍현빈", "team": "삼성", "avg": "0.125", "games": 32, "playerId": "67005", "rank": 256}, {"name": "박한결", "team": "NC", "avg": "0.118", "games": 8, "playerId": "53992", "rank": 257}, {"name": "유준규", "team": "KT", "avg": "0.118", "games": 35, "playerId": "51013", "rank": 258}, {"name": "김민혁", "team": "두산", "avg": "0.118", "games": 10, "playerId": "65269", "rank": 259}, {"name": "최성민", "team": "KT", "avg": "0.105", "games": 32, "playerId": "51007", "rank": 260}, {"name": "여동건", "team": "두산", "avg": "0.105", "games": 19, "playerId": "54205", "rank": 261}, {"name": "김수윤", "team": "SSG", "avg": "0.091", "games": 7, "playerId": "67900", "rank": 262}, {"name": "박헌", "team": "KIA", "avg": "0.083", "games": 8, "playerId": "55637", "rank": 263}, {"name": "전다민", "team": "두산", "avg": "0.083", "games": 22, "playerId": "54214", "rank": 264}, {"name": "박재현", "team": "KIA", "avg": "0.081", "games": 58, "playerId": "55636", "rank": 265}, {"name": "김인환", "team": "한화", "avg": "0.080", "games": 10, "playerId": "66715", "rank": 266}, {"name": "정해원", "team": "KIA", "avg": "0.075", "games": 24, "playerId": "53659", "rank": 267}, {"name": "윤준혁", "team": "KT", "avg": "0.059", "games": 28, "playerId": "50092", "rank": 268}, {"name": "한승현", "team": "롯데", "avg": "0.059", "games": 19, "playerId": "55506", "rank": 269}, {"name": "강민성", "team": "KT", "avg": "0.033", "games": 25, "playerId": "69064", "rank": 270}, {"name": "김영우", "team": "LG", "avg": "-", "games": 4, "playerId": "55167", "rank": 271}, {"name": "김진성", "team": "LG", "avg": "-", "games": 5, "playerId": "75867", "rank": 272}, {"name": "김진수", "team": "LG", "avg": "-", "games": 1, "playerId": "51154", "rank": 273}, {"name": "박명근", "team": "LG", "avg": "-", "games": 5, "playerId": "53139", "rank": 274}, {"name": "백승현", "team": "LG", "avg": "-", "games": 3, "playerId": "65109", "rank": 275}, {"name": "우강훈", "team": "LG", "avg": "-", "games": 2, "playerId": "51526", "rank": 276}, {"name": "김서현", "team": "한화", "avg": "-", "games": 3, "playerId": "53754", "rank": 277}, {"name": "김승일", "team": "한화", "avg": "-", "games": 1, "playerId": "50711", "rank": 278}, {"name": "김종수", "team": "한화", "avg": "-", "games": 1, "playerId": "63765", "rank": 279}, {"name": "박상원", "team": "한화", "avg": "-", "games": 1, "playerId": "67703", "rank": 280}, {"name": "박정현", "team": "한화", "avg": "0.000", "games": 2, "playerId": "50709", "rank": 281}, {"name": "김대호", "team": "삼성", "avg": "-", "games": 1, "playerId": "54401", "rank": 282}, {"name": "김재윤", "team": "삼성", "avg": "-", "games": 2, "playerId": "65062", "rank": 283}, {"name": "김재혁", "team": "삼성", "avg": "0.000", "games": 8, "playerId": "52424", "rank": 284}, {"name": "김범준", "team": "NC", "avg": "0.000", "games": 1, "playerId": "69980", "rank": 285}, {"name": "김영규", "team": "NC", "avg": "-", "games": 1, "playerId": "68900", "rank": 286}, {"name": "김태훈", "team": "NC", "avg": "-", "games": 1, "playerId": "55995", "rank": 287}, {"name": "김건형", "team": "KT", "avg": "0.000", "games": 2, "playerId": "51005", "rank": 288}, {"name": "김민석", "team": "KT", "avg": "-", "games": 2, "playerId": "54097", "rank": 289}, {"name": "김민수", "team": "KT", "avg": "-", "games": 1, "playerId": "65048", "rank": 290}, {"name": "박건우", "team": "KT", "avg": "-", "games": 2, "playerId": "55046", "rank": 291}, {"name": "강성우", "team": "롯데", "avg": "-", "games": 1, "playerId": "54567", "rank": 292}, {"name": "강승구", "team": "롯데", "avg": "0.000", "games": 1, "playerId": "54506", "rank": 293}, {"name": "구승민", "team": "롯데", "avg": "-", "games": 1, "playerId": "63543", "rank": 294}, {"name": "김강현", "team": "롯데", "avg": "-", "games": 1, "playerId": "65522", "rank": 295}, {"name": "김기훈", "team": "KIA", "avg": "0.000", "games": 2, "playerId": "69620", "rank": 296}, {"name": "김대유", "team": "KIA", "avg": "-", "games": 1, "playerId": "60337", "rank": 297}, {"name": "김시훈", "team": "KIA", "avg": "-", "games": 4, "playerId": "68928", "rank": 298}, {"name": "강현구", "team": "두산", "avg": "0.000", "games": 1, "playerId": "51269", "rank": 299}, {"name": "고효준", "team": "두산", "avg": "-", "games": 1, "playerId": "72523", "rank": 300}]
+[
+  {
+    "name": "김준태",
+    "team": "LG",
+    "avg": "1.000",
+    "games": 2,
+    "playerId": "62558",
+    "rank": 1
+  },
+  {
+    "name": "이승현",
+    "team": "한화",
+    "avg": "1.000",
+    "games": 4,
+    "playerId": "55712",
+    "rank": 2
+  },
+  {
+    "name": "장규현",
+    "team": "한화",
+    "avg": "1.000",
+    "games": 2,
+    "playerId": "51762",
+    "rank": 3
+  },
+  {
+    "name": "박건우",
+    "team": "롯데",
+    "avg": "0.667",
+    "games": 6,
+    "playerId": "55509",
+    "rank": 4
+  },
+  {
+    "name": "김태윤",
+    "team": "SSG",
+    "avg": "0.500",
+    "games": 8,
+    "playerId": "52803",
+    "rank": 5
+  },
+  {
+    "name": "정현승",
+    "team": "SSG",
+    "avg": "0.500",
+    "games": 3,
+    "playerId": "54815",
+    "rank": 6
+  },
+  {
+    "name": "이재상",
+    "team": "키움",
+    "avg": "0.500",
+    "games": 2,
+    "playerId": "54305",
+    "rank": 7
+  },
+  {
+    "name": "김정호",
+    "team": "NC",
+    "avg": "0.444",
+    "games": 8,
+    "playerId": "51903",
+    "rank": 8
+  },
+  {
+    "name": "박지훈",
+    "team": "두산",
+    "avg": "0.417",
+    "games": 37,
+    "playerId": "50204",
+    "rank": 9
+  },
+  {
+    "name": "김현종",
+    "team": "LG",
+    "avg": "0.400",
+    "games": 10,
+    "playerId": "54166",
+    "rank": 10
+  },
+  {
+    "name": "홍성호",
+    "team": "두산",
+    "avg": "0.346",
+    "games": 9,
+    "playerId": "66233",
+    "rank": 11
+  },
+  {
+    "name": "이호연",
+    "team": "KT",
+    "avg": "0.343",
+    "games": 32,
+    "playerId": "68504",
+    "rank": 12
+  },
+  {
+    "name": "박찬형",
+    "team": "롯데",
+    "avg": "0.341",
+    "games": 48,
+    "playerId": "55530",
+    "rank": 13
+  },
+  {
+    "name": "에레디아",
+    "team": "SSG",
+    "avg": "0.339",
+    "games": 96,
+    "playerId": "53827",
+    "rank": 14
+  },
+  {
+    "name": "양의지",
+    "team": "두산",
+    "avg": "0.337",
+    "games": 130,
+    "playerId": "76232",
+    "rank": 15
+  },
+  {
+    "name": "안현민",
+    "team": "KT",
+    "avg": "0.334",
+    "games": 112,
+    "playerId": "52001",
+    "rank": 16
+  },
+  {
+    "name": "김태근",
+    "team": "삼성",
+    "avg": "0.333",
+    "games": 11,
+    "playerId": "69207",
+    "rank": 17
+  },
+  {
+    "name": "주효상",
+    "team": "KIA",
+    "avg": "0.333",
+    "games": 8,
+    "playerId": "66354",
+    "rank": 18
+  },
+  {
+    "name": "김성윤",
+    "team": "삼성",
+    "avg": "0.331",
+    "games": 127,
+    "playerId": "67449",
+    "rank": 19
+  },
+  {
+    "name": "레이예스",
+    "team": "롯데",
+    "avg": "0.326",
+    "games": 144,
+    "playerId": "54529",
+    "rank": 20
+  },
+  {
+    "name": "김선빈",
+    "team": "KIA",
+    "avg": "0.321",
+    "games": 84,
+    "playerId": "78603",
+    "rank": 21
+  },
+  {
+    "name": "문현빈",
+    "team": "한화",
+    "avg": "0.320",
+    "games": 141,
+    "playerId": "53764",
+    "rank": 22
+  },
+  {
+    "name": "구자욱",
+    "team": "삼성",
+    "avg": "0.319",
+    "games": 142,
+    "playerId": "62404",
+    "rank": 23
+  },
+  {
+    "name": "안재석",
+    "team": "두산",
+    "avg": "0.319",
+    "games": 35,
+    "playerId": "51203",
+    "rank": 24
+  },
+  {
+    "name": "송성문",
+    "team": "키움",
+    "avg": "0.315",
+    "games": 144,
+    "playerId": "65357",
+    "rank": 25
+  },
+  {
+    "name": "디아즈",
+    "team": "삼성",
+    "avg": "0.314",
+    "games": 144,
+    "playerId": "54400",
+    "rank": 26
+  },
+  {
+    "name": "신민재",
+    "team": "LG",
+    "avg": "0.313",
+    "games": 135,
+    "playerId": "65207",
+    "rank": 27
+  },
+  {
+    "name": "오스틴 딘",
+    "team": "LG",
+    "avg": "0.313",
+    "games": 116,
+    "playerId": "53123",
+    "rank": 28
+  },
+  {
+    "name": "리베라토",
+    "team": "한화",
+    "avg": "0.313",
+    "games": 62,
+    "playerId": "55703",
+    "rank": 29
+  },
+  {
+    "name": "김한별",
+    "team": "NC",
+    "avg": "0.313",
+    "games": 76,
+    "playerId": "50902",
+    "rank": 30
+  },
+  {
+    "name": "이주형",
+    "team": "키움",
+    "avg": "0.313",
+    "games": 11,
+    "playerId": "51302",
+    "rank": 31
+  },
+  {
+    "name": "김도영",
+    "team": "KIA",
+    "avg": "0.309",
+    "games": 30,
+    "playerId": "52605",
+    "rank": 32
+  },
+  {
+    "name": "최형우",
+    "team": "KIA",
+    "avg": "0.307",
+    "games": 133,
+    "playerId": "72443",
+    "rank": 33
+  },
+  {
+    "name": "문성주",
+    "team": "LG",
+    "avg": "0.305",
+    "games": 135,
+    "playerId": "68119",
+    "rank": 34
+  },
+  {
+    "name": "현원회",
+    "team": "SSG",
+    "avg": "0.305",
+    "games": 21,
+    "playerId": "50840",
+    "rank": 35
+  },
+  {
+    "name": "박민우",
+    "team": "NC",
+    "avg": "0.302",
+    "games": 117,
+    "playerId": "62907",
+    "rank": 36
+  },
+  {
+    "name": "케이브",
+    "team": "두산",
+    "avg": "0.299",
+    "games": 136,
+    "playerId": "55208",
+    "rank": 37
+  },
+  {
+    "name": "김현수",
+    "team": "LG",
+    "avg": "0.298",
+    "games": 140,
+    "playerId": "76290",
+    "rank": 38
+  },
+  {
+    "name": "하주석",
+    "team": "한화",
+    "avg": "0.297",
+    "games": 95,
+    "playerId": "62700",
+    "rank": 39
+  },
+  {
+    "name": "고종욱",
+    "team": "KIA",
+    "avg": "0.296",
+    "games": 46,
+    "playerId": "61353",
+    "rank": 40
+  },
+  {
+    "name": "데이비슨",
+    "team": "NC",
+    "avg": "0.293",
+    "games": 112,
+    "playerId": "54944",
+    "rank": 41
+  },
+  {
+    "name": "전준우",
+    "team": "롯데",
+    "avg": "0.293",
+    "games": 114,
+    "playerId": "78513",
+    "rank": 42
+  },
+  {
+    "name": "김주원",
+    "team": "NC",
+    "avg": "0.289",
+    "games": 144,
+    "playerId": "51907",
+    "rank": 43
+  },
+  {
+    "name": "박건우",
+    "team": "NC",
+    "avg": "0.289",
+    "games": 124,
+    "playerId": "79215",
+    "rank": 44
+  },
+  {
+    "name": "손아섭",
+    "team": "한화",
+    "avg": "0.288",
+    "games": 111,
+    "playerId": "77532",
+    "rank": 45
+  },
+  {
+    "name": "채은성",
+    "team": "한화",
+    "avg": "0.288",
+    "games": 132,
+    "playerId": "79192",
+    "rank": 46
+  },
+  {
+    "name": "홍창기",
+    "team": "LG",
+    "avg": "0.287",
+    "games": 51,
+    "playerId": "66108",
+    "rank": 47
+  },
+  {
+    "name": "류효승",
+    "team": "SSG",
+    "avg": "0.287",
+    "games": 27,
+    "playerId": "50868",
+    "rank": 48
+  },
+  {
+    "name": "박승규",
+    "team": "삼성",
+    "avg": "0.287",
+    "games": 64,
+    "playerId": "69418",
+    "rank": 49
+  },
+  {
+    "name": "김민혁",
+    "team": "KT",
+    "avg": "0.287",
+    "games": 106,
+    "playerId": "64004",
+    "rank": 50
+  },
+  {
+    "name": "전민재",
+    "team": "롯데",
+    "avg": "0.287",
+    "games": 101,
+    "playerId": "68205",
+    "rank": 51
+  },
+  {
+    "name": "박찬호",
+    "team": "KIA",
+    "avg": "0.287",
+    "games": 134,
+    "playerId": "64646",
+    "rank": 52
+  },
+  {
+    "name": "구본혁",
+    "team": "LG",
+    "avg": "0.286",
+    "games": 131,
+    "playerId": "69100",
+    "rank": 53
+  },
+  {
+    "name": "최재훈",
+    "team": "한화",
+    "avg": "0.286",
+    "games": 121,
+    "playerId": "78288",
+    "rank": 54
+  },
+  {
+    "name": "김도환",
+    "team": "삼성",
+    "avg": "0.286",
+    "games": 6,
+    "playerId": "69442",
+    "rank": 55
+  },
+  {
+    "name": "박재엽",
+    "team": "롯데",
+    "avg": "0.286",
+    "games": 9,
+    "playerId": "55563",
+    "rank": 56
+  },
+  {
+    "name": "최지훈",
+    "team": "SSG",
+    "avg": "0.284",
+    "games": 140,
+    "playerId": "50854",
+    "rank": 57
+  },
+  {
+    "name": "박준순",
+    "team": "두산",
+    "avg": "0.284",
+    "games": 91,
+    "playerId": "55252",
+    "rank": 58
+  },
+  {
+    "name": "허경민",
+    "team": "KT",
+    "avg": "0.283",
+    "games": 114,
+    "playerId": "79240",
+    "rank": 59
+  },
+  {
+    "name": "김호령",
+    "team": "KIA",
+    "avg": "0.283",
+    "games": 105,
+    "playerId": "65653",
+    "rank": 60
+  },
+  {
+    "name": "최원영",
+    "team": "LG",
+    "avg": "0.282",
+    "games": 119,
+    "playerId": "52103",
+    "rank": 61
+  },
+  {
+    "name": "윤동희",
+    "team": "롯데",
+    "avg": "0.282",
+    "games": 97,
+    "playerId": "52591",
+    "rank": 62
+  },
+  {
+    "name": "김지찬",
+    "team": "삼성",
+    "avg": "0.281",
+    "games": 90,
+    "playerId": "50458",
+    "rank": 63
+  },
+  {
+    "name": "류지혁",
+    "team": "삼성",
+    "avg": "0.280",
+    "games": 129,
+    "playerId": "62234",
+    "rank": 64
+  },
+  {
+    "name": "고명준",
+    "team": "SSG",
+    "avg": "0.278",
+    "games": 130,
+    "playerId": "51868",
+    "rank": 65
+  },
+  {
+    "name": "임종성",
+    "team": "두산",
+    "avg": "0.277",
+    "games": 33,
+    "playerId": "54236",
+    "rank": 66
+  },
+  {
+    "name": "박해민",
+    "team": "LG",
+    "avg": "0.276",
+    "games": 144,
+    "playerId": "62415",
+    "rank": 67
+  },
+  {
+    "name": "문보경",
+    "team": "LG",
+    "avg": "0.276",
+    "games": 141,
+    "playerId": "69102",
+    "rank": 68
+  },
+  {
+    "name": "최정원",
+    "team": "NC",
+    "avg": "0.275",
+    "games": 91,
+    "playerId": "69992",
+    "rank": 69
+  },
+  {
+    "name": "황재균",
+    "team": "KT",
+    "avg": "0.275",
+    "games": 112,
+    "playerId": "76313",
+    "rank": 70
+  },
+  {
+    "name": "윤도현",
+    "team": "KIA",
+    "avg": "0.275",
+    "games": 40,
+    "playerId": "52667",
+    "rank": 71
+  },
+  {
+    "name": "최주환",
+    "team": "키움",
+    "avg": "0.275",
+    "games": 120,
+    "playerId": "76267",
+    "rank": 72
+  },
+  {
+    "name": "이진영",
+    "team": "한화",
+    "avg": "0.274",
+    "games": 115,
+    "playerId": "66657",
+    "rank": 73
+  },
+  {
+    "name": "박성한",
+    "team": "SSG",
+    "avg": "0.274",
+    "games": 127,
+    "playerId": "67893",
+    "rank": 74
+  },
+  {
+    "name": "유강남",
+    "team": "롯데",
+    "avg": "0.274",
+    "games": 110,
+    "playerId": "61102",
+    "rank": 75
+  },
+  {
+    "name": "한태양",
+    "team": "롯데",
+    "avg": "0.274",
+    "games": 108,
+    "playerId": "52568",
+    "rank": 76
+  },
+  {
+    "name": "박정우",
+    "team": "KIA",
+    "avg": "0.274",
+    "games": 53,
+    "playerId": "67609",
+    "rank": 77
+  },
+  {
+    "name": "황영묵",
+    "team": "한화",
+    "avg": "0.273",
+    "games": 117,
+    "playerId": "54795",
+    "rank": 78
+  },
+  {
+    "name": "한유섬",
+    "team": "SSG",
+    "avg": "0.273",
+    "games": 128,
+    "playerId": "62895",
+    "rank": 79
+  },
+  {
+    "name": "전병우",
+    "team": "삼성",
+    "avg": "0.273",
+    "games": 59,
+    "playerId": "65586",
+    "rank": 80
+  },
+  {
+    "name": "플로리얼",
+    "team": "한화",
+    "avg": "0.271",
+    "games": 65,
+    "playerId": "55734",
+    "rank": 81
+  },
+  {
+    "name": "고승민",
+    "team": "롯데",
+    "avg": "0.271",
+    "games": 121,
+    "playerId": "69517",
+    "rank": 82
+  },
+  {
+    "name": "노진혁",
+    "team": "롯데",
+    "avg": "0.270",
+    "games": 28,
+    "playerId": "62931",
+    "rank": 83
+  },
+  {
+    "name": "강민호",
+    "team": "삼성",
+    "avg": "0.269",
+    "games": 127,
+    "playerId": "74540",
+    "rank": 84
+  },
+  {
+    "name": "나성범",
+    "team": "KIA",
+    "avg": "0.268",
+    "games": 82,
+    "playerId": "62947",
+    "rank": 85
+  },
+  {
+    "name": "김동헌",
+    "team": "키움",
+    "avg": "0.268",
+    "games": 49,
+    "playerId": "53344",
+    "rank": 86
+  },
+  {
+    "name": "서호철",
+    "team": "NC",
+    "avg": "0.266",
+    "games": 103,
+    "playerId": "69995",
+    "rank": 87
+  },
+  {
+    "name": "석정우",
+    "team": "SSG",
+    "avg": "0.265",
+    "games": 27,
+    "playerId": "52804",
+    "rank": 88
+  },
+  {
+    "name": "강백호",
+    "team": "KT",
+    "avg": "0.265",
+    "games": 95,
+    "playerId": "68050",
+    "rank": 89
+  },
+  {
+    "name": "오선우",
+    "team": "KIA",
+    "avg": "0.265",
+    "games": 124,
+    "playerId": "69636",
+    "rank": 90
+  },
+  {
+    "name": "김석환",
+    "team": "KIA",
+    "avg": "0.265",
+    "games": 47,
+    "playerId": "67610",
+    "rank": 91
+  },
+  {
+    "name": "박관우",
+    "team": "LG",
+    "avg": "0.264",
+    "games": 39,
+    "playerId": "55164",
+    "rank": 92
+  },
+  {
+    "name": "안상현",
+    "team": "SSG",
+    "avg": "0.264",
+    "games": 102,
+    "playerId": "66864",
+    "rank": 93
+  },
+  {
+    "name": "박민석",
+    "team": "KT",
+    "avg": "0.263",
+    "games": 19,
+    "playerId": "69056",
+    "rank": 94
+  },
+  {
+    "name": "정현창",
+    "team": "KIA",
+    "avg": "0.263",
+    "games": 16,
+    "playerId": "55926",
+    "rank": 95
+  },
+  {
+    "name": "박계범",
+    "team": "두산",
+    "avg": "0.263",
+    "games": 94,
+    "playerId": "64468",
+    "rank": 96
+  },
+  {
+    "name": "오명진",
+    "team": "두산",
+    "avg": "0.263",
+    "games": 107,
+    "playerId": "50208",
+    "rank": 97
+  },
+  {
+    "name": "변상권",
+    "team": "키움",
+    "avg": "0.263",
+    "games": 12,
+    "playerId": "68305",
+    "rank": 98
+  },
+  {
+    "name": "스티븐슨",
+    "team": "KT",
+    "avg": "0.262",
+    "games": 39,
+    "playerId": "55013",
+    "rank": 99
+  },
+  {
+    "name": "장두성",
+    "team": "롯데",
+    "avg": "0.262",
+    "games": 118,
+    "playerId": "68507",
+    "rank": 100
+  },
+  {
+    "name": "김태연",
+    "team": "한화",
+    "avg": "0.261",
+    "games": 120,
+    "playerId": "66704",
+    "rank": 101
+  },
+  {
+    "name": "이도윤",
+    "team": "한화",
+    "avg": "0.260",
+    "games": 113,
+    "playerId": "65703",
+    "rank": 102
+  },
+  {
+    "name": "노시환",
+    "team": "한화",
+    "avg": "0.260",
+    "games": 144,
+    "playerId": "69737",
+    "rank": 103
+  },
+  {
+    "name": "최인호",
+    "team": "한화",
+    "avg": "0.259",
+    "games": 78,
+    "playerId": "50707",
+    "rank": 104
+  },
+  {
+    "name": "양도근",
+    "team": "삼성",
+    "avg": "0.259",
+    "games": 116,
+    "playerId": "54408",
+    "rank": 105
+  },
+  {
+    "name": "이정훈",
+    "team": "KT",
+    "avg": "0.258",
+    "games": 59,
+    "playerId": "67644",
+    "rank": 106
+  },
+  {
+    "name": "김태군",
+    "team": "KIA",
+    "avg": "0.258",
+    "games": 100,
+    "playerId": "78122",
+    "rank": 107
+  },
+  {
+    "name": "정수빈",
+    "team": "두산",
+    "avg": "0.258",
+    "games": 132,
+    "playerId": "79231",
+    "rank": 108
+  },
+  {
+    "name": "오윤석",
+    "team": "KT",
+    "avg": "0.256",
+    "games": 77,
+    "playerId": "64504",
+    "rank": 109
+  },
+  {
+    "name": "황성빈",
+    "team": "롯데",
+    "avg": "0.256",
+    "games": 79,
+    "playerId": "50500",
+    "rank": 110
+  },
+  {
+    "name": "이재현",
+    "team": "삼성",
+    "avg": "0.254",
+    "games": 139,
+    "playerId": "52415",
+    "rank": 111
+  },
+  {
+    "name": "김상수",
+    "team": "KT",
+    "avg": "0.254",
+    "games": 113,
+    "playerId": "79402",
+    "rank": 112
+  },
+  {
+    "name": "오지환",
+    "team": "LG",
+    "avg": "0.253",
+    "games": 127,
+    "playerId": "79109",
+    "rank": 113
+  },
+  {
+    "name": "박동원",
+    "team": "LG",
+    "avg": "0.253",
+    "games": 139,
+    "playerId": "79365",
+    "rank": 114
+  },
+  {
+    "name": "카디네스",
+    "team": "키움",
+    "avg": "0.253",
+    "games": 86,
+    "playerId": "54444",
+    "rank": 115
+  },
+  {
+    "name": "박영빈",
+    "team": "NC",
+    "avg": "0.250",
+    "games": 16,
+    "playerId": "50906",
+    "rank": 116
+  },
+  {
+    "name": "오태양",
+    "team": "NC",
+    "avg": "0.250",
+    "games": 14,
+    "playerId": "51996",
+    "rank": 117
+  },
+  {
+    "name": "이우성",
+    "team": "NC",
+    "avg": "0.250",
+    "games": 105,
+    "playerId": "63260",
+    "rank": 118
+  },
+  {
+    "name": "손호영",
+    "team": "롯데",
+    "avg": "0.250",
+    "games": 97,
+    "playerId": "50150",
+    "rank": 119
+  },
+  {
+    "name": "김병휘",
+    "team": "키움",
+    "avg": "0.250",
+    "games": 7,
+    "playerId": "50304",
+    "rank": 120
+  },
+  {
+    "name": "주성원",
+    "team": "키움",
+    "avg": "0.250",
+    "games": 58,
+    "playerId": "69332",
+    "rank": 121
+  },
+  {
+    "name": "김영웅",
+    "team": "삼성",
+    "avg": "0.249",
+    "games": 125,
+    "playerId": "52430",
+    "rank": 122
+  },
+  {
+    "name": "김휘집",
+    "team": "NC",
+    "avg": "0.249",
+    "games": 142,
+    "playerId": "51344",
+    "rank": 123
+  },
+  {
+    "name": "양석환",
+    "team": "두산",
+    "avg": "0.248",
+    "games": 72,
+    "playerId": "64153",
+    "rank": 124
+  },
+  {
+    "name": "장성우",
+    "team": "KT",
+    "avg": "0.247",
+    "games": 129,
+    "playerId": "78548",
+    "rank": 125
+  },
+  {
+    "name": "김기연",
+    "team": "두산",
+    "avg": "0.247",
+    "games": 100,
+    "playerId": "66112",
+    "rank": 126
+  },
+  {
+    "name": "권희동",
+    "team": "NC",
+    "avg": "0.246",
+    "games": 136,
+    "playerId": "63963",
+    "rank": 127
+  },
+  {
+    "name": "정준재",
+    "team": "SSG",
+    "avg": "0.245",
+    "games": 132,
+    "playerId": "54812",
+    "rank": 128
+  },
+  {
+    "name": "최정",
+    "team": "SSG",
+    "avg": "0.244",
+    "games": 95,
+    "playerId": "75847",
+    "rank": 129
+  },
+  {
+    "name": "조수행",
+    "team": "두산",
+    "avg": "0.244",
+    "games": 108,
+    "playerId": "66209",
+    "rank": 130
+  },
+  {
+    "name": "임지열",
+    "team": "키움",
+    "avg": "0.244",
+    "games": 102,
+    "playerId": "64340",
+    "rank": 131
+  },
+  {
+    "name": "김민성",
+    "team": "롯데",
+    "avg": "0.243",
+    "games": 96,
+    "playerId": "77564",
+    "rank": 132
+  },
+  {
+    "name": "최원준",
+    "team": "NC",
+    "avg": "0.242",
+    "games": 126,
+    "playerId": "66606",
+    "rank": 133
+  },
+  {
+    "name": "이호준",
+    "team": "롯데",
+    "avg": "0.242",
+    "games": 99,
+    "playerId": "54598",
+    "rank": 134
+  },
+  {
+    "name": "이유찬",
+    "team": "두산",
+    "avg": "0.242",
+    "games": 89,
+    "playerId": "67207",
+    "rank": 135
+  },
+  {
+    "name": "김건희",
+    "team": "키움",
+    "avg": "0.242",
+    "games": 105,
+    "playerId": "53312",
+    "rank": 136
+  },
+  {
+    "name": "김재환",
+    "team": "두산",
+    "avg": "0.241",
+    "games": 103,
+    "playerId": "78224",
+    "rank": 137
+  },
+  {
+    "name": "스톤",
+    "team": "키움",
+    "avg": "0.241",
+    "games": 22,
+    "playerId": "55326",
+    "rank": 138
+  },
+  {
+    "name": "이주형",
+    "team": "키움",
+    "avg": "0.240",
+    "games": 127,
+    "playerId": "50167",
+    "rank": 139
+  },
+  {
+    "name": "이지영",
+    "team": "SSG",
+    "avg": "0.239",
+    "games": 76,
+    "playerId": "79456",
+    "rank": 140
+  },
+  {
+    "name": "로하스",
+    "team": "KT",
+    "avg": "0.239",
+    "games": 95,
+    "playerId": "67025",
+    "rank": 141
+  },
+  {
+    "name": "조형우",
+    "team": "SSG",
+    "avg": "0.238",
+    "games": 102,
+    "playerId": "51865",
+    "rank": 142
+  },
+  {
+    "name": "천재환",
+    "team": "NC",
+    "avg": "0.238",
+    "games": 129,
+    "playerId": "67905",
+    "rank": 143
+  },
+  {
+    "name": "한승택",
+    "team": "KIA",
+    "avg": "0.238",
+    "games": 15,
+    "playerId": "63722",
+    "rank": 144
+  },
+  {
+    "name": "오선진",
+    "team": "키움",
+    "avg": "0.238",
+    "games": 99,
+    "playerId": "78756",
+    "rank": 145
+  },
+  {
+    "name": "어준서",
+    "team": "키움",
+    "avg": "0.238",
+    "games": 116,
+    "playerId": "55392",
+    "rank": 146
+  },
+  {
+    "name": "천성호",
+    "team": "LG",
+    "avg": "0.237",
+    "games": 83,
+    "playerId": "50054",
+    "rank": 147
+  },
+  {
+    "name": "김태훈",
+    "team": "삼성",
+    "avg": "0.237",
+    "games": 51,
+    "playerId": "65040",
+    "rank": 148
+  },
+  {
+    "name": "김동준",
+    "team": "두산",
+    "avg": "0.237",
+    "games": 36,
+    "playerId": "52267",
+    "rank": 149
+  },
+  {
+    "name": "위즈덤",
+    "team": "KIA",
+    "avg": "0.236",
+    "games": 119,
+    "playerId": "55645",
+    "rank": 150
+  },
+  {
+    "name": "강승호",
+    "team": "두산",
+    "avg": "0.236",
+    "games": 115,
+    "playerId": "63123",
+    "rank": 151
+  },
+  {
+    "name": "안주형",
+    "team": "삼성",
+    "avg": "0.235",
+    "games": 8,
+    "playerId": "66406",
+    "rank": 152
+  },
+  {
+    "name": "김규성",
+    "team": "KIA",
+    "avg": "0.233",
+    "games": 133,
+    "playerId": "66614",
+    "rank": 153
+  },
+  {
+    "name": "임병욱",
+    "team": "키움",
+    "avg": "0.233",
+    "games": 52,
+    "playerId": "64346",
+    "rank": 154
+  },
+  {
+    "name": "김태진",
+    "team": "키움",
+    "avg": "0.233",
+    "games": 94,
+    "playerId": "64984",
+    "rank": 155
+  },
+  {
+    "name": "오영수",
+    "team": "NC",
+    "avg": "0.232",
+    "games": 67,
+    "playerId": "68904",
+    "rank": 156
+  },
+  {
+    "name": "김형준",
+    "team": "NC",
+    "avg": "0.232",
+    "games": 127,
+    "playerId": "68912",
+    "rank": 157
+  },
+  {
+    "name": "심우준",
+    "team": "한화",
+    "avg": "0.231",
+    "games": 94,
+    "playerId": "64006",
+    "rank": 158
+  },
+  {
+    "name": "이율예",
+    "team": "SSG",
+    "avg": "0.231",
+    "games": 8,
+    "playerId": "55832",
+    "rank": 159
+  },
+  {
+    "name": "전태현",
+    "team": "키움",
+    "avg": "0.231",
+    "games": 77,
+    "playerId": "55397",
+    "rank": 160
+  },
+  {
+    "name": "나승엽",
+    "team": "롯데",
+    "avg": "0.229",
+    "games": 105,
+    "playerId": "51551",
+    "rank": 161
+  },
+  {
+    "name": "김민석",
+    "team": "두산",
+    "avg": "0.228",
+    "games": 95,
+    "playerId": "53554",
+    "rank": 162
+  },
+  {
+    "name": "안치영",
+    "team": "KT",
+    "avg": "0.227",
+    "games": 47,
+    "playerId": "67006",
+    "rank": 163
+  },
+  {
+    "name": "박주홍",
+    "team": "키움",
+    "avg": "0.226",
+    "games": 102,
+    "playerId": "50357",
+    "rank": 164
+  },
+  {
+    "name": "김헌곤",
+    "team": "삼성",
+    "avg": "0.225",
+    "games": 77,
+    "playerId": "61404",
+    "rank": 165
+  },
+  {
+    "name": "권동진",
+    "team": "KT",
+    "avg": "0.225",
+    "games": 123,
+    "playerId": "51003",
+    "rank": 166
+  },
+  {
+    "name": "김동혁",
+    "team": "롯데",
+    "avg": "0.225",
+    "games": 93,
+    "playerId": "52504",
+    "rank": 167
+  },
+  {
+    "name": "한준수",
+    "team": "KIA",
+    "avg": "0.225",
+    "games": 103,
+    "playerId": "68646",
+    "rank": 168
+  },
+  {
+    "name": "박준영",
+    "team": "두산",
+    "avg": "0.225",
+    "games": 41,
+    "playerId": "66928",
+    "rank": 169
+  },
+  {
+    "name": "추재현",
+    "team": "두산",
+    "avg": "0.222",
+    "games": 34,
+    "playerId": "68362",
+    "rank": 170
+  },
+  {
+    "name": "김동엽",
+    "team": "키움",
+    "avg": "0.222",
+    "games": 9,
+    "playerId": "66838",
+    "rank": 171
+  },
+  {
+    "name": "이주헌",
+    "team": "LG",
+    "avg": "0.219",
+    "games": 76,
+    "playerId": "52154",
+    "rank": 172
+  },
+  {
+    "name": "변우혁",
+    "team": "KIA",
+    "avg": "0.218",
+    "games": 47,
+    "playerId": "69727",
+    "rank": 173
+  },
+  {
+    "name": "김성현",
+    "team": "SSG",
+    "avg": "0.217",
+    "games": 59,
+    "playerId": "76802",
+    "rank": 174
+  },
+  {
+    "name": "고영우",
+    "team": "키움",
+    "avg": "0.217",
+    "games": 14,
+    "playerId": "54344",
+    "rank": 175
+  },
+  {
+    "name": "정훈",
+    "team": "롯데",
+    "avg": "0.216",
+    "games": 77,
+    "playerId": "60523",
+    "rank": 176
+  },
+  {
+    "name": "이용규",
+    "team": "키움",
+    "avg": "0.216",
+    "games": 14,
+    "playerId": "74163",
+    "rank": 177
+  },
+  {
+    "name": "함수호",
+    "team": "삼성",
+    "avg": "0.214",
+    "games": 6,
+    "playerId": "55440",
+    "rank": 178
+  },
+  {
+    "name": "문상철",
+    "team": "KT",
+    "avg": "0.214",
+    "games": 79,
+    "playerId": "64007",
+    "rank": 179
+  },
+  {
+    "name": "김인태",
+    "team": "두산",
+    "avg": "0.213",
+    "games": 106,
+    "playerId": "63257",
+    "rank": 180
+  },
+  {
+    "name": "푸이그",
+    "team": "키움",
+    "avg": "0.212",
+    "games": 40,
+    "playerId": "52366",
+    "rank": 181
+  },
+  {
+    "name": "송찬의",
+    "team": "LG",
+    "avg": "0.211",
+    "games": 66,
+    "playerId": "68110",
+    "rank": 182
+  },
+  {
+    "name": "염승원",
+    "team": "키움",
+    "avg": "0.211",
+    "games": 11,
+    "playerId": "55339",
+    "rank": 183
+  },
+  {
+    "name": "장진혁",
+    "team": "KT",
+    "avg": "0.209",
+    "games": 86,
+    "playerId": "66706",
+    "rank": 184
+  },
+  {
+    "name": "이영빈",
+    "team": "LG",
+    "avg": "0.208",
+    "games": 44,
+    "playerId": "51100",
+    "rank": 185
+  },
+  {
+    "name": "김재현",
+    "team": "키움",
+    "avg": "0.208",
+    "games": 62,
+    "playerId": "62332",
+    "rank": 186
+  },
+  {
+    "name": "장준원",
+    "team": "KT",
+    "avg": "0.207",
+    "games": 73,
+    "playerId": "64115",
+    "rank": 187
+  },
+  {
+    "name": "박시원",
+    "team": "NC",
+    "avg": "0.204",
+    "games": 52,
+    "playerId": "50996",
+    "rank": 188
+  },
+  {
+    "name": "배정대",
+    "team": "KT",
+    "avg": "0.204",
+    "games": 99,
+    "playerId": "64166",
+    "rank": 189
+  },
+  {
+    "name": "이원석",
+    "team": "한화",
+    "avg": "0.203",
+    "games": 129,
+    "playerId": "68700",
+    "rank": 190
+  },
+  {
+    "name": "맥브룸",
+    "team": "SSG",
+    "avg": "0.203",
+    "games": 22,
+    "playerId": "55844",
+    "rank": 191
+  },
+  {
+    "name": "박민",
+    "team": "KIA",
+    "avg": "0.202",
+    "games": 71,
+    "playerId": "50657",
+    "rank": 192
+  },
+  {
+    "name": "오태곤",
+    "team": "SSG",
+    "avg": "0.201",
+    "games": 122,
+    "playerId": "60558",
+    "rank": 193
+  },
+  {
+    "name": "김성우",
+    "team": "LG",
+    "avg": "0.200",
+    "games": 7,
+    "playerId": "52105",
+    "rank": 194
+  },
+  {
+    "name": "김주성",
+    "team": "LG",
+    "avg": "0.200",
+    "games": 16,
+    "playerId": "66162",
+    "rank": 195
+  },
+  {
+    "name": "손용준",
+    "team": "LG",
+    "avg": "0.200",
+    "games": 9,
+    "playerId": "54156",
+    "rank": 196
+  },
+  {
+    "name": "이상혁",
+    "team": "한화",
+    "avg": "0.200",
+    "games": 39,
+    "playerId": "52704",
+    "rank": 197
+  },
+  {
+    "name": "이재원",
+    "team": "한화",
+    "avg": "0.200",
+    "games": 98,
+    "playerId": "76812",
+    "rank": 198
+  },
+  {
+    "name": "이승민",
+    "team": "SSG",
+    "avg": "0.200",
+    "games": 2,
+    "playerId": "54806",
+    "rank": 199
+  },
+  {
+    "name": "홍대인",
+    "team": "SSG",
+    "avg": "0.200",
+    "games": 14,
+    "playerId": "55897",
+    "rank": 200
+  },
+  {
+    "name": "이병헌",
+    "team": "삼성",
+    "avg": "0.200",
+    "games": 55,
+    "playerId": "69428",
+    "rank": 201
+  },
+  {
+    "name": "이창용",
+    "team": "삼성",
+    "avg": "0.200",
+    "games": 11,
+    "playerId": "51407",
+    "rank": 202
+  },
+  {
+    "name": "이해승",
+    "team": "삼성",
+    "avg": "0.200",
+    "games": 8,
+    "playerId": "69416",
+    "rank": 203
+  },
+  {
+    "name": "고승완",
+    "team": "NC",
+    "avg": "0.200",
+    "games": 17,
+    "playerId": "54908",
+    "rank": 204
+  },
+  {
+    "name": "송승환",
+    "team": "NC",
+    "avg": "0.200",
+    "games": 13,
+    "playerId": "69203",
+    "rank": 205
+  },
+  {
+    "name": "김병준",
+    "team": "KT",
+    "avg": "0.200",
+    "games": 9,
+    "playerId": "52002",
+    "rank": 206
+  },
+  {
+    "name": "김준상",
+    "team": "두산",
+    "avg": "0.200",
+    "games": 9,
+    "playerId": "55226",
+    "rank": 207
+  },
+  {
+    "name": "이형종",
+    "team": "키움",
+    "avg": "0.200",
+    "games": 33,
+    "playerId": "78135",
+    "rank": 208
+  },
+  {
+    "name": "박병호",
+    "team": "삼성",
+    "avg": "0.199",
+    "games": 77,
+    "playerId": "75125",
+    "rank": 209
+  },
+  {
+    "name": "이성규",
+    "team": "삼성",
+    "avg": "0.198",
+    "games": 68,
+    "playerId": "66409",
+    "rank": 210
+  },
+  {
+    "name": "김성욱",
+    "team": "SSG",
+    "avg": "0.195",
+    "games": 56,
+    "playerId": "62934",
+    "rank": 211
+  },
+  {
+    "name": "한석현",
+    "team": "NC",
+    "avg": "0.195",
+    "games": 61,
+    "playerId": "64101",
+    "rank": 212
+  },
+  {
+    "name": "김대한",
+    "team": "두산",
+    "avg": "0.194",
+    "games": 16,
+    "playerId": "69238",
+    "rank": 213
+  },
+  {
+    "name": "최준우",
+    "team": "SSG",
+    "avg": "0.191",
+    "games": 78,
+    "playerId": "68868",
+    "rank": 214
+  },
+  {
+    "name": "박승욱",
+    "team": "롯데",
+    "avg": "0.190",
+    "games": 54,
+    "playerId": "62802",
+    "rank": 215
+  },
+  {
+    "name": "황대인",
+    "team": "KIA",
+    "avg": "0.189",
+    "games": 18,
+    "playerId": "65610",
+    "rank": 216
+  },
+  {
+    "name": "함창건",
+    "team": "LG",
+    "avg": "0.188",
+    "games": 15,
+    "playerId": "50108",
+    "rank": 217
+  },
+  {
+    "name": "채현우",
+    "team": "SSG",
+    "avg": "0.188",
+    "games": 41,
+    "playerId": "69804",
+    "rank": 218
+  },
+  {
+    "name": "양우현",
+    "team": "삼성",
+    "avg": "0.188",
+    "games": 14,
+    "playerId": "69403",
+    "rank": 219
+  },
+  {
+    "name": "강현우",
+    "team": "KT",
+    "avg": "0.188",
+    "games": 40,
+    "playerId": "50066",
+    "rank": 220
+  },
+  {
+    "name": "조대현",
+    "team": "KT",
+    "avg": "0.187",
+    "games": 64,
+    "playerId": "68089",
+    "rank": 221
+  },
+  {
+    "name": "정보근",
+    "team": "롯데",
+    "avg": "0.186",
+    "games": 93,
+    "playerId": "68518",
+    "rank": 222
+  },
+  {
+    "name": "한재환",
+    "team": "NC",
+    "avg": "0.185",
+    "games": 16,
+    "playerId": "50903",
+    "rank": 223
+  },
+  {
+    "name": "심재훈",
+    "team": "삼성",
+    "avg": "0.184",
+    "games": 31,
+    "playerId": "55438",
+    "rank": 224
+  },
+  {
+    "name": "김정율",
+    "team": "LG",
+    "avg": "0.182",
+    "games": 13,
+    "playerId": "67504",
+    "rank": 225
+  },
+  {
+    "name": "신범수",
+    "team": "SSG",
+    "avg": "0.182",
+    "games": 29,
+    "playerId": "66662",
+    "rank": 226
+  },
+  {
+    "name": "도태훈",
+    "team": "NC",
+    "avg": "0.182",
+    "games": 61,
+    "playerId": "66965",
+    "rank": 227
+  },
+  {
+    "name": "이선우",
+    "team": "두산",
+    "avg": "0.182",
+    "games": 10,
+    "playerId": "55224",
+    "rank": 228
+  },
+  {
+    "name": "강진성",
+    "team": "키움",
+    "avg": "0.182",
+    "games": 6,
+    "playerId": "62925",
+    "rank": 229
+  },
+  {
+    "name": "김찬형",
+    "team": "SSG",
+    "avg": "0.178",
+    "games": 44,
+    "playerId": "66917",
+    "rank": 230
+  },
+  {
+    "name": "윤정빈",
+    "team": "삼성",
+    "avg": "0.175",
+    "games": 25,
+    "playerId": "68463",
+    "rank": 231
+  },
+  {
+    "name": "송지후",
+    "team": "키움",
+    "avg": "0.175",
+    "games": 33,
+    "playerId": "54394",
+    "rank": 232
+  },
+  {
+    "name": "원성준",
+    "team": "키움",
+    "avg": "0.174",
+    "games": 24,
+    "playerId": "54307",
+    "rank": 233
+  },
+  {
+    "name": "안치홍",
+    "team": "한화",
+    "avg": "0.172",
+    "games": 66,
+    "playerId": "79608",
+    "rank": 234
+  },
+  {
+    "name": "허인서",
+    "team": "한화",
+    "avg": "0.172",
+    "games": 20,
+    "playerId": "52764",
+    "rank": 235
+  },
+  {
+    "name": "문정빈",
+    "team": "LG",
+    "avg": "0.167",
+    "games": 21,
+    "playerId": "52121",
+    "rank": 236
+  },
+  {
+    "name": "권광민",
+    "team": "한화",
+    "avg": "0.167",
+    "games": 15,
+    "playerId": "52769",
+    "rank": 237
+  },
+  {
+    "name": "임종찬",
+    "team": "한화",
+    "avg": "0.167",
+    "games": 17,
+    "playerId": "50704",
+    "rank": 238
+  },
+  {
+    "name": "신윤후",
+    "team": "롯데",
+    "avg": "0.167",
+    "games": 12,
+    "playerId": "69508",
+    "rank": 239
+  },
+  {
+    "name": "최항",
+    "team": "롯데",
+    "avg": "0.167",
+    "games": 8,
+    "playerId": "62884",
+    "rank": 240
+  },
+  {
+    "name": "최정용",
+    "team": "KIA",
+    "avg": "0.167",
+    "games": 4,
+    "playerId": "65464",
+    "rank": 241
+  },
+  {
+    "name": "홍종표",
+    "team": "NC",
+    "avg": "0.164",
+    "games": 62,
+    "playerId": "50600",
+    "rank": 242
+  },
+  {
+    "name": "박세혁",
+    "team": "NC",
+    "avg": "0.163",
+    "games": 48,
+    "playerId": "62244",
+    "rank": 243
+  },
+  {
+    "name": "이창진",
+    "team": "KIA",
+    "avg": "0.161",
+    "games": 37,
+    "playerId": "64560",
+    "rank": 244
+  },
+  {
+    "name": "유로결",
+    "team": "한화",
+    "avg": "0.154",
+    "games": 20,
+    "playerId": "69766",
+    "rank": 245
+  },
+  {
+    "name": "박지환",
+    "team": "SSG",
+    "avg": "0.150",
+    "games": 31,
+    "playerId": "54805",
+    "rank": 246
+  },
+  {
+    "name": "손성빈",
+    "team": "롯데",
+    "avg": "0.145",
+    "games": 51,
+    "playerId": "51528",
+    "rank": 247
+  },
+  {
+    "name": "최상민",
+    "team": "SSG",
+    "avg": "0.143",
+    "games": 23,
+    "playerId": "68805",
+    "rank": 248
+  },
+  {
+    "name": "하재훈",
+    "team": "SSG",
+    "avg": "0.143",
+    "games": 18,
+    "playerId": "69813",
+    "rank": 249
+  },
+  {
+    "name": "안중열",
+    "team": "NC",
+    "avg": "0.143",
+    "games": 33,
+    "playerId": "64022",
+    "rank": 250
+  },
+  {
+    "name": "조세진",
+    "team": "롯데",
+    "avg": "0.143",
+    "games": 12,
+    "playerId": "52516",
+    "rank": 251
+  },
+  {
+    "name": "박수종",
+    "team": "키움",
+    "avg": "0.143",
+    "games": 38,
+    "playerId": "52305",
+    "rank": 252
+  },
+  {
+    "name": "서건창",
+    "team": "KIA",
+    "avg": "0.136",
+    "games": 10,
+    "playerId": "78168",
+    "rank": 253
+  },
+  {
+    "name": "류현준",
+    "team": "두산",
+    "avg": "0.136",
+    "games": 17,
+    "playerId": "54219",
+    "rank": 254
+  },
+  {
+    "name": "김재성",
+    "team": "삼성",
+    "avg": "0.127",
+    "games": 43,
+    "playerId": "65132",
+    "rank": 255
+  },
+  {
+    "name": "홍현빈",
+    "team": "삼성",
+    "avg": "0.125",
+    "games": 32,
+    "playerId": "67005",
+    "rank": 256
+  },
+  {
+    "name": "박한결",
+    "team": "NC",
+    "avg": "0.118",
+    "games": 8,
+    "playerId": "53992",
+    "rank": 257
+  },
+  {
+    "name": "유준규",
+    "team": "KT",
+    "avg": "0.118",
+    "games": 35,
+    "playerId": "51013",
+    "rank": 258
+  },
+  {
+    "name": "김민혁",
+    "team": "두산",
+    "avg": "0.118",
+    "games": 10,
+    "playerId": "65269",
+    "rank": 259
+  },
+  {
+    "name": "최성민",
+    "team": "KT",
+    "avg": "0.105",
+    "games": 32,
+    "playerId": "51007",
+    "rank": 260
+  },
+  {
+    "name": "여동건",
+    "team": "두산",
+    "avg": "0.105",
+    "games": 19,
+    "playerId": "54205",
+    "rank": 261
+  },
+  {
+    "name": "김수윤",
+    "team": "SSG",
+    "avg": "0.091",
+    "games": 7,
+    "playerId": "67900",
+    "rank": 262
+  },
+  {
+    "name": "박헌",
+    "team": "KIA",
+    "avg": "0.083",
+    "games": 8,
+    "playerId": "55637",
+    "rank": 263
+  },
+  {
+    "name": "전다민",
+    "team": "두산",
+    "avg": "0.083",
+    "games": 22,
+    "playerId": "54214",
+    "rank": 264
+  },
+  {
+    "name": "박재현",
+    "team": "KIA",
+    "avg": "0.081",
+    "games": 58,
+    "playerId": "55636",
+    "rank": 265
+  },
+  {
+    "name": "김인환",
+    "team": "한화",
+    "avg": "0.080",
+    "games": 10,
+    "playerId": "66715",
+    "rank": 266
+  },
+  {
+    "name": "정해원",
+    "team": "KIA",
+    "avg": "0.075",
+    "games": 24,
+    "playerId": "53659",
+    "rank": 267
+  },
+  {
+    "name": "윤준혁",
+    "team": "KT",
+    "avg": "0.059",
+    "games": 28,
+    "playerId": "50092",
+    "rank": 268
+  },
+  {
+    "name": "한승현",
+    "team": "롯데",
+    "avg": "0.059",
+    "games": 19,
+    "playerId": "55506",
+    "rank": 269
+  },
+  {
+    "name": "강민성",
+    "team": "KT",
+    "avg": "0.033",
+    "games": 25,
+    "playerId": "69064",
+    "rank": 270
+  },
+  {
+    "name": "김영우",
+    "team": "LG",
+    "avg": "-",
+    "games": 4,
+    "playerId": "55167",
+    "rank": 271
+  },
+  {
+    "name": "김진성",
+    "team": "LG",
+    "avg": "-",
+    "games": 5,
+    "playerId": "75867",
+    "rank": 272
+  },
+  {
+    "name": "김진수",
+    "team": "LG",
+    "avg": "-",
+    "games": 1,
+    "playerId": "51154",
+    "rank": 273
+  },
+  {
+    "name": "박명근",
+    "team": "LG",
+    "avg": "-",
+    "games": 5,
+    "playerId": "53139",
+    "rank": 274
+  },
+  {
+    "name": "백승현",
+    "team": "LG",
+    "avg": "-",
+    "games": 3,
+    "playerId": "65109",
+    "rank": 275
+  },
+  {
+    "name": "우강훈",
+    "team": "LG",
+    "avg": "-",
+    "games": 2,
+    "playerId": "51526",
+    "rank": 276
+  },
+  {
+    "name": "김서현",
+    "team": "한화",
+    "avg": "-",
+    "games": 3,
+    "playerId": "53754",
+    "rank": 277
+  },
+  {
+    "name": "김승일",
+    "team": "한화",
+    "avg": "-",
+    "games": 1,
+    "playerId": "50711",
+    "rank": 278
+  },
+  {
+    "name": "김종수",
+    "team": "한화",
+    "avg": "-",
+    "games": 1,
+    "playerId": "63765",
+    "rank": 279
+  },
+  {
+    "name": "박상원",
+    "team": "한화",
+    "avg": "-",
+    "games": 1,
+    "playerId": "67703",
+    "rank": 280
+  },
+  {
+    "name": "박정현",
+    "team": "한화",
+    "avg": "0.000",
+    "games": 2,
+    "playerId": "50709",
+    "rank": 281
+  },
+  {
+    "name": "김대호",
+    "team": "삼성",
+    "avg": "-",
+    "games": 1,
+    "playerId": "54401",
+    "rank": 282
+  },
+  {
+    "name": "김재윤",
+    "team": "삼성",
+    "avg": "-",
+    "games": 2,
+    "playerId": "65062",
+    "rank": 283
+  },
+  {
+    "name": "김재혁",
+    "team": "삼성",
+    "avg": "0.000",
+    "games": 8,
+    "playerId": "52424",
+    "rank": 284
+  },
+  {
+    "name": "김범준",
+    "team": "NC",
+    "avg": "0.000",
+    "games": 1,
+    "playerId": "69980",
+    "rank": 285
+  },
+  {
+    "name": "김영규",
+    "team": "NC",
+    "avg": "-",
+    "games": 1,
+    "playerId": "68900",
+    "rank": 286
+  },
+  {
+    "name": "김태훈",
+    "team": "NC",
+    "avg": "-",
+    "games": 1,
+    "playerId": "55995",
+    "rank": 287
+  },
+  {
+    "name": "김건형",
+    "team": "KT",
+    "avg": "0.000",
+    "games": 2,
+    "playerId": "51005",
+    "rank": 288
+  },
+  {
+    "name": "김민석",
+    "team": "KT",
+    "avg": "-",
+    "games": 2,
+    "playerId": "54097",
+    "rank": 289
+  },
+  {
+    "name": "김민수",
+    "team": "KT",
+    "avg": "-",
+    "games": 1,
+    "playerId": "65048",
+    "rank": 290
+  },
+  {
+    "name": "박건우",
+    "team": "KT",
+    "avg": "-",
+    "games": 2,
+    "playerId": "55046",
+    "rank": 291
+  },
+  {
+    "name": "강성우",
+    "team": "롯데",
+    "avg": "-",
+    "games": 1,
+    "playerId": "54567",
+    "rank": 292
+  },
+  {
+    "name": "강승구",
+    "team": "롯데",
+    "avg": "0.000",
+    "games": 1,
+    "playerId": "54506",
+    "rank": 293
+  },
+  {
+    "name": "구승민",
+    "team": "롯데",
+    "avg": "-",
+    "games": 1,
+    "playerId": "63543",
+    "rank": 294
+  },
+  {
+    "name": "김강현",
+    "team": "롯데",
+    "avg": "-",
+    "games": 1,
+    "playerId": "65522",
+    "rank": 295
+  },
+  {
+    "name": "김기훈",
+    "team": "KIA",
+    "avg": "0.000",
+    "games": 2,
+    "playerId": "69620",
+    "rank": 296
+  },
+  {
+    "name": "김대유",
+    "team": "KIA",
+    "avg": "-",
+    "games": 1,
+    "playerId": "60337",
+    "rank": 297
+  },
+  {
+    "name": "김시훈",
+    "team": "KIA",
+    "avg": "-",
+    "games": 4,
+    "playerId": "68928",
+    "rank": 298
+  },
+  {
+    "name": "강현구",
+    "team": "두산",
+    "avg": "0.000",
+    "games": 1,
+    "playerId": "51269",
+    "rank": 299
+  },
+  {
+    "name": "고효준",
+    "team": "두산",
+    "avg": "-",
+    "games": 1,
+    "playerId": "72523",
+    "rank": 300
+  }
+]
