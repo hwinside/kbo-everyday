@@ -16,7 +16,7 @@ export function getFavoritePlayers(): FavoritePlayer[] {
 }
 
 export function setFavoritePlayers(players: FavoritePlayer[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(players.slice(0, 3)));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(players.slice(0, 5)));
 }
 
 export function clearFavoritePlayers(): void {

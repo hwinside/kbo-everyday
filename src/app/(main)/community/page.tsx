@@ -28,10 +28,10 @@ export default function CommunityPage() {
   return (
     <div className="mx-auto max-w-lg pb-24">
       {/* Header */}
-      <div className="flex items-center gap-3 px-5 pt-4 pb-5">
+      <div className="flex items-center gap-3 px-5 py-3">
         <button
           onClick={() => router.back()}
-          className="rounded-full p-1.5 text-text-secondary hover:bg-bg-tertiary transition-colors"
+          className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"
         >
           <ChevronLeft size={24} />
         </button>
@@ -61,7 +61,7 @@ export default function CommunityPage() {
       {myTeam && (
         <div className="mx-5 mb-6">
           <h2 className="mb-3 text-lg font-bold text-text-primary">내 팀</h2>
-          <Link href={`/teams/${myTeam.id}`}>
+          <Link href={`/teams/${myTeam.slug}`}>
             <GlassCard
               pressable
               className="overflow-hidden p-5"
@@ -86,7 +86,7 @@ export default function CommunityPage() {
         <h2 className="mb-3 text-lg font-bold text-text-primary">전체 구단</h2>
         <div className="grid grid-cols-5 gap-3">
           {TEAMS.map((team) => (
-            <Link key={team.id} href={`/teams/${team.id}`}>
+            <Link key={team.id} href={`/teams/${team.slug}`}>
               <div className="flex flex-col items-center gap-1.5 rounded-xl py-3 transition-colors hover:bg-bg-secondary">
                 <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white p-1">
                   <Image
@@ -114,7 +114,7 @@ export default function CommunityPage() {
       <div className="mx-5 mb-6">
         <h2 className="mb-3 text-lg font-bold text-text-primary">최애 선수 게시판</h2>
         {favPlayers.length > 0 ? (
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
             {favPlayers.map((player) => (
               <Link key={player.playerId} href={`/boards/players/${player.playerId}`}>
                 <GlassCard pressable className="flex flex-col items-center gap-2 p-4">
