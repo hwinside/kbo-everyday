@@ -147,3 +147,35 @@ Cron (4시간마다) → YouTube API → Supabase `highlights` 테이블
 |---|---|---|
 | 2026-03-02 | v1 | 초기 구현: 유저별 N+1 쿼리, 30분 캐시 |
 | 2026-03-04 | v2 | 팀 고정 2쿼리, 4시간 캐시, 프론트 제목 필터링 |
+
+## v3 단순화 (2026-03-04)
+
+### 변경 사항
+- 스타선수 쿼리 **제거** (팀 쿼리만으로 충분, 선수별 클립은 KBO에 없음)
+- `team_stars` 테이블 **불필요** (나중에 필요하면 추가)
+- 11개 고정 쿼리: 10팀 + "KBO 프로야구 하이라이트"
+
+### API 비용
+```
+11쿼리 × 100 units × 6회/일(4hr 캐시) = 6,600 units/일
+무료 할당량 10,000 대비 66% → ✅ 안전
+```
+
+### 흐름
+```
+Vercel Cron (4시간마다)
+  → 11개 YouTube 검색 (5초 간격)
+  → Supabase highlights 테이블 upsert
+  → 유저 접속 = Supabase SELECT (API 호출 0)
+  → Supabase 실패 시 → 메모리 캐시 → YouTube 직접 (최후)
+```
+
+### 파일
+- Cron: `src/app/api/cron/highlights/route.ts` (70줄)
+- API: `src/app/api/highlights/route.ts` (65줄)
+- 프론트: `src/components/home/HomeHighlights.tsx`
+- 스케줄: `vercel.json` → `"0 */4 * * *"`
+
+### 남은 셋업
+1. Supabase `highlights` 테이블 생성 (migration SQL)
+2. Vercel env: `CRON_SECRET`
