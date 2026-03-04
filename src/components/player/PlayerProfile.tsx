@@ -72,6 +72,9 @@ export default function PlayerProfile({ playerName, teamColor }: Props) {
           {renderText(content)}
         </p>
       </div>
+
+      {/* 출처 */}
+      <p className="text-[10px] text-text-tertiary text-center mt-2">📌 출처: KBO 공식 · 나무위키 · Statiz</p>
     </GlassCard>
   );
 }
