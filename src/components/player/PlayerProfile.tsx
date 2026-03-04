@@ -4,10 +4,12 @@ import { useState } from "react";
 import { User, Trophy, Sparkles } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { PLAYER_PROFILES } from '@/lib/constants/player-profiles';
+import { getPlayerAwards } from '@/lib/constants/awards';
 
 interface Props {
   playerName: string;
   teamColor: string;
+  kboId?: string;
 }
 
 function renderText(text: string) {
@@ -15,8 +17,9 @@ function renderText(text: string) {
   return text.replace(/\\n/g, '\n');
 }
 
-export default function PlayerProfile({ playerName, teamColor }: Props) {
+export default function PlayerProfile({ playerName, teamColor, kboId }: Props) {
   const profile = PLAYER_PROFILES[playerName];
+  const awards = getPlayerAwards(kboId, playerName);
   const [activeSection, setActiveSection] = useState<"bio" | "career" | "tmi">("bio");
 
   if (!profile) return (
@@ -46,6 +49,22 @@ export default function PlayerProfile({ playerName, teamColor }: Props) {
         <Sparkles size={16} style={{ color: teamColor }} />
         <h3 className="text-sm font-bold text-text-primary">선수 프로필</h3>
       </div>
+
+      {/* Awards */}
+      {awards.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-3">
+          {awards.map((award, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold"
+              style={{ background: "linear-gradient(135deg, #FFD700 0%, #B8860B 100%)", color: "#1a1a00" }}
+            >
+              <span>🏆</span>
+              <span>{award.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Section tabs */}
       <div className="flex gap-1 mb-3 bg-bg-tertiary rounded-lg p-1">
