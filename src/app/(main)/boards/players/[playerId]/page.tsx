@@ -22,10 +22,15 @@ import PlayerProfile from "@/components/player/PlayerProfile";
 import PlayerNews from "@/components/player/PlayerNews";
 import PhotoGallery from "@/components/player/PhotoGallery";
 
-// kboId → name 역매핑
+// kboId → name 역매핑 (roster 기반 — 전체 선수 커버)
+import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 const ID_TO_NAME: Record<string, string> = {};
+for (const p of PLAYERS_ROSTER) {
+  ID_TO_NAME[p.kboId] = p.name;
+}
+// photo map에서도 추가 (혹시 roster에 없는 경우)
 for (const [name, id] of Object.entries(PLAYER_PHOTO_MAP)) {
-  ID_TO_NAME[id] = name;
+  if (!ID_TO_NAME[id]) ID_TO_NAME[id] = name;
 }
 
 // 레거시 pN → kboId 매핑 (기존 링크 호환)
