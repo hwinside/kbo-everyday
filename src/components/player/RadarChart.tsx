@@ -52,7 +52,7 @@ export default function RadarChart({ stats, size = 200, color = "#E8697F", teamC
 
   // 라벨
   const labels = stats.map((s, i) => {
-    const p = getPoint(i, 1.22);
+    const p = getPoint(i, 1.32);
     return (
       <text key={i} x={p.x} y={p.y} textAnchor="middle" dominantBaseline="central"
         fill="#ccc" fontSize={size * 0.055} fontWeight={500}>
@@ -63,9 +63,9 @@ export default function RadarChart({ stats, size = 200, color = "#E8697F", teamC
 
   // 수치
   const values = stats.map((s, i) => {
-    const p = getPoint(i, 1.08);
+    const p = getPoint(i, 1.18);
     return (
-      <text key={`v${i}`} x={p.x} y={p.y + size * 0.06} textAnchor="middle" dominantBaseline="central"
+      <text key={`v${i}`} x={p.x} y={p.y + size * 0.065} textAnchor="middle" dominantBaseline="central"
         fill={teamColor || color} fontSize={size * 0.05} fontWeight={700}>
         {s.value}
       </text>
