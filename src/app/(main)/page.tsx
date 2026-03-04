@@ -214,7 +214,7 @@ export default function HomePage() {
     const yyyymmdd = dateStr.replace(/-/g, "");
     
     // 3/12 이전이면 API 호출 스킵 (경기 없음)
-    if (yyyymmdd < "20260312") { setLoading && 0; return; }
+    if (yyyymmdd < "20260312") return;
     fetch(`/api/games?date=${yyyymmdd}`)
       .then(r => r.json())
       .then(data => {
