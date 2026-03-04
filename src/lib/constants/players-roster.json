@@ -408,6 +408,14 @@
     "backNo": "45"
   },
   {
+    "name": "제리드 데일",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "0",
+    "kboId": "AQ004"
+  },
+  {
     "name": "조건호",
     "kboId": "56612",
     "team": "KIA",
@@ -494,14 +502,6 @@
     "teamId": 6,
     "position": "내야수",
     "backNo": "119"
-  },
-  {
-    "name": "홍건희",
-    "kboId": "61643",
-    "team": "KIA",
-    "teamId": 6,
-    "position": "투수",
-    "backNo": "52"
   },
   {
     "name": "홍민규",
@@ -1160,6 +1160,14 @@
     "backNo": "45"
   },
   {
+    "name": "라클란 웰스",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "AQ002"
+  },
+  {
     "name": "문보경",
     "kboId": "69102",
     "team": "LG",
@@ -1350,6 +1358,14 @@
     "teamId": 1,
     "position": "내야수",
     "backNo": "10"
+  },
+  {
+    "name": "요니 치리노스",
+    "team": "LG",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "FP004"
   },
   {
     "name": "우강훈",
@@ -2200,6 +2216,14 @@
     "backNo": "18"
   },
   {
+    "name": "기예르모 에레디아",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "0",
+    "kboId": "FP008"
+  },
+  {
     "name": "김광현",
     "kboId": "77829",
     "team": "SSG",
@@ -2262,6 +2286,14 @@
     "teamId": 4,
     "position": "투수",
     "backNo": "11"
+  },
+  {
+    "name": "김성욱",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "0",
+    "kboId": "TR001"
   },
   {
     "name": "김수윤",
@@ -2334,6 +2366,14 @@
     "teamId": 4,
     "position": "투수",
     "backNo": "42"
+  },
+  {
+    "name": "미치 화이트",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "FP007"
   },
   {
     "name": "박기호",
@@ -3008,6 +3048,14 @@
     "backNo": "56"
   },
   {
+    "name": "다즈 카메론",
+    "team": "두산",
+    "teamId": 2,
+    "position": "외야수",
+    "backNo": "0",
+    "kboId": "FP009"
+  },
+  {
     "name": "류현준",
     "kboId": "54219",
     "team": "두산",
@@ -3150,14 +3198,6 @@
     "teamId": 2,
     "position": "투수",
     "backNo": "29"
-  },
-  {
-    "name": "이선우",
-    "kboId": "55224",
-    "team": "두산",
-    "teamId": 2,
-    "position": "내야수",
-    "backNo": "108"
   },
   {
     "name": "이유찬",
@@ -4056,6 +4096,30 @@
     "backNo": "16"
   },
   {
+    "name": "르윈 디아즈",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "내야수",
+    "backNo": "0",
+    "kboId": "FP006"
+  },
+  {
+    "name": "맷 매닝",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "FP005"
+  },
+  {
+    "name": "미야지 유라",
+    "team": "삼성",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "AQ003"
+  },
+  {
     "name": "박승규",
     "kboId": "69418",
     "team": "삼성",
@@ -4536,14 +4600,6 @@
     "backNo": "61"
   },
   {
-    "name": "서건창",
-    "kboId": "78168",
-    "team": "키움",
-    "teamId": 10,
-    "position": "내야수",
-    "backNo": "14"
-  },
-  {
     "name": "송지후",
     "kboId": "54394",
     "team": "키움",
@@ -4976,6 +5032,14 @@
     "backNo": "03"
   },
   {
+    "name": "오웬 화이트",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "FP002"
+  },
+  {
     "name": "오재원",
     "kboId": "56754",
     "team": "한화",
@@ -4984,12 +5048,36 @@
     "backNo": "54"
   },
   {
+    "name": "왕옌청",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "AQ001"
+  },
+  {
+    "name": "요나단 페라자",
+    "team": "한화",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "0",
+    "kboId": "FP003"
+  },
+  {
     "name": "원종혁",
     "kboId": "54702",
     "team": "한화",
     "teamId": 9,
     "position": "투수",
     "backNo": "48"
+  },
+  {
+    "name": "윌켈 에르난데스",
+    "team": "한화",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "FP001"
   },
   {
     "name": "유민",
@@ -5054,14 +5142,6 @@
     "teamId": 9,
     "position": "투수",
     "backNo": "18"
-  },
-  {
-    "name": "이원석",
-    "kboId": "68700",
-    "team": "한화",
-    "teamId": 9,
-    "position": "외야수",
-    "backNo": "37"
   },
   {
     "name": "이지성",
