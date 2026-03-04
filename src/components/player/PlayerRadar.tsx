@@ -67,6 +67,7 @@ const PITCHER_INFO = [
 export default function PlayerRadar({ playerId, position, teamColor }: PlayerRadarProps) {
   const [stats, setStats] = useState<{ label: string; value: number }[] | null>(null);
   const [rawStats, setRawStats] = useState<any>(null);
+  const [activeTrait, setActiveTrait] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [showInfo, setShowInfo] = useState(false);
   const isPitcher = position === "투수" || position?.includes("투");
@@ -120,11 +121,17 @@ export default function PlayerRadar({ playerId, position, teamColor }: PlayerRad
         return (
           <div className="flex flex-wrap justify-center gap-2 mt-3">
             {traits.map((t, i) => (
-              <span key={i} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-white/5 border border-white/10">
-                <span>{t.emoji}</span>
-                <span className="text-text-primary">{t.label}</span>
-                <span className="text-text-tertiary text-[10px]">{t.desc}</span>
-              </span>
+              <button key={i} onClick={() => setActiveTrait(activeTrait === i ? null : i)}
+                className="inline-flex flex-col items-center gap-0.5 px-2.5 py-1 rounded-full text-xs font-medium bg-white/5 border border-white/10 transition-colors hover:bg-white/10">
+                <span className="inline-flex items-center gap-1">
+                  <span>{t.emoji}</span>
+                  <span className="text-text-primary">{t.label}</span>
+                  <span className="text-text-tertiary text-[10px]">{t.desc}</span>
+                </span>
+                {activeTrait === i && (
+                  <span className="text-[10px] text-accent">{t.criteria}</span>
+                )}
+              </button>
             ))}
           </div>
         );
