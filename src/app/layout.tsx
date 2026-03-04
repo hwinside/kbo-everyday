@@ -14,9 +14,17 @@ export const metadata: Metadata = {
     title: "크보 에브리데이",
   },
   openGraph: {
-    title: "크보 에브리데이",
-    description: "KBO 전 구단 팬 커뮤니티",
+    title: "크보 에브리데이 — KBO 팬 커뮤니티",
+    description: "실시간 스코어 · 683명 선수 프로필 · 승부예측 · 팬 커뮤니티 · 하이라이트 · 구장가이드",
     type: "website",
+    url: "https://kbo-everyday.vercel.app",
+    siteName: "크보 에브리데이",
+    locale: "ko_KR",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "크보 에브리데이 — KBO 팬 커뮤니티",
+    description: "실시간 스코어 · 683명 선수 프로필 · 승부예측 · 팬 커뮤니티 · 하이라이트 · 구장가이드",
   },
 };
 
