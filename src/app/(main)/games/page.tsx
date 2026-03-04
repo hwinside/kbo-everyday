@@ -82,7 +82,7 @@ export default function GamesPage() {
   const scheduledGames = games.filter(g => g.status === "scheduled");
 
   return (
-    <div className="mx-auto max-w-lg pt-safe">
+    <div className="mx-auto max-w-lg">
       <div className="flex items-center gap-3 px-5 py-4">
         <Link href="/" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
           <ChevronLeft size={24} />

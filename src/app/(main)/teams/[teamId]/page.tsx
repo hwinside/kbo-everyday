@@ -161,7 +161,7 @@ export default function TeamBoardPage() {
     <div className="mx-auto max-w-lg">
       {/* Team gradient header */}
       <div
-        className="relative px-5 pb-5 pt-safe"
+        className="relative px-5 pb-5"
         style={{
           background: `linear-gradient(180deg, ${team.colorPrimary}33 0%, transparent 100%)`,
         }}

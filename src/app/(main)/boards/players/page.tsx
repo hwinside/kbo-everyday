@@ -52,7 +52,7 @@ export default function PlayerBoardRankingPage() {
     <div className="min-h-screen bg-bg-primary">
       <div className="mx-auto max-w-lg px-5">
         {/* Header */}
-        <header className="flex items-center justify-between py-5 pt-[env(safe-area-inset-top,20px)]">
+        <header className="flex items-center justify-between py-5">
           <div className="flex items-center gap-3">
             <Link href="/teams">
               <motion.div whileTap={{ scale: 0.95 }}>
