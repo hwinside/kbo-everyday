@@ -19,7 +19,7 @@ interface ReelViewerProps {
 
 export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerProps) {
   const [current, setCurrent] = useState(startIndex);
-  const [muted, setMuted] = useState(false); // 소리 ON으로 시작
+  const [muted, setMuted] = useState(true); // 뮤트로 시작
   const [started, setStarted] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const touchStartY = useRef(0);
@@ -70,7 +70,6 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
   // 재생 시작 (탭) — iframe은 이미 로드됨, playVideo만 호출
   const handleStart = () => {
     postCmd("playVideo");
-    postCmd("unMute");
     setStarted(true);
   };
 
