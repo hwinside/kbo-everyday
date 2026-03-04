@@ -333,12 +333,20 @@ export default function StandingsPage() {
             const toLeader = (b: any, valKey: string) => ({ rank: b.rank, name: b.name, teamId: TEAM_NAME_TO_ID[b.team] ?? 0, value: String(b[valKey] ?? 0), playerId: PLAYER_PHOTO_MAP[b.name] });
             const sorted = (key: string, desc = true) => [...qualified].sort((a, b) => desc ? Number(b[key] || 0) - Number(a[key] || 0) : Number(a[key] || 0) - Number(b[key] || 0)).slice(0, 20).map((b, i) => ({ ...toLeader(b, key), rank: i + 1 }));
             const avgTop = [...qualified].sort((a, b) => Number(b.avg || 0) - Number(a.avg || 0)).slice(0, 20).map((b, i) => ({ ...toLeader(b, "avg"), rank: i + 1 }));
+            const opsTop = [...qualified].filter((b: any) => b.ops).sort((a, b) => Number(b.ops || 0) - Number(a.ops || 0)).slice(0, 20).map((b, i) => ({ ...toLeader(b, "ops"), rank: i + 1 }));
+            const obpTop = [...qualified].filter((b: any) => b.obp).sort((a, b) => Number(b.obp || 0) - Number(a.obp || 0)).slice(0, 20).map((b, i) => ({ ...toLeader(b, "obp"), rank: i + 1 }));
+            const slgTop = [...qualified].filter((b: any) => b.slg).sort((a, b) => Number(b.slg || 0) - Number(a.slg || 0)).slice(0, 20).map((b, i) => ({ ...toLeader(b, "slg"), rank: i + 1 }));
             const categories = [
               { id: "avg", label: "타율", leaders: avgTop },
               { id: "hr", label: "홈런", leaders: sorted("hr") },
               { id: "rbi", label: "타점", leaders: sorted("rbi") },
               { id: "hits", label: "안타", leaders: sorted("hits") },
               { id: "sb", label: "도루", leaders: sorted("sb") },
+              ...(opsTop.length > 0 ? [
+                { id: "ops", label: "OPS", leaders: opsTop },
+                { id: "obp", label: "출루율", leaders: obpTop },
+                { id: "slg", label: "장타율", leaders: slgTop },
+              ] : []),
             ];
             return categories.map((cat) => (
               <LeaderSection key={cat.id} router={router} title={`${cat.label} (2025)`} leaders={cat.leaders} />
@@ -363,12 +371,16 @@ export default function StandingsPage() {
             const toLeader = (p: any, valKey: string) => ({ rank: p.rank, name: p.name, teamId: TEAM_NAME_TO_ID[p.team] ?? 0, value: String(p[valKey] ?? 0), playerId: PLAYER_PHOTO_MAP[p.name] });
             const sorted = (key: string, desc = true) => [...qualifiedP].sort((a, b) => desc ? Number(b[key] || 0) - Number(a[key] || 0) : Number(a[key] || 0) - Number(b[key] || 0)).slice(0, 20).map((p, i) => ({ ...toLeader(p, key), rank: i + 1 }));
             const eraTop = [...qualifiedP].sort((a, b) => Number(a.era || 99) - Number(b.era || 99)).slice(0, 20).map((p, i) => ({ ...toLeader(p, "era"), rank: i + 1 }));
+            const whipTop = [...qualifiedP].filter((p: any) => p.whip).sort((a, b) => Number(a.whip || 99) - Number(b.whip || 99)).slice(0, 20).map((p, i) => ({ ...toLeader(p, "whip"), rank: i + 1 }));
             const categories = [
               { id: "era", label: "평균자책", leaders: eraTop },
               { id: "wins", label: "승리", leaders: sorted("wins") },
               { id: "so", label: "탈삼진", leaders: sorted("so") },
               { id: "saves", label: "세이브", leaders: sorted("saves") },
               { id: "holds", label: "홀드", leaders: sorted("holds") },
+              ...(whipTop.length > 0 ? [
+                { id: "whip", label: "WHIP", leaders: whipTop },
+              ] : []),
             ];
             return categories.map((cat) => (
               <LeaderSection key={cat.id} router={router} title={`${cat.label} (2025)`} leaders={cat.leaders} />
