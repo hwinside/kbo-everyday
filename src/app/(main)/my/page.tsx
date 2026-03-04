@@ -59,9 +59,6 @@ export default function MyPage() {
     <div className="mx-auto max-w-lg px-5 pb-24">
       <header className="flex items-center justify-between py-5">
         <h1 className="text-xl font-bold text-text-primary">MY</h1>
-        <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
-          <Settings size={24} />
-        </button>
       </header>
 
       {/* Profile card */}
