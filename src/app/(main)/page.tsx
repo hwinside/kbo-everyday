@@ -92,8 +92,8 @@ function StatusBadge({ status, inning }: { status: string; inning: string | null
 
 function SectionHeader({ title, href, icon }: { title: string; href?: string; icon?: string }) {
   return (
-    <div className="mb-4 flex items-center justify-between">
-      <h2 className="flex items-center gap-2 text-base font-bold text-text-primary">
+    <div className="mb-3 flex items-center justify-between">
+      <h2 className="flex items-center gap-2 text-lg font-bold text-text-primary">
         {icon && <span>{icon}</span>} {title}
       </h2>
       {href && (

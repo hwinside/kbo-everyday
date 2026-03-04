@@ -52,8 +52,8 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
 
   return (
     <section className="mt-6">
-      <h2 className="text-lg font-bold text-text-primary mb-3 px-5">🎬 하이라이트</h2>
-      <div className="flex gap-3 overflow-x-auto px-5 pb-2 scrollbar-hide" style={{ scrollSnapType: "x mandatory" }}>
+      <h2 className="text-lg font-bold text-text-primary mb-3">🎬 하이라이트</h2>
+      <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide" style={{ scrollSnapType: "x mandatory" }}>
         {videos.slice(0, 10).map((v, i) => (
           <div
             key={v.id}
