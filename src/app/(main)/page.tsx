@@ -12,6 +12,7 @@ import TeamSelectModal from "@/components/onboarding/TeamSelectModal";
 import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
+import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getMyTeamId, setMyTeamId as saveMyTeamId } from "@/lib/store/myteam";
 import NewsCarousel from "@/components/news/NewsCarousel";
@@ -47,6 +48,54 @@ const MOCK_POPULAR_POSTS = [
   { id: 3, title: "신인 드래프트 1순위 분석", boardId: "samsung", author: "야구박사", likeCount: 31, commentCount: 12, teamId: 8 },
 ];
 
+
+
+  // 오늘의 경기 (API + 시범경기 fallback)
+  const [todayGames, setTodayGames] = useState<typeof MOCK_GAMES>(MOCK_GAMES);
+  const [isPreseason, setIsPreseason] = useState(false);
+  useEffect(() => {
+    const today = new Date();
+    const dateStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
+    const yyyymmdd = dateStr.replace(/-/g, "");
+    
+    fetch(`/api/games?date=${yyyymmdd}`)
+      .then(r => r.json())
+      .then(data => {
+        const games = (data.games ?? []).map((g: any) => ({
+          id: g.gameId,
+          homeTeamId: g.homeTeamId,
+          awayTeamId: g.awayTeamId,
+          time: g.time,
+          stadium: g.stadium,
+          homeScore: g.homeScore ?? 0,
+          awayScore: g.awayScore ?? 0,
+          status: g.status === "cancelled" ? "final" as const : g.status,
+          inning: g.status === "live" ? `${g.inning}회${g.isTop ? "초" : "말"}` : null,
+        }));
+        if (games.length > 0) {
+          setTodayGames(games);
+          setIsPreseason(PRESEASON_DATES.includes(dateStr));
+        } else if (PRESEASON_DATES.includes(dateStr)) {
+          const TEAM_ID: Record<string, number> = { LG:1, "두산":2, KT:3, SSG:4, NC:5, KIA:6, "롯데":7, "삼성":8, "한화":9, "키움":10 };
+          const preGames = PRESEASON_GAMES
+            .filter(g => g.date === dateStr)
+            .map((g, i) => ({
+              id: `pre-${dateStr}-${i}`,
+              homeTeamId: TEAM_ID[g.home] ?? 0,
+              awayTeamId: TEAM_ID[g.away] ?? 0,
+              time: "13:00",
+              stadium: g.venue,
+              homeScore: 0,
+              awayScore: 0,
+              status: "scheduled" as const,
+              inning: null,
+            }));
+          setTodayGames(preGames);
+          setIsPreseason(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const container = {
   hidden: {},
@@ -232,7 +281,7 @@ export default function HomePage() {
   }
 
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
-  const myTeamGame = MOCK_GAMES.find(g => g.homeTeamId === myTeamId || g.awayTeamId === myTeamId);
+  const myTeamGame = todayGames.find(g => g.homeTeamId === myTeamId || g.awayTeamId === myTeamId);
   // Show first 2 predictions for preview
   const previewPredictions = MOCK_PREDICTIONS.filter((p) => p.status === "open").slice(0, 2);
   // Show first 3 news
@@ -402,9 +451,9 @@ export default function HomePage() {
 
       {/* ===== 1. Today's Games — horizontal scroll with snap ===== */}
       <motion.section variants={item} className="mb-6">
-        <SectionHeader title="오늘의 경기" href="/games" icon="⚾" />
+        <SectionHeader title={isPreseason ? "오늘의 시범경기" : "오늘의 경기"} href="/games" icon="⚾" />
         <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto hide-scrollbar -mx-5 px-5">
-          {MOCK_GAMES.map((game) => (
+          {todayGames.map((game) => (
             <Link key={game.id} href={`/games/${game.id}`}>
               <GlassCard pressable className="w-[220px] h-[190px] flex-shrink-0 snap-start p-5 flex flex-col justify-between">
                 <StatusBadge status={game.status} inning={game.inning} />
@@ -430,7 +479,7 @@ export default function HomePage() {
                   </div>
                 </div>
                 <p className="text-center text-xs text-text-tertiary">
-                  {game.time} · {game.stadium}
+                  {isPreseason && <span className="text-yellow-500 font-medium">시범 · </span>}{game.time} · {game.stadium}
                 </p>
 
               </GlassCard>
