@@ -59,7 +59,7 @@ export default function PlayerProfile({ playerName, teamColor, kboId }: Props) {
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold"
               style={{ background: "linear-gradient(135deg, #FFD700 0%, #B8860B 100%)", color: "#1a1a00" }}
             >
-              <span>🧤</span>
+              <span>🏆</span>
               <span>{award.label}</span>
             </div>
           ))}
