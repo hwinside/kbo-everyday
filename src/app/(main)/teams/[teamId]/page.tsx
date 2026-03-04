@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, Pencil } from "lucide-react";
@@ -75,6 +75,7 @@ const POSITION_ORDER: PositionGroup[] = ["투수", "포수", "내야수", "외�
 
 export default function TeamBoardPage() {
   const params = useParams();
+  const router = useRouter();
   const teamSlug = params.teamId as string;
   const team = getTeamBySlug(teamSlug);
 
@@ -167,12 +168,12 @@ export default function TeamBoardPage() {
         }}
       >
         <div className="flex items-center gap-4 py-5">
-          <Link
-            href="/teams"
+          <button
+            onClick={() => router.back()}
             className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary/50 transition-colors"
           >
             <ChevronLeft size={24} />
-          </Link>
+          </button>
           <div className="flex items-center gap-3">
             <TeamLogo team={team} size={64} />
             <h1 className="text-xl font-bold text-text-primary">{team.name}</h1>
@@ -308,7 +309,7 @@ export default function TeamBoardPage() {
       {pageTab === "board" && (
         <motion.button
           onClick={() => { if (!user) { setShowLogin(true); return; } setWriteOpen(true); }}
-          className="fixed bottom-20 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
+          className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
           style={{ backgroundColor: team.colorPrimary }}
           whileTap={{ scale: 0.9 }}
           whileHover={{ scale: 1.05 }}

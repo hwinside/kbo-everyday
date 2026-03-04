@@ -145,7 +145,7 @@ export default function PlayerDetailPage() {
       {activeTab === "board" && (
         <motion.button
           onClick={() => setWriteOpen(true)}
-          className="fixed bottom-20 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
+          className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
           style={{ backgroundColor: team.colorPrimary }}
           whileTap={{ scale: 0.9 }}
           whileHover={{ scale: 1.05 }}

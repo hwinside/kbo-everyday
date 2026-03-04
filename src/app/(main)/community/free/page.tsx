@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Heart, MessageCircle, Plus } from "lucide-react";
+import { ChevronLeft, Heart, MessageCircle, Pencil } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
@@ -65,9 +65,9 @@ export default function FreeBoardPage() {
       {/* FAB */}
       <button
         onClick={handleWrite}
-        className="fixed bottom-20 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
+        className="fixed bottom-24 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
       >
-        <Plus size={28} />
+        <Pencil size={24} />
       </button>
 
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
