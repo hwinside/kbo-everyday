@@ -8,6 +8,7 @@ export default function PWAInstallBanner() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isIOS, setIsIOS] = useState(false);
   const [showIOSGuide, setShowIOSGuide] = useState(false);
+  const [isInAppBrowser, setIsInAppBrowser] = useState(false);
 
   useEffect(() => {
     // 이미 PWA로 실행 중이면 숨김
@@ -22,9 +23,17 @@ export default function PWAInstallBanner() {
     const ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
     setIsIOS(ios);
 
+    // 인앱브라우저 감지 (카카오톡, 인스타, 페이스북, 네이버, 라인 등)
+    const ua = navigator.userAgent;
+    const isInApp = /KAKAOTALK|Instagram|FBAN|FBAV|NAVER|Line/i.test(ua);
+    if (isInApp) {
+      setIsInAppBrowser(true);
+      setShow(true);
+      return;
+    }
+
     if (ios) {
-      // iOS는 Safari에서만 설치 가능
-      const isSafari = /Safari/.test(navigator.userAgent) && !/CriOS|FxiOS/.test(navigator.userAgent);
+      const isSafari = /Safari/.test(ua) && !/CriOS|FxiOS/.test(ua);
       if (isSafari) setShow(true);
     } else {
       // Android: beforeinstallprompt 이벤트
@@ -49,6 +58,19 @@ export default function PWAInstallBanner() {
   };
 
   const install = async () => {
+    if (isInAppBrowser) {
+      // 외부 브라우저로 열기
+      const url = window.location.href;
+      // Android 인텐트
+      if (/android/i.test(navigator.userAgent)) {
+        window.location.href = `intent://${url.replace(/https?:\/\//, "")}#Intent;scheme=https;end`;
+      } else {
+        // iOS — Safari로 열기 안내
+        window.open(url, "_blank");
+        alert("Safari에서 열린 페이지에서 홈 화면에 추가하세요!");
+      }
+      return;
+    }
     if (isIOS) {
       setShowIOSGuide(true);
       return;
@@ -69,14 +91,14 @@ export default function PWAInstallBanner() {
       <div className="fixed bottom-[calc(60px+env(safe-area-inset-bottom,0px))] left-0 right-0 z-40 px-4 pb-2 animate-slide-up">
         <div className="mx-auto max-w-lg bg-[rgba(30,30,35,0.95)] backdrop-blur-xl rounded-2xl border border-border p-4 flex items-center gap-3 shadow-lg">
           <div className="flex-1">
-            <p className="text-sm font-semibold text-text-primary">📲 홈 화면에 추가</p>
-            <p className="text-xs text-text-tertiary mt-0.5">앱처럼 빠르게 접속할 수 있어요</p>
+            <p className="text-sm font-semibold text-text-primary">{isInAppBrowser ? "🌐 브라우저에서 열기" : "📲 홈 화면에 추가"}</p>
+            <p className="text-xs text-text-tertiary mt-0.5">{isInAppBrowser ? "외부 브라우저에서 앱을 설치할 수 있어요" : "앱처럼 빠르게 접속할 수 있어요"}</p>
           </div>
           <button
             onClick={install}
             className="px-4 py-2 bg-accent text-white text-sm font-semibold rounded-xl whitespace-nowrap"
           >
-            {isIOS ? "방법 보기" : "설치"}
+            {isInAppBrowser ? "브라우저로 열기" : isIOS ? "방법 보기" : "설치"}
           </button>
           <button onClick={dismiss} className="text-text-tertiary p-1">
             <X size={18} />
