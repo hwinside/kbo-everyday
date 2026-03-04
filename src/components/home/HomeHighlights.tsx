@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { Play } from "lucide-react";
-import { TEAMS } from "@/lib/constants/teams";
 import { getFavoritePlayers } from "@/lib/store/favorites";
 import ReelViewer from "@/components/home/ReelViewer";
 
@@ -30,25 +29,20 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
     const favPlayers = getFavoritePlayers().slice(0, 5);
     const favNames = favPlayers.map(p => p.name);
 
-    const teamObj = TEAMS.find(t => t.shortName === team);
-    const teamFullName = teamObj ? `${team} ${teamObj.name}` : team;
-
-    // API 호출 1번만! (팀 쿼리)
-    fetch(`/api/highlights?q=${encodeURIComponent(`${teamFullName} 하이라이트`)}`)
+    // 팀 쿼리 1개 → 서버에서 팀+스타선수 2쿼리 자동 실행
+    fetch(`/api/highlights?team=${encodeURIComponent(team)}`)
       .then(r => r.json())
       .then(data => {
         const items: VideoItem[] = (data.items || []).map((v: any) => {
-          // 제목에서 최애선수 이름 매칭 → 레이블 부여
+          // 최애선수 이름이 제목에 있으면 레이블
           const matchedPlayer = favNames.find(name => v.title.includes(name));
           return { ...v, label: matchedPlayer || team };
         });
 
-        // 최애선수 영상 우선 정렬
-        const playerVideos = items.filter(v => v.label !== team);
-        const teamVideos = items.filter(v => v.label === team);
-        const sorted = [...playerVideos, ...teamVideos];
-
-        setVideos(sorted.slice(0, 30));
+        // 최애선수 영상 우선
+        const playerVids = items.filter(v => v.label !== team);
+        const teamVids = items.filter(v => v.label === team);
+        setVideos([...playerVids, ...teamVids].slice(0, 30));
         setLoading(false);
       })
       .catch(() => setLoading(false));
