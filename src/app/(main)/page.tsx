@@ -114,7 +114,7 @@ function SectionHeader({ title, href, icon }: { title: string; href?: string; ic
 
 
 // 개막 전 숨김 (3/29 이후 true로 변경)
-const SEASON_STARTED = false;
+const SEASON_STARTED = new Date() >= new Date("2026-03-12");
 
 export default function HomePage() {
   const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number} | null>(null);
