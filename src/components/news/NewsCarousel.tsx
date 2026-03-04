@@ -56,7 +56,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
   }
 
   return (
-    <div className="relative -mx-5">
+    <div className="relative">
       {/* 슬라이드 컨테이너 */}
       <div
         ref={containerRef}
