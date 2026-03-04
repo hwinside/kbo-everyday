@@ -97,13 +97,13 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                 <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-bg-primary to-transparent" />
 
                 {/* 콘텐츠 */}
-                <div className="absolute inset-x-0 bottom-0 px-5 pb-5">
+                <div className="absolute inset-x-0 bottom-0 px-4 pb-4">
                   {item.label && (
                     <span className="inline-block px-2 py-0.5 mb-1 rounded-full bg-accent/80 text-xs font-semibold text-white">
                       {item.label}
                     </span>
                   )}
-                  <h3 className="text-base font-bold text-text-primary leading-snug line-clamp-3">
+                  <h3 className="text-lg font-bold text-text-primary leading-snug line-clamp-3">
                     {item.title}
                   </h3>
                   <p className="mt-1 text-xs text-text-tertiary">
