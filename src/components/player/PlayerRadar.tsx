@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import RadarChart from "./RadarChart";
+import { getBatterTraits, getPitcherTraits } from "@/lib/utils/player-traits";
 
 interface PlayerRadarProps {
   playerId: string;
@@ -65,6 +66,7 @@ const PITCHER_INFO = [
 
 export default function PlayerRadar({ playerId, position, teamColor }: PlayerRadarProps) {
   const [stats, setStats] = useState<{ label: string; value: number }[] | null>(null);
+  const [rawStats, setRawStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [showInfo, setShowInfo] = useState(false);
   const isPitcher = position === "투수" || position?.includes("투");
@@ -75,6 +77,7 @@ export default function PlayerRadar({ playerId, position, teamColor }: PlayerRad
       .then(d => {
         if (d.stats) {
           setStats(isPitcher ? calcPitcherRadar(d.stats) : calcBatterRadar(d.stats));
+          setRawStats(d.stats);
         }
         setLoading(false);
       })
@@ -110,6 +113,22 @@ export default function PlayerRadar({ playerId, position, teamColor }: PlayerRad
       )}
       <RadarChart stats={stats} size={220} teamColor={teamColor} />
       <p className="text-[11px] text-gray-500">점선 = 리그 평균 기준</p>
+      {/* 특성 뱃지 */}
+      {rawStats && (() => {
+        const traits = isPitcher ? getPitcherTraits(rawStats) : getBatterTraits(rawStats);
+        if (traits.length === 0) return null;
+        return (
+          <div className="flex flex-wrap justify-center gap-2 mt-3">
+            {traits.map((t, i) => (
+              <span key={i} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-white/5 border border-white/10">
+                <span>{t.emoji}</span>
+                <span className="text-text-primary">{t.label}</span>
+                <span className="text-text-tertiary text-[10px]">{t.desc}</span>
+              </span>
+            ))}
+          </div>
+        );
+      })()}
     </div>
   );
 }
