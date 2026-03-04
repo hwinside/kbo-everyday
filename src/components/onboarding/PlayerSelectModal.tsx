@@ -89,9 +89,9 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
             <h1 className="text-xl font-bold text-text-primary">최애 선수를 골라주세요</h1>
           </div>
             {!user && <p className="text-xs text-accent mt-1">로그인하면 5명까지 선택 가능!</p>}
-          <p className="text-sm text-text-tertiary">최대 3명 · 선택한 선수 중심으로 피드가 구성됩니다</p>
+          <p className="text-sm text-text-tertiary">최대 {maxPlayers}명 · 선택한 선수 중심으로 피드가 구성됩니다</p>
           <div className="flex justify-center gap-1 mt-3">
-            {[0, 1, 2].map(i => (
+            {Array.from({length: maxPlayers}, (_, i) => i).map(i => (
               <Star key={i} size={20} fill={i < selected.size ? team.colorLight : "none"}
                 className={i < selected.size ? "" : "text-text-tertiary"}
                 style={i < selected.size ? { color: team.colorLight } : {}} />
