@@ -29,7 +29,18 @@ async function searchPlayer(name: string): Promise<PlayerTeamInfo | null> {
       body: `name=${encodeURIComponent(name)}`,
     });
     const data = await res.json();
-    const now = data.now || [];
+    let now = data.now || [];
+    // 풀네임 실패 시 성(첫 단어)만으로 재시도 (외국인 선수)
+    if (now.length === 0 && name.includes(" ")) {
+      const firstName = name.split(" ")[0];
+      const res2 = await fetch(KBO_SEARCH, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "Mozilla/5.0" },
+        body: `name=${encodeURIComponent(firstName)}`,
+      });
+      const data2 = await res2.json();
+      now = data2.now || [];
+    }
     if (now.length > 0) {
       const p = now[0];
       return {
