@@ -256,6 +256,14 @@ export default function StandingsPage() {
         ))}
       </div>
 
+      {/* @ts-ignore */}
+      {season === 2026 ? (
+        <div className="py-20 text-center">
+          <p className="text-4xl mb-4">⚾</p>
+          <p className="text-base font-medium text-text-secondary">시즌 개막 후 확인하실 수 있습니다</p>
+          <p className="text-sm text-text-tertiary mt-2">2026 정규시즌 개막: 3월 29일</p>
+        </div>
+      ) : (<>
       {/* Team standings */}
       {mainTab === "team" && (
         <motion.div
@@ -318,11 +326,6 @@ export default function StandingsPage() {
         >
           {(() => {
             const TEAM_NAME_TO_ID: Record<string, number> = { LG: 1, 두산: 2, KT: 3, SSG: 4, NC: 5, KIA: 6, 롯데: 7, 삼성: 8, 한화: 9, 키움: 10 };
-            if (season === 2026) {
-              return BATTER_TITLES.map((cat) => (
-                <LeaderSection key={cat.id} router={router} title={cat.label} leaders={cat.leaders} />
-              ));
-            }
             if (!realBatters) return <div className="text-center py-8 text-text-tertiary text-sm">2025 시즌 데이터 로딩 중...</div>;
             if (realBatters.length === 0) return <div className="text-center py-8 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</div>;
             const toLeader = (b: any, valKey: string) => ({ rank: b.rank, name: b.name, teamId: TEAM_NAME_TO_ID[b.team] ?? 0, value: String(b[valKey]), playerId: PLAYER_PHOTO_MAP[b.name] });
@@ -351,11 +354,6 @@ export default function StandingsPage() {
         >
           {(() => {
             const TEAM_NAME_TO_ID: Record<string, number> = { LG: 1, 두산: 2, KT: 3, SSG: 4, NC: 5, KIA: 6, 롯데: 7, 삼성: 8, 한화: 9, 키움: 10 };
-            if (season === 2026) {
-              return PITCHER_TITLES.map((cat) => (
-                <LeaderSection key={cat.id} router={router} title={cat.label} leaders={cat.leaders} />
-              ));
-            }
             if (!realPitchers) return <div className="text-center py-8 text-text-tertiary text-sm">2025 시즌 데이터 로딩 중...</div>;
             if (realPitchers.length === 0) return <div className="text-center py-8 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</div>;
             const toLeader = (p: any, valKey: string) => ({ rank: p.rank, name: p.name, teamId: TEAM_NAME_TO_ID[p.team] ?? 0, value: String(p[valKey]), playerId: PLAYER_PHOTO_MAP[p.name] });
@@ -375,6 +373,7 @@ export default function StandingsPage() {
         </motion.div>
       )}
 
+      </>)}
       <div className="h-4" />
     </div>
   );
