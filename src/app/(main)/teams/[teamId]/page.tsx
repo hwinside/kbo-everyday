@@ -141,15 +141,17 @@ export default function TeamBoardPage() {
       : posts;
 
   // 팀 선수 목록 (로스터 전체)
-  const allRoster: { name: string; position: string; playerId: string }[] = (() => {
+  const allRoster: { name: string; position: string; playerId: string; backNo: string }[] = (() => {
     try {
       const roster = require("@/lib/constants/players-roster.json") as any[];
       return roster
         .filter((p: any) => p.teamId === team.id)
-        .map((p: any) => ({ name: p.name, position: p.position || "미정", playerId: p.playerId }));
+        .map((p: any) => ({ name: p.name, position: p.position || "미정", playerId: p.playerId, backNo: p.backNo || "" }));
     } catch { return []; }
   })();
-  const players = allRoster;
+  const [posFilter, setPosFilter] = useState<string>("전체");
+  const POS_FILTERS = ["전체", "투수", "내야수", "외야수", "포수"];
+  const players = posFilter === "전체" ? allRoster : allRoster.filter(p => p.position === posFilter);
   const grouped = POSITION_ORDER.map((group) => ({
     group,
     players: players.filter((p) => getPositionGroup(p.position) === group),
@@ -248,48 +250,52 @@ export default function TeamBoardPage() {
             transition={{ duration: 0.2 }}
             className="px-5 py-4"
           >
+            {/* 포지션 필터 토글 */}
+            <div className="flex gap-2 mb-4 overflow-x-auto scrollbar-hide">
+              {POS_FILTERS.map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setPosFilter(f)}
+                  className={`px-3.5 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
+                    posFilter === f
+                      ? "bg-white text-black"
+                      : "bg-bg-secondary text-text-secondary"
+                  }`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+
             {players.length === 0 ? (
               <div className="py-20 text-center text-base text-text-tertiary">
                 선수 데이터 로딩 중...
               </div>
             ) : (
-              <div className="space-y-6">
-                {grouped.map(({ group, players: groupPlayers }) => (
-                  <div key={group}>
-                    <h3 className="mb-3 text-base font-semibold text-text-tertiary">{group}</h3>
-                    <div className="space-y-2">
-                      {groupPlayers.map((player) => {
-                        const isPitcher = player.position === "투수";
-                        return (
-                          <Link
-                            key={player.name}
-                            href={`/boards/players/${PLAYER_PHOTO_MAP[player.name] || player.name}`}
-                          >
-                            <GlassCard pressable className="!p-4">
-                              <div className="flex items-center gap-4">
-                                <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={0} size={64} showTeamBadge={false} />
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-3">
-                                    <span className="text-base font-bold text-text-primary">
-                                      {player.name}
-                                    </span>
-                                    <span className="text-base text-text-tertiary">
-                                      {player.position}
-                                    </span>
-                                  </div>
-                                  <p className="mt-0.5 text-base tabular-nums text-text-secondary">
-                                    {isPitcher
-                                      ? "투수"
-                                      : "타자"}
-                                  </p>
-                                </div>
-                              </div>
-                            </GlassCard>
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  </div>
+              <div className="space-y-2">
+                {players.map((player) => (
+                  <Link
+                    key={player.name}
+                    href={`/boards/players/${PLAYER_PHOTO_MAP[player.name] || player.name}`}
+                  >
+                    <GlassCard pressable className="!p-4">
+                      <div className="flex items-center gap-4">
+                        {/* 등번호 */}
+                        <span className="text-2xl font-black text-text-tertiary w-10 text-center tabular-nums">
+                          {player.backNo || "-"}
+                        </span>
+                        <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={0} size={56} showTeamBadge={false} />
+                        <div className="flex-1 min-w-0">
+                          <span className="text-base font-bold text-text-primary">
+                            {player.name}
+                          </span>
+                          <p className="mt-0.5 text-sm text-text-tertiary">
+                            {player.position}
+                          </p>
+                        </div>
+                      </div>
+                    </GlassCard>
+                  </Link>
                 ))}
               </div>
             )}
