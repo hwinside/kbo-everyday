@@ -3,7 +3,8 @@
 import { Search, ChevronDown } from "lucide-react";
 import Link from "next/link";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { TEAMS } from "@/lib/constants/teams";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
@@ -47,13 +48,37 @@ function sortPlayers(players: PlayerItem[], mode: SortMode): PlayerItem[] {
   }
 }
 
-export default function PlayersPage() {
-  const [filterMode, setFilterMode] = useState<FilterMode>("all");
-  const [filterTeam, setFilterTeam] = useState<number | null>(null);
-  const [filterPosition, setFilterPosition] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [sortMode, setSortMode] = useState<SortMode>("name");
+function PlayersPageContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  const [filterMode, setFilterMode] = useState<FilterMode>(
+    (searchParams.get("mode") as FilterMode) || "all"
+  );
+  const [filterTeam, setFilterTeam] = useState<number | null>(
+    searchParams.get("team") ? Number(searchParams.get("team")) : null
+  );
+  const [filterPosition, setFilterPosition] = useState<string | null>(
+    searchParams.get("pos") || null
+  );
+  const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
+  const [sortMode, setSortMode] = useState<SortMode>(
+    (searchParams.get("sort") as SortMode) || "name"
+  );
   const [visibleCount, setVisibleCount] = useState(20);
+
+  // URL 쿼리 파라미터 동기화
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (filterMode !== "all") params.set("mode", filterMode);
+    if (filterTeam) params.set("team", String(filterTeam));
+    if (filterPosition) params.set("pos", filterPosition);
+    if (searchQuery.trim()) params.set("q", searchQuery.trim());
+    if (sortMode !== "name") params.set("sort", sortMode);
+    const qs = params.toString();
+    const newUrl = qs ? `/players?${qs}` : "/players";
+    router.replace(newUrl, { scroll: false });
+  }, [filterMode, filterTeam, filterPosition, searchQuery, sortMode, router]);
 
   const filtered = useMemo(() => {
     let result = PLAYERS;
@@ -244,5 +269,15 @@ export default function PlayersPage() {
         )}
       </div>
     </div>
+  );
+}
+
+import { Suspense } from "react";
+
+export default function PlayersPage() {
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-lg px-5 py-10 text-center text-text-tertiary">로딩중...</div>}>
+      <PlayersPageContent />
+    </Suspense>
   );
 }
