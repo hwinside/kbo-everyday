@@ -8,7 +8,7 @@ interface DateSelectorProps {
   onDateChange: (date: string) => void;
 }
 
-function getDates(range: number = 7) {
+function getDates(range: number = 21) {
   const dates: { key: string; day: string; weekday: string; isToday: boolean }[] = [];
   const today = new Date();
   
