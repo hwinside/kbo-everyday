@@ -211,8 +211,8 @@ export default function PlayerBoardPage() {
       {activeTab === "stats" && (
         <div className="px-5 py-4">
           <PlayerRadar playerId={rawId} position={player.position} teamColor={teamColor} />
-          <PlayerProfile playerName={player.name} teamColor={teamColor} />
-          <CheerSong playerName={player.name} teamColor={teamColor} />
+          <PlayerProfile playerName={playerName || player.name} teamColor={teamColor} />
+          <CheerSong playerName={playerName || player.name} teamColor={teamColor} />
 
           {/* Season toggle */}
           <div className="flex gap-2 mb-4 mt-2">
