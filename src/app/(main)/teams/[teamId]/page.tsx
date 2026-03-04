@@ -184,7 +184,7 @@ export default function TeamBoardPage() {
 
       {/* Team News Carousel */}
       <div className="mb-2">
-        <NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 5) : MOCK_NEWS.filter(n => n.teamId === team.id).slice(0, 5)} />
+        <NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 10) : MOCK_NEWS.filter(n => n.teamId === team.id).slice(0, 10)} />
       </div>
 
       {/* Team Official Videos */}

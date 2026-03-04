@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
   if (player) {
     searchQuery = `KBO ${player}`;
   } else if (team) {
-    searchQuery = `KBO ${team}`;
+    searchQuery = `프로야구 ${team}`;
   } else if (q) {
     searchQuery = q;
   }
