@@ -313,7 +313,7 @@ export default function HomePage() {
       <div className="mb-3">
         <LiveGameBanner />
 
-        <NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 10) : (myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 10) : MOCK_NEWS)} />
+        <div className="-mx-5"><NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 10) : (myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 10) : MOCK_NEWS)} /></div>
 
         {/* 하이라이트 영상 */}
         <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
