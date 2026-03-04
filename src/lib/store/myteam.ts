@@ -11,6 +11,7 @@ export function getMyTeamId(): number | null {
 export function setMyTeamId(teamId: number): void {
   if (typeof window === "undefined") return;
   localStorage.setItem(STORAGE_KEY, String(teamId));
+  window.dispatchEvent(new Event("team-changed"));
 }
 
 export function clearMyTeamId(): void {
