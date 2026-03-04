@@ -67,8 +67,10 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
     else if (diff < -60) goPrev();
   };
 
-  // 재생 시작 (탭)
+  // 재생 시작 (탭) — iframe은 이미 로드됨, playVideo만 호출
   const handleStart = () => {
+    postCmd("playVideo");
+    postCmd("unMute");
     setStarted(true);
   };
 
@@ -116,16 +118,17 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
         </div>
       )}
 
-      {/* iframe — started 후에만 렌더 (소리 ON, autoplay) */}
+      {/* iframe — 항상 렌더 (시작 전엔 썸네일 뒤에 숨김) */}
+      <iframe
+        ref={iframeRef}
+        src={`https://www.youtube.com/embed/${videos[startIndex].id}?autoplay=0&mute=1&controls=1&rel=0&playsinline=1&enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`}
+        className="absolute inset-0 w-full h-full"
+        allow="autoplay; encrypted-media"
+        allowFullScreen
+      />
+
       {started && (
         <>
-          <iframe
-            ref={iframeRef}
-            src={`https://www.youtube.com/embed/${video.id}?autoplay=1&mute=0&controls=1&rel=0&playsinline=1&enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`}
-            className="absolute inset-0 w-full h-full"
-            allow="autoplay; encrypted-media"
-            allowFullScreen
-          />
 
           {/* 터치 오버레이 */}
           <div
