@@ -69,14 +69,23 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
     return () => { document.body.style.overflow = ""; };
   }, []);
 
+  // 첫 로드 시 autoplay 강제
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      postCmd("playVideo");
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // 영상 변경 시 loadVideoById로 교체 (iframe 재생성 없이!)
   useEffect(() => {
     if (video.id === prevVideoId.current) return;
     prevVideoId.current = video.id;
     
     postCmd("loadVideoById", [video.id]);
+    setTimeout(() => postCmd("playVideo"), 500);
     if (!muted) {
-      setTimeout(() => postCmd("unMute"), 300);
+      setTimeout(() => postCmd("unMute"), 600);
     }
   }, [video.id, muted, postCmd]);
 
