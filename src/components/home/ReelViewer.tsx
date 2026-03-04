@@ -13,82 +13,113 @@ interface ReelViewerProps {
   videos: ReelVideo[];
   startIndex: number;
   onClose: () => void;
+  ytPlayer?: any; // 외부에서 생성된 YT.Player
 }
 
 declare global {
   interface Window {
     YT: any;
     onYouTubeIframeAPIReady: () => void;
+    _ytApiReady: boolean;
+    _ytApiCallbacks: (() => void)[];
   }
 }
 
-function loadYTAPI(): Promise<void> {
-  return new Promise((resolve) => {
+// YT API 미리 로드 (어디서든 호출 가능)
+export function preloadYTAPI() {
+  if (typeof window === "undefined") return;
+  if (window.YT?.Player || document.getElementById("yt-iframe-api")) return;
+  window._ytApiCallbacks = window._ytApiCallbacks || [];
+  window._ytApiReady = false;
+  const origCb = window.onYouTubeIframeAPIReady;
+  window.onYouTubeIframeAPIReady = () => {
+    window._ytApiReady = true;
+    origCb?.();
+    window._ytApiCallbacks?.forEach(cb => cb());
+    window._ytApiCallbacks = [];
+  };
+  const tag = document.createElement("script");
+  tag.id = "yt-iframe-api";
+  tag.src = "https://www.youtube.com/iframe_api";
+  document.head.appendChild(tag);
+}
+
+function whenYTReady(): Promise<void> {
+  return new Promise(resolve => {
     if (window.YT?.Player) { resolve(); return; }
-    const existing = document.getElementById("yt-iframe-api");
-    if (existing) {
-      const check = setInterval(() => {
-        if (window.YT?.Player) { clearInterval(check); resolve(); }
-      }, 100);
-      return;
-    }
-    window.onYouTubeIframeAPIReady = () => resolve();
-    const tag = document.createElement("script");
-    tag.id = "yt-iframe-api";
-    tag.src = "https://www.youtube.com/iframe_api";
-    document.head.appendChild(tag);
+    window._ytApiCallbacks = window._ytApiCallbacks || [];
+    window._ytApiCallbacks.push(resolve);
   });
 }
 
-export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerProps) {
+// 탭 핸들러에서 호출: 유저 제스처 체인 안에서 Player 생성
+export async function createYTPlayer(
+  containerId: string,
+  videoId: string,
+  onReady?: () => void,
+  onStateChange?: (state: number) => void,
+): Promise<any> {
+  await whenYTReady();
+  return new window.YT.Player(containerId, {
+    videoId,
+    playerVars: {
+      autoplay: 1,
+      mute: 1,
+      controls: 1,
+      rel: 0,
+      playsinline: 1,
+      modestbranding: 1,
+    },
+    events: {
+      onReady: (e: any) => {
+        e.target.playVideo();
+        onReady?.();
+      },
+      onStateChange: (e: any) => onStateChange?.(e.data),
+    },
+  });
+}
+
+export default function ReelViewer({ videos, startIndex, onClose, ytPlayer }: ReelViewerProps) {
   const [current, setCurrent] = useState(startIndex);
   const [muted, setMuted] = useState(true);
-  const [ready, setReady] = useState(false);
-  const playerRef = useRef<any>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [ready, setReady] = useState(!!ytPlayer);
+  const playerRef = useRef<any>(ytPlayer || null);
   const touchStartY = useRef(0);
   const touchMoved = useRef(false);
 
   const video = videos[current];
 
-  // YT Player 초기화
+  // 외부에서 player가 안 넘어왔으면 내부에서 생성 (fallback)
   useEffect(() => {
+    if (playerRef.current) return;
     let destroyed = false;
-    loadYTAPI().then(() => {
-      if (destroyed) return;
-      playerRef.current = new window.YT.Player("reel-yt-player", {
-        videoId: videos[startIndex].id,
-        playerVars: {
-          autoplay: 1,
-          mute: 1,
-          controls: 1,
-          rel: 0,
-          playsinline: 1,
-          modestbranding: 1,
-        },
-        events: {
-          onReady: (e: any) => {
-            e.target.playVideo();
-            setReady(true);
-          },
-          onStateChange: (e: any) => {
-            // 영상 끝나면 다음으로
-            if (e.data === window.YT.PlayerState.ENDED) {
-              setCurrent(c => Math.min(c + 1, videos.length - 1));
-            }
-          },
-        },
-      });
-    });
-    return () => {
-      destroyed = true;
-      try { playerRef.current?.destroy(); } catch {}
-    };
+    createYTPlayer(
+      "reel-yt-player",
+      videos[startIndex].id,
+      () => { if (!destroyed) setReady(true); },
+      (state) => {
+        if (state === window.YT?.PlayerState?.ENDED) {
+          setCurrent(c => Math.min(c + 1, videos.length - 1));
+        }
+      }
+    ).then(p => { if (!destroyed) playerRef.current = p; });
+    return () => { destroyed = true; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 영상 변경
+  // 외부 player 연결
   useEffect(() => {
-    if (!ready || !playerRef.current) return;
+    if (ytPlayer) {
+      playerRef.current = ytPlayer;
+      setReady(true);
+    }
+  }, [ytPlayer]);
+
+  // 영상 변경
+  const prevId = useRef(videos[startIndex].id);
+  useEffect(() => {
+    if (!ready || !playerRef.current || video.id === prevId.current) return;
+    prevId.current = video.id;
     playerRef.current.loadVideoById(video.id);
     if (!muted) {
       setTimeout(() => playerRef.current?.unMute(), 300);
@@ -99,6 +130,13 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
   useEffect(() => {
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = ""; };
+  }, []);
+
+  // cleanup
+  useEffect(() => {
+    return () => {
+      try { playerRef.current?.destroy(); } catch {}
+    };
   }, []);
 
   const goNext = useCallback(() => {
@@ -124,16 +162,11 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
     touchStartY.current = e.touches[0].clientY;
     touchMoved.current = false;
   };
-
   const handleTouchMove = (e: React.TouchEvent) => {
     if (Math.abs(e.touches[0].clientY - touchStartY.current) > 10) touchMoved.current = true;
   };
-
   const handleTouchEnd = (e: React.TouchEvent) => {
-    if (!touchMoved.current) {
-      toggleMute();
-      return;
-    }
+    if (!touchMoved.current) { toggleMute(); return; }
     const diff = touchStartY.current - e.changedTouches[0].clientY;
     if (diff > 60) goNext();
     else if (diff < -60) goPrev();
@@ -141,14 +174,12 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
 
   return (
     <div className="fixed inset-0 z-[100] bg-black">
-      {/* YT Player 컨테이너 */}
-      <div ref={containerRef} className="absolute inset-0">
+      <div className="absolute inset-0">
         <div id="reel-yt-player" className="w-full h-full" />
       </div>
 
       {/* 터치 오버레이 */}
-      <div
-        className="absolute inset-0 z-10"
+      <div className="absolute inset-0 z-10"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -171,9 +202,7 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
         </button>
         <div className="flex items-center gap-2">
           {video.label && (
-            <span className="px-2.5 py-1 rounded-full bg-accent/80 text-xs font-semibold text-white">
-              {video.label}
-            </span>
+            <span className="px-2.5 py-1 rounded-full bg-accent/80 text-xs font-semibold text-white">{video.label}</span>
           )}
           <span className="text-white/60 text-xs">{current + 1}/{videos.length}</span>
         </div>

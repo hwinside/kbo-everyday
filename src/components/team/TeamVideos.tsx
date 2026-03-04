@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { Play } from "lucide-react";
-import ReelViewer from "@/components/home/ReelViewer";
+import ReelViewer, { preloadYTAPI, createYTPlayer } from "@/components/home/ReelViewer";
 
 interface Video {
   id: string;
@@ -15,6 +15,21 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
   const [longVideos, setLongVideos] = useState<Video[]>([]);
   const [shortVideos, setShortVideos] = useState<Video[]>([]);
   const [reelIndex, setReelIndex] = useState<number | null>(null);
+  const ytPlayerRef = useRef<any>(null);
+
+  useEffect(() => { preloadYTAPI(); }, []);
+
+  const handleShortsTap = useCallback(async (index: number) => {
+    const container = document.createElement("div");
+    container.id = "reel-yt-player";
+    container.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;z-index:99;background:black;";
+    document.body.appendChild(container);
+    try {
+      const player = await createYTPlayer("reel-yt-player", shortVideos[index].id);
+      ytPlayerRef.current = player;
+    } catch { container.remove(); }
+    setReelIndex(index);
+  }, [shortVideos]);
 
   useEffect(() => {
     fetch(`/api/team-videos?team=${teamSlug}&type=long`)
@@ -71,7 +86,7 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
             {shortVideos.map((v, i) => (
               <button
                 key={v.id}
-                onClick={() => setReelIndex(i)}
+                onClick={() => handleShortsTap(i)}
                 className="shrink-0 group"
               >
                 <div className="relative w-[120px] rounded-xl overflow-hidden">
@@ -106,7 +121,8 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
             publishedAt: v.publishedAt,
           }))}
           startIndex={reelIndex}
-          onClose={() => setReelIndex(null)}
+          ytPlayer={ytPlayerRef.current}
+          onClose={() => { setReelIndex(null); ytPlayerRef.current = null; }}
         />
       )}
     </>
