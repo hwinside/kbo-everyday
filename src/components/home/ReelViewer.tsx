@@ -15,21 +15,90 @@ interface ReelViewerProps {
   onClose: () => void;
 }
 
+declare global {
+  interface Window {
+    YT: any;
+    onYouTubeIframeAPIReady: () => void;
+  }
+}
+
+function loadYTAPI(): Promise<void> {
+  return new Promise((resolve) => {
+    if (window.YT?.Player) { resolve(); return; }
+    const existing = document.getElementById("yt-iframe-api");
+    if (existing) {
+      const check = setInterval(() => {
+        if (window.YT?.Player) { clearInterval(check); resolve(); }
+      }, 100);
+      return;
+    }
+    window.onYouTubeIframeAPIReady = () => resolve();
+    const tag = document.createElement("script");
+    tag.id = "yt-iframe-api";
+    tag.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(tag);
+  });
+}
+
 export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerProps) {
   const [current, setCurrent] = useState(startIndex);
   const [muted, setMuted] = useState(true);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [ready, setReady] = useState(false);
+  const playerRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const touchStartY = useRef(0);
   const touchMoved = useRef(false);
-  const prevVideoId = useRef(videos[startIndex].id);
 
   const video = videos[current];
 
-  const postCmd = useCallback((func: string, args: any[] = []) => {
-    iframeRef.current?.contentWindow?.postMessage(
-      JSON.stringify({ event: "command", func, args }),
-      "*"
-    );
+  // YT Player 초기화
+  useEffect(() => {
+    let destroyed = false;
+    loadYTAPI().then(() => {
+      if (destroyed) return;
+      playerRef.current = new window.YT.Player("reel-yt-player", {
+        videoId: videos[startIndex].id,
+        playerVars: {
+          autoplay: 1,
+          mute: 1,
+          controls: 1,
+          rel: 0,
+          playsinline: 1,
+          modestbranding: 1,
+        },
+        events: {
+          onReady: (e: any) => {
+            e.target.playVideo();
+            setReady(true);
+          },
+          onStateChange: (e: any) => {
+            // 영상 끝나면 다음으로
+            if (e.data === window.YT.PlayerState.ENDED) {
+              setCurrent(c => Math.min(c + 1, videos.length - 1));
+            }
+          },
+        },
+      });
+    });
+    return () => {
+      destroyed = true;
+      try { playerRef.current?.destroy(); } catch {}
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 영상 변경
+  useEffect(() => {
+    if (!ready || !playerRef.current) return;
+    playerRef.current.loadVideoById(video.id);
+    if (!muted) {
+      setTimeout(() => playerRef.current?.unMute(), 300);
+    }
+  }, [video.id, ready]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // body scroll lock
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
   }, []);
 
   const goNext = useCallback(() => {
@@ -41,9 +110,15 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
   }, [current]);
 
   const toggleMute = useCallback(() => {
-    postCmd(muted ? "unMute" : "mute");
+    if (!playerRef.current) return;
+    if (muted) {
+      playerRef.current.unMute();
+      playerRef.current.setVolume(100);
+    } else {
+      playerRef.current.mute();
+    }
     setMuted(m => !m);
-  }, [muted, postCmd]);
+  }, [muted]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartY.current = e.touches[0].clientY;
@@ -64,32 +139,12 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
     else if (diff < -60) goPrev();
   };
 
-  useEffect(() => {
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = ""; };
-  }, []);
-
-  // 영상 변경 시 loadVideoById로 교체 (iframe 재생성 없이!)
-  useEffect(() => {
-    if (video.id === prevVideoId.current) return;
-    prevVideoId.current = video.id;
-    
-    postCmd("loadVideoById", [video.id]);
-    if (!muted) {
-      setTimeout(() => postCmd("unMute"), 300);
-    }
-  }, [video.id, muted, postCmd]);
-
   return (
     <div className="fixed inset-0 z-[100] bg-black">
-      {/* 단일 iframe — 절대 교체하지 않음 */}
-      <iframe
-        ref={iframeRef}
-        src={`https://www.youtube.com/embed/${videos[startIndex].id}?autoplay=1&mute=1&controls=1&rel=0&playsinline=1&enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`}
-        className="absolute inset-0 w-full h-full"
-        allow="autoplay; encrypted-media"
-        allowFullScreen
-      />
+      {/* YT Player 컨테이너 */}
+      <div ref={containerRef} className="absolute inset-0">
+        <div id="reel-yt-player" className="w-full h-full" />
+      </div>
 
       {/* 터치 오버레이 */}
       <div
