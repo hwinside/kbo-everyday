@@ -140,19 +140,16 @@ export default function TeamBoardPage() {
       ? [...posts].sort((a, b) => b.likeCount - a.likeCount)
       : posts;
 
-  // 팀 선수 목록 (KBO API에서 로딩)
-  const [teamPlayers, setTeamPlayers] = useState<{ name: string; position: string; stats: any }[]>([]);
-  useEffect(() => {
-    Promise.all([
-      fetch("/api/stats?type=batter").then(r => r.json()),
-      fetch("/api/stats?type=pitcher").then(r => r.json()),
-    ]).then(([b, p]) => {
-      const batters = (b.stats || []).filter((s: any) => s.team === team.shortName).map((s: any) => ({ name: s.name, position: "타자", stats: s }));
-      const pitchers = (p.stats || []).filter((s: any) => s.team === team.shortName).map((s: any) => ({ name: s.name, position: "투수", stats: s }));
-      setTeamPlayers([...batters, ...pitchers]);
-    });
-  }, [team.shortName]);
-  const players = teamPlayers;
+  // 팀 선수 목록 (로스터 전체)
+  const allRoster: { name: string; position: string; playerId: string }[] = (() => {
+    try {
+      const roster = require("@/lib/constants/players-roster.json") as any[];
+      return roster
+        .filter((p: any) => p.teamId === team.id)
+        .map((p: any) => ({ name: p.name, position: p.position || "미정", playerId: p.playerId }));
+    } catch { return []; }
+  })();
+  const players = allRoster;
   const grouped = POSITION_ORDER.map((group) => ({
     group,
     players: players.filter((p) => getPositionGroup(p.position) === group),
@@ -282,8 +279,8 @@ export default function TeamBoardPage() {
                                   </div>
                                   <p className="mt-0.5 text-base tabular-nums text-text-secondary">
                                     {isPitcher
-                                      ? `ERA ${player.stats?.era || "-"} · ${player.stats?.w || 0}승${player.stats?.l || 0}패 · WHIP ${player.stats?.whip || "-"}`
-                                      : `${player.stats?.avg || "-"} / ${player.stats?.hr || 0}HR / ${player.stats?.rbi || 0}RBI`}
+                                      ? "투수"
+                                      : "타자"}
                                   </p>
                                 </div>
                               </div>
