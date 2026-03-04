@@ -75,7 +75,7 @@ export function getBatterTraits(stats: {
   if (stats.hbp >= 10) traits.push({ emoji: "🧲", label: "존압박", statKey: "hbp", desc: `${stats.hbp}사구`, criteria: "시즌 10사구 이상" });
 
   // 🔋 풀타임 (경기 140+)
-  if (stats.games >= 140 || pace(stats.games) >= 155) traits.push({ emoji: "🔋", label: "풀타임", statKey: "avg", desc: `${stats.games}경기 출전`, criteria: "시즌 140경기 이상 출전" });
+  if (stats.games >= 140 || pace(stats.games) >= 155) traits.push({ emoji: "🔋", label: "풀타임", statKey: "games_batter", desc: `${stats.games}경기 출전`, criteria: "시즌 140경기 이상 출전" });
 
   // 💎 OPS 괴물 (OPS .900+)
   if (ops >= 0.900) traits.push({ emoji: "💎", label: "OPS 괴물", statKey: "ops", desc: `OPS ${stats.ops}`, criteria: "OPS .900 이상" });
