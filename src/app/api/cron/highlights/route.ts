@@ -18,7 +18,7 @@ const QUERIES: Record<string, string> = {
   "롯데": "롯데 자이언츠 하이라이트",
   "한화": "한화 이글스 하이라이트",
   "키움": "키움 히어로즈 하이라이트",
-  "_ALL": "KBO 프로야구 하이라이트",
+  "_ALL": "프로야구 하이라이트",
 };
 
 function decodeHtml(s: string) {

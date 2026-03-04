@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
   // 3. YouTube 직접 (최후 수단)
   if (!YOUTUBE_API_KEY) return NextResponse.json({ items: [] });
   try {
-    const query = team === "_ALL" ? "KBO 프로야구 하이라이트" : `${team} 하이라이트`;
+    const query = team === "_ALL" ? "프로야구 하이라이트" : `${team} 하이라이트`;
     const res = await fetch(
       `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&maxResults=30&order=date&videoDuration=short&videoEmbeddable=true&key=${YOUTUBE_API_KEY}`
     );
