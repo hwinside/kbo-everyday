@@ -18,7 +18,9 @@ function renderText(text: string) {
 }
 
 export default function PlayerProfile({ playerName, teamColor, kboId }: Props) {
-  const profile = PLAYER_PROFILES[playerName];
+  // 외국인 선수 이름 매핑 (roster 약칭 → 프로필 풀네임)
+  const NAME_ALIASES: Record<string, string> = { "디아즈": "르윈 디아즈", "레예스": "빅토르 레예스" };
+  const profile = PLAYER_PROFILES[playerName] || PLAYER_PROFILES[NAME_ALIASES[playerName] || ""];
   const awards = getPlayerAwards(kboId, playerName);
   const [activeSection, setActiveSection] = useState<"bio" | "career" | "tmi">("bio");
 
