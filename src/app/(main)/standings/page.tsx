@@ -235,7 +235,7 @@ export default function StandingsPage() {
       </header>
 
       {/* Main tabs */}
-      <div className="flex gap-4 mb-5">
+      <div className="flex gap-2 mb-4">
         {([
           { id: "team" as MainTab, label: "구단 순위" },
           { id: "batter" as MainTab, label: "타자 타이틀" },
@@ -245,7 +245,7 @@ export default function StandingsPage() {
             key={tab.id}
             onClick={() => setMainTab(tab.id)}
             className={clsx(
-              "flex-1 py-2 text-sm font-semibold rounded-full transition-all",
+              "px-4 py-1.5 text-xs font-semibold rounded-full transition-all",
               mainTab === tab.id
                 ? "bg-accent text-white"
                 : "bg-bg-tertiary text-text-tertiary"
