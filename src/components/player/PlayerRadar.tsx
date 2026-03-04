@@ -119,7 +119,7 @@ export default function PlayerRadar({ playerId, position, teamColor }: PlayerRad
         const traits = isPitcher ? getPitcherTraits(rawStats) : getBatterTraits(rawStats);
         if (traits.length === 0) return null;
         return (
-          <div className="flex flex-wrap justify-center gap-2 mt-3">
+          <div className="flex flex-wrap justify-center gap-2 mt-3 mb-6">
             {traits.map((t, i) => (
               <button key={i} onClick={() => setActiveTrait(activeTrait === i ? null : i)}
                 className="inline-flex flex-col items-center gap-0.5 px-2.5 py-1 rounded-full text-xs font-medium bg-white/5 border border-white/10 transition-colors hover:bg-white/10">
