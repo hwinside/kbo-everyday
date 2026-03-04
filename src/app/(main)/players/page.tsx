@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, ChevronDown } from "lucide-react";
+import { Search, ChevronDown, ChevronLeft } from "lucide-react";
 import Link from "next/link";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { useState, useMemo, useEffect, useCallback } from "react";
