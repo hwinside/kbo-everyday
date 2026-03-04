@@ -103,7 +103,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                       {item.label}
                     </span>
                   )}
-                  <h3 className="text-base font-bold text-text-primary leading-snug line-clamp-2">
+                  <h3 className="text-base font-bold text-text-primary leading-snug line-clamp-3">
                     {item.title}
                   </h3>
                   <p className="mt-1 text-xs text-text-tertiary">
