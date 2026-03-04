@@ -18,6 +18,7 @@ interface ReelViewerProps {
 export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerProps) {
   const [current, setCurrent] = useState(startIndex);
   const [muted, setMuted] = useState(true);
+  const [started, setStarted] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const touchStartY = useRef(0);
   const touchMoved = useRef(false);
@@ -69,14 +70,6 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
     return () => { document.body.style.overflow = ""; };
   }, []);
 
-  // 첫 로드 시 autoplay 강제
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      postCmd("playVideo");
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
   // 영상 변경 시 loadVideoById로 교체 (iframe 재생성 없이!)
   useEffect(() => {
     if (video.id === prevVideoId.current) return;
@@ -101,15 +94,29 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
       />
 
       {/* 터치 오버레이 */}
-      <div
-        className="absolute inset-0 z-10"
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-      />
+      {started ? (
+        <div
+          className="absolute inset-0 z-10"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        />
+      ) : (
+        <div
+          className="absolute inset-0 z-10 flex items-center justify-center"
+          onClick={() => {
+            postCmd("playVideo");
+            setStarted(true);
+          }}
+        >
+          <div className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center shadow-lg">
+            <svg viewBox="0 0 24 24" className="w-8 h-8 text-black ml-1" fill="currentColor"><polygon points="5,3 19,12 5,21" /></svg>
+          </div>
+        </div>
+      )}
 
       {/* 음소거 안내 */}
-      {muted && (
+      {muted && started && (
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
           <div className="bg-black/60 rounded-full px-4 py-2 flex items-center gap-2 animate-pulse">
             <VolumeX size={20} className="text-white" />
