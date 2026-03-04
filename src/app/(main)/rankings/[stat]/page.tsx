@@ -6,8 +6,7 @@ import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
 import GlassCard from "@/components/ui/GlassCard";
-import battersData from "@/lib/constants/stats-2025-batters.json";
-import pitchersData from "@/lib/constants/stats-2025-pitchers.json";
+
 import Link from "next/link";
 
 // 스탯 정의
@@ -57,23 +56,32 @@ function RankingContent() {
   
   useEffect(() => {
     if (!def) return;
-    const data: any[] = def.type === "batter" ? battersData : pitchersData;
-    const filtered = def.type === "batter" 
-      ? data.filter(p => (p.games || 0) >= 30)
-      : data.filter(p => (p.games || 0) >= 10);
-    
-    const sorted = [...filtered].sort((a, b) => {
-      let aVal = parseFloat(a[def.key]) || 0;
-      let bVal = parseFloat(b[def.key]) || 0;
-      if (stat === "doubles") {
-        aVal = (a.doubles || 0) + (a.triples || 0);
-        bVal = (b.doubles || 0) + (b.triples || 0);
-      }
-      return def.higherIsBetter ? bVal - aVal : aVal - bVal;
-    });
-    
-    setPlayers(sorted.slice(0, 50));
-    setLoading(false);
+    const type = def.type === "batter" ? "batter" : "pitcher";
+    fetch(`/api/stats?type=${type}`)
+      .then(r => r.json())
+      .then((data: any) => {
+        const rows = data.stats || [];
+        const filtered = def.type === "batter" 
+          ? rows.filter((p: any) => (p.games || 0) >= 30)
+          : rows.filter((p: any) => (p.games || 0) >= 10);
+        
+        const sorted = [...filtered].sort((a: any, b: any) => {
+          let aVal = parseFloat(a[def.key]) || 0;
+          let bVal = parseFloat(b[def.key]) || 0;
+          if (stat === "doubles") {
+            aVal = (a.doubles || 0) + (a.triples || 0);
+            bVal = (b.doubles || 0) + (b.triples || 0);
+          }
+          return def.higherIsBetter ? bVal - aVal : aVal - bVal;
+        });
+        
+        setPlayers(sorted.slice(0, 50));
+        setLoading(false);
+      })
+      .catch((e) => {
+        console.error(e);
+        setLoading(false);
+      });
   }, [stat, def]);
   
   useEffect(() => {
