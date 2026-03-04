@@ -36,10 +36,10 @@ const MOCK_GAMES = [
 
 const MOCK_HOT_PLAYER_BOARDS = [
   { playerId: "53123", name: "오스틴 딘", teamId: 1, teamName: "LG", postsToday: 47, totalPosts: 1284, trend: "up" as const },
-  { playerId: "64011", name: "양현종", teamId: 6, teamName: "KIA", postsToday: 38, totalPosts: 956, trend: "up" as const },
-  { playerId: "65064", name: "구자욱", teamId: 8, teamName: "삼성", postsToday: 35, totalPosts: 1102, trend: "same" as const },
+  { playerId: "77637", name: "양현종", teamId: 6, teamName: "KIA", postsToday: 38, totalPosts: 956, trend: "up" as const },
+  { playerId: "62404", name: "구자욱", teamId: 8, teamName: "삼성", postsToday: 35, totalPosts: 1102, trend: "same" as const },
   { playerId: "52605", name: "김도영", teamId: 6, teamName: "KIA", postsToday: 33, totalPosts: 2341, trend: "up" as const },
-  { playerId: "68069", name: "문동주", teamId: 9, teamName: "한화", postsToday: 28, totalPosts: 876, trend: "down" as const },
+  { playerId: "52701", name: "문동주", teamId: 9, teamName: "한화", postsToday: 28, totalPosts: 876, trend: "down" as const },
 ];
 
 const MOCK_POPULAR_POSTS = [
