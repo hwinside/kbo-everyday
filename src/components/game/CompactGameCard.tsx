@@ -27,8 +27,15 @@ export default function CompactGameCard({ game, isPreseason }: CompactGameCardPr
   const awayWin = isFinal && (game.awayScore ?? 0) > (game.homeScore ?? 0);
   const homeWin = isFinal && (game.homeScore ?? 0) > (game.awayScore ?? 0);
 
+  const handleClick = (e: React.MouseEvent) => {
+    if (isPreseason) {
+      e.preventDefault();
+      alert("시범경기 경기 구성 준비중입니다.");
+    }
+  };
+
   return (
-    <Link href={`/games/${game.id}`}>
+    <Link href={isPreseason ? "#" : `/games/${game.id}`} onClick={handleClick}>
       <div className="glass-card p-4 hover:bg-white/5 transition-colors">
         {/* Status */}
         <div className="flex items-center justify-between mb-3">
