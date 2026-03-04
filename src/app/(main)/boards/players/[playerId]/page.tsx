@@ -19,6 +19,7 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import CheerSong from "@/components/player/CheerSong";
 import PlayerProfile from "@/components/player/PlayerProfile";
+import PlayerRadar from "@/components/player/PlayerRadar";
 import PlayerNews from "@/components/player/PlayerNews";
 import PhotoGallery from "@/components/player/PhotoGallery";
 
@@ -205,6 +206,7 @@ export default function PlayerBoardPage() {
       {/* Stats tab */}
       {activeTab === "stats" && (
         <div className="px-5 py-4">
+          <PlayerRadar playerId={rawId} position={player.position} teamColor={teamColor} />
           <PlayerProfile playerName={player.name} teamColor={teamColor} />
           <CheerSong playerName={player.name} teamColor={teamColor} />
 
