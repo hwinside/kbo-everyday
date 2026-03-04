@@ -32,7 +32,7 @@ export function getBatterTraits(stats: {
   // 최소 출전 필터
   if (stats.games < 10 || pa < 30) return traits;
   const g162 = 162; // 풀시즌 기준
-  const pace = (g: number) => stats.games >= 30 ? Math.round(g / stats.games * g162) : 0; // 162경기 페이스 환산
+  const pace = (g: number) => stats.games >= 50 ? Math.round(g / stats.games * g162) : 0; // 162경기 페이스 환산
 
   // 💣 파워히터 (홈런 15+)
   if (stats.hr >= 15 || (stats.games >= 10 && pace(stats.hr) >= 20)) traits.push({ emoji: "💣", label: "파워히터", desc: `${stats.hr}홈런`, criteria: "시즌 15홈런 이상" });
