@@ -9,6 +9,7 @@ export default function PWAInstallBanner() {
   const [isIOS, setIsIOS] = useState(false);
   const [showIOSGuide, setShowIOSGuide] = useState(false);
   const [isInAppBrowser, setIsInAppBrowser] = useState(false);
+  const [isNonSafariiOS, setIsNonSafariiOS] = useState(false);
 
   useEffect(() => {
     // 이미 PWA로 실행 중이면 숨김
@@ -34,7 +35,14 @@ export default function PWAInstallBanner() {
 
     if (ios) {
       const isSafari = /Safari/.test(ua) && !/CriOS|FxiOS/.test(ua);
-      if (isSafari) setShow(true);
+      const isIOSChrome = /CriOS/.test(ua);
+      const isIOSFirefox = /FxiOS/.test(ua);
+      if (isIOSChrome || isIOSFirefox) {
+        setIsNonSafariiOS(true);
+        setShow(true);
+      } else if (isSafari) {
+        setShow(true);
+      }
     } else {
       // Android: beforeinstallprompt 이벤트
       const handler = (e: Event) => {
@@ -58,6 +66,11 @@ export default function PWAInstallBanner() {
   };
 
   const install = async () => {
+    if (isNonSafariiOS) {
+      alert("Safari에서만 홈 화면에 추가할 수 있어요!\n\n이 페이지 주소를 복사해서 Safari에서 열어주세요.");
+      navigator.clipboard?.writeText(window.location.href);
+      return;
+    }
     if (isInAppBrowser) {
       // 외부 브라우저로 열기
       const url = window.location.href;
@@ -91,14 +104,14 @@ export default function PWAInstallBanner() {
       <div className="fixed bottom-[calc(60px+env(safe-area-inset-bottom,0px))] left-0 right-0 z-40 px-4 pb-2 animate-slide-up">
         <div className="mx-auto max-w-lg bg-[rgba(30,30,35,0.95)] backdrop-blur-xl rounded-2xl border border-border p-4 flex items-center gap-3 shadow-lg">
           <div className="flex-1">
-            <p className="text-sm font-semibold text-text-primary">{isInAppBrowser ? "🌐 브라우저에서 열기" : "📲 홈 화면에 추가"}</p>
-            <p className="text-xs text-text-tertiary mt-0.5">{isInAppBrowser ? "외부 브라우저에서 앱을 설치할 수 있어요" : "앱처럼 빠르게 접속할 수 있어요"}</p>
+            <p className="text-sm font-semibold text-text-primary">{isInAppBrowser ? "🌐 브라우저에서 열기" : isNonSafariiOS ? "🧭 Safari에서 열기" : "📲 홈 화면에 추가"}</p>
+            <p className="text-xs text-text-tertiary mt-0.5">{isInAppBrowser ? "외부 브라우저에서 앱을 설치할 수 있어요" : isNonSafariiOS ? "Safari에서만 앱을 설치할 수 있어요" : "앱처럼 빠르게 접속할 수 있어요"}</p>
           </div>
           <button
             onClick={install}
             className="px-4 py-2 bg-accent text-white text-sm font-semibold rounded-xl whitespace-nowrap"
           >
-            {isInAppBrowser ? "브라우저로 열기" : isIOS ? "방법 보기" : "설치"}
+            {isInAppBrowser ? "브라우저로 열기" : isNonSafariiOS ? "주소 복사" : isIOS ? "방법 보기" : "설치"}
           </button>
           <button onClick={dismiss} className="text-text-tertiary p-1">
             <X size={18} />
