@@ -24,8 +24,8 @@ interface PredictionCategory {
 
 const CATEGORIES: PredictionCategory[] = [
   { id: "champion", title: "우승팀", icon: <Trophy size={20} />, description: "2026 한국시리즈 우승은?", type: "team" },
-  { id: "mvp", title: "정규시즌 MVP", icon: <Star size={20} />, description: "올해의 가장 빛나는 선수는?", type: "player" },
-  { id: "rookie", title: "신인왕", icon: <Zap size={20} />, description: "최고의 루키는 누구?", type: "player" },
+  { id: "mvp", title: "정규시즌 MVP", icon: <Star size={20} />, description: "올해의 가장 빛나는 선수는?", type: "player", statFilter: "batter" as const },
+  { id: "rookie", title: "신인왕", icon: <Zap size={20} />, description: "최고의 루키는 누구? (2025 신인 포함 전체)", type: "player" },
   { id: "batting", title: "타격왕", icon: <TrendingUp size={20} />, description: "최고 타율의 주인공은?", type: "player", statFilter: "batter" },
   { id: "homerun", title: "홈런왕", icon: <Trophy size={20} />, description: "가장 많은 홈런을 칠 선수는?", type: "player", statFilter: "batter" },
   { id: "wins", title: "다승왕", icon: <Star size={20} />, description: "가장 많이 이길 투수는?", type: "player", statFilter: "pitcher" },
@@ -85,9 +85,42 @@ export default function PredictPage() {
     ? ALL_PLAYERS.filter(p => statsNames.has(p.name))
     : ALL_PLAYERS;
   
-  const filteredPlayers = searchQuery
-    ? basePlayerList.filter(p => p.name.includes(searchQuery))
-    : basePlayerList;
+  // 카테고리별 정렬
+  const getSortedPlayers = (players: typeof basePlayerList) => {
+    if (!selectedCategory) return players;
+    const catId = selectedCategory.id;
+    const source = statsSource;
+    
+    if (catId === "batting") {
+      const sorted = [...source].sort((a, b) => parseFloat(b.avg || "0") - parseFloat(a.avg || "0"));
+      const order = new Map(sorted.map((s, i) => [s.name, i]));
+      return [...players].sort((a, b) => (order.get(a.name) ?? 999) - (order.get(b.name) ?? 999));
+    } else if (catId === "homerun") {
+      const sorted = [...source].sort((a, b) => parseInt(b.hr || "0") - parseInt(a.hr || "0"));
+      const order = new Map(sorted.map((s, i) => [s.name, i]));
+      return [...players].sort((a, b) => (order.get(a.name) ?? 999) - (order.get(b.name) ?? 999));
+    } else if (catId === "wins") {
+      const sorted = [...source].sort((a, b) => parseInt(b.wins || "0") - parseInt(a.wins || "0"));
+      const order = new Map(sorted.map((s, i) => [s.name, i]));
+      return [...players].sort((a, b) => (order.get(a.name) ?? 999) - (order.get(b.name) ?? 999));
+    } else if (catId === "era") {
+      const sorted = [...source].filter(s => parseFloat(s.era || "99") < 90).sort((a, b) => parseFloat(a.era || "99") - parseFloat(b.era || "99"));
+      const order = new Map(sorted.map((s, i) => [s.name, i]));
+      return [...players].sort((a, b) => (order.get(a.name) ?? 999) - (order.get(b.name) ?? 999));
+    } else if (catId === "mvp") {
+      // MVP: 타율 상위 (타자 기준)
+      const sorted = [...source].sort((a, b) => parseFloat(b.avg || "0") - parseFloat(a.avg || "0"));
+      const order = new Map(sorted.map((s, i) => [s.name, i]));
+      return [...players].sort((a, b) => (order.get(a.name) ?? 999) - (order.get(b.name) ?? 999));
+    }
+    return players;
+  };
+
+  const filteredPlayers = getSortedPlayers(
+    searchQuery
+      ? basePlayerList.filter(p => p.name.includes(searchQuery))
+      : basePlayerList
+  );
   
   // 순위 매핑
   const getRank = (name: string): string => {
@@ -110,6 +143,11 @@ export default function PredictPage() {
       const sorted = [...source].filter(s => parseFloat(s.era || "99") < 90).sort((a, b) => parseFloat(a.era || "99") - parseFloat(b.era || "99"));
       const idx = sorted.findIndex(s => s.name === name);
       return idx >= 0 ? `25년 ${idx + 1}위 (${sorted[idx].era})` : "";
+    }
+    if (catId === "mvp") {
+      const sorted = [...source].sort((a, b) => parseFloat(b.avg || "0") - parseFloat(a.avg || "0"));
+      const idx = sorted.findIndex(s => s.name === name);
+      return idx >= 0 ? `25년 타율 ${idx + 1}위 (${sorted[idx].avg})` : "";
     }
     return "";
   };
