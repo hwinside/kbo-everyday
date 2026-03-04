@@ -3,7 +3,7 @@ import { TEAMS } from "@/lib/constants/teams";
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
 const cache = new Map<string, { data: any; ts: number }>();
-const TTL = 4 * 60 * 60 * 1000;
+const TTL = 24 * 60 * 60 * 1000; // 24hr
 
 function decodeHtml(s: string) {
   return s.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<")
@@ -12,12 +12,13 @@ function decodeHtml(s: string) {
 
 export async function GET(req: NextRequest) {
   const teamSlug = req.nextUrl.searchParams.get("team");
+  const type = req.nextUrl.searchParams.get("type") || "long"; // long | short
   if (!teamSlug) return NextResponse.json({ items: [] });
 
   const team = TEAMS.find(t => t.slug === teamSlug || t.shortName === teamSlug);
   if (!team?.youtubeChannelId) return NextResponse.json({ items: [] });
 
-  const cacheKey = team.slug;
+  const cacheKey = `${team.slug}-${type}`;
   const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.ts < TTL) {
     return NextResponse.json(cached.data);
@@ -26,7 +27,9 @@ export async function GET(req: NextRequest) {
   if (!YOUTUBE_API_KEY) return NextResponse.json({ items: [] });
 
   try {
-    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${team.youtubeChannelId}&type=video&maxResults=10&order=date&key=${YOUTUBE_API_KEY}`;
+    const duration = type === "short" ? "short" : "medium";
+    const maxResults = type === "short" ? 20 : 10;
+    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${team.youtubeChannelId}&type=video&videoDuration=${duration}&maxResults=${maxResults}&order=date&key=${YOUTUBE_API_KEY}`;
     const res = await fetch(url);
     const data = await res.json();
 
@@ -39,7 +42,7 @@ export async function GET(req: NextRequest) {
       publishedAt: item.snippet.publishedAt,
     }));
 
-    const result = { items, channelName: team.name };
+    const result = { items };
     if (items.length > 0) cache.set(cacheKey, { data: result, ts: Date.now() });
     return NextResponse.json(result);
   } catch {
