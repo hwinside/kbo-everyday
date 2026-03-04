@@ -112,6 +112,10 @@ function SectionHeader({ title, href, icon }: { title: string; href?: string; ic
   );
 }
 
+
+// 개막 전 숨김 (3/29 이후 true로 변경)
+const SEASON_STARTED = false;
+
 export default function HomePage() {
   const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number} | null>(null);
   const [myTeamId, setMyTeam] = useState<number | null>(null);
@@ -453,8 +457,8 @@ export default function HomePage() {
 
             </div>
 
-      {/* ===== 1. Today's Games — horizontal scroll with snap ===== */}
-      <motion.section variants={item} className="mb-6">
+      {/* ===== 1. Today's Games ===== */}
+      {SEASON_STARTED && <motion.section variants={item} className="mb-6">
         <SectionHeader title={isPreseason ? "오늘의 시범경기" : "오늘의 경기"} href="/games" icon="⚾" />
         <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto hide-scrollbar -mx-5 px-5">
           {todayGames.map((game) => (
@@ -490,10 +494,10 @@ export default function HomePage() {
             </Link>
           ))}
         </div>
-      </motion.section>
+      </motion.section>}
 
       {/* ===== 2. Prediction Preview ===== */}
-      <motion.section variants={item} className="mb-6">
+      {SEASON_STARTED && <motion.section variants={item} className="mb-6">
         <SectionHeader title="승부예측" href="/predict/daily" icon="🔮" />
         <div className="space-y-4">
           {previewPredictions.map((pred) => (
@@ -548,10 +552,10 @@ export default function HomePage() {
             </Link>
           ))}
         </div>
-      </motion.section>
+      </motion.section>}
 
       {/* ===== 4. Popular Posts ===== */}
-      <motion.section variants={item} className="mb-6">
+      {SEASON_STARTED && <motion.section variants={item} className="mb-6">
         <SectionHeader title="인기글" href="/teams" icon="🔥" />
         <div className="space-y-3">
           {MOCK_POPULAR_POSTS.map((post, i) => (
@@ -571,13 +575,13 @@ export default function HomePage() {
             </GlassCard>
           ))}
         </div>
-      </motion.section>
+      </motion.section>}
 
 
 
       {/* ===== 4.5 My Favorite Players ===== */}
             {/* ===== 5. Hot Player Boards ===== */}
-      <motion.section variants={item} className="mb-6">
+      {SEASON_STARTED && <motion.section variants={item} className="mb-6">
         <SectionHeader title="인기 선수게시판" href="/players" icon="⭐" />
         <GlassCard className="p-4">
           <div className="space-y-8">
@@ -608,7 +612,7 @@ export default function HomePage() {
                 <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
     </div>
         </GlassCard>
-      </motion.section>
+      </motion.section>}
       {/* Bottom spacer */}
       <div className="h-4" />
     </motion.div>
