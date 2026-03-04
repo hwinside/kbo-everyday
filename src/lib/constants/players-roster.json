@@ -504,6 +504,14 @@
     "backNo": "119"
   },
   {
+    "name": "해럴드 카스트로",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "0",
+    "kboId": "FP016"
+  },
+  {
     "name": "홍민규",
     "kboId": "55267",
     "team": "KIA",
@@ -664,6 +672,14 @@
     "backNo": "9"
   },
   {
+    "name": "맷 사우어",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "FP011"
+  },
+  {
     "name": "문상철",
     "kboId": "64007",
     "team": "KT",
@@ -712,6 +728,14 @@
     "backNo": "19"
   },
   {
+    "name": "샘 힐리어드",
+    "team": "KT",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "0",
+    "kboId": "FP013"
+  },
+  {
     "name": "소형준",
     "kboId": "50030",
     "team": "KT",
@@ -734,6 +758,14 @@
     "teamId": 3,
     "position": "내야수",
     "backNo": "94"
+  },
+  {
+    "name": "스기모토 고우키",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "AQ007"
   },
   {
     "name": "신범준",
@@ -998,6 +1030,14 @@
     "teamId": 3,
     "position": "외야수",
     "backNo": "3"
+  },
+  {
+    "name": "케일럽 보쉴리",
+    "team": "KT",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "FP012"
   },
   {
     "name": "한승택",
@@ -1344,7 +1384,7 @@
     "backNo": "127"
   },
   {
-    "name": "오스틴",
+    "name": "오스틴 딘",
     "kboId": "53123",
     "team": "LG",
     "teamId": 1,
@@ -1766,6 +1806,14 @@
     "teamId": 5,
     "position": "내야수",
     "backNo": "24"
+  },
+  {
+    "name": "도다 나츠키",
+    "team": "NC",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "AQ006"
   },
   {
     "name": "류진욱",
@@ -2334,6 +2382,22 @@
     "teamId": 4,
     "position": "투수",
     "backNo": "38"
+  },
+  {
+    "name": "다케다 쇼타",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "AQ005"
+  },
+  {
+    "name": "드루 버하겐",
+    "team": "SSG",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "FP010"
   },
   {
     "name": "류현곤",
@@ -3048,6 +3112,14 @@
     "backNo": "56"
   },
   {
+    "name": "다무라 이치로",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "AQ009"
+  },
+  {
     "name": "다즈 카메론",
     "team": "두산",
     "teamId": 2,
@@ -3392,6 +3464,14 @@
     "backNo": "42"
   },
   {
+    "name": "크리스 플렉센",
+    "team": "두산",
+    "teamId": 2,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "FP017"
+  },
+  {
     "name": "한다현",
     "kboId": "55214",
     "team": "두산",
@@ -3430,6 +3510,14 @@
     "teamId": 7,
     "position": "내야수",
     "backNo": "2"
+  },
+  {
+    "name": "교야마 마사야",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "AQ008"
   },
   {
     "name": "구승민",
@@ -3688,6 +3776,14 @@
     "backNo": "123"
   },
   {
+    "name": "엘빈 로드리게스",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "FP014"
+  },
+  {
     "name": "유강남",
     "kboId": "61102",
     "team": "롯데",
@@ -3846,6 +3942,14 @@
     "teamId": 7,
     "position": "투수",
     "backNo": "65"
+  },
+  {
+    "name": "제러미 비슬리",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "FP015"
   },
   {
     "name": "조경민",
@@ -4480,6 +4584,14 @@
     "backNo": "75"
   },
   {
+    "name": "가나쿠보 유토",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "AQ010"
+  },
+  {
     "name": "김동규",
     "kboId": "53164",
     "team": "키움",
@@ -4518,6 +4630,22 @@
     "teamId": 10,
     "position": "내야수",
     "backNo": "26"
+  },
+  {
+    "name": "네이선 와일스",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "FP019"
+  },
+  {
+    "name": "라울 알칸타라",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "FP020"
   },
   {
     "name": "박성빈",
@@ -4766,6 +4894,14 @@
     "teamId": 10,
     "position": "외야수",
     "backNo": "27"
+  },
+  {
+    "name": "트렌턴 브룩스",
+    "team": "키움",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "0",
+    "kboId": "FP018"
   },
   {
     "name": "하영민",
