@@ -98,6 +98,14 @@ export default function GamesPage() {
         </button>
       </div>
 
+      {/* 시범경기 안내 배너 */}
+      {new Date() < new Date("2026-03-29") && (
+        <div className="mx-5 mb-3 px-4 py-3 rounded-xl bg-accent/10 border border-accent/20">
+          <p className="text-sm font-semibold text-accent">⚾ 시범경기 3/12 ~ 3/24</p>
+          <p className="text-xs text-text-tertiary mt-1">정규시즌 3월 29일 개막 · 시범경기 데이터는 준비 중입니다</p>
+        </div>
+      )}
+
       <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
 
       {loading && games.length === 0 ? (
