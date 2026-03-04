@@ -29,41 +29,43 @@ export function getBatterTraits(stats: {
     ? (stats.hits - stats.hr) / (stats.ab - stats.so - stats.hr)
     : 0;
 
-  // 최소 출전 필터 (규정타석 근처)
-  if (stats.games < 30 || pa < 100) return traits;
+  // 최소 출전 필터
+  if (stats.games < 10 || pa < 30) return traits;
+  const g162 = 162; // 풀시즌 기준
+  const pace = (g: number) => Math.round(g / stats.games * g162); // 162경기 페이스 환산
 
   // 💣 파워히터 (홈런 15+)
-  if (stats.hr >= 15) traits.push({ emoji: "💣", label: "파워히터", desc: `${stats.hr}홈런`, criteria: "시즌 15홈런 이상" });
+  if (stats.hr >= 15 || (stats.games >= 10 && pace(stats.hr) >= 20)) traits.push({ emoji: "💣", label: "파워히터", desc: `${stats.hr}홈런`, criteria: "시즌 15홈런 이상" });
   
   // 🏏 방망이장인 (타율 .300+)
   if (avg >= 0.300) traits.push({ emoji: "🏏", label: "방망이장인", desc: `타율 ${stats.avg}`, criteria: "시즌 타율 .300 이상" });
 
   // 👁️ 선구안 (볼넷/삼진 비율 0.5+ & 볼넷 40+)
-  if (stats.bb >= 40 && stats.bb / Math.max(stats.so, 1) >= 0.5) traits.push({ emoji: "👁️", label: "선구안", desc: `${stats.bb}볼넷`, criteria: "40볼넷+ & BB/K 0.5 이상" });
+  if ((stats.bb >= 40 || pace(stats.bb) >= 50) && stats.bb / Math.max(stats.so, 1) >= 0.4) traits.push({ emoji: "👁️", label: "선구안", desc: `${stats.bb}볼넷`, criteria: "40볼넷+ & BB/K 0.5 이상" });
 
   // 🏃 도루왕 (도루 20+)
-  if (stats.sb >= 20) traits.push({ emoji: "🏃", label: "도루왕", desc: `${stats.sb}도루`, criteria: "시즌 20도루 이상" });
+  if (stats.sb >= 20 || (stats.games >= 10 && pace(stats.sb) >= 25)) traits.push({ emoji: "🏃", label: "도루왕", desc: `${stats.sb}도루`, criteria: "시즌 20도루 이상" });
 
   // 🦶 쾌속 (도루 10+)
-  if (stats.sb >= 10 && stats.sb < 20) traits.push({ emoji: "🦶", label: "쾌속", desc: `${stats.sb}도루`, criteria: "시즌 10~19도루" });
+  if ((stats.sb >= 10 || pace(stats.sb) >= 12) && stats.sb < 20 && pace(stats.sb) < 25) traits.push({ emoji: "🦶", label: "쾌속", desc: `${stats.sb}도루`, criteria: "시즌 10~19도루" });
 
   // 🚶 산책왕 (볼넷 60+)
-  if (stats.bb >= 60) traits.push({ emoji: "🚶", label: "산책왕", desc: `${stats.bb}볼넷`, criteria: "시즌 60볼넷 이상" });
+  if (stats.bb >= 60 || pace(stats.bb) >= 70) traits.push({ emoji: "🚶", label: "산책왕", desc: `${stats.bb}볼넷`, criteria: "시즌 60볼넷 이상" });
 
   // 📊 출루기계 (출루율 .380+)
   if (obp >= 0.380) traits.push({ emoji: "📊", label: "출루기계", desc: `출루율 ${stats.obp}`, criteria: "출루율 .380 이상" });
 
   // 🧹 청소부 (타점 80+)
-  if (stats.rbi >= 80) traits.push({ emoji: "🧹", label: "청소부", desc: `${stats.rbi}타점`, criteria: "시즌 80타점 이상" });
+  if (stats.rbi >= 80 || (stats.games >= 10 && pace(stats.rbi) >= 90)) traits.push({ emoji: "🧹", label: "청소부", desc: `${stats.rbi}타점`, criteria: "시즌 80타점 이상" });
 
   // 🦵 장타제조기 (2루타+3루타 30+)
-  if (stats.doubles + stats.triples >= 30) traits.push({ emoji: "🦵", label: "장타제조기", desc: `${stats.doubles}이루타 ${stats.triples}삼루타`, criteria: "2루타+3루타 30개 이상" });
+  if (stats.doubles + stats.triples >= 30 || pace(stats.doubles + stats.triples) >= 35) traits.push({ emoji: "🦵", label: "장타제조기", desc: `${stats.doubles}이루타 ${stats.triples}삼루타`, criteria: "2루타+3루타 30개 이상" });
 
   // 🎯 컨택장인 (삼진율 10% 이하 & 타율 .270+)
   if (kRate <= 0.10 && avg >= 0.270) traits.push({ emoji: "🎯", label: "컨택장인", desc: `삼진율 ${(kRate * 100).toFixed(1)}%`, criteria: "삼진율 10% 이하 & 타율 .270+" });
 
   // 💀 삼진머신 (삼진 120+ — 풀스윙 파워형)
-  if (stats.so >= 120) traits.push({ emoji: "💀", label: "삼진머신", desc: `${stats.so}삼진`, criteria: "시즌 120삼진 이상 (풀스윙형)" });
+  if (stats.so >= 120 || pace(stats.so) >= 130) traits.push({ emoji: "💀", label: "삼진머신", desc: `${stats.so}삼진`, criteria: "시즌 120삼진 이상 (풀스윙형)" });
 
   // 🍀 BABIP신 (BABIP .350+)
   if (babip >= 0.350) traits.push({ emoji: "🍀", label: "BABIP신", desc: `BABIP ${babip.toFixed(3)}`, criteria: "BABIP .350 이상" });
@@ -72,7 +74,7 @@ export function getBatterTraits(stats: {
   if (stats.hbp >= 10) traits.push({ emoji: "🧲", label: "존압박", desc: `${stats.hbp}사구`, criteria: "시즌 10사구 이상" });
 
   // 🔋 풀타임 (경기 140+)
-  if (stats.games >= 140) traits.push({ emoji: "🔋", label: "풀타임", desc: `${stats.games}경기 출전`, criteria: "시즌 140경기 이상 출전" });
+  if (stats.games >= 140 || pace(stats.games) >= 155) traits.push({ emoji: "🔋", label: "풀타임", desc: `${stats.games}경기 출전`, criteria: "시즌 140경기 이상 출전" });
 
   // 💎 OPS 괴물 (OPS .900+)
   if (ops >= 0.900) traits.push({ emoji: "💎", label: "OPS 괴물", desc: `OPS ${stats.ops}`, criteria: "OPS .900 이상" });
@@ -81,7 +83,7 @@ export function getBatterTraits(stats: {
   if (stats.hr >= 10 && stats.hr / ab >= 0.04) traits.push({ emoji: "🏠", label: "홈런아티스트", desc: `${(stats.hr / ab * 100).toFixed(1)}% 홈런율`, criteria: "타수 대비 홈런 4% 이상" });
 
   // 🎪 득점기계 (득점 80+)
-  if (stats.runs >= 80) traits.push({ emoji: "🎪", label: "득점기계", desc: `${stats.runs}득점`, criteria: "시즌 80득점 이상" });
+  if (stats.runs >= 80 || (stats.games >= 10 && pace(stats.runs) >= 90)) traits.push({ emoji: "🎪", label: "득점기계", desc: `${stats.runs}득점`, criteria: "시즌 80득점 이상" });
 
   return traits;
 }
