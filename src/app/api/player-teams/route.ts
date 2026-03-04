@@ -67,7 +67,17 @@ export async function GET(req: Request) {
 
   // 단건 조회 (이름 지정 시) — 빠름
   if (nameQuery) {
-    const result = await searchPlayer(nameQuery);
+    let result = await searchPlayer(nameQuery);
+    // KBO API 실패 시 roster fallback
+    if (!result) {
+      try {
+        const roster = (await import("@/lib/constants/players-roster.json")).default as any[];
+        const found = roster.find((p: any) => p.name === nameQuery);
+        if (found) {
+          result = { name: found.name, kboId: found.kboId, team: found.team, teamId: found.teamId, position: found.position, backNo: found.backNo };
+        }
+      } catch {}
+    }
     return NextResponse.json({ players: result ? [result] : [], count: result ? 1 : 0, cached: false });
   }
 
