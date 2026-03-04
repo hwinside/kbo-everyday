@@ -1,5 +1,7 @@
 "use client";
 
+import { PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
+
 import { useRef, useEffect } from "react";
 import { motion } from "framer-motion";
 
@@ -67,6 +69,9 @@ export default function DateSelector({ selectedDate, onDateChange }: DateSelecto
             </span>
             {d.isToday && !isSelected && (
               <div className="absolute -bottom-0.5 h-1 w-1 rounded-full bg-accent" />
+            )}
+            {!d.isToday && !isSelected && PRESEASON_DATES.includes(d.key) && (
+              <div className="absolute -bottom-0.5 h-1 w-1 rounded-full bg-text-tertiary" />
             )}
           </button>
         );
