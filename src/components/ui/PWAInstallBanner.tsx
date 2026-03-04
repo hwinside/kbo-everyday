@@ -1,0 +1,117 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { X, Share, Plus } from "lucide-react";
+
+export default function PWAInstallBanner() {
+  const [show, setShow] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isIOS, setIsIOS] = useState(false);
+  const [showIOSGuide, setShowIOSGuide] = useState(false);
+
+  useEffect(() => {
+    // 이미 PWA로 실행 중이면 숨김
+    if (window.matchMedia("(display-mode: standalone)").matches) return;
+    // @ts-ignore
+    if ((window.navigator as any).standalone) return;
+
+    // 24시간 내 닫았으면 숨김
+    const dismissed = localStorage.getItem("pwa-banner-dismissed");
+    if (dismissed && Date.now() - Number(dismissed) < 24 * 60 * 60 * 1000) return;
+
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    setIsIOS(ios);
+
+    if (ios) {
+      // iOS는 Safari에서만 설치 가능
+      const isSafari = /Safari/.test(navigator.userAgent) && !/CriOS|FxiOS/.test(navigator.userAgent);
+      if (isSafari) setShow(true);
+    } else {
+      // Android: beforeinstallprompt 이벤트
+      const handler = (e: Event) => {
+        e.preventDefault();
+        setDeferredPrompt(e);
+        setShow(true);
+      };
+      window.addEventListener("beforeinstallprompt", handler);
+      // 이벤트 없어도 3초 후 표시 (일부 브라우저)
+      const timer = setTimeout(() => setShow(true), 3000);
+      return () => {
+        window.removeEventListener("beforeinstallprompt", handler);
+        clearTimeout(timer);
+      };
+    }
+  }, []);
+
+  const dismiss = () => {
+    setShow(false);
+    localStorage.setItem("pwa-banner-dismissed", String(Date.now()));
+  };
+
+  const install = async () => {
+    if (isIOS) {
+      setShowIOSGuide(true);
+      return;
+    }
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const result = await deferredPrompt.userChoice;
+      if (result.outcome === "accepted") dismiss();
+      setDeferredPrompt(null);
+    }
+  };
+
+  if (!show) return null;
+
+  return (
+    <>
+      {/* 하단 배너 */}
+      <div className="fixed bottom-[calc(60px+env(safe-area-inset-bottom,0px))] left-0 right-0 z-40 px-4 pb-2 animate-slide-up">
+        <div className="mx-auto max-w-lg bg-[rgba(30,30,35,0.95)] backdrop-blur-xl rounded-2xl border border-border p-4 flex items-center gap-3 shadow-lg">
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-text-primary">📲 홈 화면에 추가</p>
+            <p className="text-xs text-text-tertiary mt-0.5">앱처럼 빠르게 접속할 수 있어요</p>
+          </div>
+          <button
+            onClick={install}
+            className="px-4 py-2 bg-accent text-white text-sm font-semibold rounded-xl whitespace-nowrap"
+          >
+            {isIOS ? "방법 보기" : "설치"}
+          </button>
+          <button onClick={dismiss} className="text-text-tertiary p-1">
+            <X size={18} />
+          </button>
+        </div>
+      </div>
+
+      {/* iOS 가이드 모달 */}
+      {showIOSGuide && (
+        <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-end justify-center" onClick={() => setShowIOSGuide(false)}>
+          <div className="w-full max-w-lg bg-bg-secondary rounded-t-3xl p-6 pb-safe" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-text-primary mb-4">홈 화면에 추가하기</h3>
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-accent font-bold text-sm">1</div>
+                <p className="text-sm text-text-secondary">하단의 <Share size={16} className="inline text-accent" /> <strong>공유</strong> 버튼을 탭하세요</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-accent font-bold text-sm">2</div>
+                <p className="text-sm text-text-secondary"><Plus size={16} className="inline text-accent" /> <strong>홈 화면에 추가</strong>를 선택하세요</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-accent font-bold text-sm">3</div>
+                <p className="text-sm text-text-secondary">오른쪽 상단 <strong>추가</strong>를 탭하면 완료!</p>
+              </div>
+            </div>
+            <button
+              onClick={() => { setShowIOSGuide(false); dismiss(); }}
+              className="w-full mt-6 py-3 bg-accent text-white font-semibold rounded-xl"
+            >
+              확인
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}

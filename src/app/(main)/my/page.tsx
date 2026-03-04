@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { Settings, ChevronRight, FileText, MessageCircle, Mail, Heart, Trophy, RefreshCw, MapPin, Star, LogIn, LogOut, GraduationCap, Bell } from "lucide-react";
+import { Settings, ChevronRight, Download, FileText, MessageCircle, Mail, Heart, Trophy, RefreshCw, MapPin, Star, LogIn, LogOut, GraduationCap, Bell } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
@@ -111,6 +111,37 @@ export default function MyPage() {
           </div>
         </GlassCard>
       </motion.div>
+
+
+      {/* 앱 설치 */}
+      {typeof window !== "undefined" && !window.matchMedia("(display-mode: standalone)").matches && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="mt-3"
+        >
+          <GlassCard
+            pressable
+            className="flex items-center justify-between p-5"
+            onClick={() => {
+              const ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
+              if (ios) {
+                alert("Safari 하단의 공유 버튼 → 홈 화면에 추가를 선택하세요!");
+              } else {
+                const evt = (window as any).__pwaPrompt;
+                if (evt) { evt.prompt(); } else { alert("브라우저 메뉴에서 '홈 화면에 추가'를 선택하세요!"); }
+              }
+            }}
+          >
+            <div className="flex items-center gap-4">
+              <Download size={22} className="text-text-secondary" />
+              <span className="text-base text-text-primary">앱 설치하기</span>
+            </div>
+            <ChevronRight size={22} className="text-text-tertiary" />
+          </GlassCard>
+        </motion.div>
+      )}
 
       {/* 최애 선수 */}
       <motion.div

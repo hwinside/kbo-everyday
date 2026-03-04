@@ -1,4 +1,5 @@
 import TabBar from "@/components/ui/TabBar";
+import PWAInstallBanner from "@/components/ui/PWAInstallBanner";
 import ProfileSetupWrapper from "@/components/auth/ProfileSetupWrapper";
 
 export default function MainLayout({
@@ -11,6 +12,7 @@ export default function MainLayout({
       <ProfileSetupWrapper />
       <main className="pb-tab-bar pt-[env(safe-area-inset-top,0px)]">{children}</main>
       <TabBar />
+      <PWAInstallBanner />
     </div>
   );
 }
