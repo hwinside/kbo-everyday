@@ -35,11 +35,11 @@ const MOCK_GAMES = [
 
 
 const MOCK_HOT_PLAYER_BOARDS = [
-  { playerId: "p1", name: "오스틴", teamId: 1, teamName: "LG", postsToday: 47, totalPosts: 1284, trend: "up" as const },
-  { playerId: "p2", name: "양현종", teamId: 6, teamName: "KIA", postsToday: 38, totalPosts: 956, trend: "up" as const },
-  { playerId: "p3", name: "구자욱", teamId: 8, teamName: "삼성", postsToday: 35, totalPosts: 1102, trend: "same" as const },
-  { playerId: "p4", name: "김도영", teamId: 6, teamName: "KIA", postsToday: 33, totalPosts: 2341, trend: "up" as const },
-  { playerId: "p5", name: "문동주", teamId: 9, teamName: "한화", postsToday: 28, totalPosts: 876, trend: "down" as const },
+  { playerId: "53123", name: "오스틴 딘", teamId: 1, teamName: "LG", postsToday: 47, totalPosts: 1284, trend: "up" as const },
+  { playerId: "64011", name: "양현종", teamId: 6, teamName: "KIA", postsToday: 38, totalPosts: 956, trend: "up" as const },
+  { playerId: "65064", name: "구자욱", teamId: 8, teamName: "삼성", postsToday: 35, totalPosts: 1102, trend: "same" as const },
+  { playerId: "52605", name: "김도영", teamId: 6, teamName: "KIA", postsToday: 33, totalPosts: 2341, trend: "up" as const },
+  { playerId: "68069", name: "문동주", teamId: 9, teamName: "한화", postsToday: 28, totalPosts: 876, trend: "down" as const },
 ];
 
 const MOCK_POPULAR_POSTS = [
@@ -576,7 +576,7 @@ export default function HomePage() {
       {/* ===== 4.5 My Favorite Players ===== */}
             {/* ===== 5. Hot Player Boards ===== */}
       <motion.section variants={item} className="mb-6">
-        <SectionHeader title="인기 선수게시판" href="/boards/players" icon="⭐" />
+        <SectionHeader title="인기 선수게시판" href="/players" icon="⭐" />
         <GlassCard className="p-4">
           <div className="space-y-8">
             {MOCK_HOT_PLAYER_BOARDS.map((player, i) => (
