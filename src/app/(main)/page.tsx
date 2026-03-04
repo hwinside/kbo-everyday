@@ -320,7 +320,7 @@ export default function HomePage() {
 
       {favPlayers.length > 0 && (
         <div>
-          <SectionHeader title="⭐ 나의 선수" />
+          <SectionHeader title="⭐ 최애 선수" />
           <div className="flex gap-3 overflow-x-auto hide-scrollbar pb-2">
             {favPlayers.map((player) => {
               const team = getTeamById(player.teamId);
