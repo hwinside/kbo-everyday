@@ -125,11 +125,9 @@ export default function PlayerRadar({ playerId, position, teamColor }: PlayerRad
           <div className="flex flex-wrap justify-center gap-2 mt-3 mb-6">
             {traits.map((t, i) => (
               <button key={i} onClick={() => {
-                  if (activeTrait === i) {
-                    router.push(`/rankings/${t.statKey}?player=${playerId}`);
-                  } else {
-                    setActiveTrait(i);
-                  }
+                  // TODO: 3/29 정규시즌 후 랭킹 이동 활성화
+                  // const now = new Date(); if (now >= new Date("2026-03-29")) router.push(`/rankings/${t.statKey}?player=${playerId}`);
+                  setActiveTrait(activeTrait === i ? null : i);
                 }}
                 className="inline-flex flex-col items-center gap-0.5 px-2.5 py-1 rounded-full text-xs font-medium bg-white/5 border border-white/10 transition-colors hover:bg-white/10">
                 <span className="inline-flex items-center gap-1">
@@ -138,7 +136,7 @@ export default function PlayerRadar({ playerId, position, teamColor }: PlayerRad
                   <span className="text-text-tertiary text-[10px]">{t.desc}</span>
                 </span>
                 {activeTrait === i && (
-                  <span className="text-[10px] text-accent">👆 한번 더 터치하면 랭킹 보기</span>
+                  <span className="text-[10px] text-accent">{t.criteria}</span>
                 )}
               </button>
             ))}
