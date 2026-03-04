@@ -72,7 +72,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
               onClick={() => item.sourceUrl && window.open(item.sourceUrl, "_blank")}
             >
               <div
-                className="relative h-[200px] w-full overflow-hidden"
+                className="relative h-[240px] w-full overflow-hidden"
                 style={{
                   background: team
                     ? `linear-gradient(135deg, ${team.colorPrimary}40 0%, ${team.colorPrimary}15 50%, #0A0A0B 100%)`
@@ -94,7 +94,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                 )}
 
                 {/* 하단 그라데이션 */}
-                <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-bg-primary to-transparent" />
+                <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-bg-primary to-transparent" />
 
                 {/* 콘텐츠 */}
                 <div className="absolute inset-x-0 bottom-0 px-4 pb-4">
