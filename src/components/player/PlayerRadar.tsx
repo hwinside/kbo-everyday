@@ -45,9 +45,28 @@ function calcPitcherRadar(s: any) {
   ];
 }
 
+const BATTER_INFO = [
+  { label: "타격", desc: "타율 기반 (리그 평균 ~.270)" },
+  { label: "파워", desc: "장타율 기반 (높을수록 장타력)" },
+  { label: "선구안", desc: "볼넷 비율 (사구 많을수록 높음)" },
+  { label: "주루", desc: "도루 성공 횟수 기반" },
+  { label: "안정감", desc: "삼진 비율 역수 (삼진 적을수록 높음)" },
+  { label: "출루", desc: "출루율 기반 (안타+볼넷+사구)" },
+];
+
+const PITCHER_INFO = [
+  { label: "제구", desc: "이닝당 볼넷 역수 (볼넷 적을수록 높음)" },
+  { label: "구위", desc: "이닝당 탈삼진 비율" },
+  { label: "탈삼진", desc: "K/IP 기반 (삼진 많을수록 높음)" },
+  { label: "체력", desc: "총 투구 이닝 기반 (180이닝 = 최대)" },
+  { label: "안정감", desc: "ERA 역수 (방어율 낮을수록 높음)" },
+  { label: "지배력", desc: "WHIP 역수 (주자 허용 적을수록 높음)" },
+];
+
 export default function PlayerRadar({ playerId, position, teamColor }: PlayerRadarProps) {
   const [stats, setStats] = useState<{ label: string; value: number }[] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showInfo, setShowInfo] = useState(false);
   const isPitcher = position === "투수" || position?.includes("투");
 
   useEffect(() => {
@@ -65,8 +84,30 @@ export default function PlayerRadar({ playerId, position, teamColor }: PlayerRad
   if (loading) return <div className="flex justify-center py-4"><div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" /></div>;
   if (!stats) return null;
 
+  const infoItems = isPitcher ? PITCHER_INFO : BATTER_INFO;
+
   return (
-    <div className="flex flex-col items-center gap-1">
+    <div className="flex flex-col items-center gap-1 relative">
+      <div className="w-full flex justify-end px-2">
+        <button
+          onClick={() => setShowInfo(!showInfo)}
+          className="w-6 h-6 rounded-full border border-gray-600 text-gray-400 text-xs flex items-center justify-center hover:bg-white/10 transition"
+        >
+          i
+        </button>
+      </div>
+      {showInfo && (
+        <div className="w-full bg-white/5 rounded-xl p-3 mb-2 space-y-1.5">
+          <p className="text-xs text-gray-400 font-medium mb-2">📊 항목별 계산 기준</p>
+          {infoItems.map((item) => (
+            <div key={item.label} className="flex gap-2 text-xs">
+              <span className="font-semibold text-gray-300 w-14 shrink-0" style={{ color: teamColor }}>{item.label}</span>
+              <span className="text-gray-500">{item.desc}</span>
+            </div>
+          ))}
+          <p className="text-[10px] text-gray-600 mt-2">※ 점선 = 리그 평균, 2025 시즌 기준</p>
+        </div>
+      )}
       <RadarChart stats={stats} size={220} teamColor={teamColor} />
       <p className="text-[11px] text-gray-500">점선 = 리그 평균 기준</p>
     </div>
