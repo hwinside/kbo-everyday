@@ -130,10 +130,10 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
                   background: isSelected ? `${team.colorPrimary}20` : "rgba(255,255,255,0.03)",
                   border: `2px solid ${isSelected ? team.colorLight : "transparent"}`,
                 }}>
-                <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} number={0} size={48} showTeamBadge={player.teamId !== teamId} />
+                <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} number={0} size={48} showTeamBadge={true} />
                 <div className="flex-1 text-left">
                   <p className="text-sm font-bold text-text-primary">{player.name}</p>
-                  {player.teamId !== teamId && <TeamBadge teamId={player.teamId} size="xs" />}
+                  {<TeamBadge teamId={player.teamId} size="xs" />}
                 </div>
                 {isSelected ? (
                   <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: team.colorLight }}>
