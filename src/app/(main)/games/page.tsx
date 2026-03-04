@@ -1,4 +1,5 @@
 "use client";
+import { useRouter } from "next/navigation";
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
@@ -31,6 +32,7 @@ function formatDate(dateStr: string): string {
 
 export default function GamesPage() {
   const today = new Date().toISOString().slice(0, 10);
+  const router = useRouter();
   const [selectedDate, setSelectedDate] = useState(today);
   const [games, setGames] = useState<GameData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,9 +86,9 @@ export default function GamesPage() {
   return (
     <div className="mx-auto max-w-lg">
       <div className="flex items-center gap-3 px-5 py-2">
-        <Link href="/" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
+        <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
           <ChevronLeft size={24} />
-        </Link>
+        </button>
         <h1 className="text-xl font-bold text-text-primary">경기</h1>
         <button
           onClick={() => loadGames(selectedDate)}

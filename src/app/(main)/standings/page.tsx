@@ -1,4 +1,5 @@
 "use client";
+import { ChevronLeft } from "lucide-react";
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
@@ -214,7 +215,8 @@ export default function StandingsPage() {
 
   return (
     <div className="mx-auto max-w-lg px-5">
-      <header className="py-5">
+      <header className="py-5 flex items-center gap-3">
+        <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
         <h1 className="text-xl font-bold text-text-primary">순위</h1>
         <div className="flex items-center gap-2 mt-1">
           {([2025, 2026] as const).map(y => (

@@ -1,4 +1,6 @@
 "use client";
+import { useRouter } from "next/navigation";
+import { ChevronLeft } from "lucide-react";
 
 import { motion } from "framer-motion";
 import { ArrowLeft, Search } from "lucide-react";
@@ -27,6 +29,7 @@ function getTeamShortName(teamId: number) {
 }
 
 export default function PlayerBoardRankingPage() {
+  const router = useRouter();
   const [filterTeam, setFilterTeam] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [visibleCount, setVisibleCount] = useState(20);
@@ -52,7 +55,7 @@ export default function PlayerBoardRankingPage() {
     <div className="min-h-screen bg-bg-primary">
       <div className="mx-auto max-w-lg px-5">
         {/* Header */}
-        <header className="flex items-center justify-between py-5">
+        <header className="flex items-center gap-3 py-5">
           <div className="flex items-center gap-3">
             <Link href="/teams">
               <motion.div whileTap={{ scale: 0.95 }}>
