@@ -166,7 +166,7 @@ function LeaderSection({ title, leaders, router }: { title: string; leaders: Tit
 
 export default function StandingsPage() {
   const [realStandings, setRealStandings] = useState<TeamStanding[] | null>(null);
-  const [season, setSeason] = useState<2025 | 2026>(2026);
+  const [season, setSeason] = useState<2025 | 2026>(2025);
 
   useEffect(() => {
     fetch("/api/standings")
