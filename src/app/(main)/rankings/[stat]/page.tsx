@@ -6,6 +6,8 @@ import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
 import GlassCard from "@/components/ui/GlassCard";
+import battersData from "@/lib/constants/stats-2025-batters.json";
+import pitchersData from "@/lib/constants/stats-2025-pitchers.json";
 import Link from "next/link";
 
 // 스탯 정의
@@ -55,31 +57,23 @@ function RankingContent() {
   
   useEffect(() => {
     if (!def) return;
-    const file = def.type === "batter" ? "stats-2025-batters.json" : "stats-2025-pitchers.json";
-    fetch(`/${file}`)
-      .then(r => r.json())
-      .then((data: any[]) => {
-        // 최소 출전 필터
-        const filtered = def.type === "batter" 
-          ? data.filter(p => (p.games || 0) >= 30)
-          : data.filter(p => (p.games || 0) >= 10);
-        
-        // 정렬
-        const sorted = filtered.sort((a, b) => {
-          let aVal = parseFloat(a[def.key]) || 0;
-          let bVal = parseFloat(b[def.key]) || 0;
-          // doubles = doubles + triples for 장타제조기
-          if (stat === "doubles") {
-            aVal = (a.doubles || 0) + (a.triples || 0);
-            bVal = (b.doubles || 0) + (b.triples || 0);
-          }
-          return def.higherIsBetter ? bVal - aVal : aVal - bVal;
-        });
-        
-        setPlayers(sorted.slice(0, 50));
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    const data: any[] = def.type === "batter" ? battersData : pitchersData;
+    const filtered = def.type === "batter" 
+      ? data.filter(p => (p.games || 0) >= 30)
+      : data.filter(p => (p.games || 0) >= 10);
+    
+    const sorted = [...filtered].sort((a, b) => {
+      let aVal = parseFloat(a[def.key]) || 0;
+      let bVal = parseFloat(b[def.key]) || 0;
+      if (stat === "doubles") {
+        aVal = (a.doubles || 0) + (a.triples || 0);
+        bVal = (b.doubles || 0) + (b.triples || 0);
+      }
+      return def.higherIsBetter ? bVal - aVal : aVal - bVal;
+    });
+    
+    setPlayers(sorted.slice(0, 50));
+    setLoading(false);
   }, [stat, def]);
   
   useEffect(() => {
