@@ -132,7 +132,7 @@ export default function PlayerBoardPage() {
     return (
       <div className="flex flex-col items-center justify-center h-screen text-text-secondary gap-2">
         <p>선수를 찾을 수 없습니다</p>
-        <Link href="/boards/players" className="text-accent text-sm">선수 목록으로</Link>
+        <Link href="/players" className="text-accent text-sm">선수 목록으로</Link>
       </div>
     );
   }
