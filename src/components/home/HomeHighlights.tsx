@@ -27,60 +27,31 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
   useEffect(() => {
     if (!team) { setLoading(false); return; }
 
-    let favPlayers = getFavoritePlayers().slice(0, 3);
-    
-    if (favPlayers.length === 0) {
-      const defaults: Record<string, string[]> = {
-        "LG": ["오스틴", "문보경", "홍창기"],
-        "두산": ["양의지", "허경민", "곽빈"],
-        "KT": ["강백호", "로하스", "소형준"],
-        "SSG": ["최정", "추신수", "김광현"],
-        "NC": ["손아섭", "박건우", "에릭"],
-        "KIA": ["김도영", "나성범", "양현종"],
-        "삼성": ["구자욱", "김영웅", "원태인"],
-        "롯데": ["전준우", "레이예스", "윌커슨"],
-        "한화": ["노시환", "이범호", "주현상"],
-        "키움": ["이정후", "김하성", "송성문"],
-      };
-      const names = defaults[team] || [];
-      const teamObj = TEAMS.find(t => t.shortName === team);
-      favPlayers = names.map(n => ({ playerId: "", name: n, teamId: teamObj?.id || 0, position: "", number: 0 }));
-    }
+    const favPlayers = getFavoritePlayers().slice(0, 5);
+    const favNames = favPlayers.map(p => p.name);
 
     const teamObj = TEAMS.find(t => t.shortName === team);
     const teamFullName = teamObj ? `${team} ${teamObj.name}` : team;
 
-    const queries = [
-      fetch(`/api/highlights?q=${encodeURIComponent(`${teamFullName} 하이라이트`)}`).then(r => r.json()).then(d => ({
-        items: (d.items || []).map((v: any) => ({ ...v, label: team })),
-      })),
-      ...favPlayers.map(p => {
-        const pTeam = TEAMS.find(t => t.id === p.teamId);
-        const pName = pTeam ? `${pTeam.shortName} ${p.name}` : p.name;
-        return fetch(`/api/highlights?q=${encodeURIComponent(`${pName} 하이라이트`)}`).then(r => r.json()).then(d => ({
-          items: (d.items || []).map((v: any) => ({ ...v, label: p.name })),
-        }));
+    // API 호출 1번만! (팀 쿼리)
+    fetch(`/api/highlights?q=${encodeURIComponent(`${teamFullName} 하이라이트`)}`)
+      .then(r => r.json())
+      .then(data => {
+        const items: VideoItem[] = (data.items || []).map((v: any) => {
+          // 제목에서 최애선수 이름 매칭 → 레이블 부여
+          const matchedPlayer = favNames.find(name => v.title.includes(name));
+          return { ...v, label: matchedPlayer || team };
+        });
+
+        // 최애선수 영상 우선 정렬
+        const playerVideos = items.filter(v => v.label !== team);
+        const teamVideos = items.filter(v => v.label === team);
+        const sorted = [...playerVideos, ...teamVideos];
+
+        setVideos(sorted.slice(0, 30));
+        setLoading(false);
       })
-    ];
-
-    Promise.all(queries).then(results => {
-      const playerResults = results.slice(1);
-      const seen = new Set();
-      const dedup = (items: any[]) => items.filter((v: any) => {
-        if (seen.has(v.id)) return false;
-        seen.add(v.id);
-        return true;
-      });
-
-      const perPlayer = playerResults.map(d => dedup((d.items || []).slice(0, 8)));
-      const playerVideos = perPlayer.flat();
-      const teamVideos = dedup((results[0]?.items || []).slice(0, Math.max(30 - playerVideos.length, 5)));
-      const all = [...playerVideos, ...teamVideos];
-
-      all.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
-      setVideos(all.slice(0, 30));
-      setLoading(false);
-    }).catch(() => setLoading(false));
+      .catch(() => setLoading(false));
   }, [team]);
 
   if (loading || videos.length === 0) return null;
