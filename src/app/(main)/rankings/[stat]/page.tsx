@@ -58,33 +58,53 @@ function RankingContent() {
   useEffect(() => {
     if (!def) return;
     const type = def.type === "batter" ? "batter" : "pitcher";
-    fetch(`/api/stats?type=${type}`)
-      .then(r => r.json())
-      .then((data: any) => {
-        const rows = data.stats || [];
-        const filtered = def.type === "batter" 
-          ? rows.filter((p: any) => (p.games || 0) >= 30)
-          : rows.filter((p: any) => (p.games || 0) >= 10);
-        
-        const sorted = [...filtered].sort((a: any, b: any) => {
-          let aVal = parseFloat(a[def.key]) || 0;
-          let bVal = parseFloat(b[def.key]) || 0;
-          if (stat === "doubles") {
-            aVal = (a.doubles || 0) + (a.triples || 0);
-            bVal = (b.doubles || 0) + (b.triples || 0);
-          }
-          return def.higherIsBetter ? bVal - aVal : aVal - bVal;
-        });
-        
-        const top50 = sorted.slice(0, 50);
-        console.log("Ranking data sample:", top50[0]);
-        setPlayers(top50);
-        setLoading(false);
-      })
-      .catch((e) => {
-        console.error(e);
-        setLoading(false);
+    
+    // 1차: API (full stats, 30명), 2차: static JSON (300명, 제한 필드)
+    Promise.all([
+      fetch(`/api/stats?type=${type}`).then(r => r.json()).catch(() => ({ stats: [] })),
+      def.type === "batter"
+        ? import("@/lib/constants/stats-2025-batters.json").then(m => m.default).catch(() => [])
+        : import("@/lib/constants/stats-2025-pitchers.json").then(m => m.default).catch(() => []),
+    ]).then(([apiData, staticData]) => {
+      const apiRows = apiData.stats || [];
+      const staticRows = (staticData as any[]) || [];
+      
+      // API 데이터를 이름으로 인덱싱
+      const apiMap: Record<string, any> = {};
+      for (const p of apiRows) apiMap[p.name] = p;
+      
+      // static 데이터에 API 필드 머지
+      const merged = staticRows.map((p: any) => ({
+        ...p,
+        ...(apiMap[p.name] || {}),
+        kboId: p.kboId || apiMap[p.name]?.kboId || "",
+        playerId: p.playerId || p.kboId || "",
+      }));
+      
+      // API에만 있는 선수 추가
+      for (const p of apiRows) {
+        if (!staticRows.find((s: any) => s.name === p.name)) {
+          merged.push(p);
+        }
+      }
+      
+      const filtered = def.type === "batter"
+        ? merged.filter((p: any) => (p.games || 0) >= 10)
+        : merged.filter((p: any) => (p.games || 0) >= 5);
+      
+      const sorted = [...filtered].sort((a: any, b: any) => {
+        let aVal = parseFloat(a[def.key]) || 0;
+        let bVal = parseFloat(b[def.key]) || 0;
+        if (stat === "doubles") {
+          aVal = (a.doubles || 0) + (a.triples || 0);
+          bVal = (b.doubles || 0) + (b.triples || 0);
+        }
+        return def.higherIsBetter ? bVal - aVal : aVal - bVal;
       });
+      
+      setPlayers(sorted.slice(0, 100));
+      setLoading(false);
+    });
   }, [stat, def]);
   
   useEffect(() => {
