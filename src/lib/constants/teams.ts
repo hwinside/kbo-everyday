@@ -17,7 +17,7 @@ export const TEAMS: TeamData[] = [
     shortName: "LG",
     slug: "lg",
     colorPrimary: "#C60C30",
-    colorLight: "#E8697F",
+    colorLight: "#E04050",
     colorSecondary: "#1D1D1B",
     logoPath: "/logos/lg.svg",
     youtubeChannelId: "UCL6QZZxb-HR4hCh_eFAnQWA",
