@@ -317,7 +317,83 @@ export default function HomePage() {
 
         {/* 하이라이트 영상 */}
         <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
-      </div>
+
+      {favPlayers.length > 0 && (
+        <div>
+          <SectionHeader title="⭐ 나의 선수" />
+          <div className="flex gap-3 overflow-x-auto hide-scrollbar pb-2">
+            {favPlayers.map((player) => {
+              const team = getTeamById(player.teamId);
+              // Mock 최근 스탯 추이
+              const mockTrend = {
+                p1: { avg: ".312", recent: "5경기 8타수 4안타", trend: "🔥", hr: 32, rbi: 85 },
+                p4: { avg: ".334", recent: "5경기 9타수 5안타", trend: "🔥🔥", hr: 36, rbi: 100 },
+                p10: { avg: ".298", recent: "5경기 7타수 2안타", trend: "📉", hr: 20, rbi: 68 },
+                p2: { avg: "", recent: "최근 7이닝 1실점", trend: "🔥", hr: 0, rbi: 0, era: "2.89", wins: 17 },
+                p5: { avg: "", recent: "최근 8이닝 무실점", trend: "🔥🔥", hr: 0, rbi: 0, era: "2.45", wins: 14 },
+              } as Record<string, any>;
+              const stats = mockTrend[player.playerId] ?? {
+                avg: (0.260 + Math.random() * 0.06).toFixed(3),
+                recent: "5경기 활약 중",
+                trend: Math.random() > 0.5 ? "🔥" : "→",
+                hr: Math.floor(Math.random() * 25) + 5,
+                rbi: Math.floor(Math.random() * 60) + 20,
+              };
+              const isPitcher = player.position === "투수";
+              return (
+                <Link key={player.playerId} href={`/boards/players/${player.playerId}`}>
+                  <div
+                    className="min-w-[160px] rounded-2xl p-3 flex flex-col items-center gap-2"
+                    style={{ background: `linear-gradient(135deg, ${team?.colorPrimary}20, ${team?.colorPrimary}08)` }}
+                  >
+                    <PlayerAvatar
+                      name={player.name}
+                      teamId={player.teamId}
+                      photoUrl={getPlayerPhotoUrl(player.name)}
+                      number={player.number}
+                      size={56}
+                    />
+                    <div className="text-center">
+                      <p className="text-sm font-bold text-text-primary">{player.name}</p>
+                      <p className="text-[10px] text-text-tertiary">#{player.number} {player.position}</p>
+                    </div>
+                    <div className="w-full space-y-1">
+                      {isPitcher ? (
+                        <>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-text-tertiary">ERA</span>
+                            <span className="font-bold text-text-primary">{stats.era ?? "3.20"}</span>
+                          </div>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-text-tertiary">승</span>
+                            <span className="font-bold text-text-primary">{stats.wins ?? 10}</span>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-text-tertiary">타율</span>
+                            <span className="font-bold text-text-primary">{stats.avg}</span>
+                          </div>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-text-tertiary">HR/RBI</span>
+                            <span className="font-bold text-text-primary">{stats.hr}/{stats.rbi}</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-text-tertiary text-center">
+                      {stats.trend} {stats.recent}
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+            </div>
 
       {/* ===== 1. Today's Games — horizontal scroll with snap ===== */}
       <motion.section variants={item} className="mb-6">
@@ -442,82 +518,7 @@ export default function HomePage() {
 
 
       {/* ===== 4.5 My Favorite Players ===== */}
-      {favPlayers.length > 0 && (
-        <div>
-          <SectionHeader title="⭐ 나의 선수" />
-          <div className="flex gap-3 overflow-x-auto hide-scrollbar pb-2">
-            {favPlayers.map((player) => {
-              const team = getTeamById(player.teamId);
-              // Mock 최근 스탯 추이
-              const mockTrend = {
-                p1: { avg: ".312", recent: "5경기 8타수 4안타", trend: "🔥", hr: 32, rbi: 85 },
-                p4: { avg: ".334", recent: "5경기 9타수 5안타", trend: "🔥🔥", hr: 36, rbi: 100 },
-                p10: { avg: ".298", recent: "5경기 7타수 2안타", trend: "📉", hr: 20, rbi: 68 },
-                p2: { avg: "", recent: "최근 7이닝 1실점", trend: "🔥", hr: 0, rbi: 0, era: "2.89", wins: 17 },
-                p5: { avg: "", recent: "최근 8이닝 무실점", trend: "🔥🔥", hr: 0, rbi: 0, era: "2.45", wins: 14 },
-              } as Record<string, any>;
-              const stats = mockTrend[player.playerId] ?? {
-                avg: (0.260 + Math.random() * 0.06).toFixed(3),
-                recent: "5경기 활약 중",
-                trend: Math.random() > 0.5 ? "🔥" : "→",
-                hr: Math.floor(Math.random() * 25) + 5,
-                rbi: Math.floor(Math.random() * 60) + 20,
-              };
-              const isPitcher = player.position === "투수";
-              return (
-                <Link key={player.playerId} href={`/boards/players/${player.playerId}`}>
-                  <div
-                    className="min-w-[160px] rounded-2xl p-3 flex flex-col items-center gap-2"
-                    style={{ background: `linear-gradient(135deg, ${team?.colorPrimary}20, ${team?.colorPrimary}08)` }}
-                  >
-                    <PlayerAvatar
-                      name={player.name}
-                      teamId={player.teamId}
-                      photoUrl={getPlayerPhotoUrl(player.name)}
-                      number={player.number}
-                      size={56}
-                    />
-                    <div className="text-center">
-                      <p className="text-sm font-bold text-text-primary">{player.name}</p>
-                      <p className="text-[10px] text-text-tertiary">#{player.number} {player.position}</p>
-                    </div>
-                    <div className="w-full space-y-1">
-                      {isPitcher ? (
-                        <>
-                          <div className="flex justify-between text-xs">
-                            <span className="text-text-tertiary">ERA</span>
-                            <span className="font-bold text-text-primary">{stats.era ?? "3.20"}</span>
-                          </div>
-                          <div className="flex justify-between text-xs">
-                            <span className="text-text-tertiary">승</span>
-                            <span className="font-bold text-text-primary">{stats.wins ?? 10}</span>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="flex justify-between text-xs">
-                            <span className="text-text-tertiary">타율</span>
-                            <span className="font-bold text-text-primary">{stats.avg}</span>
-                          </div>
-                          <div className="flex justify-between text-xs">
-                            <span className="text-text-tertiary">HR/RBI</span>
-                            <span className="font-bold text-text-primary">{stats.hr}/{stats.rbi}</span>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                    <div className="text-[10px] text-text-tertiary text-center">
-                      {stats.trend} {stats.recent}
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ===== 5. Hot Player Boards ===== */}
+            {/* ===== 5. Hot Player Boards ===== */}
       <motion.section variants={item} className="mb-6">
         <SectionHeader title="인기 선수게시판" href="/boards/players" icon="⭐" />
         <GlassCard className="p-4">
