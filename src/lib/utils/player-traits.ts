@@ -83,7 +83,7 @@ export function getBatterTraits(stats: {
   // 🎪 득점기계 (득점 80+)
   if (stats.runs >= 80) traits.push({ emoji: "🎪", label: "득점기계", desc: `${stats.runs}득점`, criteria: "시즌 80득점 이상" });
 
-  return traits.slice(0, 4); // 최대 4개
+  return traits;
 }
 
 /** 투수 특성 판별 */
@@ -143,5 +143,5 @@ export function getPitcherTraits(stats: {
   // 💣 피홈런 많음 (HR 20+ — 특성이지만 개성)
   if (stats.hr >= 20) traits.push({ emoji: "🎰", label: "도박투수", desc: `피홈런 ${stats.hr}개`, criteria: "피홈런 20개 이상" });
 
-  return traits.slice(0, 4); // 최대 4개
+  return traits;
 }
