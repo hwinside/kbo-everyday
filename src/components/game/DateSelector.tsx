@@ -18,7 +18,7 @@ function getDates(range: number = 21) {
     const d = new Date(today);
     d.setDate(d.getDate() + i);
     const key = d.toISOString().slice(0, 10);
-    const day = d.getDate().toString();
+    const day = `${d.getMonth() + 1}/${d.getDate()}`;
     const weekday = ["일", "월", "화", "수", "목", "금", "토"][d.getDay()];
     dates.push({ key, day, weekday, isToday: i === 0 });
   }
