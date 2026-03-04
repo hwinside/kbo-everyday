@@ -75,9 +75,8 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
     prevVideoId.current = video.id;
     
     postCmd("loadVideoById", [video.id]);
-    setTimeout(() => postCmd("playVideo"), 500);
     if (!muted) {
-      setTimeout(() => postCmd("unMute"), 600);
+      setTimeout(() => postCmd("unMute"), 300);
     }
   }, [video.id, muted, postCmd]);
 
@@ -92,7 +91,7 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
         allowFullScreen
       />
 
-      {/* 터치 오버레이 — 스와이프 + 탭(음소거 토글) */}
+      {/* 터치 오버레이 */}
       <div
         className="absolute inset-0 z-10"
         onTouchStart={handleTouchStart}
