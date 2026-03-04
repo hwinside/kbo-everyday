@@ -213,6 +213,8 @@ export default function HomePage() {
     const dateStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
     const yyyymmdd = dateStr.replace(/-/g, "");
     
+    // 3/12 이전이면 API 호출 스킵 (경기 없음)
+    if (yyyymmdd < "20260312") { setLoading && 0; return; }
     fetch(`/api/games?date=${yyyymmdd}`)
       .then(r => r.json())
       .then(data => {
