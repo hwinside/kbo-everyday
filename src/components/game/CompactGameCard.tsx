@@ -5,6 +5,7 @@ import Link from "next/link";
 import { getTeamById } from "@/lib/constants/teams";
 
 interface CompactGameCardProps {
+  isPreseason?: boolean;
   game: {
     id: string;
     awayTeamId: number;
@@ -18,7 +19,7 @@ interface CompactGameCardProps {
   };
 }
 
-export default function CompactGameCard({ game }: CompactGameCardProps) {
+export default function CompactGameCard({ game, isPreseason }: CompactGameCardProps) {
   const away = getTeamById(game.awayTeamId)!;
   const home = getTeamById(game.homeTeamId)!;
   const isLive = game.status === "live";
@@ -38,7 +39,7 @@ export default function CompactGameCard({ game }: CompactGameCardProps) {
           }`}>
             {isLive ? `LIVE ${game.inning}` : isFinal ? "종료" : game.time}
           </span>
-          <div className="flex items-center gap-2">{game.id.startsWith("pre-") && (<span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-500">시범경기</span>)}<span className="text-xs text-text-tertiary">{game.stadium}</span></div>
+          <div className="flex items-center gap-2">{isPreseason && (<span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-500">시범경기</span>)}<span className="text-xs text-text-tertiary">{game.stadium}</span></div>
         </div>
 
         {/* Away team row */}

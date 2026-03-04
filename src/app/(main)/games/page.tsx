@@ -1,5 +1,5 @@
 "use client";
-import { PRESEASON_GAMES } from "@/lib/constants/preseason-schedule";
+import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import { useRouter } from "next/navigation";
 
 import { useState, useEffect } from "react";
@@ -36,6 +36,7 @@ export default function GamesPage() {
   const router = useRouter();
   const [selectedDate, setSelectedDate] = useState(today);
   const [games, setGames] = useState<GameData[]>([]);
+  const isPreseason = PRESEASON_DATES.includes(selectedDate);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -169,7 +170,7 @@ export default function GamesPage() {
               <div className="space-y-2">
                 {liveGames.map(g => (
                   <motion.div key={g.id} variants={item}>
-                    <CompactGameCard game={g} />
+                    <CompactGameCard game={g} isPreseason={isPreseason} />
                   </motion.div>
                 ))}
               </div>
@@ -182,7 +183,7 @@ export default function GamesPage() {
               <div className="space-y-2">
                 {finalGames.map(g => (
                   <motion.div key={g.id} variants={item}>
-                    <CompactGameCard game={g} />
+                    <CompactGameCard game={g} isPreseason={isPreseason} />
                   </motion.div>
                 ))}
               </div>
@@ -195,7 +196,7 @@ export default function GamesPage() {
               <div className="space-y-2">
                 {scheduledGames.map(g => (
                   <motion.div key={g.id} variants={item}>
-                    <CompactGameCard game={g} />
+                    <CompactGameCard game={g} isPreseason={isPreseason} />
                   </motion.div>
                 ))}
               </div>
