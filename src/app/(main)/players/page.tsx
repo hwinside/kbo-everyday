@@ -68,6 +68,28 @@ function PlayersPageContent() {
   const [visibleCount, setVisibleCount] = useState(20);
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
+  const filtered = useMemo(() => {
+    let result = PLAYERS;
+
+    if (filterMode === "team" && filterTeam) {
+      result = result.filter(p => p.teamId === filterTeam);
+    }
+    if (filterMode === "position" && filterPosition) {
+      result = result.filter(p => p.position === filterPosition);
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(p =>
+        p.name.toLowerCase().includes(q) ||
+        p.team.toLowerCase().includes(q) ||
+        p.position.includes(q)
+      );
+    }
+
+    return sortPlayers(result, sortMode);
+  }, [filterMode, filterTeam, filterPosition, searchQuery, sortMode]);
+
   useEffect(() => {
     const el = loadMoreRef.current;
     if (!el) return;
@@ -95,28 +117,6 @@ function PlayersPageContent() {
     const newUrl = qs ? `/players?${qs}` : "/players";
     router.replace(newUrl, { scroll: false });
   }, [filterMode, filterTeam, filterPosition, searchQuery, sortMode, router]);
-
-  const filtered = useMemo(() => {
-    let result = PLAYERS;
-
-    if (filterMode === "team" && filterTeam) {
-      result = result.filter(p => p.teamId === filterTeam);
-    }
-    if (filterMode === "position" && filterPosition) {
-      result = result.filter(p => p.position === filterPosition);
-    }
-
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(p =>
-        p.name.toLowerCase().includes(q) ||
-        p.team.toLowerCase().includes(q) ||
-        p.position.includes(q)
-      );
-    }
-
-    return sortPlayers(result, sortMode);
-  }, [filterMode, filterTeam, filterPosition, searchQuery, sortMode]);
 
   function handleFilterMode(mode: FilterMode) {
     setFilterMode(mode);
