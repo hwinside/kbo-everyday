@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import { User, Trophy, Sparkles } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
+const FeedbackSheet = lazy(() => import("@/components/feedback/FeedbackSheet"));
 import { PLAYER_PROFILES } from '@/lib/constants/player-profiles';
 import { getPlayerAwards } from '@/lib/constants/awards';
 
@@ -22,6 +23,7 @@ export default function PlayerProfile({ playerName, teamColor, kboId }: Props) {
   const NAME_ALIASES: Record<string, string> = { "디아즈": "르윈 디아즈", "레예스": "빅토르 레예스", "에르난데스": "윌켈 에르난데스" };
   const profile = PLAYER_PROFILES[playerName] || PLAYER_PROFILES[NAME_ALIASES[playerName] || ""];
   const awards = getPlayerAwards(kboId, playerName);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [activeSection, setActiveSection] = useState<"bio" | "career" | "tmi">("bio");
 
   if (!profile) return (
@@ -96,6 +98,17 @@ export default function PlayerProfile({ playerName, teamColor, kboId }: Props) {
 
       {/* 출처 */}
       <p className="text-[10px] text-text-tertiary text-center mt-2">📌 출처: KBO 공식 · 나무위키 · Statiz</p>
+      <button
+        onClick={() => setShowFeedback(true)}
+        className="mt-2 w-full py-2 text-xs text-text-tertiary hover:text-accent transition-colors"
+      >
+        ✏️ 정보 수정 요청
+      </button>
+      {showFeedback && (
+        <Suspense fallback={null}>
+          <FeedbackSheet isOpen={showFeedback} onClose={() => setShowFeedback(false)} defaultType="data" />
+        </Suspense>
+      )}
     </GlassCard>
   );
 }
