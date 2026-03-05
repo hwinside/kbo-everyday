@@ -1,7 +1,10 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import "@/styles/globals.css";
 import { AuthProvider } from "@/lib/supabase/AuthContext";
 import { Analytics } from "@vercel/analytics/next";
+
+const GA_ID = "G-C0TE4TFLZ4";
 
 export const metadata: Metadata = {
   title: "크보팬 — KBO 전 구단 팬 커뮤니티",
@@ -45,6 +48,10 @@ export default function RootLayout({
   return (
     <html lang="ko" className="dark" style={{ colorScheme: "dark" }}>
       <head>
+        <Script src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`} strategy="afterInteractive" />
+        <Script id="gtag-init" strategy="afterInteractive">
+          {`window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${GA_ID}');`}
+        </Script>
         <link
           rel="stylesheet"
           as="style"
