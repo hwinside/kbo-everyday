@@ -1,6 +1,6 @@
 {
   "name": "크보팬",
-  "short_name": "크보",
+  "short_name": "크보팬",
   "description": "KBO 전 구단 팬 커뮤니티. 실시간 경기 트래커, 승부예측, 구단/선수별 게시판, 스탯 인포그래픽.",
   "start_url": "/",
   "display": "standalone",
