@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 
 export const runtime = "edge";
-export const alt = "크보 에브리데이 — KBO 팬 커뮤니티";
+export const alt = "크보팬 — KBO 팬 커뮤니티";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -37,7 +37,7 @@ export default function Image() {
         <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "24px" }}>
           <span style={{ fontSize: "64px" }}>⚾</span>
           <span style={{ fontSize: "56px", fontWeight: 800, color: "white", letterSpacing: "-2px" }}>
-            크보 에브리데이
+            크보팬
           </span>
         </div>
 
@@ -74,7 +74,7 @@ export default function Image() {
 
         {/* URL */}
         <p style={{ position: "absolute", bottom: "24px", fontSize: "18px", color: "#555" }}>
-          kbo-everyday.vercel.app
+          keubo.fan
         </p>
       </div>
     ),

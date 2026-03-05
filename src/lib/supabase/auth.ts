@@ -5,7 +5,7 @@ export async function signInWithGoogle() {
   return supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
-      redirectTo: typeof window !== "undefined" ? `${window.location.origin}/auth/callback` : "https://kbo-everyday.vercel.app/auth/callback",
+      redirectTo: typeof window !== "undefined" ? `${window.location.origin}/auth/callback` : "https://keubo.fan/auth/callback",
       queryParams: {
         prompt: "select_account",
       },
@@ -18,7 +18,7 @@ export async function signInWithKakao() {
   return supabase.auth.signInWithOAuth({
     provider: "kakao",
     options: {
-      redirectTo: typeof window !== "undefined" ? `${window.location.origin}/auth/callback` : "https://kbo-everyday.vercel.app/auth/callback",
+      redirectTo: typeof window !== "undefined" ? `${window.location.origin}/auth/callback` : "https://keubo.fan/auth/callback",
     },
   });
 }

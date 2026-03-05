@@ -329,7 +329,7 @@ export default function MyPage() {
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="flex-shrink-0 w-6 h-6 rounded-full bg-accent flex items-center justify-center text-xs font-bold text-white">3</span>
-                  <p className="text-sm text-text-primary">홈 화면에서 크보 에브리데이 실행!</p>
+                  <p className="text-sm text-text-primary">홈 화면에서 크보팬 실행!</p>
                 </div>
               </div>
               <button

@@ -233,7 +233,7 @@ export default function TicketTab({ venueId, teamIds }: Props) {
         <div>
           <p className="text-xs font-bold text-green-300">✅ 정가 양도 원칙</p>
           <p className="text-xs text-green-200/70 mt-0.5">
-            크보 에브리데이는 정가 양도만 허용합니다. 웃돈 거래 적발 시 이용이 제한됩니다.
+            크보팬는 정가 양도만 허용합니다. 웃돈 거래 적발 시 이용이 제한됩니다.
           </p>
         </div>
       </div>

@@ -125,7 +125,7 @@ function Sidebar({ mobile, onClose }: { mobile?: boolean; onClose?: () => void }
           })}
         </nav>
         <div className="p-4 border-t border-white/8">
-          <p className="text-xs text-[#636366]">크보 에브리데이 v0.9</p>
+          <p className="text-xs text-[#636366]">크보팬 v0.9</p>
         </div>
       </div>
     </aside>

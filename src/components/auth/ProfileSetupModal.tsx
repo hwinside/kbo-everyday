@@ -121,7 +121,7 @@ export default function ProfileSetupModal({ isOpen }: Props) {
           {step === 1 && (
             <div className="p-6">
               <h2 className="text-xl font-bold text-text-primary mb-2">환영합니다! 🎉</h2>
-              <p className="text-sm text-text-secondary mb-6">크보 에브리데이에서 사용할 닉네임을 정해주세요</p>
+              <p className="text-sm text-text-secondary mb-6">크보팬에서 사용할 닉네임을 정해주세요</p>
               
               <input
                 type="text"

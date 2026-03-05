@@ -173,7 +173,7 @@ export default function PlayerBoardPage() {
           <button onClick={async () => {
             const url = window.location.href;
             if (navigator.share) {
-              await navigator.share({ title: `${player.name} - 크보 에브리데이`, url });
+              await navigator.share({ title: `${player.name} - 크보팬`, url });
             } else {
               await navigator.clipboard.writeText(url);
               alert("링크가 복사되었습니다!");

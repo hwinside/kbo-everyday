@@ -50,7 +50,7 @@ function PhotoViewer({ photos, index, onClose, onNav }: {
           <button onClick={async () => {
             const url = `${window.location.origin}${window.location.pathname}?photo=${photo.id}`;
             if (navigator.share) {
-              await navigator.share({ title: `${photo.author}의 직찍`, text: photo.caption || "크보 에브리데이 직찍", url });
+              await navigator.share({ title: `${photo.author}의 직찍`, text: photo.caption || "크보팬 직찍", url });
             } else {
               await navigator.clipboard.writeText(url);
               alert("링크가 복사되었습니다!");

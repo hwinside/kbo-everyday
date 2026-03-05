@@ -113,9 +113,9 @@ function InviteTab({ userId, inviteCount }: { userId: string; inviteCount: numbe
   }
 
   function shareCode(code: string) {
-    const text = `크보 에브리데이에 초대합니다! 🏟️⚾\n\n초대코드: ${code}\n가입하면 파운더 배지를 받아요 👑\n\nhttps://kbo-everyday.vercel.app`;
+    const text = `크보팬에 초대합니다! 🏟️⚾\n\n초대코드: ${code}\n가입하면 파운더 배지를 받아요 👑\n\nhttps://keubo.fan`;
     if (navigator.share) {
-      navigator.share({ title: "크보 에브리데이 초대", text });
+      navigator.share({ title: "크보팬 초대", text });
     } else {
       navigator.clipboard.writeText(text);
       setCopied(code);
