@@ -94,7 +94,7 @@ export default function PlayerRadar({ playerId, position, teamColor }: PlayerRad
   const infoItems = isPitcher ? PITCHER_INFO : BATTER_INFO;
 
   return (
-    <div className="flex flex-col items-center gap-1 relative">
+    <div className="flex flex-col items-center gap-1 relative mb-4">
       <div className="w-full flex justify-end px-2">
         <button
           onClick={() => setShowInfo(!showInfo)}
