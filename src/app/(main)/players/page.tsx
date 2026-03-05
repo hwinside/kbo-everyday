@@ -3,7 +3,7 @@
 import { Search, ChevronDown, ChevronLeft } from "lucide-react";
 import Link from "next/link";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { TEAMS } from "@/lib/constants/teams";
 import TeamBadge from "@/components/ui/TeamBadge";
@@ -66,6 +66,22 @@ function PlayersPageContent() {
     (searchParams.get("sort") as SortMode) || "name"
   );
   const [visibleCount, setVisibleCount] = useState(20);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = loadMoreRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisibleCount(v => v + 20);
+        }
+      },
+      { threshold: 0.1 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [visibleCount, filtered.length]);
 
   // URL 쿼리 파라미터 동기화
   useEffect(() => {
@@ -254,12 +270,9 @@ function PlayersPageContent() {
         ))}
 
         {visibleCount < filtered.length && (
-          <button
-            onClick={() => setVisibleCount(v => v + 20)}
-            className="w-full py-3 mt-2 rounded-xl bg-bg-tertiary text-text-secondary text-sm font-medium hover:bg-white/10 transition-colors"
-          >
-            더보기 ({filtered.length - visibleCount}명 남음)
-          </button>
+          <div ref={loadMoreRef} className="w-full py-4 mt-2 flex justify-center">
+            <div className="w-6 h-6 border-2 border-text-tertiary border-t-accent rounded-full animate-spin" />
+          </div>
         )}
 
         {filtered.length === 0 && (
