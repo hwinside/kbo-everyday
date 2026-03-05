@@ -302,7 +302,7 @@ export default function HomePage() {
     >
       {/* Header */}
       <motion.header variants={item} className="flex items-end justify-between pb-0 pt-0">
-        <img src="/logo.png" alt="크보팬" style={{height: "120px", objectFit: "contain"}} />
+        <img src="/logo.png" alt="크보팬" style={{height: "60px", objectFit: "contain"}} className="ml-1" />
         <div className="flex items-center gap-1 mb-6">
           <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
             <Bell size={22} />
