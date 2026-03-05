@@ -22,30 +22,7 @@ interface Photo {
   comments: Comment[];
 }
 
-const MOCK_PHOTOS: Photo[] = [
-  { id: 1, imageUrl: "https://picsum.photos/seed/kbo1/400/400", author: "직관러88", likes: 234, timeAgo: "2시간 전", caption: "오늘 잠실 직관 🔥", comments: [
-    { id: 1, author: "야구팬", text: "와 진짜 잘 찍으셨다!", timeAgo: "1시간 전" },
-    { id: 2, author: "엘지빠", text: "나도 갔었는데 ㅠ 못 봤어", timeAgo: "30분 전" },
-  ]},
-  { id: 2, imageUrl: "https://picsum.photos/seed/kbo2/400/400", author: "덕후일기", likes: 187, timeAgo: "3시간 전", caption: "사인받았다!! 떨려서 손이 후들후들", comments: [
-    { id: 3, author: "부러움", text: "어떻게 받으신 거예요?! 부럽ㅠ", timeAgo: "2시간 전" },
-  ]},
-  { id: 3, imageUrl: "https://picsum.photos/seed/kbo3/400/400", author: "카메라맨", likes: 312, timeAgo: "5시간 전", caption: "홈런 치는 순간 포착 📸", comments: [
-    { id: 4, author: "스탯덕후", text: "이거 몇 호 홈런이었죠?", timeAgo: "4시간 전" },
-    { id: 5, author: "카메라맨", text: "시즌 12호요!", timeAgo: "3시간 전" },
-    { id: 6, author: "직관러", text: "카메라 뭐 쓰세요? 너무 선명", timeAgo: "2시간 전" },
-  ]},
-  { id: 4, imageUrl: "https://picsum.photos/seed/kbo4/400/400", author: "뉴비팬", likes: 56, timeAgo: "6시간 전", caption: "첫 직관인데 너무 멋있었어요", comments: [] },
-  { id: 5, imageUrl: "https://picsum.photos/seed/kbo5/400/400", author: "시즌권자", likes: 423, timeAgo: "8시간 전", caption: "불펜 피칭 연습 중", comments: [
-    { id: 7, author: "투수덕후", text: "폼 진짜 깔끔하다...", timeAgo: "7시간 전" },
-  ]},
-  { id: 6, imageUrl: "https://picsum.photos/seed/kbo6/400/400", author: "야구사진관", likes: 189, timeAgo: "10시간 전", caption: "수비 다이빙 캐치!", comments: [] },
-  { id: 7, imageUrl: "https://picsum.photos/seed/kbo7/400/400", author: "응원단장", likes: 145, timeAgo: "12시간 전", caption: "응원하는 모습 🙌", comments: [] },
-  { id: 8, imageUrl: "https://picsum.photos/seed/kbo8/400/400", author: "직관마스터", likes: 267, timeAgo: "1일 전", caption: "세레머니 직찍", comments: [
-    { id: 8, author: "팬1", text: "이 세레머니 매번 봐도 좋아ㅋㅋ", timeAgo: "20시간 전" },
-  ]},
-  { id: 9, imageUrl: "https://picsum.photos/seed/kbo9/400/400", author: "팬카페운영자", likes: 98, timeAgo: "1일 전", caption: "팬미팅 단체사진", comments: [] },
-];
+const MOCK_PHOTOS: Photo[] = [];
 
 function PhotoViewer({ photos, index, onClose, onNav }: {
   photos: Photo[];
