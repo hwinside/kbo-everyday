@@ -73,13 +73,13 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
               <button
                 key={v.id}
                 onClick={() => setReelIndex(i)}
-                className="shrink-0 group"
+                className="shrink-0 group flex flex-col w-[120px]"
               >
-                <div className="relative w-[120px] rounded-xl overflow-hidden">
+                <div className="relative w-[120px] h-[213px] rounded-xl overflow-hidden">
                   <img
                     src={v.thumbnail}
                     alt={v.title}
-                    className="w-full aspect-[9/16] object-cover group-hover:scale-105 transition-transform"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                   />
                   <div className="absolute inset-0 bg-black/10 group-hover:bg-black/30 transition-colors flex items-end p-2">
                     <div className="w-7 h-7 rounded-full bg-white/90 flex items-center justify-center">
@@ -87,7 +87,7 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
                     </div>
                   </div>
                 </div>
-                <p className="mt-1.5 text-[11px] text-text-secondary line-clamp-2 w-[120px] leading-snug text-left">
+                <p className="mt-1.5 text-[11px] text-text-secondary line-clamp-2 leading-snug text-left">
                   {v.title}
                 </p>
               </button>
