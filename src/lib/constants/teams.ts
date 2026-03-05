@@ -94,7 +94,7 @@ export const TEAMS: TeamData[] = [
     shortName: "삼성",
     slug: "samsung",
     colorPrimary: "#074CA1",
-    colorLight: "#7AACD4",
+    colorLight: "#5A8FBD",
     colorSecondary: "#FFFFFF",
     logoPath: "/logos/samsung.svg",
     youtubeChannelId: "UCMWAku3a3h65QpLm63Jf2pw",
