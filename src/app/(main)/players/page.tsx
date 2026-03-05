@@ -157,10 +157,10 @@ function PlayersPageContent() {
             <button
               key={mode}
               onClick={() => handleFilterMode(mode)}
-              className={`rounded-full px-5 py-2 text-sm font-semibold transition-colors ${
+              className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${
                 filterMode === mode
                   ? "bg-accent text-white"
-                  : "bg-bg-secondary text-text-secondary"
+                  : "bg-bg-tertiary text-text-tertiary"
               }`}
             >
               {label}
