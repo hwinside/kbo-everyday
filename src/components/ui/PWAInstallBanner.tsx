@@ -127,7 +127,7 @@ export default function PWAInstallBanner() {
             <div className="space-y-4">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-accent font-bold text-sm">1</div>
-                <p className="text-sm text-text-secondary">하단의 <Share size={16} className="inline text-accent" /> <strong>공유</strong> 버튼을 탭하세요</p>
+                <p className="text-sm text-text-secondary">하단 우측 <strong>⋯</strong> 버튼을 탭 → <Share size={16} className="inline text-accent" /> <strong>공유</strong>를 선택하세요</p>
               </div>
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-accent font-bold text-sm">2</div>
