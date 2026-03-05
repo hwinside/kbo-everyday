@@ -157,7 +157,7 @@ function PlayersPageContent() {
             <button
               key={mode}
               onClick={() => handleFilterMode(mode)}
-              className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
+              className={`rounded-full px-5 py-2 text-sm font-semibold transition-colors ${
                 filterMode === mode
                   ? "bg-accent text-white"
                   : "bg-bg-secondary text-text-secondary"
@@ -174,7 +174,7 @@ function PlayersPageContent() {
         <div className="mb-3 flex gap-2 overflow-x-auto hide-scrollbar pb-1">
           <button
             onClick={() => { setFilterTeam(null); setVisibleCount(20); }}
-            className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${
+            className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
               !filterTeam ? "bg-white/15 text-text-primary" : "bg-bg-secondary/50 text-text-tertiary"
             }`}
           >
@@ -184,7 +184,7 @@ function PlayersPageContent() {
             <button
               key={t.id}
               onClick={() => { setFilterTeam(t.id); setVisibleCount(20); }}
-              className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${
+              className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
                 filterTeam === t.id ? "text-white" : "bg-bg-secondary/50 text-text-tertiary"
               }`}
               style={filterTeam === t.id ? { backgroundColor: t.colorPrimary } : undefined}
@@ -198,7 +198,7 @@ function PlayersPageContent() {
         <div className="mb-3 flex gap-2 pb-1">
           <button
             onClick={() => { setFilterPosition(null); setVisibleCount(20); }}
-            className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${
+            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
               !filterPosition ? "bg-white/15 text-text-primary" : "bg-bg-secondary/50 text-text-tertiary"
             }`}
           >
@@ -208,7 +208,7 @@ function PlayersPageContent() {
             <button
               key={pos}
               onClick={() => { setFilterPosition(pos); setVisibleCount(20); }}
-              className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${
+              className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
                 filterPosition === pos
                   ? "bg-white/15 text-text-primary"
                   : "bg-bg-secondary/50 text-text-tertiary"
@@ -230,7 +230,7 @@ function PlayersPageContent() {
             <button
               key={mode}
               onClick={() => { setSortMode(mode); setVisibleCount(20); }}
-              className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+              className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
                 sortMode === mode
                   ? "bg-white/10 text-text-primary"
                   : "text-text-tertiary"
