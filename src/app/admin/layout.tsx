@@ -95,9 +95,10 @@ function Sidebar({ mobile, onClose }: { mobile?: boolean; onClose?: () => void }
         style={{ background: "#101012" }}
       >
         <div className="flex items-center justify-between p-5 border-b border-white/8">
-          <h2 className="font-bold text-lg">
-            <span className="text-[#6366F1]">크보</span> 어드민
-          </h2>
+          <div className="flex items-center gap-2">
+            <img src="/logo.png" alt="크보팬" style={{height: "28px", objectFit: "contain"}} />
+            <h2 className="font-bold text-lg">어드민</h2>
+          </div>
           {mobile && (
             <button onClick={onClose} className="p-1 text-[#8E8E93]">
               <X className="w-5 h-5" />
@@ -174,9 +175,10 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
           <button onClick={() => setMobileOpen(true)} className="p-2 -ml-2">
             <Menu className="w-5 h-5" />
           </button>
-          <h1 className="font-bold">
-            <span className="text-[#6366F1]">크보</span> 어드민
-          </h1>
+          <div className="flex items-center gap-2">
+            <img src="/logo.png" alt="크보팬" style={{height: "24px", objectFit: "contain"}} />
+            <h1 className="font-bold">어드민</h1>
+          </div>
         </header>
         <div className="p-4 lg:p-8 max-w-[1600px]">{children}</div>
       </main>
