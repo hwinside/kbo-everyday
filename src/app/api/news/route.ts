@@ -12,11 +12,19 @@ export async function GET(req: NextRequest) {
   const player = req.nextUrl.searchParams.get("player");
   const q = req.nextUrl.searchParams.get("q");
 
+  // shortName → 검색에 유리한 풀네임 매핑
+  const TEAM_SEARCH: Record<string, string> = {
+    "LG": "LG 트윈스", "두산": "두산 베어스", "KT": "KT 위즈",
+    "SSG": "SSG 랜더스", "NC": "NC 다이노스", "KIA": "KIA 타이거즈",
+    "롯데": "롯데 자이언츠", "삼성": "삼성 라이온즈", "한화": "한화 이글스",
+    "키움": "키움 히어로즈",
+  };
+
   let searchQuery = "KBO 프로야구";
   if (player) {
     searchQuery = `KBO ${player}`;
   } else if (team) {
-    searchQuery = `프로야구 ${team}`;
+    searchQuery = `프로야구 ${TEAM_SEARCH[team] || team}`;
   } else if (q) {
     searchQuery = q;
   }
