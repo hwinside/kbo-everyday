@@ -76,7 +76,15 @@ export async function GET(req: NextRequest) {
       pubDate: item.pubDate,
     }));
 
-    const result = { items, _q: cacheKey };
+    // 중복 기사 제거 (link 기준)
+    const seen = new Set<string>();
+    const unique = items.filter((item: any) => {
+      if (seen.has(item.link)) return false;
+      seen.add(item.link);
+      return true;
+    });
+
+    const result = { items: unique, _q: cacheKey };
     cache.set(cacheKey, { data: result, ts: Date.now() });
     return NextResponse.json(result);
   } catch (e: any) {
