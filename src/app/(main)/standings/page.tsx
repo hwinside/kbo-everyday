@@ -7,6 +7,8 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { clsx } from "clsx";
 import { TEAMS } from "@/lib/constants/teams";
+import { useAuth } from "@/lib/supabase/AuthContext";
+import { getMyTeamId } from "@/lib/store/myteam";
 import TeamLogo from "@/components/ui/TeamLogo";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
@@ -165,6 +167,8 @@ function LeaderSection({ title, leaders, router }: { title: string; leaders: Tit
 }
 
 export default function StandingsPage() {
+  const { profile } = useAuth();
+  const myTeamId = profile?.team_id ?? getMyTeamId();
   const [realStandings, setRealStandings] = useState<TeamStanding[] | null>(null);
   const [season, setSeason] = useState<2025 | 2026>(2025);
 
@@ -286,7 +290,7 @@ export default function StandingsPage() {
             <tbody>
               {(season === 2025 && realStandings ? realStandings : MOCK_STANDINGS).map((standing, i) => {
                 const team = getTeam(standing.teamId);
-                const isMyTeam = standing.teamId === 1;
+                const isMyTeam = myTeamId !== null && standing.teamId === myTeamId;
                 return (
                   <motion.tr
                     key={standing.teamId}
@@ -294,7 +298,11 @@ export default function StandingsPage() {
                     initial={{ opacity: 0, x: -8 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.03 }}
-                      className={`border-b border-border/30 last:border-0 cursor-pointer hover:bg-white/5 ${isMyTeam ? "bg-white/5" : ""}`}
+                    className={`border-b border-border/30 last:border-0 cursor-pointer hover:bg-white/5`}
+                    style={isMyTeam ? {
+                      backgroundColor: `${team.colorPrimary}18`,
+                      borderLeft: `3px solid ${team.colorPrimary}`,
+                    } : undefined}
                   >
                     <td className="py-2.5 text-center font-bold text-text-primary">{standing.rank}</td>
                     <td className="py-2.5 pl-2">
