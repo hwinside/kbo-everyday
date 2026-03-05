@@ -63,31 +63,6 @@ export default function CommunityPage() {
         </Link>
       </div>
 
-      {/* 💡 건의함 배너 */}
-      <div className="mx-5 mb-6">
-        <GlassCard
-          pressable
-          className="border-l-4 border-yellow-400 p-5"
-          onClick={() => {
-            if (user) {
-              setShowFeedback(true);
-            } else {
-              setShowLogin(true);
-            }
-          }}
-        >
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-yellow-400/10">
-              <Lightbulb size={24} className="text-yellow-400" />
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-text-primary">💡 건의함</h3>
-              <p className="text-sm text-text-secondary">버그 신고, 기능 제안, 데이터 수정 요청</p>
-            </div>
-          </div>
-        </GlassCard>
-      </div>
-
       {/* 내 팀 */}
       {myTeam && (
         <div className="mx-5 mb-6">
@@ -170,6 +145,32 @@ export default function CommunityPage() {
           </GlassCard>
         )}
       </div>
+
+      {/* 💡 건의함 배너 */}
+      <div className="mx-5 mb-6">
+        <GlassCard
+          pressable
+          className="border-l-4 border-yellow-400 p-5"
+          onClick={() => {
+            if (user) {
+              setShowFeedback(true);
+            } else {
+              setShowLogin(true);
+            }
+          }}
+        >
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-yellow-400/10">
+              <Lightbulb size={24} className="text-yellow-400" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-text-primary">💡 건의함</h3>
+              <p className="text-sm text-text-secondary">버그 신고, 기능 제안, 데이터 수정 요청</p>
+            </div>
+          </div>
+        </GlassCard>
+      </div>
+
       <FeedbackSheet isOpen={showFeedback} onClose={() => setShowFeedback(false)} defaultType="feature" />
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
     </div>
