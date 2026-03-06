@@ -27,6 +27,9 @@ export default function PostCard({ post, onPress }: PostCardProps) {
         <span className="text-base font-medium text-text-primary">
           {post.author?.nickname ?? "익명"}
         </span>
+        {post.author?.grade === 'staff' && (
+          <span className='ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
+        )}
         {post.author && <LevelBadge level={post.author.level} />}
         <span className="ml-auto text-base text-text-tertiary">{timeAgo}</span>
       </div>

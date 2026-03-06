@@ -60,6 +60,7 @@ export interface PostAuthor {
   myTeamId: number | null;
   level: number;
   title: string;
+  grade?: string;
 }
 
 /* ===== Comment ===== */

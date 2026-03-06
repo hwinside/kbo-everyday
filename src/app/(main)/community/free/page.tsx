@@ -6,26 +6,39 @@ import { ChevronLeft, Heart, MessageCircle, Pencil } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
-
-const MOCK_POSTS = [
-  { id: 1, title: "오늘 경기 선발 라인업 예상해봅니다", author: "야구매니아", time: "10분 전", likes: 24, comments: 8 },
-  { id: 2, title: "올해 신인왕 후보 누가 될까요?", author: "프로야구팬", time: "32분 전", likes: 18, comments: 12 },
-  { id: 3, title: "어제 하이라이트 영상 봤는데 소름이었음", author: "홈런왕", time: "1시간 전", likes: 42, comments: 15 },
-  { id: 4, title: "주말 직관 같이 가실 분!", author: "잠실매니아", time: "2시간 전", likes: 11, comments: 6 },
-  { id: 5, title: "올해 우승팀 예측 투표합시다", author: "승부사", time: "3시간 전", likes: 35, comments: 21 },
-];
+import { usePosts, createPost } from "@/lib/supabase/usePosts";
+import WritePost from "@/components/community/WritePost";
 
 export default function FreeBoardPage() {
   const router = useRouter();
   const { user } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
+  const [showWrite, setShowWrite] = useState(false);
+  const { posts, loading, reload } = usePosts('free', 'general');
 
   function handleWrite() {
     if (!user) {
       setShowLogin(true);
       return;
     }
-    // TODO: navigate to write page
+    setShowWrite(true);
+  }
+
+  function formatTimeAgo(dateString: string) {
+    const now = new Date();
+    const postTime = new Date(dateString);
+    const diffMs = now.getTime() - postTime.getTime();
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffMinutes < 60) {
+      return `${diffMinutes}분 전`;
+    } else if (diffHours < 24) {
+      return `${diffHours}시간 전`;
+    } else {
+      return `${diffDays}일 전`;
+    }
   }
 
   return (
@@ -45,21 +58,37 @@ export default function FreeBoardPage() {
 
       {/* Posts */}
       <div className="mx-5 space-y-3">
-        {MOCK_POSTS.map((post) => (
-          <GlassCard key={post.id} pressable className="p-4">
-            <h3 className="text-sm font-semibold text-text-primary">{post.title}</h3>
-            <div className="mt-2 flex items-center gap-4 text-xs text-text-tertiary">
-              <span>{post.author}</span>
-              <span>{post.time}</span>
-              <span className="flex items-center gap-1">
-                <Heart size={12} /> {post.likes}
-              </span>
-              <span className="flex items-center gap-1">
-                <MessageCircle size={12} /> {post.comments}
-              </span>
-            </div>
-          </GlassCard>
-        ))}
+        {loading ? (
+          <div className="flex items-center justify-center py-20 text-text-tertiary">
+            <p>로딩 중...</p>
+          </div>
+        ) : posts.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-text-tertiary">
+            <p className="text-sm">아직 게시글이 없어요</p>
+            <p className="text-xs mt-1">첫 번째 글을 작성해보세요!</p>
+          </div>
+        ) : (
+          posts.map((post) => (
+            <GlassCard key={post.id} pressable className="p-4" onClick={() => router.push(`/community/free/${post.id}`)}>
+              <h3 className="text-sm font-semibold text-text-primary">{post.title}</h3>
+              <div className="mt-2 flex items-center gap-4 text-xs text-text-tertiary">
+                <div className="flex items-center">
+                  <span>{post.nickname || "익명"}</span>
+                  {post.grade === 'staff' && (
+                    <span className='ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
+                  )}
+                </div>
+                <span>{formatTimeAgo(post.created_at)}</span>
+                <span className="flex items-center gap-1">
+                  <Heart size={12} /> {post.like_count}
+                </span>
+                <span className="flex items-center gap-1">
+                  <MessageCircle size={12} /> {post.comment_count}
+                </span>
+              </div>
+            </GlassCard>
+          ))
+        )}
       </div>
 
       {/* FAB */}
@@ -71,6 +100,16 @@ export default function FreeBoardPage() {
       </button>
 
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
+      <WritePost
+        isOpen={showWrite}
+        onClose={() => setShowWrite(false)}
+        teamName="자유게시판"
+        onSubmit={async (title, content, imageUrls) => {
+          await createPost({ boardType: "free", boardId: "general", title, content, imageUrls });
+          reload();
+          setShowWrite(false);
+        }}
+      />
     </div>
   );
 }

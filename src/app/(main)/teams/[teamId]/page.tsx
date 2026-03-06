@@ -132,7 +132,14 @@ export default function TeamBoardPage() {
     commentCount: p.comment_count,
     isReported: false,
     createdAt: p.created_at,
-    author: { nickname: p.nickname || "익명", avatarUrl: null, myTeamId: p.team_id || team.id, level: 1, title: "" },
+    author: {
+      nickname: p.nickname || "익명",
+      avatarUrl: null,
+      myTeamId: p.team_id || team.id,
+      level: 1,
+      title: "",
+      grade: p.grade
+    },
   }));
   const mockPosts = generateMockPosts(teamSlug);
   const posts = [...realPosts, ...mockPosts];

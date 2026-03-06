@@ -305,7 +305,13 @@ export default function PlayerBoardPage() {
             <Link href={`/boards/players/${rawId}/posts/${post.id}`}><GlassCard pressable className="p-4">
               <p className="text-base font-medium text-text-primary">{post.title}</p>
               <div className="mt-2 flex items-center justify-between text-base text-text-tertiary">
-                <span>{post.nickname || "익명"} · {new Date(post.created_at).toLocaleDateString("ko-KR")}</span>
+                <div className="flex items-center">
+                  <span>{post.nickname || "익명"}</span>
+                  {post.grade === 'staff' && (
+                    <span className='ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
+                  )}
+                  <span className="ml-1">· {new Date(post.created_at).toLocaleDateString("ko-KR")}</span>
+                </div>
                 <div className="flex items-center gap-4">
                   <span className="flex items-center gap-1"><Heart size={22} /> {post.like_count}</span>
                   <span className="flex items-center gap-1"><MessageCircle size={22} /> {post.comment_count}</span>
