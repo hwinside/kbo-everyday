@@ -35,29 +35,42 @@ export default function PlayerAvatar({
           width={size}
           height={size}
           unoptimized
-          className="rounded-full object-cover"
+          className="rounded-full object-cover ring-1 ring-white/10"
           style={{ width: size, height: size }}
         />
       ) : (
         <div
-          className="flex items-center justify-center rounded-full overflow-hidden"
+          className="flex items-center justify-center rounded-full overflow-hidden ring-1 ring-white/10"
           style={{
             width: size,
             height: size,
             background: `linear-gradient(160deg, ${teamColor}30 0%, #1a1a2e 100%)`,
           }}
         >
+          {/* Silhouette behind initial */}
           <svg
             viewBox="0 0 200 200"
             fill="none"
-            style={{ width: size * 0.75, height: size * 0.75, marginTop: size * 0.1 }}
+            className="absolute"
+            style={{ width: size * 0.65, height: size * 0.65, marginTop: size * 0.15, opacity: 0.35 }}
           >
-            <circle cx="100" cy="70" r="28" fill={teamColorLight + "90"} />
+            <circle cx="100" cy="70" r="28" fill={teamColorLight} />
             <path
               d="M100 108c-30 0-54 16-58 38h116c-4-22-28-38-58-38z"
-              fill={teamColorLight + "90"}
+              fill={teamColorLight}
             />
           </svg>
+          {/* Initial letter */}
+          <span
+            className="relative font-bold"
+            style={{
+              fontSize: size * 0.38,
+              color: teamColorLight,
+              textShadow: `0 0 8px ${teamColor}60`,
+            }}
+          >
+            {name.charAt(0)}
+          </span>
         </div>
       )}
       {showTeamBadge && logoPath && (
