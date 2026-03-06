@@ -19,7 +19,7 @@ export default function PWAInstallBanner() {
 
     // 24시간 내 닫았으면 숨김
     const dismissed = localStorage.getItem("pwa-banner-dismissed");
-    if (dismissed && Date.now() - Number(dismissed) < 24 * 60 * 60 * 1000) return;
+    if (dismissed && Date.now() - Number(dismissed) < 7 * 24 * 60 * 60 * 1000) return;
 
     const ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
     setIsIOS(ios);
