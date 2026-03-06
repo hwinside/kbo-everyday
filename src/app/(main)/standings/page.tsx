@@ -280,11 +280,11 @@ export default function StandingsPage() {
               <tr className="border-b border-border text-base font-semibold text-text-tertiary">
                 <th className="w-8 py-2 text-center">#</th>
                 <th className="py-2 text-left pl-2">팀</th>
-                <th className="w-9 py-2 text-center">승</th>
-                <th className="w-9 py-2 text-center">패</th>
-                <th className="w-9 py-2 text-center">무</th>
-                <th className="w-12 py-2 text-center">승률</th>
-                <th className="w-9 py-2 text-center">차</th>
+                <th className="w-9 py-2 text-right pr-1">승</th>
+                <th className="w-9 py-2 text-right pr-1">패</th>
+                <th className="w-9 py-2 text-right pr-1">무</th>
+                <th className="w-12 py-2 text-right pr-1">승률</th>
+                <th className="w-9 py-2 text-right pr-1">차</th>
               </tr>
             </thead>
             <tbody>
@@ -312,11 +312,11 @@ export default function StandingsPage() {
                         {getStreakIcon(standing.streak) && <span className="text-base">{getStreakIcon(standing.streak)}</span>}
                       </div>
                     </td>
-                    <td className="py-2.5 text-center tabular-nums text-text-primary">{standing.wins}</td>
-                    <td className="py-2.5 text-center tabular-nums text-text-primary">{standing.losses}</td>
-                    <td className="py-2.5 text-center tabular-nums text-text-secondary">{standing.draws}</td>
-                    <td className="py-2.5 text-center tabular-nums font-semibold text-text-primary">{standing.pct.toFixed(3).slice(1)}</td>
-                    <td className="py-2.5 text-center tabular-nums text-text-secondary">{standing.gb === 0 ? "-" : standing.gb}</td>
+                    <td className="py-2.5 text-right pr-1 tabular-nums text-text-primary">{standing.wins}</td>
+                    <td className="py-2.5 text-right pr-1 tabular-nums text-text-primary">{standing.losses}</td>
+                    <td className="py-2.5 text-right pr-1 tabular-nums text-text-secondary">{standing.draws}</td>
+                    <td className="py-2.5 text-right pr-1 tabular-nums font-semibold text-text-primary">{standing.pct.toFixed(3).slice(1)}</td>
+                    <td className="py-2.5 text-right pr-1 tabular-nums text-text-secondary">{standing.gb === 0 ? "-" : standing.gb}</td>
                   </motion.tr>
                 );
               })}
