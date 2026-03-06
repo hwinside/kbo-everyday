@@ -302,10 +302,10 @@ export default function HomePage() {
     >
       {/* Header */}
       <motion.header variants={item} className="flex items-center justify-between pb-0 pt-0">
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
           <img src="/logo-mark.png" alt="크보팬" style={{height: "40px", objectFit: "contain"}} />
-          <div className="h-5 w-px bg-border opacity-30" />
-          <p className="text-[14px] font-light text-text-secondary/80 tracking-widest">오늘 야구, 여기서 시작</p>
+          <div className="h-5 w-px bg-border/30" />
+          <p className="text-[13px] font-normal text-text-tertiary tracking-normal">오늘 야구, 여기서 시작</p>
         </div>
         <div className="flex items-center gap-1">
           <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
