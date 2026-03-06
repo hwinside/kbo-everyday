@@ -18,7 +18,7 @@ import * as path from "path";
 
 // ─── Config ───
 const SUPABASE_URL = process.env.SUPABASE_URL || "https://lbmbdjgsnenqjwjotoei.supabase.co";
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SEED_AUTHOR_ID = process.env.SEED_AUTHOR_ID;
 
 const SEED_DIR = path.resolve(
