@@ -165,8 +165,10 @@
 
 ---
 
-## 질문(결정 필요)
-1) anon_id 발급 방식(쿠키 vs localStorage) + 만료 정책
-2) 가입 이벤트 정의: 가입 완료 시점(이메일/소셜 인증 포함 여부)
-3) Activation 정의(댓글/글/직찍 중 무엇을 “핵심 행동”으로 볼지)
-4) GA4는 ‘검증용’으로만 둘지, ‘주 데이터 소스’로 쓸지
+## 결정 사항 (2026-03-06)
+1) **anon_id**: 쿠키 + localStorage 하이브리드. 만료 **180일(sliding)**. **session_id는 30분 비활동 시 갱신**.
+2) **signup_completed 정의**: 이메일/소셜 등 **인증 완료 시점**.
+3) **Activation 정의(2트랙)**
+   - Activation(라이트): `comment_created` OR `post_created`
+   - Activation(코어): `post_created` OR `photo_uploaded`
+4) **데이터 소스 전략**: 자체 로그(traffic_attribution/events)를 **주 데이터 소스**로 사용. GA4는 **검증/참고용**.

@@ -15,7 +15,7 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getMyTeamId, setMyTeamId as saveMyTeamId } from "@/lib/store/myteam";
-import { isOnboardingDone, needsPlayerSetup, setOnboardingStatus } from "@/lib/store/onboarding";
+import { getOnboardingStatus, isOnboardingDone, needsPlayerSetup, setOnboardingStatus } from "@/lib/store/onboarding";
 import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 import NewsCarousel from "@/components/news/NewsCarousel";
 import HomeHighlights from "@/components/home/HomeHighlights";
@@ -266,14 +266,29 @@ export default function HomePage() {
 
   useEffect(() => {
     const saved = getMyTeamId();
-    if (saved) {
+    const status = getOnboardingStatus();
+
+    if (saved && (status === "completed" || status === "skipped")) {
+      // 온보딩 완료/스킵 → 정상 홈
       setMyTeam(saved);
       setFavPlayers(getFavoritePlayers());
-      // 스킵 유저: 최애선수 설정 CTA 표시
-      if (needsPlayerSetup()) {
+      if (status === "skipped") {
         setShowPlayerSetupCTA(true);
       }
-    } else if (!isOnboardingDone()) {
+    } else if (saved && status === "team_selected") {
+      // 팀 선택 후 이탈 → 온보딩 이어하기 (선수 선택부터)
+      setMyTeam(saved);
+      setShowOnboarding(true);
+    } else if (saved && !status) {
+      // 기존 유저 (onboarding status 없음) → 정상 홈, 온보딩 완료 처리
+      setMyTeam(saved);
+      setFavPlayers(getFavoritePlayers());
+      setOnboardingStatus(getFavoritePlayers().length > 0 ? "completed" : "skipped");
+      if (getFavoritePlayers().length === 0) {
+        setShowPlayerSetupCTA(true);
+      }
+    } else {
+      // 첫 방문 → 온보딩 시작
       setShowOnboarding(true);
     }
   }, []);
