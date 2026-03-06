@@ -30,6 +30,30 @@
   --team-samsung: #074CA1;
   --team-hanwha: #FF6600;
   --team-kiwoom: #820024;
+
+  /* ===== v0 semantic aliases (design-tokens-v0) ===== */
+  --bg: var(--bg-primary);
+  --surface-1: #111114;
+  --surface-2: #15151A;
+
+  --text-1: rgba(255, 255, 255, 0.92);
+  --text-2: rgba(255, 255, 255, 0.72);
+  --text-3: rgba(255, 255, 255, 0.52);
+
+  --primary: var(--accent);
+  --primary-strong: #E63B31;
+  --primary-weak-bg: rgba(255, 69, 58, 0.14);
+  --primary-weak-border: rgba(255, 69, 58, 0.30);
+
+  --border-weak: var(--border);
+  --border-strong: rgba(255, 255, 255, 0.12);
+
+  --control-bg: rgba(255, 255, 255, 0.04);
+
+  --radius-card: 16px;
+  --radius-control: 9999px;
+
+  --focus-ring: rgba(255, 69, 58, 0.35);
 }
 
 /* ===== Light Mode ===== */

@@ -101,16 +101,33 @@
 - `page_view` (props: path, referrer_host)
 - `signup_completed`
 - `team_selected` (props: team)
+- `player_selected` (props: player_id 등)
+- `onboarding_complete`
+- `onboarding_skipped`
 - `post_created` (props: team_board)
 - `comment_created`
 - `photo_uploaded` (직찍)
 - `notification_opt_in` (props: platform)
 
+#### D1 온보딩 이벤트 상세(현재 수집 중)
+
+| event_name | props | 발생 위치/의미 |
+|---|---|---|
+| `team_select_view` | (없음) | 온보딩 진입 시 |
+| `team_selected` | `team_id` | 팀 선택 |
+| `player_selected` | `team_id`, `player_id` | 선수 선택 |
+| `onboarding_complete` | `team_id`, `player_id` | 온보딩 완료 |
+| `onboarding_skipped` | `team_id` | 선수 선택 스킵 |
+
 ### 3) 퍼널 정의(초안)
 - F0: UV(= unique anon_id with page_view)
 - F1: signup_completed
-- F2: activation (선택, 아래 중 1개라도 만족)
-  - post_created OR comment_created OR photo_uploaded
+- F2: onboarding (선택)
+  - 팀 선택: `team_selected`
+  - 선수 선택: `player_selected`
+  - 온보딩 완료/스킵: `onboarding_complete` / `onboarding_skipped`
+- F3: activation (선택, 아래 중 1개라도 만족)
+  - `post_created` OR `comment_created` OR `photo_uploaded`
 
 화면
 - 기간 선택(일/주)
