@@ -26,6 +26,7 @@ export default function TeamSelectModal({ isOpen, onSelect }: TeamSelectModalPro
               transition={{ delay: 0.1 }}
               className="text-center mb-8"
             >
+              <p className="text-sm text-text-tertiary mb-3">내 팀 경기, 오늘 할 얘기는 여기서 끝.</p>
               <h1 className="text-2xl font-bold text-text-primary mb-2">⚾ 응원 구단을 선택하세요</h1>
               <p className="text-sm text-text-tertiary">선택한 구단 중심으로 홈 화면이 구성됩니다</p>
             </motion.div>

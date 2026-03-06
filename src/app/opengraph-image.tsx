@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 
 export const runtime = "edge";
-export const alt = "크보팬 — KBO 팬 커뮤니티";
+export const alt = "크보팬 — 내 팀 경기, 오늘 할 얘기는 여기서 끝";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -43,7 +43,7 @@ export default function Image() {
 
         {/* Tagline */}
         <p style={{ fontSize: "28px", color: "#999", marginBottom: "40px" }}>
-          KBO 팬을 위한 올인원 커뮤니티 플랫폼
+          내 팀 경기, 오늘 할 얘기는 여기서 끝.
         </p>
 
         {/* Feature pills */}

@@ -7,9 +7,9 @@ import { Analytics } from "@vercel/analytics/next";
 const GA_ID = "G-C0TE4TFLZ4";
 
 export const metadata: Metadata = {
-  title: "크보팬 — KBO 전 구단 팬 커뮤니티",
+  title: "크보팬 — 내 팀 경기, 오늘 할 얘기는 여기서 끝",
   description:
-    "KBO 전 구단 팬 커뮤니티. 실시간 경기 트래커, 승부예측, 구단/선수별 게시판, 스탯 인포그래픽.",
+    "내 팀 경기, 오늘 할 얘기는 여기서 끝. 실시간 스코어, 승부예측, 구단/선수별 게시판, 하이라이트.",
   keywords: ["KBO", "야구", "커뮤니티", "실시간", "승부예측", "스탯"],
   manifest: "/manifest.json",
   appleWebApp: {
@@ -18,8 +18,8 @@ export const metadata: Metadata = {
     title: "크보팬",
   },
   openGraph: {
-    title: "크보팬 — KBO 팬 커뮤니티",
-    description: "실시간 스코어 · 683명 선수 프로필 · 승부예측 · 팬 커뮤니티 · 하이라이트 · 구장가이드",
+    title: "크보팬 — 내 팀 경기, 오늘 할 얘기는 여기서 끝",
+    description: "내 팀 경기, 오늘 할 얘기는 여기서 끝. 실시간 스코어 · 승부예측 · 팬 커뮤니티 · 하이라이트",
     type: "website",
     url: "https://keubo.fan",
     siteName: "크보팬",
@@ -27,8 +27,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "크보팬 — KBO 팬 커뮤니티",
-    description: "실시간 스코어 · 683명 선수 프로필 · 승부예측 · 팬 커뮤니티 · 하이라이트 · 구장가이드",
+    title: "크보팬 — 내 팀 경기, 오늘 할 얘기는 여기서 끝",
+    description: "내 팀 경기, 오늘 할 얘기는 여기서 끝. 실시간 스코어 · 승부예측 · 팬 커뮤니티 · 하이라이트",
   },
 };
 
