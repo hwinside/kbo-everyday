@@ -8,13 +8,15 @@ import Image from "next/image";
 import GlassCard from "@/components/ui/GlassCard";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import AIAnalysis from "@/components/game/AIAnalysis";
-import TeamSelectModal from "@/components/onboarding/TeamSelectModal";
+import OnboardingFlow from "@/components/onboarding/OnboardingFlow";
 import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getMyTeamId, setMyTeamId as saveMyTeamId } from "@/lib/store/myteam";
+import { isOnboardingDone, needsPlayerSetup, setOnboardingStatus } from "@/lib/store/onboarding";
+import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 import NewsCarousel from "@/components/news/NewsCarousel";
 import HomeHighlights from "@/components/home/HomeHighlights";
 import LiveGameBanner from "@/components/home/LiveGameBanner";
@@ -206,6 +208,7 @@ export default function HomePage() {
   }, [myTeamId]);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
+  const [showPlayerSetupCTA, setShowPlayerSetupCTA] = useState(false);
   const { user } = useAuth();
 
   // 오늘의 경기 (API + 시범경기 fallback)
@@ -266,18 +269,21 @@ export default function HomePage() {
     if (saved) {
       setMyTeam(saved);
       setFavPlayers(getFavoritePlayers());
-    } else {
+      // 스킵 유저: 최애선수 설정 CTA 표시
+      if (needsPlayerSetup()) {
+        setShowPlayerSetupCTA(true);
+      }
+    } else if (!isOnboardingDone()) {
       setShowOnboarding(true);
     }
   }, []);
 
-  function handleTeamSelect(teamId: number) {
-    saveMyTeamId(teamId);
+  function handleOnboardingComplete(teamId: number, players: FavoritePlayer[]) {
     setMyTeam(teamId);
+    setFavPlayers(players);
     setShowOnboarding(false);
-    // 최애 선수 선택으로 넘어가기
-    if (getFavoritePlayers().length === 0) {
-      setShowPlayerSelect(true);
+    if (players.length === 0) {
+      setShowPlayerSetupCTA(true);
     }
   }
 
@@ -285,6 +291,17 @@ export default function HomePage() {
     setFavoritePlayers(players);
     setFavPlayers(players);
     setShowPlayerSelect(false);
+    setShowPlayerSetupCTA(false);
+    setOnboardingStatus("completed");
+    trackEvent(OnboardingEvents.PLAYER_SELECTED, {
+      player_count: players.length,
+      player_ids: players.map(p => p.playerId),
+    });
+    trackEvent(OnboardingEvents.ONBOARDING_COMPLETE, {
+      team_id: myTeamId,
+      player_count: players.length,
+      upgraded_from_skip: true,
+    });
   }
 
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
@@ -372,6 +389,27 @@ export default function HomePage() {
       {/* ===== News Carousel ===== */}
       <div className="mb-3">
         <LiveGameBanner />
+
+        {/* 스킵 유저: 최애선수 설정 CTA */}
+        {showPlayerSetupCTA && myTeamId && (
+          <motion.button
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            onClick={() => setShowPlayerSelect(true)}
+            className="w-full mb-4 p-3.5 rounded-2xl flex items-center gap-3 transition-colors"
+            style={{ 
+              background: `${getTeamBgColor(myTeamId)}15`,
+              border: `1px solid ${getTeamColor(myTeamId)}30`,
+            }}
+          >
+            <span className="text-2xl">⭐</span>
+            <div className="flex-1 text-left">
+              <p className="text-sm font-bold text-text-primary">최애 선수를 설정해보세요!</p>
+              <p className="text-xs text-text-tertiary mt-0.5">맞춤 뉴스와 피드를 받을 수 있어요</p>
+            </div>
+            <ChevronRight size={18} className="text-text-tertiary" />
+          </motion.button>
+        )}
 
         <h2 className="text-lg font-bold text-text-primary mb-3">📰 내 팀 뉴스</h2>
         <div className="-mx-5"><NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 10) : (myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 10) : MOCK_NEWS)} /></div>
@@ -587,13 +625,18 @@ export default function HomePage() {
       <div className="h-4" />
     </motion.div>
 
-      {/* AI Analysis Modal */}
-      <TeamSelectModal isOpen={showOnboarding} onSelect={handleTeamSelect} />
+      {/* Onboarding Flow */}
+      {showOnboarding && (
+        <OnboardingFlow onComplete={handleOnboardingComplete} />
+      )}
       <PlayerSelectModal
         isOpen={showPlayerSelect}
         teamId={myTeamId ?? 1}
         onComplete={handlePlayerSelect}
-        onSkip={() => setShowPlayerSelect(false)}
+        onSkip={() => {
+          setShowPlayerSelect(false);
+          setShowPlayerSetupCTA(false);
+        }}
       />
 
       {aiGame && (
