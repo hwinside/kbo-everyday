@@ -82,7 +82,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-[100] flex items-center justify-center bg-bg-primary"
     >
-      <div className="w-full max-w-lg px-6">
+      <div className="w-full max-w-lg px-6 pt-10">
         <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} className="text-center mb-4">
           <div className="flex items-center justify-center gap-2 mb-2">
             <Image src={team.logoPath} alt="" width={32} height={32} unoptimized className="object-contain" />
