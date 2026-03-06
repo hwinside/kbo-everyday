@@ -332,6 +332,29 @@ export default function HomePage() {
         </div>
       </motion.header>
 
+      {/* 스킵 유저: 최애선수 설정 CTA (헤더 바로 아래) */}
+      {showPlayerSetupCTA && myTeamId && (
+        <motion.div variants={item} className="mb-3">
+          <button
+            onClick={() => setShowPlayerSelect(true)}
+            className="w-full p-4 rounded-2xl flex items-center gap-3 transition-colors"
+            style={{ 
+              background: `${getTeamBgColor(myTeamId)}12`,
+              border: `1px solid ${getTeamColor(myTeamId)}20`,
+            }}
+          >
+            <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: `${getTeamBgColor(myTeamId)}25` }}>
+              <span className="text-lg">⭐</span>
+            </div>
+            <div className="flex-1 text-left">
+              <p className="text-sm font-bold text-text-primary">최애선수 설정하고 홈을 꾸며보세요</p>
+              <p className="text-xs text-text-tertiary mt-0.5">선수 소식/기록을 더 잘 추천해드려요</p>
+            </div>
+            <ChevronRight size={18} className="text-text-tertiary" />
+          </button>
+        </motion.div>
+      )}
+
       {/* ===== My Team Hero ===== */}
       {myTeam && myTeamGame && (
         <div className="mb-3">
@@ -389,27 +412,6 @@ export default function HomePage() {
       {/* ===== News Carousel ===== */}
       <div className="mb-3">
         <LiveGameBanner />
-
-        {/* 스킵 유저: 최애선수 설정 CTA */}
-        {showPlayerSetupCTA && myTeamId && (
-          <motion.button
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            onClick={() => setShowPlayerSelect(true)}
-            className="w-full mb-4 p-3.5 rounded-2xl flex items-center gap-3 transition-colors"
-            style={{ 
-              background: `${getTeamBgColor(myTeamId)}15`,
-              border: `1px solid ${getTeamColor(myTeamId)}30`,
-            }}
-          >
-            <span className="text-2xl">⭐</span>
-            <div className="flex-1 text-left">
-              <p className="text-sm font-bold text-text-primary">최애 선수를 설정해보세요!</p>
-              <p className="text-xs text-text-tertiary mt-0.5">맞춤 뉴스와 피드를 받을 수 있어요</p>
-            </div>
-            <ChevronRight size={18} className="text-text-tertiary" />
-          </motion.button>
-        )}
 
         <h2 className="text-lg font-bold text-text-primary mb-3">📰 내 팀 뉴스</h2>
         <div className="-mx-5"><NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 10) : (myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 10) : MOCK_NEWS)} /></div>
