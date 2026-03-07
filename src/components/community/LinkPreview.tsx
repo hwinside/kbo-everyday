@@ -76,11 +76,16 @@ export default function LinkPreview({ text, maxPreviews = 3, stopPropagation = f
       {urls.map((url) => {
         const data = previews.get(url);
 
-        // Loading state
+        // Loading skeleton — matches compact OG card layout
         if (data === "loading") {
           return (
-            <div key={url} className="rounded-xl bg-bg-tertiary p-3 animate-pulse">
-              <div className="h-3 bg-bg-glass rounded w-2/3" />
+            <div key={url} className="flex rounded-xl bg-bg-tertiary overflow-hidden border border-white/5 max-w-lg animate-pulse">
+              <div className="flex-shrink-0 w-20 h-20 bg-bg-glass" />
+              <div className="flex-1 min-w-0 px-3 py-3 flex flex-col justify-center gap-2">
+                <div className="h-2.5 bg-bg-glass rounded w-1/3" />
+                <div className="h-3.5 bg-bg-glass rounded w-3/4" />
+                <div className="h-2.5 bg-bg-glass rounded w-2/3" />
+              </div>
             </div>
           );
         }
@@ -130,9 +135,9 @@ export default function LinkPreview({ text, maxPreviews = 3, stopPropagation = f
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex rounded-xl bg-bg-tertiary overflow-hidden hover:bg-bg-glass transition-colors border border-white/5 max-w-lg"
+            className="flex rounded-xl bg-bg-tertiary overflow-hidden hover:bg-bg-glass transition-all border border-white/5 max-w-lg animate-fadeIn"
           >
-            {data.image && (
+            {data.image ? (
               <div className="flex-shrink-0 w-20 h-20 bg-bg-glass">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
@@ -142,6 +147,8 @@ export default function LinkPreview({ text, maxPreviews = 3, stopPropagation = f
                   loading="lazy"
                 />
               </div>
+            ) : (
+              <div className="flex-shrink-0 w-20 h-20 bg-bg-glass flex items-center justify-center text-text-tertiary text-2xl">🔗</div>
             )}
             <div className="flex-1 min-w-0 px-3 py-2 flex flex-col justify-center">
               {data.siteName && (
