@@ -4,6 +4,34 @@
 
 ---
 
+## 2026-03-08 03:41 KST — 커뮤니티 OG 카드 + 게시글 라우팅 정상화
+
+- **환경:** prod/web (Vercel)
+- **Commits:**
+  - `731d192b1d5370ddb2c040b370c5f0b1de4cac4d` — 게시글 클릭 → 상세 이동 연결 + LinkPreview 이벤트 충돌 수정
+  - `3a72c4fe2973dd2a78f8c7b43092b532a7b3ed00` — www. 시작 URL도 OG 프리뷰 지원
+  - `7fbd1c507ac2a5c6446c0eb30605653ea569a93a` — OG 카드 컴팩트 + 팀 글 상세 라우팅 정상화
+
+### 변경사항
+- **P0 수정**: 게시글 목록에서 클릭해도 상세 페이지로 이동하지 않던 버그 수정 (PostList → PostCard onPress 미전달)
+- **OG 카드 컴팩트화**: 세로 풀사이즈 → 가로 레이아웃 (80px 썸네일 + 텍스트, 카톡/슬랙 스타일)
+- **www. URL 지원**: `www.` 시작 URL도 OG 프리뷰 자동 감지 + `https://` prefix
+- **팀 게시판 라우팅 정상화**: 팀 글 상세 → `/community/teams/{teamId}/posts/{postId}` 신규 라우트 (탭 활성 유지 + "LG 게시판" 헤더)
+- **뒤로가기 2개 중복 해소**: 상세 페이지에서 커뮤니티 탭 헤더 자동 숨김
+- **PostDetail 공통 컴포넌트**: 자유/선수/팀 상세 페이지 통합 (-313줄 중복 제거)
+
+### 리스크/롤백
+- `git revert 7fbd1c5` + `git revert 3a72c4f` + `git revert 731d192`
+- PostDetail 공통 컴포넌트: 기존 코드 그대로 옮긴 것, 로직 변경은 headerTitle prop 하나뿐
+
+### 확인 항목
+- [x] 팀 글 상세: 팀 탭 활성 + "LG 게시판" 헤더
+- [x] OG 카드 컴팩트 (가로형)
+- [x] 뒤로가기 1개만 표시
+- [x] 댓글/좋아요 정상
+
+---
+
 ## Template
 
 Release: `YYYY-MM-DD HH:mm KST`
