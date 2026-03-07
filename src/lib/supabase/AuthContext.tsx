@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { supabase } from "./client";
 import { setMyTeamId } from "@/lib/store/myteam";
 import { setFavoritePlayers } from "@/lib/store/favorites";
+import { setOnboardingStatus } from "@/lib/store/onboarding";
 import type { User } from "@supabase/supabase-js";
 
 interface Profile {
@@ -39,7 +40,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   function syncProfileToLocal(p: Profile) {
     // 로그인 시 DB 프로필 → localStorage 강제 동기화 (DB = source of truth)
-    if (p.team_id) setMyTeamId(p.team_id);
+    if (p.team_id) {
+      setMyTeamId(p.team_id);
+      // 팀이 있으면 온보딩 완료 상태도 복원 (PWA 재설치 시 localStorage 초기화 대응)
+      setOnboardingStatus(p.favorite_players?.length ? "completed" : "skipped");
+    }
     // DB에 최애선수 있으면 복원, 없으면 게스트 값 제거
     setFavoritePlayers(p.favorite_players?.length ? p.favorite_players : []);
   }

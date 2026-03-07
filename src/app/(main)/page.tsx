@@ -330,7 +330,17 @@ export default function HomePage() {
       setMyTeam(saved);
       setFavPlayers(getFavoritePlayers());
       setOnboardingStatus(getFavoritePlayers().length > 0 ? "completed" : "skipped");
+      setShowOnboarding(false);
       if (getFavoritePlayers().length === 0) {
+        setShowPlayerSetupCTA(true);
+      }
+    } else if (profile && profile.team_id) {
+      // 로그인 유저인데 localStorage가 아직 동기화 안 된 경우 (PWA 재설치 등)
+      setMyTeam(profile.team_id);
+      setFavPlayers(profile.favorite_players?.length ? profile.favorite_players : []);
+      setOnboardingStatus(profile.favorite_players?.length ? "completed" : "skipped");
+      setShowOnboarding(false);
+      if (!profile.favorite_players?.length) {
         setShowPlayerSetupCTA(true);
       }
     } else {
