@@ -48,13 +48,17 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
     ]).then(([highlightData, officialData]) => {
       const seen = new Set<string>();
 
-      // 하이라이트 영상 (서버에서 이미 선수 레이블 포함)
-      const highlightItems: VideoItem[] = (highlightData.items || [])
-        .filter((v: any) => {
-          if (seen.has(v.id)) return false;
-          seen.add(v.id);
-          return true;
-        });
+      // 하이라이트 영상: 선수별 vs 팀 분리
+      const playerItems: VideoItem[] = [];
+      const teamItems: VideoItem[] = [];
+      for (const v of (highlightData.items || [])) {
+        if (seen.has(v.id)) continue;
+        seen.add(v.id);
+        // 서버에서 label이 팀명이 아닌 = 선수 이름
+        const isPlayer = v.label && v.label !== team && !TEAMS.some((t: any) => t.shortName === v.label);
+        if (isPlayer) playerItems.push(v);
+        else teamItems.push(v);
+      }
 
       // 공식채널 숏츠
       const officialItems: VideoItem[] = (officialData.items || [])
@@ -72,9 +76,8 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
           return true;
         });
 
-      // 합치고 최신순 정렬
-      const merged = [...highlightItems, ...officialItems]
-        .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+      // 선수 영상 우선 → 공식 → 팀 순으로 인터리빙
+      const merged = [...playerItems, ...officialItems, ...teamItems]
         .slice(0, 30);
 
       setVideos(merged);
