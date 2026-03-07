@@ -14,9 +14,9 @@ interface TabItem {
 const tabs: TabItem[] = [
   { href: "/", label: "홈", icon: Home },
   { href: "/games", label: "경기", icon: CalendarDays },
-  { href: "/standings", label: "순위", icon: BarChart3 },
-  { href: "/players", label: "선수", icon: Users },
   { href: "/community", label: "커뮤니티", icon: MessageSquare },
+  { href: "/players", label: "선수", icon: Users },
+  { href: "/standings", label: "순위", icon: BarChart3 },
 ];
 
 export default function TabBar() {
