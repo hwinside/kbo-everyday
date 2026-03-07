@@ -36,8 +36,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   async function loadProfile(accessToken: string, userId: string) {
+    // 1차: 서버 API (Bearer 토큰 기반 + service role)
     try {
-      // 1차: Bearer 토큰으로 서버 API 호출 (쿠키 의존 X — iOS PWA 안전)
       const res = await fetch("/api/me", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
@@ -48,12 +48,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
       }
-    } catch {
-      // 서버 API 실패 시 fallback
-    }
+    } catch { /* continue to fallback */ }
 
+    // 2차: Supabase REST API 직접 호출 (access_token을 명시적으로 전달)
     try {
-      // 2차: 클라이언트 직접 조회 (fallback)
+      const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=*`;
+      const res = await fetch(url, {
+        headers: {
+          apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/vnd.pgrst.object+json",
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.id) {
+          setProfile(data);
+          return;
+        }
+      }
+    } catch { /* continue */ }
+
+    // 3차: Supabase 클라이언트 직접 (기존 방식)
+    try {
       const { data, error } = await supabase
         .from("profiles")
         .select("*")
