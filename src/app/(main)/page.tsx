@@ -516,10 +516,7 @@ export default function HomePage() {
         <h2 className="text-lg leading-[26px] font-semibold text-text-primary mb-3">📰 내 팀, 최애선수 관련 뉴스</h2>
         <div className="-mx-5"><NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 10) : (myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 10) : MOCK_NEWS)} /></div>
 
-        {/* 하이라이트 영상 */}
-        <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
-        <HomeOfficialVideos team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
-
+      {/* 최애선수 카드 (뉴스 아래, 숏츠 위) */}
       {favPlayers.length > 0 && (
         <div>
           <SectionHeader title="⭐ 나의 최애 선수" />
@@ -594,6 +591,10 @@ export default function HomePage() {
           </div>
         </div>
       )}
+
+        {/* 하이라이트 영상 */}
+        <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
+        <HomeOfficialVideos team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
 
             </div>
 
