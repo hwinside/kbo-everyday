@@ -11,6 +11,7 @@ import AIAnalysis from "@/components/game/AIAnalysis";
 import OnboardingFlow from "@/components/onboarding/OnboardingFlow";
 import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { updateProfile } from "@/lib/supabase/auth";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
@@ -353,6 +354,10 @@ export default function HomePage() {
     setShowPlayerSelect(false);
     setShowPlayerSetupCTA(false);
     setOnboardingStatus("completed");
+    // 로그인 상태면 DB에도 동기화
+    if (user) {
+      updateProfile(user.id, { favorite_players: players });
+    }
     trackEvent(OnboardingEvents.PLAYER_SELECTED, {
       player_count: players.length,
       player_ids: players.map(p => p.playerId),

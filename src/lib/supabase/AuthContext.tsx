@@ -3,7 +3,8 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { supabase } from "./client";
 import { setMyTeamId } from "@/lib/store/myteam";
-import { setFavoritePlayers } from "@/lib/store/favorites";
+import { getFavoritePlayers, setFavoritePlayers } from "@/lib/store/favorites";
+import { updateProfile } from "./auth";
 import type { User } from "@supabase/supabase-js";
 
 interface Profile {
@@ -40,7 +41,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   function syncProfileToLocal(p: Profile) {
     // 로그인 시 DB 프로필 → localStorage 동기화
     if (p.team_id) setMyTeamId(p.team_id);
-    if (p.favorite_players?.length) setFavoritePlayers(p.favorite_players);
+
+    if (p.favorite_players?.length) {
+      // DB에 최애선수 있으면 → localStorage 덮어쓰기
+      setFavoritePlayers(p.favorite_players);
+    } else {
+      // DB에 없고 localStorage에 있으면 → DB에 올리기
+      const localFavs = getFavoritePlayers();
+      if (localFavs.length) {
+        updateProfile(p.id, { favorite_players: localFavs });
+      }
+    }
   }
 
   async function loadProfile(accessToken: string, userId: string) {

@@ -17,6 +17,7 @@ import { getTeamById } from "@/lib/constants/teams";
 import { getMyTeamId, setMyTeamId } from "@/lib/store/myteam";
 import { usePushNotification } from "@/lib/hooks/usePushNotification";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { updateProfile } from "@/lib/supabase/auth";
 import LoginSheet from "@/components/auth/LoginSheet";
 import FeedbackSheet from "@/components/feedback/FeedbackSheet";
 import { getAvatarPath } from "@/lib/constants/avatars";
@@ -42,7 +43,7 @@ export default function MyPage() {
 
   const team = teamId ? getTeamById(teamId) : null;
 
-  const handleTeamChange = (newTeamId: number) => {
+  const handleTeamChange = async (newTeamId: number) => {
     setMyTeamId(newTeamId);
     setTeamId(newTeamId);
     setShowTeamSelect(false);
@@ -50,12 +51,20 @@ export default function MyPage() {
     setFavoritePlayers([]);
     setFavPlayers([]);
     setShowPlayerSelect(true);
+    // 로그인 상태면 DB에도 동기화
+    if (user) {
+      await updateProfile(user.id, { team_id: newTeamId, favorite_players: [] });
+    }
   };
 
-  const handlePlayerChange = (players: FavoritePlayer[]) => {
+  const handlePlayerChange = async (players: FavoritePlayer[]) => {
     setFavoritePlayers(players);
     setFavPlayers(players);
     setShowPlayerSelect(false);
+    // 로그인 상태면 DB에도 동기화
+    if (user) {
+      await updateProfile(user.id, { favorite_players: players });
+    }
   };
 
   return (
