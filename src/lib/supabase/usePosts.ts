@@ -9,6 +9,7 @@ export interface Post {
   author_id: string;
   board_type: string;
   board_id: string;
+  content_type: "general" | "photo";
   title: string;
   content: string;
   image_urls: string[];
@@ -33,7 +34,7 @@ export interface Comment {
 }
 
 /** 게시글 목록 */
-export function usePosts(boardType: string, boardId: string) {
+export function usePosts(boardType: string, boardId: string, contentType: "general" | "photo" = "general") {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -41,9 +42,10 @@ export function usePosts(boardType: string, boardId: string) {
     setLoading(true);
     const { data } = await supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
       .eq("board_type", boardType)
       .eq("board_id", boardId)
+      .eq("content_type", contentType)
       .neq("is_hidden", true)
       .order("created_at", { ascending: false })
       .limit(30);
@@ -51,6 +53,7 @@ export function usePosts(boardType: string, boardId: string) {
     if (data) {
       setPosts(data.map((p: any) => ({
         ...p,
+        content_type: p.content_type ?? "general",
         image_urls: p.image_urls ?? [],
         nickname: p.profiles?.nickname,
         team_id: p.profiles?.team_id,
@@ -58,7 +61,7 @@ export function usePosts(boardType: string, boardId: string) {
       })));
     }
     setLoading(false);
-  }, [boardType, boardId]);
+  }, [boardType, boardId, contentType]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -134,6 +137,7 @@ export async function createPost(params: {
   title: string;
   content: string;
   imageUrls?: string[];
+  contentType?: "general" | "photo";
 }) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
@@ -144,6 +148,7 @@ export async function createPost(params: {
       author_id: user.id,
       board_type: params.boardType,
       board_id: params.boardId,
+      content_type: params.contentType ?? "general",
       title: params.title,
       content: params.content,
       image_urls: params.imageUrls ?? [],
@@ -153,6 +158,31 @@ export async function createPost(params: {
 
   if (error) throw error;
   return data;
+}
+
+/** 이미지 업로드 (Supabase Storage) */
+export async function uploadImages(files: File[]): Promise<string[]> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("로그인 필요");
+
+  const urls: string[] = [];
+  for (const file of files) {
+    const ext = file.name.split(".").pop() || "jpg";
+    const path = `${user.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+    const { error } = await supabase.storage
+      .from("photos")
+      .upload(path, file, { contentType: file.type });
+
+    if (error) throw error;
+
+    const { data: urlData } = supabase.storage
+      .from("photos")
+      .getPublicUrl(path);
+
+    urls.push(urlData.publicUrl);
+  }
+  return urls;
 }
 
 /** 댓글 작성 */

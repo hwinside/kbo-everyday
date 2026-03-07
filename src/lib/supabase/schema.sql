@@ -22,6 +22,7 @@ CREATE TABLE posts (
   author_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
   board_type TEXT NOT NULL DEFAULT 'team', -- team, player, free
   board_id TEXT NOT NULL, -- teamId or playerId
+  content_type TEXT NOT NULL DEFAULT 'general', -- general, photo
   title TEXT NOT NULL,
   content TEXT NOT NULL,
   image_urls JSONB DEFAULT '[]',

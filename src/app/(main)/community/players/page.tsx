@@ -4,19 +4,23 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Pencil, Search, Heart, MessageCircle } from "lucide-react";
+import { Pencil } from "lucide-react";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import PostList from "@/components/community/PostList";
+import PhotoFeed from "@/components/community/PhotoFeed";
 import WritePost from "@/components/community/WritePost";
+import WritePhotoPost from "@/components/community/WritePhotoPost";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { supabase } from "@/lib/supabase/client";
-import { createPost } from "@/lib/supabase/usePosts";
+import { createPost, toggleLike } from "@/lib/supabase/usePosts";
 import { getFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
 import type { Post } from "@/lib/types";
+import type { Post as RawPost } from "@/lib/supabase/usePosts";
 
+type ContentTab = "general" | "photo";
 type SortTab = "latest" | "hot";
 
 export default function CommunityPlayersPage() {
@@ -26,10 +30,14 @@ export default function CommunityPlayersPage() {
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
   const [favLoaded, setFavLoaded] = useState(false);
   const [posts, setPosts] = useState<Post[]>([]);
+  const [photoPosts, setPhotoPosts] = useState<RawPost[]>([]);
   const [loading, setLoading] = useState(false);
+  const [photoLoading, setPhotoLoading] = useState(false);
+  const [contentTab, setContentTab] = useState<ContentTab>("general");
   const [sortTab, setSortTab] = useState<SortTab>("latest");
-  const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null); // null = 전체
+  const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
   const [writeOpen, setWriteOpen] = useState(false);
+  const [writePhotoOpen, setWritePhotoOpen] = useState(false);
   const [writePlayerTarget, setWritePlayerTarget] = useState<string | null>(null);
   const [playerPickerOpen, setPlayerPickerOpen] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
@@ -48,15 +56,16 @@ export default function CommunityPlayersPage() {
     setFavLoaded(true);
   }, []);
 
-  // Load posts for all favorite players
+  // Load general posts
   const loadPosts = useCallback(async () => {
     if (favPlayerIds.length === 0) return;
     setLoading(true);
 
     let query = supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
       .eq("board_type", "player")
+      .eq("content_type", "general")
       .in("board_id", favPlayerIds)
       .neq("is_hidden", true);
 
@@ -70,7 +79,6 @@ export default function CommunityPlayersPage() {
     }
 
     query = query.limit(50);
-
     const { data } = await query;
 
     if (data) {
@@ -101,14 +109,76 @@ export default function CommunityPlayersPage() {
     setLoading(false);
   }, [favPlayerIds, sortTab]);
 
+  // Load photo posts
+  const loadPhotoPosts = useCallback(async () => {
+    if (favPlayerIds.length === 0) return;
+    setPhotoLoading(true);
+
+    let query = supabase
+      .from("posts")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
+      .eq("board_type", "player")
+      .eq("content_type", "photo")
+      .in("board_id", favPlayerIds)
+      .neq("is_hidden", true);
+
+    if (sortTab === "hot") {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      query = query
+        .gte("created_at", sevenDaysAgo)
+        .order("like_count", { ascending: false });
+    } else {
+      query = query.order("created_at", { ascending: false });
+    }
+
+    query = query.limit(50);
+    const { data } = await query;
+
+    if (data) {
+      setPhotoPosts(
+        data.map((p: any) => ({
+          id: p.id,
+          author_id: p.author_id,
+          board_type: p.board_type,
+          board_id: p.board_id,
+          content_type: p.content_type ?? "photo",
+          title: p.title,
+          content: p.content,
+          image_urls: p.image_urls ?? [],
+          like_count: p.like_count,
+          comment_count: p.comment_count,
+          created_at: p.created_at,
+          nickname: p.profiles?.nickname || "익명",
+          team_id: p.profiles?.team_id,
+          grade: p.profiles?.grade,
+        }))
+      );
+    }
+    setPhotoLoading(false);
+  }, [favPlayerIds, sortTab]);
+
   useEffect(() => {
-    if (favPlayerIds.length > 0) loadPosts();
-  }, [loadPosts, favPlayerIds.length]);
+    if (favPlayerIds.length > 0) {
+      if (contentTab === "general") loadPosts();
+      else loadPhotoPosts();
+    }
+  }, [loadPosts, loadPhotoPosts, favPlayerIds.length, contentTab]);
 
   // Filter by selected chip
   const filteredPosts = selectedPlayer
     ? posts.filter((p) => p.boardId === selectedPlayer)
     : posts;
+
+  const filteredPhotoPosts = selectedPlayer
+    ? photoPosts.filter((p) => p.board_id === selectedPlayer)
+    : photoPosts;
+
+  // Handle tab change
+  const handleTabChange = (tab: ContentTab) => {
+    setContentTab(tab);
+    setSortTab("latest");
+    window.scrollTo(0, 0);
+  };
 
   // Handle sort change
   const handleSortChange = (sort: SortTab) => {
@@ -128,7 +198,11 @@ export default function CommunityPlayersPage() {
     }
     if (favPlayerIds.length === 1 || selectedPlayer) {
       setWritePlayerTarget(selectedPlayer || favPlayerIds[0]);
-      setWriteOpen(true);
+      if (contentTab === "photo") {
+        setWritePhotoOpen(true);
+      } else {
+        setWriteOpen(true);
+      }
     } else {
       setPlayerPickerOpen(true);
     }
@@ -139,6 +213,21 @@ export default function CommunityPlayersPage() {
     const fav = favPlayers.find((p) => p.playerId === playerId);
     if (!fav) return "#E8364E";
     return TEAMS.find((t) => t.id === fav.teamId)?.colorPrimary || "#E8364E";
+  };
+
+  const handlePhotoPostClick = (postId: number) => {
+    const post = photoPosts.find((p) => p.id === postId);
+    if (post) {
+      router.push(`/community/players/${post.board_id}/posts/${postId}`);
+    }
+  };
+
+  const handlePhotoLike = async (postId: number) => {
+    try {
+      await toggleLike(postId);
+    } catch {
+      // ignore
+    }
   };
 
   if (!favLoaded) {
@@ -184,9 +273,23 @@ export default function CommunityPlayersPage() {
     <div className="mx-auto max-w-lg">
       {/* Controls */}
       <div className="px-5 pb-2 space-y-3">
-        {/* Row 1: Title + Write CTA */}
+        {/* Row 1: Title + Tab toggle + Write CTA */}
         <div className="flex items-center justify-between pt-3">
-          <h2 className="text-base font-bold text-text-primary">최애선수 게시판</h2>
+          <div className="flex bg-bg-glass rounded-xl p-1">
+            {(["general", "photo"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => handleTabChange(tab)}
+                className={`relative px-4 py-2 text-sm font-semibold rounded-lg transition-colors ${
+                  contentTab === tab
+                    ? "bg-text-primary text-bg-primary shadow-sm"
+                    : "text-text-tertiary hover:text-text-secondary"
+                }`}
+              >
+                {tab === "general" ? "일반" : "사진"}
+              </button>
+            ))}
+          </div>
           <button
             onClick={handleWrite}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-accent transition-colors hover:bg-accent/90"
@@ -255,48 +358,74 @@ export default function CommunityPlayersPage() {
         </div>
       </div>
 
-      {/* Posts */}
-      <div className="px-5 py-3">
-        {loading ? (
-          <div className="space-y-3">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="glass-card p-5 animate-pulse">
-                <div className="h-4 bg-bg-tertiary rounded w-24 mb-3" />
-                <div className="h-5 bg-bg-tertiary rounded w-3/4 mb-2" />
-                <div className="h-4 bg-bg-tertiary rounded w-full" />
-              </div>
-            ))}
-          </div>
-        ) : filteredPosts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-text-tertiary">
-            <p className="text-base">아직 글이 없습니다</p>
-            <p className="mt-1 text-sm">최애선수 게시판에 첫 글을 작성해보세요!</p>
-          </div>
-        ) : (
-          <>
-            {/* Player label on each post when showing "전체" */}
-            {!selectedPlayer ? (
+      {/* Content */}
+      <AnimatePresence mode="wait">
+        {contentTab === "general" ? (
+          <motion.div
+            key="general-posts"
+            initial={{ opacity: 0, x: -12 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -12 }}
+            transition={{ duration: 0.15 }}
+            className="px-5 py-3"
+          >
+            {loading ? (
               <div className="space-y-3">
-                {filteredPosts.map((post) => (
-                  <div key={post.id}>
-                    <div className="mb-1">
-                      <span
-                        className="inline-block px-2 py-0.5 rounded-md text-xs font-semibold text-white"
-                        style={{ backgroundColor: getPlayerTeamColor(post.boardId) + "CC" }}
-                      >
-                        {favPlayerNames[post.boardId] || post.boardId}
-                      </span>
-                    </div>
-                    <PostList posts={[post]} />
+                {[...Array(5)].map((_, i) => (
+                  <div key={i} className="glass-card p-5 animate-pulse">
+                    <div className="h-4 bg-bg-tertiary rounded w-24 mb-3" />
+                    <div className="h-5 bg-bg-tertiary rounded w-3/4 mb-2" />
+                    <div className="h-4 bg-bg-tertiary rounded w-full" />
                   </div>
                 ))}
               </div>
+            ) : filteredPosts.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 text-text-tertiary">
+                <p className="text-base">아직 글이 없습니다</p>
+                <p className="mt-1 text-sm">최애선수 게시판에 첫 글을 작성해보세요!</p>
+              </div>
             ) : (
-              <PostList posts={filteredPosts} />
+              <>
+                {!selectedPlayer ? (
+                  <div className="space-y-3">
+                    {filteredPosts.map((post) => (
+                      <div key={post.id}>
+                        <div className="mb-1">
+                          <span
+                            className="inline-block px-2 py-0.5 rounded-md text-xs font-semibold text-white"
+                            style={{ backgroundColor: getPlayerTeamColor(post.boardId) + "CC" }}
+                          >
+                            {favPlayerNames[post.boardId] || post.boardId}
+                          </span>
+                        </div>
+                        <PostList posts={[post]} />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <PostList posts={filteredPosts} />
+                )}
+              </>
             )}
-          </>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="photo-posts"
+            initial={{ opacity: 0, x: 12 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 12 }}
+            transition={{ duration: 0.15 }}
+            className="px-5 py-3"
+          >
+            <PhotoFeed
+              posts={filteredPhotoPosts}
+              loading={photoLoading}
+              onLike={handlePhotoLike}
+              onPostClick={handlePhotoPostClick}
+            />
+          </motion.div>
         )}
-      </div>
+      </AnimatePresence>
 
       {/* Player picker sheet */}
       <AnimatePresence>
@@ -331,7 +460,11 @@ export default function CommunityPlayersPage() {
                       onClick={() => {
                         setWritePlayerTarget(player.playerId);
                         setPlayerPickerOpen(false);
-                        setWriteOpen(true);
+                        if (contentTab === "photo") {
+                          setWritePhotoOpen(true);
+                        } else {
+                          setWriteOpen(true);
+                        }
                       }}
                       className="w-full flex items-center gap-3 text-left rounded-xl bg-bg-tertiary px-4 py-3 text-base font-semibold text-text-primary hover:bg-bg-glass active:scale-[0.98] transition-all"
                     >
@@ -351,7 +484,7 @@ export default function CommunityPlayersPage() {
         )}
       </AnimatePresence>
 
-      {/* Write post modal */}
+      {/* Write post modal (general) */}
       <WritePost
         isOpen={writeOpen}
         onClose={() => { setWriteOpen(false); setWritePlayerTarget(null); }}
@@ -367,10 +500,29 @@ export default function CommunityPlayersPage() {
             title,
             content,
             imageUrls,
+            contentType: "general",
           });
           setWriteOpen(false);
           setWritePlayerTarget(null);
           loadPosts();
+        }}
+      />
+
+      {/* Write photo post modal */}
+      <WritePhotoPost
+        isOpen={writePhotoOpen}
+        onClose={() => { setWritePhotoOpen(false); setWritePlayerTarget(null); }}
+        teamName={
+          writePlayerTarget
+            ? (favPlayerNames[writePlayerTarget] || writePlayerTarget)
+            : "선수"
+        }
+        boardType="player"
+        boardId={writePlayerTarget || favPlayerIds[0]}
+        onSuccess={() => {
+          setWritePhotoOpen(false);
+          setWritePlayerTarget(null);
+          loadPhotoPosts();
         }}
       />
 

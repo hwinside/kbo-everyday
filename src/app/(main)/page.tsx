@@ -311,6 +311,18 @@ export default function HomePage() {
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
 
   useEffect(() => {
+    // 로그인 유저 + DB에 팀 있음 → localStorage 상태와 무관하게 온보딩 스킵 (PWA 재설치 대응)
+    if (profile && profile.team_id) {
+      setMyTeam(profile.team_id);
+      setFavPlayers(profile.favorite_players?.length ? profile.favorite_players : []);
+      setOnboardingStatus(profile.favorite_players?.length ? "completed" : "skipped");
+      setShowOnboarding(false);
+      if (!profile.favorite_players?.length) {
+        setShowPlayerSetupCTA(true);
+      }
+      return;
+    }
+
     const saved = getMyTeamId();
     const status = getOnboardingStatus();
 
@@ -318,6 +330,7 @@ export default function HomePage() {
       // 온보딩 완료/스킵 → 정상 홈
       setMyTeam(saved);
       setFavPlayers(getFavoritePlayers());
+      setShowOnboarding(false);
       if (status === "skipped") {
         setShowPlayerSetupCTA(true);
       }
@@ -334,17 +347,11 @@ export default function HomePage() {
       if (getFavoritePlayers().length === 0) {
         setShowPlayerSetupCTA(true);
       }
-    } else if (profile && profile.team_id) {
-      // 로그인 유저인데 localStorage가 아직 동기화 안 된 경우 (PWA 재설치 등)
-      setMyTeam(profile.team_id);
-      setFavPlayers(profile.favorite_players?.length ? profile.favorite_players : []);
-      setOnboardingStatus(profile.favorite_players?.length ? "completed" : "skipped");
-      setShowOnboarding(false);
-      if (!profile.favorite_players?.length) {
-        setShowPlayerSetupCTA(true);
-      }
+    } else if (!profile) {
+      // 프로필 아직 로딩 중 → 아무것도 안 함 (온보딩 표시 방지)
+      return;
     } else {
-      // 첫 방문 → 온보딩 시작
+      // 비로그인 첫 방문 → 온보딩 시작
       setShowOnboarding(true);
     }
   }, [profile]);

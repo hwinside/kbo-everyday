@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useCallback } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -8,15 +8,16 @@ import { ChevronLeft, Pencil } from "lucide-react";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
 import PostList from "@/components/community/PostList";
+import PhotoFeed from "@/components/community/PhotoFeed";
 import WritePost from "@/components/community/WritePost";
+import WritePhotoPost from "@/components/community/WritePhotoPost";
 import type { Post } from "@/lib/types";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { usePosts, createPost } from "@/lib/supabase/usePosts";
-import { supabase } from "@/lib/supabase/client";
-import { getFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
+import { toggleLike } from "@/lib/supabase/usePosts";
 
-type PageTab = "team" | "player";
+type ContentTab = "general" | "photo";
 type SortTab = "latest" | "hot";
 
 export default function CommunityTeamBoardPage() {
@@ -27,16 +28,15 @@ export default function CommunityTeamBoardPage() {
   const team = getTeamBySlug(teamSlug);
 
   // URL-driven state
-  const initialTab = (searchParams.get("tab") as PageTab) || "team";
+  const initialTab = (searchParams.get("tab") as ContentTab) || "general";
   const initialSort = (searchParams.get("sort") as SortTab) || "latest";
-  const [pageTab, setPageTab] = useState<PageTab>(initialTab);
+  const [contentTab, setContentTab] = useState<ContentTab>(initialTab);
   const [sortTab, setSortTab] = useState<SortTab>(initialSort);
   const [writeOpen, setWriteOpen] = useState(false);
-  const [writePlayerTarget, setWritePlayerTarget] = useState<string | null>(null);
-  const [playerPickerOpen, setPlayerPickerOpen] = useState(false);
+  const [writePhotoOpen, setWritePhotoOpen] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
 
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
 
   if (!team) {
     return (
@@ -48,7 +48,7 @@ export default function CommunityTeamBoardPage() {
 
   // Update URL when tab/sort changes
   const updateUrl = useCallback(
-    (tab: PageTab, sort: SortTab) => {
+    (tab: ContentTab, sort: SortTab) => {
       const url = new URL(window.location.href);
       url.searchParams.set("tab", tab);
       url.searchParams.set("sort", sort);
@@ -57,22 +57,22 @@ export default function CommunityTeamBoardPage() {
     []
   );
 
-  const handleTabChange = (tab: PageTab) => {
-    setPageTab(tab);
-    setSortTab("latest"); // reset sort on tab change
+  const handleTabChange = (tab: ContentTab) => {
+    setContentTab(tab);
+    setSortTab("latest");
     updateUrl(tab, "latest");
     window.scrollTo(0, 0);
   };
 
   const handleSortChange = (sort: SortTab) => {
     setSortTab(sort);
-    updateUrl(pageTab, sort);
+    updateUrl(contentTab, sort);
     window.scrollTo(0, 0);
   };
 
-  // ── Team board posts ──
-  const { posts: livePosts, loading: postsLoading, reload } = usePosts("team", teamSlug);
-  const teamPosts: Post[] = livePosts.map((p) => ({
+  // ── General posts ──
+  const { posts: generalLivePosts, loading: generalLoading, reload: reloadGeneral } = usePosts("team", teamSlug, "general");
+  const generalPosts: Post[] = generalLivePosts.map((p) => ({
     id: p.id,
     boardType: "team" as const,
     boardId: teamSlug,
@@ -94,101 +94,38 @@ export default function CommunityTeamBoardPage() {
     },
   }));
 
-  // Sort team posts
-  const sortedTeamPosts = sortTab === "hot"
-    ? [...teamPosts]
+  const sortedGeneralPosts = sortTab === "hot"
+    ? [...generalPosts]
         .filter((p) => {
           const d = new Date(p.createdAt);
-          return Date.now() - d.getTime() < 30 * 24 * 60 * 60 * 1000; // 30 days
+          return Date.now() - d.getTime() < 30 * 24 * 60 * 60 * 1000;
         })
         .sort((a, b) => b.likeCount - a.likeCount || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    : teamPosts; // already sorted by created_at desc from usePosts
+    : generalPosts;
 
-  // ── Player board posts (favorite players) ──
-  const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
-  const [favPlayersLoaded, setFavPlayersLoaded] = useState(false);
-  const [playerPosts, setPlayerPosts] = useState<Post[]>([]);
-  const [playerPostsLoading, setPlayerPostsLoading] = useState(false);
-  const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null); // null = all
+  // ── Photo posts ──
+  const { posts: photoPosts, loading: photoLoading, reload: reloadPhoto } = usePosts("team", teamSlug, "photo");
 
-  // Derived (memoized to avoid infinite re-render loops in useEffect deps)
-  const favPlayerIds = useMemo(() => favPlayers.map((p) => p.playerId), [favPlayers]);
-  const favPlayerNames = useMemo(() => {
-    const m: Record<string, string> = {};
-    favPlayers.forEach((p) => { m[p.playerId] = p.name; });
-    return m;
-  }, [favPlayers]);
+  const sortedPhotoPosts = sortTab === "hot"
+    ? [...photoPosts]
+        .filter((p) => {
+          const d = new Date(p.created_at);
+          return Date.now() - d.getTime() < 30 * 24 * 60 * 60 * 1000;
+        })
+        .sort((a, b) => b.like_count - a.like_count || new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    : photoPosts;
 
-  // Load favorite players from SSOT (favorites store)
-  useEffect(() => {
-    const players = getFavoritePlayers();
-    setFavPlayers(players);
-    setFavPlayersLoaded(true);
-  }, []);
+  const handlePhotoPostClick = (postId: number) => {
+    router.push(`/community/teams/${teamSlug}/posts/${postId}`);
+  };
 
-  // Load player posts when switching to player tab
-  useEffect(() => {
-    if (pageTab !== "player" || favPlayerIds.length === 0) return;
-
-    async function loadPlayerPosts() {
-      setPlayerPostsLoading(true);
-
-      // Query player board posts for all favorite players
-      let query = supabase
-        .from("posts")
-        .select("id, author_id, board_type, board_id, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
-        .eq("board_type", "player")
-        .in("board_id", favPlayerIds)
-        .neq("is_hidden", true);
-
-      if (sortTab === "hot") {
-        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-        query = query.gte("created_at", thirtyDaysAgo);
-        query = query.order("like_count", { ascending: false });
-      } else {
-        query = query.order("created_at", { ascending: false });
-      }
-
-      query = query.limit(100);
-
-      const { data } = await query;
-
-      if (data) {
-        setPlayerPosts(
-          data.map((p: any) => ({
-            id: p.id,
-            boardType: "player" as const,
-            boardId: p.board_id,
-            authorId: p.author_id,
-            title: p.title,
-            content: p.content,
-            imageUrls: p.image_urls ?? [],
-            likeCount: p.like_count,
-            commentCount: p.comment_count,
-            isReported: false,
-            createdAt: p.created_at,
-            author: {
-              nickname: p.profiles?.nickname || "익명",
-              avatarUrl: null,
-              myTeamId: p.profiles?.team_id || team!.id,
-              level: 1,
-              title: "",
-              grade: p.profiles?.grade,
-            },
-          }))
-        );
-      }
-      setPlayerPostsLoading(false);
+  const handlePhotoLike = async (postId: number) => {
+    try {
+      await toggleLike(postId);
+    } catch {
+      // ignore if not logged in
     }
-
-    loadPlayerPosts();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageTab, favPlayerIds.join(","), sortTab, team!.id]);
-
-  // Filter player posts by selected chip
-  const filteredPlayerPosts = selectedPlayer
-    ? playerPosts.filter((p) => p.boardId === selectedPlayer)
-    : playerPosts;
+  };
 
   return (
     <div className="mx-auto max-w-lg">
@@ -219,50 +156,36 @@ export default function CommunityTeamBoardPage() {
         </div>
       </div>
 
-      {/* Controls: toggles + write CTA */}
+      {/* Controls */}
       <div className="px-5 pb-2 space-y-3">
         {/* Row 1: Tab toggle + Write CTA */}
         <div className="flex items-center justify-between">
           <div className="flex bg-bg-glass rounded-xl p-1">
-            {(["team", "player"] as const).map((tab) => (
+            {(["general", "photo"] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => handleTabChange(tab)}
                 className={`relative px-4 py-2 text-sm font-semibold rounded-lg transition-colors ${
-                  pageTab === tab
+                  contentTab === tab
                     ? "bg-text-primary text-bg-primary shadow-sm"
                     : "text-text-tertiary hover:text-text-secondary"
                 }`}
               >
-                {tab === "team" ? "팀 게시판" : "선수 게시판"}
+                {tab === "general" ? "일반" : "사진"}
               </button>
             ))}
           </div>
 
-          {/* Write CTA — 상단 고정 */}
+          {/* Write CTA */}
           <button
             onClick={() => {
               if (!user) {
                 setShowLogin(true);
                 return;
               }
-              if (pageTab === "player") {
-                // 선수 탭: 선수 선택 후 글쓰기
-                if (favPlayerIds.length === 0) {
-                  // 최애선수 0명 → 선수 선택 유도
-                  router.push("/my");
-                  return;
-                }
-                if (favPlayerIds.length === 1 || selectedPlayer) {
-                  // 1명이거나 이미 칩 선택됨 → 바로 글쓰기
-                  setWritePlayerTarget(selectedPlayer || favPlayerIds[0]);
-                  setWriteOpen(true);
-                } else {
-                  // 2명 이상 → 선수 선택 시트 열기
-                  setPlayerPickerOpen(true);
-                }
+              if (contentTab === "photo") {
+                setWritePhotoOpen(true);
               } else {
-                setWritePlayerTarget(null);
                 setWriteOpen(true);
               }
             }}
@@ -293,51 +216,20 @@ export default function CommunityTeamBoardPage() {
             <span className="flex items-center text-xs text-text-tertiary ml-1">최근 30일</span>
           )}
         </div>
-
-        {/* Player chip filters (only on player tab) */}
-        {pageTab === "player" && favPlayerIds.length > 0 && (
-          <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
-            <button
-              onClick={() => setSelectedPlayer(null)}
-              className={`px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
-                selectedPlayer === null
-                  ? "text-white"
-                  : "bg-bg-glass text-text-secondary"
-              }`}
-              style={selectedPlayer === null ? { backgroundColor: team.colorPrimary } : {}}
-            >
-              전체
-            </button>
-            {favPlayerIds.map((pid) => (
-              <button
-                key={pid}
-                onClick={() => setSelectedPlayer(pid)}
-                className={`px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
-                  selectedPlayer === pid
-                    ? "text-white"
-                    : "bg-bg-glass text-text-secondary"
-                }`}
-                style={selectedPlayer === pid ? { backgroundColor: team.colorPrimary } : {}}
-              >
-                {favPlayerNames[pid] || pid}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Content */}
       <AnimatePresence mode="wait">
-        {pageTab === "team" ? (
+        {contentTab === "general" ? (
           <motion.div
-            key="team-board"
+            key="general-board"
             initial={{ opacity: 0, x: -12 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -12 }}
             transition={{ duration: 0.15 }}
             className="px-5 py-3"
           >
-            {postsLoading ? (
+            {generalLoading ? (
               <div className="space-y-3">
                 {[...Array(5)].map((_, i) => (
                   <div key={i} className="glass-card p-5 animate-pulse">
@@ -348,156 +240,57 @@ export default function CommunityTeamBoardPage() {
                 ))}
               </div>
             ) : (
-              <PostList posts={sortedTeamPosts} />
+              <PostList posts={sortedGeneralPosts} />
             )}
           </motion.div>
         ) : (
           <motion.div
-            key="player-board"
+            key="photo-board"
             initial={{ opacity: 0, x: 12 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 12 }}
             transition={{ duration: 0.15 }}
             className="px-5 py-3"
           >
-            {!favPlayersLoaded ? (
-              /* Loading state */
-              <div className="space-y-3">
-                {[...Array(3)].map((_, i) => (
-                  <div key={i} className="glass-card p-5 animate-pulse">
-                    <div className="h-4 bg-bg-tertiary rounded w-24 mb-3" />
-                    <div className="h-5 bg-bg-tertiary rounded w-3/4 mb-2" />
-                    <div className="h-4 bg-bg-tertiary rounded w-full" />
-                  </div>
-                ))}
-              </div>
-            ) : favPlayerIds.length === 0 ? (
-              /* Empty state: no favorite players */
-              <div className="flex flex-col items-center justify-center py-20 text-center">
-                <p className="text-base text-text-tertiary mb-2">
-                  최애선수를 선택하면<br />선수 게시판이 열려요
-                </p>
-                <Link
-                  href="/my"
-                  className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-colors"
-                  style={{ backgroundColor: team.colorPrimary }}
-                >
-                  선수 선택하기
-                </Link>
-              </div>
-            ) : playerPostsLoading ? (
-              <div className="space-y-3">
-                {[...Array(5)].map((_, i) => (
-                  <div key={i} className="glass-card p-5 animate-pulse">
-                    <div className="h-4 bg-bg-tertiary rounded w-24 mb-3" />
-                    <div className="h-5 bg-bg-tertiary rounded w-3/4 mb-2" />
-                    <div className="h-4 bg-bg-tertiary rounded w-full" />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <>
-                {/* Player label on each post */}
-                {filteredPlayerPosts.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-20 text-text-tertiary">
-                    <p className="text-base">아직 글이 없습니다</p>
-                    <p className="mt-1 text-base">최애선수 게시판에 첫 글을 작성해보세요!</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {filteredPlayerPosts.map((post) => (
-                      <div key={post.id}>
-                        {/* Player name label */}
-                        {!selectedPlayer && (
-                          <div className="mb-1">
-                            <span
-                              className="inline-block px-2 py-0.5 rounded-md text-xs font-semibold text-white"
-                              style={{ backgroundColor: team.colorPrimary + "CC" }}
-                            >
-                              {favPlayerNames[post.boardId] || post.boardId}
-                            </span>
-                          </div>
-                        )}
-                        <PostList posts={[post]} />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
+            <PhotoFeed
+              posts={sortedPhotoPosts}
+              loading={photoLoading}
+              onLike={handlePhotoLike}
+              onPostClick={handlePhotoPostClick}
+            />
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Player picker sheet (선수 2명 이상일 때 글쓰기 전 선택) */}
-      <AnimatePresence>
-        {playerPickerOpen && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-50 bg-black/60"
-              onClick={() => setPlayerPickerOpen(false)}
-            />
-            <motion.div
-              initial={{ y: "100%" }}
-              animate={{ y: 0 }}
-              exit={{ y: "100%" }}
-              transition={{ type: "spring", damping: 30, stiffness: 300 }}
-              className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-bg-secondary overflow-y-auto"
-              style={{ maxHeight: "92dvh" }}
-            >
-              <div className="flex justify-center pt-3">
-                <div className="h-1 w-10 rounded-full bg-text-tertiary" />
-              </div>
-              <div className="flex flex-col h-full">
-                <div className="sticky top-0 bg-bg-secondary px-5 pt-3 pb-2 z-10">
-                  <h3 className="text-lg font-bold text-text-primary">어떤 선수 게시판에 쓸까요?</h3>
-                </div>
-                <div className="px-5 pb-24 space-y-2 overflow-y-auto flex-1">
-                  {favPlayerIds.map((pid) => (
-                    <button
-                      key={pid}
-                      onClick={() => {
-                        setWritePlayerTarget(pid);
-                        setPlayerPickerOpen(false);
-                        setWriteOpen(true);
-                      }}
-                      className="w-full text-left rounded-xl bg-bg-tertiary px-4 py-3 text-base font-semibold text-text-primary hover:bg-bg-glass active:scale-[0.98] transition-all"
-                    >
-                      {favPlayerNames[pid] || pid}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-
-      {/* Write post modal */}
+      {/* Write post modal (general) */}
       <WritePost
         isOpen={writeOpen}
-        onClose={() => { setWriteOpen(false); setWritePlayerTarget(null); }}
-        teamName={
-          writePlayerTarget
-            ? (favPlayerNames[writePlayerTarget] || writePlayerTarget) + " 게시판"
-            : team.name
-        }
+        onClose={() => setWriteOpen(false)}
+        teamName={team.name}
         onSubmit={async (title, content, imageUrls) => {
           await createPost({
-            boardType: writePlayerTarget ? "player" : "team",
-            boardId: writePlayerTarget || teamSlug,
+            boardType: "team",
+            boardId: teamSlug,
             title,
             content,
             imageUrls,
+            contentType: "general",
           });
-          reload();
+          reloadGeneral();
           setWriteOpen(false);
-          setWritePlayerTarget(null);
         }}
       />
+
+      {/* Write photo post modal */}
+      <WritePhotoPost
+        isOpen={writePhotoOpen}
+        onClose={() => setWritePhotoOpen(false)}
+        teamName={team.name}
+        boardType="team"
+        boardId={teamSlug}
+        onSuccess={() => reloadPhoto()}
+      />
+
       {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
     </div>
   );
