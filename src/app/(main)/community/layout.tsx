@@ -6,11 +6,11 @@ import { motion } from "framer-motion";
 import { MessageSquare, Users, User, Ticket, MapPin } from "lucide-react";
 
 const COMMUNITY_TABS = [
-  { key: "free", label: "자유", href: "/community/free", icon: MessageSquare },
   { key: "teams", label: "팀", href: "/community/teams", icon: Users },
   { key: "players", label: "선수", href: "/community/players", icon: User },
   { key: "tickets", label: "티켓", href: "/community/tickets", icon: Ticket },
   { key: "stadiums", label: "구장", href: "/community/stadiums", icon: MapPin },
+  { key: "free", label: "자유", href: "/community/free", icon: MessageSquare },
 ] as const;
 
 export default function CommunityLayout({
