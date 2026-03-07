@@ -53,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.warn("[AuthContext] client profile fetch failed:", {
         code: error?.code,
         message: error?.message,
-        status: (error as any)?.status,
+        details: error?.details,
         userId,
       });
 
