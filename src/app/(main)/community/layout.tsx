@@ -39,9 +39,13 @@ export default function CommunityLayout({
         !pathname.includes("/posts/"))
   );
 
+  // Stadium detail is a dedicated page — hide the community tabs to avoid "tab under tab"
+  const hideCommunityTabs =
+    pathname.startsWith("/community/stadiums/") && pathname !== "/community/stadiums";
+
   return (
     <div>
-      {isHubLevel && (
+      {isHubLevel && !hideCommunityTabs && (
         <div
           className="sticky top-0 z-30 bg-bg-primary border-b border-border"
           style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}

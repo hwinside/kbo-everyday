@@ -126,6 +126,7 @@ function TicketCard({ ticket }: { ticket: TicketData }) {
 }
 
 interface Props {
+  // venueId: stadium slug (e.g. jamsil). Use "all" for 전체 보기.
   venueId: string;
   teamIds: number[];
 }
@@ -210,8 +211,9 @@ function WriteTicketModal({ isOpen, onClose, venueId }: { isOpen: boolean; onClo
 export default function TicketTab({ venueId, teamIds }: Props) {
   const [filter, setFilter] = useState<"all" | number>("all");
   const [writeOpen, setWriteOpen] = useState(false);
-  const tickets = MOCK_TICKETS.filter(t =>
-    String(t.venue_id) === String(venueId) && (filter === "all" || t.team_id === filter)
+  const tickets = MOCK_TICKETS.filter((t) =>
+    (venueId === "all" || String(t.venue_id) === String(venueId)) &&
+    (filter === "all" || t.team_id === filter)
   );
 
   return (
