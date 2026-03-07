@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { permanentRedirect } from "next/navigation";
 
 export default function LegacyPlayersPage() {
-  redirect("/community/players");
+  permanentRedirect("/community/players");
 }
