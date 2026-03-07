@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { Heart, MessageCircle } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
+import LinkPreview from "@/components/community/LinkPreview";
 import type { Post } from "@/lib/types";
 
 interface PostCardProps {
@@ -46,7 +47,10 @@ export default function PostCard({ post, onPress }: PostCardProps) {
         {post.content}
       </p>
 
-      {/* Image preview */}
+      {/* Link previews (OG cards + direct image URLs) */}
+      <LinkPreview text={post.content} maxPreviews={2} />
+
+      {/* Image preview (uploaded — currently feature-flagged OFF) */}
       {post.imageUrls.length > 0 && (
         <div className="mt-2 flex gap-4 overflow-hidden">
           {post.imageUrls.slice(0, 3).map((_, i) => (

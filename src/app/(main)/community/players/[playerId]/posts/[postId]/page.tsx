@@ -9,6 +9,7 @@ import TeamBadge from "@/components/ui/TeamBadge";
 
 import { usePostDetail, createComment, toggleLike } from "@/lib/supabase/usePosts";
 import ReportSheet from "@/components/community/ReportSheet";
+import LinkPreview from "@/components/community/LinkPreview";
 import { useAuth } from "@/lib/supabase/AuthContext";
 
 export default function PostDetailPage() {
@@ -94,6 +95,9 @@ export default function PostDetailPage() {
 
         <h1 className="text-lg font-bold text-text-primary mb-3">{post.title}</h1>
         <p className="text-sm text-text-secondary whitespace-pre-line leading-relaxed">{post.content}</p>
+
+        {/* Link previews */}
+        <LinkPreview text={post.content} maxPreviews={3} />
 
         {/* Images */}
         {post.image_urls.length > 0 && (
