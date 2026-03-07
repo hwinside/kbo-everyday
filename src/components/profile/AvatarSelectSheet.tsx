@@ -22,21 +22,13 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
   const [saving, setSaving] = useState(false);
   const team = teamId ? TEAMS.find(t => t.id === teamId) : null;
 
-  // iOS scroll bleed-through 방지
+  // iOS scroll bleed-through 방지 (position:fixed는 시트 내부 스크롤을 막으므로 사용 안 함)
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden';
-      document.body.style.position = 'fixed';
-      document.body.style.width = '100%';
-      document.body.style.top = `-${window.scrollY}px`;
     }
     return () => {
-      const scrollY = document.body.style.top;
       document.body.style.overflow = '';
-      document.body.style.position = '';
-      document.body.style.width = '';
-      document.body.style.top = '';
-      window.scrollTo(0, parseInt(scrollY || '0') * -1);
     };
   }, [isOpen]);
 
