@@ -94,7 +94,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         </div>
 
         <h1 className="text-lg font-bold text-text-primary mb-3">{post.title}</h1>
-        <p className="text-sm text-text-secondary whitespace-pre-line leading-relaxed">{post.content}</p>
+        <p className="text-sm text-text-secondary whitespace-pre-line leading-relaxed">{collapseUrls(post.content)}</p>
 
         {/* Link previews */}
         <LinkPreview text={post.content} maxPreviews={3} />
@@ -109,12 +109,12 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         )}
 
         {/* Actions */}
-        <div className="flex items-center gap-6 mt-4 pt-3 border-t border-border">
-          <button onClick={handleLike} className="flex items-center gap-1.5">
+        <div className="flex items-center gap-4 mt-4 pt-3 border-t border-border">
+          <button onClick={handleLike} className="flex items-center gap-1.5 min-h-[44px] min-w-[44px] px-2 -ml-2 rounded-lg active:bg-bg-tertiary transition-colors">
             <Heart size={20} className={liked ? "text-red-500" : "text-text-tertiary"} fill={liked ? "currentColor" : "none"} />
             <span className="text-sm text-text-secondary">{post.like_count + likeCount}</span>
           </button>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 min-h-[44px] min-w-[44px] px-2">
             <MessageCircle size={20} className="text-text-tertiary" />
             <span className="text-sm text-text-secondary">{comments.length}</span>
           </div>
@@ -127,16 +127,20 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           <h3 className="text-sm font-bold text-text-primary">댓글 {comments.length}개</h3>
         </div>
         <div className="px-5 space-y-4 pb-4">
-          {comments.map(c => (
-            <div key={c.id}>
-              <div className="flex items-center gap-2 mb-1">
-                {c.team_id && <TeamBadge teamId={c.team_id} size="xs" />}
-                <span className="text-sm font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>{c.nickname || "익명"}</span>
-                <span className="text-xs text-text-tertiary">{timeAgo(c.created_at)}</span>
+          {comments.length === 0 ? (
+            <p className="text-sm text-text-tertiary text-center py-6">첫 댓글을 남겨보세요 💬</p>
+          ) : (
+            comments.map(c => (
+              <div key={c.id}>
+                <div className="flex items-center gap-2 mb-1">
+                  {c.team_id && <TeamBadge teamId={c.team_id} size="xs" />}
+                  <span className="text-sm font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>{c.nickname || "익명"}</span>
+                  <span className="text-xs text-text-tertiary">{timeAgo(c.created_at)}</span>
+                </div>
+                <p className="text-sm text-text-secondary">{c.content}</p>
               </div>
-              <p className="text-sm text-text-secondary">{c.content}</p>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </div>
 
@@ -158,4 +162,17 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
       <ReportSheet isOpen={showReport} onClose={() => setShowReport(false)} targetType={reportTarget.type} targetId={reportTarget.id} />
     </div>
   );
+}
+
+/** Collapse full URLs in text to domain-only (e.g. "https://www.naver.com/long/path" → "naver.com") */
+function collapseUrls(text: string): string {
+  return text.replace(/(?:https?:\/\/|www\.)[^\s<>"')\]]+/g, (url) => {
+    try {
+      const full = url.startsWith("http") ? url : `https://${url}`;
+      const hostname = new URL(full).hostname.replace(/^www\./, "");
+      return hostname;
+    } catch {
+      return url;
+    }
+  });
 }
