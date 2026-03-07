@@ -19,8 +19,8 @@ import { usePushNotification } from "@/lib/hooks/usePushNotification";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import FeedbackSheet from "@/components/feedback/FeedbackSheet";
-import { PRESET_AVATARS, getAvatarPath, getPresetKey } from "@/lib/constants/avatars";
-import { supabase } from "@/lib/supabase/client";
+import { getAvatarPath } from "@/lib/constants/avatars";
+import AvatarSelectSheet from "@/components/profile/AvatarSelectSheet";
 
 export default function MyPage() {
   const [teamId, setTeamId] = useState<number | null>(null);
@@ -68,9 +68,28 @@ export default function MyPage() {
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
         <GlassCard className="p-5">
           <div className="flex items-center gap-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-bg-tertiary text-2xl">
-              ⚾
-            </div>
+            <button
+              onClick={() => user && setShowAvatarSelect(true)}
+              className="relative flex h-14 w-14 items-center justify-center rounded-full bg-bg-tertiary text-2xl overflow-hidden transition-transform hover:scale-105"
+            >
+              {profile?.avatar_url && getAvatarPath(profile.avatar_url) ? (
+                <img src={getAvatarPath(profile.avatar_url)!} alt="" className="w-full h-full object-cover" />
+              ) : profile?.nickname ? (
+                <div
+                  className="w-full h-full flex items-center justify-center text-xl font-bold text-white"
+                  style={{ backgroundColor: team?.colorPrimary ?? '#6366f1' }}
+                >
+                  {profile.nickname.charAt(0)}
+                </div>
+              ) : (
+                <>⚾</>
+              )}
+              {user && (
+                <div className="absolute bottom-0 right-0 w-5 h-5 bg-bg-secondary rounded-full flex items-center justify-center border border-white/20">
+                  <Settings size={10} className="text-text-secondary" />
+                </div>
+              )}
+            </button>
             <div className="flex-1">
               <div className="flex items-center gap-3">
                 <span className="text-lg font-semibold text-text-primary">{user ? (profile?.nickname || user.email || "유저") : "게스트"}</span>
@@ -347,6 +366,13 @@ export default function MyPage() {
 
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
       <FeedbackSheet isOpen={showFeedback} onClose={() => setShowFeedback(false)} />
+      <AvatarSelectSheet
+        isOpen={showAvatarSelect}
+        onClose={() => setShowAvatarSelect(false)}
+        currentAvatarUrl={profile?.avatar_url ?? null}
+        teamId={teamId}
+        nickname={profile?.nickname ?? ""}
+      />
       <PlayerSelectModal
         isOpen={showPlayerSelect}
         teamId={teamId ?? 1}
