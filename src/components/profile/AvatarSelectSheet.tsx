@@ -20,20 +20,19 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
   const { user, refreshProfile } = useAuth();
   const [selected, setSelected] = useState<string | null>(getPresetKey(currentAvatarUrl));
   const [saving, setSaving] = useState(false);
-  const currentKey = getPresetKey(currentAvatarUrl);
   const team = teamId ? TEAMS.find(t => t.id === teamId) : null;
 
-  const handleSave = async () => {
-    if (!user) return;
+  const handleSelect = async (key: string | null) => {
+    if (!user || saving) return;
+    setSelected(key);
     setSaving(true);
-    const avatarUrl = selected ? `preset:${selected}` : null;
+    const avatarUrl = key ? `preset:${key}` : null;
     await supabase
       .from("profiles")
       .update({ avatar_url: avatarUrl })
       .eq("id", user.id);
     await refreshProfile();
     setSaving(false);
-    onClose();
   };
 
   return (
@@ -53,7 +52,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
             className="fixed bottom-0 left-0 right-0 z-50 mx-auto max-w-lg rounded-t-3xl bg-bg-secondary border-t border-white/10 flex flex-col"
-            style={{ maxHeight: "70vh" }}
+            style={{ maxHeight: "65vh" }}
           >
             {/* Handle */}
             <div className="mx-auto mt-3 mb-2 h-1 w-10 rounded-full bg-text-tertiary/30 flex-shrink-0" />
@@ -67,36 +66,16 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             </div>
 
             {/* 스크롤 영역 */}
-            <div className="flex-1 overflow-y-auto px-5 pb-2">
-              {/* 현재 미리보기 */}
-              <div className="flex justify-center mb-4">
-                <div className="w-16 h-16 rounded-full overflow-hidden bg-bg-tertiary flex items-center justify-center">
-                  {selected ? (
-                    <img
-                      src={PRESET_AVATARS.find(a => a.key === selected)?.path}
-                      alt=""
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div
-                      className="w-full h-full flex items-center justify-center text-2xl font-bold text-white"
-                      style={{ backgroundColor: team?.colorPrimary ?? '#6366f1' }}
-                    >
-                      {nickname?.charAt(0) || '?'}
-                    </div>
-                  )}
-                </div>
-              </div>
-
+            <div className="flex-1 overflow-y-auto px-5 pb-8">
               {/* 기본(이니셜) 옵션 */}
               <button
-                onClick={() => setSelected(null)}
-                className={`w-full mb-3 p-3 rounded-2xl flex items-center gap-3 transition-colors ${
+                onClick={() => handleSelect(null)}
+                className={`w-full mb-4 p-3 rounded-2xl flex items-center gap-3 transition-colors ${
                   selected === null ? 'bg-accent/10 border border-accent/30' : 'bg-bg-glass'
                 }`}
               >
                 <div
-                  className="w-9 h-9 rounded-full flex items-center justify-center text-base font-bold text-white flex-shrink-0"
+                  className="w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold text-white flex-shrink-0"
                   style={{ backgroundColor: team?.colorPrimary ?? '#6366f1' }}
                 >
                   {nickname?.charAt(0) || '?'}
@@ -106,39 +85,31 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
               </button>
 
               {/* 프리셋 그리드 */}
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-4 gap-3">
                 {PRESET_AVATARS.map((avatar) => (
                   <button
                     key={avatar.key}
-                    onClick={() => setSelected(avatar.key)}
-                    className={`flex flex-col items-center gap-1 p-1.5 rounded-xl transition-colors ${
+                    onClick={() => handleSelect(avatar.key)}
+                    className={`flex flex-col items-center gap-1.5 p-2 rounded-xl transition-all ${
                       selected === avatar.key
-                        ? 'bg-accent/10 ring-2 ring-accent'
-                        : 'hover:bg-bg-tertiary'
+                        ? 'bg-accent/10 ring-2 ring-accent scale-105'
+                        : 'hover:bg-bg-tertiary active:scale-95'
                     }`}
                   >
-                    <div className="w-14 h-14 rounded-full overflow-hidden bg-white">
-                      <img src={avatar.path} alt={avatar.label} className="w-full h-full object-cover" />
+                    <div className={`w-14 h-14 rounded-full overflow-hidden flex items-center justify-center p-1.5 ${
+                      selected === avatar.key ? 'bg-accent/20' : 'bg-bg-tertiary'
+                    }`}>
+                      <img src={avatar.path} alt={avatar.label} className="w-full h-full" />
                     </div>
                     <span className="text-[11px] text-text-tertiary">{avatar.label}</span>
+                    {selected === avatar.key && (
+                      <div className="absolute -top-0.5 -right-0.5">
+                        <Check size={14} className="text-accent" />
+                      </div>
+                    )}
                   </button>
                 ))}
               </div>
-            </div>
-
-            {/* 저장 버튼 — 하단 고정 */}
-            <div className="px-5 pt-3 pb-8 flex-shrink-0 border-t border-white/5">
-              <button
-                onClick={handleSave}
-                disabled={saving || selected === currentKey}
-                className={`w-full py-3 rounded-2xl text-base font-semibold transition-colors ${
-                  saving || selected === currentKey
-                    ? 'bg-bg-tertiary text-text-tertiary'
-                    : 'bg-accent text-white'
-                }`}
-              >
-                {saving ? '저장 중...' : '저장'}
-              </button>
             </div>
           </motion.div>
         </>

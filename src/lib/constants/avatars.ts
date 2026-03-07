@@ -6,23 +6,23 @@ export interface PresetAvatar {
 }
 
 export const PRESET_AVATARS: PresetAvatar[] = [
-  { key: "baseball", label: "야구공", path: "/avatars/baseball.png" },
-  { key: "glove", label: "글러브", path: "/avatars/glove.png" },
-  { key: "cap", label: "모자", path: "/avatars/cap.png" },
-  { key: "trophy", label: "트로피", path: "/avatars/trophy.png" },
-  { key: "stadium", label: "구장", path: "/avatars/stadium.png" },
-  { key: "megaphone", label: "메가폰", path: "/avatars/megaphone.png" },
-  { key: "beer", label: "맥주", path: "/avatars/beer.png" },
-  { key: "hotdog", label: "핫도그", path: "/avatars/hotdog.png" },
-  { key: "fire", label: "불꽃", path: "/avatars/fire.png" },
-  { key: "star", label: "스타", path: "/avatars/star.png" },
-  { key: "muscle", label: "근육", path: "/avatars/muscle.png" },
-  { key: "fist", label: "화이팅", path: "/avatars/fist.png" },
+  { key: "baseball", label: "야구공", path: "/avatars/baseball.svg" },
+  { key: "glove", label: "글러브", path: "/avatars/glove.svg" },
+  { key: "cap", label: "모자", path: "/avatars/cap.svg" },
+  { key: "trophy", label: "트로피", path: "/avatars/trophy.svg" },
+  { key: "stadium", label: "구장", path: "/avatars/stadium.svg" },
+  { key: "megaphone", label: "메가폰", path: "/avatars/megaphone.svg" },
+  { key: "beer", label: "맥주", path: "/avatars/beer.svg" },
+  { key: "hotdog", label: "핫도그", path: "/avatars/hotdog.svg" },
+  { key: "fire", label: "불꽃", path: "/avatars/fire.svg" },
+  { key: "star", label: "스타", path: "/avatars/star.svg" },
+  { key: "muscle", label: "근육", path: "/avatars/muscle.svg" },
+  { key: "fist", label: "화이팅", path: "/avatars/fist.svg" },
 ];
 
 /**
  * avatar_url 값에서 프리셋 아바타 경로를 반환.
- * "preset:baseball" → "/avatars/baseball.png"
+ * "preset:baseball" → "/avatars/baseball.svg"
  * 외부 URL은 프라이버시 정책상 사용하지 않음.
  */
 export function getAvatarPath(avatarUrl: string | null): string | null {
