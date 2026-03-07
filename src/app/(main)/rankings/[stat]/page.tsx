@@ -252,8 +252,8 @@ function RankingContent() {
                 : highlightLevel === 3
                   ? undefined
                   : {
-                      borderLeft: `${highlightLevel === 2 ? 4 : 3}px solid ${hexToRgba(teamColor, highlightLevel === 2 ? 0.9 : 0.6)}`,
-                      backgroundColor: hexToRgba(teamColor, highlightLevel === 2 ? 0.08 : 0.05),
+                      borderLeft: `${highlightLevel === 2 ? 4 : 3}px solid ${hexToRgba(teamColor, highlightLevel === 2 ? 1 : 0.8)}`,
+                      backgroundColor: hexToRgba(teamColor, highlightLevel === 2 ? 0.18 : 0.12),
                     };
 
             return (
