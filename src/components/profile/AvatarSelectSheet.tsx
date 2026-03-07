@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Check } from "lucide-react";
 import { PRESET_AVATARS, getPresetKey } from "@/lib/constants/avatars";
@@ -64,7 +65,9 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
     setSaving(false);
   };
 
-  return (
+  if (typeof window === "undefined") return null;
+
+  return createPortal(
     <AnimatePresence>
       {isOpen && (
         <>
@@ -154,6 +157,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
           </motion.div>
         </>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }
