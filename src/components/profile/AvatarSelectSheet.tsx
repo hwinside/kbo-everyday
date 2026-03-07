@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Check } from "lucide-react";
 import { PRESET_AVATARS, getPresetKey } from "@/lib/constants/avatars";
@@ -22,42 +22,31 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
   const [saving, setSaving] = useState(false);
   const team = teamId ? TEAMS.find(t => t.id === teamId) : null;
   const scrollRef = useRef<HTMLDivElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
 
-  // iOS Safari: 배경 스크롤 방지 + 시트 내부 스크롤 허용
+  // iOS Safari: 배경 스크롤 완전 차단
   useEffect(() => {
     if (!isOpen) return;
 
     const scrollEl = scrollRef.current;
 
-    // 배경 터치 스크롤 차단 (시트 내부 스크롤 영역은 허용)
-    function preventBgScroll(e: TouchEvent) {
-      if (scrollEl && scrollEl.contains(e.target as Node)) {
-        // 스크롤 영역 내부: 스크롤 가능하면 허용, 끝에서는 방지
-        const { scrollTop, scrollHeight, clientHeight } = scrollEl;
-        const atTop = scrollTop <= 0;
-        const atBottom = scrollTop + clientHeight >= scrollHeight;
-        const touchY = e.touches[0]?.clientY;
-
-        if (!touchY) return;
-
-        // 스크롤할 콘텐츠가 있으면 허용
-        if (scrollHeight > clientHeight) {
-          // 맨 위에서 위로 당기거나, 맨 아래에서 아래로 당기는 경우만 방지
-          if (atTop && atBottom) {
-            e.preventDefault();
-          }
-          return; // 나머지는 정상 스크롤 허용
+    // touchmove: 스크롤 영역 내부만 허용, 나머지는 차단
+    function onTouchMove(e: TouchEvent) {
+      // 스크롤 영역 내부인지 확인
+      if (scrollEl?.contains(e.target as Node)) {
+        // 스크롤할 콘텐츠가 실제로 있으면 허용
+        if (scrollEl.scrollHeight > scrollEl.clientHeight) {
+          return; // 정상 스크롤 허용
         }
-        e.preventDefault();
-      } else {
-        // 스크롤 영역 밖 (backdrop, header 등): 배경 스크롤 방지
-        e.preventDefault();
       }
+      // 그 외: 배경 스크롤 차단
+      e.preventDefault();
     }
 
-    document.addEventListener("touchmove", preventBgScroll, { passive: false });
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
+
     return () => {
-      document.removeEventListener("touchmove", preventBgScroll);
+      document.removeEventListener("touchmove", onTouchMove);
     };
   }, [isOpen]);
 
@@ -78,37 +67,56 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
     <AnimatePresence>
       {isOpen && (
         <>
+          {/* Backdrop — touch-action: none으로 터치 제스처 완전 차단 */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
             className="fixed inset-0 z-50 bg-black/60"
+            style={{ touchAction: "none" }}
           />
+
+          {/* Sheet */}
           <motion.div
+            ref={sheetRef}
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
-            className="fixed bottom-0 left-0 right-0 z-50 mx-auto max-w-lg rounded-t-3xl bg-bg-secondary border-t border-white/10 flex flex-col"
-            style={{ maxHeight: "70vh" }}
+            className="fixed bottom-0 left-0 right-0 z-50 mx-auto max-w-lg rounded-t-3xl bg-bg-secondary border-t border-white/10"
+            style={{
+              maxHeight: "70vh",
+              display: "flex",
+              flexDirection: "column",
+              touchAction: "none",
+            }}
           >
             {/* Handle */}
-            <div className="mx-auto mt-3 mb-2 h-1 w-10 rounded-full bg-text-tertiary/30 flex-shrink-0" />
+            <div className="mx-auto mt-3 mb-2 h-1 w-10 rounded-full bg-text-tertiary/30" />
 
             {/* Header */}
-            <div className="flex items-center justify-between px-5 mb-3 flex-shrink-0">
+            <div className="flex items-center justify-between px-5 mb-3">
               <h2 className="text-lg font-bold text-text-primary">아바타 선택</h2>
               <button onClick={onClose} className="rounded-full p-1 hover:bg-bg-tertiary transition-colors">
                 <X size={22} className="text-text-secondary" />
               </button>
             </div>
 
-            {/* 스크롤 영역 */}
+            {/* 스크롤 영역 — touch-action: pan-y로 세로 스크롤만 허용 */}
             <div
               ref={scrollRef}
-              className="flex-1 overflow-y-auto px-5 pb-8"
-              style={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch' }}
+              style={{
+                flex: 1,
+                minHeight: 0,        /* flexbox overflow 핵심: 이게 없으면 스크롤 안 됨 */
+                overflowY: "auto",
+                WebkitOverflowScrolling: "touch",
+                overscrollBehavior: "contain",
+                touchAction: "pan-y",
+                paddingLeft: 20,
+                paddingRight: 20,
+                paddingBottom: 32,
+              }}
             >
               {/* 기본(이니셜) 옵션 */}
               <button
