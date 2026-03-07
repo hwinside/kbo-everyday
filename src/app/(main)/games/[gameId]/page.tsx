@@ -24,13 +24,14 @@ import { getStatsForGame } from "@/lib/constants/game-stats";
 import ScoreBoard from "@/components/game/ScoreBoard";
 import Diamond from "@/components/game/Diamond";
 import CountIndicator from "@/components/game/CountIndicator";
-import RadioPlayer from "@/components/game/RadioPlayer";
+
 import PlayByPlay from "@/components/game/PlayByPlay";
 import GameChat from "@/components/game/GameChat";
 import LiveScoreboard from "@/components/game/LiveScoreboard";
 import AIAnalysis from "@/components/game/AIAnalysis";
 import { useLiveGame } from "@/lib/hooks/useLiveGame";
 import LineupTab from "@/components/game/LineupTab";
+import OnDeckBatters from "@/components/game/OnDeckBatters";
 import GameStatsTab from "@/components/game/GameStatsTab";
 
 type Tab = "relay" | "chat" | "lineup" | "stats";
@@ -109,22 +110,15 @@ export default function GameDetailPage() {
           </div>
         </div>
 
-        {/* Radio player */}
-        {game.status === "live" && (
-          <div className="px-4 pt-2">
-            <RadioPlayer />
-          </div>
-        )}
-
         {/* Score header */}
-        <div className="flex items-center justify-center gap-3 px-4 py-4 whitespace-nowrap">
+        <div className="flex items-center justify-center gap-3 px-4 py-3 whitespace-nowrap">
           {/* Away team */}
-          <Link href={`/teams/${awayTeam.slug}`} className="flex items-center gap-3">
+          <Link href={`/teams/${awayTeam.slug}`} className="flex items-center gap-2">
             <TeamLogo
               team={awayTeam}
-              size={52}
+              size={40}
               className="shadow-lg"
-              style={{ boxShadow: `0 0 20px ${awayTeam.colorPrimary}40` }}
+              style={{ boxShadow: `0 0 16px ${awayTeam.colorPrimary}40` }}
             />
             <span className="text-sm font-semibold text-text-primary flex-shrink-0">
               {awayTeam.shortName}
@@ -132,19 +126,19 @@ export default function GameDetailPage() {
           </Link>
 
           {/* Score */}
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <motion.span
               key={`away-${game.awayScore}`}
               initial={{ scale: 1.5, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="text-3xl font-bold tabular-nums text-text-primary min-w-[36px] text-center"
+              className="text-2xl font-bold tabular-nums text-text-primary min-w-[32px] text-center"
             >
               {game.awayScore}
             </motion.span>
             <div className="flex flex-col items-center">
               <span className="text-base text-text-tertiary">:</span>
               {game.inning && (
-                <span className="text-sm text-text-secondary mt-0.5 whitespace-nowrap">
+                <span className="text-xs text-text-secondary mt-0.5 whitespace-nowrap">
                   {game.inning}
                 </span>
               )}
@@ -153,22 +147,22 @@ export default function GameDetailPage() {
               key={`home-${game.homeScore}`}
               initial={{ scale: 1.5, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="text-3xl font-bold tabular-nums text-text-primary min-w-[36px] text-center"
+              className="text-2xl font-bold tabular-nums text-text-primary min-w-[32px] text-center"
             >
               {game.homeScore}
             </motion.span>
           </div>
 
           {/* Home team */}
-          <Link href={`/teams/${homeTeam.slug}`} className="flex items-center gap-3">
+          <Link href={`/teams/${homeTeam.slug}`} className="flex items-center gap-2">
             <span className="text-sm font-semibold text-text-primary flex-shrink-0">
               {homeTeam.shortName}
             </span>
             <TeamLogo
               team={homeTeam}
-              size={52}
+              size={40}
               className="shadow-lg"
-              style={{ boxShadow: `0 0 20px ${homeTeam.colorPrimary}40` }}
+              style={{ boxShadow: `0 0 16px ${homeTeam.colorPrimary}40` }}
             />
           </Link>
         </div>
@@ -197,12 +191,21 @@ export default function GameDetailPage() {
                 currentPitcher: liveGame?.currentPitcher ?? gameState.currentPitcher,
               }}
               isLive={true}
+              lineup={lineup}
             />
           </div>
         )}
 
-        {/* Inning score table (종료/예정 경기) */}
-        {game.status !== "live" && innings.length > 0 && (
+        {/* On-deck batters */}
+        {game.status === "live" && gameState && lineup && (
+          <OnDeckBatters
+            batters={isTopInning ? lineup.away.batters : lineup.home.batters}
+            currentBatterName={liveGame?.currentBatter ?? gameState.currentBatter}
+          />
+        )}
+
+        {/* Inning score table (모든 경기) */}
+        {innings.length > 0 && (
           <div className="px-4 pb-2">
             <ScoreBoard
               awayTeam={awayTeam}

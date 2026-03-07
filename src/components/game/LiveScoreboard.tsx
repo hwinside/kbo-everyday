@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Radio } from "lucide-react";
+import { motion } from "framer-motion";
 import Diamond from "./Diamond";
+import FieldView from "./FieldView";
 import CountIndicator from "./CountIndicator";
 import type { GameState } from "@/lib/types";
+import type { GameLineup } from "@/lib/constants/games";
+import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 
 interface LiveScoreboardProps {
   gameId: string;
@@ -18,6 +20,7 @@ interface LiveScoreboardProps {
   currentInning: string;
   state: GameState;
   isLive?: boolean;
+  lineup?: GameLineup | null;
 }
 
 export default function LiveScoreboard({
@@ -31,6 +34,7 @@ export default function LiveScoreboard({
   currentInning,
   state,
   isLive = false,
+  lineup,
 }: LiveScoreboardProps) {
   const [pulse, setPulse] = useState(false);
 
@@ -43,6 +47,27 @@ export default function LiveScoreboard({
 
   const isTop = currentInning.includes("초");
   const attackingTeam = isTop ? "away" : "home";
+
+  // Determine pitcher/batter team IDs for photos
+  const pitcherTeamId = isTop ? lineup?.home.teamId : lineup?.away.teamId;
+  const batterTeamId = isTop ? lineup?.away.teamId : lineup?.home.teamId;
+
+  // Get pitcher stats from lineup
+  const pitcherSide = isTop ? lineup?.home : lineup?.away;
+  const batterSide = isTop ? lineup?.away : lineup?.home;
+  const currentBatterData = batterSide?.batters.find(
+    (b) => b.name === state.currentBatter
+  );
+
+  // Defensive team is the fielding team
+  const defensiveSide = isTop ? lineup?.home : lineup?.away;
+
+  const pitcherPhotoUrl = state.currentPitcher
+    ? getPlayerPhotoUrl(state.currentPitcher)
+    : null;
+  const batterPhotoUrl = state.currentBatter
+    ? getPlayerPhotoUrl(state.currentBatter)
+    : null;
 
   return (
     <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-bg-secondary to-bg-tertiary border border-border">
@@ -66,8 +91,8 @@ export default function LiveScoreboard({
           </span>
         </div>
 
-        {/* Score + Diamond */}
-        <div className="flex items-center justify-center gap-4">
+        {/* Score row */}
+        <div className="flex items-center justify-center gap-4 mb-3">
           {/* Away */}
           <div className={`text-center flex-1 ${attackingTeam === "away" ? "" : "opacity-60"}`}>
             <p className="text-xs font-bold text-text-tertiary mb-1">{awayName}</p>
@@ -88,15 +113,17 @@ export default function LiveScoreboard({
             )}
           </div>
 
-          {/* Diamond */}
-          <div className="flex flex-col items-center gap-1">
-            <Diamond
-              runner1b={state.runner1b}
-              runner2b={state.runner2b}
-              runner3b={state.runner3b}
-              teamColor={attackingTeam === "away" ? awayColor : homeColor}
-            />
-          </div>
+          {/* Small diamond fallback when no lineup */}
+          {!defensiveSide && (
+            <div className="flex flex-col items-center gap-1">
+              <Diamond
+                runner1b={state.runner1b}
+                runner2b={state.runner2b}
+                runner3b={state.runner3b}
+                teamColor={attackingTeam === "away" ? awayColor : homeColor}
+              />
+            </div>
+          )}
 
           {/* Home */}
           <div className={`text-center flex-1 ${attackingTeam === "home" ? "" : "opacity-60"}`}>
@@ -118,6 +145,18 @@ export default function LiveScoreboard({
             )}
           </div>
         </div>
+
+        {/* Field view with defensive positions */}
+        {defensiveSide && (
+          <FieldView
+            defenders={defensiveSide.batters}
+            currentPitcher={state.currentPitcher}
+            currentBatter={state.currentBatter}
+            runner1b={state.runner1b}
+            runner2b={state.runner2b}
+            runner3b={state.runner3b}
+          />
+        )}
       </div>
 
       {/* BSO + Matchup */}
@@ -128,6 +167,26 @@ export default function LiveScoreboard({
           outs={state.outs}
           currentBatter={state.currentBatter}
           currentPitcher={state.currentPitcher}
+          pitcherPhotoUrl={pitcherPhotoUrl}
+          batterPhotoUrl={batterPhotoUrl}
+          pitcherTeamId={pitcherTeamId}
+          batterTeamId={batterTeamId}
+          pitcherStats={
+            pitcherSide
+              ? {
+                  era: pitcherSide.startingPitcher.era,
+                  pitchCount: 72, // mock
+                }
+              : undefined
+          }
+          batterStats={
+            currentBatterData
+              ? {
+                  avg: currentBatterData.avg,
+                  todayRecord: "2타수 1안타", // mock
+                }
+              : undefined
+          }
         />
       </div>
     </div>
