@@ -13,11 +13,38 @@ function decodeHtml(s: string) {
     .replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&apos;/g, "'");
 }
 
+async function searchYouTube(query: string, maxResults: number): Promise<any[]> {
+  if (!YOUTUBE_API_KEY) return [];
+  try {
+    const res = await fetch(
+      `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&maxResults=${maxResults}&order=date&videoDuration=short&videoEmbeddable=true&key=${YOUTUBE_API_KEY}`
+    );
+    const data = await res.json();
+    if (data.error) return [];
+    return (data.items || []).map((item: any) => ({
+      id: item.id.videoId,
+      title: decodeHtml(item.snippet.title),
+      thumbnail: item.snippet.thumbnails?.high?.url,
+      channel: item.snippet.channelTitle,
+      publishedAt: item.snippet.publishedAt,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export async function GET(req: NextRequest) {
   const team = req.nextUrl.searchParams.get("team") || "_ALL";
+  const playersParam = req.nextUrl.searchParams.get("players") || "";
+  const playerNames = playersParam ? playersParam.split(",").map(s => s.trim()).filter(Boolean).slice(0, 5) : [];
 
-  // 1. Supabase (Cron이 채운 데이터)
-  if (SUPABASE_URL) {
+  // 캐시 키: 팀 + 선수 조합
+  const cacheKey = playerNames.length > 0
+    ? `${team}:${playerNames.sort().join(",")}`
+    : team;
+
+  // 1. Supabase (Cron이 채운 데이터) — 선수 검색 없는 경우만
+  if (SUPABASE_URL && playerNames.length === 0) {
     try {
       const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
       const { data } = await supabase
@@ -39,29 +66,53 @@ export async function GET(req: NextRequest) {
   }
 
   // 2. 메모리 캐시
-  const cached = memCache.get(team);
+  const cached = memCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < MEM_TTL) {
     return NextResponse.json(cached.data);
   }
 
-  // 3. YouTube 직접 (최후 수단)
-  if (!YOUTUBE_API_KEY) return NextResponse.json({ items: [] });
-  try {
-    const query = team === "_ALL" ? "프로야구 하이라이트" : `${team} 하이라이트`;
-    const res = await fetch(
-      `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&maxResults=30&order=date&videoDuration=short&videoEmbeddable=true&key=${YOUTUBE_API_KEY}`
-    );
-    const data = await res.json();
-    if (data.error) return NextResponse.json({ items: [] });
-    const items = (data.items || []).map((item: any) => ({
-      id: item.id.videoId, title: decodeHtml(item.snippet.title),
-      thumbnail: item.snippet.thumbnails?.high?.url, channel: item.snippet.channelTitle,
-      publishedAt: item.snippet.publishedAt,
-    }));
-    const result = { items };
-    if (items.length > 0) memCache.set(team, { data: result, ts: Date.now() });
-    return NextResponse.json(result);
-  } catch {
-    return NextResponse.json({ items: [] });
+  // 3. YouTube 검색: 팀 + 선수별 병렬
+  const teamQuery = team === "_ALL" ? "프로야구 하이라이트" : `${team} 하이라이트`;
+  const teamMaxResults = playerNames.length > 0 ? 20 : 30;
+
+  const searches = [
+    searchYouTube(teamQuery, teamMaxResults).then(items =>
+      items.map(v => ({ ...v, _label: team }))
+    ),
+    ...playerNames.map(name =>
+      searchYouTube(`${name} 하이라이트`, 5).then(items =>
+        items.map(v => ({ ...v, _label: name }))
+      )
+    ),
+  ];
+
+  const results = await Promise.all(searches);
+  const seen = new Set<string>();
+  const merged: any[] = [];
+
+  // 선수별 영상 먼저 추가 (균등 배분 보장)
+  for (let i = 1; i < results.length; i++) {
+    for (const v of results[i]) {
+      if (!seen.has(v.id)) {
+        seen.add(v.id);
+        merged.push(v);
+      }
+    }
   }
+
+  // 팀 영상으로 나머지 채우기
+  for (const v of results[0]) {
+    if (!seen.has(v.id)) {
+      seen.add(v.id);
+      merged.push(v);
+    }
+  }
+
+  // 최신순 정렬
+  merged.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+
+  const items = merged.map(({ _label, ...rest }) => ({ ...rest, label: _label }));
+  const result = { items };
+  if (items.length > 0) memCache.set(cacheKey, { data: result, ts: Date.now() });
+  return NextResponse.json(result);
 }

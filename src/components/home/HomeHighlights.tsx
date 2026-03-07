@@ -29,16 +29,17 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
 
     const favPlayers = getFavoritePlayers().slice(0, 5);
     const favNames = favPlayers.map(p => p.name);
-
-    // 팀 slug 찾기 (공식채널 숏츠 호출용)
     const teamObj = TEAMS.find(t => t.shortName === team);
     const teamSlug = teamObj?.slug || team;
 
-    // 2개 소스 병렬 호출:
-    // 1) 기존 하이라이트 (검색 기반)
-    // 2) 팀 공식 유튜브 채널 숏츠
+    // 선수 이름을 API에 전달 → 서버에서 선수별 개별 검색
+    const playersParam = favNames.length > 0
+      ? `&players=${encodeURIComponent(favNames.join(","))}`
+      : "";
+
+    // 2개 소스 병렬: 하이라이트(팀+선수) + 공식채널 숏츠
     Promise.all([
-      fetch(`/api/highlights?team=${encodeURIComponent(team)}`)
+      fetch(`/api/highlights?team=${encodeURIComponent(team)}${playersParam}`)
         .then(r => r.json())
         .catch(() => ({ items: [] })),
       fetch(`/api/team-videos?team=${encodeURIComponent(teamSlug)}&type=short`)
@@ -47,19 +48,15 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
     ]).then(([highlightData, officialData]) => {
       const seen = new Set<string>();
 
-      // 하이라이트 영상 (최애선수 레이블링)
+      // 하이라이트 영상 (서버에서 이미 선수 레이블 포함)
       const highlightItems: VideoItem[] = (highlightData.items || [])
-        .map((v: any) => {
-          const matchedPlayer = favNames.find(name => v.title.includes(name));
-          return { ...v, label: matchedPlayer || team };
-        })
-        .filter((v: VideoItem) => {
+        .filter((v: any) => {
           if (seen.has(v.id)) return false;
           seen.add(v.id);
           return true;
         });
 
-      // 공식채널 숏츠 (channel 정보 추가)
+      // 공식채널 숏츠
       const officialItems: VideoItem[] = (officialData.items || [])
         .map((v: any) => ({
           id: v.id,
