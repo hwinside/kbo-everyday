@@ -94,7 +94,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         </div>
 
         <h1 className="text-lg font-bold text-text-primary mb-3">{post.title}</h1>
-        <p className="text-sm text-text-secondary whitespace-pre-line leading-relaxed">{collapseUrls(post.content)}</p>
+        <p className="text-sm text-text-secondary whitespace-pre-line leading-relaxed">{stripUrls(post.content)}</p>
 
         {/* Link previews */}
         <LinkPreview text={post.content} maxPreviews={3} />
@@ -164,15 +164,10 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   );
 }
 
-/** Collapse full URLs in text to domain-only (e.g. "https://www.naver.com/long/path" → "naver.com") */
-function collapseUrls(text: string): string {
-  return text.replace(/(?:https?:\/\/|www\.)[^\s<>"')\]]+/g, (url) => {
-    try {
-      const full = url.startsWith("http") ? url : `https://${url}`;
-      const hostname = new URL(full).hostname.replace(/^www\./, "");
-      return hostname;
-    } catch {
-      return url;
-    }
-  });
+/** Strip URLs from text (OG cards handle link display). Trims leftover blank lines. */
+function stripUrls(text: string): string {
+  return text
+    .replace(/(?:https?:\/\/|www\.)[^\s<>"')\]]+/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }

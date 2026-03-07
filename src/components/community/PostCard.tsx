@@ -42,9 +42,9 @@ export default function PostCard({ post, onPress }: PostCardProps) {
         </h3>
       )}
 
-      {/* Content preview — URLs collapsed to domain */}
+      {/* Content preview — URLs stripped (OG cards handle links) */}
       <p className="mt-1 text-base text-text-secondary line-clamp-2">
-        {collapseUrls(post.content)}
+        {stripUrls(post.content)}
       </p>
 
       {/* Link previews (OG cards + direct image URLs) */}
@@ -93,13 +93,9 @@ function getTimeAgo(dateStr: string): string {
   });
 }
 
-function collapseUrls(text: string): string {
-  return text.replace(/(?:https?:\/\/|www\.)[^\s<>"')\]]+/g, (url) => {
-    try {
-      const full = url.startsWith("http") ? url : `https://${url}`;
-      return new URL(full).hostname.replace(/^www\./, "");
-    } catch {
-      return url;
-    }
-  });
+function stripUrls(text: string): string {
+  return text
+    .replace(/(?:https?:\/\/|www\.)[^\s<>"')\]]+/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
