@@ -1,84 +1,39 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useState, useEffect, useCallback } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, Pencil } from "lucide-react";
 import { getTeamBySlug } from "@/lib/constants/teams";
-import GlassCard from "@/components/ui/GlassCard";
-import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import TeamLogo from "@/components/ui/TeamLogo";
 import PostList from "@/components/community/PostList";
 import WritePost from "@/components/community/WritePost";
-import NewsCarousel from "@/components/news/NewsCarousel";
-import { MOCK_NEWS } from "@/lib/constants/news";
-import TeamVideos from "@/components/team/TeamVideos";
-import {
-  getPositionGroup,
-  type PositionGroup,
-} from "@/lib/constants/players";
 import type { Post } from "@/lib/types";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { usePosts, createPost } from "@/lib/supabase/usePosts";
+import { supabase } from "@/lib/supabase/client";
 
-type PageTab = "board" | "players";
-type SortTab = "latest" | "popular";
-
-function generateMockPosts(teamSlug: string): Post[] {
-  const team = getTeamBySlug(teamSlug);
-  if (!team) return [];
-
-  const titles = [
-    "오늘의 선발 라인업 예상",
-    "이번 시즌 기대되는 신인 선수",
-    "어제 경기 하이라이트 리뷰",
-    "연봉 협상 소식 정리",
-    "올해 우승 가능성 분석",
-    "응원가 새 버전 나왔네요",
-    "직관 후기 공유합니다",
-    "트레이드 루머 어떻게 생각하시나요?",
-    "이번 주 3연전 프리뷰",
-    "MVP 후보 토론",
-  ];
-
-  const authors = [
-    { nickname: "야구광팬", level: 15, title: "골드글러브", myTeamId: team.id, avatarUrl: null },
-    { nickname: "직관러", level: 8, title: "레귤러", myTeamId: team.id, avatarUrl: null },
-    { nickname: "통계매니아", level: 22, title: "MVP", myTeamId: team.id, avatarUrl: null },
-    { nickname: "신입팬", level: 2, title: "루키", myTeamId: team.id, avatarUrl: null },
-    { nickname: "올드팬", level: 30, title: "명예의전당", myTeamId: team.id, avatarUrl: null },
-  ];
-
-  return titles.map((title, i) => ({
-    id: i + 1,
-    boardType: "team" as const,
-    boardId: teamSlug,
-    authorId: `user-${i}`,
-    title,
-    content: "게시글 내용이 여기에 표시됩니다. 목업 데이터입니다.",
-    imageUrls: i % 3 === 0 ? ["/placeholder.jpg"] : [],
-    likeCount: Math.floor(Math.random() * 50) + 1,
-    commentCount: Math.floor(Math.random() * 30),
-    isReported: false,
-    createdAt: new Date(Date.now() - i * 3600000 * (i + 1)).toISOString(),
-    author: authors[i % authors.length],
-  }));
-}
-
-const POSITION_ORDER: PositionGroup[] = ["투수", "포수", "내야수", "외야수"];
+type PageTab = "team" | "player";
+type SortTab = "latest" | "hot";
 
 export default function CommunityTeamBoardPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const teamSlug = params.teamId as string;
   const team = getTeamBySlug(teamSlug);
 
-  const [pageTab, setPageTab] = useState<PageTab>("board");
-  const [sortTab, setSortTab] = useState<SortTab>("latest");
+  // URL-driven state
+  const initialTab = (searchParams.get("tab") as PageTab) || "team";
+  const initialSort = (searchParams.get("sort") as SortTab) || "latest";
+  const [pageTab, setPageTab] = useState<PageTab>(initialTab);
+  const [sortTab, setSortTab] = useState<SortTab>(initialSort);
   const [writeOpen, setWriteOpen] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
+
+  const { user, profile } = useAuth();
 
   if (!team) {
     return (
@@ -88,52 +43,35 @@ export default function CommunityTeamBoardPage() {
     );
   }
 
-  const { user } = useAuth();
-  const [showLogin, setShowLogin] = useState(false);
-  const [realNews, setRealNews] = useState<any[]>([]);
+  // Update URL when tab/sort changes
+  const updateUrl = useCallback(
+    (tab: PageTab, sort: SortTab) => {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", tab);
+      url.searchParams.set("sort", sort);
+      window.history.replaceState(null, "", url.toString());
+    },
+    []
+  );
 
-  useEffect(() => {
-    if (!team) return;
-    fetch(`/api/news?team=${team.shortName}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.items?.length) {
-          const teamNames = [
-            team.shortName,
-            team.name,
-            ...(team.id === 1 ? ["LG", "엘지", "트윈스"] : team.id === 2 ? ["두산", "베어스"] : team.id === 3 ? ["KT", "위즈"] : team.id === 4 ? ["SSG", "랜더스"] : team.id === 5 ? ["NC", "다이노스"] : team.id === 6 ? ["KIA", "기아", "타이거즈"] : team.id === 7 ? ["롯데", "자이언츠"] : team.id === 8 ? ["삼성", "라이온즈"] : team.id === 9 ? ["한화", "이글스"] : team.id === 10 ? ["키움", "히어로즈"] : []),
-          ];
-          const filtered = d.items.filter((item: any) =>
-            teamNames.some((n: string) => item.title.includes(n))
-          );
-          const source = filtered.length > 0 ? filtered : d.items;
-          setRealNews(
-            source.map((item: any, i: number) => ({
-              id: 2000 + i,
-              teamId: team.id,
-              title: item.title,
-              source: (() => {
-                try {
-                  return new URL(item.link).hostname.replace("www.", "").replace("m.", "");
-                } catch {
-                  return "뉴스";
-                }
-              })(),
-              sourceUrl: item.link,
-              thumbnailUrl: null,
-              timeAgo: new Date(item.pubDate).toLocaleDateString("ko-KR"),
-              type: "news" as const,
-            }))
-          );
-        }
-      })
-      .catch(() => {});
-  }, [team]);
+  const handleTabChange = (tab: PageTab) => {
+    setPageTab(tab);
+    setSortTab("latest"); // reset sort on tab change
+    updateUrl(tab, "latest");
+    window.scrollTo(0, 0);
+  };
 
+  const handleSortChange = (sort: SortTab) => {
+    setSortTab(sort);
+    updateUrl(pageTab, sort);
+    window.scrollTo(0, 0);
+  };
+
+  // ── Team board posts ──
   const { posts: livePosts, loading: postsLoading, reload } = usePosts("team", teamSlug);
-  const realPosts: Post[] = livePosts.map((p) => ({
+  const teamPosts: Post[] = livePosts.map((p) => ({
     id: p.id,
-    boardType: "team" as any,
+    boardType: "team" as const,
     boardId: teamSlug,
     authorId: p.author_id,
     title: p.title,
@@ -152,44 +90,124 @@ export default function CommunityTeamBoardPage() {
       grade: p.grade,
     },
   }));
-  const mockPosts = generateMockPosts(teamSlug);
-  const posts = [...realPosts, ...mockPosts];
-  const sortedPosts =
-    sortTab === "popular"
-      ? [...posts].sort((a, b) => b.likeCount - a.likeCount)
-      : posts;
 
-  const allRoster: { name: string; position: string; playerId: string; backNo: string }[] =
-    (() => {
-      try {
-        const roster = require("@/lib/constants/players-roster.json") as any[];
-        return roster
-          .filter((p: any) => p.teamId === team.id)
-          .map((p: any) => ({
-            name: p.name,
-            position: p.position || "미정",
-            playerId: p.playerId,
-            backNo: p.backNo || "",
-          }));
-      } catch {
-        return [];
+  // Sort team posts
+  const sortedTeamPosts = sortTab === "hot"
+    ? [...teamPosts]
+        .filter((p) => {
+          const d = new Date(p.createdAt);
+          return Date.now() - d.getTime() < 30 * 24 * 60 * 60 * 1000; // 30 days
+        })
+        .sort((a, b) => b.likeCount - a.likeCount || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    : teamPosts; // already sorted by created_at desc from usePosts
+
+  // ── Player board posts (favorite players) ──
+  const [favPlayerIds, setFavPlayerIds] = useState<string[]>([]);
+  const [favPlayerNames, setFavPlayerNames] = useState<Record<string, string>>({});
+  const [playerPosts, setPlayerPosts] = useState<Post[]>([]);
+  const [playerPostsLoading, setPlayerPostsLoading] = useState(false);
+  const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null); // null = all
+
+  // Load favorite players
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("kbo-fav-players");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setFavPlayerIds(parsed);
+          // Build name map from roster
+          try {
+            const roster = require("@/lib/constants/players-roster.json") as any[];
+            const nameMap: Record<string, string> = {};
+            parsed.forEach((id: string) => {
+              const player = roster.find((p: any) => String(p.playerId) === String(id));
+              if (player) nameMap[id] = player.name;
+            });
+            setFavPlayerNames(nameMap);
+          } catch {
+            // roster not available
+          }
+        }
       }
-    })();
-  const [posFilter, setPosFilter] = useState<string>("전체");
-  const POS_FILTERS = ["전체", "투수", "내야수", "외야수", "포수"];
-  const players =
-    posFilter === "전체" ? allRoster : allRoster.filter((p) => p.position === posFilter);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Load player posts when switching to player tab
+  useEffect(() => {
+    if (pageTab !== "player" || favPlayerIds.length === 0) return;
+
+    async function loadPlayerPosts() {
+      setPlayerPostsLoading(true);
+
+      // Query player board posts for all favorite players
+      let query = supabase
+        .from("posts")
+        .select("id, author_id, board_type, board_id, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
+        .eq("board_type", "player")
+        .in("board_id", favPlayerIds)
+        .neq("is_hidden", true);
+
+      if (sortTab === "hot") {
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        query = query.gte("created_at", thirtyDaysAgo);
+        query = query.order("like_count", { ascending: false });
+      } else {
+        query = query.order("created_at", { ascending: false });
+      }
+
+      query = query.limit(100);
+
+      const { data } = await query;
+
+      if (data) {
+        setPlayerPosts(
+          data.map((p: any) => ({
+            id: p.id,
+            boardType: "player" as const,
+            boardId: p.board_id,
+            authorId: p.author_id,
+            title: p.title,
+            content: p.content,
+            imageUrls: p.image_urls ?? [],
+            likeCount: p.like_count,
+            commentCount: p.comment_count,
+            isReported: false,
+            createdAt: p.created_at,
+            author: {
+              nickname: p.profiles?.nickname || "익명",
+              avatarUrl: null,
+              myTeamId: p.profiles?.team_id || team!.id,
+              level: 1,
+              title: "",
+              grade: p.profiles?.grade,
+            },
+          }))
+        );
+      }
+      setPlayerPostsLoading(false);
+    }
+
+    loadPlayerPosts();
+  }, [pageTab, favPlayerIds, sortTab, team.id]);
+
+  // Filter player posts by selected chip
+  const filteredPlayerPosts = selectedPlayer
+    ? playerPosts.filter((p) => p.boardId === selectedPlayer)
+    : playerPosts;
 
   return (
     <div className="mx-auto max-w-lg">
-      {/* Team gradient header */}
+      {/* Team header (compact) */}
       <div
-        className="relative px-5 pb-5"
+        className="relative px-5 pb-3"
         style={{
           background: `linear-gradient(180deg, ${team.colorPrimary}33 0%, transparent 100%)`,
         }}
       >
-        <div className="flex items-center gap-4 py-5">
+        <div className="flex items-center gap-4 py-4">
           <button
             onClick={() => router.push("/community/teams?pick=true")}
             className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary/50 transition-colors"
@@ -197,7 +215,7 @@ export default function CommunityTeamBoardPage() {
             <ChevronLeft size={24} />
           </button>
           <div className="flex items-center gap-3 flex-1">
-            <TeamLogo team={team} size={64} />
+            <TeamLogo team={team} size={48} />
             <h1 className="text-xl font-bold text-text-primary">{team.name}</h1>
           </div>
           <Link
@@ -209,165 +227,200 @@ export default function CommunityTeamBoardPage() {
         </div>
       </div>
 
-      {/* Team News Carousel */}
-      <div className="mb-2 overflow-hidden">
-        <NewsCarousel
-          news={
-            realNews.length > 0
-              ? realNews.slice(0, 10)
-              : MOCK_NEWS.filter((n) => n.teamId === team.id).slice(0, 10)
-          }
-        />
-      </div>
+      {/* Controls: toggles + write CTA */}
+      <div className="px-5 pb-2 space-y-3">
+        {/* Row 1: Tab toggle + Write CTA */}
+        <div className="flex items-center justify-between">
+          <div className="flex bg-bg-glass rounded-xl p-1">
+            {(["team", "player"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => handleTabChange(tab)}
+                className={`relative px-4 py-2 text-sm font-semibold rounded-lg transition-colors ${
+                  pageTab === tab
+                    ? "bg-text-primary text-bg-primary shadow-sm"
+                    : "text-text-tertiary hover:text-text-secondary"
+                }`}
+              >
+                {tab === "team" ? "팀 게시판" : "선수 게시판"}
+              </button>
+            ))}
+          </div>
 
-      {/* Team Official Videos */}
-      <div className="px-5">
-        <TeamVideos teamSlug={team.slug} />
-      </div>
+          {/* Write CTA — 상단 고정 */}
+          <button
+            onClick={() => {
+              if (!user) {
+                setShowLogin(true);
+                return;
+              }
+              setWriteOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white transition-colors"
+            style={{ backgroundColor: team.colorPrimary }}
+          >
+            <Pencil size={16} />
+            글쓰기
+          </button>
+        </div>
 
-      <div className="px-5 pb-5">
-        {/* Page tabs: 게시판 / 선수 */}
-        <div className="flex gap-3">
-          {(["board", "players"] as const).map((tab) => (
+        {/* Row 2: Sort toggle */}
+        <div className="flex gap-2">
+          {(["latest", "hot"] as const).map((sort) => (
             <button
-              key={tab}
-              onClick={() => setPageTab(tab)}
-              className={`rounded-full px-5 py-2 text-base font-medium transition-colors ${
-                pageTab === tab
-                  ? "bg-text-primary text-bg-primary"
-                  : "bg-bg-glass text-text-secondary"
+              key={sort}
+              onClick={() => handleSortChange(sort)}
+              className={`px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                sortTab === sort
+                  ? "bg-bg-tertiary text-text-primary"
+                  : "text-text-tertiary hover:text-text-secondary"
               }`}
             >
-              {tab === "board" ? "게시판" : "선수"}
+              {sort === "latest" ? "최신" : "인기"}
             </button>
           ))}
+          {sortTab === "hot" && (
+            <span className="flex items-center text-xs text-text-tertiary ml-1">최근 30일</span>
+          )}
         </div>
+
+        {/* Player chip filters (only on player tab) */}
+        {pageTab === "player" && favPlayerIds.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+            <button
+              onClick={() => setSelectedPlayer(null)}
+              className={`px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
+                selectedPlayer === null
+                  ? "text-white"
+                  : "bg-bg-glass text-text-secondary"
+              }`}
+              style={selectedPlayer === null ? { backgroundColor: team.colorPrimary } : {}}
+            >
+              전체
+            </button>
+            {favPlayerIds.map((pid) => (
+              <button
+                key={pid}
+                onClick={() => setSelectedPlayer(pid)}
+                className={`px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
+                  selectedPlayer === pid
+                    ? "text-white"
+                    : "bg-bg-glass text-text-secondary"
+                }`}
+                style={selectedPlayer === pid ? { backgroundColor: team.colorPrimary } : {}}
+              >
+                {favPlayerNames[pid] || pid}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
+      {/* Content */}
       <AnimatePresence mode="wait">
-        {pageTab === "board" ? (
+        {pageTab === "team" ? (
           <motion.div
-            key="board"
-            initial={{ opacity: 0, x: -20 }}
+            key="team-board"
+            initial={{ opacity: 0, x: -12 }}
             animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.2 }}
+            exit={{ opacity: 0, x: -12 }}
+            transition={{ duration: 0.15 }}
+            className="px-5 py-3"
           >
-            {/* Sort tabs */}
-            <div className="flex gap-4 px-5 pt-2">
-              {(["latest", "popular"] as const).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setSortTab(tab)}
-                  className={`rounded-full px-4 py-1.5 text-base font-medium transition-colors ${
-                    sortTab === tab
-                      ? "bg-bg-tertiary text-text-primary"
-                      : "text-text-tertiary"
-                  }`}
-                >
-                  {tab === "latest" ? "최신" : "인기"}
-                </button>
-              ))}
-            </div>
-
-            {/* Post list */}
-            <div className="px-5 py-4">
-              <PostList posts={sortedPosts} />
-            </div>
+            {postsLoading ? (
+              <div className="space-y-3">
+                {[...Array(5)].map((_, i) => (
+                  <div key={i} className="glass-card p-5 animate-pulse">
+                    <div className="h-4 bg-bg-tertiary rounded w-24 mb-3" />
+                    <div className="h-5 bg-bg-tertiary rounded w-3/4 mb-2" />
+                    <div className="h-4 bg-bg-tertiary rounded w-full" />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <PostList posts={sortedTeamPosts} />
+            )}
           </motion.div>
         ) : (
           <motion.div
-            key="players"
-            initial={{ opacity: 0, x: 20 }}
+            key="player-board"
+            initial={{ opacity: 0, x: 12 }}
             animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 20 }}
-            transition={{ duration: 0.2 }}
-            className="px-5 py-4"
+            exit={{ opacity: 0, x: 12 }}
+            transition={{ duration: 0.15 }}
+            className="px-5 py-3"
           >
-            {/* 포지션 필터 토글 */}
-            <div className="flex gap-2 mb-4 overflow-x-auto scrollbar-hide">
-              {POS_FILTERS.map((f) => (
-                <button
-                  key={f}
-                  onClick={() => setPosFilter(f)}
-                  className={`px-3.5 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
-                    posFilter === f ? "text-white" : "bg-bg-secondary text-text-secondary"
-                  }`}
-                  style={posFilter === f ? { backgroundColor: team.colorPrimary } : {}}
+            {favPlayerIds.length === 0 ? (
+              /* Empty state: no favorite players */
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <p className="text-base text-text-tertiary mb-2">
+                  최애선수를 선택하면<br />선수 게시판이 열려요
+                </p>
+                <Link
+                  href="/my"
+                  className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-colors"
+                  style={{ backgroundColor: team.colorPrimary }}
                 >
-                  {f}
-                </button>
-              ))}
-            </div>
-
-            {players.length === 0 ? (
-              <div className="py-20 text-center text-base text-text-tertiary">
-                선수 데이터 로딩 중...
+                  선수 선택하기
+                </Link>
               </div>
-            ) : (
-              <div className="space-y-2">
-                {players.map((player) => (
-                  <Link
-                    key={player.name}
-                    href={`/community/players/${PLAYER_PHOTO_MAP[player.name] || player.name}`}
-                  >
-                    <GlassCard pressable className="!p-4">
-                      <div className="flex items-center gap-4">
-                        <span
-                          className="text-2xl font-black w-10 text-center tabular-nums"
-                          style={{ color: team.colorLight }}
-                        >
-                          {player.backNo || "-"}
-                        </span>
-                        <PlayerAvatar
-                          name={player.name}
-                          teamId={team.id}
-                          photoUrl={getPlayerPhotoUrl(player.name)}
-                          number={0}
-                          size={56}
-                          showTeamBadge={false}
-                        />
-                        <div className="flex-1 min-w-0">
-                          <span className="text-base font-bold text-text-primary">
-                            {player.name}
-                          </span>
-                          <p className="mt-0.5 text-sm text-text-tertiary">{player.position}</p>
-                        </div>
-                      </div>
-                    </GlassCard>
-                  </Link>
+            ) : playerPostsLoading ? (
+              <div className="space-y-3">
+                {[...Array(5)].map((_, i) => (
+                  <div key={i} className="glass-card p-5 animate-pulse">
+                    <div className="h-4 bg-bg-tertiary rounded w-24 mb-3" />
+                    <div className="h-5 bg-bg-tertiary rounded w-3/4 mb-2" />
+                    <div className="h-4 bg-bg-tertiary rounded w-full" />
+                  </div>
                 ))}
               </div>
+            ) : (
+              <>
+                {/* Player label on each post */}
+                {filteredPlayerPosts.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-text-tertiary">
+                    <p className="text-base">아직 글이 없습니다</p>
+                    <p className="mt-1 text-base">최애선수 게시판에 첫 글을 작성해보세요!</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {filteredPlayerPosts.map((post) => (
+                      <div key={post.id}>
+                        {/* Player name label */}
+                        {!selectedPlayer && (
+                          <div className="mb-1">
+                            <span
+                              className="inline-block px-2 py-0.5 rounded-md text-xs font-semibold text-white"
+                              style={{ backgroundColor: team.colorPrimary + "CC" }}
+                            >
+                              {favPlayerNames[post.boardId] || post.boardId}
+                            </span>
+                          </div>
+                        )}
+                        <PostList posts={[post]} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* FAB — Write post (only on board tab) */}
-      {pageTab === "board" && (
-        <motion.button
-          onClick={() => {
-            if (!user) {
-              setShowLogin(true);
-              return;
-            }
-            setWriteOpen(true);
-          }}
-          className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
-          style={{ backgroundColor: team.colorPrimary }}
-          whileTap={{ scale: 0.9 }}
-          whileHover={{ scale: 1.05 }}
-        >
-          <Pencil size={24} className="text-white" />
-        </motion.button>
-      )}
-
+      {/* Write post modal */}
       <WritePost
         isOpen={writeOpen}
         onClose={() => setWriteOpen(false)}
         teamName={team.name}
         onSubmit={async (title, content, imageUrls) => {
-          await createPost({ boardType: "team", boardId: teamSlug, title, content, imageUrls });
+          await createPost({
+            boardType: pageTab === "team" ? "team" : "player",
+            boardId: pageTab === "team" ? teamSlug : (selectedPlayer || favPlayerIds[0] || teamSlug),
+            title,
+            content,
+            imageUrls,
+          });
           reload();
           setWriteOpen(false);
         }}
