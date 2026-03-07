@@ -16,11 +16,41 @@ interface Props {
   nickname: string;
 }
 
+/**
+ * iOS Safari 배경 스크롤 방지:
+ * - html + body 둘 다 overflow: hidden 필요 (body만으로는 iOS에서 안 먹음)
+ * - position: fixed는 쓰지 않음 (시트 내부 스크롤 죽이는 부작용)
+ * - touch-action도 쓰지 않음 (부모-자식 intersection 규칙으로 자식 스크롤 무력화)
+ */
+function lockBodyScroll() {
+  const scrollY = window.scrollY;
+  document.documentElement.style.overflow = "hidden";
+  document.body.style.overflow = "hidden";
+  document.body.dataset.scrollLockY = String(scrollY);
+}
+
+function unlockBodyScroll() {
+  document.documentElement.style.overflow = "";
+  document.body.style.overflow = "";
+  const scrollY = parseInt(document.body.dataset.scrollLockY || "0", 10);
+  delete document.body.dataset.scrollLockY;
+  window.scrollTo(0, scrollY);
+}
+
 export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, teamId, nickname }: Props) {
   const { user, refreshProfile } = useAuth();
   const [selected, setSelected] = useState<string | null>(getPresetKey(currentAvatarUrl));
   const [saving, setSaving] = useState(false);
   const team = teamId ? TEAMS.find(t => t.id === teamId) : null;
+
+  useEffect(() => {
+    if (isOpen) {
+      lockBodyScroll();
+    }
+    return () => {
+      unlockBodyScroll();
+    };
+  }, [isOpen]);
 
   const handleSelect = async (key: string | null) => {
     if (!user || saving) return;
@@ -48,7 +78,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             className="fixed inset-0 z-50 bg-black/60"
           />
 
-          {/* Sheet — PlayerSelectModal과 동일한 패턴: 단순 max-h + overflow-y-auto */}
+          {/* Sheet */}
           <motion.div
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
@@ -68,8 +98,8 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
               </button>
             </div>
 
-            {/* 스크롤 영역 — 검증된 패턴: max-h + overflow-y-auto만 사용 */}
-            <div className="max-h-[60vh] overflow-y-auto px-5 pb-8">
+            {/* 스크롤 영역 */}
+            <div className="max-h-[60vh] overflow-y-scroll px-5 pb-8" style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
               {/* 기본(이니셜) 옵션 */}
               <button
                 onClick={() => handleSelect(null)}
