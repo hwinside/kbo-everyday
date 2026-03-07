@@ -55,21 +55,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // 초기 세션 확인
     supabase.auth.getSession().then(async ({ data: { session } }) => {
-      setUser(session?.user ?? null);
       if (session?.user) {
         await loadProfile(session.user.id);
+        setUser(session.user); // profile 로드 완료 후에 user 세팅 (닉네임 깜빡임 방지)
+      } else {
+        setUser(null);
       }
-      setLoading(false); // loadProfile 완료 후에 false
+      setLoading(false);
     });
 
     // 인증 상태 변화 구독
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
-        setUser(session?.user ?? null);
         if (session?.user) {
           await loadProfile(session.user.id);
+          setUser(session.user); // profile 먼저 로드 후 user 세팅
         } else {
           setProfile(null);
+          setUser(null);
         }
         setLoading(false);
       }
