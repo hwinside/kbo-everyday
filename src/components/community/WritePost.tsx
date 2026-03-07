@@ -63,13 +63,9 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit }: Write
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
-            className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-bg-secondary overflow-y-auto"
-            style={{ maxHeight: "90vh" }}
+            className="fixed inset-0 z-50 bg-bg-primary overflow-y-auto flex flex-col"
           >
-            <div className="flex justify-center pt-2">
-              <div className="h-1 w-10 rounded-full bg-text-tertiary" />
-            </div>
-            <div className="flex items-center justify-between px-5 py-3">
+            <div className="flex items-center justify-between px-5 py-3" style={{ paddingTop: "max(env(safe-area-inset-top, 0px), 12px)" }}>
               <button onClick={onClose} className="text-text-secondary p-1">
                 <X size={24} />
               </button>
@@ -84,7 +80,7 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit }: Write
                 등록
               </button>
             </div>
-            <div className="px-5 pb-8 space-y-4">
+            <div className="px-5 pb-8 space-y-4 flex-1 flex flex-col">
               <input
                 type="text"
                 placeholder="제목"
@@ -97,8 +93,7 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit }: Write
                 placeholder="내용을 입력하세요"
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
-                rows={6}
-                className="w-full resize-none rounded-xl bg-bg-tertiary px-5 py-4 text-base text-text-primary placeholder:text-text-tertiary outline-none"
+                className="w-full flex-1 min-h-[200px] resize-none rounded-xl bg-bg-tertiary px-5 py-4 text-base text-text-primary placeholder:text-text-tertiary outline-none"
               />
               {images.length > 0 && (
                 <div className="flex gap-2 overflow-x-auto hide-scrollbar">
