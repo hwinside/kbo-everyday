@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { supabase } from "./client";
-import type { User, Session } from "@supabase/supabase-js";
+import type { User } from "@supabase/supabase-js";
 
 interface Profile {
   id: string;
@@ -35,10 +35,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function loadProfile(userId: string) {
+  async function loadProfile(accessToken: string, userId: string) {
     try {
-      // 1차: 서버 API (쿠키 인증 + service role로 RLS 우회 — 가장 안정적)
-      const res = await fetch("/api/me", { credentials: "include" });
+      // 1차: Bearer 토큰으로 서버 API 호출 (쿠키 의존 X — iOS PWA 안전)
+      const res = await fetch("/api/me", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
       if (res.ok) {
         const json = await res.json();
         if (json.profile) {
@@ -47,7 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
     } catch {
-      // 서버 API 실패 시 클라이언트로 fallback
+      // 서버 API 실패 시 fallback
     }
 
     try {
@@ -57,7 +59,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .select("*")
         .eq("id", userId)
         .single();
-
       setProfile(!error && data ? data : null);
     } catch {
       setProfile(null);
@@ -65,15 +66,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function refreshProfile() {
-    if (user) await loadProfile(user.id);
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user && session.access_token) {
+      await loadProfile(session.access_token, session.user.id);
+    }
   }
 
   useEffect(() => {
     async function syncSession() {
       const { data: { session } } = await supabase.auth.getSession();
       setUser(session?.user ?? null);
-      if (session?.user) {
-        await loadProfile(session.user.id);
+      if (session?.user && session.access_token) {
+        await loadProfile(session.access_token, session.user.id);
       } else {
         setProfile(null);
       }
@@ -85,8 +89,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
         setUser(session?.user ?? null);
-        if (session?.user) {
-          await loadProfile(session.user.id);
+        if (session?.user && session.access_token) {
+          await loadProfile(session.access_token, session.user.id);
         } else {
           setProfile(null);
         }
