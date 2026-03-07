@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useLayoutEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -16,21 +16,42 @@ const item = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0 } };
 export default function CommunityTeamsPage() {
   const router = useRouter();
   const [myTeamId, setMyTeamId] = useState<number | null>(null);
+  const [redirecting, setRedirecting] = useState(false);
 
-  useEffect(() => {
-    const pick = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("pick");
+  // 가능한 한 "paint" 전에 리다이렉트해서 팀 선택 화면이 깜빡이는 느낌을 줄임
+  useLayoutEffect(() => {
+    const pick =
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("pick");
     const id = getMyTeamId();
     setMyTeamId(id);
+
     // myTeam 설정 시 바로 해당 팀 게시판으로 (pick=true면 팀 선택 모드이므로 건너뜀)
     if (id && !pick) {
       const team = getTeamById(id);
       if (team) {
+        setRedirecting(true);
         router.replace(`/community/teams/${team.slug}`);
       }
     }
   }, [router]);
 
+  // hydration 이후에도 myTeamId는 계속 세팅해둠 (다른 UI에서 필요)
+  useEffect(() => {
+    if (myTeamId !== null) return;
+    const id = getMyTeamId();
+    setMyTeamId(id);
+  }, [myTeamId]);
+
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
+
+  if (redirecting) {
+    return (
+      <div className="mx-auto max-w-lg px-5 pb-24">
+        <div className="mt-8 text-sm text-text-tertiary">내 팀 게시판으로 이동 중…</div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-lg px-5 pb-24">
