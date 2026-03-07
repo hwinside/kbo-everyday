@@ -109,6 +109,18 @@ function RankingContent() {
 
   const def = STAT_DEFS[stat];
 
+  // 🔍 임시 디버그 (하이라이트 진단용 — 확인 후 제거)
+  useEffect(() => {
+    console.log("[HIGHLIGHT DEBUG]", {
+      myTeamId,
+      profileTeamId: profile?.team_id,
+      lsTeamId: getMyTeamId(),
+      favIds: [...favoriteIdSet],
+      favNames: [...favoriteNameSet],
+      profileFavs: profile?.favorite_players?.length ?? 0,
+      lsFavs: getFavoritePlayers().length,
+    });
+  }, [myTeamId, favoriteIdSet, favoriteNameSet, profile]);
 
   useEffect(() => {
     if (!def) return;
