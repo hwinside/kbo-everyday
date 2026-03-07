@@ -35,15 +35,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function loadProfile(userId: string) {
+  async function loadProfile(userId: string, retries = 2) {
     try {
       const { data, error } = await supabase
         .from("profiles")
         .select("*")
         .eq("id", userId)
         .single();
-      setProfile(error ? null : data);
+
+      if (error || !data) {
+        // OAuth 직후 세션 토큰이 아직 확정 안 된 경우 RLS 실패 가능 → 재시도
+        if (retries > 0) {
+          await new Promise((r) => setTimeout(r, 500));
+          return loadProfile(userId, retries - 1);
+        }
+        setProfile(null);
+      } else {
+        setProfile(data);
+      }
     } catch {
+      if (retries > 0) {
+        await new Promise((r) => setTimeout(r, 500));
+        return loadProfile(userId, retries - 1);
+      }
       setProfile(null);
     }
   }
