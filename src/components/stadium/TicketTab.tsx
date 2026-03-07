@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Ticket, AlertTriangle } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
@@ -220,27 +220,12 @@ export default function TicketTab({
 }: Props) {
   const [filter, setFilter] = useState<"all" | number>("all");
   const [writeOpen, setWriteOpen] = useState(false);
-  const [fabVisible, setFabVisible] = useState(true);
 
   const tickets = MOCK_TICKETS.filter((t) =>
     (venueId === "all" || String(t.venue_id) === String(venueId)) &&
     (filter === "all" || t.team_id === filter)
   );
 
-  // Hide FAB on scroll down (avoid covering content). Low-risk heuristic.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    let lastY = window.scrollY;
-    const onScroll = () => {
-      const y = window.scrollY;
-      const goingDown = y > lastY;
-      if (Math.abs(y - lastY) < 12) return;
-      setFabVisible(!goingDown || y < 80);
-      lastY = y;
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
 
   return (
     <div className="space-y-3">
@@ -318,14 +303,12 @@ export default function TicketTab({
           {tickets.map(t => <TicketCard key={t.id} ticket={t} />)}
         </div>
       )}
-      {fabVisible && (
-        <button
-          onClick={() => setWriteOpen(true)}
-          className="fixed bottom-28 right-5 z-[51] w-14 h-14 rounded-full bg-accent text-white shadow-lg flex items-center justify-center text-2xl"
-        >
-          🎫
-        </button>
-      )}
+      <button
+        onClick={() => setWriteOpen(true)}
+        className="fixed bottom-28 right-5 z-[51] w-14 h-14 rounded-full bg-accent text-white shadow-lg flex items-center justify-center text-2xl"
+      >
+        🎫
+      </button>
 
       <AnimatePresence>
         {writeOpen && <WriteTicketModal isOpen={writeOpen} onClose={() => setWriteOpen(false)} venueId={venueId} />}
