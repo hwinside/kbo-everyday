@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -111,10 +111,13 @@ export default function CommunityTeamBoardPage() {
   const [playerPostsLoading, setPlayerPostsLoading] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null); // null = all
 
-  // Derived
-  const favPlayerIds = favPlayers.map((p) => p.playerId);
-  const favPlayerNames: Record<string, string> = {};
-  favPlayers.forEach((p) => { favPlayerNames[p.playerId] = p.name; });
+  // Derived (memoized to avoid infinite re-render loops in useEffect deps)
+  const favPlayerIds = useMemo(() => favPlayers.map((p) => p.playerId), [favPlayers]);
+  const favPlayerNames = useMemo(() => {
+    const m: Record<string, string> = {};
+    favPlayers.forEach((p) => { m[p.playerId] = p.name; });
+    return m;
+  }, [favPlayers]);
 
   // Load favorite players from SSOT (favorites store)
   useEffect(() => {
@@ -179,7 +182,8 @@ export default function CommunityTeamBoardPage() {
     }
 
     loadPlayerPosts();
-  }, [pageTab, favPlayerIds, sortTab, team.id]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageTab, favPlayerIds.join(","), sortTab, team!.id]);
 
   // Filter player posts by selected chip
   const filteredPlayerPosts = selectedPlayer
