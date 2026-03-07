@@ -52,7 +52,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
 
   return (
     <section className="mt-6">
-      <h2 className="text-lg font-bold text-text-primary mb-3">🎬 내 팀 하이라이트</h2>
+      <h2 className="text-lg font-semibold leading-[26px] text-text-primary mb-3">🎬 내 팀 하이라이트</h2>
       <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide" style={{ scrollSnapType: "x mandatory" }}>
         {videos.slice(0, 10).map((v, i) => (
           <div
@@ -68,11 +68,11 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
                 <Play size={28} className="text-white fill-white opacity-80" />
               </div>
               {v.label && (
-                <span className="absolute top-2 left-2 px-1.5 py-0.5 rounded-full bg-accent/80 text-[10px] font-semibold text-white">
+                <span className="absolute top-2 left-2 px-1.5 py-0.5 rounded-full bg-accent/80 text-xs font-semibold text-white">
                   {v.label}
                 </span>
               )}
-              <p className="absolute bottom-2 left-2 right-2 text-[11px] text-white font-medium line-clamp-2 leading-tight">
+              <p className="absolute bottom-2 left-2 right-2 text-xs leading-[18px] text-white font-medium line-clamp-2">
                 {v.title}
               </p>
             </div>
