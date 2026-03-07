@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Check } from "lucide-react";
 import { PRESET_AVATARS, getPresetKey } from "@/lib/constants/avatars";
@@ -17,24 +17,67 @@ interface Props {
 }
 
 /**
- * iOS Safari 배경 스크롤 방지:
- * - html + body 둘 다 overflow: hidden 필요 (body만으로는 iOS에서 안 먹음)
- * - position: fixed는 쓰지 않음 (시트 내부 스크롤 죽이는 부작용)
- * - touch-action도 쓰지 않음 (부모-자식 intersection 규칙으로 자식 스크롤 무력화)
+ * iOS Safari body-scroll-lock 패턴:
+ * - overflow:hidden은 iOS Safari에서 배경 스크롤을 막지 못함
+ * - position:fixed는 시트 내부 스크롤을 죽임
+ * - touch-action:none은 자식의 pan-y를 무력화함
+ * → touchmove 이벤트에서 스크롤 영역 바깥만 preventDefault하는 게 유일한 해법
  */
-function lockBodyScroll() {
-  const scrollY = window.scrollY;
-  document.documentElement.style.overflow = "hidden";
-  document.body.style.overflow = "hidden";
-  document.body.dataset.scrollLockY = String(scrollY);
-}
+function useBodyScrollLock(isOpen: boolean, scrollRef: React.RefObject<HTMLDivElement | null>) {
+  const startYRef = useRef(0);
 
-function unlockBodyScroll() {
-  document.documentElement.style.overflow = "";
-  document.body.style.overflow = "";
-  const scrollY = parseInt(document.body.dataset.scrollLockY || "0", 10);
-  delete document.body.dataset.scrollLockY;
-  window.scrollTo(0, scrollY);
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const scrollEl = scrollRef.current;
+
+    function isInsideScroll(target: EventTarget | null): boolean {
+      let el = target as Element | null;
+      while (el && el !== document.body) {
+        if (el === scrollEl) return true;
+        el = el.parentElement;
+      }
+      return false;
+    }
+
+    function onTouchStart(e: TouchEvent) {
+      startYRef.current = e.touches[0].clientY;
+    }
+
+    function onTouchMove(e: TouchEvent) {
+      // 스크롤 영역 바깥: 무조건 차단
+      if (!isInsideScroll(e.target)) {
+        e.preventDefault();
+        return;
+      }
+
+      // 스크롤 영역 안: 경계 체크 (overscroll → 배경으로 전파 방지)
+      if (scrollEl) {
+        const deltaY = e.touches[0].clientY - startYRef.current;
+        const { scrollTop, scrollHeight, clientHeight } = scrollEl;
+        const atTop = scrollTop <= 0;
+        const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
+
+        // 스크롤할 콘텐츠가 없거나, 끝에서 더 당기는 경우
+        if (scrollHeight <= clientHeight) {
+          e.preventDefault(); // 스크롤할 게 없음
+        } else if (atTop && deltaY > 0) {
+          e.preventDefault(); // 맨 위에서 아래로 당김
+        } else if (atBottom && deltaY < 0) {
+          e.preventDefault(); // 맨 아래에서 위로 당김
+        }
+        // 그 외: 정상 스크롤 허용
+      }
+    }
+
+    document.addEventListener("touchstart", onTouchStart, { passive: true });
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
+
+    return () => {
+      document.removeEventListener("touchstart", onTouchStart);
+      document.removeEventListener("touchmove", onTouchMove);
+    };
+  }, [isOpen, scrollRef]);
 }
 
 export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, teamId, nickname }: Props) {
@@ -42,15 +85,9 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
   const [selected, setSelected] = useState<string | null>(getPresetKey(currentAvatarUrl));
   const [saving, setSaving] = useState(false);
   const team = teamId ? TEAMS.find(t => t.id === teamId) : null;
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (isOpen) {
-      lockBodyScroll();
-    }
-    return () => {
-      unlockBodyScroll();
-    };
-  }, [isOpen]);
+  useBodyScrollLock(isOpen, scrollRef);
 
   const handleSelect = async (key: string | null) => {
     if (!user || saving) return;
@@ -99,7 +136,11 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             </div>
 
             {/* 스크롤 영역 */}
-            <div className="max-h-[60vh] overflow-y-scroll px-5 pb-8" style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
+            <div
+              ref={scrollRef}
+              className="overflow-y-auto px-5 pb-8"
+              style={{ maxHeight: "calc(80vh - 80px)", WebkitOverflowScrolling: "touch" }}
+            >
               {/* 기본(이니셜) 옵션 */}
               <button
                 onClick={() => handleSelect(null)}
