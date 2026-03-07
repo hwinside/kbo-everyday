@@ -2,6 +2,8 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { supabase } from "./client";
+import { setMyTeamId } from "@/lib/store/myteam";
+import { setFavoritePlayers } from "@/lib/store/favorites";
 import type { User } from "@supabase/supabase-js";
 
 interface Profile {
@@ -35,6 +37,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
+  function syncProfileToLocal(p: Profile) {
+    // 로그인 시 DB 프로필 → localStorage 동기화
+    if (p.team_id) setMyTeamId(p.team_id);
+    if (p.favorite_players?.length) setFavoritePlayers(p.favorite_players);
+  }
+
   async function loadProfile(accessToken: string, userId: string) {
     // 1차: 서버 API (Bearer 토큰 + service role — 가장 안정적)
     try {
@@ -45,6 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const json = await res.json();
         if (json.profile) {
           setProfile(json.profile);
+          syncProfileToLocal(json.profile);
           return;
         }
       }
@@ -64,6 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const data = await res.json();
         if (data && data.id) {
           setProfile(data);
+          syncProfileToLocal(data);
           return;
         }
       }
@@ -76,7 +86,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .select("*")
         .eq("id", userId)
         .single();
-      setProfile(!error && data ? data : null);
+      if (!error && data) {
+        setProfile(data);
+        syncProfileToLocal(data);
+      } else {
+        setProfile(null);
+      }
     } catch {
       setProfile(null);
     }

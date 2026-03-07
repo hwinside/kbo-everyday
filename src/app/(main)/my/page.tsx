@@ -38,7 +38,7 @@ export default function MyPage() {
   useEffect(() => {
     setTeamId(getMyTeamId());
     setFavPlayers(getFavoritePlayers());
-  }, []);
+  }, [profile]);
 
   const team = teamId ? getTeamById(teamId) : null;
 
