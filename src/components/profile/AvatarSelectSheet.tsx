@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Check } from "lucide-react";
 import { PRESET_AVATARS, getPresetKey } from "@/lib/constants/avatars";
@@ -21,6 +21,24 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
   const [selected, setSelected] = useState<string | null>(getPresetKey(currentAvatarUrl));
   const [saving, setSaving] = useState(false);
   const team = teamId ? TEAMS.find(t => t.id === teamId) : null;
+
+  // iOS scroll bleed-through 방지
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+      document.body.style.position = 'fixed';
+      document.body.style.width = '100%';
+      document.body.style.top = `-${window.scrollY}px`;
+    }
+    return () => {
+      const scrollY = document.body.style.top;
+      document.body.style.overflow = '';
+      document.body.style.position = '';
+      document.body.style.width = '';
+      document.body.style.top = '';
+      window.scrollTo(0, parseInt(scrollY || '0') * -1);
+    };
+  }, [isOpen]);
 
   const handleSelect = async (key: string | null) => {
     if (!user || saving) return;
@@ -52,7 +70,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
             className="fixed bottom-0 left-0 right-0 z-50 mx-auto max-w-lg rounded-t-3xl bg-bg-secondary border-t border-white/10 flex flex-col"
-            style={{ maxHeight: "65vh" }}
+            style={{ maxHeight: "70vh" }}
           >
             {/* Handle */}
             <div className="mx-auto mt-3 mb-2 h-1 w-10 rounded-full bg-text-tertiary/30 flex-shrink-0" />
