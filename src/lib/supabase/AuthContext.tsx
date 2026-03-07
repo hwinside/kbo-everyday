@@ -55,12 +55,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     async function syncSession() {
       const { data: { session } } = await supabase.auth.getSession();
+      // user는 즉시 세팅 (auth truth). profile은 별도 비동기.
+      setUser(session?.user ?? null);
       if (session?.user) {
         await loadProfile(session.user.id);
-        setUser(session.user);
       } else {
         setProfile(null);
-        setUser(null);
       }
       setLoading(false);
     }
@@ -71,12 +71,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // 인증 상태 변화 구독
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
+        // user는 즉시 세팅. profile 로드 실패해도 user는 유지.
+        setUser(session?.user ?? null);
         if (session?.user) {
           await loadProfile(session.user.id);
-          setUser(session.user);
         } else {
           setProfile(null);
-          setUser(null);
         }
         setLoading(false);
       }
