@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { X, Ticket } from "lucide-react";
 import TicketTab from "@/components/stadium/TicketTab";
 import { STADIUMS } from "@/lib/constants/stadiums";
+import { TEAMS } from "@/lib/constants/teams";
 
 export default function TicketBoardPage() {
   const router = useRouter();
@@ -24,7 +25,7 @@ export default function TicketBoardPage() {
   }, [venue]);
 
   const venueId = stadium ? stadium.id : "all";
-  const teamIds = stadium ? stadium.teamIds : [];
+  const teamIds = stadium ? stadium.teamIds : TEAMS.map((t) => t.id);
 
   return (
     <div className="mx-auto max-w-lg pb-24">
@@ -43,7 +44,13 @@ export default function TicketBoardPage() {
               <span className="font-semibold text-text-primary">{stadium.name}</span>
               <span className="text-text-tertiary">필터 적용됨</span>
               <button
-                onClick={() => router.replace("/community/tickets")}
+                onClick={() => {
+                  setVenue(null);
+                  if (typeof window !== "undefined") {
+                    window.history.replaceState({}, "", "/community/tickets");
+                  }
+                  router.replace("/community/tickets");
+                }}
                 className="ml-1 rounded-full p-1 hover:bg-white/10"
                 aria-label="필터 해제"
               >
