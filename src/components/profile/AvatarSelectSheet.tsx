@@ -17,67 +17,29 @@ interface Props {
 }
 
 /**
- * iOS Safari body-scroll-lock 패턴:
- * - overflow:hidden은 iOS Safari에서 배경 스크롤을 막지 못함
- * - position:fixed는 시트 내부 스크롤을 죽임
- * - touch-action:none은 자식의 pan-y를 무력화함
- * → touchmove 이벤트에서 스크롤 영역 바깥만 preventDefault하는 게 유일한 해법
+ * iOS Safari body-scroll-lock:
+ * body를 position:fixed로 고정 → 배경 스크롤 완전 차단
+ * 시트는 이미 position:fixed이므로 내부 스크롤에 영향 없음
  */
-function useBodyScrollLock(isOpen: boolean, scrollRef: React.RefObject<HTMLDivElement | null>) {
-  const startYRef = useRef(0);
-
+function useBodyScrollLock(isOpen: boolean) {
   useEffect(() => {
     if (!isOpen) return;
 
-    const scrollEl = scrollRef.current;
-
-    function isInsideScroll(target: EventTarget | null): boolean {
-      let el = target as Element | null;
-      while (el && el !== document.body) {
-        if (el === scrollEl) return true;
-        el = el.parentElement;
-      }
-      return false;
-    }
-
-    function onTouchStart(e: TouchEvent) {
-      startYRef.current = e.touches[0].clientY;
-    }
-
-    function onTouchMove(e: TouchEvent) {
-      // 스크롤 영역 바깥: 무조건 차단
-      if (!isInsideScroll(e.target)) {
-        e.preventDefault();
-        return;
-      }
-
-      // 스크롤 영역 안: 경계 체크 (overscroll → 배경으로 전파 방지)
-      if (scrollEl) {
-        const deltaY = e.touches[0].clientY - startYRef.current;
-        const { scrollTop, scrollHeight, clientHeight } = scrollEl;
-        const atTop = scrollTop <= 0;
-        const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
-
-        // 스크롤할 콘텐츠가 없거나, 끝에서 더 당기는 경우
-        if (scrollHeight <= clientHeight) {
-          e.preventDefault(); // 스크롤할 게 없음
-        } else if (atTop && deltaY > 0) {
-          e.preventDefault(); // 맨 위에서 아래로 당김
-        } else if (atBottom && deltaY < 0) {
-          e.preventDefault(); // 맨 아래에서 위로 당김
-        }
-        // 그 외: 정상 스크롤 허용
-      }
-    }
-
-    document.addEventListener("touchstart", onTouchStart, { passive: true });
-    document.addEventListener("touchmove", onTouchMove, { passive: false });
+    const scrollY = window.scrollY;
+    const { style } = document.body;
+    style.position = "fixed";
+    style.top = `-${scrollY}px`;
+    style.width = "100%";
+    style.overflow = "hidden";
 
     return () => {
-      document.removeEventListener("touchstart", onTouchStart);
-      document.removeEventListener("touchmove", onTouchMove);
+      style.position = "";
+      style.top = "";
+      style.width = "";
+      style.overflow = "";
+      window.scrollTo(0, scrollY);
     };
-  }, [isOpen, scrollRef]);
+  }, [isOpen]);
 }
 
 export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, teamId, nickname }: Props) {
@@ -87,7 +49,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
   const team = teamId ? TEAMS.find(t => t.id === teamId) : null;
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  useBodyScrollLock(isOpen, scrollRef);
+  useBodyScrollLock(isOpen);
 
   const handleSelect = async (key: string | null) => {
     if (!user || saving) return;
@@ -139,7 +101,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             <div
               ref={scrollRef}
               className="overflow-y-auto px-5 pb-8"
-              style={{ maxHeight: "calc(80vh - 80px)", WebkitOverflowScrolling: "touch" }}
+              style={{ maxHeight: "calc(80vh - 80px)", overscrollBehavior: "contain" }}
             >
               {/* 기본(이니셜) 옵션 */}
               <button
