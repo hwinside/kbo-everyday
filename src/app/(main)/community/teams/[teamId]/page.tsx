@@ -31,6 +31,8 @@ export default function CommunityTeamBoardPage() {
   const [pageTab, setPageTab] = useState<PageTab>(initialTab);
   const [sortTab, setSortTab] = useState<SortTab>(initialSort);
   const [writeOpen, setWriteOpen] = useState(false);
+  const [writePlayerTarget, setWritePlayerTarget] = useState<string | null>(null);
+  const [playerPickerOpen, setPlayerPickerOpen] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
 
   const { user, profile } = useAuth();
@@ -254,7 +256,25 @@ export default function CommunityTeamBoardPage() {
                 setShowLogin(true);
                 return;
               }
-              setWriteOpen(true);
+              if (pageTab === "player") {
+                // 선수 탭: 선수 선택 후 글쓰기
+                if (favPlayerIds.length === 0) {
+                  // 최애선수 0명 → 선수 선택 유도
+                  router.push("/my");
+                  return;
+                }
+                if (favPlayerIds.length === 1 || selectedPlayer) {
+                  // 1명이거나 이미 칩 선택됨 → 바로 글쓰기
+                  setWritePlayerTarget(selectedPlayer || favPlayerIds[0]);
+                  setWriteOpen(true);
+                } else {
+                  // 2명 이상 → 선수 선택 시트 열기
+                  setPlayerPickerOpen(true);
+                }
+              } else {
+                setWritePlayerTarget(null);
+                setWriteOpen(true);
+              }
             }}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white transition-colors"
             style={{ backgroundColor: team.colorPrimary }}
@@ -408,21 +428,71 @@ export default function CommunityTeamBoardPage() {
         )}
       </AnimatePresence>
 
+      {/* Player picker sheet (선수 2명 이상일 때 글쓰기 전 선택) */}
+      <AnimatePresence>
+        {playerPickerOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 bg-black/60"
+              onClick={() => setPlayerPickerOpen(false)}
+            />
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 30, stiffness: 300 }}
+              className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-bg-secondary"
+              style={{ maxHeight: "50vh" }}
+            >
+              <div className="flex justify-center pt-2">
+                <div className="h-1 w-10 rounded-full bg-text-tertiary" />
+              </div>
+              <div className="px-5 py-4">
+                <h3 className="text-lg font-semibold text-text-primary mb-4">어떤 선수 게시판에 쓸까요?</h3>
+                <div className="space-y-2">
+                  {favPlayerIds.map((pid) => (
+                    <button
+                      key={pid}
+                      onClick={() => {
+                        setWritePlayerTarget(pid);
+                        setPlayerPickerOpen(false);
+                        setWriteOpen(true);
+                      }}
+                      className="w-full text-left rounded-xl bg-bg-tertiary px-4 py-3 text-base font-medium text-text-primary hover:bg-bg-glass transition-colors"
+                    >
+                      {favPlayerNames[pid] || pid}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
       {/* Write post modal */}
       <WritePost
         isOpen={writeOpen}
-        onClose={() => setWriteOpen(false)}
-        teamName={team.name}
+        onClose={() => { setWriteOpen(false); setWritePlayerTarget(null); }}
+        teamName={
+          writePlayerTarget
+            ? (favPlayerNames[writePlayerTarget] || writePlayerTarget) + " 게시판"
+            : team.name
+        }
         onSubmit={async (title, content, imageUrls) => {
           await createPost({
-            boardType: pageTab === "team" ? "team" : "player",
-            boardId: pageTab === "team" ? teamSlug : (selectedPlayer || favPlayerIds[0] || teamSlug),
+            boardType: writePlayerTarget ? "player" : "team",
+            boardId: writePlayerTarget || teamSlug,
             title,
             content,
             imageUrls,
           });
           reload();
           setWriteOpen(false);
+          setWritePlayerTarget(null);
         }}
       />
       {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
