@@ -1,4 +1,4 @@
-const CACHE_NAME = "kbo-everyday-v10";
+const CACHE_NAME = "kbo-everyday-v11";
 
 const PRECACHE_ASSETS = ["/", "/offline"];
 
@@ -37,17 +37,36 @@ self.addEventListener("fetch", (event) => {
   const isCacheable = CACHEABLE_EXTENSIONS.some((e) => `.${ext}` === e);
 
   if (isCacheable) {
-    event.respondWith(
-      caches.match(request).then((cached) => {
-        const fetchPromise = fetch(request).then((response) => {
-          if (response.ok) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-          }
-          return response;
-        });
-        return cached || fetchPromise;
-      })
-    );
+    // Network-first for JS (최신 빌드 즉시 반영), cache-first for static assets
+    const isScript = `.${ext}` === ".js" || `.${ext}` === ".css";
+
+    if (isScript) {
+      // Network-first: 네트워크 먼저, 실패 시 캐시
+      event.respondWith(
+        fetch(request)
+          .then((response) => {
+            if (response.ok) {
+              const clone = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+            }
+            return response;
+          })
+          .catch(() => caches.match(request).then((c) => c || new Response("Offline", { status: 503 })))
+      );
+    } else {
+      // Stale-while-revalidate for images/fonts
+      event.respondWith(
+        caches.match(request).then((cached) => {
+          const fetchPromise = fetch(request).then((response) => {
+            if (response.ok) {
+              const clone = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+            }
+            return response;
+          });
+          return cached || fetchPromise;
+        })
+      );
+    }
   }
 });
