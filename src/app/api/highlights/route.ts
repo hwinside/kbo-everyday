@@ -34,6 +34,27 @@ async function searchYouTube(query: string, maxResults: number): Promise<any[]> 
   }
 }
 
+// Supabase fallback: 팀 기반 하이라이트 (YouTube API 실패 시)
+async function getSupabaseFallback(team: string): Promise<any[]> {
+  if (!SUPABASE_URL) return [];
+  try {
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    const { data } = await supabase
+      .from("highlights")
+      .select("video_id, title, thumbnail, channel, published_at")
+      .eq("team", team)
+      .order("published_at", { ascending: false })
+      .limit(30);
+    if (data && data.length > 0) {
+      return data.map((v) => ({
+        id: v.video_id, title: v.title, thumbnail: v.thumbnail,
+        channel: v.channel, publishedAt: v.published_at,
+      }));
+    }
+  } catch { /* ignore */ }
+  return [];
+}
+
 export async function GET(req: NextRequest) {
   const team = req.nextUrl.searchParams.get("team") || "_ALL";
   const playersParam = req.nextUrl.searchParams.get("players") || "";
@@ -109,6 +130,15 @@ export async function GET(req: NextRequest) {
     if (!seen.has(v.id)) {
       seen.add(v.id);
       merged.push(v);
+    }
+  }
+
+  // YouTube 결과가 비어있으면 Supabase fallback (쿼터 초과 등)
+  if (merged.length === 0) {
+    const fallbackItems = await getSupabaseFallback(team);
+    if (fallbackItems.length > 0) {
+      const result = { items: fallbackItems };
+      return NextResponse.json(result);
     }
   }
 
