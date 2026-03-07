@@ -20,6 +20,7 @@ import { getOnboardingStatus, isOnboardingDone, needsPlayerSetup, setOnboardingS
 import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 import NewsCarousel from "@/components/news/NewsCarousel";
 import HomeHighlights from "@/components/home/HomeHighlights";
+import HomeOfficialVideos from "@/components/home/HomeOfficialVideos";
 import LiveGameBanner from "@/components/home/LiveGameBanner";
 import PWAInstallBanner from "@/components/ui/PWAInstallBanner";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
@@ -512,11 +513,12 @@ export default function HomePage() {
       <div className="mb-3">
         <LiveGameBanner />
 
-        <h2 className="text-lg leading-[26px] font-semibold text-text-primary mb-3">📰 내 팀 뉴스</h2>
+        <h2 className="text-lg leading-[26px] font-semibold text-text-primary mb-3">📰 내 팀, 최애선수 관련 뉴스</h2>
         <div className="-mx-5"><NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 10) : (myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 10) : MOCK_NEWS)} /></div>
 
         {/* 하이라이트 영상 */}
         <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
+        <HomeOfficialVideos team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
 
       {favPlayers.length > 0 && (
         <div>
