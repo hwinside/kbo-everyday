@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { Bell, ChevronRight, Crosshair, Flame, User, Users } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
@@ -61,6 +61,38 @@ const item = {
   hidden: { opacity: 0, y: 14 },
   show: { opacity: 1, y: 0, transition: { duration: 0.35 } },
 };
+
+function HeaderAvatar({ user, profile, getTeamColor }: { user: any; profile: any; getTeamColor: (id: number) => string }) {
+  const [imgError, setImgError] = useState(false);
+
+  if (!user || !profile) {
+    return <User size={22} className="text-text-secondary" />;
+  }
+
+  const initial = profile.nickname?.charAt(0) || '?';
+  const bgColor = profile.team_id ? (TEAMS.find(t => t.id === profile.team_id)?.colorPrimary ?? '#6366f1') : '#6366f1';
+
+  if (profile.avatar_url && !imgError) {
+    return (
+      <img
+        src={profile.avatar_url}
+        alt=""
+        className="w-[22px] h-[22px] rounded-full object-cover"
+        referrerPolicy="no-referrer"
+        onError={() => setImgError(true)}
+      />
+    );
+  }
+
+  return (
+    <div
+      className="w-[22px] h-[22px] rounded-full flex items-center justify-center text-[11px] font-bold text-white"
+      style={{ backgroundColor: bgColor }}
+    >
+      {initial}
+    </div>
+  );
+}
 
 function getTeamShortName(teamId: number) {
   return TEAMS.find((t) => t.id === teamId)?.shortName ?? "";
@@ -211,7 +243,20 @@ export default function HomePage() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
   const [showPlayerSetupCTA, setShowPlayerSetupCTA] = useState(false);
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
+  const [welcomeToast, setWelcomeToast] = useState(false);
+
+  // 로그인 후 1회 환영 토스트
+  useEffect(() => {
+    if (user && profile?.nickname) {
+      const key = `welcome_shown_${user.id}`;
+      if (!sessionStorage.getItem(key)) {
+        sessionStorage.setItem(key, '1');
+        setWelcomeToast(true);
+        setTimeout(() => setWelcomeToast(false), 3000);
+      }
+    }
+  }, [user, profile]);
 
   // 오늘의 경기 (API + 시범경기 fallback)
   const [todayGames, setTodayGames] = useState<any[]>(MOCK_GAMES);
@@ -328,6 +373,20 @@ export default function HomePage() {
 
   return (
     <>
+    {/* 환영 토스트 */}
+    <AnimatePresence>
+      {welcomeToast && (
+        <motion.div
+          initial={{ opacity: 0, y: -40 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -40 }}
+          className="fixed top-14 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl bg-bg-secondary border border-white/10 shadow-lg"
+        >
+          <p className="text-sm font-medium text-text-primary">👋 {profile?.nickname}님 환영합니다!</p>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
     <motion.div
       variants={container}
       initial="hidden"
@@ -344,7 +403,7 @@ export default function HomePage() {
             <Bell size={22} />
           </button>
           <Link href="/my" className="rounded-full p-2 hover:bg-bg-tertiary transition-colors">
-            <User size={22} className="text-text-secondary" />
+            <HeaderAvatar user={user} profile={profile} getTeamColor={getTeamColor} />
           </Link>
         </div>
       </motion.header>
