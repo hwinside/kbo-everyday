@@ -192,6 +192,12 @@ function RankingContent() {
         <h1 className="text-3xl font-extrabold tracking-tight">{def.emoji} {def.desc}</h1>
       </div>
 
+      {/* 🔍 임시 디버그 배너 — 확인 후 제거 */}
+      <div className="p-3 mb-3 rounded-xl bg-yellow-500/20 border border-yellow-500/40 text-xs font-mono text-yellow-300 space-y-1">
+        <div>🔍 [DEBUG] profile: {profile ? "✅" : "❌"} | teamId: {myTeamId ?? "null"} | profileTeamId: {profile?.team_id ?? "null"} | lsTeam: {getMyTeamId() ?? "null"}</div>
+        <div>favIds: [{[...favoriteIdSet].join(",")}] | favNames: [{[...favoriteNameSet].join(",")}] | profileFavs: {profile?.favorite_players?.length ?? 0} | lsFavs: {getFavoritePlayers().length}</div>
+      </div>
+
       {/* 뱃지 설명 */}
       <GlassCard className="p-4 mb-3">
         <p className="text-sm text-text-secondary">{def.criteria}</p>
