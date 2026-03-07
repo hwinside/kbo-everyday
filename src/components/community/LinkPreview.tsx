@@ -3,8 +3,8 @@
 import { useState, useEffect } from "react";
 import Image from "next/image";
 
-// Match URLs in text
-const URL_REGEX = /https?:\/\/[^\s<>"')\]]+/g;
+// Match URLs in text (with or without protocol)
+const URL_REGEX = /(?:https?:\/\/|www\.)[^\s<>"')\]]+/g;
 
 // Direct image extensions
 const IMAGE_EXT_REGEX = /\.(jpg|jpeg|png|gif|webp)(\?[^\s]*)?$/i;
@@ -30,8 +30,9 @@ export default function LinkPreview({ text, maxPreviews = 3, stopPropagation = f
     : undefined;
   const [previews, setPreviews] = useState<Map<string, OGData | "loading" | "error">>(new Map());
 
-  // Extract URLs from text
-  const urls = [...new Set(text.match(URL_REGEX) || [])].slice(0, maxPreviews);
+  // Extract URLs from text, normalize www. → https://www.
+  const rawUrls = text.match(URL_REGEX) || [];
+  const urls = [...new Set(rawUrls.map((u) => (u.startsWith("http") ? u : `https://${u}`)))].slice(0, maxPreviews);
 
   useEffect(() => {
     if (urls.length === 0) return;
