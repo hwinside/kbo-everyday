@@ -145,13 +145,13 @@ export default function LinkPreview({ text, maxPreviews = 3, stopPropagation = f
             )}
             <div className="flex-1 min-w-0 px-3 py-2 flex flex-col justify-center">
               {data.siteName && (
-                <p className="text-[11px] text-text-tertiary truncate">{data.siteName}</p>
+                <p className="text-[11px] text-text-tertiary truncate">{decodeEntities(data.siteName)}</p>
               )}
               {data.title && (
-                <p className="text-sm font-semibold text-text-primary line-clamp-1">{data.title}</p>
+                <p className="text-sm font-semibold text-text-primary line-clamp-1">{decodeEntities(data.title)}</p>
               )}
               {data.description && (
-                <p className="text-xs text-text-secondary line-clamp-1 mt-0.5">{data.description}</p>
+                <p className="text-xs text-text-secondary line-clamp-1 mt-0.5">{decodeEntities(data.description)}</p>
               )}
               {!data.title && !data.image && (
                 <p className="text-sm text-accent truncate">🔗 {cleanUrl(url)}</p>
@@ -171,4 +171,25 @@ function cleanUrl(url: string): string {
   } catch {
     return url;
   }
+}
+
+/** Client-side HTML entity decode — defence against cached OG data with raw entities */
+function decodeEntities(s: string | null): string | null {
+  if (!s) return s;
+  if (typeof document !== "undefined") {
+    const el = document.createElement("textarea");
+    el.innerHTML = s;
+    return el.value;
+  }
+  // SSR fallback
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0*39;/g, "'")
+    .replace(/&#x0*27;/gi, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 }
