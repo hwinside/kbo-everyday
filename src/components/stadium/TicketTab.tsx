@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Ticket, AlertTriangle } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
@@ -129,6 +129,9 @@ interface Props {
   // venueId: stadium slug (e.g. jamsil). Use "all" for 전체 보기.
   venueId: string;
   teamIds: number[];
+  showPolicyBanner?: boolean;
+  showHeader?: boolean;
+  onOpenFilters?: () => void;
 }
 
 function WriteTicketModal({ isOpen, onClose, venueId }: { isOpen: boolean; onClose: () => void; venueId: string }) {
@@ -208,16 +211,58 @@ function WriteTicketModal({ isOpen, onClose, venueId }: { isOpen: boolean; onClo
   );
 }
 
-export default function TicketTab({ venueId, teamIds }: Props) {
+export default function TicketTab({
+  venueId,
+  teamIds,
+  showPolicyBanner = true,
+  showHeader = false,
+  onOpenFilters,
+}: Props) {
   const [filter, setFilter] = useState<"all" | number>("all");
   const [writeOpen, setWriteOpen] = useState(false);
+  const [fabVisible, setFabVisible] = useState(true);
+
   const tickets = MOCK_TICKETS.filter((t) =>
     (venueId === "all" || String(t.venue_id) === String(venueId)) &&
     (filter === "all" || t.team_id === filter)
   );
 
+  // Hide FAB on scroll down (avoid covering content). Low-risk heuristic.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let lastY = window.scrollY;
+    const onScroll = () => {
+      const y = window.scrollY;
+      const goingDown = y > lastY;
+      if (Math.abs(y - lastY) < 12) return;
+      setFabVisible(!goingDown || y < 80);
+      lastY = y;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   return (
     <div className="space-y-3">
+      {(showHeader || teamIds.length > 1) && (
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-text-tertiary">팀</span>
+            {teamIds.length > 1 && (
+              <span className="text-[11px] text-text-tertiary">필터</span>
+            )}
+          </div>
+          {onOpenFilters && (
+            <button
+              onClick={onOpenFilters}
+              className="text-xs font-semibold text-text-secondary px-3 py-1.5 rounded-full bg-bg-tertiary"
+            >
+              필터
+            </button>
+          )}
+        </div>
+      )}
+
       {teamIds.length > 1 && (
         <div className="flex gap-2 overflow-x-auto hide-scrollbar pr-2">
           <button
@@ -250,15 +295,17 @@ export default function TicketTab({ venueId, teamIds }: Props) {
         </div>
       )}
 
-      <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-3 flex items-start gap-2">
-        <Ticket size={16} className="text-green-400 mt-0.5 flex-shrink-0" />
-        <div>
-          <p className="text-xs font-bold text-green-300">✅ 정가 이하 양도 원칙</p>
-          <p className="text-xs text-green-200/70 mt-0.5">
-            크보팬은 정가 이하 양도만 허용합니다. 정가보다 비싼 웃돈 거래 적발 시 이용이 제한됩니다.
-          </p>
+      {showPolicyBanner && (
+        <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-3 flex items-start gap-2">
+          <Ticket size={16} className="text-green-400 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-xs font-bold text-green-300">✅ 정가 이하 양도 원칙</p>
+            <p className="text-xs text-green-200/70 mt-0.5">
+              크보팬은 정가 이하 양도만 허용합니다. 정가보다 비싼 웃돈 거래 적발 시 이용이 제한됩니다.
+            </p>
+          </div>
         </div>
-      </div>
+      )}
 
       {tickets.length === 0 ? (
         <div className="text-center py-12 text-text-tertiary">
@@ -271,12 +318,14 @@ export default function TicketTab({ venueId, teamIds }: Props) {
           {tickets.map(t => <TicketCard key={t.id} ticket={t} />)}
         </div>
       )}
-      <button
-        onClick={() => setWriteOpen(true)}
-        className="fixed bottom-20 right-4 z-[51] w-14 h-14 rounded-full bg-accent text-white shadow-lg flex items-center justify-center text-2xl"
-      >
-        🎫
-      </button>
+      {fabVisible && (
+        <button
+          onClick={() => setWriteOpen(true)}
+          className="fixed bottom-28 right-5 z-[51] w-14 h-14 rounded-full bg-accent text-white shadow-lg flex items-center justify-center text-2xl"
+        >
+          🎫
+        </button>
+      )}
 
       <AnimatePresence>
         {writeOpen && <WriteTicketModal isOpen={writeOpen} onClose={() => setWriteOpen(false)} venueId={venueId} />}

@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { X, Ticket } from "lucide-react";
+import { Filter, X, Ticket, ChevronDown } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import TicketTab from "@/components/stadium/TicketTab";
 import { STADIUMS } from "@/lib/constants/stadiums";
 import { TEAMS } from "@/lib/constants/teams";
@@ -10,6 +11,8 @@ import { TEAMS } from "@/lib/constants/teams";
 export default function TicketBoardPage() {
   const router = useRouter();
   const [venue, setVenue] = useState<string | null>(null);
+  const [policyOpen, setPolicyOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
 
   useEffect(() => {
     const v =
@@ -29,13 +32,41 @@ export default function TicketBoardPage() {
 
   return (
     <div className="mx-auto max-w-lg pb-24 overflow-x-hidden">
-      {/* Info banner */}
+      {/* Banner (slim) */}
       <div className="mx-5 mt-4 mb-4">
-        <div className="flex items-center gap-3 rounded-2xl bg-accent/10 p-4">
-          <Ticket size={20} className="text-accent flex-shrink-0" />
-          <p className="text-sm text-text-secondary">
-            티켓을 양도하거나 구하는 게시판입니다. 직거래 시 주의하세요!
-          </p>
+        <div className="rounded-2xl bg-accent/10 p-4">
+          <div className="flex items-center gap-3">
+            <Ticket size={20} className="text-accent flex-shrink-0" />
+            <p className="text-sm text-text-secondary">
+              티켓을 양도하거나 구하는 게시판입니다. 직거래 시 주의하세요.
+            </p>
+          </div>
+
+          <button
+            onClick={() => setPolicyOpen((v) => !v)}
+            className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-text-secondary"
+          >
+            ✅ 정가 이하 양도 원칙 {policyOpen ? "접기" : "보기"}
+            <ChevronDown
+              size={14}
+              className={"transition-transform " + (policyOpen ? "rotate-180" : "")}
+            />
+          </button>
+          <AnimatePresence initial={false}>
+            {policyOpen && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <p className="mt-2 text-xs text-text-tertiary leading-relaxed">
+                  크보팬은 정가 이하 양도만 허용합니다. 정가보다 비싼 웃돈 거래 적발 시
+                  이용이 제한될 수 있습니다.
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {stadium && (
@@ -62,8 +93,98 @@ export default function TicketBoardPage() {
       </div>
 
       <div className="mx-5">
-        <TicketTab venueId={venueId} teamIds={teamIds} />
+        <TicketTab
+          venueId={venueId}
+          teamIds={teamIds}
+          showPolicyBanner={false}
+          showHeader
+          onOpenFilters={() => setFilterOpen(true)}
+        />
       </div>
+
+      <AnimatePresence>
+        {filterOpen && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-end justify-center"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setFilterOpen(false)}
+          >
+            <div className="absolute inset-0 bg-black/60" />
+            <motion.div
+              className="relative w-full max-w-lg bg-bg-secondary rounded-t-2xl border-t border-border p-5 max-h-[85vh] overflow-y-auto"
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-text-primary flex items-center gap-2">
+                  <Filter size={18} /> 필터
+                </h3>
+                <button
+                  onClick={() => setFilterOpen(false)}
+                  className="rounded-full p-2 hover:bg-bg-tertiary"
+                  aria-label="닫기"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <p className="text-xs font-bold text-text-tertiary mb-2">구장</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => {
+                        setVenue(null);
+                        if (typeof window !== "undefined") {
+                          window.history.replaceState({}, "", "/community/tickets");
+                        }
+                        router.replace("/community/tickets");
+                        setFilterOpen(false);
+                      }}
+                      className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                        !stadium
+                          ? "bg-accent text-white"
+                          : "bg-bg-tertiary text-text-secondary"
+                      }`}
+                    >
+                      전체
+                    </button>
+                    {STADIUMS.map((s) => (
+                      <button
+                        key={s.id}
+                        onClick={() => {
+                          setVenue(s.id);
+                          const url = `/community/tickets?venue=${s.id}`;
+                          if (typeof window !== "undefined") {
+                            window.history.replaceState({}, "", url);
+                          }
+                          router.replace(url);
+                          setFilterOpen(false);
+                        }}
+                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                          stadium?.id === s.id
+                            ? "bg-accent text-white"
+                            : "bg-bg-tertiary text-text-secondary"
+                        }`}
+                      >
+                        {s.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="text-xs text-text-tertiary">
+                  날짜 필터는 다음 업데이트에서 추가할게요.
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
