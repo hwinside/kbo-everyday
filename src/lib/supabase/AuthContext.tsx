@@ -83,7 +83,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       profile,
       loading,
-      signOut: async () => { await supabase.auth.signOut(); },
+      signOut: async () => {
+        await supabase.auth.signOut();
+        // Force full reload to clear all client state (PWA included)
+        window.location.href = "/";
+      },
       refreshProfile,
     }}>
       {children}
