@@ -31,13 +31,20 @@ const MOCK_TICKETS: TicketData[] = [
   { id: 2, team_id: 1, venue_id: "jamsil", game_date: "2026-03-29", opponent_team_id: 6, seat_area: "테이블석", seat_detail: "T구역 12번", quantity: 4, price: 35000, original_price: 35000, status: "open", contact_method: "댓글", contact_info: null, description: "4인 테이블석 통째로! 치맥하기 최고 자리", nickname: "직관마스터" },
   { id: 3, team_id: 2, venue_id: "jamsil", game_date: "2026-04-01", opponent_team_id: 8, seat_area: "3루 내야", seat_detail: "블록 305 열 8", quantity: 1, price: 18000, original_price: 18000, status: "open", contact_method: "카톡 오픈채팅", contact_info: null, description: "정가 양도합니다. 두산 vs 삼성", nickname: "곰돌이" },
   { id: 4, team_id: 1, venue_id: "jamsil", game_date: "2026-04-05", opponent_team_id: 4, seat_area: "외야 잔디석", seat_detail: null, quantity: 3, price: 15000, original_price: 15000, status: "open", contact_method: "댓글", contact_info: null, description: "잔디석 3자리. 돗자리 별도 준비하세요~", nickname: "잔디러버" },
+  { id: 5, team_id: 1, venue_id: "jamsil", game_date: "2026-04-12", opponent_team_id: 3, seat_area: "1루 내야", seat_detail: "블록 112 열 5", quantity: 2, price: 15000, original_price: 20000, status: "open", contact_method: "카톡 오픈채팅", contact_info: null, description: "급한 일로 못가서 싸게 양도합니다!", nickname: "야구보고싶다" },
 ];
 
 function PriceBadge({ price, original }: { price: number; original: number | null }) {
+  const isDiscount = original != null && price < original;
+  const discountPct = original ? Math.round((1 - price / original) * 100) : 0;
   return (
     <div className="text-right">
       <span className="text-base font-bold text-text-primary">{price.toLocaleString()}원</span>
-      <div className="text-xs text-green-400">✅ 정가 양도</div>
+      {isDiscount ? (
+        <div className="text-xs text-blue-400">🏷️ {discountPct}% 할인</div>
+      ) : (
+        <div className="text-xs text-green-400">✅ 정가 양도</div>
+      )}
     </div>
   );
 }
@@ -181,9 +188,9 @@ function WriteTicketModal({ isOpen, onClose, venueId }: { isOpen: boolean; onClo
           <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)}
             className="mt-0.5 accent-green-500" />
           <div>
-            <p className="text-xs font-bold text-green-300">정가 양도 원칙에 동의합니다</p>
+            <p className="text-xs font-bold text-green-300">정가 이하 양도 원칙에 동의합니다</p>
             <p className="text-[10px] text-green-200/60 mt-0.5">
-              티켓 정가 이하로만 양도하며, 위반 시 이용이 제한될 수 있습니다.
+              티켓 정가 이하로만 양도하며, 웃돈(정가 초과) 거래 시 이용이 제한될 수 있습니다.
             </p>
           </div>
         </label>
@@ -231,9 +238,9 @@ export default function TicketTab({ venueId, teamIds }: Props) {
       <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-3 flex items-start gap-2">
         <Ticket size={16} className="text-green-400 mt-0.5 flex-shrink-0" />
         <div>
-          <p className="text-xs font-bold text-green-300">✅ 정가 양도 원칙</p>
+          <p className="text-xs font-bold text-green-300">✅ 정가 이하 양도 원칙</p>
           <p className="text-xs text-green-200/70 mt-0.5">
-            크보팬는 정가 양도만 허용합니다. 웃돈 거래 적발 시 이용이 제한됩니다.
+            크보팬은 정가 이하 양도만 허용합니다. 정가보다 비싼 웃돈 거래 적발 시 이용이 제한됩니다.
           </p>
         </div>
       </div>

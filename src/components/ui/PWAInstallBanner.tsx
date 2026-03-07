@@ -100,21 +100,21 @@ export default function PWAInstallBanner() {
 
   return (
     <>
-      {/* 하단 배너 */}
-      <div className="fixed bottom-[calc(60px+env(safe-area-inset-bottom,0px))] left-0 right-0 z-40 px-4 pb-2 animate-slide-up">
-        <div className="mx-auto max-w-lg bg-[rgba(30,30,35,0.95)] backdrop-blur-xl rounded-2xl border border-border p-4 flex items-center gap-3 shadow-lg">
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-text-primary">{isInAppBrowser ? "🌐 브라우저에서 열기" : isNonSafariiOS ? "🧭 Safari에서 열기" : "📲 홈 화면에 추가"}</p>
-            <p className="text-xs text-text-tertiary mt-0.5">{isInAppBrowser ? "외부 브라우저에서 앱을 설치할 수 있어요" : isNonSafariiOS ? "Safari에서만 앱을 설치할 수 있어요" : "앱처럼 빠르게 접속할 수 있어요"}</p>
+      {/* 인라인 슬림 배너 (non-sticky) */}
+      <div className="mx-auto max-w-lg px-5 mb-3">
+        <div className="bg-[rgba(30,30,35,0.95)] backdrop-blur-xl rounded-2xl border border-border px-4 py-2.5 flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-text-primary truncate">{isInAppBrowser ? "🌐 브라우저에서 열기" : isNonSafariiOS ? "🧭 Safari에서 열기" : "📲 홈 화면에 추가"}</p>
+            <p className="text-xs leading-[18px] text-text-tertiary truncate">{isInAppBrowser ? "외부 브라우저에서 앱을 설치할 수 있어요" : isNonSafariiOS ? "Safari에서만 앱을 설치할 수 있어요" : "앱처럼 빠르게 접속할 수 있어요"}</p>
           </div>
           <button
             onClick={install}
-            className="px-4 py-2 bg-accent text-white text-sm font-semibold rounded-xl whitespace-nowrap"
+            className="px-3 py-1.5 bg-accent text-white text-xs font-semibold rounded-xl whitespace-nowrap"
           >
-            {isInAppBrowser ? "브라우저로 열기" : isNonSafariiOS ? "주소 복사" : isIOS ? "방법 보기" : "설치"}
+            {isInAppBrowser ? "열기" : isNonSafariiOS ? "복사" : isIOS ? "방법" : "설치"}
           </button>
-          <button onClick={dismiss} className="text-text-tertiary p-1">
-            <X size={18} />
+          <button onClick={dismiss} className="text-text-tertiary p-0.5 -mr-1">
+            <X size={16} />
           </button>
         </div>
       </div>

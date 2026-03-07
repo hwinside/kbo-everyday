@@ -20,6 +20,7 @@ import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 import NewsCarousel from "@/components/news/NewsCarousel";
 import HomeHighlights from "@/components/home/HomeHighlights";
 import LiveGameBanner from "@/components/home/LiveGameBanner";
+import PWAInstallBanner from "@/components/ui/PWAInstallBanner";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { TEAMS, getTeamById } from "@/lib/constants/teams";
@@ -346,6 +347,9 @@ export default function HomePage() {
           </Link>
         </div>
       </motion.header>
+
+      {/* PWA 설치 배너 (인라인, 홈에서만) */}
+      <PWAInstallBanner />
 
       {/* 스킵 유저: 최애선수 설정 CTA (헤더 바로 아래) */}
       {showPlayerSetupCTA && myTeamId && (

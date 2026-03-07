@@ -3,7 +3,7 @@
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Check, Star, Search } from "lucide-react";
 import Image from "next/image";
@@ -55,6 +55,25 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
     ? allPlayers.filter(p => p.name.includes(search))
     : showAll ? [...allPlayers].sort((a, b) => a.name.localeCompare(b.name, 'ko')) : myTeamPlayers;
   const displayPlayers = allDisplayPlayers.slice(0, visibleCount);
+
+  // 무한스크롤 IntersectionObserver
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && visibleCount < allDisplayPlayers.length) {
+          setVisibleCount(v => Math.min(v + 30, allDisplayPlayers.length));
+        }
+      },
+      { threshold: 0.1 }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [visibleCount, allDisplayPlayers.length]);
 
   const toggle = (player: PlayerInfo) => {
     setSelected(prev => {
@@ -126,6 +145,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
         )}
 
         <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }}
+          ref={scrollContainerRef}
           className="space-y-2 max-h-[45vh] overflow-y-auto">
           {displayPlayers.length === 0 ? (
             <div className="text-center py-8 text-text-tertiary text-sm">검색 결과가 없습니다</div>
@@ -154,12 +174,9 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
             );
           })}
           {visibleCount < allDisplayPlayers.length && (
-            <button
-              onClick={() => setVisibleCount(v => v + 30)}
-              className="w-full py-2 mt-1 text-xs text-text-tertiary"
-            >
-              더보기 ({allDisplayPlayers.length - visibleCount}명 남음)
-            </button>
+            <div ref={sentinelRef} className="w-full py-3 text-center text-xs text-text-tertiary">
+              로딩 중...
+            </div>
           )}
         </motion.div>
 

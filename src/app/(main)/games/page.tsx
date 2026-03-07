@@ -4,7 +4,9 @@ import { useRouter } from "next/navigation";
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Calendar, ChevronLeft, MapPin, RefreshCw, Trophy } from "lucide-react";
+import { Calendar, ChevronLeft, MapPin, RefreshCw, Trophy, Clock } from "lucide-react";
+import { getMyTeamId } from "@/lib/store/myteam";
+import { getTeamById, TEAMS } from "@/lib/constants/teams";
 import Link from "next/link";
 import DateSelector from "@/components/game/DateSelector";
 import CompactGameCard from "@/components/game/CompactGameCard";
@@ -210,6 +212,14 @@ export default function GamesPage() {
 function EmptyGameState({ selectedDate }: { selectedDate: string }) {
   const PRESEASON_START = "2026-03-12";
   const REGULAR_SEASON_START = "2026-03-28";
+  const [myTeamId, setMyTeamId] = useState<number | null>(null);
+
+  useEffect(() => {
+    setMyTeamId(getMyTeamId());
+    const handler = () => setMyTeamId(getMyTeamId());
+    window.addEventListener("team-changed", handler);
+    return () => window.removeEventListener("team-changed", handler);
+  }, []);
 
   const now = new Date();
   // KST today
@@ -316,25 +326,40 @@ function EmptyGameState({ selectedDate }: { selectedDate: string }) {
             다가오는 시범경기 · {formatDateLabel(nextPreseasonDate)}
           </h3>
           <div className="space-y-2">
-            {upcomingGames.map((g, i) => (
+            {upcomingGames.map((g, i) => {
+              const myTeam = myTeamId ? getTeamById(myTeamId) : null;
+              const isMyTeamGame = myTeam && (g.away === myTeam.shortName || g.home === myTeam.shortName);
+              return (
               <motion.div
                 key={`upcoming-${i}`}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.35 + i * 0.05 }}
-                className="rounded-xl bg-bg-secondary border border-border px-4 py-3 flex items-center justify-between"
+                className={`rounded-xl px-4 py-3 flex items-center justify-between ${
+                  isMyTeamGame
+                    ? "border-2 bg-white/5"
+                    : "bg-bg-secondary border border-border"
+                }`}
+                style={isMyTeamGame && myTeam ? { borderColor: `${myTeam.colorLight}60` } : {}}
               >
                 <div className="flex items-center gap-3 text-sm">
-                  <span className="font-semibold text-text-primary w-12 text-right">{g.away}</span>
+                  <span className={`font-semibold w-12 text-right ${isMyTeamGame && g.away === myTeam?.shortName ? "text-accent" : "text-text-primary"}`}>{g.away}</span>
                   <span className="text-text-tertiary text-xs">vs</span>
-                  <span className="font-semibold text-text-primary w-12">{g.home}</span>
+                  <span className={`font-semibold w-12 ${isMyTeamGame && g.home === myTeam?.shortName ? "text-accent" : "text-text-primary"}`}>{g.home}</span>
                 </div>
-                <div className="flex items-center gap-1 text-xs text-text-tertiary">
-                  <MapPin size={12} />
-                  <span>{g.venue}</span>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 text-xs text-text-tertiary">
+                    <Clock size={11} />
+                    <span>13:00</span>
+                  </div>
+                  <div className="flex items-center gap-1 text-xs text-text-tertiary">
+                    <MapPin size={12} />
+                    <span>{g.venue}</span>
+                  </div>
                 </div>
               </motion.div>
-            ))}
+              );
+            })}
           </div>
         </motion.div>
       )}
