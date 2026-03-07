@@ -20,9 +20,14 @@ interface OGData {
 interface LinkPreviewProps {
   text: string;
   maxPreviews?: number;
+  /** Set true when rendered inside a clickable parent (e.g. PostCard button) */
+  stopPropagation?: boolean;
 }
 
-export default function LinkPreview({ text, maxPreviews = 3 }: LinkPreviewProps) {
+export default function LinkPreview({ text, maxPreviews = 3, stopPropagation = false }: LinkPreviewProps) {
+  const handleClick = stopPropagation
+    ? (e: React.MouseEvent) => e.stopPropagation()
+    : undefined;
   const [previews, setPreviews] = useState<Map<string, OGData | "loading" | "error">>(new Map());
 
   // Extract URLs from text
@@ -82,7 +87,7 @@ export default function LinkPreview({ text, maxPreviews = 3 }: LinkPreviewProps)
         // Error — show clean link fallback
         if (data === "error" || !data) {
           return (
-            <a
+            <a onClick={handleClick}
               key={url}
               href={url}
               target="_blank"
@@ -99,7 +104,7 @@ export default function LinkPreview({ text, maxPreviews = 3 }: LinkPreviewProps)
         // Direct image — inline thumbnail
         if (isDirectImage && data.image) {
           return (
-            <a
+            <a onClick={handleClick}
               key={url}
               href={url}
               target="_blank"
@@ -121,7 +126,7 @@ export default function LinkPreview({ text, maxPreviews = 3 }: LinkPreviewProps)
 
         // OG card
         return (
-          <a
+          <a onClick={handleClick}
             key={url}
             href={url}
             target="_blank"

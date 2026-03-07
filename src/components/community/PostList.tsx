@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import PostCard from "./PostCard";
 import type { Post } from "@/lib/types";
@@ -19,6 +20,7 @@ const item = {
 };
 
 export default function PostList({ posts }: PostListProps) {
+  const router = useRouter();
   if (posts.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-text-tertiary">
@@ -37,7 +39,16 @@ export default function PostList({ posts }: PostListProps) {
     >
       {posts.map((post) => (
         <motion.div key={post.id} variants={item}>
-          <PostCard post={post} />
+          <PostCard
+            post={post}
+            onPress={() => {
+              if (post.boardType === "player") {
+                router.push(`/community/players/${post.boardId}/posts/${post.id}`);
+              } else {
+                router.push(`/community/free/${post.id}`);
+              }
+            }}
+          />
         </motion.div>
       ))}
     </motion.div>

@@ -48,7 +48,7 @@ export default function PostCard({ post, onPress }: PostCardProps) {
       </p>
 
       {/* Link previews (OG cards + direct image URLs) */}
-      <LinkPreview text={post.content} maxPreviews={2} />
+      <LinkPreview text={post.content} maxPreviews={2} stopPropagation />
 
       {/* Image preview (uploaded — currently feature-flagged OFF) */}
       {post.imageUrls.length > 0 && (
