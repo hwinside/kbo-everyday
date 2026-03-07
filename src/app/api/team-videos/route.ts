@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { TEAMS } from "@/lib/constants/teams";
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+
 const cache = new Map<string, { data: any; ts: number }>();
 const TTL = 24 * 60 * 60 * 1000; // 24hr
 
@@ -24,7 +28,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(cached.data);
   }
 
-  if (!YOUTUBE_API_KEY) return NextResponse.json({ items: [] });
+  if (!YOUTUBE_API_KEY) return fallback(team.shortName, type);
 
   try {
     const duration = type === "short" ? "short" : "medium";
@@ -33,7 +37,7 @@ export async function GET(req: NextRequest) {
     const res = await fetch(url);
     const data = await res.json();
 
-    if (data.error) return NextResponse.json({ items: [] });
+    if (data.error) return fallback(team.shortName, type);
 
     const items = (data.items || []).map((item: any) => ({
       id: item.id.videoId,
@@ -42,10 +46,38 @@ export async function GET(req: NextRequest) {
       publishedAt: item.snippet.publishedAt,
     }));
 
+    if (items.length === 0) return fallback(team.shortName, type);
+
     const result = { items };
-    if (items.length > 0) cache.set(cacheKey, { data: result, ts: Date.now() });
+    cache.set(cacheKey, { data: result, ts: Date.now() });
     return NextResponse.json(result);
   } catch {
-    return NextResponse.json({ items: [] });
+    return fallback(team.shortName, type);
   }
+}
+
+// YouTube API 실패 시 highlights 테이블에서 같은 팀 데이터로 fallback
+async function fallback(teamShortName: string, type: string) {
+  if (!SUPABASE_URL) return NextResponse.json({ items: [] });
+  try {
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    const { data } = await supabase
+      .from("highlights")
+      .select("video_id, title, thumbnail, published_at")
+      .eq("team", teamShortName)
+      .order("published_at", { ascending: false })
+      .limit(type === "short" ? 20 : 10);
+
+    if (data && data.length > 0) {
+      return NextResponse.json({
+        items: data.map((v) => ({
+          id: v.video_id,
+          title: v.title,
+          thumbnail: v.thumbnail,
+          publishedAt: v.published_at,
+        })),
+      });
+    }
+  } catch { /* ignore */ }
+  return NextResponse.json({ items: [] });
 }
