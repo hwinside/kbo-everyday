@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-03-08 05:50 KST — PR3 사진 게시판 + 인스타 비율
+
+- **환경:** prod/web (Vercel)
+- **Commits:** `932930b50a0e3a5e4f8c0b6e6e1a2c3d4f5a6b7c`, `87fecc44aeb50885b2e81013742cee8f6e2c5b5d`
+- **변경사항:**
+  - 팀탭/선수탭에 [일반/사진] 토글 추가
+  - 인스타 피드형 사진 게시판 (PhotoFeed, WritePhotoPost 컴포넌트)
+  - 캐러셀 스와이프 (1~3장, dot indicator)
+  - 사진 비율 4:5 고정 + object-cover (인스타 방식)
+  - usePosts에 content_type 필터 + 이미지 업로드 함수
+  - Next.js Image remotePatterns에 Supabase Storage 도메인 추가
+  - 팀탭에서 선수 게시판 토글 제거 (선수탭과 중복)
+- **리스크/롤백:** `fb80c52`로 revert 가능. DB content_type 컬럼은 default='general'이라 기존 데이터 영향 없음.
+- **확인 항목:**
+  - [x] 팀탭 일반/사진 토글 정상
+  - [x] 사진 피드 이미지 로딩 정상
+  - [x] 혼합 비율 캐러셀 스와이프 높이 일정
+  - [x] 일반탭 기존 기능 정상
+
+---
+
 ## 2026-03-08 03:41 KST — 커뮤니티 OG 카드 + 게시글 라우팅 정상화
 
 - **환경:** prod/web (Vercel)
