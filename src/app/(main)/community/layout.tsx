@@ -22,12 +22,29 @@ export default function CommunityLayout({
   const router = useRouter();
 
   function handleBack() {
-    // 항상 back 노출. 히스토리가 없으면 홈으로.
-    if (typeof window !== "undefined" && window.history.length > 1) {
-      router.back();
-    } else {
-      router.push("/");
+    // 항상 back 노출. 히스토리가 없거나, /community → redirect 케이스면 홈으로.
+    if (typeof window !== "undefined") {
+      try {
+        const ref = document.referrer;
+        if (ref) {
+          const u = new URL(ref);
+          // /community(root)에서 서버 redirect로 넘어온 경우: back은 루프가 되므로 홈으로 탈출
+          if (u.origin === window.location.origin && u.pathname === "/community") {
+            router.push("/");
+            return;
+          }
+        }
+      } catch {
+        // ignore
+      }
+
+      if (window.history.length > 1) {
+        router.back();
+        return;
+      }
     }
+
+    router.push("/");
   }
 
   // Only show tabs on top-level community pages, not deep nested (e.g. post detail)
