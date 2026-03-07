@@ -14,6 +14,7 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { usePosts, createPost } from "@/lib/supabase/usePosts";
 import { supabase } from "@/lib/supabase/client";
+import { getFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 
 type PageTab = "team" | "player";
 type SortTab = "latest" | "hot";
@@ -104,37 +105,22 @@ export default function CommunityTeamBoardPage() {
     : teamPosts; // already sorted by created_at desc from usePosts
 
   // ── Player board posts (favorite players) ──
-  const [favPlayerIds, setFavPlayerIds] = useState<string[]>([]);
-  const [favPlayerNames, setFavPlayerNames] = useState<Record<string, string>>({});
+  const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
+  const [favPlayersLoaded, setFavPlayersLoaded] = useState(false);
   const [playerPosts, setPlayerPosts] = useState<Post[]>([]);
   const [playerPostsLoading, setPlayerPostsLoading] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null); // null = all
 
-  // Load favorite players
+  // Derived
+  const favPlayerIds = favPlayers.map((p) => p.playerId);
+  const favPlayerNames: Record<string, string> = {};
+  favPlayers.forEach((p) => { favPlayerNames[p.playerId] = p.name; });
+
+  // Load favorite players from SSOT (favorites store)
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("kbo-fav-players");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setFavPlayerIds(parsed);
-          // Build name map from roster
-          try {
-            const roster = require("@/lib/constants/players-roster.json") as any[];
-            const nameMap: Record<string, string> = {};
-            parsed.forEach((id: string) => {
-              const player = roster.find((p: any) => String(p.playerId) === String(id));
-              if (player) nameMap[id] = player.name;
-            });
-            setFavPlayerNames(nameMap);
-          } catch {
-            // roster not available
-          }
-        }
-      }
-    } catch {
-      // ignore
-    }
+    const players = getFavoritePlayers();
+    setFavPlayers(players);
+    setFavPlayersLoaded(true);
   }, []);
 
   // Load player posts when switching to player tab
@@ -370,7 +356,18 @@ export default function CommunityTeamBoardPage() {
             transition={{ duration: 0.15 }}
             className="px-5 py-3"
           >
-            {favPlayerIds.length === 0 ? (
+            {!favPlayersLoaded ? (
+              /* Loading state */
+              <div className="space-y-3">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="glass-card p-5 animate-pulse">
+                    <div className="h-4 bg-bg-tertiary rounded w-24 mb-3" />
+                    <div className="h-5 bg-bg-tertiary rounded w-3/4 mb-2" />
+                    <div className="h-4 bg-bg-tertiary rounded w-full" />
+                  </div>
+                ))}
+              </div>
+            ) : favPlayerIds.length === 0 ? (
               /* Empty state: no favorite players */
               <div className="flex flex-col items-center justify-center py-20 text-center">
                 <p className="text-base text-text-tertiary mb-2">
