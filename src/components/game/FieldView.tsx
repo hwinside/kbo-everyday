@@ -15,13 +15,13 @@ interface FieldViewProps {
 const POSITION_COORDS: Record<string, { top?: string; bottom?: string; left?: string; right?: string; transform?: string }> = {
   P:  { bottom: "100px", left: "50%", transform: "translateX(-50%)" },
   C:  { bottom: "4px", left: "50%", transform: "translateX(-50%)" },
-  "1B": { bottom: "88px", right: "40px" },
-  "2B": { bottom: "135px", right: "80px" },
-  SS: { bottom: "135px", left: "80px" },
-  "3B": { bottom: "88px", left: "40px" },
-  LF: { top: "20px", left: "50px" },
-  CF: { top: "4px", left: "50%", transform: "translateX(-50%)" },
-  RF: { top: "20px", right: "50px" },
+  "1B": { bottom: "88px", right: "80px" },
+  "2B": { bottom: "135px", right: "110px" },
+  SS: { bottom: "135px", left: "110px" },
+  "3B": { bottom: "88px", left: "80px" },
+  LF: { top: "12px", left: "55px" },
+  CF: { top: "2px", left: "50%", transform: "translateX(-50%)" },
+  RF: { top: "12px", right: "55px" },
 };
 
 function PlayerMarker({
