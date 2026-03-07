@@ -44,6 +44,8 @@ export default function PostList({ posts }: PostListProps) {
             onPress={() => {
               if (post.boardType === "player") {
                 router.push(`/community/players/${post.boardId}/posts/${post.id}`);
+              } else if (post.boardType === "team") {
+                router.push(`/community/teams/${post.boardId}/posts/${post.id}`);
               } else {
                 router.push(`/community/free/${post.id}`);
               }

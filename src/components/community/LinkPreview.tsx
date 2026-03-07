@@ -102,7 +102,7 @@ export default function LinkPreview({ text, maxPreviews = 3, stopPropagation = f
 
         const isDirectImage = IMAGE_EXT_REGEX.test(url);
 
-        // Direct image — inline thumbnail
+        // Direct image — inline thumbnail (max 200px height)
         if (isDirectImage && data.image) {
           return (
             <a onClick={handleClick}
@@ -112,48 +112,46 @@ export default function LinkPreview({ text, maxPreviews = 3, stopPropagation = f
               rel="noopener noreferrer"
               className="block rounded-xl overflow-hidden bg-bg-tertiary"
             >
-              <div className="relative w-full max-h-64">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={data.image}
-                  alt="첨부 이미지"
-                  className="w-full max-h-64 object-contain rounded-xl"
-                  loading="lazy"
-                />
-              </div>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={data.image}
+                alt="첨부 이미지"
+                className="w-full max-h-[200px] object-contain rounded-xl"
+                loading="lazy"
+              />
             </a>
           );
         }
 
-        // OG card
+        // OG card — compact horizontal layout (image left + text right)
         return (
           <a onClick={handleClick}
             key={url}
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="block rounded-xl bg-bg-tertiary overflow-hidden hover:bg-bg-glass transition-colors"
+            className="flex rounded-xl bg-bg-tertiary overflow-hidden hover:bg-bg-glass transition-colors border border-white/5"
           >
             {data.image && (
-              <div className="relative w-full h-36 bg-bg-glass">
+              <div className="flex-shrink-0 w-20 h-20 bg-bg-glass">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={data.image}
                   alt={data.title || ""}
-                  className="w-full h-36 object-cover"
+                  className="w-20 h-20 object-cover"
                   loading="lazy"
                 />
               </div>
             )}
-            <div className="px-4 py-3">
+            <div className="flex-1 min-w-0 px-3 py-2 flex flex-col justify-center">
               {data.siteName && (
-                <p className="text-xs text-text-tertiary mb-0.5">{data.siteName}</p>
+                <p className="text-[11px] text-text-tertiary truncate">{data.siteName}</p>
               )}
               {data.title && (
-                <p className="text-sm font-semibold text-text-primary line-clamp-2">{data.title}</p>
+                <p className="text-sm font-semibold text-text-primary line-clamp-1">{data.title}</p>
               )}
               {data.description && (
-                <p className="text-xs text-text-secondary line-clamp-2 mt-0.5">{data.description}</p>
+                <p className="text-xs text-text-secondary line-clamp-1 mt-0.5">{data.description}</p>
               )}
               {!data.title && !data.image && (
                 <p className="text-sm text-accent truncate">🔗 {cleanUrl(url)}</p>
