@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
 
   // 3. YouTube 검색: 팀 + 선수별 병렬
   const teamQuery = team === "_ALL" ? "프로야구 하이라이트" : `${team} 하이라이트`;
-  const teamMaxResults = playerNames.length > 0 ? 20 : 30;
+  const teamMaxResults = playerNames.length > 0 ? 10 : 30;
 
   const searches = [
     searchYouTube(teamQuery, teamMaxResults).then(items =>
