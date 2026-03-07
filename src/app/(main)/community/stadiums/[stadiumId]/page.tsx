@@ -352,10 +352,9 @@ export default function StadiumDetailPage() {
           }
           /* TODO: write post */
         }}
-        className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
-        style={{ backgroundColor: primaryTeam.colorPrimary }}
+        className="fixed bottom-24 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
       >
-        <PenLine className="w-6 h-6 text-white" />
+        <PenLine className="w-6 h-6" />
       </button>
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
     </div>

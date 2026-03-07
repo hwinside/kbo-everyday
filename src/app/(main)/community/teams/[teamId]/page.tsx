@@ -176,25 +176,6 @@ export default function CommunityTeamBoardPage() {
             ))}
           </div>
 
-          {/* Write CTA */}
-          <button
-            onClick={() => {
-              if (!user) {
-                setShowLogin(true);
-                return;
-              }
-              if (contentTab === "photo") {
-                setWritePhotoOpen(true);
-              } else {
-                setWriteOpen(true);
-              }
-            }}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white transition-colors"
-            style={{ backgroundColor: team.colorPrimary }}
-          >
-            <Pencil size={16} />
-            글쓰기
-          </button>
         </div>
 
         {/* Row 2: Sort toggle */}
@@ -261,6 +242,24 @@ export default function CommunityTeamBoardPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* FAB */}
+      <button
+        onClick={() => {
+          if (!user) {
+            setShowLogin(true);
+            return;
+          }
+          if (contentTab === "photo") {
+            setWritePhotoOpen(true);
+          } else {
+            setWriteOpen(true);
+          }
+        }}
+        className="fixed bottom-24 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
+      >
+        <Pencil size={24} />
+      </button>
 
       {/* Write post modal (general) */}
       <WritePost

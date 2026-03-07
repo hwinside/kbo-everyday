@@ -290,13 +290,6 @@ export default function CommunityPlayersPage() {
               </button>
             ))}
           </div>
-          <button
-            onClick={handleWrite}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-accent transition-colors hover:bg-accent/90"
-          >
-            <Pencil size={16} />
-            글쓰기
-          </button>
         </div>
 
         {/* Player chip filters */}
@@ -483,6 +476,14 @@ export default function CommunityPlayersPage() {
           </>
         )}
       </AnimatePresence>
+
+      {/* FAB */}
+      <button
+        onClick={handleWrite}
+        className="fixed bottom-24 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
+      >
+        <Pencil size={24} />
+      </button>
 
       {/* Write post modal (general) */}
       <WritePost
