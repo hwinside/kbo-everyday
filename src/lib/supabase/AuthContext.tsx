@@ -37,27 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function loadProfile(userId: string) {
     try {
-      // 1차: 클라이언트 직접 조회
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", userId)
-        .single();
-
-      if (!error && data) {
-        setProfile(data);
-        return;
-      }
-
-      // 1차 실패 원인 로깅 (RLS 403 vs row없음 PGRST116 vs 네트워크)
-      console.warn("[AuthContext] client profile fetch failed:", {
-        code: error?.code,
-        message: error?.message,
-        details: error?.details,
-        userId,
-      });
-
-      // 2차: 서버사이드 API로 fallback (OAuth 직후 클라이언트 auth 전파 안 된 경우)
+      // 1차: 서버 API (쿠키 인증 + service role로 RLS 우회 — 가장 안정적)
       const res = await fetch("/api/me", { credentials: "include" });
       if (res.ok) {
         const json = await res.json();
@@ -66,8 +46,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
       }
+    } catch {
+      // 서버 API 실패 시 클라이언트로 fallback
+    }
 
-      setProfile(null);
+    try {
+      // 2차: 클라이언트 직접 조회 (fallback)
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", userId)
+        .single();
+
+      setProfile(!error && data ? data : null);
     } catch {
       setProfile(null);
     }
@@ -80,7 +71,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     async function syncSession() {
       const { data: { session } } = await supabase.auth.getSession();
-      // user는 즉시 세팅 (auth truth). profile은 별도 비동기.
       setUser(session?.user ?? null);
       if (session?.user) {
         await loadProfile(session.user.id);
@@ -90,13 +80,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     }
 
-    // 초기 세션 확인
     syncSession();
 
-    // 인증 상태 변화 구독
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
-        // user는 즉시 세팅. profile 로드 실패해도 user는 유지.
         setUser(session?.user ?? null);
         if (session?.user) {
           await loadProfile(session.user.id);
@@ -107,8 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     );
 
-    // iOS PWA: OAuth가 SFSafariViewController에서 완료된 후
-    // 사용자가 PWA로 돌아오면 세션을 재확인해야 함
+    // iOS PWA: OAuth 완료 후 PWA 복귀 시 세션 재확인
     function handleVisibilityChange() {
       if (document.visibilityState === "visible") {
         syncSession();
@@ -128,8 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profile,
       loading,
       signOut: async () => {
-        await supabase.auth.signOut();
-        // Force full reload to clear all client state (PWA included)
+        try { await supabase.auth.signOut(); } catch { /* ignore */ }
         window.location.href = "/";
       },
       refreshProfile,
