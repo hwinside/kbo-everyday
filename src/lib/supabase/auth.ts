@@ -1,11 +1,17 @@
 import { supabase } from "./client";
 
+// Always use the canonical domain for OAuth callbacks.
+// In iOS PWA, window.location.origin can be correct but the OAuth flow
+// opens in SFSafariViewController which won't return to the PWA context.
+// Hardcoding ensures we always land on keubo.fan.
+const CALLBACK_URL = "https://keubo.fan/auth/callback";
+
 /** 구글 로그인 */
 export async function signInWithGoogle() {
   return supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
-      redirectTo: typeof window !== "undefined" ? `${window.location.origin}/auth/callback` : "https://keubo.fan/auth/callback",
+      redirectTo: CALLBACK_URL,
       queryParams: {
         prompt: "select_account",
       },
@@ -18,7 +24,7 @@ export async function signInWithKakao() {
   return supabase.auth.signInWithOAuth({
     provider: "kakao",
     options: {
-      redirectTo: typeof window !== "undefined" ? `${window.location.origin}/auth/callback` : "https://keubo.fan/auth/callback",
+      redirectTo: CALLBACK_URL,
     },
   });
 }
