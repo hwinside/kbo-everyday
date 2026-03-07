@@ -32,7 +32,7 @@ export default function CommunityLayout({
   return (
     <div>
       {isHubLevel && (
-        <div className="sticky top-[env(safe-area-inset-top,0px)] z-30 bg-bg-primary border-b border-border">
+        <div className="sticky top-0 z-30 bg-bg-primary border-b border-border" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
           <div className="mx-auto max-w-lg">
             <h1 className="px-5 pt-4 pb-2 text-xl font-bold text-text-primary">
               커뮤니티
