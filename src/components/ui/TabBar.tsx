@@ -42,7 +42,7 @@ export default function TabBar() {
                 active ? "text-accent" : "text-text-secondary",
               )}
             >
-              <Icon size={22} strokeWidth={active ? 2.5 : 1.5} />
+              <Icon size={22} strokeWidth={active ? 2 : 1.5} fill={active ? "currentColor" : "none"} className={active ? "opacity-90" : ""} />
               <span className="text-xs font-medium">{tab.label}</span>
             </Link>
           );
