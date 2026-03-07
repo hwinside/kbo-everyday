@@ -52,6 +52,19 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
 
   useBodyScrollLock(isOpen);
 
+  // ESC 닫기
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, onClose]);
+
   const handleSelect = async (key: string | null) => {
     if (!user || saving) return;
     setSelected(key);
