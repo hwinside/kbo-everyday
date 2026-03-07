@@ -445,15 +445,17 @@ export default function CommunityTeamBoardPage() {
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
               transition={{ type: "spring", damping: 30, stiffness: 300 }}
-              className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-bg-secondary"
-              style={{ maxHeight: "50vh" }}
+              className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-bg-secondary overflow-y-auto"
+              style={{ maxHeight: "70vh" }}
             >
-              <div className="flex justify-center pt-2">
+              <div className="flex justify-center pt-3">
                 <div className="h-1 w-10 rounded-full bg-text-tertiary" />
               </div>
-              <div className="px-5 py-4">
-                <h3 className="text-lg font-semibold text-text-primary mb-4">어떤 선수 게시판에 쓸까요?</h3>
-                <div className="space-y-2">
+              <div className="flex flex-col h-full">
+                <div className="sticky top-0 bg-bg-secondary px-5 pt-4 pb-3 z-10">
+                  <h3 className="text-xl font-bold text-text-primary">어떤 선수 게시판에 쓸까요?</h3>
+                </div>
+                <div className="px-5 pb-5 space-y-3 overflow-y-auto flex-1">
                   {favPlayerIds.map((pid) => (
                     <button
                       key={pid}
@@ -462,7 +464,7 @@ export default function CommunityTeamBoardPage() {
                         setPlayerPickerOpen(false);
                         setWriteOpen(true);
                       }}
-                      className="w-full text-left rounded-xl bg-bg-tertiary px-4 py-3 text-base font-medium text-text-primary hover:bg-bg-glass transition-colors"
+                      className="w-full text-left rounded-2xl bg-bg-tertiary px-5 py-4 text-lg font-semibold text-text-primary hover:bg-bg-glass active:scale-[0.98] transition-all"
                     >
                       {favPlayerNames[pid] || pid}
                     </button>
