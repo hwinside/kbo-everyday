@@ -1,13 +1,44 @@
 "use client";
 
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
 import GlassCard from "@/components/ui/GlassCard";
+import { getMyTeamId } from "@/lib/store/myteam";
+import { getFavoritePlayers } from "@/lib/store/favorites";
 
 import Link from "next/link";
+
+function hexToRgba(hex: string, alpha: number): string {
+  const cleaned = hex.replace("#", "");
+  const full = cleaned.length === 3
+    ? cleaned.split("").map((c) => c + c).join("")
+    : cleaned;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function getTeamColor(teamId: number): string {
+  return TEAMS.find((t) => t.id === teamId)?.colorPrimary || "#FF6B35";
+}
+
+type StatType = "batter" | "pitcher";
+
+type PlayerRow = {
+  kboId?: string;
+  playerId?: string;
+  name: string;
+  team?: string;
+  teamId?: number;
+  games?: number;
+  doubles?: number;
+  triples?: number;
+  [key: string]: unknown;
+};
 
 // 스탯 정의
 const STAT_DEFS: Record<string, {
@@ -16,7 +47,7 @@ const STAT_DEFS: Record<string, {
   desc: string;
   criteria: string;
   key: string;
-  type: "batter" | "pitcher";
+  type: StatType;
   format?: (v: number) => string;
   higherIsBetter: boolean;
 }> = {
@@ -49,40 +80,68 @@ function RankingContent() {
   const stat = params.stat as string;
   const highlightPlayer = searchParams.get("player");
   const highlightRef = useRef<HTMLDivElement>(null);
-  
-  const [players, setPlayers] = useState<any[]>([]);
+
+  const [players, setPlayers] = useState<PlayerRow[]>([]);
   const [loading, setLoading] = useState(true);
-  
+
+  // NOTE: 클라이언트 페이지라 localStorage를 state initializer에서 바로 로드(불필요한 깜빡임/렌더링 방지)
+  const [myTeamId] = useState<number | null>(() => {
+    try {
+      return getMyTeamId();
+    } catch {
+      return null;
+    }
+  });
+
+  const [favoriteIdSet] = useState<Set<string>>(() => {
+    try {
+      const favs = getFavoritePlayers().slice(0, 5);
+      return new Set(favs.map((f) => String(f.playerId)));
+    } catch {
+      return new Set();
+    }
+  });
+
+  const [favoriteNameSet] = useState<Set<string>>(() => {
+    try {
+      const favs = getFavoritePlayers().slice(0, 5);
+      return new Set(favs.map((f) => f.name));
+    } catch {
+      return new Set();
+    }
+  });
+
   const def = STAT_DEFS[stat];
-  
+
+
   useEffect(() => {
     if (!def) return;
     const type = def.type === "batter" ? "batter" : "pitcher";
-    
+
     fetch(`/api/stats?type=${type}&season=2025`)
-      .then(r => r.json())
-      .then((data: any) => {
-        const rows = data.stats || [];
+      .then((r) => r.json())
+      .then((data: { stats?: PlayerRow[] }) => {
+        const rows: PlayerRow[] = data.stats || [];
         const filtered = def.type === "batter"
-          ? rows.filter((p: any) => (p.games || 0) >= 10)
-          : rows.filter((p: any) => (p.games || 0) >= 5);
-        
-        const sorted = [...filtered].sort((a: any, b: any) => {
-          let aVal = parseFloat(a[def.key]) || 0;
-          let bVal = parseFloat(b[def.key]) || 0;
+          ? rows.filter((p) => (p.games || 0) >= 10)
+          : rows.filter((p) => (p.games || 0) >= 5);
+
+        const sorted = [...filtered].sort((a, b) => {
+          let aVal = Number(a[def.key] ?? 0) || 0;
+          let bVal = Number(b[def.key] ?? 0) || 0;
           if (stat === "doubles") {
             aVal = (a.doubles || 0) + (a.triples || 0);
             bVal = (b.doubles || 0) + (b.triples || 0);
           }
           return def.higherIsBetter ? bVal - aVal : aVal - bVal;
         });
-        
+
         setPlayers(sorted.slice(0, 100));
         setLoading(false);
       })
       .catch(() => setLoading(false));
   }, [stat, def]);
-  
+
   useEffect(() => {
     if (highlightRef.current) {
       setTimeout(() => {
@@ -90,7 +149,15 @@ function RankingContent() {
       }, 300);
     }
   }, [players]);
-  
+
+  const legendItems = useMemo(() => {
+    const items: { key: string; label: string }[] = [];
+    if (highlightPlayer) items.push({ key: "l3", label: "🔗 선택된 선수" });
+    items.push({ key: "l2", label: "★ 최애" });
+    items.push({ key: "l1", label: "내 팀" });
+    return items;
+  }, [highlightPlayer]);
+
   if (!def) {
     return (
       <div className="min-h-screen bg-bg-primary text-text-primary px-5 pt-safe">
@@ -101,14 +168,14 @@ function RankingContent() {
       </div>
     );
   }
-  
-  const getValue = (p: any) => {
+
+  const getValue = (p: PlayerRow) => {
     if (stat === "doubles") return (p.doubles || 0) + (p.triples || 0);
-    return parseFloat(p[def.key]) || 0;
+    return Number(p[def.key] ?? 0) || 0;
   };
-  
-  const formatValue = (v: number) => def.format ? def.format(v) : String(v);
-  
+
+  const formatValue = (v: number) => (def.format ? def.format(v) : String(v));
+
   return (
     <div className="min-h-screen bg-bg-primary text-text-primary px-5 pt-safe pb-24">
       {/* Header */}
@@ -116,61 +183,124 @@ function RankingContent() {
         <button onClick={() => router.back()} className="text-xl">←</button>
         <h1 className="text-3xl font-extrabold tracking-tight">{def.emoji} {def.desc}</h1>
       </div>
-      
+
       {/* 뱃지 설명 */}
-      <GlassCard className="p-4 mb-6">
+      <GlassCard className="p-4 mb-3">
         <p className="text-sm text-text-secondary">{def.criteria}</p>
       </GlassCard>
-      
+
+      {/* Legend */}
+      <div className="mb-6 text-xs text-text-tertiary flex flex-wrap gap-x-3 gap-y-1">
+        {legendItems.map((it) => (
+          <span key={it.key} className="inline-flex items-center gap-1">
+            <span className="opacity-80">•</span>
+            <span>{it.label}</span>
+          </span>
+        ))}
+      </div>
+
       {/* 랭킹 리스트 */}
       {loading ? (
         <div className="text-center py-20 text-text-tertiary">로딩 중...</div>
       ) : (
         <div className="space-y-2">
-          {highlightPlayer && !players.some((p: any) => p.kboId === highlightPlayer || p.playerId === highlightPlayer || p.name === decodeURIComponent(highlightPlayer)) && (
-            <GlassCard className="p-4 mb-4 border border-accent/30">
-              <p className="text-sm text-text-secondary text-center">
-                해당 선수는 현재 Top {players.length} 밖에 위치해 있습니다
-              </p>
-            </GlassCard>
-          )}
+          {highlightPlayer &&
+            !players.some((p) =>
+              p.kboId === highlightPlayer ||
+              p.playerId === highlightPlayer ||
+              p.name === decodeURIComponent(highlightPlayer)
+            ) && (
+              <GlassCard className="p-4 mb-4 border border-accent/30">
+                <p className="text-sm text-text-secondary text-center">
+                  해당 선수는 현재 Top {players.length} 밖에 위치해 있습니다
+                </p>
+              </GlassCard>
+            )}
+
           {players.map((p, i) => {
-            const isHighlight = highlightPlayer && (p.kboId === highlightPlayer || p.playerId === highlightPlayer || p.name === decodeURIComponent(highlightPlayer));
+            const isUrlHighlight =
+              !!highlightPlayer &&
+              (p.kboId === highlightPlayer ||
+                p.playerId === highlightPlayer ||
+                p.name === decodeURIComponent(highlightPlayer));
+
             const val = getValue(p);
             const teamId = p.teamId || 0;
-            
+
+            const isMyTeam = myTeamId != null && teamId === myTeamId;
+            const playerKey = String(p.kboId || p.playerId || "");
+            const isFavorite = favoriteIdSet.has(playerKey) || favoriteNameSet.has(p.name);
+
+            // Priority: L3(URL) > L2(favorite) > L1(my team)
+            const highlightLevel = isUrlHighlight ? 3 : isFavorite ? 2 : isMyTeam ? 1 : 0;
+
+            const teamColor = getTeamColor(teamId);
+
+            const cardStyle: CSSProperties | undefined =
+              highlightLevel === 0
+                ? undefined
+                : highlightLevel === 3
+                  ? undefined
+                  : {
+                      borderLeft: `${highlightLevel === 2 ? 4 : 3}px solid ${hexToRgba(teamColor, highlightLevel === 2 ? 0.9 : 0.6)}`,
+                      backgroundColor: hexToRgba(teamColor, highlightLevel === 2 ? 0.08 : 0.05),
+                    };
+
             return (
-              <div
-                key={p.kboId || p.playerId || i}
-                ref={isHighlight ? highlightRef : undefined}
-              >
+              <div key={p.kboId || p.playerId || i} ref={isUrlHighlight ? highlightRef : undefined}>
                 <Link href={`/community/players/${p.kboId || p.playerId || p.name}`}>
                   <GlassCard
                     pressable
                     className={`p-3 flex items-center gap-3 ${
-                      isHighlight ? "ring-2 ring-accent bg-white/10" : ""
+                      highlightLevel === 3 ? "ring-2 ring-accent bg-white/10" : ""
                     }`}
+                    style={cardStyle}
                   >
                     {/* 순위 */}
-                    <span className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold flex-shrink-0 ${
-                      i === 0 ? "bg-yellow-500/20 text-yellow-400" :
-                      i === 1 ? "bg-gray-400/20 text-gray-300" :
-                      i === 2 ? "bg-amber-700/20 text-amber-600" :
-                      "bg-bg-tertiary text-text-tertiary"
-                    }`}>
+                    <span
+                      className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold flex-shrink-0 ${
+                        i === 0
+                          ? "bg-yellow-500/20 text-yellow-400"
+                          : i === 1
+                            ? "bg-gray-400/20 text-gray-300"
+                            : i === 2
+                              ? "bg-amber-700/20 text-amber-600"
+                              : "bg-bg-tertiary text-text-tertiary"
+                      }`}
+                    >
                       {i + 1}
                     </span>
-                    
+
                     {/* 선수 */}
-                    <PlayerAvatar name={p.name} teamId={teamId} photoUrl={getPlayerPhotoUrl(p.name)} size={44} />
-                    
+                    <PlayerAvatar
+                      name={p.name}
+                      teamId={teamId}
+                      photoUrl={getPlayerPhotoUrl(p.name)}
+                      size={44}
+                    />
+
                     <div className="flex-1 min-w-0">
-                      <span className="text-sm font-semibold text-text-primary">{p.name}</span>
+                      <span className="text-sm font-semibold text-text-primary">
+                        {p.name}
+                        {highlightLevel === 2 && (
+                          <span className="ml-1" role="img" aria-label="최애 선수">
+                            ★
+                          </span>
+                        )}
+                      </span>
                       <span className="ml-1.5 text-xs text-text-tertiary">{p.team}</span>
                     </div>
-                    
+
                     {/* 스탯 값 */}
-                    <span className="text-lg font-bold tabular-nums" style={{ color: isHighlight ? (TEAMS.find(t => t.id === teamId)?.colorLight || "#FF6B35") : undefined }}>
+                    <span
+                      className="text-lg font-bold tabular-nums"
+                      style={{
+                        color:
+                          highlightLevel > 0
+                            ? TEAMS.find((t) => t.id === teamId)?.colorLight || "#FF6B35"
+                            : undefined,
+                      }}
+                    >
                       {formatValue(val)}
                     </span>
                   </GlassCard>
