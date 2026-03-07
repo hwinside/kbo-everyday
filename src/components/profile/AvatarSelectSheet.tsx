@@ -84,7 +84,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             </div>
 
             {/* 스크롤 영역 */}
-            <div className="flex-1 overflow-y-auto px-5 pb-8">
+            <div className="flex-1 overflow-y-auto px-5 pb-8 touch-pan-y" style={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch' }}>
               {/* 기본(이니셜) 옵션 */}
               <button
                 onClick={() => handleSelect(null)}
