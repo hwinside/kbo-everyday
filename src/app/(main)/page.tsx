@@ -98,7 +98,7 @@ function StatusBadge({ status, inning }: { status: string; inning: string | null
 function SectionHeader({ title, href, icon }: { title: string; href?: string; icon?: string }) {
   return (
     <div className="mb-3 flex items-center justify-between">
-      <h2 className="flex items-center gap-2 text-lg font-bold text-text-primary">
+      <h2 className="flex items-center gap-2 text-lg leading-[26px] font-semibold text-text-primary">
         {icon && <span>{icon}</span>} {title}
       </h2>
       {href && (
@@ -362,8 +362,8 @@ export default function HomePage() {
               <span className="text-lg">⭐</span>
             </div>
             <div className="flex-1 text-left">
-              <p className="text-sm font-bold text-text-primary">최애선수 설정하고 홈을 꾸며보세요</p>
-              <p className="text-xs text-text-tertiary mt-0.5">선수 소식/기록을 더 잘 추천해드려요</p>
+              <p className="text-[15px] leading-[22px] font-medium text-text-primary">최애선수 설정하고 홈을 꾸며보세요</p>
+              <p className="text-xs leading-[18px] text-text-tertiary mt-0.5">선수 소식/기록을 더 잘 추천해드려요</p>
             </div>
             <ChevronRight size={18} className="text-text-tertiary" />
           </button>
@@ -387,7 +387,7 @@ export default function HomePage() {
                 <div className="w-7 h-7 rounded-full bg-white p-0.5 flex items-center justify-center">
                   <Image src={myTeam.logoPath} alt="" width={20} height={20} unoptimized className="object-contain" />
                 </div>
-                <span className="text-sm font-bold" style={{ color: myTeam.colorLight }}>MY TEAM</span>
+                <span className="text-xs leading-[18px] font-semibold tracking-wide" style={{ color: myTeam.colorLight }}>MY TEAM</span>
               </div>
 
               {/* Score */}
@@ -428,7 +428,7 @@ export default function HomePage() {
       <div className="mb-3">
         <LiveGameBanner />
 
-        <h2 className="text-lg font-bold text-text-primary mb-3">📰 내 팀 뉴스</h2>
+        <h2 className="text-lg leading-[26px] font-semibold text-text-primary mb-3">📰 내 팀 뉴스</h2>
         <div className="-mx-5"><NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 10) : (myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 10) : MOCK_NEWS)} /></div>
 
         {/* 하이라이트 영상 */}
@@ -470,35 +470,35 @@ export default function HomePage() {
                       size={56}
                     />
                     <div className="text-center">
-                      <p className="text-sm font-bold text-text-primary">{player.name}</p>
-                      <p className="text-[10px] text-text-tertiary">#{player.number} {player.position}</p>
+                      <p className="text-[15px] leading-[22px] font-medium text-text-primary">{player.name}</p>
+                      <p className="text-xs leading-[18px] text-text-tertiary">#{player.number} {player.position}</p>
                     </div>
                     <div className="w-full space-y-1">
                       {isPitcher ? (
                         <>
-                          <div className="flex justify-between text-xs">
+                          <div className="flex justify-between text-xs leading-[18px]">
                             <span className="text-text-tertiary">ERA</span>
-                            <span className="font-bold text-text-primary">{stats.era ?? "3.20"}</span>
+                            <span className="font-medium tabular-nums text-text-primary">{stats.era ?? "3.20"}</span>
                           </div>
-                          <div className="flex justify-between text-xs">
+                          <div className="flex justify-between text-xs leading-[18px]">
                             <span className="text-text-tertiary">승</span>
-                            <span className="font-bold text-text-primary">{stats.wins ?? 10}</span>
+                            <span className="font-medium tabular-nums text-text-primary">{stats.wins ?? 10}</span>
                           </div>
                         </>
                       ) : (
                         <>
-                          <div className="flex justify-between text-xs">
+                          <div className="flex justify-between text-xs leading-[18px]">
                             <span className="text-text-tertiary">타율</span>
-                            <span className="font-bold text-text-primary">{stats.avg}</span>
+                            <span className="font-medium tabular-nums text-text-primary">{stats.avg}</span>
                           </div>
-                          <div className="flex justify-between text-xs">
+                          <div className="flex justify-between text-xs leading-[18px]">
                             <span className="text-text-tertiary">HR/RBI</span>
-                            <span className="font-bold text-text-primary">{stats.hr}/{stats.rbi}</span>
+                            <span className="font-medium tabular-nums text-text-primary">{stats.hr}/{stats.rbi}</span>
                           </div>
                         </>
                       )}
                     </div>
-                    <div className="text-[10px] text-text-tertiary text-center">
+                    <div className="text-xs leading-[18px] text-text-tertiary text-center">
                       {stats.trend} {stats.recent}
                     </div>
                   </div>
@@ -556,8 +556,8 @@ export default function HomePage() {
         <Link href="/predict">
           <div className="flex h-20 items-center rounded-2xl bg-gradient-to-r from-accent/20 to-accent/5 px-5 mb-4">
             <div className="flex-1">
-              <p className="text-base font-bold text-text-primary">🏆 2026 시즌예측</p>
-              <p className="text-xs text-text-secondary">MVP, 우승팀을 예측하세요!</p>
+              <p className="text-[15px] leading-[22px] font-medium text-text-primary">🏆 2026 시즌예측</p>
+              <p className="text-xs leading-[18px] text-text-tertiary">MVP, 우승팀을 예측하세요!</p>
             </div>
             <ChevronRight size={20} className="text-text-tertiary" />
           </div>
@@ -571,8 +571,8 @@ export default function HomePage() {
                 <Crosshair size={22} className="text-accent" />
               </div>
               <div className="flex-1">
-                <p className="text-sm font-bold text-text-primary">적중률 68% · 12승 6패</p>
-                <p className="text-xs text-text-secondary">승부예측 하러가기 →</p>
+                <p className="text-[15px] leading-[22px] font-medium text-text-primary">적중률 68% · 12승 6패</p>
+                <p className="text-xs leading-[18px] text-text-tertiary">승부예측 하러가기 →</p>
               </div>
             </div>
           </GlassCard>
@@ -622,12 +622,12 @@ export default function HomePage() {
                 </span>
                 <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} size={64} />
                 <div className="flex-1 min-w-0 whitespace-nowrap">
-                  <span className="text-sm font-semibold text-text-primary">{player.name}</span>
-                  <span className="ml-1.5 text-xs text-text-tertiary">{player.teamName}</span>
+                  <span className="text-[15px] leading-[22px] font-medium text-text-primary">{player.name}</span>
+                  <span className="ml-1.5 text-xs leading-[18px] text-text-tertiary">{player.teamName}</span>
                 </div>
                 <div className="text-right">
-                  <div className="text-sm font-bold text-accent">오늘 {player.postsToday}글</div>
-                  <div className="text-xs text-text-tertiary">총 {player.totalPosts.toLocaleString()}글</div>
+                  <div className="text-sm font-medium tabular-nums text-accent">오늘 {player.postsToday}글</div>
+                  <div className="text-xs leading-[18px] text-text-tertiary">총 {player.totalPosts.toLocaleString()}글</div>
                 </div>
                 <span className="text-base">
                   {player.trend === "up" ? "🔥" : player.trend === "down" ? "📉" : "➖"}
