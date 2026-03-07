@@ -7,7 +7,7 @@ export default function CommunityPage() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace("/community/free");
+    router.replace("/community/teams");
   }, [router]);
 
   return null;

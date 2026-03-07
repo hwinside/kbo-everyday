@@ -196,10 +196,16 @@ export default function CommunityTeamBoardPage() {
           >
             <ChevronLeft size={24} />
           </button>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-1">
             <TeamLogo team={team} size={64} />
             <h1 className="text-xl font-bold text-text-primary">{team.name}</h1>
           </div>
+          <Link
+            href="/community/teams"
+            className="rounded-full px-3 py-1.5 text-xs font-medium bg-bg-glass text-text-secondary hover:bg-bg-tertiary transition-colors"
+          >
+            다른 팀
+          </Link>
         </div>
       </div>
 
