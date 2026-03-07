@@ -32,5 +32,10 @@ export async function GET() {
     .eq("id", user.id)
     .single();
 
-  return NextResponse.json({ profile });
+  return NextResponse.json({ profile }, {
+    headers: {
+      "Cache-Control": "no-store, no-cache, must-revalidate",
+      "Pragma": "no-cache",
+    },
+  });
 }

@@ -49,6 +49,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      // 1차 실패 원인 로깅 (RLS 403 vs row없음 PGRST116 vs 네트워크)
+      console.warn("[AuthContext] client profile fetch failed:", {
+        code: error?.code,
+        message: error?.message,
+        status: (error as Record<string, unknown>)?.status,
+        userId,
+      });
+
       // 2차: 서버사이드 API로 fallback (OAuth 직후 클라이언트 auth 전파 안 된 경우)
       const res = await fetch("/api/me", { credentials: "include" });
       if (res.ok) {

@@ -19,6 +19,8 @@ import { usePushNotification } from "@/lib/hooks/usePushNotification";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import FeedbackSheet from "@/components/feedback/FeedbackSheet";
+import { PRESET_AVATARS, getAvatarPath, getPresetKey } from "@/lib/constants/avatars";
+import { supabase } from "@/lib/supabase/client";
 
 export default function MyPage() {
   const [teamId, setTeamId] = useState<number | null>(null);
@@ -29,6 +31,7 @@ export default function MyPage() {
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
   const [showPwaGuide, setShowPwaGuide] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [showAvatarSelect, setShowAvatarSelect] = useState(false);
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
   const router = useRouter();
 

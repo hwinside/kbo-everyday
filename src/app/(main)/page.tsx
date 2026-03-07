@@ -24,6 +24,7 @@ import PWAInstallBanner from "@/components/ui/PWAInstallBanner";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { TEAMS, getTeamById } from "@/lib/constants/teams";
+import { getAvatarPath } from "@/lib/constants/avatars";
 import { MOCK_NEWS } from "@/lib/constants/news";
 
 /* ===== Mock Data ===== */
@@ -62,24 +63,21 @@ const item = {
   show: { opacity: 1, y: 0, transition: { duration: 0.35 } },
 };
 
-function HeaderAvatar({ user, profile, getTeamColor }: { user: any; profile: any; getTeamColor: (id: number) => string }) {
-  const [imgError, setImgError] = useState(false);
-
+function HeaderAvatar({ user, profile }: { user: any; profile: any }) {
   if (!user || !profile) {
     return <User size={22} className="text-text-secondary" />;
   }
 
+  const avatarPath = getAvatarPath(profile.avatar_url);
   const initial = profile.nickname?.charAt(0) || '?';
   const bgColor = profile.team_id ? (TEAMS.find(t => t.id === profile.team_id)?.colorPrimary ?? '#6366f1') : '#6366f1';
 
-  if (profile.avatar_url && !imgError) {
+  if (avatarPath) {
     return (
       <img
-        src={profile.avatar_url}
+        src={avatarPath}
         alt=""
         className="w-[22px] h-[22px] rounded-full object-cover"
-        referrerPolicy="no-referrer"
-        onError={() => setImgError(true)}
       />
     );
   }
@@ -403,7 +401,7 @@ export default function HomePage() {
             <Bell size={22} />
           </button>
           <Link href="/my" className="rounded-full p-2 hover:bg-bg-tertiary transition-colors">
-            <HeaderAvatar user={user} profile={profile} getTeamColor={getTeamColor} />
+            <HeaderAvatar user={user} profile={profile} />
           </Link>
         </div>
       </motion.header>
