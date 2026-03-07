@@ -95,37 +95,28 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit }: Write
                 onChange={(e) => setContent(e.target.value)}
                 className="w-full flex-1 min-h-[200px] resize-none rounded-xl bg-bg-tertiary px-5 py-4 text-base text-text-primary placeholder:text-text-tertiary outline-none"
               />
-              {images.length > 0 && (
-                <div className="flex gap-2 overflow-x-auto hide-scrollbar">
-                  {images.map((img, i) => (
-                    <div key={i} className="relative flex-shrink-0 w-20 h-20 rounded-xl overflow-hidden">
-                      <Image src={img.preview} alt={`첨부 ${i + 1}`} fill className="object-cover" unoptimized />
-                      <button
-                        onClick={() => removeImage(i)}
-                        className="absolute top-1 right-1 text-white drop-shadow-lg"
-                      >
-                        <XCircle size={20} fill="rgba(0,0,0,0.6)" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
+              {/* 이미지 미리보기 — 사진 첨부 기능 OFF 동안 숨김 */}
+              {/* 사진 첨부 — 기능 플래그 OFF (모더레이션/Storage 파이프라인 준비 후 오픈) */}
+              {false && (
+                <>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={handleImageSelect}
+                    className="hidden"
+                  />
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={images.length >= 5}
+                    className="flex items-center gap-4 rounded-xl bg-bg-tertiary px-5 py-4 text-base text-text-secondary hover:text-text-primary transition-colors disabled:opacity-40"
+                  >
+                    <ImageIcon size={22} />
+                    사진 첨부 ({images.length}/5)
+                  </button>
+                </>
               )}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={handleImageSelect}
-                className="hidden"
-              />
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={images.length >= 5}
-                className="flex items-center gap-4 rounded-xl bg-bg-tertiary px-5 py-4 text-base text-text-secondary hover:text-text-primary transition-colors disabled:opacity-40"
-              >
-                <ImageIcon size={22} />
-                사진 첨부 ({images.length}/5)
-              </button>
             </div>
           </motion.div>
         </>
