@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -21,14 +22,37 @@ export default function CommunityLayout({
   const pathname = usePathname();
   const router = useRouter();
 
+  useEffect(() => {
+    // 새 탭에서 /community 직접 진입 + 서버 redirect로 /community/teams로 온 케이스는
+    // referrer가 비어있고 history가 2 정도로 잡히는 경우가 있어 back 루프가 발생할 수 있음.
+    // 이 경우 첫 back은 홈으로 보내기 위한 세션 플래그를 심어둔다.
+    if (typeof window === "undefined") return;
+    try {
+      const ref = document.referrer;
+      const hasReferrer = !!ref;
+      if (!hasReferrer && window.location.pathname.startsWith("/community") && window.history.length <= 2) {
+        sessionStorage.setItem("community-direct-entry", "1");
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
   function handleBack() {
     // 항상 back 노출. 히스토리가 없거나, /community → redirect 케이스면 홈으로.
     if (typeof window !== "undefined") {
       try {
+        // 1) direct-entry 플래그가 있으면 첫 back은 무조건 홈
+        if (sessionStorage.getItem("community-direct-entry") === "1") {
+          sessionStorage.removeItem("community-direct-entry");
+          router.push("/");
+          return;
+        }
+
+        // 2) /community(root) → redirect 케이스는 back 루프가 될 수 있으니 referrer로도 방어
         const ref = document.referrer;
         if (ref) {
           const u = new URL(ref);
-          // /community(root)에서 서버 redirect로 넘어온 경우: back은 루프가 되므로 홈으로 탈출
           if (u.origin === window.location.origin && u.pathname === "/community") {
             router.push("/");
             return;
