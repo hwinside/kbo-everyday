@@ -53,23 +53,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    // 초기 세션 확인
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
+    async function syncSession() {
+      const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
         await loadProfile(session.user.id);
-        setUser(session.user); // profile 로드 완료 후에 user 세팅 (닉네임 깜빡임 방지)
+        setUser(session.user);
       } else {
+        setProfile(null);
         setUser(null);
       }
       setLoading(false);
-    });
+    }
+
+    // 초기 세션 확인
+    syncSession();
 
     // 인증 상태 변화 구독
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
         if (session?.user) {
           await loadProfile(session.user.id);
-          setUser(session.user); // profile 먼저 로드 후 user 세팅
+          setUser(session.user);
         } else {
           setProfile(null);
           setUser(null);
@@ -78,7 +82,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     );
 
-    return () => subscription.unsubscribe();
+    // iOS PWA: OAuth가 SFSafariViewController에서 완료된 후
+    // 사용자가 PWA로 돌아오면 세션을 재확인해야 함
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        syncSession();
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      subscription.unsubscribe();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, []);
 
   return (
