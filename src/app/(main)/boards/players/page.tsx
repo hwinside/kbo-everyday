@@ -124,7 +124,7 @@ export default function PlayerBoardRankingPage() {
         {/* 선수 목록 */}
         <div className="space-y-3 pb-20">
           {filtered.slice(0, visibleCount).map((player, i) => (
-            <Link key={i} href={`/boards/players/${player.kboId}`}>
+            <Link key={i} href={`/community/players/${player.kboId}`}>
               <GlassCard pressable className="p-4">
                 <div className="flex items-center gap-4">
                   <span className="text-xl font-bold text-text-tertiary w-8 text-center">

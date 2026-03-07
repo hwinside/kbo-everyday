@@ -30,7 +30,7 @@ export default function StadiumInfo({ name, location, capacity, gameTime, attend
           <MapPin size={16} className="text-text-tertiary flex-shrink-0" />
           <div>
             {stadiumId ? (
-              <Link href={`/stadiums/${stadiumId}`} className="block">
+              <Link href={`/community/stadiums/${stadiumId}`} className="block">
                 {nameContent}
               </Link>
             ) : nameContent}

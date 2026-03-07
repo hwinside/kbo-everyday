@@ -2,19 +2,19 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Heart, MessageCircle, Pencil } from "lucide-react";
+import { Heart, MessageCircle, Pencil, Ticket } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { usePosts, createPost } from "@/lib/supabase/usePosts";
 import WritePost from "@/components/community/WritePost";
 
-export default function FreeBoardPage() {
+export default function TicketBoardPage() {
   const router = useRouter();
   const { user } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
   const [showWrite, setShowWrite] = useState(false);
-  const { posts, loading, reload } = usePosts('free', 'general');
+  const { posts, loading, reload } = usePosts("ticket", "general");
 
   function handleWrite() {
     if (!user) {
@@ -43,7 +43,15 @@ export default function FreeBoardPage() {
 
   return (
     <div className="mx-auto max-w-lg pb-24">
-      <div className="h-3" />
+      {/* Info banner */}
+      <div className="mx-5 mt-4 mb-4">
+        <div className="flex items-center gap-3 rounded-2xl bg-accent/10 p-4">
+          <Ticket size={20} className="text-accent flex-shrink-0" />
+          <p className="text-sm text-text-secondary">
+            티켓을 양도하거나 구하는 게시판입니다. 직거래 시 주의하세요!
+          </p>
+        </div>
+      </div>
 
       {/* Posts */}
       <div className="mx-5 space-y-3">
@@ -53,18 +61,26 @@ export default function FreeBoardPage() {
           </div>
         ) : posts.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-text-tertiary">
-            <p className="text-sm">아직 게시글이 없어요</p>
-            <p className="text-xs mt-1">첫 번째 글을 작성해보세요!</p>
+            <Ticket size={40} className="mb-3 opacity-30" />
+            <p className="text-sm">아직 양도글이 없어요</p>
+            <p className="text-xs mt-1">첫 번째 양도글을 작성해보세요!</p>
           </div>
         ) : (
           posts.map((post) => (
-            <GlassCard key={post.id} pressable className="p-4" onClick={() => router.push(`/community/free/${post.id}`)}>
+            <GlassCard
+              key={post.id}
+              pressable
+              className="p-4"
+              onClick={() => router.push(`/community/free/${post.id}`)}
+            >
               <h3 className="text-sm font-semibold text-text-primary">{post.title}</h3>
               <div className="mt-2 flex items-center gap-4 text-xs text-text-tertiary">
                 <div className="flex items-center">
                   <span>{post.nickname || "익명"}</span>
-                  {post.grade === 'staff' && (
-                    <span className='ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
+                  {post.grade === "staff" && (
+                    <span className="ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full">
+                      운영팀
+                    </span>
                   )}
                 </div>
                 <span>{formatTimeAgo(post.created_at)}</span>
@@ -92,9 +108,15 @@ export default function FreeBoardPage() {
       <WritePost
         isOpen={showWrite}
         onClose={() => setShowWrite(false)}
-        teamName="자유게시판"
+        teamName="티켓양도"
         onSubmit={async (title, content, imageUrls) => {
-          await createPost({ boardType: "free", boardId: "general", title, content, imageUrls });
+          await createPost({
+            boardType: "ticket",
+            boardId: "general",
+            title,
+            content,
+            imageUrls,
+          });
           reload();
           setShowWrite(false);
         }}

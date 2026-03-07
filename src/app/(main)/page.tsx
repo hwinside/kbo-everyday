@@ -352,6 +352,22 @@ export default function HomePage() {
       {/* PWA 설치 배너 (인라인, 홈에서만) */}
       <PWAInstallBanner />
 
+      {/* 퀵액션 버튼 */}
+      <motion.div variants={item} className="flex gap-3 mb-3">
+        <Link href="/community/tickets" className="flex-1">
+          <GlassCard pressable className="flex items-center gap-3 !p-4">
+            <span className="text-lg">🎫</span>
+            <span className="text-[15px] leading-[22px] font-medium text-text-primary">티켓양도</span>
+          </GlassCard>
+        </Link>
+        <Link href="/community/stadiums" className="flex-1">
+          <GlassCard pressable className="flex items-center gap-3 !p-4">
+            <span className="text-lg">🏟️</span>
+            <span className="text-[15px] leading-[22px] font-medium text-text-primary">구장가이드</span>
+          </GlassCard>
+        </Link>
+      </motion.div>
+
       {/* 스킵 유저: 최애선수 설정 CTA (헤더 바로 아래) */}
       {showPlayerSetupCTA && myTeamId && (
         <motion.div variants={item} className="mb-3">
@@ -462,7 +478,7 @@ export default function HomePage() {
               };
               const isPitcher = player.position === "투수";
               return (
-                <Link key={player.playerId} href={`/boards/players/${player.playerId}`}>
+                <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
                   <div
                     className="min-w-[160px] rounded-2xl p-3 flex flex-col items-center gap-2"
                     style={{ background: `linear-gradient(135deg, ${team?.colorPrimary}20, ${team?.colorPrimary}08)` }}
@@ -616,7 +632,7 @@ export default function HomePage() {
         <GlassCard className="p-4">
           <div className="space-y-8">
             {MOCK_HOT_PLAYER_BOARDS.map((player, i) => (
-              <Link key={player.playerId} href={`/boards/players/${player.playerId}`}><div className="flex items-center gap-4">
+              <Link key={player.playerId} href={`/community/players/${player.playerId}`}><div className="flex items-center gap-4">
                 <span className={`flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold ${
                   i === 0 ? "bg-yellow-500/20 text-yellow-400" :
                   i === 1 ? "bg-gray-400/20 text-gray-300" :

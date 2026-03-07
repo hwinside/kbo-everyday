@@ -41,7 +41,7 @@ export default function StadiumDetailPage() {
         className="relative px-5 pt-safe pb-5"
         style={{ background: `linear-gradient(135deg, ${primaryTeam.colorPrimary}20, transparent)` }}
       >
-        <Link href="/stadiums" className="inline-flex items-center gap-1 text-text-secondary mb-3">
+        <Link href="/community/stadiums" className="inline-flex items-center gap-1 text-text-secondary mb-3">
           <ArrowLeft size={20} />
           <span className="text-sm">구장 가이드</span>
         </Link>

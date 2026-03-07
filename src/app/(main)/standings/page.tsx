@@ -139,7 +139,7 @@ function LeaderSection({ title, leaders, router }: { title: string; leaders: Tit
       <h3 className="text-base font-semibold text-text-tertiary mb-3">{title}</h3>
       <div className="space-y-3">
         {shown.map((l) => (
-          <div key={l.rank} onClick={() => l.playerId && router.push(`/boards/players/${l.playerId}`)} className="flex items-center gap-3 cursor-pointer hover:bg-white/5 rounded-lg transition-colors">
+          <div key={l.rank} onClick={() => l.playerId && router.push(`/community/players/${l.playerId}`)} className="flex items-center gap-3 cursor-pointer hover:bg-white/5 rounded-lg transition-colors">
             <span className={clsx("flex h-6 w-6 items-center justify-center rounded-full text-base font-bold",
               l.rank === 1 ? "bg-yellow-500/20 text-yellow-400" :
               l.rank === 2 ? "bg-gray-400/20 text-gray-300" :

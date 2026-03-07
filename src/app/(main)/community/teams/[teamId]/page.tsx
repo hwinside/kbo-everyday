@@ -16,15 +16,12 @@ import NewsCarousel from "@/components/news/NewsCarousel";
 import { MOCK_NEWS } from "@/lib/constants/news";
 import TeamVideos from "@/components/team/TeamVideos";
 import {
-  ALL_LG_PLAYERS,
   getPositionGroup,
-  POSITION_LABELS,
   type PositionGroup,
 } from "@/lib/constants/players";
 import type { Post } from "@/lib/types";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
-import { PLAYER_PROFILES } from "@/lib/constants/player-profiles";
 import { usePosts, createPost } from "@/lib/supabase/usePosts";
 
 type PageTab = "board" | "players";
@@ -73,7 +70,7 @@ function generateMockPosts(teamSlug: string): Post[] {
 
 const POSITION_ORDER: PositionGroup[] = ["투수", "포수", "내야수", "외야수"];
 
-export default function TeamBoardPage() {
+export default function CommunityTeamBoardPage() {
   const params = useParams();
   const router = useRouter();
   const teamSlug = params.teamId as string;
@@ -98,29 +95,43 @@ export default function TeamBoardPage() {
   useEffect(() => {
     if (!team) return;
     fetch(`/api/news?team=${team.shortName}`)
-      .then(r => r.json())
-      .then(d => {
+      .then((r) => r.json())
+      .then((d) => {
         if (d.items?.length) {
-          const teamNames = [team.shortName, team.name, ...(team.id === 1 ? ["LG","엘지","트윈스"] : team.id === 2 ? ["두산","베어스"] : team.id === 3 ? ["KT","위즈"] : team.id === 4 ? ["SSG","랜더스"] : team.id === 5 ? ["NC","다이노스"] : team.id === 6 ? ["KIA","기아","타이거즈"] : team.id === 7 ? ["롯데","자이언츠"] : team.id === 8 ? ["삼성","라이온즈"] : team.id === 9 ? ["한화","이글스"] : team.id === 10 ? ["키움","히어로즈"] : [])];
-          const filtered = d.items.filter((item: any) => teamNames.some((n: string) => item.title.includes(n)));
+          const teamNames = [
+            team.shortName,
+            team.name,
+            ...(team.id === 1 ? ["LG", "엘지", "트윈스"] : team.id === 2 ? ["두산", "베어스"] : team.id === 3 ? ["KT", "위즈"] : team.id === 4 ? ["SSG", "랜더스"] : team.id === 5 ? ["NC", "다이노스"] : team.id === 6 ? ["KIA", "기아", "타이거즈"] : team.id === 7 ? ["롯데", "자이언츠"] : team.id === 8 ? ["삼성", "라이온즈"] : team.id === 9 ? ["한화", "이글스"] : team.id === 10 ? ["키움", "히어로즈"] : []),
+          ];
+          const filtered = d.items.filter((item: any) =>
+            teamNames.some((n: string) => item.title.includes(n))
+          );
           const source = filtered.length > 0 ? filtered : d.items;
-          setRealNews(source.map((item: any, i: number) => ({
-            id: 2000 + i,
-            teamId: team.id,
-            title: item.title,
-            source: (() => { try { return new URL(item.link).hostname.replace("www.", "").replace("m.", ""); } catch { return "뉴스"; } })(),
-            sourceUrl: item.link,
-            thumbnailUrl: null,
-            timeAgo: new Date(item.pubDate).toLocaleDateString("ko-KR"),
-            type: "news" as const,
-          })));
+          setRealNews(
+            source.map((item: any, i: number) => ({
+              id: 2000 + i,
+              teamId: team.id,
+              title: item.title,
+              source: (() => {
+                try {
+                  return new URL(item.link).hostname.replace("www.", "").replace("m.", "");
+                } catch {
+                  return "뉴스";
+                }
+              })(),
+              sourceUrl: item.link,
+              thumbnailUrl: null,
+              timeAgo: new Date(item.pubDate).toLocaleDateString("ko-KR"),
+              type: "news" as const,
+            }))
+          );
         }
       })
       .catch(() => {});
   }, [team]);
 
   const { posts: livePosts, loading: postsLoading, reload } = usePosts("team", teamSlug);
-  const realPosts: Post[] = livePosts.map(p => ({
+  const realPosts: Post[] = livePosts.map((p) => ({
     id: p.id,
     boardType: "team" as any,
     boardId: teamSlug,
@@ -138,7 +149,7 @@ export default function TeamBoardPage() {
       myTeamId: p.team_id || team.id,
       level: 1,
       title: "",
-      grade: p.grade
+      grade: p.grade,
     },
   }));
   const mockPosts = generateMockPosts(teamSlug);
@@ -148,22 +159,26 @@ export default function TeamBoardPage() {
       ? [...posts].sort((a, b) => b.likeCount - a.likeCount)
       : posts;
 
-  // 팀 선수 목록 (로스터 전체)
-  const allRoster: { name: string; position: string; playerId: string; backNo: string }[] = (() => {
-    try {
-      const roster = require("@/lib/constants/players-roster.json") as any[];
-      return roster
-        .filter((p: any) => p.teamId === team.id)
-        .map((p: any) => ({ name: p.name, position: p.position || "미정", playerId: p.playerId, backNo: p.backNo || "" }));
-    } catch { return []; }
-  })();
+  const allRoster: { name: string; position: string; playerId: string; backNo: string }[] =
+    (() => {
+      try {
+        const roster = require("@/lib/constants/players-roster.json") as any[];
+        return roster
+          .filter((p: any) => p.teamId === team.id)
+          .map((p: any) => ({
+            name: p.name,
+            position: p.position || "미정",
+            playerId: p.playerId,
+            backNo: p.backNo || "",
+          }));
+      } catch {
+        return [];
+      }
+    })();
   const [posFilter, setPosFilter] = useState<string>("전체");
   const POS_FILTERS = ["전체", "투수", "내야수", "외야수", "포수"];
-  const players = posFilter === "전체" ? allRoster : allRoster.filter(p => p.position === posFilter);
-  const grouped = POSITION_ORDER.map((group) => ({
-    group,
-    players: players.filter((p) => getPositionGroup(p.position) === group),
-  })).filter((g) => g.players.length > 0);
+  const players =
+    posFilter === "전체" ? allRoster : allRoster.filter((p) => p.position === posFilter);
 
   return (
     <div className="mx-auto max-w-lg">
@@ -176,7 +191,7 @@ export default function TeamBoardPage() {
       >
         <div className="flex items-center gap-4 py-5">
           <button
-            onClick={() => router.back()}
+            onClick={() => router.push("/community/teams")}
             className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary/50 transition-colors"
           >
             <ChevronLeft size={24} />
@@ -186,12 +201,17 @@ export default function TeamBoardPage() {
             <h1 className="text-xl font-bold text-text-primary">{team.name}</h1>
           </div>
         </div>
-
       </div>
 
       {/* Team News Carousel */}
       <div className="mb-2 overflow-hidden">
-        <NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 10) : MOCK_NEWS.filter(n => n.teamId === team.id).slice(0, 10)} />
+        <NewsCarousel
+          news={
+            realNews.length > 0
+              ? realNews.slice(0, 10)
+              : MOCK_NEWS.filter((n) => n.teamId === team.id).slice(0, 10)
+          }
+        />
       </div>
 
       {/* Team Official Videos */}
@@ -265,9 +285,7 @@ export default function TeamBoardPage() {
                   key={f}
                   onClick={() => setPosFilter(f)}
                   className={`px-3.5 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
-                    posFilter === f
-                      ? "text-white"
-                      : "bg-bg-secondary text-text-secondary"
+                    posFilter === f ? "text-white" : "bg-bg-secondary text-text-secondary"
                   }`}
                   style={posFilter === f ? { backgroundColor: team.colorPrimary } : {}}
                 >
@@ -289,18 +307,25 @@ export default function TeamBoardPage() {
                   >
                     <GlassCard pressable className="!p-4">
                       <div className="flex items-center gap-4">
-                        {/* 등번호 */}
-                        <span className="text-2xl font-black w-10 text-center tabular-nums" style={{ color: team.colorLight }}>
+                        <span
+                          className="text-2xl font-black w-10 text-center tabular-nums"
+                          style={{ color: team.colorLight }}
+                        >
                           {player.backNo || "-"}
                         </span>
-                        <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={0} size={56} showTeamBadge={false} />
+                        <PlayerAvatar
+                          name={player.name}
+                          teamId={team.id}
+                          photoUrl={getPlayerPhotoUrl(player.name)}
+                          number={0}
+                          size={56}
+                          showTeamBadge={false}
+                        />
                         <div className="flex-1 min-w-0">
                           <span className="text-base font-bold text-text-primary">
                             {player.name}
                           </span>
-                          <p className="mt-0.5 text-sm text-text-tertiary">
-                            {player.position}
-                          </p>
+                          <p className="mt-0.5 text-sm text-text-tertiary">{player.position}</p>
                         </div>
                       </div>
                     </GlassCard>
@@ -315,7 +340,13 @@ export default function TeamBoardPage() {
       {/* FAB — Write post (only on board tab) */}
       {pageTab === "board" && (
         <motion.button
-          onClick={() => { if (!user) { setShowLogin(true); return; } setWriteOpen(true); }}
+          onClick={() => {
+            if (!user) {
+              setShowLogin(true);
+              return;
+            }
+            setWriteOpen(true);
+          }}
           className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
           style={{ backgroundColor: team.colorPrimary }}
           whileTap={{ scale: 0.9 }}

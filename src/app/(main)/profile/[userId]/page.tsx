@@ -428,7 +428,7 @@ export default function ProfilePage() {
               <GlassCard
                 key={post.id}
                 className="p-3 cursor-pointer hover:bg-white/5"
-                onClick={() => router.push(`/boards/players/${post.board_id}/posts/${post.id}`)}
+                onClick={() => router.push(`/community/players/${post.board_id}/posts/${post.id}`)}
               >
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-text-tertiary">

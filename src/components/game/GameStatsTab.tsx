@@ -267,7 +267,7 @@ export default function GameStatsTab({
                         }
                       >
                         {isName ? (
-                          <Link href={`/boards/players/${b.name}`} className="hover:underline">
+                          <Link href={`/community/players/${b.name}`} className="hover:underline">
                             {String(b[col.key])}
                           </Link>
                         ) : String(b[col.key])}

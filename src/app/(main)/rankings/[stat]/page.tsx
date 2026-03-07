@@ -144,7 +144,7 @@ function RankingContent() {
                 key={p.kboId || p.playerId || i}
                 ref={isHighlight ? highlightRef : undefined}
               >
-                <Link href={`/boards/players/${p.kboId || p.playerId || p.name}`}>
+                <Link href={`/community/players/${p.kboId || p.playerId || p.name}`}>
                   <GlassCard
                     pressable
                     className={`p-3 flex items-center gap-3 ${

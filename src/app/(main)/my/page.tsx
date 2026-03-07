@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { Settings, ChevronRight, Download, FileText, MessageCircle, Mail, Heart, Trophy, RefreshCw, MapPin, Star, LogIn, LogOut, GraduationCap, Bell, MessageSquareHeart } from "lucide-react";
+import { Settings, ChevronRight, Download, FileText, MessageCircle, Mail, Heart, Trophy, RefreshCw, Star, LogIn, LogOut, GraduationCap, Bell, MessageSquareHeart } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
@@ -229,7 +229,6 @@ export default function MyPage() {
           { icon: MessageCircle, label: "내 댓글", count: 89 },
           { icon: Heart, label: "좋아요한 글", count: 156 },
           { icon: Trophy, label: "예측 전적", count: null, detail: "67% 적중" },
-          { icon: MapPin, label: "구장 가이드", count: null, detail: "", href: "/stadiums" },
           { icon: GraduationCap, label: "야구 쉽게 배우기", count: null, detail: "NEW", href: "/learn" },
         ].map(({ icon: Icon, label, count, detail, href }: any) => (
           <GlassCard key={label} pressable onClick={() => href && router.push(href)} className="flex items-center justify-between p-5">
