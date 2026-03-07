@@ -28,7 +28,7 @@ export default function TicketBoardPage() {
   const teamIds = stadium ? stadium.teamIds : TEAMS.map((t) => t.id);
 
   return (
-    <div className="mx-auto max-w-lg pb-24">
+    <div className="mx-auto max-w-lg pb-24 overflow-x-hidden">
       {/* Info banner */}
       <div className="mx-5 mt-4 mb-4">
         <div className="flex items-center gap-3 rounded-2xl bg-accent/10 p-4">

@@ -219,17 +219,30 @@ export default function TicketTab({ venueId, teamIds }: Props) {
   return (
     <div className="space-y-3">
       {teamIds.length > 1 && (
-        <div className="flex gap-2">
-          <button onClick={() => setFilter("all")}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${filter === "all" ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"}`}>
+        <div className="flex gap-2 overflow-x-auto hide-scrollbar pr-2">
+          <button
+            onClick={() => setFilter("all")}
+            className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+              filter === "all"
+                ? "bg-accent text-white"
+                : "bg-bg-tertiary text-text-secondary"
+            }`}
+          >
             전체
           </button>
-          {teamIds.map(id => {
+          {teamIds.map((id) => {
             const t = getTeamById(id);
             if (!t) return null;
             return (
-              <button key={id} onClick={() => setFilter(id)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${filter === id ? "bg-white/10 text-text-primary" : "bg-bg-tertiary text-text-secondary"}`}>
+              <button
+                key={id}
+                onClick={() => setFilter(id)}
+                className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                  filter === id
+                    ? "bg-white/10 text-text-primary"
+                    : "bg-bg-tertiary text-text-secondary"
+                }`}
+              >
                 <TeamBadge teamId={t.id} size="xs" />
               </button>
             );
