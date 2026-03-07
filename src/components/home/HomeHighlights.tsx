@@ -88,7 +88,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
     <section className="mt-6">
       <h2 className="text-lg font-semibold leading-[26px] text-text-primary mb-3">🎬 내 팀, 최애선수 숏츠</h2>
       <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide" style={{ scrollSnapType: "x mandatory" }}>
-        {videos.slice(0, 10).map((v, i) => (
+        {videos.slice(0, 15).map((v, i) => (
           <div
             key={v.id}
             className="flex-shrink-0 cursor-pointer"
