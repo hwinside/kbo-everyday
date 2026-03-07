@@ -74,7 +74,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 z-50 bg-black/60"
+            className="fixed inset-0 z-[60] bg-black/60"
           />
 
           {/* Sheet */}
@@ -83,7 +83,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
-            className="fixed bottom-0 left-0 right-0 z-50 mx-auto max-w-lg rounded-t-3xl bg-bg-secondary border-t border-white/10"
+            className="fixed bottom-0 left-0 right-0 z-[60] mx-auto max-w-lg rounded-t-3xl bg-bg-secondary border-t border-white/10"
             style={{ maxHeight: "80vh" }}
           >
             {/* Handle */}
@@ -100,8 +100,12 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             {/* 스크롤 영역 */}
             <div
               ref={scrollRef}
-              className="overflow-y-auto px-5 pb-8"
-              style={{ maxHeight: "calc(80vh - 80px)", overscrollBehavior: "contain" }}
+              className="overflow-y-auto px-5"
+              style={{
+                maxHeight: "calc(80vh - 80px)",
+                overscrollBehavior: "contain",
+                paddingBottom: "calc(32px + env(safe-area-inset-bottom, 0px))",
+              }}
             >
               {/* 기본(이니셜) 옵션 */}
               <button
