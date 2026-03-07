@@ -18,10 +18,11 @@ export default function CommunityTeamsPage() {
   const [myTeamId, setMyTeamId] = useState<number | null>(null);
 
   useEffect(() => {
+    const pick = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("pick");
     const id = getMyTeamId();
     setMyTeamId(id);
-    // myTeam 설정 시 바로 해당 팀 게시판으로
-    if (id) {
+    // myTeam 설정 시 바로 해당 팀 게시판으로 (pick=true면 팀 선택 모드이므로 건너뜀)
+    if (id && !pick) {
       const team = getTeamById(id);
       if (team) {
         router.replace(`/community/teams/${team.slug}`);

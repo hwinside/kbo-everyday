@@ -191,7 +191,7 @@ export default function CommunityTeamBoardPage() {
       >
         <div className="flex items-center gap-4 py-5">
           <button
-            onClick={() => router.push("/community/teams")}
+            onClick={() => router.push("/community/teams?pick=true")}
             className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary/50 transition-colors"
           >
             <ChevronLeft size={24} />
@@ -201,7 +201,7 @@ export default function CommunityTeamBoardPage() {
             <h1 className="text-xl font-bold text-text-primary">{team.name}</h1>
           </div>
           <Link
-            href="/community/teams"
+            href="/community/teams?pick=true"
             className="rounded-full px-3 py-1.5 text-xs font-medium bg-bg-glass text-text-secondary hover:bg-bg-tertiary transition-colors"
           >
             다른 팀
