@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-03-08 05:30 KST — PWA 재설치 온보딩 버그 수정
+
+- **환경**: prod/web (keubo.fan)
+- **Commit**: 932930b0eedea9f7ed1389be0416113f82440b3b
+- **변경사항**:
+  - PWA 삭제→재설치 시 로그인 유저에게 온보딩(팀/최애선수 선택)이 다시 노출되던 버그 수정
+  - AuthContext `syncProfileToLocal()`에서 DB team_id 있으면 온보딩 상태도 함께 복원
+  - 홈 페이지 useEffect에서 profile+team_id 체크를 최우선으로 (localStorage 무관하게 스킵)
+  - profile 로딩 중(null)일 때 온보딩 표시 방지 (레이스 컨디션 차단)
+- **리스크/롤백**: 낮음 / `a1592dd`로 revert 가능
+- **확인 항목**:
+  - [x] PWA 삭제→재설치→로그인 시 온보딩 미노출
+  - [x] 비로그인 첫 방문 시 정상 온보딩 표시
+  - [x] 빌드 성공
+
+---
+
 ## 2026-03-08 05:50 KST — PR3 사진 게시판 + 인스타 비율
 
 - **환경:** prod/web (Vercel)
