@@ -129,6 +129,22 @@ chip(inactive): hover:bg-white/5
 
 숫자 영역: 무조건 `tabular-nums` + 가능하면 `text-right`
 
+### ⚠️ font-size ↔ leading 매핑 룰 (필수)
+
+font-size를 바꾸면 **반드시** leading도 아래 매핑대로 같이 바꾼다:
+
+| font-size | leading | 용도 |
+|-----------|---------|------|
+| 24px | 32px | Page title |
+| 18px | 26px | Section heading |
+| 15px | 22px | Card title |
+| 14px | 22px | Body |
+| 12px | 18px | Meta |
+
+- `18px → leading-[26px]` (Section heading)
+- `15px → leading-[22px]` (Card title)
+- **절대 섞지 말 것**: 15px에 leading-26 쓰면 행간 과다, 18px에 leading-22 쓰면 줄 겹침
+
 ## 5. Spacing Scale (8pt)
 
 | Token    | Value |

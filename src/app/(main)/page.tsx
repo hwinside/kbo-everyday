@@ -96,6 +96,7 @@ function StatusBadge({ status, inning }: { status: string; inning: string | null
   return <span className="text-sm text-text-secondary">예정</span>;
 }
 
+/** Section heading: 18/26/600 — 절대 변경 금지 (design-tokens-v0.md 참고) */
 function SectionHeader({ title, href, icon }: { title: string; href?: string; icon?: string }) {
   return (
     <div className="mb-3 flex items-center justify-between">
