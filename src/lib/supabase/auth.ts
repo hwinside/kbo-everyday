@@ -6,27 +6,37 @@ import { supabase } from "./client";
 // Hardcoding ensures we always land on keubo.fan.
 const CALLBACK_URL = "https://keubo.fan/auth/callback";
 
-/** 구글 로그인 */
+/** 구글 로그인 — PWA 동일 탭에서 OAuth 진행 (Safari VC 방지) */
 export async function signInWithGoogle() {
-  return supabase.auth.signInWithOAuth({
+  const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
       redirectTo: CALLBACK_URL,
+      skipBrowserRedirect: true,
       queryParams: {
         prompt: "select_account",
       },
     },
   });
+  if (data?.url) {
+    window.location.assign(data.url);
+  }
+  return { data, error };
 }
 
-/** 카카오 로그인 */
+/** 카카오 로그인 — PWA 동일 탭에서 OAuth 진행 (Safari VC 방지) */
 export async function signInWithKakao() {
-  return supabase.auth.signInWithOAuth({
+  const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "kakao",
     options: {
       redirectTo: CALLBACK_URL,
+      skipBrowserRedirect: true,
     },
   });
+  if (data?.url) {
+    window.location.assign(data.url);
+  }
+  return { data, error };
 }
 
 /** 로그아웃 */
