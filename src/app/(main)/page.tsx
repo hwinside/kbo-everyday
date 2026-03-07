@@ -352,22 +352,6 @@ export default function HomePage() {
       {/* PWA 설치 배너 (인라인, 홈에서만) */}
       <PWAInstallBanner />
 
-      {/* 퀵액션 버튼 */}
-      <motion.div variants={item} className="flex gap-3 mb-3">
-        <Link href="/community/tickets" className="flex-1">
-          <GlassCard pressable className="flex items-center gap-3 !p-4">
-            <span className="text-lg">🎫</span>
-            <span className="text-[15px] leading-[22px] font-medium text-text-primary">티켓양도</span>
-          </GlassCard>
-        </Link>
-        <Link href="/community/stadiums" className="flex-1">
-          <GlassCard pressable className="flex items-center gap-3 !p-4">
-            <span className="text-lg">🏟️</span>
-            <span className="text-[15px] leading-[22px] font-medium text-text-primary">구장가이드</span>
-          </GlassCard>
-        </Link>
-      </motion.div>
-
       {/* 스킵 유저: 최애선수 설정 CTA (헤더 바로 아래) */}
       {showPlayerSetupCTA && myTeamId && (
         <motion.div variants={item} className="mb-3">
@@ -531,6 +515,22 @@ export default function HomePage() {
       )}
 
             </div>
+
+      {/* 퀵액션 버튼 (개인화 영역 아래) */}
+      <motion.div variants={item} className="flex gap-3 mb-6">
+        <Link href="/community/tickets" className="flex-1">
+          <GlassCard pressable className="flex items-center gap-3 !p-4">
+            <span className="text-lg">🎫</span>
+            <span className="text-[15px] leading-[22px] font-medium text-text-primary">티켓양도</span>
+          </GlassCard>
+        </Link>
+        <Link href="/community/stadiums" className="flex-1">
+          <GlassCard pressable className="flex items-center gap-3 !p-4">
+            <span className="text-lg">🏟️</span>
+            <span className="text-[15px] leading-[22px] font-medium text-text-primary">구장가이드</span>
+          </GlassCard>
+        </Link>
+      </motion.div>
 
       {/* ===== 1. Today's Games ===== */}
       {SEASON_STARTED && <motion.section variants={item} className="mb-6">
