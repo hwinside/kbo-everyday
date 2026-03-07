@@ -196,13 +196,18 @@ export default function GameDetailPage() {
           </div>
         )}
 
-        {/* On-deck batters */}
-        {game.status === "live" && gameState && lineup && (
-          <OnDeckBatters
-            batters={isTopInning ? lineup.away.batters : lineup.home.batters}
-            currentBatterName={liveGame?.currentBatter ?? gameState.currentBatter}
-          />
-        )}
+        {/* On-deck batters — find batter in either lineup */}
+        {game.status === "live" && gameState && lineup && (() => {
+          const batterName = liveGame?.currentBatter ?? gameState.currentBatter;
+          const inAway = lineup.away.batters.some(b => b.name === batterName);
+          const batters = inAway ? lineup.away.batters : lineup.home.batters;
+          return (
+            <OnDeckBatters
+              batters={batters}
+              currentBatterName={batterName}
+            />
+          );
+        })()}
 
         {/* Inning score table (모든 경기) */}
         {innings.length > 0 && (

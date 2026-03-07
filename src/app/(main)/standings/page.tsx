@@ -9,6 +9,7 @@ import { clsx } from "clsx";
 import { TEAMS } from "@/lib/constants/teams";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getMyTeamId } from "@/lib/store/myteam";
+import { getFavoritePlayers } from "@/lib/store/favorites";
 import TeamLogo from "@/components/ui/TeamLogo";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
@@ -130,7 +131,19 @@ function getStreakIcon(streak: string) {
 
 type MainTab = "team" | "batter" | "pitcher";
 
-function LeaderSection({ title, leaders, router }: { title: string; leaders: TitleLeader[]; router: ReturnType<typeof useRouter> }) {
+function hexToRgba(hex: string, alpha: number): string {
+  const c = hex.replace("#", "");
+  const full = c.length === 3 ? c.split("").map((ch) => ch + ch).join("") : c;
+  return `rgba(${parseInt(full.slice(0, 2), 16)}, ${parseInt(full.slice(2, 4), 16)}, ${parseInt(full.slice(4, 6), 16)}, ${alpha})`;
+}
+
+function LeaderSection({ title, leaders, router, myTeamId, favoriteNames }: {
+  title: string;
+  leaders: TitleLeader[];
+  router: ReturnType<typeof useRouter>;
+  myTeamId: number | null;
+  favoriteNames: Set<string>;
+}) {
   const [expanded, setExpanded] = useState(false);
   const shown = expanded ? leaders : leaders.slice(0, 5);
 
@@ -138,8 +151,24 @@ function LeaderSection({ title, leaders, router }: { title: string; leaders: Tit
     <div className="glass-card p-4">
       <h3 className="text-base font-semibold text-text-tertiary mb-3">{title}</h3>
       <div className="space-y-3">
-        {shown.map((l) => (
-          <div key={l.rank} onClick={() => l.playerId && router.push(`/community/players/${l.playerId}`)} className="flex items-center gap-3 cursor-pointer hover:bg-white/5 rounded-lg transition-colors">
+        {shown.map((l) => {
+          const isMyTeam = myTeamId != null && l.teamId === myTeamId;
+          const isFavorite = favoriteNames.has(l.name);
+          const hlLevel = isFavorite ? 2 : isMyTeam ? 1 : 0;
+          const teamColor = TEAMS.find((t) => t.id === l.teamId)?.colorPrimary || "#FF6B35";
+
+          return (
+          <div
+            key={l.rank}
+            onClick={() => l.playerId && router.push(`/community/players/${l.playerId}`)}
+            className="flex items-center gap-3 cursor-pointer hover:bg-white/5 rounded-lg transition-colors py-1 px-1"
+            style={hlLevel === 0 ? undefined : {
+              borderLeft: `${hlLevel === 2 ? 4 : 3}px solid ${hexToRgba(teamColor, hlLevel === 2 ? 1 : 0.8)}`,
+              backgroundColor: hexToRgba(teamColor, hlLevel === 2 ? 0.18 : 0.12),
+              borderRadius: 8,
+              paddingLeft: 8,
+            }}
+          >
             <span className={clsx("flex h-6 w-6 items-center justify-center rounded-full text-base font-bold",
               l.rank === 1 ? "bg-yellow-500/20 text-yellow-400" :
               l.rank === 2 ? "bg-gray-400/20 text-gray-300" :
@@ -149,10 +178,14 @@ function LeaderSection({ title, leaders, router }: { title: string; leaders: Tit
               {l.rank}
             </span>
             <PlayerAvatar name={l.name} teamId={l.teamId} photoUrl={getPlayerPhotoUrl(l.name)} size={52} />
-            <span className="flex-1 text-base text-text-primary">{l.name}</span>
+            <span className="flex-1 text-base text-text-primary">
+              {l.name}
+              {isFavorite && <span className="ml-1">★</span>}
+            </span>
             <span className="text-base font-bold tabular-nums" style={{ color: getTeamColor(l.teamId) }}>{l.value}</span>
           </div>
-        ))}
+          );
+        })}
       </div>
       {leaders.length > 5 && (
         <button
@@ -169,6 +202,13 @@ function LeaderSection({ title, leaders, router }: { title: string; leaders: Tit
 export default function StandingsPage() {
   const { profile } = useAuth();
   const myTeamId = profile?.team_id ?? getMyTeamId();
+
+  const favoriteNames = (() => {
+    const dbFavs = profile?.favorite_players as { name?: string }[] | undefined;
+    const favs = dbFavs?.length ? dbFavs : getFavoritePlayers();
+    return new Set(favs.map((f) => f.name || "").filter(Boolean));
+  })();
+
   const [realStandings, setRealStandings] = useState<TeamStanding[] | null>(null);
   const [season, setSeason] = useState<2025 | 2026>(2025);
 
@@ -366,7 +406,7 @@ export default function StandingsPage() {
               ] : []),
             ];
             return categories.map((cat) => (
-              <LeaderSection key={cat.id} router={router} title={`${cat.label} (2025)`} leaders={cat.leaders} />
+              <LeaderSection key={cat.id} router={router} title={`${cat.label} (2025)`} leaders={cat.leaders} myTeamId={myTeamId} favoriteNames={favoriteNames} />
             ));
           })()}
         </motion.div>
@@ -400,7 +440,7 @@ export default function StandingsPage() {
               ] : []),
             ];
             return categories.map((cat) => (
-              <LeaderSection key={cat.id} router={router} title={`${cat.label} (2025)`} leaders={cat.leaders} />
+              <LeaderSection key={cat.id} router={router} title={`${cat.label} (2025)`} leaders={cat.leaders} myTeamId={myTeamId} favoriteNames={favoriteNames} />
             ));
           })()}
         </motion.div>

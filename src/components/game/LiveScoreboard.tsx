@@ -48,16 +48,17 @@ export default function LiveScoreboard({
   const isTop = currentInning.includes("초");
   const attackingTeam = isTop ? "away" : "home";
 
-  // Determine pitcher/batter team IDs for photos
-  const pitcherTeamId = isTop ? lineup?.home.teamId : lineup?.away.teamId;
-  const batterTeamId = isTop ? lineup?.away.teamId : lineup?.home.teamId;
-
   // Get pitcher stats from lineup
   const pitcherSide = isTop ? lineup?.home : lineup?.away;
-  const batterSide = isTop ? lineup?.away : lineup?.home;
-  const currentBatterData = batterSide?.batters.find(
-    (b) => b.name === state.currentBatter
-  );
+
+  // Find batter in BOTH lineups (mock data may not match inning direction)
+  const awayBatterData = lineup?.away.batters.find((b) => b.name === state.currentBatter);
+  const homeBatterData = lineup?.home.batters.find((b) => b.name === state.currentBatter);
+  const currentBatterData = awayBatterData || homeBatterData;
+
+  // Determine pitcher/batter team IDs for photos
+  const pitcherTeamId = pitcherSide?.teamId;
+  const batterTeamId = awayBatterData ? lineup?.away.teamId : homeBatterData ? lineup?.home.teamId : undefined;
 
   // Defensive team is the fielding team
   const defensiveSide = isTop ? lineup?.home : lineup?.away;

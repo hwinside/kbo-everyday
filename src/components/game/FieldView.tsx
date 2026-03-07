@@ -19,9 +19,9 @@ const POSITION_COORDS: Record<string, { top?: string; bottom?: string; left?: st
   "2B": { bottom: "135px", right: "80px" },
   SS: { bottom: "135px", left: "80px" },
   "3B": { bottom: "88px", left: "40px" },
-  LF: { top: "20px", left: "30px" },
+  LF: { top: "20px", left: "50px" },
   CF: { top: "4px", left: "50%", transform: "translateX(-50%)" },
-  RF: { top: "20px", right: "30px" },
+  RF: { top: "20px", right: "50px" },
 };
 
 function PlayerMarker({

@@ -109,19 +109,6 @@ function RankingContent() {
 
   const def = STAT_DEFS[stat];
 
-  // 🔍 임시 디버그 (하이라이트 진단용 — 확인 후 제거)
-  useEffect(() => {
-    console.log("[HIGHLIGHT DEBUG]", {
-      myTeamId,
-      profileTeamId: profile?.team_id,
-      lsTeamId: getMyTeamId(),
-      favIds: [...favoriteIdSet],
-      favNames: [...favoriteNameSet],
-      profileFavs: profile?.favorite_players?.length ?? 0,
-      lsFavs: getFavoritePlayers().length,
-    });
-  }, [myTeamId, favoriteIdSet, favoriteNameSet, profile]);
-
   useEffect(() => {
     if (!def) return;
     const type = def.type === "batter" ? "batter" : "pitcher";
@@ -190,12 +177,6 @@ function RankingContent() {
       <div className="py-3 flex items-center gap-3">
         <button onClick={() => router.back()} className="text-xl">←</button>
         <h1 className="text-3xl font-extrabold tracking-tight">{def.emoji} {def.desc}</h1>
-      </div>
-
-      {/* 🔍 임시 디버그 배너 — 확인 후 제거 */}
-      <div className="p-3 mb-3 rounded-xl bg-yellow-500/20 border border-yellow-500/40 text-xs font-mono text-yellow-300 space-y-1">
-        <div>🔍 [DEBUG] profile: {profile ? "✅" : "❌"} | teamId: {myTeamId ?? "null"} | profileTeamId: {profile?.team_id ?? "null"} | lsTeam: {getMyTeamId() ?? "null"}</div>
-        <div>favIds: [{[...favoriteIdSet].join(",")}] | favNames: [{[...favoriteNameSet].join(",")}] | profileFavs: {profile?.favorite_players?.length ?? 0} | lsFavs: {getFavoritePlayers().length}</div>
       </div>
 
       {/* 뱃지 설명 */}
