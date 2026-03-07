@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { TEAMS } from "@/lib/constants/teams";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -72,7 +73,10 @@ export async function GET(req: NextRequest) {
   }
 
   // 3. YouTube 검색: 팀 + 선수별 병렬
-  const teamQuery = team === "_ALL" ? "프로야구 하이라이트" : `${team} 하이라이트`;
+  // 정식 팀명 사용 (예: "LG" → "LG 트윈스") — "LG 하이라이트"는 LG전자/농구 등 노이즈 유발
+  const teamObj = TEAMS.find(t => t.shortName === team);
+  const teamFullName = teamObj?.name || team;
+  const teamQuery = team === "_ALL" ? "프로야구 하이라이트" : `${teamFullName} 하이라이트`;
   const teamMaxResults = playerNames.length > 0 ? 10 : 30;
 
   const searches = [
