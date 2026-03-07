@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Check } from "lucide-react";
 import { PRESET_AVATARS, getPresetKey } from "@/lib/constants/avatars";
@@ -21,14 +21,43 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
   const [selected, setSelected] = useState<string | null>(getPresetKey(currentAvatarUrl));
   const [saving, setSaving] = useState(false);
   const team = teamId ? TEAMS.find(t => t.id === teamId) : null;
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  // iOS scroll bleed-through 방지 (position:fixed는 시트 내부 스크롤을 막으므로 사용 안 함)
+  // iOS Safari: 배경 스크롤 방지 + 시트 내부 스크롤 허용
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
+    if (!isOpen) return;
+
+    const scrollEl = scrollRef.current;
+
+    // 배경 터치 스크롤 차단 (시트 내부 스크롤 영역은 허용)
+    function preventBgScroll(e: TouchEvent) {
+      if (scrollEl && scrollEl.contains(e.target as Node)) {
+        // 스크롤 영역 내부: 스크롤 가능하면 허용, 끝에서는 방지
+        const { scrollTop, scrollHeight, clientHeight } = scrollEl;
+        const atTop = scrollTop <= 0;
+        const atBottom = scrollTop + clientHeight >= scrollHeight;
+        const touchY = e.touches[0]?.clientY;
+
+        if (!touchY) return;
+
+        // 스크롤할 콘텐츠가 있으면 허용
+        if (scrollHeight > clientHeight) {
+          // 맨 위에서 위로 당기거나, 맨 아래에서 아래로 당기는 경우만 방지
+          if (atTop && atBottom) {
+            e.preventDefault();
+          }
+          return; // 나머지는 정상 스크롤 허용
+        }
+        e.preventDefault();
+      } else {
+        // 스크롤 영역 밖 (backdrop, header 등): 배경 스크롤 방지
+        e.preventDefault();
+      }
     }
+
+    document.addEventListener("touchmove", preventBgScroll, { passive: false });
     return () => {
-      document.body.style.overflow = '';
+      document.removeEventListener("touchmove", preventBgScroll);
     };
   }, [isOpen]);
 
@@ -76,7 +105,11 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             </div>
 
             {/* 스크롤 영역 */}
-            <div className="flex-1 overflow-y-auto px-5 pb-8 touch-pan-y" style={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch' }}>
+            <div
+              ref={scrollRef}
+              className="flex-1 overflow-y-auto px-5 pb-8"
+              style={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch' }}
+            >
               {/* 기본(이니셜) 옵션 */}
               <button
                 onClick={() => handleSelect(null)}
