@@ -130,7 +130,7 @@ export default function LinkPreview({ text, maxPreviews = 3, stopPropagation = f
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex rounded-xl bg-bg-tertiary overflow-hidden hover:bg-bg-glass transition-colors border border-white/5"
+            className="flex rounded-xl bg-bg-tertiary overflow-hidden hover:bg-bg-glass transition-colors border border-white/5 max-w-lg"
           >
             {data.image && (
               <div className="flex-shrink-0 w-20 h-20 bg-bg-glass">

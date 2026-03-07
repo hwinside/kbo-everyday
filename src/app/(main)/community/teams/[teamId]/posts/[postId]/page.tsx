@@ -11,7 +11,7 @@ export default function TeamPostDetailPage() {
   return (
     <PostDetail
       postId={Number(postId)}
-      headerTitle={team ? `${team.shortName} 게시판` : "팀 게시판"}
+      headerTitle={team ? `${team.name} 게시판` : "팀 게시판"}
     />
   );
 }
