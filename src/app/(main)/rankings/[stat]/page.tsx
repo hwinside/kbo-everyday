@@ -8,6 +8,7 @@ import { TEAMS } from "@/lib/constants/teams";
 import GlassCard from "@/components/ui/GlassCard";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { getFavoritePlayers } from "@/lib/store/favorites";
+import { useAuth } from "@/lib/supabase/AuthContext";
 
 import Link from "next/link";
 
@@ -84,6 +85,7 @@ function RankingContent() {
   const params = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { profile } = useAuth();
   const stat = params.stat as string;
   const highlightPlayer = searchParams.get("player");
   const highlightRef = useRef<HTMLDivElement>(null);
@@ -91,32 +93,19 @@ function RankingContent() {
   const [players, setPlayers] = useState<PlayerRow[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // NOTE: 클라이언트 페이지라 localStorage를 state initializer에서 바로 로드(불필요한 깜빡임/렌더링 방지)
-  const [myTeamId] = useState<number | null>(() => {
-    try {
-      return getMyTeamId();
-    } catch {
-      return null;
-    }
-  });
+  // DB 프로필 > localStorage 폴백 (앱 재설치 시 localStorage 초기화 대응)
+  const myTeamId = useMemo(() => {
+    return profile?.team_id ?? getMyTeamId();
+  }, [profile]);
 
-  const [favoriteIdSet] = useState<Set<string>>(() => {
-    try {
-      const favs = getFavoritePlayers().slice(0, 5);
-      return new Set(favs.map((f) => String(f.playerId)));
-    } catch {
-      return new Set();
-    }
-  });
-
-  const [favoriteNameSet] = useState<Set<string>>(() => {
-    try {
-      const favs = getFavoritePlayers().slice(0, 5);
-      return new Set(favs.map((f) => f.name));
-    } catch {
-      return new Set();
-    }
-  });
+  const { favoriteIdSet, favoriteNameSet } = useMemo(() => {
+    const dbFavs = profile?.favorite_players as { playerId?: string; name?: string }[] | undefined;
+    const favs = dbFavs?.length ? dbFavs.slice(0, 5) : getFavoritePlayers().slice(0, 5);
+    return {
+      favoriteIdSet: new Set(favs.map((f) => String(f.playerId || "")).filter(Boolean)),
+      favoriteNameSet: new Set(favs.map((f) => f.name || "").filter(Boolean)),
+    };
+  }, [profile]);
 
   const def = STAT_DEFS[stat];
 
