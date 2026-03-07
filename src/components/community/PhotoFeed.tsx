@@ -61,16 +61,19 @@ function PhotoCarousel({ images }: { images: string[] }) {
     setTranslateX(0);
   }, [current, images.length]);
 
+  // Instagram style: min 1.91:1 (landscape), max 4:5 (portrait)
+  // aspect-[4/5] = max portrait ratio, object-cover centers the crop
   if (images.length === 1) {
     return (
       <div className="relative w-full overflow-hidden rounded-xl bg-bg-tertiary">
         <Image
           src={images[0]}
           alt="photo"
-          width={600}
-          height={600}
-          className="w-full h-auto object-cover"
-          style={{ maxHeight: "500px" }}
+          width={800}
+          height={1000}
+          className="w-full object-cover rounded-xl"
+          style={{ aspectRatio: "4/5", objectPosition: "center" }}
+          sizes="(max-width: 768px) 100vw, 600px"
         />
       </div>
     );
@@ -94,10 +97,11 @@ function PhotoCarousel({ images }: { images: string[] }) {
             <Image
               src={url}
               alt={`photo ${i + 1}`}
-              width={600}
-              height={600}
-              className="w-full h-auto object-cover"
-              style={{ maxHeight: "500px" }}
+              width={800}
+              height={1000}
+              className="w-full object-cover"
+              style={{ aspectRatio: "4/5", objectPosition: "center" }}
+              sizes="(max-width: 768px) 100vw, 600px"
             />
           </div>
         ))}
