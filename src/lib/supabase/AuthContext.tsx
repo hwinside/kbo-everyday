@@ -30,27 +30,40 @@ const AuthContext = createContext<AuthContextType>({
   refreshProfile: async () => {},
 });
 
+// 임시 디버그 (P0 해결 후 제거)
+function debugLog(msg: string) {
+  if (typeof window !== "undefined") {
+    console.warn("[Auth Debug]", msg);
+    // 임시: 화면 하단에 디버그 메시지 표시
+    const el = document.getElementById("auth-debug");
+    if (el) el.textContent = msg;
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
   async function loadProfile(accessToken: string, userId: string) {
-    // 1차: 서버 API (Bearer 토큰 기반 + service role)
+    debugLog(`loadProfile start: token=${accessToken ? "yes(" + accessToken.substring(0, 10) + "...)" : "NO"}, userId=${userId.substring(0, 8)}`);
+
+    // 1차: 서버 API
     try {
       const res = await fetch("/api/me", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.profile) {
-          setProfile(json.profile);
-          return;
-        }
+      const json = await res.json();
+      debugLog(`/api/me: status=${res.status}, profile=${json.profile ? "YES(" + json.profile.nickname + ")" : "null"}, error=${json.error || "none"}`);
+      if (res.ok && json.profile) {
+        setProfile(json.profile);
+        return;
       }
-    } catch { /* continue to fallback */ }
+    } catch (e: any) {
+      debugLog(`/api/me error: ${e.message}`);
+    }
 
-    // 2차: Supabase REST API 직접 호출 (access_token을 명시적으로 전달)
+    // 2차: Supabase REST API 직접 호출
     try {
       const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=*`;
       const res = await fetch(url, {
@@ -60,24 +73,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           Accept: "application/vnd.pgrst.object+json",
         },
       });
+      debugLog(`REST direct: status=${res.status}`);
       if (res.ok) {
         const data = await res.json();
+        debugLog(`REST direct data: nickname=${data?.nickname || "null"}`);
         if (data && data.id) {
           setProfile(data);
           return;
         }
       }
-    } catch { /* continue */ }
+    } catch (e: any) {
+      debugLog(`REST direct error: ${e.message}`);
+    }
 
-    // 3차: Supabase 클라이언트 직접 (기존 방식)
+    // 3차: Supabase client
     try {
       const { data, error } = await supabase
         .from("profiles")
         .select("*")
         .eq("id", userId)
         .single();
+      debugLog(`client query: data=${data ? "YES(" + data.nickname + ")" : "null"}, error=${error?.message || "none"}`);
       setProfile(!error && data ? data : null);
-    } catch {
+    } catch (e: any) {
+      debugLog(`client query error: ${e.message}`);
       setProfile(null);
     }
   }
@@ -92,6 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     async function syncSession() {
       const { data: { session } } = await supabase.auth.getSession();
+      debugLog(`syncSession: user=${session?.user?.email || "null"}, hasToken=${!!session?.access_token}`);
       setUser(session?.user ?? null);
       if (session?.user && session.access_token) {
         await loadProfile(session.access_token, session.user.id);
@@ -104,7 +124,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     syncSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      async (event, session) => {
+        debugLog(`authStateChange: event=${event}, user=${session?.user?.email || "null"}, hasToken=${!!session?.access_token}`);
         setUser(session?.user ?? null);
         if (session?.user && session.access_token) {
           await loadProfile(session.access_token, session.user.id);
@@ -115,7 +136,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     );
 
-    // iOS PWA: OAuth 완료 후 PWA 복귀 시 세션 재확인
     function handleVisibilityChange() {
       if (document.visibilityState === "visible") {
         syncSession();
@@ -141,6 +161,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshProfile,
     }}>
       {children}
+      {/* 임시 디버그 표시 — P0 해결 후 제거 */}
+      <div id="auth-debug" style={{
+        position: "fixed", bottom: 60, left: 8, right: 8,
+        background: "rgba(0,0,0,0.85)", color: "#0f0", fontSize: 10,
+        padding: 6, borderRadius: 6, zIndex: 99999,
+        fontFamily: "monospace", wordBreak: "break-all",
+        pointerEvents: "none",
+      }} />
     </AuthContext.Provider>
   );
 }
