@@ -26,6 +26,13 @@ function getTeamColor(teamId: number): string {
   return TEAMS.find((t) => t.id === teamId)?.colorPrimary || "#FF6B35";
 }
 
+function getTeamIdFromTeamText(team?: string): number | null {
+  if (!team) return null;
+  // stats JSON은 "LG" 같은 shortName을 사용
+  const found = TEAMS.find((t) => t.shortName === team || t.name === team);
+  return found?.id ?? null;
+}
+
 type StatType = "batter" | "pitcher";
 
 type PlayerRow = {
@@ -225,7 +232,10 @@ function RankingContent() {
                 p.name === decodeURIComponent(highlightPlayer));
 
             const val = getValue(p);
-            const teamId = p.teamId || 0;
+            const teamId =
+              (typeof p.teamId === "number" ? p.teamId : null) ??
+              getTeamIdFromTeamText(p.team) ??
+              0;
 
             const isMyTeam = myTeamId != null && teamId === myTeamId;
             const playerKey = String(p.kboId || p.playerId || "");
