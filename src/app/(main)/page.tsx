@@ -337,7 +337,7 @@ export default function HomePage() {
       // 첫 방문 → 온보딩 시작
       setShowOnboarding(true);
     }
-  }, []);
+  }, [profile]);
 
   function handleOnboardingComplete(teamId: number, players: FavoritePlayer[]) {
     setMyTeam(teamId);
