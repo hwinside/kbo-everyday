@@ -113,7 +113,7 @@ export default function PWAInstallBanner() {
           >
             {isInAppBrowser ? "열기" : isNonSafariiOS ? "복사" : isIOS ? "방법" : "설치"}
           </button>
-          <button onClick={dismiss} className="text-text-tertiary p-0.5 -mr-1">
+          <button onClick={dismiss} className="text-text-tertiary p-0.5 -mr-1" aria-label="닫기">
             <X size={16} />
           </button>
         </div>
