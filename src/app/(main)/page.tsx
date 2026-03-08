@@ -696,9 +696,8 @@ export default function HomePage() {
         )}
       </motion.section>
 
-      {/* ===== 2. Prediction Entry Cards ===== */}
-      <motion.section variants={item} className="mb-6">
-        {/* 시즌예측 이벤트 배너 */}
+      {/* ===== 2. Prediction Entry Cards (목데이터 — 실데이터 연결 후 복원) ===== */}
+      {/* <motion.section variants={item} className="mb-6">
         <Link href="/predict">
           <div className="flex h-20 items-center rounded-2xl bg-gradient-to-r from-accent/20 to-accent/5 px-5 mb-4">
             <div className="flex-1">
@@ -708,8 +707,6 @@ export default function HomePage() {
             <ChevronRight size={20} className="text-text-tertiary" />
           </div>
         </Link>
-
-        {/* 내 승부예측 성적 카드 */}
         <Link href="/predict/daily">
           <GlassCard pressable className="p-4">
             <div className="flex items-center gap-4">
@@ -723,10 +720,10 @@ export default function HomePage() {
             </div>
           </GlassCard>
         </Link>
-      </motion.section>
+      </motion.section> */}
 
-      {/* ===== 4. Popular Posts ===== */}
-      <motion.section variants={item} className="mb-6">
+      {/* ===== 4. Popular Posts (목데이터 — 실데이터 연결 후 복원) ===== */}
+      {/* <motion.section variants={item} className="mb-6">
         <SectionHeader title="인기글" href="/teams" icon="🔥" />
         <div className="space-y-3">
           {MOCK_POPULAR_POSTS.map((post, i) => (
@@ -746,13 +743,13 @@ export default function HomePage() {
             </GlassCard>
           ))}
         </div>
-      </motion.section>
+      </motion.section> */}
 
 
 
       {/* ===== 4.5 My Favorite Players ===== */}
-            {/* ===== 5. Hot Player Boards ===== */}
-      <motion.section variants={item} className="mb-6">
+      {/* ===== 5. Hot Player Boards (목데이터 — 실데이터 연결 후 복원) ===== */}
+      {/* <motion.section variants={item} className="mb-6">
         <SectionHeader title="인기 선수게시판" href="/players" icon="⭐" />
         <GlassCard className="p-4">
           <div className="space-y-8">
@@ -780,10 +777,10 @@ export default function HomePage() {
                 </span>
               </div></Link>
             ))}
-                <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
-    </div>
+          </div>
         </GlassCard>
-      </motion.section>
+      </motion.section> */}
+                <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
       {/* Bottom spacer */}
       <div className="h-4" />
     </motion.div>
