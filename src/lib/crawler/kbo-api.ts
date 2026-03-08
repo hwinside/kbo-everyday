@@ -48,7 +48,39 @@ function parseGameStatus(stateCode: string, cancelCode: string): KboGame["status
   return "scheduled";
 }
 
-function parseGame(raw: any): KboGame {
+interface KboGameRaw {
+  G_ID: string;
+  G_DT: string;
+  G_TM: string;
+  S_NM: string;
+  AWAY_ID: string;
+  HOME_ID: string;
+  AWAY_NM: string;
+  HOME_NM: string;
+  T_SCORE_CN: string;
+  B_SCORE_CN: string;
+  GAME_INN_NO: number;
+  GAME_TB_SC: string;
+  GAME_STATE_SC: string;
+  CANCEL_SC_ID: string;
+  T_PIT_P_NM: string;
+  B_PIT_P_NM: string;
+  W_PIT_P_NM: string;
+  L_PIT_P_NM: string;
+  SV_PIT_P_NM: string;
+  STRIKE_CN: number;
+  BALL_CN: number;
+  OUT_CN: number;
+  B1_BAT_ORDER_NO: number;
+  B2_BAT_ORDER_NO: number;
+  B3_BAT_ORDER_NO: number;
+  B_P_NM: string;
+  T_P_NM: string;
+  T_RANK_NO: number;
+  B_RANK_NO: number;
+}
+
+function parseGame(raw: KboGameRaw): KboGame {
   const status = parseGameStatus(raw.GAME_STATE_SC?.toString(), raw.CANCEL_SC_ID?.toString());
   return {
     gameId: raw.G_ID,

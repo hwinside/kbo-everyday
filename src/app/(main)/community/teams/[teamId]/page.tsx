@@ -38,14 +38,6 @@ export default function CommunityTeamBoardPage() {
 
   const { user } = useAuth();
 
-  if (!team) {
-    return (
-      <div className="flex items-center justify-center py-40 text-text-tertiary">
-        존재하지 않는 구단입니다
-      </div>
-    );
-  }
-
   // Update URL when tab/sort changes
   const updateUrl = useCallback(
     (tab: ContentTab, sort: SortTab) => {
@@ -56,6 +48,20 @@ export default function CommunityTeamBoardPage() {
     },
     []
   );
+
+  // ── General posts ──
+  const { posts: generalLivePosts, loading: generalLoading, reload: reloadGeneral } = usePosts("team", teamSlug, "general");
+
+  // ── Photo posts ──
+  const { posts: photoPosts, loading: photoLoading, reload: reloadPhoto } = usePosts("team", teamSlug, "photo");
+
+  if (!team) {
+    return (
+      <div className="flex items-center justify-center py-40 text-text-tertiary">
+        존재하지 않는 구단입니다
+      </div>
+    );
+  }
 
   const handleTabChange = (tab: ContentTab) => {
     setContentTab(tab);
@@ -70,8 +76,6 @@ export default function CommunityTeamBoardPage() {
     window.scrollTo(0, 0);
   };
 
-  // ── General posts ──
-  const { posts: generalLivePosts, loading: generalLoading, reload: reloadGeneral } = usePosts("team", teamSlug, "general");
   const generalPosts: Post[] = generalLivePosts.map((p) => ({
     id: p.id,
     boardType: "team" as const,
@@ -94,6 +98,7 @@ export default function CommunityTeamBoardPage() {
     },
   }));
 
+  /* eslint-disable react-hooks/purity */
   const sortedGeneralPosts = sortTab === "hot"
     ? [...generalPosts]
         .filter((p) => {
@@ -103,9 +108,6 @@ export default function CommunityTeamBoardPage() {
         .sort((a, b) => b.likeCount - a.likeCount || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     : generalPosts;
 
-  // ── Photo posts ──
-  const { posts: photoPosts, loading: photoLoading, reload: reloadPhoto } = usePosts("team", teamSlug, "photo");
-
   const sortedPhotoPosts = sortTab === "hot"
     ? [...photoPosts]
         .filter((p) => {
@@ -114,6 +116,7 @@ export default function CommunityTeamBoardPage() {
         })
         .sort((a, b) => b.like_count - a.like_count || new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     : photoPosts;
+  /* eslint-enable react-hooks/purity */
 
   const handlePhotoLike = async (postId: number) => {
     try {

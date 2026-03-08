@@ -44,7 +44,7 @@ export function useDMList() {
     if (!data) { setLoading(false); return; }
 
     const mapped = await Promise.all(
-      data.map(async (conv: any) => {
+      data.map(async (conv: { id: string; user1_id: string; user2_id: string; last_message: string | null; last_message_at: string }) => {
         const otherId = conv.user1_id === user.id ? conv.user2_id : conv.user1_id;
         const { data: prof } = await supabase
           .from("profiles")
@@ -77,6 +77,7 @@ export function useDMList() {
     setLoading(false);
   }, [user]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load(); }, [load]);
 
   return { conversations, loading, refresh: load };
@@ -102,7 +103,7 @@ export function useDMChat(conversationId: string) {
 
       if (data) {
         const mapped = await Promise.all(
-          data.reverse().map(async (m: any) => {
+          data.reverse().map(async (m: DMMessage) => {
             const { data: prof } = await supabase
               .from("profiles")
               .select("nickname, team_id")
@@ -151,7 +152,7 @@ export function useDMChat(conversationId: string) {
           filter: `conversation_id=eq.${conversationId}`,
         },
         async (payload) => {
-          const msg = payload.new as any;
+          const msg = payload.new as DMMessage;
           const { data: prof } = await supabase
             .from("profiles")
             .select("nickname, team_id")

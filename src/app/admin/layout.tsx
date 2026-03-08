@@ -150,6 +150,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
         setChecking(false);
       });
     } else {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setChecking(false);
     }
   }, []);

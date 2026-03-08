@@ -1,12 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { TEAMS } from "@/lib/constants/teams";
+import type { YouTubeSearchItem } from "@/types/api";
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
-const cache = new Map<string, { data: any; ts: number }>();
+interface TeamVideoItem {
+  id: string;
+  title: string;
+  thumbnail: string | undefined;
+  publishedAt: string;
+}
+
+interface TeamVideoResult {
+  items: TeamVideoItem[];
+}
+
+const cache = new Map<string, { data: TeamVideoResult; ts: number }>();
 const TTL = 24 * 60 * 60 * 1000; // 24hr
 
 function decodeHtml(s: string) {
@@ -39,7 +51,7 @@ export async function GET(req: NextRequest) {
 
     if (data.error) return fallback(team.shortName, type);
 
-    const items = (data.items || []).map((item: any) => ({
+    const items: TeamVideoItem[] = (data.items || []).map((item: YouTubeSearchItem) => ({
       id: item.id.videoId,
       title: decodeHtml(item.snippet.title),
       thumbnail: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url,

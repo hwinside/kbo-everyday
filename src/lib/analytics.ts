@@ -7,15 +7,19 @@
 
 import { getGuestId } from "@/lib/store/onboarding";
 
+interface GtagWindow extends Window {
+  gtag?: (command: string, event: string, params?: Record<string, unknown>) => void;
+}
+
 interface EventPayload {
   event: string;
-  properties?: Record<string, any>;
+  properties?: Record<string, unknown>;
   timestamp?: string;
 }
 
 const EVENTS_KEY = "kbo-analytics-events";
 
-export function trackEvent(event: string, properties?: Record<string, any>): void {
+export function trackEvent(event: string, properties?: Record<string, unknown>): void {
   if (typeof window === "undefined") return;
 
   const payload: EventPayload = {
@@ -40,13 +44,11 @@ export function trackEvent(event: string, properties?: Record<string, any>): voi
   }
 
   // GA4 연동 (gtag 있으면)
-  if (typeof window !== "undefined" && (window as any).gtag) {
-    (window as any).gtag("event", event, payload.properties);
+  if (typeof window !== "undefined" && (window as unknown as GtagWindow).gtag) {
+    (window as unknown as GtagWindow).gtag!("event", event, payload.properties);
   }
 
-  if (process.env.NODE_ENV === "development") {
-    console.log(`[analytics] ${event}`, payload.properties);
-  }
+  // Phase 2: development logging via GA4 debug mode
 }
 
 // 온보딩 이벤트

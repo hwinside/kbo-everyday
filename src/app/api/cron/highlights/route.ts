@@ -1,6 +1,6 @@
-// @ts-nocheck
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import type { YouTubeSearchItem, HighlightRow } from "@/types/api";
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
@@ -31,7 +31,7 @@ async function fetchYouTube(query: string) {
   const res = await fetch(url);
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
-  return (data.items || []).map((item: any) => ({
+  return (data.items || []).map((item: YouTubeSearchItem) => ({
     video_id: item.id.videoId,
     title: decodeHtml(item.snippet.title),
     thumbnail: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.default?.url,
@@ -58,7 +58,7 @@ export async function GET(req: NextRequest) {
       if (videos.length > 0) {
         await supabase.from("highlights").delete().eq("team", team);
         await supabase.from("highlights").insert(
-          videos.slice(0, 30).map((v: any) => ({ ...v, team }))
+          videos.slice(0, 30).map((v: HighlightRow) => ({ ...v, team }))
         );
       }
       results[team] = videos.length;

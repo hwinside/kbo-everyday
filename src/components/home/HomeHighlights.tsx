@@ -25,6 +25,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!team) { setLoading(false); return; }
 
     const favPlayers = getFavoritePlayers().slice(0, 5);
@@ -55,14 +56,14 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
         if (seen.has(v.id)) continue;
         seen.add(v.id);
         // 서버에서 label이 팀명이 아닌 = 선수 이름
-        const isPlayer = v.label && v.label !== team && !TEAMS.some((t: any) => t.shortName === v.label);
+        const isPlayer = v.label && v.label !== team && !TEAMS.some((t: typeof TEAMS[number]) => t.shortName === v.label);
         if (isPlayer) playerItems.push(v);
         else teamItems.push(v);
       }
 
       // 공식채널 숏츠
       const officialItems: VideoItem[] = (officialData.items || [])
-        .map((v: any) => ({
+        .map((v: { id: string; title: string; thumbnail: string; publishedAt: string }) => ({
           id: v.id,
           title: v.title,
           thumbnail: v.thumbnail,

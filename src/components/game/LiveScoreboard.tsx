@@ -40,6 +40,7 @@ export default function LiveScoreboard({
 
   // 점수 변동 시 펄스
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPulse(true);
     const t = setTimeout(() => setPulse(false), 1000);
     return () => clearTimeout(t);

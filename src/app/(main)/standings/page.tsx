@@ -15,6 +15,47 @@ import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import type { TeamStanding } from "@/lib/types";
 
+interface RawStanding {
+  teamName: string;
+  wins: number;
+  losses: number;
+  draws: number;
+  winRate: number;
+  gamesBehind: number;
+}
+
+interface RealBatterStat {
+  name: string;
+  team: string;
+  rank: number;
+  pa?: number;
+  games?: number;
+  avg?: string;
+  hr?: string;
+  rbi?: string;
+  hits?: string;
+  sb?: string;
+  ops?: string;
+  obp?: string;
+  slg?: string;
+  [key: string]: string | number | undefined;
+}
+
+interface RealPitcherStat {
+  name: string;
+  team: string;
+  rank: number;
+  ip?: number;
+  games?: number;
+  era?: string;
+  wins?: string;
+  so?: string;
+  saves?: string;
+  holds?: string;
+  whip?: string;
+  [key: string]: string | number | undefined;
+}
+
 const MOCK_STANDINGS: TeamStanding[] = [
   { teamId: 7, season: 2026, rank: 1, wins: 85, losses: 56, draws: 3, pct: 0.603, gb: 0, streak: "3연승", last10: "7승3패" },
   { teamId: 9, season: 2026, rank: 2, wins: 83, losses: 57, draws: 4, pct: 0.593, gb: 1.5, streak: "2연승", last10: "6승4패" },
@@ -221,7 +262,7 @@ export default function StandingsPage() {
             "LG": 1, "두산": 2, "KT": 3, "SSG": 4, "NC": 5,
             "KIA": 6, "롯데": 7, "삼성": 8, "한화": 9, "키움": 10,
           };
-          const mapped: TeamStanding[] = data.standings.map((s: any, i: number) => ({
+          const mapped: TeamStanding[] = data.standings.map((s: RawStanding, i: number) => ({
             teamId: TEAM_NAME_MAP[s.teamName] ?? 0,
             season: 2025,
             rank: i + 1,
@@ -240,10 +281,11 @@ export default function StandingsPage() {
   }, []);
 
   const standings = realStandings ?? MOCK_STANDINGS;
-  const [realBatters, setRealBatters] = useState<any[] | null>(null);
-  const [realPitchers, setRealPitchers] = useState<any[] | null>(null);
+  const [realBatters, setRealBatters] = useState<RealBatterStat[] | null>(null);
+  const [realPitchers, setRealPitchers] = useState<RealPitcherStat[] | null>(null);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (season !== 2025) { setRealBatters(null); setRealPitchers(null); return; }
     fetch("/api/stats?type=batter&season=2025")
       .then(r => r.json())
@@ -300,7 +342,6 @@ export default function StandingsPage() {
         ))}
       </div>
 
-      {/* @ts-ignore */}
       {season === 2026 ? (
         <div className="py-20 text-center">
           <p className="text-4xl mb-4">⚾</p>
@@ -386,13 +427,13 @@ export default function StandingsPage() {
             if (!realBatters) return <div className="text-center py-8 text-text-tertiary text-sm">2025 시즌 데이터 로딩 중...</div>;
             if (realBatters.length === 0) return <div className="text-center py-8 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</div>;
             // KBO 규정타석: 팀경기수(144) × 3.1 = 446타석
-            const qualified = realBatters.filter((b: any) => Number(b.pa || 0) >= 446 || (!(b.pa) && Number(b.games || 0) >= 120));
-            const toLeader = (b: any, valKey: string) => ({ rank: b.rank, name: b.name, teamId: TEAM_NAME_TO_ID[b.team] ?? 0, value: String(b[valKey] ?? 0), playerId: PLAYER_PHOTO_MAP[b.name] });
+            const qualified = realBatters.filter((b) => Number(b.pa || 0) >= 446 || (!(b.pa) && Number(b.games || 0) >= 120));
+            const toLeader = (b: RealBatterStat, valKey: string) => ({ rank: b.rank, name: b.name, teamId: TEAM_NAME_TO_ID[b.team] ?? 0, value: String(b[valKey] ?? 0), playerId: PLAYER_PHOTO_MAP[b.name] });
             const sorted = (key: string, desc = true) => [...qualified].sort((a, b) => desc ? Number(b[key] || 0) - Number(a[key] || 0) : Number(a[key] || 0) - Number(b[key] || 0)).slice(0, 20).map((b, i) => ({ ...toLeader(b, key), rank: i + 1 }));
             const avgTop = [...qualified].sort((a, b) => Number(b.avg || 0) - Number(a.avg || 0)).slice(0, 20).map((b, i) => ({ ...toLeader(b, "avg"), rank: i + 1 }));
-            const opsTop = [...qualified].filter((b: any) => b.ops).sort((a, b) => Number(b.ops || 0) - Number(a.ops || 0)).slice(0, 20).map((b, i) => ({ ...toLeader(b, "ops"), rank: i + 1 }));
-            const obpTop = [...qualified].filter((b: any) => b.obp).sort((a, b) => Number(b.obp || 0) - Number(a.obp || 0)).slice(0, 20).map((b, i) => ({ ...toLeader(b, "obp"), rank: i + 1 }));
-            const slgTop = [...qualified].filter((b: any) => b.slg).sort((a, b) => Number(b.slg || 0) - Number(a.slg || 0)).slice(0, 20).map((b, i) => ({ ...toLeader(b, "slg"), rank: i + 1 }));
+            const opsTop = [...qualified].filter((b) => b.ops).sort((a, b) => Number(b.ops || 0) - Number(a.ops || 0)).slice(0, 20).map((b, i) => ({ ...toLeader(b, "ops"), rank: i + 1 }));
+            const obpTop = [...qualified].filter((b) => b.obp).sort((a, b) => Number(b.obp || 0) - Number(a.obp || 0)).slice(0, 20).map((b, i) => ({ ...toLeader(b, "obp"), rank: i + 1 }));
+            const slgTop = [...qualified].filter((b) => b.slg).sort((a, b) => Number(b.slg || 0) - Number(a.slg || 0)).slice(0, 20).map((b, i) => ({ ...toLeader(b, "slg"), rank: i + 1 }));
             const categories = [
               { id: "avg", label: "타율", leaders: avgTop },
               { id: "hr", label: "홈런", leaders: sorted("hr") },
@@ -424,11 +465,11 @@ export default function StandingsPage() {
             if (!realPitchers) return <div className="text-center py-8 text-text-tertiary text-sm">2025 시즌 데이터 로딩 중...</div>;
             if (realPitchers.length === 0) return <div className="text-center py-8 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</div>;
             // KBO 규정이닝: 팀경기수(144) × 1.0 = 144이닝
-            const qualifiedP = realPitchers.filter((p: any) => Number(p.ip || 0) >= 144 || (!(p.ip) && Number(p.games || 0) >= 40));
-            const toLeader = (p: any, valKey: string) => ({ rank: p.rank, name: p.name, teamId: TEAM_NAME_TO_ID[p.team] ?? 0, value: String(p[valKey] ?? 0), playerId: PLAYER_PHOTO_MAP[p.name] });
+            const qualifiedP = realPitchers.filter((p) => Number(p.ip || 0) >= 144 || (!(p.ip) && Number(p.games || 0) >= 40));
+            const toLeader = (p: RealPitcherStat, valKey: string) => ({ rank: p.rank, name: p.name, teamId: TEAM_NAME_TO_ID[p.team] ?? 0, value: String(p[valKey] ?? 0), playerId: PLAYER_PHOTO_MAP[p.name] });
             const sorted = (key: string, desc = true) => [...qualifiedP].sort((a, b) => desc ? Number(b[key] || 0) - Number(a[key] || 0) : Number(a[key] || 0) - Number(b[key] || 0)).slice(0, 20).map((p, i) => ({ ...toLeader(p, key), rank: i + 1 }));
             const eraTop = [...qualifiedP].sort((a, b) => Number(a.era || 99) - Number(b.era || 99)).slice(0, 20).map((p, i) => ({ ...toLeader(p, "era"), rank: i + 1 }));
-            const whipTop = [...qualifiedP].filter((p: any) => p.whip).sort((a, b) => Number(a.whip || 99) - Number(b.whip || 99)).slice(0, 20).map((p, i) => ({ ...toLeader(p, "whip"), rank: i + 1 }));
+            const whipTop = [...qualifiedP].filter((p) => p.whip).sort((a, b) => Number(a.whip || 99) - Number(b.whip || 99)).slice(0, 20).map((p, i) => ({ ...toLeader(p, "whip"), rank: i + 1 }));
             const categories = [
               { id: "era", label: "평균자책", leaders: eraTop },
               { id: "wins", label: "승리", leaders: sorted("wins") },

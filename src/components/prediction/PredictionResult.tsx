@@ -39,6 +39,7 @@ export default function PredictionResult({
                 left: `${10 + i * 12}%`,
                 top: "-4px",
               }}
+              /* eslint-disable react-hooks/purity */
               animate={{
                 y: [0, 60 + Math.random() * 40],
                 x: [0, (Math.random() - 0.5) * 30],
@@ -51,6 +52,7 @@ export default function PredictionResult({
                 delay: Math.random() * 2,
                 ease: "easeOut",
               }}
+              /* eslint-enable react-hooks/purity */
             />
           ))}
         </div>

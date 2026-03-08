@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
 import GlassCard from "@/components/ui/GlassCard";
-import { calcBatterSaber, calcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
+import { calcBatterSaber, calcPitcherSaber, type CalcBatterSaber, type CalcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
 import {
   BATTER_ADVANCED, PITCHER_ADVANCED,
   getDefaultBatterAdvanced, getDefaultPitcherAdvanced,
@@ -187,10 +187,11 @@ function PitcherStats({ data, teamColor }: { data: PitcherAdvanced; teamColor: s
 
 export default function NicheStats({ playerId, position, teamColor, playerName, season = 2026 }: { playerId: string; position: string; teamColor: string; playerName?: string; season?: number }) {
   const isPitcher = position === "투수";
-  const [realSaber, setRealSaber] = useState<any>(null);
+  const [realSaber, setRealSaber] = useState<CalcBatterSaber | CalcPitcherSaber | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (season !== 2025 || !playerId) { setRealSaber(null); return; }
     setLoading(true);
     fetch(`/api/player-stats?id=${playerId}&pos=${encodeURIComponent(position)}`)
@@ -212,18 +213,19 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
     if (!realSaber) return <div className="glass-card p-4 mb-4 text-center text-text-tertiary text-sm">2025 세이버메트릭스 데이터를 찾을 수 없습니다</div>;
 
     if (isPitcher) {
+      const ps = realSaber as CalcPitcherSaber;
       return (
         <div className="space-y-4">
           <GlassCard className="p-4">
             <h3 className="text-sm font-bold text-text-primary mb-3">📊 2025 세이버메트릭스 (실데이터 기반)</h3>
             <div className="grid grid-cols-4 gap-3">
-              <StatBox label="FIP" value={realSaber.FIP.toFixed(2)} desc="순수 투구력" />
-              <StatBox label="WHIP" value={typeof realSaber.WHIP === "number" ? realSaber.WHIP.toFixed(2) : realSaber.WHIP} desc="출루 허용" />
-              <StatBox label="K/9" value={realSaber.K9.toFixed(1)} desc="9이닝 삼진" />
-              <StatBox label="BB/9" value={realSaber.BB9.toFixed(1)} desc="9이닝 볼넷" />
-              <StatBox label="HR/9" value={realSaber.HR9.toFixed(1)} desc="9이닝 피홈런" />
-              <StatBox label="K%" value={`${realSaber.K_pct}%`} desc="삼진 비율" />
-              <StatBox label="BB%" value={`${realSaber.BB_pct}%`} desc="볼넷 비율" />
+              <StatBox label="FIP" value={ps.FIP.toFixed(2)} desc="순수 투구력" />
+              <StatBox label="WHIP" value={typeof ps.WHIP === "number" ? ps.WHIP.toFixed(2) : ps.WHIP} desc="출루 허용" />
+              <StatBox label="K/9" value={ps.K9.toFixed(1)} desc="9이닝 삼진" />
+              <StatBox label="BB/9" value={ps.BB9.toFixed(1)} desc="9이닝 볼넷" />
+              <StatBox label="HR/9" value={ps.HR9.toFixed(1)} desc="9이닝 피홈런" />
+              <StatBox label="K%" value={`${ps.K_pct}%`} desc="삼진 비율" />
+              <StatBox label="BB%" value={`${ps.BB_pct}%`} desc="볼넷 비율" />
             </div>
             <p className="text-[10px] text-text-tertiary mt-3 text-center">※ KBO 공식 기록 기반 계산값</p>
           </GlassCard>
@@ -231,20 +233,21 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
       );
     }
 
+    const bs = realSaber as CalcBatterSaber;
     return (
       <div className="space-y-4">
         <GlassCard className="p-4">
           <h3 className="text-sm font-bold text-text-primary mb-3">📊 2025 세이버메트릭스 (실데이터 기반)</h3>
           <div className="grid grid-cols-4 gap-3">
-            <StatBox label="wRC+" value={String(realSaber.wRC_plus)} desc="득점 생산" />
-            <StatBox label="OPS" value={realSaber.OPS.toFixed(3)} desc="출루+장타" />
-            <StatBox label="wOBA" value={realSaber.wOBA.toFixed(3)} desc="가중 출루" />
-            <StatBox label="ISO" value={realSaber.ISO.toFixed(3)} desc="순수 장타력" />
-            <StatBox label="BABIP" value={realSaber.BABIP.toFixed(3)} desc="인플레이 타율" />
-            <StatBox label="BB%" value={`${realSaber.BB_pct}%`} desc="볼넷 비율" />
-            <StatBox label="K%" value={`${realSaber.K_pct}%`} desc="삼진 비율" />
-            <StatBox label="OBP" value={realSaber.OBP.toFixed(3)} desc="출루율" />
-            <StatBox label="WAR" value={realSaber.WAR.toFixed(1)} desc="대체 선수 대비 (추정)" />
+            <StatBox label="wRC+" value={String(bs.wRC_plus)} desc="득점 생산" />
+            <StatBox label="OPS" value={bs.OPS.toFixed(3)} desc="출루+장타" />
+            <StatBox label="wOBA" value={bs.wOBA.toFixed(3)} desc="가중 출루" />
+            <StatBox label="ISO" value={bs.ISO.toFixed(3)} desc="순수 장타력" />
+            <StatBox label="BABIP" value={bs.BABIP.toFixed(3)} desc="인플레이 타율" />
+            <StatBox label="BB%" value={`${bs.BB_pct}%`} desc="볼넷 비율" />
+            <StatBox label="K%" value={`${bs.K_pct}%`} desc="삼진 비율" />
+            <StatBox label="OBP" value={bs.OBP.toFixed(3)} desc="출루율" />
+            <StatBox label="WAR" value={bs.WAR.toFixed(1)} desc="대체 선수 대비 (추정)" />
           </div>
           <p className="text-[10px] text-text-tertiary mt-3 text-center">※ KBO 공식 기록 기반 계산값 (WAR는 근사치, 핫존/구종별은 Statiz 연동 예정)</p>
         </GlassCard>

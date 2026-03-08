@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { TEAMS } from "@/lib/constants/teams";
+import type { YouTubeSearchItem, HighlightVideo } from "@/types/api";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
 
-const memCache = new Map<string, { data: any; ts: number }>();
+interface HighlightResult {
+  items: HighlightVideo[];
+}
+
+const memCache = new Map<string, { data: HighlightResult; ts: number }>();
 const MEM_TTL = 4 * 60 * 60 * 1000;
 
 function decodeHtml(s: string) {
@@ -14,7 +19,7 @@ function decodeHtml(s: string) {
     .replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&apos;/g, "'");
 }
 
-async function searchYouTube(query: string, maxResults: number): Promise<any[]> {
+async function searchYouTube(query: string, maxResults: number): Promise<HighlightVideo[]> {
   if (!YOUTUBE_API_KEY) return [];
   try {
     const res = await fetch(
@@ -22,7 +27,7 @@ async function searchYouTube(query: string, maxResults: number): Promise<any[]> 
     );
     const data = await res.json();
     if (data.error) return [];
-    return (data.items || []).map((item: any) => ({
+    return (data.items || []).map((item: YouTubeSearchItem) => ({
       id: item.id.videoId,
       title: decodeHtml(item.snippet.title),
       thumbnail: item.snippet.thumbnails?.high?.url,
@@ -35,7 +40,7 @@ async function searchYouTube(query: string, maxResults: number): Promise<any[]> 
 }
 
 // Supabase fallback: 팀 기반 하이라이트 (YouTube API 실패 시)
-async function getSupabaseFallback(team: string): Promise<any[]> {
+async function getSupabaseFallback(team: string): Promise<HighlightVideo[]> {
   if (!SUPABASE_URL) return [];
   try {
     const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -113,7 +118,7 @@ export async function GET(req: NextRequest) {
 
   const results = await Promise.all(searches);
   const seen = new Set<string>();
-  const merged: any[] = [];
+  const merged: (HighlightVideo & { _label: string })[] = [];
 
   // 선수별 영상 먼저 추가 (균등 배분 보장)
   for (let i = 1; i < results.length; i++) {

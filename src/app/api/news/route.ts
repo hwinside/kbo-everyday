@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { NaverNewsRawItem, NewsItem } from "@/types/api";
 
 const NAVER_CLIENT_ID = process.env.NAVER_CLIENT_ID || "";
 const NAVER_CLIENT_SECRET = process.env.NAVER_CLIENT_SECRET || "";
 
 // 1시간 캐시 (player별, team별 독립 캐시)
-const cache = new Map<string, { data: any; ts: number }>();
+interface NewsResult {
+  items: NewsItem[];
+  _q: string;
+}
+
+const cache = new Map<string, { data: NewsResult; ts: number }>();
 const CACHE_TTL = 60 * 60 * 1000;
 
 export async function GET(req: NextRequest) {
@@ -40,8 +46,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ items: [], error: "Naver API not configured", _q: searchQuery });
   }
   
-  console.log('[API/news] Query:', searchQuery);
-
   try {
     const res = await fetch(
       `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(searchQuery)}&display=20&sort=date`,
@@ -55,7 +59,7 @@ export async function GET(req: NextRequest) {
 
     const data = await res.json();
 
-    const items = (data.items || []).map((item: any) => ({
+    const items: NewsItem[] = (data.items || []).map((item: NaverNewsRawItem) => ({
       title: item.title
         .replace(/<[^>]+>/g, "")
         .replace(/&quot;/g, '"')
@@ -78,7 +82,7 @@ export async function GET(req: NextRequest) {
 
     // 중복 기사 제거 (link 기준)
     const seen = new Set<string>();
-    const unique = items.filter((item: any) => {
+    const unique = items.filter((item: NewsItem) => {
       if (seen.has(item.link)) return false;
       seen.add(item.link);
       return true;
@@ -87,8 +91,8 @@ export async function GET(req: NextRequest) {
     const result = { items: unique, _q: cacheKey };
     cache.set(cacheKey, { data: result, ts: Date.now() });
     return NextResponse.json(result);
-  } catch (e: any) {
-    console.error('[API/news] Fetch error:', e.message);
-    return NextResponse.json({ items: [], error: e.message, _q: searchQuery });
+  } catch (e: unknown) {
+    console.error('[API/news] Fetch error:', (e as Error).message);
+    return NextResponse.json({ items: [], error: (e as Error).message, _q: searchQuery });
   }
 }

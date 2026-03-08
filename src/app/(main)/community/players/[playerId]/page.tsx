@@ -46,6 +46,15 @@ const TEAM_SHORT_MAP: Record<string, number> = {
   "두산": 2, SSG: 4, KIA: 6, "롯데": 7, "삼성": 8, "한화": 9, "키움": 10,
 };
 
+interface RawPlayerInfo {
+  kboId: string;
+  name: string;
+  teamId: number;
+  backNo: string;
+  position: string;
+  team: string;
+}
+
 interface PlayerData {
   name: string;
   teamId: number;
@@ -77,7 +86,7 @@ export default function PlayerBoardPage() {
   const kboId = LEGACY_MAP[rawId] || rawId;
   const playerName = ID_TO_NAME[kboId];
   // 동명이인 대응: roster에서 kboId로 직접 찾기
-  const rosterPlayer = PLAYERS_ROSTER.find((p: any) => p.kboId === kboId);
+  const rosterPlayer = PLAYERS_ROSTER.find((p) => p.kboId === kboId);
   
   const [player, setPlayer] = useState<PlayerData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -87,13 +96,14 @@ export default function PlayerBoardPage() {
   const [showWrite, setShowWrite] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [statSeason, setStatSeason] = useState<2025 | 2026>(2025);
-  const [realStats, setRealStats] = useState<any>(null);
+  const [realStats, setRealStats] = useState<Record<string, string | number> | null>(null);
   const { user } = useAuth();
   const { newBadges, checkBadges, clearBadges } = useBadgeCheck();
 
   // KBO 검색 API로 선수 정보 로드
   useEffect(() => {
     if (!playerName) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLoading(false);
       return;
     }
@@ -101,7 +111,7 @@ export default function PlayerBoardPage() {
     fetch(`/api/player-teams?name=${encodeURIComponent(playerName)}${rosterPlayer ? `&team=${encodeURIComponent(rosterPlayer.team)}` : ""}`).then(r => r.json()).then(d => {
       // 동명이인: kboId 일치하는 선수 우선, 없으면 팀 일치, 없으면 첫 번째
       const players = d.players || [];
-      const found = players.find((p: any) => p.kboId === kboId) || players.find((p: any) => rosterPlayer && p.team === rosterPlayer.team) || players[0];
+      const found = players.find((p: RawPlayerInfo) => p.kboId === kboId) || players.find((p: RawPlayerInfo) => rosterPlayer && p.team === rosterPlayer.team) || players[0];
       if (found) {
         setPlayer({
           name: found.name,
@@ -122,6 +132,7 @@ export default function PlayerBoardPage() {
 
   // 2025 스탯 로드 (개별 선수)
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (statSeason !== 2025 || !player) { setRealStats(null); return; }
     fetch(`/api/player-stats?id=${kboId}&pos=${encodeURIComponent(player.position)}`)
       .then(r => r.json())

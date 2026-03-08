@@ -66,7 +66,25 @@ async function fetchPlayerStats(playerId: string, position: string) {
   }
 }
 
-const cache: Record<string, { data: any; ts: number }> = {};
+interface PitcherDetailStats {
+  team: string; era: string; games: number;
+  cg: number; sho: number; wins: number; losses: number;
+  saves: number; holds: number; wpct: string | undefined;
+  ip: string; hits: number; hr: number;
+  bb: number; so: number; er: number; whip: string;
+}
+
+interface BatterDetailStats {
+  team: string; avg: string; games: number;
+  pa: number; ab: number; runs: number; hits: number;
+  doubles: number; triples: number; hr: number; tb: number;
+  rbi: number; sb: number; bb: number; hbp: number;
+  so: number; slg: string; obp: string; ops: string;
+}
+
+type PlayerDetailStats = PitcherDetailStats | BatterDetailStats;
+
+const cache: Record<string, { data: PlayerDetailStats; ts: number }> = {};
 
 export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("id");
@@ -83,7 +101,7 @@ export async function GET(req: NextRequest) {
     const stats = await fetchPlayerStats(id, pos);
     if (stats) cache[cacheKey] = { data: stats, ts: Date.now() };
     return NextResponse.json({ stats, cached: false });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message, stats: null }, { status: 500 });
+  } catch (e: unknown) {
+    return NextResponse.json({ error: (e as Error).message, stats: null }, { status: 500 });
   }
 }

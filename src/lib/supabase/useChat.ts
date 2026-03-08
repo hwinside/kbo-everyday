@@ -34,7 +34,7 @@ export function useChat(roomId: string) {
         .limit(50);
 
       if (data) {
-        const mapped = data.reverse().map((m: any) => ({
+        const mapped = data.reverse().map((m: ChatMessage & { profiles?: { nickname?: string; team_id?: number; grade?: string } }) => ({
           id: m.id,
           room_id: m.room_id,
           user_id: m.user_id,
@@ -67,7 +67,7 @@ export function useChat(roomId: string) {
           filter: `room_id=eq.${roomId}`,
         },
         async (payload) => {
-          const msg = payload.new as any;
+          const msg = payload.new as ChatMessage;
           // 프로필 조회
           const { data: prof } = await supabase
             .from("profiles")

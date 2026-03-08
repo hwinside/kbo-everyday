@@ -26,13 +26,9 @@ export default function PlayerNews({ playerName, teamId }: PlayerNewsProps) {
     const teamName = teamObj ? `${teamObj.shortName} ${teamObj.name}` : "";
     const searchQuery = teamName ? `${teamName} ${playerName}` : `KBO ${playerName}`;
     
-    console.log('[PlayerNews] Search query:', searchQuery);
-    
     fetch(`/api/news?q=${encodeURIComponent(searchQuery)}`)
       .then(r => r.json())
       .then(d => {
-        console.log('[PlayerNews] Items:', d.items?.length || 0);
-        
         // 중복 제거 (link 기준)
         const seen = new Set<string>();
         const unique = (d.items || []).filter((item: NewsItem) => {
@@ -41,7 +37,6 @@ export default function PlayerNews({ playerName, teamId }: PlayerNewsProps) {
           return true;
         });
         
-        console.log('[PlayerNews] Unique items:', unique.length);
         setNews(unique.slice(0, 5));
         setLoading(false);
       })

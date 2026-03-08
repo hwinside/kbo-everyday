@@ -24,6 +24,7 @@ export default function CommunityTeamsPage() {
       typeof window !== "undefined" &&
       new URLSearchParams(window.location.search).get("pick");
     const id = getMyTeamId();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMyTeamId(id);
 
     // myTeam 설정 시 바로 해당 팀 게시판으로 (pick=true면 팀 선택 모드이므로 건너뜀)
@@ -40,6 +41,7 @@ export default function CommunityTeamsPage() {
   useEffect(() => {
     if (myTeamId !== null) return;
     const id = getMyTeamId();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMyTeamId(id);
   }, [myTeamId]);
 

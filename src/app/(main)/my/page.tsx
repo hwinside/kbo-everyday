@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import Image from "next/image";
 import { Settings, ChevronRight, Download, FileText, MessageCircle, Mail, Heart, Trophy, RefreshCw, Star, LogIn, LogOut, GraduationCap, Bell, MessageSquareHeart } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
@@ -37,6 +38,7 @@ export default function MyPage() {
   const router = useRouter();
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTeamId(getMyTeamId());
     setFavPlayers(getFavoritePlayers());
   }, [profile]);
@@ -158,7 +160,7 @@ export default function MyPage() {
               if (ios) {
                 alert("Safari 하단의 공유 버튼 → 홈 화면에 추가를 선택하세요!");
               } else {
-                const evt = (window as any).__pwaPrompt;
+                const evt = (window as unknown as { __pwaPrompt?: { prompt: () => void } }).__pwaPrompt;
                 if (evt) { evt.prompt(); } else { alert("브라우저 메뉴에서 '홈 화면에 추가'를 선택하세요!"); }
               }
             }}
@@ -261,7 +263,7 @@ export default function MyPage() {
           { icon: Heart, label: "좋아요한 글", count: 156 },
           { icon: Trophy, label: "예측 전적", count: null, detail: "67% 적중" },
           { icon: GraduationCap, label: "야구 쉽게 배우기", count: null, detail: "NEW", href: "/learn" },
-        ].map(({ icon: Icon, label, count, detail, href }: any) => (
+        ].map(({ icon: Icon, label, count, detail, href }: { icon: LucideIcon; label: string; count?: number | null; detail?: string; href?: string }) => (
           <GlassCard key={label} pressable onClick={() => href && router.push(href)} className="flex items-center justify-between p-5">
             <div className="flex items-center gap-4">
               <Icon size={22} className="text-text-secondary" />
@@ -355,7 +357,7 @@ export default function MyPage() {
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="flex-shrink-0 w-6 h-6 rounded-full bg-accent flex items-center justify-center text-xs font-bold text-white">2</span>
-                  <p className="text-sm text-text-primary">"홈 화면에 추가" 선택</p>
+                  <p className="text-sm text-text-primary">&quot;홈 화면에 추가&quot; 선택</p>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="flex-shrink-0 w-6 h-6 rounded-full bg-accent flex items-center justify-center text-xs font-bold text-white">3</span>

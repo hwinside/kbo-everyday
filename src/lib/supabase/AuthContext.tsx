@@ -6,12 +6,13 @@ import { setMyTeamId } from "@/lib/store/myteam";
 import { setFavoritePlayers } from "@/lib/store/favorites";
 import { setOnboardingStatus } from "@/lib/store/onboarding";
 import type { User } from "@supabase/supabase-js";
+import type { FavoritePlayer } from "@/lib/store/favorites";
 
 interface Profile {
   id: string;
   nickname: string;
   team_id: number;
-  favorite_players: any[];
+  favorite_players: FavoritePlayer[];
   points: number;
   grade: string;
   avatar_url: string | null;

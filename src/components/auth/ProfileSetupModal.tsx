@@ -97,8 +97,8 @@ export default function ProfileSetupModal({ isOpen }: Props) {
 
       await refreshProfile();
       setStep(3);
-    } catch (e: any) {
-      setError(e.message || "프로필 생성에 실패했습니다");
+    } catch (e: unknown) {
+      setError((e as Error).message || "프로필 생성에 실패했습니다");
     } finally {
       setLoading(false);
     }

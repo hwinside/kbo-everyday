@@ -350,7 +350,7 @@ export default function StadiumDetailPage() {
             setShowLogin(true);
             return;
           }
-          /* TODO: write post */
+          /* TODO(Phase 2): navigate to write post page with board_type='stadium' and board_id=stadiumId pre-filled */
         }}
         className="fixed bottom-24 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
       >

@@ -37,8 +37,8 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit }: Write
     if (!title.trim() || !content.trim()) return;
     try {
       if (onSubmit) await onSubmit(title.trim(), content.trim(), []);
-    } catch (e: any) {
-      alert("등록 실패: " + (e.message || JSON.stringify(e)));
+    } catch (e: unknown) {
+      alert("등록 실패: " + ((e as Error).message || JSON.stringify(e)));
       return;
     }
     onClose();

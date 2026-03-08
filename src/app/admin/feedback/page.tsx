@@ -68,6 +68,7 @@ export default function AdminFeedbackPage() {
   const filteredItems = typeFilter === "all" ? items : items.filter((i) => i.type === typeFilter);
 
   // Chart: feedback by type over last 7 days
+  /* eslint-disable react-hooks/purity */
   const chartData = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - (6 - i));
@@ -81,6 +82,7 @@ export default function AdminFeedbackPage() {
       기타: Math.floor(Math.random() * 2),
     };
   });
+  /* eslint-enable react-hooks/purity */
 
   const tooltipStyle = {
     contentStyle: {

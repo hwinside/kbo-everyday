@@ -82,18 +82,9 @@ export default function TeamBoardPage() {
   const [pageTab, setPageTab] = useState<PageTab>("board");
   const [sortTab, setSortTab] = useState<SortTab>("latest");
   const [writeOpen, setWriteOpen] = useState(false);
-
-  if (!team) {
-    return (
-      <div className="flex items-center justify-center py-40 text-text-tertiary">
-        존재하지 않는 구단입니다
-      </div>
-    );
-  }
-
   const { user } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
-  const [realNews, setRealNews] = useState<any[]>([]);
+  const [realNews, setRealNews] = useState<{ id: number; teamId: number; title: string; source: string; sourceUrl: string; thumbnailUrl: null; timeAgo: string; type: "news" }[]>([]);
 
   useEffect(() => {
     if (!team) return;
@@ -102,9 +93,9 @@ export default function TeamBoardPage() {
       .then(d => {
         if (d.items?.length) {
           const teamNames = [team.shortName, team.name, ...(team.id === 1 ? ["LG","엘지","트윈스"] : team.id === 2 ? ["두산","베어스"] : team.id === 3 ? ["KT","위즈"] : team.id === 4 ? ["SSG","랜더스"] : team.id === 5 ? ["NC","다이노스"] : team.id === 6 ? ["KIA","기아","타이거즈"] : team.id === 7 ? ["롯데","자이언츠"] : team.id === 8 ? ["삼성","라이온즈"] : team.id === 9 ? ["한화","이글스"] : team.id === 10 ? ["키움","히어로즈"] : [])];
-          const filtered = d.items.filter((item: any) => teamNames.some((n: string) => item.title.includes(n)));
+          const filtered = d.items.filter((item: { title: string; link: string; pubDate: string }) => teamNames.some((n: string) => item.title.includes(n)));
           const source = filtered.length > 0 ? filtered : d.items;
-          setRealNews(source.map((item: any, i: number) => ({
+          setRealNews(source.map((item: { title: string; link: string; pubDate: string }, i: number) => ({
             id: 2000 + i,
             teamId: team.id,
             title: item.title,
@@ -120,9 +111,29 @@ export default function TeamBoardPage() {
   }, [team]);
 
   const { posts: livePosts, loading: postsLoading, reload } = usePosts("team", teamSlug);
+
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const allRoster: { name: string; position: string; playerId: string; backNo: string }[] = (() => {
+    try {
+      const roster = require("@/lib/constants/players-roster.json") as { name: string; teamId: number; position?: string; playerId: string; backNo?: string }[];
+      return roster
+        .filter((p) => p.teamId === (team?.id ?? -1))
+        .map((p) => ({ name: p.name, position: p.position || "미정", playerId: p.playerId, backNo: p.backNo || "" }));
+    } catch { return []; }
+  })();
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  const [posFilter, setPosFilter] = useState<string>("전체");
+
+  if (!team) {
+    return (
+      <div className="flex items-center justify-center py-40 text-text-tertiary">
+        존재하지 않는 구단입니다
+      </div>
+    );
+  }
   const realPosts: Post[] = livePosts.map(p => ({
     id: p.id,
-    boardType: "team" as any,
+    boardType: "team" as const,
     boardId: teamSlug,
     authorId: p.author_id,
     title: p.title,
@@ -148,16 +159,6 @@ export default function TeamBoardPage() {
       ? [...posts].sort((a, b) => b.likeCount - a.likeCount)
       : posts;
 
-  // 팀 선수 목록 (로스터 전체)
-  const allRoster: { name: string; position: string; playerId: string; backNo: string }[] = (() => {
-    try {
-      const roster = require("@/lib/constants/players-roster.json") as any[];
-      return roster
-        .filter((p: any) => p.teamId === team.id)
-        .map((p: any) => ({ name: p.name, position: p.position || "미정", playerId: p.playerId, backNo: p.backNo || "" }));
-    } catch { return []; }
-  })();
-  const [posFilter, setPosFilter] = useState<string>("전체");
   const POS_FILTERS = ["전체", "투수", "내야수", "외야수", "포수"];
   const players = posFilter === "전체" ? allRoster : allRoster.filter(p => p.position === posFilter);
   const grouped = POSITION_ORDER.map((group) => ({
