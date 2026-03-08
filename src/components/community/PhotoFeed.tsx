@@ -296,17 +296,11 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
 
               {/* Caption */}
               {post.content && (
-                <div className="px-4 pb-1">
-                  <button
-                    onClick={() => setCommentPostId(post.id)}
-                    className="text-left"
-                  >
-                    <span className="text-base font-semibold text-text-primary mr-1.5">
-                      {post.nickname || "익명"}
-                    </span>
-                    <span className="text-base text-text-secondary">{post.content}</span>
-                  </button>
-                </div>
+                <CaptionBlock
+                  nickname={post.nickname || "익명"}
+                  content={post.content}
+                  onPress={() => setCommentPostId(post.id)}
+                />
               )}
 
               {/* Comment preview */}
@@ -330,6 +324,32 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
           onClose={() => setCommentPostId(null)}
           postId={commentPostId}
         />
+      )}
+    </div>
+  );
+}
+
+/** 인스타 스타일 캡션: 2줄 초과 시 "더보기" */
+function CaptionBlock({ nickname, content, onPress }: { nickname: string; content: string; onPress: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const MAX_CHARS = 80;
+  const isLong = content.length > MAX_CHARS;
+
+  return (
+    <div className="px-4 pb-1">
+      <button onClick={onPress} className="text-left">
+        <span className="text-base font-semibold text-text-primary mr-1.5">{nickname}</span>
+        <span className="text-base text-text-secondary">
+          {!expanded && isLong ? content.slice(0, MAX_CHARS) + "..." : content}
+        </span>
+      </button>
+      {isLong && !expanded && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
+          className="text-base text-text-tertiary ml-1"
+        >
+          더보기
+        </button>
       )}
     </div>
   );
