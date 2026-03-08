@@ -408,7 +408,7 @@ export default function CommunityPlayersPage() {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 12 }}
             transition={{ duration: 0.15 }}
-            className="px-5 py-3"
+            className="py-3"
           >
             <PhotoFeed
               posts={filteredPhotoPosts}
