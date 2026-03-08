@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, X } from "lucide-react";
 import { GRADES } from "@/lib/constants/grades";
+import { getAvatarPath } from "@/lib/constants/avatars";
 import { createComment } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
@@ -54,7 +55,7 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
     (async () => {
       const { data } = await supabase
         .from("comments")
-        .select("*, profiles(nickname, team_id, grade)")
+        .select("*, profiles(nickname, team_id, grade, avatar_url)")
         .eq("post_id", postId)
         .order("created_at", { ascending: true });
 
@@ -65,6 +66,7 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
             nickname: cm.profiles?.nickname,
             team_id: cm.profiles?.team_id,
             grade: cm.profiles?.grade,
+            avatar_url: cm.profiles?.avatar_url,
           }))
         );
       }
@@ -202,14 +204,21 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
               ) : (
                 comments.map((comment) => {
                   const grade = getGradeInfo(comment.grade);
+                  const avatarPath = getAvatarPath((comment as any).avatar_url);
                   return (
                     <div key={comment.id} className="flex gap-2.5">
-                      <div
-                        className="w-8 h-8 rounded-full flex items-center justify-center text-sm flex-shrink-0"
-                        style={{ backgroundColor: grade.bgColor }}
-                      >
-                        {grade.emoji}
-                      </div>
+                      {avatarPath ? (
+                        <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-bg-tertiary">
+                          <img src={avatarPath} alt="" className="w-full h-full" />
+                        </div>
+                      ) : (
+                        <div
+                          className="w-8 h-8 rounded-full flex items-center justify-center text-sm flex-shrink-0"
+                          style={{ backgroundColor: grade.bgColor }}
+                        >
+                          {grade.emoji}
+                        </div>
+                      )}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5">
                           <span className="text-sm font-semibold text-text-primary">
