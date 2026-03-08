@@ -7,31 +7,27 @@ import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { getTeamById } from "@/lib/constants/teams";
-import TeamLogo from "@/components/ui/TeamLogo";
 import {
   getGameById,
   getInningsForGame,
   getPlaysForGame,
   MOCK_GAME_STATE,
-
   MOCK_LINEUP,
 } from "@/lib/constants/games";
-import TeamComparisonBar from "@/components/game/TeamComparisonBar";
-import GameDecisionPitchers from "@/components/game/GameDecisionPitchers";
-import StadiumInfo from "@/components/game/StadiumInfo";
 import { getStatsForGame } from "@/lib/constants/game-stats";
+import { useLiveGame } from "@/lib/hooks/useLiveGame";
 
-import ScoreBoard from "@/components/game/ScoreBoard";
+import ScoreBar from "@/components/game/ScoreBar";
+import LinescoreTable from "@/components/game/LinescoreTable";
+import FieldViewV2 from "@/components/game/FieldViewV2";
+import MatchupCard from "@/components/game/MatchupCard";
 import Diamond from "@/components/game/Diamond";
-import CountIndicator from "@/components/game/CountIndicator";
+import ScoreBoard from "@/components/game/ScoreBoard";
 
 import PlayByPlay from "@/components/game/PlayByPlay";
 import GameChat from "@/components/game/GameChat";
-import LiveScoreboard from "@/components/game/LiveScoreboard";
 import AIAnalysis from "@/components/game/AIAnalysis";
-import { useLiveGame } from "@/lib/hooks/useLiveGame";
 import LineupTab from "@/components/game/LineupTab";
-import OnDeckBatters from "@/components/game/OnDeckBatters";
 import GameStatsTab from "@/components/game/GameStatsTab";
 
 type Tab = "relay" | "chat" | "lineup" | "stats";
@@ -67,203 +63,198 @@ export default function GameDetailPage() {
   const lineup = game.id === MOCK_LINEUP.gameId ? MOCK_LINEUP : null;
   const gameStats = getStatsForGame(gameId);
 
-  // Determine which team color to use for the current batting team
   const isTopInning = game.inning?.includes("초");
   const battingTeamColor = isTopInning
     ? awayTeam.colorPrimary
     : homeTeam.colorPrimary;
 
+  // Resolve live state
+  const currentBalls = liveGame?.balls ?? gameState?.balls ?? 0;
+  const currentStrikes = liveGame?.strikes ?? gameState?.strikes ?? 0;
+  const currentOuts = liveGame?.outs ?? gameState?.outs ?? 0;
+  const currentRunner1b = liveGame?.runner1b ?? gameState?.runner1b ?? false;
+  const currentRunner2b = liveGame?.runner2b ?? gameState?.runner2b ?? false;
+  const currentRunner3b = liveGame?.runner3b ?? gameState?.runner3b ?? false;
+  const currentBatter = liveGame?.currentBatter ?? gameState?.currentBatter ?? null;
+  const currentPitcher = liveGame?.currentPitcher ?? gameState?.currentPitcher ?? null;
+  const currentInning = liveGame?.currentInning || game.inning || "";
+  const awayScore = liveGame?.awayScore ?? game.awayScore;
+  const homeScore = liveGame?.homeScore ?? game.homeScore;
+
+  // Determine defensive side for field view
+  const isTop = currentInning.includes("초");
+  const defensiveSide = isTop ? lineup?.home : lineup?.away;
+
+  // On-deck batters
+  const onDeckBatters = (() => {
+    if (!currentBatter || !lineup) return undefined;
+    const inAway = lineup.away.batters.some((b) => b.name === currentBatter);
+    const batters = inAway ? lineup.away.batters : lineup.home.batters;
+    const currentIndex = batters.findIndex((b) => b.name === currentBatter);
+    if (currentIndex === -1) return undefined;
+    const next: { order: number; name: string }[] = [];
+    for (let i = 1; i <= 3; i++) {
+      const idx = (currentIndex + i) % batters.length;
+      next.push({ order: batters[idx].order, name: batters[idx].name });
+    }
+    return next;
+  })();
+
+  // Pitcher ERA from lineup
+  const pitcherSide = isTop ? lineup?.home : lineup?.away;
+  const pitcherEra = pitcherSide?.startingPitcher.era;
+
+  // Batter AVG from lineup
+  const batterData =
+    lineup?.away.batters.find((b) => b.name === currentBatter) ||
+    lineup?.home.batters.find((b) => b.name === currentBatter);
+  const batterAvg = batterData?.avg;
+
+  const isLive = game.status === "live" && gameState;
+
   return (
     <div className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto">
-      {/* ===== Sticky top section ===== */}
-      <div
-        className="border-b border-border bg-bg-primary/80 backdrop-blur-xl"
-        style={{
-          backgroundImage: `linear-gradient(135deg, ${awayTeam.colorPrimary}08, transparent, ${homeTeam.colorPrimary}08)`,
-        }}
-      >
-        {/* Back button + game info */}
-        <div className="flex items-center gap-4 px-4 pt-2">
-          <Link href="/games" className="p-1 -ml-1">
-            <ArrowLeft className="w-5 h-5 text-text-secondary" />
-          </Link>
-          <div className="flex-1">
-            {game.status === "live" && (
-              <div className="flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
-                <span className="text-base font-semibold text-accent">LIVE</span>
-                <span className="text-base text-text-tertiary ml-1">
-                  {game.stadium}
-                </span>
-              </div>
-            )}
-            {game.status === "final" && (
-              <span className="text-base text-text-tertiary">
-                경기 종료 · {game.stadium}
-              </span>
-            )}
-            {game.status === "scheduled" && (
-              <span className="text-base text-text-tertiary">
-                {game.time} 예정 · {game.stadium}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Score header */}
-        <div className="flex items-center justify-center gap-3 px-4 py-3 whitespace-nowrap">
-          {/* Away team */}
-          <Link href={`/teams/${awayTeam.slug}`} className="flex items-center gap-2">
-            <TeamLogo
-              team={awayTeam}
-              size={40}
-              className="shadow-lg"
-              style={{ boxShadow: `0 0 16px ${awayTeam.colorPrimary}40` }}
-            />
-            <span className="text-sm font-semibold text-text-primary flex-shrink-0">
-              {awayTeam.shortName}
-            </span>
-          </Link>
-
-          {/* Score */}
-          <div className="flex items-center gap-3">
-            <motion.span
-              key={`away-${game.awayScore}`}
-              initial={{ scale: 1.5, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="text-2xl font-bold tabular-nums text-text-primary min-w-[32px] text-center"
-            >
-              {game.awayScore}
-            </motion.span>
-            <div className="flex flex-col items-center">
-              <span className="text-base text-text-tertiary">:</span>
-              {game.inning && (
-                <span className="text-xs text-text-secondary mt-0.5 whitespace-nowrap">
-                  {game.inning}
-                </span>
-              )}
-            </div>
-            <motion.span
-              key={`home-${game.homeScore}`}
-              initial={{ scale: 1.5, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="text-2xl font-bold tabular-nums text-text-primary min-w-[32px] text-center"
-            >
-              {game.homeScore}
-            </motion.span>
-          </div>
-
-          {/* Home team */}
-          <Link href={`/teams/${homeTeam.slug}`} className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-text-primary flex-shrink-0">
-              {homeTeam.shortName}
-            </span>
-            <TeamLogo
-              team={homeTeam}
-              size={40}
-              className="shadow-lg"
-              style={{ boxShadow: `0 0 16px ${homeTeam.colorPrimary}40` }}
-            />
-          </Link>
-        </div>
-
-        {/* Live Scoreboard */}
-        {game.status === "live" && gameState && (
-          <div className="px-4 pb-2">
-            <LiveScoreboard
-              gameId={gameId}
-              awayName={awayTeam.shortName}
-              homeName={homeTeam.shortName}
-              awayScore={liveGame?.awayScore ?? game.awayScore}
-              homeScore={liveGame?.homeScore ?? game.homeScore}
-              awayColor={awayTeam.colorLight || awayTeam.colorPrimary}
-              homeColor={homeTeam.colorLight || homeTeam.colorPrimary}
-              currentInning={liveGame?.currentInning || game.inning || ""}
-              state={{
-                gameId,
-                balls: liveGame?.balls ?? gameState.balls,
-                strikes: liveGame?.strikes ?? gameState.strikes,
-                outs: liveGame?.outs ?? gameState.outs,
-                runner1b: liveGame?.runner1b ?? gameState.runner1b,
-                runner2b: liveGame?.runner2b ?? gameState.runner2b,
-                runner3b: liveGame?.runner3b ?? gameState.runner3b,
-                currentBatter: liveGame?.currentBatter ?? gameState.currentBatter,
-                currentPitcher: liveGame?.currentPitcher ?? gameState.currentPitcher,
-              }}
-              isLive={true}
-              lineup={lineup}
-            />
-          </div>
+      {/* ===== Header ===== */}
+      <div className="flex items-center gap-2 px-4 py-2.5 sticky top-0 z-[100] bg-bg-primary">
+        <Link href="/games" className="p-1 -ml-1">
+          <ArrowLeft className="w-[18px] h-[18px] text-[#888]" />
+        </Link>
+        {game.status === "live" && (
+          <span className="text-[10px] font-bold text-white bg-[#e53935] px-1.5 py-0.5 rounded-[3px] animate-pulse">
+            ● LIVE
+          </span>
         )}
-
-        {/* On-deck batters — find batter in either lineup */}
-        {game.status === "live" && gameState && lineup && (() => {
-          const batterName = liveGame?.currentBatter ?? gameState.currentBatter;
-          const inAway = lineup.away.batters.some(b => b.name === batterName);
-          const batters = inAway ? lineup.away.batters : lineup.home.batters;
-          return (
-            <OnDeckBatters
-              batters={batters}
-              currentBatterName={batterName}
-            />
-          );
-        })()}
-
-        {/* Inning score table (모든 경기) */}
-        {innings.length > 0 && (
-          <div className="px-4 pb-2">
-            <ScoreBoard
-              awayTeam={awayTeam}
-              homeTeam={homeTeam}
-              innings={innings}
-              awayScore={game.awayScore}
-              homeScore={game.homeScore}
-              currentInning={game.inning}
-            />
-          </div>
+        {game.status === "final" && (
+          <span className="text-[13px] text-[#888]">경기 종료</span>
         )}
+        {game.status === "scheduled" && (
+          <span className="text-[13px] text-[#888]">{game.time} 예정</span>
+        )}
+        <span className="text-[13px] text-[#888]">{game.stadium}</span>
+      </div>
 
-        {/* AI 분석 버튼 */}
-        <div className="px-4 py-2 flex justify-center">
-          <button
-            onClick={() => setAiOpen(true)}
-            className="px-4 py-2 rounded-full bg-accent/20 text-accent text-sm font-semibold flex items-center gap-1.5 hover:bg-accent/30 transition-colors"
-          >
-            🤖 AI 분석
-          </button>
-        </div>
-
-        <AIAnalysis
-          isOpen={aiOpen}
-          onClose={() => setAiOpen(false)}
-          awayTeamId={game.awayTeamId}
-          homeTeamId={game.homeTeamId}
+      {/* ===== Sticky Score Bar (live only) ===== */}
+      {isLive ? (
+        <ScoreBar
+          awayTeam={awayTeam}
+          homeTeam={homeTeam}
+          awayScore={awayScore}
+          homeScore={homeScore}
+          currentInning={currentInning}
+          balls={currentBalls}
+          strikes={currentStrikes}
+          outs={currentOuts}
+          runner1b={currentRunner1b}
+          runner2b={currentRunner2b}
+          runner3b={currentRunner3b}
         />
-
-        {/* Tabs */}
-        <div className="flex border-t border-border">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={clsx(
-                "flex-1 py-3 text-base font-medium transition-colors relative",
-                activeTab === tab.id
-                  ? "text-text-primary"
-                  : "text-text-tertiary"
-              )}
-            >
-              {tab.label}
-              {activeTab === tab.id && (
-                <motion.div
-                  layoutId="tab-indicator"
-                  className="absolute bottom-0 left-0 right-0 h-0.5 bg-accent"
-                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                />
-              )}
-            </button>
-          ))}
+      ) : (
+        /* Non-live: simple score display */
+        <div className="flex items-center justify-center gap-3 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-white">{awayTeam.shortName}</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-2xl font-bold tabular-nums text-white">{awayScore}</span>
+            <span className="text-base text-[#555]">:</span>
+            <span className="text-2xl font-bold tabular-nums text-white">{homeScore}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-white">{homeTeam.shortName}</span>
+          </div>
         </div>
+      )}
+
+      {/* ===== Linescore Table ===== */}
+      {innings.length > 0 && (
+        <LinescoreTable
+          awayTeam={awayTeam}
+          homeTeam={homeTeam}
+          innings={innings}
+          awayScore={awayScore}
+          homeScore={homeScore}
+          currentInning={currentInning}
+        />
+      )}
+
+      {/* ===== Field View (live with lineup) ===== */}
+      {isLive && defensiveSide ? (
+        <FieldViewV2
+          defenders={defensiveSide.batters}
+          currentPitcher={currentPitcher}
+          currentBatter={currentBatter}
+          runner1b={currentRunner1b}
+          runner2b={currentRunner2b}
+          runner3b={currentRunner3b}
+          runner1bName={gameState?.runner1bName}
+          runner2bName={gameState?.runner2bName}
+          runner3bName={gameState?.runner3bName}
+          onDeckBatters={onDeckBatters}
+        />
+      ) : isLive && !defensiveSide ? (
+        /* Fallback small diamond */
+        <div className="flex justify-center py-3">
+          <Diamond
+            runner1b={currentRunner1b}
+            runner2b={currentRunner2b}
+            runner3b={currentRunner3b}
+            teamColor={battingTeamColor}
+          />
+        </div>
+      ) : null}
+
+      {/* ===== Matchup Card (live only) ===== */}
+      {isLive && (
+        <MatchupCard
+          currentPitcher={currentPitcher}
+          currentBatter={currentBatter}
+          pitcherEra={pitcherEra}
+          batterAvg={batterAvg}
+        />
+      )}
+
+      {/* Non-live: existing ScoreBoard for finished/scheduled games without live linescore */}
+      {!isLive && innings.length === 0 && game.status === "final" && (
+        <div className="px-4 pb-2">
+          <ScoreBoard
+            awayTeam={awayTeam}
+            homeTeam={homeTeam}
+            innings={innings}
+            awayScore={awayScore}
+            homeScore={homeScore}
+            currentInning={game.inning}
+          />
+        </div>
+      )}
+
+      <AIAnalysis
+        isOpen={aiOpen}
+        onClose={() => setAiOpen(false)}
+        awayTeamId={game.awayTeamId}
+        homeTeamId={game.homeTeamId}
+      />
+
+      {/* ===== Tabs ===== */}
+      <div className="flex border-b border-[#1a1a2e] mx-4">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={clsx(
+              "flex-1 py-2.5 text-[13px] font-medium transition-colors relative",
+              activeTab === tab.id ? "text-white font-semibold" : "text-[#888]"
+            )}
+          >
+            {tab.label}
+            {activeTab === tab.id && (
+              <motion.div
+                layoutId="tab-indicator"
+                className="absolute bottom-[-1px] left-[20%] right-[20%] h-0.5 bg-white rounded-sm"
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              />
+            )}
+          </button>
+        ))}
       </div>
 
       {/* ===== Tab content ===== */}
@@ -289,7 +280,7 @@ export default function GameDetailPage() {
               exit={{ opacity: 0 }}
               className="h-full"
             >
-              <GameChat gameId={gameId as string} homeTeamId={homeTeam.id} awayTeamId={awayTeam.id} />
+              <GameChat gameId={gameId} homeTeamId={homeTeam.id} awayTeamId={awayTeam.id} />
             </motion.div>
           )}
 
@@ -299,14 +290,9 @@ export default function GameDetailPage() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className=""
             >
               {lineup ? (
-                <LineupTab
-                  lineup={lineup}
-                  awayTeam={awayTeam}
-                  homeTeam={homeTeam}
-                />
+                <LineupTab lineup={lineup} awayTeam={awayTeam} homeTeam={homeTeam} />
               ) : (
                 <div className="flex items-center justify-center h-32 text-text-tertiary text-base">
                   라인업 정보가 없습니다
@@ -321,14 +307,9 @@ export default function GameDetailPage() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className=""
             >
               {gameStats ? (
-                <GameStatsTab
-                  stats={gameStats}
-                  awayTeam={awayTeam}
-                  homeTeam={homeTeam}
-                />
+                <GameStatsTab stats={gameStats} awayTeam={awayTeam} homeTeam={homeTeam} />
               ) : (
                 <div className="flex items-center justify-center h-32 text-text-tertiary text-base">
                   스탯 정보가 없습니다
@@ -338,7 +319,6 @@ export default function GameDetailPage() {
           )}
         </AnimatePresence>
       </div>
-
     </div>
   );
 }

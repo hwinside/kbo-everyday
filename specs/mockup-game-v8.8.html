@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>크보팬 - 경기 중계 v8</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;
+    background: #0a0a0f;
+    color: #fff;
+    max-width: 430px;
+    margin: 0 auto;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ===== 비교 라벨 ===== */
+  .mockup-label {
+    position: fixed; top: 0; left: 0; right: 0;
+    background: linear-gradient(135deg, #ff375f, #c62850);
+    color: #fff; text-align: center; padding: 4px;
+    font-size: 10px; font-weight: 700; z-index: 200;
+    letter-spacing: 0.5px;
+  }
+
+  /* ===== 상단 헤더 ===== */
+  .header {
+    display: flex; align-items: center;
+    padding: 10px 16px; gap: 8px;
+    position: sticky; top: 20px; z-index: 100;
+    background: #0a0a0f;
+  }
+  .header .back { font-size: 18px; color: #888; text-decoration: none; }
+  .header .live-badge {
+    background: #e53935; color: #fff;
+    font-size: 10px; font-weight: 700;
+    padding: 2px 6px; border-radius: 3px;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+  .header .stadium { color: #888; font-size: 13px; }
+
+  /* ===== ★ Tier1-②③: 스코어바 sticky + BSO 통합 ===== */
+  .score-bar {
+    position: sticky;
+    top: 60px;
+    z-index: 99;
+    background: rgba(10,10,15,0.92);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid #1a1a2e;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+  }
+  .sb-team {
+    display: flex; align-items: center; gap: 5px;
+    flex: 1;
+  }
+  .sb-team.away { justify-content: flex-end; }
+  .sb-team.home { justify-content: flex-start; }
+  .sb-logo {
+    width: 26px; height: 26px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 9px;
+  }
+  .sb-logo.lg { background: #c8102e22; color: #c8102e; border: 1.5px solid #c8102e44; }
+  .sb-logo.ds { background: #13274f22; color: #6b8cce; border: 1.5px solid #13274f44; }
+  .sb-name { font-size: 13px; font-weight: 600; }
+  .sb-center {
+    display: flex; flex-direction: column;
+    align-items: center; min-width: 100px;
+  }
+  .sb-score {
+    display: flex; align-items: center; gap: 6px;
+  }
+  .sb-num { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .sb-num.winning { color: #4fc3f7; }
+  .sb-divider { font-size: 16px; color: #555; }
+  .sb-inning {
+    font-size: 10px; font-weight: 600; color: #e53935;
+    background: #e5393522; padding: 1px 6px; border-radius: 8px;
+  }
+  /* BSO 통합 — 네이버식 텍스트 */
+  .sb-bso {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; color: #888; margin-top: 3px;
+    font-variant-numeric: tabular-nums;
+  }
+  .sb-bso .b-val { color: #4caf50; font-weight: 600; }
+  .sb-bso .s-val { color: #ffc107; font-weight: 600; }
+  .sb-bso .o-val { color: #e53935; font-weight: 600; }
+  .sb-bso .out-dots {
+    display: inline-flex; gap: 2px;
+  }
+  .sb-bso .out-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #333; display: inline-block;
+  }
+  .sb-bso .out-dot.on { background: #e53935; }
+  /* 투수+투구수 (스코어바 우측) */
+  .sb-pitcher {
+    font-size: 10px; color: #888; margin-top: 2px;
+  }
+  .sb-pitcher .name { color: #ccc; font-weight: 600; }
+
+  /* ===== 이닝별 라인스코어 ===== */
+  .linescore-wrapper {
+    padding: 0 16px; margin-bottom: 10px;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+  }
+  .linescore-wrapper::-webkit-scrollbar { display: none; }
+  .linescore {
+    width: 100%; min-width: 360px;
+    border-collapse: collapse;
+    font-size: 11px; font-variant-numeric: tabular-nums;
+  }
+  .linescore th, .linescore td {
+    padding: 4px 0; text-align: center; min-width: 22px;
+  }
+  .linescore th { color: #666; font-weight: 500; font-size: 10px; }
+  .linescore th.team-col { text-align: left; padding-left: 4px; min-width: 36px; }
+  .linescore td.team-col { text-align: left; padding-left: 4px; font-weight: 600; font-size: 12px; }
+  .linescore td { color: #ccc; }
+  .linescore td.current-inning { color: #4fc3f7; font-weight: 700; }
+  .linescore .summary-col { font-weight: 700; color: #fff; border-left: 1px solid #333; padding: 4px 6px; }
+  .linescore tr { border-bottom: 1px solid #1a1a2e; }
+
+  /* ===== ★ 핵심: 다이아몬드 수비배치 (v8 — 가로 확대, 외야 축소) ===== */
+  .field-card {
+    background: #12121e;
+    border-radius: 12px;
+    margin: 0 12px 10px;
+    padding: 10px;
+    overflow: hidden;
+  }
+  .field-view {
+    position: relative;
+    width: 100%;
+    /* 세로 줄이기 — 외야수 내림으로 공간 절약 */
+    aspect-ratio: 1 / 0.7;
+    overflow: hidden;
+    border-radius: 8px;
+  }
+  /* 외야 잔디 — 상단 얕게 (외야 축소) */
+  .field-outfield {
+    position: absolute;
+    bottom: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 120%;
+    height: 95%;
+    background: radial-gradient(ellipse at 50% 100%, #1b4a1b 0%, #143814 30%, #0d2a0d 50%, #12121e 70%);
+    border-radius: 50% 50% 0 0;
+  }
+  /* 다이아몬드 — clip-path로 직접 꼭지점 제어 */
+  .field-infield {
+    position: absolute;
+    /* 좌우: 문보경~홍창기, 상: 김현수 정가운데, 하: 홈 */
+    left: 16%;
+    right: 16%;
+    bottom: 8%;
+    top: 35%;
+    background: #3a2a18;
+    border: none;
+    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  }
+  /* 베이스(플레이트) — 다이아몬드 꼭짓점 */
+  .field-base {
+    position: absolute;
+    width: 8px; height: 8px;
+    background: #888;
+    transform: rotate(45deg);
+    border-radius: 1px;
+    z-index: 5;
+  }
+  .field-base.on { background: #ffd600; box-shadow: 0 0 6px #ffd60088; }
+  .field-base.home { bottom: 18%; left: 50%; transform: translateX(-50%) rotate(45deg); }
+  .field-base.b1 { bottom: 33%; right: 29%; }
+  .field-base.b2 { bottom: 44%; left: 50%; transform: translateX(-50%) rotate(45deg); width: 6px; height: 6px; }
+  .field-base.b3 { bottom: 33%; left: 29%; }
+
+  /* ★ Tier1-①: 선수 마커 — 원형 실사진 */
+  .field-player {
+    position: absolute;
+    display: flex; flex-direction: column;
+    align-items: center; gap: 0px;
+    z-index: 10;
+  }
+  .field-player-photo {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    overflow: hidden;
+    border: 2px solid #444;
+    background: #1a1a2e;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .field-player-photo img {
+    width: 100%; height: 100%; object-fit: cover;
+  }
+  .field-player-photo .fallback {
+    font-size: 8px; font-weight: 700; color: #aaa;
+  }
+  .field-player-photo.defense { border-color: #6b8cce; }
+  .field-player-photo.pitcher { border-color: #e53935; }
+  .field-player-photo.runner { border-color: #ffd600; }
+  .field-player-photo.batter { border-color: #4fc3f7; }
+  .field-player-name {
+    font-size: 8px; color: #bbb; white-space: nowrap;
+    text-shadow: 0 1px 3px #000, 0 0 6px #000;
+    background: rgba(0,0,0,0.5);
+    padding: 0px 3px; border-radius: 3px;
+    margin-top: -1px;
+  }
+  .field-player-name.highlight { color: #fff; font-weight: 600; }
+
+  /* ---- v8.7 포지션 좌표 (완벽한 좌우 대칭) ---- */
+  /* 중심선: left 50% */
+  /* 투수: 정중앙 */
+  .pos-p { bottom: 30%; left: 50%; transform: translateX(-50%); }
+  /* 포수: 홈 */
+  .pos-c { bottom: 6%; left: 50%; transform: translateX(-50%); }
+  /* ★ 3B↔1B: 완전 대칭 (같은 bottom, 같은 거리) */
+  .pos-3b { bottom: 33%; left: 8%; }
+  .pos-1b { bottom: 33%; right: 8%; }
+  /* ★ SS↔2B: 완전 대칭 (같은 bottom, 2·3루 가운데 ↔ 1·2루 가운데) */
+  .pos-ss { bottom: 43%; left: 25%; }
+  .pos-2b { bottom: 43%; right: 25%; }
+  /* ★ 외야: 완전 대칭 — 아래로 조금 내림 */
+  .pos-lf { top: 8%; left: 10%; }
+  .pos-cf { top: 4%; left: 50%; transform: translateX(-50%); }
+  .pos-rf { top: 8%; right: 10%; }
+  /* ★ 주자: 완전 대칭 */
+  .pos-r3 { bottom: 26%; left: 18%; }
+  .pos-r1 { bottom: 26%; right: 18%; }
+  .pos-r2 { bottom: 56%; left: 50%; transform: translateX(-50%); }
+  /* 타자: 홈 옆 (유일한 비대칭) */
+  .pos-batter { bottom: 8%; left: calc(50% + 24px); }
+
+  /* ★ Tier1-④: 대기타석 필드 오버레이 */
+  .field-ondeck {
+    position: absolute;
+    bottom: 6%;
+    left: 8px;
+    z-index: 15;
+  }
+  .field-ondeck-label {
+    font-size: 8px; color: #888;
+    font-weight: 600; margin-bottom: 2px;
+  }
+  .field-ondeck-item {
+    font-size: 9px; color: rgba(255,255,255,0.75);
+    line-height: 1.5;
+    text-shadow: 0 1px 3px #000;
+  }
+  .field-ondeck-order {
+    color: #666; font-weight: 600;
+    margin-right: 2px;
+  }
+
+  /* 주자 다이아몬드 미니 (스코어바 옆) */
+  .sb-bases {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 1px; margin-left: 4px;
+  }
+  .sb-base-row { display: flex; gap: 1px; }
+  .sb-base-diamond {
+    width: 7px; height: 7px;
+    background: #333; transform: rotate(45deg);
+  }
+  .sb-base-diamond.on { background: #ffd600; }
+
+  /* ===== 투타 매치업 ===== */
+  .matchup {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 14px; margin: 0 12px 10px;
+    background: #12121e; border-radius: 10px;
+  }
+  .player-card { display: flex; align-items: center; gap: 8px; }
+  .player-photo {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: #2a2a3e; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; color: #666;
+    border: 2px solid #333;
+  }
+  .player-photo img { width: 100%; height: 100%; object-fit: cover; }
+  .player-photo.pitcher-photo { border-color: #e53935; }
+  .player-photo.batter-photo { border-color: #4fc3f7; }
+  .player-role { font-size: 10px; color: #888; }
+  .player-name { font-size: 14px; font-weight: 700; }
+  .player-stat { font-size: 11px; color: #4fc3f7; font-weight: 500; }
+  .vs-divider { font-size: 11px; color: #555; font-weight: 600; }
+
+  /* ===== AI 분석 버튼 ===== */
+  .ai-btn {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    margin: 0 auto 10px; padding: 7px 18px;
+    background: transparent; border: 1px solid #4fc3f7;
+    border-radius: 20px; color: #4fc3f7;
+    font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+
+  /* ===== 탭 네비게이션 ===== */
+  .tab-nav {
+    display: flex; border-bottom: 1px solid #1a1a2e; margin: 0 16px;
+  }
+  .tab-item {
+    flex: 1; text-align: center; padding: 10px 0;
+    font-size: 13px; color: #888; cursor: pointer; position: relative;
+  }
+  .tab-item.active { color: #fff; font-weight: 600; }
+  .tab-item.active::after {
+    content: ''; position: absolute; bottom: -1px;
+    left: 20%; right: 20%; height: 2px;
+    background: #fff; border-radius: 1px;
+  }
+
+  /* ===== 채팅 영역 ===== */
+  .chat-area { padding: 12px 16px; }
+  .chat-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .chat-selector { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #aaa; }
+  .chat-count { font-size: 12px; color: #666; }
+  .fan-mood {
+    margin-bottom: 12px; padding: 8px 10px;
+    background: #12121e; border-radius: 8px;
+  }
+  .fan-mood-label {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 11px; color: #888; margin-bottom: 4px;
+  }
+  .fan-mood-bar {
+    height: 5px; border-radius: 3px; background: #6b8cce;
+    position: relative; overflow: hidden;
+  }
+  .fan-mood-fill { height: 100%; background: #c8102e; border-radius: 3px; width: 42%; }
+  .fan-mood-labels { display: flex; justify-content: space-between; margin-top: 3px; }
+  .fan-mood-team { font-size: 10px; font-weight: 600; }
+  .fan-mood-team.lg { color: #c8102e; }
+  .fan-mood-team.ds { color: #6b8cce; }
+  .chat-message {
+    display: flex; align-items: flex-start; gap: 8px; padding: 6px 0;
+  }
+  .chat-avatar {
+    width: 26px; height: 26px; border-radius: 50%;
+    background: #c8102e; display: flex; align-items: center;
+    justify-content: center; font-size: 9px; font-weight: 700; flex-shrink: 0;
+  }
+  .chat-user { font-size: 12px; color: #888; margin-bottom: 1px; }
+  .chat-text { font-size: 13px; color: #eee; }
+  .chat-time { font-size: 10px; color: #555; margin-top: 1px; }
+
+  /* 채팅 입력 */
+  .chat-input-wrap {
+    position: fixed; bottom: 52px; left: 50%; transform: translateX(-50%);
+    width: 100%; max-width: 430px; padding: 6px 16px;
+    background: #0a0a0f; border-top: 1px solid #1a1a2e;
+  }
+  .chat-input {
+    width: 100%; padding: 8px 14px; background: #1a1a2e;
+    border: none; border-radius: 20px; color: #888; font-size: 13px; outline: none;
+  }
+
+  /* 하단 네비게이션 */
+  .bottom-nav {
+    position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
+    width: 100%; max-width: 430px; display: flex;
+    background: #0a0a0f; border-top: 1px solid #1a1a2e;
+    padding: 6px 0 4px; z-index: 100;
+  }
+  .nav-item {
+    flex: 1; text-align: center; font-size: 10px; color: #666; padding: 2px 0;
+  }
+  .nav-item.active { color: #e53935; }
+  .nav-icon { font-size: 18px; margin-bottom: 1px; }
+
+  ::-webkit-scrollbar { width: 0; }
+</style>
+</head>
+<body>
+
+<div class="mockup-label">🦊 크보팬 경기 중계 v8.5 — 황토색 다이아몬드 위에 김현수</div>
+
+<!-- 상단 헤더 -->
+<div class="header">
+  <a class="back">←</a>
+  <span class="live-badge">● LIVE</span>
+  <span class="stadium">잠실</span>
+</div>
+
+<!-- ★ Tier1-②③: 스코어바 (sticky + BSO 통합) -->
+<div class="score-bar">
+  <div class="sb-team away">
+    <span class="sb-name">LG</span>
+    <div class="sb-logo lg">LG</div>
+  </div>
+  <div class="sb-center">
+    <div class="sb-score">
+      <span class="sb-num winning">3</span>
+      <span class="sb-divider">:</span>
+      <span class="sb-num">1</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:6px; margin-top:2px;">
+      <span class="sb-inning">5회말</span>
+      <div class="sb-bso">
+        <span><span class="b-val">2</span>B</span>
+        <span><span class="s-val">1</span>S</span>
+        <span class="out-dots">
+          <span class="out-dot on"></span>
+          <span class="out-dot"></span>
+        </span>
+      </div>
+      <!-- 주자 미니 다이아몬드 -->
+      <div class="sb-bases">
+        <div class="sb-base-row">
+          <div class="sb-base-diamond on"></div>
+        </div>
+        <div class="sb-base-row">
+          <div class="sb-base-diamond on"></div>
+          <div class="sb-base-diamond on"></div>
+        </div>
+        <div class="sb-base-row">
+          <div class="sb-base-diamond"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  <div class="sb-team home">
+    <div class="sb-logo ds">DS</div>
+    <span class="sb-name">두산</span>
+  </div>
+</div>
+
+<!-- 이닝별 라인스코어 -->
+<div class="linescore-wrapper">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+    <span style="font-size:10px;color:#666;font-weight:600;">이닝별 스코어</span>
+    <span style="font-size:9px;color:#555;">R 점수 · H 안타 · E 에러</span>
+  </div>
+  <table class="linescore">
+    <thead><tr>
+      <th class="team-col"></th>
+      <th>1</th><th>2</th><th>3</th><th>4</th>
+      <th style="color:#4fc3f7">5</th>
+      <th>6</th><th>7</th><th>8</th><th>9</th>
+      <th class="summary-col">R</th><th class="summary-col">H</th><th class="summary-col">E</th>
+    </tr></thead>
+    <tbody>
+      <tr>
+        <td class="team-col" style="color:#c8102e">LG</td>
+        <td>0</td><td>1</td><td>0</td><td>2</td>
+        <td class="current-inning">0</td>
+        <td>-</td><td>-</td><td>-</td><td>-</td>
+        <td class="summary-col">3</td><td class="summary-col">6</td><td class="summary-col">0</td>
+      </tr>
+      <tr>
+        <td class="team-col" style="color:#6b8cce">두산</td>
+        <td>0</td><td>0</td><td>1</td><td>0</td>
+        <td class="current-inning">·</td>
+        <td>-</td><td>-</td><td>-</td><td>-</td>
+        <td class="summary-col">1</td><td class="summary-col">4</td><td class="summary-col">1</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ★ 핵심: 다이아몬드 수비배치 (v8 — 가로 확대, 외야 축소) -->
+<div class="field-card">
+  <div class="field-view">
+    <div class="field-outfield"></div>
+    <div class="field-infield"></div>
+
+    <!-- 베이스 마커 전체 제거 — 주자 원형으로 대체 -->
+
+    <!-- ★ Tier1-①: 수비수 — 원형 사진 + 이름 -->
+    <div class="field-player pos-p">
+      <div class="field-player-photo pitcher">
+        <img src="https://statiz.sporki.com/data/article/hot/1695107437.jpeg" alt="곽빈">
+      </div>
+      <span class="field-player-name highlight">곽빈</span>
+    </div>
+    <div class="field-player pos-c">
+      <div class="field-player-photo defense">
+        <img src="https://lgcxydabfbch3fxe.public.blob.vercel-storage.com/player-photos/default-catcher.jpg" alt="박세혁">
+      </div>
+      <span class="field-player-name">박세혁</span>
+    </div>
+    <div class="field-player pos-1b">
+      <div class="field-player-photo defense">
+        <span class="fallback">1B</span>
+      </div>
+      <span class="field-player-name">양석환</span>
+    </div>
+    <div class="field-player pos-2b">
+      <div class="field-player-photo defense">
+        <span class="fallback">2B</span>
+      </div>
+      <span class="field-player-name">김재호</span>
+    </div>
+    <div class="field-player pos-ss">
+      <div class="field-player-photo defense">
+        <span class="fallback">SS</span>
+      </div>
+      <span class="field-player-name">김택연</span>
+    </div>
+    <div class="field-player pos-3b">
+      <div class="field-player-photo defense">
+        <span class="fallback">3B</span>
+      </div>
+      <span class="field-player-name">허경민</span>
+    </div>
+    <div class="field-player pos-lf">
+      <div class="field-player-photo defense">
+        <span class="fallback">LF</span>
+      </div>
+      <span class="field-player-name">정수빈</span>
+    </div>
+    <div class="field-player pos-cf">
+      <div class="field-player-photo defense">
+        <span class="fallback">CF</span>
+      </div>
+      <span class="field-player-name">조수행</span>
+    </div>
+    <div class="field-player pos-rf">
+      <div class="field-player-photo defense">
+        <span class="fallback">RF</span>
+      </div>
+      <span class="field-player-name">박건우</span>
+    </div>
+
+    <!-- 주자 (만루) — 이름 표시 -->
+    <div class="field-player pos-r1">
+      <div class="field-player-photo runner">
+        <span class="fallback" style="color:#ffd600">R</span>
+      </div>
+      <span class="field-player-name" style="color:#ffd600;">홍창기</span>
+    </div>
+    <div class="field-player pos-r2">
+      <div class="field-player-photo runner">
+        <span class="fallback" style="color:#ffd600">R</span>
+      </div>
+      <span class="field-player-name" style="color:#ffd600;">김현수</span>
+    </div>
+    <div class="field-player pos-r3">
+      <div class="field-player-photo runner">
+        <span class="fallback" style="color:#ffd600">R</span>
+      </div>
+      <span class="field-player-name" style="color:#ffd600;">문보경</span>
+    </div>
+
+    <!-- 타자 -->
+    <div class="field-player pos-batter">
+      <div class="field-player-photo batter">
+        <span class="fallback" style="color:#4fc3f7">AB</span>
+      </div>
+      <span class="field-player-name" style="color:#4fc3f7;">오스틴</span>
+    </div>
+
+    <!-- ★ Tier1-④: 대기타석 필드 오버레이 -->
+    <div class="field-ondeck">
+      <div class="field-ondeck-label">대기타석</div>
+      <div class="field-ondeck-item"><span class="field-ondeck-order">5.</span> 김현수</div>
+      <div class="field-ondeck-item"><span class="field-ondeck-order">6.</span> 문보경</div>
+      <div class="field-ondeck-item"><span class="field-ondeck-order">7.</span> 박해민</div>
+    </div>
+  </div>
+</div>
+
+<!-- 투타 매치업 — 2줄 리치 스탯 -->
+<div class="matchup">
+  <div class="player-card">
+    <div class="player-photo pitcher-photo">곽</div>
+    <div>
+      <div class="player-role">투수</div>
+      <div class="player-name">곽빈</div>
+      <div style="margin-top:2px; line-height:1.5;">
+        <div style="display:flex; gap:6px; font-size:11px;">
+          <span style="color:#ccc; font-weight:600;">72구</span>
+          <span style="color:#4caf50;">B <b>40</b></span>
+          <span style="color:#ffc107;">S <b>32</b></span>
+        </div>
+        <div style="display:flex; gap:6px; font-size:11px;">
+          <span style="color:#e53935;">K <b>6</b></span>
+          <span style="color:#64b5f6;">BB <b>3</b></span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="vs-divider">VS</div>
+  <div class="player-card">
+    <div style="text-align:right;">
+      <div class="player-role">타자</div>
+      <div class="player-name">오스틴</div>
+      <div style="margin-top:2px; line-height:1.5;">
+        <div style="display:flex; gap:6px; font-size:11px; justify-content:flex-end;">
+          <span style="color:#4fc3f7; font-weight:600;">.305</span>
+          <span style="color:#ccc;">2타수</span>
+          <span style="color:#4caf50;">1안타</span>
+          <span style="color:#ffd600;">1득점</span>
+        </div>
+        <div style="display:flex; gap:6px; font-size:11px; justify-content:flex-end;">
+          <span style="color:#ff7043;">1홈런</span>
+          <span style="color:#64b5f6;">1볼넷</span>
+        </div>
+      </div>
+    </div>
+    <div class="player-photo batter-photo">오</div>
+  </div>
+</div>
+
+<!-- 탭 -->
+<div class="tab-nav">
+  <div class="tab-item">중계</div>
+  <div class="tab-item active">채팅</div>
+  <div class="tab-item">라인업</div>
+  <div class="tab-item">스탯</div>
+</div>
+
+<!-- 채팅 -->
+<div class="chat-area">
+  <div class="chat-header">
+    <div class="chat-selector">👥 전체 채팅 ▾</div>
+    <div class="chat-count">3개 메시지</div>
+  </div>
+  <div class="fan-mood">
+    <div class="fan-mood-label">🔥 팬 분위기 <span style="margin-left:auto;color:#666">실시간</span></div>
+    <div class="fan-mood-bar"><div class="fan-mood-fill"></div></div>
+    <div class="fan-mood-labels">
+      <span class="fan-mood-team lg">LG 42%</span>
+      <span class="fan-mood-team ds">두산 58%</span>
+    </div>
+  </div>
+  <div class="chat-message">
+    <div class="chat-avatar">LG</div>
+    <div>
+      <div class="chat-user">하린아빠</div>
+      <div class="chat-text">야야야야!! 만루!!</div>
+      <div class="chat-time">07:17</div>
+    </div>
+  </div>
+  <div class="chat-message">
+    <div class="chat-avatar" style="background:#6b8cce">DS</div>
+    <div>
+      <div class="chat-user">두산팬123</div>
+      <div class="chat-text">곽빈 투구수 좀 많은데... 교체 언제 하려나</div>
+      <div class="chat-time">07:18</div>
+    </div>
+  </div>
+  <div class="chat-message">
+    <div class="chat-avatar">LG</div>
+    <div>
+      <div class="chat-user">엘지만세</div>
+      <div class="chat-text">오스틴 만루홈런 가자!! 🔥🔥🔥</div>
+      <div class="chat-time">07:19</div>
+    </div>
+  </div>
+</div>
+
+<!-- 채팅 입력 -->
+<div class="chat-input-wrap">
+  <input class="chat-input" placeholder="응원 메시지를 입력하세요..." disabled>
+</div>
+
+<!-- 하단 네비게이션 -->
+<div class="bottom-nav">
+  <div class="nav-item"><div class="nav-icon">🏠</div>홈</div>
+  <div class="nav-item active"><div class="nav-icon">📅</div>경기</div>
+  <div class="nav-item"><div class="nav-icon">💬</div>커뮤니티</div>
+  <div class="nav-item"><div class="nav-icon">⚾</div>선수</div>
+  <div class="nav-item"><div class="nav-icon">📊</div>순위</div>
+</div>
+
+</body>
+</html>
