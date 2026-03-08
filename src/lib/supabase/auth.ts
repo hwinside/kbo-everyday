@@ -51,7 +51,7 @@ export async function getCurrentUser() {
 }
 
 /** 프로필 조회/생성 */
-export async function getOrCreateProfile(userId: string, defaults?: { nickname: string; teamId: number; favoritePlayers: any[] }) {
+export async function getOrCreateProfile(userId: string, defaults?: { nickname: string; teamId: number; favoritePlayers: { playerId: string; name: string; teamId: number; position: string; number: number }[] }) {
   // 조회
   const { data: profile } = await supabase
     .from("profiles")
@@ -85,7 +85,7 @@ export async function getOrCreateProfile(userId: string, defaults?: { nickname: 
 export async function updateProfile(userId: string, updates: {
   nickname?: string;
   team_id?: number;
-  favorite_players?: any[];
+  favorite_players?: { playerId: string; name: string; teamId: number; position: string; number: number }[];
   avatar_url?: string;
 }) {
   return supabase

@@ -43,7 +43,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
   const team = getTeamById(teamId);
 
   const allPlayers = useMemo<PlayerInfo[]>(() =>
-    (playersRoster as any[]).map((p) => ({
+    (playersRoster as { kboId: string; name: string; team: string; teamId: number; position: string; backNo: string }[]).map((p) => ({
       id: p.kboId, name: p.name, team: p.team, teamId: p.teamId,
     })),
   []);

@@ -28,6 +28,72 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import { TEAMS, getTeamById } from "@/lib/constants/teams";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { MOCK_NEWS } from "@/lib/constants/news";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
+
+interface AuthProfile {
+  nickname: string;
+  team_id: number;
+  favorite_players: FavoritePlayer[];
+  points: number;
+  grade: string;
+  avatar_url: string | null;
+}
+
+interface NewsItem {
+  title: string;
+  link: string;
+  pubDate: string;
+  _label?: string;
+}
+
+interface RawGameData {
+  gameId: string;
+  homeTeamId: number;
+  awayTeamId: number;
+  time: string;
+  stadium: string;
+  homeScore?: number;
+  awayScore?: number;
+  status: string;
+  inning?: string;
+  isTop?: boolean;
+}
+
+interface HomeGame {
+  id: string;
+  homeTeamId: number;
+  awayTeamId: number;
+  time: string;
+  stadium: string;
+  homeScore: number;
+  awayScore: number;
+  status: "scheduled" | "live" | "final";
+  inning: string | null;
+}
+
+interface HomeNewsItem {
+  id: number;
+  title: string;
+  link: string;
+  pubDate: string;
+  label: string;
+  source: string;
+  sourceUrl: string;
+  thumbnailUrl: null;
+  timeAgo: string;
+  teamId: number | null;
+  type: "news";
+}
+
+interface PlayerMockStats {
+  avg: string;
+  recent: string;
+  trend: string;
+  hr: number;
+  rbi: number;
+  era?: string;
+  wins?: number;
+}
 
 /* ===== Mock Data ===== */
 const MOCK_GAMES = [
@@ -65,7 +131,7 @@ const item = {
   show: { opacity: 1, y: 0, transition: { duration: 0.35 } },
 };
 
-function HeaderAvatar({ user, profile }: { user: any; profile: any }) {
+function HeaderAvatar({ user, profile }: { user: SupabaseUser | null; profile: AuthProfile | null }) {
   if (!user || !profile) {
     return <User size={22} className="text-text-secondary" />;
   }
@@ -155,7 +221,7 @@ const PRESEASON_START = new Date("2026-03-12");
 export default function HomePage() {
   const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number} | null>(null);
   const [myTeamId, setMyTeam] = useState<number | null>(null);
-  const [realNews, setRealNews] = useState<any[]>([]);
+  const [realNews, setRealNews] = useState<HomeNewsItem[]>([]);
 
   useEffect(() => {
     const team = myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName : "";
@@ -184,14 +250,14 @@ export default function HomePage() {
     const queries = [
       team 
         ? fetch(`/api/news?q=${encodeURIComponent(`프로야구 ${team}`)}`).then(r => r.json()).then(d => ({
-            items: (d.items || []).map((item: any) => ({ ...item, _label: team })),
+            items: (d.items || []).map((item: NewsItem) => ({ ...item, _label: team })),
           }))
         : Promise.resolve({ items: [] }),
       ...favPlayers.map(p => {
         const pTeam = TEAMS.find(t => t.id === p.teamId);
         const pTeamName = pTeam ? `${pTeam.shortName} ${pTeam.name}` : "";
         return fetch(`/api/news?q=${encodeURIComponent(`${pTeamName} ${p.name}`)}`).then(r => r.json()).then(d => ({
-          items: (d.items || []).map((item: any) => ({ ...item, _label: p.name })),
+          items: (d.items || []).map((item: NewsItem) => ({ ...item, _label: p.name })),
         }));
       })
     ];
@@ -202,7 +268,7 @@ export default function HomePage() {
       
       // 선수별 균등 분배 (각 2개씩 먼저, 남은 슬롯은 라운드로빈)
       const seen = new Set();
-      const dedupArr = (items: any[]) => items.filter((item: any) => {
+      const dedupArr = (items: NewsItem[]) => items.filter((item: NewsItem) => {
         if (seen.has(item.link)) return false;
         seen.add(item.link);
         return true;
@@ -217,10 +283,10 @@ export default function HomePage() {
       const unique = [...playerNews, ...uniqueTeam];
       
       // 최신순 정렬
-      unique.sort((a: any, b: any) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
-      
+      unique.sort((a: NewsItem, b: NewsItem) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
+
       if (unique.length) {
-          setRealNews(unique.map((item: any, i: number) => ({
+          setRealNews(unique.map((item: NewsItem, i: number) => ({
             id: 1000 + i,
             title: item.title,
             link: item.link,
@@ -236,6 +302,8 @@ export default function HomePage() {
               const days = Math.floor(hours / 24);
               return `${days}일 전`;
             })(),
+            thumbnailUrl: null,
+            type: "news" as const,
             teamId: myTeamId || null,
           })));
         }
@@ -260,7 +328,7 @@ export default function HomePage() {
   }, [user, profile]);
 
   // 오늘의 경기 (API + 시범경기 fallback)
-  const [todayGames, setTodayGames] = useState<any[]>([]);
+  const [todayGames, setTodayGames] = useState<HomeGame[]>([]);
   const [isPreseason, setIsPreseason] = useState(false);
   useEffect(() => {
     const today = new Date();
@@ -270,7 +338,7 @@ export default function HomePage() {
     fetch(`/api/games?date=${yyyymmdd}`)
       .then(r => r.json())
       .then(data => {
-        const games = (data.games ?? []).map((g: any) => ({
+        const games: HomeGame[] = (data.games ?? []).map((g: RawGameData) => ({
           id: g.gameId,
           homeTeamId: g.homeTeamId,
           awayTeamId: g.awayTeamId,
@@ -551,7 +619,8 @@ export default function HomePage() {
                 p10: { avg: ".298", recent: "5경기 7타수 2안타", trend: "📉", hr: 20, rbi: 68 },
                 p2: { avg: "", recent: "최근 7이닝 1실점", trend: "🔥", hr: 0, rbi: 0, era: "2.89", wins: 17 },
                 p5: { avg: "", recent: "최근 8이닝 무실점", trend: "🔥🔥", hr: 0, rbi: 0, era: "2.45", wins: 14 },
-              } as Record<string, any>;
+              } as Record<string, PlayerMockStats>;
+              /* eslint-disable react-hooks/purity */
               const stats = mockTrend[player.playerId] ?? {
                 avg: (0.260 + Math.random() * 0.06).toFixed(3),
                 recent: "5경기 활약 중",
@@ -559,6 +628,7 @@ export default function HomePage() {
                 hr: Math.floor(Math.random() * 25) + 5,
                 rbi: Math.floor(Math.random() * 60) + 20,
               };
+              /* eslint-enable react-hooks/purity */
               const isPitcher = player.position === "투수";
               return (
                 <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
@@ -660,6 +730,7 @@ export default function HomePage() {
         ) : (
           <GlassCard className="p-6 text-center">
             <p className="text-2xl mb-2">⚾</p>
+            {/* eslint-disable react-hooks/purity */}
             {new Date() < PRESEASON_START ? (
               <>
                 <p className="text-[15px] font-medium text-text-primary">시범경기 D-{Math.ceil((PRESEASON_START.getTime() - Date.now()) / 86400000)}</p>
@@ -676,6 +747,7 @@ export default function HomePage() {
                 <p className="text-xs text-text-tertiary mt-1">내일 경기를 기대해주세요!</p>
               </>
             )}
+            {/* eslint-enable react-hooks/purity */}
           </GlassCard>
         )}
       </motion.section>

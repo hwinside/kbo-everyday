@@ -20,6 +20,7 @@ export default function HomeOfficialVideos({ team }: HomeOfficialVideosProps) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!team) { setLoading(false); return; }
 
     const teamObj = TEAMS.find(t => t.shortName === team);

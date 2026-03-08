@@ -83,8 +83,8 @@ export default function WritePhotoPost({
       setImages([]);
       onClose();
       onSuccess?.();
-    } catch (e: any) {
-      alert("업로드 실패: " + (e.message || JSON.stringify(e)));
+    } catch (e: unknown) {
+      alert("업로드 실패: " + ((e as Error).message || JSON.stringify(e)));
     } finally {
       setSubmitting(false);
     }

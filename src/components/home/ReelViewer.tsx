@@ -28,7 +28,7 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
 
   const video = videos[current];
 
-  const postCmd = useCallback((func: string, args: any[] = []) => {
+  const postCmd = useCallback((func: string, args: (string | number | boolean)[] = []) => {
     iframeRef.current?.contentWindow?.postMessage(
       JSON.stringify({ event: "command", func, args }),
       "*"

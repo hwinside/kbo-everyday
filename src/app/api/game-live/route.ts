@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { KboRawGame } from "@/types/api";
 
 export async function GET(req: NextRequest) {
   const date = req.nextUrl.searchParams.get("date") || new Date().toISOString().slice(0, 10).replace(/-/g, "");
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest) {
     if (!res.ok) throw new Error(`KBO API ${res.status}`);
     
     const data = await res.json();
-    const games = (data?.game || []).map((g: any) => ({
+    const games = (data?.game || []).map((g: KboRawGame) => ({
       gameId: g.G_ID,
       awayName: g.AWAY_NM,
       homeName: g.HOME_NM,
@@ -40,7 +41,7 @@ export async function GET(req: NextRequest) {
     }));
 
     return NextResponse.json({ games, date });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message, games: [] }, { status: 200 });
+  } catch (e: unknown) {
+    return NextResponse.json({ error: (e as Error).message, games: [] }, { status: 200 });
   }
 }

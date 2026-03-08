@@ -133,7 +133,7 @@ export default function HighlightsPage() {
       .then(r => r.json())
       .then(d => {
         if (d.items?.length) {
-          const ytHighlights: Highlight[] = d.items.map((item: any, i: number) => ({
+          const ytHighlights: Highlight[] = d.items.map((item: { id: string; title: string; publishedAt: string }, i: number) => ({
             id: `yt-${item.id}`,
             youtubeId: item.id,
             title: item.title,

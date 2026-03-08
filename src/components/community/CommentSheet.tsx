@@ -61,7 +61,7 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
 
       if (data) {
         setComments(
-          data.map((cm: any) => ({
+          data.map((cm: Comment & { profiles?: { nickname?: string; team_id?: number; grade?: string; avatar_url?: string } }) => ({
             ...cm,
             nickname: cm.profiles?.nickname,
             team_id: cm.profiles?.team_id,
@@ -204,7 +204,7 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
               ) : (
                 comments.map((comment) => {
                   const grade = getGradeInfo(comment.grade);
-                  const avatarPath = getAvatarPath((comment as any).avatar_url);
+                  const avatarPath = getAvatarPath((comment as Comment & { avatar_url?: string }).avatar_url ?? null);
                   return (
                     <div key={comment.id} className="flex gap-2.5">
                       {avatarPath ? (

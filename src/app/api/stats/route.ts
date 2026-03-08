@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import playersRoster from "@/lib/constants/players-roster.json";
 import batterStats2025 from "@/lib/constants/stats-2025-batters.json";
 import pitcherStats2025 from "@/lib/constants/stats-2025-pitchers.json";
+import type { RosterPlayer } from "@/types/api";
 
 const KBO_BASE = "https://www.koreabaseball.com";
 
@@ -48,10 +49,10 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
   const url = `${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=HRA_RT`;
   const html = await fetchHtml(url);
   const rows = parseTable(html);
-  const roster = playersRoster as any[];
+  const roster = playersRoster as RosterPlayer[];
   return rows.map((c, i) => {
     const name = c[1] || "";
-    const found = roster.find((p: any) => p.name === name);
+    const found = roster.find((p) => p.name === name);
     return {
     rank: i + 1,
     name: c[1] || "",
@@ -86,10 +87,10 @@ async function fetchPitcherStats(): Promise<PlayerStat[]> {
   const url = `${KBO_BASE}/Record/Player/PitcherBasic/Basic1.aspx?sort=ERA_RT`;
   const html = await fetchHtml(url);
   const rows = parseTable(html);
-  const roster = playersRoster as any[];
+  const roster = playersRoster as RosterPlayer[];
   return rows.map((c, i) => {
     const name = c[1] || "";
-    const found = roster.find((p: any) => p.name === name);
+    const found = roster.find((p) => p.name === name);
     return {
       rank: i + 1,
       name,
@@ -111,7 +112,13 @@ async function fetchPitcherStats(): Promise<PlayerStat[]> {
   });
 }
 
-const cache: Record<string, { data: any; ts: number }> = {};
+interface StatsResult {
+  stats: PlayerStat[];
+  type: string;
+  count: number;
+}
+
+const cache: Record<string, { data: StatsResult; ts: number }> = {};
 const CACHE_TTL = 5 * 60 * 1000;
 
 function getCached(key: string) {
@@ -119,7 +126,7 @@ function getCached(key: string) {
   if (entry && Date.now() - entry.ts < CACHE_TTL) return entry.data;
   return null;
 }
-function setCache(key: string, data: any) {
+function setCache(key: string, data: StatsResult) {
   cache[key] = { data, ts: Date.now() };
 }
 
@@ -145,7 +152,7 @@ export async function GET(req: NextRequest) {
     const result = { stats, type, count: stats.length };
     setCache(cacheKey, result);
     return NextResponse.json(result);
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message, stats: [] }, { status: 500 });
+  } catch (e: unknown) {
+    return NextResponse.json({ error: (e as Error).message, stats: [] }, { status: 500 });
   }
 }

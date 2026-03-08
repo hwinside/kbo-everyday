@@ -3,9 +3,18 @@
 import { useState, useEffect } from "react";
 import { X, Share, Plus } from "lucide-react";
 
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+}
+
+interface NavigatorStandalone extends Navigator {
+  standalone?: boolean;
+}
+
 export default function PWAInstallBanner() {
   const [show, setShow] = useState(false);
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isIOS, setIsIOS] = useState(false);
   const [showIOSGuide, setShowIOSGuide] = useState(false);
   const [isInAppBrowser, setIsInAppBrowser] = useState(false);
@@ -14,14 +23,14 @@ export default function PWAInstallBanner() {
   useEffect(() => {
     // 이미 PWA로 실행 중이면 숨김
     if (window.matchMedia("(display-mode: standalone)").matches) return;
-    // @ts-ignore
-    if ((window.navigator as any).standalone) return;
+    if ((window.navigator as NavigatorStandalone).standalone) return;
 
     // 24시간 내 닫았으면 숨김
     const dismissed = localStorage.getItem("pwa-banner-dismissed");
     if (dismissed && Date.now() - Number(dismissed) < 7 * 24 * 60 * 60 * 1000) return;
 
     const ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsIOS(ios);
 
     // 인앱브라우저 감지 (카카오톡, 인스타, 페이스북, 네이버, 라인 등)
@@ -47,7 +56,7 @@ export default function PWAInstallBanner() {
       // Android: beforeinstallprompt 이벤트
       const handler = (e: Event) => {
         e.preventDefault();
-        setDeferredPrompt(e);
+        setDeferredPrompt(e as BeforeInstallPromptEvent);
         setShow(true);
       };
       window.addEventListener("beforeinstallprompt", handler);

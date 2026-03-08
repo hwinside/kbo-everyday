@@ -20,6 +20,28 @@ import { TEAMS } from "@/lib/constants/teams";
 import type { Post } from "@/lib/types";
 import type { Post as RawPost } from "@/lib/supabase/usePosts";
 
+interface SupabaseProfileJoin {
+  nickname?: string;
+  team_id?: number;
+  grade?: string;
+}
+
+interface SupabasePostRow {
+  id: number;
+  author_id: string;
+  board_type: string;
+  board_id: string;
+  content_type?: string;
+  title: string;
+  content: string;
+  image_urls?: string[];
+  like_count: number;
+  comment_count: number;
+  created_at: string;
+  is_hidden: boolean;
+  profiles?: SupabaseProfileJoin | SupabaseProfileJoin[] | null;
+}
+
 type ContentTab = "general" | "photo";
 type SortTab = "latest" | "hot";
 
@@ -52,6 +74,7 @@ export default function CommunityPlayersPage() {
 
   // Load favorites
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setFavPlayers(getFavoritePlayers());
     setFavLoaded(true);
   }, []);
@@ -82,28 +105,32 @@ export default function CommunityPlayersPage() {
     const { data } = await query;
 
     if (data) {
+      const rows = data as unknown as SupabasePostRow[];
       setPosts(
-        data.map((p: any) => ({
-          id: p.id,
-          boardType: "player" as const,
-          boardId: p.board_id,
-          authorId: p.author_id,
-          title: p.title,
-          content: p.content,
-          imageUrls: p.image_urls ?? [],
-          likeCount: p.like_count,
-          commentCount: p.comment_count,
-          isReported: false,
-          createdAt: p.created_at,
-          author: {
-            nickname: p.profiles?.nickname || "익명",
-            avatarUrl: null,
-            myTeamId: p.profiles?.team_id || 0,
-            level: 1,
-            title: "",
-            grade: p.profiles?.grade,
-          },
-        }))
+        rows.map((p) => {
+          const prof = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
+          return {
+            id: p.id,
+            boardType: "player" as const,
+            boardId: p.board_id,
+            authorId: p.author_id,
+            title: p.title,
+            content: p.content,
+            imageUrls: p.image_urls ?? [],
+            likeCount: p.like_count,
+            commentCount: p.comment_count,
+            isReported: false,
+            createdAt: p.created_at,
+            author: {
+              nickname: prof?.nickname || "익명",
+              avatarUrl: null,
+              myTeamId: prof?.team_id || 0,
+              level: 1,
+              title: "",
+              grade: prof?.grade,
+            },
+          };
+        })
       );
     }
     setLoading(false);
@@ -135,23 +162,27 @@ export default function CommunityPlayersPage() {
     const { data } = await query;
 
     if (data) {
+      const rows = data as unknown as SupabasePostRow[];
       setPhotoPosts(
-        data.map((p: any) => ({
-          id: p.id,
-          author_id: p.author_id,
-          board_type: p.board_type,
-          board_id: p.board_id,
-          content_type: p.content_type ?? "photo",
-          title: p.title,
-          content: p.content,
-          image_urls: p.image_urls ?? [],
-          like_count: p.like_count,
-          comment_count: p.comment_count,
-          created_at: p.created_at,
-          nickname: p.profiles?.nickname || "익명",
-          team_id: p.profiles?.team_id,
-          grade: p.profiles?.grade,
-        }))
+        rows.map((p) => {
+          const prof = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
+          return {
+            id: p.id,
+            author_id: p.author_id,
+            board_type: p.board_type,
+            board_id: p.board_id,
+            content_type: (p.content_type ?? "photo") as "general" | "photo",
+            title: p.title,
+            content: p.content,
+            image_urls: p.image_urls ?? [],
+            like_count: p.like_count,
+            comment_count: p.comment_count,
+            created_at: p.created_at,
+            nickname: prof?.nickname || "익명",
+            team_id: prof?.team_id,
+            grade: prof?.grade,
+          };
+        })
       );
     }
     setPhotoLoading(false);
@@ -159,6 +190,7 @@ export default function CommunityPlayersPage() {
 
   useEffect(() => {
     if (favPlayerIds.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (contentTab === "general") loadPosts();
       else loadPhotoPosts();
     }

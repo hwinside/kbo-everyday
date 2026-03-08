@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import webpush from "web-push";
+import type { PushSubscriptionRow, WebPushError } from "@/types/api";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -33,13 +34,13 @@ export async function POST(req: NextRequest) {
   let failed = 0;
 
   await Promise.allSettled(
-    subs.map(async (s: any) => {
+    subs.map(async (s: PushSubscriptionRow) => {
       try {
         await wp.sendNotification(s.subscription, payload);
         sent++;
-      } catch (e: any) {
+      } catch (e: unknown) {
         failed++;
-        if (e.statusCode === 410) {
+        if ((e as WebPushError).statusCode === 410) {
           await supabase.from("push_subscriptions").delete().eq("endpoint", s.subscription.endpoint);
         }
       }

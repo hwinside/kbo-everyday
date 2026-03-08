@@ -31,6 +31,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
 
     if (status === "completed" || status === "skipped") {
       // 이미 완료/스킵 → 홈 표시
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setStep("done");
       return;
     }

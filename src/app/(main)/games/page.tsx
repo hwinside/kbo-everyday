@@ -50,7 +50,7 @@ export default function GamesPage() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      const mapped: GameData[] = (data.games ?? []).map((g: any) => ({
+      const mapped: GameData[] = (data.games ?? []).map((g: { gameId: string; awayTeamId: number; homeTeamId: number; awayScore: number | null; homeScore: number | null; status: string; time: string; stadium: string; inning?: string; isTop?: boolean; awayStarterName?: string; homeStarterName?: string }) => ({
         id: g.gameId,
         awayTeamId: g.awayTeamId,
         homeTeamId: g.homeTeamId,
@@ -86,7 +86,7 @@ export default function GamesPage() {
       } else {
         setGames(mapped);
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       // 에러 시에도 시범경기 fallback
       const dateStr = `${date.slice(0,4)}-${date.slice(4,6)}-${date.slice(6,8)}`;
       const TEAM_ID: Record<string, number> = { LG:1, 두산:2, KT:3, SSG:4, NC:5, KIA:6, 롯데:7, 삼성:8, 한화:9, 키움:10 };
@@ -109,7 +109,7 @@ export default function GamesPage() {
         setGames(preGames);
         setError(null);
       } else {
-        setError(e.message);
+        setError((e as Error).message);
         setGames([]);
       }
     }
@@ -215,6 +215,7 @@ function EmptyGameState({ selectedDate }: { selectedDate: string }) {
   const [myTeamId, setMyTeamId] = useState<number | null>(null);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMyTeamId(getMyTeamId());
     const handler = () => setMyTeamId(getMyTeamId());
     window.addEventListener("team-changed", handler);

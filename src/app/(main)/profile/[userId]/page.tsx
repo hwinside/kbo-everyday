@@ -84,7 +84,7 @@ function InviteTab({ userId, inviteCount }: { userId: string; inviteCount: numbe
     fetch(`/api/invite?userId=${userId}`)
       .then(r => r.json())
       .then(data => {
-        setCodes((data.invitations || []).filter((i: any) => !i.used_at).map((i: any) => i.code));
+        setCodes((data.invitations || []).filter((i: { code: string; used_at: string | null }) => !i.used_at).map((i: { code: string; used_at: string | null }) => i.code));
         setFriends(data.friends || []);
         setTotalInvited(data.totalInvited || 0);
       });

@@ -39,7 +39,40 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    let cancelled = false;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setLoading(true);
+    supabase
+      .from("posts")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade, points)")
+      .eq("board_type", boardType)
+      .eq("board_id", boardId)
+      .eq("content_type", contentType)
+      .neq("is_hidden", true)
+      .order("created_at", { ascending: false })
+      .limit(30)
+      .then(({ data }) => {
+        if (cancelled) return;
+        if (data) {
+          setPosts(data.map((p) => ({
+            ...p,
+            content_type: (p.content_type ?? "general") as "general" | "photo",
+            image_urls: (p.image_urls ?? []) as string[],
+            nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
+            team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
+            grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
+            points: ((p.profiles as unknown as Record<string, unknown> | null)?.points as number) ?? 0,
+          })));
+        }
+        setLoading(false);
+      });
+    /* eslint-enable react-hooks/set-state-in-effect */
+
+    return () => { cancelled = true; };
+  }, [boardType, boardId, contentType]);
+
+  const reload = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase
       .from("posts")
@@ -52,22 +85,20 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
       .limit(30);
 
     if (data) {
-      setPosts(data.map((p: any) => ({
+      setPosts(data.map((p) => ({
         ...p,
-        content_type: p.content_type ?? "general",
-        image_urls: p.image_urls ?? [],
-        nickname: p.profiles?.nickname,
-        team_id: p.profiles?.team_id,
-        grade: p.profiles?.grade,
-        points: p.profiles?.points ?? 0,
+        content_type: (p.content_type ?? "general") as "general" | "photo",
+        image_urls: (p.image_urls ?? []) as string[],
+        nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
+        team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
+        grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
+        points: ((p.profiles as unknown as Record<string, unknown> | null)?.points as number) ?? 0,
       })));
     }
     setLoading(false);
   }, [boardType, boardId, contentType]);
 
-  useEffect(() => { load(); }, [load]);
-
-  return { posts, loading, reload: load };
+  return { posts, loading, reload };
 }
 
 /** 게시글 상세 + 댓글 */
@@ -91,9 +122,9 @@ export function usePostDetail(postId: number) {
         setPost({
           ...p,
           image_urls: p.image_urls ?? [],
-          nickname: (p as any).profiles?.nickname,
-          team_id: (p as any).profiles?.team_id,
-          grade: (p as any).profiles?.grade,
+          nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
+          team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
+          grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
         });
       }
 
@@ -105,11 +136,11 @@ export function usePostDetail(postId: number) {
         .order("created_at", { ascending: true });
 
       if (c) {
-        setComments(c.map((cm: any) => ({
+        setComments(c.map((cm) => ({
           ...cm,
-          nickname: cm.profiles?.nickname,
-          team_id: cm.profiles?.team_id,
-          grade: cm.profiles?.grade,
+          nickname: (cm.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
+          team_id: (cm.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
+          grade: (cm.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
         })));
       }
 

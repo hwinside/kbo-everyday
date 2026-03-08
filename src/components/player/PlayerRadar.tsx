@@ -12,10 +12,32 @@ interface PlayerRadarProps {
   teamColor?: string;
 }
 
-function calcBatterRadar(s: any) {
-  const avg = parseFloat(s.avg) || 0;
-  const obp = parseFloat(s.obp) || 0;
-  const slg = parseFloat(s.slg) || 0;
+interface BatterStatsRaw {
+  avg: string | number;
+  obp: string | number;
+  slg: string | number;
+  pa: number;
+  bb: number;
+  so: number;
+  sb: number;
+  // Additional fields used by traits/saber
+  [key: string]: string | number | undefined;
+}
+
+interface PitcherStatsRaw {
+  era: string | number;
+  whip: string | number;
+  ip: string | number;
+  so: number;
+  bb: number;
+  // Additional fields used by traits/saber
+  [key: string]: string | number | undefined;
+}
+
+function calcBatterRadar(s: BatterStatsRaw) {
+  const avg = parseFloat(String(s.avg)) || 0;
+  const obp = parseFloat(String(s.obp)) || 0;
+  const slg = parseFloat(String(s.slg)) || 0;
   const pa = s.pa || 1;
   const bb = s.bb || 0;
   const so = s.so || 0;
@@ -31,10 +53,10 @@ function calcBatterRadar(s: any) {
   ];
 }
 
-function calcPitcherRadar(s: any) {
-  const era = parseFloat(s.era) || 5;
-  const whip = parseFloat(s.whip) || 1.5;
-  const ip = parseFloat(s.ip) || 1;
+function calcPitcherRadar(s: PitcherStatsRaw) {
+  const era = parseFloat(String(s.era)) || 5;
+  const whip = parseFloat(String(s.whip)) || 1.5;
+  const ip = parseFloat(String(s.ip)) || 1;
   const so = s.so || 0;
   const bb = s.bb || 0;
 
@@ -68,7 +90,7 @@ const PITCHER_INFO = [
 
 export default function PlayerRadar({ playerId, position, teamColor }: PlayerRadarProps) {
   const [stats, setStats] = useState<{ label: string; value: number }[] | null>(null);
-  const [rawStats, setRawStats] = useState<any>(null);
+  const [rawStats, setRawStats] = useState<BatterStatsRaw | PitcherStatsRaw | null>(null);
   const [activeTrait, setActiveTrait] = useState<number | null>(null);
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -119,14 +141,15 @@ export default function PlayerRadar({ playerId, position, teamColor }: PlayerRad
       <p className="text-[11px] text-gray-500">점선 = 리그 평균 기준</p>
       {/* 특성 뱃지 */}
       {rawStats && (() => {
-        const traits = isPitcher ? getPitcherTraits(rawStats) : getBatterTraits(rawStats);
+        const traits = isPitcher
+          ? getPitcherTraits(rawStats as unknown as Parameters<typeof getPitcherTraits>[0])
+          : getBatterTraits(rawStats as unknown as Parameters<typeof getBatterTraits>[0]);
         if (traits.length === 0) return null;
         return (
           <div className="flex flex-wrap justify-center gap-2 mt-3 mb-6">
             {traits.map((t, i) => (
               <button key={i} onClick={() => {
-                  // TODO: 3/29 정규시즌 후 랭킹 이동 활성화
-                  // const now = new Date(); if (now >= new Date("2026-03-29")) router.push(`/rankings/${t.statKey}?player=${playerId}`);
+                  // TODO(Phase 3): enable ranking navigation after regular season starts (requires /rankings page to be built first)
                   setActiveTrait(activeTrait === i ? null : i);
                 }}
                 className="inline-flex flex-col items-center gap-0.5 px-2.5 py-1 rounded-full text-xs font-medium bg-white/5 border border-white/10 transition-colors hover:bg-white/10">

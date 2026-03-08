@@ -55,6 +55,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   }
 
   const timeAgo = (date: string) => {
+    // eslint-disable-next-line react-hooks/purity
     const diff = Date.now() - new Date(date).getTime();
     const min = Math.floor(diff / 60000);
     if (min < 1) return "방금 전";

@@ -34,8 +34,8 @@ export function useLiveGame(gameId?: string, pollInterval = 30000) {
       const data = await res.json();
       if (data.games) setGames(data.games);
       setError(data.error || null);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError((e as Error).message);
     } finally {
       setLoading(false);
     }

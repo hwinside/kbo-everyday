@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
+import type { RosterPlayer } from "@/types/api";
 
 const KBO_SEARCH = "https://www.koreabaseball.com/ws/Controls.asmx/GetSearchPlayer";
 
@@ -82,8 +83,8 @@ export async function GET(req: Request) {
     // KBO API 실패 시 roster fallback
     if (!result) {
       try {
-        const roster = (await import("@/lib/constants/players-roster.json")).default as any[];
-        const found = roster.find((p: any) => p.name === nameQuery);
+        const roster = (await import("@/lib/constants/players-roster.json")).default as RosterPlayer[];
+        const found = roster.find((p) => p.name === nameQuery);
         if (found) {
           result = { name: found.name, kboId: found.kboId, team: found.team, teamId: found.teamId, position: found.position, backNo: found.backNo };
         }
@@ -101,7 +102,7 @@ export async function GET(req: Request) {
     const players = await fetchAllPlayerTeams();
     cache = { data: players, ts: Date.now() };
     return NextResponse.json({ players, count: players.length, cached: false });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message, players: [] }, { status: 500 });
+  } catch (e: unknown) {
+    return NextResponse.json({ error: (e as Error).message, players: [] }, { status: 500 });
   }
 }

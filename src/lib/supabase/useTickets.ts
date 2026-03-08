@@ -43,7 +43,7 @@ export function useTickets(venueId?: string) {
 
       const { data } = await query;
       if (data) {
-        setTickets(data.map((d: any) => ({
+        setTickets(data.map((d: TicketTransfer & { profiles?: { nickname?: string } }) => ({
           ...d,
           author_nickname: d.profiles?.nickname,
         })));

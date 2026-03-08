@@ -38,10 +38,10 @@ function sortPlayers(players: PlayerItem[], mode: SortMode): PlayerItem[] {
     case "name":
       return sorted.sort((a, b) => a.name.localeCompare(b.name, "ko"));
     case "posts":
-      // TODO: Supabase 연동 후 실제 게시글수로 소팅
+      // TODO(Phase 2): fetch post counts per player from Supabase (board_type='player'), then sort by count desc. Falls back to name sort for now.
       return sorted.sort((a, b) => a.name.localeCompare(b.name, "ko"));
     case "photos":
-      // TODO: Supabase 연동 후 실제 직찍수로 소팅
+      // TODO(Phase 2): fetch photo post counts per player from Supabase (content_type='photo'), then sort by count desc. Falls back to name sort for now.
       return sorted.sort((a, b) => a.name.localeCompare(b.name, "ko"));
     default:
       return sorted;

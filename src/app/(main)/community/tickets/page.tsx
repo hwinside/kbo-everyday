@@ -19,6 +19,7 @@ export default function TicketBoardPage() {
       typeof window !== "undefined"
         ? new URLSearchParams(window.location.search).get("venue")
         : null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setVenue(v);
   }, []);
 

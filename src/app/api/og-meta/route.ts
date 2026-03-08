@@ -134,9 +134,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(data, {
       headers: { "Cache-Control": "public, max-age=3600" },
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     return NextResponse.json(
-      { error: "fetch error", message: e.message },
+      { error: "fetch error", message: (e as Error).message },
       { status: 502 }
     );
   }

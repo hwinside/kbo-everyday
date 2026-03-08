@@ -8,6 +8,7 @@ export function usePushNotification() {
 
   useEffect(() => {
     if (typeof window !== "undefined" && "Notification" in window) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPermission(Notification.permission);
     }
   }, []);

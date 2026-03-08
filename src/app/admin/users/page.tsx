@@ -102,6 +102,7 @@ export default function AdminUsersPage() {
     MAU: Math.round(s.uv * 5 + i * 20),
   }));
 
+  /* eslint-disable react-hooks/purity */
   const recentUsers = Array.from({ length: 20 }, (_, i) => ({
     id: i + 1,
     nickname: `유저${1000 + i}`,
@@ -109,6 +110,7 @@ export default function AdminUsersPage() {
     joinedAt: new Date(Date.now() - i * 3600000 * 4).toLocaleString("ko-KR"),
     posts: Math.floor(Math.random() * 20),
   }));
+  /* eslint-enable react-hooks/purity */
 
   return (
     <div className="space-y-6">

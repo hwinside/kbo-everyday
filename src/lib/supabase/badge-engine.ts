@@ -139,12 +139,12 @@ async function getUserStats(userId: string): Promise<UserStats> {
     totalPosts: postCount || 0,
     totalComments: commentCount || 0,
     totalLikes,
-    totalPhotos: 0, // TODO: photo gallery count
-    predictCorrect: 0, // TODO: after season ends
+    totalPhotos: 0, // TODO(Phase 2): query posts.content_type='photo' count for this user
+    predictCorrect: 0, // TODO(Phase 3): calculate from predictions table after season ends
     predictStreak: 0,
-    attendanceDays: 0, // TODO: login tracking
+    attendanceDays: 0, // TODO(Phase 2): requires daily login tracking table (not yet created)
     inviteCount: inviteCount || 0,
-    tutorialComplete: false, // TODO: localStorage check
+    tutorialComplete: false, // TODO(Phase 2): check onboarding completion from localStorage or profiles.onboarding_done
     teamsVisited: 0,
     saberViews: 0,
     playerActivity,

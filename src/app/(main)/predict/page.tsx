@@ -13,6 +13,16 @@ import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { usePredictions } from "@/lib/supabase/usePredictions";
 
+interface PlayerStat {
+  name: string;
+  avg?: string;
+  hr?: string;
+  rbi?: string;
+  wins?: string;
+  era?: string;
+  [key: string]: string | number | undefined;
+}
+
 interface PredictionCategory {
   id: string;
   title: string;
@@ -47,8 +57,8 @@ export default function PredictPage() {
   const { myPredictions, communityVotes, loading: predsLoading, savePrediction: savePredictionToDb } = usePredictions(user?.id);
   const [localPicks, setLocalPicks] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState("");
-  const [batterStats, setBatterStats] = useState<any[]>([]);
-  const [pitcherStats, setPitcherStats] = useState<any[]>([]);
+  const [batterStats, setBatterStats] = useState<PlayerStat[]>([]);
+  const [pitcherStats, setPitcherStats] = useState<PlayerStat[]>([]);
 
   useEffect(() => {
     fetch("/api/stats?type=batter").then(r => r.json()).then(d => setBatterStats(d.stats || []));
@@ -79,7 +89,7 @@ export default function PredictPage() {
 
   const statFilter = selectedCategory?.statFilter;
   const statsSource = statFilter === "pitcher" ? pitcherStats : statFilter === "batter" ? batterStats : [];
-  const statsNames = new Set(statsSource.map((s: any) => s.name));
+  const statsNames = new Set(statsSource.map((s) => s.name));
   
   const basePlayerList = statFilter
     ? ALL_PLAYERS.filter(p => statsNames.has(p.name))
