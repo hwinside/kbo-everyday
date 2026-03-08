@@ -215,13 +215,6 @@ export default function CommunityPlayersPage() {
     return TEAMS.find((t) => t.id === fav.teamId)?.colorPrimary || "#E8364E";
   };
 
-  const handlePhotoPostClick = (postId: number) => {
-    const post = photoPosts.find((p) => p.id === postId);
-    if (post) {
-      router.push(`/community/players/${post.board_id}/posts/${postId}`);
-    }
-  };
-
   const handlePhotoLike = async (postId: number) => {
     try {
       await toggleLike(postId);
@@ -414,7 +407,6 @@ export default function CommunityPlayersPage() {
               posts={filteredPhotoPosts}
               loading={photoLoading}
               onLike={handlePhotoLike}
-              onPostClick={handlePhotoPostClick}
             />
           </motion.div>
         )}

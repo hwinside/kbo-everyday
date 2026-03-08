@@ -1,18 +1,17 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle } from "lucide-react";
 import { GRADES } from "@/lib/constants/grades";
 import type { Post } from "@/lib/supabase/usePosts";
+import CommentSheet from "./CommentSheet";
 
 interface PhotoFeedProps {
   posts: Post[];
   loading: boolean;
   onLike: (postId: number) => void;
-  onPostClick: (postId: number) => void;
 }
 
 function timeAgo(dateStr: string): string {
@@ -173,9 +172,10 @@ function HeartOverlay({ show }: { show: boolean }) {
   );
 }
 
-export default function PhotoFeed({ posts, loading, onLike, onPostClick }: PhotoFeedProps) {
+export default function PhotoFeed({ posts, loading, onLike }: PhotoFeedProps) {
   const [likedPosts, setLikedPosts] = useState<Set<number>>(new Set());
   const [heartPostId, setHeartPostId] = useState<number | null>(null);
+  const [commentPostId, setCommentPostId] = useState<number | null>(null);
 
   const handleLike = (postId: number) => {
     setLikedPosts((prev) => {
@@ -286,7 +286,7 @@ export default function PhotoFeed({ posts, loading, onLike, onPostClick }: Photo
                   </span>
                 </button>
                 <button
-                  onClick={() => onPostClick(post.id)}
+                  onClick={() => setCommentPostId(post.id)}
                   className="flex items-center gap-1 text-sm text-text-secondary"
                 >
                   <MessageCircle size={18} />
@@ -298,7 +298,7 @@ export default function PhotoFeed({ posts, loading, onLike, onPostClick }: Photo
               {post.content && (
                 <div className="px-4 pb-1">
                   <button
-                    onClick={() => onPostClick(post.id)}
+                    onClick={() => setCommentPostId(post.id)}
                     className="text-left"
                   >
                     <span className="text-sm font-semibold text-text-primary mr-1.5">
@@ -313,7 +313,7 @@ export default function PhotoFeed({ posts, loading, onLike, onPostClick }: Photo
               {post.comment_count > 0 && (
                 <div className="px-4 pb-3 pt-1">
                   <button
-                    onClick={() => onPostClick(post.id)}
+                    onClick={() => setCommentPostId(post.id)}
                     className="text-sm text-text-tertiary"
                   >
                     댓글 {post.comment_count}개 모두 보기
@@ -324,6 +324,11 @@ export default function PhotoFeed({ posts, loading, onLike, onPostClick }: Photo
           </div>
         );
       })}
+      <CommentSheet
+        isOpen={commentPostId !== null}
+        onClose={() => setCommentPostId(null)}
+        postId={commentPostId}
+      />
     </div>
   );
 }

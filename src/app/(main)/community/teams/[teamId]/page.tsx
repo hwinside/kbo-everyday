@@ -115,10 +115,6 @@ export default function CommunityTeamBoardPage() {
         .sort((a, b) => b.like_count - a.like_count || new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     : photoPosts;
 
-  const handlePhotoPostClick = (postId: number) => {
-    router.push(`/community/teams/${teamSlug}/posts/${postId}`);
-  };
-
   const handlePhotoLike = async (postId: number) => {
     try {
       await toggleLike(postId);
@@ -237,7 +233,6 @@ export default function CommunityTeamBoardPage() {
               posts={sortedPhotoPosts}
               loading={photoLoading}
               onLike={handlePhotoLike}
-              onPostClick={handlePhotoPostClick}
             />
           </motion.div>
         )}
