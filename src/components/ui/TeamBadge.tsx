@@ -6,12 +6,15 @@ interface TeamBadgeProps {
   teamId: number;
   size?: "xs" | "sm" | "md" | "lg";
   className?: string;
+  /** 선수 게시판용: "LG 김진성" 형태로 표시 */
+  playerName?: string;
 }
 
 export default function TeamBadge({
   teamId,
   size = "sm",
   className,
+  playerName,
 }: TeamBadgeProps) {
   const team = getTeamById(teamId);
   if (!team) return null;
@@ -43,7 +46,7 @@ export default function TeamBadge({
           className="object-contain"
         />
       </span>
-      {team.shortName}
+      {playerName ? `${team.shortName} ${playerName}` : team.shortName}
     </span>
   );
 }

@@ -7,6 +7,8 @@ import type { Post } from "@/lib/types";
 
 interface PostListProps {
   posts: Post[];
+  /** 선수 게시판: post별 playerLabel 맵 (postId → {teamId, playerName}) */
+  playerLabels?: Record<number, { teamId: number; playerName: string }>;
 }
 
 const container = {
@@ -19,7 +21,7 @@ const item = {
   show: { opacity: 1, y: 0, transition: { duration: 0.2 } },
 };
 
-export default function PostList({ posts }: PostListProps) {
+export default function PostList({ posts, playerLabels }: PostListProps) {
   const router = useRouter();
   if (posts.length === 0) {
     return (
@@ -41,6 +43,7 @@ export default function PostList({ posts }: PostListProps) {
         <motion.div key={post.id} variants={item}>
           <PostCard
             post={post}
+            playerLabel={playerLabels?.[post.id] ?? null}
             onPress={() => {
               if (post.boardType === "player") {
                 router.push(`/community/players/${post.boardId}/posts/${post.id}`);

@@ -14,6 +14,8 @@ interface PhotoFeedProps {
   loading: boolean;
   onLike: (postId: number) => void;
   boardType?: "team" | "player";
+  /** 선수 게시판: post별 playerLabel 맵 (postId → {teamId, playerName}) */
+  playerLabels?: Record<number, { teamId: number; playerName: string }>;
 }
 
 function timeAgo(dateStr: string): string {
@@ -174,7 +176,7 @@ function HeartOverlay({ show }: { show: boolean }) {
   );
 }
 
-export default function PhotoFeed({ posts, loading, onLike, boardType = "team" }: PhotoFeedProps) {
+export default function PhotoFeed({ posts, loading, onLike, boardType = "team", playerLabels }: PhotoFeedProps) {
   const [likedPosts, setLikedPosts] = useState<Set<number>>(new Set());
   const [heartPostId, setHeartPostId] = useState<number | null>(null);
   const [commentPostId, setCommentPostId] = useState<number | null>(null);
@@ -238,10 +240,8 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team" }
             <div className="overflow-hidden">
               {/* Author header — 일반게시판(PostCard) 기준 통일 */}
               <div className="flex items-center gap-3 px-4 py-3">
-                {boardType === "player" && post.board_id ? (
-                  <span className="inline-flex items-center gap-1 rounded-full py-1 pl-2 pr-2.5 text-xs font-semibold bg-white/10 text-text-primary">
-                    ⚾ {post.board_id}
-                  </span>
+                {boardType === "player" && playerLabels?.[post.id] ? (
+                  <TeamBadge teamId={playerLabels[post.id].teamId} playerName={playerLabels[post.id].playerName} />
                 ) : (
                   post.team_id && <TeamBadge teamId={post.team_id} />
                 )}

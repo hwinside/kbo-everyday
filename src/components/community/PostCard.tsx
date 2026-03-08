@@ -10,9 +10,11 @@ import type { Post } from "@/lib/types";
 interface PostCardProps {
   post: Post;
   onPress?: () => void;
+  /** 선수 게시판: "LG 김진성" 같은 통합 레이블 (팀 뱃지 대체) */
+  playerLabel?: { teamId: number; playerName: string } | null;
 }
 
-export default function PostCard({ post, onPress }: PostCardProps) {
+export default function PostCard({ post, onPress, playerLabel }: PostCardProps) {
   const timeAgo = getTimeAgo(post.createdAt);
 
   return (
@@ -24,7 +26,11 @@ export default function PostCard({ post, onPress }: PostCardProps) {
     >
       {/* Author info */}
       <div className="flex items-center gap-3">
-        {post.author?.myTeamId && <TeamBadge teamId={post.author.myTeamId} />}
+        {playerLabel ? (
+          <TeamBadge teamId={playerLabel.teamId} playerName={playerLabel.playerName} />
+        ) : (
+          post.author?.myTeamId && <TeamBadge teamId={post.author.myTeamId} />
+        )}
         <span className="text-base font-medium text-text-primary">
           {post.author?.nickname ?? "익명"}
         </span>

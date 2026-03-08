@@ -372,25 +372,18 @@ export default function CommunityPlayersPage() {
               </div>
             ) : (
               <>
-                {!selectedPlayer ? (
-                  <div className="space-y-3">
-                    {filteredPosts.map((post) => (
-                      <div key={post.id}>
-                        <div className="mb-1">
-                          <span
-                            className="inline-block px-2 py-0.5 rounded-md text-xs font-semibold text-white"
-                            style={{ backgroundColor: getPlayerTeamColor(post.boardId) + "CC" }}
-                          >
-                            {favPlayerNames[post.boardId] || post.boardId}
-                          </span>
-                        </div>
-                        <PostList posts={[post]} />
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <PostList posts={filteredPosts} />
-                )}
+                {(() => {
+                  // 선수 게시판: "LG 김진성" 통합 레이블 맵 생성
+                  const playerLabels: Record<number, { teamId: number; playerName: string }> = {};
+                  const postsToShow = selectedPlayer ? filteredPosts : filteredPosts;
+                  postsToShow.forEach((post) => {
+                    const fav = favPlayers.find((p) => p.playerId === post.boardId);
+                    if (fav) {
+                      playerLabels[post.id] = { teamId: fav.teamId, playerName: fav.name };
+                    }
+                  });
+                  return <PostList posts={postsToShow} playerLabels={playerLabels} />;
+                })()}
               </>
             )}
           </motion.div>
@@ -408,6 +401,14 @@ export default function CommunityPlayersPage() {
               loading={photoLoading}
               onLike={handlePhotoLike}
               boardType="player"
+              playerLabels={(() => {
+                const labels: Record<number, { teamId: number; playerName: string }> = {};
+                filteredPhotoPosts.forEach((post) => {
+                  const fav = favPlayers.find((p) => p.playerId === post.board_id);
+                  if (fav) labels[post.id] = { teamId: fav.teamId, playerName: fav.name };
+                });
+                return labels;
+              })()}
             />
           </motion.div>
         )}
