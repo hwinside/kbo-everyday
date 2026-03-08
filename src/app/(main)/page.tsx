@@ -619,23 +619,7 @@ export default function HomePage() {
 
             </div>
 
-      {/* 퀵액션 버튼 (개인화 영역 아래) */}
-      <motion.div variants={item} className="flex gap-3 mb-6">
-        <Link href="/community/tickets" className="flex-1">
-          <GlassCard pressable className="flex items-center gap-3 !p-4">
-            <span className="text-lg">🎫</span>
-            <span className="text-[15px] leading-[22px] font-medium text-text-primary">티켓양도</span>
-          </GlassCard>
-        </Link>
-        <Link href="/community/stadiums" className="flex-1">
-          <GlassCard pressable className="flex items-center gap-3 !p-4">
-            <span className="text-lg">🏟️</span>
-            <span className="text-[15px] leading-[22px] font-medium text-text-primary">구장가이드</span>
-          </GlassCard>
-        </Link>
-      </motion.div>
-
-      {/* ===== 1. Today's Games ===== */}
+      {/* ===== 1. Today's Games (퀵버튼 위 — fold 안에 노출) ===== */}
       <motion.section variants={item} className="mb-6">
         <SectionHeader title={isPreseason ? "오늘의 시범경기" : "오늘의 경기"} href="/games" icon="⚾" />
         {todayGames.length > 0 && !todayGames[0]?.id?.startsWith("placeholder") ? (
@@ -695,6 +679,22 @@ export default function HomePage() {
           </GlassCard>
         )}
       </motion.section>
+
+      {/* 퀵액션 버튼 */}
+      <motion.div variants={item} className="flex gap-3 mb-6">
+        <Link href="/community/tickets" className="flex-1">
+          <GlassCard pressable className="flex items-center gap-3 !p-4">
+            <span className="text-lg">🎫</span>
+            <span className="text-[15px] leading-[22px] font-medium text-text-primary">티켓양도</span>
+          </GlassCard>
+        </Link>
+        <Link href="/community/stadiums" className="flex-1">
+          <GlassCard pressable className="flex items-center gap-3 !p-4">
+            <span className="text-lg">🏟️</span>
+            <span className="text-[15px] leading-[22px] font-medium text-text-primary">구장가이드</span>
+          </GlassCard>
+        </Link>
+      </motion.div>
 
       {/* ===== 2. Prediction Entry Cards (목데이터 — 실데이터 연결 후 복원) ===== */}
       {/* <motion.section variants={item} className="mb-6">
