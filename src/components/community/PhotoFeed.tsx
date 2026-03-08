@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle } from "lucide-react";
 import { GRADES } from "@/lib/constants/grades";
 import type { Post } from "@/lib/supabase/usePosts";
@@ -30,13 +31,20 @@ function getGradeInfo(gradeId?: string) {
   return GRADES.find((g) => g.id === gradeId) ?? GRADES[0];
 }
 
-function PhotoCarousel({ images }: { images: string[] }) {
+function PhotoCarousel({
+  images,
+  onDoubleTap,
+}: {
+  images: string[];
+  onDoubleTap: () => void;
+}) {
   const [current, setCurrent] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const touchStartX = useRef(0);
   const touchDeltaX = useRef(0);
   const [translateX, setTranslateX] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
+  const lastTapRef = useRef(0);
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
@@ -61,17 +69,30 @@ function PhotoCarousel({ images }: { images: string[] }) {
     setTranslateX(0);
   }, [current, images.length]);
 
-  // Instagram style: min 1.91:1 (landscape), max 4:5 (portrait)
-  // aspect-[4/5] = max portrait ratio, object-cover centers the crop
+  // Double-tap detection for mobile
+  const handleTap = useCallback(() => {
+    const now = Date.now();
+    if (now - lastTapRef.current < 300) {
+      onDoubleTap();
+      lastTapRef.current = 0;
+    } else {
+      lastTapRef.current = now;
+    }
+  }, [onDoubleTap]);
+
   if (images.length === 1) {
     return (
-      <div className="relative w-full overflow-hidden rounded-xl bg-bg-tertiary">
+      <div
+        className="relative w-full overflow-hidden bg-bg-tertiary"
+        onDoubleClick={onDoubleTap}
+        onClick={handleTap}
+      >
         <Image
           src={images[0]}
           alt="photo"
           width={800}
           height={1000}
-          className="w-full object-cover rounded-xl"
+          className="w-full object-cover"
           style={{ aspectRatio: "4/5", objectPosition: "center" }}
           sizes="(max-width: 768px) 100vw, 600px"
         />
@@ -80,7 +101,11 @@ function PhotoCarousel({ images }: { images: string[] }) {
   }
 
   return (
-    <div className="relative w-full overflow-hidden rounded-xl bg-bg-tertiary">
+    <div
+      className="relative w-full overflow-hidden bg-bg-tertiary"
+      onDoubleClick={onDoubleTap}
+      onClick={handleTap}
+    >
       <div
         ref={containerRef}
         className="flex"
@@ -121,8 +146,36 @@ function PhotoCarousel({ images }: { images: string[] }) {
   );
 }
 
+/** Heart animation overlay for double-tap */
+function HeartOverlay({ show }: { show: boolean }) {
+  return (
+    <AnimatePresence>
+      {show && (
+        <motion.div
+          className="absolute inset-0 flex items-center justify-center pointer-events-none z-10"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.1 }}
+        >
+          <motion.span
+            className="text-7xl drop-shadow-lg"
+            initial={{ scale: 0.2, opacity: 0.8 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 1.4, opacity: 0 }}
+            transition={{ duration: 0.6, ease: "easeOut" }}
+          >
+            ❤️
+          </motion.span>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 export default function PhotoFeed({ posts, loading, onLike, onPostClick }: PhotoFeedProps) {
   const [likedPosts, setLikedPosts] = useState<Set<number>>(new Set());
+  const [heartPostId, setHeartPostId] = useState<number | null>(null);
 
   const handleLike = (postId: number) => {
     setLikedPosts((prev) => {
@@ -134,16 +187,26 @@ export default function PhotoFeed({ posts, loading, onLike, onPostClick }: Photo
     onLike(postId);
   };
 
+  // Double-tap: always adds like (never removes), Instagram-style
+  const handleDoubleTap = (postId: number) => {
+    if (!likedPosts.has(postId)) {
+      handleLike(postId);
+    }
+    // Show heart animation
+    setHeartPostId(postId);
+    setTimeout(() => setHeartPostId(null), 800);
+  };
+
   if (loading) {
     return (
-      <div className="space-y-4">
+      <div className="divide-y divide-white/[0.02]">
         {[...Array(3)].map((_, i) => (
-          <div key={i} className="rounded-2xl bg-bg-secondary p-4 animate-pulse">
+          <div key={i} className="p-4 animate-pulse">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-8 h-8 rounded-full bg-bg-tertiary" />
               <div className="h-4 bg-bg-tertiary rounded w-24" />
             </div>
-            <div className="w-full aspect-square rounded-xl bg-bg-tertiary" />
+            <div className="w-full aspect-[4/5] bg-bg-tertiary" />
           </div>
         ))}
       </div>
@@ -160,83 +223,104 @@ export default function PhotoFeed({ posts, loading, onLike, onPostClick }: Photo
   }
 
   return (
-    <div className="space-y-4">
-      {posts.map((post) => {
+    <div>
+      {posts.map((post, index) => {
         const grade = getGradeInfo(post.grade);
         const isLiked = likedPosts.has(post.id);
 
         return (
-          <div key={post.id} className="rounded-2xl bg-bg-secondary overflow-hidden">
-            {/* Author header */}
-            <div className="flex items-center gap-2.5 px-4 py-3">
-              <div
-                className="w-8 h-8 rounded-full flex items-center justify-center text-sm"
-                style={{ backgroundColor: grade.bgColor }}
-              >
-                {grade.emoji}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm font-semibold text-text-primary truncate">
-                    {post.nickname || "익명"}
-                  </span>
-                  <span
-                    className="text-[10px] font-bold px-1.5 py-0.5 rounded-md"
-                    style={{ color: grade.color, backgroundColor: grade.bgColor }}
-                  >
-                    {grade.name}
-                  </span>
+          <div key={post.id}>
+            {/* Post separator */}
+            {index > 0 && <div className="h-2 bg-white/[0.02]" />}
+
+            <div className="overflow-hidden">
+              {/* Author header */}
+              <div className="flex items-center gap-2.5 px-4 py-3">
+                <div
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-sm"
+                  style={{ backgroundColor: grade.bgColor }}
+                >
+                  {grade.emoji}
                 </div>
-              </div>
-              <span className="text-xs text-text-tertiary flex-shrink-0">
-                {timeAgo(post.created_at)}
-              </span>
-            </div>
-
-            {/* Photo carousel */}
-            {post.image_urls.length > 0 && (
-              <div className="px-3">
-                <PhotoCarousel images={post.image_urls} />
-              </div>
-            )}
-
-            {/* Action bar */}
-            <div className="flex items-center gap-4 px-4 py-2.5">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleLike(post.id);
-                }}
-                className="flex items-center gap-1 text-sm transition-colors"
-              >
-                <span className="text-lg">{isLiked ? "\u2764\uFE0F" : "\u2661"}</span>
-                <span className={isLiked ? "text-red-500 font-medium" : "text-text-secondary"}>
-                  {post.like_count + (isLiked ? 1 : 0)}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm font-semibold text-text-primary truncate">
+                      {post.nickname || "익명"}
+                    </span>
+                    <span
+                      className="text-[10px] font-bold px-1.5 py-0.5 rounded-md"
+                      style={{ color: grade.color, backgroundColor: grade.bgColor }}
+                    >
+                      {grade.name}
+                    </span>
+                  </div>
+                </div>
+                <span className="text-xs text-text-tertiary flex-shrink-0">
+                  {timeAgo(post.created_at)}
                 </span>
-              </button>
-              <button
-                onClick={() => onPostClick(post.id)}
-                className="flex items-center gap-1 text-sm text-text-secondary"
-              >
-                <MessageCircle size={18} />
-                <span>{post.comment_count}</span>
-              </button>
-            </div>
+              </div>
 
-            {/* Caption */}
-            {post.content && (
-              <div className="px-4 pb-3">
+              {/* Photo carousel — full bleed, no padding, no rounded corners */}
+              {post.image_urls.length > 0 && (
+                <div className="relative">
+                  <PhotoCarousel
+                    images={post.image_urls}
+                    onDoubleTap={() => handleDoubleTap(post.id)}
+                  />
+                  <HeartOverlay show={heartPostId === post.id} />
+                </div>
+              )}
+
+              {/* Action bar */}
+              <div className="flex items-center gap-4 px-4 py-2.5">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleLike(post.id);
+                  }}
+                  className="flex items-center gap-1 text-sm transition-colors"
+                >
+                  <span className="text-lg">{isLiked ? "\u2764\uFE0F" : "\u2661"}</span>
+                  <span className={isLiked ? "text-red-500 font-medium" : "text-text-secondary"}>
+                    {post.like_count + (isLiked ? 1 : 0)}
+                  </span>
+                </button>
                 <button
                   onClick={() => onPostClick(post.id)}
-                  className="text-left"
+                  className="flex items-center gap-1 text-sm text-text-secondary"
                 >
-                  <span className="text-sm font-semibold text-text-primary mr-1.5">
-                    {post.nickname || "익명"}
-                  </span>
-                  <span className="text-sm text-text-secondary">{post.content}</span>
+                  <MessageCircle size={18} />
+                  <span>{post.comment_count}</span>
                 </button>
               </div>
-            )}
+
+              {/* Caption */}
+              {post.content && (
+                <div className="px-4 pb-1">
+                  <button
+                    onClick={() => onPostClick(post.id)}
+                    className="text-left"
+                  >
+                    <span className="text-sm font-semibold text-text-primary mr-1.5">
+                      {post.nickname || "익명"}
+                    </span>
+                    <span className="text-sm text-text-secondary">{post.content}</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Comment preview */}
+              {post.comment_count > 0 && (
+                <div className="px-4 pb-3 pt-1">
+                  <button
+                    onClick={() => onPostClick(post.id)}
+                    className="text-sm text-text-tertiary"
+                  >
+                    댓글 {post.comment_count}개 모두 보기
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         );
       })}
