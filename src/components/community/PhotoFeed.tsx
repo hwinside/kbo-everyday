@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle } from "lucide-react";
@@ -328,21 +328,32 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   );
 }
 
-/** 인스타 스타일 캡션: 2줄 초과 시 "더보기" */
+/** 인스타 스타일 캡션: 2줄 초과 시 "더보기" / 펼친 후 클릭하면 접기 */
 function CaptionBlock({ nickname, content, onPress }: { nickname: string; content: string; onPress: () => void }) {
   const [expanded, setExpanded] = useState(false);
-  const MAX_CHARS = 80;
-  const isLong = content.length > MAX_CHARS;
+  const [clamped, setClamped] = useState(false);
+  const textRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    const el = textRef.current;
+    if (el) setClamped(el.scrollHeight > el.clientHeight + 2);
+  }, [content]);
 
   return (
     <div className="px-4 pb-1">
-      <button onClick={onPress} className="text-left">
+      <button
+        onClick={expanded ? () => setExpanded(false) : clamped ? () => setExpanded(true) : onPress}
+        className="text-left"
+      >
         <span className="text-base font-semibold text-text-primary mr-1.5">{nickname}</span>
-        <span className="text-base text-text-secondary">
-          {!expanded && isLong ? content.slice(0, MAX_CHARS) + "..." : content}
+        <span
+          ref={textRef}
+          className={`text-base text-text-secondary ${!expanded ? "line-clamp-2" : ""}`}
+        >
+          {content}
         </span>
       </button>
-      {isLong && !expanded && (
+      {clamped && !expanded && (
         <button
           onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
           className="text-base text-text-tertiary ml-1"
