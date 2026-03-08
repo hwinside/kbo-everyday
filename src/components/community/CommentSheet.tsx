@@ -42,7 +42,7 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
   const inputRef = useRef<HTMLInputElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const dragStartY = useRef(0);
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const shouldRender = isOpen && postId !== null;
 
   // Fetch comments directly (lightweight, no post/like fetch)
@@ -115,9 +115,9 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
           author_id: user?.id ?? "",
           content: input.trim(),
           created_at: new Date().toISOString(),
-          nickname: undefined,
-          team_id: undefined,
-          grade: undefined,
+          nickname: profile?.nickname ?? user?.user_metadata?.name ?? "나",
+          team_id: profile?.team_id,
+          grade: profile?.grade,
         },
       ]);
       setInput("");
