@@ -62,8 +62,14 @@ export default function PlayerDetailPage() {
 
   if (!team || !player) {
     return (
-      <div className="flex items-center justify-center py-40 text-text-tertiary">
-        선수를 찾을 수 없습니다
+      <div className="flex flex-col items-center justify-center py-40 gap-4">
+        <p className="text-text-tertiary">선수 정보를 준비 중입니다</p>
+        <button
+          onClick={() => window.history.back()}
+          className="text-sm text-accent hover:underline"
+        >
+          ← 돌아가기
+        </button>
       </div>
     );
   }

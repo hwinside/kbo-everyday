@@ -44,16 +44,16 @@ export default function ScoreBar({
             key={`sb-away-${awayScore}`}
             initial={{ scale: 1.3, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className={`text-[32px] font-extrabold tabular-nums ${awayWinning ? "text-[#4fc3f7]" : "text-white"}`}
+            className={`text-[40px] font-extrabold tabular-nums ${awayWinning ? "text-[#4fc3f7]" : "text-white"}`}
           >
             {awayScore}
           </motion.span>
-          <span className="text-lg text-[#555]">:</span>
+          <span className="text-xl text-[#555]">:</span>
           <motion.span
             key={`sb-home-${homeScore}`}
             initial={{ scale: 1.3, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className={`text-[32px] font-extrabold tabular-nums ${homeWinning ? "text-[#4fc3f7]" : "text-white"}`}
+            className={`text-[40px] font-extrabold tabular-nums ${homeWinning ? "text-[#4fc3f7]" : "text-white"}`}
           >
             {homeScore}
           </motion.span>

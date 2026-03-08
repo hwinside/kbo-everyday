@@ -102,41 +102,41 @@ export const MOCK_GAME_STATE: GameState = {
   runner2bName: "홍창기",
   runner3bName: "김현수",
   currentBatter: "오스틴",
-  currentPitcher: "곽빈",
+  currentPitcher: "최승용",
 };
 
 /* ===== LG vs 두산 문자 중계 ===== */
 export const MOCK_PLAYS: GamePlay[] = [
   // 1회초
-  { id: 1, gameId: "20260328-LG-DS", inning: "1회초", sequence: 1, description: "홍창기 중전안타", isHighlight: false, batter: "홍창기", pitcher: "곽빈", createdAt: "2026-03-28T18:35:00Z" },
-  { id: 2, gameId: "20260328-LG-DS", inning: "1회초", sequence: 2, description: "구본혁 번트 실패 삼진", isHighlight: false, batter: "구본혁", pitcher: "곽빈", createdAt: "2026-03-28T18:37:00Z" },
-  { id: 3, gameId: "20260328-LG-DS", inning: "1회초", sequence: 3, description: "오스틴 우비 플라이", isHighlight: false, batter: "오스틴", pitcher: "곽빈", createdAt: "2026-03-28T18:39:00Z" },
-  { id: 4, gameId: "20260328-LG-DS", inning: "1회초", sequence: 4, description: "김현수 유격수 땅볼 아웃", isHighlight: false, batter: "김현수", pitcher: "곽빈", createdAt: "2026-03-28T18:41:00Z" },
+  { id: 1, gameId: "20260328-LG-DS", inning: "1회초", sequence: 1, description: "홍창기 중전안타", isHighlight: false, batter: "홍창기", pitcher: "최승용", createdAt: "2026-03-28T18:35:00Z" },
+  { id: 2, gameId: "20260328-LG-DS", inning: "1회초", sequence: 2, description: "구본혁 번트 실패 삼진", isHighlight: false, batter: "구본혁", pitcher: "최승용", createdAt: "2026-03-28T18:37:00Z" },
+  { id: 3, gameId: "20260328-LG-DS", inning: "1회초", sequence: 3, description: "오스틴 우비 플라이", isHighlight: false, batter: "오스틴", pitcher: "최승용", createdAt: "2026-03-28T18:39:00Z" },
+  { id: 4, gameId: "20260328-LG-DS", inning: "1회초", sequence: 4, description: "김현수 유격수 땅볼 아웃", isHighlight: false, batter: "김현수", pitcher: "최승용", createdAt: "2026-03-28T18:41:00Z" },
   // 1회말
   { id: 5, gameId: "20260328-LG-DS", inning: "1회말", sequence: 1, description: "정수빈 볼넷", isHighlight: false, batter: "정수빈", pitcher: "케이시 켈리", createdAt: "2026-03-28T18:45:00Z" },
   { id: 6, gameId: "20260328-LG-DS", inning: "1회말", sequence: 2, description: "양석환 유격수 땅볼 병살", isHighlight: false, batter: "양석환", pitcher: "케이시 켈리", createdAt: "2026-03-28T18:48:00Z" },
-  { id: 7, gameId: "20260328-LG-DS", inning: "1회말", sequence: 3, description: "페르난데스 삼진", isHighlight: false, batter: "페르난데스", pitcher: "케이시 켈리", createdAt: "2026-03-28T18:50:00Z" },
+  { id: 7, gameId: "20260328-LG-DS", inning: "1회말", sequence: 3, description: "허경민 삼진", isHighlight: false, batter: "허경민", pitcher: "케이시 켈리", createdAt: "2026-03-28T18:50:00Z" },
   // 2회초
-  { id: 8, gameId: "20260328-LG-DS", inning: "2회초", sequence: 1, description: "문보경 좌전안타", isHighlight: false, batter: "문보경", pitcher: "곽빈", createdAt: "2026-03-28T18:55:00Z" },
-  { id: 9, gameId: "20260328-LG-DS", inning: "2회초", sequence: 2, description: "박해민 볼넷 (1·2루)", isHighlight: false, batter: "박해민", pitcher: "곽빈", createdAt: "2026-03-28T18:57:00Z" },
-  { id: 10, gameId: "20260328-LG-DS", inning: "2회초", sequence: 3, description: "⚾ 박동원 좌전 적시타 (1타점) — LG 1:0", isHighlight: true, batter: "박동원", pitcher: "곽빈", createdAt: "2026-03-28T18:59:00Z" },
-  { id: 11, gameId: "20260328-LG-DS", inning: "2회초", sequence: 4, description: "신민재 삼진", isHighlight: false, batter: "신민재", pitcher: "곽빈", createdAt: "2026-03-28T19:01:00Z" },
-  { id: 12, gameId: "20260328-LG-DS", inning: "2회초", sequence: 5, description: "문성주 우비 플라이", isHighlight: false, batter: "문성주", pitcher: "곽빈", createdAt: "2026-03-28T19:03:00Z" },
+  { id: 8, gameId: "20260328-LG-DS", inning: "2회초", sequence: 1, description: "문보경 좌전안타", isHighlight: false, batter: "문보경", pitcher: "최승용", createdAt: "2026-03-28T18:55:00Z" },
+  { id: 9, gameId: "20260328-LG-DS", inning: "2회초", sequence: 2, description: "박해민 볼넷 (1·2루)", isHighlight: false, batter: "박해민", pitcher: "최승용", createdAt: "2026-03-28T18:57:00Z" },
+  { id: 10, gameId: "20260328-LG-DS", inning: "2회초", sequence: 3, description: "⚾ 박동원 좌전 적시타 (1타점) — LG 1:0", isHighlight: true, batter: "박동원", pitcher: "최승용", createdAt: "2026-03-28T18:59:00Z" },
+  { id: 11, gameId: "20260328-LG-DS", inning: "2회초", sequence: 4, description: "신민재 삼진", isHighlight: false, batter: "신민재", pitcher: "최승용", createdAt: "2026-03-28T19:01:00Z" },
+  { id: 12, gameId: "20260328-LG-DS", inning: "2회초", sequence: 5, description: "문성주 우비 플라이", isHighlight: false, batter: "문성주", pitcher: "최승용", createdAt: "2026-03-28T19:03:00Z" },
   // 3회초
-  { id: 13, gameId: "20260328-LG-DS", inning: "3회초", sequence: 1, description: "홍창기 삼진", isHighlight: false, batter: "홍창기", pitcher: "곽빈", createdAt: "2026-03-28T19:10:00Z" },
+  { id: 13, gameId: "20260328-LG-DS", inning: "3회초", sequence: 1, description: "홍창기 삼진", isHighlight: false, batter: "홍창기", pitcher: "최승용", createdAt: "2026-03-28T19:10:00Z" },
   // 3회말
-  { id: 14, gameId: "20260328-LG-DS", inning: "3회말", sequence: 1, description: "김재환 2루타", isHighlight: false, batter: "김재환", pitcher: "케이시 켈리", createdAt: "2026-03-28T19:15:00Z" },
-  { id: 15, gameId: "20260328-LG-DS", inning: "3회말", sequence: 2, description: "⚾ 허경민 좌전 적시타 (1타점) — 1:1 동점", isHighlight: true, batter: "허경민", pitcher: "케이시 켈리", createdAt: "2026-03-28T19:17:00Z" },
+  { id: 14, gameId: "20260328-LG-DS", inning: "3회말", sequence: 1, description: "김인태 2루타", isHighlight: false, batter: "김인태", pitcher: "케이시 켈리", createdAt: "2026-03-28T19:15:00Z" },
+  { id: 15, gameId: "20260328-LG-DS", inning: "3회말", sequence: 2, description: "⚾ 강승호 좌전 적시타 (1타점) — 1:1 동점", isHighlight: true, batter: "강승호", pitcher: "케이시 켈리", createdAt: "2026-03-28T19:17:00Z" },
   // 4회말
   { id: 16, gameId: "20260328-LG-DS", inning: "4회말", sequence: 1, description: "정수빈 중전안타", isHighlight: false, batter: "정수빈", pitcher: "케이시 켈리", createdAt: "2026-03-28T19:25:00Z" },
   { id: 17, gameId: "20260328-LG-DS", inning: "4회말", sequence: 2, description: "정수빈 도루 성공 (2루)", isHighlight: false, batter: "정수빈", pitcher: "케이시 켈리", createdAt: "2026-03-28T19:27:00Z" },
   { id: 18, gameId: "20260328-LG-DS", inning: "4회말", sequence: 3, description: "⚾ 양석환 중전 적시타 (1타점) — 두산 2:1 역전", isHighlight: true, batter: "양석환", pitcher: "케이시 켈리", createdAt: "2026-03-28T19:29:00Z" },
   // 5회초
-  { id: 19, gameId: "20260328-LG-DS", inning: "5회초", sequence: 1, description: "구본혁 좌전안타", isHighlight: false, batter: "구본혁", pitcher: "곽빈", createdAt: "2026-03-28T19:35:00Z" },
-  { id: 20, gameId: "20260328-LG-DS", inning: "5회초", sequence: 2, description: "⚾ 오스틴 좌중간 2점 홈런!!! — LG 3:2 재역전", isHighlight: true, batter: "오스틴", pitcher: "곽빈", createdAt: "2026-03-28T19:37:00Z" },
+  { id: 19, gameId: "20260328-LG-DS", inning: "5회초", sequence: 1, description: "구본혁 좌전안타", isHighlight: false, batter: "구본혁", pitcher: "최승용", createdAt: "2026-03-28T19:35:00Z" },
+  { id: 20, gameId: "20260328-LG-DS", inning: "5회초", sequence: 2, description: "⚾ 오스틴 좌중간 2점 홈런!!! — LG 3:2 재역전", isHighlight: true, batter: "오스틴", pitcher: "최승용", createdAt: "2026-03-28T19:37:00Z" },
   // 5회초 (진행중 — LG 공격)
-  { id: 21, gameId: "20260328-LG-DS", inning: "5회초", sequence: 3, description: "김현수 좌전안타", isHighlight: false, batter: "김현수", pitcher: "곽빈", createdAt: "2026-03-28T19:42:00Z" },
-  { id: 22, gameId: "20260328-LG-DS", inning: "5회초", sequence: 4, description: "문보경 볼넷 (만루)", isHighlight: false, batter: "문보경", pitcher: "곽빈", createdAt: "2026-03-28T19:44:00Z" },
+  { id: 21, gameId: "20260328-LG-DS", inning: "5회초", sequence: 3, description: "김현수 좌전안타", isHighlight: false, batter: "김현수", pitcher: "최승용", createdAt: "2026-03-28T19:42:00Z" },
+  { id: 22, gameId: "20260328-LG-DS", inning: "5회초", sequence: 4, description: "문보경 볼넷 (만루)", isHighlight: false, batter: "문보경", pitcher: "최승용", createdAt: "2026-03-28T19:44:00Z" },
 ];
 
 /* ===== 채팅 메시지 ===== */
@@ -214,17 +214,17 @@ export const MOCK_LINEUP: GameLineup = {
   },
   home: {
     teamId: 2, // 두산
-    startingPitcher: { name: "곽빈", era: "3.42" },
+    startingPitcher: { name: "최승용", era: "4.41" },
     batters: [
       { order: 1, name: "정수빈", position: "CF", avg: ".305" },
       { order: 2, name: "양석환", position: "1B", avg: ".292" },
-      { order: 3, name: "페르난데스", position: "DH", avg: ".310" },
-      { order: 4, name: "김재환", position: "LF", avg: ".285" },
-      { order: 5, name: "허경민", position: "2B", avg: ".278" },
-      { order: 6, name: "강승호", position: "3B", avg: ".252" },
+      { order: 3, name: "허경민", position: "DH", avg: ".278" },
+      { order: 4, name: "김인태", position: "LF", avg: ".213" },
+      { order: 5, name: "강승호", position: "2B", avg: ".252" },
+      { order: 6, name: "장승현", position: "3B", avg: ".220" },
       { order: 7, name: "조수행", position: "SS", avg: ".240" },
-      { order: 8, name: "박세혁", position: "RF", avg: ".235" },
-      { order: 9, name: "장승현", position: "C", avg: ".220" },
+      { order: 8, name: "전다민", position: "RF", avg: ".235" },
+      { order: 9, name: "홍성호", position: "C", avg: ".248" },
     ],
   },
 };

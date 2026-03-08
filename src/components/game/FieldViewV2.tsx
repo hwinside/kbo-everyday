@@ -19,6 +19,9 @@ interface FieldViewV2Props {
   runner3bName?: string | null;
   onDeckBatters?: { order: number; name: string }[];
   batterBats?: "L" | "R" | "S" | null; // 좌타/우타/스위치
+  balls?: number;
+  strikes?: number;
+  outs?: number;
 }
 
 type MarkerType = "defense" | "pitcher" | "runner" | "batter";
@@ -142,6 +145,9 @@ export default function FieldViewV2({
   runner3bName,
   onDeckBatters,
   batterBats,
+  balls = 0,
+  strikes = 0,
+  outs = 0,
 }: FieldViewV2Props) {
   const getDefender = (pos: string) => defenders.find((d) => d.position === pos);
 
@@ -243,6 +249,54 @@ export default function FieldViewV2({
             className={batterClass}
           />
         )}
+
+        {/* BSO Scoreboard overlay — bottom right */}
+        <div className="absolute bottom-[5%] right-2 z-[15] bg-black/70 rounded-md px-2 py-1.5 backdrop-blur-sm border border-[#333]">
+          <div className="flex flex-col gap-0.5">
+            {/* Balls */}
+            <div className="flex items-center gap-1">
+              <span className="text-[8px] font-bold text-[#4caf50] w-[8px]">B</span>
+              <div className="flex gap-[2px]">
+                {[0, 1, 2, 3].map((i) => (
+                  <span
+                    key={`b-${i}`}
+                    className={`inline-block w-[7px] h-[7px] rounded-full ${
+                      i < balls ? "bg-[#4caf50]" : "bg-[#333]"
+                    }`}
+                  />
+                ))}
+              </div>
+            </div>
+            {/* Strikes */}
+            <div className="flex items-center gap-1">
+              <span className="text-[8px] font-bold text-[#ffc107] w-[8px]">S</span>
+              <div className="flex gap-[2px]">
+                {[0, 1, 2].map((i) => (
+                  <span
+                    key={`s-${i}`}
+                    className={`inline-block w-[7px] h-[7px] rounded-full ${
+                      i < strikes ? "bg-[#ffc107]" : "bg-[#333]"
+                    }`}
+                  />
+                ))}
+              </div>
+            </div>
+            {/* Outs */}
+            <div className="flex items-center gap-1">
+              <span className="text-[8px] font-bold text-[#e53935] w-[8px]">O</span>
+              <div className="flex gap-[2px]">
+                {[0, 1].map((i) => (
+                  <span
+                    key={`o-${i}`}
+                    className={`inline-block w-[7px] h-[7px] rounded-full ${
+                      i < outs ? "bg-[#e53935]" : "bg-[#333]"
+                    }`}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
 
         {/* On-deck batters overlay */}
         {onDeckBatters && onDeckBatters.length > 0 && (
