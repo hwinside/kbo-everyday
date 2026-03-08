@@ -235,8 +235,8 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
               )}
             </div>
 
-            {/* Input area — above tab bar + safe area */}
-            <div className="border-t border-border px-4 py-3 pb-[calc(5rem+env(safe-area-inset-bottom))]">
+            {/* Input area — snug above safe area (sheet covers tab bar) */}
+            <div className="border-t border-border px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
               <div className="flex items-center gap-2">
                 {user ? (
                   <input
