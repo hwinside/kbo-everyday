@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send } from "lucide-react";
 import { GRADES } from "@/lib/constants/grades";
-import { usePostDetail, createComment } from "@/lib/supabase/usePosts";
+import { createComment } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { supabase } from "@/lib/supabase/client";
+import type { Comment } from "@/lib/supabase/usePosts";
 
 interface CommentSheetProps {
   isOpen: boolean;
@@ -33,12 +35,59 @@ function getGradeInfo(gradeId?: string) {
 export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetProps) {
   const [input, setInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [loading, setLoading] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
-
-  // Only fetch when we have a postId and the sheet is open
-  const { comments, loading, setComments } = usePostDetail(postId ?? 0);
   const shouldRender = isOpen && postId !== null;
+
+  // Fetch comments directly (lightweight, no post/like fetch)
+  useEffect(() => {
+    if (!postId) return;
+    setLoading(true);
+    setComments([]);
+
+    (async () => {
+      const { data } = await supabase
+        .from("comments")
+        .select("*, profiles(nickname, team_id, grade)")
+        .eq("post_id", postId)
+        .order("created_at", { ascending: true });
+
+      if (data) {
+        setComments(
+          data.map((cm: any) => ({
+            ...cm,
+            nickname: cm.profiles?.nickname,
+            team_id: cm.profiles?.team_id,
+            grade: cm.profiles?.grade,
+          }))
+        );
+      }
+      setLoading(false);
+    })();
+  }, [postId]);
+
+  // Lock body scroll when sheet is open
+  useEffect(() => {
+    if (shouldRender) {
+      const scrollY = window.scrollY;
+      document.body.style.position = "fixed";
+      document.body.style.top = `-${scrollY}px`;
+      document.body.style.left = "0";
+      document.body.style.right = "0";
+      document.body.style.overflow = "hidden";
+
+      return () => {
+        document.body.style.position = "";
+        document.body.style.top = "";
+        document.body.style.left = "";
+        document.body.style.right = "";
+        document.body.style.overflow = "";
+        window.scrollTo(0, scrollY);
+      };
+    }
+  }, [shouldRender]);
 
   // Focus input when opened
   useEffect(() => {
@@ -49,12 +98,11 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
     }
   }, [shouldRender]);
 
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     if (!input.trim() || !postId || submitting) return;
     setSubmitting(true);
     try {
       await createComment(postId, input.trim());
-      // Optimistic add
       setComments((prev) => [
         ...prev,
         {
@@ -64,16 +112,17 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
           content: input.trim(),
           created_at: new Date().toISOString(),
           nickname: undefined,
+          team_id: undefined,
           grade: undefined,
         },
       ]);
       setInput("");
     } catch {
-      // silently fail (e.g. not logged in)
+      // silently fail
     } finally {
       setSubmitting(false);
     }
-  };
+  }, [input, postId, submitting, user]);
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
@@ -86,7 +135,8 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
         <>
           {/* Backdrop */}
           <motion.div
-            className="fixed inset-0 z-50 bg-black/60"
+            className="fixed inset-0 bg-black/60"
+            style={{ zIndex: 9998 }}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -96,8 +146,8 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
 
           {/* Sheet */}
           <motion.div
-            className="fixed inset-x-0 bottom-0 z-50 flex flex-col bg-bg-secondary rounded-t-2xl"
-            style={{ maxHeight: "85vh", minHeight: "50vh" }}
+            className="fixed inset-x-0 bottom-0 flex flex-col bg-bg-secondary rounded-t-2xl"
+            style={{ zIndex: 9999, maxHeight: "85vh", minHeight: "50vh" }}
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
@@ -114,7 +164,7 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
             </div>
 
             {/* Comment list */}
-            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+            <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-3 space-y-4">
               {loading ? (
                 <div className="space-y-4">
                   {[...Array(4)].map((_, i) => (
@@ -167,8 +217,8 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
               )}
             </div>
 
-            {/* Input area */}
-            <div className="border-t border-border px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+            {/* Input area — above tab bar + safe area */}
+            <div className="border-t border-border px-4 py-3 pb-[calc(5rem+env(safe-area-inset-bottom))]">
               <div className="flex items-center gap-2">
                 <input
                   ref={inputRef}
