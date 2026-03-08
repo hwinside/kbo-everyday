@@ -324,11 +324,13 @@ export default function PhotoFeed({ posts, loading, onLike }: PhotoFeedProps) {
           </div>
         );
       })}
-      <CommentSheet
-        isOpen={commentPostId !== null}
-        onClose={() => setCommentPostId(null)}
-        postId={commentPostId}
-      />
+      {commentPostId !== null && (
+        <CommentSheet
+          isOpen={true}
+          onClose={() => setCommentPostId(null)}
+          postId={commentPostId}
+        />
+      )}
     </div>
   );
 }

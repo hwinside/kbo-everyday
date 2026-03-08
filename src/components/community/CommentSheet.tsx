@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send } from "lucide-react";
 import { GRADES } from "@/lib/constants/grades";
@@ -74,7 +75,12 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
     }
   };
 
-  return (
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
+  if (!mounted) return null;
+
+  return createPortal(
     <AnimatePresence>
       {shouldRender && (
         <>
@@ -191,6 +197,7 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
           </motion.div>
         </>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 }
