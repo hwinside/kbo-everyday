@@ -2,12 +2,11 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Users, BarChart3, Flame, ChevronDown } from "lucide-react";
+import { Send, Users, Flame, ChevronDown } from "lucide-react";
 import { clsx } from "clsx";
 import Image from "next/image";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getTeamById } from "@/lib/constants/teams";
-import { getMyTeamId } from "@/lib/store/myteam";
 import { useChat } from "@/lib/supabase/useChat";
 import { useAuth } from "@/lib/supabase/AuthContext";
 
@@ -53,12 +52,18 @@ function MoodGauge({ homeTeamId, awayTeamId, homePct }: { homeTeamId: number; aw
   );
 }
 
+/* ===== Room ID builder ===== */
+function getRoomId(gameId: string, room: ChatRoom): string {
+  if (room === "all") return `game:${gameId}`;
+  return `game:${gameId}:${room}`;
+}
+
 export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatProps) {
-  const roomId = `game:${gameId}`;
-  const { messages, loading, sendMessage, isLoggedIn } = useChat(roomId);
-  const { user } = useAuth();
-  const [input, setInput] = useState("");
   const [room, setRoom] = useState<ChatRoom>("all");
+  const roomId = getRoomId(gameId, room);
+  const { messages, loading, sendMessage, isLoggedIn } = useChat(roomId);
+  const { user, profile } = useAuth();
+  const [input, setInput] = useState("");
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -68,16 +73,30 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     }
   }, [messages.length]);
 
-  const filteredMessages = messages.filter((msg) => {
+  const homeTeam = getTeamById(homeTeamId)!;
+  const awayTeam = getTeamById(awayTeamId)!;
+
+  // 팬방 글쓰기 권한 체크: 전체는 누구나, 팬방은 해당 팀 팬만
+  const myTeamId = profile?.team_id;
+  const canWrite = (() => {
+    if (!isLoggedIn) return false;
     if (room === "all") return true;
-    if (room === "home") return msg.team_id === homeTeamId;
-    if (room === "away") return msg.team_id === awayTeamId;
-    return true;
-  });
+    if (room === "home") return myTeamId === homeTeamId;
+    if (room === "away") return myTeamId === awayTeamId;
+    return false;
+  })();
+
+  const writeBlockedReason = (() => {
+    if (!isLoggedIn) return "로그인 후 채팅 가능";
+    if (!canWrite) {
+      const teamName = room === "home" ? homeTeam.shortName : awayTeam.shortName;
+      return `${teamName} 팬만 글쓰기 가능`;
+    }
+    return "";
+  })();
 
   async function handleSend() {
-    if (!input.trim()) return;
-    if (!isLoggedIn) { alert("로그인이 필요합니다"); return; }
+    if (!input.trim() || !canWrite) return;
     const ok = await sendMessage(input.trim());
     if (ok) setInput("");
   }
@@ -86,9 +105,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const d = new Date(dateStr);
     return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
   }
-
-  const homeTeam = getTeamById(homeTeamId)!;
-  const awayTeam = getTeamById(awayTeamId)!;
 
   const roomLabels: Record<ChatRoom, string> = {
     all: "전체 채팅",
@@ -138,6 +154,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
                     <span className={clsx("text-sm font-medium", room === r ? "text-accent" : "text-text-primary")}>
                       {roomLabels[r]}
                     </span>
+                    {r !== "all" && (
+                      <span className="text-[10px] text-text-tertiary ml-auto">
+                        {r === "home" ? homeTeam.shortName : awayTeam.shortName}팬 전용
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -160,7 +181,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
           </div>
         ) : (
           <AnimatePresence initial={false}>
-            {filteredMessages.map((msg) => {
+            {messages.map((msg) => {
               const isMe = user?.id === msg.user_id;
               return (
                 <motion.div
@@ -189,7 +210,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         )}
       </div>
 
-      {/* Fixed Input — above bottom tab bar (52px) */}
+      {/* Fixed Input — above bottom tab bar */}
       <div
         className="fixed bottom-[calc(52px+env(safe-area-inset-bottom,0px))] left-0 right-0 z-[98] border-t border-border"
         style={{ background: "rgba(10,10,15,0.95)", backdropFilter: "blur(12px)" }}
@@ -200,22 +221,23 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            placeholder={isLoggedIn ? (room === "all" ? "메시지 입력..." : `${roomLabels[room]}에 메시지...`) : "로그인 후 채팅 가능"}
-            disabled={!isLoggedIn}
+            placeholder={canWrite ? (room === "all" ? "메시지 입력..." : `${roomLabels[room]}에 메시지...`) : writeBlockedReason}
+            disabled={!canWrite}
             maxLength={200}
             className={clsx(
               "flex-1 h-10 px-4 rounded-full text-sm",
               "bg-bg-tertiary text-text-primary placeholder:text-text-tertiary",
-              "border border-border focus:border-accent/50 focus:outline-none transition-colors"
+              "border border-border focus:border-accent/50 focus:outline-none transition-colors",
+              !canWrite && "opacity-50"
             )}
           />
           <motion.button
             whileTap={{ scale: 0.9 }}
             onClick={handleSend}
-            disabled={!input.trim() || !isLoggedIn}
+            disabled={!input.trim() || !canWrite}
             className={clsx(
               "w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors",
-              input.trim() ? "bg-accent text-white" : "bg-bg-tertiary text-text-tertiary"
+              input.trim() && canWrite ? "bg-accent text-white" : "bg-bg-tertiary text-text-tertiary"
             )}
           >
             <Send className="w-5 h-5" />

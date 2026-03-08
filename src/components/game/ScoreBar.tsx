@@ -24,7 +24,7 @@ export default function ScoreBar({
 
   return (
     <div
-      className="sticky top-[60px] z-[99] border-b border-[#1a1a2e] px-4 py-3"
+      className="sticky top-[36px] z-[99] border-b border-[#1a1a2e] px-4 py-2"
       style={{
         background: "rgba(10,10,15,0.92)",
         backdropFilter: "blur(12px)",

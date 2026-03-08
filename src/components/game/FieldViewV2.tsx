@@ -251,7 +251,7 @@ export default function FieldViewV2({
         )}
 
         {/* BSO Scoreboard overlay — bottom right */}
-        <div className="absolute bottom-2 right-3 z-[15] bg-black/70 rounded-md px-2 py-1.5 backdrop-blur-sm border border-[#333]">
+        <div className="absolute -bottom-1 -right-1 z-[15] bg-black/70 rounded-md px-2 py-1.5 backdrop-blur-sm border border-[#333]">
           <div className="flex flex-col gap-0.5">
             {/* Balls */}
             <div className="flex items-center gap-1">

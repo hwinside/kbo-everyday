@@ -118,7 +118,7 @@ export default function GameDetailPage() {
   return (
     <div className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto pb-[104px] max-w-[640px] mx-auto w-full">
       {/* ===== Header ===== */}
-      <div className="flex items-center gap-2 px-4 py-2.5 sticky top-0 z-[100] bg-bg-primary">
+      <div className="flex items-center gap-2 px-4 py-1.5 sticky top-0 z-[100] bg-bg-primary">
         <Link href="/games" className="p-1 -ml-1">
           <ArrowLeft className="w-[18px] h-[18px] text-[#888]" />
         </Link>
