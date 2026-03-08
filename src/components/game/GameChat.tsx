@@ -191,7 +191,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
       {/* Fixed Input — above bottom tab bar (52px) */}
       <div
-        className="fixed bottom-[52px] left-0 right-0 z-[98] border-t border-border"
+        className="fixed bottom-[calc(52px+env(safe-area-inset-bottom,0px))] left-0 right-0 z-[98] border-t border-border"
         style={{ background: "rgba(10,10,15,0.95)", backdropFilter: "blur(12px)" }}
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
