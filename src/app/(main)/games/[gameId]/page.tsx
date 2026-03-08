@@ -109,11 +109,12 @@ export default function GameDetailPage() {
     lineup?.away.batters.find((b) => b.name === currentBatter) ||
     lineup?.home.batters.find((b) => b.name === currentBatter);
   const batterAvg = batterData?.avg;
+  const batterBats = batterData?.bats ?? null;
 
   const isLive = game.status === "live" && gameState;
 
   return (
-    <div className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto">
+    <div className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto pb-[52px] max-w-[640px] mx-auto w-full">
       {/* ===== Header ===== */}
       <div className="flex items-center gap-2 px-4 py-2.5 sticky top-0 z-[100] bg-bg-primary">
         <Link href="/games" className="p-1 -ml-1">
@@ -190,6 +191,7 @@ export default function GameDetailPage() {
           runner2bName={gameState?.runner2bName}
           runner3bName={gameState?.runner3bName}
           onDeckBatters={onDeckBatters}
+          batterBats={batterBats}
         />
       ) : isLive && !defensiveSide ? (
         /* Fallback small diamond */

@@ -15,6 +15,7 @@ interface FieldViewV2Props {
   runner2bName?: string | null;
   runner3bName?: string | null;
   onDeckBatters?: { order: number; name: string }[];
+  batterBats?: "L" | "R" | "S" | null; // 좌타/우타/스위치
 }
 
 type MarkerType = "defense" | "pitcher" | "runner" | "batter";
@@ -30,11 +31,13 @@ function PlayerMarker({
   name,
   type,
   label,
+  posLabel,
   className,
 }: {
   name: string;
   type: MarkerType;
   label?: string;
+  posLabel?: string; // 포지션명 (CF, 2B 등)
   className: string;
 }) {
   const photoUrl = getPlayerPhotoUrl(name);
@@ -75,21 +78,34 @@ function PlayerMarker({
       >
         {name}
       </span>
+      {/* 포지션명 (수비수만, 주자/타자 제외) */}
+      {posLabel && (
+        <span
+          className="text-[7px] whitespace-nowrap px-[2px] rounded-[2px] -mt-px"
+          style={{
+            color: "#888",
+            textShadow: "0 1px 2px #000",
+            background: "rgba(0,0,0,0.4)",
+          }}
+        >
+          {posLabel}
+        </span>
+      )}
     </div>
   );
 }
 
-// Position classes matching v8.8 mockup coordinates exactly
+// Position classes matching v8.8 mockup — 컴팩트 버전
 const POS_CLASSES: Record<string, string> = {
   P: "bottom-[30%] left-1/2 -translate-x-1/2",
   C: "bottom-[6%] left-1/2 -translate-x-1/2",
-  "1B": "bottom-[33%] right-[8%]",
-  "2B": "bottom-[43%] right-[25%]",
-  SS: "bottom-[43%] left-[25%]",
-  "3B": "bottom-[33%] left-[8%]",
-  LF: "top-[8%] left-[10%]",
-  CF: "top-[4%] left-1/2 -translate-x-1/2",
-  RF: "top-[8%] right-[10%]",
+  "1B": "bottom-[33%] right-[10%]",
+  "2B": "bottom-[43%] right-[26%]",
+  SS: "bottom-[43%] left-[26%]",
+  "3B": "bottom-[33%] left-[10%]",
+  LF: "top-[6%] left-[12%]",
+  CF: "top-[2%] left-1/2 -translate-x-1/2",
+  RF: "top-[6%] right-[12%]",
 };
 
 export default function FieldViewV2({
@@ -103,37 +119,47 @@ export default function FieldViewV2({
   runner2bName,
   runner3bName,
   onDeckBatters,
+  batterBats,
 }: FieldViewV2Props) {
   const getDefender = (pos: string) => defenders.find((d) => d.position === pos);
 
   const positions = ["LF", "CF", "RF", "SS", "2B", "3B", "1B", "C"] as const;
 
+  // 좌타자 = 오른쪽(1루쪽), 우타자 = 왼쪽(3루쪽)
+  const batterClass =
+    batterBats === "R"
+      ? "bottom-[8%] right-[calc(50%-24px)]" // 우타석 (3루쪽)
+      : "bottom-[8%] left-[calc(50%+24px)]"; // 좌타석 (1루쪽, default)
+
   return (
-    <div className="mx-3 mb-2.5 bg-[#12121e] rounded-xl p-2.5 overflow-hidden">
-      <div className="relative w-full overflow-hidden rounded-lg" style={{ aspectRatio: "1 / 0.7" }}>
+    <div className="mx-3 mb-2 bg-[#12121e] rounded-xl p-2 overflow-hidden">
+      <div
+        className="relative w-full overflow-hidden rounded-lg max-w-[480px] mx-auto"
+        style={{ aspectRatio: "1 / 0.55" }}
+      >
         {/* Outfield grass */}
         <div
-          className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[120%] h-[95%] rounded-t-[50%]"
+          className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[110%] h-[90%] rounded-t-[50%]"
           style={{
             background:
-              "radial-gradient(ellipse at 50% 100%, #1b4a1b 0%, #143814 30%, #0d2a0d 50%, #12121e 70%)",
+              "radial-gradient(ellipse at 50% 100%, #1b4a1b 0%, #143814 25%, #0d2a0d 45%, #12121e 65%)",
           }}
         />
 
-        {/* Infield diamond */}
+        {/* Infield diamond — clip-path polygon */}
         <div
           className="absolute"
           style={{
-            left: "16%",
-            right: "16%",
+            left: "18%",
+            right: "18%",
             bottom: "8%",
-            top: "35%",
+            top: "38%",
             background: "#3a2a18",
             clipPath: "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)",
           }}
         />
 
-        {/* Fielders */}
+        {/* Fielders with position labels */}
         {positions.map((pos) => {
           const defender = getDefender(pos);
           if (!defender) return null;
@@ -143,6 +169,7 @@ export default function FieldViewV2({
               name={defender.name}
               type="defense"
               label={pos}
+              posLabel={pos}
               className={POS_CLASSES[pos]}
             />
           );
@@ -154,17 +181,18 @@ export default function FieldViewV2({
             name={currentPitcher}
             type="pitcher"
             label="P"
+            posLabel="P"
             className={POS_CLASSES.P}
           />
         )}
 
-        {/* Runners */}
+        {/* Runners — no position label */}
         {runner1b && runner1bName && (
           <PlayerMarker
             name={runner1bName}
             type="runner"
             label="R"
-            className="bottom-[26%] right-[18%]"
+            className="bottom-[26%] right-[20%]"
           />
         )}
         {runner2b && runner2bName && (
@@ -172,7 +200,7 @@ export default function FieldViewV2({
             name={runner2bName}
             type="runner"
             label="R"
-            className="bottom-[56%] left-1/2 -translate-x-1/2"
+            className="bottom-[53%] left-1/2 -translate-x-1/2"
           />
         )}
         {runner3b && runner3bName && (
@@ -180,26 +208,30 @@ export default function FieldViewV2({
             name={runner3bName}
             type="runner"
             label="R"
-            className="bottom-[26%] left-[18%]"
+            className="bottom-[26%] left-[20%]"
           />
         )}
 
-        {/* Batter */}
+        {/* Batter — 좌타/우타에 따라 위치 변경 */}
         {currentBatter && (
           <PlayerMarker
             name={currentBatter}
             type="batter"
             label="AB"
-            className="bottom-[8%] left-[calc(50%+24px)]"
+            className={batterClass}
           />
         )}
 
         {/* On-deck batters overlay */}
         {onDeckBatters && onDeckBatters.length > 0 && (
-          <div className="absolute bottom-[6%] left-2 z-[15]">
-            <div className="text-[8px] text-[#888] font-semibold mb-0.5">대기타석</div>
+          <div className="absolute bottom-[5%] left-2 z-[15]">
+            <div className="text-[7px] text-[#888] font-semibold mb-0.5">대기타석</div>
             {onDeckBatters.map((b) => (
-              <div key={b.order} className="text-[9px] text-white/75 leading-relaxed" style={{ textShadow: "0 1px 3px #000" }}>
+              <div
+                key={b.order}
+                className="text-[8px] text-white/75 leading-relaxed"
+                style={{ textShadow: "0 1px 3px #000" }}
+              >
                 <span className="text-[#666] font-semibold mr-0.5">{b.order}.</span>
                 {b.name}
               </div>

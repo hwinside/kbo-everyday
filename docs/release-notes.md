@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-03-08 17:30 KST — v8.8 경기 상세 페이지 Phase 1 구현
+
+- **환경**: prod/web (keubo.fan)
+- **Commit**: 6e2d2e7fd6803c431eecdc9b7b8300d42ed933e6
+- **변경사항**:
+  - ScoreBar 신규 — sticky 스코어바 (BSO 텍스트, 주자 미니 다이아몬드)
+  - LinescoreTable 신규 — 9이닝 라인스코어 (R/H/E 포함)
+  - FieldViewV2 신규 — v8.8 다이아몬드 수비배치 (완벽 좌우 대칭, 황토색 infield, 28px 원형 사진 마커, On-deck 오버레이)
+  - MatchupCard 신규 — 투타 매치업 (ERA/타율 static JSON 조회, 2줄 리치 스탯)
+  - page.tsx 레이아웃 리팩토링 (Header → ScoreBar → Linescore → FieldView → Matchup → Tabs)
+  - AI 분석 버튼 헤더에서 제거
+- **리스크**: 없음 (mock 데이터 기반, Phase 2에서 실시간 크롤링 추가 예정)
+- **확인**:
+  - [x] pnpm build 성공
+  - [ ] 스코어바 sticky 동작 + BSO/주자
+  - [ ] 다이아몬드 좌우 대칭
+  - [ ] 투타 매치업 ERA/타율
+  - [ ] 모바일 430px 레이아웃
+
+---
+
 ## 2026-03-08 09:30 KST — 경기 상세 페이지 대폭 개선
 
 - **환경**: prod/web (keubo.fan)

@@ -98,9 +98,9 @@ export const MOCK_GAME_STATE: GameState = {
   runner1b: true,
   runner2b: true,
   runner3b: true,
-  runner1bName: "홍창기",
-  runner2bName: "구본혁",
-  runner3bName: "김현수",
+  runner1bName: "허경민",
+  runner2bName: "양석환",
+  runner3bName: "김재환",
   currentBatter: "오스틴",
   currentPitcher: "곽빈",
 };
@@ -178,6 +178,7 @@ export interface LineupPlayer {
   name: string;
   position: string;
   avg: string;
+  bats?: "L" | "R" | "S"; // 좌타/우타/스위치
 }
 
 export interface GameLineup {
@@ -202,7 +203,7 @@ export const MOCK_LINEUP: GameLineup = {
     batters: [
       { order: 1, name: "홍창기", position: "CF", avg: ".312" },
       { order: 2, name: "구본혁", position: "SS", avg: ".289" },
-      { order: 3, name: "오스틴", position: "DH", avg: ".317" },
+      { order: 3, name: "오스틴", position: "DH", avg: ".317", bats: "L" },
       { order: 4, name: "김현수", position: "LF", avg: ".298" },
       { order: 5, name: "문보경", position: "3B", avg: ".275" },
       { order: 6, name: "박해민", position: "RF", avg: ".265" },
