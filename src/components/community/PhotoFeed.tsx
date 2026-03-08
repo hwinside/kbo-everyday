@@ -5,6 +5,7 @@ import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle } from "lucide-react";
 import { GRADES } from "@/lib/constants/grades";
+import TeamBadge from "@/components/ui/TeamBadge";
 import type { Post } from "@/lib/supabase/usePosts";
 import CommentSheet from "./CommentSheet";
 
@@ -234,28 +235,18 @@ export default function PhotoFeed({ posts, loading, onLike }: PhotoFeedProps) {
             {index > 0 && <div className="h-2 bg-white/[0.02]" />}
 
             <div className="overflow-hidden">
-              {/* Author header */}
-              <div className="flex items-center gap-2.5 px-4 py-3">
-                <div
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-sm"
-                  style={{ backgroundColor: grade.bgColor }}
-                >
-                  {grade.emoji}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-sm font-semibold text-text-primary truncate">
-                      {post.nickname || "익명"}
-                    </span>
-                    <span
-                      className="text-[10px] font-bold px-1.5 py-0.5 rounded-md"
-                      style={{ color: grade.color, backgroundColor: grade.bgColor }}
-                    >
-                      {grade.name}
-                    </span>
-                  </div>
-                </div>
-                <span className="text-xs text-text-tertiary flex-shrink-0">
+              {/* Author header — 일반게시판(PostCard) 기준 통일 */}
+              <div className="flex items-center gap-3 px-4 py-3">
+                {post.team_id && <TeamBadge teamId={post.team_id} />}
+                <span className="text-base font-medium text-text-primary truncate">
+                  {post.nickname || "익명"}
+                </span>
+                {post.grade === "staff" && (
+                  <span className="ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full">
+                    운영팀
+                  </span>
+                )}
+                <span className="ml-auto text-base text-text-tertiary flex-shrink-0">
                   {timeAgo(post.created_at)}
                 </span>
               </div>
@@ -278,7 +269,7 @@ export default function PhotoFeed({ posts, loading, onLike }: PhotoFeedProps) {
                     e.stopPropagation();
                     handleLike(post.id);
                   }}
-                  className="flex items-center gap-1 text-sm transition-colors"
+                  className="flex items-center gap-1 text-base transition-colors"
                 >
                   <span className="text-lg">{isLiked ? "\u2764\uFE0F" : "\u2661"}</span>
                   <span className={isLiked ? "text-red-500 font-medium" : "text-text-secondary"}>
@@ -287,9 +278,9 @@ export default function PhotoFeed({ posts, loading, onLike }: PhotoFeedProps) {
                 </button>
                 <button
                   onClick={() => setCommentPostId(post.id)}
-                  className="flex items-center gap-1 text-sm text-text-secondary"
+                  className="flex items-center gap-1 text-base text-text-secondary"
                 >
-                  <MessageCircle size={18} />
+                  <MessageCircle size={20} />
                   <span>{post.comment_count}</span>
                 </button>
               </div>
@@ -301,10 +292,10 @@ export default function PhotoFeed({ posts, loading, onLike }: PhotoFeedProps) {
                     onClick={() => setCommentPostId(post.id)}
                     className="text-left"
                   >
-                    <span className="text-sm font-semibold text-text-primary mr-1.5">
+                    <span className="text-base font-semibold text-text-primary mr-1.5">
                       {post.nickname || "익명"}
                     </span>
-                    <span className="text-sm text-text-secondary">{post.content}</span>
+                    <span className="text-base text-text-secondary">{post.content}</span>
                   </button>
                 </div>
               )}
@@ -314,7 +305,7 @@ export default function PhotoFeed({ posts, loading, onLike }: PhotoFeedProps) {
                 <div className="px-4 pb-3 pt-1">
                   <button
                     onClick={() => setCommentPostId(post.id)}
-                    className="text-sm text-text-tertiary"
+                    className="text-base text-text-tertiary"
                   >
                     댓글 {post.comment_count}개 모두 보기
                   </button>
