@@ -156,6 +156,9 @@ export default function LiveScoreboard({
             runner1b={state.runner1b}
             runner2b={state.runner2b}
             runner3b={state.runner3b}
+            runner1bName={state.runner1bName}
+            runner2bName={state.runner2bName}
+            runner3bName={state.runner3bName}
           />
         )}
       </div>

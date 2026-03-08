@@ -9,39 +9,26 @@ interface FieldViewProps {
   runner1b: boolean;
   runner2b: boolean;
   runner3b: boolean;
+  runner1bName?: string | null;
+  runner2bName?: string | null;
+  runner3bName?: string | null;
 }
 
 /*
-  Base coordinates (anchor points for positioning):
-  Home plate:  bottom 28px, center
-  1st base:    bottom 82px, ~55px right of center
-  2nd base:    bottom 138px, center
-  3rd base:    bottom 82px, ~55px left of center
-  Mound:       ~bottom 78px, center (between home & 2nd)
-
-  Players use left: calc(50% ± offset) with translateX(-50%) for centering.
-  내야수는 다이아몬드 라인 위에 걸치도록, 외야수는 잔디 안쪽에.
+  Diamond geometry — 플레이트가 각 모서리에
+  110px square rotated 45° → diamond with ~78px half-diagonal
+  
+  Diamond center: bottom 130px, horizontally centered
+  Home plate (bottom): bottom 52px
+  1st base (right):    bottom 130px, +78px right
+  2nd base (top):      bottom 208px
+  3rd base (left):     bottom 130px, -78px left
+  
+  Pitcher mound: diamond center (bottom 130px)
+  
+  Fielders: 1B/3B slightly OUTSIDE their plates
+  Runners:  1B/3B slightly INSIDE (toward basepath), 2B above plate
 */
-const POSITION_COORDS: Record<string, React.CSSProperties> = {
-  // 투수: 마운드 = 다이아몬드 정중앙
-  P:    { bottom: "78px", left: "50%", transform: "translateX(-50%)" },
-  // 포수: 홈 플레이트 뒤
-  C:    { bottom: "8px", left: "50%", transform: "translateX(-50%)" },
-  // 1루수: 1루 베이스 근처, 약간 바깥
-  "1B": { bottom: "72px", left: "calc(50% + 62px)", transform: "translateX(-50%)" },
-  // 2루수: 1-2루 사이, 다이아몬드 라인 위
-  "2B": { bottom: "115px", left: "calc(50% + 32px)", transform: "translateX(-50%)" },
-  // 유격수: 2-3루 사이, 다이아몬드 라인 위
-  SS:   { bottom: "115px", left: "calc(50% - 32px)", transform: "translateX(-50%)" },
-  // 3루수: 3루 베이스 근처, 약간 바깥
-  "3B": { bottom: "72px", left: "calc(50% - 62px)", transform: "translateX(-50%)" },
-  // 좌익수: 잔디 안쪽
-  LF:   { top: "30px", left: "calc(50% - 95px)", transform: "translateX(-50%)" },
-  // 중견수: 잔디 중앙
-  CF:   { top: "12px", left: "50%", transform: "translateX(-50%)" },
-  // 우익수: 잔디 안쪽
-  RF:   { top: "30px", left: "calc(50% + 95px)", transform: "translateX(-50%)" },
-};
 
 function PlayerMarker({
   label,
@@ -69,19 +56,30 @@ function PlayerMarker({
   };
 
   return (
-    <div className="absolute flex flex-col items-center gap-0.5 z-10" style={style}>
+    <div className="absolute flex flex-col items-center gap-0 z-10" style={style}>
       <div
-        className={`w-7 h-7 rounded-full bg-bg-tertiary border-2 flex items-center justify-center text-[9px] font-bold ${dotStyles[type]}`}
+        className={`w-6 h-6 rounded-full bg-bg-tertiary border-2 flex items-center justify-center text-[8px] font-bold ${dotStyles[type]}`}
       >
         {label}
       </div>
       <span
-        className={`text-[9px] whitespace-nowrap ${nameStyles[type]}`}
+        className={`text-[8px] whitespace-nowrap leading-none ${nameStyles[type]}`}
         style={{ textShadow: "0 1px 3px #000, 0 0 6px #000" }}
       >
         {name}
       </span>
     </div>
+  );
+}
+
+function BaseMarker({ active, style }: { active: boolean; style: React.CSSProperties }) {
+  return (
+    <div
+      className={`absolute w-2.5 h-2.5 rotate-45 rounded-[1px] z-20 ${
+        active ? "bg-yellow-400 shadow-[0_0_6px_#ffd60088]" : "bg-[#555]"
+      }`}
+      style={style}
+    />
   );
 }
 
@@ -92,106 +90,84 @@ export default function FieldView({
   runner1b,
   runner2b,
   runner3b,
+  runner1bName,
+  runner2bName,
+  runner3bName,
 }: FieldViewProps) {
-  const getDefenderByPosition = (pos: string) => {
-    return defenders.find((d) => d.position === pos);
-  };
+  const getDefender = (pos: string) => defenders.find((d) => d.position === pos);
+
+  // center helper: all positions relative to 50% center
+  const cx = (offset: number) => `calc(50% + ${offset}px)`;
 
   return (
-    <div className="relative w-full h-[240px] overflow-hidden rounded-lg">
-      {/* Outfield grass — wider to contain outfielders */}
+    <div className="relative w-full h-[280px] overflow-hidden rounded-lg">
+      {/* Outfield grass */}
       <div
-        className="absolute top-0 left-1/2 -translate-x-1/2 w-[380px] h-[190px] rounded-t-[50%]"
+        className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[420px] h-[200px] rounded-t-[50%]"
         style={{
-          background: "radial-gradient(ellipse at 50% 130%, #1a3d1a 0%, #0d2a0d 60%, transparent 80%)",
+          background: "radial-gradient(ellipse at 50% 140%, #1a3d1a 0%, #0d2a0d 55%, transparent 78%)",
         }}
       />
 
-      {/* Infield diamond */}
+      {/* Infield diamond (110px square → 45° → diamond ~156px diagonal) */}
       <div
-        className="absolute bottom-5 left-1/2 -translate-x-1/2 rotate-45 w-[100px] h-[100px] rounded-sm border border-[#3a2f24]"
-        style={{ background: "#2a1f14" }}
+        className="absolute border border-[#3a2f24] rounded-sm"
+        style={{
+          width: "110px",
+          height: "110px",
+          bottom: "75px", // center at 130px (75 + 55)
+          left: "50%",
+          transform: "translateX(-50%) rotate(45deg)",
+          background: "#2a1f14",
+        }}
       />
 
-      {/* Bases */}
-      <div
-        className={`absolute w-2.5 h-2.5 rotate-45 rounded-[1px] bottom-[82px] left-[calc(50%+50px)] -translate-x-1/2 ${
-          runner1b ? "bg-yellow-400 shadow-[0_0_6px_#ffd60088]" : "bg-[#555]"
-        }`}
-      />
-      <div
-        className={`absolute w-2.5 h-2.5 rotate-45 rounded-[1px] bottom-[138px] left-1/2 -translate-x-1/2 ${
-          runner2b ? "bg-yellow-400 shadow-[0_0_6px_#ffd60088]" : "bg-[#555]"
-        }`}
-      />
-      <div
-        className={`absolute w-2.5 h-2.5 rotate-45 rounded-[1px] bottom-[82px] left-[calc(50%-50px)] -translate-x-1/2 ${
-          runner3b ? "bg-yellow-400 shadow-[0_0_6px_#ffd60088]" : "bg-[#555]"
-        }`}
-      />
-      {/* Home plate */}
-      <div className="absolute w-2.5 h-2.5 rotate-45 rounded-[1px] bottom-7 left-1/2 -translate-x-1/2 bg-[#555]" />
+      {/* Base plates at each diamond corner */}
+      <BaseMarker active={false} style={{ bottom: "49px", left: "50%", transform: "translateX(-50%) rotate(45deg)" }} />
+      <BaseMarker active={runner1b} style={{ bottom: "127px", left: cx(75), transform: "translateX(-50%) rotate(45deg)" }} />
+      <BaseMarker active={runner2b} style={{ bottom: "205px", left: "50%", transform: "translateX(-50%) rotate(45deg)" }} />
+      <BaseMarker active={runner3b} style={{ bottom: "127px", left: cx(-75), transform: "translateX(-50%) rotate(45deg)" }} />
 
-      {/* Defensive players */}
-      {Object.entries(POSITION_COORDS).map(([pos, coords]) => {
-        if (pos === "P") {
-          return currentPitcher ? (
-            <PlayerMarker
-              key={pos}
-              label="P"
-              name={currentPitcher}
-              type="pitcher"
-              style={coords}
-            />
-          ) : null;
-        }
-        const defender = getDefenderByPosition(pos);
-        if (!defender) return null;
-        return (
-          <PlayerMarker
-            key={pos}
-            label={pos}
-            name={defender.name}
-            type="defense"
-            style={coords}
-          />
-        );
-      })}
+      {/* ===== OUTFIELDERS (잔디 안쪽) ===== */}
+      {(() => { const p = getDefender("LF"); return p ? <PlayerMarker label="LF" name={p.name} type="defense" style={{ top: "22px", left: cx(-95), transform: "translateX(-50%)" }} /> : null; })()}
+      {(() => { const p = getDefender("CF"); return p ? <PlayerMarker label="CF" name={p.name} type="defense" style={{ top: "6px", left: "50%", transform: "translateX(-50%)" }} /> : null; })()}
+      {(() => { const p = getDefender("RF"); return p ? <PlayerMarker label="RF" name={p.name} type="defense" style={{ top: "22px", left: cx(95), transform: "translateX(-50%)" }} /> : null; })()}
 
-      {/* Runners — positioned near their bases */}
+      {/* ===== INFIELDERS ===== */}
+      {/* 2B — 2루 방향, 1루쪽 */}
+      {(() => { const p = getDefender("2B"); return p ? <PlayerMarker label="2B" name={p.name} type="defense" style={{ bottom: "178px", left: cx(32), transform: "translateX(-50%)" }} /> : null; })()}
+      {/* SS — 2루 방향, 3루쪽 */}
+      {(() => { const p = getDefender("SS"); return p ? <PlayerMarker label="SS" name={p.name} type="defense" style={{ bottom: "178px", left: cx(-32), transform: "translateX(-50%)" }} /> : null; })()}
+      {/* 1B — 1루 플레이트 위 (바깥쪽, 파울라인 방향) */}
+      {(() => { const p = getDefender("1B"); return p ? <PlayerMarker label="1B" name={p.name} type="defense" style={{ bottom: "140px", left: cx(85), transform: "translateX(-50%)" }} /> : null; })()}
+      {/* 3B — 3루 플레이트 위 (바깥쪽, 파울라인 방향) */}
+      {(() => { const p = getDefender("3B"); return p ? <PlayerMarker label="3B" name={p.name} type="defense" style={{ bottom: "140px", left: cx(-85), transform: "translateX(-50%)" }} /> : null; })()}
+
+      {/* ===== PITCHER (다이아몬드 정중앙) ===== */}
+      {currentPitcher && (
+        <PlayerMarker label="P" name={currentPitcher} type="pitcher" style={{ bottom: "125px", left: "50%", transform: "translateX(-50%)" }} />
+      )}
+
+      {/* ===== CATCHER (홈플레이트 아래) ===== */}
+      {(() => { const p = getDefender("C"); return p ? <PlayerMarker label="C" name={p.name} type="defense" style={{ bottom: "14px", left: "50%", transform: "translateX(-50%)" }} /> : null; })()}
+
+      {/* ===== RUNNERS (플레이트 안쪽/밑, 이름 표시) ===== */}
+      {/* 1루 주자: 1루 플레이트 밑 (홈 방향) */}
       {runner1b && (
-        <PlayerMarker
-          label="R"
-          name=""
-          type="runner"
-          style={{ bottom: "90px", left: "calc(50% + 60px)", transform: "translateX(-50%)" }}
-        />
+        <PlayerMarker label="R" name={runner1bName || ""} type="runner" style={{ bottom: "108px", left: cx(68), transform: "translateX(-50%)" }} />
       )}
+      {/* 2루 주자: 2루 플레이트 위 (외야 방향) */}
       {runner2b && (
-        <PlayerMarker
-          label="R"
-          name=""
-          type="runner"
-          style={{ bottom: "145px", left: "50%", transform: "translateX(-50%)" }}
-        />
+        <PlayerMarker label="R" name={runner2bName || ""} type="runner" style={{ bottom: "214px", left: "50%", transform: "translateX(-50%)" }} />
       )}
+      {/* 3루 주자: 3루 플레이트 밑 (홈 방향) */}
       {runner3b && (
-        <PlayerMarker
-          label="R"
-          name=""
-          type="runner"
-          style={{ bottom: "90px", left: "calc(50% - 60px)", transform: "translateX(-50%)" }}
-        />
+        <PlayerMarker label="R" name={runner3bName || ""} type="runner" style={{ bottom: "108px", left: cx(-68), transform: "translateX(-50%)" }} />
       )}
 
-      {/* Batter — next to home plate */}
+      {/* ===== BATTER (홈플레이트 옆) ===== */}
       {currentBatter && (
-        <PlayerMarker
-          label="AB"
-          name={currentBatter}
-          type="batter"
-          style={{ bottom: "14px", left: "calc(50% + 22px)", transform: "translateX(-50%)" }}
-        />
+        <PlayerMarker label="AB" name={currentBatter} type="batter" style={{ bottom: "42px", left: cx(24), transform: "translateX(-50%)" }} />
       )}
     </div>
   );
