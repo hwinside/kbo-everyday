@@ -20,6 +20,7 @@ export interface Post {
   nickname?: string;
   team_id?: number;
   grade?: string;
+  points?: number;
 }
 
 export interface Comment {
@@ -42,7 +43,7 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
     setLoading(true);
     const { data } = await supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade, points)")
       .eq("board_type", boardType)
       .eq("board_id", boardId)
       .eq("content_type", contentType)
@@ -58,6 +59,7 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
         nickname: p.profiles?.nickname,
         team_id: p.profiles?.team_id,
         grade: p.profiles?.grade,
+        points: p.profiles?.points ?? 0,
       })));
     }
     setLoading(false);

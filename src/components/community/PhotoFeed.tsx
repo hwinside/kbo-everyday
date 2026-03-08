@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle } from "lucide-react";
 import { GRADES } from "@/lib/constants/grades";
 import TeamBadge from "@/components/ui/TeamBadge";
+import LevelBadge from "@/components/ui/LevelBadge";
 import type { Post } from "@/lib/supabase/usePosts";
 import CommentSheet from "./CommentSheet";
 
@@ -248,6 +249,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 <span className="text-base font-medium text-text-primary truncate">
                   {post.nickname || "익명"}
                 </span>
+                <LevelBadge points={post.points ?? 0} />
                 {post.grade === "staff" && (
                   <span className="ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full">
                     운영팀
