@@ -290,7 +290,6 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   className="flex items-center gap-1 text-base text-text-secondary"
                 >
                   <MessageCircle size={20} />
-                  <span>{post.comment_count}</span>
                 </button>
               </div>
 
