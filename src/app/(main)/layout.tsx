@@ -14,7 +14,7 @@ export default function MainLayout({
       <ProfileSetupWrapper />
       <MyTeamCookieSync />
       <TeamAccent />
-      <main className="pb-tab-bar pt-[env(safe-area-inset-top,0px)]">{children}</main>
+      <main className="pb-tab-bar pt-safe">{children}</main>
       <TabBar />
     </div>
   );
