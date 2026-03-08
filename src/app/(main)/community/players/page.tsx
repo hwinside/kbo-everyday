@@ -407,6 +407,7 @@ export default function CommunityPlayersPage() {
               posts={filteredPhotoPosts}
               loading={photoLoading}
               onLike={handlePhotoLike}
+              boardType="player"
             />
           </motion.div>
         )}

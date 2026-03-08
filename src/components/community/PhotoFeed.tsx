@@ -13,6 +13,7 @@ interface PhotoFeedProps {
   posts: Post[];
   loading: boolean;
   onLike: (postId: number) => void;
+  boardType?: "team" | "player";
 }
 
 function timeAgo(dateStr: string): string {
@@ -173,7 +174,7 @@ function HeartOverlay({ show }: { show: boolean }) {
   );
 }
 
-export default function PhotoFeed({ posts, loading, onLike }: PhotoFeedProps) {
+export default function PhotoFeed({ posts, loading, onLike, boardType = "team" }: PhotoFeedProps) {
   const [likedPosts, setLikedPosts] = useState<Set<number>>(new Set());
   const [heartPostId, setHeartPostId] = useState<number | null>(null);
   const [commentPostId, setCommentPostId] = useState<number | null>(null);
@@ -237,7 +238,13 @@ export default function PhotoFeed({ posts, loading, onLike }: PhotoFeedProps) {
             <div className="overflow-hidden">
               {/* Author header — 일반게시판(PostCard) 기준 통일 */}
               <div className="flex items-center gap-3 px-4 py-3">
-                {post.team_id && <TeamBadge teamId={post.team_id} />}
+                {boardType === "player" && post.board_id ? (
+                  <span className="inline-flex items-center gap-1 rounded-full py-1 pl-2 pr-2.5 text-xs font-semibold bg-white/10 text-text-primary">
+                    ⚾ {post.board_id}
+                  </span>
+                ) : (
+                  post.team_id && <TeamBadge teamId={post.team_id} />
+                )}
                 <span className="text-base font-medium text-text-primary truncate">
                   {post.nickname || "익명"}
                 </span>
