@@ -332,7 +332,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
 function CaptionBlock({ nickname, content, onPress }: { nickname: string; content: string; onPress: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const [clamped, setClamped] = useState(false);
-  const textRef = useRef<HTMLSpanElement>(null);
+  const textRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = textRef.current;
@@ -341,22 +341,20 @@ function CaptionBlock({ nickname, content, onPress }: { nickname: string; conten
 
   return (
     <div className="px-4 pb-1">
-      <button
+      <div
+        ref={textRef}
+        role="button"
+        tabIndex={0}
         onClick={expanded ? () => setExpanded(false) : clamped ? () => setExpanded(true) : onPress}
-        className="text-left"
+        className={`text-left text-base cursor-pointer ${!expanded ? "line-clamp-2" : ""}`}
       >
-        <span className="text-base font-semibold text-text-primary mr-1.5">{nickname}</span>
-        <span
-          ref={textRef}
-          className={`text-base text-text-secondary ${!expanded ? "line-clamp-2" : ""}`}
-        >
-          {content}
-        </span>
-      </button>
+        <span className="font-semibold text-text-primary mr-1.5">{nickname}</span>
+        <span className="text-text-secondary">{content}</span>
+      </div>
       {clamped && !expanded && (
         <button
           onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
-          className="text-base text-text-tertiary ml-1"
+          className="text-base text-text-tertiary mt-0.5"
         >
           더보기
         </button>
