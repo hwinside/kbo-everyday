@@ -280,7 +280,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   }}
                   className="flex items-center gap-1 text-base transition-colors"
                 >
-                  <span className="text-lg">{isLiked ? "\u2764\uFE0F" : "\u2661"}</span>
+                  <span className="text-xl leading-none">{isLiked ? "\u2764\uFE0F" : "\u2661"}</span>
                   <span className={isLiked ? "text-red-500 font-medium" : "text-text-secondary"}>
                     {post.like_count + (isLiked ? 1 : 0)}
                   </span>
