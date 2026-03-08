@@ -19,14 +19,14 @@ export default function TeamBadge({
   const team = getTeamById(teamId);
   if (!team) return null;
 
-  const logoSize = size === "xs" ? 12 : size === "sm" ? 16 : size === "md" ? 20 : 28;
+  const logoSize = size === "xs" ? 12 : size === "sm" ? 14 : size === "md" ? 20 : 28;
 
   return (
     <span
       className={clsx(
         "inline-flex items-center gap-1 rounded-full font-semibold text-white",
         size === "xs" && "py-0.5 pl-0.5 pr-1.5 text-[10px]",
-        size === "sm" && "py-1 pl-0.5 pr-2.5 text-base",
+        size === "sm" && "py-0.5 pl-0.5 pr-2 text-xs",
         size === "md" && "py-1.5 pl-1 pr-3.5 text-base",
         size === "lg" && "py-2 pl-1.5 pr-4 text-lg",
         className,
