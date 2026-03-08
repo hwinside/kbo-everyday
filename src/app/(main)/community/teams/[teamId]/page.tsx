@@ -4,7 +4,7 @@ import { useState, useCallback } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronLeft, Pencil } from "lucide-react";
+import { Pencil } from "lucide-react";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
 import PostList from "@/components/community/PostList";
@@ -133,12 +133,6 @@ export default function CommunityTeamBoardPage() {
         }}
       >
         <div className="flex items-center gap-4 py-4">
-          <button
-            onClick={() => router.push("/community/teams?pick=true")}
-            className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary/50 transition-colors"
-          >
-            <ChevronLeft size={24} />
-          </button>
           <div className="flex items-center gap-3 flex-1">
             <TeamLogo team={team} size={48} />
             <h1 className="text-xl font-bold text-text-primary">{team.name}</h1>
