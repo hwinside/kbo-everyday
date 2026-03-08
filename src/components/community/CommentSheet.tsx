@@ -3,10 +3,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send } from "lucide-react";
+import { Send, X } from "lucide-react";
 import { GRADES } from "@/lib/constants/grades";
 import { createComment } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import LoginSheet from "@/components/auth/LoginSheet";
 import { supabase } from "@/lib/supabase/client";
 import type { Comment } from "@/lib/supabase/usePosts";
 
@@ -37,7 +38,10 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
   const [submitting, setSubmitting] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showLogin, setShowLogin] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const dragStartY = useRef(0);
   const { user } = useAuth();
   const shouldRender = isOpen && postId !== null;
 
@@ -129,7 +133,8 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
 
   if (!mounted) return null;
 
-  return createPortal(
+  return (<>
+    {createPortal(
     <AnimatePresence>
       {shouldRender && (
         <>
@@ -153,14 +158,27 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 28, stiffness: 300 }}
           >
-            {/* Drag handle */}
-            <div className="flex justify-center pt-3 pb-2">
+            {/* Drag handle — drag down to dismiss */}
+            <div
+              className="flex justify-center pt-3 pb-2 cursor-grab"
+              onTouchStart={(e) => { dragStartY.current = e.touches[0].clientY; }}
+              onTouchEnd={(e) => {
+                const delta = e.changedTouches[0].clientY - dragStartY.current;
+                if (delta > 80) onClose();
+              }}
+            >
               <div className="w-10 h-1 rounded-full bg-text-tertiary/40" />
             </div>
 
             {/* Header */}
-            <div className="px-4 pb-3 border-b border-border">
+            <div className="relative px-4 pb-3 border-b border-border">
               <h3 className="text-base font-semibold text-text-primary text-center">댓글</h3>
+              <button
+                onClick={onClose}
+                className="absolute right-4 top-0 p-1 text-text-tertiary hover:text-text-primary transition-colors"
+              >
+                <X size={20} />
+              </button>
             </div>
 
             {/* Comment list */}
@@ -220,21 +238,29 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
             {/* Input area — above tab bar + safe area */}
             <div className="border-t border-border px-4 py-3 pb-[calc(5rem+env(safe-area-inset-bottom))]">
               <div className="flex items-center gap-2">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-                      e.preventDefault();
-                      handleSubmit();
-                    }
-                  }}
-                  placeholder={user ? "댓글 달기..." : "로그인 후 댓글을 남겨보세요"}
-                  disabled={!user}
-                  className="flex-1 bg-bg-tertiary rounded-full px-4 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-accent/50 disabled:opacity-50"
-                />
+                {user ? (
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                        e.preventDefault();
+                        handleSubmit();
+                      }
+                    }}
+                    placeholder="댓글 달기..."
+                    className="flex-1 bg-bg-tertiary rounded-full px-4 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-accent/50"
+                  />
+                ) : (
+                  <button
+                    onClick={() => setShowLogin(true)}
+                    className="flex-1 bg-bg-tertiary rounded-full px-4 py-2.5 text-sm text-text-tertiary text-left"
+                  >
+                    로그인하고 댓글 달기
+                  </button>
+                )}
                 <button
                   onClick={handleSubmit}
                   disabled={!input.trim() || submitting || !user}
@@ -249,5 +275,7 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
       )}
     </AnimatePresence>,
     document.body
-  );
+  )}
+  {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
+  </>);
 }
