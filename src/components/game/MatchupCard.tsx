@@ -1,9 +1,22 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import batterStatsJson from "@/lib/constants/stats-2025-batters.json";
 import pitcherStatsJson from "@/lib/constants/stats-2025-pitchers.json";
+import playersRoster from "@/lib/constants/players-roster.json";
+import { getTeamById } from "@/lib/constants/teams";
+
+function getPlayerHref(name: string): string | null {
+  const player = (playersRoster as { name: string; kboId: string; teamId: number }[]).find(
+    (p) => p.name === name
+  );
+  if (!player) return null;
+  const team = getTeamById(player.teamId);
+  if (!team) return null;
+  return `/teams/${team.slug}/players/${player.kboId}`;
+}
 
 interface MatchupCardProps {
   currentPitcher: string | null;
@@ -66,7 +79,14 @@ export default function MatchupCard({
           <PlayerPhoto name={currentPitcher} type="pitcher" />
           <div>
             <div className="text-[10px] text-[#888]">투수</div>
-            <div className="text-sm font-bold text-white">{currentPitcher}</div>
+            {(() => {
+              const href = getPlayerHref(currentPitcher);
+              return href ? (
+                <Link href={href} className="text-sm font-bold text-white hover:underline">{currentPitcher}</Link>
+              ) : (
+                <div className="text-sm font-bold text-white">{currentPitcher}</div>
+              );
+            })()}
             <div className="mt-0.5 leading-relaxed">
               <div className="flex gap-1.5 text-[11px]">
                 <span className="text-[#ccc] font-semibold">72구</span>
@@ -93,7 +113,14 @@ export default function MatchupCard({
         <div className="flex items-center gap-2">
           <div className="text-right">
             <div className="text-[10px] text-[#888]">타자</div>
-            <div className="text-sm font-bold text-white">{currentBatter}</div>
+            {(() => {
+              const href = getPlayerHref(currentBatter);
+              return href ? (
+                <Link href={href} className="text-sm font-bold text-white hover:underline">{currentBatter}</Link>
+              ) : (
+                <div className="text-sm font-bold text-white">{currentBatter}</div>
+              );
+            })()}
             <div className="mt-0.5 leading-relaxed">
               <div className="flex gap-1.5 text-[11px] justify-end">
                 {resolvedAvg && (

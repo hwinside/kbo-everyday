@@ -1,8 +1,11 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import type { LineupPlayer } from "@/lib/constants/games";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
+import playersRoster from "@/lib/constants/players-roster.json";
+import { getTeamById } from "@/lib/constants/teams";
 
 interface FieldViewV2Props {
   defenders: LineupPlayer[];
@@ -46,8 +49,15 @@ function PlayerMarker({
   const nameColor =
     type === "runner" ? "#ffd600" : type === "batter" ? "#4fc3f7" : isHighlight ? "#fff" : "#bbb";
 
-  return (
-    <div className={`absolute flex flex-col items-center gap-0 z-10 ${className}`}>
+  // Player link lookup
+  const rosterPlayer = (playersRoster as { name: string; kboId: string; teamId: number }[]).find(
+    (p) => p.name === name
+  );
+  const teamSlug = rosterPlayer ? getTeamById(rosterPlayer.teamId)?.slug : null;
+  const playerHref = rosterPlayer && teamSlug ? `/teams/${teamSlug}/players/${rosterPlayer.kboId}` : null;
+
+  const content = (
+    <>
       <div
         className="w-7 h-7 rounded-full overflow-hidden flex items-center justify-center bg-[#1a1a2e]"
         style={{ border: `2px solid ${borderColor}` }}
@@ -78,6 +88,18 @@ function PlayerMarker({
       >
         {name}
       </span>
+    </>
+  );
+
+  return (
+    <div className={`absolute flex flex-col items-center gap-0 z-10 ${className}`}>
+      {playerHref ? (
+        <Link href={playerHref} className="flex flex-col items-center gap-0">
+          {content}
+        </Link>
+      ) : (
+        content
+      )}
       {/* 포지션명 (수비수만, 주자/타자 제외) */}
       {posLabel && (
         <span
@@ -97,8 +119,8 @@ function PlayerMarker({
 
 // Position classes matching v8.8 mockup — 컴팩트 버전
 const POS_CLASSES: Record<string, string> = {
-  P: "bottom-[30%] left-1/2 -translate-x-1/2",
-  C: "bottom-[6%] left-1/2 -translate-x-1/2",
+  P: "bottom-[27%] left-1/2 -translate-x-1/2",
+  C: "bottom-[4%] left-1/2 -translate-x-1/2",
   "1B": "bottom-[33%] right-[10%]",
   "2B": "bottom-[43%] right-[26%]",
   SS: "bottom-[43%] left-[26%]",
@@ -200,7 +222,7 @@ export default function FieldViewV2({
             name={runner2bName}
             type="runner"
             label="R"
-            className="bottom-[53%] left-1/2 -translate-x-1/2"
+            className="bottom-[58%] left-1/2 -translate-x-1/2"
           />
         )}
         {runner3b && runner3bName && (

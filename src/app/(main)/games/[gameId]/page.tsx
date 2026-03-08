@@ -29,6 +29,7 @@ import GameChat from "@/components/game/GameChat";
 import AIAnalysis from "@/components/game/AIAnalysis";
 import LineupTab from "@/components/game/LineupTab";
 import GameStatsTab from "@/components/game/GameStatsTab";
+import { Send } from "lucide-react";
 
 type Tab = "relay" | "chat" | "lineup" | "stats";
 
@@ -114,7 +115,7 @@ export default function GameDetailPage() {
   const isLive = game.status === "live" && gameState;
 
   return (
-    <div className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto pb-[52px] max-w-[640px] mx-auto w-full">
+    <div className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto pb-[104px] max-w-[640px] mx-auto w-full">
       {/* ===== Header ===== */}
       <div className="flex items-center gap-2 px-4 py-2.5 sticky top-0 z-[100] bg-bg-primary">
         <Link href="/games" className="p-1 -ml-1">
@@ -142,12 +143,6 @@ export default function GameDetailPage() {
           awayScore={awayScore}
           homeScore={homeScore}
           currentInning={currentInning}
-          balls={currentBalls}
-          strikes={currentStrikes}
-          outs={currentOuts}
-          runner1b={currentRunner1b}
-          runner2b={currentRunner2b}
-          runner3b={currentRunner3b}
         />
       ) : (
         /* Non-live: simple score display */
@@ -204,6 +199,30 @@ export default function GameDetailPage() {
           />
         </div>
       ) : null}
+
+      {/* ===== BSO Indicator (live only) ===== */}
+      {isLive && (
+        <div className="flex items-center justify-center gap-3 py-1.5 mx-3">
+          <span className="text-[12px] tabular-nums">
+            <span className="text-[#4caf50] font-semibold">{currentBalls}</span>
+            <span className="text-[#888]">B</span>
+          </span>
+          <span className="text-[12px] tabular-nums">
+            <span className="text-[#ffc107] font-semibold">{currentStrikes}</span>
+            <span className="text-[#888]">S</span>
+          </span>
+          <span className="inline-flex gap-0.5">
+            {[0, 1].map((i) => (
+              <span
+                key={i}
+                className={`inline-block w-[8px] h-[8px] rounded-full ${
+                  i < currentOuts ? "bg-[#e53935]" : "bg-[#333]"
+                }`}
+              />
+            ))}
+          </span>
+        </div>
+      )}
 
       {/* ===== Matchup Card (live only) ===== */}
       {isLive && (
@@ -320,6 +339,23 @@ export default function GameDetailPage() {
             </motion.div>
           )}
         </AnimatePresence>
+      </div>
+
+      {/* ===== Fixed Chat Input Bar ===== */}
+      <div
+        className="fixed bottom-[52px] left-0 right-0 z-[98] border-t border-[#1a1a2e]"
+        style={{ background: "rgba(10,10,15,0.95)" }}
+      >
+        <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
+          <input
+            type="text"
+            placeholder="응원 메시지를 입력하세요..."
+            className="flex-1 h-9 px-4 rounded-full bg-[#1a1a2e] text-sm text-white placeholder:text-[#555] border border-[#2a2a3e] focus:border-[#4fc3f7]/50 focus:outline-none transition-colors"
+          />
+          <button className="w-9 h-9 rounded-full bg-[#1a1a2e] flex items-center justify-center text-[#555] shrink-0">
+            <Send className="w-4 h-4" />
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -9,8 +9,8 @@ export const MOCK_GAMES: Game[] = [
     homeTeamId: 2,    // 두산
     awayTeamId: 1,    // LG
     status: "live",
-    inning: "5회말",
-    homeScore: 1,
+    inning: "5회초",
+    homeScore: 2,
     awayScore: 3,
     stadium: "잠실",
     updatedAt: "2026-03-28T19:45:00Z",
@@ -98,9 +98,9 @@ export const MOCK_GAME_STATE: GameState = {
   runner1b: true,
   runner2b: true,
   runner3b: true,
-  runner1bName: "허경민",
-  runner2bName: "양석환",
-  runner3bName: "김재환",
+  runner1bName: "구본혁",
+  runner2bName: "홍창기",
+  runner3bName: "김현수",
   currentBatter: "오스틴",
   currentPitcher: "곽빈",
 };
@@ -134,9 +134,9 @@ export const MOCK_PLAYS: GamePlay[] = [
   // 5회초
   { id: 19, gameId: "20260328-LG-DS", inning: "5회초", sequence: 1, description: "구본혁 좌전안타", isHighlight: false, batter: "구본혁", pitcher: "곽빈", createdAt: "2026-03-28T19:35:00Z" },
   { id: 20, gameId: "20260328-LG-DS", inning: "5회초", sequence: 2, description: "⚾ 오스틴 좌중간 2점 홈런!!! — LG 3:2 재역전", isHighlight: true, batter: "오스틴", pitcher: "곽빈", createdAt: "2026-03-28T19:37:00Z" },
-  // 5회말 (진행중)
-  { id: 21, gameId: "20260328-LG-DS", inning: "5회말", sequence: 1, description: "김재환 볼넷", isHighlight: false, batter: "김재환", pitcher: "케이시 켈리", createdAt: "2026-03-28T19:42:00Z" },
-  { id: 22, gameId: "20260328-LG-DS", inning: "5회말", sequence: 2, description: "허경민 번트 희생타 (주자 2루)", isHighlight: false, batter: "허경민", pitcher: "케이시 켈리", createdAt: "2026-03-28T19:44:00Z" },
+  // 5회초 (진행중 — LG 공격)
+  { id: 21, gameId: "20260328-LG-DS", inning: "5회초", sequence: 3, description: "김현수 좌전안타", isHighlight: false, batter: "김현수", pitcher: "곽빈", createdAt: "2026-03-28T19:42:00Z" },
+  { id: 22, gameId: "20260328-LG-DS", inning: "5회초", sequence: 4, description: "문보경 볼넷 (만루)", isHighlight: false, batter: "문보경", pitcher: "곽빈", createdAt: "2026-03-28T19:44:00Z" },
 ];
 
 /* ===== 채팅 메시지 ===== */
