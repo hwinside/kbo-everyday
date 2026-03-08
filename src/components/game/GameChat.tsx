@@ -189,9 +189,12 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         )}
       </div>
 
-      {/* Input */}
-      <div className="px-4 py-3 border-t border-border bg-bg-secondary/50 backdrop-blur-lg">
-        <div className="flex items-center gap-3">
+      {/* Fixed Input — above bottom tab bar (52px) */}
+      <div
+        className="fixed bottom-[52px] left-0 right-0 z-[98] border-t border-border"
+        style={{ background: "rgba(10,10,15,0.95)", backdropFilter: "blur(12px)" }}
+      >
+        <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
           <input
             type="text"
             value={input}
@@ -201,7 +204,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
             disabled={!isLoggedIn}
             maxLength={200}
             className={clsx(
-              "flex-1 h-10 px-4 rounded-full text-base",
+              "flex-1 h-10 px-4 rounded-full text-sm",
               "bg-bg-tertiary text-text-primary placeholder:text-text-tertiary",
               "border border-border focus:border-accent/50 focus:outline-none transition-colors"
             )}

@@ -24,50 +24,50 @@ export default function ScoreBar({
 
   return (
     <div
-      className="sticky top-[60px] z-[99] border-b border-[#1a1a2e] px-4 py-3 flex items-center justify-center gap-3"
+      className="sticky top-[60px] z-[99] border-b border-[#1a1a2e] px-4 py-3"
       style={{
         background: "rgba(10,10,15,0.92)",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
       }}
     >
-      {/* Away team */}
-      <div className="flex items-center gap-2 flex-1 justify-end">
-        <span className="text-[16px] font-semibold text-white">{awayTeam.shortName}</span>
-        <TeamLogo team={awayTeam} size={36} />
-      </div>
-
-      {/* Center: score + inning */}
-      <div className="flex flex-col items-center min-w-[100px]">
-        <div className="flex items-center gap-2">
+      {/* Single row: logo name score : inning : score name logo */}
+      <div className="flex items-center justify-center gap-0">
+        {/* Away side */}
+        <div className="flex items-center gap-2.5 flex-1 justify-end">
+          <span className="text-lg font-bold text-white">{awayTeam.shortName}</span>
+          <TeamLogo team={awayTeam} size={40} />
           <motion.span
             key={`sb-away-${awayScore}`}
             initial={{ scale: 1.3, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className={`text-[40px] font-extrabold tabular-nums ${awayWinning ? "text-[#4fc3f7]" : "text-white"}`}
+            className={`text-[48px] font-extrabold tabular-nums leading-none ${awayWinning ? "text-[#4fc3f7]" : "text-white"}`}
           >
             {awayScore}
           </motion.span>
-          <span className="text-xl text-[#555]">:</span>
+        </div>
+
+        {/* Center divider + inning */}
+        <div className="flex flex-col items-center mx-3">
+          <span className="text-xl text-[#555] font-light leading-none">:</span>
+          <span className="text-[9px] font-semibold text-[#e53935] bg-[#e5393522] px-1.5 py-px rounded-md mt-1 whitespace-nowrap">
+            {currentInning}
+          </span>
+        </div>
+
+        {/* Home side */}
+        <div className="flex items-center gap-2.5 flex-1 justify-start">
           <motion.span
             key={`sb-home-${homeScore}`}
             initial={{ scale: 1.3, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className={`text-[40px] font-extrabold tabular-nums ${homeWinning ? "text-[#4fc3f7]" : "text-white"}`}
+            className={`text-[48px] font-extrabold tabular-nums leading-none ${homeWinning ? "text-[#4fc3f7]" : "text-white"}`}
           >
             {homeScore}
           </motion.span>
+          <TeamLogo team={homeTeam} size={40} />
+          <span className="text-lg font-bold text-white">{homeTeam.shortName}</span>
         </div>
-        {/* Inning badge */}
-        <span className="text-[10px] font-semibold text-[#e53935] bg-[#e5393522] px-1.5 py-px rounded-lg">
-          {currentInning}
-        </span>
-      </div>
-
-      {/* Home team */}
-      <div className="flex items-center gap-2 flex-1 justify-start">
-        <TeamLogo team={homeTeam} size={36} />
-        <span className="text-[16px] font-semibold text-white">{homeTeam.shortName}</span>
       </div>
     </div>
   );
