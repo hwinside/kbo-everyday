@@ -90,9 +90,9 @@ export default function ProfileSetupModal({ isOpen }: Props) {
           .insert({ user_id: user!.id, badge_id: "founder" });
       }
 
-      // localStorage도 동기화
+      // localStorage도 동기화 (홈/커뮤니티가 읽는 canonical key와 일치)
       if (typeof window !== "undefined") {
-        localStorage.setItem("myTeamId", String(selectedTeam));
+        localStorage.setItem("kbo-my-team", String(selectedTeam));
       }
 
       await refreshProfile();

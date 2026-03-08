@@ -148,8 +148,9 @@ function SectionHeader({ title, href, icon }: { title: string; href?: string; ic
 }
 
 
-// 개막 전 숨김 (3/29 이후 true로 변경)
-const SEASON_STARTED = new Date() >= new Date("2026-03-12");
+// 시범경기/정규시즌 날짜 기준
+const REGULAR_SEASON_START = new Date("2026-03-28");
+const PRESEASON_START = new Date("2026-03-12");
 
 export default function HomePage() {
   const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number} | null>(null);
@@ -243,7 +244,7 @@ export default function HomePage() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
   const [showPlayerSetupCTA, setShowPlayerSetupCTA] = useState(false);
-  const { user, profile } = useAuth();
+  const { user, profile, loading } = useAuth();
   const [welcomeToast, setWelcomeToast] = useState(false);
 
   // 로그인 후 1회 환영 토스트
@@ -259,15 +260,13 @@ export default function HomePage() {
   }, [user, profile]);
 
   // 오늘의 경기 (API + 시범경기 fallback)
-  const [todayGames, setTodayGames] = useState<any[]>(MOCK_GAMES);
+  const [todayGames, setTodayGames] = useState<any[]>([]);
   const [isPreseason, setIsPreseason] = useState(false);
   useEffect(() => {
     const today = new Date();
     const dateStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
     const yyyymmdd = dateStr.replace(/-/g, "");
     
-    // 3/12 이전이면 API 호출 스킵 (경기 없음)
-    if (yyyymmdd < "20260312") return;
     fetch(`/api/games?date=${yyyymmdd}`)
       .then(r => r.json())
       .then(data => {
@@ -312,50 +311,72 @@ export default function HomePage() {
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
 
   useEffect(() => {
+    // auth/session 로딩이 끝난 뒤에만 홈 초기화
+    if (loading) return;
+
+    // 매번 CTA 상태를 먼저 초기화하고, 필요한 케이스에서만 다시 켠다.
+    setShowPlayerSetupCTA(false);
+
     // 로그인 유저 + DB에 팀 있음 → localStorage 상태와 무관하게 온보딩 스킵 (PWA 재설치 대응)
     if (profile && profile.team_id) {
+      const dbFavs = Array.isArray(profile.favorite_players) ? profile.favorite_players : [];
       setMyTeam(profile.team_id);
-      setFavPlayers(profile.favorite_players?.length ? profile.favorite_players : []);
-      setOnboardingStatus(profile.favorite_players?.length ? "completed" : "skipped");
+      setFavPlayers(dbFavs);
+      setOnboardingStatus(dbFavs.length ? "completed" : "skipped");
       setShowOnboarding(false);
-      if (!profile.favorite_players?.length) {
+      if (dbFavs.length === 0) {
         setShowPlayerSetupCTA(true);
       }
       return;
     }
 
     const saved = getMyTeamId();
+    const savedFavs = getFavoritePlayers();
+    const rawStatus = typeof window !== "undefined" ? localStorage.getItem("kbo-onboarding-status") : null;
     const status = getOnboardingStatus();
 
     if (saved && (status === "completed" || status === "skipped")) {
       // 온보딩 완료/스킵 → 정상 홈
       setMyTeam(saved);
-      setFavPlayers(getFavoritePlayers());
+      setFavPlayers(savedFavs);
       setShowOnboarding(false);
-      if (status === "skipped") {
+      if (status === "skipped" || savedFavs.length === 0) {
         setShowPlayerSetupCTA(true);
       }
-    } else if (saved && status === "team_selected") {
+      return;
+    }
+
+    if (saved && status === "team_selected") {
       // 팀 선택 후 이탈 → 온보딩 이어하기 (선수 선택부터)
       setMyTeam(saved);
+      setFavPlayers(savedFavs);
       setShowOnboarding(true);
-    } else if (saved && !status) {
-      // 기존 유저 (onboarding status 없음) → 정상 홈, 온보딩 완료 처리
+      return;
+    }
+
+    if (saved && rawStatus === null) {
+      // 기존 유저/스토리지 유실 복구: 팀은 있는데 onboarding key만 없는 경우
       setMyTeam(saved);
-      setFavPlayers(getFavoritePlayers());
-      setOnboardingStatus(getFavoritePlayers().length > 0 ? "completed" : "skipped");
+      setFavPlayers(savedFavs);
+      const recoveredStatus = savedFavs.length > 0 ? "completed" : "skipped";
+      setOnboardingStatus(recoveredStatus);
       setShowOnboarding(false);
-      if (getFavoritePlayers().length === 0) {
+      if (savedFavs.length === 0) {
         setShowPlayerSetupCTA(true);
       }
-    } else if (!profile) {
-      // 프로필 아직 로딩 중 → 아무것도 안 함 (온보딩 표시 방지)
       return;
-    } else {
-      // 비로그인 첫 방문 → 온보딩 시작
-      setShowOnboarding(true);
     }
-  }, [profile]);
+
+    if (user && !profile) {
+      // 로그인은 살아있지만 프로필 로드/생성이 아직 안 된 상태.
+      // ProfileSetupWrapper가 모달을 띄우므로 홈 온보딩은 열지 않는다.
+      setShowOnboarding(false);
+      return;
+    }
+
+    // 비로그인 첫 방문 → 온보딩 시작
+    setShowOnboarding(true);
+  }, [loading, user, profile]);
 
   function handleOnboardingComplete(teamId: number, players: FavoritePlayer[]) {
     setMyTeam(teamId);
@@ -615,8 +636,9 @@ export default function HomePage() {
       </motion.div>
 
       {/* ===== 1. Today's Games ===== */}
-      {SEASON_STARTED && <motion.section variants={item} className="mb-6">
+      <motion.section variants={item} className="mb-6">
         <SectionHeader title={isPreseason ? "오늘의 시범경기" : "오늘의 경기"} href="/games" icon="⚾" />
+        {todayGames.length > 0 && !todayGames[0]?.id?.startsWith("placeholder") ? (
         <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto hide-scrollbar -mx-5 px-5">
           {todayGames.map((game) => (
             <Link key={game.id} href={`/games/${game.id}`}>
@@ -651,10 +673,31 @@ export default function HomePage() {
             </Link>
           ))}
         </div>
-      </motion.section>}
+        ) : (
+          <GlassCard className="p-6 text-center">
+            <p className="text-2xl mb-2">⚾</p>
+            {new Date() < PRESEASON_START ? (
+              <>
+                <p className="text-[15px] font-medium text-text-primary">시범경기 D-{Math.ceil((PRESEASON_START.getTime() - Date.now()) / 86400000)}</p>
+                <p className="text-xs text-text-tertiary mt-1">3월 12일 시범경기 시작!</p>
+              </>
+            ) : new Date() < REGULAR_SEASON_START ? (
+              <>
+                <p className="text-[15px] font-medium text-text-primary">오늘은 경기가 없습니다</p>
+                <p className="text-xs text-text-tertiary mt-1">시범경기 진행중 · 개막 D-{Math.ceil((REGULAR_SEASON_START.getTime() - Date.now()) / 86400000)}</p>
+              </>
+            ) : (
+              <>
+                <p className="text-[15px] font-medium text-text-primary">오늘은 경기가 없습니다</p>
+                <p className="text-xs text-text-tertiary mt-1">내일 경기를 기대해주세요!</p>
+              </>
+            )}
+          </GlassCard>
+        )}
+      </motion.section>
 
       {/* ===== 2. Prediction Entry Cards ===== */}
-      {SEASON_STARTED && <motion.section variants={item} className="mb-6">
+      <motion.section variants={item} className="mb-6">
         {/* 시즌예측 이벤트 배너 */}
         <Link href="/predict">
           <div className="flex h-20 items-center rounded-2xl bg-gradient-to-r from-accent/20 to-accent/5 px-5 mb-4">
@@ -680,10 +723,10 @@ export default function HomePage() {
             </div>
           </GlassCard>
         </Link>
-      </motion.section>}
+      </motion.section>
 
       {/* ===== 4. Popular Posts ===== */}
-      {SEASON_STARTED && <motion.section variants={item} className="mb-6">
+      <motion.section variants={item} className="mb-6">
         <SectionHeader title="인기글" href="/teams" icon="🔥" />
         <div className="space-y-3">
           {MOCK_POPULAR_POSTS.map((post, i) => (
@@ -703,13 +746,13 @@ export default function HomePage() {
             </GlassCard>
           ))}
         </div>
-      </motion.section>}
+      </motion.section>
 
 
 
       {/* ===== 4.5 My Favorite Players ===== */}
             {/* ===== 5. Hot Player Boards ===== */}
-      {SEASON_STARTED && <motion.section variants={item} className="mb-6">
+      <motion.section variants={item} className="mb-6">
         <SectionHeader title="인기 선수게시판" href="/players" icon="⭐" />
         <GlassCard className="p-4">
           <div className="space-y-8">
@@ -740,7 +783,7 @@ export default function HomePage() {
                 <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
     </div>
         </GlassCard>
-      </motion.section>}
+      </motion.section>
       {/* Bottom spacer */}
       <div className="h-4" />
     </motion.div>
