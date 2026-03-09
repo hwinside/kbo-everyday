@@ -6,7 +6,8 @@ import Link from "next/link";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { TEAMS } from "@/lib/constants/teams";
+import { TEAMS, getTeamById } from "@/lib/constants/teams";
+import { getMyTeamId } from "@/lib/store/myteam";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import playersRoster from "@/lib/constants/players-roster.json";
@@ -52,6 +53,8 @@ function sortPlayers(players: PlayerItem[], mode: SortMode): PlayerItem[] {
 function PlayersPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const [myTeamId, setMyTeamId] = useState<number | null>(null);
+  useEffect(() => { setMyTeamId(getMyTeamId()); }, []);
 
   const [filterMode, setFilterMode] = useState<FilterMode>(
     (searchParams.get("mode") as FilterMode) || "all"
@@ -129,11 +132,13 @@ function PlayersPageContent() {
   return (
     <div className="mx-auto max-w-lg px-5">
       {/* Header */}
-      <header className="py-3 flex items-center gap-3">
-        <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
-        <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">선수</h1>
-        <HeaderProfileLink />
-      </header>
+      <div className="border-b pb-1" style={{ borderColor: myTeamId ? `${getTeamById(myTeamId)?.colorPrimary}40` : 'var(--color-border)' }}>
+        <header className="py-3 flex items-center gap-3">
+          <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
+          <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">선수</h1>
+          <HeaderProfileLink />
+        </header>
+      </div>
 
       {/* 검색 */}
       <div className="mb-4">
