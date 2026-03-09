@@ -4,9 +4,10 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 
 import { useMemo, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
+import { ChevronLeft } from "lucide-react";
 import {
   ArrowLeft,
   Star,
@@ -142,22 +143,27 @@ export default function StadiumDetailPage() {
     el.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  const router = useRouter();
+
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
-      {/* Header */}
+      {/* Sticky Header */}
+      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
+        <div className="flex items-center gap-3 px-4 py-3">
+          <button onClick={() => router.back()}>
+            <ChevronLeft size={24} className="text-text-secondary" />
+          </button>
+          <span className="text-lg font-semibold text-text-primary">구장</span>
+        </div>
+      </div>
+
+      {/* Stadium Hero */}
       <div
-        className="relative px-5 pb-5"
+        className="relative px-5 pb-5 pt-4"
         style={{
           background: `linear-gradient(135deg, ${primaryTeam.colorPrimary}20, transparent)`,
         }}
       >
-        <Link
-          href="/community/stadiums"
-          className="inline-flex items-center gap-1 text-text-secondary mb-3"
-        >
-          <ArrowLeft size={20} />
-          <span className="text-lg font-semibold">구장</span>
-        </Link>
         <div className="flex items-center gap-3 mb-2">
           {teams.map((t) => (
             <div

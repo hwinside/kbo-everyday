@@ -37,7 +37,7 @@ export interface Player {
 }
 
 /* ===== Post ===== */
-export type BoardType = "team" | "player" | "game";
+export type BoardType = "team" | "player" | "game" | "free";
 
 export interface Post {
   id: number;
