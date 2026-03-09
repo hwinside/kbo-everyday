@@ -10,6 +10,7 @@ import { usePostDetail, createComment, toggleLike } from "@/lib/supabase/usePost
 import ReportSheet from "@/components/community/ReportSheet";
 import LinkPreview from "@/components/community/LinkPreview";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { getTeamById } from "@/lib/constants/teams";
 
 interface PostDetailProps {
   postId: number;
@@ -174,18 +175,26 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
 
       {/* Comment Input — positioned above TabBar (TabBar ≈ 4rem + safe-area-inset-bottom) */}
       <div className="fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40" style={{ bottom: "calc(4rem + env(safe-area-inset-bottom, 0px))" }}>
-        <input
-          type="text"
-          value={comment}
-          onChange={e => setComment(e.target.value)}
-          placeholder={user ? "댓글을 입력하세요" : "로그인 후 댓글 작성 가능"}
-          disabled={!user}
-          className="flex-1 bg-bg-tertiary rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
-          onKeyDown={e => e.key === "Enter" && handleComment()}
-        />
-        <button onClick={handleComment} disabled={!comment.trim() || !user} className="text-accent disabled:opacity-30">
-          <Send size={20} />
-        </button>
+        {(() => {
+          const teamColor = post.team_id ? getTeamById(post.team_id)?.colorPrimary : undefined;
+          return (
+            <>
+              <input
+                type="text"
+                value={comment}
+                onChange={e => setComment(e.target.value)}
+                placeholder={user ? "댓글을 입력하세요" : "로그인 후 댓글 작성 가능"}
+                disabled={!user}
+                className="flex-1 bg-bg-tertiary rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none border"
+                style={{ borderColor: teamColor ? `${teamColor}60` : 'transparent' }}
+                onKeyDown={e => e.key === "Enter" && handleComment()}
+              />
+              <button onClick={handleComment} disabled={!comment.trim() || !user} className="disabled:opacity-30" style={{ color: teamColor || 'var(--color-accent)' }}>
+                <Send size={20} />
+              </button>
+            </>
+          );
+        })()}
       </div>
       <ReportSheet isOpen={showReport} onClose={() => setShowReport(false)} targetType={reportTarget.type} targetId={reportTarget.id} />
     </div>
