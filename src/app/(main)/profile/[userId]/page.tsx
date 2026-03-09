@@ -13,7 +13,7 @@ import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import { BADGES, BADGE_MAP, RARITY_COLORS, CATEGORY_LABELS } from "@/lib/constants/badges";
 import type { BadgeDefinition } from "@/lib/constants/badges";
-import { getTeamBorderColor } from "@/lib/utils/team-border-color";
+import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 
 interface UserProfile {
   id: string;
@@ -277,7 +277,7 @@ export default function ProfilePage() {
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
       {/* Header */}
-      <div className="sticky top-0 z-30 pt-safe border-b bg-bg-primary/80 backdrop-blur-xl" style={{ borderColor: myProfile?.team_id ? getTeamBorderColor(getTeamById(myProfile.team_id)!.colorPrimary) : 'var(--color-border)' }}>
+      <div className="sticky top-0 z-30 pt-safe border-b bg-bg-primary/80 backdrop-blur-xl" style={{ borderColor: myProfile?.team_id ? getTeamBorderColorById(myProfile.team_id) : 'var(--color-border)' }}>
         <div className="flex items-center gap-3 px-4 py-3">
           <button onClick={() => router.back()}>
             <ChevronLeft size={24} className="text-text-secondary" />

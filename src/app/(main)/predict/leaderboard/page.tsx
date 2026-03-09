@@ -7,7 +7,7 @@ import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById } from "@/lib/constants/teams";
-import { getTeamBorderColor } from "@/lib/utils/team-border-color";
+import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 
 interface LeaderEntry {
   rank: number;
@@ -36,11 +36,11 @@ const MEDAL_COLORS = ["text-amber-400", "text-gray-300", "text-amber-700"];
 export default function LeaderboardPage() {
   const router = useRouter();
   const { profile } = useAuth();
-  const myTeamColor = profile?.team_id ? getTeamById(profile.team_id)?.colorPrimary : undefined;
+  const myTeamBorder = profile?.team_id ? getTeamBorderColorById(profile.team_id) : undefined;
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
-      <div className="sticky top-0 z-30 pt-safe border-b bg-bg-primary/80 backdrop-blur-xl" style={{ borderColor: myTeamColor ? getTeamBorderColor(myTeamColor) : 'var(--color-border)' }}>
+      <div className="sticky top-0 z-30 pt-safe border-b bg-bg-primary/80 backdrop-blur-xl" style={{ borderColor: myTeamBorder || 'var(--color-border)' }}>
         <div className="flex items-center gap-3 px-4 py-3">
           <button onClick={() => router.back()}>
             <ChevronLeft size={24} className="text-text-secondary" />

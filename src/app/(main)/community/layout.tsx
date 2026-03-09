@@ -81,7 +81,7 @@ export default function CommunityLayout({
   const currentTeam = teamSlugMatch ? getTeamBySlug(teamSlugMatch[1]) : undefined;
   const myTeam = profile?.team_id ? getTeamById(profile.team_id) : undefined;
   const headerTeam = currentTeam || myTeam;
-  const headerBorderColor = headerTeam?.colorPrimary ? getTeamBorderColor(headerTeam.colorPrimary) : undefined;
+  const headerBorderColor = headerTeam?.colorPrimary ? getTeamBorderColor(headerTeam.colorPrimary, headerTeam.colorLight) : undefined;
 
   // Only show tabs on top-level community pages, not deep nested (e.g. post detail)
   const isHubLevel = COMMUNITY_TABS.some(

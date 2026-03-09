@@ -11,7 +11,7 @@ import { getMyTeamId } from "@/lib/store/myteam";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import playersRoster from "@/lib/constants/players-roster.json";
-import { getTeamBorderColor } from "@/lib/utils/team-border-color";
+import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 
 interface PlayerItem {
   name: string;
@@ -133,7 +133,7 @@ function PlayersPageContent() {
   return (
     <div className="mx-auto max-w-lg px-5">
       {/* Header */}
-      <div className="border-b" style={{ borderColor: myTeamId ? getTeamBorderColor(getTeamById(myTeamId)!.colorPrimary) : 'var(--color-border)' }}>
+      <div className="border-b" style={{ borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)' }}>
         <header className="py-3 flex items-center gap-3">
           <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
           <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">선수</h1>

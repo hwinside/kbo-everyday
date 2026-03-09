@@ -29,7 +29,7 @@ import { TEAMS, getTeamById } from "@/lib/constants/teams";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { MOCK_NEWS } from "@/lib/constants/news";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
-import { getTeamBorderColor } from "@/lib/utils/team-border-color";
+import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 
 interface AuthProfile {
   nickname: string;
@@ -505,7 +505,7 @@ export default function HomePage() {
       className="mx-auto max-w-lg px-5"
     >
       {/* Header */}
-      <motion.header variants={item} className="flex items-center justify-between py-3 border-b mb-2" style={{ borderColor: myTeamId ? getTeamBorderColor(getTeamById(myTeamId)!.colorPrimary) : 'var(--color-border)' }}>
+      <motion.header variants={item} className="flex items-center justify-between py-3 border-b mb-2" style={{ borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)' }}>
         <div className="flex flex-col">
           <img src="/logo-mark.png" alt="크보팬" style={{height: "44px", objectFit: "contain"}} className="-ml-0.5" />
         </div>
