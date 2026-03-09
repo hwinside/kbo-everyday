@@ -209,8 +209,8 @@ export default function StadiumDetailPage() {
 
       {/* Sticky section chips */}
       <div
-        className="sticky top-0 z-20 bg-bg-primary/95 backdrop-blur-xl border-b border-border"
-        style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
+        className="sticky top-0 z-20 bg-bg-primary/95 backdrop-blur-xl border-b"
+        style={{ paddingTop: "env(safe-area-inset-top, 0px)", borderColor: primaryTeam?.colorPrimary ? `${primaryTeam.colorPrimary}40` : 'var(--color-border)' }}
       >
         <div className="mx-auto max-w-lg px-5 py-3 flex items-center gap-2 overflow-x-auto hide-scrollbar">
           <SectionChip

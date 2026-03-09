@@ -196,7 +196,7 @@ function InviteTab({ userId, inviteCount }: { userId: string; inviteCount: numbe
 export default function ProfilePage() {
   const { userId } = useParams();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, profile: myProfile } = useAuth();
   const isOwn = user?.id === userId;
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -276,7 +276,7 @@ export default function ProfilePage() {
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
       {/* Header */}
-      <div className="sticky top-0 z-30 pt-safe border-b border-border bg-bg-primary/80 backdrop-blur-xl">
+      <div className="sticky top-0 z-30 pt-safe border-b bg-bg-primary/80 backdrop-blur-xl" style={{ borderColor: myProfile?.team_id ? `${getTeamById(myProfile.team_id)?.colorPrimary}40` : 'var(--color-border)' }}>
         <div className="flex items-center gap-3 px-4 py-3">
           <button onClick={() => router.back()}>
             <ChevronLeft size={24} className="text-text-secondary" />
