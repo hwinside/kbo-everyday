@@ -138,7 +138,7 @@ export default function CommunityTeamBoardPage() {
         <div className="flex items-center gap-4 py-4">
           <div className="flex items-center gap-3 flex-1">
             <TeamLogo team={team} size={48} />
-            <h1 className="text-xl font-bold text-text-primary">{team.name}</h1>
+            <h1 className="text-lg font-semibold text-text-primary">{team.name}</h1>
           </div>
           <Link
             href="/community/teams?pick=true"

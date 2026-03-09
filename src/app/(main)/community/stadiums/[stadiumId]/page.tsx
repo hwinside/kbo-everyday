@@ -146,7 +146,7 @@ export default function StadiumDetailPage() {
     <div className="min-h-screen bg-bg-primary pb-24">
       {/* Header */}
       <div
-        className="relative px-5 pt-safe pb-5"
+        className="relative px-5 pb-5"
         style={{
           background: `linear-gradient(135deg, ${primaryTeam.colorPrimary}20, transparent)`,
         }}
@@ -175,7 +175,7 @@ export default function StadiumDetailPage() {
             </div>
           ))}
         </div>
-        <h1 className="text-xl font-bold text-text-primary">{stadium.name}</h1>
+        <h1 className="text-lg font-semibold text-text-primary">{stadium.name}</h1>
         <div className="flex items-center gap-3 mt-1 text-sm text-text-tertiary">
           <span className="flex items-center gap-1">
             <MapPin size={14} />

@@ -76,7 +76,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           <button onClick={() => router.back()}>
             <ChevronLeft size={24} className="text-text-secondary" />
           </button>
-          <span className="text-base font-semibold text-text-primary flex-1">{headerTitle}</span>
+          <span className="text-lg font-semibold text-text-primary flex-1">{headerTitle}</span>
           <button onClick={async () => {
             if (navigator.share) await navigator.share({ title: post.title, url: window.location.href });
             else { await navigator.clipboard.writeText(window.location.href); alert("링크 복사됨!"); }

@@ -159,8 +159,8 @@ export default function PlayerBoardPage() {
     <div className="min-h-screen bg-bg-primary pb-20">
       {/* Header */}
       <div
-        className="sticky top-0 z-30 pt-safe border-b border-border backdrop-blur-xl pt-safe"
-        style={{ background: `linear-gradient(135deg, ${teamColor}15, transparent)` }}
+        className="sticky z-30 border-b border-border backdrop-blur-xl"
+        style={{ top: 'env(safe-area-inset-top, 0px)', background: `linear-gradient(135deg, ${teamColor}15, transparent)` }}
       >
         <div className="flex items-center gap-4 px-5 py-4">
           <button onClick={() => router.back()} className="p-1 -ml-1">
@@ -169,7 +169,7 @@ export default function PlayerBoardPage() {
           <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name) || getPlayerPhotoUrl(playerName || "") || getPlayerPhotoByKboId(kboId)} number={player.number} size={64} />
           <div className="flex-1">
             <div className="flex items-center gap-3">
-              <h1 className="text-xl font-bold text-text-primary">{player.name}</h1>
+              <h1 className="text-lg font-semibold text-text-primary">{player.name}</h1>
               {player.number > 0 && (
                 <span className="text-base px-1.5 py-0.5 rounded-full" style={{ backgroundColor: teamColor + "20", color: teamColor }}>
                   #{player.number}
