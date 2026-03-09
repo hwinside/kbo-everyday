@@ -4,6 +4,8 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { Home, CalendarDays, BarChart3, MessageSquare, Users, type LucideIcon } from "lucide-react";
+import { useAuth } from "@/lib/supabase/AuthContext";
+import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 
 interface TabItem {
   href: string;
@@ -21,6 +23,11 @@ const tabs: TabItem[] = [
 
 export default function TabBar() {
   const pathname = usePathname();
+  const { profile } = useAuth();
+
+  // 지정팀 컬러 (없으면 시스템 accent)
+  const team = profile?.team_id ? getTeamById(profile.team_id) : undefined;
+  const teamColor = team ? getTeamBgColor(team) : undefined;
 
   function isActive(href: string) {
     if (href === "/") return pathname === "/";
@@ -39,8 +46,9 @@ export default function TabBar() {
               href={tab.href}
               className={clsx(
                 "flex flex-col items-center gap-0.5 px-3 py-1.5 transition-colors",
-                active ? "text-accent" : "text-text-secondary",
+                active ? (teamColor ? "" : "text-accent") : "text-text-secondary",
               )}
+              style={active && teamColor ? { color: teamColor } : undefined}
             >
               <Icon size={22} strokeWidth={active ? 2 : 1.5} fill={active ? "currentColor" : "none"} className={active ? "opacity-90" : ""} />
               <span className="text-xs font-medium">{tab.label}</span>
