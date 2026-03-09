@@ -131,29 +131,29 @@ function PlayersPageContent() {
 
   return (
     <div className="mx-auto max-w-lg px-5">
-      {/* Header */}
-      <div className="border-b pb-1" style={{ borderColor: myTeamId ? `${getTeamById(myTeamId)?.colorPrimary}40` : 'var(--color-border)' }}>
+      {/* Header + 검색 */}
+      <div className="border-b pb-3 mb-2" style={{ borderColor: myTeamId ? `${getTeamById(myTeamId)?.colorPrimary}40` : 'var(--color-border)' }}>
         <header className="py-3 flex items-center gap-3">
           <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
           <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">선수</h1>
           <HeaderProfileLink />
         </header>
-      </div>
 
-      {/* 검색 */}
-      <div className="mb-4">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-text-tertiary" />
-          <input
-            type="text"
-            placeholder="선수 이름, 팀, 포지션 검색"
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              setVisibleCount(20);
-            }}
-            className="w-full rounded-xl bg-bg-secondary py-3 pl-10 pr-4 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent"
-          />
+        {/* 검색 */}
+        <div>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-text-tertiary" />
+            <input
+              type="text"
+              placeholder="선수 이름, 팀, 포지션 검색"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setVisibleCount(20);
+              }}
+              className="w-full rounded-xl bg-bg-secondary py-3 pl-10 pr-4 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent"
+            />
+          </div>
         </div>
       </div>
 
