@@ -304,7 +304,8 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                 <button
                   onClick={handleSubmit}
                   disabled={!input.trim() || submitting || !user}
-                  className="flex items-center justify-center w-9 h-9 rounded-full text-white disabled:opacity-30 transition-opacity bg-accent"
+                  className="flex items-center justify-center w-9 h-9 rounded-full text-white disabled:opacity-30 transition-opacity"
+                  style={{ backgroundColor: 'var(--color-accent)' }}
                 >
                   <Send size={16} />
                 </button>
