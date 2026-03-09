@@ -106,11 +106,32 @@ export default function CommentSheet({ isOpen, onClose, postId, onCommentAdded }
     }
   }, [shouldRender]);
 
+  // 댓글 목록 DB 재조회 (optimistic → 실제 데이터 교체)
+  const refetchComments = useCallback(async (pid: number) => {
+    const { data } = await supabase
+      .from("comments")
+      .select("*, profiles(nickname, team_id, grade, avatar_url)")
+      .eq("post_id", pid)
+      .order("created_at", { ascending: true });
+    if (data) {
+      setComments(
+        data.map((cm: Comment & { profiles?: { nickname?: string; team_id?: number; grade?: string; avatar_url?: string } }) => ({
+          ...cm,
+          nickname: cm.profiles?.nickname,
+          team_id: cm.profiles?.team_id,
+          grade: cm.profiles?.grade,
+          avatar_url: cm.profiles?.avatar_url,
+        }))
+      );
+    }
+  }, []);
+
   const handleSubmit = useCallback(async () => {
     if (!input.trim() || !postId || submitting) return;
     setSubmitting(true);
     try {
       await createComment(postId, input.trim());
+      // optimistic update (즉시 반영)
       setComments((prev) => [
         ...prev,
         {
@@ -127,12 +148,14 @@ export default function CommentSheet({ isOpen, onClose, postId, onCommentAdded }
       ]);
       setInput("");
       if (postId) onCommentAdded?.(postId);
+      // DB 재조회로 정확한 프로필(아바타 등) 반영
+      refetchComments(postId);
     } catch {
       // silently fail
     } finally {
       setSubmitting(false);
     }
-  }, [input, postId, submitting, user, onCommentAdded]);
+  }, [input, postId, submitting, user, onCommentAdded, profile, refetchComments]);
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
