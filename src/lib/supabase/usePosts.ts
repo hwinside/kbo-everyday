@@ -32,6 +32,7 @@ export interface Comment {
   nickname?: string;
   team_id?: number;
   grade?: string;
+  avatar_url?: string;
 }
 
 /** 게시글 목록 */
@@ -131,7 +132,7 @@ export function usePostDetail(postId: number) {
       // 댓글
       const { data: c } = await supabase
         .from("comments")
-        .select("*, profiles(nickname, team_id, grade)")
+        .select("*, profiles(nickname, team_id, grade, avatar_url)")
         .eq("post_id", postId)
         .order("created_at", { ascending: true });
 
@@ -141,6 +142,7 @@ export function usePostDetail(postId: number) {
           nickname: (cm.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
           team_id: (cm.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
           grade: (cm.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
+          avatar_url: (cm.profiles as unknown as Record<string, unknown> | null)?.avatar_url as string | undefined,
         })));
       }
 

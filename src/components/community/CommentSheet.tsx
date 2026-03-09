@@ -120,6 +120,7 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
           nickname: profile?.nickname ?? user?.user_metadata?.name ?? "나",
           team_id: profile?.team_id,
           grade: profile?.grade,
+          avatar_url: profile?.avatar_url ?? undefined,
         },
       ]);
       setInput("");

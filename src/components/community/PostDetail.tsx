@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
+import { GRADES } from "@/lib/constants/grades";
+import { getAvatarPath } from "@/lib/constants/avatars";
 import { usePostDetail, createComment, toggleLike } from "@/lib/supabase/usePosts";
 import ReportSheet from "@/components/community/ReportSheet";
 import LinkPreview from "@/components/community/LinkPreview";
@@ -16,7 +18,7 @@ interface PostDetailProps {
 
 export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [showReport, setShowReport] = useState(false);
   const [reportTarget, setReportTarget] = useState<{type: "post"|"comment"; id: number}>({type: "post", id: 0});
   const { post, comments, loading, liked, setLiked, setComments } = usePostDetail(postId);
@@ -47,9 +49,10 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         author_id: user.id,
         content: comment.trim(),
         created_at: new Date().toISOString(),
-        nickname: "나",
-        team_id: undefined,
-        grade: undefined,
+        nickname: profile?.nickname ?? user?.user_metadata?.name ?? "나",
+        team_id: profile?.team_id,
+        grade: profile?.grade,
+        avatar_url: profile?.avatar_url ?? undefined,
       }]);
     } catch {}
   }
@@ -131,16 +134,40 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           {comments.length === 0 ? (
             <p className="text-sm text-text-tertiary text-center py-6">첫 댓글을 남겨보세요 💬</p>
           ) : (
-            comments.map(c => (
-              <div key={c.id}>
-                <div className="flex items-center gap-2 mb-1">
-                  {c.team_id && <TeamBadge teamId={c.team_id} size="xs" />}
-                  <span className="text-sm font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>{c.nickname || "익명"}</span>
-                  <span className="text-xs text-text-tertiary">{timeAgo(c.created_at)}</span>
+            comments.map(c => {
+              const grade = GRADES.find((g) => g.id === c.grade) ?? GRADES[0];
+              const avatarPath = getAvatarPath(c.avatar_url ?? null);
+              return (
+                <div key={c.id} className="flex gap-2.5">
+                  {avatarPath ? (
+                    <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-bg-tertiary cursor-pointer" onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>
+                      <img src={avatarPath} alt="" className="w-full h-full" />
+                    </div>
+                  ) : (
+                    <div
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-sm flex-shrink-0 cursor-pointer"
+                      style={{ backgroundColor: grade.bgColor }}
+                      onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}
+                    >
+                      {grade.emoji}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>{c.nickname || "익명"}</span>
+                      <span
+                        className="text-[10px] font-bold px-1.5 py-0.5 rounded-md"
+                        style={{ color: grade.color, backgroundColor: grade.bgColor }}
+                      >
+                        {grade.name}
+                      </span>
+                      <span className="text-xs text-text-tertiary ml-auto flex-shrink-0">{timeAgo(c.created_at)}</span>
+                    </div>
+                    <p className="text-sm text-text-secondary mt-0.5 break-words">{c.content}</p>
+                  </div>
                 </div>
-                <p className="text-sm text-text-secondary">{c.content}</p>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
