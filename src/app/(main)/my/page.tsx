@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { Settings, ChevronRight, Download, FileText, MessageCircle, Mail, Heart, Trophy, RefreshCw, Star, LogIn, LogOut, GraduationCap, Bell, MessageSquareHeart } from "lucide-react";
+import { Settings, ChevronLeft, ChevronRight, Download, FileText, MessageCircle, Mail, Heart, Trophy, RefreshCw, Star, LogIn, LogOut, GraduationCap, Bell, MessageSquareHeart } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
@@ -72,12 +72,15 @@ export default function MyPage() {
 
   return (
     <div className="mx-auto max-w-lg px-5 pb-24">
-      <header className="flex items-center justify-between py-5 border-b -mx-5 px-5" style={{ borderColor: profile?.team_id ? getTeamBorderColorById(profile.team_id) : 'var(--color-border)' }}>
-        <h1 className="text-xl font-bold text-text-primary">마이페이지</h1>
-      </header>
+      <div className="border-b -mx-5 px-5" style={{ borderColor: profile?.team_id ? getTeamBorderColorById(profile.team_id) : 'var(--color-border)' }}>
+        <header className="py-3 flex items-center gap-3">
+          <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
+          <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">마이페이지</h1>
+        </header>
+      </div>
 
       {/* Profile card */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-4">
         <GlassCard className="p-5">
           <div className="flex items-center gap-4">
             <button
