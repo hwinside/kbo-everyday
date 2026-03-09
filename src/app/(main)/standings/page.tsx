@@ -1,6 +1,7 @@
 "use client";
 import { ChevronLeft } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
+import { getTeamBorderColor } from "@/lib/utils/team-border-color";
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
@@ -302,7 +303,7 @@ export default function StandingsPage() {
 
   return (
     <div className="mx-auto max-w-lg px-5">
-      <div className="border-b" style={{ borderColor: myTeamId ? `${getTeamById(myTeamId)?.colorPrimary}40` : 'var(--color-border)' }}>
+      <div className="border-b" style={{ borderColor: myTeamId ? getTeamBorderColor(getTeamById(myTeamId)!.colorPrimary) : 'var(--color-border)' }}>
         <header className="py-3 flex items-center gap-3">
           <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
           <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">순위</h1>

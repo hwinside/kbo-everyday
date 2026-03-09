@@ -1,6 +1,7 @@
 "use client";
 import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import { useRouter } from "next/navigation";
+import { getTeamBorderColor } from "@/lib/utils/team-border-color";
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
@@ -140,7 +141,7 @@ export default function GamesPage() {
 
   return (
     <div className="mx-auto max-w-lg">
-      <div className="border-b" style={{ borderColor: myTeamId ? `${getTeamById(myTeamId)?.colorPrimary}40` : 'var(--color-border)' }}>
+      <div className="border-b" style={{ borderColor: myTeamId ? getTeamBorderColor(getTeamById(myTeamId)!.colorPrimary) : 'var(--color-border)' }}>
         <div className="flex items-center gap-3 px-5 py-3">
           <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
             <ChevronLeft size={24} />

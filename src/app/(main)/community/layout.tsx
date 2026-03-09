@@ -8,6 +8,7 @@ import { ChevronLeft, MessageSquare, Users, User, Ticket, MapPin } from "lucide-
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamById, getTeamBySlug } from "@/lib/constants/teams";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { getTeamBorderColor } from "@/lib/utils/team-border-color";
 
 const COMMUNITY_TABS = [
   { key: "teams", label: "팀", href: "/community/teams", icon: Users },
@@ -80,7 +81,7 @@ export default function CommunityLayout({
   const currentTeam = teamSlugMatch ? getTeamBySlug(teamSlugMatch[1]) : undefined;
   const myTeam = profile?.team_id ? getTeamById(profile.team_id) : undefined;
   const headerTeam = currentTeam || myTeam;
-  const headerBorderColor = headerTeam?.colorPrimary ? `${headerTeam.colorPrimary}40` : undefined;
+  const headerBorderColor = headerTeam?.colorPrimary ? getTeamBorderColor(headerTeam.colorPrimary) : undefined;
 
   // Only show tabs on top-level community pages, not deep nested (e.g. post detail)
   const isHubLevel = COMMUNITY_TABS.some(
