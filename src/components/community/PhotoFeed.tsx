@@ -292,6 +292,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   className="flex items-center gap-1 text-base text-text-secondary"
                 >
                   <MessageCircle size={20} />
+                  <span>{post.comment_count + (commentDeltas[post.id] ?? 0)}</span>
                 </button>
               </div>
 
@@ -302,18 +303,6 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   content={post.content}
                   onPress={() => setCommentPostId(post.id)}
                 />
-              )}
-
-              {/* Comment preview */}
-              {(post.comment_count + (commentDeltas[post.id] ?? 0)) > 0 && (
-                <div className="px-4 pb-3 pt-1">
-                  <button
-                    onClick={() => setCommentPostId(post.id)}
-                    className="text-base text-text-tertiary"
-                  >
-                    댓글 {post.comment_count + (commentDeltas[post.id] ?? 0)}개 모두 보기
-                  </button>
-                </div>
               )}
             </div>
           </div>
