@@ -140,20 +140,16 @@ export default function GamesPage() {
           <ChevronLeft size={24} />
         </button>
         <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">경기</h1>
-        <HeaderProfileLink />
-      </div>
-
-      <div className="flex items-center px-5">
-        <div className="flex-1">
-          <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
-        </div>
         <button
           onClick={() => loadGames(selectedDate)}
-          className="p-2 rounded-full text-text-tertiary hover:bg-bg-tertiary transition-colors flex-shrink-0"
+          className="p-2 rounded-full text-text-tertiary hover:bg-bg-tertiary transition-colors"
         >
           <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
         </button>
+        <HeaderProfileLink />
       </div>
+
+      <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
 
       {loading && games.length === 0 ? (
         <div className="flex items-center justify-center py-20">
