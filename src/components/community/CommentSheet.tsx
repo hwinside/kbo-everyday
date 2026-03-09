@@ -290,8 +290,8 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                       }
                     }}
                     placeholder="댓글 달기..."
-                    className="flex-1 bg-bg-tertiary rounded-full px-4 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary outline-none border"
-                    style={{ borderColor: teamId ? `${getTeamById(teamId)?.colorPrimary}60` : 'transparent' }}
+                    className="flex-1 bg-bg-secondary rounded-full px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary outline-none border"
+                    style={{ borderColor: teamId ? `${getTeamById(teamId)?.colorPrimary}80` : 'rgba(255,255,255,0.15)' }}
                   />
                 ) : (
                   <button
@@ -305,7 +305,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                   onClick={handleSubmit}
                   disabled={!input.trim() || submitting || !user}
                   className="flex items-center justify-center w-9 h-9 rounded-full text-white disabled:opacity-30 transition-opacity"
-                  style={{ backgroundColor: teamId ? getTeamById(teamId)?.colorPrimary : 'var(--color-accent)' }}
+                  style={{ backgroundColor: teamId ? (getTeamById(teamId)?.colorLight || getTeamById(teamId)?.colorPrimary) : 'var(--color-accent)' }}
                 >
                   <Send size={16} />
                 </button>

@@ -186,11 +186,11 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                 onChange={e => setComment(e.target.value)}
                 placeholder={user ? "댓글을 입력하세요" : "로그인 후 댓글 작성 가능"}
                 disabled={!user}
-                className="flex-1 bg-bg-tertiary rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none border"
-                style={{ borderColor: teamColor ? `${teamColor}60` : 'transparent' }}
+                className="flex-1 bg-bg-secondary rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none border"
+                style={{ borderColor: teamColor ? `${teamColor}80` : 'rgba(255,255,255,0.15)' }}
                 onKeyDown={e => e.key === "Enter" && handleComment()}
               />
-              <button onClick={handleComment} disabled={!comment.trim() || !user} className="disabled:opacity-30" style={{ color: teamColor || 'var(--color-accent)' }}>
+              <button onClick={handleComment} disabled={!comment.trim() || !user} className="disabled:opacity-30" style={{ color: (post.team_id ? getTeamById(post.team_id)?.colorLight : undefined) || teamColor || 'var(--color-accent)' }}>
                 <Send size={20} />
               </button>
             </>
