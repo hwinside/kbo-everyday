@@ -181,6 +181,8 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   const [likedPosts, setLikedPosts] = useState<Set<number>>(new Set());
   const [heartPostId, setHeartPostId] = useState<number | null>(null);
   const [commentPostId, setCommentPostId] = useState<number | null>(null);
+  // 댓글 추가 시 로컬 카운트 보정값
+  const [commentDeltas, setCommentDeltas] = useState<Record<number, number>>({});
 
   const handleLike = (postId: number) => {
     setLikedPosts((prev) => {
@@ -303,13 +305,13 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
               )}
 
               {/* Comment preview */}
-              {post.comment_count > 0 && (
+              {(post.comment_count + (commentDeltas[post.id] ?? 0)) > 0 && (
                 <div className="px-4 pb-3 pt-1">
                   <button
                     onClick={() => setCommentPostId(post.id)}
                     className="text-base text-text-tertiary"
                   >
-                    댓글 {post.comment_count}개 모두 보기
+                    댓글 {post.comment_count + (commentDeltas[post.id] ?? 0)}개 모두 보기
                   </button>
                 </div>
               )}
@@ -322,6 +324,9 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
           isOpen={true}
           onClose={() => setCommentPostId(null)}
           postId={commentPostId}
+          onCommentAdded={(postId) => {
+            setCommentDeltas((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }));
+          }}
         />
       )}
     </div>

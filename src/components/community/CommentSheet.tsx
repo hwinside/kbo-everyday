@@ -16,6 +16,8 @@ interface CommentSheetProps {
   isOpen: boolean;
   onClose: () => void;
   postId: number | null;
+  /** 댓글 작성 성공 시 부모에게 알림 (comment_count 동기화용) */
+  onCommentAdded?: (postId: number) => void;
 }
 
 function timeAgo(dateStr: string): string {
@@ -34,7 +36,7 @@ function getGradeInfo(gradeId?: string) {
   return GRADES.find((g) => g.id === gradeId) ?? GRADES[0];
 }
 
-export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetProps) {
+export default function CommentSheet({ isOpen, onClose, postId, onCommentAdded }: CommentSheetProps) {
   const [input, setInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -124,12 +126,13 @@ export default function CommentSheet({ isOpen, onClose, postId }: CommentSheetPr
         },
       ]);
       setInput("");
+      if (postId) onCommentAdded?.(postId);
     } catch {
       // silently fail
     } finally {
       setSubmitting(false);
     }
-  }, [input, postId, submitting, user]);
+  }, [input, postId, submitting, user, onCommentAdded]);
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
