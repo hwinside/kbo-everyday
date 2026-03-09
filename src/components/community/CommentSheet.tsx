@@ -11,7 +11,7 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { supabase } from "@/lib/supabase/client";
 import type { Comment } from "@/lib/supabase/usePosts";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 
 interface CommentSheetProps {
   isOpen: boolean;
@@ -305,7 +305,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                   onClick={handleSubmit}
                   disabled={!input.trim() || submitting || !user}
                   className="flex items-center justify-center w-9 h-9 rounded-full text-white disabled:opacity-50 transition-opacity"
-                  style={{ backgroundColor: '#FF453A' }}
+                  style={{ backgroundColor: teamId ? (() => { const t = getTeamById(teamId); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}
                 >
                   <Send size={16} />
                 </button>
