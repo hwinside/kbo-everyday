@@ -138,7 +138,7 @@ export default function GamesPage() {
         <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
           <ChevronLeft size={24} />
         </button>
-        <h1 className="text-3xl font-extrabold text-text-primary tracking-tight">경기</h1>
+        <h1 className="text-2xl font-bold text-text-primary tracking-tight">경기</h1>
         <button
           onClick={() => loadGames(selectedDate)}
           className="ml-auto p-2 rounded-full text-text-tertiary hover:bg-bg-tertiary transition-colors"

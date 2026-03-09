@@ -504,9 +504,9 @@ export default function HomePage() {
       className="mx-auto max-w-lg px-5"
     >
       {/* Header */}
-      <motion.header variants={item} className="flex items-center justify-between pb-0 pt-0">
+      <motion.header variants={item} className="flex items-center justify-between py-3">
         <div className="flex flex-col">
-          <img src="/logo-mark.png" alt="크보팬" style={{height: "36px", objectFit: "contain"}} className="-ml-0.5" />
+          <img src="/logo-mark.png" alt="크보팬" style={{height: "44px", objectFit: "contain"}} className="-ml-0.5" />
         </div>
         <div className="flex items-center gap-1">
           <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">

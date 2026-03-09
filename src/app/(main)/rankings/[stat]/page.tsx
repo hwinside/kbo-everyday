@@ -176,7 +176,7 @@ function RankingContent() {
       {/* Header */}
       <div className="py-3 flex items-center gap-3">
         <button onClick={() => router.back()} className="text-xl">←</button>
-        <h1 className="text-3xl font-extrabold tracking-tight">{def.emoji} {def.desc}</h1>
+        <h1 className="text-2xl font-bold tracking-tight">{def.emoji} {def.desc}</h1>
       </div>
 
       {/* 뱃지 설명 */}
