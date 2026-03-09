@@ -101,19 +101,18 @@ export default function CommunityLayout({
     <div>
       {isHubLevel && !isDetailPage && (
         <div
-          className="sticky top-0 z-30 bg-bg-primary border-b"
+          className="sticky top-0 z-30 bg-bg-primary"
           data-team-border={!!headerBorderColor}
           // main layout already applies safe-area padding-top. Here we keep the notch-safe background
           // without pushing the title row down (baseline alignment with other root menus).
           style={{
             paddingTop: "env(safe-area-inset-top, 0px)",
             marginTop: "calc(env(safe-area-inset-top, 0px) * -1)",
-            borderColor: headerBorderColor || 'var(--color-border)',
           }}
         >
           <div className="mx-auto max-w-lg">
             {/* Header (루트 메뉴들과 동일 규격) */}
-            <div className="flex items-center gap-3 px-5 py-3">
+            <div className="flex items-center gap-3 px-5 py-3 border-b" style={{ borderColor: headerBorderColor || 'var(--color-border)' }}>
               <button
                 onClick={handleBack}
                 className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"
