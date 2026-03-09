@@ -6,6 +6,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { ChevronLeft, MessageSquare, Users, User, Ticket, MapPin } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
+import { getTeamBySlug } from "@/lib/constants/teams";
 
 const COMMUNITY_TABS = [
   { key: "teams", label: "팀", href: "/community/teams", icon: Users },
@@ -72,6 +73,11 @@ export default function CommunityLayout({
     router.push("/");
   }
 
+  // Extract team color from pathname (e.g. /community/teams/lg-twins)
+  const teamSlugMatch = pathname.match(/^\/community\/teams\/([^/]+)/);
+  const currentTeam = teamSlugMatch ? getTeamBySlug(teamSlugMatch[1]) : undefined;
+  const headerBorderColor = currentTeam?.colorPrimary ? `${currentTeam.colorPrimary}40` : undefined;
+
   // Only show tabs on top-level community pages, not deep nested (e.g. post detail)
   const isHubLevel = COMMUNITY_TABS.some(
     (tab) =>
@@ -91,12 +97,14 @@ export default function CommunityLayout({
     <div>
       {isHubLevel && !isDetailPage && (
         <div
-          className="sticky top-0 z-30 bg-bg-primary border-b border-border"
+          className="sticky top-0 z-30 bg-bg-primary border-b"
+          data-team-border={!!headerBorderColor}
           // main layout already applies safe-area padding-top. Here we keep the notch-safe background
           // without pushing the title row down (baseline alignment with other root menus).
           style={{
             paddingTop: "env(safe-area-inset-top, 0px)",
             marginTop: "calc(env(safe-area-inset-top, 0px) * -1)",
+            borderColor: headerBorderColor || 'var(--color-border)',
           }}
         >
           <div className="mx-auto max-w-lg">
