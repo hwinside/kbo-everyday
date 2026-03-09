@@ -117,9 +117,15 @@ function RankingContent() {
       .then((r) => r.json())
       .then((data: { stats?: PlayerRow[] }) => {
         const rows: PlayerRow[] = data.stats || [];
-        const filtered = def.type === "batter"
-          ? rows.filter((p) => (p.games || 0) >= 10)
-          : rows.filter((p) => (p.games || 0) >= 5);
+        // 비율 스탯(avg/era/obp/ops/whip/slg)은 KBO 기록실 규정 기준 적용
+        // → 이미 KBO가 규정타석/규정이닝 충족자만 제공하므로 추가 필터 불필요
+        // 누적 스탯(hr/rbi/wins/so 등)은 최소 경기수만 체크
+        const isRateStat = ["avg", "era", "obp", "ops", "whip"].includes(stat);
+        const filtered = isRateStat
+          ? rows // KBO 기록실 데이터 = 이미 규정 충족자만 포함
+          : def.type === "batter"
+            ? rows.filter((p) => (p.games || 0) >= 10)
+            : rows.filter((p) => (p.games || 0) >= 5);
 
         const sorted = [...filtered].sort((a, b) => {
           let aVal = Number(a[def.key] ?? 0) || 0;

@@ -46,6 +46,7 @@ function parseTable(html: string): string[][] {
 }
 
 async function fetchBatterStats(): Promise<PlayerStat[]> {
+  // Basic1: 순위(0) 선수명(1) 팀명(2) AVG(3) G(4) PA(5) AB(6) R(7) H(8) 2B(9) 3B(10) HR(11) TB(12) RBI(13) SAC(14) SF(15)
   const url = `${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=HRA_RT`;
   const html = await fetchHtml(url);
   const rows = parseTable(html);
@@ -54,36 +55,30 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
     const name = c[1] || "";
     const found = roster.find((p) => p.name === name);
     return {
-    rank: i + 1,
-    name: c[1] || "",
-    team: c[2] || "",
-    avg: c[3] || ".000",
-    games: parseInt(c[4]) || 0,
-    pa: parseInt(c[5]) || 0,
-    ab: parseInt(c[6]) || 0,
-    runs: parseInt(c[7]) || 0,
-    hits: parseInt(c[8]) || 0,
-    doubles: parseInt(c[9]) || 0,
-    triples: parseInt(c[10]) || 0,
-    hr: parseInt(c[11]) || 0,
-    rbi: parseInt(c[12]) || 0,
-    sb: parseInt(c[13]) || 0,
-    cs: parseInt(c[14]) || 0,
-    bb: parseInt(c[15]) || 0,
-    hbp: parseInt(c[16]) || 0,
-    so: parseInt(c[17]) || 0,
-    gdp: parseInt(c[18]) || 0,
-    slg: c[19] || ".000",
-    obp: c[20] || ".000",
-    e: parseInt(c[21]) || 0,
-    ops: c[22] || ".000",
-    kboId: found?.kboId || "",
-    playerId: found?.kboId || "",
-  };
+      rank: i + 1,
+      name,
+      team: c[2] || "",
+      avg: c[3] || ".000",
+      games: parseInt(c[4]) || 0,
+      pa: parseInt(c[5]) || 0,
+      ab: parseInt(c[6]) || 0,
+      runs: parseInt(c[7]) || 0,
+      hits: parseInt(c[8]) || 0,
+      doubles: parseInt(c[9]) || 0,
+      triples: parseInt(c[10]) || 0,
+      hr: parseInt(c[11]) || 0,
+      tb: parseInt(c[12]) || 0,
+      rbi: parseInt(c[13]) || 0,
+      sac: parseInt(c[14]) || 0,
+      sf: parseInt(c[15]) || 0,
+      kboId: found?.kboId || "",
+      playerId: found?.kboId || "",
+    };
   });
 }
 
 async function fetchPitcherStats(): Promise<PlayerStat[]> {
+  // 순위(0) 선수명(1) 팀명(2) ERA(3) G(4) W(5) L(6) SV(7) HLD(8) WPCT(9) IP(10) H(11) HR(12) BB(13) HBP(14) SO(15) R(16) ER(17) WHIP(18)
   const url = `${KBO_BASE}/Record/Player/PitcherBasic/Basic1.aspx?sort=ERA_RT`;
   const html = await fetchHtml(url);
   const rows = parseTable(html);
@@ -101,11 +96,16 @@ async function fetchPitcherStats(): Promise<PlayerStat[]> {
       losses: parseInt(c[6]) || 0,
       saves: parseInt(c[7]) || 0,
       holds: parseInt(c[8]) || 0,
+      wpct: c[9] || "0.000",
       ip: c[10] || "0",
+      h: parseInt(c[11]) || 0,
+      hr: parseInt(c[12]) || 0,
+      bb: parseInt(c[13]) || 0,
+      hbp: parseInt(c[14]) || 0,
       so: parseInt(c[15]) || 0,
+      r: parseInt(c[16]) || 0,
       er: parseInt(c[17]) || 0,
       whip: c[18] || "0.00",
-      bb: parseInt(c[14]) || 0,
       kboId: found?.kboId || "",
       playerId: found?.kboId || "",
     };
