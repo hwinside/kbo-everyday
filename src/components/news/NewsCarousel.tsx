@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import type { NewsMock } from "@/lib/constants/news";
 
 interface NewsCarouselProps {
@@ -75,7 +75,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                 className="relative h-[240px] w-full overflow-hidden"
                 style={{
                   background: team
-                    ? `linear-gradient(135deg, ${team.colorPrimary}40 0%, ${team.colorPrimary}15 50%, #0A0A0B 100%)`
+                    ? `linear-gradient(135deg, ${getTeamBgColor(team)}40 0%, ${getTeamBgColor(team)}15 50%, #0A0A0B 100%)`
                     : "linear-gradient(135deg, rgba(99,102,241,0.3) 0%, rgba(99,102,241,0.1) 50%, #0A0A0B 100%)",
                 }}
               >

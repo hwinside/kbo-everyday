@@ -25,7 +25,7 @@ import LiveGameBanner from "@/components/home/LiveGameBanner";
 import PWAInstallBanner from "@/components/ui/PWAInstallBanner";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import TeamBadge from "@/components/ui/TeamBadge";
-import { TEAMS, getTeamById } from "@/lib/constants/teams";
+import { TEAMS, getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { MOCK_NEWS } from "@/lib/constants/news";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
@@ -139,7 +139,8 @@ function HeaderAvatar({ user, profile }: { user: SupabaseUser | null; profile: A
 
   const avatarPath = getAvatarPath(profile.avatar_url);
   const initial = profile.nickname?.charAt(0) || '?';
-  const bgColor = profile.team_id ? (TEAMS.find(t => t.id === profile.team_id)?.colorPrimary ?? '#6366f1') : '#6366f1';
+  const team = profile.team_id ? TEAMS.find(t => t.id === profile.team_id) : undefined;
+  const bgColor = team ? getTeamBgColor(team) : '#6366f1';
 
   if (avatarPath) {
     return (
@@ -168,8 +169,9 @@ function getTeamShortName(teamId: number) {
 function getTeamColor(teamId: number) {
   return TEAMS.find((t) => t.id === teamId)?.colorLight ?? "#999";
 }
-function getTeamBgColor(teamId: number) {
-  return TEAMS.find((t) => t.id === teamId)?.colorPrimary ?? "#666";
+function getTeamBgColorById(teamId: number) {
+  const team = TEAMS.find((t) => t.id === teamId);
+  return team ? getTeamBgColor(team) : "#666";
 }
 
 function getTeamLogo(teamId: number) {
@@ -529,11 +531,11 @@ export default function HomePage() {
             onClick={() => setShowPlayerSelect(true)}
             className="w-full p-4 rounded-2xl flex items-center gap-3 transition-colors"
             style={{ 
-              background: `${getTeamBgColor(myTeamId)}12`,
+              background: `${getTeamBgColorById(myTeamId)}12`,
               border: `1px solid ${getTeamColor(myTeamId)}20`,
             }}
           >
-            <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: `${getTeamBgColor(myTeamId)}25` }}>
+            <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: `${getTeamBgColorById(myTeamId)}25` }}>
               <span className="text-lg">⭐</span>
             </div>
             <div className="flex-1 text-left">
@@ -551,7 +553,7 @@ export default function HomePage() {
           <Link href={`/games/${myTeamGame.id}`}>
             <div
               className="relative rounded-2xl p-5 overflow-hidden border border-white/10 bg-bg-secondary"
-              style={{ background: `linear-gradient(135deg, ${myTeam.colorPrimary}50 0%, #1a1a1d 100%)` }}
+              style={{ background: `linear-gradient(135deg, ${getTeamBgColor(myTeam)}50 0%, #1a1a1d 100%)` }}
             >
               {/* Team logo watermark */}
               <div className="absolute right-3 top-3 opacity-15">
@@ -635,7 +637,7 @@ export default function HomePage() {
                 <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
                   <div
                     className="min-w-[160px] rounded-2xl p-3 flex flex-col items-center gap-2"
-                    style={{ background: `linear-gradient(135deg, ${team?.colorPrimary}20, ${team?.colorPrimary}08)` }}
+                    style={{ background: `linear-gradient(135deg, ${team ? getTeamBgColor(team) : '#666'}20, ${team ? getTeamBgColor(team) : '#666'}08)` }}
                   >
                     <PlayerAvatar
                       name={player.name}
