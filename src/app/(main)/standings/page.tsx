@@ -302,48 +302,48 @@ export default function StandingsPage() {
 
   return (
     <div className="mx-auto max-w-lg px-5">
-      <div className="border-b pb-3 mb-2" style={{ borderColor: myTeamId ? `${getTeamById(myTeamId)?.colorPrimary}40` : 'var(--color-border)' }}>
+      <div className="border-b" style={{ borderColor: myTeamId ? `${getTeamById(myTeamId)?.colorPrimary}40` : 'var(--color-border)' }}>
         <header className="py-3 flex items-center gap-3">
           <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
           <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">순위</h1>
           <HeaderProfileLink />
         </header>
+      </div>
 
-        {/* Season + Main tabs */}
-        <div className="flex items-center gap-2">
-        {([2025, 2026] as const).map(y => (
-          <button
-            key={y}
-            onClick={() => setSeason(y)}
-            className={clsx(
-              "px-3 py-1 rounded-full text-xs font-semibold transition-all",
-              season === y ? "bg-accent text-white" : "bg-bg-tertiary text-text-tertiary"
-            )}
-          >
-            {y} 시즌
-          </button>
-        ))}
-        </div>
-        <div className="flex gap-2 mt-2">
-        {([
-          { id: "team" as MainTab, label: "구단 순위" },
-          { id: "batter" as MainTab, label: "타자 타이틀" },
-          { id: "pitcher" as MainTab, label: "투수 타이틀" },
-        ]).map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setMainTab(tab.id)}
-            className={clsx(
-              "px-4 py-1.5 text-xs font-semibold rounded-full transition-all",
-              mainTab === tab.id
-                ? "bg-accent text-white"
-                : "bg-bg-tertiary text-text-tertiary"
-            )}
-          >
-            {tab.label}
-          </button>
-        ))}
-        </div>
+      {/* Season + Main tabs */}
+      <div className="flex items-center gap-2 mt-2">
+      {([2025, 2026] as const).map(y => (
+        <button
+          key={y}
+          onClick={() => setSeason(y)}
+          className={clsx(
+            "px-3 py-1 rounded-full text-xs font-semibold transition-all",
+            season === y ? "bg-accent text-white" : "bg-bg-tertiary text-text-tertiary"
+          )}
+        >
+          {y} 시즌
+        </button>
+      ))}
+      </div>
+      <div className="flex gap-2 mt-2 mb-3">
+      {([
+        { id: "team" as MainTab, label: "구단 순위" },
+        { id: "batter" as MainTab, label: "타자 타이틀" },
+        { id: "pitcher" as MainTab, label: "투수 타이틀" },
+      ]).map((tab) => (
+        <button
+          key={tab.id}
+          onClick={() => setMainTab(tab.id)}
+          className={clsx(
+            "px-4 py-1.5 text-xs font-semibold rounded-full transition-all",
+            mainTab === tab.id
+              ? "bg-accent text-white"
+              : "bg-bg-tertiary text-text-tertiary"
+          )}
+        >
+          {tab.label}
+        </button>
+      ))}
       </div>
 
       {season === 2026 ? (
