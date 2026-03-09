@@ -190,8 +190,8 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                 style={{ borderColor: teamColor ? `${teamColor}80` : 'rgba(255,255,255,0.15)' }}
                 onKeyDown={e => e.key === "Enter" && handleComment()}
               />
-              <button onClick={handleComment} disabled={!comment.trim() || !user} className="disabled:opacity-30" style={{ color: (post.team_id ? getTeamById(post.team_id)?.colorLight : undefined) || teamColor || 'var(--color-accent)' }}>
-                <Send size={20} />
+              <button onClick={handleComment} disabled={!comment.trim() || !user} className="w-9 h-9 rounded-full flex items-center justify-center text-white disabled:opacity-30 transition-opacity" style={{ backgroundColor: (post.team_id ? getTeamById(post.team_id)?.colorLight : undefined) || teamColor || 'var(--color-accent)' }}>
+                <Send size={16} />
               </button>
             </>
           );
