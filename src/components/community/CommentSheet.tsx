@@ -289,8 +289,8 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                         handleSubmit();
                       }
                     }}
-                    placeholder="댓글 달기..."
-                    className="flex-1 bg-bg-secondary rounded-full px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary outline-none border"
+                    placeholder="댓글을 입력하세요"
+                    className="flex-1 bg-bg-tertiary rounded-full px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary outline-none border"
                     style={{ borderColor: teamId ? `${getTeamById(teamId)?.colorPrimary}80` : 'rgba(255,255,255,0.15)' }}
                   />
                 ) : (

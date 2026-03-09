@@ -80,7 +80,7 @@ export default function MyPage() {
       </div>
 
       {/* Profile card */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-4">
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
         <GlassCard className="p-5">
           <div className="flex items-center gap-4">
             <button
