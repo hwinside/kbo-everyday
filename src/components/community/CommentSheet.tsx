@@ -11,11 +11,14 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { supabase } from "@/lib/supabase/client";
 import type { Comment } from "@/lib/supabase/usePosts";
+import { getTeamById } from "@/lib/constants/teams";
 
 interface CommentSheetProps {
   isOpen: boolean;
   onClose: () => void;
   postId: number | null;
+  /** 팀 컬러 적용용 */
+  teamId?: number | null;
   /** 댓글 작성 성공 시 부모에게 알림 (comment_count 동기화용) */
   onCommentAdded?: (postId: number) => void;
 }
@@ -36,7 +39,7 @@ function getGradeInfo(gradeId?: string) {
   return GRADES.find((g) => g.id === gradeId) ?? GRADES[0];
 }
 
-export default function CommentSheet({ isOpen, onClose, postId, onCommentAdded }: CommentSheetProps) {
+export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommentAdded }: CommentSheetProps) {
   const [input, setInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -287,7 +290,8 @@ export default function CommentSheet({ isOpen, onClose, postId, onCommentAdded }
                       }
                     }}
                     placeholder="댓글 달기..."
-                    className="flex-1 bg-bg-tertiary rounded-full px-4 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-accent/50"
+                    className="flex-1 bg-bg-tertiary rounded-full px-4 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary outline-none border"
+                    style={{ borderColor: teamId ? `${getTeamById(teamId)?.colorPrimary}60` : 'transparent' }}
                   />
                 ) : (
                   <button
@@ -300,7 +304,8 @@ export default function CommentSheet({ isOpen, onClose, postId, onCommentAdded }
                 <button
                   onClick={handleSubmit}
                   disabled={!input.trim() || submitting || !user}
-                  className="flex items-center justify-center w-9 h-9 rounded-full bg-accent text-white disabled:opacity-30 transition-opacity"
+                  className="flex items-center justify-center w-9 h-9 rounded-full text-white disabled:opacity-30 transition-opacity"
+                  style={{ backgroundColor: teamId ? getTeamById(teamId)?.colorPrimary : 'var(--color-accent)' }}
                 >
                   <Send size={16} />
                 </button>

@@ -181,6 +181,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   const [likedPosts, setLikedPosts] = useState<Set<number>>(new Set());
   const [heartPostId, setHeartPostId] = useState<number | null>(null);
   const [commentPostId, setCommentPostId] = useState<number | null>(null);
+  const [commentTeamId, setCommentTeamId] = useState<number | null>(null);
   // 댓글 추가 시 로컬 카운트 보정값
   const [commentDeltas, setCommentDeltas] = useState<Record<number, number>>({});
 
@@ -288,7 +289,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   </span>
                 </button>
                 <button
-                  onClick={() => setCommentPostId(post.id)}
+                  onClick={() => { setCommentPostId(post.id); setCommentTeamId(post.team_id ?? null); }}
                   className="flex items-center gap-1 text-base text-text-secondary"
                 >
                   <MessageCircle size={20} />
@@ -301,7 +302,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 <CaptionBlock
                   nickname={post.nickname || "익명"}
                   content={post.content}
-                  onPress={() => setCommentPostId(post.id)}
+                  onPress={() => { setCommentPostId(post.id); setCommentTeamId(post.team_id ?? null); }}
                 />
               )}
             </div>
@@ -311,8 +312,9 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
       {commentPostId !== null && (
         <CommentSheet
           isOpen={true}
-          onClose={() => setCommentPostId(null)}
+          onClose={() => { setCommentPostId(null); setCommentTeamId(null); }}
           postId={commentPostId}
+          teamId={commentTeamId}
           onCommentAdded={(postId) => {
             setCommentDeltas((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }));
           }}
