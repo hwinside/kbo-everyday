@@ -332,7 +332,12 @@ function CaptionBlock({ nickname, content, onPress }: { nickname: string; conten
 
   useEffect(() => {
     const el = textRef.current;
-    if (el) setClamped(el.scrollHeight > el.clientHeight + 2);
+    if (!el) return;
+    // line-clamp가 적용된 상태에서 높이 비교로 clamped 판단
+    // 약간의 딜레이를 줘서 렌더 후 측정
+    requestAnimationFrame(() => {
+      setClamped(el.scrollHeight > el.clientHeight + 2);
+    });
   }, [content]);
 
   return (
