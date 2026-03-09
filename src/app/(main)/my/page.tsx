@@ -16,6 +16,7 @@ import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getTeamById } from "@/lib/constants/teams";
 import { getMyTeamId, setMyTeamId } from "@/lib/store/myteam";
+import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { usePushNotification } from "@/lib/hooks/usePushNotification";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { updateProfile } from "@/lib/supabase/auth";
@@ -71,8 +72,8 @@ export default function MyPage() {
 
   return (
     <div className="mx-auto max-w-lg px-5 pb-24">
-      <header className="flex items-center justify-between py-5">
-        <h1 className="text-xl font-bold text-text-primary">MY</h1>
+      <header className="flex items-center justify-between py-5 border-b -mx-5 px-5" style={{ borderColor: profile?.team_id ? getTeamBorderColorById(profile.team_id) : 'var(--color-border)' }}>
+        <h1 className="text-xl font-bold text-text-primary">마이페이지</h1>
       </header>
 
       {/* Profile card */}
