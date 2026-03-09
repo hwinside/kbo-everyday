@@ -156,7 +156,7 @@ export default function StadiumDetailPage() {
           className="inline-flex items-center gap-1 text-text-secondary mb-3"
         >
           <ArrowLeft size={20} />
-          <span className="text-sm">구장</span>
+          <span className="text-lg font-semibold">구장</span>
         </Link>
         <div className="flex items-center gap-3 mb-2">
           {teams.map((t) => (

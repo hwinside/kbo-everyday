@@ -81,13 +81,15 @@ export default function CommunityLayout({
         !pathname.includes("/posts/"))
   );
 
-  // Stadium detail is a dedicated page — hide the community tabs to avoid "tab under tab"
-  const hideCommunityTabs =
-    pathname.startsWith("/community/stadiums/") && pathname !== "/community/stadiums";
+  // 상세 페이지에서는 1뎁스 헤더+탭 전체 숨김
+  const isDetailPage =
+    pathname.includes("/posts/") ||
+    (pathname.startsWith("/community/stadiums/") && pathname !== "/community/stadiums") ||
+    (pathname.startsWith("/community/free/") && pathname !== "/community/free");
 
   return (
     <div>
-      {isHubLevel && !hideCommunityTabs && (
+      {isHubLevel && !isDetailPage && (
         <div
           className="sticky top-0 z-30 bg-bg-primary border-b border-border"
           // main layout already applies safe-area padding-top. Here we keep the notch-safe background
