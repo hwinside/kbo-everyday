@@ -6,7 +6,8 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { ChevronLeft, MessageSquare, Users, User, Ticket, MapPin } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
-import { getTeamBySlug } from "@/lib/constants/teams";
+import { getTeamById, getTeamBySlug } from "@/lib/constants/teams";
+import { useAuth } from "@/lib/supabase/AuthContext";
 
 const COMMUNITY_TABS = [
   { key: "teams", label: "팀", href: "/community/teams", icon: Users },
@@ -23,6 +24,7 @@ export default function CommunityLayout({
 }) {
   const pathname = usePathname();
   const router = useRouter();
+  const { profile } = useAuth();
 
   useEffect(() => {
     // 새 탭에서 /community 직접 진입 + 서버 redirect로 /community/teams로 온 케이스는
@@ -73,10 +75,12 @@ export default function CommunityLayout({
     router.push("/");
   }
 
-  // Extract team color from pathname (e.g. /community/teams/lg-twins)
+  // Extract team color: URL team → fallback to user's myTeam
   const teamSlugMatch = pathname.match(/^\/community\/teams\/([^/]+)/);
   const currentTeam = teamSlugMatch ? getTeamBySlug(teamSlugMatch[1]) : undefined;
-  const headerBorderColor = currentTeam?.colorPrimary ? `${currentTeam.colorPrimary}40` : undefined;
+  const myTeam = profile?.team_id ? getTeamById(profile.team_id) : undefined;
+  const headerTeam = currentTeam || myTeam;
+  const headerBorderColor = headerTeam?.colorPrimary ? `${headerTeam.colorPrimary}40` : undefined;
 
   // Only show tabs on top-level community pages, not deep nested (e.g. post detail)
   const isHubLevel = COMMUNITY_TABS.some(
