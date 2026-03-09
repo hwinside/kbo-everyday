@@ -7,7 +7,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { clsx } from "clsx";
-import { TEAMS } from "@/lib/constants/teams";
+import { TEAMS, getTeamById } from "@/lib/constants/teams";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { getFavoritePlayers } from "@/lib/store/favorites";
@@ -302,14 +302,15 @@ export default function StandingsPage() {
 
   return (
     <div className="mx-auto max-w-lg px-5">
-      <header className="py-3 flex items-center gap-3">
-        <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
-        <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">순위</h1>
-        <HeaderProfileLink />
-      </header>
+      <div className="border-b pb-3 mb-2" style={{ borderColor: myTeamId ? `${getTeamById(myTeamId)?.colorPrimary}40` : 'var(--color-border)' }}>
+        <header className="py-3 flex items-center gap-3">
+          <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
+          <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">순위</h1>
+          <HeaderProfileLink />
+        </header>
 
-      {/* Season + Main tabs */}
-      <div className="flex items-center gap-2 mb-3">
+        {/* Season + Main tabs */}
+        <div className="flex items-center gap-2">
         {([2025, 2026] as const).map(y => (
           <button
             key={y}
@@ -322,8 +323,8 @@ export default function StandingsPage() {
             {y} 시즌
           </button>
         ))}
-      </div>
-      <div className="flex gap-2 mb-4">
+        </div>
+        <div className="flex gap-2 mt-2">
         {([
           { id: "team" as MainTab, label: "구단 순위" },
           { id: "batter" as MainTab, label: "타자 타이틀" },
@@ -342,6 +343,7 @@ export default function StandingsPage() {
             {tab.label}
           </button>
         ))}
+        </div>
       </div>
 
       {season === 2026 ? (

@@ -42,6 +42,11 @@ export default function GamesPage() {
   const isPreseason = PRESEASON_DATES.includes(selectedDate);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [myTeamId, setMyTeamId] = useState<number | null>(null);
+
+  useEffect(() => {
+    setMyTeamId(getMyTeamId());
+  }, []);
 
   async function loadGames(date: string) {
     setLoading(true);
@@ -135,21 +140,23 @@ export default function GamesPage() {
 
   return (
     <div className="mx-auto max-w-lg">
-      <div className="flex items-center gap-3 px-5 py-3">
-        <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
-          <ChevronLeft size={24} />
-        </button>
-        <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">경기</h1>
-        <button
-          onClick={() => loadGames(selectedDate)}
-          className="p-2 rounded-full text-text-tertiary hover:bg-bg-tertiary transition-colors"
-        >
-          <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-        </button>
-        <HeaderProfileLink />
-      </div>
+      <div className="border-b pb-1" style={{ borderColor: myTeamId ? `${getTeamById(myTeamId)?.colorPrimary}40` : 'var(--color-border)' }}>
+        <div className="flex items-center gap-3 px-5 py-3">
+          <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
+            <ChevronLeft size={24} />
+          </button>
+          <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">경기</h1>
+          <button
+            onClick={() => loadGames(selectedDate)}
+            className="p-2 rounded-full text-text-tertiary hover:bg-bg-tertiary transition-colors"
+          >
+            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+          </button>
+          <HeaderProfileLink />
+        </div>
 
-      <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
+        <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
+      </div>
 
       {loading && games.length === 0 ? (
         <div className="flex items-center justify-center py-20">
