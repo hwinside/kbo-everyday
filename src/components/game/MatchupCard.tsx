@@ -18,11 +18,30 @@ function getPlayerHref(name: string): string | null {
   return `/teams/${team.slug}/players/${player.kboId}`;
 }
 
+interface PitcherTodayStats {
+  pitchCount: number;
+  strikeouts: number;
+  walks: number;
+  hits: number;
+  earnedRuns: number;
+  era: string;
+}
+
+interface BatterTodayStats {
+  atBats: number;
+  hits: number;
+  runs: number;
+  rbi: number;
+  avg: string;
+}
+
 interface MatchupCardProps {
   currentPitcher: string | null;
   currentBatter: string | null;
   pitcherEra?: string;
   batterAvg?: string;
+  pitcherToday?: PitcherTodayStats | null;
+  batterToday?: BatterTodayStats | null;
 }
 
 function lookupBatterAvg(name: string): string | null {
@@ -65,6 +84,8 @@ export default function MatchupCard({
   currentBatter,
   pitcherEra,
   batterAvg,
+  pitcherToday,
+  batterToday,
 }: MatchupCardProps) {
   if (!currentPitcher && !currentBatter) return null;
 
@@ -88,18 +109,28 @@ export default function MatchupCard({
               );
             })()}
             <div className="mt-0.5 leading-relaxed">
-              <div className="flex gap-1.5 text-[11px]">
-                <span className="text-[#ccc] font-semibold">72구</span>
-                <span className="text-[#4caf50]">B <b>40</b></span>
-                <span className="text-[#ffc107]">S <b>32</b></span>
-              </div>
-              <div className="flex gap-1.5 text-[11px]">
-                <span className="text-[#e53935]">K <b>6</b></span>
-                <span className="text-[#64b5f6]">BB <b>3</b></span>
-                {resolvedEra && (
-                  <span className="text-[#888]">ERA {resolvedEra}</span>
-                )}
-              </div>
+              {pitcherToday ? (
+                <>
+                  <div className="flex gap-1.5 text-[11px]">
+                    <span className="text-[#ccc] font-semibold">{pitcherToday.pitchCount}구</span>
+                    <span className="text-[#e53935]">K <b>{pitcherToday.strikeouts}</b></span>
+                    <span className="text-[#64b5f6]">BB <b>{pitcherToday.walks}</b></span>
+                  </div>
+                  <div className="flex gap-1.5 text-[11px]">
+                    <span className="text-[#ff7043]">H <b>{pitcherToday.hits}</b></span>
+                    <span className="text-[#ffc107]">ER <b>{pitcherToday.earnedRuns}</b></span>
+                    {resolvedEra && (
+                      <span className="text-[#888]">ERA {resolvedEra}</span>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="flex gap-1.5 text-[11px]">
+                  {resolvedEra && (
+                    <span className="text-[#888]">ERA {resolvedEra}</span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -122,18 +153,27 @@ export default function MatchupCard({
               );
             })()}
             <div className="mt-0.5 leading-relaxed">
-              <div className="flex gap-1.5 text-[11px] justify-end">
-                {resolvedAvg && (
-                  <span className="text-[#4fc3f7] font-semibold">{resolvedAvg}</span>
-                )}
-                <span className="text-[#ccc]">2타수</span>
-                <span className="text-[#4caf50]">1안타</span>
-                <span className="text-[#ffd600]">1득점</span>
-              </div>
-              <div className="flex gap-1.5 text-[11px] justify-end">
-                <span className="text-[#ff7043]">1홈런</span>
-                <span className="text-[#64b5f6]">1볼넷</span>
-              </div>
+              {batterToday ? (
+                <>
+                  <div className="flex gap-1.5 text-[11px] justify-end">
+                    {resolvedAvg && (
+                      <span className="text-[#4fc3f7] font-semibold">{resolvedAvg}</span>
+                    )}
+                    <span className="text-[#ccc]">{batterToday.atBats}타수</span>
+                    <span className="text-[#4caf50]">{batterToday.hits}안타</span>
+                  </div>
+                  <div className="flex gap-1.5 text-[11px] justify-end">
+                    <span className="text-[#ffd600]">{batterToday.runs}득점</span>
+                    <span className="text-[#ff7043]">{batterToday.rbi}타점</span>
+                  </div>
+                </>
+              ) : (
+                <div className="flex gap-1.5 text-[11px] justify-end">
+                  {resolvedAvg && (
+                    <span className="text-[#4fc3f7] font-semibold">{resolvedAvg}</span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           <PlayerPhoto name={currentBatter} type="batter" />

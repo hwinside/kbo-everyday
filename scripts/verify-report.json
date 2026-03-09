@@ -1,0 +1,149 @@
+{
+  "total": 684,
+  "verified": 355,
+  "noRecord": 329,
+  "nameMatch": 355,
+  "nameMismatch": [],
+  "teamMismatch": [
+    {
+      "kboId": "65769",
+      "name": "김범수",
+      "ourTeam": "KIA",
+      "kboTeam": "한화"
+    },
+    {
+      "kboId": "55267",
+      "name": "홍민규",
+      "ourTeam": "KIA",
+      "kboTeam": "두산"
+    },
+    {
+      "kboId": "76290",
+      "name": "김현수",
+      "ourTeam": "KT",
+      "kboTeam": "LG"
+    },
+    {
+      "kboId": "50901",
+      "name": "안인산",
+      "ourTeam": "KT",
+      "kboTeam": "NC"
+    },
+    {
+      "kboId": "66606",
+      "name": "최원준",
+      "ourTeam": "KT",
+      "kboTeam": "NC"
+    },
+    {
+      "kboId": "63722",
+      "name": "한승택",
+      "ourTeam": "KT",
+      "kboTeam": "KIA"
+    },
+    {
+      "kboId": "50092",
+      "name": "윤준혁",
+      "ourTeam": "NC",
+      "kboTeam": "KT"
+    },
+    {
+      "kboId": "55359",
+      "name": "김서준",
+      "ourTeam": "고양",
+      "kboTeam": "키움"
+    },
+    {
+      "kboId": "53309",
+      "name": "서유신",
+      "ourTeam": "고양",
+      "kboTeam": "키움"
+    },
+    {
+      "kboId": "54363",
+      "name": "손현기",
+      "ourTeam": "고양",
+      "kboTeam": "키움"
+    },
+    {
+      "kboId": "67365",
+      "name": "양지율",
+      "ourTeam": "고양",
+      "kboTeam": "키움"
+    },
+    {
+      "kboId": "54307",
+      "name": "원성준",
+      "ourTeam": "고양",
+      "kboTeam": "키움"
+    },
+    {
+      "kboId": "55396",
+      "name": "윤현",
+      "ourTeam": "고양",
+      "kboTeam": "키움"
+    },
+    {
+      "kboId": "50036",
+      "name": "이강준",
+      "ourTeam": "고양",
+      "kboTeam": "키움"
+    },
+    {
+      "kboId": "54305",
+      "name": "이재상",
+      "ourTeam": "고양",
+      "kboTeam": "키움"
+    },
+    {
+      "kboId": "51302",
+      "name": "이주형",
+      "ourTeam": "고양",
+      "kboTeam": "키움"
+    },
+    {
+      "kboId": "64646",
+      "name": "박찬호",
+      "ourTeam": "두산",
+      "kboTeam": "KIA"
+    },
+    {
+      "kboId": "62754",
+      "name": "임기영",
+      "ourTeam": "삼성",
+      "kboTeam": "KIA"
+    },
+    {
+      "kboId": "63202",
+      "name": "장승현",
+      "ourTeam": "삼성",
+      "kboTeam": "두산"
+    },
+    {
+      "kboId": "72443",
+      "name": "최형우",
+      "ourTeam": "삼성",
+      "kboTeam": "KIA"
+    },
+    {
+      "kboId": "63512",
+      "name": "박진형",
+      "ourTeam": "키움",
+      "kboTeam": "롯데"
+    },
+    {
+      "kboId": "68362",
+      "name": "추재현",
+      "ourTeam": "키움",
+      "kboTeam": "두산"
+    },
+    {
+      "kboId": "68050",
+      "name": "강백호",
+      "ourTeam": "한화",
+      "kboTeam": "KT"
+    }
+  ],
+  "errors": [],
+  "statIssues": []
+}

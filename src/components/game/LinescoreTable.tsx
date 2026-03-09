@@ -5,6 +5,13 @@ import { clsx } from "clsx";
 import type { GameInning } from "@/lib/types";
 import type { TeamData } from "@/lib/constants/teams";
 
+interface LinescoreSide {
+  innings: (number | null)[];
+  R: number;
+  H: number;
+  E: number;
+}
+
 interface LinescoreTableProps {
   awayTeam: TeamData;
   homeTeam: TeamData;
@@ -16,6 +23,8 @@ interface LinescoreTableProps {
   homeHits?: number;
   awayErrors?: number;
   homeErrors?: number;
+  /** Real linescore data from API — overrides innings/hits/errors when provided */
+  linescore?: { away: LinescoreSide; home: LinescoreSide } | null;
 }
 
 export default function LinescoreTable({
@@ -29,18 +38,37 @@ export default function LinescoreTable({
   homeHits = 5,
   awayErrors = 0,
   homeErrors = 1,
+  linescore,
 }: LinescoreTableProps) {
   const maxInning = 9;
   const currentInningNum = currentInning
     ? parseInt(currentInning.replace(/[^0-9]/g, ""))
     : 0;
 
+  // When linescore is provided, use it directly
+  const useLive = !!linescore;
+  const totalInnings = useLive
+    ? Math.max(maxInning, linescore!.away.innings.length, linescore!.home.innings.length)
+    : Math.max(maxInning, innings.length);
+
   const inningNumbers = Array.from(
-    { length: Math.max(maxInning, innings.length) },
+    { length: totalInnings },
     (_, i) => i + 1
   );
 
+  const resolvedAwayHits = useLive ? linescore!.away.H : awayHits;
+  const resolvedHomeHits = useLive ? linescore!.home.H : homeHits;
+  const resolvedAwayErrors = useLive ? linescore!.away.E : awayErrors;
+  const resolvedHomeErrors = useLive ? linescore!.home.E : homeErrors;
+  const resolvedAwayScore = useLive ? linescore!.away.R : awayScore;
+  const resolvedHomeScore = useLive ? linescore!.home.R : homeScore;
+
   function getInningScore(inning: number, isTop: boolean): string {
+    if (useLive) {
+      const side = isTop ? linescore!.away : linescore!.home;
+      const val = side.innings[inning - 1];
+      return val !== null && val !== undefined ? String(val) : "";
+    }
     const data = innings.find((i) => i.inning === inning);
     if (!data) return "";
     const score = isTop ? data.topScore : data.bottomScore;
@@ -99,9 +127,9 @@ export default function LinescoreTable({
                   </td>
                 );
               })}
-              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{awayScore}</td>
-              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{awayHits}</td>
-              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{awayErrors}</td>
+              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{resolvedAwayScore}</td>
+              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{resolvedAwayHits}</td>
+              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{resolvedAwayErrors}</td>
             </tr>
             {/* Home */}
             <tr className="border-b border-[#1a1a2e]">
@@ -127,9 +155,9 @@ export default function LinescoreTable({
                   </td>
                 );
               })}
-              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{homeScore}</td>
-              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{homeHits}</td>
-              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{homeErrors}</td>
+              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{resolvedHomeScore}</td>
+              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{resolvedHomeHits}</td>
+              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{resolvedHomeErrors}</td>
             </tr>
           </tbody>
         </table>

@@ -11,11 +11,11 @@ import {
   getGameById,
   getInningsForGame,
   getPlaysForGame,
-  MOCK_GAME_STATE,
-  MOCK_LINEUP,
 } from "@/lib/constants/games";
 import { getStatsForGame } from "@/lib/constants/game-stats";
 import { useLiveGame } from "@/lib/hooks/useLiveGame";
+import { useGameDetail } from "@/lib/hooks/useGameDetail";
+import type { LineupEntry, BatterRecord, PitcherRecord } from "@/lib/hooks/useGameDetail";
 
 import ScoreBar from "@/components/game/ScoreBar";
 import TeamLogo from "@/components/ui/TeamLogo";
@@ -47,6 +47,7 @@ export default function GameDetailPage() {
   const [activeTab, setActiveTab] = useState<Tab>("chat");
   const [aiOpen, setAiOpen] = useState(false);
   const { game: liveGame } = useLiveGame(gameId, 15000);
+  const { data: gameDetail } = useGameDetail(gameId, 30000);
 
   const game = getGameById(gameId);
   if (!game) {
@@ -61,8 +62,6 @@ export default function GameDetailPage() {
   const awayTeam = getTeamById(game.awayTeamId)!;
   const innings = getInningsForGame(gameId);
   const plays = getPlaysForGame(gameId);
-  const gameState = game.id === MOCK_GAME_STATE.gameId ? MOCK_GAME_STATE : null;
-  const lineup = game.id === MOCK_LINEUP.gameId ? MOCK_LINEUP : null;
   const gameStats = getStatsForGame(gameId);
 
   const isTopInning = game.inning?.includes("초");
@@ -70,29 +69,43 @@ export default function GameDetailPage() {
     ? awayTeam.colorPrimary
     : homeTeam.colorPrimary;
 
-  // Resolve live state
-  const currentBalls = liveGame?.balls ?? gameState?.balls ?? 0;
-  const currentStrikes = liveGame?.strikes ?? gameState?.strikes ?? 0;
-  const currentOuts = liveGame?.outs ?? gameState?.outs ?? 0;
-  const currentRunner1b = liveGame?.runner1b ?? gameState?.runner1b ?? false;
-  const currentRunner2b = liveGame?.runner2b ?? gameState?.runner2b ?? false;
-  const currentRunner3b = liveGame?.runner3b ?? gameState?.runner3b ?? false;
-  const currentBatter = liveGame?.currentBatter ?? gameState?.currentBatter ?? null;
-  const currentPitcher = liveGame?.currentPitcher ?? gameState?.currentPitcher ?? null;
+  // Resolve live state (useLiveGame = BSO/runners/scores, useGameDetail = linescore/lineup/boxscore)
+  const currentBalls = liveGame?.balls ?? 0;
+  const currentStrikes = liveGame?.strikes ?? 0;
+  const currentOuts = liveGame?.outs ?? 0;
+  const currentRunner1b = liveGame?.runner1b ?? false;
+  const currentRunner2b = liveGame?.runner2b ?? false;
+  const currentRunner3b = liveGame?.runner3b ?? false;
+  const currentBatter = liveGame?.currentBatter ?? null;
+  const currentPitcher = liveGame?.currentPitcher ?? null;
   const currentInning = liveGame?.currentInning || game.inning || "";
   const awayScore = liveGame?.awayScore ?? game.awayScore;
   const homeScore = liveGame?.homeScore ?? game.homeScore;
 
-  // Determine defensive side for field view
+  // Determine defensive side from gameDetail lineup
   const isTop = currentInning.includes("초");
-  const defensiveSide = isTop ? lineup?.home : lineup?.away;
+  const detailLineup = gameDetail?.lineup;
 
-  // On-deck batters
+  // Convert LineupEntry[] to the shape FieldViewV2 expects
+  function toDefenders(entries: LineupEntry[]) {
+    return entries.map(e => ({
+      order: e.order,
+      name: e.name,
+      position: e.position,
+      avg: "",
+    }));
+  }
+
+  const defensiveSide = detailLineup
+    ? (isTop ? toDefenders(detailLineup.home) : toDefenders(detailLineup.away))
+    : null;
+
+  // On-deck batters from lineup
   const onDeckBatters = (() => {
-    if (!currentBatter || !lineup) return undefined;
-    const inAway = lineup.away.batters.some((b) => b.name === currentBatter);
-    const batters = inAway ? lineup.away.batters : lineup.home.batters;
-    const currentIndex = batters.findIndex((b) => b.name === currentBatter);
+    if (!currentBatter || !detailLineup) return undefined;
+    const inAway = detailLineup.away.some((b: LineupEntry) => b.name === currentBatter);
+    const batters = inAway ? detailLineup.away : detailLineup.home;
+    const currentIndex = batters.findIndex((b: LineupEntry) => b.name === currentBatter);
     if (currentIndex === -1) return undefined;
     const next: { order: number; name: string }[] = [];
     for (let i = 1; i <= 3; i++) {
@@ -102,18 +115,30 @@ export default function GameDetailPage() {
     return next;
   })();
 
-  // Pitcher ERA from lineup
-  const pitcherSide = isTop ? lineup?.home : lineup?.away;
-  const pitcherEra = pitcherSide?.startingPitcher.era;
+  // Pitcher today stats from boxScore
+  const pitcherToday = (() => {
+    if (!currentPitcher || !gameDetail?.boxScore) return null;
+    const allPitchers = [
+      ...(gameDetail.boxScore.awayPitchers || []),
+      ...(gameDetail.boxScore.homePitchers || []),
+    ];
+    return allPitchers.find((p: PitcherRecord) => p.name === currentPitcher) ?? null;
+  })();
 
-  // Batter AVG from lineup
-  const batterData =
-    lineup?.away.batters.find((b) => b.name === currentBatter) ||
-    lineup?.home.batters.find((b) => b.name === currentBatter);
-  const batterAvg = batterData?.avg;
-  const batterBats = batterData?.bats ?? null;
+  // Batter today stats from boxScore
+  const batterToday = (() => {
+    if (!currentBatter || !gameDetail?.boxScore) return null;
+    const allBatters = [
+      ...(gameDetail.boxScore.awayBatters || []),
+      ...(gameDetail.boxScore.homeBatters || []),
+    ];
+    return allBatters.find((b: BatterRecord) => b.name === currentBatter) ?? null;
+  })();
 
-  const isLive = game.status === "live" && gameState;
+  const pitcherEra = pitcherToday?.era;
+  const batterAvg = batterToday?.avg;
+
+  const isLive = liveGame?.isLive || game.status === "live";
 
   return (
     <div className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto pb-[104px] max-w-[640px] mx-auto w-full">
@@ -165,7 +190,7 @@ export default function GameDetailPage() {
       )}
 
       {/* ===== Linescore Table ===== */}
-      {innings.length > 0 && (
+      {(gameDetail?.linescore || innings.length > 0) && (
         <LinescoreTable
           awayTeam={awayTeam}
           homeTeam={homeTeam}
@@ -173,23 +198,23 @@ export default function GameDetailPage() {
           awayScore={awayScore}
           homeScore={homeScore}
           currentInning={currentInning}
+          linescore={gameDetail?.linescore}
         />
       )}
 
       {/* ===== Field View (live with lineup) ===== */}
       {isLive && defensiveSide ? (
         <FieldViewV2
-          defenders={defensiveSide.batters}
+          defenders={defensiveSide}
           currentPitcher={currentPitcher}
           currentBatter={currentBatter}
           runner1b={currentRunner1b}
           runner2b={currentRunner2b}
           runner3b={currentRunner3b}
-          runner1bName={gameState?.runner1bName}
-          runner2bName={gameState?.runner2bName}
-          runner3bName={gameState?.runner3bName}
+          runner1bName={liveGame?.runner1bName}
+          runner2bName={liveGame?.runner2bName}
+          runner3bName={liveGame?.runner3bName}
           onDeckBatters={onDeckBatters}
-          batterBats={batterBats}
           balls={currentBalls}
           strikes={currentStrikes}
           outs={currentOuts}
@@ -215,6 +240,8 @@ export default function GameDetailPage() {
           currentBatter={currentBatter}
           pitcherEra={pitcherEra}
           batterAvg={batterAvg}
+          pitcherToday={pitcherToday}
+          batterToday={batterToday}
         />
       )}
 
@@ -296,8 +323,40 @@ export default function GameDetailPage() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
             >
-              {lineup ? (
-                <LineupTab lineup={lineup} awayTeam={awayTeam} homeTeam={homeTeam} />
+              {detailLineup ? (
+                <LineupTab
+                  lineup={{
+                    gameId,
+                    away: {
+                      teamId: game.awayTeamId,
+                      startingPitcher: {
+                        name: gameDetail?.boxScore?.awayPitchers?.[0]?.name ?? "",
+                        era: gameDetail?.boxScore?.awayPitchers?.[0]?.era ?? "-",
+                      },
+                      batters: detailLineup.away.map((e: LineupEntry) => ({
+                        order: e.order,
+                        name: e.name,
+                        position: e.position,
+                        avg: "",
+                      })),
+                    },
+                    home: {
+                      teamId: game.homeTeamId,
+                      startingPitcher: {
+                        name: gameDetail?.boxScore?.homePitchers?.[0]?.name ?? "",
+                        era: gameDetail?.boxScore?.homePitchers?.[0]?.era ?? "-",
+                      },
+                      batters: detailLineup.home.map((e: LineupEntry) => ({
+                        order: e.order,
+                        name: e.name,
+                        position: e.position,
+                        avg: "",
+                      })),
+                    },
+                  }}
+                  awayTeam={awayTeam}
+                  homeTeam={homeTeam}
+                />
               ) : (
                 <div className="flex items-center justify-center h-32 text-text-tertiary text-base">
                   라인업 정보가 없습니다
