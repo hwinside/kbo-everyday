@@ -1,6 +1,7 @@
 "use client";
 
 import { Search, ChevronDown, ChevronLeft } from "lucide-react";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import Link from "next/link";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
@@ -130,7 +131,8 @@ function PlayersPageContent() {
       {/* Header */}
       <header className="py-3 flex items-center gap-3">
         <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
-        <h1 className="text-2xl font-bold text-text-primary tracking-tight">선수</h1>
+        <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">선수</h1>
+        <HeaderProfileLink />
       </header>
 
       {/* 검색 */}

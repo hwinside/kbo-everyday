@@ -1,5 +1,6 @@
 "use client";
 import { ChevronLeft } from "lucide-react";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
@@ -303,24 +304,25 @@ export default function StandingsPage() {
     <div className="mx-auto max-w-lg px-5">
       <header className="py-3 flex items-center gap-3">
         <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
-        <h1 className="text-2xl font-bold text-text-primary tracking-tight">순위</h1>
-        <div className="flex items-center gap-2 mt-1">
-          {([2025, 2026] as const).map(y => (
-            <button
-              key={y}
-              onClick={() => setSeason(y)}
-              className={clsx(
-                "px-3 py-1 rounded-full text-xs font-semibold transition-all",
-                season === y ? "bg-accent text-white" : "bg-bg-tertiary text-text-tertiary"
-              )}
-            >
-              {y} 시즌
-            </button>
-          ))}
-        </div>
+        <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">순위</h1>
+        <HeaderProfileLink />
       </header>
 
-      {/* Main tabs */}
+      {/* Season + Main tabs */}
+      <div className="flex items-center gap-2 mb-3">
+        {([2025, 2026] as const).map(y => (
+          <button
+            key={y}
+            onClick={() => setSeason(y)}
+            className={clsx(
+              "px-3 py-1 rounded-full text-xs font-semibold transition-all",
+              season === y ? "bg-accent text-white" : "bg-bg-tertiary text-text-tertiary"
+            )}
+          >
+            {y} 시즌
+          </button>
+        ))}
+      </div>
       <div className="flex gap-2 mb-4">
         {([
           { id: "team" as MainTab, label: "구단 순위" },

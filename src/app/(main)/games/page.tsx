@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Calendar, ChevronLeft, MapPin, RefreshCw, Trophy, Clock } from "lucide-react";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { getTeamById, TEAMS } from "@/lib/constants/teams";
 import Link from "next/link";
@@ -138,16 +139,21 @@ export default function GamesPage() {
         <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
           <ChevronLeft size={24} />
         </button>
-        <h1 className="text-2xl font-bold text-text-primary tracking-tight">경기</h1>
+        <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">경기</h1>
+        <HeaderProfileLink />
+      </div>
+
+      <div className="flex items-center px-5">
+        <div className="flex-1">
+          <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
+        </div>
         <button
           onClick={() => loadGames(selectedDate)}
-          className="ml-auto p-2 rounded-full text-text-tertiary hover:bg-bg-tertiary transition-colors"
+          className="p-2 rounded-full text-text-tertiary hover:bg-bg-tertiary transition-colors flex-shrink-0"
         >
           <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
         </button>
       </div>
-
-      <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
 
       {loading && games.length === 0 ? (
         <div className="flex items-center justify-center py-20">

@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { ChevronLeft, MessageSquare, Users, User, Ticket, MapPin } from "lucide-react";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 
 const COMMUNITY_TABS = [
   { key: "teams", label: "팀", href: "/community/teams", icon: Users },
@@ -106,7 +107,8 @@ export default function CommunityLayout({
               >
                 <ChevronLeft size={24} />
               </button>
-              <h1 className="text-2xl font-bold text-text-primary tracking-tight">커뮤니티</h1>
+              <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">커뮤니티</h1>
+              <HeaderProfileLink />
             </div>
 
             {/* Community tabs (헤더 아래 2번째 줄) */}
