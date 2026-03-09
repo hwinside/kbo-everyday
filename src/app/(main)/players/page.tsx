@@ -6,7 +6,7 @@ import Link from "next/link";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { TEAMS, getTeamById } from "@/lib/constants/teams";
+import { TEAMS, getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getMyTeamId } from "@/lib/store/myteam";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
@@ -195,7 +195,7 @@ function PlayersPageContent() {
               className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
                 filterTeam === t.id ? "text-white" : "bg-bg-secondary/50 text-text-tertiary"
               }`}
-              style={filterTeam === t.id ? { backgroundColor: t.colorPrimary } : undefined}
+              style={filterTeam === t.id ? { backgroundColor: getTeamBgColor(t) } : undefined}
             >
               {t.shortName}
             </button>

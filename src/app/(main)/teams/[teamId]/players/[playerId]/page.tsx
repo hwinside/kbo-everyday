@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, Pencil } from "lucide-react";
-import { getTeamBySlug } from "@/lib/constants/teams";
+import { getTeamBySlug, getTeamBgColor } from "@/lib/constants/teams";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getPlayerById, getPlayerGameLog } from "@/lib/constants/players";
@@ -83,7 +83,7 @@ export default function PlayerDetailPage() {
       <div
         className="relative px-5 pb-5 pt-safe"
         style={{
-          background: `linear-gradient(180deg, ${team.colorPrimary}33 0%, transparent 100%)`,
+          background: `linear-gradient(180deg, ${getTeamBgColor(team)}33 0%, transparent 100%)`,
         }}
       >
         <div className="flex items-center gap-4 py-5">
@@ -152,7 +152,7 @@ export default function PlayerDetailPage() {
         <motion.button
           onClick={() => setWriteOpen(true)}
           className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
-          style={{ backgroundColor: team.colorPrimary }}
+          style={{ backgroundColor: getTeamBgColor(team) }}
           whileTap={{ scale: 0.9 }}
           whileHover={{ scale: 1.05 }}
         >

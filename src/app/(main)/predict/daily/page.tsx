@@ -6,7 +6,7 @@ import { ArrowLeft, Users } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { MOCK_PREDICTIONS } from "@/lib/constants/predictions";
 import GlassCard from "@/components/ui/GlassCard";
 import AIAnalysis from "@/components/game/AIAnalysis";
@@ -60,7 +60,7 @@ export default function DailyPredictPage() {
                   initial={{ width: 0 }}
                   animate={{ width: `${pred.awayPercent}%` }}
                   transition={{ duration: 0.8, ease: "easeOut" }}
-                  style={{ backgroundColor: away.colorPrimary }}
+                  style={{ backgroundColor: getTeamBgColor(away) }}
                 >
                   <span className="text-xs font-bold text-white drop-shadow">{pred.awayPercent}%</span>
                 </motion.div>
@@ -69,7 +69,7 @@ export default function DailyPredictPage() {
                   initial={{ width: 0 }}
                   animate={{ width: `${pred.homePercent}%` }}
                   transition={{ duration: 0.8, ease: "easeOut", delay: 0.1 }}
-                  style={{ backgroundColor: home.colorPrimary }}
+                  style={{ backgroundColor: getTeamBgColor(home) }}
                 >
                   <span className="text-xs font-bold text-white drop-shadow">{pred.homePercent}%</span>
                 </motion.div>

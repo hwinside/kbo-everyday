@@ -5,7 +5,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { Pencil } from "lucide-react";
-import { getTeamBySlug } from "@/lib/constants/teams";
+import { getTeamBySlug, getTeamBgColor } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
 import PostList from "@/components/community/PostList";
 import PhotoFeed from "@/components/community/PhotoFeed";
@@ -132,7 +132,7 @@ export default function CommunityTeamBoardPage() {
       <div
         className="relative px-5 pb-3"
         style={{
-          background: `linear-gradient(180deg, ${team.colorPrimary}33 0%, transparent 100%)`,
+          background: `linear-gradient(180deg, ${getTeamBgColor(team)}33 0%, transparent 100%)`,
         }}
       >
         <div className="flex items-center gap-4 py-4">

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
 import Image from "next/image";
 import { Heart, MessageCircle, Share2, ChevronUp, Volume2, VolumeX } from "lucide-react";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { HIGHLIGHTS, rankHighlights, type Highlight } from "@/lib/constants/highlights";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { getFavoritePlayers } from "@/lib/store/favorites";
@@ -106,7 +106,7 @@ function ReelSlide({
         <div className="flex items-center gap-2 mb-2">
           <span className="text-sm font-bold text-white">{reel.channel}</span>
           {t && (
-            <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: `${t.colorPrimary}60`, color: t.colorLight }}>
+            <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: `${getTeamBgColor(t)}60`, color: t.colorLight }}>
               {t.shortName}
             </span>
           )}

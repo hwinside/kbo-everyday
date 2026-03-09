@@ -14,7 +14,7 @@ import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getMyTeamId, setMyTeamId } from "@/lib/store/myteam";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { usePushNotification } from "@/lib/hooks/usePushNotification";
@@ -92,7 +92,7 @@ export default function MyPage() {
               ) : profile?.nickname ? (
                 <div
                   className="w-full h-full flex items-center justify-center text-xl font-bold text-white"
-                  style={{ backgroundColor: team?.colorPrimary ?? '#6366f1' }}
+                  style={{ backgroundColor: team ? getTeamBgColor(team) : '#6366f1' }}
                 >
                   {profile.nickname.charAt(0)}
                 </div>

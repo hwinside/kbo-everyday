@@ -6,7 +6,7 @@ import { ChevronRight, Newspaper, Users, MessageSquare, Play } from "lucide-reac
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import TeamLogo from "@/components/ui/TeamLogo";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { LG_BATTERS, POSITION_LABELS } from "@/lib/constants/players";
 
 const MY_TEAM_ID = 1; // LG 트윈스
@@ -71,7 +71,7 @@ export default function MyTeamPage() {
         variants={item}
         className="relative px-5 pb-6 pt-safe"
         style={{
-          background: `linear-gradient(180deg, ${team.colorPrimary}40 0%, ${team.colorPrimary}10 40%, transparent 100%)`,
+          background: `linear-gradient(180deg, ${getTeamBgColor(team)}40 0%, ${getTeamBgColor(team)}10 40%, transparent 100%)`,
         }}
       >
         <div className="flex items-center gap-4 py-5">
@@ -140,7 +140,7 @@ export default function MyTeamPage() {
                   <div
                     className="flex h-8 w-8 items-center justify-center rounded-lg text-base font-bold text-white"
                     style={{
-                      background: `linear-gradient(135deg, ${team.colorPrimary}, ${team.colorSecondary})`,
+                      background: `linear-gradient(135deg, ${getTeamBgColor(team)}, ${team.colorSecondary})`,
                     }}
                   >
                     SP
@@ -201,7 +201,7 @@ export default function MyTeamPage() {
                 {/* Thumbnail placeholder */}
                 <div
                   className="flex h-[124px] items-center justify-center"
-                  style={{ backgroundColor: `${team.colorPrimary}15` }}
+                  style={{ backgroundColor: `${getTeamBgColor(team)}15` }}
                 >
                   <Play size={34} className="text-text-tertiary" />
                 </div>

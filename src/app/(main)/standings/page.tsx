@@ -8,7 +8,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { clsx } from "clsx";
-import { TEAMS, getTeamById } from "@/lib/constants/teams";
+import { TEAMS, getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { getFavoritePlayers } from "@/lib/store/favorites";
@@ -395,8 +395,8 @@ export default function StandingsPage() {
                     transition={{ delay: i * 0.03 }}
                     className={`border-b border-border/30 last:border-0 cursor-pointer hover:bg-white/5`}
                     style={isMyTeam ? {
-                      backgroundColor: `${team.colorPrimary}18`,
-                      borderLeft: `3px solid ${team.colorPrimary}`,
+                      backgroundColor: `${getTeamBgColor(team)}18`,
+                      borderLeft: `3px solid ${getTeamBgColor(team)}`,
                     } : undefined}
                   >
                     <td className="py-2.5 text-center font-bold text-text-primary">{standing.rank}</td>

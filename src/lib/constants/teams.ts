@@ -130,3 +130,22 @@ export function getTeamById(id: number): TeamData | undefined {
 export function getTeamBySlug(slug: string): TeamData | undefined {
   return TEAMS.find((t) => t.slug === slug);
 }
+
+/**
+ * hex → relative luminance (0~1).
+ * 0 = black, 1 = white.
+ */
+function hexLuminance(hex: string): number {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const toLinear = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+}
+
+/** 다크모드 배경에서 사용할 팀 컬러.
+ *  colorPrimary가 너무 어두우면(luminance < 0.05) colorLight를 반환.
+ */
+export function getTeamBgColor(team: TeamData): string {
+  return hexLuminance(team.colorPrimary) < 0.05 ? team.colorLight : team.colorPrimary;
+}

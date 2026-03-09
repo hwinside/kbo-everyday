@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { STADIUMS } from "@/lib/constants/stadiums";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 
 const MOCK_REVIEWS = [
   {
@@ -162,7 +162,7 @@ export default function StadiumDetailPage() {
       <div
         className="relative px-5 pb-5 pt-4"
         style={{
-          background: `linear-gradient(135deg, ${primaryTeam.colorPrimary}20, transparent)`,
+          background: `linear-gradient(135deg, ${getTeamBgColor(primaryTeam)}20, transparent)`,
         }}
       >
         <div className="flex items-center gap-3 mb-2">
