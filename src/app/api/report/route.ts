@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { supabaseErrorResponse } from "@/lib/supabase/error";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -39,8 +40,9 @@ export async function POST(req: NextRequest) {
   });
 
   if (error) {
-    if (error.code === "23505") return NextResponse.json({ error: "이미 신고한 게시물입니다" }, { status: 409 });
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return supabaseErrorResponse(error, {
+      "23505": { status: 409, message: "이미 신고한 게시물입니다" },
+    });
   }
 
   return NextResponse.json({ success: true });

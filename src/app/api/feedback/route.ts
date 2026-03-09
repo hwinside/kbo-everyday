@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { supabaseErrorResponse } from "@/lib/supabase/error";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -29,9 +30,7 @@ export async function POST(req: NextRequest) {
     .eq("user_id", userId)
     .gte("created_at", todayStart.toISOString());
 
-  if (countError) {
-    return NextResponse.json({ error: countError.message }, { status: 500 });
-  }
+  if (countError) return supabaseErrorResponse(countError);
 
   if ((count ?? 0) >= 10) {
     return NextResponse.json({ error: "하루 최대 10건까지 보낼 수 있어요" }, { status: 429 });
@@ -46,9 +45,7 @@ export async function POST(req: NextRequest) {
     device_info: deviceInfo || null,
   });
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  if (error) return supabaseErrorResponse(error);
 
   return NextResponse.json({ success: true });
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { supabaseErrorResponse } from "@/lib/supabase/error";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -17,6 +18,6 @@ export async function POST(req: NextRequest) {
     created_at: new Date().toISOString(),
   }, { onConflict: "endpoint" });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return supabaseErrorResponse(error);
   return NextResponse.json({ success: true });
 }

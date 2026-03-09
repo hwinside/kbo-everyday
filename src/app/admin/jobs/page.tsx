@@ -12,7 +12,7 @@ import {
 import { generateJobInfos, generateJobLogs } from "@/lib/admin/mock-data";
 import type { JobInfo, JobLog } from "@/lib/admin/types";
 
-function StatusBadge({ status }: { status: string }) {
+function JobStatusBadge({ status }: { status: string }) {
   if (status === "success") {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#30D158]/15 text-[#30D158]">
@@ -39,7 +39,7 @@ function JobCard({ job }: { job: JobInfo }) {
     <div className="glass-card p-5 space-y-3">
       <div className="flex items-start justify-between">
         <h3 className="font-semibold">{job.label}</h3>
-        <StatusBadge status={job.status} />
+        <JobStatusBadge status={job.status} />
       </div>
       <p className="text-xs text-[#8E8E93]">{job.description}</p>
       <div className="grid grid-cols-2 gap-2 text-xs">
@@ -138,7 +138,7 @@ export default function AdminJobsPage() {
                 <tr key={log.id} className="border-b border-white/5">
                   <td className="py-2.5 font-medium">{log.jobName}</td>
                   <td className="py-2.5">
-                    <StatusBadge status={log.status} />
+                    <JobStatusBadge status={log.status} />
                   </td>
                   <td className="py-2.5 text-[#8E8E93]">
                     {new Date(log.startedAt).toLocaleString("ko-KR")}

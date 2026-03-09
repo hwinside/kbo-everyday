@@ -49,7 +49,7 @@ function PriceBadge({ price, original }: { price: number; original: number | nul
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function TicketStatusBadge({ status }: { status: string }) {
   const config: Record<string, { label: string; color: string }> = {
     open: { label: "양도중", color: "bg-green-500/20 text-green-400" },
     reserved: { label: "예약중", color: "bg-yellow-500/20 text-yellow-400" },
@@ -71,7 +71,7 @@ function TicketCard({ ticket }: { ticket: TicketData }) {
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1.5">
-            <StatusBadge status={ticket.status} />
+            <TicketStatusBadge status={ticket.status} />
             <span className="text-xs text-text-tertiary">{ticket.quantity}매</span>
           </div>
           <div className="flex items-center gap-1.5 mb-1">
