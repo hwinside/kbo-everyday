@@ -178,7 +178,7 @@ export default function WritePhotoPost({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/60"
+            className="fixed inset-0 z-[59] bg-black/60"
             onClick={handleClose}
           />
           <motion.div
@@ -186,7 +186,7 @@ export default function WritePhotoPost({
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
-            className="fixed inset-0 z-50 bg-bg-primary overflow-y-auto flex flex-col"
+            className="fixed inset-0 z-[60] bg-bg-primary overflow-y-auto flex flex-col"
           >
             {/* Header */}
             <div
@@ -215,7 +215,7 @@ export default function WritePhotoPost({
             </div>
 
             {/* Step content */}
-            <div className="flex-1 px-5 pb-8 flex flex-col">
+            <div className="flex-1 px-5 flex flex-col">
               <AnimatePresence mode="wait">
                 {step === 1 && (
                   <motion.div
@@ -263,16 +263,6 @@ export default function WritePhotoPost({
                       onChange={handleImageSelect}
                       className="hidden"
                     />
-
-                    <div className="flex-1" />
-
-                    <button
-                      onClick={() => setStep(2)}
-                      disabled={images.length === 0}
-                      className="w-full rounded-xl bg-accent py-3 text-base font-semibold text-white disabled:opacity-40 transition-opacity"
-                    >
-                      다음
-                    </button>
                   </motion.div>
                 )}
 
@@ -306,24 +296,6 @@ export default function WritePhotoPost({
                         </div>
                       ))}
                     </div>
-
-                    <div className="flex-1" />
-
-                    <div className="flex gap-3">
-                      <button
-                        onClick={() => setStep(3)}
-                        className="flex-1 rounded-xl bg-bg-tertiary py-3 text-base font-medium text-text-secondary flex items-center justify-center gap-2"
-                      >
-                        <SkipForward size={18} />
-                        건너뛰기
-                      </button>
-                      <button
-                        onClick={() => setStep(3)}
-                        className="flex-1 rounded-xl bg-accent py-3 text-base font-semibold text-white"
-                      >
-                        다음
-                      </button>
-                    </div>
                   </motion.div>
                 )}
 
@@ -333,7 +305,7 @@ export default function WritePhotoPost({
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
-                    className="flex-1 flex flex-col space-y-5"
+                    className="flex-1 flex flex-col space-y-5 pb-4"
                   >
                     {/* Thumbnail preview */}
                     <div className="flex gap-2 overflow-x-auto scrollbar-hide">
@@ -372,21 +344,52 @@ export default function WritePhotoPost({
                       tags={hashtags}
                       onUpdate={setHashtags}
                     />
-
-                    <div className="flex-1" />
-
-                    {/* Submit */}
-                    <button
-                      onClick={handleSubmit}
-                      disabled={submitting}
-                      className="w-full rounded-xl bg-accent py-3 text-base font-semibold text-white disabled:opacity-40 transition-opacity flex items-center justify-center gap-2"
-                    >
-                      {submitting && <Loader2 size={18} className="animate-spin" />}
-                      게시하기
-                    </button>
                   </motion.div>
                 )}
               </AnimatePresence>
+            </div>
+
+            {/* Fixed bottom action bar */}
+            <div
+              className="sticky bottom-0 px-5 pt-3 pb-3 bg-bg-primary border-t border-border"
+              style={{ paddingBottom: "max(env(safe-area-inset-bottom, 0px), 12px)" }}
+            >
+              {step === 1 && (
+                <button
+                  onClick={() => setStep(2)}
+                  disabled={images.length === 0}
+                  className="w-full rounded-xl bg-accent py-3.5 text-base font-semibold text-white disabled:opacity-40 transition-opacity"
+                >
+                  다음
+                </button>
+              )}
+              {step === 2 && (
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setStep(3)}
+                    className="flex-1 rounded-xl bg-bg-tertiary py-3.5 text-base font-medium text-text-secondary flex items-center justify-center gap-2"
+                  >
+                    <SkipForward size={18} />
+                    건너뛰기
+                  </button>
+                  <button
+                    onClick={() => setStep(3)}
+                    className="flex-1 rounded-xl bg-accent py-3.5 text-base font-semibold text-white"
+                  >
+                    다음
+                  </button>
+                </div>
+              )}
+              {step === 3 && (
+                <button
+                  onClick={handleSubmit}
+                  disabled={submitting}
+                  className="w-full rounded-xl bg-accent py-3.5 text-base font-semibold text-white disabled:opacity-40 transition-opacity flex items-center justify-center gap-2"
+                >
+                  {submitting && <Loader2 size={18} className="animate-spin" />}
+                  게시하기
+                </button>
+              )}
             </div>
           </motion.div>
 
