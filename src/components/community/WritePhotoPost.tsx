@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useMemo, useCallback } from "react";
+import { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Plus, XCircle, Loader2, ChevronLeft, Pencil, SkipForward } from "lucide-react";
 import Image from "next/image";
@@ -56,6 +56,16 @@ export default function WritePhotoPost({
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Sync defaultPlayerTag when modal opens or player changes
+  useEffect(() => {
+    if (isOpen && defaultPlayerTag) {
+      setSelectedPlayers((prev) => {
+        const already = prev.some((p) => p.name === defaultPlayerTag.name);
+        return already ? prev : [defaultPlayerTag, ...prev];
+      });
+    }
+  }, [isOpen, defaultPlayerTag]);
 
   // Team → stadium mapping
   const TEAM_STADIUMS: Record<number, string> = {
