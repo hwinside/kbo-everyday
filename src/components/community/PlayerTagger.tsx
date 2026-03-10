@@ -5,6 +5,7 @@ import { getTeamById } from "@/lib/constants/teams";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { Search, X } from "lucide-react";
 import type { PickedGame } from "./GamePicker";
+import { getFavoritePlayers } from "@/lib/store/favorites";
 
 // Import all player data from constants
 import * as playerData from "@/lib/constants/players";
@@ -152,26 +153,36 @@ export default function PlayerTagger({ game, selectedPlayers, onToggle }: Player
         )}
       </div>
 
-      {/* Recommended players (no search) */}
-      {!search && (
-        <div className="flex flex-wrap gap-1.5 max-h-[120px] overflow-y-auto">
-          {filtered.slice(0, 30).map((p) => {
-            const team = getTeamById(p.teamId);
-            return (
-              <button
-                key={p.id}
-                onClick={() => onToggle(p)}
-                className="px-2.5 py-1 rounded-full text-xs font-medium transition-colors bg-bg-tertiary text-text-secondary"
-              >
-                {team?.shortName && (
-                  <span className="text-text-tertiary mr-0.5">{team.shortName}</span>
-                )}
-                {p.name}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {/* Favorite players only (no search) — rest via search */}
+      {!search && (() => {
+        const favorites = getFavoritePlayers();
+        const favoriteIds = new Set(favorites.map((f) => Number(f.playerId)));
+        const favoritePlayers = favoriteIds.size > 0
+          ? filtered.filter((p) => favoriteIds.has(p.id))
+          : [];
+        
+        if (favoritePlayers.length === 0) return null;
+        
+        return (
+          <div className="flex flex-wrap gap-1.5">
+            {favoritePlayers.map((p) => {
+              const team = getTeamById(p.teamId);
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => onToggle(p)}
+                  className="px-2.5 py-1 rounded-full text-xs font-medium transition-colors bg-bg-tertiary text-text-secondary"
+                >
+                  {team?.shortName && (
+                    <span className="text-text-tertiary mr-0.5">{team.shortName}</span>
+                  )}
+                  {p.name}
+                </button>
+              );
+            })}
+          </div>
+        );
+      })()}
     </div>
   );
 }

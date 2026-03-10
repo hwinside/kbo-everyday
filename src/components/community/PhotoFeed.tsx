@@ -2,13 +2,29 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle } from "lucide-react";
 import { GRADES } from "@/lib/constants/grades";
+import { getTeamById } from "@/lib/constants/teams";
+import * as playerData from "@/lib/constants/players";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
 import type { Post } from "@/lib/supabase/usePosts";
 import CommentSheet from "./CommentSheet";
+
+function findPlayerByName(name: string): { id: number; teamId: number } | null {
+  for (const [, value] of Object.entries(playerData)) {
+    if (Array.isArray(value)) {
+      for (const p of value) {
+        if (p && typeof p === "object" && "name" in p && p.name === name) {
+          return { id: p.id, teamId: p.teamId };
+        }
+      }
+    }
+  }
+  return null;
+}
 
 interface PhotoFeedProps {
   posts: Post[];
@@ -306,14 +322,25 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 />
               )}
 
-              {/* Player tags */}
+              {/* Player tags — clickable, links to player page */}
               {post.player_tags && Array.isArray(post.player_tags) && post.player_tags.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 px-4 pb-1">
-                  {(post.player_tags as string[]).map((name: string) => (
-                    <span key={name} className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full">
-                      @{name}
-                    </span>
-                  ))}
+                  {(post.player_tags as string[]).map((name: string) => {
+                    const player = findPlayerByName(name);
+                    const team = player ? getTeamById(player.teamId) : null;
+                    const href = player ? `/community/players/${player.id}` : undefined;
+                    const label = team ? `@${team.shortName} ${name}` : `@${name}`;
+                    
+                    return href ? (
+                      <Link key={name} href={href} className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full active:bg-bg-quaternary transition-colors">
+                        {label}
+                      </Link>
+                    ) : (
+                      <span key={name} className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full">
+                        {label}
+                      </span>
+                    );
+                  })}
                 </div>
               )}
 

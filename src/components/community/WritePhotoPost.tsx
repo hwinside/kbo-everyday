@@ -193,13 +193,8 @@ export default function WritePhotoPost({
               className="flex items-center justify-between px-4 py-2"
               style={{ paddingTop: "max(env(safe-area-inset-top, 0px), 12px)" }}
             >
-              <button onClick={goBack} className="flex items-center gap-0.5 text-text-secondary p-1">
-                {step === 1 ? <X size={24} /> : (
-                  <>
-                    <ChevronLeft size={24} />
-                    <span className="text-sm">이전</span>
-                  </>
-                )}
+              <button onClick={step === 1 ? handleClose : undefined} className="flex items-center gap-0.5 text-text-secondary p-1">
+                {step === 1 ? <X size={24} /> : <div className="w-6" />}
               </button>
               <h2 className="text-base font-semibold text-text-primary">
                 {teamName ? `${teamName} 사진` : "사진 올리기"}
@@ -312,11 +307,16 @@ export default function WritePhotoPost({
                     exit={{ opacity: 0, x: 20 }}
                     className="flex-1 flex flex-col space-y-5 pb-4"
                   >
-                    {/* Thumbnail preview */}
-                    <div className="flex gap-2 overflow-x-auto scrollbar-hide">
+                    {/* Thumbnail preview — sized so 3 fit in one row */}
+                    <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(images.length, 3)}, 1fr)` }}>
                       {images.map((img, i) => (
-                        <div key={i} className="relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden bg-bg-tertiary">
+                        <div key={i} className="relative aspect-square rounded-xl overflow-hidden bg-bg-tertiary">
                           <Image src={img.preview} alt={`thumb ${i}`} fill className="object-cover" />
+                          {img.edited && (
+                            <div className="absolute bottom-1 left-1 bg-accent/80 rounded-full px-1.5 py-0.5 text-[9px] text-white font-medium">
+                              편집됨
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>

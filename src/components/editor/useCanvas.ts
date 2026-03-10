@@ -116,6 +116,17 @@ export function useCanvas(
       c.add(text);
       c.setActiveObject(text);
       c.renderAll();
+
+      // If using a web font, re-render after it loads to avoid fallback flash
+      if (options?.fontFamily) {
+        const primaryFont = options.fontFamily.split(",")[0].replace(/'/g, "").trim();
+        if (!document.fonts.check(`${text.fontSize}px "${primaryFont}"`)) {
+          document.fonts.ready.then(() => {
+            c.renderAll();
+          });
+        }
+      }
+
       return text;
     },
     []

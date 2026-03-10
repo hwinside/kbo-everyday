@@ -34,6 +34,23 @@ export default function MemeEditor({ imageUrl, onSave, onCancel }: MemeEditorPro
     };
   }, [canvas]);
 
+  // Preload custom fonts so Fabric.js renders them correctly on first use
+  useEffect(() => {
+    const fonts = [
+      new FontFace("Gamja Flower", "url(https://fonts.gstatic.com/s/gamjaflower/v22/6NUR8FiKJGBITYdP0ymr1M0O2A.woff2)", {
+        style: "normal",
+        weight: "400",
+      }),
+    ];
+    fonts.forEach((font) => {
+      font.load().then((loaded) => {
+        document.fonts.add(loaded);
+        // Re-render canvas after font loads so any existing text updates
+        if (canvas) canvas.renderAll();
+      }).catch(() => {/* font already loaded or unavailable */});
+    });
+  }, [canvas]);
+
   useEffect(() => {
     if (imageUrl) {
       loadImage(imageUrl).then(() => setLoaded(true));
