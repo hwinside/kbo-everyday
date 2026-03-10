@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { X, Check, Loader2 } from "lucide-react";
+import { X, Check, Loader2, Trash2 } from "lucide-react";
 import { useCanvas } from "./useCanvas";
 import EditorToolbar from "./EditorToolbar";
 
@@ -14,9 +14,25 @@ interface MemeEditorProps {
 
 export default function MemeEditor({ imageUrl, onSave, onCancel }: MemeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { canvas, loadImage, exportBlob, addText, addSvg, clearObjects } = useCanvas(containerRef);
+  const { canvas, loadImage, exportBlob, addText, addSvg, clearObjects, deleteSelected } = useCanvas(containerRef);
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [hasSelection, setHasSelection] = useState(false);
+
+  // Track canvas selection state
+  useEffect(() => {
+    if (!canvas) return;
+    const onSelect = () => setHasSelection(true);
+    const onDeselect = () => setHasSelection(false);
+    canvas.on("selection:created", onSelect);
+    canvas.on("selection:updated", onSelect);
+    canvas.on("selection:cleared", onDeselect);
+    return () => {
+      canvas.off("selection:created", onSelect);
+      canvas.off("selection:updated", onSelect);
+      canvas.off("selection:cleared", onDeselect);
+    };
+  }, [canvas]);
 
   useEffect(() => {
     if (imageUrl) {
@@ -62,6 +78,19 @@ export default function MemeEditor({ imageUrl, onSave, onCancel }: MemeEditorPro
           완료
         </button>
       </div>
+
+      {/* Delete button (shown when element selected) */}
+      {hasSelection && (
+        <div className="flex justify-center py-2">
+          <button
+            onClick={() => deleteSelected()}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-red-500/20 text-red-400 text-sm font-medium"
+          >
+            <Trash2 size={16} />
+            선택 삭제
+          </button>
+        </div>
+      )}
 
       {/* Canvas area */}
       <div className="flex-1 overflow-hidden flex items-center justify-center bg-black/40">

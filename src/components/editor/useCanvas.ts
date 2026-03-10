@@ -10,6 +10,7 @@ interface UseCanvasReturn {
   addText: (content?: string, options?: Partial<fabric.ITextProps>) => fabric.IText;
   addSvg: (svgString: string) => Promise<fabric.FabricObject>;
   clearObjects: () => void;
+  deleteSelected: () => boolean;
 }
 
 export function useCanvas(
@@ -155,6 +156,21 @@ export function useCanvas(
     c.renderAll();
   }, []);
 
+  const deleteSelected = useCallback((): boolean => {
+    const c = canvasRef.current;
+    if (!c) return false;
+    const active = c.getActiveObject();
+    if (!active) return false;
+    if (active instanceof fabric.ActiveSelection) {
+      active.getObjects().forEach((obj) => c.remove(obj));
+    } else {
+      c.remove(active);
+    }
+    c.discardActiveObject();
+    c.renderAll();
+    return true;
+  }, []);
+
   return {
     canvas: canvasRef.current,
     loadImage,
@@ -162,5 +178,6 @@ export function useCanvas(
     addText,
     addSvg,
     clearObjects,
+    deleteSelected,
   };
 }
