@@ -119,38 +119,59 @@ export default function PlayerTagger({ game, selectedPlayers, onToggle }: Player
           onKeyDown={(e) => {
             if (e.key === "Enter" && filtered.length > 0) {
               e.preventDefault();
-              const first = filtered[0];
-              if (!isSelected(first.id)) onToggle(first);
+              onToggle(filtered[0]);
               setSearch("");
             }
           }}
           className="w-full pl-9 pr-3 py-2 rounded-lg bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
         />
+
+        {/* Dropdown results on search */}
+        {search && (
+          <div className="absolute z-10 left-0 right-0 top-full mt-1 bg-bg-secondary rounded-xl border border-border shadow-lg max-h-[200px] overflow-y-auto">
+            {filtered.length === 0 ? (
+              <p className="text-xs text-text-tertiary px-4 py-3">검색 결과 없음</p>
+            ) : (
+              filtered.slice(0, 20).map((p) => {
+                const team = getTeamById(p.teamId);
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => { onToggle(p); setSearch(""); }}
+                    className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-text-primary hover:bg-bg-tertiary active:bg-bg-tertiary transition-colors text-left"
+                  >
+                    {team && (
+                      <span className="text-xs text-text-tertiary min-w-[28px]">{team.shortName}</span>
+                    )}
+                    <span>{p.name}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Player grid */}
-      <div className="flex flex-wrap gap-1.5 max-h-[120px] overflow-y-auto">
-        {filtered.slice(0, 30).map((p) => {
-          const team = getTeamById(p.teamId);
-          const selected = isSelected(p.id);
-          return (
-            <button
-              key={p.id}
-              onClick={() => onToggle(p)}
-              className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                selected
-                  ? "bg-accent/20 text-accent"
-                  : "bg-bg-tertiary text-text-secondary"
-              }`}
-            >
-              {team?.shortName && (
-                <span className="text-text-tertiary mr-0.5">{team.shortName}</span>
-              )}
-              {p.name}
-            </button>
-          );
-        })}
-      </div>
+      {/* Recommended players (no search) */}
+      {!search && (
+        <div className="flex flex-wrap gap-1.5 max-h-[120px] overflow-y-auto">
+          {filtered.slice(0, 30).map((p) => {
+            const team = getTeamById(p.teamId);
+            return (
+              <button
+                key={p.id}
+                onClick={() => onToggle(p)}
+                className="px-2.5 py-1 rounded-full text-xs font-medium transition-colors bg-bg-tertiary text-text-secondary"
+              >
+                {team?.shortName && (
+                  <span className="text-text-tertiary mr-0.5">{team.shortName}</span>
+                )}
+                {p.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
