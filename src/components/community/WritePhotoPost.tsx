@@ -310,7 +310,7 @@ export default function WritePhotoPost({
                     {/* Thumbnail preview */}
                     <div className="flex gap-2 overflow-x-auto scrollbar-hide">
                       {images.map((img, i) => (
-                        <div key={i} className="flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden bg-bg-tertiary">
+                        <div key={i} className="relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden bg-bg-tertiary">
                           <Image src={img.preview} alt={`thumb ${i}`} fill className="object-cover" />
                         </div>
                       ))}

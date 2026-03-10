@@ -70,18 +70,24 @@ export default function PlayerTagger({ game, selectedPlayers, onToggle }: Player
       <p className="text-sm font-medium text-text-secondary">선수 태그</p>
 
       {/* Search when no game */}
-      {!game && (
-        <div className="relative">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
-          <input
-            type="text"
-            placeholder="선수 이름 검색"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 rounded-lg bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
-          />
-        </div>
-      )}
+      <div className="relative">
+        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
+        <input
+          type="text"
+          placeholder="선수 이름 검색"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && filtered.length > 0) {
+              e.preventDefault();
+              const first = filtered[0];
+              if (!isSelected(first.id)) onToggle(first);
+              setSearch("");
+            }
+          }}
+          className="w-full pl-9 pr-3 py-2 rounded-lg bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+        />
+      </div>
 
       {/* Selected chips */}
       {selectedPlayers.length > 0 && (

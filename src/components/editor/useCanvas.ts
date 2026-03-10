@@ -61,6 +61,10 @@ export function useCanvas(
 
     img.scaleX = scale;
     img.scaleY = scale;
+    img.left = 0;
+    img.top = 0;
+    img.originX = "left";
+    img.originY = "top";
     img.selectable = false;
     img.evented = false;
 

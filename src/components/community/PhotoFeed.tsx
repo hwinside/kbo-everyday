@@ -305,6 +305,17 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   onPress={() => { setCommentPostId(post.id); setCommentTeamId(post.team_id ?? null); }}
                 />
               )}
+
+              {/* Hashtags */}
+              {post.hashtags && Array.isArray(post.hashtags) && post.hashtags.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 px-4 pb-1">
+                  {(post.hashtags as string[]).map((tag: string) => (
+                    <span key={tag} className="text-xs text-accent font-medium">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         );

@@ -16,6 +16,10 @@ export interface Post {
   like_count: number;
   comment_count: number;
   created_at: string;
+  // meme editor fields
+  game_id?: string | null;
+  player_tags?: string[];
+  hashtags?: string[];
   // joined
   nickname?: string;
   team_id?: number;
@@ -47,7 +51,7 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
       setLoading(true);
       const { data } = await supabase
         .from("posts")
-        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade, points)")
+        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)")
         .eq("board_type", boardType)
         .eq("board_id", boardId)
         .eq("content_type", contentType)
@@ -78,7 +82,7 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
     setLoading(true);
     const { data } = await supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade, points)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)")
       .eq("board_type", boardType)
       .eq("board_id", boardId)
       .eq("content_type", contentType)
