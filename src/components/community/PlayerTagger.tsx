@@ -59,11 +59,22 @@ export default function PlayerTagger({ game, selectedPlayers, onToggle }: Player
     return all;
   }, [game]);
 
-  const filtered = search
-    ? players.filter((p) => p.name.includes(search))
-    : players;
+  // Dedupe players by id
+  const uniquePlayers = useMemo(() => {
+    const seen = new Set<number>();
+    return players.filter((p) => {
+      if (seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    });
+  }, [players]);
 
   const isSelected = (id: number) => selectedPlayers.some((p) => p.id === id);
+
+  // Filter by search + exclude already selected
+  const filtered = uniquePlayers
+    .filter((p) => !isSelected(p.id))
+    .filter((p) => !search || p.name.includes(search));
 
   return (
     <div className="space-y-2">
