@@ -619,7 +619,9 @@ export function getPlayerPhotoUrl(name: string, kboId?: string): string | null {
   if (kboId && PLAYER_PHOTO_ID_SET.has(kboId)) {
     return `/players/${kboId}.jpg`;
   }
-  // name 기반 fallback
+  // kboId가 명시적으로 제공됐지만 사진이 없으면 → null (다른 동명이인 사진 방지)
+  if (kboId) return null;
+  // name 기반 fallback (kboId가 없는 경우만 — 라이브 경기 등)
   const mappedId = PLAYER_PHOTO_MAP[name];
   if (!mappedId) return null;
   return `/players/${mappedId}.jpg`;
