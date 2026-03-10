@@ -7,20 +7,16 @@ import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle } from "lucide-react";
 import { GRADES } from "@/lib/constants/grades";
 import { getTeamById } from "@/lib/constants/teams";
-import * as playerData from "@/lib/constants/players";
+import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
 import type { Post } from "@/lib/supabase/usePosts";
 import CommentSheet from "./CommentSheet";
 
-function findPlayerByName(name: string): { id: number; teamId: number } | null {
-  for (const [, value] of Object.entries(playerData)) {
-    if (Array.isArray(value)) {
-      for (const p of value) {
-        if (p && typeof p === "object" && "name" in p && p.name === name) {
-          return { id: p.id, teamId: p.teamId };
-        }
-      }
+function findPlayerByName(name: string): { kboId: string; teamId: number } | null {
+  for (const p of PLAYERS_ROSTER) {
+    if (p.name === name) {
+      return { kboId: p.kboId, teamId: p.teamId };
     }
   }
   return null;
@@ -328,7 +324,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   {(post.player_tags as string[]).map((name: string) => {
                     const player = findPlayerByName(name);
                     const team = player ? getTeamById(player.teamId) : null;
-                    const href = player ? `/community/players/${player.id}` : undefined;
+                    const href = player ? `/community/players/${player.kboId}` : undefined;
                     const label = team ? `@${team.shortName} ${name}` : `@${name}`;
                     
                     return href ? (
