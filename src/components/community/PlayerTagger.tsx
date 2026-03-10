@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { getTeamById } from "@/lib/constants/teams";
+import { useAuth } from "@/lib/supabase/AuthContext";
 import { Search, X } from "lucide-react";
 import type { PickedGame } from "./GamePicker";
 
@@ -59,15 +60,26 @@ export default function PlayerTagger({ game, selectedPlayers, onToggle }: Player
     return all;
   }, [game]);
 
-  // Dedupe players by id
+  const { profile } = useAuth();
+  const userTeamId = (profile as Record<string, unknown> | null)?.team_id as number | undefined;
+
+  // Dedupe players by id, sort user's team first
   const uniquePlayers = useMemo(() => {
     const seen = new Set<number>();
-    return players.filter((p) => {
+    const deduped = players.filter((p) => {
       if (seen.has(p.id)) return false;
       seen.add(p.id);
       return true;
     });
-  }, [players]);
+    if (userTeamId) {
+      deduped.sort((a, b) => {
+        const aIsMyTeam = a.teamId === userTeamId ? 0 : 1;
+        const bIsMyTeam = b.teamId === userTeamId ? 0 : 1;
+        return aIsMyTeam - bIsMyTeam;
+      });
+    }
+    return deduped;
+  }, [players, userTeamId]);
 
   const isSelected = (id: number) => selectedPlayers.some((p) => p.id === id);
 
