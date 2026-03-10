@@ -306,6 +306,17 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 />
               )}
 
+              {/* Player tags */}
+              {post.player_tags && Array.isArray(post.player_tags) && post.player_tags.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 px-4 pb-1">
+                  {(post.player_tags as string[]).map((name: string) => (
+                    <span key={name} className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full">
+                      @{name}
+                    </span>
+                  ))}
+                </div>
+              )}
+
               {/* Hashtags */}
               {post.hashtags && Array.isArray(post.hashtags) && post.hashtags.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 px-4 pb-1">
