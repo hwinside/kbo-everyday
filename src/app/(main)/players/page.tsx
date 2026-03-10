@@ -258,7 +258,7 @@ function PlayersPageContent() {
               <PlayerAvatar
                 name={player.name}
                 teamId={player.teamId}
-                photoUrl={getPlayerPhotoUrl(player.name)}
+                photoUrl={getPlayerPhotoUrl(player.name, player.kboId)}
                 size={48}
               />
               <div className="flex-1 min-w-0">

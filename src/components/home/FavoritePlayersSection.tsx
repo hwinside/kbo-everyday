@@ -62,7 +62,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                 <PlayerAvatar
                   name={player.name}
                   teamId={player.teamId}
-                  photoUrl={getPlayerPhotoUrl(player.name)}
+                  photoUrl={getPlayerPhotoUrl(player.name, player.playerId)}
                   number={player.number}
                   size={56}
                 />

@@ -51,7 +51,7 @@ export default function LeaderSection({ title, leaders, myTeamId, favoriteNames 
             )}>
               {l.rank}
             </span>
-            <PlayerAvatar name={l.name} teamId={l.teamId} photoUrl={getPlayerPhotoUrl(l.name)} size={52} />
+            <PlayerAvatar name={l.name} teamId={l.teamId} photoUrl={getPlayerPhotoUrl(l.name, l.playerId)} size={52} />
             <span className="flex-1 text-base text-text-primary">
               {l.name}
               {isFavorite && <span className="ml-1">★</span>}

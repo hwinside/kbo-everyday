@@ -27,7 +27,7 @@ export default function FavoritePlayersCard({ favPlayers, onEdit }: FavoritePlay
         <div className="flex gap-3">
           {favPlayers.map(p => (
             <div key={p.playerId} className="flex flex-col items-center gap-1">
-              <PlayerAvatar name={p.name} teamId={p.teamId} photoUrl={getPlayerPhotoUrl(p.name)} number={p.number} size={44} />
+              <PlayerAvatar name={p.name} teamId={p.teamId} photoUrl={getPlayerPhotoUrl(p.name, p.playerId)} number={p.number} size={44} />
               <span className="text-xs text-text-secondary">{p.name}</span>
             </div>
           ))}

@@ -8,7 +8,7 @@ import { motion } from "framer-motion";
 import { Check, Star, Search } from "lucide-react";
 import Image from "next/image";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
+import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getTeamById, TEAMS } from "@/lib/constants/teams";
 import TeamBadge from "@/components/ui/TeamBadge";
 import type { FavoritePlayer } from "@/lib/store/favorites";
@@ -158,7 +158,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
                   background: isSelected ? `${team.colorPrimary}20` : "rgba(255,255,255,0.03)",
                   border: `2px solid ${isSelected ? team.colorLight : "transparent"}`,
                 }}>
-                <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} number={0} size={48} showTeamBadge={true} />
+                <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name, player.id)} number={0} size={48} showTeamBadge={true} />
                 <div className="flex-1 text-left">
                   <p className="text-sm font-bold text-text-primary">{player.name}</p>
                   {<TeamBadge teamId={player.teamId} size="xs" />}

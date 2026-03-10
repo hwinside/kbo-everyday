@@ -279,7 +279,7 @@ function RankingContent() {
                     <PlayerAvatar
                       name={p.name}
                       teamId={teamId}
-                      photoUrl={getPlayerPhotoUrl(p.name)}
+                      photoUrl={getPlayerPhotoUrl(p.name, p.kboId || p.playerId)}
                       size={44}
                     />
 

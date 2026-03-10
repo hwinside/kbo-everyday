@@ -8,7 +8,7 @@ import { ChevronLeft, Pencil } from "lucide-react";
 import { getTeamBySlug, getTeamBgColor } from "@/lib/constants/teams";
 import GlassCard from "@/components/ui/GlassCard";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
+import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import TeamLogo from "@/components/ui/TeamLogo";
 import PostList from "@/components/community/PostList";
 import WritePost from "@/components/community/WritePost";
@@ -113,12 +113,12 @@ export default function TeamBoardPage() {
   const { posts: livePosts, loading: postsLoading, reload } = usePosts("team", teamSlug);
 
   /* eslint-disable @typescript-eslint/no-require-imports */
-  const allRoster: { name: string; position: string; playerId: string; backNo: string }[] = (() => {
+  const allRoster: { name: string; position: string; kboId: string; backNo: string }[] = (() => {
     try {
-      const roster = require("@/lib/constants/players-roster.json") as { name: string; teamId: number; position?: string; playerId: string; backNo?: string }[];
+      const roster = require("@/lib/constants/players-roster.json") as { name: string; teamId: number; position?: string; kboId: string; backNo?: string }[];
       return roster
         .filter((p) => p.teamId === (team?.id ?? -1))
-        .map((p) => ({ name: p.name, position: p.position || "미정", playerId: p.playerId, backNo: p.backNo || "" }));
+        .map((p) => ({ name: p.name, position: p.position || "미정", kboId: p.kboId, backNo: p.backNo || "" }));
     } catch { return []; }
   })();
   /* eslint-enable @typescript-eslint/no-require-imports */
@@ -285,8 +285,8 @@ export default function TeamBoardPage() {
               <div className="space-y-2">
                 {players.map((player) => (
                   <Link
-                    key={player.name}
-                    href={`/community/players/${PLAYER_PHOTO_MAP[player.name] || player.name}`}
+                    key={player.kboId}
+                    href={`/community/players/${player.kboId}`}
                   >
                     <GlassCard pressable className="!p-4">
                       <div className="flex items-center gap-4">
@@ -294,7 +294,7 @@ export default function TeamBoardPage() {
                         <span className="text-2xl font-black w-10 text-center tabular-nums" style={{ color: team.colorLight }}>
                           {player.backNo || "-"}
                         </span>
-                        <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={0} size={56} showTeamBadge={false} />
+                        <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name, player.kboId)} number={0} size={56} showTeamBadge={false} />
                         <div className="flex-1 min-w-0">
                           <span className="text-base font-bold text-text-primary">
                             {player.name}

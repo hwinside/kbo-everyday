@@ -9,7 +9,7 @@ import Link from "next/link";
 import GlassCard from "@/components/ui/GlassCard";
 import NicheStats from "@/components/player/NicheStats";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { getPlayerPhotoUrl, getPlayerPhotoByKboId, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
+import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
 import { usePosts, createPost } from "@/lib/supabase/usePosts";
 import WritePost from "@/components/community/WritePost";
@@ -166,7 +166,7 @@ export default function PlayerBoardPage() {
           <button onClick={() => router.back()} className="p-1 -ml-1">
             <ArrowLeft className="w-10 h-10 text-text-secondary" />
           </button>
-          <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name) || getPlayerPhotoUrl(playerName || "") || getPlayerPhotoByKboId(kboId)} number={player.number} size={64} />
+          <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name, kboId)} number={player.number} size={64} />
           <div className="flex-1">
             <div className="flex items-center gap-3">
               <h1 className="text-lg font-semibold text-text-primary">{player.name}</h1>

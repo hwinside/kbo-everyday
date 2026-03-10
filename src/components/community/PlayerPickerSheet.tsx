@@ -49,7 +49,7 @@ export default function PlayerPickerSheet({ open, onClose, players, onSelect }: 
                     <PlayerAvatar
                       name={player.name}
                       teamId={player.teamId}
-                      photoUrl={getPlayerPhotoUrl(player.name)}
+                      photoUrl={getPlayerPhotoUrl(player.name, player.playerId)}
                       size={36}
                     />
                     {player.name}

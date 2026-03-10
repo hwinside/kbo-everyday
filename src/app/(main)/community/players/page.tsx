@@ -147,7 +147,7 @@ export default function CommunityPlayersPage() {
               }`}
               style={selectedPlayer === player.playerId ? { backgroundColor: getPlayerTeamColor(player.playerId) } : {}}
             >
-              <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} size={22} />
+              <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name, player.playerId)} size={22} />
               {player.name}
             </button>
           ))}
