@@ -38,7 +38,7 @@ const STYLE_PRESETS: StylePreset[] = [
   {
     id: "handwrite",
     label: "손글씨",
-    fontFamily: "cursive, Comic Sans MS, sans-serif",
+    fontFamily: "'Gamja Flower', cursive",
     fill: "#FFFFFF",
     stroke: "",
     strokeWidth: 0,
