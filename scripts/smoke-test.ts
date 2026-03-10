@@ -78,8 +78,8 @@ async function testPage(name: string, path: string): Promise<TestResult> {
     }
     
     return { page: name, url, status: "✅ PASS", detail: `${(body.length / 1024).toFixed(1)}KB`, loadTime };
-  } catch (e: any) {
-    return { page: name, url, status: "❌ FAIL", detail: e.message, loadTime: Date.now() - start };
+  } catch (e: unknown) {
+    return { page: name, url, status: "❌ FAIL", detail: e instanceof Error ? e.message : String(e), loadTime: Date.now() - start };
   }
 }
 
@@ -110,8 +110,8 @@ async function testApi(name: string, path: string): Promise<TestResult> {
     }
     
     return { page: name, url, status: "✅ PASS", detail: `OK (${loadTime}ms)`, loadTime };
-  } catch (e: any) {
-    return { page: name, url, status: "❌ FAIL", detail: e.message, loadTime: Date.now() - start };
+  } catch (e: unknown) {
+    return { page: name, url, status: "❌ FAIL", detail: e instanceof Error ? e.message : String(e), loadTime: Date.now() - start };
   }
 }
 

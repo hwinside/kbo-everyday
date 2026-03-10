@@ -42,34 +42,35 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
 
   useEffect(() => {
     let cancelled = false;
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setLoading(true);
-    supabase
-      .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade, points)")
-      .eq("board_type", boardType)
-      .eq("board_id", boardId)
-      .eq("content_type", contentType)
-      .neq("is_hidden", true)
-      .order("created_at", { ascending: false })
-      .limit(30)
-      .then(({ data }) => {
-        if (cancelled) return;
-        if (data) {
-          setPosts(data.map((p) => ({
-            ...p,
-            content_type: (p.content_type ?? "general") as "general" | "photo",
-            image_urls: (p.image_urls ?? []) as string[],
-            nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
-            team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
-            grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
-            points: ((p.profiles as unknown as Record<string, unknown> | null)?.points as number) ?? 0,
-          })));
-        }
-        setLoading(false);
-      });
-    /* eslint-enable react-hooks/set-state-in-effect */
 
+    async function fetchPosts() {
+      setLoading(true);
+      const { data } = await supabase
+        .from("posts")
+        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade, points)")
+        .eq("board_type", boardType)
+        .eq("board_id", boardId)
+        .eq("content_type", contentType)
+        .neq("is_hidden", true)
+        .order("created_at", { ascending: false })
+        .limit(30);
+
+      if (cancelled) return;
+      if (data) {
+        setPosts(data.map((p) => ({
+          ...p,
+          content_type: (p.content_type ?? "general") as "general" | "photo",
+          image_urls: (p.image_urls ?? []) as string[],
+          nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
+          team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
+          grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
+          points: ((p.profiles as unknown as Record<string, unknown> | null)?.points as number) ?? 0,
+        })));
+      }
+      setLoading(false);
+    }
+
+    fetchPosts();
     return () => { cancelled = true; };
   }, [boardType, boardId, contentType]);
 
