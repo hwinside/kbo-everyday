@@ -96,8 +96,8 @@ function PhotoCarousel({
           alt="photo"
           width={800}
           height={1000}
-          className="w-full object-cover"
-          style={{ aspectRatio: "4/5", objectPosition: "center" }}
+          className="w-full object-contain"
+          style={{ aspectRatio: "4/5" }}
           sizes="(max-width: 768px) 100vw, 600px"
         />
       </div>
@@ -128,8 +128,8 @@ function PhotoCarousel({
               alt={`photo ${i + 1}`}
               width={800}
               height={1000}
-              className="w-full object-cover"
-              style={{ aspectRatio: "4/5", objectPosition: "center" }}
+              className="w-full object-contain"
+              style={{ aspectRatio: "4/5" }}
               sizes="(max-width: 768px) 100vw, 600px"
             />
           </div>
