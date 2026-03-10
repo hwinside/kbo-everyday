@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, startTransition } from "react";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getMyTeamId } from "@/lib/store/myteam";
@@ -49,8 +49,10 @@ export function useHomeInit() {
       const key = `welcome_shown_${user.id}`;
       if (!sessionStorage.getItem(key)) {
         sessionStorage.setItem(key, '1');
-        setWelcomeToast(true);
-        setTimeout(() => setWelcomeToast(false), 3000);
+        startTransition(() => {
+          setWelcomeToast(true);
+          setTimeout(() => setWelcomeToast(false), 3000);
+        });
       }
     }
   }, [user, profile]);
@@ -103,60 +105,62 @@ export function useHomeInit() {
   // 온보딩 초기화
   useEffect(() => {
     if (loading) return;
-    setShowPlayerSetupCTA(false);
+    startTransition(() => {
+      setShowPlayerSetupCTA(false);
 
-    if (profile && profile.team_id) {
-      const dbFavs = Array.isArray(profile.favorite_players) ? profile.favorite_players : [];
-      setMyTeam(profile.team_id);
-      setFavPlayers(dbFavs);
-      setOnboardingStatus(dbFavs.length ? "completed" : "skipped");
-      setShowOnboarding(false);
-      if (dbFavs.length === 0) {
-        setShowPlayerSetupCTA(true);
+      if (profile && profile.team_id) {
+        const dbFavs = Array.isArray(profile.favorite_players) ? profile.favorite_players : [];
+        setMyTeam(profile.team_id);
+        setFavPlayers(dbFavs);
+        setOnboardingStatus(dbFavs.length ? "completed" : "skipped");
+        setShowOnboarding(false);
+        if (dbFavs.length === 0) {
+          setShowPlayerSetupCTA(true);
+        }
+        return;
       }
-      return;
-    }
 
-    const saved = getMyTeamId();
-    const savedFavs = getFavoritePlayers();
-    const rawStatus = typeof window !== "undefined" ? localStorage.getItem("kbo-onboarding-status") : null;
-    const status = getOnboardingStatus();
+      const saved = getMyTeamId();
+      const savedFavs = getFavoritePlayers();
+      const rawStatus = typeof window !== "undefined" ? localStorage.getItem("kbo-onboarding-status") : null;
+      const status = getOnboardingStatus();
 
-    if (saved && (status === "completed" || status === "skipped")) {
-      setMyTeam(saved);
-      setFavPlayers(savedFavs);
-      setShowOnboarding(false);
-      if (status === "skipped" || savedFavs.length === 0) {
-        setShowPlayerSetupCTA(true);
+      if (saved && (status === "completed" || status === "skipped")) {
+        setMyTeam(saved);
+        setFavPlayers(savedFavs);
+        setShowOnboarding(false);
+        if (status === "skipped" || savedFavs.length === 0) {
+          setShowPlayerSetupCTA(true);
+        }
+        return;
       }
-      return;
-    }
 
-    if (saved && status === "team_selected") {
-      setMyTeam(saved);
-      setFavPlayers(savedFavs);
+      if (saved && status === "team_selected") {
+        setMyTeam(saved);
+        setFavPlayers(savedFavs);
+        setShowOnboarding(true);
+        return;
+      }
+
+      if (saved && rawStatus === null) {
+        setMyTeam(saved);
+        setFavPlayers(savedFavs);
+        const recoveredStatus = savedFavs.length > 0 ? "completed" : "skipped";
+        setOnboardingStatus(recoveredStatus);
+        setShowOnboarding(false);
+        if (savedFavs.length === 0) {
+          setShowPlayerSetupCTA(true);
+        }
+        return;
+      }
+
+      if (user && !profile) {
+        setShowOnboarding(false);
+        return;
+      }
+
       setShowOnboarding(true);
-      return;
-    }
-
-    if (saved && rawStatus === null) {
-      setMyTeam(saved);
-      setFavPlayers(savedFavs);
-      const recoveredStatus = savedFavs.length > 0 ? "completed" : "skipped";
-      setOnboardingStatus(recoveredStatus);
-      setShowOnboarding(false);
-      if (savedFavs.length === 0) {
-        setShowPlayerSetupCTA(true);
-      }
-      return;
-    }
-
-    if (user && !profile) {
-      setShowOnboarding(false);
-      return;
-    }
-
-    setShowOnboarding(true);
+    });
   }, [loading, user, profile]);
 
   function handleOnboardingComplete(teamId: number, players: FavoritePlayer[]) {

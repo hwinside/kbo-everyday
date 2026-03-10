@@ -170,8 +170,8 @@ async function main() {
   summary += `\n⏱️ 평균 응답: ${avgTime}ms`;
   
   // 요약을 파일로 저장 (삼식이가 읽어서 전송)
-  const fs = require("fs");
-  fs.writeFileSync("/tmp/smoke-test-result.txt", summary);
+  const { writeFileSync } = await import("fs");
+  writeFileSync("/tmp/smoke-test-result.txt", summary);
   
   console.log("\n" + summary);
   

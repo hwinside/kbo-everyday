@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { motion } from "framer-motion";
@@ -27,6 +28,7 @@ const item = {
 };
 
 export default function TodayGamesSection({ todayGames, isPreseason }: { todayGames: HomeGame[]; isPreseason: boolean }) {
+  const currentTime = useMemo(() => new Date(), []);
   return (
     <motion.section variants={item} className="mb-6">
       <SectionHeader title={isPreseason ? "오늘의 시범경기" : "오늘의 경기"} href="/games" icon="⚾" />
@@ -67,15 +69,15 @@ export default function TodayGamesSection({ todayGames, isPreseason }: { todayGa
       ) : (
         <GlassCard className="p-6 text-center">
           <p className="text-2xl mb-2">⚾</p>
-          {new Date() < PRESEASON_START ? (
+          {currentTime < PRESEASON_START ? (
             <>
-              <p className="text-[15px] font-medium text-text-primary">시범경기 D-{Math.ceil((PRESEASON_START.getTime() - Date.now()) / 86400000)}</p>
+              <p className="text-[15px] font-medium text-text-primary">시범경기 D-{Math.ceil((PRESEASON_START.getTime() - currentTime.getTime()) / 86400000)}</p>
               <p className="text-xs text-text-tertiary mt-1">3월 12일 시범경기 시작!</p>
             </>
-          ) : new Date() < REGULAR_SEASON_START ? (
+          ) : currentTime < REGULAR_SEASON_START ? (
             <>
               <p className="text-[15px] font-medium text-text-primary">오늘은 경기가 없습니다</p>
-              <p className="text-xs text-text-tertiary mt-1">시범경기 진행중 · 개막 D-{Math.ceil((REGULAR_SEASON_START.getTime() - Date.now()) / 86400000)}</p>
+              <p className="text-xs text-text-tertiary mt-1">시범경기 진행중 · 개막 D-{Math.ceil((REGULAR_SEASON_START.getTime() - currentTime.getTime()) / 86400000)}</p>
             </>
           ) : (
             <>

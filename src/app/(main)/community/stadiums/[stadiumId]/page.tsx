@@ -108,6 +108,7 @@ function SectionChip({
 
 export default function StadiumDetailPage() {
   const { stadiumId } = useParams();
+  const router = useRouter();
   const { user } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
 
@@ -143,8 +144,6 @@ export default function StadiumDetailPage() {
     if (!el) return;
     el.scrollIntoView({ behavior: "smooth", block: "start" });
   }
-
-  const router = useRouter();
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">

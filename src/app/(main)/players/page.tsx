@@ -4,7 +4,7 @@ import { Search, ChevronDown, ChevronLeft } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import Link from "next/link";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef, startTransition } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { TEAMS, getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getMyTeamId } from "@/lib/store/myteam";
@@ -55,7 +55,7 @@ function PlayersPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [myTeamId, setMyTeamId] = useState<number | null>(null);
-  useEffect(() => { setMyTeamId(getMyTeamId()); }, []);
+  useEffect(() => { startTransition(() => setMyTeamId(getMyTeamId())); }, []);
 
   const [filterMode, setFilterMode] = useState<FilterMode>(
     (searchParams.get("mode") as FilterMode) || "all"
