@@ -1,246 +1,62 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
 import { Pencil } from "lucide-react";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import PostList from "@/components/community/PostList";
-import PhotoFeed from "@/components/community/PhotoFeed";
 import WritePost from "@/components/community/WritePost";
 import WritePhotoPost from "@/components/community/WritePhotoPost";
 import LoginSheet from "@/components/auth/LoginSheet";
+import PlayerPickerSheet from "@/components/community/PlayerPickerSheet";
+import PlayerPostContent from "@/components/community/PlayerPostContent";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { supabase } from "@/lib/supabase/client";
 import { createPost, toggleLike } from "@/lib/supabase/usePosts";
-import { getFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
-import type { Post } from "@/lib/types";
-import type { Post as RawPost } from "@/lib/supabase/usePosts";
-
-interface SupabaseProfileJoin {
-  nickname?: string;
-  team_id?: number;
-  grade?: string;
-}
-
-interface SupabasePostRow {
-  id: number;
-  author_id: string;
-  board_type: string;
-  board_id: string;
-  content_type?: string;
-  title: string;
-  content: string;
-  image_urls?: string[];
-  like_count: number;
-  comment_count: number;
-  created_at: string;
-  is_hidden: boolean;
-  profiles?: SupabaseProfileJoin | SupabaseProfileJoin[] | null;
-}
-
-type ContentTab = "general" | "photo";
-type SortTab = "latest" | "hot";
+import { usePlayerCommunity } from "@/hooks/usePlayerCommunity";
 
 export default function CommunityPlayersPage() {
   const router = useRouter();
   const { user } = useAuth();
 
-  const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
-  const [favLoaded, setFavLoaded] = useState(false);
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [photoPosts, setPhotoPosts] = useState<RawPost[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [photoLoading, setPhotoLoading] = useState(false);
-  const [contentTab, setContentTab] = useState<ContentTab>("general");
-  const [sortTab, setSortTab] = useState<SortTab>("latest");
-  const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
+  const {
+    favPlayers,
+    favLoaded,
+    favPlayerIds,
+    favPlayerNames,
+    loading,
+    photoLoading,
+    contentTab,
+    sortTab,
+    selectedPlayer,
+    setSelectedPlayer,
+    filteredPosts,
+    filteredPhotoPosts,
+    handleTabChange,
+    handleSortChange,
+    loadPosts,
+    loadPhotoPosts,
+  } = usePlayerCommunity();
+
   const [writeOpen, setWriteOpen] = useState(false);
   const [writePhotoOpen, setWritePhotoOpen] = useState(false);
   const [writePlayerTarget, setWritePlayerTarget] = useState<string | null>(null);
   const [playerPickerOpen, setPlayerPickerOpen] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
 
-  // Derived
-  const favPlayerIds = useMemo(() => favPlayers.map((p) => p.playerId), [favPlayers]);
-  const favPlayerNames = useMemo(() => {
-    const m: Record<string, string> = {};
-    favPlayers.forEach((p) => { m[p.playerId] = p.name; });
-    return m;
-  }, [favPlayers]);
-
-  // Load favorites
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setFavPlayers(getFavoritePlayers());
-    setFavLoaded(true);
-  }, []);
-
-  // Load general posts
-  const loadPosts = useCallback(async () => {
-    if (favPlayerIds.length === 0) return;
-    setLoading(true);
-
-    let query = supabase
-      .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
-      .eq("board_type", "player")
-      .eq("content_type", "general")
-      .in("board_id", favPlayerIds)
-      .neq("is_hidden", true);
-
-    if (sortTab === "hot") {
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      query = query
-        .gte("created_at", sevenDaysAgo)
-        .order("like_count", { ascending: false });
-    } else {
-      query = query.order("created_at", { ascending: false });
-    }
-
-    query = query.limit(50);
-    const { data } = await query;
-
-    if (data) {
-      const rows = data as unknown as SupabasePostRow[];
-      setPosts(
-        rows.map((p) => {
-          const prof = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
-          return {
-            id: p.id,
-            boardType: "player" as const,
-            boardId: p.board_id,
-            authorId: p.author_id,
-            title: p.title,
-            content: p.content,
-            imageUrls: p.image_urls ?? [],
-            likeCount: p.like_count,
-            commentCount: p.comment_count,
-            isReported: false,
-            createdAt: p.created_at,
-            author: {
-              nickname: prof?.nickname || "익명",
-              avatarUrl: null,
-              myTeamId: prof?.team_id || 0,
-              level: 1,
-              title: "",
-              grade: prof?.grade,
-            },
-          };
-        })
-      );
-    }
-    setLoading(false);
-  }, [favPlayerIds, sortTab]);
-
-  // Load photo posts
-  const loadPhotoPosts = useCallback(async () => {
-    if (favPlayerIds.length === 0) return;
-    setPhotoLoading(true);
-
-    let query = supabase
-      .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
-      .eq("board_type", "player")
-      .eq("content_type", "photo")
-      .in("board_id", favPlayerIds)
-      .neq("is_hidden", true);
-
-    if (sortTab === "hot") {
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      query = query
-        .gte("created_at", sevenDaysAgo)
-        .order("like_count", { ascending: false });
-    } else {
-      query = query.order("created_at", { ascending: false });
-    }
-
-    query = query.limit(50);
-    const { data } = await query;
-
-    if (data) {
-      const rows = data as unknown as SupabasePostRow[];
-      setPhotoPosts(
-        rows.map((p) => {
-          const prof = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
-          return {
-            id: p.id,
-            author_id: p.author_id,
-            board_type: p.board_type,
-            board_id: p.board_id,
-            content_type: (p.content_type ?? "photo") as "general" | "photo",
-            title: p.title,
-            content: p.content,
-            image_urls: p.image_urls ?? [],
-            like_count: p.like_count,
-            comment_count: p.comment_count,
-            created_at: p.created_at,
-            nickname: prof?.nickname || "익명",
-            team_id: prof?.team_id,
-            grade: prof?.grade,
-          };
-        })
-      );
-    }
-    setPhotoLoading(false);
-  }, [favPlayerIds, sortTab]);
-
-  useEffect(() => {
-    if (favPlayerIds.length > 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (contentTab === "general") loadPosts();
-      else loadPhotoPosts();
-    }
-  }, [loadPosts, loadPhotoPosts, favPlayerIds.length, contentTab]);
-
-  // Filter by selected chip
-  const filteredPosts = selectedPlayer
-    ? posts.filter((p) => p.boardId === selectedPlayer)
-    : posts;
-
-  const filteredPhotoPosts = selectedPlayer
-    ? photoPosts.filter((p) => p.board_id === selectedPlayer)
-    : photoPosts;
-
-  // Handle tab change
-  const handleTabChange = (tab: ContentTab) => {
-    setContentTab(tab);
-    setSortTab("latest");
-    window.scrollTo(0, 0);
-  };
-
-  // Handle sort change
-  const handleSortChange = (sort: SortTab) => {
-    setSortTab(sort);
-    window.scrollTo(0, 0);
-  };
-
-  // Handle write
   const handleWrite = () => {
-    if (!user) {
-      setShowLogin(true);
-      return;
-    }
-    if (favPlayerIds.length === 0) {
-      router.push("/my");
-      return;
-    }
+    if (!user) { setShowLogin(true); return; }
+    if (favPlayerIds.length === 0) { router.push("/my"); return; }
     if (favPlayerIds.length === 1 || selectedPlayer) {
       setWritePlayerTarget(selectedPlayer || favPlayerIds[0]);
-      if (contentTab === "photo") {
-        setWritePhotoOpen(true);
-      } else {
-        setWriteOpen(true);
-      }
+      if (contentTab === "photo") setWritePhotoOpen(true);
+      else setWriteOpen(true);
     } else {
       setPlayerPickerOpen(true);
     }
   };
 
-  // Get team color for a player
   const getPlayerTeamColor = (playerId: string) => {
     const fav = favPlayers.find((p) => p.playerId === playerId);
     if (!fav) return "#E8364E";
@@ -248,11 +64,7 @@ export default function CommunityPlayersPage() {
   };
 
   const handlePhotoLike = async (postId: number) => {
-    try {
-      await toggleLike(postId);
-    } catch {
-      // ignore
-    }
+    try { await toggleLike(postId); } catch { /* ignore */ }
   };
 
   if (!favLoaded) {
@@ -271,7 +83,6 @@ export default function CommunityPlayersPage() {
     );
   }
 
-  // Empty state: no favorite players
   if (favPlayerIds.length === 0) {
     return (
       <div className="mx-auto max-w-lg px-5 pb-24">
@@ -298,7 +109,6 @@ export default function CommunityPlayersPage() {
     <div className="mx-auto max-w-lg">
       {/* Controls */}
       <div className="px-5 pb-2 space-y-3">
-        {/* Row 1: Title + Tab toggle + Write CTA */}
         <div className="flex items-center justify-between pt-3">
           <div className="flex bg-bg-glass rounded-xl p-1">
             {(["general", "photo"] as const).map((tab) => (
@@ -322,9 +132,7 @@ export default function CommunityPlayersPage() {
           <button
             onClick={() => setSelectedPlayer(null)}
             className={`px-3.5 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
-              selectedPlayer === null
-                ? "bg-accent text-white"
-                : "bg-bg-glass text-text-secondary"
+              selectedPlayer === null ? "bg-accent text-white" : "bg-bg-glass text-text-secondary"
             }`}
           >
             전체
@@ -334,22 +142,11 @@ export default function CommunityPlayersPage() {
               key={player.playerId}
               onClick={() => setSelectedPlayer(player.playerId)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
-                selectedPlayer === player.playerId
-                  ? "text-white"
-                  : "bg-bg-glass text-text-secondary"
+                selectedPlayer === player.playerId ? "text-white" : "bg-bg-glass text-text-secondary"
               }`}
-              style={
-                selectedPlayer === player.playerId
-                  ? { backgroundColor: getPlayerTeamColor(player.playerId) }
-                  : {}
-              }
+              style={selectedPlayer === player.playerId ? { backgroundColor: getPlayerTeamColor(player.playerId) } : {}}
             >
-              <PlayerAvatar
-                name={player.name}
-                teamId={player.teamId}
-                photoUrl={getPlayerPhotoUrl(player.name)}
-                size={22}
-              />
+              <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name)} size={22} />
               {player.name}
             </button>
           ))}
@@ -362,148 +159,38 @@ export default function CommunityPlayersPage() {
               key={sort}
               onClick={() => handleSortChange(sort)}
               className={`px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                sortTab === sort
-                  ? "bg-bg-tertiary text-text-primary"
-                  : "text-text-tertiary hover:text-text-secondary"
+                sortTab === sort ? "bg-bg-tertiary text-text-primary" : "text-text-tertiary hover:text-text-secondary"
               }`}
             >
               {sort === "latest" ? "최신" : "인기"}
             </button>
           ))}
-          {sortTab === "hot" && (
-            <span className="flex items-center text-xs text-text-tertiary ml-1">최근 7일</span>
-          )}
+          {sortTab === "hot" && <span className="flex items-center text-xs text-text-tertiary ml-1">최근 7일</span>}
         </div>
       </div>
 
-      {/* Content */}
-      <AnimatePresence mode="wait">
-        {contentTab === "general" ? (
-          <motion.div
-            key="general-posts"
-            initial={{ opacity: 0, x: -12 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -12 }}
-            transition={{ duration: 0.15 }}
-            className="px-5 py-3"
-          >
-            {loading ? (
-              <div className="space-y-3">
-                {[...Array(5)].map((_, i) => (
-                  <div key={i} className="glass-card p-5 animate-pulse">
-                    <div className="h-4 bg-bg-tertiary rounded w-24 mb-3" />
-                    <div className="h-5 bg-bg-tertiary rounded w-3/4 mb-2" />
-                    <div className="h-4 bg-bg-tertiary rounded w-full" />
-                  </div>
-                ))}
-              </div>
-            ) : filteredPosts.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-text-tertiary">
-                <p className="text-base">아직 글이 없습니다</p>
-                <p className="mt-1 text-sm">최애선수 게시판에 첫 글을 작성해보세요!</p>
-              </div>
-            ) : (
-              <>
-                {(() => {
-                  // 선수 게시판: "LG 김진성" 통합 레이블 맵 생성
-                  const playerLabels: Record<number, { teamId: number; playerName: string }> = {};
-                  const postsToShow = selectedPlayer ? filteredPosts : filteredPosts;
-                  postsToShow.forEach((post) => {
-                    const fav = favPlayers.find((p) => p.playerId === post.boardId);
-                    if (fav) {
-                      playerLabels[post.id] = { teamId: fav.teamId, playerName: fav.name };
-                    }
-                  });
-                  return <PostList posts={postsToShow} playerLabels={playerLabels} />;
-                })()}
-              </>
-            )}
-          </motion.div>
-        ) : (
-          <motion.div
-            key="photo-posts"
-            initial={{ opacity: 0, x: 12 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 12 }}
-            transition={{ duration: 0.15 }}
-            className="py-3"
-          >
-            <PhotoFeed
-              posts={filteredPhotoPosts}
-              loading={photoLoading}
-              onLike={handlePhotoLike}
-              boardType="player"
-              playerLabels={(() => {
-                const labels: Record<number, { teamId: number; playerName: string }> = {};
-                filteredPhotoPosts.forEach((post) => {
-                  const fav = favPlayers.find((p) => p.playerId === post.board_id);
-                  if (fav) labels[post.id] = { teamId: fav.teamId, playerName: fav.name };
-                });
-                return labels;
-              })()}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <PlayerPostContent
+        contentTab={contentTab}
+        loading={loading}
+        photoLoading={photoLoading}
+        filteredPosts={filteredPosts}
+        filteredPhotoPosts={filteredPhotoPosts}
+        favPlayers={favPlayers}
+        onPhotoLike={handlePhotoLike}
+      />
 
-      {/* Player picker sheet */}
-      <AnimatePresence>
-        {playerPickerOpen && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-50 bg-black/60"
-              onClick={() => setPlayerPickerOpen(false)}
-            />
-            <motion.div
-              initial={{ y: "100%" }}
-              animate={{ y: 0 }}
-              exit={{ y: "100%" }}
-              transition={{ type: "spring", damping: 30, stiffness: 300 }}
-              className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-bg-secondary overflow-y-auto"
-              style={{ maxHeight: "92dvh" }}
-            >
-              <div className="flex justify-center pt-3">
-                <div className="h-1 w-10 rounded-full bg-text-tertiary" />
-              </div>
-              <div className="flex flex-col h-full">
-                <div className="sticky top-0 bg-bg-secondary px-5 pt-3 pb-2 z-10">
-                  <h3 className="text-lg font-bold text-text-primary">어떤 선수 게시판에 쓸까요?</h3>
-                </div>
-                <div className="px-5 pb-24 space-y-2 overflow-y-auto flex-1">
-                  {favPlayers.map((player) => (
-                    <button
-                      key={player.playerId}
-                      onClick={() => {
-                        setWritePlayerTarget(player.playerId);
-                        setPlayerPickerOpen(false);
-                        if (contentTab === "photo") {
-                          setWritePhotoOpen(true);
-                        } else {
-                          setWriteOpen(true);
-                        }
-                      }}
-                      className="w-full flex items-center gap-3 text-left rounded-xl bg-bg-tertiary px-4 py-3 text-base font-semibold text-text-primary hover:bg-bg-glass active:scale-[0.98] transition-all"
-                    >
-                      <PlayerAvatar
-                        name={player.name}
-                        teamId={player.teamId}
-                        photoUrl={getPlayerPhotoUrl(player.name)}
-                        size={36}
-                      />
-                      {player.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+      <PlayerPickerSheet
+        open={playerPickerOpen}
+        onClose={() => setPlayerPickerOpen(false)}
+        players={favPlayers}
+        onSelect={(playerId) => {
+          setWritePlayerTarget(playerId);
+          setPlayerPickerOpen(false);
+          if (contentTab === "photo") setWritePhotoOpen(true);
+          else setWriteOpen(true);
+        }}
+      />
 
-      {/* FAB */}
       <button
         onClick={handleWrite}
         className="fixed bottom-24 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
@@ -511,46 +198,25 @@ export default function CommunityPlayersPage() {
         <Pencil size={24} />
       </button>
 
-      {/* Write post modal (general) */}
       <WritePost
         isOpen={writeOpen}
         onClose={() => { setWriteOpen(false); setWritePlayerTarget(null); }}
-        teamName={
-          writePlayerTarget
-            ? (favPlayerNames[writePlayerTarget] || writePlayerTarget) + " 게시판"
-            : "선수 게시판"
-        }
+        teamName={writePlayerTarget ? (favPlayerNames[writePlayerTarget] || writePlayerTarget) + " 게시판" : "선수 게시판"}
         onSubmit={async (title, content, imageUrls) => {
-          await createPost({
-            boardType: "player",
-            boardId: writePlayerTarget || favPlayerIds[0],
-            title,
-            content,
-            imageUrls,
-            contentType: "general",
-          });
+          await createPost({ boardType: "player", boardId: writePlayerTarget || favPlayerIds[0], title, content, imageUrls, contentType: "general" });
           setWriteOpen(false);
           setWritePlayerTarget(null);
           loadPosts();
         }}
       />
 
-      {/* Write photo post modal */}
       <WritePhotoPost
         isOpen={writePhotoOpen}
         onClose={() => { setWritePhotoOpen(false); setWritePlayerTarget(null); }}
-        teamName={
-          writePlayerTarget
-            ? (favPlayerNames[writePlayerTarget] || writePlayerTarget)
-            : "선수"
-        }
+        teamName={writePlayerTarget ? (favPlayerNames[writePlayerTarget] || writePlayerTarget) : "선수"}
         boardType="player"
         boardId={writePlayerTarget || favPlayerIds[0]}
-        onSuccess={() => {
-          setWritePhotoOpen(false);
-          setWritePlayerTarget(null);
-          loadPhotoPosts();
-        }}
+        onSuccess={() => { setWritePhotoOpen(false); setWritePlayerTarget(null); loadPhotoPosts(); }}
       />
 
       {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
