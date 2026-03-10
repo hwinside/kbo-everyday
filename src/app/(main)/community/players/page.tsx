@@ -15,6 +15,7 @@ import { createPost, toggleLike } from "@/lib/supabase/usePosts";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
 import { usePlayerCommunity } from "@/hooks/usePlayerCommunity";
+import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
 export default function CommunityPlayersPage() {
   const router = useRouter();
@@ -216,6 +217,12 @@ export default function CommunityPlayersPage() {
         teamName={writePlayerTarget ? (favPlayerNames[writePlayerTarget] || writePlayerTarget) : "선수"}
         boardType="player"
         boardId={writePlayerTarget || favPlayerIds[0]}
+        defaultPlayerTag={(() => {
+          if (!writePlayerTarget) return undefined;
+          const r = PLAYERS_ROSTER.find((p) => p.kboId === writePlayerTarget);
+          if (!r) return undefined;
+          return { id: Number(r.kboId), name: r.name, teamId: r.teamId };
+        })()}
         onSuccess={() => { setWritePhotoOpen(false); setWritePlayerTarget(null); loadPhotoPosts(); }}
       />
 

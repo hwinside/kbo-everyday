@@ -18,6 +18,7 @@ interface WritePhotoPostProps {
   teamName?: string;
   boardType: string;
   boardId: string;
+  defaultPlayerTag?: { id: number; name: string; teamId: number };
   onSuccess?: () => void;
 }
 
@@ -41,6 +42,7 @@ export default function WritePhotoPost({
   teamName,
   boardType,
   boardId,
+  defaultPlayerTag,
   onSuccess,
 }: WritePhotoPostProps) {
   const [step, setStep] = useState<Step>(1);
@@ -48,7 +50,9 @@ export default function WritePhotoPost({
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [caption, setCaption] = useState("");
   const [selectedGame, setSelectedGame] = useState<PickedGame | null>(null);
-  const [selectedPlayers, setSelectedPlayers] = useState<PlayerTag[]>([]);
+  const [selectedPlayers, setSelectedPlayers] = useState<PlayerTag[]>(
+    defaultPlayerTag ? [defaultPlayerTag] : []
+  );
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -152,7 +156,7 @@ export default function WritePhotoPost({
     images.forEach((img) => URL.revokeObjectURL(img.preview));
     setImages([]);
     setSelectedGame(null);
-    setSelectedPlayers([]);
+    setSelectedPlayers(defaultPlayerTag ? [defaultPlayerTag] : []);
     setHashtags([]);
     setEditingIndex(null);
   }
