@@ -374,6 +374,13 @@ export default function WritePhotoPost({
               {step === 2 && (
                 <div className="flex gap-3">
                   <button
+                    onClick={goBack}
+                    className="rounded-xl bg-bg-tertiary py-3.5 px-5 text-base font-medium text-text-secondary flex items-center justify-center gap-1"
+                  >
+                    <ChevronLeft size={18} />
+                    이전
+                  </button>
+                  <button
                     onClick={() => setStep(3)}
                     className="flex-1 rounded-xl bg-bg-tertiary py-3.5 text-base font-medium text-text-secondary flex items-center justify-center gap-2"
                   >
@@ -389,14 +396,23 @@ export default function WritePhotoPost({
                 </div>
               )}
               {step === 3 && (
-                <button
-                  onClick={handleSubmit}
-                  disabled={submitting}
-                  className="w-full rounded-xl bg-accent py-3.5 text-base font-semibold text-white disabled:opacity-40 transition-opacity flex items-center justify-center gap-2"
-                >
-                  {submitting && <Loader2 size={18} className="animate-spin" />}
-                  게시하기
-                </button>
+                <div className="flex gap-3">
+                  <button
+                    onClick={goBack}
+                    className="rounded-xl bg-bg-tertiary py-3.5 px-5 text-base font-medium text-text-secondary flex items-center justify-center gap-1"
+                  >
+                    <ChevronLeft size={18} />
+                    이전
+                  </button>
+                  <button
+                    onClick={handleSubmit}
+                    disabled={submitting}
+                    className="flex-1 rounded-xl bg-accent py-3.5 text-base font-semibold text-white disabled:opacity-40 transition-opacity flex items-center justify-center gap-2"
+                  >
+                    {submitting && <Loader2 size={18} className="animate-spin" />}
+                    게시하기
+                  </button>
+                </div>
               )}
             </div>
           </motion.div>
