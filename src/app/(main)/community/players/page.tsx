@@ -202,7 +202,12 @@ export default function CommunityPlayersPage() {
       <WritePost
         isOpen={writeOpen}
         onClose={() => { setWriteOpen(false); setWritePlayerTarget(null); }}
-        teamName={writePlayerTarget ? (favPlayerNames[writePlayerTarget] || writePlayerTarget) + " 게시판" : "선수 게시판"}
+        teamName={writePlayerTarget ? (() => {
+          const r = PLAYERS_ROSTER.find((p) => p.kboId === writePlayerTarget);
+          const team = r ? TEAMS.find((t) => t.id === r.teamId) : null;
+          const label = team ? `${team.shortName} ${r!.name} 선수` : (favPlayerNames[writePlayerTarget] || writePlayerTarget) + " 선수";
+          return label + " 게시판";
+        })() : "선수 게시판"}
         onSubmit={async (title, content, imageUrls) => {
           await createPost({ boardType: "player", boardId: writePlayerTarget || favPlayerIds[0], title, content, imageUrls, contentType: "general" });
           setWriteOpen(false);
@@ -214,7 +219,11 @@ export default function CommunityPlayersPage() {
       <WritePhotoPost
         isOpen={writePhotoOpen}
         onClose={() => { setWritePhotoOpen(false); setWritePlayerTarget(null); }}
-        teamName={writePlayerTarget ? (favPlayerNames[writePlayerTarget] || writePlayerTarget) : "선수"}
+        teamName={writePlayerTarget ? (() => {
+          const r = PLAYERS_ROSTER.find((p) => p.kboId === writePlayerTarget);
+          const team = r ? TEAMS.find((t) => t.id === r.teamId) : null;
+          return team ? `${team.shortName} ${r!.name} 선수` : (favPlayerNames[writePlayerTarget] || writePlayerTarget) + " 선수";
+        })() : "선수"}
         boardType="player"
         boardId={writePlayerTarget || favPlayerIds[0]}
         defaultPlayerTag={(() => {
