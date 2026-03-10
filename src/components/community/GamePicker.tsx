@@ -77,20 +77,17 @@ export default function GamePicker({ selectedGameId, onSelect }: GamePickerProps
   }, [userTeamId]);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-4">
-        <Loader2 size={20} className="animate-spin text-text-tertiary" />
-      </div>
-    );
+    return null;
+  }
+
+  // 경기 없으면 섹션 자체 숨김
+  if (games.length === 0) {
+    return null;
   }
 
   return (
     <div className="space-y-2">
       <p className="text-sm font-medium text-text-secondary">경기 연결</p>
-
-      {games.length === 0 && (
-        <p className="text-xs text-text-tertiary py-2">최근 경기가 없습니다</p>
-      )}
 
       <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
         {/* No game option */}
