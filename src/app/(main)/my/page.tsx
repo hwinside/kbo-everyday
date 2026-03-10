@@ -4,17 +4,12 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { Settings, ChevronLeft, ChevronRight, Download, FileText, MessageCircle, Mail, Heart, Trophy, RefreshCw, Star, LogIn, LogOut, GraduationCap, Bell, MessageSquareHeart } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, RefreshCw, MessageSquareHeart } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
-import TeamBadge from "@/components/ui/TeamBadge";
-import LevelBadge from "@/components/ui/LevelBadge";
 import TeamSelectModal from "@/components/onboarding/TeamSelectModal";
 import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
-import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
-import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
+import { getTeamById } from "@/lib/constants/teams";
 import { getMyTeamId, setMyTeamId } from "@/lib/store/myteam";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { usePushNotification } from "@/lib/hooks/usePushNotification";
@@ -22,8 +17,12 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { updateProfile } from "@/lib/supabase/auth";
 import LoginSheet from "@/components/auth/LoginSheet";
 import FeedbackSheet from "@/components/feedback/FeedbackSheet";
-import { getAvatarPath } from "@/lib/constants/avatars";
 import AvatarSelectSheet from "@/components/profile/AvatarSelectSheet";
+import ProfileCard from "@/components/my/ProfileCard";
+import FavoritePlayersCard from "@/components/my/FavoritePlayersCard";
+import NotificationCard from "@/components/my/NotificationCard";
+import MenuSection from "@/components/my/MenuSection";
+import PwaGuideModal from "@/components/my/PwaGuideModal";
 
 export default function MyPage() {
   const [teamId, setTeamId] = useState<number | null>(null);
@@ -44,17 +43,15 @@ export default function MyPage() {
     setFavPlayers(getFavoritePlayers());
   }, [profile]);
 
-  const team = teamId ? getTeamById(teamId) : null;
+  const team = teamId ? getTeamById(teamId) ?? null : null;
 
   const handleTeamChange = async (newTeamId: number) => {
     setMyTeamId(newTeamId);
     setTeamId(newTeamId);
     setShowTeamSelect(false);
-    // 팀 변경 시 최애 선수 재선택
     setFavoritePlayers([]);
     setFavPlayers([]);
     setShowPlayerSelect(true);
-    // 로그인 상태면 DB에도 동기화
     if (user) {
       await updateProfile(user.id, { team_id: newTeamId, favorite_players: [] });
     }
@@ -64,7 +61,6 @@ export default function MyPage() {
     setFavoritePlayers(players);
     setFavPlayers(players);
     setShowPlayerSelect(false);
-    // 로그인 상태면 DB에도 동기화
     if (user) {
       await updateProfile(user.id, { favorite_players: players });
     }
@@ -81,54 +77,12 @@ export default function MyPage() {
 
       {/* Profile card */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
-        <GlassCard className="p-5">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => user && setShowAvatarSelect(true)}
-              className="relative flex h-14 w-14 items-center justify-center rounded-full bg-bg-tertiary text-2xl overflow-hidden transition-transform hover:scale-105"
-            >
-              {profile?.avatar_url && getAvatarPath(profile.avatar_url) ? (
-                <img src={getAvatarPath(profile.avatar_url)!} alt="" className="w-full h-full object-cover" />
-              ) : profile?.nickname ? (
-                <div
-                  className="w-full h-full flex items-center justify-center text-xl font-bold text-white"
-                  style={{ backgroundColor: team ? getTeamBgColor(team) : '#6366f1' }}
-                >
-                  {profile.nickname.charAt(0)}
-                </div>
-              ) : (
-                <>⚾</>
-              )}
-              {user && (
-                <div className="absolute bottom-0 right-0 w-5 h-5 bg-bg-secondary rounded-full flex items-center justify-center border border-white/20">
-                  <Settings size={10} className="text-text-secondary" />
-                </div>
-              )}
-            </button>
-            <div className="flex-1">
-              <div className="flex items-center gap-3">
-                <span className="text-lg font-semibold text-text-primary">{user ? (profile?.nickname || user.email || "유저") : "게스트"}</span>
-                {team && <TeamBadge teamId={team.id} />}
-              </div>
-              <LevelBadge level={15} showTitle />
-              <p className="mt-0.5 text-base text-text-tertiary">{user ? `${profile?.points || 0} 포인트` : "로그인 해주세요"}</p>
-            </div>
-          </div>
-        </GlassCard>
+        <ProfileCard user={user} profile={profile} team={team} onAvatarClick={() => user && setShowAvatarSelect(true)} />
       </motion.div>
 
       {/* 응원 구단 변경 */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.08 }}
-        className="mt-5"
-      >
-        <GlassCard
-          pressable
-          className="flex items-center justify-between p-5"
-          onClick={() => setShowTeamSelect(true)}
-        >
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }} className="mt-5">
+        <GlassCard pressable className="flex items-center justify-between p-5" onClick={() => setShowTeamSelect(true)}>
           <div className="flex items-center gap-4">
             <RefreshCw size={22} className="text-text-secondary" />
             <span className="text-base text-text-primary">응원 구단 변경</span>
@@ -147,15 +101,9 @@ export default function MyPage() {
         </GlassCard>
       </motion.div>
 
-
       {/* 앱 설치 */}
       {typeof window !== "undefined" && !window.matchMedia("(display-mode: standalone)").matches && (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="mt-3"
-        >
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="mt-3">
           <GlassCard
             pressable
             className="flex items-center justify-between p-5"
@@ -179,122 +127,24 @@ export default function MyPage() {
       )}
 
       {/* 최애 선수 */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.12 }}
-        className="mt-3"
-      >
-        <GlassCard
-          pressable
-          className="p-5"
-          onClick={() => setShowPlayerSelect(true)}
-        >
-          <div className="flex items-center gap-4 mb-3">
-            <Star size={22} className="text-yellow-400" />
-            <span className="text-base text-text-primary">최애 선수</span>
-            <ChevronRight size={18} className="ml-auto text-text-tertiary" />
-          </div>
-          {favPlayers.length > 0 ? (
-            <div className="flex gap-3">
-              {favPlayers.map(p => (
-                <div key={p.playerId} className="flex flex-col items-center gap-1">
-                  <PlayerAvatar name={p.name} teamId={p.teamId} photoUrl={getPlayerPhotoUrl(p.name)} number={p.number} size={44} />
-                  <span className="text-xs text-text-secondary">{p.name}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-xs text-text-tertiary">선수를 선택해주세요</p>
-          )}
-        </GlassCard>
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }} className="mt-3">
+        <FavoritePlayersCard favPlayers={favPlayers} onEdit={() => setShowPlayerSelect(true)} />
       </motion.div>
 
       {/* 알림 설정 */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.13 }}
-        className="mt-3"
-      >
-        <GlassCard className="p-5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Bell size={22} className="text-text-secondary" />
-              <div>
-                <span className="text-base text-text-primary">푸시 알림</span>
-                <p className="text-xs text-text-tertiary mt-0.5">
-                  {permission === "granted" ? "경기 시작, 득점 알림 수신 중" : typeof window !== "undefined" && (!("PushManager" in window) || !window.matchMedia("(display-mode: standalone)").matches) ? "홈 화면에 추가하면 알림을 받을 수 있어요 📲" : "경기 알림을 받아보세요"}
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={async () => {
-                const isStandalone = window.matchMedia("(display-mode: standalone)").matches;
-                if (!isStandalone || !("PushManager" in window)) {
-                  setShowPwaGuide(true);
-                  return;
-                }
-                if (permission === "granted" && subscription) {
-                  await unsubscribe();
-                } else {
-                  await subscribe();
-                }
-              }}
-              className={`relative w-12 h-7 rounded-full transition-colors ${
-                permission === "granted" ? "bg-accent" : "bg-bg-tertiary"
-              }`}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${
-                permission === "granted" ? "translate-x-5" : "translate-x-0"
-              }`} />
-            </button>
-          </div>
-        </GlassCard>
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.13 }} className="mt-3">
+        <NotificationCard permission={permission} subscription={subscription} subscribe={subscribe} unsubscribe={unsubscribe} onShowPwaGuide={() => setShowPwaGuide(true)} />
       </motion.div>
 
       {/* Menu items */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15 }}
-        className="mt-5 space-y-3"
-      >
-        {[
-          { icon: FileText, label: "내가 쓴 글", count: 23 },
-          { icon: Mail, label: "쪽지함", href: "/messages" },
-          { icon: MessageCircle, label: "내 댓글", count: 89 },
-          { icon: Heart, label: "좋아요한 글", count: 156 },
-          { icon: Trophy, label: "예측 전적", count: null, detail: "67% 적중" },
-          { icon: GraduationCap, label: "야구 쉽게 배우기", count: null, detail: "NEW", href: "/learn" },
-        ].map(({ icon: Icon, label, count, detail, href }: { icon: LucideIcon; label: string; count?: number | null; detail?: string; href?: string }) => (
-          <GlassCard key={label} pressable onClick={() => href && router.push(href)} className="flex items-center justify-between p-5">
-            <div className="flex items-center gap-4">
-              <Icon size={22} className="text-text-secondary" />
-              <span className="text-base text-text-primary">{label}</span>
-            </div>
-            <div className="flex items-center gap-1 text-text-tertiary">
-              {count !== null && <span className="text-base">{count}</span>}
-              {detail && <span className="text-base text-accent-gold">{detail}</span>}
-              <ChevronRight size={22} />
-            </div>
-          </GlassCard>
-        ))}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="mt-5">
+        <MenuSection />
       </motion.div>
 
-      {/* 피드백 보내기 - 로그인 시에만 */}
+      {/* 피드백 보내기 */}
       {user && (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.17 }}
-          className="mt-3"
-        >
-          <GlassCard
-            pressable
-            className="flex items-center justify-between p-5"
-            onClick={() => setShowFeedback(true)}
-          >
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.17 }} className="mt-3">
+          <GlassCard pressable className="flex items-center justify-between p-5" onClick={() => setShowFeedback(true)}>
             <div className="flex items-center gap-4">
               <MessageSquareHeart size={22} className="text-text-secondary" />
               <span className="text-base text-text-primary">📮 피드백 보내기</span>
@@ -306,19 +156,14 @@ export default function MyPage() {
 
       {/* Login prompt */}
       {!user && (
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
-        className="mt-5"
-      >
-        <GlassCard className="flex flex-col items-center gap-3 py-6">
-          <p className="text-sm text-text-tertiary">로그인하면 데이터가 동기화됩니다</p>
-          <button onClick={() => setShowLogin(true)} className="rounded-full bg-accent px-8 py-2.5 text-sm font-semibold text-white">
-            로그인 / 회원가입
-          </button>
-        </GlassCard>
-      </motion.div>
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="mt-5">
+          <GlassCard className="flex flex-col items-center gap-3 py-6">
+            <p className="text-sm text-text-tertiary">로그인하면 데이터가 동기화됩니다</p>
+            <button onClick={() => setShowLogin(true)} className="rounded-full bg-accent px-8 py-2.5 text-sm font-semibold text-white">
+              로그인 / 회원가입
+            </button>
+          </GlassCard>
+        </motion.div>
       )}
 
       {/* Logged in info */}
@@ -334,51 +179,9 @@ export default function MyPage() {
         </motion.div>
       )}
 
-      {/* Team select modal (reuse onboarding) */}
-      <TeamSelectModal
-        isOpen={showTeamSelect}
-        onSelect={handleTeamChange}
-      />
-      {/* PWA 안내 모달 */}
-      {showPwaGuide && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-5" onClick={() => setShowPwaGuide(false)}>
-          <motion.div
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="w-full max-w-sm rounded-2xl bg-bg-secondary p-6"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="text-center">
-              <p className="text-3xl mb-3">📲</p>
-              <h3 className="text-lg font-bold text-text-primary mb-2">홈 화면에 추가해주세요!</h3>
-              <p className="text-sm text-text-secondary mb-4">
-                앱처럼 사용하고 푸시 알림도 받을 수 있어요
-              </p>
-              <div className="glass-card p-4 text-left space-y-3 mb-5">
-                <div className="flex items-center gap-3">
-                  <span className="flex-shrink-0 w-6 h-6 rounded-full bg-accent flex items-center justify-center text-xs font-bold text-white">1</span>
-                  <p className="text-sm text-text-primary">하단 공유 버튼 <span className="inline-block w-5 h-5 text-center">⎋</span> 탭</p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="flex-shrink-0 w-6 h-6 rounded-full bg-accent flex items-center justify-center text-xs font-bold text-white">2</span>
-                  <p className="text-sm text-text-primary">&quot;홈 화면에 추가&quot; 선택</p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="flex-shrink-0 w-6 h-6 rounded-full bg-accent flex items-center justify-center text-xs font-bold text-white">3</span>
-                  <p className="text-sm text-text-primary">홈 화면에서 크보팬 실행!</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowPwaGuide(false)}
-                className="w-full rounded-xl bg-accent py-3 text-sm font-semibold text-white"
-              >
-                확인
-              </button>
-            </div>
-          </motion.div>
-        </div>
-      )}
-
+      {/* Modals */}
+      <TeamSelectModal isOpen={showTeamSelect} onSelect={handleTeamChange} />
+      <PwaGuideModal isOpen={showPwaGuide} onClose={() => setShowPwaGuide(false)} />
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
       <FeedbackSheet isOpen={showFeedback} onClose={() => setShowFeedback(false)} />
       <AvatarSelectSheet

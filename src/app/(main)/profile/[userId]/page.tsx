@@ -2,8 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
-import { ChevronLeft, Copy, Check, Heart, MessageCircle, Settings } from "lucide-react";
+import { ChevronLeft, Heart, MessageCircle, Settings } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById } from "@/lib/constants/teams";
@@ -11,9 +10,11 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import GlassCard from "@/components/ui/GlassCard";
 import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
-import { BADGES, BADGE_MAP, RARITY_COLORS, CATEGORY_LABELS } from "@/lib/constants/badges";
 import type { BadgeDefinition } from "@/lib/constants/badges";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
+import InviteTab from "@/components/profile/InviteTab";
+import BadgeDetailModal from "@/components/profile/BadgeDetailModal";
+import BadgesTab from "@/components/profile/BadgesTab";
 
 interface UserProfile {
   id: string;
@@ -47,153 +48,6 @@ interface UserPost {
   created_at: string;
 }
 
-
-// 동적 배지 (fan-player:playerId:level, fan-team:teamId:level) 해석
-function parseDynamicBadge(badgeId: string): BadgeDefinition | null {
-  const playerMatch = badgeId.match(/^fan-player:(.+):(\d+)$/);
-  if (playerMatch) {
-    const [, playerId, level] = playerMatch;
-    const playerName = Object.entries(PLAYER_PHOTO_MAP).find(([, id]) => id === playerId)?.[0] || playerId;
-    const lvl = parseInt(level);
-    const rarity = lvl <= 2 ? "common" : lvl <= 3 ? "rare" : lvl <= 4 ? "epic" : "legendary";
-    return { id: badgeId, name: `${playerName} 덕후 Lv.${level}`, icon: "⭐", description: `${playerName} 게시판 활동`, category: "fan", rarity };
-  }
-  const teamMatch = badgeId.match(/^fan-team:(\d+):(\d+)$/);
-  if (teamMatch) {
-    const [, teamId, level] = teamMatch;
-    const teamName = KBO_TEAMS.find(t => String(t.id) === teamId)?.shortName || teamId;
-    const lvl = parseInt(level);
-    const rarity = lvl <= 2 ? "common" : lvl <= 3 ? "rare" : lvl <= 4 ? "epic" : "legendary";
-    return { id: badgeId, name: `${teamName} 광팬 Lv.${level}`, icon: "🏟️", description: `${teamName} 게시판 활동`, category: "fan", rarity };
-  }
-  return null;
-}
-
-function getBadgeInfo(badgeId: string): BadgeDefinition | null {
-  return BADGE_MAP[badgeId] || parseDynamicBadge(badgeId);
-}
-
-function InviteTab({ userId, inviteCount }: { userId: string; inviteCount: number }) {
-  const [codes, setCodes] = useState<string[]>([]);
-  const [friends, setFriends] = useState<{ id: string; nickname: string }[]>([]);
-  const [totalInvited, setTotalInvited] = useState(0);
-  const [generating, setGenerating] = useState(false);
-  const [copied, setCopied] = useState<string | null>(null);
-  const [remaining, setRemaining] = useState(inviteCount);
-
-  useEffect(() => {
-    fetch(`/api/invite?userId=${userId}`)
-      .then(r => r.json())
-      .then(data => {
-        setCodes((data.invitations || []).filter((i: { code: string; used_at: string | null }) => !i.used_at).map((i: { code: string; used_at: string | null }) => i.code));
-        setFriends(data.friends || []);
-        setTotalInvited(data.totalInvited || 0);
-      });
-  }, [userId]);
-
-  async function generateCode() {
-    if (remaining <= 0) return;
-    setGenerating(true);
-    const res = await fetch("/api/invite", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId }),
-    });
-    const data = await res.json();
-    if (data.code) {
-      setCodes(prev => [data.code, ...prev]);
-      setRemaining(prev => prev - 1);
-    }
-    setGenerating(false);
-  }
-
-  function copyCode(code: string) {
-    navigator.clipboard.writeText(code);
-    setCopied(code);
-    setTimeout(() => setCopied(null), 2000);
-  }
-
-  function shareCode(code: string) {
-    const text = `크보팬에 초대합니다! 🏟️⚾\n\n초대코드: ${code}\n가입하면 파운더 배지를 받아요 👑\n\nhttps://keubo.fan`;
-    if (navigator.share) {
-      navigator.share({ title: "크보팬 초대", text });
-    } else {
-      navigator.clipboard.writeText(text);
-      setCopied(code);
-      setTimeout(() => setCopied(null), 2000);
-    }
-  }
-
-  return (
-    <div className="px-5 space-y-4">
-      <GlassCard className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-bold text-text-primary">🎟️ 초대코드</h3>
-          <span className="text-xs px-2 py-1 rounded-full bg-accent/20 text-accent font-bold">
-            남은 초대권: {remaining}장
-          </span>
-        </div>
-
-        {remaining > 0 && (
-          <button
-            onClick={generateCode}
-            disabled={generating}
-            className="w-full mb-3 py-2.5 rounded-xl bg-accent/20 text-accent font-bold text-sm hover:bg-accent/30 transition-all disabled:opacity-50"
-          >
-            {generating ? "생성 중..." : "✨ 초대코드 생성하기"}
-          </button>
-        )}
-
-        {codes.length > 0 ? (
-          <div className="space-y-2">
-            {codes.map(code => (
-              <div key={code} className="flex items-center gap-2 bg-bg-tertiary rounded-xl px-4 py-3">
-                <code className="flex-1 text-sm font-mono text-accent">{code}</code>
-                <button onClick={() => copyCode(code)} className="p-1.5">
-                  {copied === code ? <Check size={16} className="text-green-400" /> : <Copy size={16} className="text-text-tertiary" />}
-                </button>
-                <button onClick={() => shareCode(code)} className="p-1.5 text-text-tertiary text-xs">
-                  공유
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-text-tertiary text-center py-2">
-            초대코드를 생성해서 친구에게 공유하세요!
-          </p>
-        )}
-      </GlassCard>
-
-      <GlassCard className="p-4">
-        <h3 className="text-sm font-bold text-text-primary mb-2">
-          👥 내가 초대한 친구 ({totalInvited}명)
-        </h3>
-        {friends.length > 0 ? (
-          <div className="space-y-2">
-            {friends.map(f => (
-              <div key={f.id} className="flex items-center gap-2 text-sm">
-                <span className="text-base">🤝</span>
-                <span className="text-text-primary">{f.nickname}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-xs text-text-tertiary">아직 초대한 친구가 없어요</p>
-        )}
-      </GlassCard>
-
-      <div className="text-center text-xs text-text-tertiary space-y-1">
-        <p>🤝 1명 초대 → 리크루터 Lv.1</p>
-        <p>🤝 3명 초대 → 리크루터 Lv.2</p>
-        <p>🤝 10명 초대 → 리크루터 Lv.3</p>
-        <p>🎪 30명 초대 → <span className="text-amber-400 font-bold">초대왕</span></p>
-      </div>
-
-    </div>
-  );
-}
-
 export default function ProfilePage() {
   const { userId } = useParams();
   const router = useRouter();
@@ -203,15 +57,12 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [badges, setBadges] = useState<UserBadge[]>([]);
   const [posts, setPosts] = useState<UserPost[]>([]);
-  const [inviteCodes, setInviteCodes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedBadge, setSelectedBadge] = useState<BadgeDefinition | null>(null);
   const [activeTab, setActiveTab] = useState<"badges" | "posts" | "invite">("badges");
-  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     async function load() {
-      // Profile
       const { data: p } = await supabase
         .from("profiles")
         .select("*")
@@ -219,7 +70,6 @@ export default function ProfilePage() {
         .single();
       if (p) setProfile(p as UserProfile);
 
-      // Badges
       const { data: b } = await supabase
         .from("user_badges")
         .select("badge_id, earned_at")
@@ -227,7 +77,6 @@ export default function ProfilePage() {
         .order("earned_at", { ascending: false });
       if (b) setBadges(b);
 
-      // Posts (if public)
       if (p?.show_posts) {
         const { data: posts } = await supabase
           .from("posts")
@@ -236,16 +85,6 @@ export default function ProfilePage() {
           .order("created_at", { ascending: false })
           .limit(20);
         if (posts) setPosts(posts);
-      }
-
-      // Invite codes (own only)
-      if (user?.id === userId) {
-        const { data: inv } = await supabase
-          .from("invitations")
-          .select("code, used_at")
-          .eq("inviter_id", userId)
-          .is("used_at", null);
-        if (inv) setInviteCodes(inv.map(i => i.code));
       }
 
       setLoading(false);
@@ -260,14 +99,6 @@ export default function ProfilePage() {
   const teamColor = team?.colorPrimary ?? "#666";
   const earnedBadgeIds = new Set(badges.map(b => b.badge_id));
   const founderBadge = earnedBadgeIds.has("founder");
-
-  const categories = Object.entries(CATEGORY_LABELS);
-
-  function copyCode(code: string) {
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
 
   const timeAgo = (date: string) => {
     const d = new Date(date);
@@ -360,61 +191,7 @@ export default function ProfilePage() {
 
       {/* Badges Tab */}
       {activeTab === "badges" && (
-        <div className="px-5 space-y-4">
-          {categories.map(([catId, catLabel]) => {
-            const catBadges = BADGES.filter(b => b.category === catId);
-            if (catBadges.length === 0) return null;
-            return (
-              <GlassCard key={catId} className="p-4">
-                <h3 className="text-sm font-bold text-text-primary mb-3">{catLabel}</h3>
-                <div className="grid grid-cols-4 gap-3">
-                  {catBadges.map(badge => {
-                    const earned = earnedBadgeIds.has(badge.id);
-                    return (
-                      <motion.div
-                        key={badge.id}
-                        whileTap={{ scale: 0.95 }}
-                        onClick={() => setSelectedBadge(badge)}
-                        className={`text-center p-2 rounded-xl transition-all cursor-pointer ${
-                          earned ? "bg-white/5" : "opacity-30"
-                        }`}
-                      >
-                        <span className={`text-2xl ${earned ? "" : "grayscale"}`}>{badge.icon}</span>
-                        <p className="text-[10px] mt-1 font-medium" style={{ color: earned ? RARITY_COLORS[badge.rarity] : "#666" }}>
-                          {badge.name}
-                        </p>
-                      </motion.div>
-                    );
-                  })}
-                </div>
-              </GlassCard>
-            );
-          })}
-          {/* 동적 배지 (선수/팀 덕후) */}
-          {badges.filter(b => b.badge_id.startsWith("fan-")).length > 0 && (
-            <GlassCard className="p-4">
-              <h3 className="text-sm font-bold text-text-primary mb-3">⚾ 나의 덕질 배지</h3>
-              <div className="grid grid-cols-4 gap-3">
-                {badges.filter(b => b.badge_id.startsWith("fan-")).map(b => {
-                  const info = getBadgeInfo(b.badge_id);
-                  if (!info) return null;
-                  return (
-                    <motion.div key={b.badge_id} className="text-center p-2 rounded-xl bg-white/5">
-                      <span className="text-2xl">{info.icon}</span>
-                      <p className="text-[10px] mt-1 font-medium" style={{ color: RARITY_COLORS[info.rarity] }}>
-                        {info.name}
-                      </p>
-                    </motion.div>
-                  );
-                })}
-              </div>
-            </GlassCard>
-          )}
-
-          <p className="text-center text-xs text-text-tertiary">
-            {badges.length}개 획득 / {BADGES.length}개 중
-          </p>
-        </div>
+        <BadgesTab badges={badges} earnedBadgeIds={earnedBadgeIds} onSelectBadge={setSelectedBadge} />
       )}
 
       {/* Posts Tab */}
@@ -454,43 +231,7 @@ export default function ProfilePage() {
       )}
 
       {/* Badge Detail Popup */}
-      <AnimatePresence>
-        {selectedBadge && (
-          <motion.div
-            className="fixed inset-0 z-50 flex items-center justify-center p-8"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setSelectedBadge(null)}
-          >
-            <div className="absolute inset-0 bg-black/60" />
-            <motion.div
-              className="relative bg-bg-secondary rounded-2xl border border-border p-6 text-center max-w-[280px] w-full"
-              initial={{ scale: 0.8, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.8, y: 20 }}
-              onClick={e => e.stopPropagation()}
-            >
-              <span className="text-5xl">{selectedBadge.icon}</span>
-              <h3 className="text-lg font-bold text-text-primary mt-3">{selectedBadge.name}</h3>
-              <p className="text-sm text-text-secondary mt-2">{selectedBadge.description}</p>
-              <div className="mt-3">
-                <span
-                  className="text-xs font-bold px-3 py-1 rounded-full"
-                  style={{ backgroundColor: RARITY_COLORS[selectedBadge.rarity] + "20", color: RARITY_COLORS[selectedBadge.rarity] }}
-                >
-                  {selectedBadge.rarity === "common" ? "일반" : selectedBadge.rarity === "rare" ? "레어" : selectedBadge.rarity === "epic" ? "에픽" : "전설"}
-                </span>
-              </div>
-              {earnedBadgeIds.has(selectedBadge.id)
-                ? <p className="text-xs text-green-400 mt-3">✅ 획득 완료!</p>
-                : <p className="text-xs text-text-tertiary mt-3">🔒 아직 미획득</p>
-              }
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
+      <BadgeDetailModal selectedBadge={selectedBadge} earnedBadgeIds={earnedBadgeIds} onClose={() => setSelectedBadge(null)} />
     </div>
   );
 }
