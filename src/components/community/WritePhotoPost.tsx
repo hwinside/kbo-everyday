@@ -193,8 +193,13 @@ export default function WritePhotoPost({
               className="flex items-center justify-between px-4 py-2"
               style={{ paddingTop: "max(env(safe-area-inset-top, 0px), 12px)" }}
             >
-              <button onClick={goBack} className="text-text-secondary p-1">
-                {step === 1 ? <X size={24} /> : <ChevronLeft size={24} />}
+              <button onClick={goBack} className="flex items-center gap-0.5 text-text-secondary p-1">
+                {step === 1 ? <X size={24} /> : (
+                  <>
+                    <ChevronLeft size={24} />
+                    <span className="text-sm">이전</span>
+                  </>
+                )}
               </button>
               <h2 className="text-base font-semibold text-text-primary">
                 {teamName ? `${teamName} 사진` : "사진 올리기"}
@@ -316,14 +321,17 @@ export default function WritePhotoPost({
                       ))}
                     </div>
 
-                    {/* Caption */}
-                    <textarea
-                      placeholder="캡션을 입력하세요 (선택)"
-                      value={caption}
-                      onChange={(e) => setCaption(e.target.value)}
-                      rows={3}
-                      className="w-full resize-none rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary outline-none"
-                    />
+                    {/* Body text */}
+                    <div>
+                      <p className="text-sm font-medium text-text-secondary mb-2">본문</p>
+                      <textarea
+                        placeholder="사진에 대해 적어보세요"
+                        value={caption}
+                        onChange={(e) => setCaption(e.target.value)}
+                        rows={4}
+                        className="w-full resize-none rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+                      />
+                    </div>
 
                     {/* Game picker */}
                     <GamePicker
