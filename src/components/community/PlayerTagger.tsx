@@ -156,9 +156,10 @@ export default function PlayerTagger({ game, selectedPlayers, onToggle }: Player
       {/* Favorite players only (no search) — rest via search */}
       {!search && (() => {
         const favorites = getFavoritePlayers();
-        const favoriteIds = new Set(favorites.map((f) => Number(f.playerId)));
-        const favoritePlayers = favoriteIds.size > 0
-          ? filtered.filter((p) => favoriteIds.has(p.id))
+        // Match by name since favorites use kboId while players.ts uses internal id
+        const favoriteNames = new Set(favorites.map((f) => f.name));
+        const favoritePlayers = favoriteNames.size > 0
+          ? filtered.filter((p) => favoriteNames.has(p.name))
           : [];
         
         if (favoritePlayers.length === 0) return null;
