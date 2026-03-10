@@ -69,7 +69,23 @@ export default function PlayerTagger({ game, selectedPlayers, onToggle }: Player
     <div className="space-y-2">
       <p className="text-sm font-medium text-text-secondary">선수 태그</p>
 
-      {/* Search when no game */}
+      {/* Selected chips (above input) */}
+      {selectedPlayers.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {selectedPlayers.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => onToggle(p)}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-accent/20 text-accent"
+            >
+              {p.name}
+              <X size={12} />
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Search */}
       <div className="relative">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
         <input
@@ -88,25 +104,6 @@ export default function PlayerTagger({ game, selectedPlayers, onToggle }: Player
           className="w-full pl-9 pr-3 py-2 rounded-lg bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
         />
       </div>
-
-      {/* Selected chips */}
-      {selectedPlayers.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {selectedPlayers.map((p) => {
-            const team = getTeamById(p.teamId);
-            return (
-              <button
-                key={p.id}
-                onClick={() => onToggle(p)}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-accent/20 text-accent"
-              >
-                {p.name}
-                <X size={12} />
-              </button>
-            );
-          })}
-        </div>
-      )}
 
       {/* Player grid */}
       <div className="flex flex-wrap gap-1.5 max-h-[120px] overflow-y-auto">
