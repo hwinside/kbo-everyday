@@ -197,7 +197,7 @@ export default function WritePhotoPost({
                 {step === 1 ? <X size={24} /> : <div className="w-6" />}
               </button>
               <h2 className="text-base font-semibold text-text-primary">
-                {teamName ? `${teamName} 사진` : "사진 올리기"}
+                {teamName ? `${teamName} 사진 게시판` : "사진 올리기"}
               </h2>
               <div className="w-10" />
             </div>
