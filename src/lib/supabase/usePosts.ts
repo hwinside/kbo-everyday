@@ -174,21 +174,30 @@ export async function createPost(params: {
   content: string;
   imageUrls?: string[];
   contentType?: "general" | "photo";
+  gameId?: string;
+  playerTags?: string[];
+  hashtags?: string[];
 }) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
 
+  const row: Record<string, unknown> = {
+    author_id: user.id,
+    board_type: params.boardType,
+    board_id: params.boardId,
+    content_type: params.contentType ?? "general",
+    title: params.title,
+    content: params.content,
+    image_urls: params.imageUrls ?? [],
+  };
+
+  if (params.gameId) row.game_id = params.gameId;
+  if (params.playerTags?.length) row.player_tags = params.playerTags;
+  if (params.hashtags?.length) row.hashtags = params.hashtags;
+
   const { data, error } = await supabase
     .from("posts")
-    .insert({
-      author_id: user.id,
-      board_type: params.boardType,
-      board_id: params.boardId,
-      content_type: params.contentType ?? "general",
-      title: params.title,
-      content: params.content,
-      image_urls: params.imageUrls ?? [],
-    })
+    .insert(row)
     .select()
     .single();
 
