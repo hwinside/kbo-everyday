@@ -10,7 +10,7 @@ import MemeEditor from "@/components/editor/MemeEditor";
 import GamePicker, { type PickedGame } from "./GamePicker";
 import PlayerTagger from "./PlayerTagger";
 import HashtagInput from "./HashtagInput";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, TEAMS } from "@/lib/constants/teams";
 
 interface WritePhotoPostProps {
   isOpen: boolean;
@@ -57,18 +57,40 @@ export default function WritePhotoPost({
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-generated hashtag suggestions
+  // Team → stadium mapping
+  const TEAM_STADIUMS: Record<number, string> = {
+    1: "잠실야구장", 2: "잠실야구장", 3: "수원KT위즈파크",
+    4: "인천SSG랜더스필드", 5: "창원NC파크", 6: "광주기아챔피언스필드",
+    7: "사직야구장", 8: "대구삼성라이온즈파크", 9: "한화생명이글스파크", 10: "고척스카이돔",
+  };
+
+  // Auto-generated hashtag suggestions (team context-aware)
   const autoTags = useMemo(() => {
-    const tags: string[] = ["#직관"];
+    const tags: string[] = [];
+    // If a game is selected, use home/away teams
     if (selectedGame) {
       const home = getTeamById(selectedGame.homeTeamId);
       const away = getTeamById(selectedGame.awayTeamId);
       if (home) tags.push(`#${home.shortName}`);
       if (away) tags.push(`#${away.shortName}`);
+      const stadium = TEAM_STADIUMS[selectedGame.homeTeamId];
+      if (stadium) tags.push(`#${stadium}`);
     }
+    // Board context tags (team/player board)
+    if (!selectedGame && boardType === "team") {
+      // Try to resolve teamId from boardId (slug)
+      const team = TEAMS.find((t) => t.slug === boardId);
+      if (team) {
+        tags.push(`#${team.shortName}`);
+        const stadium = TEAM_STADIUMS[team.id];
+        if (stadium) tags.push(`#${stadium}`);
+      }
+    }
+    tags.push("#직관", "#KBO");
     selectedPlayers.forEach((p) => tags.push(`#${p.name}`));
-    return tags;
-  }, [selectedGame, selectedPlayers]);
+    // Dedupe
+    return [...new Set(tags)];
+  }, [selectedGame, selectedPlayers, boardType, boardId]);
 
   function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
