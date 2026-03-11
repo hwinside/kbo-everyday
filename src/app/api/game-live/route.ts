@@ -15,30 +15,37 @@ export async function GET(req: NextRequest) {
     if (!res.ok) throw new Error(`KBO API ${res.status}`);
     
     const data = await res.json();
-    const games = (data?.game || []).map((g: KboRawGame) => ({
-      gameId: g.G_ID,
-      awayName: g.AWAY_NM,
-      homeName: g.HOME_NM,
-      awayScore: parseInt(g.AWAY_SCORE) || 0,
-      homeScore: parseInt(g.HOME_SCORE) || 0,
-      inning: parseInt(g.INN_NO) || 0,
-      isTop: g.TB_SC === "T",
-      balls: parseInt(g.BALL_CN) || 0,
-      strikes: parseInt(g.STRIKE_CN) || 0,
-      outs: parseInt(g.OUT_CN) || 0,
-      runner1b: !!g.BASE1_NM,
-      runner2b: !!g.BASE2_NM,
-      runner3b: !!g.BASE3_NM,
-      runner1bName: g.BASE1_NM || null,
-      runner2bName: g.BASE2_NM || null,
-      runner3bName: g.BASE3_NM || null,
-      currentBatter: g.BAT_NM || null,
-      currentPitcher: g.PIT_NM || null,
-      date: g.G_DT,
-      stadium: g.STADIUM_NM,
-      currentInning: g.INN_NO ? `${g.INN_NO}회${g.TB_SC === "T" ? "초" : "말"}` : "",
-      isLive: parseInt(g.INN_NO) > 0,
-    }));
+    const games = (data?.game || []).map((g: KboRawGame) => {
+      const status = g.CANCEL_SC_ID !== "0" ? "cancelled"
+        : g.GAME_STATE_SC === "3" ? "final"
+        : g.GAME_STATE_SC === "2" ? "live"
+        : "scheduled";
+      return {
+        gameId: g.G_ID,
+        awayName: g.AWAY_NM,
+        homeName: g.HOME_NM,
+        awayScore: status !== "scheduled" ? parseInt(g.T_SCORE_CN) || 0 : 0,
+        homeScore: status !== "scheduled" ? parseInt(g.B_SCORE_CN) || 0 : 0,
+        inning: g.GAME_INN_NO ?? 0,
+        isTop: g.GAME_TB_SC === "T",
+        balls: g.BALL_CN ?? 0,
+        strikes: g.STRIKE_CN ?? 0,
+        outs: g.OUT_CN ?? 0,
+        runner1b: (g.B1_BAT_ORDER_NO ?? 0) > 0,
+        runner2b: (g.B2_BAT_ORDER_NO ?? 0) > 0,
+        runner3b: (g.B3_BAT_ORDER_NO ?? 0) > 0,
+        runner1bName: null,
+        runner2bName: null,
+        runner3bName: null,
+        currentBatter: g.T_P_NM?.trim() || null,
+        currentPitcher: g.B_P_NM?.trim() || null,
+        date: g.G_DT,
+        stadium: g.S_NM,
+        status,
+        currentInning: g.GAME_INN_NO ? `${g.GAME_INN_NO}회${g.GAME_TB_SC === "T" ? "초" : "말"}` : "",
+        isLive: g.GAME_STATE_SC === "2",
+      };
+    });
 
     return NextResponse.json({ games, date });
   } catch (e: unknown) {

@@ -277,7 +277,7 @@ export async function GET(req: NextRequest) {
   }
 
   const seasonId = req.nextUrl.searchParams.get("seasonId") || new Date().getFullYear().toString();
-  const srId = req.nextUrl.searchParams.get("srId") || "0";
+  const srId = req.nextUrl.searchParams.get("srId") || "0,1";
   const body = `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${gameId}`;
 
   try {

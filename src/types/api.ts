@@ -60,25 +60,37 @@ export interface NewsItem {
   pubDate: string;
 }
 
-/** KBO game-live raw game object from KBO WebSocket API */
+/** KBO game-live raw game object from KBO GetKboGameList API */
 export interface KboRawGame {
   G_ID: string;
+  G_DT: string;
+  G_TM: string;
+  S_NM: string;
+  AWAY_ID: string;
+  HOME_ID: string;
   AWAY_NM: string;
   HOME_NM: string;
-  AWAY_SCORE: string;
-  HOME_SCORE: string;
-  INN_NO: string;
-  TB_SC: string;
-  BALL_CN: string;
-  STRIKE_CN: string;
-  OUT_CN: string;
-  BASE1_NM: string;
-  BASE2_NM: string;
-  BASE3_NM: string;
-  BAT_NM: string;
-  PIT_NM: string;
-  G_DT: string;
-  STADIUM_NM: string;
+  T_SCORE_CN: string;
+  B_SCORE_CN: string;
+  GAME_INN_NO: number;
+  GAME_TB_SC: string;
+  GAME_STATE_SC: string;
+  CANCEL_SC_ID: string;
+  T_PIT_P_NM: string;
+  B_PIT_P_NM: string;
+  W_PIT_P_NM: string;
+  L_PIT_P_NM: string;
+  SV_PIT_P_NM: string;
+  STRIKE_CN: number;
+  BALL_CN: number;
+  OUT_CN: number;
+  B1_BAT_ORDER_NO: number;
+  B2_BAT_ORDER_NO: number;
+  B3_BAT_ORDER_NO: number;
+  B_P_NM: string;
+  T_P_NM: string;
+  T_RANK_NO: number;
+  B_RANK_NO: number;
 }
 
 /** Push subscription row from Supabase */
