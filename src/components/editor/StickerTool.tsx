@@ -177,7 +177,7 @@ function GiphyPanel({ addImage }: { addImage: (url: string) => Promise<unknown> 
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={sticker.images.fixed_width_small?.url}
+                src={sticker.images.fixed_width_small_still?.url || sticker.images.fixed_width_small?.url}
                 alt={sticker.title}
                 className="w-full h-full object-contain"
                 loading="lazy"
