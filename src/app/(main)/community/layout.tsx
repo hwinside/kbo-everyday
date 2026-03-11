@@ -44,33 +44,41 @@ export default function CommunityLayout({
   }, []);
 
   function handleBack() {
-    // 항상 back 노출. 히스토리가 없거나, /community → redirect 케이스면 홈으로.
-    if (typeof window !== "undefined") {
-      try {
-        // 1) direct-entry 플래그가 있으면 첫 back은 무조건 홈
-        if (sessionStorage.getItem("community-direct-entry") === "1") {
-          sessionStorage.removeItem("community-direct-entry");
+    if (typeof window === "undefined") { router.push("/"); return; }
+
+    // 하위 페이지(선수 페이지 등)에서는 항상 히스토리 back 우선
+    const isSubPage = window.location.pathname.split("/").filter(Boolean).length > 2;
+    // e.g. /community/teams = 2 segments, /community/players/12345 = 3 segments
+
+    if (isSubPage && window.history.length > 1) {
+      router.back();
+      return;
+    }
+
+    try {
+      // direct-entry 플래그: 커뮤니티 최상위에서만 적용
+      if (sessionStorage.getItem("community-direct-entry") === "1") {
+        sessionStorage.removeItem("community-direct-entry");
+        router.push("/");
+        return;
+      }
+
+      // /community(root) → redirect 루프 방어
+      const ref = document.referrer;
+      if (ref) {
+        const u = new URL(ref);
+        if (u.origin === window.location.origin && u.pathname === "/community") {
           router.push("/");
           return;
         }
-
-        // 2) /community(root) → redirect 케이스는 back 루프가 될 수 있으니 referrer로도 방어
-        const ref = document.referrer;
-        if (ref) {
-          const u = new URL(ref);
-          if (u.origin === window.location.origin && u.pathname === "/community") {
-            router.push("/");
-            return;
-          }
-        }
-      } catch {
-        // ignore
       }
+    } catch {
+      // ignore
+    }
 
-      if (window.history.length > 1) {
-        router.back();
-        return;
-      }
+    if (window.history.length > 1) {
+      router.back();
+      return;
     }
 
     router.push("/");
