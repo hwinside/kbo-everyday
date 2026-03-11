@@ -105,26 +105,41 @@ export default function StickerTool({ addSvg, addImage }: StickerToolProps) {
   );
 }
 
+const PAGE_SIZE = 20;
+
 function GiphyPanel({ addImage }: { addImage: (url: string) => Promise<unknown> }) {
   const [query, setQuery] = useState("");
   const [stickers, setStickers] = useState<GiphySticker[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const lastQueryRef = useRef("");
 
-  const fetchStickers = useCallback(async (searchQuery: string) => {
+  const fetchStickers = useCallback(async (searchQuery: string, offset = 0) => {
     if (!GIPHY_API_KEY) return;
-    setLoading(true);
+    const isLoadMore = offset > 0;
+    if (isLoadMore) setLoadingMore(true); else setLoading(true);
     try {
-      const endpoint = searchQuery
-        ? `https://api.giphy.com/v1/stickers/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(searchQuery)}&limit=20&rating=g`
-        : `https://api.giphy.com/v1/stickers/trending?api_key=${GIPHY_API_KEY}&limit=20&rating=g`;
-      const res = await fetch(endpoint);
+      const base = searchQuery
+        ? `https://api.giphy.com/v1/stickers/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(searchQuery)}&limit=${PAGE_SIZE}&offset=${offset}&rating=g`
+        : `https://api.giphy.com/v1/stickers/trending?api_key=${GIPHY_API_KEY}&limit=${PAGE_SIZE}&offset=${offset}&rating=g`;
+      const res = await fetch(base);
       const json = await res.json();
-      setStickers(json.data ?? []);
+      const newData: GiphySticker[] = json.data ?? [];
+      const total = json.pagination?.total_count ?? 0;
+      if (isLoadMore) {
+        setStickers((prev) => [...prev, ...newData]);
+      } else {
+        setStickers(newData);
+        lastQueryRef.current = searchQuery;
+      }
+      setHasMore(offset + newData.length < total && newData.length === PAGE_SIZE);
     } catch {
-      setStickers([]);
+      if (!isLoadMore) setStickers([]);
+      setHasMore(false);
     } finally {
-      setLoading(false);
+      if (isLoadMore) setLoadingMore(false); else setLoading(false);
     }
   }, []);
 
@@ -185,6 +200,21 @@ function GiphyPanel({ addImage }: { addImage: (url: string) => Promise<unknown> 
             </button>
           ))}
         </div>
+      )}
+
+      {/* Load more button */}
+      {hasMore && !loading && (
+        <button
+          onClick={() => fetchStickers(lastQueryRef.current, stickers.length)}
+          disabled={loadingMore}
+          className="w-full py-2.5 rounded-xl bg-bg-tertiary text-text-secondary text-sm font-medium hover:bg-bg-secondary transition-colors disabled:opacity-50"
+        >
+          {loadingMore ? (
+            <Loader2 size={16} className="animate-spin mx-auto" />
+          ) : (
+            "더보기"
+          )}
+        </button>
       )}
 
       {/* GIPHY Attribution */}
