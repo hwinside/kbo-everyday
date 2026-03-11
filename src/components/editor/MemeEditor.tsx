@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { X, Check, Loader2, Trash2 } from "lucide-react";
+import { X, Check, Loader2, Trash2, FlipHorizontal2, FlipVertical2 } from "lucide-react";
 import { useCanvas } from "./useCanvas";
 import EditorToolbar from "./EditorToolbar";
 
@@ -96,9 +96,29 @@ export default function MemeEditor({ imageUrl, onSave, onCancel }: MemeEditorPro
         </button>
       </div>
 
-      {/* Delete button (shown when element selected) */}
+      {/* Selection actions (shown when element selected) */}
       {hasSelection && (
-        <div className="flex justify-center py-2">
+        <div className="flex justify-center gap-2 py-2">
+          <button
+            onClick={() => {
+              const obj = canvas?.getActiveObject();
+              if (obj) { obj.set("flipX", !obj.flipX); canvas?.renderAll(); }
+            }}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-bg-tertiary text-text-secondary text-sm font-medium"
+          >
+            <FlipHorizontal2 size={16} />
+            좌우
+          </button>
+          <button
+            onClick={() => {
+              const obj = canvas?.getActiveObject();
+              if (obj) { obj.set("flipY", !obj.flipY); canvas?.renderAll(); }
+            }}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-bg-tertiary text-text-secondary text-sm font-medium"
+          >
+            <FlipVertical2 size={16} />
+            상하
+          </button>
           <button
             onClick={() => deleteSelected()}
             className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-red-500/20 text-red-400 text-sm font-medium"
