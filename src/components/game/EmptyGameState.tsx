@@ -6,6 +6,7 @@ import { Calendar, MapPin, Clock, Trophy } from "lucide-react";
 import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { getTeamById } from "@/lib/constants/teams";
+import { getKSTToday, daysFromKSTToday } from "@/lib/utils/date-kst";
 
 export default function EmptyGameState({ selectedDate }: { selectedDate: string }) {
   const PRESEASON_START = "2026-03-12";
@@ -20,19 +21,10 @@ export default function EmptyGameState({ selectedDate }: { selectedDate: string 
     return () => window.removeEventListener("team-changed", handler);
   }, []);
 
-  const now = new Date();
-  // KST today
-  const kstToday = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
-  const todayStr = kstToday.toISOString().slice(0, 10);
+  const todayStr = getKSTToday();
 
-  function daysUntil(targetDate: string): number {
-    const target = new Date(targetDate + "T00:00:00+09:00");
-    const today = new Date(todayStr + "T00:00:00+09:00");
-    return Math.ceil((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-  }
-
-  const daysToPreseason = daysUntil(PRESEASON_START);
-  const daysToRegular = daysUntil(REGULAR_SEASON_START);
+  const daysToPreseason = daysFromKSTToday(PRESEASON_START);
+  const daysToRegular = daysFromKSTToday(REGULAR_SEASON_START);
 
   // Find next upcoming preseason date
   const nextPreseasonDate = PRESEASON_DATES.find(d => d > todayStr);

@@ -6,6 +6,7 @@ import GlassCard from "@/components/ui/GlassCard";
 import StatusBadge from "@/components/ui/StatusBadge";
 import SectionHeader from "@/components/ui/SectionHeader";
 import { getTeamShortName, getTeamColor, getTeamLogo, getTeamName } from "@/lib/utils/team";
+import { daysFromKSTToday } from "@/lib/utils/date-kst";
 
 interface HomeGame {
   id: string;
@@ -19,8 +20,8 @@ interface HomeGame {
   inning: string | null;
 }
 
-const REGULAR_SEASON_START = new Date("2026-03-28");
-const PRESEASON_START = new Date("2026-03-12");
+const PRESEASON_START_STR = "2026-03-12";
+const REGULAR_SEASON_START_STR = "2026-03-28";
 
 const item = {
   hidden: { opacity: 0, y: 14 },
@@ -28,7 +29,8 @@ const item = {
 };
 
 export default function TodayGamesSection({ todayGames, isPreseason }: { todayGames: HomeGame[]; isPreseason: boolean }) {
-  const currentTime = useMemo(() => new Date(), []);
+  const daysToPreseason = useMemo(() => daysFromKSTToday(PRESEASON_START_STR), []);
+  const daysToRegular = useMemo(() => daysFromKSTToday(REGULAR_SEASON_START_STR), []);
   return (
     <motion.section variants={item} className="mb-6">
       <SectionHeader title={isPreseason ? "오늘의 시범경기" : "오늘의 경기"} href="/games" icon="⚾" />
@@ -69,15 +71,15 @@ export default function TodayGamesSection({ todayGames, isPreseason }: { todayGa
       ) : (
         <GlassCard className="p-6 text-center">
           <p className="text-2xl mb-2">⚾</p>
-          {currentTime < PRESEASON_START ? (
+          {daysToPreseason > 0 ? (
             <>
-              <p className="text-[15px] font-medium text-text-primary">시범경기 D-{Math.ceil((PRESEASON_START.getTime() - currentTime.getTime()) / 86400000)}</p>
+              <p className="text-[15px] font-medium text-text-primary">시범경기 D-{daysToPreseason}</p>
               <p className="text-xs text-text-tertiary mt-1">3월 12일 시범경기 시작!</p>
             </>
-          ) : currentTime < REGULAR_SEASON_START ? (
+          ) : daysToRegular > 0 ? (
             <>
               <p className="text-[15px] font-medium text-text-primary">오늘은 경기가 없습니다</p>
-              <p className="text-xs text-text-tertiary mt-1">시범경기 진행중 · 개막 D-{Math.ceil((REGULAR_SEASON_START.getTime() - currentTime.getTime()) / 86400000)}</p>
+              <p className="text-xs text-text-tertiary mt-1">시범경기 진행중 · 개막 D-{daysToRegular}</p>
             </>
           ) : (
             <>

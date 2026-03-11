@@ -4,30 +4,16 @@ import { PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 
 import { useRef, useEffect } from "react";
 import { motion } from "framer-motion";
+import { getKSTDateRange } from "@/lib/utils/date-kst";
 
 interface DateSelectorProps {
   selectedDate: string; // YYYY-MM-DD
   onDateChange: (date: string) => void;
 }
 
-function getDates(range: number = 21) {
-  const dates: { key: string; day: string; weekday: string; isToday: boolean }[] = [];
-  const today = new Date();
-  
-  for (let i = -range; i <= range; i++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() + i);
-    const key = d.toISOString().slice(0, 10);
-    const day = `${d.getMonth() + 1}/${d.getDate()}`;
-    const weekday = ["일", "월", "화", "수", "목", "금", "토"][d.getDay()];
-    dates.push({ key, day, weekday, isToday: i === 0 });
-  }
-  return dates;
-}
-
 export default function DateSelector({ selectedDate, onDateChange }: DateSelectorProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const dates = getDates();
+  const dates = getKSTDateRange();
 
   useEffect(() => {
     const el = scrollRef.current;

@@ -5,6 +5,7 @@ import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { getKSTToday } from "@/lib/utils/date-kst";
 import { ChevronLeft, RefreshCw } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getMyTeamId } from "@/lib/store/myteam";
@@ -54,7 +55,7 @@ function buildPreseasonFallback(date: string): GameData[] {
 }
 
 export default function GamesPage() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getKSTToday();
   const router = useRouter();
   const [selectedDate, setSelectedDate] = useState(today);
   const [games, setGames] = useState<GameData[]>([]);
