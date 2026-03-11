@@ -39,14 +39,19 @@ export default function CompactGameCard({ game, isPreseason }: CompactGameCardPr
       <div className="glass-card p-4 hover:bg-white/5 transition-colors">
         {/* Status */}
         <div className="flex items-center justify-between mb-3">
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-            isLive ? "bg-red-500/20 text-red-400 animate-pulse" :
-            isFinal ? "bg-text-tertiary/20 text-text-tertiary" :
-            "bg-accent/20 text-accent"
-          }`}>
-            {isLive ? `LIVE ${game.inning}` : isFinal ? "종료" : game.time}
-          </span>
-          <div className="flex items-center gap-2">{isPreseason && (<span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-500">시범경기</span>)}<span className="text-xs text-text-tertiary">{game.stadium}</span></div>
+          <div className="flex items-center gap-2">
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+              isLive ? "bg-red-500/20 text-red-400 animate-pulse" :
+              isFinal ? "bg-text-tertiary/20 text-text-tertiary" :
+              "bg-accent/20 text-accent"
+            }`}>
+              {isLive ? `LIVE ${game.inning}` : isFinal ? "종료" : game.time}
+            </span>
+            {isPreseason && (
+              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-500">시범경기</span>
+            )}
+          </div>
+          <span className="text-xs text-text-tertiary">{game.stadium}</span>
         </div>
 
         {/* Away team row */}
