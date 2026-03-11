@@ -9,6 +9,7 @@ interface UseCanvasReturn {
   exportBlob: () => Promise<File>;
   addText: (content?: string, options?: Partial<fabric.ITextProps>) => fabric.IText;
   addSvg: (svgString: string) => Promise<fabric.FabricObject>;
+  addImage: (url: string) => Promise<fabric.FabricObject>;
   clearObjects: () => void;
   deleteSelected: () => boolean;
 }
@@ -160,6 +161,30 @@ export function useCanvas(
     []
   );
 
+  const addImage = useCallback(
+    async (url: string): Promise<fabric.FabricObject> => {
+      const c = canvasRef.current;
+      if (!c) throw new Error("Canvas not initialized");
+
+      const img = await fabric.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+
+      const targetSize = c.getWidth() * 0.25;
+      const scale = targetSize / Math.max(img.width, img.height);
+      img.scaleX = scale;
+      img.scaleY = scale;
+      img.left = c.getWidth() / 2;
+      img.top = c.getHeight() / 2;
+      img.originX = "center";
+      img.originY = "center";
+
+      c.add(img);
+      c.setActiveObject(img);
+      c.renderAll();
+      return img;
+    },
+    []
+  );
+
   const clearObjects = useCallback(() => {
     const c = canvasRef.current;
     if (!c) return;
@@ -188,6 +213,7 @@ export function useCanvas(
     exportBlob,
     addText,
     addSvg,
+    addImage,
     clearObjects,
     deleteSelected,
   };

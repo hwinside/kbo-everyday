@@ -14,6 +14,7 @@ interface EditorToolbarProps {
   canvas: fabric.Canvas | null;
   addText: (content?: string, options?: Partial<fabric.ITextProps>) => fabric.IText;
   addSvg: (svgString: string) => Promise<fabric.FabricObject>;
+  addImage: (url: string) => Promise<fabric.FabricObject>;
   clearObjects: () => void;
 }
 
@@ -23,7 +24,7 @@ const TOOLS: { id: ToolType; icon: typeof Type; label: string }[] = [
   { id: "template", icon: LayoutTemplate, label: "템플릿" },
 ];
 
-export default function EditorToolbar({ canvas, addText, addSvg, clearObjects }: EditorToolbarProps) {
+export default function EditorToolbar({ canvas, addText, addSvg, addImage, clearObjects }: EditorToolbarProps) {
   const [activeTool, setActiveTool] = useState<ToolType>(null);
 
   function toggleTool(tool: ToolType) {
@@ -43,7 +44,7 @@ export default function EditorToolbar({ canvas, addText, addSvg, clearObjects }:
             className="bg-bg-secondary border-t border-border rounded-t-2xl max-h-[40vh] overflow-y-auto"
           >
             {activeTool === "text" && <TextTool canvas={canvas} addText={addText} />}
-            {activeTool === "sticker" && <StickerTool addSvg={addSvg} />}
+            {activeTool === "sticker" && <StickerTool addSvg={addSvg} addImage={addImage} />}
             {activeTool === "template" && (
               <TemplateTool canvas={canvas} addText={addText} clearObjects={clearObjects} />
             )}

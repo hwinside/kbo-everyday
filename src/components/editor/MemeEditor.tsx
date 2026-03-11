@@ -14,7 +14,7 @@ interface MemeEditorProps {
 
 export default function MemeEditor({ imageUrl, onSave, onCancel }: MemeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { canvas, loadImage, exportBlob, addText, addSvg, clearObjects, deleteSelected } = useCanvas(containerRef);
+  const { canvas, loadImage, exportBlob, addText, addSvg, addImage, clearObjects, deleteSelected } = useCanvas(containerRef);
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
@@ -139,6 +139,7 @@ export default function MemeEditor({ imageUrl, onSave, onCancel }: MemeEditorPro
         canvas={canvas}
         addText={addText}
         addSvg={addSvg}
+        addImage={addImage}
         clearObjects={clearObjects}
       />
     </motion.div>
