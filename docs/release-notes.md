@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-03-11 16:51 KST — 밈 에디터 2차 (식별자 통합 + 반전 + GIPHY)
+
+- **환경:** prod/web (Vercel)
+- **Commits:**
+  - 23cf679c (kboId 통합 + player_tags kboId 저장)
+  - f768290a (에셋 좌우/상하 반전)
+  - 288285b0 (GIPHY 스티커 연동)
+- **변경사항:**
+  - PlayerTagger: players.ts 목업(내부 id) → players-roster.json(684명, kboId) 전환
+  - player_tags DB 저장: name-only → "kboId:name" 포맷 (기존 데이터 하위호환)
+  - 밈 에디터 선택 에셋에 좌우/상하 반전 버튼 추가 (Fabric.js flipX/flipY)
+  - StickerTool에 GIPHY 탭 추가 (검색 + 트렌딩, rating=g SafeSearch)
+  - 스티커는 정적 이미지(still)로 canvas 삽입
+  - "Powered by GIPHY" attribution 표시
+- **리스크:** 낮음 (UI 기능 추가, 기존 데이터 무중단 호환)
+- **환경변수:** Vercel에 `NEXT_PUBLIC_GIPHY_API_KEY` 추가 필요
+- **확인 항목:**
+  - [ ] 선수 태그 선택 시 684명 전체 검색 가능
+  - [ ] 동명이인(김현수 LG/KT) 태그 → 각각 올바른 선수 페이지 링크
+  - [ ] 에셋 선택 후 좌우/상하 반전 정상 동작
+  - [ ] GIPHY 탭에서 스티커 검색 + 삽입 정상 (env key 설정 후)
+  - [ ] env key 없으면 GIPHY 탭 숨김 (graceful fallback)
+
+---
+
 ## 2026-03-10 22:41 KST — 동명이인 선수 사진 중복 버그 수정
 
 - **환경:** prod/web (Vercel)
