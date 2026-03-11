@@ -11,6 +11,7 @@ import GamePicker, { type PickedGame } from "./GamePicker";
 import PlayerTagger from "./PlayerTagger";
 import HashtagInput from "./HashtagInput";
 import { getTeamById, TEAMS } from "@/lib/constants/teams";
+import { formatPlayerTag } from "@/lib/utils/player-tags";
 
 interface WritePhotoPostProps {
   isOpen: boolean;
@@ -18,7 +19,7 @@ interface WritePhotoPostProps {
   teamName?: string;
   boardType: string;
   boardId: string;
-  defaultPlayerTag?: { id: number; name: string; teamId: number };
+  defaultPlayerTag?: { kboId: string; name: string; teamId: number };
   onSuccess?: () => void;
 }
 
@@ -31,7 +32,7 @@ interface ImageItem {
 }
 
 interface PlayerTag {
-  id: number;
+  kboId: string;
   name: string;
   teamId: number;
 }
@@ -61,7 +62,7 @@ export default function WritePhotoPost({
   useEffect(() => {
     if (isOpen && defaultPlayerTag) {
       setSelectedPlayers((prev) => {
-        const already = prev.some((p) => p.name === defaultPlayerTag.name);
+        const already = prev.some((p) => p.kboId === defaultPlayerTag.kboId);
         return already ? prev : [defaultPlayerTag, ...prev];
       });
     }
@@ -136,8 +137,8 @@ export default function WritePhotoPost({
 
   const handlePlayerToggle = useCallback((player: PlayerTag) => {
     setSelectedPlayers((prev) => {
-      const exists = prev.find((p) => p.id === player.id);
-      if (exists) return prev.filter((p) => p.id !== player.id);
+      const exists = prev.find((p) => p.kboId === player.kboId);
+      if (exists) return prev.filter((p) => p.kboId !== player.kboId);
       return [...prev, player];
     });
   }, []);
@@ -167,7 +168,7 @@ export default function WritePhotoPost({
         imageUrls: urls,
         contentType: "photo",
         gameId: selectedGame?.id,
-        playerTags: selectedPlayers.map((p) => p.name),
+        playerTags: selectedPlayers.map((p) => formatPlayerTag(p.kboId, p.name)),
         hashtags: hashtags,
       });
 

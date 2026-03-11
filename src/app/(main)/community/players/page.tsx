@@ -230,7 +230,7 @@ export default function CommunityPlayersPage() {
           if (!writePlayerTarget) return undefined;
           const r = PLAYERS_ROSTER.find((p) => p.kboId === writePlayerTarget);
           if (!r) return undefined;
-          return { id: Number(r.kboId), name: r.name, teamId: r.teamId };
+          return { kboId: r.kboId, name: r.name, teamId: r.teamId };
         })()}
         onSuccess={() => { setWritePhotoOpen(false); setWritePlayerTarget(null); loadPhotoPosts(); }}
       />

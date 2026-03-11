@@ -8,6 +8,7 @@ import { MessageCircle } from "lucide-react";
 import { GRADES } from "@/lib/constants/grades";
 import { getTeamById } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
+import { parsePlayerTag } from "@/lib/utils/player-tags";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
 import type { Post } from "@/lib/supabase/usePosts";
@@ -15,9 +16,14 @@ import CommentSheet from "./CommentSheet";
 
 function findPlayerByName(name: string): { kboId: string; teamId: number } | null {
   for (const p of PLAYERS_ROSTER) {
-    if (p.name === name) {
-      return { kboId: p.kboId, teamId: p.teamId };
-    }
+    if (p.name === name) return { kboId: p.kboId, teamId: p.teamId };
+  }
+  return null;
+}
+
+function findPlayerByKboId(kboId: string): { teamId: number } | null {
+  for (const p of PLAYERS_ROSTER) {
+    if (p.kboId === kboId) return { teamId: p.teamId };
   }
   return null;
 }
@@ -321,18 +327,34 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
               {/* Player tags — clickable, links to player page */}
               {post.player_tags && Array.isArray(post.player_tags) && post.player_tags.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 px-4 pb-1">
-                  {(post.player_tags as string[]).map((name: string) => {
-                    const player = findPlayerByName(name);
-                    const team = player ? getTeamById(player.teamId) : null;
-                    const href = player ? `/community/players/${player.kboId}` : undefined;
-                    const label = team ? `@${team.shortName} ${name}` : `@${name}`;
-                    
+                  {(post.player_tags as string[]).map((tag: string) => {
+                    const { kboId, displayName } = parsePlayerTag(tag);
+
+                    let href: string | undefined;
+                    let team: ReturnType<typeof getTeamById> = undefined;
+
+                    if (kboId) {
+                      // New format: kboId directly available
+                      href = `/community/players/${kboId}`;
+                      const rosterEntry = findPlayerByKboId(kboId);
+                      team = rosterEntry ? getTeamById(rosterEntry.teamId) : undefined;
+                    } else {
+                      // Legacy name-only fallback
+                      const player = findPlayerByName(displayName);
+                      if (player) {
+                        href = `/community/players/${player.kboId}`;
+                        team = getTeamById(player.teamId);
+                      }
+                    }
+
+                    const label = team ? `@${team.shortName} ${displayName}` : `@${displayName}`;
+
                     return href ? (
-                      <Link key={name} href={href} className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full active:bg-bg-quaternary transition-colors">
+                      <Link key={tag} href={href} className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full active:bg-bg-quaternary transition-colors">
                         {label}
                       </Link>
                     ) : (
-                      <span key={name} className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full">
+                      <span key={tag} className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full">
                         {label}
                       </span>
                     );

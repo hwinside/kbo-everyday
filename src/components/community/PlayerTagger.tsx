@@ -6,12 +6,10 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { Search, X } from "lucide-react";
 import type { PickedGame } from "./GamePicker";
 import { getFavoritePlayers } from "@/lib/store/favorites";
-
-// Import all player data from constants
-import * as playerData from "@/lib/constants/players";
+import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
 interface PlayerTag {
-  id: number;
+  kboId: string;
   name: string;
   teamId: number;
 }
@@ -23,18 +21,9 @@ interface PlayerTaggerProps {
 }
 
 function getPlayersForTeam(teamId: number): PlayerTag[] {
-  // Search through all exported arrays in players.ts for matching teamId
-  const allPlayers: PlayerTag[] = [];
-  for (const [, value] of Object.entries(playerData)) {
-    if (Array.isArray(value)) {
-      for (const p of value) {
-        if (p && typeof p === "object" && "teamId" in p && p.teamId === teamId) {
-          allPlayers.push({ id: p.id, name: p.name, teamId: p.teamId });
-        }
-      }
-    }
-  }
-  return allPlayers;
+  return PLAYERS_ROSTER
+    .filter((p) => p.teamId === teamId)
+    .map((p) => ({ kboId: p.kboId, name: p.name, teamId: p.teamId }));
 }
 
 export default function PlayerTagger({ game, selectedPlayers, onToggle }: PlayerTaggerProps) {
@@ -48,28 +37,18 @@ export default function PlayerTagger({ game, selectedPlayers, onToggle }: Player
       ];
     }
     // No game: show all players, filter by search
-    const all: PlayerTag[] = [];
-    for (const [, value] of Object.entries(playerData)) {
-      if (Array.isArray(value)) {
-        for (const p of value) {
-          if (p && typeof p === "object" && "teamId" in p) {
-            all.push({ id: p.id, name: p.name, teamId: p.teamId });
-          }
-        }
-      }
-    }
-    return all;
+    return PLAYERS_ROSTER.map((p) => ({ kboId: p.kboId, name: p.name, teamId: p.teamId }));
   }, [game]);
 
   const { profile } = useAuth();
   const userTeamId = (profile as Record<string, unknown> | null)?.team_id as number | undefined;
 
-  // Dedupe players by id, sort user's team first
+  // Dedupe players by kboId, sort user's team first
   const uniquePlayers = useMemo(() => {
-    const seen = new Set<number>();
+    const seen = new Set<string>();
     const deduped = players.filter((p) => {
-      if (seen.has(p.id)) return false;
-      seen.add(p.id);
+      if (seen.has(p.kboId)) return false;
+      seen.add(p.kboId);
       return true;
     });
     if (userTeamId) {
@@ -82,11 +61,11 @@ export default function PlayerTagger({ game, selectedPlayers, onToggle }: Player
     return deduped;
   }, [players, userTeamId]);
 
-  const isSelected = (id: number) => selectedPlayers.some((p) => p.id === id);
+  const isSelected = (kboId: string) => selectedPlayers.some((p) => p.kboId === kboId);
 
   // Filter by search + exclude already selected
   const filtered = uniquePlayers
-    .filter((p) => !isSelected(p.id))
+    .filter((p) => !isSelected(p.kboId))
     .filter((p) => !search || p.name.includes(search));
 
   return (
@@ -98,7 +77,7 @@ export default function PlayerTagger({ game, selectedPlayers, onToggle }: Player
         <div className="flex flex-wrap gap-1.5">
           {selectedPlayers.map((p) => (
             <button
-              key={p.id}
+              key={p.kboId}
               onClick={() => onToggle(p)}
               className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-accent/20 text-accent"
             >
@@ -137,7 +116,7 @@ export default function PlayerTagger({ game, selectedPlayers, onToggle }: Player
                 const team = getTeamById(p.teamId);
                 return (
                   <button
-                    key={p.id}
+                    key={p.kboId}
                     onClick={() => { onToggle(p); setSearch(""); }}
                     className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-text-primary hover:bg-bg-tertiary active:bg-bg-tertiary transition-colors text-left"
                   >
@@ -156,10 +135,9 @@ export default function PlayerTagger({ game, selectedPlayers, onToggle }: Player
       {/* Favorite players only (no search) — rest via search */}
       {!search && (() => {
         const favorites = getFavoritePlayers();
-        // Match by name since favorites use kboId while players.ts uses internal id
-        const favoriteNames = new Set(favorites.map((f) => f.name));
-        const favoritePlayers = favoriteNames.size > 0
-          ? filtered.filter((p) => favoriteNames.has(p.name))
+        const favoriteIds = new Set(favorites.map((f) => f.playerId));
+        const favoritePlayers = favoriteIds.size > 0
+          ? filtered.filter((p) => favoriteIds.has(p.kboId))
           : [];
         
         if (favoritePlayers.length === 0) return null;
@@ -170,7 +148,7 @@ export default function PlayerTagger({ game, selectedPlayers, onToggle }: Player
               const team = getTeamById(p.teamId);
               return (
                 <button
-                  key={p.id}
+                  key={p.kboId}
                   onClick={() => onToggle(p)}
                   className="px-2.5 py-1 rounded-full text-xs font-medium transition-colors bg-bg-tertiary text-text-secondary"
                 >
