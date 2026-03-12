@@ -9,6 +9,7 @@ import type {
   BatterStat,
   PitcherStat,
 } from "@/lib/constants/game-stats";
+import playersRoster from "@/lib/constants/players-roster.json";
 
 interface GameStatsTabProps {
   stats: GameStats;
@@ -17,6 +18,22 @@ interface GameStatsTabProps {
 }
 
 type Side = "away" | "home";
+
+type RosterPlayer = {
+  name: string;
+  kboId: string;
+  teamId: number;
+};
+
+function getPlayerHref(name: string, teamId: number): string | null {
+  const roster = playersRoster as RosterPlayer[];
+  const player =
+    roster.find((entry) => entry.name === name && entry.teamId === teamId) ??
+    roster.find((entry) => entry.name === name) ??
+    null;
+
+  return player ? `/community/players/${player.kboId}` : null;
+}
 
 /* -- batter columns -- */
 const BATTER_COLUMNS: {
@@ -281,11 +298,16 @@ export default function GameStatsTab({
                       >
                         {isOrder && b.isSubstitute ? (
                           <span className="text-[10px] text-text-tertiary">↑</span>
-                        ) : isName ? (
-                          <Link href={`/community/players/${b.name}`} className="hover:underline">
-                            {String(b[col.key])}
-                          </Link>
-                        ) : String(b[col.key])}
+                        ) : isName ? (() => {
+                          const href = getPlayerHref(b.name, team.id);
+                          return href ? (
+                            <Link href={href} className="hover:underline">
+                              {String(b[col.key])}
+                            </Link>
+                          ) : (
+                            String(b[col.key])
+                          );
+                        })() : String(b[col.key])}
                       </td>
                     );
                   })}
@@ -380,12 +402,20 @@ export default function GameStatsTab({
                           !isSticky && "text-center text-text-secondary"
                         )}
                       >
-                        {isName ? (
-                          <span className="inline-flex items-center">
-                            {p.name}
-                            <ResultBadge result={p.result} />
-                          </span>
-                        ) : (
+                        {isName ? (() => {
+                          const href = getPlayerHref(p.name, team.id);
+                          const content = (
+                            <span className="inline-flex items-center">
+                              {p.name}
+                              <ResultBadge result={p.result} />
+                            </span>
+                          );
+                          return href ? (
+                            <Link href={href} className="hover:underline">
+                              {content}
+                            </Link>
+                          ) : content;
+                        })() : (
                           String(p[col.key] ?? "")
                         )}
                       </td>

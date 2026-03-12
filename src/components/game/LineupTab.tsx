@@ -91,6 +91,12 @@ export default function LineupTab({
             {Array.from({ length: 9 }, (_, i) => {
               const away = lineup.away.batters[i];
               const home = lineup.home.batters[i];
+              const awayHref = away.kboId
+                ? `/community/players/${away.kboId}`
+                : `/community/players/${away.name}`;
+              const homeHref = home.kboId
+                ? `/community/players/${home.kboId}`
+                : `/community/players/${home.name}`;
               return (
                 <tr
                   key={i}
@@ -103,15 +109,21 @@ export default function LineupTab({
                     {away.order}
                   </td>
                   <td className="py-2">
-                    <div className="flex items-center gap-2">
-
+                    <Link href={awayHref} className="flex items-center gap-2 hover:opacity-80">
+                      <PlayerAvatar
+                        name={away.name}
+                        teamId={away.teamId}
+                        photoUrl={getPlayerPhotoUrl(away.name, away.kboId)}
+                        size={28}
+                        showTeamBadge={false}
+                      />
                       <span className="text-sm text-text-tertiary w-5">
                         {away.position}
                       </span>
-                      <Link href={`/community/players/${away.name}`} className="text-text-primary font-medium hover:underline">
+                      <span className="text-text-primary font-medium">
                         {away.name}
-                      </Link>
-                    </div>
+                      </span>
+                    </Link>
                   </td>
                   <td className="py-2 text-center text-text-secondary tabular-nums">
                     {away.avg}
@@ -123,15 +135,21 @@ export default function LineupTab({
                     {home.avg}
                   </td>
                   <td className="py-2 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <Link href={`/community/players/${home.name}`} className="text-text-primary font-medium hover:underline">
+                    <Link href={homeHref} className="flex items-center justify-end gap-2 hover:opacity-80">
+                      <span className="text-text-primary font-medium">
                         {home.name}
-                      </Link>
+                      </span>
                       <span className="text-sm text-text-tertiary w-5 text-right">
                         {home.position}
                       </span>
-
-                    </div>
+                      <PlayerAvatar
+                        name={home.name}
+                        teamId={home.teamId}
+                        photoUrl={getPlayerPhotoUrl(home.name, home.kboId)}
+                        size={28}
+                        showTeamBadge={false}
+                      />
+                    </Link>
                   </td>
                   <td className="py-2 text-right text-text-tertiary tabular-nums">
                     {home.order}

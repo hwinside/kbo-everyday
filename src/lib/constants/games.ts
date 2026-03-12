@@ -179,6 +179,8 @@ export interface LineupPlayer {
   position: string;
   avg: string;
   bats?: "L" | "R" | "S"; // 좌타/우타/스위치
+  kboId?: string;
+  teamId?: number;
 }
 
 export interface GameLineup {

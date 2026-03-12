@@ -31,6 +31,7 @@ import GameChat from "@/components/game/GameChat";
 import AIAnalysis from "@/components/game/AIAnalysis";
 import LineupTab from "@/components/game/LineupTab";
 import GameStatsTab from "@/components/game/GameStatsTab";
+import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
 type Tab = "relay" | "chat" | "lineup" | "stats";
 
@@ -300,9 +301,10 @@ export default function GameDetailPage() {
                         name: gameDetail?.boxScore?.awayPitchers?.[0]?.name ?? "",
                         era: gameDetail?.boxScore?.awayPitchers?.[0]?.era ?? "-",
                       },
-                      batters: d.detailLineup.away.map((e: LineupEntry) => ({
-                        order: e.order, name: e.name, position: e.position, avg: e.avg || "",
-                      })),
+                      batters: d.detailLineup.away.map((e: LineupEntry) => {
+                        const roster = PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === e.name && p.teamId === game.awayTeamId);
+                        return { order: e.order, name: e.name, position: e.position, avg: e.avg || "", kboId: roster?.kboId, teamId: game.awayTeamId };
+                      }),
                     },
                     home: {
                       teamId: game.homeTeamId,
@@ -310,9 +312,10 @@ export default function GameDetailPage() {
                         name: gameDetail?.boxScore?.homePitchers?.[0]?.name ?? "",
                         era: gameDetail?.boxScore?.homePitchers?.[0]?.era ?? "-",
                       },
-                      batters: d.detailLineup.home.map((e: LineupEntry) => ({
-                        order: e.order, name: e.name, position: e.position, avg: e.avg || "",
-                      })),
+                      batters: d.detailLineup.home.map((e: LineupEntry) => {
+                        const roster = PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === e.name && p.teamId === game.homeTeamId);
+                        return { order: e.order, name: e.name, position: e.position, avg: e.avg || "", kboId: roster?.kboId, teamId: game.homeTeamId };
+                      }),
                     },
                   }}
                   awayTeam={awayTeam}
