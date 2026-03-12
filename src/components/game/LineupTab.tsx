@@ -109,44 +109,44 @@ export default function LineupTab({
                     {away.order}
                   </td>
                   <td className="py-2">
-                    <Link href={awayHref} className="flex items-center gap-2 hover:opacity-80">
+                    <Link href={awayHref} className="flex items-center gap-1.5 hover:opacity-80">
                       <PlayerAvatar
                         name={away.name}
                         teamId={away.teamId}
                         photoUrl={getPlayerPhotoUrl(away.name, away.kboId)}
-                        size={28}
+                        size={24}
                         showTeamBadge={false}
                       />
-                      <span className="text-sm text-text-tertiary w-5">
+                      <span className="text-xs text-text-tertiary shrink-0">
                         {away.position}
                       </span>
-                      <span className="text-text-primary font-medium">
+                      <span className="text-sm text-text-primary font-medium whitespace-nowrap">
                         {away.name}
                       </span>
                     </Link>
                   </td>
-                  <td className="py-2 text-center text-text-secondary tabular-nums">
+                  <td className="py-2 text-center text-xs text-text-secondary tabular-nums">
                     {away.avg}
                   </td>
                   <td className="py-2 text-center">
                     <div className="w-px h-4 bg-border mx-auto" />
                   </td>
-                  <td className="py-2 text-center text-text-secondary tabular-nums">
+                  <td className="py-2 text-center text-xs text-text-secondary tabular-nums">
                     {home.avg}
                   </td>
                   <td className="py-2 text-right">
-                    <Link href={homeHref} className="flex items-center justify-end gap-2 hover:opacity-80">
-                      <span className="text-text-primary font-medium">
+                    <Link href={homeHref} className="flex items-center justify-end gap-1.5 hover:opacity-80">
+                      <span className="text-sm text-text-primary font-medium whitespace-nowrap">
                         {home.name}
                       </span>
-                      <span className="text-sm text-text-tertiary w-5 text-right">
+                      <span className="text-xs text-text-tertiary shrink-0">
                         {home.position}
                       </span>
                       <PlayerAvatar
                         name={home.name}
                         teamId={home.teamId}
                         photoUrl={getPlayerPhotoUrl(home.name, home.kboId)}
-                        size={28}
+                        size={24}
                         showTeamBadge={false}
                       />
                     </Link>
