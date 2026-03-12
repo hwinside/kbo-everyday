@@ -35,6 +35,9 @@ export function deriveGameState(
   const awayScore = liveGame?.awayScore ?? game.awayScore;
   const homeScore = liveGame?.homeScore ?? game.homeScore;
   const isLive = liveGame?.isLive || game.status === "live";
+  // liveGame이 있지만 isLive가 false이고 점수가 있으면 → 종료된 경기
+  const isFinal = game.status === "final" || (!!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0));
+  const derivedStatus: "live" | "final" | "scheduled" = isLive ? "live" : isFinal ? "final" : "scheduled";
 
   const isTop = currentInning.includes("초");
   const detailLineup = gameDetail?.lineup ?? null;
@@ -91,6 +94,8 @@ export function deriveGameState(
     awayScore,
     homeScore,
     isLive,
+    isFinal,
+    derivedStatus,
     isTop,
     detailLineup,
     defensiveSide,

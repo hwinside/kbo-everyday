@@ -100,7 +100,7 @@ export default function GameDetailPage() {
 
   return (
     <div className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto pb-[104px] max-w-[640px] mx-auto w-full">
-      <GameDetailHeader status={game.status} time={game.time} stadium={game.stadium} />
+      <GameDetailHeader status={d.derivedStatus} time={game.time} stadium={liveGame?.stadium || game.stadium} />
 
       {d.isLive ? (
         <ScoreBar
