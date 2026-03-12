@@ -16,6 +16,7 @@ import type { GameDetailResponse } from "@/app/api/game-detail/route";
 import { getPreseasonGameById } from "@/lib/constants/preseason-schedule";
 import { useLiveGame } from "@/lib/hooks/useLiveGame";
 import { useGameDetail } from "@/lib/hooks/useGameDetail";
+import { useGameEvents } from "@/lib/hooks/useGameEvents";
 import type { LineupEntry } from "@/lib/hooks/useGameDetail";
 import { deriveGameState } from "@/lib/utils/game-derived";
 import GameDetailHeader from "@/components/game/GameDetailHeader";
@@ -136,6 +137,7 @@ export default function GameDetailPage() {
   const [aiOpen, setAiOpen] = useState(false);
   const { game: liveGame } = useLiveGame(gameId, 15000);
   const { data: gameDetail } = useGameDetail(gameId, 30000);
+  const { events: gameEvents } = useGameEvents(gameId, liveGame?.isLive ?? false, 15000);
 
   const game = getGameById(gameId) ?? getPreseasonGameById(gameId) ?? parseKboGameId(gameId);
   if (!game) {
@@ -281,7 +283,7 @@ export default function GameDetailPage() {
         <AnimatePresence mode="wait">
           {activeTab === "relay" && (
             <motion.div key="relay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-              <PlayByPlay plays={plays} teamColor={battingTeamColor} />
+              <PlayByPlay plays={plays} teamColor={battingTeamColor} gameEvents={gameEvents.length > 0 ? gameEvents : undefined} />
             </motion.div>
           )}
           {activeTab === "chat" && (
