@@ -39,6 +39,35 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "stats", label: "스탯" },
 ];
 
+/* KBO G_ID → 팀 코드 파싱 (예: "20260312LGNC0" → away=LG, home=NC) */
+const KBO_CODE_TO_ID: Record<string, number> = {
+  LG: 1, OB: 2, KT: 3, SK: 4, NC: 5,
+  HT: 6, LT: 7, SS: 8, HH: 9, WO: 10,
+};
+
+function parseKboGameId(gameId: string) {
+  // Format: YYYYMMDD + 2-char away + 2-char home + game#
+  const m = gameId.match(/^(\d{8})([A-Z]{2})([A-Z]{2})(\d)$/);
+  if (!m) return undefined;
+  const [, dateStr, awayCode, homeCode] = m;
+  const awayTeamId = KBO_CODE_TO_ID[awayCode];
+  const homeTeamId = KBO_CODE_TO_ID[homeCode];
+  if (!awayTeamId || !homeTeamId) return undefined;
+  return {
+    id: gameId,
+    date: `${dateStr.slice(0,4)}-${dateStr.slice(4,6)}-${dateStr.slice(6,8)}`,
+    time: "13:00",
+    homeTeamId,
+    awayTeamId,
+    status: "scheduled" as const,
+    inning: null,
+    homeScore: 0,
+    awayScore: 0,
+    stadium: "",
+    updatedAt: "",
+  };
+}
+
 export default function GameDetailPage() {
   const params = useParams();
   const gameId = params.gameId as string;
@@ -47,7 +76,7 @@ export default function GameDetailPage() {
   const { game: liveGame } = useLiveGame(gameId, 15000);
   const { data: gameDetail } = useGameDetail(gameId, 30000);
 
-  const game = getGameById(gameId) ?? getPreseasonGameById(gameId);
+  const game = getGameById(gameId) ?? getPreseasonGameById(gameId) ?? parseKboGameId(gameId);
   if (!game) {
     return (
       <div className="flex items-center justify-center h-screen text-text-secondary">
