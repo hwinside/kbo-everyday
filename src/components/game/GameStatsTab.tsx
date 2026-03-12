@@ -233,7 +233,7 @@ export default function GameStatsTab({
             <tbody>
               {data.batters.map((b, i) => (
                 <tr
-                  key={b.order}
+                  key={`${side}-${i}-${b.name}`}
                   className={clsx(
                     "border-b border-border/50 group",
                     i % 2 === 0 ? "bg-bg-glass/30" : "bg-transparent"
@@ -345,7 +345,7 @@ export default function GameStatsTab({
             <tbody>
               {data.pitchers.map((p, i) => (
                 <tr
-                  key={p.name}
+                  key={`${side}-pitcher-${i}-${p.name}`}
                   className={clsx(
                     "border-b border-border/50",
                     i % 2 === 0 ? "bg-bg-glass/30" : "bg-transparent"
