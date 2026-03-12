@@ -35,6 +35,7 @@ export interface LineupEntry {
   positionKr: string;
   name: string;
   war: number;
+  avg: string;
 }
 
 export interface BatterRecord {
@@ -212,12 +213,14 @@ function parseLineup(data: unknown[]): GameDetailResponse["lineup"] {
         positionKr: posKr,
         name: stripHtml(cells[2] || ""),
         war: parseFloat(cells[3] || "0") || 0,
+        avg: safeStr(cells[3]) || ".000",
       };
     }).filter(e => e.name !== "");
   }
 
-  const away = parseLineupRows(data[3]);
-  const home = parseLineupRows(data[4]);
+  // KBO returns: data[1]=HOME team, data[3]=HOME lineup; data[2]=AWAY team, data[4]=AWAY lineup
+  const home = parseLineupRows(data[3]);
+  const away = parseLineupRows(data[4]);
 
   if (away.length === 0 && home.length === 0) return null;
 

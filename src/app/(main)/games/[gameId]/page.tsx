@@ -300,7 +300,7 @@ export default function GameDetailPage() {
                         era: gameDetail?.boxScore?.awayPitchers?.[0]?.era ?? "-",
                       },
                       batters: d.detailLineup.away.map((e: LineupEntry) => ({
-                        order: e.order, name: e.name, position: e.position, avg: "",
+                        order: e.order, name: e.name, position: e.position, avg: e.avg || "",
                       })),
                     },
                     home: {
@@ -310,7 +310,7 @@ export default function GameDetailPage() {
                         era: gameDetail?.boxScore?.homePitchers?.[0]?.era ?? "-",
                       },
                       batters: d.detailLineup.home.map((e: LineupEntry) => ({
-                        order: e.order, name: e.name, position: e.position, avg: "",
+                        order: e.order, name: e.name, position: e.position, avg: e.avg || "",
                       })),
                     },
                   }}
