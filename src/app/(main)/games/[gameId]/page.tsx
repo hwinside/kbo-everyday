@@ -11,6 +11,7 @@ import {
   getPlaysForGame,
 } from "@/lib/constants/games";
 import { getStatsForGame } from "@/lib/constants/game-stats";
+import { getPreseasonGameById } from "@/lib/constants/preseason-schedule";
 import { useLiveGame } from "@/lib/hooks/useLiveGame";
 import { useGameDetail } from "@/lib/hooks/useGameDetail";
 import type { LineupEntry } from "@/lib/hooks/useGameDetail";
@@ -46,7 +47,7 @@ export default function GameDetailPage() {
   const { game: liveGame } = useLiveGame(gameId, 15000);
   const { data: gameDetail } = useGameDetail(gameId, 30000);
 
-  const game = getGameById(gameId);
+  const game = getGameById(gameId) ?? getPreseasonGameById(gameId);
   if (!game) {
     return (
       <div className="flex items-center justify-center h-screen text-text-secondary">

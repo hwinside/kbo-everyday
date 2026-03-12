@@ -83,3 +83,35 @@ export const PRESEASON_GAMES: PreseasonGame[] = [
 ];
 
 export const PRESEASON_DATES = [...new Set(PRESEASON_GAMES.map(g => g.date))].sort();
+
+const TEAM_NAME_TO_ID: Record<string, number> = {
+  LG: 1, 두산: 2, KT: 3, SSG: 4, NC: 5, KIA: 6, 롯데: 7, 삼성: 8, 한화: 9, 키움: 10,
+};
+
+/**
+ * Look up a preseason game by its `pre-YYYY-MM-DD-{index}` id.
+ * Returns a minimal Game-shaped object or undefined.
+ */
+export function getPreseasonGameById(id: string) {
+  const m = id.match(/^pre-(\d{4}-\d{2}-\d{2})-(\d+)$/);
+  if (!m) return undefined;
+  const [, date, idxStr] = m;
+  const gamesOnDate = PRESEASON_GAMES.filter((g) => g.date === date);
+  const idx = parseInt(idxStr, 10);
+  const pg = gamesOnDate[idx];
+  if (!pg) return undefined;
+  return {
+    id,
+    date: pg.date,
+    time: "13:00",
+    homeTeamId: TEAM_NAME_TO_ID[pg.home] ?? 0,
+    awayTeamId: TEAM_NAME_TO_ID[pg.away] ?? 0,
+    status: "scheduled" as const,
+    inning: null,
+    homeScore: 0,
+    awayScore: 0,
+    stadium: pg.venue,
+    updatedAt: "",
+    isPreseason: true,
+  };
+}
