@@ -113,10 +113,16 @@ function parseScoreBoard(data: unknown[]): {
 
   let status: GameDetailResponse["status"] = "scheduled";
   if (m) {
-    const sNm = safeStr(m.S_NM);
-    if (sNm.includes("종료") || sNm.includes("경기종료")) status = "final";
-    else if (sNm.includes("취소") || sNm.includes("우천")) status = "cancelled";
-    else if (safeInt(m.T_SCORE_CN) > 0 || safeInt(m.B_SCORE_CN) > 0) status = "live";
+    const cancelNm = safeStr(m.CANCEL_SC_NM);
+    const endTm = safeStr(m.END_TM);
+    if (cancelNm.includes("취소") || cancelNm.includes("우천")) {
+      status = "cancelled";
+    } else if (endTm) {
+      // END_TM이 있으면 경기 종료
+      status = "final";
+    } else if (safeInt(m.T_SCORE_CN) > 0 || safeInt(m.B_SCORE_CN) > 0) {
+      status = "live";
+    }
   }
 
   const meta: GameDetailResponse["meta"] = m ? {
@@ -277,7 +283,16 @@ export async function GET(req: NextRequest) {
   }
 
   const seasonId = req.nextUrl.searchParams.get("seasonId") || new Date().getFullYear().toString();
-  const srId = req.nextUrl.searchParams.get("srId") || "0,1";
+
+  // Determine srId from gameId date (preseason: srId=1, regular: srId=0)
+  let srId = req.nextUrl.searchParams.get("srId") || "0";
+  if (!req.nextUrl.searchParams.has("srId") && gameId.length >= 8) {
+    const dateStr = gameId.slice(0, 8); // YYYYMMDD
+    // 2026 preseason: 3/12 ~ 3/24
+    if (dateStr >= "20260312" && dateStr <= "20260324") {
+      srId = "1";
+    }
+  }
   const body = `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${gameId}`;
 
   try {
