@@ -41,12 +41,18 @@ export interface LineupEntry {
 export interface BatterRecord {
   order: number;
   position: string;
+  positionFull: string;
   name: string;
   atBats: number;
   hits: number;
   runs: number;
   rbi: number;
+  hr: number;
+  bb: number;
+  so: number;
+  sb: number;
   avg: string;
+  isSubstitute: boolean;
 }
 
 export interface PitcherRecord {
@@ -55,9 +61,13 @@ export interface PitcherRecord {
   decision: string;
   pitchCount: number;
   hits: number;
+  runs: number;
+  hr: number;
   strikeouts: number;
   walks: number;
   earnedRuns: number;
+  battersFaced: number;
+  atBats: number;
   era: string;
 }
 
@@ -72,6 +82,36 @@ const POS_MAP: Record<string, string> = {
   "주좌": "LF", "주우": "RF", "주중": "CF", "주1": "1B", "주2": "2B", "주3": "3B", "주유": "SS",
   "대타": "DH", "대주": "DH",
 };
+
+// BoxScore 약어 → 풀네임 매핑
+const POS_FULL: Record<string, string> = {
+  "투": "투수", "포": "포수", "一": "1루수", "二": "2루수",
+  "三": "3루수", "유": "유격수", "좌": "좌익수", "중": "중견수",
+  "우": "우익수", "지": "지명타자",
+  // 복합/교체 약어
+  "타지": "대타·지명", "타좌": "대타·좌익", "타우": "대타·우익", "타중": "대타·중견",
+  "타1": "대타·1루", "타2": "대타·2루", "타3": "대타·3루", "타유": "대타·유격", "타포": "대타·포수",
+  "주좌": "대주·좌익", "주우": "대주·우익", "주중": "대주·중견",
+  "주1": "대주·1루", "주2": "대주·2루", "주3": "대주·3루", "주유": "대주·유격",
+  "타": "대타", "주": "대주",
+  // 복합 포지션 (二유, 一二 등)
+  "二유": "2루·유격", "유二": "유격·2루", "一二": "1루·2루",
+  "중우": "중견·우익", "우중": "우익·중견",
+};
+
+function positionFullName(abbr: string): string {
+  if (POS_FULL[abbr]) return POS_FULL[abbr];
+  // Try splitting compound positions (e.g., "二유" → each char)
+  const parts = abbr.split("").map(c => {
+    const full: Record<string, string> = {
+      "投": "투수", "捕": "포수", "一": "1루", "二": "2루",
+      "三": "3루", "유": "유격", "좌": "좌익", "중": "중견",
+      "우": "우익", "지": "지명",
+    };
+    return full[c] || c;
+  });
+  return parts.join("·") || abbr;
+}
 
 import playersRoster from "@/lib/constants/players-roster.json";
 
@@ -235,21 +275,63 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
   const obj = data as { tables?: unknown[]; code?: string };
   if (!obj?.tables || !Array.isArray(obj.tables) || obj.tables.length < 5) return null;
 
-  function parseBatters(table: { rows?: { row: { Text: string }[] }[] }): BatterRecord[] {
+  // Parse stolen bases from key plays table (table[0])
+  const sbMap = new Map<string, number>();
+  const keyPlaysTable = obj.tables[0] as { rows?: { row: { Text: string }[] }[] };
+  if (keyPlaysTable?.rows) {
+    for (const r of keyPlaysTable.rows) {
+      const cells = r.row.map(c => safeStr(c.Text));
+      if (stripHtml(cells[0]) === "도루") {
+        // Format: "송찬의2(2회) 이영빈(2회) 최원영(8회)"
+        const text = stripHtml(cells[1] || "");
+        const matches = text.matchAll(/([가-힣]+?)(\d*)\(/g);
+        for (const m of matches) {
+          const name = m[1];
+          const count = m[2] ? parseInt(m[2]) : 1;
+          sbMap.set(name, (sbMap.get(name) || 0) + count);
+        }
+      }
+    }
+  }
+
+  function parseBatters(table: { rows?: { row: { Text: string }[] }[] }, sbLookup: Map<string, number>): BatterRecord[] {
     if (!table?.rows) return [];
+    let prevOrder = -1;
     return table.rows.map(r => {
       const cells = r.row.map(c => safeStr(c.Text));
       // Last 5 columns = 타수, 안타, 득점, 타점, 타율
       const tail = cells.slice(cells.length - 5);
+      // Middle columns (3 to length-5) = at-bat results
+      const atBatResults = cells.slice(3, cells.length - 5).map(c => stripHtml(c)).filter(c => c && c !== "&nbsp;");
+
+      // Count HR/BB/SO from at-bat results
+      let hr = 0, bb = 0, so = 0;
+      for (const ab of atBatResults) {
+        if (ab.includes("홈")) hr++;
+        if (ab === "4구" || ab === "사구") bb++;
+        if (ab.includes("삼진")) so++;
+      }
+
+      const order = safeInt(stripHtml(cells[0]));
+      const posRaw = stripHtml(cells[1] || "");
+      const isSubstitute = order === prevOrder || posRaw.startsWith("타") || posRaw.startsWith("주") || posRaw.startsWith("대");
+      prevOrder = order;
+
       return {
-        order: safeInt(stripHtml(cells[0])),
-        position: stripHtml(cells[1] || ""),
+        order,
+        position: POS_MAP[posRaw] || posRaw,
+        positionFull: positionFullName(posRaw),
         name: stripHtml(cells[2] || ""),
         atBats: safeInt(stripHtml(tail[0])),
         hits: safeInt(stripHtml(tail[1])),
         runs: safeInt(stripHtml(tail[2])),
         rbi: safeInt(stripHtml(tail[3])),
+        hr,
+        bb,
+        so,
+        sb: sbLookup.get(stripHtml(cells[2] || "")) || 0,
         avg: stripHtml(tail[4]) || ".000",
+        isSubstitute,
       };
     }).filter(b => b.name !== "");
   }
@@ -270,10 +352,14 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
         name: stripHtml(cells[0] || ""),
         inningsPitched: ip,
         decision: stripHtml(cells[2] || ""),
+        battersFaced: safeInt(stripHtml(cells[7])),
         pitchCount: safeInt(stripHtml(cells[8])),
+        atBats: safeInt(stripHtml(cells[9])),
         hits: safeInt(stripHtml(cells[10])),
-        strikeouts: safeInt(stripHtml(cells[13])),
+        hr: safeInt(stripHtml(cells[11])),
         walks: safeInt(stripHtml(cells[12])),
+        strikeouts: safeInt(stripHtml(cells[13])),
+        runs: safeInt(stripHtml(cells[14])),
         earnedRuns: safeInt(stripHtml(cells[15])),
         era: stripHtml(cells[16] || "") || "0.00",
       };
@@ -292,8 +378,8 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
   const tables = obj.tables as { rows?: { row: { Text: string }[] }[] }[];
 
   return {
-    awayBatters: parseBatters(tables[1]),
-    homeBatters: parseBatters(tables[2]),
+    awayBatters: parseBatters(tables[1], sbMap),
+    homeBatters: parseBatters(tables[2], sbMap),
     awayPitchers: parsePitchers(tables[3]),
     homePitchers: parsePitchers(tables[4]),
   };

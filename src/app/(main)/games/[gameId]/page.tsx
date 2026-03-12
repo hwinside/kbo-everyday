@@ -56,16 +56,17 @@ function boxScoreToGameStats(
     return batters.map(b => ({
       order: b.order,
       name: b.name,
-      position: b.position,
+      position: b.positionFull || b.position,
       ab: b.atBats,
       r: b.runs,
       h: b.hits,
       rbi: b.rbi,
-      hr: 0, // not in API response
-      bb: 0, // not in API response
-      so: 0, // not in API response
-      sb: 0, // not in API response
+      hr: b.hr,
+      bb: b.bb,
+      so: b.so,
+      sb: b.sb,
       avg: b.avg,
+      isSubstitute: b.isSubstitute,
     }));
   }
 
@@ -75,13 +76,13 @@ function boxScoreToGameStats(
       result: DECISION_MAP[p.decision],
       ip: p.inningsPitched,
       h: p.hits,
-      r: 0,
+      r: p.runs,
       er: p.earnedRuns,
       bb: p.walks,
       so: p.strikeouts,
-      hr: 0,
-      bf: 0,
-      ab: 0,
+      hr: p.hr,
+      bf: p.battersFaced,
+      ab: p.atBats,
       np: p.pitchCount,
       g: 0,
       w: 0,

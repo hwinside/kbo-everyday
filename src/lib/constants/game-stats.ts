@@ -13,6 +13,7 @@ export interface BatterStat {
   so: number;       // 삼진
   sb: number;       // 도루
   avg: string;      // 타율
+  isSubstitute?: boolean; // 교체 선수
 }
 
 export interface PitcherStat {

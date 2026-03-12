@@ -243,6 +243,7 @@ export default function GameStatsTab({
                     const isSticky = col.sticky;
                     const isName = col.key === "name";
                     const isPos = col.key === "position";
+                    const isOrder = col.key === "order";
 
                     return (
                       <td
@@ -251,9 +252,10 @@ export default function GameStatsTab({
                           "py-2 px-2 tabular-nums whitespace-nowrap",
                           isSticky && stickyBase,
                           isName && "text-text-primary font-medium",
-                          isPos && "text-text-tertiary",
+                          isPos && "text-text-tertiary text-xs",
                           !isSticky && "text-center text-text-secondary",
-                          col.key === "order" && "text-center text-text-tertiary w-8",
+                          isOrder && "text-center text-text-tertiary w-8",
+                          b.isSubstitute && isOrder && "text-accent",
                           // highlight: 3+ hits or 1+ HR
                           col.key === "h" && b.h >= 3 && "text-accent font-semibold",
                           col.key === "hr" && b.hr >= 1 && "text-accent font-semibold"
@@ -266,7 +268,9 @@ export default function GameStatsTab({
                               : undefined
                         }
                       >
-                        {isName ? (
+                        {isOrder && b.isSubstitute ? (
+                          <span className="text-[10px] text-text-tertiary">↑</span>
+                        ) : isName ? (
                           <Link href={`/community/players/${b.name}`} className="hover:underline">
                             {String(b[col.key])}
                           </Link>
