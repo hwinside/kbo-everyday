@@ -344,10 +344,9 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
     // [12]4사구, [13]삼진, [14]실점, [15]자책, [16]평균자책
     return table.rows.map(r => {
       const cells = r.row.map(c => safeStr(c.Text));
-      const role = stripHtml(cells[1] || "");
-      // For starters, [1]="선발"/"구원" and IP is in [6]; for relievers [1]=IP and [6] is a different stat
-      const isStarter = role === "선발" || role === "구원";
-      const ip = isStarter ? stripHtml(cells[6] || "") : role;
+      // [1]=등판 (선발/"5.9" 등판이닝), [6]=이닝 (투구이닝)
+      // IP is ALWAYS in [6] regardless of starter/reliever
+      const ip = stripHtml(cells[6] || "");
       return {
         name: stripHtml(cells[0] || ""),
         inningsPitched: ip,
