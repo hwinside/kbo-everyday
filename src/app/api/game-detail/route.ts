@@ -308,7 +308,8 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
       let hr = 0, bb = 0, so = 0;
       for (const ab of atBatResults) {
         if (ab.includes("홈")) hr++;
-        if (ab === "4구" || ab === "사구") bb++;
+        if (ab === "4구") bb++;
+        // 사구(死球) = HBP, not BB — don't count as walk
         if (ab.includes("삼진")) so++;
       }
 
@@ -317,6 +318,7 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
       const isSubstitute = order === prevOrder || posRaw.startsWith("타") || posRaw.startsWith("주") || posRaw.startsWith("대");
       prevOrder = order;
 
+      // KBO header order: [타수, 안타, 타점, 득점, 타율]
       return {
         order,
         position: POS_MAP[posRaw] || posRaw,
@@ -324,8 +326,8 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
         name: stripHtml(cells[2] || ""),
         atBats: safeInt(stripHtml(tail[0])),
         hits: safeInt(stripHtml(tail[1])),
-        runs: safeInt(stripHtml(tail[2])),
-        rbi: safeInt(stripHtml(tail[3])),
+        rbi: safeInt(stripHtml(tail[2])),
+        runs: safeInt(stripHtml(tail[3])),
         hr,
         bb,
         so,
@@ -368,7 +370,7 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
         const player = (playersRoster as { kboId: string; name: string }[]).find(
           r => String(r.kboId) === p.name
         );
-        if (player) p.name = player.name;
+        p.name = player ? player.name : `선수(${p.name.slice(-3)})`;
       }
       return p;
     });

@@ -84,10 +84,10 @@ function boxScoreToGameStats(
       bf: p.battersFaced,
       ab: p.atBats,
       np: p.pitchCount,
-      g: 0,
-      w: 0,
-      l: 0,
-      sv: 0,
+      g: 1,
+      w: DECISION_MAP[p.decision] === "win" ? 1 : 0,
+      l: DECISION_MAP[p.decision] === "loss" ? 1 : 0,
+      sv: DECISION_MAP[p.decision] === "save" ? 1 : 0,
       era: p.era,
     }));
   }
