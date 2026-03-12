@@ -74,14 +74,24 @@ function sumPitcherField(pitchers: PitcherStat[], key: keyof PitcherStat): numbe
   return pitchers.reduce((s, p) => s + (typeof p[key] === "number" ? (p[key] as number) : 0), 0);
 }
 
-/** innings sum: "6.0" + "2.0" + "1.0" -> "9.0" */
+/** innings sum: handles "4", "1/3", "2/3", "6.1" formats */
+function parseIpToThirds(ip: string): number {
+  if (ip === "1/3") return 1;
+  if (ip === "2/3") return 2;
+  if (ip.includes(".")) {
+    const [whole, frac] = ip.split(".");
+    return parseInt(whole) * 3 + (frac ? parseInt(frac) : 0);
+  }
+  return (parseInt(ip) || 0) * 3;
+}
+
 function sumInnings(pitchers: PitcherStat[]): string {
   let thirds = 0;
   for (const p of pitchers) {
-    const [whole, frac] = p.ip.split(".");
-    thirds += parseInt(whole) * 3 + (frac ? parseInt(frac) : 0);
+    thirds += parseIpToThirds(p.ip);
   }
-  return `${Math.floor(thirds / 3)}.${thirds % 3}`;
+  const rem = thirds % 3;
+  return rem === 0 ? `${thirds / 3}` : `${Math.floor(thirds / 3)} ${rem}/3`;
 }
 
 /** team batting avg */
@@ -95,9 +105,9 @@ function teamAvg(batters: BatterStat[]): string {
 /** team ERA */
 function teamEra(pitchers: PitcherStat[]): string {
   const totalEr = sumPitcherField(pitchers, "er");
-  const ipStr = sumInnings(pitchers);
-  const [whole, frac] = ipStr.split(".");
-  const innings = parseInt(whole) + (frac ? parseInt(frac) / 3 : 0);
+  let thirds = 0;
+  for (const p of pitchers) thirds += parseIpToThirds(p.ip);
+  const innings = thirds / 3;
   if (innings === 0) return "0.00";
   return ((totalEr * 9) / innings).toFixed(2);
 }
