@@ -213,7 +213,11 @@ function parseLineup(data: unknown[]): GameDetailResponse["lineup"] {
         positionKr: posKr,
         name: stripHtml(cells[2] || ""),
         war: parseFloat(cells[3] || "0") || 0,
-        avg: safeStr(cells[3]) || ".000",
+        avg: (() => {
+          const raw = safeStr(cells[3]);
+          // 시범경기 첫날 등 0.00인 경우 "-" 표시
+          return (!raw || raw === "0.00" || raw === "0" || raw === ".000") ? "-" : raw;
+        })(),
       };
     }).filter(e => e.name !== "");
   }
