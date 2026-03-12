@@ -127,7 +127,7 @@ export default function LineupTab({
                         name={away.name}
                         teamId={away.teamId}
                         photoUrl={getPlayerPhotoUrl(away.name, away.kboId)}
-                        size={32}
+                        size={36}
                         showTeamBadge={false}
                       />
                       <span className="text-xs text-text-tertiary w-6 text-center shrink-0">
@@ -153,7 +153,7 @@ export default function LineupTab({
                         name={home.name}
                         teamId={home.teamId}
                         photoUrl={getPlayerPhotoUrl(home.name, home.kboId)}
-                        size={32}
+                        size={36}
                         showTeamBadge={false}
                       />
                     </Link>
