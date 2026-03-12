@@ -63,7 +63,8 @@ const BATTER_SUM_KEYS: (keyof BatterStat)[] = [
   "ab", "r", "h", "rbi", "hr", "bb", "so", "sb",
 ];
 const PITCHER_SUM_KEYS: (keyof PitcherStat)[] = [
-  "h", "r", "er", "bb", "so", "hr", "bf", "ab", "np", "g", "w", "l", "sv",
+  "h", "r", "er", "bb", "so", "hr", "bf", "ab", "np",
+  // g, w, l, sv는 합계행에서 의미 없으므로 제외 (네이버도 비워둠)
 ];
 
 function sumBatterField(batters: BatterStat[], key: keyof BatterStat): number {
