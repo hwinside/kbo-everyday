@@ -91,9 +91,7 @@ export default function LineupTab({
                   {awayTeam.shortName}
                 </span>
               </th>
-              <th className="py-2 text-center font-medium w-8">타율</th>
               <th className="py-2 w-4" />
-              <th className="py-2 text-center font-medium w-8">타율</th>
               <th className="py-2 text-right font-medium">
                 <span style={{ color: homeTeam.colorLight }}>
                   {homeTeam.shortName}
@@ -140,14 +138,8 @@ export default function LineupTab({
                       </span>
                     </Link>
                   </td>
-                  <td className="py-2 text-center text-xs text-text-secondary tabular-nums">
-                    {away.avg}
-                  </td>
                   <td className="py-2 text-center">
                     <div className="w-px h-4 bg-border mx-auto" />
-                  </td>
-                  <td className="py-2 text-center text-xs text-text-secondary tabular-nums">
-                    {home.avg}
                   </td>
                   <td className="py-2 text-right">
                     <Link href={homeHref} className="flex items-center justify-end gap-1.5 hover:opacity-80">
