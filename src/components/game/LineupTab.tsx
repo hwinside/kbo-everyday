@@ -117,7 +117,7 @@ export default function LineupTab({
                         size={24}
                         showTeamBadge={false}
                       />
-                      <span className="text-xs text-text-tertiary shrink-0">
+                      <span className="text-xs text-text-tertiary w-6 text-center shrink-0">
                         {away.position}
                       </span>
                       <span className="text-sm text-text-primary font-medium whitespace-nowrap">
@@ -139,7 +139,7 @@ export default function LineupTab({
                       <span className="text-sm text-text-primary font-medium whitespace-nowrap">
                         {home.name}
                       </span>
-                      <span className="text-xs text-text-tertiary shrink-0">
+                      <span className="text-xs text-text-tertiary w-6 text-center shrink-0">
                         {home.position}
                       </span>
                       <PlayerAvatar
