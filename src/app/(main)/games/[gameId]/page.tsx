@@ -11,6 +11,8 @@ import {
   getPlaysForGame,
 } from "@/lib/constants/games";
 import { getStatsForGame } from "@/lib/constants/game-stats";
+import type { GameStats, BatterStat, PitcherStat } from "@/lib/constants/game-stats";
+import type { GameDetailResponse } from "@/app/api/game-detail/route";
 import { getPreseasonGameById } from "@/lib/constants/preseason-schedule";
 import { useLiveGame } from "@/lib/hooks/useLiveGame";
 import { useGameDetail } from "@/lib/hooks/useGameDetail";
@@ -38,6 +40,63 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "lineup", label: "라인업" },
   { id: "stats", label: "스탯" },
 ];
+
+/* boxScore → GameStats 변환 */
+function boxScoreToGameStats(
+  gameId: string,
+  boxScore: NonNullable<GameDetailResponse["boxScore"]>,
+  awayTeamId: number,
+  homeTeamId: number,
+): GameStats {
+  const DECISION_MAP: Record<string, PitcherStat["result"]> = {
+    "승": "win", "패": "loss", "세": "save", "홀": "hold",
+  };
+
+  function toBatterStats(batters: typeof boxScore.awayBatters): BatterStat[] {
+    return batters.map(b => ({
+      order: b.order,
+      name: b.name,
+      position: b.position,
+      ab: b.atBats,
+      r: b.runs,
+      h: b.hits,
+      rbi: b.rbi,
+      hr: 0, // not in API response
+      bb: 0, // not in API response
+      so: 0, // not in API response
+      sb: 0, // not in API response
+      avg: b.avg,
+    }));
+  }
+
+  function toPitcherStats(pitchers: typeof boxScore.awayPitchers): PitcherStat[] {
+    return pitchers.map(p => ({
+      name: p.name,
+      result: DECISION_MAP[p.decision],
+      ip: p.inningsPitched,
+      h: p.hits,
+      r: 0,
+      er: p.earnedRuns,
+      bb: p.walks,
+      so: p.strikeouts,
+      hr: 0,
+      bf: 0,
+      ab: 0,
+      np: p.pitchCount,
+      g: 0,
+      w: 0,
+      l: 0,
+      sv: 0,
+      era: p.era,
+    }));
+  }
+
+  return {
+    gameId,
+    away: { teamId: awayTeamId, batters: toBatterStats(boxScore.awayBatters), pitchers: toPitcherStats(boxScore.awayPitchers) },
+    home: { teamId: homeTeamId, batters: toBatterStats(boxScore.homeBatters), pitchers: toPitcherStats(boxScore.homePitchers) },
+  };
+}
 
 /* KBO G_ID → 팀 코드 파싱 (예: "20260312LGNC0" → away=LG, home=NC) */
 const KBO_CODE_TO_ID: Record<string, number> = {
@@ -89,7 +148,10 @@ export default function GameDetailPage() {
   const awayTeam = getTeamById(game.awayTeamId)!;
   const innings = getInningsForGame(gameId);
   const plays = getPlaysForGame(gameId);
-  const gameStats = getStatsForGame(gameId);
+  const staticGameStats = getStatsForGame(gameId);
+  const gameStats = staticGameStats ?? (gameDetail?.boxScore
+    ? boxScoreToGameStats(gameId, gameDetail.boxScore, game.awayTeamId, game.homeTeamId)
+    : null);
 
   const isTopInning = game.inning?.includes("초");
   const battingTeamColor = isTopInning

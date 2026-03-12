@@ -72,6 +72,8 @@ const POS_MAP: Record<string, string> = {
   "대타": "DH", "대주": "DH",
 };
 
+import playersRoster from "@/lib/constants/players-roster.json";
+
 const KBO_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
 const HEADERS = {
   "Content-Type": "application/x-www-form-urlencoded",
@@ -247,21 +249,37 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
 
   function parsePitchers(table: { rows?: { row: { Text: string }[] }[] }): PitcherRecord[] {
     if (!table?.rows) return [];
+    // KBO BoxScore columns:
+    // [0]선수명, [1]등판(선발/IP), [2]결과, [3]승, [4]패, [5]세,
+    // [6]이닝, [7]타자, [8]투구수, [9]타수, [10]피안타, [11]홈런,
+    // [12]4사구, [13]삼진, [14]실점, [15]자책, [16]평균자책
     return table.rows.map(r => {
       const cells = r.row.map(c => safeStr(c.Text));
-      // [선수명, 이닝, 승패, 피안타, 타수, 피홈런, 삼진, 투구수, 볼, 피안타수, 사구, 실점, 자책, 폭투, 보크, ERA]
+      const role = stripHtml(cells[1] || "");
+      // For starters, [1]="선발"/"구원" and IP is in [6]; for relievers [1]=IP and [6] is a different stat
+      const isStarter = role === "선발" || role === "구원";
+      const ip = isStarter ? stripHtml(cells[6] || "") : role;
       return {
         name: stripHtml(cells[0] || ""),
-        inningsPitched: stripHtml(cells[1] || ""),
+        inningsPitched: ip,
         decision: stripHtml(cells[2] || ""),
-        hits: safeInt(stripHtml(cells[3])),
-        strikeouts: safeInt(stripHtml(cells[6])),
-        pitchCount: safeInt(stripHtml(cells[7])),
-        walks: safeInt(stripHtml(cells[10])),
-        earnedRuns: safeInt(stripHtml(cells[12])),
-        era: stripHtml(cells[cells.length - 1] || "") || "0.00",
+        pitchCount: safeInt(stripHtml(cells[8])),
+        hits: safeInt(stripHtml(cells[10])),
+        strikeouts: safeInt(stripHtml(cells[13])),
+        walks: safeInt(stripHtml(cells[12])),
+        earnedRuns: safeInt(stripHtml(cells[15])),
+        era: stripHtml(cells[16] || "") || "0.00",
       };
-    }).filter(p => p.name !== "");
+    }).filter(p => p.name !== "").map(p => {
+      // KBO sometimes returns player IDs instead of names for foreign players
+      if (/^\d+$/.test(p.name)) {
+        const player = (playersRoster as { kboId: string; name: string }[]).find(
+          r => String(r.kboId) === p.name
+        );
+        if (player) p.name = player.name;
+      }
+      return p;
+    });
   }
 
   const tables = obj.tables as { rows?: { row: { Text: string }[] }[] }[];
