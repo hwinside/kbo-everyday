@@ -187,12 +187,12 @@ export interface GameLineup {
   gameId: string;
   away: {
     teamId: number;
-    startingPitcher: { name: string; era: string };
+    startingPitcher: { name: string; era: string; kboId?: string };
     batters: LineupPlayer[];
   };
   home: {
     teamId: number;
-    startingPitcher: { name: string; era: string };
+    startingPitcher: { name: string; era: string; kboId?: string };
     batters: LineupPlayer[];
   };
 }

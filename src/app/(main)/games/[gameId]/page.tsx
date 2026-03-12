@@ -297,10 +297,11 @@ export default function GameDetailPage() {
                     gameId,
                     away: {
                       teamId: game.awayTeamId,
-                      startingPitcher: {
-                        name: gameDetail?.boxScore?.awayPitchers?.[0]?.name ?? "",
-                        era: gameDetail?.boxScore?.awayPitchers?.[0]?.era ?? "-",
-                      },
+                      startingPitcher: (() => {
+                        const spName = gameDetail?.boxScore?.awayPitchers?.[0]?.name ?? "";
+                        const spRoster = spName ? PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === spName && p.teamId === game.awayTeamId) : undefined;
+                        return { name: spName, era: gameDetail?.boxScore?.awayPitchers?.[0]?.era ?? "-", kboId: spRoster?.kboId };
+                      })(),
                       batters: d.detailLineup.away.map((e: LineupEntry) => {
                         const roster = PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === e.name && p.teamId === game.awayTeamId);
                         return { order: e.order, name: e.name, position: e.position, avg: e.avg || "", kboId: roster?.kboId, teamId: game.awayTeamId };
@@ -308,10 +309,11 @@ export default function GameDetailPage() {
                     },
                     home: {
                       teamId: game.homeTeamId,
-                      startingPitcher: {
-                        name: gameDetail?.boxScore?.homePitchers?.[0]?.name ?? "",
-                        era: gameDetail?.boxScore?.homePitchers?.[0]?.era ?? "-",
-                      },
+                      startingPitcher: (() => {
+                        const spName = gameDetail?.boxScore?.homePitchers?.[0]?.name ?? "";
+                        const spRoster = spName ? PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === spName && p.teamId === game.homeTeamId) : undefined;
+                        return { name: spName, era: gameDetail?.boxScore?.homePitchers?.[0]?.era ?? "-", kboId: spRoster?.kboId };
+                      })(),
                       batters: d.detailLineup.home.map((e: LineupEntry) => {
                         const roster = PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === e.name && p.teamId === game.homeTeamId);
                         return { order: e.order, name: e.name, position: e.position, avg: e.avg || "", kboId: roster?.kboId, teamId: game.homeTeamId };

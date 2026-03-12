@@ -17,24 +17,35 @@ function PitcherCard({
   name,
   era,
   teamColor,
+  teamId,
+  kboId,
   label,
 }: {
   name: string;
   era: string;
   teamColor: string;
+  teamId: number;
+  kboId?: string;
   label: string;
 }) {
   return (
-    <div className="text-center">
-      <div className="text-base text-text-tertiary mb-1">{label}</div>
+    <div className="text-center flex flex-col items-center">
+      <div className="text-base text-text-tertiary mb-2">{label}</div>
+      <PlayerAvatar
+        name={name}
+        teamId={teamId}
+        photoUrl={getPlayerPhotoUrl(name, kboId)}
+        size={56}
+        showTeamBadge={true}
+      />
       <div
-        className="inline-flex items-center gap-4 px-4 py-1.5 rounded-full text-white text-base font-semibold"
+        className="inline-flex items-center gap-3 px-4 py-1.5 rounded-full text-white text-sm font-semibold mt-2"
         style={{ backgroundColor: teamColor }}
       >
         <span>SP</span>
         <span>{name}</span>
       </div>
-      <div className="text-base text-text-secondary mt-1 tabular-nums">
+      <div className="text-sm text-text-secondary mt-1 tabular-nums">
         ERA {era}
       </div>
     </div>
@@ -54,13 +65,17 @@ export default function LineupTab({
           name={lineup.away.startingPitcher.name}
           era={lineup.away.startingPitcher.era}
           teamColor={awayTeam.colorPrimary}
+          teamId={awayTeam.id}
+          kboId={lineup.away.startingPitcher.kboId}
           label={awayTeam.shortName}
         />
-        <div className="text-text-tertiary text-base mt-4">VS</div>
+        <div className="text-text-tertiary text-base mt-8">VS</div>
         <PitcherCard
           name={lineup.home.startingPitcher.name}
           era={lineup.home.startingPitcher.era}
           teamColor={homeTeam.colorPrimary}
+          teamId={homeTeam.id}
+          kboId={lineup.home.startingPitcher.kboId}
           label={homeTeam.shortName}
         />
       </div>
