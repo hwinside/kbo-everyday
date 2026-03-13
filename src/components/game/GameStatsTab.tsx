@@ -195,8 +195,74 @@ export default function GameStatsTab({
     return totals;
   }, [data.pitchers]);
 
+  /* team comparison summary */
+  const comparison = useMemo(() => {
+    const items: { label: string; away: number; home: number }[] = [
+      { label: "안타", away: sumBatterField(stats.away.batters, "h"), home: sumBatterField(stats.home.batters, "h") },
+      { label: "홈런", away: sumBatterField(stats.away.batters, "hr"), home: sumBatterField(stats.home.batters, "hr") },
+      { label: "삼진", away: sumBatterField(stats.away.batters, "so"), home: sumBatterField(stats.home.batters, "so") },
+      { label: "볼넷", away: sumBatterField(stats.away.batters, "bb"), home: sumBatterField(stats.home.batters, "bb") },
+      { label: "도루", away: sumBatterField(stats.away.batters, "sb"), home: sumBatterField(stats.home.batters, "sb") },
+    ];
+    return items;
+  }, [stats]);
+
   return (
     <div className="px-5 py-4 space-y-5">
+      {/* -- team comparison bar chart -- */}
+      <div className="glass-card p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: awayTeam.colorPrimary }} />
+            <span className="text-xs font-bold" style={{ color: awayTeam.colorLight }}>{awayTeam.shortName}</span>
+          </div>
+          <span className="text-[10px] text-text-tertiary font-semibold">팀 비교</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold" style={{ color: homeTeam.colorLight }}>{homeTeam.shortName}</span>
+            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: homeTeam.colorPrimary }} />
+          </div>
+        </div>
+        <div className="space-y-2">
+          {comparison.map((item) => {
+            const total = item.away + item.home;
+            const awayPct = total > 0 ? (item.away / total) * 100 : 50;
+            const homePct = total > 0 ? (item.home / total) * 100 : 50;
+            return (
+              <div key={item.label} className="flex items-center gap-1.5">
+                {/* away number */}
+                <span className="text-xs font-bold text-text-primary w-5 text-right shrink-0">{item.away}</span>
+                {/* away bar (grows right-to-left) */}
+                <div className="flex-1 flex justify-end">
+                  <div
+                    className="h-4 rounded-l-md transition-all duration-700"
+                    style={{
+                      width: `${awayPct}%`,
+                      backgroundColor: awayTeam.colorPrimary,
+                      minWidth: item.away > 0 ? "4px" : "0px",
+                    }}
+                  />
+                </div>
+                {/* label */}
+                <span className="text-[10px] text-text-tertiary w-7 text-center shrink-0 font-medium">{item.label}</span>
+                {/* home bar (grows left-to-right) */}
+                <div className="flex-1 flex justify-start">
+                  <div
+                    className="h-4 rounded-r-md transition-all duration-700"
+                    style={{
+                      width: `${homePct}%`,
+                      backgroundColor: homeTeam.colorPrimary,
+                      minWidth: item.home > 0 ? "4px" : "0px",
+                    }}
+                  />
+                </div>
+                {/* home number */}
+                <span className="text-xs font-bold text-text-primary w-5 text-left shrink-0">{item.home}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* -- team switch tabs -- */}
       <div className="flex gap-1 p-1 rounded-lg bg-bg-glass/40 backdrop-blur-sm">
         {([
