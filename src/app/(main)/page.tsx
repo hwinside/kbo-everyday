@@ -14,6 +14,7 @@ import HomeOfficialVideos from "@/components/home/HomeOfficialVideos";
 import LiveGameBanner from "@/components/home/LiveGameBanner";
 import PWAInstallBanner from "@/components/ui/PWAInstallBanner";
 import { TEAMS, getTeamById } from "@/lib/constants/teams";
+import { useLiveGame } from "@/lib/hooks/useLiveGame";
 import { MOCK_NEWS } from "@/lib/constants/news";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
@@ -51,7 +52,22 @@ export default function HomePage() {
 
   const realNews = useHomeNews(myTeamId);
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
-  const myTeamGame = todayGames.find(g => g.homeTeamId === myTeamId || g.awayTeamId === myTeamId);
+  const myTeamGameBase = todayGames.find(g => g.homeTeamId === myTeamId || g.awayTeamId === myTeamId);
+  const { liveGames } = useLiveGame(undefined, 30000);
+  const myTeamLive = myTeamGameBase ? liveGames.find(g => g.gameId === myTeamGameBase.id) : undefined;
+  const myTeamGame = myTeamGameBase ? {
+    ...myTeamGameBase,
+    balls: myTeamLive?.balls ?? 0,
+    strikes: myTeamLive?.strikes ?? 0,
+    outs: myTeamLive?.outs ?? 0,
+    runner1b: myTeamLive?.runner1b ?? false,
+    runner2b: myTeamLive?.runner2b ?? false,
+    runner3b: myTeamLive?.runner3b ?? false,
+    currentBatter: myTeamLive?.currentBatter ?? null,
+    currentPitcher: myTeamLive?.currentPitcher ?? null,
+    isTop: myTeamLive?.isTop ?? true,
+    ...(myTeamLive ? { homeScore: myTeamLive.homeScore, awayScore: myTeamLive.awayScore } : {}),
+  } : undefined;
 
   return (
     <>
@@ -122,7 +138,6 @@ export default function HomePage() {
 
       {/* News Carousel */}
       <div className="mb-3">
-        <LiveGameBanner />
         <h2 className="text-lg leading-[26px] font-semibold text-text-primary mb-3">📰 내 팀, 최애선수 관련 뉴스</h2>
         <div className="-mx-5"><NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 10) : (myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 10) : MOCK_NEWS)} /></div>
 
@@ -132,6 +147,7 @@ export default function HomePage() {
         <HomeOfficialVideos team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
       </div>
 
+      <LiveGameBanner excludeGameId={myTeamGameBase?.id} />
       <TodayGamesSection todayGames={todayGames} isPreseason={isPreseason} />
 
       {/* 퀵액션 버튼 */}

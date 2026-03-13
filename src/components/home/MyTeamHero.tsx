@@ -2,6 +2,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { getTeamBgColor } from "@/lib/constants/teams";
 import { getTeamShortName, getTeamColor, getTeamLogo } from "@/lib/utils/team";
+import Diamond from "@/components/game/Diamond";
 import type { TeamData } from "@/lib/constants/teams";
 
 interface HomeGame {
@@ -14,6 +15,15 @@ interface HomeGame {
   awayScore: number;
   status: "scheduled" | "live" | "final";
   inning: string | null;
+  balls: number;
+  strikes: number;
+  outs: number;
+  runner1b: boolean;
+  runner2b: boolean;
+  runner3b: boolean;
+  currentBatter: string | null;
+  currentPitcher: string | null;
+  isTop: boolean;
 }
 
 export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; myTeamGame: HomeGame }) {
@@ -65,6 +75,31 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
               <span className="text-sm font-bold" style={{ color: getTeamColor(myTeamGame.homeTeamId) }}>{getTeamShortName(myTeamGame.homeTeamId)}</span>
             </div>
           </div>
+
+          {/* Live details: BSO + Diamond + Pitcher/Batter */}
+          {myTeamGame.status === "live" && (
+            <div className="mt-3 pt-3 border-t border-white/10">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3 text-[11px] font-mono">
+                  <span>B <span className="text-green-400">{"●".repeat(myTeamGame.balls)}{"○".repeat(4 - myTeamGame.balls)}</span></span>
+                  <span>S <span className="text-yellow-400">{"●".repeat(myTeamGame.strikes)}{"○".repeat(3 - myTeamGame.strikes)}</span></span>
+                  <span>O <span className="text-red-400">{"●".repeat(myTeamGame.outs)}{"○".repeat(3 - myTeamGame.outs)}</span></span>
+                </div>
+                <Diamond
+                  runner1b={myTeamGame.runner1b}
+                  runner2b={myTeamGame.runner2b}
+                  runner3b={myTeamGame.runner3b}
+                  teamColor={myTeamGame.isTop ? getTeamColor(myTeamGame.awayTeamId) : getTeamColor(myTeamGame.homeTeamId)}
+                />
+              </div>
+              {(myTeamGame.currentPitcher || myTeamGame.currentBatter) && (
+                <div className="mt-2 text-xs text-text-tertiary truncate">
+                  {myTeamGame.currentPitcher && <span>P {myTeamGame.currentPitcher}</span>}
+                  {myTeamGame.currentBatter && <span className="ml-3">AB {myTeamGame.currentBatter}</span>}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </Link>
     </div>

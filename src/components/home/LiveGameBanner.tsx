@@ -32,19 +32,21 @@ function LiveGameCard({ game }: { game: LiveGameData }) {
         {game.stadium && <span className="text-xs text-text-tertiary ml-auto">{game.stadium}</span>}
       </div>
 
+      {/* Horizontal layout: away left, score center, home right */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col items-center gap-1 flex-1">
           {away && <TeamLogo team={away} size={28} />}
-          <span className="text-sm font-bold text-text-primary">{game.awayName}</span>
+          <span className="text-xs font-bold" style={{ color: awayColor }}>{game.awayName}</span>
         </div>
-        <span className="text-2xl font-black tabular-nums" style={{ color: awayColor }}>{game.awayScore}</span>
-      </div>
-      <div className="flex items-center justify-between mt-2">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3 px-2">
+          <span className="text-2xl font-black tabular-nums" style={{ color: awayColor }}>{game.awayScore}</span>
+          <span className="text-sm text-text-tertiary">:</span>
+          <span className="text-2xl font-black tabular-nums" style={{ color: homeColor }}>{game.homeScore}</span>
+        </div>
+        <div className="flex flex-col items-center gap-1 flex-1">
           {home && <TeamLogo team={home} size={28} />}
-          <span className="text-sm font-bold text-text-primary">{game.homeName}</span>
+          <span className="text-xs font-bold" style={{ color: homeColor }}>{game.homeName}</span>
         </div>
-        <span className="text-2xl font-black tabular-nums" style={{ color: homeColor }}>{game.homeScore}</span>
       </div>
 
       <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
@@ -66,19 +68,20 @@ function LiveGameCard({ game }: { game: LiveGameData }) {
   );
 }
 
-export default function LiveGameBanner() {
+export default function LiveGameBanner({ excludeGameId }: { excludeGameId?: string }) {
   const { liveGames, loading } = useLiveGame(undefined, 30000);
-  if (loading || liveGames.length === 0) return null;
+  const filteredGames = excludeGameId ? liveGames.filter(g => g.gameId !== excludeGameId) : liveGames;
+  if (loading || filteredGames.length === 0) return null;
 
   return (
     <div className="mb-4">
       <div className="flex items-center gap-2 px-5 mb-3">
         <Radio size={16} className="text-red-400" />
         <h2 className="text-base font-bold text-text-primary">실시간 경기</h2>
-        <span className="text-xs text-text-tertiary">{liveGames.length}경기 진행 중</span>
+        <span className="text-xs text-text-tertiary">{filteredGames.length}경기 진행 중</span>
       </div>
       <div className="flex gap-3 overflow-x-auto hide-scrollbar px-5">
-        {liveGames.map(game => (
+        {filteredGames.map(game => (
           <LiveGameCard key={game.gameId} game={game} />
         ))}
       </div>
