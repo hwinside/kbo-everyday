@@ -429,11 +429,28 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
         headline: llmSummary.headline,
         gameFlow: llmSummary.gameFlow,
         turningPoint: llmSummary.turningPoint,
+        mvpBatterLabel: typeof llmSummary.mvpBatter === "string"
+          ? llmSummary.mvpBatter
+          : llmSummary.mvpBatter
+            ? `${llmSummary.mvpBatter.name} (${llmSummary.mvpBatter.stats})`
+            : null,
+        mvpBatterReason: typeof llmSummary.mvpBatter === "object" && llmSummary.mvpBatter
+          ? llmSummary.mvpBatter.reason
+          : null,
         mvpText: typeof llmSummary.mvpBatter === "string"
           ? llmSummary.mvpBatter
           : llmSummary.mvpBatter
             ? `${llmSummary.mvpBatter.name} (${llmSummary.mvpBatter.stats}) — ${llmSummary.mvpBatter.reason}`
             : null,
+        pitcherLabel: llmSummary.mvpPitcher == null ? null
+          : typeof llmSummary.mvpPitcher === "string" ? llmSummary.mvpPitcher
+          : (llmSummary.mvpPitcher.name && llmSummary.mvpPitcher.name !== "null")
+            ? `${llmSummary.mvpPitcher.name} (${llmSummary.mvpPitcher.stats})`
+            : null,
+        pitcherReason: typeof llmSummary.mvpPitcher === "object" && llmSummary.mvpPitcher
+          && llmSummary.mvpPitcher.name && llmSummary.mvpPitcher.name !== "null"
+          ? llmSummary.mvpPitcher.reason
+          : null,
         pitcherHighlight: llmSummary.mvpPitcher == null ? null
           : typeof llmSummary.mvpPitcher === "string" ? llmSummary.mvpPitcher
           : (llmSummary.mvpPitcher.name && llmSummary.mvpPitcher.name !== "null")
@@ -441,7 +458,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
             : null,
         insight: llmSummary.insight,
       }
-    : fallbackSummary;
+    : fallbackSummary ? { ...fallbackSummary, mvpBatterLabel: fallbackSummary.mvpText, mvpBatterReason: null as string | null, pitcherLabel: fallbackSummary.pitcherHighlight, pitcherReason: null as string | null } : null;
 
   return (
     <div className="flex flex-col h-full">
@@ -484,33 +501,45 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
             )}
 
             {/* 승부처 */}
-            <div>
-              <div className="flex items-center gap-1.5 mb-1">
-                <span className="text-xs">🔑</span>
-                <span className="text-[11px] font-semibold text-text-tertiary">승부처</span>
+            {summary.turningPoint && (
+              <div>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="text-xs">🔑</span>
+                  <span className="text-[11px] font-semibold text-text-tertiary">승부처</span>
+                </div>
+                <p className="text-sm text-text-secondary leading-relaxed">{summary.turningPoint}</p>
               </div>
-              <p className="text-sm text-text-secondary leading-relaxed">{summary.turningPoint}</p>
-            </div>
+            )}
 
             {/* 오늘의 타자 */}
-            {summary.mvpText && (
+            {summary.mvpBatterLabel && (
               <div>
                 <div className="flex items-center gap-1.5 mb-1">
                   <span className="text-xs">⭐</span>
                   <span className="text-[11px] font-semibold text-text-tertiary">오늘의 타자</span>
                 </div>
-                <p className="text-sm font-semibold text-text-primary">{summary.mvpText}</p>
+                <p className="text-sm text-text-primary">
+                  <span className="font-semibold">{summary.mvpBatterLabel}</span>
+                  {summary.mvpBatterReason && (
+                    <span className="font-normal text-text-secondary"> — {summary.mvpBatterReason}</span>
+                  )}
+                </p>
               </div>
             )}
 
             {/* 오늘의 투수 */}
-            {summary.pitcherHighlight && (
+            {summary.pitcherLabel && (
               <div>
                 <div className="flex items-center gap-1.5 mb-1">
                   <span className="text-xs">🔥</span>
                   <span className="text-[11px] font-semibold text-text-tertiary">오늘의 투수</span>
                 </div>
-                <p className="text-sm font-semibold text-text-primary">{summary.pitcherHighlight}</p>
+                <p className="text-sm text-text-primary">
+                  <span className="font-semibold">{summary.pitcherLabel}</span>
+                  {summary.pitcherReason && (
+                    <span className="font-normal text-text-secondary"> — {summary.pitcherReason}</span>
+                  )}
+                </p>
               </div>
             )}
 

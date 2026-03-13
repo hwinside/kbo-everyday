@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 2; // 프롬프트 변경 시 증가 → 캐시 자동 무효화
+const PROMPT_VERSION = 3; // 프롬프트 변경 시 증가 → 캐시 자동 무효화
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -74,7 +74,7 @@ ${awayPitchers.map(p => `${p.name}: ${p.ip}이닝 피안타${p.h} ${p.er}자책 
 ${homePitchers.map(p => `${p.name}: ${p.ip}이닝 피안타${p.h} ${p.er}자책 ${p.bb}볼넷 ${p.so}삼진 ${p.np}투구${p.result ? ` (${p.result})` : ""}`).join("\n")}
 
 ## 작성 규칙
-1. 반드시 박스스코어에 있는 숫자만 사용. 없는 사실, 없는 이닝 사건을 만들지 마세요.
+1. 반드시 박스스코어에 있는 숫자만 사용. 없는 사실, 없는 이닝 사건을 만들지 마세요. "선수(숫자)" 형식의 이름이 있으면 그 선수를 언급하지 말고, 해당 팀의 다른 선수나 팀명으로 대체하세요.
 2. 이닝별 점수가 있으면 이를 참고해 경기 흐름(초반/중반/후반)을 서술하세요.
 3. 이닝별 점수가 없으면 전체 스탯 기반으로 흐름을 추론하되 "X회에~" 같은 구체적 이닝 언급은 피하세요.
 4. 스포츠 기자 톤: 문장을 짧고 강하게, 핵심 장면은 생생하게, 선수 이름은 풀네임으로.
@@ -90,7 +90,7 @@ ${homePitchers.map(p => `${p.name}: ${p.ip}이닝 피안타${p.h} ${p.er}자책 
     "mid": "중반(4~6회) 경기 흐름. 전환점, 추가 득점, 투수 교체 등. (2~3문장)",
     "late": "후반(7~9회+) 경기 흐름. 추격/역전/마무리, 클로징 상황. (2~3문장)"
   },
-  "turningPoint": "이 경기의 결정적 승부처. 구체적 상황+숫자+왜 경기를 갈랐는지 해석. (3~4문장)",
+  "turningPoint": "이 경기의 결정적 승부처. 구체적 상황+숫자+왜 경기를 갈랐는지 해석. 반드시 작성. 무승부여도 가장 팽팽했던 순간을 서술. (3~4문장, 절대 빈 문자열 금지)",
   "mvpBatter": {
     "name": "선수 이름",
     "stats": "구체적 기록 (예: 4타수 3안타 1홈런 3타점)",

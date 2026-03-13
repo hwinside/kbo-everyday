@@ -335,7 +335,16 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
         avg: stripHtml(tail[4]) || ".000",
         isSubstitute,
       };
-    }).filter(b => b.name !== "");
+    }).filter(b => b.name !== "").map(b => {
+      // KBO sometimes returns player IDs instead of names
+      if (/^\d+$/.test(b.name)) {
+        const player = (playersRoster as { kboId: string; name: string }[]).find(
+          r => String(r.kboId) === b.name
+        );
+        b.name = player ? player.name : `선수(${b.name.slice(-3)})`;
+      }
+      return b;
+    });
   }
 
   function parsePitchers(table: { rows?: { row: { Text: string }[] }[] }): PitcherRecord[] {
