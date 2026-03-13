@@ -178,10 +178,15 @@ export async function POST(req: NextRequest) {
     } catch {
       const jsonMatch = rawText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        summary = JSON.parse(jsonMatch[0]);
+        try {
+          summary = JSON.parse(jsonMatch[0]);
+        } catch {
+          console.error("JSON match parse failed:", jsonMatch[0].slice(0, 500));
+          return NextResponse.json({ error: "Invalid Gemini response format", raw: rawText.slice(0, 800) }, { status: 502 });
+        }
       } else {
-        console.error("Failed to parse Gemini response:", rawText);
-        return NextResponse.json({ error: "Invalid Gemini response format" }, { status: 502 });
+        console.error("Failed to parse Gemini response:", rawText.slice(0, 500));
+        return NextResponse.json({ error: "Invalid Gemini response format", raw: rawText.slice(0, 800) }, { status: 502 });
       }
     }
 
