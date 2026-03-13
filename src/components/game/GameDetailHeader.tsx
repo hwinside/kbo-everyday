@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ChevronLeft } from "lucide-react";
 
 interface GameDetailHeaderProps {
   status: string;
@@ -10,23 +10,33 @@ interface GameDetailHeaderProps {
 }
 
 export default function GameDetailHeader({ status, time, stadium }: GameDetailHeaderProps) {
+  const router = useRouter();
+
+  const titleText =
+    status === "live" ? "경기 중" :
+    status === "final" ? "경기 종료" :
+    `${time} 예정`;
+
   return (
-    <div className="flex items-center gap-2 px-4 py-1.5 sticky top-0 z-[100] bg-bg-primary">
-      <Link href="/games" className="p-1 -ml-1">
-        <ArrowLeft className="w-[18px] h-[18px] text-[#888]" />
-      </Link>
-      {status === "live" && (
-        <span className="text-[10px] font-bold text-white bg-[#e53935] px-1.5 py-0.5 rounded-[3px] animate-pulse">
-          ● LIVE
-        </span>
-      )}
-      {status === "final" && (
-        <span className="text-[13px] text-[#888]">경기 종료</span>
-      )}
-      {status === "scheduled" && (
-        <span className="text-[13px] text-[#888]">{time} 예정</span>
-      )}
-      <span className="text-[13px] text-[#888]">{stadium}</span>
+    <div className="flex items-center gap-3 px-5 py-3 sticky top-0 z-[100] bg-bg-primary border-b border-border">
+      <button onClick={() => {
+        if (window.history.length > 1) {
+          router.back();
+        } else {
+          router.push("/games");
+        }
+      }} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
+        <ChevronLeft size={24} />
+      </button>
+      <div className="flex items-center gap-2 flex-1">
+        <h1 className="text-lg font-bold text-text-primary tracking-tight">{titleText}</h1>
+        {status === "live" && (
+          <span className="text-[10px] font-bold text-white bg-[#e53935] px-1.5 py-0.5 rounded-[3px] animate-pulse">
+            LIVE
+          </span>
+        )}
+      </div>
+      <span className="text-[13px] text-text-tertiary">{stadium}</span>
     </div>
   );
 }
