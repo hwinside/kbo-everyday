@@ -184,7 +184,7 @@ export default function StandingsPage() {
                     <td className="py-2.5 text-right pr-2 tabular-nums text-text-primary">{standing.wins}</td>
                     <td className="py-2.5 text-right pr-2 tabular-nums text-text-primary">{standing.losses}</td>
                     <td className="py-2.5 text-right pr-2 tabular-nums text-text-secondary">{standing.draws}</td>
-                    <td className="py-2.5 text-right pr-2 tabular-nums font-semibold text-text-primary">{standing.pct.toFixed(3).slice(1)}</td>
+                    <td className="py-2.5 text-right pr-2 tabular-nums font-semibold text-text-primary">{standing.pct >= 1 ? "1.000" : standing.pct.toFixed(3).slice(1)}</td>
                     <td className="py-2.5 text-right pr-2 tabular-nums text-text-secondary">{standing.gb === 0 ? "-" : standing.gb}</td>
                   </motion.tr>
                 );
