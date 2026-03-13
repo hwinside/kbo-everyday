@@ -37,8 +37,11 @@ export async function GET(req: NextRequest) {
         runner1bName: null,
         runner2bName: null,
         runner3bName: null,
-        currentBatter: g.T_P_NM?.trim() || null,
-        currentPitcher: g.B_P_NM?.trim() || null,
+        // T_P_NM = away(Top) team player, B_P_NM = home(Bottom) team player
+        // 초(top): away=batting → T=batter, B=pitcher
+        // 말(bottom): home=batting → T=pitcher, B=batter
+        currentBatter: (g.GAME_TB_SC === "T" ? g.T_P_NM : g.B_P_NM)?.trim() || null,
+        currentPitcher: (g.GAME_TB_SC === "T" ? g.B_P_NM : g.T_P_NM)?.trim() || null,
         date: g.G_DT,
         stadium: g.S_NM,
         status,
