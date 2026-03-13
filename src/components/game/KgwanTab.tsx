@@ -241,67 +241,172 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
 
-  // Mock AI summary — v1 uses boxScore-based simple heuristics
+  // AI summary — boxScore 기반 분석
   const summary = useMemo(() => {
     if (!boxScore) return null;
 
     const homeR = boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);
     const awayR = boxScore.awayBatters.reduce((s, b) => s + b.runs, 0);
-    const winnerName = homeR >= awayR ? homeTeam.shortName : awayTeam.shortName;
-    const loserName = homeR >= awayR ? awayTeam.shortName : homeTeam.shortName;
+    const isDraw = homeR === awayR;
+    const homeWon = homeR > awayR;
+    const winnerName = isDraw ? null : (homeWon ? homeTeam.shortName : awayTeam.shortName);
+    const loserName = isDraw ? null : (homeWon ? awayTeam.shortName : homeTeam.shortName);
 
-    // MVP: most RBI
+    // 모든 타자 통합
     const allBatters = [
-      ...boxScore.homeBatters.map(b => ({ ...b, team: homeTeam.shortName })),
-      ...boxScore.awayBatters.map(b => ({ ...b, team: awayTeam.shortName })),
+      ...boxScore.homeBatters.map(b => ({ ...b, team: homeTeam.shortName, teamColor: homeTeam.colorLight })),
+      ...boxScore.awayBatters.map(b => ({ ...b, team: awayTeam.shortName, teamColor: awayTeam.colorLight })),
     ];
-    const mvp = allBatters.sort((a, b) => b.rbi - a.rbi)[0];
+    // 모든 투수 통합
+    const allPitchers = [
+      ...boxScore.homePitchers.map(p => ({ ...p, team: homeTeam.shortName })),
+      ...boxScore.awayPitchers.map(p => ({ ...p, team: awayTeam.shortName })),
+    ];
 
-    return {
-      headline: `${winnerName}, ${homeR >= awayR ? homeR : awayR}-${homeR >= awayR ? awayR : homeR}로 ${loserName}에 승리!`,
-      turningPoint: `${winnerName}의 집중 타선이 경기를 결정지었습니다`,
-      mvp: mvp ? `${mvp.team} ${mvp.name} (${mvp.hits}안타 ${mvp.rbi}타점)` : null,
-      insight: `${winnerName}이 효율적인 타격으로 ${loserName} 투수진을 공략했습니다`,
-    };
+    // MVP: 타점 → 안타 → 홈런 순으로
+    const mvpBatter = [...allBatters].sort((a, b) => (b.rbi - a.rbi) || (b.hits - a.hits) || (b.hr - a.hr))[0];
+    // 최다 탈삼진 투수
+    const topPitcher = [...allPitchers].sort((a, b) => b.strikeouts - a.strikeouts)[0];
+    // 홈런 타자들
+    const hrHitters = allBatters.filter(b => b.hr > 0);
+    // 멀티히트 타자들
+    const multiHitters = allBatters.filter(b => b.hits >= 2);
+    // 에러
+    const homeErrors = boxScore.homeBatters.reduce((s, b) => s + (("errors" in b) ? (b as { errors: number }).errors : 0), 0);
+    const awayErrors = boxScore.awayBatters.reduce((s, b) => s + (("errors" in b) ? (b as { errors: number }).errors : 0), 0);
+
+    // 가장 많은 득점이 난 이닝 찾기 (linescore 없이 boxScore만으로는 제한적 → 간접 추론)
+    const totalH = boxScore.homeBatters.reduce((s, b) => s + b.hits, 0) + boxScore.awayBatters.reduce((s, b) => s + b.hits, 0);
+    const totalK = allPitchers.reduce((s, p) => s + p.strikeouts, 0);
+
+    // 헤드라인
+    let headline: string;
+    if (isDraw) {
+      headline = `${homeTeam.shortName} vs ${awayTeam.shortName}, ${homeR}-${awayR} 무승부!`;
+    } else {
+      const margin = Math.abs(homeR - awayR);
+      if (margin >= 5) {
+        headline = `${winnerName}, ${Math.max(homeR, awayR)}-${Math.min(homeR, awayR)}로 ${loserName} 대파!`;
+      } else if (margin === 1) {
+        headline = `${winnerName}, ${Math.max(homeR, awayR)}-${Math.min(homeR, awayR)} 짜릿한 1점차 승리!`;
+      } else {
+        headline = `${winnerName}, ${Math.max(homeR, awayR)}-${Math.min(homeR, awayR)}로 ${loserName}에 승리!`;
+      }
+    }
+
+    // 승부처 (리치하게)
+    let turningPoint: string;
+    if (isDraw) {
+      turningPoint = `양 팀 모두 ${homeR}점씩 주고받은 팽팽한 접전. 시범경기 규정에 따라 무승부로 마무리되었습니다.`;
+    } else {
+      const winBatters = homeWon ? boxScore.homeBatters : boxScore.awayBatters;
+      const winHits = winBatters.reduce((s, b) => s + b.hits, 0);
+      const winRbi = winBatters.reduce((s, b) => s + b.rbi, 0);
+      turningPoint = `${winnerName}이 ${winHits}안타 ${winRbi}타점으로 효과적으로 공략했습니다.`;
+      if (hrHitters.length > 0) {
+        turningPoint += ` ${hrHitters.map(h => `${h.team} ${h.name}`).join(", ")}의 홈런이 터졌습니다.`;
+      }
+    }
+
+    // MVP 카드 (리치)
+    let mvpText: string | null = null;
+    if (mvpBatter && (mvpBatter.hits > 0 || mvpBatter.rbi > 0)) {
+      const parts = [`${mvpBatter.hits}안타`];
+      if (mvpBatter.rbi > 0) parts.push(`${mvpBatter.rbi}타점`);
+      if (mvpBatter.hr > 0) parts.push(`${mvpBatter.hr}홈런`);
+      if (mvpBatter.runs > 0) parts.push(`${mvpBatter.runs}득점`);
+      if (mvpBatter.bb > 0) parts.push(`${mvpBatter.bb}볼넷`);
+      mvpText = `${mvpBatter.team} ${mvpBatter.name} (${parts.join(" ")})`;
+    }
+
+    // 투수 하이라이트
+    let pitcherHighlight: string | null = null;
+    if (topPitcher && topPitcher.strikeouts >= 3) {
+      pitcherHighlight = `${topPitcher.team} ${topPitcher.name} — ${topPitcher.inningsPitched}이닝 ${topPitcher.strikeouts}탈삼진`;
+      if (topPitcher.earnedRuns === 0) pitcherHighlight += " 무실점";
+    }
+
+    // 종합 인사이트 (리치)
+    let insight: string;
+    if (isDraw) {
+      insight = `총 ${totalH}안타, ${totalK}탈삼진이 오간 균형 잡힌 경기였습니다.`;
+      if (multiHitters.length > 0) {
+        insight += ` 멀티히트: ${multiHitters.map(h => `${h.team} ${h.name}(${h.hits}안타)`).join(", ")}.`;
+      }
+    } else {
+      const losePitchers = homeWon ? boxScore.awayPitchers : boxScore.homePitchers;
+      const loseEr = losePitchers.reduce((s, p) => s + p.earnedRuns, 0);
+      insight = `${loserName} 투수진이 ${loseEr}자책점을 허용하며 흔들렸습니다.`;
+      if (multiHitters.length >= 2) {
+        insight += ` ${winnerName} 타선에서 ${multiHitters.filter(h => h.team === winnerName).map(h => `${h.name}(${h.hits}안타)`).join(", ")} 등이 활약했습니다.`;
+      }
+      if (homeErrors + awayErrors >= 2) {
+        insight += ` 양 팀 합산 ${homeErrors + awayErrors}실책도 경기 흐름에 영향을 줬습니다.`;
+      }
+    }
+
+    return { headline, turningPoint, mvpText, pitcherHighlight, insight };
   }, [boxScore, homeTeam, awayTeam]);
 
   return (
     <div className="flex flex-col h-full">
       {/* AI Summary Cards */}
-      <div className="px-4 py-4 space-y-2.5">
+      <div className="px-4 py-4">
         {summary ? (
-          <>
-            <div className="glass-card p-3 flex items-start gap-2.5">
-              <span className="text-base shrink-0">📰</span>
-              <div>
-                <span className="text-[10px] text-text-tertiary block mb-0.5">한 줄 헤드라인</span>
-                <p className="text-sm font-bold text-text-primary">{summary.headline}</p>
-              </div>
+          <div className="glass-card p-5 space-y-4">
+            {/* AI 라벨 */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs">🤖</span>
+              <span className="text-[11px] font-semibold text-accent">AI 경기 요약</span>
             </div>
-            <div className="glass-card p-3 flex items-start gap-2.5">
-              <span className="text-base shrink-0">🔑</span>
-              <div>
-                <span className="text-[10px] text-text-tertiary block mb-0.5">승부처</span>
-                <p className="text-sm text-text-secondary">{summary.turningPoint}</p>
+
+            {/* 헤드라인 */}
+            <p className="text-base font-bold text-text-primary leading-snug">{summary.headline}</p>
+
+            {/* 승부처 */}
+            <div>
+              <div className="flex items-center gap-1.5 mb-1">
+                <span className="text-xs">🔑</span>
+                <span className="text-[11px] font-semibold text-text-tertiary">승부처</span>
               </div>
+              <p className="text-sm text-text-secondary leading-relaxed">{summary.turningPoint}</p>
             </div>
-            {summary.mvp && (
-              <div className="glass-card p-3 flex items-start gap-2.5">
-                <span className="text-base shrink-0">⭐</span>
-                <div>
-                  <span className="text-[10px] text-text-tertiary block mb-0.5">오늘의 선수</span>
-                  <p className="text-sm font-semibold text-text-primary">{summary.mvp}</p>
+
+            {/* 오늘의 타자 */}
+            {summary.mvpText && (
+              <div>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="text-xs">⭐</span>
+                  <span className="text-[11px] font-semibold text-text-tertiary">오늘의 타자</span>
                 </div>
+                <p className="text-sm font-semibold text-text-primary">{summary.mvpText}</p>
               </div>
             )}
-            <div className="glass-card p-3 flex items-start gap-2.5">
-              <span className="text-base shrink-0">📊</span>
+
+            {/* 오늘의 투수 */}
+            {summary.pitcherHighlight && (
               <div>
-                <span className="text-[10px] text-text-tertiary block mb-0.5">왜 이런 결과가?</span>
-                <p className="text-sm text-text-secondary">{summary.insight}</p>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="text-xs">🔥</span>
+                  <span className="text-[11px] font-semibold text-text-tertiary">오늘의 투수</span>
+                </div>
+                <p className="text-sm font-semibold text-text-primary">{summary.pitcherHighlight}</p>
               </div>
+            )}
+
+            {/* 경기 분석 */}
+            <div>
+              <div className="flex items-center gap-1.5 mb-1">
+                <span className="text-xs">📊</span>
+                <span className="text-[11px] font-semibold text-text-tertiary">경기 분석</span>
+              </div>
+              <p className="text-sm text-text-secondary leading-relaxed">{summary.insight}</p>
             </div>
-          </>
+
+            <p className="text-center text-[10px] text-text-tertiary pt-1 border-t border-border/30">
+              박스스코어 기반 자동 생성 · 실제와 다를 수 있습니다
+            </p>
+          </div>
         ) : (
           <div className="glass-card p-4 text-center text-text-tertiary text-sm">
             경기 데이터 집계 중...
