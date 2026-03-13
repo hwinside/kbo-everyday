@@ -105,6 +105,36 @@ ${homePitchers.map(p => `${p.name}: ${p.ip}이닝 피안타${p.h} ${p.er}자책 
 }`;
 }
 
+/** 선수(xxx) 패턴을 팀명+역할로 치환 (LLM에 보내기 전 전처리) */
+function sanitizePlayerNames(data: BoxScoreInput): BoxScoreInput {
+  const PLACEHOLDER_RE = /^선수\(\d+\)$/;
+
+  const sanitizeBatters = (batters: BoxScoreInput["awayBatters"], teamName: string) =>
+    batters.map((b, i) => {
+      if (PLACEHOLDER_RE.test(b.name)) {
+        return { ...b, name: `${teamName} ${i + 1}번째 타자` };
+      }
+      return b;
+    });
+
+  const sanitizePitchers = (pitchers: BoxScoreInput["awayPitchers"], teamName: string) =>
+    pitchers.map((p, i) => {
+      if (PLACEHOLDER_RE.test(p.name)) {
+        const role = i === 0 ? "선발 투수" : `${i + 1}번째 투수`;
+        return { ...p, name: `${teamName} ${role}` };
+      }
+      return p;
+    });
+
+  return {
+    ...data,
+    awayBatters: sanitizeBatters(data.awayBatters, data.awayTeam),
+    homeBatters: sanitizeBatters(data.homeBatters, data.homeTeam),
+    awayPitchers: sanitizePitchers(data.awayPitchers, data.awayTeam),
+    homePitchers: sanitizePitchers(data.homePitchers, data.homeTeam),
+  };
+}
+
 /** 버전 포함 캐시 키 */
 function cacheKey(gameId: string) {
   return `${gameId}_v${PROMPT_VERSION}`;
@@ -165,7 +195,8 @@ export async function POST(req: NextRequest) {
 
   // Gemini Flash 호출
   try {
-    const prompt = buildPrompt(body);
+    const sanitized = sanitizePlayerNames(body);
+    const prompt = buildPrompt(sanitized);
 
     const geminiRes = await fetch(GEMINI_URL, {
       method: "POST",
