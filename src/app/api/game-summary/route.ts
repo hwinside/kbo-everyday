@@ -155,6 +155,7 @@ export async function POST(req: NextRequest) {
           temperature: 0.7,
           maxOutputTokens: 1024,
           responseMimeType: "application/json",
+          thinkingConfig: { thinkingBudget: 0 },
         },
       }),
     });
@@ -166,10 +167,13 @@ export async function POST(req: NextRequest) {
     }
 
     const geminiData = await geminiRes.json();
-    const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
+    // Gemini 2.5 Flash may include thinking parts — use the last text part
+    const parts = geminiData.candidates?.[0]?.content?.parts ?? [];
+    const textParts = parts.filter((p: { text?: string }) => p.text);
+    const rawText = textParts.length > 0 ? textParts[textParts.length - 1].text : null;
 
     if (!rawText) {
-      return NextResponse.json({ error: "Empty Gemini response" }, { status: 502 });
+      return NextResponse.json({ error: "Empty Gemini response", parts: JSON.stringify(parts).slice(0, 500) }, { status: 502 });
     }
 
     let summary;
