@@ -434,9 +434,9 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
           : llmSummary.mvpBatter
             ? `${llmSummary.mvpBatter.name} (${llmSummary.mvpBatter.stats}) — ${llmSummary.mvpBatter.reason}`
             : null,
-        pitcherHighlight: typeof llmSummary.mvpPitcher === "string"
-          ? llmSummary.mvpPitcher
-          : llmSummary.mvpPitcher
+        pitcherHighlight: llmSummary.mvpPitcher == null ? null
+          : typeof llmSummary.mvpPitcher === "string" ? llmSummary.mvpPitcher
+          : (llmSummary.mvpPitcher.name && llmSummary.mvpPitcher.name !== "null")
             ? `${llmSummary.mvpPitcher.name} (${llmSummary.mvpPitcher.stats}) — ${llmSummary.mvpPitcher.reason}`
             : null,
         insight: llmSummary.insight,
