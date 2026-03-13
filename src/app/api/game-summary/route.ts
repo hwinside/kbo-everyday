@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+const PROMPT_VERSION = 2; // 프롬프트 변경 시 증가 → 캐시 자동 무효화
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -104,17 +105,22 @@ ${homePitchers.map(p => `${p.name}: ${p.ip}이닝 피안타${p.h} ${p.er}자책 
 }`;
 }
 
+/** 버전 포함 캐시 키 */
+function cacheKey(gameId: string) {
+  return `${gameId}_v${PROMPT_VERSION}`;
+}
+
 /** Supabase 캐시 조회 (테이블 없으면 null) */
 async function getCached(gameId: string) {
   try {
     const { data } = await supabase
       .from("game_summaries")
       .select("summary")
-      .eq("game_id", gameId)
+      .eq("game_id", cacheKey(gameId))
       .single();
     return data?.summary ?? null;
   } catch {
-    return null; // 테이블 없어도 에러 안 남
+    return null;
   }
 }
 
@@ -123,7 +129,7 @@ async function saveCache(gameId: string, summary: Record<string, unknown>) {
   try {
     await supabase
       .from("game_summaries")
-      .upsert({ game_id: gameId, summary, created_at: new Date().toISOString() }, { onConflict: "game_id" });
+      .upsert({ game_id: cacheKey(gameId), summary, created_at: new Date().toISOString() }, { onConflict: "game_id" });
   } catch {
     // 테이블 없으면 그냥 무시
   }
