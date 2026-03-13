@@ -13,7 +13,7 @@ import { getMyTeamId } from "@/lib/store/myteam";
 import { getFavoritePlayers } from "@/lib/store/favorites";
 import TeamLogo from "@/components/ui/TeamLogo";
 import type { TeamStanding } from "@/lib/types";
-import { MOCK_STANDINGS, TEAM_NAME_TO_ID, type RawStanding, type RealBatterStat, type RealPitcherStat, type MainTab } from "@/lib/constants/standings-data";
+import { STANDINGS_2025, MOCK_STANDINGS, TEAM_NAME_TO_ID, type RawStanding, type RealBatterStat, type RealPitcherStat, type MainTab } from "@/lib/constants/standings-data";
 import { getTeam, getStreakIcon } from "@/lib/utils/standings";
 import BatterTitleTab from "@/components/standings/BatterTitleTab";
 import PitcherTitleTab from "@/components/standings/PitcherTitleTab";
@@ -32,13 +32,15 @@ export default function StandingsPage() {
   const [season, setSeason] = useState<2025 | 2026>(2025);
 
   useEffect(() => {
+    // 2025 시즌은 확정 데이터 사용, API fetch 불필요
+    if (season !== 2026) { setRealStandings(null); return; }
     fetch("/api/standings")
       .then(r => r.json())
       .then(data => {
         if (data.standings?.length) {
           const mapped: TeamStanding[] = data.standings.map((s: RawStanding, i: number) => ({
             teamId: TEAM_NAME_TO_ID[s.teamName] ?? 0,
-            season: 2025,
+            season: 2026,
             rank: i + 1,
             wins: s.wins,
             losses: s.losses,
@@ -52,9 +54,9 @@ export default function StandingsPage() {
         }
       })
       .catch(() => {});
-  }, []);
+  }, [season]);
 
-  const standings = realStandings ?? MOCK_STANDINGS;
+  const standings = season === 2025 ? STANDINGS_2025 : (realStandings ?? MOCK_STANDINGS);
   const [realBatters, setRealBatters] = useState<RealBatterStat[] | null>(null);
   const [realPitchers, setRealPitchers] = useState<RealPitcherStat[] | null>(null);
 
@@ -155,7 +157,7 @@ export default function StandingsPage() {
               </tr>
             </thead>
             <tbody>
-              {(season === 2025 && realStandings ? realStandings : MOCK_STANDINGS).map((standing, i) => {
+              {standings.map((standing, i) => {
                 const team = getTeam(standing.teamId);
                 const isMyTeam = myTeamId !== null && standing.teamId === myTeamId;
                 return (

@@ -58,18 +58,21 @@ export const TEAM_NAME_TO_ID: Record<string, number> = {
   "KIA": 6, "롯데": 7, "삼성": 8, "한화": 9, "키움": 10,
 };
 
-export const MOCK_STANDINGS: TeamStanding[] = [
-  { teamId: 7, season: 2026, rank: 1, wins: 85, losses: 56, draws: 3, pct: 0.603, gb: 0, streak: "3연승", last10: "7승3패" },
-  { teamId: 9, season: 2026, rank: 2, wins: 83, losses: 57, draws: 4, pct: 0.593, gb: 1.5, streak: "2연승", last10: "6승4패" },
-  { teamId: 4, season: 2026, rank: 3, wins: 75, losses: 64, draws: 5, pct: 0.536, gb: 9.5, streak: "1연패", last10: "5승5패" },
-  { teamId: 6, season: 2026, rank: 4, wins: 73, losses: 67, draws: 4, pct: 0.521, gb: 12, streak: "1연승", last10: "6승4패" },
-  { teamId: 5, season: 2026, rank: 5, wins: 71, losses: 69, draws: 4, pct: 0.507, gb: 14, streak: "2연패", last10: "4승6패" },
-  { teamId: 2, season: 2026, rank: 6, wins: 70, losses: 70, draws: 4, pct: 0.500, gb: 15, streak: "1연승", last10: "5승5패" },
-  { teamId: 8, season: 2026, rank: 7, wins: 67, losses: 73, draws: 4, pct: 0.479, gb: 18, streak: "3연패", last10: "3승7패" },
-  { teamId: 3, season: 2026, rank: 8, wins: 65, losses: 75, draws: 4, pct: 0.464, gb: 20, streak: "1연패", last10: "4승6패" },
-  { teamId: 1, season: 2026, rank: 9, wins: 60, losses: 80, draws: 4, pct: 0.429, gb: 25, streak: "2연승", last10: "5승5패" },
-  { teamId: 10, season: 2026, rank: 10, wins: 55, losses: 85, draws: 4, pct: 0.393, gb: 30, streak: "4연패", last10: "2승8패" },
+/** 2025 정규시즌 최종 순위 (확정) */
+export const STANDINGS_2025: TeamStanding[] = [
+  { teamId: 1,  season: 2025, rank: 1,  wins: 85, losses: 56, draws: 3, pct: 0.603, gb: 0,    streak: "", last10: "" },
+  { teamId: 9,  season: 2025, rank: 2,  wins: 83, losses: 57, draws: 4, pct: 0.593, gb: 1.5,  streak: "", last10: "" },
+  { teamId: 4,  season: 2025, rank: 3,  wins: 75, losses: 65, draws: 4, pct: 0.536, gb: 9.5,  streak: "", last10: "" },
+  { teamId: 8,  season: 2025, rank: 4,  wins: 74, losses: 68, draws: 2, pct: 0.521, gb: 11.5, streak: "", last10: "" },
+  { teamId: 5,  season: 2025, rank: 5,  wins: 71, losses: 67, draws: 6, pct: 0.514, gb: 12.5, streak: "", last10: "" },
+  { teamId: 3,  season: 2025, rank: 6,  wins: 71, losses: 68, draws: 5, pct: 0.511, gb: 13,   streak: "", last10: "" },
+  { teamId: 7,  season: 2025, rank: 7,  wins: 66, losses: 72, draws: 6, pct: 0.478, gb: 17.5, streak: "", last10: "" },
+  { teamId: 6,  season: 2025, rank: 8,  wins: 65, losses: 75, draws: 4, pct: 0.464, gb: 19.5, streak: "", last10: "" },
+  { teamId: 2,  season: 2025, rank: 9,  wins: 61, losses: 77, draws: 6, pct: 0.442, gb: 22.5, streak: "", last10: "" },
+  { teamId: 10, season: 2025, rank: 10, wins: 47, losses: 93, draws: 4, pct: 0.336, gb: 37.5, streak: "", last10: "" },
 ];
+
+export const MOCK_STANDINGS: TeamStanding[] = STANDINGS_2025;
 
 export const BATTER_TITLES: { id: TitleCategory; label: string; leaders: TitleLeader[] }[] = [
   { id: "avg", label: "타율", leaders: [
