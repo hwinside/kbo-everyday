@@ -37,7 +37,7 @@ const TEAM_PLAYERS: Record<number, { sp: string; spEra: string; ace: string; cle
   10: { sp: "안우진", spEra: "2.68", ace: "안우진", cleanup: ["송성문", "김혜성", "최주환"], closer: "조상우", closerSv: "25", keyPlayers: [{ name: "안우진", playerId: "68341", reason: "리그 최고 구속+제구, MLB 복귀 후에도 압도적 구위" }, { name: "김혜성", playerId: "64300", reason: "출루율 .420, 1번 타자로 경기 흐름을 지배" }] },
 };
 
-function generateAnalysis(awayId: number, homeId: number) {
+export function generateAnalysis(awayId: number, homeId: number) {
   const away = getTeamById(awayId)!;
   const home = getTeamById(homeId)!;
   const ap = TEAM_PLAYERS[awayId] || TEAM_PLAYERS[1];

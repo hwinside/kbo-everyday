@@ -27,18 +27,15 @@ import FieldViewV2 from "@/components/game/FieldViewV2";
 import MatchupCard from "@/components/game/MatchupCard";
 import Diamond from "@/components/game/Diamond";
 import ScoreBoard from "@/components/game/ScoreBoard";
-import PlayByPlay from "@/components/game/PlayByPlay";
-import GameChat from "@/components/game/GameChat";
-import AIAnalysis from "@/components/game/AIAnalysis";
+import KgwanTab from "@/components/game/KgwanTab";
 import LineupTab from "@/components/game/LineupTab";
 import GameStatsTab from "@/components/game/GameStatsTab";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
-type Tab = "relay" | "chat" | "lineup" | "stats";
+type Tab = "kgwan" | "lineup" | "stats";
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "relay", label: "중계" },
-  { id: "chat", label: "채팅" },
+  { id: "kgwan", label: "크관" },
   { id: "lineup", label: "라인업" },
   { id: "stats", label: "스탯" },
 ];
@@ -133,8 +130,7 @@ function parseKboGameId(gameId: string) {
 export default function GameDetailPage() {
   const params = useParams();
   const gameId = params.gameId as string;
-  const [activeTab, setActiveTab] = useState<Tab>("chat");
-  const [aiOpen, setAiOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<Tab>("kgwan");
   const { game: liveGame } = useLiveGame(gameId, 15000);
   const { data: gameDetail } = useGameDetail(gameId, 30000);
   const { events: gameEvents } = useGameEvents(gameId, liveGame?.isLive ?? false, 15000);
@@ -248,13 +244,6 @@ export default function GameDetailPage() {
         </div>
       )}
 
-      <AIAnalysis
-        isOpen={aiOpen}
-        onClose={() => setAiOpen(false)}
-        awayTeamId={game.awayTeamId}
-        homeTeamId={game.homeTeamId}
-      />
-
       {/* Tabs */}
       <div className="flex border-b border-[#1a1a2e] mx-4">
         {TABS.map((tab) => (
@@ -281,14 +270,22 @@ export default function GameDetailPage() {
       {/* Tab content */}
       <div className="flex-1">
         <AnimatePresence mode="wait">
-          {activeTab === "relay" && (
-            <motion.div key="relay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-              <PlayByPlay plays={plays} teamColor={battingTeamColor} gameEvents={gameEvents.length > 0 ? gameEvents : undefined} />
-            </motion.div>
-          )}
-          {activeTab === "chat" && (
-            <motion.div key="chat" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-              <GameChat gameId={gameId} homeTeamId={homeTeam.id} awayTeamId={awayTeam.id} />
+          {activeTab === "kgwan" && (
+            <motion.div key="kgwan" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
+              <KgwanTab
+                gameId={gameId}
+                homeTeamId={game.homeTeamId}
+                awayTeamId={game.awayTeamId}
+                status={d.derivedStatus}
+                gameEvents={gameEvents}
+                plays={plays}
+                teamColor={battingTeamColor}
+                boxScore={gameDetail?.boxScore ?? null}
+                starterNames={{
+                  away: liveGame?.awayStarterName || gameDetail?.boxScore?.awayPitchers?.[0]?.name || "",
+                  home: liveGame?.homeStarterName || gameDetail?.boxScore?.homePitchers?.[0]?.name || "",
+                }}
+              />
             </motion.div>
           )}
           {activeTab === "lineup" && (
