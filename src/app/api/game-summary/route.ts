@@ -163,7 +163,7 @@ export async function POST(req: NextRequest) {
     if (!geminiRes.ok) {
       const errText = await geminiRes.text();
       console.error("Gemini API error:", geminiRes.status, errText);
-      return NextResponse.json({ error: "Gemini API failed", status: geminiRes.status, detail: errText.slice(0, 500) }, { status: 502 });
+      return NextResponse.json({ error: "Gemini API failed" }, { status: 502 });
     }
 
     const geminiData = await geminiRes.json();
@@ -173,7 +173,7 @@ export async function POST(req: NextRequest) {
     const rawText = textParts.length > 0 ? textParts[textParts.length - 1].text : null;
 
     if (!rawText) {
-      return NextResponse.json({ error: "Empty Gemini response", parts: JSON.stringify(parts).slice(0, 500) }, { status: 502 });
+      return NextResponse.json({ error: "Empty Gemini response" }, { status: 502 });
     }
 
     let summary;
@@ -186,11 +186,11 @@ export async function POST(req: NextRequest) {
           summary = JSON.parse(jsonMatch[0]);
         } catch {
           console.error("JSON match parse failed:", jsonMatch[0].slice(0, 500));
-          return NextResponse.json({ error: "Invalid Gemini response format", raw: rawText.slice(0, 800) }, { status: 502 });
+          return NextResponse.json({ error: "Invalid Gemini response format" }, { status: 502 });
         }
       } else {
         console.error("Failed to parse Gemini response:", rawText.slice(0, 500));
-        return NextResponse.json({ error: "Invalid Gemini response format", raw: rawText.slice(0, 800) }, { status: 502 });
+        return NextResponse.json({ error: "Invalid Gemini response format" }, { status: 502 });
       }
     }
 
