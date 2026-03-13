@@ -244,9 +244,10 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
   // LLM 요약 상태
   const [llmSummary, setLlmSummary] = useState<{
     headline: string;
+    gameFlow?: { early: string; mid: string; late: string };
     turningPoint: string;
-    mvpBatter: string | null;
-    mvpPitcher: string | null;
+    mvpBatter: string | { name: string; stats: string; reason: string } | null;
+    mvpPitcher: string | { name: string; stats: string; reason: string } | null;
     insight: string;
   } | null>(null);
   const [llmLoading, setLlmLoading] = useState(false);
@@ -419,16 +420,25 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
       }
     }
 
-    return { headline, turningPoint, mvpText, pitcherHighlight, insight };
+    return { headline, gameFlow: undefined as { early: string; mid: string; late: string } | undefined, turningPoint, mvpText, pitcherHighlight, insight };
   }, [boxScore, homeTeam, awayTeam]);
 
   // LLM 우선, fallback 사용
   const summary = llmSummary
     ? {
         headline: llmSummary.headline,
+        gameFlow: llmSummary.gameFlow,
         turningPoint: llmSummary.turningPoint,
-        mvpText: llmSummary.mvpBatter,
-        pitcherHighlight: llmSummary.mvpPitcher,
+        mvpText: typeof llmSummary.mvpBatter === "string"
+          ? llmSummary.mvpBatter
+          : llmSummary.mvpBatter
+            ? `${llmSummary.mvpBatter.name} (${llmSummary.mvpBatter.stats}) — ${llmSummary.mvpBatter.reason}`
+            : null,
+        pitcherHighlight: typeof llmSummary.mvpPitcher === "string"
+          ? llmSummary.mvpPitcher
+          : llmSummary.mvpPitcher
+            ? `${llmSummary.mvpPitcher.name} (${llmSummary.mvpPitcher.stats}) — ${llmSummary.mvpPitcher.reason}`
+            : null,
         insight: llmSummary.insight,
       }
     : fallbackSummary;
@@ -452,6 +462,26 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
 
             {/* 헤드라인 */}
             <p className="text-base font-bold text-text-primary leading-snug">{summary.headline}</p>
+
+            {/* 경기 흐름 (LLM에서만) */}
+            {summary.gameFlow && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="text-xs">⚾</span>
+                  <span className="text-[11px] font-semibold text-text-tertiary">경기 흐름</span>
+                </div>
+                {[
+                  { label: "초반 (1~3회)", text: summary.gameFlow.early },
+                  { label: "중반 (4~6회)", text: summary.gameFlow.mid },
+                  { label: "후반 (7~9회)", text: summary.gameFlow.late },
+                ].map((phase) => (
+                  <div key={phase.label}>
+                    <span className="text-[10px] font-bold text-accent/70">{phase.label}</span>
+                    <p className="text-sm text-text-secondary leading-relaxed mt-0.5">{phase.text}</p>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* 승부처 */}
             <div>
