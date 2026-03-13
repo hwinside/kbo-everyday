@@ -300,7 +300,7 @@ export default function GameDetailPage() {
                     away: {
                       teamId: game.awayTeamId,
                       startingPitcher: (() => {
-                        const spName = gameDetail?.boxScore?.awayPitchers?.[0]?.name ?? "";
+                        const spName = gameDetail?.boxScore?.awayPitchers?.[0]?.name || liveGame?.awayStarterName || "";
                         const spRoster = spName ? PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === spName && p.teamId === game.awayTeamId) : undefined;
                         return { name: spName, era: gameDetail?.boxScore?.awayPitchers?.[0]?.era ?? "-", kboId: spRoster?.kboId };
                       })(),
@@ -312,7 +312,7 @@ export default function GameDetailPage() {
                     home: {
                       teamId: game.homeTeamId,
                       startingPitcher: (() => {
-                        const spName = gameDetail?.boxScore?.homePitchers?.[0]?.name ?? "";
+                        const spName = gameDetail?.boxScore?.homePitchers?.[0]?.name || liveGame?.homeStarterName || "";
                         const spRoster = spName ? PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === spName && p.teamId === game.homeTeamId) : undefined;
                         return { name: spName, era: gameDetail?.boxScore?.homePitchers?.[0]?.era ?? "-", kboId: spRoster?.kboId };
                       })(),

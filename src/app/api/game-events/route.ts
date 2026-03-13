@@ -172,6 +172,8 @@ export async function GET(req: NextRequest) {
       currentInning: rawGame.GAME_INN_NO ? `${rawGame.GAME_INN_NO}회${rawGame.GAME_TB_SC === "T" ? "초" : "말"}` : "",
       stadium: rawGame.S_NM,
       isLive: rawGame.GAME_STATE_SC === "2",
+      awayStarterName: rawGame.T_PIT_P_NM?.trim() || null,
+      homeStarterName: rawGame.B_PIT_P_NM?.trim() || null,
     };
 
     const currentBoxScore = parseBoxScoreMinimal(boxScoreRes);

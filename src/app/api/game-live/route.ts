@@ -44,6 +44,8 @@ export async function GET(req: NextRequest) {
         status,
         currentInning: g.GAME_INN_NO ? `${g.GAME_INN_NO}회${g.GAME_TB_SC === "T" ? "초" : "말"}` : "",
         isLive: g.GAME_STATE_SC === "2",
+        awayStarterName: g.T_PIT_P_NM?.trim() || null,
+        homeStarterName: g.B_PIT_P_NM?.trim() || null,
       };
     });
 

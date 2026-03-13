@@ -24,6 +24,8 @@ export interface LiveGameData {
   currentInning: string;
   stadium: string;
   isLive: boolean;
+  awayStarterName: string | null;
+  homeStarterName: string | null;
 }
 
 export function useLiveGame(gameId?: string, pollInterval = 30000) {
