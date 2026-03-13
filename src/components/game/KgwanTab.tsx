@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { motion } from "framer-motion";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { clsx } from "clsx";
@@ -241,8 +241,82 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
 
-  // AI summary — boxScore 기반 분석
-  const summary = useMemo(() => {
+  // LLM 요약 상태
+  const [llmSummary, setLlmSummary] = useState<{
+    headline: string;
+    turningPoint: string;
+    mvpBatter: string | null;
+    mvpPitcher: string | null;
+    insight: string;
+  } | null>(null);
+  const [llmLoading, setLlmLoading] = useState(false);
+
+  // LLM 요약 fetch
+  useEffect(() => {
+    if (!boxScore || llmSummary) return;
+
+    const fetchLlmSummary = async () => {
+      setLlmLoading(true);
+      try {
+        // 1. 캐시 확인
+        const cacheRes = await fetch(`/api/game-summary?gameId=${gameId}`);
+        const cacheData = await cacheRes.json();
+        if (cacheData.summary) {
+          setLlmSummary(cacheData.summary);
+          return;
+        }
+
+        // 2. 생성 요청
+        const homeR = boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);
+        const awayR = boxScore.awayBatters.reduce((s, b) => s + b.runs, 0);
+        
+        const payload = {
+          gameId,
+          awayTeam: awayTeam.shortName,
+          homeTeam: homeTeam.shortName,
+          awayScore: awayR,
+          homeScore: homeR,
+          awayBatters: boxScore.awayBatters.map(b => ({
+            name: b.name, ab: b.atBats, r: b.runs, h: b.hits,
+            rbi: b.rbi, hr: b.hr, bb: b.bb, so: b.so, avg: b.avg || "",
+          })),
+          homeBatters: boxScore.homeBatters.map(b => ({
+            name: b.name, ab: b.atBats, r: b.runs, h: b.hits,
+            rbi: b.rbi, hr: b.hr, bb: b.bb, so: b.so, avg: b.avg || "",
+          })),
+          awayPitchers: boxScore.awayPitchers.map(p => ({
+            name: p.name, ip: p.inningsPitched, h: p.hits, r: p.runs,
+            er: p.earnedRuns, bb: p.walks, so: p.strikeouts, hr: p.hr,
+            np: p.pitchCount, result: p.decision || undefined,
+          })),
+          homePitchers: boxScore.homePitchers.map(p => ({
+            name: p.name, ip: p.inningsPitched, h: p.hits, r: p.runs,
+            er: p.earnedRuns, bb: p.walks, so: p.strikeouts, hr: p.hr,
+            np: p.pitchCount, result: p.decision || undefined,
+          })),
+        };
+
+        const genRes = await fetch("/api/game-summary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const genData = await genRes.json();
+        if (genData.summary) {
+          setLlmSummary(genData.summary);
+        }
+      } catch (err) {
+        console.error("LLM summary fetch failed:", err);
+      } finally {
+        setLlmLoading(false);
+      }
+    };
+
+    fetchLlmSummary();
+  }, [boxScore, gameId, llmSummary, awayTeam, homeTeam]);
+
+  // 기존 템플릿 기반 fallback
+  const fallbackSummary = useMemo(() => {
     if (!boxScore) return null;
 
     const homeR = boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);
@@ -348,6 +422,17 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
     return { headline, turningPoint, mvpText, pitcherHighlight, insight };
   }, [boxScore, homeTeam, awayTeam]);
 
+  // LLM 우선, fallback 사용
+  const summary = llmSummary
+    ? {
+        headline: llmSummary.headline,
+        turningPoint: llmSummary.turningPoint,
+        mvpText: llmSummary.mvpBatter,
+        pitcherHighlight: llmSummary.mvpPitcher,
+        insight: llmSummary.insight,
+      }
+    : fallbackSummary;
+
   return (
     <div className="flex flex-col h-full">
       {/* AI Summary Cards */}
@@ -357,7 +442,12 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
             {/* AI 라벨 */}
             <div className="flex items-center gap-1.5">
               <span className="text-xs">🤖</span>
-              <span className="text-[11px] font-semibold text-accent">AI 경기 요약</span>
+              <span className="text-[11px] font-semibold text-accent">
+                {llmSummary ? "AI 경기 요약" : llmLoading ? "AI 분석 중..." : "경기 요약"}
+              </span>
+              {llmLoading && (
+                <div className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin" />
+              )}
             </div>
 
             {/* 헤드라인 */}
