@@ -207,19 +207,23 @@ export default function GameStatsTab({
     return items;
   }, [stats]);
 
+  // 다크모드에서 검정/짙은 색 팀 바가 안 보이는 문제 → colorSecondary 우선
+  const awayBarColor = awayTeam.colorSecondary || awayTeam.colorLight || awayTeam.colorPrimary;
+  const homeBarColor = homeTeam.colorSecondary || homeTeam.colorLight || homeTeam.colorPrimary;
+
   return (
     <div className="px-5 py-4 space-y-5">
       {/* -- team comparison bar chart -- */}
       <div className="glass-card p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: awayTeam.colorPrimary }} />
+            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: awayBarColor }} />
             <span className="text-xs font-bold" style={{ color: awayTeam.colorLight }}>{awayTeam.shortName}</span>
           </div>
           <span className="text-[10px] text-text-tertiary font-semibold">팀 비교</span>
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold" style={{ color: homeTeam.colorLight }}>{homeTeam.shortName}</span>
-            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: homeTeam.colorPrimary }} />
+            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: homeBarColor }} />
           </div>
         </div>
         <div className="space-y-2">
@@ -237,7 +241,7 @@ export default function GameStatsTab({
                     className="h-4 rounded-l-md transition-all duration-700"
                     style={{
                       width: `${awayPct}%`,
-                      backgroundColor: awayTeam.colorPrimary,
+                      backgroundColor: awayBarColor,
                       minWidth: item.away > 0 ? "4px" : "0px",
                     }}
                   />
@@ -250,7 +254,7 @@ export default function GameStatsTab({
                     className="h-4 rounded-r-md transition-all duration-700"
                     style={{
                       width: `${homePct}%`,
-                      backgroundColor: homeTeam.colorPrimary,
+                      backgroundColor: homeBarColor,
                       minWidth: item.home > 0 ? "4px" : "0px",
                     }}
                   />
