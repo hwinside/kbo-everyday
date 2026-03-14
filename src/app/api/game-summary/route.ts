@@ -187,6 +187,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
+  // Sanity check: 선수는 있는데 모든 스탯이 0이면 데이터 미완성 → 생성 거부
+  const allBatters = [...(body.awayBatters || []), ...(body.homeBatters || [])];
+  const allPitchers = [...(body.awayPitchers || []), ...(body.homePitchers || [])];
+  const hasBatters = allBatters.length > 0;
+  const totalAB = allBatters.reduce((s, b) => s + (b.ab || 0), 0);
+  const totalNP = allPitchers.reduce((s, p) => s + (p.np || 0), 0);
+  if (hasBatters && totalAB === 0 && totalNP === 0) {
+    return NextResponse.json({ error: "BoxScore data appears incomplete (all zeros)" }, { status: 422 });
+  }
+
   // 캐시 확인
   const cached = await getCached(body.gameId);
   if (cached) {

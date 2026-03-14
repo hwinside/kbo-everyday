@@ -266,9 +266,13 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
   } | null>(null);
   const [llmLoading, setLlmLoading] = useState(false);
 
+  // BoxScore가 실질적 데이터를 갖고 있는지 확인 (빈 배열이면 무의미)
+  const hasRealBoxScore = boxScore &&
+    (boxScore.awayBatters.length > 0 || boxScore.homeBatters.length > 0);
+
   // LLM 요약 fetch
   useEffect(() => {
-    if (!boxScore || llmSummary) return;
+    if (!hasRealBoxScore || llmSummary) return;
 
     const fetchLlmSummary = async () => {
       setLlmLoading(true);
@@ -281,9 +285,15 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
           return;
         }
 
-        // 2. 생성 요청
+        // 2. 생성 요청 — 데이터 유효성 먼저 확인
         const homeR = boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);
         const awayR = boxScore.awayBatters.reduce((s, b) => s + b.runs, 0);
+        const totalAB = [...boxScore.awayBatters, ...boxScore.homeBatters].reduce((s, b) => s + b.atBats, 0);
+        if (totalAB === 0) {
+          // BoxScore 데이터 미완성 → 생성 건너뜀 (다음 렌더에서 재시도)
+          console.warn("BoxScore data incomplete (0 AB), skipping summary generation");
+          return;
+        }
         
         const payload = {
           gameId,
@@ -328,11 +338,11 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
     };
 
     fetchLlmSummary();
-  }, [boxScore, gameId, llmSummary, awayTeam, homeTeam]);
+  }, [hasRealBoxScore, boxScore, gameId, llmSummary, awayTeam, homeTeam]);
 
   // 기존 템플릿 기반 fallback
   const fallbackSummary = useMemo(() => {
-    if (!boxScore) return null;
+    if (!hasRealBoxScore) return null;
 
     const homeR = boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);
     const awayR = boxScore.awayBatters.reduce((s, b) => s + b.runs, 0);
@@ -435,7 +445,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
     }
 
     return { headline, gameFlow: undefined as { early: string; mid: string; late: string } | undefined, turningPoint, mvpText, pitcherHighlight, insight };
-  }, [boxScore, homeTeam, awayTeam]);
+  }, [hasRealBoxScore, boxScore, homeTeam, awayTeam]);
 
   // LLM 우선, fallback 사용
   const summary = llmSummary
