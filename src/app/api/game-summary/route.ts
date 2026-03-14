@@ -256,6 +256,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 저장 가드: 생성된 요약의 headline이 스코어와 일치하는지 검증
+    const headlineStr = (summary.headline || "").toLowerCase();
+    const actualScore = `${body.awayScore}` + `${body.homeScore}`;
+    const isZeroZero = body.awayScore === 0 && body.homeScore === 0;
+    const headlineSaysZero = /0대0|0-0|무승부/.test(headlineStr) || /득점\s*없/.test(headlineStr);
+    if (!isZeroZero && headlineSaysZero) {
+      // 실제 스코어 ≠ 0-0인데 요약이 0-0 → 오염 데이터, 캐시하지 않고 폐기
+      console.error(`Score mismatch: actual ${body.awayScore}-${body.homeScore}, headline says 0-0. Discarding.`);
+      return NextResponse.json({ error: "Generated summary score mismatch, discarded" }, { status: 422 });
+    }
+
     // Supabase 캐시 (optional)
     await saveCache(body.gameId, summary);
 
