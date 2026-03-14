@@ -268,6 +268,9 @@ function parseLineup(data: unknown[]): GameDetailResponse["lineup"] {
 
   if (away.length === 0 && home.length === 0) return null;
 
+  // LINEUP_CK가 false이면 아직 라인업 미확정 → 데이터 반환하지 않음
+  if (!isToday) return null;
+
   return { isToday, away, home };
 }
 
