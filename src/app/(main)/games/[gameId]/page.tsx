@@ -323,8 +323,13 @@ export default function GameDetailPage() {
                   homeTeam={homeTeam}
                 />
               ) : (
-                <div className="flex items-center justify-center h-32 text-text-tertiary text-base">
-                  라인업 정보가 없습니다
+                <div className="flex flex-col items-center justify-center h-32 gap-2">
+                  <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
+                    <span className="text-yellow-400 text-sm">⚠️</span>
+                    <span className="text-sm text-yellow-400/90">
+                      라인업 확정 후 공개됩니다.
+                    </span>
+                  </div>
                 </div>
               )}
             </motion.div>
@@ -334,8 +339,13 @@ export default function GameDetailPage() {
               {gameStats ? (
                 <GameStatsTab stats={gameStats} awayTeam={awayTeam} homeTeam={homeTeam} />
               ) : (
-                <div className="flex items-center justify-center h-32 text-text-tertiary text-base">
-                  스탯 정보가 없습니다
+                <div className="flex flex-col items-center justify-center h-32 gap-2">
+                  <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
+                    <span className="text-yellow-400 text-sm">⚠️</span>
+                    <span className="text-sm text-yellow-400/90">
+                      {game.time}시 경기가 시작된 후 확인하실 수 있습니다.
+                    </span>
+                  </div>
                 </div>
               )}
             </motion.div>
