@@ -285,6 +285,7 @@ export default function GameDetailPage() {
                   away: liveGame?.awayStarterName || gameDetail?.boxScore?.awayPitchers?.[0]?.name || "",
                   home: liveGame?.homeStarterName || gameDetail?.boxScore?.homePitchers?.[0]?.name || "",
                 }}
+                lineupConfirmed={!!d.detailLineup}
               />
             </motion.div>
           )}

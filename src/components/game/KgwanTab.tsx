@@ -26,13 +26,15 @@ interface KgwanTabProps {
   teamColor: string;
   boxScore: GameDetailResponse["boxScore"] | null;
   starterNames?: { away: string; home: string };
+  lineupConfirmed?: boolean;
 }
 
 /* ===== Scheduled: AI Preview ===== */
-function ScheduledView({ awayTeamId, homeTeamId, starterNames }: {
+function ScheduledView({ awayTeamId, homeTeamId, starterNames, lineupConfirmed }: {
   awayTeamId: number;
   homeTeamId: number;
   starterNames?: { away: string; home: string };
+  lineupConfirmed?: boolean;
 }) {
   const router = useRouter();
   const analysis = useMemo(() => generateAnalysis(awayTeamId, homeTeamId), [awayTeamId, homeTeamId]);
@@ -63,6 +65,16 @@ function ScheduledView({ awayTeamId, homeTeamId, starterNames }: {
         </div>
       </div>
 
+      {/* AI 분석: 라인업 확정 후에만 노출 */}
+      {!lineupConfirmed ? (
+        <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
+          <span className="text-yellow-400 text-sm">⚠️</span>
+          <span className="text-sm text-yellow-400/90">
+            라인업이 확정되면 AI 경기 예측을 보실 수 있습니다.
+          </span>
+        </div>
+      ) : (
+      <>
       {/* Win probability bar */}
       <div className="glass-card p-4">
         <div className="flex items-center justify-between mb-3">
@@ -179,6 +191,8 @@ function ScheduledView({ awayTeamId, homeTeamId, starterNames }: {
       <p className="text-center text-[10px] text-text-tertiary pb-2">
         ※ AI 분석은 참고용이며 실제 경기 결과와 다를 수 있습니다
       </p>
+      </>
+      )}
     </div>
   );
 }
@@ -580,9 +594,10 @@ export default function KgwanTab({
   plays: _plays,
   boxScore,
   starterNames,
+  lineupConfirmed,
 }: KgwanTabProps) {
   if (status === "scheduled") {
-    return <ScheduledView awayTeamId={awayTeamId} homeTeamId={homeTeamId} starterNames={starterNames} />;
+    return <ScheduledView awayTeamId={awayTeamId} homeTeamId={homeTeamId} starterNames={starterNames} lineupConfirmed={lineupConfirmed} />;
   }
 
   if (status === "live") {
