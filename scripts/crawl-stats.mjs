@@ -46,16 +46,67 @@ function extractPlayerId(html) {
   return match ? match[1] : "";
 }
 
-async function selectSeason(page) {
-  // Select season from dropdown
-  const seasonSelector =
-    "select[name$='ddlSeason$ddlSeason']";
-  const current = await page.$eval(seasonSelector, (el) => el.value).catch(() => null);
-  if (current !== SEASON) {
-    await page.selectOption(seasonSelector, SEASON);
-    await page.waitForLoadState("networkidle");
-    await page.waitForTimeout(1000);
+async function changeSelectAndWait(page, selector, value, waitMs = 8000) {
+  const current = await page.$eval(selector, (el) => el.value).catch(() => null);
+  if (current === value) return;
+
+  const beforeFirstRow = await page.locator("tbody tr").first().textContent().catch(() => "");
+  await page.selectOption(selector, value);
+
+  try {
+    await page.waitForFunction(
+      ({ selector, value, beforeFirstRow }) => {
+        const el = document.querySelector(selector);
+        const firstRow = document.querySelector("tbody tr")?.textContent?.trim() || "";
+        return !!el && el.value === value && firstRow !== beforeFirstRow;
+      },
+      { selector, value, beforeFirstRow },
+      { timeout: waitMs }
+    );
+  } catch {
+    await page.waitForTimeout(waitMs);
   }
+
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await page.waitForTimeout(1000);
+}
+
+async function selectSeason(page) {
+  const seriesSelector = "select[name$='ddlSeries$ddlSeries']";
+  const seasonSelector = "select[name$='ddlSeason$ddlSeason']";
+
+  // Always use regular season for seasonal stat snapshots.
+  const hasSeries = await page.$(seriesSelector);
+  if (hasSeries) {
+    await changeSelectAndWait(page, seriesSelector, "0", 5000);
+  }
+
+  await changeSelectAndWait(page, seasonSelector, SEASON, 8000);
+}
+
+async function sortTable(page, sortKey, waitMs = 5000) {
+  const beforeFirstRow = await page.locator("tbody tr").first().textContent().catch(() => "");
+  const selector = `a[href="javascript:sort('${sortKey}');"]`;
+  const link = await page.$(selector);
+  if (!link) throw new Error(`Sort link not found: ${sortKey}`);
+
+  await link.click();
+
+  try {
+    await page.waitForFunction(
+      ({ beforeFirstRow }) => {
+        const firstRow = document.querySelector("tbody tr")?.textContent?.trim() || "";
+        return firstRow !== beforeFirstRow;
+      },
+      { beforeFirstRow },
+      { timeout: waitMs }
+    );
+  } catch {
+    await page.waitForTimeout(waitMs);
+  }
+
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await page.waitForTimeout(1000);
 }
 
 async function scrapeTable(page) {
@@ -83,30 +134,32 @@ async function scrapeAllPages(page) {
     allRows.push(...rows);
     console.log(`    Page ${pageNum}: ${rows.length} rows (total: ${allRows.length})`);
 
-    // KBO uses numbered page buttons: btnNo1, btnNo2, ...
-    const nextBtnId = `cphContents_cphContents_cphContents_ucPager_btnNo${pageNum + 1}`;
-    const nextBtn = await page.$(`#${nextBtnId}`);
-    if (!nextBtn) {
-      // Try "다음" or "마지막" button group navigation
-      const nextGroupBtn = await page.$(`a[id$="btnNext"]`);
-      if (nextGroupBtn) {
-        await nextGroupBtn.click();
-        await page.waitForLoadState("networkidle");
-        await page.waitForTimeout(800);
-        pageNum++;
-        continue;
-      }
-      break;
+    const targetPageText = String(pageNum + 1);
+    const nextVisibleBtn = await page.locator('a[id*="ucPager_btnNo"]').filter({ hasText: targetPageText }).first();
+    if (await nextVisibleBtn.count()) {
+      await nextVisibleBtn.click();
+      await page.waitForLoadState("networkidle").catch(() => {});
+      await page.waitForTimeout(1200);
+      pageNum++;
+      continue;
     }
 
-    // Check if this button has class "on" (already active) — shouldn't happen, but just in case
-    const isActive = await nextBtn.evaluate((el) => el.classList.contains("on"));
-    if (isActive) break;
+    const nextGroupBtn = await page.$('a[id$="btnNext"]');
+    if (!nextGroupBtn) break;
 
-    await nextBtn.click();
-    await page.waitForLoadState("networkidle");
-    await page.waitForTimeout(800);
-    pageNum++;
+    const beforePager = await page.$$eval('a[id*="ucPager_btnNo"]', (links) =>
+      links.map((a) => `${a.textContent?.trim()}:${a.className}`).join("|")
+    );
+
+    await nextGroupBtn.click();
+    await page.waitForLoadState("networkidle").catch(() => {});
+    await page.waitForTimeout(1200);
+
+    const afterPager = await page.$$eval('a[id*="ucPager_btnNo"]', (links) =>
+      links.map((a) => `${a.textContent?.trim()}:${a.className}`).join("|")
+    );
+
+    if (!afterPager || afterPager === beforePager) break;
   }
 
   return allRows;
@@ -202,6 +255,10 @@ async function crawlPitcher(page) {
   );
   await page.waitForLoadState("networkidle");
   await selectSeason(page);
+
+  // ERA 기본 정렬은 규정이닝 투수 위주라 불펜/마무리가 빠진다.
+  // 전체 투수 목록을 얻기 위해 등판수(G) 기준으로 재정렬 후 전 페이지를 순회한다.
+  await sortTable(page, "GAME_CN", 6000);
 
   const rows = await scrapeAllPages(page);
 
