@@ -494,9 +494,9 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
             <div className="flex items-center gap-1.5">
               <span className="text-xs">🤖</span>
               <span className="text-[11px] font-semibold text-accent">
-                {llmSummary ? "AI 경기 요약" : llmLoading ? "AI 분석 중..." : "경기 요약"}
+                {llmSummary ? "AI 경기 요약" : "경기 요약"}
               </span>
-              {llmLoading && (
+              {llmLoading && !summary && (
                 <div className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin" />
               )}
             </div>
