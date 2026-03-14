@@ -5,6 +5,7 @@ import type { GameSnapshot } from "@/types/game-events";
 import { generateEvents, type PrevGameState } from "@/lib/event-generator";
 import type { GameEvent } from "@/types/game-events";
 import type { KboRawGame } from "@/types/api";
+import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
 
 // In-memory cache per game
 const prevStateCache = new Map<string, PrevGameState>();
@@ -167,8 +168,11 @@ export async function GET(req: NextRequest) {
       runner1bName: null,
       runner2bName: null,
       runner3bName: null,
-      currentBatter: rawGame.T_P_NM?.trim() || null,
-      currentPitcher: rawGame.B_P_NM?.trim() || null,
+      ...resolveCurrentPlayers({
+        tPlayerName: rawGame.T_P_NM,
+        bPlayerName: rawGame.B_P_NM,
+        gameTbSc: rawGame.GAME_TB_SC,
+      }),
       currentInning: rawGame.GAME_INN_NO ? `${rawGame.GAME_INN_NO}회${rawGame.GAME_TB_SC === "T" ? "초" : "말"}` : "",
       stadium: rawGame.S_NM,
       isLive: rawGame.GAME_STATE_SC === "2",

@@ -346,7 +346,9 @@ export default function GameDetailPage() {
                   <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
                     <span className="text-yellow-400 text-sm">⚠️</span>
                     <span className="text-sm text-yellow-400/90">
-                      {game.time}시 경기가 시작된 후 확인하실 수 있습니다.
+                      {liveGame?.isLive
+                        ? "경기 진행 중입니다. 스탯은 경기 종료 후 업데이트됩니다."
+                        : `${game.time}시 경기가 시작된 후 확인하실 수 있습니다.`}
                     </span>
                   </div>
                 </div>

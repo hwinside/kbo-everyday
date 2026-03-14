@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { KboRawGame } from "@/types/api";
+import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
 
 export async function GET(req: NextRequest) {
   const date = req.nextUrl.searchParams.get("date") || new Date().toISOString().slice(0, 10).replace(/-/g, "");
@@ -37,11 +38,11 @@ export async function GET(req: NextRequest) {
         runner1bName: null,
         runner2bName: null,
         runner3bName: null,
-        // T_P_NM = away(Top) team player, B_P_NM = home(Bottom) team player
-        // 초(top): away=batting → T=batter, B=pitcher
-        // 말(bottom): home=batting → T=pitcher, B=batter
-        currentBatter: (g.GAME_TB_SC === "T" ? g.T_P_NM : g.B_P_NM)?.trim() || null,
-        currentPitcher: (g.GAME_TB_SC === "T" ? g.B_P_NM : g.T_P_NM)?.trim() || null,
+        ...resolveCurrentPlayers({
+          tPlayerName: g.T_P_NM,
+          bPlayerName: g.B_P_NM,
+          gameTbSc: g.GAME_TB_SC,
+        }),
         date: g.G_DT,
         stadium: g.S_NM,
         status,
