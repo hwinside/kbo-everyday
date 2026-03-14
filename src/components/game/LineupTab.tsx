@@ -57,8 +57,22 @@ export default function LineupTab({
   awayTeam,
   homeTeam,
 }: LineupTabProps) {
+  const awaySp = lineup.away.startingPitcher.name;
+  const homeSp = lineup.home.startingPitcher.name;
+  const isLineupPartial = !awaySp || !homeSp;
+
   return (
     <div className="px-4 py-4 space-y-5 overflow-y-auto">
+      {/* Lineup not fully confirmed notice */}
+      {isLineupPartial && (
+        <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
+          <span className="text-yellow-400 text-sm">⚠️</span>
+          <span className="text-sm text-yellow-400/90">
+            선발투수 정보가 아직 반영되지 않았습니다. 경기 시작 전 업데이트됩니다.
+          </span>
+        </div>
+      )}
+
       {/* Starting pitchers */}
       <div className="flex items-start justify-around">
         <PitcherCard
