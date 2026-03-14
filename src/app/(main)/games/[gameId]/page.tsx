@@ -149,8 +149,10 @@ export default function GameDetailPage() {
   const innings = getInningsForGame(gameId);
   const plays = getPlaysForGame(gameId);
   const staticGameStats = getStatsForGame(gameId);
-  const gameStats = staticGameStats ?? (gameDetail?.boxScore
-    ? boxScoreToGameStats(gameId, gameDetail.boxScore, game.awayTeamId, game.homeTeamId)
+  const hasBoxScoreData = gameDetail?.boxScore &&
+    (gameDetail.boxScore.awayBatters.length > 0 || gameDetail.boxScore.homeBatters.length > 0);
+  const gameStats = staticGameStats ?? (hasBoxScoreData
+    ? boxScoreToGameStats(gameId, gameDetail.boxScore!, game.awayTeamId, game.homeTeamId)
     : null);
 
   const isTopInning = game.inning?.includes("초");
