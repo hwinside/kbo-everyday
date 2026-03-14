@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { type TeamData } from "@/lib/constants/teams";
+import { type TeamData, getTeamBarColor } from "@/lib/constants/teams";
 import type {
   GameStats,
   BatterStat,
@@ -207,9 +207,10 @@ export default function GameStatsTab({
     return items;
   }, [stats]);
 
-  // 다크모드에서 검정/짙은 색 팀 바가 안 보이는 문제 → colorSecondary 우선
-  const awayBarColor = awayTeam.colorSecondary || awayTeam.colorLight || awayTeam.colorPrimary;
-  const homeBarColor = homeTeam.colorSecondary || homeTeam.colorLight || homeTeam.colorPrimary;
+  // 다크모드에서 바 가시성: colorLight가 항상 다크 배경에서 잘 보임
+  // 다크모드에서 어두운 팀 컬러가 안 보이는 문제 → luminance 기반 선택
+  const awayBarColor = getTeamBarColor(awayTeam);
+  const homeBarColor = getTeamBarColor(homeTeam);
 
   return (
     <div className="px-5 py-4 space-y-5">

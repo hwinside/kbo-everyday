@@ -149,3 +149,15 @@ function hexLuminance(hex: string): number {
 export function getTeamBgColor(team: TeamData): string {
   return hexLuminance(team.colorPrimary) < 0.05 ? team.colorLight : team.colorPrimary;
 }
+
+/** 다크모드 바 차트용 팀 컬러.
+ *  colorSecondary → colorPrimary → colorLight 순으로 검토하되,
+ *  luminance < 0.05인 색은 건너뜀 (다크 배경에서 안 보이므로).
+ */
+export function getTeamBarColor(team: TeamData): string {
+  const candidates = [team.colorSecondary, team.colorPrimary, team.colorLight];
+  for (const c of candidates) {
+    if (c && hexLuminance(c) >= 0.05) return c;
+  }
+  return team.colorLight;
+}
