@@ -74,22 +74,22 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                     <>
                       <div className="flex justify-between text-xs leading-[18px]">
                         <span className="text-text-tertiary">ERA</span>
-                        <span className="font-semibold tabular-nums text-accent">{stats.era ?? "3.20"}</span>
+                        <span className="font-medium tabular-nums text-text-primary">{stats.era ?? "3.20"}</span>
                       </div>
                       <div className="flex justify-between text-xs leading-[18px]">
                         <span className="text-text-tertiary">승</span>
-                        <span className="font-semibold tabular-nums text-accent">{stats.wins ?? 10}</span>
+                        <span className="font-medium tabular-nums text-text-primary">{stats.wins ?? 10}</span>
                       </div>
                     </>
                   ) : (
                     <>
                       <div className="flex justify-between text-xs leading-[18px]">
                         <span className="text-text-tertiary">타율</span>
-                        <span className="font-semibold tabular-nums text-accent">{stats.avg}</span>
+                        <span className="font-medium tabular-nums text-text-primary">{stats.avg}</span>
                       </div>
                       <div className="flex justify-between text-xs leading-[18px]">
                         <span className="text-text-tertiary">HR/RBI</span>
-                        <span className="font-semibold tabular-nums text-accent">{stats.hr}/{stats.rbi}</span>
+                        <span className="font-medium tabular-nums text-text-primary">{stats.hr}/{stats.rbi}</span>
                       </div>
                     </>
                   )}
