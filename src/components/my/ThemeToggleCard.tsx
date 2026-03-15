@@ -25,7 +25,7 @@ export default function ThemeToggleCard() {
               onClick={() => setTheme(value)}
               className={`flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-medium transition-colors ${
                 active
-                  ? "bg-accent text-white"
+                  ? "bg-text-primary text-bg-primary"
                   : "bg-bg-tertiary text-text-secondary hover:text-text-primary"
               }`}
             >
