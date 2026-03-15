@@ -66,11 +66,15 @@ const TEAM_PLAYERS: Record<number, { sp: string; spEra: string; ace: string; cle
   10: { sp: "안우진", spEra: "2.68", ace: "안우진", cleanup: ["이주형", "김병휘", "서유신"], closer: "네이선 와일스", closerSv: "25", keyPlayers: [{ name: "안우진", playerId: getKboId(10, "안우진"), reason: "리그 최고 구속+제구, 압도적 구위의 에이스" }, { name: "이주형", playerId: getKboId(10, "이주형"), reason: "팀 핵심 내야수, 안정적인 수비와 타격으로 팀 기둥" }] },
 };
 
-export function generateAnalysis(awayId: number, homeId: number) {
+export function generateAnalysis(awayId: number, homeId: number, starterNames?: { away: string; home: string }) {
   const away = getTeamById(awayId)!;
   const home = getTeamById(homeId)!;
   const ap = TEAM_PLAYERS[awayId] || TEAM_PLAYERS[1];
   const hp = TEAM_PLAYERS[homeId] || TEAM_PLAYERS[1];
+
+  // 실제 라인업의 선발투수를 우선 사용, 없으면 팀 기본값
+  const awaySp = starterNames?.away || ap.sp;
+  const homeSp = starterNames?.home || hp.sp;
   
   const awayWinPct = Math.floor(Math.random() * 30) + 35;
   const homeWinPct = 100 - awayWinPct;
@@ -81,7 +85,7 @@ export function generateAnalysis(awayId: number, homeId: number) {
       team: away,
       winPct: awayWinPct,
       strengths: [
-        `선발 ${ap.sp} 최근 5경기 ERA ${ap.spEra}`,
+        `선발 ${awaySp} 최근 5경기 ERA ${ap.spEra}`,
         `${ap.cleanup[0]} 최근 10경기 타율 .348, ${ap.cleanup[1]} OPS .912`,
         `마무리 ${ap.closer} ${ap.closerSv}세이브, 최근 12경기 무실점`,
       ],
@@ -94,7 +98,7 @@ export function generateAnalysis(awayId: number, homeId: number) {
       team: home,
       winPct: homeWinPct,
       strengths: [
-        `선발 ${hp.sp} 홈 ERA ${(parseFloat(hp.spEra) - 0.4).toFixed(2)}, 홈 경기 5연승`,
+        `선발 ${homeSp} 홈 ERA ${(parseFloat(hp.spEra) - 0.4).toFixed(2)}, 홈 경기 5연승`,
         `${hp.cleanup[0]} 시즌 21호 홈런, 득점권 타율 .362`,
         `${hp.cleanup[1]} 최근 15경기 연속 안타, 타율 .341`,
       ],
@@ -103,16 +107,16 @@ export function generateAnalysis(awayId: number, homeId: number) {
         `대주자 상황 도루 허용률 78% (리그 하위)`,
       ],
     },
-    keyMatchup: `🔑 이번 경기의 핵심은 ${away.shortName} ${ap.sp}(ERA ${ap.spEra}) vs ${home.shortName} 클린업 ${hp.cleanup[0]}·${hp.cleanup[1]} 대결입니다.
+    keyMatchup: `🔑 이번 경기의 핵심은 ${away.shortName} ${awaySp}(ERA ${ap.spEra}) vs ${home.shortName} 클린업 ${hp.cleanup[0]}·${hp.cleanup[1]} 대결입니다.
 
-${ap.sp}은 최근 5경기 평균 6.2이닝을 소화하며 안정적인 투구를 이어가고 있지만, ${hp.cleanup[0]}에게 시즌 상대전적 7타수 4안타(.571)로 크게 밀리고 있습니다.
+${awaySp}은 최근 5경기 평균 6.2이닝을 소화하며 안정적인 투구를 이어가고 있지만, ${hp.cleanup[0]}에게 시즌 상대전적 7타수 4안타(.571)로 크게 밀리고 있습니다.
 
-반면 ${home.shortName} ${hp.sp}은 홈에서 유독 강한 모습(홈 ERA ${(parseFloat(hp.spEra) - 0.4).toFixed(2)})을 보이고 있어 ${away.shortName} 타선이 초반에 흔들 수 있을지가 관건입니다.
+반면 ${home.shortName} ${homeSp}은 홈에서 유독 강한 모습(홈 ERA ${(parseFloat(hp.spEra) - 0.4).toFixed(2)})을 보이고 있어 ${away.shortName} 타선이 초반에 흔들 수 있을지가 관건입니다.
 
 ${away.shortName}이 승리하려면 ${ap.cleanup[0]}의 멀티히트와 불펜의 안정이 필수이고, ${home.shortName}은 ${hp.cleanup[0]}·${hp.cleanup[1]}의 중심 타선이 선발을 일찍 무너뜨려야 합니다.`,
     prediction: homeWinPct > 50 
-      ? `${home.shortName} ${homeWinPct}% 우세 (${hp.cleanup[0]}의 홈 타율 + ${hp.sp} 홈 ERA 기반)` 
-      : `${away.shortName} ${awayWinPct}% 우세 (${ap.sp}의 최근 폼 + ${ap.cleanup[0]} 핫스트릭)`,
+      ? `${home.shortName} ${homeWinPct}% 우세 (${hp.cleanup[0]}의 홈 타율 + ${homeSp} 홈 ERA 기반)` 
+      : `${away.shortName} ${awayWinPct}% 우세 (${awaySp}의 최근 폼 + ${ap.cleanup[0]} 핫스트릭)`,
     confidence,
     awayKeyPlayers: ap.keyPlayers || [],
     homeKeyPlayers: hp.keyPlayers || [],

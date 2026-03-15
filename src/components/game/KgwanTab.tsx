@@ -37,7 +37,7 @@ function ScheduledView({ awayTeamId, homeTeamId, starterNames, lineupConfirmed }
   lineupConfirmed?: boolean;
 }) {
   const router = useRouter();
-  const analysis = useMemo(() => generateAnalysis(awayTeamId, homeTeamId), [awayTeamId, homeTeamId]);
+  const analysis = useMemo(() => generateAnalysis(awayTeamId, homeTeamId, starterNames), [awayTeamId, homeTeamId, starterNames]);
   const awayTeam = getTeamById(awayTeamId)!;
   const homeTeam = getTeamById(homeTeamId)!;
 
