@@ -250,7 +250,7 @@ export default function GameDetailPage() {
       )}
 
       {/* Tabs */}
-      <div className="flex border-b border-[#1a1a2e] mx-4">
+      <div className="flex border-b border-border mx-4">
         {TABS.map((tab) => (
           <button
             key={tab.id}

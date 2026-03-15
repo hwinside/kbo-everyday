@@ -48,7 +48,7 @@ export default function TrendChart({ data, teamColor, isPitcher }: TrendChartPro
             />
             <Tooltip
               contentStyle={{
-                backgroundColor: "#1C1C1F",
+                backgroundColor: "var(--bg-tertiary, #1C1C1F)",
                 border: "1px solid rgba(255,255,255,0.08)",
                 borderRadius: 8,
                 fontSize: 13,
@@ -98,7 +98,7 @@ export default function TrendChart({ data, teamColor, isPitcher }: TrendChartPro
           />
           <Tooltip
             contentStyle={{
-              backgroundColor: "#1C1C1F",
+              backgroundColor: "var(--bg-tertiary, #1C1C1F)",
               border: "1px solid rgba(255,255,255,0.08)",
               borderRadius: 8,
               fontSize: 13,

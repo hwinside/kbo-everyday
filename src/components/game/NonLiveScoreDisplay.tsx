@@ -19,7 +19,7 @@ export default function NonLiveScoreDisplay({ awayTeam, homeTeam, awayScore, hom
         <span className="text-[48px] font-extrabold tabular-nums leading-none text-text-primary">{awayScore}</span>
       </div>
       <div className="flex flex-col items-center mx-3">
-        <span className="text-xl text-[#555] font-light leading-none">:</span>
+        <span className="text-xl text-text-tertiary font-light leading-none">:</span>
       </div>
       <div className="flex items-center gap-2.5 flex-1 justify-start">
         <span className="text-[48px] font-extrabold tabular-nums leading-none text-text-primary">{homeScore}</span>

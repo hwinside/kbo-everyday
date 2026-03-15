@@ -62,7 +62,7 @@ export default function RadarChart({ stats, teamColor, isPitcher }: RadarChartPr
           grid: { line: { stroke: "rgba(255,255,255,0.08)" } },
           tooltip: {
             container: {
-              background: "#1C1C1F",
+              background: "var(--bg-tertiary, #1C1C1F)",
               color: "#F5F5F7",
               borderRadius: "8px",
               border: "1px solid rgba(255,255,255,0.08)",

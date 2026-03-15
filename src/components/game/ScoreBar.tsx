@@ -24,9 +24,9 @@ export default function ScoreBar({
 
   return (
     <div
-      className="sticky top-[36px] z-[99] border-b border-[#1a1a2e] px-4 py-2"
+      className="sticky top-[36px] z-[99] border-b border-border px-4 py-2"
       style={{
-        background: "rgba(10,10,15,0.92)",
+        background: "var(--scorebar-bg, rgba(10,10,15,0.92))",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
       }}
@@ -41,7 +41,7 @@ export default function ScoreBar({
             key={`sb-away-${awayScore}`}
             initial={{ scale: 1.3, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className={`text-[48px] font-extrabold tabular-nums leading-none ${awayWinning ? "text-[#4fc3f7]" : "text-white"}`}
+            className={`text-[48px] font-extrabold tabular-nums leading-none ${awayWinning ? "text-[#4fc3f7]" : "text-text-primary"}`}
           >
             {awayScore}
           </motion.span>
@@ -49,7 +49,7 @@ export default function ScoreBar({
 
         {/* Center divider + inning */}
         <div className="flex flex-col items-center mx-3">
-          <span className="text-xl text-[#555] font-light leading-none">:</span>
+          <span className="text-xl text-text-tertiary font-light leading-none">:</span>
           <span className="text-[9px] font-semibold text-[#e53935] bg-[#e5393522] px-1.5 py-px rounded-md mt-1 whitespace-nowrap">
             {currentInning}
           </span>
@@ -61,7 +61,7 @@ export default function ScoreBar({
             key={`sb-home-${homeScore}`}
             initial={{ scale: 1.3, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className={`text-[48px] font-extrabold tabular-nums leading-none ${homeWinning ? "text-[#4fc3f7]" : "text-white"}`}
+            className={`text-[48px] font-extrabold tabular-nums leading-none ${homeWinning ? "text-[#4fc3f7]" : "text-text-primary"}`}
           >
             {homeScore}
           </motion.span>

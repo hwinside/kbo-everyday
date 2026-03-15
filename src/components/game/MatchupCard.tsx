@@ -73,7 +73,7 @@ function PlayerPhoto({ name, type }: { name: string; type: "pitcher" | "batter" 
           className="w-full h-full object-cover"
         />
       ) : (
-        <span className="text-[10px] text-[#666]">{name.charAt(0)}</span>
+        <span className="text-[10px] text-text-tertiary">{name.charAt(0)}</span>
       )}
     </div>
   );
@@ -99,7 +99,7 @@ export default function MatchupCard({
         <div className="flex items-center gap-2">
           <PlayerPhoto name={currentPitcher} type="pitcher" />
           <div>
-            <div className="text-[10px] text-[#888]">투수</div>
+            <div className="text-[10px] text-text-tertiary">투수</div>
             {(() => {
               const href = getPlayerHref(currentPitcher);
               return href ? (
@@ -112,7 +112,7 @@ export default function MatchupCard({
               {pitcherToday ? (
                 <>
                   <div className="flex gap-1.5 text-[11px]">
-                    <span className="text-[#ccc] font-semibold">{pitcherToday.pitchCount}구</span>
+                    <span className="text-text-secondary font-semibold">{pitcherToday.pitchCount}구</span>
                     <span className="text-[#e53935]">K <b>{pitcherToday.strikeouts}</b></span>
                     <span className="text-[#64b5f6]">BB <b>{pitcherToday.walks}</b></span>
                   </div>
@@ -120,14 +120,14 @@ export default function MatchupCard({
                     <span className="text-[#ff7043]">H <b>{pitcherToday.hits}</b></span>
                     <span className="text-[#ffc107]">ER <b>{pitcherToday.earnedRuns}</b></span>
                     {resolvedEra && (
-                      <span className="text-[#888]">ERA {resolvedEra}</span>
+                      <span className="text-text-tertiary">ERA {resolvedEra}</span>
                     )}
                   </div>
                 </>
               ) : (
                 <div className="flex gap-1.5 text-[11px]">
                   {resolvedEra && (
-                    <span className="text-[#888]">ERA {resolvedEra}</span>
+                    <span className="text-text-tertiary">ERA {resolvedEra}</span>
                   )}
                 </div>
               )}
@@ -143,7 +143,7 @@ export default function MatchupCard({
       {currentBatter && (
         <div className="flex items-center gap-2">
           <div className="text-right">
-            <div className="text-[10px] text-[#888]">타자</div>
+            <div className="text-[10px] text-text-tertiary">타자</div>
             {(() => {
               const href = getPlayerHref(currentBatter);
               return href ? (
@@ -159,7 +159,7 @@ export default function MatchupCard({
                     {resolvedAvg && (
                       <span className="text-[#4fc3f7] font-semibold">{resolvedAvg}</span>
                     )}
-                    <span className="text-[#ccc]">{batterToday.atBats}타수</span>
+                    <span className="text-text-secondary">{batterToday.atBats}타수</span>
                     <span className="text-[#4caf50]">{batterToday.hits}안타</span>
                   </div>
                   <div className="flex gap-1.5 text-[11px] justify-end">

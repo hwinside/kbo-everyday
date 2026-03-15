@@ -65,7 +65,7 @@ export default function LeaderboardPage() {
                     <span className="text-sm font-bold text-text-tertiary">{entry.rank}</span>
                   )}
                 </div>
-                <div className="w-8 h-8 rounded-full bg-black/8 dark:bg-white/10 flex items-center justify-center text-sm font-bold" style={{ color: "#fff" }}>
+                <div className="w-8 h-8 rounded-full bg-black/8 dark:bg-white/10 flex items-center justify-center text-sm font-bold text-text-primary">
                   {entry.nickname.charAt(0)}
                 </div>
                 <div className="flex-1">

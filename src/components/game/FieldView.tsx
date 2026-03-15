@@ -111,7 +111,7 @@ export default function FieldView({
 
       {/* Infield diamond (110px square → 45° → diamond ~156px diagonal) */}
       <div
-        className="absolute border border-[#3a2f24] rounded-sm"
+        className="absolute border border-border rounded-sm"
         style={{
           width: "110px",
           height: "110px",

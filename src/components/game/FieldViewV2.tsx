@@ -251,7 +251,7 @@ export default function FieldViewV2({
         )}
 
         {/* BSO Scoreboard overlay — bottom right */}
-        <div className="absolute -bottom-1 -right-1 z-[15] bg-black/70 rounded-md px-2 py-1.5 backdrop-blur-sm border border-[#333]">
+        <div className="absolute -bottom-1 -right-1 z-[15] bg-black/70 rounded-md px-2 py-1.5 backdrop-blur-sm border border-border">
           <div className="flex flex-col gap-0.5">
             {/* Balls */}
             <div className="flex items-center gap-1">
@@ -301,14 +301,14 @@ export default function FieldViewV2({
         {/* On-deck batters overlay */}
         {onDeckBatters && onDeckBatters.length > 0 && (
           <div className="absolute bottom-[5%] left-2 z-[15]">
-            <div className="text-[7px] text-[#888] font-semibold mb-0.5">대기타석</div>
+            <div className="text-[7px] text-text-tertiary font-semibold mb-0.5">대기타석</div>
             {onDeckBatters.map((b) => (
               <div
                 key={b.order}
                 className="text-[8px] text-white/75 leading-relaxed"
                 style={{ textShadow: "0 1px 3px #000" }}
               >
-                <span className="text-[#666] font-semibold mr-0.5">{b.order}.</span>
+                <span className="text-text-tertiary font-semibold mr-0.5">{b.order}.</span>
                 {b.name}
               </div>
             ))}
