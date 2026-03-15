@@ -82,7 +82,10 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents }: {
 }) {
   const [expanded, setExpanded] = useState(false);
 
-  const recentEvents = gameEvents.slice(0, expanded ? gameEvents.length : 3);
+  // 접힌 상태에서는 최신 3개만 표시 (역순 → 다시 시간순으로)
+  const recentEvents = expanded
+    ? gameEvents
+    : gameEvents.slice(-3);
 
   return (
     <div className="flex flex-col h-full">
