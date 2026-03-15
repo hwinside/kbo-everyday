@@ -53,7 +53,7 @@ export default function HomePage() {
   const realNews = useHomeNews(myTeamId);
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
   const myTeamGameBase = todayGames.find(g => g.homeTeamId === myTeamId || g.awayTeamId === myTeamId);
-  const { liveGames } = useLiveGame(undefined, 30000);
+  const { liveGames } = useLiveGame(undefined, 15000);
   const myTeamLive = myTeamGameBase ? liveGames.find(g => g.gameId === myTeamGameBase.id) : undefined;
   const myTeamGame = myTeamGameBase ? {
     ...myTeamGameBase,
