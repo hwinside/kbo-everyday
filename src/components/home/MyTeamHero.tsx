@@ -31,7 +31,7 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
     <div className="mb-3">
       <Link href={`/games/${myTeamGame.id}`}>
         <div
-          className="relative rounded-2xl p-5 overflow-hidden border border-white/10 bg-bg-secondary"
+          className="relative rounded-2xl p-5 overflow-hidden border border-black/10 dark:border-white/10 bg-bg-secondary"
           style={{ background: `linear-gradient(135deg, ${getTeamBgColor(myTeam)}50 0%, #1a1a1d 100%)` }}
         >
           {/* Team logo watermark */}
@@ -78,7 +78,7 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
 
           {/* Live details: BSO + Diamond + Pitcher/Batter */}
           {myTeamGame.status === "live" && (
-            <div className="mt-3 pt-3 border-t border-white/10">
+            <div className="mt-3 pt-3 border-t border-black/10 dark:border-white/10">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3 text-[11px] font-mono">
                   <span>B <span className="text-green-400">{"●".repeat(myTeamGame.balls)}{"○".repeat(4 - myTeamGame.balls)}</span></span>

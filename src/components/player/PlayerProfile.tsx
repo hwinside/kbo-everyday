@@ -78,7 +78,7 @@ export default function PlayerProfile({ playerName, teamColor, kboId }: Props) {
             onClick={() => setActiveSection(s.id)}
             className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md text-xs font-medium transition-all ${
               activeSection === s.id
-                ? "bg-white/10 text-text-primary"
+                ? "bg-black/8 dark:bg-white/10 text-text-primary"
                 : "text-text-tertiary"
             }`}
             style={activeSection === s.id ? { color: teamColor } : {}}

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import "@/styles/globals.css";
 import { AuthProvider } from "@/lib/supabase/AuthContext";
+import { ThemeProvider, themeScript } from "@/components/ThemeProvider";
 import { Analytics } from "@vercel/analytics/next";
 
 const GA_ID = "G-C0TE4TFLZ4";
@@ -37,7 +38,10 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   viewportFit: "cover",
-  themeColor: "#0A0A0B",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#FFFFFF" },
+    { media: "(prefers-color-scheme: dark)", color: "#0A0A0B" },
+  ],
 };
 
 export default function RootLayout({
@@ -46,8 +50,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ko" className="dark" style={{ colorScheme: "dark" }}>
+    <html lang="ko" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <Script src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`} strategy="afterInteractive" />
         <Script id="gtag-init" strategy="afterInteractive">
           {`window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${GA_ID}');`}
@@ -67,8 +72,10 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
-      <body style={{ backgroundColor: "#0A0A0B", color: "#F5F5F7" }} className="font-pretendard antialiased">
-        <AuthProvider>{children}</AuthProvider>
+      <body className="font-pretendard antialiased bg-bg-primary text-text-primary">
+        <ThemeProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </ThemeProvider>
         <script
           dangerouslySetInnerHTML={{
             __html: `

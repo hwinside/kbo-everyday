@@ -240,7 +240,7 @@ function PlayersPageContent() {
               onClick={() => { setSortMode(mode); setVisibleCount(20); }}
               className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
                 sortMode === mode
-                  ? "bg-white/10 text-text-primary"
+                  ? "bg-black/8 dark:bg-white/10 text-text-primary"
                   : "text-text-tertiary"
               }`}
             >

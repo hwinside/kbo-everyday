@@ -199,11 +199,11 @@ export default function PredictPage() {
               transition={{ delay: i * 0.05 }}
             >
               <GlassCard
-                className={`p-4 cursor-pointer transition-all ${isSubmitted ? "border border-green-500/30" : "hover:bg-white/5"}`}
+                className={`p-4 cursor-pointer transition-all ${isSubmitted ? "border border-green-500/30" : "hover:bg-black/5 dark:hover:bg-white/5"}`}
                 onClick={() => !isSubmitted && setSelectedCategory(cat)}
               >
                 <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isSubmitted ? "bg-green-500/20 text-green-400" : "bg-white/10 text-text-secondary"}`}>
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isSubmitted ? "bg-green-500/20 text-green-400" : "bg-black/8 dark:bg-white/10 text-text-secondary"}`}>
                     {isSubmitted ? <Check size={20} /> : cat.icon}
                   </div>
                   <div className="flex-1">
@@ -241,7 +241,7 @@ export default function PredictPage() {
 
       {/* 리더보드 링크 */}
       <div className="px-5 mt-6">
-        <GlassCard className="p-4 cursor-pointer hover:bg-white/5" onClick={() => router.push("/predict/leaderboard")}>
+        <GlassCard className="p-4 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5" onClick={() => router.push("/predict/leaderboard")}>
           <div className="flex items-center gap-3">
             <span className="text-2xl">🏆</span>
             <div className="flex-1">
@@ -286,8 +286,8 @@ export default function PredictPage() {
                           onClick={() => savePrediction(selectedCategory.id, String(team.id))}
                           className={`flex items-center gap-3 p-3 rounded-xl transition-all ${
                             isSelected
-                              ? "bg-white/10 ring-2 ring-accent"
-                              : "bg-bg-tertiary hover:bg-white/5"
+                              ? "bg-black/8 dark:bg-white/10 ring-2 ring-accent"
+                              : "bg-bg-tertiary hover:bg-black/5 dark:hover:bg-white/5"
                           }`}
                         >
                           <TeamBadge teamId={team.id} size="md" />
@@ -315,7 +315,7 @@ export default function PredictPage() {
                               key={player.name}
                               onClick={() => savePrediction(selectedCategory.id, player.name)}
                               className={`flex items-center gap-3 p-3 rounded-xl w-full transition-all ${
-                                isSelected ? "bg-white/10 ring-2 ring-accent" : "bg-bg-tertiary hover:bg-white/5"
+                                isSelected ? "bg-black/8 dark:bg-white/10 ring-2 ring-accent" : "bg-bg-tertiary hover:bg-black/5 dark:hover:bg-white/5"
                               }`}
                             >
                               <PlayerAvatar name={player.name} teamId={0} photoUrl={`https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2025/${player.playerId}.jpg`} size={36} showTeamBadge={false} />

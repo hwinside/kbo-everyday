@@ -167,7 +167,7 @@ export default function StandingsPage() {
                     initial={{ opacity: 0, x: -8 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.03 }}
-                    className={`border-b border-border/30 last:border-0 cursor-pointer hover:bg-white/5`}
+                    className={`border-b border-border/30 last:border-0 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5`}
                     style={isMyTeam ? {
                       backgroundColor: `${getTeamBgColor(team)}18`,
                       borderLeft: `3px solid ${getTeamBgColor(team)}`,

@@ -35,7 +35,7 @@ export default function LeaderSection({ title, leaders, myTeamId, favoriteNames 
           <div
             key={l.rank}
             onClick={() => l.playerId && router.push(`/community/players/${l.playerId}`)}
-            className="flex items-center gap-3 cursor-pointer hover:bg-white/5 rounded-lg transition-colors py-1 px-1"
+            className="flex items-center gap-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 rounded-lg transition-colors py-1 px-1"
             style={hlLevel === 0 ? undefined : {
               borderLeft: `${hlLevel === 2 ? 4 : 3}px solid ${hexToRgba(teamColor, hlLevel === 2 ? 1 : 0.8)}`,
               backgroundColor: hexToRgba(teamColor, hlLevel === 2 ? 0.18 : 0.12),

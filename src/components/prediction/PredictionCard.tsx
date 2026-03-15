@@ -77,7 +77,7 @@ export default function PredictionCard({ prediction: initial }: PredictionCardPr
             pred.myPick === pred.awayTeamId
               ? awayCorrect ? "border-green-500 bg-green-500/10" :
                 isFinished ? "border-red-500/50 bg-red-500/5" :
-                "border-current bg-white/5"
+                "border-current bg-black/5 dark:bg-white/5"
               : "border-transparent bg-bg-tertiary/50 hover:bg-bg-tertiary"
           } ${isOpen && !hasPicked ? "cursor-pointer active:scale-95" : ""}`}
           style={pred.myPick === pred.awayTeamId && !isFinished ? { borderColor: awayTeam.colorLight } : {}}
@@ -110,7 +110,7 @@ export default function PredictionCard({ prediction: initial }: PredictionCardPr
             pred.myPick === pred.homeTeamId
               ? homeCorrect ? "border-green-500 bg-green-500/10" :
                 isFinished ? "border-red-500/50 bg-red-500/5" :
-                "border-current bg-white/5"
+                "border-current bg-black/5 dark:bg-white/5"
               : "border-transparent bg-bg-tertiary/50 hover:bg-bg-tertiary"
           } ${isOpen && !hasPicked ? "cursor-pointer active:scale-95" : ""}`}
           style={pred.myPick === pred.homeTeamId && !isFinished ? { borderColor: homeTeam.colorLight } : {}}

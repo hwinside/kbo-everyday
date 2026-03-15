@@ -290,7 +290,7 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId }: 
                         <div
                           key={p.playerId}
                           onClick={() => { onClose(); router.push(`/community/players/${p.playerId}`); }}
-                          className="flex items-start gap-3 p-2 rounded-xl hover:bg-white/5 cursor-pointer transition-colors"
+                          className="flex items-start gap-3 p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer transition-colors"
                         >
                           <PlayerAvatar name={p.name} teamId={side.teamId} photoUrl={getPlayerPhotoUrl(p.name)} size={48} />
                           <div className="flex-1 min-w-0">

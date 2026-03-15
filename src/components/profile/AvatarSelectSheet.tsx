@@ -99,7 +99,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
-            className="fixed bottom-0 left-0 right-0 z-[60] mx-auto max-w-lg rounded-t-3xl bg-bg-secondary border-t border-white/10"
+            className="fixed bottom-0 left-0 right-0 z-[60] mx-auto max-w-lg rounded-t-3xl bg-bg-secondary border-t border-black/10 dark:border-white/10"
             style={{ maxHeight: "80vh" }}
           >
             {/* Handle */}

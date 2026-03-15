@@ -53,7 +53,7 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
 
               <button
                 onClick={() => signInWithGoogle()}
-                className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-medium text-sm border border-white/10 bg-white text-gray-800 transition-transform active:scale-[0.98]"
+                className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-medium text-sm border border-black/10 dark:border-white/10 bg-white text-gray-800 transition-transform active:scale-[0.98]"
               >
                 <svg width="20" height="20" viewBox="0 0 20 20">
                   <path d="M19.6 10.23c0-.68-.06-1.36-.17-2.02H10v3.83h5.38a4.6 4.6 0 01-2 3.02v2.5h3.24c1.89-1.74 2.98-4.3 2.98-7.33z" fill="#4285F4"/>

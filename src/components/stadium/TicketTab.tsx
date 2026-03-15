@@ -269,7 +269,7 @@ export default function TicketTab({
                 onClick={() => setFilter(id)}
                 className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
                   filter === id
-                    ? "bg-white/10 text-text-primary"
+                    ? "bg-black/8 dark:bg-white/10 text-text-primary"
                     : "bg-bg-tertiary text-text-secondary"
                 }`}
               >

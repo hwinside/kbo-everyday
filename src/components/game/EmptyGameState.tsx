@@ -128,7 +128,7 @@ export default function EmptyGameState({ selectedDate }: { selectedDate: string 
                 transition={{ delay: 0.35 + i * 0.05 }}
                 className={`rounded-xl px-4 py-3 flex items-center justify-between ${
                   isMyTeamGame
-                    ? "border-2 bg-white/5"
+                    ? "border-2 bg-black/5 dark:bg-white/5"
                     : "bg-bg-secondary border border-border"
                 }`}
                 style={isMyTeamGame && myTeam ? { borderColor: `${myTeam.colorLight}60` } : {}}

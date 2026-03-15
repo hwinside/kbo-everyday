@@ -89,7 +89,7 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId }: R
                   key={r.id}
                   onClick={() => setSelected(r.id)}
                   className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all ${
-                    selected === r.id ? "bg-white/10 ring-2 ring-red-500/50" : "bg-bg-tertiary"
+                    selected === r.id ? "bg-black/8 dark:bg-white/10 ring-2 ring-red-500/50" : "bg-bg-tertiary"
                   }`}
                 >
                   <span className="text-xl">{r.icon}</span>

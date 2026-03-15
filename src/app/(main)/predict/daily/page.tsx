@@ -34,7 +34,7 @@ export default function DailyPredictPage() {
               {/* Teams */}
               <div className="flex items-center justify-between mb-4">
                 <Link href={`/games/${pred.gameId}/predict`} className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center p-1.5">
+                  <div className="w-12 h-12 rounded-xl bg-black/8 dark:bg-white/10 flex items-center justify-center p-1.5">
                     <Image src={away.logoPath} alt={away.name} width={36} height={36} unoptimized />
                   </div>
                   <span className="text-sm font-bold" style={{ color: away.colorLight || away.colorPrimary }}>{away.shortName}</span>
@@ -47,7 +47,7 @@ export default function DailyPredictPage() {
 
                 <Link href={`/games/${pred.gameId}/predict`} className="flex items-center gap-3">
                   <span className="text-sm font-bold" style={{ color: home.colorLight || home.colorPrimary }}>{home.shortName}</span>
-                  <div className="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center p-1.5">
+                  <div className="w-12 h-12 rounded-xl bg-black/8 dark:bg-white/10 flex items-center justify-center p-1.5">
                     <Image src={home.logoPath} alt={home.name} width={36} height={36} unoptimized />
                   </div>
                 </Link>
@@ -88,7 +88,7 @@ export default function DailyPredictPage() {
                   </button>
                   <Link
                     href={`/games/${pred.gameId}/predict`}
-                    className="px-3 py-1.5 rounded-full bg-white/10 text-text-primary text-xs font-semibold"
+                    className="px-3 py-1.5 rounded-full bg-black/8 dark:bg-white/10 text-text-primary text-xs font-semibold"
                   >
                     투표하기 →
                   </Link>

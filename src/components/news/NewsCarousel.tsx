@@ -75,8 +75,8 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                 className="relative h-[240px] w-full overflow-hidden"
                 style={{
                   background: team
-                    ? `linear-gradient(135deg, ${getTeamBgColor(team)}40 0%, ${getTeamBgColor(team)}15 50%, #0A0A0B 100%)`
-                    : "linear-gradient(135deg, rgba(99,102,241,0.3) 0%, rgba(99,102,241,0.1) 50%, #0A0A0B 100%)",
+                    ? `linear-gradient(135deg, ${getTeamBgColor(team)}40 0%, ${getTeamBgColor(team)}15 50%, var(--bg-primary) 100%)`
+                    : "linear-gradient(135deg, rgba(99,102,241,0.3) 0%, rgba(99,102,241,0.1) 50%, var(--bg-primary) 100%)",
                 }}
               >
                 {/* 팀 로고 워터마크 */}

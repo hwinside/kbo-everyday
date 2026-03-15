@@ -45,7 +45,7 @@ export default function TeamSelectModal({ isOpen, onSelect }: TeamSelectModalPro
                   transition={{ delay: 0.3 + i * 0.05 }}
                   whileTap={{ scale: 0.95 }}
                   onClick={() => onSelect(team.id)}
-                  className="flex items-center gap-3 rounded-2xl p-4 transition-colors hover:bg-white/10"
+                  className="flex items-center gap-3 rounded-2xl p-4 transition-colors hover:bg-black/8 dark:hover:bg-white/10"
                   style={{ background: `${team.colorPrimary}15`, border: `1px solid ${team.colorPrimary}30` }}
                 >
                   <div className="w-12 h-12 rounded-full bg-white p-1.5 flex items-center justify-center flex-shrink-0">

@@ -83,7 +83,7 @@ export default function TicketBoardPage() {
                   }
                   router.replace("/community/tickets");
                 }}
-                className="ml-1 rounded-full p-1 hover:bg-white/10"
+                className="ml-1 rounded-full p-1 hover:bg-black/8 dark:hover:bg-white/10"
                 aria-label="필터 해제"
               >
                 <X size={14} />

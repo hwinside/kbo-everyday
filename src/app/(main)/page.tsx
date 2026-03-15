@@ -83,7 +83,7 @@ export default function HomePage() {
           initial={{ opacity: 0, y: -40 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -40 }}
-          className="fixed top-14 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl bg-bg-secondary border border-white/10 shadow-lg"
+          className="fixed top-14 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl bg-bg-secondary border border-black/10 dark:border-white/10 shadow-lg"
         >
           <p className="text-sm font-medium text-text-primary">👋 {profile?.nickname}님 환영합니다!</p>
         </motion.div>

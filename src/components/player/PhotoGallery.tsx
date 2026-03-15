@@ -42,7 +42,7 @@ function PhotoViewer({ photos, index, onClose, onNav }: {
       className="fixed inset-0 z-50 bg-black flex flex-col"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-black/10 dark:border-white/10">
         <span className="text-sm font-semibold text-white">{photo.author}</span>
         <div className="flex items-center gap-2">
           <span className="text-xs text-white/40">{photo.timeAgo}</span>
@@ -110,7 +110,7 @@ function PhotoViewer({ photos, index, onClose, onNav }: {
       </div>
 
       {/* Comment input */}
-      <div className="border-t border-white/10 px-4 py-3 flex items-center gap-3">
+      <div className="border-t border-black/10 dark:border-white/10 px-4 py-3 flex items-center gap-3">
         <input
           type="text"
           value={comment}

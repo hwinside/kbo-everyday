@@ -128,7 +128,7 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
                 {/* Inning header */}
                 <button
                   onClick={() => setExpandedInning(isExpanded ? null : inningKey)}
-                  className="w-full flex items-center gap-2 px-4 py-2 hover:bg-white/5 transition-colors"
+                  className="w-full flex items-center gap-2 px-4 py-2 hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
                 >
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs font-bold text-accent">{inn.inning}회{halfLabel}</span>

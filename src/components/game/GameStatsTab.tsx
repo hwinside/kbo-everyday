@@ -155,7 +155,7 @@ function ResultBadge({ result }: { result: PitcherStat["result"] }) {
 
 /* -- sticky cell shared style -- */
 const stickyBase =
-  "sticky bg-[#0A0A0B] z-[2]";
+  "sticky bg-bg-primary z-[2]";
 
 export default function GameStatsTab({
   stats,

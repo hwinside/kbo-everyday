@@ -22,6 +22,7 @@ import ProfileCard from "@/components/my/ProfileCard";
 import FavoritePlayersCard from "@/components/my/FavoritePlayersCard";
 import NotificationCard from "@/components/my/NotificationCard";
 import MenuSection from "@/components/my/MenuSection";
+import ThemeToggleCard from "@/components/my/ThemeToggleCard";
 import PwaGuideModal from "@/components/my/PwaGuideModal";
 
 export default function MyPage() {
@@ -134,6 +135,11 @@ export default function MyPage() {
       {/* 알림 설정 */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.13 }} className="mt-3">
         <NotificationCard permission={permission} subscription={subscription} subscribe={subscribe} unsubscribe={unsubscribe} onShowPwaGuide={() => setShowPwaGuide(true)} />
+      </motion.div>
+
+      {/* 테마 설정 */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.14 }} className="mt-3">
+        <ThemeToggleCard />
       </motion.div>
 
       {/* Menu items */}

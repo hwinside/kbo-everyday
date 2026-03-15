@@ -50,7 +50,7 @@ export default function GamePredictPage() {
             className={`flex flex-col items-center gap-3 transition-all ${voted === "away" ? "scale-110" : voted === "home" ? "opacity-40" : ""}`}
           >
             <div
-              className={`w-20 h-20 rounded-2xl bg-white/10 flex items-center justify-center p-2 border-2 transition-colors ${voted === "away" ? "border-accent shadow-lg" : "border-transparent"}`}
+              className={`w-20 h-20 rounded-2xl bg-black/8 dark:bg-white/10 flex items-center justify-center p-2 border-2 transition-colors ${voted === "away" ? "border-accent shadow-lg" : "border-transparent"}`}
               style={voted === "away" ? { boxShadow: `0 0 20px ${away.colorPrimary}40` } : {}}
             >
               <Image src={away.logoPath} alt={away.name} width={56} height={56} unoptimized />
@@ -68,7 +68,7 @@ export default function GamePredictPage() {
             className={`flex flex-col items-center gap-3 transition-all ${voted === "home" ? "scale-110" : voted === "away" ? "opacity-40" : ""}`}
           >
             <div
-              className={`w-20 h-20 rounded-2xl bg-white/10 flex items-center justify-center p-2 border-2 transition-colors ${voted === "home" ? "border-accent shadow-lg" : "border-transparent"}`}
+              className={`w-20 h-20 rounded-2xl bg-black/8 dark:bg-white/10 flex items-center justify-center p-2 border-2 transition-colors ${voted === "home" ? "border-accent shadow-lg" : "border-transparent"}`}
               style={voted === "home" ? { boxShadow: `0 0 20px ${home.colorPrimary}40` } : {}}
             >
               <Image src={home.logoPath} alt={home.name} width={56} height={56} unoptimized />

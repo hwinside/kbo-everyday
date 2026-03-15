@@ -181,7 +181,7 @@ export default function ProfilePage() {
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={`flex-1 py-2 rounded-md text-sm font-medium transition-all ${
-              activeTab === tab.id ? "bg-white/10 text-text-primary" : "text-text-tertiary"
+              activeTab === tab.id ? "bg-black/8 dark:bg-white/10 text-text-primary" : "text-text-tertiary"
             }`}
           >
             {tab.label}
@@ -205,11 +205,11 @@ export default function ProfilePage() {
             posts.map(post => (
               <GlassCard
                 key={post.id}
-                className="p-3 cursor-pointer hover:bg-white/5"
+                className="p-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5"
                 onClick={() => router.push(`/community/players/${post.board_id}/posts/${post.id}`)}
               >
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-text-tertiary">
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-black/8 dark:bg-white/10 text-text-tertiary">
                     {post.board_type === "player" ? `⚾ ${Object.entries(PLAYER_PHOTO_MAP).find(([, id]) => id === post.board_id)?.[0] || post.board_id}` : post.board_type === "team" ? `🏟️ ${KBO_TEAMS.find(t => String(t.id) === post.board_id)?.shortName || post.board_id}` : "💬 자유"}
                   </span>
                 </div>

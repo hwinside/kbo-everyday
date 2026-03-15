@@ -115,7 +115,7 @@ export default function ProfileSetupModal({ isOpen }: Props) {
         <motion.div
           initial={{ scale: 0.9, y: 20 }}
           animate={{ scale: 1, y: 0 }}
-          className="w-full max-w-md bg-bg-secondary rounded-2xl border border-white/10 overflow-hidden"
+          className="w-full max-w-md bg-bg-secondary rounded-2xl border border-black/10 dark:border-white/10 overflow-hidden"
         >
           {/* Step 1: Nickname */}
           {step === 1 && (
@@ -129,7 +129,7 @@ export default function ProfileSetupModal({ isOpen }: Props) {
                 onChange={(e) => { setNickname(e.target.value); setError(""); }}
                 placeholder="닉네임 (2~12자)"
                 maxLength={12}
-                className="w-full bg-bg-tertiary border border-white/10 rounded-xl px-4 py-3 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
+                className="w-full bg-bg-tertiary border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
               />
               {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
               <p className="text-xs text-text-tertiary mt-2">한글, 영문, 숫자만 사용 가능</p>
@@ -157,7 +157,7 @@ export default function ProfileSetupModal({ isOpen }: Props) {
                     onClick={() => setSelectedTeam(team.id)}
                     className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${
                       selectedTeam === team.id
-                        ? "border-current bg-white/5"
+                        ? "border-current bg-black/5 dark:bg-white/5"
                         : "border-transparent bg-bg-tertiary/50 hover:bg-bg-tertiary"
                     }`}
                     style={selectedTeam === team.id ? { borderColor: team.colorLight } : {}}

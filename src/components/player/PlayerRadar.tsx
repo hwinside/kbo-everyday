@@ -120,13 +120,13 @@ export default function PlayerRadar({ playerId, position, teamColor }: PlayerRad
       <div className="w-full flex justify-end px-2">
         <button
           onClick={() => setShowInfo(!showInfo)}
-          className="w-6 h-6 rounded-full border border-gray-600 text-gray-400 text-xs flex items-center justify-center hover:bg-white/10 transition"
+          className="w-6 h-6 rounded-full border border-gray-600 text-gray-400 text-xs flex items-center justify-center hover:bg-black/8 dark:hover:bg-white/10 transition"
         >
           i
         </button>
       </div>
       {showInfo && (
-        <div className="w-full bg-white/5 rounded-xl p-3 mb-2 space-y-1.5">
+        <div className="w-full bg-black/5 dark:bg-white/5 rounded-xl p-3 mb-2 space-y-1.5">
           <p className="text-xs text-gray-400 font-medium mb-2">📊 항목별 계산 기준</p>
           {infoItems.map((item) => (
             <div key={item.label} className="flex gap-2 text-xs">
@@ -152,7 +152,7 @@ export default function PlayerRadar({ playerId, position, teamColor }: PlayerRad
                   // TODO(Phase 3): enable ranking navigation after regular season starts (requires /rankings page to be built first)
                   setActiveTrait(activeTrait === i ? null : i);
                 }}
-                className="inline-flex flex-col items-center gap-0.5 px-2.5 py-1 rounded-full text-xs font-medium bg-white/5 border border-white/10 transition-colors hover:bg-white/10">
+                className="inline-flex flex-col items-center gap-0.5 px-2.5 py-1 rounded-full text-xs font-medium bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 transition-colors hover:bg-black/8 dark:hover:bg-white/10">
                 <span className="inline-flex items-center gap-1">
                   <span>{t.emoji}</span>
                   <span className="text-text-primary">{t.label}</span>

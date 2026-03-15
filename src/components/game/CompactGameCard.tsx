@@ -29,7 +29,7 @@ export default function CompactGameCard({ game, isPreseason }: CompactGameCardPr
 
   return (
     <Link href={`/games/${game.id}`}>
-      <div className="glass-card p-4 hover:bg-white/5 transition-colors">
+      <div className="glass-card p-4 hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
         {/* Status */}
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">

@@ -35,7 +35,7 @@ export default function ScoreBar({
       <div className="flex items-center justify-center gap-0">
         {/* Away side */}
         <div className="flex items-center gap-2.5 flex-1 justify-end">
-          <span className="text-lg font-bold text-white">{awayTeam.shortName}</span>
+          <span className="text-lg font-bold text-text-primary">{awayTeam.shortName}</span>
           <TeamLogo team={awayTeam} size={40} />
           <motion.span
             key={`sb-away-${awayScore}`}
@@ -66,7 +66,7 @@ export default function ScoreBar({
             {homeScore}
           </motion.span>
           <TeamLogo team={homeTeam} size={40} />
-          <span className="text-lg font-bold text-white">{homeTeam.shortName}</span>
+          <span className="text-lg font-bold text-text-primary">{homeTeam.shortName}</span>
         </div>
       </div>
     </div>

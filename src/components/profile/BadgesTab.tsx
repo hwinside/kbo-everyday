@@ -37,7 +37,7 @@ export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: Bad
                     whileTap={{ scale: 0.95 }}
                     onClick={() => onSelectBadge(badge)}
                     className={`text-center p-2 rounded-xl transition-all cursor-pointer ${
-                      earned ? "bg-white/5" : "opacity-30"
+                      earned ? "bg-black/5 dark:bg-white/5" : "opacity-30"
                     }`}
                   >
                     <span className={`text-2xl ${earned ? "" : "grayscale"}`}>{badge.icon}</span>
@@ -60,7 +60,7 @@ export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: Bad
               const info = getBadgeInfo(b.badge_id);
               if (!info) return null;
               return (
-                <motion.div key={b.badge_id} className="text-center p-2 rounded-xl bg-white/5">
+                <motion.div key={b.badge_id} className="text-center p-2 rounded-xl bg-black/5 dark:bg-white/5">
                   <span className="text-2xl">{info.icon}</span>
                   <p className="text-[10px] mt-1 font-medium" style={{ color: RARITY_COLORS[info.rarity] }}>
                     {info.name}

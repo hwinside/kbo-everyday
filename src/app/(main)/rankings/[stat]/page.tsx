@@ -256,7 +256,7 @@ function RankingContent() {
                   <GlassCard
                     pressable
                     className={`p-3 flex items-center gap-3 ${
-                      highlightLevel === 3 ? "ring-2 ring-accent bg-white/10" : ""
+                      highlightLevel === 3 ? "ring-2 ring-accent bg-black/8 dark:bg-white/10" : ""
                     }`}
                     style={cardStyle}
                   >
