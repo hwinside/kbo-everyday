@@ -239,9 +239,9 @@ body {
   animation: fadeIn 0.25s ease-out;
 }
 
-/* MY TEAM card — 라이트/다크 모두 팀 컬러 기반 다크 히어로 카드 */
+/* MY TEAM card — 라이트: 미드톤 팀컬러, 다크: 진한 히어로 */
 .myteam-card {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--team-bg, #333) 40%, #1a1a1d) 0%, #1a1a1d 100%);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--team-bg, #333) 25%, #2a2a2f) 0%, #2a2a2f 100%);
   border-top: none;
   color: #F5F5F7;
 }

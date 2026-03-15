@@ -75,8 +75,8 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                 className="relative h-[240px] w-full overflow-hidden"
                 style={{
                   "--news-bg-light": team
-                    ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 12%, #EAEAEF) 0%, #EAEAEF 100%)`
-                    : "linear-gradient(135deg, #E5E5EC 0%, #EAEAEF 100%)",
+                    ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 20%, #D8D8DE) 0%, #D8D8DE 100%)`
+                    : "linear-gradient(135deg, #D0D0D8 0%, #D8D8DE 100%)",
                   "--news-bg-dark": team
                     ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 35%, #1a1a1d) 0%, #1a1a1d 100%)`
                     : "linear-gradient(135deg, #2a2a3d 0%, #1a1a1d 100%)",
@@ -98,7 +98,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                 )}
 
                 {/* 하단 그라데이션 */}
-                <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#EAEAEF] dark:from-[#1a1a1d] to-transparent" />
+                <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#D8D8DE] dark:from-[#1a1a1d] to-transparent" />
 
                 {/* 콘텐츠 */}
                 <div className="absolute inset-x-0 bottom-0 px-4 pb-4">
