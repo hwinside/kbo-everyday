@@ -61,7 +61,7 @@
   --chat-input-bg: rgba(248, 248, 250, 0.95);
   --scorebar-bg: rgba(248, 248, 250, 0.92);
   --myteam-card-end: #F2F2F7;
-  --myteam-tint: color-mix(in srgb, var(--team-color, #FF453A) 15%, transparent);
+  --myteam-tint: color-mix(in srgb, var(--team-color, #FF453A) 8%, white);
 }
 
 /* ===== Dark Mode ===== */
