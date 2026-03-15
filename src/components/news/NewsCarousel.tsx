@@ -75,8 +75,8 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                 className="relative h-[240px] w-full overflow-hidden"
                 style={{
                   background: team
-                    ? `linear-gradient(135deg, ${getTeamBgColor(team)}40 0%, ${getTeamBgColor(team)}15 50%, var(--bg-primary) 100%)`
-                    : "linear-gradient(135deg, rgba(99,102,241,0.3) 0%, rgba(99,102,241,0.1) 50%, var(--bg-primary) 100%)",
+                    ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 35%, #1a1a1d) 0%, #1a1a1d 100%)`
+                    : "linear-gradient(135deg, #2a2a3d 0%, #1a1a1d 100%)",
                 }}
               >
                 {/* 팀 로고 워터마크 */}
@@ -94,7 +94,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                 )}
 
                 {/* 하단 그라데이션 */}
-                <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-bg-primary to-transparent" />
+                <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#1a1a1d] to-transparent" />
 
                 {/* 콘텐츠 */}
                 <div className="absolute inset-x-0 bottom-0 px-4 pb-4">
@@ -103,10 +103,10 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                       {item.label}
                     </span>
                   )}
-                  <h3 className="text-lg font-semibold leading-[26px] text-text-primary line-clamp-3">
+                  <h3 className="text-lg font-semibold leading-[26px] text-white line-clamp-3">
                     {item.title}
                   </h3>
-                  <p className="mt-1 text-xs leading-[18px] text-text-tertiary">
+                  <p className="mt-1 text-xs leading-[18px] text-gray-400">
                     {item.source} · {item.timeAgo}
                   </p>
                 </div>
