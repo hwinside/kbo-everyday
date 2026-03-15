@@ -239,13 +239,18 @@ body {
   animation: fadeIn 0.25s ease-out;
 }
 
-/* MY TEAM card — 라이트: 미드톤 팀컬러, 다크: 진한 히어로 */
+/* MY TEAM card — 라이트: 밝은 카드 + 팀 포인트, 다크: 진한 히어로 */
 .myteam-card {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--team-bg, #333) 18%, #3d3d44) 0%, #3d3d44 100%);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--team-bg, #999) 8%, #FFFFFF) 0%, #FFFFFF 100%);
+  border: 1px solid color-mix(in srgb, var(--team-bg, #999) 20%, transparent);
+  border-top: 3px solid color-mix(in srgb, var(--team-bg, #999) 50%, transparent);
+}
+.dark .myteam-card {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--team-bg, #333) 40%, #1a1a1d) 0%, #1a1a1d 100%);
+  border: 1px solid rgba(255,255,255,0.1);
   border-top: none;
   color: #F5F5F7;
 }
-.myteam-card .text-text-primary { color: #F5F5F7 !important; }
-.myteam-card .text-text-secondary { color: #D1D1D6 !important; }
-.myteam-card .text-text-tertiary { color: #A1A1A6 !important; }
-.myteam-card .text-text-readable { color: #D1D1D6 !important; }
+.dark .myteam-card .text-text-primary { color: #F5F5F7 !important; }
+.dark .myteam-card .text-text-secondary { color: #D1D1D6 !important; }
+.dark .myteam-card .text-text-tertiary { color: #A1A1A6 !important; }

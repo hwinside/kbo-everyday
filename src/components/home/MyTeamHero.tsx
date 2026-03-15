@@ -2,7 +2,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { getTeamBgColor } from "@/lib/constants/teams";
 import { getTeamShortName, getTeamLogo } from "@/lib/utils/team";
-import { getTeamById } from "@/lib/constants/teams";
+
 import Diamond from "@/components/game/Diamond";
 import type { TeamData } from "@/lib/constants/teams";
 
@@ -32,7 +32,7 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
     <div className="mb-3">
       <Link href={`/games/${myTeamGame.id}`}>
         <div
-          className="relative rounded-2xl p-5 overflow-hidden border border-white/10 myteam-card"
+          className="relative rounded-2xl p-5 overflow-hidden myteam-card"
           style={{ ['--team-bg' as string]: getTeamBgColor(myTeam) }}
         >
           {/* Team logo watermark */}
@@ -53,7 +53,7 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
               <div className="w-12 h-12 rounded-full bg-white p-1 flex items-center justify-center">
                 <Image src={getTeamLogo(myTeamGame.awayTeamId)} alt="" width={32} height={32} unoptimized className="object-contain" />
               </div>
-              <span className="text-sm font-bold" style={{ color: getTeamById(myTeamGame.awayTeamId)?.colorLight ?? '#fff' }}>{getTeamShortName(myTeamGame.awayTeamId)}</span>
+              <span className="text-sm font-bold text-accent">{getTeamShortName(myTeamGame.awayTeamId)}</span>
             </div>
             <div className="text-center">
               <div className="flex items-center gap-3">
@@ -73,7 +73,7 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
               <div className="w-12 h-12 rounded-full bg-white p-1 flex items-center justify-center">
                 <Image src={getTeamLogo(myTeamGame.homeTeamId)} alt="" width={32} height={32} unoptimized className="object-contain" />
               </div>
-              <span className="text-sm font-bold" style={{ color: getTeamById(myTeamGame.homeTeamId)?.colorLight ?? '#fff' }}>{getTeamShortName(myTeamGame.homeTeamId)}</span>
+              <span className="text-sm font-bold text-accent">{getTeamShortName(myTeamGame.homeTeamId)}</span>
             </div>
           </div>
 
@@ -90,7 +90,7 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
                   runner1b={myTeamGame.runner1b}
                   runner2b={myTeamGame.runner2b}
                   runner3b={myTeamGame.runner3b}
-                  teamColor={myTeamGame.isTop ? (getTeamById(myTeamGame.awayTeamId)?.colorLight ?? '#fff') : (getTeamById(myTeamGame.homeTeamId)?.colorLight ?? '#fff')}
+                  teamColor="var(--accent)"
                 />
               </div>
               {(myTeamGame.currentPitcher || myTeamGame.currentBatter) && (
