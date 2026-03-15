@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { type TeamData, getTeamBarColor } from "@/lib/constants/teams";
+import { type TeamData } from "@/lib/constants/teams";
 import type {
   GameStats,
   BatterStat,
@@ -207,10 +207,9 @@ export default function GameStatsTab({
     return items;
   }, [stats]);
 
-  // 다크모드에서 바 가시성: colorLight가 항상 다크 배경에서 잘 보임
-  // 다크모드에서 어두운 팀 컬러가 안 보이는 문제 → luminance 기반 선택
-  const awayBarColor = getTeamBarColor(awayTeam);
-  const homeBarColor = getTeamBarColor(homeTeam);
+  // 고정 정보색 2색 — 팀컬러와 겹치지 않는 Away/Home 구분용
+  const awayBarColor = "#38BDF8"; // cyan
+  const homeBarColor = "#F59E0B"; // amber
 
   return (
     <div className="px-5 py-4 space-y-5">
@@ -219,11 +218,11 @@ export default function GameStatsTab({
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full" style={{ backgroundColor: awayBarColor }} />
-            <span className="text-xs font-bold" style={{ color: awayTeam.colorLight }}>{awayTeam.shortName}</span>
+            <span className="text-xs font-bold" style={{ color: awayBarColor }}>{awayTeam.shortName}</span>
           </div>
           <span className="text-[10px] text-text-tertiary font-semibold">팀 비교</span>
           <div className="flex items-center gap-2">
-            <span className="text-xs font-bold" style={{ color: homeTeam.colorLight }}>{homeTeam.shortName}</span>
+            <span className="text-xs font-bold" style={{ color: homeBarColor }}>{homeTeam.shortName}</span>
             <div className="w-3 h-3 rounded-full" style={{ backgroundColor: homeBarColor }} />
           </div>
         </div>
