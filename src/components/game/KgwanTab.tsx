@@ -5,12 +5,8 @@ import { motion } from "framer-motion";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { clsx } from "clsx";
 import Image from "next/image";
-import { TrendingUp, Zap, Swords } from "lucide-react";
 import { getTeamById } from "@/lib/constants/teams";
-import { generateAnalysis } from "@/components/game/AIAnalysis";
 import GameChat from "@/components/game/GameChat";
-import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { useRouter } from "next/navigation";
 import type { GameEvent } from "@/types/game-events";
 import type { GamePlay } from "@/lib/types";
@@ -36,8 +32,6 @@ function ScheduledView({ awayTeamId, homeTeamId, starterNames, lineupConfirmed }
   starterNames?: { away: string; home: string };
   lineupConfirmed?: boolean;
 }) {
-  const router = useRouter();
-  const analysis = useMemo(() => generateAnalysis(awayTeamId, homeTeamId, starterNames), [awayTeamId, homeTeamId, starterNames]);
   const awayTeam = getTeamById(awayTeamId)!;
   const homeTeam = getTeamById(homeTeamId)!;
 
@@ -65,134 +59,16 @@ function ScheduledView({ awayTeamId, homeTeamId, starterNames, lineupConfirmed }
         </div>
       </div>
 
-      {/* AI 분석: 라인업 확정 후에만 노출 */}
-      {!lineupConfirmed ? (
-        <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
-          <span className="text-yellow-400 text-sm">⚠️</span>
-          <span className="text-sm text-yellow-400/90">
-            라인업이 확정되면 AI 경기 예측을 보실 수 있습니다.
-          </span>
+      {/* AI 경기 예측 — 실데이터 기반 생성 구현 전까지 비노출 */}
+      <div className="glass-card p-4 text-center">
+        <div className="flex items-center justify-center gap-2 mb-1">
+          <span className="text-base">🤖</span>
+          <span className="text-sm font-semibold text-text-primary">AI 경기 예측</span>
         </div>
-      ) : (
-      <>
-      {/* Win probability bar */}
-      <div className="glass-card p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-full bg-white p-0.5 flex items-center justify-center">
-              <Image src={analysis.away.team.logoPath} alt="" width={18} height={18} unoptimized className="object-contain" />
-            </div>
-            <span className="text-sm font-bold" style={{ color: analysis.away.team.colorLight }}>{analysis.away.team.shortName}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-bold" style={{ color: analysis.home.team.colorLight }}>{analysis.home.team.shortName}</span>
-            <div className="w-6 h-6 rounded-full bg-white p-0.5 flex items-center justify-center">
-              <Image src={analysis.home.team.logoPath} alt="" width={18} height={18} unoptimized className="object-contain" />
-            </div>
-          </div>
-        </div>
-        <div className="flex h-8 rounded-xl overflow-hidden">
-          <motion.div
-            initial={{ width: "50%" }}
-            animate={{ width: `${analysis.away.winPct}%` }}
-            transition={{ duration: 1, ease: "easeOut" }}
-            className="flex items-center justify-center text-white text-xs font-bold"
-            style={{ backgroundColor: analysis.away.team.colorPrimary }}
-          >
-            {analysis.away.winPct}%
-          </motion.div>
-          <motion.div
-            initial={{ width: "50%" }}
-            animate={{ width: `${analysis.home.winPct}%` }}
-            transition={{ duration: 1, ease: "easeOut" }}
-            className="flex items-center justify-center text-white text-xs font-bold"
-            style={{ backgroundColor: analysis.home.team.colorPrimary }}
-          >
-            {analysis.home.winPct}%
-          </motion.div>
-        </div>
-        <div className="mt-1.5 text-center">
-          <span className="text-[10px] text-text-tertiary">AI 신뢰도 {analysis.confidence}%</span>
-        </div>
+        <p className="text-xs text-text-tertiary">
+          정규시즌 개막과 함께 실제 라인업 기반 AI 분석을 제공할 예정입니다.
+        </p>
       </div>
-
-      {/* Strengths / Weaknesses */}
-      <div className="grid grid-cols-2 gap-3">
-        {[analysis.away, analysis.home].map((side) => (
-          <div key={side.team.id} className="glass-card p-3 space-y-2">
-            <div className="flex items-center gap-1.5 mb-1">
-              <div className="w-5 h-5 rounded-full bg-white p-0.5 flex items-center justify-center">
-                <Image src={side.team.logoPath} alt="" width={14} height={14} unoptimized className="object-contain" />
-              </div>
-              <span className="text-xs font-bold" style={{ color: side.team.colorLight }}>{side.team.shortName}</span>
-            </div>
-            <div>
-              <div className="flex items-center gap-1 mb-1">
-                <TrendingUp size={10} className="text-green-400" />
-                <span className="text-[10px] font-semibold text-green-400">강점</span>
-              </div>
-              {side.strengths.map((s, i) => (
-                <p key={i} className="text-[11px] text-text-secondary ml-3">• {s}</p>
-              ))}
-            </div>
-            <div>
-              <div className="flex items-center gap-1 mb-1">
-                <Zap size={10} className="text-red-400" />
-                <span className="text-[10px] font-semibold text-red-400">약점</span>
-              </div>
-              {side.weaknesses.map((w, i) => (
-                <p key={i} className="text-[11px] text-text-secondary ml-3">• {w}</p>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Key matchup */}
-      <div className="glass-card p-4">
-        <div className="flex items-center gap-2 mb-2">
-          <Swords size={14} className="text-accent" />
-          <span className="text-sm font-bold text-text-primary">핵심 포인트</span>
-        </div>
-        <p className="text-xs text-text-secondary leading-relaxed whitespace-pre-line">{analysis.keyMatchup}</p>
-      </div>
-
-      {/* Key Players */}
-      <div className="glass-card p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-sm">⭐</span>
-          <span className="text-sm font-bold text-text-primary">키플레이어</span>
-        </div>
-        {[
-          { label: analysis.away.team.shortName, color: analysis.away.team.colorLight, players: analysis.awayKeyPlayers, teamId: awayTeamId },
-          { label: analysis.home.team.shortName, color: analysis.home.team.colorLight, players: analysis.homeKeyPlayers, teamId: homeTeamId },
-        ].map((side) => (
-          <div key={side.label} className="mb-3 last:mb-0">
-            <span className="text-[10px] font-bold mb-1.5 block" style={{ color: side.color }}>{side.label}</span>
-            <div className="space-y-2">
-              {side.players.map((p) => (
-                <div
-                  key={p.playerId}
-                  onClick={() => router.push(`/community/players/${p.playerId}`)}
-                  className="flex items-start gap-2.5 p-1.5 rounded-xl hover:bg-white/5 cursor-pointer transition-colors"
-                >
-                  <PlayerAvatar name={p.name} teamId={side.teamId} photoUrl={getPlayerPhotoUrl(p.name)} size={40} />
-                  <div className="flex-1 min-w-0">
-                    <span className="text-sm font-bold text-text-primary">{p.name}</span>
-                    <p className="text-[11px] text-text-secondary mt-0.5 leading-relaxed">{p.reason}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <p className="text-center text-[10px] text-text-tertiary pb-2">
-        ※ AI 분석은 참고용이며 실제 경기 결과와 다를 수 있습니다
-      </p>
-      </>
-      )}
     </div>
   );
 }
