@@ -390,7 +390,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
     return { headline, gameFlow: undefined as { early: string; mid: string; late: string } | undefined, turningPoint, mvpText, pitcherHighlight, insight };
   }, [hasRealBoxScore, boxScore, homeTeam, awayTeam]);
 
-  // LLM 우선, fallback 사용
+  // LLM 요약만 사용 (fallback/숏버전 폐기)
   const summary = llmSummary
     ? {
         headline: llmSummary.headline,
@@ -425,7 +425,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
             : null,
         insight: llmSummary.insight,
       }
-    : fallbackSummary ? { ...fallbackSummary, mvpBatterLabel: fallbackSummary.mvpText, mvpBatterReason: null as string | null, pitcherLabel: fallbackSummary.pitcherHighlight, pitcherReason: null as string | null } : null;
+    : null;
 
   return (
     <div className="flex flex-col h-full">
@@ -436,12 +436,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
             {/* AI 라벨 */}
             <div className="flex items-center gap-1.5">
               <span className="text-xs">🤖</span>
-              <span className="text-[11px] font-semibold text-accent">
-                {llmSummary ? "AI 경기 요약" : "경기 요약"}
-              </span>
-              {llmLoading && !summary && (
-                <div className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin" />
-              )}
+              <span className="text-[11px] font-semibold text-accent">AI 경기 요약</span>
             </div>
 
             {/* 헤드라인 */}
@@ -524,8 +519,23 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
             </p>
           </div>
         ) : (
-          <div className="glass-card p-4 text-center text-text-tertiary text-sm">
-            경기 데이터 집계 중...
+          <div className="glass-card p-5 text-center">
+            {llmLoading ? (
+              <div className="flex flex-col items-center gap-3 py-4">
+                <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                <div>
+                  <p className="text-sm font-medium text-text-primary">🤖 AI 경기 요약 생성 중...</p>
+                  <p className="text-xs text-text-tertiary mt-1">BoxScore 기반으로 분석하고 있습니다</p>
+                </div>
+              </div>
+            ) : hasRealBoxScore ? (
+              <div className="py-4">
+                <p className="text-sm text-text-tertiary">요약을 불러올 수 없습니다.</p>
+                <p className="text-xs text-text-tertiary mt-1">잠시 후 다시 시도해 주세요.</p>
+              </div>
+            ) : (
+              <p className="text-sm text-text-tertiary py-4">경기 데이터 집계 중...</p>
+            )}
           </div>
         )}
       </div>
