@@ -100,7 +100,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         </div>
 
         <h1 className="text-lg font-bold text-text-primary mb-3">{post.title}</h1>
-        <p className="text-sm text-text-secondary whitespace-pre-line leading-relaxed">{stripUrls(post.content)}</p>
+        <p className="readable-body whitespace-pre-line">{stripUrls(post.content)}</p>
 
         {/* Link previews */}
         <LinkPreview text={post.content} maxPreviews={3} />
@@ -165,7 +165,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                       </span>
                       <span className="text-xs text-text-tertiary ml-auto flex-shrink-0">{timeAgo(c.created_at)}</span>
                     </div>
-                    <p className="text-sm text-text-secondary mt-0.5 break-words">{c.content}</p>
+                    <p className="readable-body mt-0.5 break-words">{c.content}</p>
                   </div>
                 </div>
               );

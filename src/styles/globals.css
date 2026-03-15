@@ -9,8 +9,9 @@
   --bg-glass: rgba(255, 255, 255, 0.05);
 
   --text-primary: #F5F5F7;
-  --text-secondary: #A1A1A6;
+  --text-secondary: #BCBCC1;
   --text-tertiary: #636366;
+  --text-readable: #D1D1D6;
 
   --accent: #FF453A;
   --accent-gold: #FFD60A;
@@ -93,6 +94,12 @@ body {
   font-family: var(--font-pretendard);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+.readable-body {
+  font-size: 16px;
+  line-height: 1.78;
+  color: var(--text-readable);
 }
 
 /* ===== Glass Card ===== */

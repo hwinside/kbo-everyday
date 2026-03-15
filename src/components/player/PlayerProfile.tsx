@@ -91,7 +91,7 @@ export default function PlayerProfile({ playerName, teamColor, kboId }: Props) {
 
       {/* Content */}
       <div className="bg-bg-tertiary rounded-xl p-4">
-        <p className="text-sm text-text-secondary whitespace-pre-line leading-relaxed">
+        <p className="readable-body whitespace-pre-line">
           {renderText(content)}
         </p>
       </div>

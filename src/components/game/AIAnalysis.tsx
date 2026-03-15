@@ -233,7 +233,7 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId }: 
                         <span className="text-xs font-semibold text-green-400">강점</span>
                       </div>
                       {side.strengths.map((s, i) => (
-                        <p key={i} className="text-sm text-text-secondary ml-4">• {s}</p>
+                        <p key={i} className="readable-body ml-4">• {s}</p>
                       ))}
                     </div>
                     <div>
@@ -242,7 +242,7 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId }: 
                         <span className="text-xs font-semibold text-red-400">약점</span>
                       </div>
                       {side.weaknesses.map((w, i) => (
-                        <p key={i} className="text-sm text-text-secondary ml-4">• {w}</p>
+                        <p key={i} className="readable-body ml-4">• {w}</p>
                       ))}
                     </div>
                   </div>
@@ -255,7 +255,7 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId }: 
                   <Swords size={16} className="text-accent" />
                   <span className="text-sm font-bold text-text-primary">핵심 포인트</span>
                 </div>
-                <p className="text-[15px] text-text-secondary leading-relaxed whitespace-pre-line">{analysis.keyMatchup}</p>
+                <p className="readable-body whitespace-pre-line">{analysis.keyMatchup}</p>
               </div>
 
               {/* Prediction */}
@@ -295,7 +295,7 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId }: 
                           <PlayerAvatar name={p.name} teamId={side.teamId} photoUrl={getPlayerPhotoUrl(p.name)} size={48} />
                           <div className="flex-1 min-w-0">
                             <span className="text-sm font-bold text-text-primary">{p.name}</span>
-                            <p className="text-sm text-text-secondary mt-0.5 leading-relaxed">{p.reason}</p>
+                            <p className="readable-body mt-0.5">{p.reason}</p>
                           </div>
                         </div>
                       ))}

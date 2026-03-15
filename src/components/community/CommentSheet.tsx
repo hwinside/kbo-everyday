@@ -264,7 +264,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                             {timeAgo(comment.created_at)}
                           </span>
                         </div>
-                        <p className="text-sm text-text-secondary mt-0.5 break-words">
+                        <p className="readable-body mt-0.5 break-words">
                           {comment.content}
                         </p>
                       </div>

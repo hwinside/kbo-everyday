@@ -336,7 +336,7 @@ export default function StadiumDetailPage() {
                       {review.timeAgo}
                     </span>
                   </div>
-                  <p className="text-sm text-text-secondary leading-relaxed">
+                  <p className="readable-body">
                     {review.content}
                   </p>
                   <div className="mt-2 flex items-center gap-1 text-xs text-text-tertiary">

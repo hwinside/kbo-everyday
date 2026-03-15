@@ -184,7 +184,7 @@ export default function LearnPage() {
               <h2 className="text-lg font-bold text-text-primary mb-3">
                 {chapter.lessons[lessonIndex].title}
               </h2>
-              <p className="text-sm text-text-secondary whitespace-pre-line leading-relaxed mb-4">
+              <p className="readable-body whitespace-pre-line mb-4">
                 {chapter.lessons[lessonIndex].content.split(/(https?:\/\/[^\s]+)/g).map((part, i) =>
                   part.match(/^https?:\/\//) ? (
                     <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="text-accent underline break-all">

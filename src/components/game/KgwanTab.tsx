@@ -456,7 +456,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
                 ].map((phase) => (
                   <div key={phase.label}>
                     <span className="text-[10px] font-bold text-accent/70">{phase.label}</span>
-                    <p className="text-[15px] text-text-secondary leading-relaxed mt-0.5">{phase.text}</p>
+                    <p className="readable-body mt-0.5">{phase.text}</p>
                   </div>
                 ))}
               </div>
@@ -469,7 +469,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
                   <span className="text-xs">🔑</span>
                   <span className="text-[11px] font-semibold text-text-tertiary">승부처</span>
                 </div>
-                <p className="text-[15px] text-text-secondary leading-relaxed">{summary.turningPoint}</p>
+                <p className="readable-body">{summary.turningPoint}</p>
               </div>
             )}
 
@@ -480,10 +480,10 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
                   <span className="text-xs">⭐</span>
                   <span className="text-[11px] font-semibold text-text-tertiary">오늘의 타자</span>
                 </div>
-                <p className="text-sm text-text-primary">
-                  <span className="font-semibold">{summary.mvpBatterLabel}</span>
+                <p className="readable-body">
+                  <span className="font-semibold text-text-primary">{summary.mvpBatterLabel}</span>
                   {summary.mvpBatterReason && (
-                    <span className="font-normal text-text-secondary"> — {summary.mvpBatterReason}</span>
+                    <span className="font-normal" style={{ color: "var(--text-readable)" }}> — {summary.mvpBatterReason}</span>
                   )}
                 </p>
               </div>
@@ -496,10 +496,10 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
                   <span className="text-xs">🔥</span>
                   <span className="text-[11px] font-semibold text-text-tertiary">오늘의 투수</span>
                 </div>
-                <p className="text-sm text-text-primary">
-                  <span className="font-semibold">{summary.pitcherLabel}</span>
+                <p className="readable-body">
+                  <span className="font-semibold text-text-primary">{summary.pitcherLabel}</span>
                   {summary.pitcherReason && (
-                    <span className="font-normal text-text-secondary"> — {summary.pitcherReason}</span>
+                    <span className="font-normal" style={{ color: "var(--text-readable)" }}> — {summary.pitcherReason}</span>
                   )}
                 </p>
               </div>
@@ -512,7 +512,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
                   <span className="text-xs">📊</span>
                   <span className="text-[11px] font-semibold text-text-tertiary">경기 분석</span>
                 </div>
-                <p className="text-[15px] text-text-secondary leading-relaxed">{summary.insight}</p>
+                <p className="readable-body">{summary.insight}</p>
               </div>
             )}
 
