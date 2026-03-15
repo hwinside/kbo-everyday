@@ -62,7 +62,7 @@ function PlayerMarker({
   const content = (
     <>
       <div
-        className="w-7 h-7 rounded-full overflow-hidden flex items-center justify-center bg-[#1a1a2e]"
+        className="w-7 h-7 rounded-full overflow-hidden flex items-center justify-center bg-bg-tertiary"
         style={{ border: `2px solid ${borderColor}` }}
       >
         {photoUrl ? (
@@ -160,7 +160,7 @@ export default function FieldViewV2({
       : "bottom-[8%] left-[calc(50%+24px)]"; // 좌타석 (1루쪽, default)
 
   return (
-    <div className="mx-3 mb-2 bg-[#12121e] rounded-xl p-2 overflow-hidden">
+    <div className="mx-3 mb-2 bg-bg-tertiary rounded-xl p-2 overflow-hidden">
       <div
         className="relative w-full overflow-hidden rounded-lg max-w-[480px] mx-auto"
         style={{ aspectRatio: "1 / 0.55" }}
@@ -261,7 +261,7 @@ export default function FieldViewV2({
                   <span
                     key={`b-${i}`}
                     className={`inline-block w-[7px] h-[7px] rounded-full ${
-                      i < balls ? "bg-[#4caf50]" : "bg-[#333]"
+                      i < balls ? "bg-[#4caf50]" : "bg-gray-300 dark:bg-[#333]"
                     }`}
                   />
                 ))}
@@ -275,7 +275,7 @@ export default function FieldViewV2({
                   <span
                     key={`s-${i}`}
                     className={`inline-block w-[7px] h-[7px] rounded-full ${
-                      i < strikes ? "bg-[#ffc107]" : "bg-[#333]"
+                      i < strikes ? "bg-[#ffc107]" : "bg-gray-300 dark:bg-[#333]"
                     }`}
                   />
                 ))}
@@ -289,7 +289,7 @@ export default function FieldViewV2({
                   <span
                     key={`o-${i}`}
                     className={`inline-block w-[7px] h-[7px] rounded-full ${
-                      i < outs ? "bg-[#e53935]" : "bg-[#333]"
+                      i < outs ? "bg-[#e53935]" : "bg-gray-300 dark:bg-[#333]"
                     }`}
                   />
                 ))}

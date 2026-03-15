@@ -60,7 +60,7 @@ function PlayerPhoto({ name, type }: { name: string; type: "pitcher" | "batter" 
 
   return (
     <div
-      className="w-[38px] h-[38px] rounded-full overflow-hidden flex items-center justify-center bg-[#2a2a3e] flex-shrink-0"
+      className="w-[38px] h-[38px] rounded-full overflow-hidden flex items-center justify-center bg-bg-tertiary flex-shrink-0"
       style={{ border: `2px solid ${borderColor}` }}
     >
       {photoUrl ? (
@@ -93,7 +93,7 @@ export default function MatchupCard({
   const resolvedAvg = batterAvg ?? (currentBatter ? lookupBatterAvg(currentBatter) : null);
 
   return (
-    <div className="flex justify-between items-center px-3.5 py-2.5 mx-3 mb-2.5 bg-[#12121e] rounded-[10px]">
+    <div className="flex justify-between items-center px-3.5 py-2.5 mx-3 mb-2.5 bg-bg-tertiary rounded-[10px]">
       {/* Pitcher side */}
       {currentPitcher && (
         <div className="flex items-center gap-2">

@@ -111,7 +111,7 @@ export default function PWAInstallBanner() {
     <>
       {/* 인라인 슬림 배너 (non-sticky, 홈 전용) */}
       <div className="mx-auto max-w-lg px-5 mb-3">
-        <div className="bg-[rgba(30,30,35,0.95)] backdrop-blur-xl border border-border rounded-2xl px-4 py-2.5 flex items-center gap-3">
+        <div className="bg-[rgba(240,240,242,0.95)] dark:bg-[rgba(30,30,35,0.95)] backdrop-blur-xl border border-border rounded-2xl px-4 py-2.5 flex items-center gap-3">
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-text-primary truncate">{isInAppBrowser ? "🌐 브라우저에서 열기" : isNonSafariiOS ? "🧭 Safari에서 열기" : "📲 홈 화면에 추가"}</p>
             <p className="text-xs leading-[18px] text-text-tertiary truncate">{isInAppBrowser ? "외부 브라우저에서 앱을 설치할 수 있어요" : isNonSafariiOS ? "Safari에서만 앱을 설치할 수 있어요" : "앱처럼 빠르게 접속할 수 있어요"}</p>

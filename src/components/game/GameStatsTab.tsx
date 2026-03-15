@@ -302,7 +302,7 @@ export default function GameStatsTab({
 
         <div className="overflow-x-auto max-h-[45vh] relative">
           <table className="w-max min-w-full text-sm border-collapse">
-            <thead className="sticky top-0 z-[3] bg-[#141416]">
+            <thead className="sticky top-0 z-[3] bg-bg-secondary">
               <tr className="text-text-tertiary border-b border-border">
                 {BATTER_COLUMNS.map((col) => (
                   <th
@@ -431,7 +431,7 @@ export default function GameStatsTab({
 
         <div className="overflow-x-auto max-h-[45vh] relative">
           <table className="w-max min-w-full text-sm border-collapse">
-            <thead className="sticky top-0 z-[3] bg-[#141416]">
+            <thead className="sticky top-0 z-[3] bg-bg-secondary">
               <tr className="text-text-tertiary border-b border-border">
                 {PITCHER_COLUMNS.map((col) => (
                   <th
