@@ -167,7 +167,7 @@ export default function GamesPage() {
               <div className="space-y-2">
                 {liveGames.map(g => (
                   <motion.div key={g.id} variants={item}>
-                    <CompactGameCard game={g} isPreseason={isPreseason} />
+                    <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} />
                   </motion.div>
                 ))}
               </div>
@@ -180,7 +180,7 @@ export default function GamesPage() {
               <div className="space-y-2">
                 {finalGames.map(g => (
                   <motion.div key={g.id} variants={item}>
-                    <CompactGameCard game={g} isPreseason={isPreseason} />
+                    <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} />
                   </motion.div>
                 ))}
               </div>
@@ -193,7 +193,7 @@ export default function GamesPage() {
               <div className="space-y-2">
                 {scheduledGames.map(g => (
                   <motion.div key={g.id} variants={item}>
-                    <CompactGameCard game={g} isPreseason={isPreseason} />
+                    <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} />
                   </motion.div>
                 ))}
               </div>

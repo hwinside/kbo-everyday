@@ -43,7 +43,7 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
             <div className="w-7 h-7 rounded-full bg-white p-0.5 flex items-center justify-center">
               <Image src={myTeam.logoPath} alt="" width={20} height={20} unoptimized className="object-contain" />
             </div>
-            <span className="text-xs leading-[18px] font-semibold tracking-wide" style={{ color: myTeam.colorLight }}>MY TEAM</span>
+            <span className="text-xs leading-[18px] font-semibold tracking-wide text-accent">MY TEAM</span>
           </div>
 
           {/* Score */}

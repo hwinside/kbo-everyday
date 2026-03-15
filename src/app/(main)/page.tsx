@@ -153,7 +153,7 @@ export default function HomePage() {
       </div>
 
       <LiveGameBanner excludeGameId={myTeamGameBase?.id} />
-      <TodayGamesSection todayGames={todayGames} isPreseason={isPreseason} />
+      <TodayGamesSection todayGames={todayGames} isPreseason={isPreseason} myTeamId={myTeamId} />
 
       {/* 퀵액션 버튼 */}
       <motion.div variants={item} className="flex gap-3 mb-6">

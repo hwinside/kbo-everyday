@@ -28,7 +28,7 @@ const item = {
   show: { opacity: 1, y: 0, transition: { duration: 0.35 } },
 };
 
-export default function TodayGamesSection({ todayGames, isPreseason }: { todayGames: HomeGame[]; isPreseason: boolean }) {
+export default function TodayGamesSection({ todayGames, isPreseason, myTeamId }: { todayGames: HomeGame[]; isPreseason: boolean; myTeamId?: number | null }) {
   const daysToPreseason = useMemo(() => daysFromKSTToday(PRESEASON_START_STR), []);
   const daysToRegular = useMemo(() => daysFromKSTToday(REGULAR_SEASON_START_STR), []);
   return (
@@ -36,9 +36,11 @@ export default function TodayGamesSection({ todayGames, isPreseason }: { todayGa
       <SectionHeader title={isPreseason ? "오늘의 시범경기" : "오늘의 경기"} href="/games" icon="⚾" />
       {todayGames.length > 0 && !todayGames[0]?.id?.startsWith("placeholder") ? (
         <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto hide-scrollbar -mx-5 px-5">
-          {todayGames.map((game) => (
+          {todayGames.map((game) => {
+            const isMyGame = myTeamId != null && (game.homeTeamId === myTeamId || game.awayTeamId === myTeamId);
+            return (
             <Link key={game.id} href={`/games/${game.id}`}>
-              <GlassCard pressable className="w-[220px] h-[190px] flex-shrink-0 snap-start p-5 flex flex-col justify-between">
+              <GlassCard pressable className={`w-[220px] h-[190px] flex-shrink-0 snap-start p-5 flex flex-col justify-between ${isMyGame ? "ring-2 ring-accent/40" : ""}`}>
                 <StatusBadge status={game.status} inning={game.inning} />
                 <div className="flex items-center justify-between flex-1">
                   <div className="flex flex-col items-center gap-1 flex-1">
@@ -66,7 +68,8 @@ export default function TodayGamesSection({ todayGames, isPreseason }: { todayGa
                 </p>
               </GlassCard>
             </Link>
-          ))}
+          );
+          })}
         </div>
       ) : (
         <GlassCard className="p-6 text-center">
