@@ -58,6 +58,7 @@
   --radius-control: 9999px;
 
   --focus-ring: rgba(255, 69, 58, 0.35);
+  --chat-input-bg: rgba(248, 248, 250, 0.95);
 }
 
 /* ===== Dark Mode ===== */
@@ -96,6 +97,7 @@
   --control-bg: rgba(255, 255, 255, 0.04);
 
   --focus-ring: rgba(255, 69, 58, 0.35);
+  --chat-input-bg: rgba(10, 10, 15, 0.95);
 }
 
 @theme inline {

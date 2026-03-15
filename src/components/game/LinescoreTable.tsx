@@ -97,14 +97,14 @@ export default function LinescoreTable({
                   {n}
                 </th>
               ))}
-              <th className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">R</th>
-              <th className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">H</th>
-              <th className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">E</th>
+              <th className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">R</th>
+              <th className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">H</th>
+              <th className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">E</th>
             </tr>
           </thead>
           <tbody>
             {/* Away */}
-            <tr className="border-b border-[#1a1a2e]">
+            <tr className="border-b border-border">
               <td className="text-left pl-1 py-1 font-semibold text-xs" style={{ color: awayTeam.colorPrimary }}>
                 {awayTeam.shortName}
               </td>
@@ -127,12 +127,12 @@ export default function LinescoreTable({
                   </td>
                 );
               })}
-              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{resolvedAwayScore}</td>
-              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{resolvedAwayHits}</td>
-              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{resolvedAwayErrors}</td>
+              <td className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">{resolvedAwayScore}</td>
+              <td className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">{resolvedAwayHits}</td>
+              <td className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">{resolvedAwayErrors}</td>
             </tr>
             {/* Home */}
-            <tr className="border-b border-[#1a1a2e]">
+            <tr className="border-b border-border">
               <td className="text-left pl-1 py-1 font-semibold text-xs" style={{ color: homeTeam.colorLight || homeTeam.colorPrimary }}>
                 {homeTeam.shortName}
               </td>
@@ -155,9 +155,9 @@ export default function LinescoreTable({
                   </td>
                 );
               })}
-              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{resolvedHomeScore}</td>
-              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{resolvedHomeHits}</td>
-              <td className="font-bold text-white border-l border-[#333] px-1.5 py-1 text-center">{resolvedHomeErrors}</td>
+              <td className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">{resolvedHomeScore}</td>
+              <td className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">{resolvedHomeHits}</td>
+              <td className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">{resolvedHomeErrors}</td>
             </tr>
           </tbody>
         </table>
