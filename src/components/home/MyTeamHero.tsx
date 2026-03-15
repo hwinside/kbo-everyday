@@ -36,15 +36,15 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
           style={{ ['--team-bg' as string]: getTeamBgColor(myTeam) }}
         >
           {/* Team logo watermark */}
-          <div className="absolute right-3 top-3 opacity-15">
-            <Image src={myTeam.logoPath} alt="" width={72} height={72} unoptimized className="object-contain" />
+          <div className="absolute right-3 top-3 opacity-[0.08] dark:opacity-15">
+            <Image src={myTeam.logoPath} alt="" width={80} height={80} unoptimized className="object-contain" />
           </div>
 
           <div className="flex items-center gap-2 mb-3">
-            <div className="w-7 h-7 rounded-full bg-white p-0.5 flex items-center justify-center">
-              <Image src={myTeam.logoPath} alt="" width={20} height={20} unoptimized className="object-contain" />
+            <div className="w-8 h-8 rounded-full bg-bg-tertiary dark:bg-white p-0.5 flex items-center justify-center">
+              <Image src={myTeam.logoPath} alt="" width={22} height={22} unoptimized className="object-contain" />
             </div>
-            <span className="text-xs leading-[18px] font-semibold tracking-wide text-accent">MY TEAM</span>
+            <span className="text-sm leading-[20px] font-bold tracking-wide text-accent">MY TEAM</span>
           </div>
 
           {/* Score */}
