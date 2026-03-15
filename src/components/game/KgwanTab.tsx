@@ -506,13 +506,15 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
             )}
 
             {/* 경기 분석 */}
-            <div>
-              <div className="flex items-center gap-1.5 mb-1">
-                <span className="text-xs">📊</span>
-                <span className="text-[11px] font-semibold text-text-tertiary">경기 분석</span>
+            {summary.insight && (
+              <div>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="text-xs">📊</span>
+                  <span className="text-[11px] font-semibold text-text-tertiary">경기 분석</span>
+                </div>
+                <p className="text-sm text-text-secondary leading-relaxed">{summary.insight}</p>
               </div>
-              <p className="text-sm text-text-secondary leading-relaxed">{summary.insight}</p>
-            </div>
+            )}
 
             <p className="text-center text-[10px] text-text-tertiary pt-1 border-t border-border/30">
               박스스코어 기반 자동 생성 · 실제와 다를 수 있습니다
