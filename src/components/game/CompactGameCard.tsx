@@ -51,8 +51,8 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
         {/* Away team row */}
         <div className={`flex items-center justify-between py-1.5 ${awayWin ? "" : isFinal ? "opacity-50" : ""}`}>
           <div className="flex items-center gap-3">
-            <div className="w-7 h-7 rounded-full bg-white p-0.5 flex items-center justify-center">
-              <Image src={away.logoPath} alt="" width={20} height={20} unoptimized className="object-contain" />
+            <div className="w-9 h-9 rounded-full bg-gray-100 dark:bg-white p-1 flex items-center justify-center">
+              <Image src={away.logoPath} alt="" width={24} height={24} unoptimized className="object-contain" />
             </div>
             <span className={`text-sm font-semibold ${awayWin ? "text-text-primary" : "text-text-secondary"}`}>
               {away.shortName}
@@ -66,8 +66,8 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
         {/* Home team row */}
         <div className={`flex items-center justify-between py-1.5 ${homeWin ? "" : isFinal ? "opacity-50" : ""}`}>
           <div className="flex items-center gap-3">
-            <div className="w-7 h-7 rounded-full bg-white p-0.5 flex items-center justify-center">
-              <Image src={home.logoPath} alt="" width={20} height={20} unoptimized className="object-contain" />
+            <div className="w-9 h-9 rounded-full bg-gray-100 dark:bg-white p-1 flex items-center justify-center">
+              <Image src={home.logoPath} alt="" width={24} height={24} unoptimized className="object-contain" />
             </div>
             <span className={`text-sm font-semibold ${homeWin ? "text-text-primary" : "text-text-secondary"}`}>
               {home.shortName}
