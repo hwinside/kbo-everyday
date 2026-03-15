@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getTeamById } from "@/lib/constants/teams";
-import { getTeamBgColor } from "@/lib/constants/teams";
+
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import SectionHeader from "@/components/ui/SectionHeader";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
@@ -56,8 +56,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
           return (
             <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
               <div
-                className="min-w-[160px] rounded-2xl p-3 flex flex-col items-center gap-2 border border-border"
-                style={{ ['--team-color' as string]: team ? getTeamBgColor(team) : '#666', background: `linear-gradient(135deg, var(--myteam-tint), transparent)` }}
+                className="min-w-[160px] rounded-2xl p-3 flex flex-col items-center gap-2 border border-border bg-bg-secondary"
               >
                 <PlayerAvatar
                   name={player.name}

@@ -61,7 +61,7 @@
   --chat-input-bg: rgba(248, 248, 250, 0.95);
   --scorebar-bg: rgba(248, 248, 250, 0.92);
   --myteam-card-end: #F2F2F7;
-  --myteam-tint: color-mix(in srgb, var(--team-color, #FF453A) 8%, white);
+  --myteam-tint: transparent;
 }
 
 /* ===== Dark Mode ===== */
@@ -230,4 +230,12 @@ body {
 }
 .animate-fadeIn {
   animation: fadeIn 0.25s ease-out;
+}
+
+/* MY TEAM card gradient — light: 중립 흰배경 + 은은한 팀 tint, dark: 기존 진한 gradient */
+.myteam-card {
+  background: var(--bg-secondary);
+}
+.dark .myteam-card {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--team-bg, #333) 30%, #1a1a1d) 0%, #1a1a1d 100%);
 }
