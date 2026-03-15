@@ -44,9 +44,9 @@ export default function LeaderSection({ title, leaders, myTeamId, favoriteNames 
             }}
           >
             <span className={clsx("flex h-6 w-6 items-center justify-center rounded-full text-base font-bold",
-              l.rank === 1 ? "bg-yellow-500/20 text-yellow-400" :
-              l.rank === 2 ? "bg-gray-400/20 text-gray-300" :
-              l.rank === 3 ? "bg-amber-700/20 text-amber-600" :
+              l.rank === 1 ? "bg-yellow-500/20 text-yellow-600 dark:text-yellow-400" :
+              l.rank === 2 ? "bg-gray-400/20 text-gray-500 dark:text-gray-300" :
+              l.rank === 3 ? "bg-amber-700/20 text-amber-700 dark:text-amber-600" :
               "bg-bg-tertiary text-text-tertiary"
             )}>
               {l.rank}
