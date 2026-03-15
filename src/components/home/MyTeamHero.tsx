@@ -1,7 +1,8 @@
 import Link from "next/link";
 import Image from "next/image";
 import { getTeamBgColor } from "@/lib/constants/teams";
-import { getTeamShortName, getTeamColor, getTeamLogo } from "@/lib/utils/team";
+import { getTeamShortName, getTeamLogo } from "@/lib/utils/team";
+import { getTeamById } from "@/lib/constants/teams";
 import Diamond from "@/components/game/Diamond";
 import type { TeamData } from "@/lib/constants/teams";
 
@@ -31,7 +32,7 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
     <div className="mb-3">
       <Link href={`/games/${myTeamGame.id}`}>
         <div
-          className="relative rounded-2xl p-5 overflow-hidden border border-black/10 dark:border-white/10 myteam-card"
+          className="relative rounded-2xl p-5 overflow-hidden border border-white/10 myteam-card"
           style={{ ['--team-bg' as string]: getTeamBgColor(myTeam) }}
         >
           {/* Team logo watermark */}
@@ -52,7 +53,7 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
               <div className="w-12 h-12 rounded-full bg-white p-1 flex items-center justify-center">
                 <Image src={getTeamLogo(myTeamGame.awayTeamId)} alt="" width={32} height={32} unoptimized className="object-contain" />
               </div>
-              <span className="text-sm font-bold" style={{ color: getTeamColor(myTeamGame.awayTeamId) }}>{getTeamShortName(myTeamGame.awayTeamId)}</span>
+              <span className="text-sm font-bold" style={{ color: getTeamById(myTeamGame.awayTeamId)?.colorLight ?? '#fff' }}>{getTeamShortName(myTeamGame.awayTeamId)}</span>
             </div>
             <div className="text-center">
               <div className="flex items-center gap-3">
@@ -72,13 +73,13 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
               <div className="w-12 h-12 rounded-full bg-white p-1 flex items-center justify-center">
                 <Image src={getTeamLogo(myTeamGame.homeTeamId)} alt="" width={32} height={32} unoptimized className="object-contain" />
               </div>
-              <span className="text-sm font-bold" style={{ color: getTeamColor(myTeamGame.homeTeamId) }}>{getTeamShortName(myTeamGame.homeTeamId)}</span>
+              <span className="text-sm font-bold" style={{ color: getTeamById(myTeamGame.homeTeamId)?.colorLight ?? '#fff' }}>{getTeamShortName(myTeamGame.homeTeamId)}</span>
             </div>
           </div>
 
           {/* Live details: BSO + Diamond + Pitcher/Batter */}
           {myTeamGame.status === "live" && (
-            <div className="mt-3 pt-3 border-t border-black/10 dark:border-white/10">
+            <div className="mt-3 pt-3 border-t border-white/10">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3 text-[11px] font-mono">
                   <span>B <span className="text-green-400">{"●".repeat(myTeamGame.balls)}{"○".repeat(4 - myTeamGame.balls)}</span></span>
@@ -89,7 +90,7 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
                   runner1b={myTeamGame.runner1b}
                   runner2b={myTeamGame.runner2b}
                   runner3b={myTeamGame.runner3b}
-                  teamColor={myTeamGame.isTop ? getTeamColor(myTeamGame.awayTeamId) : getTeamColor(myTeamGame.homeTeamId)}
+                  teamColor={myTeamGame.isTop ? (getTeamById(myTeamGame.awayTeamId)?.colorLight ?? '#fff') : (getTeamById(myTeamGame.homeTeamId)?.colorLight ?? '#fff')}
                 />
               </div>
               {(myTeamGame.currentPitcher || myTeamGame.currentBatter) && (
