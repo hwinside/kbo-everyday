@@ -6,7 +6,7 @@ import { clsx } from "clsx";
 import { TEAMS } from "@/lib/constants/teams";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
-import { hexToRgba, getTeamColor } from "@/lib/utils/standings";
+import { hexToRgba } from "@/lib/utils/standings";
 import type { TitleLeader } from "@/lib/constants/standings-data";
 
 interface LeaderSectionProps {
@@ -56,7 +56,7 @@ export default function LeaderSection({ title, leaders, myTeamId, favoriteNames 
               {l.name}
               {isFavorite && <span className="ml-1">★</span>}
             </span>
-            <span className="text-base font-bold tabular-nums" style={{ color: getTeamColor(l.teamId) }}>{l.value}</span>
+            <span className="text-base font-bold tabular-nums text-accent">{l.value}</span>
           </div>
           );
         })}

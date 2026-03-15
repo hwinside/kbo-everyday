@@ -94,7 +94,7 @@ export default function MyPage() {
                 <div className="w-7 h-7 rounded-full bg-white p-0.5 flex items-center justify-center">
                   <Image src={team.logoPath} alt="" width={20} height={20} unoptimized className="object-contain" />
                 </div>
-                <span className="text-sm font-medium" style={{ color: team.colorLight }}>{team.name}</span>
+                <span className="text-sm font-medium text-accent">{team.name}</span>
               </div>
             )}
             <ChevronRight size={22} className="text-text-tertiary" />
