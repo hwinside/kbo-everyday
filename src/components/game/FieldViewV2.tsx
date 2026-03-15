@@ -214,26 +214,26 @@ export default function FieldViewV2({
           />
         )}
 
-        {/* Runners — no position label */}
-        {runner1b && runner1bName && (
+        {/* Runners — 이름이 없어도 베이스 점유 자체는 표시 */}
+        {runner1b && (
           <PlayerMarker
-            name={runner1bName}
+            name={runner1bName || "주자"}
             type="runner"
             label="R"
             className="bottom-[26%] right-[20%]"
           />
         )}
-        {runner2b && runner2bName && (
+        {runner2b && (
           <PlayerMarker
-            name={runner2bName}
+            name={runner2bName || "주자"}
             type="runner"
             label="R"
             className="bottom-[58%] left-1/2 -translate-x-1/2"
           />
         )}
-        {runner3b && runner3bName && (
+        {runner3b && (
           <PlayerMarker
-            name={runner3bName}
+            name={runner3bName || "주자"}
             type="runner"
             label="R"
             className="bottom-[26%] left-[20%]"
