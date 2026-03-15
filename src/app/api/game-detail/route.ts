@@ -437,9 +437,15 @@ export async function GET(req: NextRequest) {
       }).then(r => r.ok ? r.json() : null).catch(() => null),
     ]);
 
-    const { meta, linescore, status } = parseScoreBoard(scoreBoardRes ?? []);
+    const { meta, linescore, status: scoreBoardStatus } = parseScoreBoard(scoreBoardRes ?? []);
     const lineup = parseLineup(lineupRes ?? []);
     const boxScore = parseBoxScore(boxScoreRes);
+
+    // ScoreBoard가 scheduled인데 BoxScore에 실데이터가 있으면 → 종료된 경기
+    const hasRealBoxScore = boxScore &&
+      (boxScore.awayBatters.some(b => b.atBats > 0) || boxScore.homeBatters.some(b => b.atBats > 0));
+    const status: GameDetailResponse["status"] =
+      scoreBoardStatus === "scheduled" && hasRealBoxScore ? "final" : scoreBoardStatus;
 
     const response: GameDetailResponse = {
       gameId,
