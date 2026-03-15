@@ -6,10 +6,10 @@
 /* ===== Light Mode (Default) ===== */
 :root {
   color-scheme: light;
-  --bg-primary: #FFFFFF;
-  --bg-secondary: #F5F5F7;
-  --bg-tertiary: #E8E8ED;
-  --bg-glass: rgba(255, 255, 255, 0.8);
+  --bg-primary: #F2F2F7;
+  --bg-secondary: #FFFFFF;
+  --bg-tertiary: #E5E5EA;
+  --bg-glass: rgba(255, 255, 255, 0.92);
 
   --text-primary: #1D1D1F;
   --text-secondary: #6E6E73;
@@ -20,7 +20,7 @@
   --accent-gold: #FF9F0A;
   --accent-green: #34C759;
 
-  --border: rgba(0, 0, 0, 0.10);
+  --border: rgba(0, 0, 0, 0.12);
   --glass-blur: 20px;
 
   /* Team Colors */
@@ -37,8 +37,8 @@
 
   /* ===== v0 semantic aliases (design-tokens-v0) ===== */
   --bg: var(--bg-primary);
-  --surface-1: #F0F0F5;
-  --surface-2: #E8E8ED;
+  --surface-1: #FFFFFF;
+  --surface-2: #F2F2F7;
 
   --text-1: rgba(0, 0, 0, 0.88);
   --text-2: rgba(0, 0, 0, 0.64);
@@ -151,6 +151,14 @@ body {
   -webkit-backdrop-filter: blur(var(--glass-blur));
   border: 1px solid var(--border);
   border-radius: 16px;
+  box-shadow: var(--card-shadow);
+}
+
+:root {
+  --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.dark {
+  --card-shadow: none;
 }
 
 /* ===== Scrollbar ===== */
