@@ -456,7 +456,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
                 ].map((phase) => (
                   <div key={phase.label}>
                     <span className="text-[10px] font-bold text-accent/70">{phase.label}</span>
-                    <p className="text-sm text-text-secondary leading-relaxed mt-0.5">{phase.text}</p>
+                    <p className="text-[15px] text-text-secondary leading-relaxed mt-0.5">{phase.text}</p>
                   </div>
                 ))}
               </div>
@@ -469,7 +469,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
                   <span className="text-xs">🔑</span>
                   <span className="text-[11px] font-semibold text-text-tertiary">승부처</span>
                 </div>
-                <p className="text-sm text-text-secondary leading-relaxed">{summary.turningPoint}</p>
+                <p className="text-[15px] text-text-secondary leading-relaxed">{summary.turningPoint}</p>
               </div>
             )}
 
@@ -512,7 +512,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
                   <span className="text-xs">📊</span>
                   <span className="text-[11px] font-semibold text-text-tertiary">경기 분석</span>
                 </div>
-                <p className="text-sm text-text-secondary leading-relaxed">{summary.insight}</p>
+                <p className="text-[15px] text-text-secondary leading-relaxed">{summary.insight}</p>
               </div>
             )}
 
