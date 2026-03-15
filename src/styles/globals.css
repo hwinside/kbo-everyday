@@ -62,6 +62,7 @@
   --scorebar-bg: rgba(248, 248, 250, 0.92);
   --myteam-card-end: #F2F2F7;
   --myteam-tint: transparent;
+  --logo-filter: drop-shadow(0 0 0.5px rgba(0,0,0,0.6)) drop-shadow(0 0 0.5px rgba(0,0,0,0.4));
 }
 
 /* ===== Dark Mode ===== */
@@ -104,6 +105,7 @@
   --scorebar-bg: rgba(10, 10, 15, 0.92);
   --myteam-card-end: #1a1a1d;
   --myteam-tint: color-mix(in srgb, var(--team-color, #FF453A) 35%, transparent);
+  --logo-filter: none;
 }
 
 @theme inline {
