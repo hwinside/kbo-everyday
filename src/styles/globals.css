@@ -232,10 +232,12 @@ body {
   animation: fadeIn 0.25s ease-out;
 }
 
-/* MY TEAM card gradient — light: 중립 흰배경 + 은은한 팀 tint, dark: 기존 진한 gradient */
+/* MY TEAM card — light: 은은한 팀 tint + 상단 보더, dark: 기존 진한 gradient */
 .myteam-card {
-  background: var(--bg-secondary);
+  background: color-mix(in srgb, var(--team-bg, #999) 6%, var(--bg-secondary));
+  border-top: 3px solid color-mix(in srgb, var(--team-bg, #999) 40%, transparent);
 }
 .dark .myteam-card {
   background: linear-gradient(135deg, color-mix(in srgb, var(--team-bg, #333) 30%, #1a1a1d) 0%, #1a1a1d 100%);
+  border-top: none;
 }
