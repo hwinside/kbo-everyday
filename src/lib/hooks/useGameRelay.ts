@@ -9,6 +9,7 @@ export function useGameRelay(
   gameId: string | undefined,
   isLive: boolean,
   interval = 30000,
+  currentInning = 0,
 ) {
   const [data, setData] = useState<GameRelayResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -18,9 +19,9 @@ export function useGameRelay(
     if (!gameId || !isLive) return;
     setIsLoading(true);
     try {
-      const res = await fetch(
-        `/api/game-relay?gameId=${encodeURIComponent(gameId)}`
-      );
+      const params = new URLSearchParams({ gameId });
+      if (currentInning > 0) params.set("inning", String(currentInning));
+      const res = await fetch(`/api/game-relay?${params}`);
       if (res.ok && mountedRef.current) {
         const json = (await res.json()) as GameRelayResponse;
         setData(json);
@@ -30,7 +31,7 @@ export function useGameRelay(
     } finally {
       if (mountedRef.current) setIsLoading(false);
     }
-  }, [gameId, isLive]);
+  }, [gameId, isLive, currentInning]);
 
   useEffect(() => {
     mountedRef.current = true;

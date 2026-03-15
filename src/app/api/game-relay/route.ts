@@ -155,6 +155,9 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // 클라이언트에서 현재 이닝을 힌트로 전달 (네이버 API의 inn이 부정확할 때 대비)
+  const inningHint = parseInt(req.nextUrl.searchParams.get("inning") || "0") || 0;
+
   const naverGameId = toNaverGameId(gameId);
 
   try {
@@ -181,7 +184,9 @@ export async function GET(req: NextRequest) {
     }
 
     const firstData = (await firstRes.json()) as NaverRelayResponse;
-    const currentInning = firstData.result?.textRelayData?.inn ?? 1;
+    const naverInning = firstData.result?.textRelayData?.inn ?? 1;
+    // 네이버 inn과 클라이언트 힌트 중 큰 값 사용 (네이버가 부정확할 때 대비)
+    const currentInning = Math.max(naverInning, inningHint);
 
     // Cap at 15 innings (extended games)
     const maxInning = Math.min(currentInning, 15);

@@ -136,7 +136,7 @@ export default function GameDetailPage() {
   const { game: liveGame } = useLiveGame(gameId, 15000);
   const { data: gameDetail } = useGameDetail(gameId, 30000);
   const { events: gameEvents } = useGameEvents(gameId, liveGame?.isLive ?? false, 15000);
-  const { data: gameRelay } = useGameRelay(gameId, liveGame?.isLive ?? false, 30000);
+  const { data: gameRelay } = useGameRelay(gameId, liveGame?.isLive ?? false, 30000, liveGame?.inning ?? 0);
 
   const game = getGameById(gameId) ?? getPreseasonGameById(gameId) ?? parseKboGameId(gameId);
   if (!game) {

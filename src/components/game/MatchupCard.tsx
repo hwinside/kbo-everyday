@@ -56,7 +56,7 @@ function lookupPitcherEra(name: string): string | null {
 
 function PlayerPhoto({ name, type }: { name: string; type: "pitcher" | "batter" }) {
   const photoUrl = getPlayerPhotoUrl(name);
-  const borderColor = type === "pitcher" ? "#e53935" : "#4fc3f7";
+  const borderColor = "#7ecb4a";
 
   return (
     <div
