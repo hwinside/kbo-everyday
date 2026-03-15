@@ -74,7 +74,7 @@ function StatItem({ label, value }: { label: string; value: string | number; col
   return (
     <div className="bg-bg-tertiary rounded-xl p-3 text-center">
       <p className="text-xs text-text-tertiary mb-1">{label}</p>
-      <p className="text-lg font-bold" style={{ color: "#E8E8F0" }}>{value}</p>
+      <p className="text-lg font-bold text-text-primary">{value}</p>
     </div>
   );
 }
