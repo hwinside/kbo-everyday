@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+// Vercel 서버리스에서 캐시 방지 (라이브 데이터는 항상 최신이어야 함)
+export const dynamic = "force-dynamic";
+
 // ===== Types =====
 
 export interface PlayEvent {
@@ -168,7 +171,7 @@ export async function GET(req: NextRequest) {
         headers: {
           "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
         },
-        next: { revalidate: 30 },
+        cache: "no-store",
       }
     );
 
@@ -207,7 +210,7 @@ export async function GET(req: NextRequest) {
           headers: {
             "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
           },
-          next: { revalidate: 30 },
+          cache: "no-store",
         })
           .then((r) => (r.ok ? r.json() : null))
           .then(
