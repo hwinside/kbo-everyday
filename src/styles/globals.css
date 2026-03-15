@@ -243,7 +243,7 @@ body {
 .myteam-card {
   background: color-mix(in srgb, var(--team-bg, #999) 5%, #FFFFFF);
   border: 1px solid color-mix(in srgb, var(--team-bg, #999) 12%, transparent);
-  border-top: 3px solid color-mix(in srgb, var(--team-bg, #999) 80%, transparent);
+  border-top: 4px solid color-mix(in srgb, var(--team-bg, #999) 90%, transparent);
 }
 .dark .myteam-card {
   background: linear-gradient(135deg, color-mix(in srgb, var(--team-bg, #333) 40%, #1a1a1d) 0%, #1a1a1d 100%);
