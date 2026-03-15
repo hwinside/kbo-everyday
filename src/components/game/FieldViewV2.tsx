@@ -27,10 +27,10 @@ interface FieldViewV2Props {
 type MarkerType = "defense" | "pitcher" | "runner" | "batter";
 
 const BORDER_COLORS: Record<MarkerType, string> = {
-  defense: "#6b8cce",
-  pitcher: "#e53935",
+  defense: "#888888",
+  pitcher: "#7ecb4a",
   runner: "#ffd600",
-  batter: "#4fc3f7",
+  batter: "#7ecb4a",
 };
 
 function PlayerMarker({
@@ -50,7 +50,7 @@ function PlayerMarker({
   const borderColor = BORDER_COLORS[type];
   const isHighlight = type === "pitcher" || type === "runner" || type === "batter";
   const nameColor =
-    type === "runner" ? "#ffd600" : type === "batter" ? "#4fc3f7" : isHighlight ? "#fff" : "#bbb";
+    type === "runner" ? "#ffd600" : type === "batter" ? "#7ecb4a" : type === "pitcher" ? "#7ecb4a" : "#bbb";
 
   // Player link lookup
   const rosterPlayer = (playersRoster as { name: string; kboId: string; teamId: number }[]).find(

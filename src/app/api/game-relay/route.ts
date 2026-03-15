@@ -1,0 +1,239 @@
+import { NextRequest, NextResponse } from "next/server";
+
+// ===== Types =====
+
+export interface PlayEvent {
+  batterName: string;
+  result: string;
+  type:
+    | "hit"
+    | "homerun"
+    | "walk"
+    | "strikeout"
+    | "out"
+    | "hbp"
+    | "sacrifice"
+    | "error"
+    | "other";
+  extras?: string[];
+}
+
+export interface InningRelay {
+  inning: number;
+  half: "top" | "bottom";
+  teamName: string;
+  plays: PlayEvent[];
+}
+
+export interface GameRelayResponse {
+  gameId: string;
+  currentInning: number;
+  innings: InningRelay[];
+}
+
+// ===== Helpers =====
+
+function toNaverGameId(kboGameId: string): string {
+  const year = kboGameId.slice(0, 4);
+  return kboGameId + year;
+}
+
+function classifyResult(text: string): PlayEvent["type"] {
+  if (text.includes("홈런")) return "homerun";
+  if (text.includes("1루타") || text.includes("2루타") || text.includes("3루타"))
+    return "hit";
+  if (text.includes("볼넷")) return "walk";
+  if (text.includes("삼진")) return "strikeout";
+  if (text.includes("몸에 맞는 볼")) return "hbp";
+  if (text.includes("희생")) return "sacrifice";
+  if (text.includes("실책")) return "error";
+  if (text.includes("아웃")) return "out";
+  return "other";
+}
+
+interface NaverTextOption {
+  seqno: number;
+  text: string;
+  type: number;
+  speed?: string;
+  stuff?: string;
+}
+
+interface NaverTextRelay {
+  title: string;
+  titleStyle: string;
+  textOptions?: NaverTextOption[];
+}
+
+interface NaverRelayResponse {
+  code: number;
+  success: boolean;
+  result: {
+    textRelayData: {
+      gameId: string;
+      inn: number;
+      currentInning: string;
+      textRelays: NaverTextRelay[];
+    };
+  };
+}
+
+function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
+  // textRelays comes in reverse order (newest first) — flip to chronological
+  const chronological = [...textRelays].reverse();
+
+  const innings: InningRelay[] = [];
+  let current: InningRelay | null = null;
+
+  for (const relay of chronological) {
+    if (relay.titleStyle === "0") {
+      // Inning header: "1회초 LG 공격"
+      const match = relay.title.match(/(\d+)회(초|말)\s*(.+?)\s*공격/);
+      if (match) {
+        current = {
+          inning: parseInt(match[1]),
+          half: match[2] === "초" ? "top" : "bottom",
+          teamName: match[3],
+          plays: [],
+        };
+        innings.push(current);
+      }
+      continue;
+    }
+
+    // Batter at-bat (titleStyle "8" or others with textOptions)
+    if (!current || !relay.textOptions) continue;
+
+    // Extract batter name from title: "3번타자 홍창기"
+    const batterMatch = relay.title.match(/\d+번타자\s+(.+)/);
+    const batterName = batterMatch ? batterMatch[1] : relay.title;
+
+    for (const opt of relay.textOptions) {
+      if (opt.type === 13) {
+        // At-bat result: "홍창기 : 우익수 앞 1루타"
+        const parts = opt.text.split(" : ");
+        const resultText = parts.length > 1 ? parts.slice(1).join(" : ") : opt.text;
+
+        const play: PlayEvent = {
+          batterName,
+          result: resultText,
+          type: classifyResult(resultText),
+        };
+        current.plays.push(play);
+      } else if (opt.type === 14) {
+        // Base running event — only show scoring and steals
+        if (
+          opt.text.includes("홈까지 진루") ||
+          opt.text.includes("득점") ||
+          opt.text.includes("도루")
+        ) {
+          // Attach to the last play as extra
+          const lastPlay = current.plays[current.plays.length - 1];
+          if (lastPlay) {
+            if (!lastPlay.extras) lastPlay.extras = [];
+            lastPlay.extras.push(opt.text);
+          }
+        }
+      }
+    }
+  }
+
+  return innings;
+}
+
+// ===== Route handler =====
+
+const NAVER_API_BASE =
+  "https://api-gw.sports.naver.com/schedule/games";
+
+export async function GET(req: NextRequest) {
+  const gameId = req.nextUrl.searchParams.get("gameId");
+  if (!gameId) {
+    return NextResponse.json(
+      { error: "gameId is required" },
+      { status: 400 }
+    );
+  }
+
+  const naverGameId = toNaverGameId(gameId);
+
+  try {
+    // First, fetch inning 1 to get the current inning number
+    const firstRes = await fetch(
+      `${NAVER_API_BASE}/${naverGameId}/relay?inning=1`,
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+        },
+        next: { revalidate: 30 },
+      }
+    );
+
+    if (!firstRes.ok) {
+      return NextResponse.json(
+        {
+          gameId,
+          currentInning: 0,
+          innings: [],
+        } satisfies GameRelayResponse,
+        { status: 200 }
+      );
+    }
+
+    const firstData = (await firstRes.json()) as NaverRelayResponse;
+    const currentInning = firstData.result?.textRelayData?.inn ?? 1;
+
+    // Cap at 15 innings (extended games)
+    const maxInning = Math.min(currentInning, 15);
+
+    // Fetch all innings in parallel (inning 1 already fetched)
+    const inningPromises: Promise<NaverTextRelay[]>[] = [];
+
+    // Use the already-fetched inning 1 data
+    inningPromises.push(
+      Promise.resolve(
+        firstData.result?.textRelayData?.textRelays ?? []
+      )
+    );
+
+    for (let i = 2; i <= maxInning; i++) {
+      inningPromises.push(
+        fetch(`${NAVER_API_BASE}/${naverGameId}/relay?inning=${i}`, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+          },
+          next: { revalidate: 30 },
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .then(
+            (data: NaverRelayResponse | null) =>
+              data?.result?.textRelayData?.textRelays ?? []
+          )
+          .catch(() => [] as NaverTextRelay[])
+      );
+    }
+
+    const allTextRelays = await Promise.all(inningPromises);
+
+    // Combine all text relays and parse
+    const combined = allTextRelays.flat();
+    const innings = parseInningRelays(combined);
+
+    const response: GameRelayResponse = {
+      gameId,
+      currentInning: maxInning,
+      innings,
+    };
+
+    return NextResponse.json(response);
+  } catch {
+    return NextResponse.json(
+      {
+        gameId,
+        currentInning: 0,
+        innings: [],
+      } satisfies GameRelayResponse,
+      { status: 200 }
+    );
+  }
+}

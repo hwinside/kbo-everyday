@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import type { GameEvent } from "@/types/game-events";
 import type { GamePlay } from "@/lib/types";
 import type { GameDetailResponse } from "@/app/api/game-detail/route";
+import type { GameRelayResponse, PlayEvent } from "@/app/api/game-relay/route";
 
 interface KgwanTabProps {
   gameId: string;
@@ -23,6 +24,7 @@ interface KgwanTabProps {
   boxScore: GameDetailResponse["boxScore"] | null;
   starterNames?: { away: string; home: string };
   lineupConfirmed?: boolean;
+  gameRelay?: GameRelayResponse | null;
 }
 
 /* ===== Scheduled: AI Preview ===== */
@@ -73,29 +75,103 @@ function ScheduledView({ awayTeamId, homeTeamId, starterNames, lineupConfirmed }
   );
 }
 
+/* ===== Play type → emoji ===== */
+function playEmoji(type: PlayEvent["type"]): string {
+  switch (type) {
+    case "homerun": return "💥";
+    case "hit": return "🔵";
+    case "walk": return "🟡";
+    case "hbp": return "🟡";
+    case "strikeout": return "🔴";
+    case "out": return "⚪";
+    case "sacrifice": return "⚪";
+    case "error": return "⚠️";
+    default: return "⚾";
+  }
+}
+
 /* ===== Live: Relay + Chat ===== */
-function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents }: {
+function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
   gameId: string;
   homeTeamId: number;
   awayTeamId: number;
   gameEvents: GameEvent[];
+  gameRelay?: GameRelayResponse | null;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expandedInning, setExpandedInning] = useState<string | null>(null);
 
-  // 접힌 상태에서는 최신 3개만 표시 (역순 → 다시 시간순으로)
-  const recentEvents = expanded
-    ? gameEvents
-    : gameEvents.slice(-3);
+  // 네이버 relay가 있으면 이닝별 상세 표시, 없으면 diff 이벤트 fallback
+  const hasRelay = gameRelay && gameRelay.innings.length > 0;
+
+  // 이닝 역순 (최신 이닝 위로)
+  const reversedInnings = useMemo(() => {
+    if (!gameRelay) return [];
+    return [...gameRelay.innings].reverse();
+  }, [gameRelay]);
 
   return (
     <div className="flex flex-col h-full">
-      {/* Live relay strip */}
-      {gameEvents.length > 0 && (
+      {/* Live relay */}
+      {hasRelay ? (
+        <div className="bg-bg-tertiary border-b border-border max-h-[40vh] overflow-y-auto">
+          {reversedInnings.map((inn) => {
+            const inningKey = `${inn.inning}-${inn.half}`;
+            const isExpanded = expandedInning === inningKey;
+            const halfLabel = inn.half === "top" ? "초" : "말";
+            const totalPlays = inn.plays.length;
+            // 최신 이닝은 기본 펼침
+            const isLatest = reversedInnings[0] === inn;
+            const showPlays = isExpanded || isLatest;
+
+            return (
+              <div key={inningKey} className="border-b border-border/30 last:border-b-0">
+                {/* Inning header */}
+                <button
+                  onClick={() => setExpandedInning(isExpanded ? null : inningKey)}
+                  className="w-full flex items-center gap-2 px-4 py-2 hover:bg-white/5 transition-colors"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-accent">{inn.inning}회{halfLabel}</span>
+                    <span className="text-[11px] text-text-tertiary">{inn.teamName} 공격</span>
+                  </div>
+                  <span className="text-[10px] text-text-tertiary ml-auto">{totalPlays}타석</span>
+                  {!isLatest && (
+                    isExpanded ? <ChevronUp size={12} className="text-text-tertiary" /> : <ChevronDown size={12} className="text-text-tertiary" />
+                  )}
+                </button>
+
+                {/* Plays */}
+                {showPlays && inn.plays.length > 0 && (
+                  <div className="px-4 pb-2 space-y-1.5">
+                    {inn.plays.map((play, idx) => (
+                      <div key={`${inningKey}-${idx}`} className="flex items-start gap-2">
+                        <span className="text-xs mt-0.5 w-4 text-center shrink-0">{playEmoji(play.type)}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs text-text-primary leading-relaxed">
+                            <span className="font-semibold">{play.batterName}</span>
+                            <span className="text-text-secondary ml-1.5">{play.result}</span>
+                          </p>
+                          {play.extras && play.extras.length > 0 && (
+                            <p className="text-[11px] text-text-tertiary leading-relaxed mt-0.5">
+                              └ {play.extras.join(" / ")}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : gameEvents.length > 0 ? (
+        /* Fallback: diff 기반 이벤트 (relay 없을 때) */
         <div className="bg-bg-tertiary border-b border-border">
           <div className="flex items-stretch">
             <div className="w-1 bg-red-500 shrink-0 rounded-r" />
             <div className="flex-1 px-3 py-2 space-y-1">
-              {recentEvents.map((ev) => (
+              {gameEvents.slice(-5).map((ev) => (
                 <p key={ev.id} className="text-xs text-text-secondary leading-relaxed">
                   <span className="text-text-tertiary mr-1.5">{ev.inning}회{ev.isTop ? "초" : "말"}</span>
                   {ev.text}
@@ -103,20 +179,8 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents }: {
               ))}
             </div>
           </div>
-          {gameEvents.length > 3 && (
-            <button
-              onClick={() => setExpanded(!expanded)}
-              className="w-full flex items-center justify-center gap-1 py-1.5 text-[11px] text-text-tertiary hover:text-text-secondary transition-colors border-t border-border/50"
-            >
-              {expanded ? (
-                <>접기 <ChevronUp size={12} /></>
-              ) : (
-                <>전체 중계 보기 ({gameEvents.length}개) <ChevronDown size={12} /></>
-              )}
-            </button>
-          )}
         </div>
-      )}
+      ) : null}
 
       {/* Chat */}
       <GameChat gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
@@ -484,13 +548,14 @@ export default function KgwanTab({
   boxScore,
   starterNames,
   lineupConfirmed,
+  gameRelay,
 }: KgwanTabProps) {
   if (status === "scheduled") {
     return <ScheduledView awayTeamId={awayTeamId} homeTeamId={homeTeamId} starterNames={starterNames} lineupConfirmed={lineupConfirmed} />;
   }
 
   if (status === "live") {
-    return <LiveView gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} gameEvents={gameEvents} />;
+    return <LiveView gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} gameEvents={gameEvents} gameRelay={gameRelay} />;
   }
 
   // final
