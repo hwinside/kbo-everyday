@@ -257,7 +257,7 @@ export default function GameDetailPage() {
             onClick={() => setActiveTab(tab.id)}
             className={clsx(
               "flex-1 py-2.5 text-[13px] font-medium transition-colors relative",
-              activeTab === tab.id ? "text-white font-semibold" : "text-[#888]"
+              activeTab === tab.id ? "text-text-primary font-semibold" : "text-text-tertiary"
             )}
           >
             {tab.label}
