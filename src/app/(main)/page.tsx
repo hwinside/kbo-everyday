@@ -66,7 +66,12 @@ export default function HomePage() {
     currentBatter: myTeamLive?.currentBatter ?? null,
     currentPitcher: myTeamLive?.currentPitcher ?? null,
     isTop: myTeamLive?.isTop ?? true,
-    ...(myTeamLive ? { homeScore: myTeamLive.homeScore, awayScore: myTeamLive.awayScore } : {}),
+    ...(myTeamLive ? {
+      homeScore: myTeamLive.homeScore,
+      awayScore: myTeamLive.awayScore,
+      status: myTeamLive.isLive ? "live" as const : "final" as const,
+      inning: myTeamLive.currentInning || null,
+    } : {}),
   } : undefined;
 
   return (
