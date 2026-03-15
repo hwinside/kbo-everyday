@@ -176,9 +176,9 @@ function hexToHue(hex: string): number {
 /** 두 팀의 바 차트 색상 쌍을 반환.
  *  colorLight 기반, hue 차이 < 40° 이면 home을 colorSecondary로 교체.
  */
-export function getCompareBarColors(away: TeamData, home: TeamData): [string, string] {
-  const awayColor = away.colorLight;
-  let homeColor = home.colorLight;
+export function getCompareBarColors(away: TeamData, home: TeamData, isDark = true): [string, string] {
+  const awayColor = isDark ? away.colorLight : away.colorPrimary;
+  let homeColor = isDark ? home.colorLight : home.colorPrimary;
 
   const awayHue = hexToHue(awayColor);
   const homeHue = hexToHue(homeColor);

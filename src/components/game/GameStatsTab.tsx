@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { type TeamData, getCompareBarColors } from "@/lib/constants/teams";
+import { useTheme } from "@/components/ThemeProvider";
 import type {
   GameStats,
   BatterStat,
@@ -207,8 +208,10 @@ export default function GameStatsTab({
     return items;
   }, [stats]);
 
-  // 팀 colorLight 기반 + 유사색 자동 회피
-  const [awayBarColor, homeBarColor] = getCompareBarColors(awayTeam, homeTeam);
+  // 라이트 → colorPrimary, 다크 → colorLight
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === "dark";
+  const [awayBarColor, homeBarColor] = getCompareBarColors(awayTeam, homeTeam, isDark);
 
   return (
     <div className="px-5 py-4 space-y-5">
