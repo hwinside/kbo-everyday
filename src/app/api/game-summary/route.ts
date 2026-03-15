@@ -171,7 +171,16 @@ export async function GET(req: NextRequest) {
 
   const cached = await getCached(gameId);
   if (cached) {
-    return NextResponse.json({ summary: cached, source: "cache" });
+    // 기존 캐시도 정규화 (gameFlow 안에 필드가 잘못 들어간 경우)
+    const s = cached as Record<string, unknown>;
+    const gf = s.gameFlow as Record<string, unknown> | undefined;
+    if (gf) {
+      if (!s.insight && gf.insight) { s.insight = gf.insight; delete gf.insight; }
+      if (!s.turningPoint && gf.turningPoint) { s.turningPoint = gf.turningPoint; delete gf.turningPoint; }
+      if (!s.mvpBatter && gf.mvpBatter) { s.mvpBatter = gf.mvpBatter; delete gf.mvpBatter; }
+      if (!s.mvpPitcher && gf.mvpPitcher) { s.mvpPitcher = gf.mvpPitcher; delete gf.mvpPitcher; }
+    }
+    return NextResponse.json({ summary: s, source: "cache" });
   }
 
   return NextResponse.json({ summary: null, source: "none" });
@@ -253,6 +262,26 @@ export async function POST(req: NextRequest) {
       } else {
         console.error("Failed to parse Gemini response:", rawText.slice(0, 500));
         return NextResponse.json({ error: "Invalid Gemini response format" }, { status: 502 });
+      }
+    }
+
+    // LLM이 필드를 gameFlow 안에 넣는 경우 정규화
+    if (summary.gameFlow) {
+      if (!summary.insight && summary.gameFlow.insight) {
+        summary.insight = summary.gameFlow.insight;
+        delete summary.gameFlow.insight;
+      }
+      if (!summary.turningPoint && summary.gameFlow.turningPoint) {
+        summary.turningPoint = summary.gameFlow.turningPoint;
+        delete summary.gameFlow.turningPoint;
+      }
+      if (!summary.mvpBatter && summary.gameFlow.mvpBatter) {
+        summary.mvpBatter = summary.gameFlow.mvpBatter;
+        delete summary.gameFlow.mvpBatter;
+      }
+      if (!summary.mvpPitcher && summary.gameFlow.mvpPitcher) {
+        summary.mvpPitcher = summary.gameFlow.mvpPitcher;
+        delete summary.gameFlow.mvpPitcher;
       }
     }
 
