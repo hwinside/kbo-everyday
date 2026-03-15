@@ -16,6 +16,9 @@ export interface LiveGameData {
   runner1b: boolean;
   runner2b: boolean;
   runner3b: boolean;
+  runner1bOrder?: number;
+  runner2bOrder?: number;
+  runner3bOrder?: number;
   runner1bName: string | null;
   runner2bName: string | null;
   runner3bName: string | null;

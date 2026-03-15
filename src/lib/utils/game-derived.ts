@@ -18,6 +18,19 @@ function toDefenders(entries: LineupEntry[]) {
   }));
 }
 
+/** 타순 번호 + 라인업으로 주자 이름 해결 (초=원정 공격, 말=홈 공격) */
+function resolveRunnerName(
+  orderNo: number | undefined,
+  isTop: boolean,
+  lineup: GameDetailResponse["lineup"] | null,
+): string | null {
+  if (!orderNo || orderNo <= 0 || !lineup) return null;
+  // 초(top)일 때 공격팀은 원정(away), 말(bottom)일 때 공격팀은 홈(home)
+  const batters = isTop ? lineup.away : lineup.home;
+  const found = batters.find(b => b.order === orderNo);
+  return found?.name ?? null;
+}
+
 export function deriveGameState(
   liveGame: LiveGameData | undefined,
   game: GameBase,
@@ -104,8 +117,8 @@ export function deriveGameState(
     batterToday,
     pitcherEra: pitcherToday?.era,
     batterAvg: batterToday?.avg,
-    runner1bName: liveGame?.runner1bName,
-    runner2bName: liveGame?.runner2bName,
-    runner3bName: liveGame?.runner3bName,
+    runner1bName: liveGame?.runner1bName || resolveRunnerName(liveGame?.runner1bOrder, isTop, detailLineup),
+    runner2bName: liveGame?.runner2bName || resolveRunnerName(liveGame?.runner2bOrder, isTop, detailLineup),
+    runner3bName: liveGame?.runner3bName || resolveRunnerName(liveGame?.runner3bOrder, isTop, detailLineup),
   };
 }
