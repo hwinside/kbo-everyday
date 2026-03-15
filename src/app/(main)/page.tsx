@@ -99,7 +99,8 @@ export default function HomePage() {
       {/* Header */}
       <motion.header variants={item} className="flex items-center justify-between py-3 border-b mb-2 -mx-5 px-5" style={{ borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)' }}>
         <div className="flex flex-col">
-          <img src="/logo-mark.png" alt="크보팬" style={{height: "44px", objectFit: "contain", filter: "var(--logo-filter)"}} className="-ml-0.5" />
+          <img src="/logo-mark-light.png" alt="크보팬" style={{height: "44px", objectFit: "contain"}} className="-ml-0.5 dark:hidden" />
+          <img src="/logo-mark.png" alt="크보팬" style={{height: "44px", objectFit: "contain"}} className="-ml-0.5 hidden dark:block" />
         </div>
         <div className="flex items-center gap-1">
           <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
