@@ -151,13 +151,57 @@ export function getTeamBgColor(team: TeamData): string {
 }
 
 /** 다크모드 바 차트용 팀 컬러.
- *  colorSecondary → colorPrimary → colorLight 순으로 검토하되,
- *  luminance < 0.05인 색은 건너뜀 (다크 배경에서 안 보이므로).
+ *  colorLight를 기본으로 사용 (다크 배경에서 가시성 보장).
  */
 export function getTeamBarColor(team: TeamData): string {
-  const candidates = [team.colorSecondary, team.colorPrimary, team.colorLight];
-  for (const c of candidates) {
-    if (c && hexLuminance(c) >= 0.05) return c;
-  }
   return team.colorLight;
+}
+
+/** hex → hue (0~360) */
+function hexToHue(hex: string): number {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const d = max - min;
+  if (d === 0) return 0;
+  let h = 0;
+  if (max === r) h = ((g - b) / d) % 6;
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  h = Math.round(h * 60);
+  return h < 0 ? h + 360 : h;
+}
+
+/** 두 팀의 바 차트 색상 쌍을 반환.
+ *  colorLight 기반, hue 차이 < 40° 이면 home을 colorSecondary로 교체.
+ */
+export function getCompareBarColors(away: TeamData, home: TeamData): [string, string] {
+  const awayColor = away.colorLight;
+  let homeColor = home.colorLight;
+
+  const awayHue = hexToHue(awayColor);
+  const homeHue = hexToHue(homeColor);
+  const hueDiff = Math.abs(awayHue - homeHue);
+  const hueDistance = Math.min(hueDiff, 360 - hueDiff);
+
+  if (hueDistance < 40) {
+    // 유사색 → home을 secondary로 교체
+    if (home.colorSecondary && hexLuminance(home.colorSecondary) >= 0.05) {
+      // secondary도 유사한지 체크
+      const secHue = hexToHue(home.colorSecondary);
+      const secDiff = Math.min(Math.abs(awayHue - secHue), 360 - Math.abs(awayHue - secHue));
+      if (secDiff >= 40) {
+        homeColor = home.colorSecondary;
+      } else {
+        // secondary도 유사 → 중립 그레이 사용
+        homeColor = "#A0A0A0";
+      }
+    } else {
+      // secondary가 너무 어두움 → 중립 그레이
+      homeColor = "#A0A0A0";
+    }
+  }
+
+  return [awayColor, homeColor];
 }

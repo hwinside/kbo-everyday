@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { type TeamData } from "@/lib/constants/teams";
+import { type TeamData, getCompareBarColors } from "@/lib/constants/teams";
 import type {
   GameStats,
   BatterStat,
@@ -207,9 +207,8 @@ export default function GameStatsTab({
     return items;
   }, [stats]);
 
-  // 고정 정보색 2색 — 팀컬러와 겹치지 않는 Away/Home 구분용
-  const awayBarColor = "#38BDF8"; // cyan
-  const homeBarColor = "#F59E0B"; // amber
+  // 팀 colorLight 기반 + 유사색 자동 회피
+  const [awayBarColor, homeBarColor] = getCompareBarColors(awayTeam, homeTeam);
 
   return (
     <div className="px-5 py-4 space-y-5">
