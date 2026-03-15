@@ -93,7 +93,7 @@ export default function StandingsPage() {
           onClick={() => setSeason(y)}
           className={clsx(
             "px-3 py-1 rounded-full text-xs font-semibold transition-all",
-            season === y ? "bg-accent text-white" : "bg-bg-tertiary text-text-tertiary"
+            season === y ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
           )}
         >
           {y} 시즌
@@ -113,7 +113,7 @@ export default function StandingsPage() {
             "px-4 py-1.5 text-xs font-semibold rounded-full transition-all",
             mainTab === tab.id
               ? "bg-accent text-white"
-              : "bg-bg-tertiary text-text-tertiary"
+              : "bg-bg-tertiary text-text-secondary"
           )}
         >
           {tab.label}
