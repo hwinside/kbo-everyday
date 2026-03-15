@@ -193,8 +193,8 @@ export default function LearnPage() {
                   ) : part
                 )}
               </p>
-              <div className="bg-bg-tertiary rounded-xl p-3">
-                <p className="text-sm text-center text-text-tertiary whitespace-pre-line font-mono">
+              <div className="bg-bg-tertiary rounded-xl p-3 border border-border">
+                <p className="text-sm text-center text-text-secondary whitespace-pre-line font-mono">
                   {chapter.lessons[lessonIndex].illustration}
                 </p>
               </div>
