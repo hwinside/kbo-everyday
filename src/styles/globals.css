@@ -9,7 +9,7 @@
   --bg-primary: #FFFFFF;
   --bg-secondary: #F5F5F7;
   --bg-tertiary: #E8E8ED;
-  --bg-glass: rgba(0, 0, 0, 0.03);
+  --bg-glass: rgba(255, 255, 255, 0.8);
 
   --text-primary: #1D1D1F;
   --text-secondary: #6E6E73;
@@ -20,7 +20,7 @@
   --accent-gold: #FF9F0A;
   --accent-green: #34C759;
 
-  --border: rgba(0, 0, 0, 0.08);
+  --border: rgba(0, 0, 0, 0.10);
   --glass-blur: 20px;
 
   /* Team Colors */
