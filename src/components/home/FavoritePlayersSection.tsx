@@ -56,8 +56,8 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
           return (
             <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
               <div
-                className="min-w-[160px] rounded-2xl p-3 flex flex-col items-center gap-2"
-                style={{ background: `linear-gradient(135deg, ${team ? getTeamBgColor(team) : '#666'}20, ${team ? getTeamBgColor(team) : '#666'}08)` }}
+                className="min-w-[160px] rounded-2xl p-3 flex flex-col items-center gap-2 border border-border"
+                style={{ ['--team-color' as string]: team ? getTeamBgColor(team) : '#666', background: `linear-gradient(135deg, var(--myteam-tint), transparent)` }}
               >
                 <PlayerAvatar
                   name={player.name}

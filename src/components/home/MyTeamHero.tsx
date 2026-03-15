@@ -32,7 +32,7 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
       <Link href={`/games/${myTeamGame.id}`}>
         <div
           className="relative rounded-2xl p-5 overflow-hidden border border-black/10 dark:border-white/10 bg-bg-secondary"
-          style={{ background: `linear-gradient(135deg, ${getTeamBgColor(myTeam)}30 0%, var(--myteam-card-end, #1a1a1d) 100%)` }}
+          style={{ ['--team-color' as string]: getTeamBgColor(myTeam), background: `linear-gradient(135deg, var(--myteam-tint) 0%, var(--myteam-card-end, #1a1a1d) 100%)` }}
         >
           {/* Team logo watermark */}
           <div className="absolute right-3 top-3 opacity-15">
