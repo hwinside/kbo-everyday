@@ -16,8 +16,8 @@ export default function Diamond({
   teamColor,
 }: DiamondProps) {
   const baseSize = 14;
-  const emptyColor = "#2C2C2E";
-  const glowFilter = "drop-shadow(0 0 6px var(--glow-color))";
+  const emptyColor = "#1a1a1c";
+  const activeColor = "#ffd600"; // 노랑 — 주자 있을 때
 
   return (
     <svg
@@ -39,7 +39,7 @@ export default function Diamond({
       <path
         d="M40 8 L62 35 L40 62 L18 35 Z"
         fill="none"
-        stroke="rgba(255,255,255,0.1)"
+        stroke="rgba(255,255,255,0.05)"
         strokeWidth="1"
       />
 
@@ -51,9 +51,9 @@ export default function Diamond({
         height={baseSize}
         rx={2}
         transform="rotate(45 40 8)"
-        fill={runner2b ? teamColor : emptyColor}
+        fill={runner2b ? activeColor : emptyColor}
         filter={runner2b ? "url(#glow)" : undefined}
-        style={{ "--glow-color": teamColor } as React.CSSProperties}
+        style={{ "--glow-color": activeColor } as React.CSSProperties}
         animate={{
           fill: runner2b ? teamColor : emptyColor,
           scale: runner2b ? [1, 1.15, 1] : 1,
@@ -69,9 +69,9 @@ export default function Diamond({
         height={baseSize}
         rx={2}
         transform="rotate(45 18 35)"
-        fill={runner3b ? teamColor : emptyColor}
+        fill={runner3b ? activeColor : emptyColor}
         filter={runner3b ? "url(#glow)" : undefined}
-        style={{ "--glow-color": teamColor } as React.CSSProperties}
+        style={{ "--glow-color": activeColor } as React.CSSProperties}
         animate={{
           fill: runner3b ? teamColor : emptyColor,
           scale: runner3b ? [1, 1.15, 1] : 1,
@@ -87,9 +87,9 @@ export default function Diamond({
         height={baseSize}
         rx={2}
         transform="rotate(45 62 35)"
-        fill={runner1b ? teamColor : emptyColor}
+        fill={runner1b ? activeColor : emptyColor}
         filter={runner1b ? "url(#glow)" : undefined}
-        style={{ "--glow-color": teamColor } as React.CSSProperties}
+        style={{ "--glow-color": activeColor } as React.CSSProperties}
         animate={{
           fill: runner1b ? teamColor : emptyColor,
           scale: runner1b ? [1, 1.15, 1] : 1,
