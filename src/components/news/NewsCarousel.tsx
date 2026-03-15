@@ -74,10 +74,14 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
               <div
                 className="relative h-[240px] w-full overflow-hidden"
                 style={{
-                  background: team
+                  "--news-bg-light": team
+                    ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 12%, #EAEAEF) 0%, #EAEAEF 100%)`
+                    : "linear-gradient(135deg, #E5E5EC 0%, #EAEAEF 100%)",
+                  "--news-bg-dark": team
                     ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 35%, #1a1a1d) 0%, #1a1a1d 100%)`
                     : "linear-gradient(135deg, #2a2a3d 0%, #1a1a1d 100%)",
-                }}
+                  background: "var(--news-bg-light)",
+                } as React.CSSProperties}
               >
                 {/* 팀 로고 워터마크 */}
                 {team && (
@@ -94,7 +98,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                 )}
 
                 {/* 하단 그라데이션 */}
-                <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#1a1a1d] to-transparent" />
+                <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#EAEAEF] dark:from-[#1a1a1d] to-transparent" />
 
                 {/* 콘텐츠 */}
                 <div className="absolute inset-x-0 bottom-0 px-4 pb-4">
@@ -103,10 +107,10 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                       {item.label}
                     </span>
                   )}
-                  <h3 className="text-lg font-semibold leading-[26px] text-white line-clamp-3">
+                  <h3 className="text-lg font-semibold leading-[26px] text-text-primary dark:text-white line-clamp-3">
                     {item.title}
                   </h3>
-                  <p className="mt-1 text-xs leading-[18px] text-gray-400">
+                  <p className="mt-1 text-xs leading-[18px] text-text-tertiary dark:text-gray-400">
                     {item.source} · {item.timeAgo}
                   </p>
                 </div>

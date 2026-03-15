@@ -167,6 +167,11 @@ body {
   --card-shadow: none;
 }
 
+/* 뉴스 카드: 다크 시 다크 히어로, 라이트 시 미드톤 */
+.dark [style*="--news-bg-light"] {
+  background: var(--news-bg-dark) !important;
+}
+
 /* ===== Scrollbar ===== */
 ::-webkit-scrollbar {
   width: 4px;
@@ -240,6 +245,7 @@ body {
   border-top: none;
   color: #F5F5F7;
 }
-.myteam-card .text-text-primary { color: #F5F5F7; }
-.myteam-card .text-text-secondary { color: #D1D1D6; }
-.myteam-card .text-text-tertiary { color: #A1A1A6; }
+.myteam-card .text-text-primary { color: #F5F5F7 !important; }
+.myteam-card .text-text-secondary { color: #D1D1D6 !important; }
+.myteam-card .text-text-tertiary { color: #A1A1A6 !important; }
+.myteam-card .text-text-readable { color: #D1D1D6 !important; }
