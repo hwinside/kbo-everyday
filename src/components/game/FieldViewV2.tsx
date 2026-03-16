@@ -50,7 +50,7 @@ function PlayerMarker({
   const borderColor = BORDER_COLORS[type];
   const isHighlight = type === "pitcher" || type === "runner" || type === "batter";
   const nameColor =
-    type === "runner" ? "#ffd600" : type === "batter" ? "#7ecb4a" : type === "pitcher" ? "#7ecb4a" : "#bbb";
+    type === "runner" ? "#ffd600" : type === "batter" ? "#7ecb4a" : type === "pitcher" ? "#7ecb4a" : "var(--field-label-text)";
 
   // Player link lookup
   const rosterPlayer = (playersRoster as { name: string; kboId: string; teamId: number }[]).find(
@@ -85,8 +85,8 @@ function PlayerMarker({
         style={{
           color: nameColor,
           fontWeight: isHighlight ? 600 : 400,
-          textShadow: "0 1px 3px #000, 0 0 6px #000",
-          background: "rgba(0,0,0,0.5)",
+          textShadow: "var(--field-label-shadow)",
+          background: "var(--field-label-bg)",
         }}
       >
         {name}
@@ -108,9 +108,9 @@ function PlayerMarker({
         <span
           className="text-[7px] whitespace-nowrap px-[2px] rounded-[2px] -mt-px"
           style={{
-            color: "#888",
-            textShadow: "0 1px 2px #000",
-            background: "rgba(0,0,0,0.4)",
+            color: "var(--field-pos-text)",
+            textShadow: "var(--field-label-shadow)",
+            background: "var(--field-pos-bg)",
           }}
         >
           {posLabel}
@@ -165,9 +165,16 @@ export default function FieldViewV2({
         className="relative w-full overflow-hidden rounded-lg max-w-[480px] mx-auto"
         style={{ aspectRatio: "1 / 0.55" }}
       >
-        {/* Outfield grass */}
+        {/* Outfield grass — light/dark variants */}
         <div
-          className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[110%] h-[90%] rounded-t-[50%]"
+          className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[110%] h-[90%] rounded-t-[50%] dark:hidden"
+          style={{
+            background:
+              "radial-gradient(ellipse at 50% 100%, #3a7a3a 0%, #2d6a2d 25%, #1f5a1f 45%, var(--bg-tertiary) 65%)",
+          }}
+        />
+        <div
+          className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[110%] h-[90%] rounded-t-[50%] hidden dark:block"
           style={{
             background:
               "radial-gradient(ellipse at 50% 100%, #1b4a1b 0%, #143814 25%, #0d2a0d 45%, #12121e 65%)",
@@ -182,7 +189,7 @@ export default function FieldViewV2({
             right: "18%",
             bottom: "8%",
             top: "38%",
-            background: "#3a2a18",
+            background: "var(--field-infield)",
             clipPath: "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)",
           }}
         />
@@ -251,7 +258,7 @@ export default function FieldViewV2({
         )}
 
         {/* BSO Scoreboard overlay — bottom right */}
-        <div className="absolute -bottom-1 -right-1 z-[15] bg-black/70 rounded-md px-2 py-1.5 backdrop-blur-sm border border-border">
+        <div className="absolute -bottom-1 -right-1 z-[15] rounded-md px-2 py-1.5 backdrop-blur-sm" style={{ background: "var(--field-bso-bg)", border: "1px solid var(--field-bso-border)" }}>
           <div className="flex flex-col gap-0.5">
             {/* Balls */}
             <div className="flex items-center gap-1">
@@ -261,8 +268,9 @@ export default function FieldViewV2({
                   <span
                     key={`b-${i}`}
                     className={`inline-block w-[7px] h-[7px] rounded-full ${
-                      i < balls ? "bg-[#4caf50]" : "bg-gray-300 dark:bg-[#333]"
+                      i < balls ? "bg-[#4caf50]" : ""
                     }`}
+                    style={i >= balls ? { backgroundColor: "var(--field-bso-inactive)" } : undefined}
                   />
                 ))}
               </div>
@@ -275,8 +283,9 @@ export default function FieldViewV2({
                   <span
                     key={`s-${i}`}
                     className={`inline-block w-[7px] h-[7px] rounded-full ${
-                      i < strikes ? "bg-[#ffc107]" : "bg-gray-300 dark:bg-[#333]"
+                      i < strikes ? "bg-[#ffc107]" : ""
                     }`}
+                    style={i >= strikes ? { backgroundColor: "var(--field-bso-inactive)" } : undefined}
                   />
                 ))}
               </div>
@@ -289,8 +298,9 @@ export default function FieldViewV2({
                   <span
                     key={`o-${i}`}
                     className={`inline-block w-[7px] h-[7px] rounded-full ${
-                      i < outs ? "bg-[#e53935]" : "bg-gray-300 dark:bg-[#333]"
+                      i < outs ? "bg-[#e53935]" : ""
                     }`}
+                    style={i >= outs ? { backgroundColor: "var(--field-bso-inactive)" } : undefined}
                   />
                 ))}
               </div>
@@ -300,15 +310,15 @@ export default function FieldViewV2({
 
         {/* On-deck batters overlay */}
         {onDeckBatters && onDeckBatters.length > 0 && (
-          <div className="absolute bottom-[5%] left-2 z-[15]">
-            <div className="text-[7px] text-text-tertiary font-semibold mb-0.5">대기타석</div>
+          <div className="absolute bottom-[5%] left-2 z-[15] rounded-md px-1.5 py-1" style={{ background: "var(--field-ondeck-bg)" }}>
+            <div className="text-[7px] font-semibold mb-0.5" style={{ color: "var(--field-pos-text)" }}>대기타석</div>
             {onDeckBatters.map((b) => (
               <div
                 key={b.order}
-                className="text-[8px] text-white/75 leading-relaxed"
-                style={{ textShadow: "0 1px 3px #000" }}
+                className="text-[8px] leading-relaxed"
+                style={{ color: "var(--field-ondeck-text)", textShadow: "var(--field-label-shadow)" }}
               >
-                <span className="text-text-tertiary font-semibold mr-0.5">{b.order}.</span>
+                <span className="font-semibold mr-0.5" style={{ color: "var(--field-pos-text)" }}>{b.order}.</span>
                 {b.name}
               </div>
             ))}

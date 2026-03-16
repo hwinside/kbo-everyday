@@ -103,9 +103,9 @@ export default function MatchupCard({
             {(() => {
               const href = getPlayerHref(currentPitcher);
               return href ? (
-                <Link href={href} className="text-sm font-bold text-white hover:underline">{currentPitcher}</Link>
+                <Link href={href} className="text-sm font-bold hover:underline" style={{ color: "var(--matchup-name)" }}>{currentPitcher}</Link>
               ) : (
-                <div className="text-sm font-bold text-white">{currentPitcher}</div>
+                <div className="text-sm font-bold" style={{ color: "var(--matchup-name)" }}>{currentPitcher}</div>
               );
             })()}
             <div className="mt-0.5 leading-relaxed">
@@ -137,7 +137,7 @@ export default function MatchupCard({
       )}
 
       {/* VS */}
-      <div className="text-[11px] text-[#555] font-semibold">VS</div>
+      <div className="text-[11px] font-semibold" style={{ color: "var(--matchup-vs)" }}>VS</div>
 
       {/* Batter side */}
       {currentBatter && (
@@ -147,9 +147,9 @@ export default function MatchupCard({
             {(() => {
               const href = getPlayerHref(currentBatter);
               return href ? (
-                <Link href={href} className="text-sm font-bold text-white hover:underline">{currentBatter}</Link>
+                <Link href={href} className="text-sm font-bold hover:underline" style={{ color: "var(--matchup-name)" }}>{currentBatter}</Link>
               ) : (
-                <div className="text-sm font-bold text-white">{currentBatter}</div>
+                <div className="text-sm font-bold" style={{ color: "var(--matchup-name)" }}>{currentBatter}</div>
               );
             })()}
             <div className="mt-0.5 leading-relaxed">

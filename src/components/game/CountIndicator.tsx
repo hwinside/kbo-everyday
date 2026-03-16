@@ -48,7 +48,7 @@ function CountDots({
             key={i}
             className={clsx("w-2.5 h-2.5 rounded-full")}
             style={{
-              backgroundColor: i < count ? activeColor : "var(--bg-tertiary, #2C2C2E)",
+              backgroundColor: i < count ? activeColor : "var(--field-bso-inactive)",
             }}
             animate={
               i === count - 1 && count > 0

@@ -152,7 +152,7 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
                             <span className="text-text-secondary ml-1.5">{play.result}</span>
                           </p>
                           {play.extras && play.extras.length > 0 && (
-                            <p className="text-[11px] text-text-tertiary leading-relaxed mt-0.5">
+                            <p className="text-[11px] leading-relaxed mt-0.5" style={{ color: "var(--relay-sub-text)" }}>
                               └ {play.extras.join(" / ")}
                             </p>
                           )}

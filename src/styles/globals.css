@@ -63,6 +63,23 @@
   --myteam-card-end: #F2F2F7;
   --myteam-tint: transparent;
   --logo-filter: none;
+
+  /* ===== Live Game Field Tokens ===== */
+  --field-bg: #3a7a3a;
+  --field-infield: #c9a86c;
+  --field-label-bg: rgba(255,255,255,0.78);
+  --field-label-text: #1D1D1F;
+  --field-label-shadow: none;
+  --field-pos-bg: rgba(0,0,0,0.06);
+  --field-pos-text: #4A4A4E;
+  --field-bso-bg: rgba(255,255,255,0.85);
+  --field-bso-border: var(--border);
+  --field-bso-inactive: #C7C7CC;
+  --field-ondeck-text: #3A3A3C;
+  --field-ondeck-bg: rgba(255,255,255,0.6);
+  --matchup-name: var(--text-primary);
+  --matchup-vs: var(--text-tertiary);
+  --relay-sub-text: var(--text-secondary);
 }
 
 /* ===== Dark Mode ===== */
@@ -106,6 +123,23 @@
   --myteam-card-end: #1a1a1d;
   --myteam-tint: color-mix(in srgb, var(--team-color, #FF453A) 35%, transparent);
   --logo-filter: none;
+
+  /* ===== Live Game Field Tokens ===== */
+  --field-bg: #1b4a1b;
+  --field-infield: #3a2a18;
+  --field-label-bg: rgba(0,0,0,0.5);
+  --field-label-text: #bbb;
+  --field-label-shadow: 0 1px 3px #000, 0 0 6px #000;
+  --field-pos-bg: rgba(0,0,0,0.4);
+  --field-pos-text: #888;
+  --field-bso-bg: rgba(0,0,0,0.7);
+  --field-bso-border: var(--border);
+  --field-bso-inactive: #333;
+  --field-ondeck-text: rgba(255,255,255,0.75);
+  --field-ondeck-bg: rgba(0,0,0,0.5);
+  --matchup-name: #F5F5F7;
+  --matchup-vs: #636366;
+  --relay-sub-text: var(--text-tertiary);
 }
 
 @theme inline {

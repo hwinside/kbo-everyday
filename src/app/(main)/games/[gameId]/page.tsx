@@ -264,7 +264,7 @@ export default function GameDetailPage() {
             {activeTab === tab.id && (
               <motion.div
                 layoutId="tab-indicator"
-                className="absolute bottom-[-1px] left-[20%] right-[20%] h-0.5 bg-white rounded-sm"
+                className="absolute bottom-[-1px] left-[20%] right-[20%] h-0.5 bg-text-primary rounded-sm"
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
               />
             )}
