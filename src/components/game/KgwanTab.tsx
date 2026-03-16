@@ -607,7 +607,10 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
                 <p className="text-xs text-text-tertiary mt-1">잠시 후 다시 시도해 주세요.</p>
               </div>
             ) : (
-              <p className="text-sm text-text-tertiary py-4">경기 데이터 집계 중...</p>
+              <div className="py-4">
+                <p className="text-sm text-text-tertiary">경기 데이터 집계 중...</p>
+                <p className="text-xs text-text-tertiary/60 mt-1">곧 AI경기 분석을 확인하실 수 있습니다.</p>
+              </div>
             )}
           </div>
         )}
