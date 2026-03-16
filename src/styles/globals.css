@@ -73,6 +73,8 @@
   --field-pos-bg: rgba(0,0,0,0.06);
   --field-pos-text: #4A4A4E;
   --field-defense: #666;
+  --field-runner-text: #9E7700;
+  --field-highlight-text: #2D7A1E;
   --field-bso-bg: rgba(255,255,255,0.85);
   --field-bso-border: var(--border);
   --field-bso-inactive: #C7C7CC;
@@ -136,6 +138,8 @@
   --field-pos-bg: rgba(0,0,0,0.4);
   --field-pos-text: #888;
   --field-defense: #888;
+  --field-runner-text: #ffd600;
+  --field-highlight-text: #7ecb4a;
   --field-bso-bg: rgba(0,0,0,0.7);
   --field-bso-border: var(--border);
   --field-bso-inactive: #333;

@@ -50,7 +50,7 @@ function PlayerMarker({
   const borderColor = BORDER_COLORS[type];
   const isHighlight = type === "pitcher" || type === "runner" || type === "batter";
   const nameColor =
-    type === "runner" ? "#ffd600" : type === "batter" ? "#7ecb4a" : type === "pitcher" ? "#7ecb4a" : "var(--field-label-text)";
+    type === "runner" ? "var(--field-runner-text)" : type === "batter" ? "var(--field-highlight-text)" : type === "pitcher" ? "var(--field-highlight-text)" : "var(--field-label-text)";
 
   // Player link lookup
   const rosterPlayer = (playersRoster as { name: string; kboId: string; teamId: number }[]).find(
