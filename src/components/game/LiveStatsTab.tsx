@@ -208,12 +208,9 @@ export default function LiveStatsTab({
   awayTeam,
   homeTeam,
 }: LiveStatsTabProps) {
-  const [showPreviousInnings, setShowPreviousInnings] = useState(false);
+  const [collapseInnings, setCollapseInnings] = useState(false);
 
-  // Separate latest inning and previous innings (chronological, latest = last)
   const orderedInnings = relay.innings;
-  const latestInning = orderedInnings.length > 0 ? orderedInnings[orderedInnings.length - 1] : null;
-  const previousInnings = orderedInnings.slice(0, -1);
 
   // Convert relay playerStats to GameStats for reuse
   const gameStats = relayToGameStats(relay, awayTeam.id, homeTeam.id);
@@ -243,34 +240,27 @@ export default function LiveStatsTab({
           </div>
 
           <div className="space-y-2">
-            {/* Previous innings toggle */}
-            {previousInnings.length > 0 && (
-              <>
-                <button
-                  onClick={() => setShowPreviousInnings(!showPreviousInnings)}
-                  className="w-full flex items-center justify-center gap-1.5 px-4 py-2 text-text-tertiary hover:bg-black/5 dark:hover:bg-white/5 transition-colors rounded-lg border border-border/30"
-                >
-                  {showPreviousInnings ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                  <span className="text-[11px] font-medium">
-                    {showPreviousInnings ? "이전 이닝 접기" : `이전 이닝 보기 (${previousInnings.length}개)`}
-                  </span>
-                </button>
-
-                {showPreviousInnings && previousInnings.map((inning) => (
-                  <InningPlays
-                    key={`${inning.inning}-${inning.half}`}
-                    inning={inning}
-                    awayTeam={awayTeam}
-                    homeTeam={homeTeam}
-                  />
-                ))}
-              </>
+            {/* 전체 이닝 기본 펼침 — 접기 토글 */}
+            {orderedInnings.length > 3 && (
+              <button
+                onClick={() => setCollapseInnings(!collapseInnings)}
+                className="w-full flex items-center justify-center gap-1.5 px-4 py-2 text-text-tertiary hover:bg-black/5 dark:hover:bg-white/5 transition-colors rounded-lg border border-border/30"
+              >
+                {collapseInnings ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                <span className="text-[11px] font-medium">
+                  {collapseInnings ? `전체 이닝별 기록 보기 (${orderedInnings.length}개)` : "이닝별 기록 접기"}
+                </span>
+              </button>
             )}
 
-            {/* Latest inning (always visible) */}
-            {latestInning && (
-              <InningPlays inning={latestInning} awayTeam={awayTeam} homeTeam={homeTeam} />
-            )}
+            {!collapseInnings && orderedInnings.map((inning) => (
+              <InningPlays
+                key={`${inning.inning}-${inning.half}`}
+                inning={inning}
+                awayTeam={awayTeam}
+                homeTeam={homeTeam}
+              />
+            ))}
           </div>
         </div>
       )}
