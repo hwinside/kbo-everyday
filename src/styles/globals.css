@@ -13,7 +13,7 @@
 
   --text-primary: #1D1D1F;
   --text-secondary: #6E6E73;
-  --text-tertiary: #AEAEB2;
+  --text-tertiary: #8E8E93;
   --text-readable: #3A3A3C;
 
   --accent: #FF453A;
@@ -71,8 +71,8 @@
   --field-label-text: #1D1D1F;
   --field-label-shadow: none;
   --field-pos-bg: rgba(0,0,0,0.06);
-  --field-pos-text: #4A4A4E;
-  --field-defense: #666;
+  --field-pos-text: #3A3A3E;
+  --field-defense: #555;
   --field-runner-text: #9E7700;
   --field-highlight-text: #2D7A1E;
   --field-bso-bg: rgba(255,255,255,0.85);
