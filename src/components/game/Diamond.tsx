@@ -6,18 +6,17 @@ interface DiamondProps {
   runner1b: boolean;
   runner2b: boolean;
   runner3b: boolean;
-  teamColor: string;
+  teamColor?: string; // deprecated — kept for backward compat
 }
 
 export default function Diamond({
   runner1b,
   runner2b,
   runner3b,
-  teamColor,
 }: DiamondProps) {
   const baseSize = 14;
   const emptyColor = "var(--diamond-empty)";
-  const activeColor = "#ffd600"; // 노랑 — 주자 있을 때
+  const activeColor = "#E53935"; // 빨간색 — 주자 있을 때
 
   return (
     <svg
@@ -53,9 +52,8 @@ export default function Diamond({
         transform="rotate(45 40 8)"
         fill={runner2b ? activeColor : emptyColor}
         filter={runner2b ? "url(#glow)" : undefined}
-        style={{ "--glow-color": activeColor } as React.CSSProperties}
         animate={{
-          fill: runner2b ? teamColor : emptyColor,
+          fill: runner2b ? activeColor : emptyColor,
           scale: runner2b ? [1, 1.15, 1] : 1,
         }}
         transition={{ duration: 0.4, ease: "easeOut" }}
@@ -71,9 +69,8 @@ export default function Diamond({
         transform="rotate(45 18 35)"
         fill={runner3b ? activeColor : emptyColor}
         filter={runner3b ? "url(#glow)" : undefined}
-        style={{ "--glow-color": activeColor } as React.CSSProperties}
         animate={{
-          fill: runner3b ? teamColor : emptyColor,
+          fill: runner3b ? activeColor : emptyColor,
           scale: runner3b ? [1, 1.15, 1] : 1,
         }}
         transition={{ duration: 0.4, ease: "easeOut" }}
@@ -89,9 +86,8 @@ export default function Diamond({
         transform="rotate(45 62 35)"
         fill={runner1b ? activeColor : emptyColor}
         filter={runner1b ? "url(#glow)" : undefined}
-        style={{ "--glow-color": activeColor } as React.CSSProperties}
         animate={{
-          fill: runner1b ? teamColor : emptyColor,
+          fill: runner1b ? activeColor : emptyColor,
           scale: runner1b ? [1, 1.15, 1] : 1,
         }}
         transition={{ duration: 0.4, ease: "easeOut" }}
