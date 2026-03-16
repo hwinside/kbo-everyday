@@ -78,7 +78,7 @@ function BaseMarker({ active, style }: { active: boolean; style: React.CSSProper
       className={`absolute w-3 h-3 rotate-45 rounded-[1px] z-20 border ${
         active
           ? "bg-[#E53935] border-[#E53935] shadow-[0_0_8px_#E5393588]"
-          : "bg-[#AEAEB2] border-[#8E8E93]"
+          : "bg-[#C7C7CC] border-[#AEAEB2]"
       }`}
       style={style}
     />
