@@ -354,7 +354,7 @@ export default function GameDetailPage() {
             <motion.div key="stats" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
               {gameStats ? (
                 <GameStatsTab stats={gameStats} awayTeam={awayTeam} homeTeam={homeTeam} />
-              ) : gameRelay && gameRelay.innings.length > 0 ? (
+              ) : liveGame?.isLive && gameRelay && gameRelay.innings.length > 0 ? (
                 <LiveStatsTab relay={gameRelay} awayTeam={awayTeam} homeTeam={homeTeam} />
               ) : (
                 <div className="flex flex-col items-center justify-center h-32 gap-2">
