@@ -14,7 +14,7 @@ export default function Diamond({
   runner2b,
   runner3b,
 }: DiamondProps) {
-  const baseSize = 14;
+  const baseSize = 16;
   const emptyColor = "var(--diamond-empty)";
   const activeColor = "#E53935"; // 빨간색 — 주자 있을 때
 
