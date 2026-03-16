@@ -69,7 +69,7 @@ function LiveGameCard({ game }: { game: LiveGameData }) {
 }
 
 export default function LiveGameBanner({ excludeGameId }: { excludeGameId?: string }) {
-  const { liveGames, loading } = useLiveGame(undefined, 30000);
+  const { liveGames, loading } = useLiveGame(undefined, 15000);
   const filteredGames = excludeGameId ? liveGames.filter(g => g.gameId !== excludeGameId) : liveGames;
   if (loading || filteredGames.length === 0) return null;
 
