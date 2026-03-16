@@ -99,6 +99,7 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
   gameRelay?: GameRelayResponse | null;
 }) {
   const [expandedInning, setExpandedInning] = useState<string | null>(null);
+  const [showPreviousInnings, setShowPreviousInnings] = useState(false);
   const relayEndRef = useRef<HTMLDivElement>(null);
 
   // 네이버 relay가 있으면 이닝별 상세 표시, 없으면 diff 이벤트 fallback
@@ -114,6 +115,10 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
     });
   }, [gameRelay]);
 
+  // 최신 이닝과 이전 이닝 분리
+  const latestInning = orderedInnings.length > 0 ? orderedInnings[orderedInnings.length - 1] : null;
+  const previousInnings = orderedInnings.slice(0, -1);
+
   // 최신 이닝(아래)으로 자동 스크롤
   useEffect(() => {
     if (relayEndRef.current && orderedInnings.length > 0) {
@@ -126,36 +131,89 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
       {/* Live relay */}
       {hasRelay ? (
         <div className="bg-bg-tertiary border-b border-border max-h-[40vh] overflow-y-auto">
-          {orderedInnings.map((inn) => {
-            const inningKey = `${inn.inning}-${inn.half}`;
-            const isExpanded = expandedInning === inningKey;
-            const halfLabel = inn.half === "top" ? "초" : "말";
-            const totalPlays = inn.plays.length;
-            // 최신 이닝(마지막)은 기본 펼침
-            const isLatest = orderedInnings[orderedInnings.length - 1] === inn;
-            const showPlays = isExpanded || isLatest;
+          {/* 이전 이닝 토글 버튼 */}
+          {previousInnings.length > 0 && (
+            <>
+              <button
+                onClick={() => setShowPreviousInnings(!showPreviousInnings)}
+                className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 text-text-tertiary hover:bg-black/5 dark:hover:bg-white/5 transition-colors border-b border-border/30"
+              >
+                {showPreviousInnings ? (
+                  <ChevronUp size={14} />
+                ) : (
+                  <ChevronDown size={14} />
+                )}
+                <span className="text-[11px] font-medium">
+                  {showPreviousInnings ? "이전 이닝 접기" : `이전 이닝 보기 (${previousInnings.length}개)`}
+                </span>
+              </button>
+
+              {/* 이전 이닝 목록 (토글) */}
+              {showPreviousInnings && previousInnings.map((inn) => {
+                const inningKey = `${inn.inning}-${inn.half}`;
+                const isExpanded = expandedInning === inningKey;
+                const halfLabel = inn.half === "top" ? "초" : "말";
+                const totalPlays = inn.plays.length;
+
+                return (
+                  <div key={inningKey} className="border-b border-border/30 last:border-b-0">
+                    <button
+                      onClick={() => setExpandedInning(isExpanded ? null : inningKey)}
+                      className="w-full flex items-center gap-2 px-4 py-2 hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-accent">{inn.inning}회{halfLabel}</span>
+                        <span className="text-[11px] text-text-tertiary">{inn.teamName} 공격</span>
+                      </div>
+                      <span className="text-[10px] text-text-tertiary ml-auto">{totalPlays}타석</span>
+                      {isExpanded ? <ChevronUp size={12} className="text-text-tertiary" /> : <ChevronDown size={12} className="text-text-tertiary" />}
+                    </button>
+
+                    {isExpanded && inn.plays.length > 0 && (
+                      <div className="px-4 pb-2 space-y-1.5">
+                        {inn.plays.map((play, idx) => (
+                          <div key={`${inningKey}-${idx}`} className="flex items-start gap-2">
+                            <span className="text-xs mt-0.5 w-4 text-center shrink-0">{playEmoji(play.type)}</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs text-text-primary leading-relaxed">
+                                <span className="font-semibold">{play.batterName}</span>
+                                <span className="text-text-secondary ml-1.5">{play.result}</span>
+                              </p>
+                              {play.extras && play.extras.length > 0 && (
+                                <p className="text-[11px] leading-relaxed mt-0.5" style={{ color: "var(--relay-sub-text)" }}>
+                                  └ {play.extras.join(" / ")}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </>
+          )}
+
+          {/* 최신(현재) 이닝 — 항상 펼침 */}
+          {latestInning && (() => {
+            const inningKey = `${latestInning.inning}-${latestInning.half}`;
+            const halfLabel = latestInning.half === "top" ? "초" : "말";
+            const totalPlays = latestInning.plays.length;
 
             return (
               <div key={inningKey} className="border-b border-border/30 last:border-b-0">
-                {/* Inning header */}
-                <button
-                  onClick={() => setExpandedInning(isExpanded ? null : inningKey)}
-                  className="w-full flex items-center gap-2 px-4 py-2 hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                >
+                <div className="w-full flex items-center gap-2 px-4 py-2">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-bold text-accent">{inn.inning}회{halfLabel}</span>
-                    <span className="text-[11px] text-text-tertiary">{inn.teamName} 공격</span>
+                    <span className="text-xs font-bold text-accent">{latestInning.inning}회{halfLabel}</span>
+                    <span className="text-[11px] text-text-tertiary">{latestInning.teamName} 공격</span>
                   </div>
                   <span className="text-[10px] text-text-tertiary ml-auto">{totalPlays}타석</span>
-                  {!isLatest && (
-                    isExpanded ? <ChevronUp size={12} className="text-text-tertiary" /> : <ChevronDown size={12} className="text-text-tertiary" />
-                  )}
-                </button>
+                </div>
 
-                {/* Plays */}
-                {showPlays && inn.plays.length > 0 && (
+                {latestInning.plays.length > 0 && (
                   <div className="px-4 pb-2 space-y-1.5">
-                    {inn.plays.map((play, idx) => (
+                    {latestInning.plays.map((play, idx) => (
                       <div key={`${inningKey}-${idx}`} className="flex items-start gap-2">
                         <span className="text-xs mt-0.5 w-4 text-center shrink-0">{playEmoji(play.type)}</span>
                         <div className="flex-1 min-w-0">
@@ -175,7 +233,7 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
                 )}
               </div>
             );
-          })}
+          })()}
           <div ref={relayEndRef} />
         </div>
       ) : gameEvents.length > 0 ? (
