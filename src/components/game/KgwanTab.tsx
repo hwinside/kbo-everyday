@@ -107,7 +107,11 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
   // 이닝 시간순 (최신 이닝이 아래 — 채팅과 같은 방향)
   const orderedInnings = useMemo(() => {
     if (!gameRelay) return [];
-    return [...gameRelay.innings]; // API 원순서 = 시간순
+    return [...gameRelay.innings].sort((a, b) => {
+      if (a.inning !== b.inning) return a.inning - b.inning;
+      // 같은 이닝이면 초(top) < 말(bottom)
+      return a.half === "top" ? -1 : 1;
+    });
   }, [gameRelay]);
 
   // 최신 이닝(아래)으로 자동 스크롤
