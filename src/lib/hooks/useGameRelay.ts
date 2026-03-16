@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { GameRelayResponse } from "@/app/api/game-relay/route";
 
-export type { GameRelayResponse, InningRelay, PlayEvent } from "@/app/api/game-relay/route";
+export type { GameRelayResponse, InningRelay, PlayEvent, MatchupStats } from "@/app/api/game-relay/route";
 
 export function useGameRelay(
   gameId: string | undefined,

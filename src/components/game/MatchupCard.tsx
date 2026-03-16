@@ -7,6 +7,7 @@ import batterStatsJson from "@/lib/constants/stats-2025-batters.json";
 import pitcherStatsJson from "@/lib/constants/stats-2025-pitchers.json";
 import playersRoster from "@/lib/constants/players-roster.json";
 import { getTeamById } from "@/lib/constants/teams";
+import type { MatchupStats } from "@/app/api/game-relay/route";
 
 function getPlayerHref(name: string): string | null {
   const player = (playersRoster as { name: string; kboId: string; teamId: number }[]).find(
@@ -42,6 +43,7 @@ interface MatchupCardProps {
   batterAvg?: string;
   pitcherToday?: PitcherTodayStats | null;
   batterToday?: BatterTodayStats | null;
+  relayMatchup?: MatchupStats;
 }
 
 function lookupBatterAvg(name: string): string | null {
@@ -86,11 +88,34 @@ export default function MatchupCard({
   batterAvg,
   pitcherToday,
   batterToday,
+  relayMatchup,
 }: MatchupCardProps) {
   if (!currentPitcher && !currentBatter) return null;
 
-  const resolvedEra = pitcherEra ?? (currentPitcher ? lookupPitcherEra(currentPitcher) : null);
-  const resolvedAvg = batterAvg ?? (currentBatter ? lookupBatterAvg(currentBatter) : null);
+  // Relay matchup → BoxScore → static JSON fallback
+  const relayPitcher = relayMatchup?.pitcher;
+  const relayBatter = relayMatchup?.batter;
+
+  // Use relay data to build pitcherToday/batterToday if BoxScore is empty
+  const effectivePitcherToday: PitcherTodayStats | null | undefined = pitcherToday ?? (relayPitcher ? {
+    pitchCount: relayPitcher.pitchCount,
+    strikeouts: relayPitcher.strikeouts,
+    walks: relayPitcher.walks,
+    hits: relayPitcher.hits,
+    earnedRuns: relayPitcher.earnedRuns,
+    era: relayPitcher.seasonEra > 0 ? relayPitcher.seasonEra.toFixed(2) : "",
+  } : null);
+
+  const effectiveBatterToday: BatterTodayStats | null | undefined = batterToday ?? (relayBatter ? {
+    atBats: relayBatter.ab,
+    hits: relayBatter.hits,
+    runs: relayBatter.run,
+    rbi: relayBatter.rbi,
+    avg: relayBatter.seasonAvg > 0 ? `.${Math.round(relayBatter.seasonAvg * 1000)}` : ".000",
+  } : null);
+
+  const resolvedEra = pitcherEra ?? (relayPitcher && relayPitcher.seasonEra > 0 ? relayPitcher.seasonEra.toFixed(2) : null) ?? (currentPitcher ? lookupPitcherEra(currentPitcher) : null);
+  const resolvedAvg = batterAvg ?? (relayBatter && relayBatter.seasonAvg > 0 ? `.${Math.round(relayBatter.seasonAvg * 1000)}` : null) ?? (currentBatter ? lookupBatterAvg(currentBatter) : null);
 
   return (
     <div className="flex justify-between items-center px-3.5 py-2.5 mx-3 mb-2.5 bg-bg-tertiary rounded-[10px]">
@@ -109,16 +134,16 @@ export default function MatchupCard({
               );
             })()}
             <div className="mt-0.5 leading-relaxed">
-              {pitcherToday ? (
+              {effectivePitcherToday ? (
                 <>
                   <div className="flex gap-1.5 text-xs">
-                    <span className="text-text-secondary font-semibold">{pitcherToday.pitchCount}구</span>
-                    <span className="text-[#e53935]">K <b>{pitcherToday.strikeouts}</b></span>
-                    <span className="text-[#64b5f6]">BB <b>{pitcherToday.walks}</b></span>
+                    <span className="text-text-secondary font-semibold">{effectivePitcherToday.pitchCount}구</span>
+                    <span className="text-[#e53935]">K <b>{effectivePitcherToday.strikeouts}</b></span>
+                    <span className="text-[#64b5f6]">BB <b>{effectivePitcherToday.walks}</b></span>
                   </div>
                   <div className="flex gap-1.5 text-xs">
-                    <span className="text-[#ff7043]">H <b>{pitcherToday.hits}</b></span>
-                    <span className="text-[#ffc107]">ER <b>{pitcherToday.earnedRuns}</b></span>
+                    <span className="text-[#ff7043]">H <b>{effectivePitcherToday.hits}</b></span>
+                    <span className="text-[#ffc107]">ER <b>{effectivePitcherToday.earnedRuns}</b></span>
                     {resolvedEra && (
                       <span className="text-text-secondary">ERA {resolvedEra}</span>
                     )}
@@ -155,18 +180,18 @@ export default function MatchupCard({
               );
             })()}
             <div className="mt-0.5 leading-relaxed">
-              {batterToday ? (
+              {effectiveBatterToday ? (
                 <>
                   <div className="flex gap-1.5 text-xs justify-end">
                     {resolvedAvg && (
                       <span className="text-[#4fc3f7] font-semibold">{resolvedAvg}</span>
                     )}
-                    <span className="text-text-secondary">{batterToday.atBats}타수</span>
-                    <span className="text-[#4caf50]">{batterToday.hits}안타</span>
+                    <span className="text-text-secondary">{effectiveBatterToday.atBats}타수</span>
+                    <span className="text-[#4caf50]">{effectiveBatterToday.hits}안타</span>
                   </div>
                   <div className="flex gap-1.5 text-xs justify-end">
-                    <span className="text-[#ffd600]">{batterToday.runs}득점</span>
-                    <span className="text-[#ff7043]">{batterToday.rbi}타점</span>
+                    <span className="text-[#ffd600]">{effectiveBatterToday.runs}득점</span>
+                    <span className="text-[#ff7043]">{effectiveBatterToday.rbi}타점</span>
                   </div>
                 </>
               ) : (

@@ -28,10 +28,40 @@ export interface InningRelay {
   plays: PlayEvent[];
 }
 
+export interface MatchupStats {
+  pitcher?: {
+    name: string;
+    pitchCount: number;
+    strikeCount: number;
+    ballCount: number;
+    strikeouts: number;
+    walks: number;
+    hits: number;
+    earnedRuns: number;
+    inn: string | null;
+    seasonEra: number;
+  };
+  batter?: {
+    name: string;
+    pa: number;
+    ab: number;
+    hits: number;
+    hr: number;
+    bb: number;
+    so: number;
+    rbi: number;
+    run: number;
+    todayAvg: number;
+    seasonAvg: number;
+    batResult: string;
+  };
+}
+
 export interface GameRelayResponse {
   gameId: string;
   currentInning: number;
   innings: InningRelay[];
+  matchup?: MatchupStats;
 }
 
 // ===== Helpers =====
@@ -54,12 +84,66 @@ function classifyResult(text: string): PlayEvent["type"] {
   return "other";
 }
 
+interface NaverGamePlayerStats {
+  kk: number;
+  hit: number;
+  bhome: number;
+  ballCount: number;
+  era: number;
+  seasonEra: number;
+  inn: string | null;
+  run: number;
+  strikeCount: number;
+  bb: number;
+  ab: number;
+  batResult?: string;
+  rbi: number;
+  batOrder?: number;
+  hr: number;
+  so: number;
+  pa: number;
+}
+
+interface NaverPlayerInfo {
+  playerType: "pitcher" | "batter";
+  currentGamePlayerStats?: NaverGamePlayerStats;
+  totalSeasonStats?: {
+    era: number;
+    inn: string | null;
+    kk: number;
+    bb: number;
+    hra: number;
+    [key: string]: unknown;
+  };
+}
+
+interface NaverBatterRecord {
+  name: string;
+  ab: number;
+  hit: number;
+  hr: number;
+  bb: number;
+  so: number;
+  rbi: number;
+  run: number;
+  pa: number;
+  todayHra: number;
+  seasonHra: number;
+  batOrder: number;
+  posName: string;
+}
+
 interface NaverTextOption {
   seqno: number;
   text: string;
   type: number;
   speed?: string;
   stuff?: string;
+  currentPlayersInfo?: {
+    away?: NaverPlayerInfo;
+    home?: NaverPlayerInfo;
+  };
+  batterRecord?: NaverBatterRecord;
 }
 
 interface NaverTextRelay {
@@ -142,6 +226,68 @@ function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
   }
 
   return innings;
+}
+
+function extractMatchup(allTextRelays: NaverTextRelay[]): MatchupStats | undefined {
+  // Find the latest type=8 option (newest batter entry) which has currentPlayersInfo
+  // textRelays are in reverse order (newest first within each inning fetch)
+  // We want the FIRST type=8 we encounter (which is the most recent)
+  for (const relay of allTextRelays) {
+    if (relay.titleStyle !== "8") continue;
+    const opts = relay.textOptions;
+    if (!opts) continue;
+
+    for (const opt of opts) {
+      if (opt.type !== 8 || !opt.currentPlayersInfo) continue;
+
+      const matchup: MatchupStats = {};
+
+      // Find pitcher side (the one with playerType === "pitcher")
+      const awaySide = opt.currentPlayersInfo.away;
+      const homeSide = opt.currentPlayersInfo.home;
+      const pitcherSide = awaySide?.playerType === "pitcher" ? awaySide : homeSide?.playerType === "pitcher" ? homeSide : undefined;
+      const batterSide = awaySide?.playerType === "batter" ? awaySide : homeSide?.playerType === "batter" ? homeSide : undefined;
+
+      if (pitcherSide?.currentGamePlayerStats) {
+        const s = pitcherSide.currentGamePlayerStats;
+        // Extract pitcher name from game-live (not available here), will be matched on client
+        matchup.pitcher = {
+          name: "", // Will be filled by client from currentPitcher
+          pitchCount: s.ballCount + s.strikeCount,
+          strikeCount: s.strikeCount,
+          ballCount: s.ballCount,
+          strikeouts: s.kk,
+          walks: s.bb,
+          hits: s.hit,
+          earnedRuns: s.run,
+          inn: s.inn,
+          seasonEra: pitcherSide.totalSeasonStats?.era ?? s.seasonEra,
+        };
+      }
+
+      if (batterSide?.currentGamePlayerStats && opt.batterRecord) {
+        const s = batterSide.currentGamePlayerStats;
+        const br = opt.batterRecord;
+        matchup.batter = {
+          name: br.name,
+          pa: br.pa,
+          ab: br.ab,
+          hits: br.hit,
+          hr: br.hr,
+          bb: br.bb,
+          so: br.so,
+          rbi: br.rbi,
+          run: br.run,
+          todayAvg: br.todayHra,
+          seasonAvg: br.seasonHra,
+          batResult: s.batResult || "",
+        };
+      }
+
+      if (matchup.pitcher || matchup.batter) return matchup;
+    }
+  }
+  return undefined;
 }
 
 // ===== Route handler =====
@@ -227,10 +373,16 @@ export async function GET(req: NextRequest) {
     const combined = allTextRelays.flat();
     const innings = parseInningRelays(combined);
 
+    // Extract current matchup stats from the latest batter entry
+    // Use the last inning's raw data (newest first = first in array)
+    const lastInningRelays = allTextRelays[allTextRelays.length - 1] ?? [];
+    const matchup = extractMatchup(lastInningRelays);
+
     const response: GameRelayResponse = {
       gameId,
       currentInning: maxInning,
       innings,
+      matchup,
     };
 
     return NextResponse.json(response);

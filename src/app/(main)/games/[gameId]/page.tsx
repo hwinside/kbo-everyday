@@ -239,6 +239,7 @@ export default function GameDetailPage() {
           batterAvg={d.batterAvg}
           pitcherToday={d.pitcherToday}
           batterToday={d.batterToday}
+          relayMatchup={gameRelay?.matchup}
         />
       )}
 
