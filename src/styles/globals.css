@@ -83,8 +83,8 @@
   --matchup-name: var(--text-primary);
   --matchup-vs: var(--text-tertiary);
   --relay-sub-text: var(--text-secondary);
-  --diamond-empty: #B0B0B5;
-  --diamond-outline: rgba(0,0,0,0.15);
+  --diamond-empty: #8E8E93;
+  --diamond-outline: rgba(0,0,0,0.25);
 }
 
 /* ===== Dark Mode ===== */
