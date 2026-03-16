@@ -148,8 +148,8 @@
   --matchup-name: #F5F5F7;
   --matchup-vs: #636366;
   --relay-sub-text: var(--text-tertiary);
-  --diamond-empty: #48484A;
-  --diamond-outline: rgba(255,255,255,0.15);
+  --diamond-empty: #3A3A3C;
+  --diamond-outline: rgba(255,255,255,0.10);
 }
 
 @theme inline {
