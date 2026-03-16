@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx } from "clsx";
 import { getTeamById } from "@/lib/constants/teams";
+import { getMyTeamId } from "@/lib/store/myteam";
 import {
   getGameById,
   getInningsForGame,
@@ -163,6 +164,11 @@ export default function GameDetailPage() {
     ? awayTeam.colorPrimary
     : homeTeam.colorPrimary;
 
+  // 탭 인디케이터: 지정팀 참여시 지정팀 컬러, 아니면 홈팀 컬러
+  const myTeamId = getMyTeamId();
+  const myTeamInGame = myTeamId && (myTeamId === game.homeTeamId || myTeamId === game.awayTeamId);
+  const tabIndicatorTeam = myTeamInGame ? getTeamById(myTeamId)! : homeTeam;
+
   const d = deriveGameState(liveGame, game, gameDetail);
 
   return (
@@ -265,7 +271,7 @@ export default function GameDetailPage() {
               <motion.div
                 layoutId="tab-indicator"
                 className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full"
-                style={{ backgroundColor: homeTeam.colorLight }}
+                style={{ backgroundColor: tabIndicatorTeam.colorLight }}
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
               />
             )}
