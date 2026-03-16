@@ -137,7 +137,8 @@ export default function GameDetailPage() {
   const { game: liveGame } = useLiveGame(gameId, 15000);
   const { data: gameDetail } = useGameDetail(gameId, 30000);
   const { events: gameEvents } = useGameEvents(gameId, liveGame?.isLive ?? false, 15000);
-  const { data: gameRelay } = useGameRelay(gameId, liveGame?.isLive ?? false, 30000, liveGame?.inning ?? 0);
+  const liveIsFinal = !!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0);
+  const { data: gameRelay } = useGameRelay(gameId, liveGame?.isLive ?? false, 30000, liveGame?.inning ?? 0, liveIsFinal);
 
   const game = getGameById(gameId) ?? getPreseasonGameById(gameId) ?? parseKboGameId(gameId);
   if (!game) {
@@ -353,7 +354,7 @@ export default function GameDetailPage() {
             <motion.div key="stats" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
               {gameStats ? (
                 <GameStatsTab stats={gameStats} awayTeam={awayTeam} homeTeam={homeTeam} />
-              ) : liveGame?.isLive && gameRelay && gameRelay.innings.length > 0 ? (
+              ) : gameRelay && gameRelay.innings.length > 0 ? (
                 <LiveStatsTab relay={gameRelay} awayTeam={awayTeam} homeTeam={homeTeam} />
               ) : (
                 <div className="flex flex-col items-center justify-center h-32 gap-2">
@@ -362,6 +363,8 @@ export default function GameDetailPage() {
                     <span className="text-sm text-yellow-400/90">
                       {liveGame?.isLive
                         ? "경기 진행 중입니다. 스탯은 경기 종료 후 업데이트됩니다."
+                        : d.isFinal
+                        ? "경기 상세 데이터 준비 중입니다."
                         : `${game.time}시 경기가 시작된 후 확인하실 수 있습니다.`}
                     </span>
                   </div>

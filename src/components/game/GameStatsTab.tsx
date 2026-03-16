@@ -16,6 +16,7 @@ interface GameStatsTabProps {
   stats: GameStats;
   awayTeam: TeamData;
   homeTeam: TeamData;
+  isLive?: boolean;
 }
 
 type Side = "away" | "home";
@@ -162,7 +163,9 @@ export default function GameStatsTab({
   stats,
   awayTeam,
   homeTeam,
+  isLive,
 }: GameStatsTabProps) {
+  void isLive; // Reserved for future live-specific styling
   const [side, setSide] = useState<Side>("away");
 
   const team = side === "away" ? awayTeam : homeTeam;

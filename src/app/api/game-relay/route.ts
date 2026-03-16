@@ -57,11 +57,50 @@ export interface MatchupStats {
   };
 }
 
+export interface RelayBatterStat {
+  name: string;
+  batOrder: number;
+  posName: string;
+  pa: number;
+  ab: number;
+  hit: number;
+  hr: number;
+  bb: number;
+  so: number;
+  rbi: number;
+  run: number;
+  seasonAvg: number;
+  todayAvg: number;
+}
+
+export interface RelayPitcherStat {
+  name: string;
+  pitchCount: number;
+  strikeCount: number;
+  ballCount: number;
+  strikeouts: number;
+  walks: number;
+  hits: number;
+  earnedRuns: number;
+  runs: number;
+  inn: string | null;
+  seasonEra: number;
+  hr: number;
+}
+
+export interface RelayPlayerStats {
+  awayBatters: RelayBatterStat[];
+  homeBatters: RelayBatterStat[];
+  awayPitchers: RelayPitcherStat[];
+  homePitchers: RelayPitcherStat[];
+}
+
 export interface GameRelayResponse {
   gameId: string;
   currentInning: number;
   innings: InningRelay[];
   matchup?: MatchupStats;
+  playerStats?: RelayPlayerStats;
 }
 
 // ===== Helpers =====
@@ -228,6 +267,158 @@ function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
   return innings;
 }
 
+function extractPlayerStats(allTextRelays: NaverTextRelay[]): RelayPlayerStats {
+  // Collect latest stats for each player across all innings
+  // batterRecord is cumulative (updated each at-bat), so last occurrence = latest
+  const batterMap = new Map<string, { record: NaverBatterRecord; half: "top" | "bottom" }>();
+  const pitcherMap = new Map<string, { stats: NaverGamePlayerStats; total: { era: number; inn: string | null }; half: "top" | "bottom" }>();
+
+  let currentHalf: "top" | "bottom" = "top";
+
+  // Process in chronological order (reverse since newest first)
+  const chronological = [...allTextRelays].reverse();
+
+  for (const relay of chronological) {
+    // Track inning half from headers
+    if (relay.titleStyle === "0") {
+      const match = relay.title?.match(/\d+회(초|말)/);
+      if (match) currentHalf = match[1] === "초" ? "top" : "bottom";
+      continue;
+    }
+
+    if (relay.titleStyle !== "8") continue;
+    const opts = relay.textOptions;
+    if (!opts) continue;
+
+    for (const opt of opts) {
+      // Batter record (accumulates through the game)
+      if (opt.batterRecord?.name) {
+        batterMap.set(opt.batterRecord.name, {
+          record: opt.batterRecord,
+          half: currentHalf,  // batting team's half
+        });
+      }
+
+      // Pitcher stats from currentPlayersInfo
+      if (opt.currentPlayersInfo) {
+        const awaySide = opt.currentPlayersInfo.away;
+        const homeSide = opt.currentPlayersInfo.home;
+
+        // The pitcher is on the defensive side
+        const pitcherInfo = awaySide?.playerType === "pitcher" ? awaySide : homeSide?.playerType === "pitcher" ? homeSide : undefined;
+        const pitcherIsHome = homeSide?.playerType === "pitcher";
+
+        if (pitcherInfo?.currentGamePlayerStats) {
+          // We need pitcher name — extract from relay title context
+          // Unfortunately pitcher name isn't directly in currentPlayersInfo
+          // But we can use the batter's at-bat context: when batter is away (top), pitcher is home
+          const pitcherHalf: "top" | "bottom" = pitcherIsHome ? "bottom" : "top"; // pitcher's team half
+          const pitcherId = `pitcher_${pitcherIsHome ? "home" : "away"}_${pitcherInfo.currentGamePlayerStats.inn || "0"}`;
+
+          // We'll collect all pitcher data and deduplicate by ballCount (increasing)
+          // For now store by a composite key
+        }
+      }
+    }
+  }
+
+  // Separate batters by team (top = away batters, bottom = home batters)
+  const awayBatters: RelayBatterStat[] = [];
+  const homeBatters: RelayBatterStat[] = [];
+
+  for (const [, { record, half }] of batterMap) {
+    const stat: RelayBatterStat = {
+      name: record.name,
+      batOrder: record.batOrder,
+      posName: record.posName,
+      pa: record.pa,
+      ab: record.ab,
+      hit: record.hit,
+      hr: record.hr,
+      bb: record.bb,
+      so: record.so,
+      rbi: record.rbi,
+      run: record.run,
+      seasonAvg: record.seasonHra,
+      todayAvg: record.todayHra,
+    };
+    if (half === "top") awayBatters.push(stat);
+    else homeBatters.push(stat);
+  }
+
+  // Sort by batting order
+  awayBatters.sort((a, b) => a.batOrder - b.batOrder);
+  homeBatters.sort((a, b) => a.batOrder - b.batOrder);
+
+  // For pitchers, we need to extract from the inning headers' currentPlayersInfo
+  // Each inning header has pitcher ID, and we can track pitcher changes
+  const awayPitchers: RelayPitcherStat[] = [];
+  const homePitchers: RelayPitcherStat[] = [];
+
+  // Re-scan for pitcher data from type=8 options (last occurrence per pitcher name)
+  // The pitcher's currentGamePlayerStats accumulate
+  const pitcherAccum = new Map<string, { stats: NaverGamePlayerStats; totalEra: number; isHome: boolean }>();
+
+  for (const relay of chronological) {
+    if (relay.titleStyle !== "8") continue;
+    const opts = relay.textOptions;
+    if (!opts) continue;
+
+    for (const opt of opts) {
+      if (!opt.currentPlayersInfo) continue;
+
+      const awaySide = opt.currentPlayersInfo.away;
+      const homeSide = opt.currentPlayersInfo.home;
+
+      // Find pitcher side
+      for (const [side, isHome] of [[awaySide, false], [homeSide, true]] as [NaverPlayerInfo | undefined, boolean][]) {
+        if (side?.playerType !== "pitcher" || !side.currentGamePlayerStats) continue;
+        const gs = side.currentGamePlayerStats;
+        // Use pitcher's ballCount as identifier (increases monotonically for same pitcher)
+        // We need a name... check if batterRecord tells us the opposing pitcher
+        // Actually, the title of the relay is the batter, not the pitcher
+        // We'll need to get pitcher name from somewhere else
+
+        // For now, create a key from isHome + inn (rough approximation)
+        const key = `${isHome ? "home" : "away"}_pitcher`;
+        const existing = pitcherAccum.get(key);
+        const totalPitchCount = gs.ballCount + gs.strikeCount;
+
+        // If this pitcher has more pitches than the stored one, it's the current pitcher (same or new)
+        // Since we can't distinguish pitcher changes without names, we'll just use the latest stats
+        if (!existing || totalPitchCount >= (existing.stats.ballCount + existing.stats.strikeCount)) {
+          pitcherAccum.set(key, {
+            stats: gs,
+            totalEra: side.totalSeasonStats?.era ?? gs.seasonEra,
+            isHome,
+          });
+        }
+      }
+    }
+  }
+
+  for (const [, { stats, totalEra, isHome }] of pitcherAccum) {
+    const pitcherStat: RelayPitcherStat = {
+      name: "", // Will be filled by client matching with currentPitcher
+      pitchCount: stats.ballCount + stats.strikeCount,
+      strikeCount: stats.strikeCount,
+      ballCount: stats.ballCount,
+      strikeouts: stats.kk,
+      walks: stats.bb,
+      hits: stats.hit,
+      earnedRuns: stats.run,
+      runs: stats.run,
+      inn: stats.inn,
+      seasonEra: totalEra,
+      hr: stats.hr,
+    };
+    if (isHome) homePitchers.push(pitcherStat);
+    else awayPitchers.push(pitcherStat);
+  }
+
+  return { awayBatters, homeBatters, awayPitchers, homePitchers };
+}
+
 function extractMatchup(allTextRelays: NaverTextRelay[]): MatchupStats | undefined {
   // Find the latest type=8 option (newest batter entry) which has currentPlayersInfo
   // textRelays are in reverse order (newest first within each inning fetch)
@@ -378,11 +569,15 @@ export async function GET(req: NextRequest) {
     const lastInningRelays = allTextRelays[allTextRelays.length - 1] ?? [];
     const matchup = extractMatchup(lastInningRelays);
 
+    // Extract all player stats for stats tab
+    const playerStats = extractPlayerStats(combined);
+
     const response: GameRelayResponse = {
       gameId,
       currentInning: maxInning,
       innings,
       matchup,
+      playerStats,
     };
 
     return NextResponse.json(response);
