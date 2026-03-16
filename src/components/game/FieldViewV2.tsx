@@ -27,7 +27,7 @@ interface FieldViewV2Props {
 type MarkerType = "defense" | "pitcher" | "runner" | "batter";
 
 const BORDER_COLORS: Record<MarkerType, string> = {
-  defense: "#888888",
+  defense: "var(--field-defense)",
   pitcher: "#7ecb4a",
   runner: "#ffd600",
   batter: "#7ecb4a",

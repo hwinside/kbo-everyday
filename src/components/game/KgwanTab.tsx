@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { clsx } from "clsx";
@@ -99,28 +99,36 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
   gameRelay?: GameRelayResponse | null;
 }) {
   const [expandedInning, setExpandedInning] = useState<string | null>(null);
+  const relayEndRef = useRef<HTMLDivElement>(null);
 
   // 네이버 relay가 있으면 이닝별 상세 표시, 없으면 diff 이벤트 fallback
   const hasRelay = gameRelay && gameRelay.innings.length > 0;
 
-  // 이닝 역순 (최신 이닝 위로)
-  const reversedInnings = useMemo(() => {
+  // 이닝 시간순 (최신 이닝이 아래 — 채팅과 같은 방향)
+  const orderedInnings = useMemo(() => {
     if (!gameRelay) return [];
-    return [...gameRelay.innings].reverse();
+    return [...gameRelay.innings]; // API 원순서 = 시간순
   }, [gameRelay]);
+
+  // 최신 이닝(아래)으로 자동 스크롤
+  useEffect(() => {
+    if (relayEndRef.current && orderedInnings.length > 0) {
+      relayEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [orderedInnings.length]);
 
   return (
     <div className="flex flex-col h-full">
       {/* Live relay */}
       {hasRelay ? (
         <div className="bg-bg-tertiary border-b border-border max-h-[40vh] overflow-y-auto">
-          {reversedInnings.map((inn) => {
+          {orderedInnings.map((inn) => {
             const inningKey = `${inn.inning}-${inn.half}`;
             const isExpanded = expandedInning === inningKey;
             const halfLabel = inn.half === "top" ? "초" : "말";
             const totalPlays = inn.plays.length;
-            // 최신 이닝은 기본 펼침
-            const isLatest = reversedInnings[0] === inn;
+            // 최신 이닝(마지막)은 기본 펼침
+            const isLatest = orderedInnings[orderedInnings.length - 1] === inn;
             const showPlays = isExpanded || isLatest;
 
             return (
@@ -164,6 +172,7 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
               </div>
             );
           })}
+          <div ref={relayEndRef} />
         </div>
       ) : gameEvents.length > 0 ? (
         /* Fallback: diff 기반 이벤트 (relay 없을 때) */

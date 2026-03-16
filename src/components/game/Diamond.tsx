@@ -16,7 +16,7 @@ export default function Diamond({
   teamColor,
 }: DiamondProps) {
   const baseSize = 14;
-  const emptyColor = "#1a1a1c";
+  const emptyColor = "var(--diamond-empty)";
   const activeColor = "#ffd600"; // 노랑 — 주자 있을 때
 
   return (
@@ -39,7 +39,7 @@ export default function Diamond({
       <path
         d="M40 8 L62 35 L40 62 L18 35 Z"
         fill="none"
-        stroke="rgba(255,255,255,0.05)"
+        stroke="var(--diamond-outline)"
         strokeWidth="1"
       />
 
@@ -101,7 +101,7 @@ export default function Diamond({
       <path
         d="M40 58 L45 62 L40 66 L35 62 Z"
         fill={emptyColor}
-        opacity={0.6}
+        opacity={0.7}
       />
     </svg>
   );

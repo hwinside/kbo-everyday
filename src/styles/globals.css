@@ -72,6 +72,7 @@
   --field-label-shadow: none;
   --field-pos-bg: rgba(0,0,0,0.06);
   --field-pos-text: #4A4A4E;
+  --field-defense: #666;
   --field-bso-bg: rgba(255,255,255,0.85);
   --field-bso-border: var(--border);
   --field-bso-inactive: #C7C7CC;
@@ -80,6 +81,8 @@
   --matchup-name: var(--text-primary);
   --matchup-vs: var(--text-tertiary);
   --relay-sub-text: var(--text-secondary);
+  --diamond-empty: #D1D1D6;
+  --diamond-outline: rgba(0,0,0,0.08);
 }
 
 /* ===== Dark Mode ===== */
@@ -132,6 +135,7 @@
   --field-label-shadow: 0 1px 3px #000, 0 0 6px #000;
   --field-pos-bg: rgba(0,0,0,0.4);
   --field-pos-text: #888;
+  --field-defense: #888;
   --field-bso-bg: rgba(0,0,0,0.7);
   --field-bso-border: var(--border);
   --field-bso-inactive: #333;
@@ -140,6 +144,8 @@
   --matchup-name: #F5F5F7;
   --matchup-vs: #636366;
   --relay-sub-text: var(--text-tertiary);
+  --diamond-empty: #1a1a1c;
+  --diamond-outline: rgba(255,255,255,0.05);
 }
 
 @theme inline {
