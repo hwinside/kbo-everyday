@@ -72,7 +72,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
               onClick={() => item.sourceUrl && window.open(item.sourceUrl, "_blank")}
             >
               <div
-                className="relative h-[240px] w-full overflow-hidden"
+                className="relative h-[172px] w-full overflow-hidden"
                 style={{
                   "--news-bg-light": team
                     ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 35%, #1a1a1d) 0%, #1a1a1d 100%)`

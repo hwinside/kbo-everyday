@@ -137,18 +137,18 @@ export default function HomePage() {
         </motion.div>
       )}
 
+      {/* News Carousel */}
+      <div className="mb-3">
+        <h2 className="text-lg leading-[26px] font-semibold text-text-primary mb-3">📰 내 팀, 최애선수 관련 뉴스</h2>
+        <div className="-mx-5"><NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 10) : (myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 10) : MOCK_NEWS)} /></div>
+      </div>
+
       {/* My Team Hero */}
       {myTeam && myTeamGame && (
         <MyTeamHero myTeam={myTeam} myTeamGame={myTeamGame} />
       )}
 
-      {/* News Carousel */}
       <div className="mb-3">
-        <h2 className="text-lg leading-[26px] font-semibold text-text-primary mb-3">📰 내 팀, 최애선수 관련 뉴스</h2>
-        <div className="-mx-5"><NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 10) : (myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 10) : MOCK_NEWS)} /></div>
-
-        <div className="h-6" />
-
         <FavoritePlayersSection favPlayers={favPlayers} />
 
         <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
