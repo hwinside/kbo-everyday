@@ -75,12 +75,13 @@ function PlayerMarker({
 function BaseMarker({ active, style }: { active: boolean; style: React.CSSProperties }) {
   return (
     <div
-      className={`absolute w-3 h-3 rotate-45 rounded-[1px] z-20 border ${
-        active
-          ? "bg-[#E53935] border-[#E53935] shadow-[0_0_8px_#E5393588]"
-          : "bg-[#D8D8DC] border-[#C7C7CC]"
-      }`}
-      style={style}
+      className="absolute w-3 h-3 rotate-45 rounded-[1px] z-20 border"
+      style={{
+        ...style,
+        backgroundColor: active ? "#E53935" : "var(--diamond-empty)",
+        borderColor: active ? "#E53935" : "var(--diamond-outline)",
+        boxShadow: active ? "0 0 8px #E5393588" : "none",
+      }}
     />
   );
 }
