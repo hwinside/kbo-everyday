@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { Radio } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useLiveGame, type LiveGameData } from "@/lib/hooks/useLiveGame";
+import type { LiveGameData } from "@/lib/hooks/useLiveGame";
 import Diamond from "@/components/game/Diamond";
 import { TEAMS } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
@@ -68,10 +68,9 @@ function LiveGameCard({ game }: { game: LiveGameData }) {
   );
 }
 
-export default function LiveGameBanner({ excludeGameId }: { excludeGameId?: string }) {
-  const { liveGames, loading } = useLiveGame(undefined, 15000);
+export default function LiveGameBanner({ excludeGameId, liveGames }: { excludeGameId?: string; liveGames: LiveGameData[] }) {
   const filteredGames = excludeGameId ? liveGames.filter(g => g.gameId !== excludeGameId) : liveGames;
-  if (loading || filteredGames.length === 0) return null;
+  if (filteredGames.length === 0) return null;
 
   return (
     <div className="mb-4">

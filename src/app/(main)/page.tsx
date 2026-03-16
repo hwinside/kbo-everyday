@@ -154,7 +154,7 @@ export default function HomePage() {
         <HomeOfficialVideos team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
       </div>
 
-      <LiveGameBanner excludeGameId={myTeamGameBase?.id} />
+      <LiveGameBanner excludeGameId={myTeamGameBase?.id} liveGames={liveGames} />
       <TodayGamesSection todayGames={todayGames} isPreseason={isPreseason} myTeamId={myTeamId} />
 
       {/* 퀵액션 버튼 */}
