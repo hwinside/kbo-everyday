@@ -39,7 +39,7 @@ export default function Diamond({
         d="M40 8 L62 35 L40 62 L18 35 Z"
         fill="none"
         stroke="var(--diamond-outline)"
-        strokeWidth="1"
+        strokeWidth="1.5"
       />
 
       {/* 2nd base (top) */}
@@ -51,6 +51,8 @@ export default function Diamond({
         rx={2}
         transform="rotate(45 40 8)"
         fill={runner2b ? activeColor : emptyColor}
+        stroke={runner2b ? activeColor : "var(--diamond-outline)"}
+        strokeWidth={runner2b ? 0 : 1.5}
         filter={runner2b ? "url(#glow)" : undefined}
         animate={{
           fill: runner2b ? activeColor : emptyColor,
@@ -68,6 +70,8 @@ export default function Diamond({
         rx={2}
         transform="rotate(45 18 35)"
         fill={runner3b ? activeColor : emptyColor}
+        stroke={runner3b ? activeColor : "var(--diamond-outline)"}
+        strokeWidth={runner3b ? 0 : 1.5}
         filter={runner3b ? "url(#glow)" : undefined}
         animate={{
           fill: runner3b ? activeColor : emptyColor,
@@ -85,6 +89,8 @@ export default function Diamond({
         rx={2}
         transform="rotate(45 62 35)"
         fill={runner1b ? activeColor : emptyColor}
+        stroke={runner1b ? activeColor : "var(--diamond-outline)"}
+        strokeWidth={runner1b ? 0 : 1.5}
         filter={runner1b ? "url(#glow)" : undefined}
         animate={{
           fill: runner1b ? activeColor : emptyColor,
