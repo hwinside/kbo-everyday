@@ -92,54 +92,44 @@ export default function CountIndicator({
         <div className="flex items-center justify-between pt-2 border-t border-border">
           {/* Pitcher */}
           {currentPitcher && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               <div className="ring-2 ring-red-500/50 rounded-full">
                 <PlayerAvatar
                   name={currentPitcher}
                   teamId={pitcherTeamId}
                   photoUrl={pitcherPhotoUrl}
-                  size={36}
+                  size={40}
                   showTeamBadge={false}
                 />
               </div>
-              <div>
-                <div className="text-[10px] text-text-tertiary uppercase tracking-wider">투수</div>
-                <div className="text-sm font-bold text-text-primary">{currentPitcher}</div>
-                {pitcherStats && (
-                  <>
-                    <div className="text-[11px] text-accent font-medium">
-                      ERA {pitcherStats.era}
-                    </div>
-                    {pitcherStats.pitchCount !== undefined && (
-                      <div className="text-[11px] text-yellow-400 font-semibold">
-                        {pitcherStats.pitchCount}구
-                      </div>
-                    )}
-                  </>
+              <div className="min-h-[52px] flex flex-col justify-center">
+                <div className="text-[11px] text-text-secondary font-semibold tracking-wider">투수</div>
+                <div className="text-[15px] font-bold text-text-primary">{currentPitcher}</div>
+                {pitcherStats ? (
+                  <div className="text-xs text-text-secondary font-medium">
+                    ERA {pitcherStats.era}
+                  </div>
+                ) : (
+                  <div className="text-xs text-transparent select-none">&nbsp;</div>
                 )}
               </div>
             </div>
           )}
 
-          <span className="text-xs text-text-tertiary font-semibold">VS</span>
+          <span className="text-sm text-text-tertiary font-semibold">VS</span>
 
           {/* Batter */}
           {currentBatter && (
-            <div className="flex items-center gap-2">
-              <div className="text-right">
-                <div className="text-[10px] text-text-tertiary uppercase tracking-wider">타자</div>
-                <div className="text-sm font-bold text-text-primary">{currentBatter}</div>
-                {batterStats && (
-                  <>
-                    <div className="text-[11px] text-accent font-medium">
-                      {batterStats.avg}
-                    </div>
-                    {batterStats.todayRecord && (
-                      <div className="text-[11px] text-text-secondary">
-                        {batterStats.todayRecord}
-                      </div>
-                    )}
-                  </>
+            <div className="flex items-center gap-2.5">
+              <div className="text-right min-h-[52px] flex flex-col justify-center">
+                <div className="text-[11px] text-text-secondary font-semibold tracking-wider">타자</div>
+                <div className="text-[15px] font-bold text-text-primary">{currentBatter}</div>
+                {batterStats ? (
+                  <div className="text-xs text-text-secondary font-medium">
+                    {batterStats.avg}
+                  </div>
+                ) : (
+                  <div className="text-xs text-transparent select-none">&nbsp;</div>
                 )}
               </div>
               <div className="ring-2 ring-sky-400/50 rounded-full">
@@ -147,7 +137,7 @@ export default function CountIndicator({
                   name={currentBatter}
                   teamId={batterTeamId}
                   photoUrl={batterPhotoUrl}
-                  size={36}
+                  size={40}
                   showTeamBadge={false}
                 />
               </div>

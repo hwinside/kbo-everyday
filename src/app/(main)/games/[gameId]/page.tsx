@@ -256,7 +256,7 @@ export default function GameDetailPage() {
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={clsx(
-              "flex-1 py-2.5 text-[13px] font-medium transition-colors relative",
+              "flex-1 py-2.5 text-sm font-medium transition-colors relative",
               activeTab === tab.id ? "text-text-primary font-semibold" : "text-text-tertiary"
             )}
           >
@@ -264,7 +264,8 @@ export default function GameDetailPage() {
             {activeTab === tab.id && (
               <motion.div
                 layoutId="tab-indicator"
-                className="absolute bottom-[-1px] left-[20%] right-[20%] h-0.5 bg-text-primary rounded-sm"
+                className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full"
+                style={{ backgroundColor: homeTeam.colorLight }}
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
               />
             )}

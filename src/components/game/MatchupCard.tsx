@@ -96,38 +96,40 @@ export default function MatchupCard({
     <div className="flex justify-between items-center px-3.5 py-2.5 mx-3 mb-2.5 bg-bg-tertiary rounded-[10px]">
       {/* Pitcher side */}
       {currentPitcher && (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
           <PlayerPhoto name={currentPitcher} type="pitcher" />
-          <div>
-            <div className="text-[10px] text-text-tertiary">투수</div>
+          <div className="min-h-[48px] flex flex-col justify-center">
+            <div className="text-[11px] text-text-secondary font-semibold">투수</div>
             {(() => {
               const href = getPlayerHref(currentPitcher);
               return href ? (
-                <Link href={href} className="text-sm font-bold hover:underline" style={{ color: "var(--matchup-name)" }}>{currentPitcher}</Link>
+                <Link href={href} className="text-[15px] font-bold hover:underline" style={{ color: "var(--matchup-name)" }}>{currentPitcher}</Link>
               ) : (
-                <div className="text-sm font-bold" style={{ color: "var(--matchup-name)" }}>{currentPitcher}</div>
+                <div className="text-[15px] font-bold" style={{ color: "var(--matchup-name)" }}>{currentPitcher}</div>
               );
             })()}
             <div className="mt-0.5 leading-relaxed">
               {pitcherToday ? (
                 <>
-                  <div className="flex gap-1.5 text-[11px]">
+                  <div className="flex gap-1.5 text-xs">
                     <span className="text-text-secondary font-semibold">{pitcherToday.pitchCount}구</span>
                     <span className="text-[#e53935]">K <b>{pitcherToday.strikeouts}</b></span>
                     <span className="text-[#64b5f6]">BB <b>{pitcherToday.walks}</b></span>
                   </div>
-                  <div className="flex gap-1.5 text-[11px]">
+                  <div className="flex gap-1.5 text-xs">
                     <span className="text-[#ff7043]">H <b>{pitcherToday.hits}</b></span>
                     <span className="text-[#ffc107]">ER <b>{pitcherToday.earnedRuns}</b></span>
                     {resolvedEra && (
-                      <span className="text-text-tertiary">ERA {resolvedEra}</span>
+                      <span className="text-text-secondary">ERA {resolvedEra}</span>
                     )}
                   </div>
                 </>
               ) : (
-                <div className="flex gap-1.5 text-[11px]">
-                  {resolvedEra && (
-                    <span className="text-text-tertiary">ERA {resolvedEra}</span>
+                <div className="flex gap-1.5 text-xs">
+                  {resolvedEra ? (
+                    <span className="text-text-secondary">ERA {resolvedEra}</span>
+                  ) : (
+                    <span className="text-transparent select-none">&nbsp;</span>
                   )}
                 </div>
               )}
@@ -137,40 +139,42 @@ export default function MatchupCard({
       )}
 
       {/* VS */}
-      <div className="text-[11px] font-semibold" style={{ color: "var(--matchup-vs)" }}>VS</div>
+      <div className="text-xs font-semibold" style={{ color: "var(--matchup-vs)" }}>VS</div>
 
       {/* Batter side */}
       {currentBatter && (
-        <div className="flex items-center gap-2">
-          <div className="text-right">
-            <div className="text-[10px] text-text-tertiary">타자</div>
+        <div className="flex items-center gap-2.5">
+          <div className="text-right min-h-[48px] flex flex-col justify-center">
+            <div className="text-[11px] text-text-secondary font-semibold">타자</div>
             {(() => {
               const href = getPlayerHref(currentBatter);
               return href ? (
-                <Link href={href} className="text-sm font-bold hover:underline" style={{ color: "var(--matchup-name)" }}>{currentBatter}</Link>
+                <Link href={href} className="text-[15px] font-bold hover:underline" style={{ color: "var(--matchup-name)" }}>{currentBatter}</Link>
               ) : (
-                <div className="text-sm font-bold" style={{ color: "var(--matchup-name)" }}>{currentBatter}</div>
+                <div className="text-[15px] font-bold" style={{ color: "var(--matchup-name)" }}>{currentBatter}</div>
               );
             })()}
             <div className="mt-0.5 leading-relaxed">
               {batterToday ? (
                 <>
-                  <div className="flex gap-1.5 text-[11px] justify-end">
+                  <div className="flex gap-1.5 text-xs justify-end">
                     {resolvedAvg && (
                       <span className="text-[#4fc3f7] font-semibold">{resolvedAvg}</span>
                     )}
                     <span className="text-text-secondary">{batterToday.atBats}타수</span>
                     <span className="text-[#4caf50]">{batterToday.hits}안타</span>
                   </div>
-                  <div className="flex gap-1.5 text-[11px] justify-end">
+                  <div className="flex gap-1.5 text-xs justify-end">
                     <span className="text-[#ffd600]">{batterToday.runs}득점</span>
                     <span className="text-[#ff7043]">{batterToday.rbi}타점</span>
                   </div>
                 </>
               ) : (
-                <div className="flex gap-1.5 text-[11px] justify-end">
-                  {resolvedAvg && (
+                <div className="flex gap-1.5 text-xs justify-end">
+                  {resolvedAvg ? (
                     <span className="text-[#4fc3f7] font-semibold">{resolvedAvg}</span>
+                  ) : (
+                    <span className="text-transparent select-none">&nbsp;</span>
                   )}
                 </div>
               )}
