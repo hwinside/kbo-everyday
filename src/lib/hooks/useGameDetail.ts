@@ -18,6 +18,10 @@ export function useGameDetail(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const stoppedRef = useRef(false);
+  const finalSinceRef = useRef<number | null>(null);
+
+  // Max 10 min of polling after final (in case KBO never fills boxScore, e.g. preseason)
+  const FINAL_MAX_POLL_MS = 10 * 60 * 1000;
 
   const fetchDetail = useCallback(async () => {
     if (!gameId || stoppedRef.current) return;
@@ -27,9 +31,22 @@ export function useGameDetail(
       setData(json as GameDetailResponse);
       setError(json.error || null);
 
-      // Stop polling when game is final or cancelled
-      if (json.status === "final" || json.status === "cancelled") {
-        stoppedRef.current = true;
+      const isFinalOrCancelled = json.status === "final" || json.status === "cancelled";
+      const hasRealBox = json.boxScore &&
+        (json.boxScore.awayBatters?.length > 0 || json.boxScore.homeBatters?.length > 0);
+
+      if (isFinalOrCancelled) {
+        if (hasRealBox) {
+          // Got real data — stop immediately
+          stoppedRef.current = true;
+        } else {
+          // Final but no boxScore — keep polling up to FINAL_MAX_POLL_MS
+          if (!finalSinceRef.current) {
+            finalSinceRef.current = Date.now();
+          } else if (Date.now() - finalSinceRef.current > FINAL_MAX_POLL_MS) {
+            stoppedRef.current = true;
+          }
+        }
       }
     } catch (e: unknown) {
       setError((e as Error).message);
