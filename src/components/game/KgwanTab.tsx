@@ -12,7 +12,6 @@ import type { GameEvent } from "@/types/game-events";
 import type { GamePlay } from "@/lib/types";
 import type { GameDetailResponse } from "@/app/api/game-detail/route";
 import type { GameRelayResponse, PlayEvent } from "@/app/api/game-relay/route";
-import { generateAnalysis } from "@/components/game/AIAnalysis";
 
 interface KgwanTabProps {
   gameId: string;
@@ -29,12 +28,87 @@ interface KgwanTabProps {
 }
 
 /* ===== AI Preview Card (inline in KgwanTab) ===== */
-function AIPreviewCard({ awayTeamId, homeTeamId, starterNames }: {
-  awayTeamId: number; homeTeamId: number; starterNames?: { away: string; home: string };
+interface PreviewData {
+  awayWinPct: number;
+  homeWinPct: number;
+  prediction: string;
+  keyMatchup: string;
+}
+
+function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
+  gameId: string; awayTeamId: number; homeTeamId: number; starterNames?: { away: string; home: string };
 }) {
-  const analysis = useMemo(() => generateAnalysis(awayTeamId, homeTeamId, starterNames), [awayTeamId, homeTeamId, starterNames]);
+  const [preview, setPreview] = useState<PreviewData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const fetchedRef = useRef(false);
   const awayTeam = getTeamById(awayTeamId)!;
   const homeTeam = getTeamById(homeTeamId)!;
+
+  useEffect(() => {
+    if (fetchedRef.current) return;
+    fetchedRef.current = true;
+
+    async function fetchPreview() {
+      try {
+        // 1) 캐시 확인
+        const cacheRes = await fetch(`/api/game-preview?gameId=${gameId}`);
+        const cacheData = await cacheRes.json();
+        if (cacheData.preview) {
+          setPreview(cacheData.preview);
+          setLoading(false);
+          return;
+        }
+
+        // 2) 생성 요청
+        const genRes = await fetch("/api/game-preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            gameId,
+            awayTeamId,
+            homeTeamId,
+            awayStarter: starterNames?.away,
+            homeStarter: starterNames?.home,
+          }),
+        });
+        const genData = await genRes.json();
+        if (genData.preview) {
+          setPreview(genData.preview);
+        }
+      } catch (err) {
+        console.error("Preview fetch error:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchPreview();
+  }, [gameId, awayTeamId, homeTeamId, starterNames]);
+
+  if (loading) {
+    return (
+      <div className="space-y-3">
+        <div className="glass-card p-4">
+          <div className="flex items-center justify-center gap-2 mb-3">
+            <span className="text-base">🤖</span>
+            <span className="text-sm font-semibold text-text-primary">AI 경기 예측</span>
+          </div>
+          <div className="flex items-center justify-center py-6">
+            <div className="w-5 h-5 border-2 border-text-tertiary border-t-accent rounded-full animate-spin" />
+            <span className="ml-2 text-xs text-text-tertiary">AI가 분석 중...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!preview) {
+    return (
+      <div className="glass-card p-4">
+        <p className="text-center text-xs text-text-tertiary">AI 경기 예측을 준비 중입니다</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">
@@ -57,19 +131,19 @@ function AIPreviewCard({ awayTeamId, homeTeamId, starterNames }: {
         <div className="flex h-8 rounded-lg overflow-hidden">
           <div
             className="flex items-center justify-center text-white text-xs font-bold transition-all"
-            style={{ width: `${analysis.away.winPct}%`, backgroundColor: awayTeam.colorPrimary }}
+            style={{ width: `${preview.awayWinPct}%`, backgroundColor: awayTeam.colorPrimary }}
           >
-            {analysis.away.winPct}%
+            {preview.awayWinPct}%
           </div>
           <div
             className="flex items-center justify-center text-white text-xs font-bold transition-all"
-            style={{ width: `${analysis.home.winPct}%`, backgroundColor: homeTeam.colorPrimary }}
+            style={{ width: `${preview.homeWinPct}%`, backgroundColor: homeTeam.colorPrimary }}
           >
-            {analysis.home.winPct}%
+            {preview.homeWinPct}%
           </div>
         </div>
         <p className="text-center text-[11px] text-text-tertiary mt-2">
-          {analysis.prediction}
+          {preview.prediction}
         </p>
       </div>
 
@@ -80,7 +154,7 @@ function AIPreviewCard({ awayTeamId, homeTeamId, starterNames }: {
           <span className="text-sm font-semibold text-text-primary">핵심 포인트</span>
         </div>
         <p className="text-xs text-text-secondary leading-relaxed whitespace-pre-line">
-          {analysis.keyMatchup}
+          {preview.keyMatchup}
         </p>
       </div>
 
@@ -92,7 +166,8 @@ function AIPreviewCard({ awayTeamId, homeTeamId, starterNames }: {
 }
 
 /* ===== Scheduled: AI Preview ===== */
-function ScheduledView({ awayTeamId, homeTeamId, starterNames, lineupConfirmed }: {
+function ScheduledView({ gameId, awayTeamId, homeTeamId, starterNames, lineupConfirmed }: {
+  gameId: string;
   awayTeamId: number;
   homeTeamId: number;
   starterNames?: { away: string; home: string };
@@ -126,7 +201,7 @@ function ScheduledView({ awayTeamId, homeTeamId, starterNames, lineupConfirmed }
       </div>
 
       {/* AI 경기 예측 */}
-      <AIPreviewCard awayTeamId={awayTeamId} homeTeamId={homeTeamId} starterNames={starterNames} />
+      <AIPreviewCard gameId={gameId} awayTeamId={awayTeamId} homeTeamId={homeTeamId} starterNames={starterNames} />
     </div>
   );
 }
@@ -693,7 +768,7 @@ export default function KgwanTab({
   gameRelay,
 }: KgwanTabProps) {
   if (status === "scheduled") {
-    return <ScheduledView awayTeamId={awayTeamId} homeTeamId={homeTeamId} starterNames={starterNames} lineupConfirmed={lineupConfirmed} />;
+    return <ScheduledView gameId={gameId} awayTeamId={awayTeamId} homeTeamId={homeTeamId} starterNames={starterNames} lineupConfirmed={lineupConfirmed} />;
   }
 
   if (status === "live") {
