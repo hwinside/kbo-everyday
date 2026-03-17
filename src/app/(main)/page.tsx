@@ -37,7 +37,7 @@ const item = {
 };
 
 export default function HomePage() {
-  const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number} | null>(null);
+  const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number; gameId: string} | null>(null);
   const [showLogin, setShowLogin] = useState(false);
 
   const {
@@ -198,6 +198,7 @@ export default function HomePage() {
         onClose={() => setAiGame(null)}
         awayTeamId={aiGame.awayTeamId}
         homeTeamId={aiGame.homeTeamId}
+        gameId={aiGame.gameId}
       />
     )}
     </>

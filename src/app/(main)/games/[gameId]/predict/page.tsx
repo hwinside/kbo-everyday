@@ -137,7 +137,7 @@ export default function GamePredictPage() {
         </button>
       </div>
 
-      <AIAnalysis isOpen={aiOpen} onClose={() => setAiOpen(false)} awayTeamId={pred.awayTeamId} homeTeamId={pred.homeTeamId} />
+      <AIAnalysis isOpen={aiOpen} onClose={() => setAiOpen(false)} awayTeamId={pred.awayTeamId} homeTeamId={pred.homeTeamId} gameId={gameId} />
 
       {/* 경기 상세 링크 */}
       <div className="px-4 mt-4">

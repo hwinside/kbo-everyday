@@ -13,7 +13,7 @@ import AIAnalysis from "@/components/game/AIAnalysis";
 
 export default function DailyPredictPage() {
   const router = useRouter();
-  const [aiTarget, setAiTarget] = useState<{ away: number; home: number } | null>(null);
+  const [aiTarget, setAiTarget] = useState<{ away: number; home: number; gameId: string } | null>(null);
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
@@ -81,7 +81,7 @@ export default function DailyPredictPage() {
                 </span>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setAiTarget({ away: pred.awayTeamId, home: pred.homeTeamId })}
+                    onClick={() => setAiTarget({ away: pred.awayTeamId, home: pred.homeTeamId, gameId: pred.gameId })}
                     className="px-3 py-1.5 rounded-full bg-accent/20 text-accent text-xs font-semibold"
                   >
                     🤖 AI 분석
@@ -105,6 +105,7 @@ export default function DailyPredictPage() {
           onClose={() => setAiTarget(null)}
           awayTeamId={aiTarget.away}
           homeTeamId={aiTarget.home}
+          gameId={aiTarget.gameId}
         />
       )}
     </div>
