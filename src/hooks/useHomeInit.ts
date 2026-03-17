@@ -102,6 +102,16 @@ export function useHomeInit() {
       .catch(() => {});
   }, []);
 
+  // team-changed 이벤트 리스닝 (마이페이지에서 구단 변경 시 즉시 반영)
+  useEffect(() => {
+    const handler = () => {
+      const newTeamId = getMyTeamId();
+      startTransition(() => setMyTeam(newTeamId));
+    };
+    window.addEventListener("team-changed", handler);
+    return () => window.removeEventListener("team-changed", handler);
+  }, []);
+
   // 온보딩 초기화
   useEffect(() => {
     if (loading) return;

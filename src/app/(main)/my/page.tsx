@@ -29,7 +29,7 @@ export default function MyPage() {
   const [teamId, setTeamId] = useState<number | null>(null);
   const [showTeamSelect, setShowTeamSelect] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
-  const { user, profile, signOut } = useAuth();
+  const { user, profile, signOut, refreshProfile } = useAuth();
   const { permission, subscription, subscribe, unsubscribe } = usePushNotification();
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
   const [showPwaGuide, setShowPwaGuide] = useState(false);
@@ -55,6 +55,7 @@ export default function MyPage() {
     setShowPlayerSelect(true);
     if (user) {
       await updateProfile(user.id, { team_id: newTeamId, favorite_players: [] });
+      await refreshProfile();
     }
   };
 
@@ -64,6 +65,7 @@ export default function MyPage() {
     setShowPlayerSelect(false);
     if (user) {
       await updateProfile(user.id, { favorite_players: players });
+      await refreshProfile();
     }
   };
 
