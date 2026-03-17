@@ -120,11 +120,17 @@ export function useHomeInit() {
 
       if (profile && profile.team_id) {
         const dbFavs = Array.isArray(profile.favorite_players) ? profile.favorite_players : [];
-        setMyTeam(profile.team_id);
-        setFavPlayers(dbFavs);
-        setOnboardingStatus(dbFavs.length ? "completed" : "skipped");
+        // localStorage is updated synchronously in handleTeamChange, so it may be
+        // more recent than profile (which requires an async refreshProfile round-trip).
+        // Prefer localStorage when it differs — it means the user just changed their team.
+        const localTeamId = getMyTeamId();
+        const effectiveTeamId = localTeamId ?? profile.team_id;
+        setMyTeam(effectiveTeamId);
+        setFavPlayers(effectiveTeamId !== profile.team_id ? [] : dbFavs);
+        const effectiveFavs = effectiveTeamId !== profile.team_id ? [] : dbFavs;
+        setOnboardingStatus(effectiveFavs.length ? "completed" : "skipped");
         setShowOnboarding(false);
-        if (dbFavs.length === 0) {
+        if (effectiveFavs.length === 0) {
           setShowPlayerSetupCTA(true);
         }
         return;
