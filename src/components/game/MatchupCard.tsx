@@ -106,6 +106,10 @@ export default function MatchupCard({
     era: relayPitcher.seasonEra > 0 ? relayPitcher.seasonEra.toFixed(2) : "",
   } : null);
 
+  // 투수 누적 B/S (relay에서 직접 가져옴)
+  const pitcherBalls = relayPitcher?.ballCount ?? null;
+  const pitcherStrikes = relayPitcher?.strikeCount ?? null;
+
   const effectiveBatterToday: BatterTodayStats | null | undefined = batterToday ?? (relayBatter ? {
     atBats: relayBatter.ab,
     hits: relayBatter.hits,
@@ -138,15 +142,10 @@ export default function MatchupCard({
                 <>
                   <div className="flex gap-1.5 text-xs">
                     <span className="text-text-secondary font-semibold">{effectivePitcherToday.pitchCount}구</span>
-                    <span className="text-[#e53935]">K <b>{effectivePitcherToday.strikeouts}</b></span>
+                    {pitcherBalls !== null && <span className="text-[#64b5f6]">B <b>{pitcherBalls}</b></span>}
+                    {pitcherStrikes !== null && <span className="text-[#e53935]">S <b>{pitcherStrikes}</b></span>}
                     <span className="text-[#64b5f6]">BB <b>{effectivePitcherToday.walks}</b></span>
-                  </div>
-                  <div className="flex gap-1.5 text-xs">
-                    <span className="text-[#ff7043]">H <b>{effectivePitcherToday.hits}</b></span>
-                    <span className="text-[#ffc107]">ER <b>{effectivePitcherToday.earnedRuns}</b></span>
-                    {resolvedEra && (
-                      <span className="text-text-secondary">ERA {resolvedEra}</span>
-                    )}
+                    <span className="text-[#e53935]">K <b>{effectivePitcherToday.strikeouts}</b></span>
                   </div>
                 </>
               ) : (
