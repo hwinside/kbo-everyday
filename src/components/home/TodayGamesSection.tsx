@@ -35,7 +35,7 @@ export default function TodayGamesSection({ todayGames, isPreseason, myTeamId }:
     <motion.section variants={item} className="mb-6 -mx-5 px-5 py-4 bg-bg-tertiary/50 dark:bg-transparent rounded-none">
       <SectionHeader title={isPreseason ? "오늘의 시범경기" : "오늘의 경기"} href="/games" icon="⚾" />
       {todayGames.length > 0 && !todayGames[0]?.id?.startsWith("placeholder") ? (
-        <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto hide-scrollbar -mx-5 px-5">
+        <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto hide-scrollbar">
           {todayGames.map((game) => {
             const isMyGame = myTeamId != null && (game.homeTeamId === myTeamId || game.awayTeamId === myTeamId);
             return (
