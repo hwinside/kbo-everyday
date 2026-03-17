@@ -235,8 +235,9 @@ function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
     const batterName = batterMatch ? batterMatch[1] : relay.title;
 
     for (const opt of relay.textOptions) {
-      if (opt.type === 13) {
+      if (opt.type === 13 || opt.type === 23) {
         // At-bat result: "홍창기 : 우익수 앞 1루타"
+        // type 13 = 일반 타석 결과, type 23 = 희생플라이/아웃/볼넷 등
         const parts = opt.text.split(" : ");
         const resultText = parts.length > 1 ? parts.slice(1).join(" : ") : opt.text;
 
@@ -246,10 +247,12 @@ function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
           type: classifyResult(resultText),
         };
         current.plays.push(play);
-      } else if (opt.type === 14) {
-        // Base running event — only show scoring and steals
+      } else if (opt.type === 14 || opt.type === 24) {
+        // Base running event — show scoring, steals, and home-ins
+        // type 14 = 일반 주루, type 24 = 홈인/진루 등
         if (
           opt.text.includes("홈까지 진루") ||
+          opt.text.includes("홈인") ||
           opt.text.includes("득점") ||
           opt.text.includes("도루")
         ) {
