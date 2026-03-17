@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { TEAMS } from "@/lib/constants/teams";
 import { getFavoritePlayers } from "@/lib/store/favorites";
 
@@ -23,11 +23,99 @@ export interface HomeNewsItem {
   type: "news";
 }
 
-export function useHomeNews(myTeamId: number | null) {
-  const [realNews, setRealNews] = useState<HomeNewsItem[]>([]);
+const NEWS_CACHE_KEY = "kbo-home-news";
+const NEWS_CACHE_TTL = 30 * 60 * 1000; // 30분
 
+function toHomeNewsItems(items: NewsItem[], myTeamId: number | null): HomeNewsItem[] {
+  return items.map((item, i) => ({
+    id: 1000 + i,
+    title: item.title,
+    link: item.link,
+    pubDate: item.pubDate,
+    label: item._label || "",
+    source: (() => {
+      try { return new URL(item.link).hostname.replace("www.", "").replace("m.", ""); }
+      catch { return "뉴스"; }
+    })(),
+    sourceUrl: item.link,
+    timeAgo: (() => {
+      const diff = Date.now() - new Date(item.pubDate).getTime();
+      const hours = Math.floor(diff / (1000 * 60 * 60));
+      if (hours < 1) return "방금";
+      if (hours < 24) return `${hours}시간 전`;
+      const days = Math.floor(hours / 24);
+      return `${days}일 전`;
+    })(),
+    thumbnailUrl: null,
+    type: "news" as const,
+    teamId: myTeamId || null,
+  }));
+}
+
+function loadCachedNews(myTeamId: number | null): HomeNewsItem[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(NEWS_CACHE_KEY);
+    if (!raw) return [];
+    const { items, ts, teamId } = JSON.parse(raw);
+    // 캐시 팀이 다르면 무효
+    if (teamId !== myTeamId) return [];
+    // TTL 체크는 느슨하게 — 일단 보여주고 백그라운드에서 갱신
+    if (Date.now() - ts > 24 * 60 * 60 * 1000) return []; // 24시간 넘으면 무효
+    return toHomeNewsItems(items, myTeamId);
+  } catch {
+    return [];
+  }
+}
+
+function saveCachedNews(items: NewsItem[], myTeamId: number | null) {
+  try {
+    localStorage.setItem(NEWS_CACHE_KEY, JSON.stringify({
+      items,
+      ts: Date.now(),
+      teamId: myTeamId,
+    }));
+  } catch { /* quota exceeded 등 무시 */ }
+}
+
+function shouldRefresh(): boolean {
+  try {
+    const raw = localStorage.getItem(NEWS_CACHE_KEY);
+    if (!raw) return true;
+    const { ts } = JSON.parse(raw);
+    return Date.now() - ts > NEWS_CACHE_TTL;
+  } catch {
+    return true;
+  }
+}
+
+export function useHomeNews(myTeamId: number | null) {
+  const [news, setNews] = useState<HomeNewsItem[]>([]);
+  const fetchedRef = useRef(false);
+
+  // 즉시 캐시에서 로드
   useEffect(() => {
-    const team = myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName : "";
+    const cached = loadCachedNews(myTeamId);
+    if (cached.length > 0) {
+      setNews(cached);
+    }
+  }, [myTeamId]);
+
+  // 백그라운드에서 새 뉴스 fetch
+  useEffect(() => {
+    if (fetchedRef.current) return;
+    if (myTeamId === null) return; // 팀 아직 안 로드됨
+
+    // 캐시 있고 신선하면 skip
+    const cached = loadCachedNews(myTeamId);
+    if (cached.length > 0 && !shouldRefresh()) {
+      fetchedRef.current = true;
+      return;
+    }
+
+    fetchedRef.current = true;
+
+    const team = TEAMS.find(t => t.id === myTeamId)?.shortName || "";
     let favPlayers = getFavoritePlayers().slice(0, 5);
 
     // 최애선수 미설정 시 팀의 대표 선수 3명으로 fallback
@@ -49,69 +137,30 @@ export function useHomeNews(myTeamId: number | null) {
       favPlayers = names.map(name => ({ playerId: "", name, teamId: teamObj?.id || 0, position: "", number: 0 }));
     }
 
-    // 팀 뉴스 + 최애선수 뉴스 병렬 호출
-    const queries = [
-      team
-        ? fetch(`/api/news?q=${encodeURIComponent(`프로야구 ${team}`)}`).then(r => r.json()).then(d => ({
-            items: (d.items || []).map((item: NewsItem) => ({ ...item, _label: team })),
-          }))
-        : Promise.resolve({ items: [] }),
-      ...favPlayers.map(p => {
-        const pTeam = TEAMS.find(t => t.id === p.teamId);
-        const pTeamName = pTeam ? `${pTeam.shortName} ${pTeam.name}` : "";
-        return fetch(`/api/news?q=${encodeURIComponent(`${pTeamName} ${p.name}`)}`).then(r => r.json()).then(d => ({
-          items: (d.items || []).map((item: NewsItem) => ({ ...item, _label: p.name })),
-        }));
+    // 단일 batch API 호출
+    const players = favPlayers.map(p => {
+      const pTeam = TEAMS.find(t => t.id === p.teamId);
+      return {
+        name: p.name,
+        teamName: pTeam ? `${pTeam.shortName} ${pTeam.name}` : "",
+      };
+    });
+
+    fetch("/api/news/batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ team: team ? `${team}` : "", players }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        const items: NewsItem[] = data.items || [];
+        if (items.length > 0) {
+          saveCachedNews(items, myTeamId);
+          setNews(toHomeNewsItems(items, myTeamId));
+        }
       })
-    ];
-
-    Promise.all(queries).then(results => {
-      const teamItems = results[0]?.items || [];
-      const playerResults = results.slice(1);
-
-      // 선수별 균등 분배 (각 2개씩 먼저, 남은 슬롯은 라운드로빈)
-      const seen = new Set();
-      const dedupArr = (items: NewsItem[]) => items.filter((item: NewsItem) => {
-        if (seen.has(item.link)) return false;
-        seen.add(item.link);
-        return true;
-      });
-
-      // 선수별 각 2개씩
-      const perPlayer = playerResults.map(d => dedupArr((d.items || []).slice(0, 3)));
-      const playerNews = perPlayer.flat();
-
-      // 팀 기사로 나머지 채우기
-      const uniqueTeam = dedupArr(teamItems).slice(0, Math.max(10 - playerNews.length, 2));
-      const unique = [...playerNews, ...uniqueTeam];
-
-      // 최신순 정렬
-      unique.sort((a: NewsItem, b: NewsItem) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
-
-      if (unique.length) {
-        setRealNews(unique.map((item: NewsItem, i: number) => ({
-          id: 1000 + i,
-          title: item.title,
-          link: item.link,
-          pubDate: item.pubDate,
-          label: item._label || "",
-          source: (() => { try { return new URL(item.link).hostname.replace("www.", "").replace("m.", ""); } catch { return "뉴스"; } })(),
-          sourceUrl: item.link,
-          timeAgo: (() => {
-            const diff = Date.now() - new Date(item.pubDate).getTime();
-            const hours = Math.floor(diff / (1000 * 60 * 60));
-            if (hours < 1) return "방금";
-            if (hours < 24) return `${hours}시간 전`;
-            const days = Math.floor(hours / 24);
-            return `${days}일 전`;
-          })(),
-          thumbnailUrl: null,
-          type: "news" as const,
-          teamId: myTeamId || null,
-        })));
-      }
-    }).catch(console.error);
+      .catch(console.error);
   }, [myTeamId]);
 
-  return realNews;
+  return news;
 }

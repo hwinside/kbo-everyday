@@ -15,7 +15,7 @@ import LiveGameBanner from "@/components/home/LiveGameBanner";
 import PWAInstallBanner from "@/components/ui/PWAInstallBanner";
 import { TEAMS, getTeamById } from "@/lib/constants/teams";
 import { useLiveGame } from "@/lib/hooks/useLiveGame";
-import { MOCK_NEWS } from "@/lib/constants/news";
+// MOCK_NEWS removed — using localStorage cache instead
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
 import { useHomeNews } from "@/hooks/useHomeNews";
@@ -138,9 +138,11 @@ export default function HomePage() {
       )}
 
       {/* News Carousel */}
-      <div className="mb-3">
-        <div className="-mx-5"><NewsCarousel news={realNews.length > 0 ? realNews.slice(0, 10) : (myTeamId ? [...MOCK_NEWS.filter(n => n.teamId === myTeamId), ...MOCK_NEWS.filter(n => n.teamId !== myTeamId)].slice(0, 10) : MOCK_NEWS)} /></div>
-      </div>
+      {realNews.length > 0 && (
+        <div className="mb-3">
+          <div className="-mx-5"><NewsCarousel news={realNews.slice(0, 10)} /></div>
+        </div>
+      )}
 
       {/* My Team Hero */}
       {myTeam && myTeamGame && (
