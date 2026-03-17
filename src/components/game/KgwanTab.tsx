@@ -12,6 +12,7 @@ import type { GameEvent } from "@/types/game-events";
 import type { GamePlay } from "@/lib/types";
 import type { GameDetailResponse } from "@/app/api/game-detail/route";
 import type { GameRelayResponse, PlayEvent } from "@/app/api/game-relay/route";
+import { generateAnalysis } from "@/components/game/AIAnalysis";
 
 interface KgwanTabProps {
   gameId: string;
@@ -25,6 +26,69 @@ interface KgwanTabProps {
   starterNames?: { away: string; home: string };
   lineupConfirmed?: boolean;
   gameRelay?: GameRelayResponse | null;
+}
+
+/* ===== AI Preview Card (inline in KgwanTab) ===== */
+function AIPreviewCard({ awayTeamId, homeTeamId, starterNames }: {
+  awayTeamId: number; homeTeamId: number; starterNames?: { away: string; home: string };
+}) {
+  const analysis = useMemo(() => generateAnalysis(awayTeamId, homeTeamId, starterNames), [awayTeamId, homeTeamId, starterNames]);
+  const awayTeam = getTeamById(awayTeamId)!;
+  const homeTeam = getTeamById(homeTeamId)!;
+
+  return (
+    <div className="space-y-3">
+      {/* Win probability */}
+      <div className="glass-card p-4">
+        <div className="flex items-center justify-center gap-2 mb-3">
+          <span className="text-base">🤖</span>
+          <span className="text-sm font-semibold text-text-primary">AI 경기 예측</span>
+        </div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-1.5">
+            <Image src={awayTeam.logoPath} alt="" width={20} height={20} unoptimized className="object-contain" />
+            <span className="text-xs font-bold" style={{ color: awayTeam.colorLight }}>{awayTeam.shortName}</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-bold" style={{ color: homeTeam.colorLight }}>{homeTeam.shortName}</span>
+            <Image src={homeTeam.logoPath} alt="" width={20} height={20} unoptimized className="object-contain" />
+          </div>
+        </div>
+        <div className="flex h-8 rounded-lg overflow-hidden">
+          <div
+            className="flex items-center justify-center text-white text-xs font-bold transition-all"
+            style={{ width: `${analysis.away.winPct}%`, backgroundColor: awayTeam.colorPrimary }}
+          >
+            {analysis.away.winPct}%
+          </div>
+          <div
+            className="flex items-center justify-center text-white text-xs font-bold transition-all"
+            style={{ width: `${analysis.home.winPct}%`, backgroundColor: homeTeam.colorPrimary }}
+          >
+            {analysis.home.winPct}%
+          </div>
+        </div>
+        <p className="text-center text-[11px] text-text-tertiary mt-2">
+          {analysis.prediction}
+        </p>
+      </div>
+
+      {/* Key matchup summary */}
+      <div className="glass-card p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-sm">🔑</span>
+          <span className="text-sm font-semibold text-text-primary">핵심 포인트</span>
+        </div>
+        <p className="text-xs text-text-secondary leading-relaxed whitespace-pre-line">
+          {analysis.keyMatchup}
+        </p>
+      </div>
+
+      <p className="text-center text-[10px] text-text-tertiary">
+        ※ AI 분석은 참고용이며 실제 경기 결과와 다를 수 있습니다
+      </p>
+    </div>
+  );
 }
 
 /* ===== Scheduled: AI Preview ===== */
@@ -61,16 +125,8 @@ function ScheduledView({ awayTeamId, homeTeamId, starterNames, lineupConfirmed }
         </div>
       </div>
 
-      {/* AI 경기 예측 — 실데이터 기반 생성 구현 전까지 비노출 */}
-      <div className="glass-card p-4 text-center">
-        <div className="flex items-center justify-center gap-2 mb-1">
-          <span className="text-base">🤖</span>
-          <span className="text-sm font-semibold text-text-primary">AI 경기 예측</span>
-        </div>
-        <p className="text-xs text-text-tertiary">
-          정규시즌 개막과 함께 실제 라인업 기반 AI 분석을 제공할 예정입니다.
-        </p>
-      </div>
+      {/* AI 경기 예측 */}
+      <AIPreviewCard awayTeamId={awayTeamId} homeTeamId={homeTeamId} starterNames={starterNames} />
     </div>
   );
 }
