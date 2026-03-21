@@ -246,7 +246,7 @@ export default function GameStatsTab({
   relay,
 }: GameStatsTabProps) {
   void isLive; // Reserved for future live-specific styling
-  const [collapseInnings, setCollapseInnings] = useState(false);
+  const [collapseInnings, setCollapseInnings] = useState(true);
   const relayInnings = relay?.innings ?? [];
   const [side, setSide] = useState<Side>("away");
 
@@ -306,17 +306,15 @@ export default function GameStatsTab({
           <div className="glass-card p-3 mb-3">
             <p className="text-sm font-semibold text-text-primary">이닝별 주요 기록</p>
           </div>
-          {relayInnings.length > 6 && (
-            <button
-              onClick={() => setCollapseInnings(!collapseInnings)}
-              className="w-full flex items-center justify-center gap-1.5 px-4 py-2 text-text-tertiary hover:bg-black/5 dark:hover:bg-white/5 transition-colors rounded-lg border border-border/30"
-            >
-              {collapseInnings ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-              <span className="text-[11px] font-medium">
-                {collapseInnings ? `전체 이닝별 기록 보기 (${relayInnings.length}개)` : "이닝별 기록 접기"}
-              </span>
-            </button>
-          )}
+          <button
+            onClick={() => setCollapseInnings(!collapseInnings)}
+            className="w-full flex items-center justify-center gap-1.5 px-4 py-2 text-text-tertiary hover:bg-black/5 dark:hover:bg-white/5 transition-colors rounded-lg border border-border/30"
+          >
+            {collapseInnings ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+            <span className="text-[11px] font-medium">
+              {collapseInnings ? `전체 이닝별 기록 보기 (${relayInnings.length}개)` : "이닝별 기록 접기"}
+            </span>
+          </button>
           <div className="space-y-2">
             {!collapseInnings && relayInnings.map((inning) => (
               <RelayInningPlays
