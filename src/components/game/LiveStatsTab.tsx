@@ -12,6 +12,9 @@ interface LiveStatsTabProps {
   relay: GameRelayResponse;
   awayTeam: TeamData;
   homeTeam: TeamData;
+  currentPitcher?: string | null;
+  awayStarterName?: string;
+  homeStarterName?: string;
 }
 
 function getPlayStyle(type: PlayEvent["type"]) {
@@ -67,7 +70,12 @@ function countScoring(plays: PlayEvent[]): number {
 }
 
 /** relay playerStats → GameStats 변환 */
-function relayToGameStats(relay: GameRelayResponse, awayTeamId: number, homeTeamId: number): GameStats | null {
+function relayToGameStats(
+  relay: GameRelayResponse,
+  awayTeamId: number,
+  homeTeamId: number,
+  pitcherNames?: { awayStarter?: string; homeStarter?: string; currentPitcher?: string | null },
+): GameStats | null {
   const ps = relay.playerStats;
   if (!ps || (ps.awayBatters.length === 0 && ps.homeBatters.length === 0)) return null;
 
@@ -91,9 +99,9 @@ function relayToGameStats(relay: GameRelayResponse, awayTeamId: number, homeTeam
     }));
   }
 
-  function toPitcherStats(pitchers: RP): PitcherStat[] {
-    return pitchers.map((p) => ({
-      name: p.name || "투수",
+  function toPitcherStats(pitchers: RP, fallbackName?: string): PitcherStat[] {
+    return pitchers.map((p, i) => ({
+      name: p.name || (i === 0 && fallbackName ? fallbackName : "투수"),
       ip: p.inn || "-",
       h: p.hits,
       r: p.runs,
@@ -117,12 +125,12 @@ function relayToGameStats(relay: GameRelayResponse, awayTeamId: number, homeTeam
     away: {
       teamId: awayTeamId,
       batters: toBatterStats(ps.awayBatters),
-      pitchers: toPitcherStats(ps.awayPitchers),
+      pitchers: toPitcherStats(ps.awayPitchers, pitcherNames?.awayStarter),
     },
     home: {
       teamId: homeTeamId,
       batters: toBatterStats(ps.homeBatters),
-      pitchers: toPitcherStats(ps.homePitchers),
+      pitchers: toPitcherStats(ps.homePitchers, pitcherNames?.homeStarter),
     },
   };
 }
@@ -207,13 +215,20 @@ export default function LiveStatsTab({
   relay,
   awayTeam,
   homeTeam,
+  currentPitcher,
+  awayStarterName,
+  homeStarterName,
 }: LiveStatsTabProps) {
   const [collapseInnings, setCollapseInnings] = useState(false);
 
   const orderedInnings = relay.innings;
 
   // Convert relay playerStats to GameStats for reuse
-  const gameStats = relayToGameStats(relay, awayTeam.id, homeTeam.id);
+  const gameStats = relayToGameStats(relay, awayTeam.id, homeTeam.id, {
+    awayStarter: awayStarterName,
+    homeStarter: homeStarterName,
+    currentPitcher,
+  });
 
   if (orderedInnings.length === 0 && !gameStats) {
     return (

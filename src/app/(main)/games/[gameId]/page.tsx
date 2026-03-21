@@ -355,7 +355,14 @@ export default function GameDetailPage() {
               {gameStats ? (
                 <GameStatsTab stats={gameStats} awayTeam={awayTeam} homeTeam={homeTeam} />
               ) : liveGame?.isLive && gameRelay && gameRelay.innings.length > 0 ? (
-                <LiveStatsTab relay={gameRelay} awayTeam={awayTeam} homeTeam={homeTeam} />
+                <LiveStatsTab
+                  relay={gameRelay}
+                  awayTeam={awayTeam}
+                  homeTeam={homeTeam}
+                  currentPitcher={d.currentPitcher}
+                  awayStarterName={liveGame?.awayStarterName || ""}
+                  homeStarterName={liveGame?.homeStarterName || ""}
+                />
               ) : (
                 <div className="flex flex-col items-center justify-center h-32 gap-2">
                   <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-yellow-500/10 border border-yellow-500/20">

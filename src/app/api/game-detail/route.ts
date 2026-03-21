@@ -228,7 +228,7 @@ function parseScoreBoard(data: unknown[]): {
   };
 }
 
-function parseLineup(data: unknown[], gameStatus?: GameDetailResponse["status"]): GameDetailResponse["lineup"] {
+function parseLineup(data: unknown[]): GameDetailResponse["lineup"] {
   if (!Array.isArray(data) || data.length < 5) return null;
 
   // data[0] = [{LINEUP_CK: true/false}]
@@ -268,10 +268,8 @@ function parseLineup(data: unknown[], gameStatus?: GameDetailResponse["status"])
 
   if (away.length === 0 && home.length === 0) return null;
 
-  // LINEUP_CK가 false이고 경기가 아직 시작 전이면 → 데이터 반환하지 않음
-  // 경기가 이미 진행 중(live)이거나 종료(final)인 경우는 라인업 데이터가 있으면 보여줌
-  if (!isToday && gameStatus !== "live" && gameStatus !== "final") return null;
-
+  // 실제 라인업 데이터가 존재하면 LINEUP_CK 무관하게 반환
+  // KBO ScoreBoard가 "scheduled"로 내려와도 라인업은 이미 확정된 경우 있음
   return { isToday, away, home };
 }
 
@@ -439,7 +437,7 @@ export async function GET(req: NextRequest) {
     ]);
 
     const { meta, linescore, status: scoreBoardStatus } = parseScoreBoard(scoreBoardRes ?? []);
-    const lineup = parseLineup(lineupRes ?? [], scoreBoardStatus);
+    const lineup = parseLineup(lineupRes ?? []);
     const boxScore = parseBoxScore(boxScoreRes);
 
     // ScoreBoard가 scheduled인데 BoxScore에 실데이터가 있으면 → 종료된 경기
