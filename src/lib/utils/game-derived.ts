@@ -45,11 +45,16 @@ export function deriveGameState(
   const currentBatter = liveGame?.currentBatter ?? null;
   const currentPitcher = liveGame?.currentPitcher ?? null;
   const currentInning = liveGame?.currentInning || game.inning || "";
-  const awayScore = liveGame?.awayScore ?? game.awayScore;
-  const homeScore = liveGame?.homeScore ?? game.homeScore;
+  // 점수 소스 우선순위: liveGame > gameDetail linescore > game (static)
+  const awayScore = liveGame?.awayScore ?? gameDetail?.linescore?.away?.R ?? game.awayScore;
+  const homeScore = liveGame?.homeScore ?? gameDetail?.linescore?.home?.R ?? game.homeScore;
   const isLive = liveGame?.isLive || game.status === "live";
   // liveGame이 있지만 isLive가 false이고 점수가 있으면 → 종료된 경기
-  const isFinal = game.status === "final" || (!!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0));
+  // gameDetail.status도 체크 (과거 경기는 game-live에 없지만 game-detail API는 final 반환)
+  const isFinal = game.status === "final"
+    || gameDetail?.status === "final"
+    || gameDetail?.status === "cancelled"
+    || (!!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0));
   const derivedStatus: "live" | "final" | "scheduled" = isLive ? "live" : isFinal ? "final" : "scheduled";
 
   const isTop = currentInning.includes("초");
