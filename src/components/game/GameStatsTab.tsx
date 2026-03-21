@@ -10,6 +10,8 @@ import type {
   BatterStat,
   PitcherStat,
 } from "@/lib/constants/game-stats";
+import type { GameRelayResponse, InningRelay, PlayEvent } from "@/lib/hooks/useGameRelay";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import playersRoster from "@/lib/constants/players-roster.json";
 
 interface GameStatsTabProps {
@@ -17,6 +19,7 @@ interface GameStatsTabProps {
   awayTeam: TeamData;
   homeTeam: TeamData;
   isLive?: boolean;
+  relay?: GameRelayResponse | null;
 }
 
 type Side = "away" | "home";
@@ -132,6 +135,82 @@ function teamEra(pitchers: PitcherStat[]): string {
   return ((totalEr * 9) / innings).toFixed(2);
 }
 
+/* -- relay inning plays (for post-game stats) -- */
+
+function getRelayPlayStyle(type: PlayEvent["type"]) {
+  switch (type) {
+    case "homerun": return "text-accent font-semibold";
+    case "hit": return "text-accent";
+    case "strikeout": return "text-text-tertiary";
+    case "walk": case "hbp": return "text-text-secondary";
+    case "error": return "text-red-400";
+    default: return "text-text-secondary";
+  }
+}
+
+function getRelayPlayEmoji(type: PlayEvent["type"]) {
+  if (type === "homerun") return " 🔥";
+  if (type === "hit") return " ⚾";
+  return "";
+}
+
+function countScoring(plays: PlayEvent[]): number {
+  let scores = 0;
+  for (const play of plays) {
+    if (play.extras) {
+      for (const extra of play.extras) {
+        if (extra.includes("홈까지 진루") || extra.includes("득점")) scores++;
+      }
+    }
+    if (play.type === "homerun") {
+      const hasExtraScore = play.extras?.some(e => e.includes("홈까지 진루") || e.includes("득점"));
+      if (!hasExtraScore) scores++;
+    }
+  }
+  return scores;
+}
+
+function RelayInningPlays({ inning, awayTeam, homeTeam }: {
+  inning: InningRelay; awayTeam: TeamData; homeTeam: TeamData;
+}) {
+  const teamColor = inning.half === "top" ? awayTeam.colorPrimary : homeTeam.colorPrimary;
+  const halfLabel = inning.half === "top" ? "초" : "말";
+  const scores = countScoring(inning.plays);
+
+  return (
+    <div className="glass-card overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border/30">
+        <div className="w-1 h-4 rounded-full shrink-0" style={{ backgroundColor: teamColor }} />
+        <span className="text-sm font-semibold text-text-primary">{inning.inning}회{halfLabel}</span>
+        <span className="text-sm font-medium" style={{ color: teamColor }}>{inning.teamName}</span>
+        {scores > 0 && (
+          <span className="ml-auto text-xs font-bold text-accent bg-accent/10 px-1.5 py-0.5 rounded">{scores}점</span>
+        )}
+      </div>
+      <div className="px-3 py-1.5">
+        {inning.plays.length === 0 ? (
+          <p className="text-xs text-text-tertiary py-1">기록 없음</p>
+        ) : inning.plays.map((play, i) => {
+          const isLast = i === inning.plays.length - 1;
+          const hasScoring = play.extras?.some(e => e.includes("홈까지 진루") || e.includes("득점"));
+          return (
+            <div key={`${play.batterName}-${i}`} className={clsx("flex items-start gap-2 py-1.5", !isLast && "border-b border-border/20")}>
+              <span className="text-text-tertiary text-xs mt-0.5 shrink-0 w-3 text-center">{isLast ? "└" : "├"}</span>
+              <span className="text-sm text-text-primary font-medium shrink-0 min-w-[48px]">{play.batterName}</span>
+              <span className={clsx("text-sm flex-1", getRelayPlayStyle(play.type))}>
+                {play.result}{getRelayPlayEmoji(play.type)}
+              </span>
+              {hasScoring && (
+                <span className="text-[10px] font-bold text-accent bg-accent/10 px-1 py-0.5 rounded shrink-0">+득점</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* -- result badge -- */
 function ResultBadge({ result }: { result: PitcherStat["result"] }) {
   if (!result) return null;
@@ -164,8 +243,11 @@ export default function GameStatsTab({
   awayTeam,
   homeTeam,
   isLive,
+  relay,
 }: GameStatsTabProps) {
   void isLive; // Reserved for future live-specific styling
+  const [collapseInnings, setCollapseInnings] = useState(false);
+  const relayInnings = relay?.innings ?? [];
   const [side, setSide] = useState<Side>("away");
 
   const team = side === "away" ? awayTeam : homeTeam;
@@ -218,6 +300,36 @@ export default function GameStatsTab({
 
   return (
     <div className="px-5 py-4 space-y-5">
+      {/* -- 이닝별 주요 기록 (relay 데이터 있을 때) -- */}
+      {relayInnings.length > 0 && (
+        <div className="space-y-1">
+          <div className="glass-card p-3 mb-3">
+            <p className="text-sm font-semibold text-text-primary">이닝별 주요 기록</p>
+          </div>
+          {relayInnings.length > 6 && (
+            <button
+              onClick={() => setCollapseInnings(!collapseInnings)}
+              className="w-full flex items-center justify-center gap-1.5 px-4 py-2 text-text-tertiary hover:bg-black/5 dark:hover:bg-white/5 transition-colors rounded-lg border border-border/30"
+            >
+              {collapseInnings ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+              <span className="text-[11px] font-medium">
+                {collapseInnings ? `전체 이닝별 기록 보기 (${relayInnings.length}개)` : "이닝별 기록 접기"}
+              </span>
+            </button>
+          )}
+          <div className="space-y-2">
+            {!collapseInnings && relayInnings.map((inning) => (
+              <RelayInningPlays
+                key={`${inning.inning}-${inning.half}`}
+                inning={inning}
+                awayTeam={awayTeam}
+                homeTeam={homeTeam}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* -- team comparison bar chart -- */}
       <div className="glass-card p-4">
         <div className="flex items-center justify-between mb-3">

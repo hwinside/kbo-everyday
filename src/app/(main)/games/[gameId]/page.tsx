@@ -361,7 +361,7 @@ export default function GameDetailPage() {
           {activeTab === "stats" && (
             <motion.div key="stats" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
               {gameStats ? (
-                <GameStatsTab stats={gameStats} awayTeam={awayTeam} homeTeam={homeTeam} />
+                <GameStatsTab stats={gameStats} awayTeam={awayTeam} homeTeam={homeTeam} relay={gameRelay} />
               ) : liveGame?.isLive && gameRelay && gameRelay.innings.length > 0 ? (
                 <LiveStatsTab
                   relay={gameRelay}
