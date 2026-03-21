@@ -20,8 +20,8 @@ export function useGameDetail(
   const stoppedRef = useRef(false);
   const finalSinceRef = useRef<number | null>(null);
 
-  // Max 10 min of polling after final (in case KBO never fills boxScore, e.g. preseason)
-  const FINAL_MAX_POLL_MS = 10 * 60 * 1000;
+  // Max 30 min of polling after final (KBO can take time to fill boxScore, especially preseason)
+  const FINAL_MAX_POLL_MS = 30 * 60 * 1000;
 
   const fetchDetail = useCallback(async () => {
     if (!gameId || stoppedRef.current) return;
@@ -66,6 +66,23 @@ export function useGameDetail(
 
     return () => clearInterval(interval);
   }, [fetchDetail, pollInterval]);
+
+  // 앱 포커스 복귀 시 강제 refetch (폴링 중단 후에도 데이터 복구)
+  useEffect(() => {
+    const onFocus = () => {
+      stoppedRef.current = false;
+      finalSinceRef.current = null;
+      fetchDetail();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") onFocus();
+    });
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [fetchDetail]);
 
   return { data, loading, error, refetch: fetchDetail };
 }

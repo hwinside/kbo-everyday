@@ -383,6 +383,14 @@ export default function GameDetailPage() {
                         : `${game.time}시 경기가 시작된 후 확인하실 수 있습니다.`}
                     </span>
                   </div>
+                  {d.isFinal && (
+                    <button
+                      onClick={handleRefresh}
+                      className="mt-2 px-4 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-sm text-text-secondary transition-colors"
+                    >
+                      🔄 새로고침
+                    </button>
+                  )}
                 </div>
               )}
             </motion.div>
