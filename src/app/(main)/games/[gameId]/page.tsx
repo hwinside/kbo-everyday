@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx } from "clsx";
@@ -34,6 +34,7 @@ import GameStatsTab from "@/components/game/GameStatsTab";
 import LiveStatsTab from "@/components/game/LiveStatsTab";
 import { useGameRelay } from "@/lib/hooks/useGameRelay";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
+import PullToRefresh from "@/components/PullToRefresh";
 
 type Tab = "kgwan" | "lineup" | "stats";
 
@@ -134,8 +135,8 @@ export default function GameDetailPage() {
   const params = useParams();
   const gameId = params.gameId as string;
   const [activeTab, setActiveTab] = useState<Tab>("kgwan");
-  const { game: liveGame } = useLiveGame(gameId, 15000);
-  const { data: gameDetail } = useGameDetail(gameId, 30000);
+  const { game: liveGame, refetch: refetchLive } = useLiveGame(gameId, 15000);
+  const { data: gameDetail, refetch: refetchDetail } = useGameDetail(gameId, 30000);
   const { events: gameEvents } = useGameEvents(gameId, liveGame?.isLive ?? false, 15000);
   const liveIsFinal = !!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0);
   const { data: gameRelay } = useGameRelay(gameId, liveGame?.isLive ?? false, 30000, liveGame?.inning ?? 0, liveIsFinal);
@@ -172,8 +173,15 @@ export default function GameDetailPage() {
 
   const d = deriveGameState(liveGame, game, gameDetail);
 
+  const handleRefresh = useCallback(async () => {
+    await Promise.all([refetchLive(), refetchDetail()]);
+  }, [refetchLive, refetchDetail]);
+
   return (
-    <div className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto pb-[104px] max-w-[640px] mx-auto w-full">
+    <PullToRefresh
+      onRefresh={handleRefresh}
+      className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto pb-[104px] max-w-[640px] mx-auto w-full"
+    >
       <GameDetailHeader status={d.derivedStatus} time={game.time} stadium={liveGame?.stadium || game.stadium} />
 
       {d.isLive ? (
@@ -381,6 +389,6 @@ export default function GameDetailPage() {
           )}
         </AnimatePresence>
       </div>
-    </div>
+    </PullToRefresh>
   );
 }
