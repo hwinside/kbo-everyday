@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
-      next: { revalidate: 30 },
+      next: { revalidate: 10 },
     });
 
     if (!res.ok) throw new Error(`KBO API ${res.status}`);

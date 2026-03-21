@@ -135,7 +135,7 @@ export default function GameDetailPage() {
   const params = useParams();
   const gameId = params.gameId as string;
   const [activeTab, setActiveTab] = useState<Tab>("kgwan");
-  const { game: liveGame, refetch: refetchLive } = useLiveGame(gameId, 15000);
+  const { game: liveGame, refetch: refetchLive } = useLiveGame(gameId, 10000);
   const { data: gameDetail, refetch: refetchDetail } = useGameDetail(gameId, 30000);
   const { events: gameEvents } = useGameEvents(gameId, liveGame?.isLive ?? false, 15000);
   const liveIsFinal = !!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0);

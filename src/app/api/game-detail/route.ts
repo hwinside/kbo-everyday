@@ -422,12 +422,12 @@ export async function GET(req: NextRequest) {
     const [scoreBoardRes, lineupRes, boxScoreRes] = await Promise.all([
       fetch(`${KBO_BASE}/GetScoreBoard`, {
         method: "POST", headers: HEADERS, body,
-        next: { revalidate: 30 },
+        next: { revalidate: 10 },
       }).then(r => r.ok ? r.json() : null).catch(() => null),
 
       fetch(`${KBO_BASE}/GetLineUpAnalysis`, {
         method: "POST", headers: HEADERS, body,
-        next: { revalidate: 30 },
+        next: { revalidate: 60 },
       }).then(r => r.ok ? r.json() : null).catch(() => null),
 
       fetch(`${KBO_BASE}/GetBoxScore`, {
