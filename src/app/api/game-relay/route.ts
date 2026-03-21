@@ -95,12 +95,18 @@ export interface RelayPlayerStats {
   homePitchers: RelayPitcherStat[];
 }
 
+export interface RelayLinescore {
+  away: { innings: (number | null)[]; R: number; H: number; E: number };
+  home: { innings: (number | null)[]; R: number; H: number; E: number };
+}
+
 export interface GameRelayResponse {
   gameId: string;
   currentInning: number;
   innings: InningRelay[];
   matchup?: MatchupStats;
   playerStats?: RelayPlayerStats;
+  linescore?: RelayLinescore;
 }
 
 // ===== Helpers =====
@@ -200,6 +206,19 @@ interface NaverRelayResponse {
       inn: number;
       currentInning: string;
       textRelays: NaverTextRelay[];
+      inningScore?: {
+        home: Record<string, string>;
+        away: Record<string, string>;
+      };
+      currentGameState?: {
+        homeScore: string;
+        awayScore: string;
+        homeHit: string;
+        awayHit: string;
+        homeError: string;
+        awayError: string;
+        [key: string]: string;
+      };
     };
   };
 }
@@ -575,12 +594,47 @@ export async function GET(req: NextRequest) {
     // Extract all player stats for stats tab
     const playerStats = extractPlayerStats(combined);
 
+    // Build linescore from naver relay data
+    const trd = firstData.result?.textRelayData;
+    let linescore: RelayLinescore | undefined;
+    if (trd?.inningScore && trd?.currentGameState) {
+      const is = trd.inningScore;
+      const gs = trd.currentGameState;
+      const maxInn = Math.max(
+        ...Object.keys(is.away || {}).map(Number).filter(n => !isNaN(n)),
+        ...Object.keys(is.home || {}).map(Number).filter(n => !isNaN(n)),
+        0
+      );
+      const awayInnings: (number | null)[] = [];
+      const homeInnings: (number | null)[] = [];
+      for (let i = 1; i <= maxInn; i++) {
+        const ak = String(i);
+        awayInnings.push(is.away?.[ak] != null ? parseInt(is.away[ak]) || 0 : null);
+        homeInnings.push(is.home?.[ak] != null ? parseInt(is.home[ak]) || 0 : null);
+      }
+      linescore = {
+        away: {
+          innings: awayInnings,
+          R: parseInt(gs.awayScore) || 0,
+          H: parseInt(gs.awayHit) || 0,
+          E: parseInt(gs.awayError) || 0,
+        },
+        home: {
+          innings: homeInnings,
+          R: parseInt(gs.homeScore) || 0,
+          H: parseInt(gs.homeHit) || 0,
+          E: parseInt(gs.homeError) || 0,
+        },
+      };
+    }
+
     const response: GameRelayResponse = {
       gameId,
       currentInning: maxInning,
       innings,
       matchup,
       playerStats,
+      linescore,
     };
 
     return NextResponse.json(response);

@@ -193,7 +193,7 @@ export default function GameDetailPage() {
         />
       )}
 
-      {(gameDetail?.linescore || innings.length > 0) && (
+      {(gameDetail?.linescore || gameRelay?.linescore || innings.length > 0) && (
         <LinescoreTable
           awayTeam={awayTeam}
           homeTeam={homeTeam}
@@ -201,7 +201,7 @@ export default function GameDetailPage() {
           awayScore={d.awayScore}
           homeScore={d.homeScore}
           currentInning={d.currentInning}
-          linescore={gameDetail?.linescore}
+          linescore={gameDetail?.linescore ?? gameRelay?.linescore}
         />
       )}
 
