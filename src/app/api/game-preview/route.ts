@@ -13,7 +13,14 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
-const PREVIEW_VERSION = 1;
+const PREVIEW_VERSION = 2;
+
+// Build a set of current roster players (teamShortName:playerName) for filtering
+const currentRosterSet = new Set<string>();
+for (const p of playersRoster) {
+  const team = TEAMS.find(t => t.id === p.teamId);
+  if (team) currentRosterSet.add(`${team.shortName}:${p.name}`);
+}
 
 interface PreviewRequest {
   gameId: string;
@@ -31,21 +38,21 @@ function getTeamName(teamId: number): string {
   return TEAMS.find(t => t.id === teamId)?.name || `팀${teamId}`;
 }
 
-/** 팀 주요 타자 스탯 (타율 상위 5명) */
+/** 팀 주요 타자 스탯 (타율 상위 5명) - 현재 로스터에 있는 선수만 */
 function getTeamBatters(teamId: number) {
   const teamName = getTeamShortName(teamId);
   return (batterStats as Array<{ name: string; team: string; avg: string; hr: number; rbi: number; hits: number; games: number; ob?: string; obp?: string; ops?: string }>)
-    .filter(b => b.team === teamName)
+    .filter(b => b.team === teamName && currentRosterSet.has(`${teamName}:${b.name}`))
     .sort((a, b) => parseFloat(b.avg) - parseFloat(a.avg))
     .slice(0, 8)
     .map(b => `${b.name} (타율 ${b.avg}, ${b.hr}홈런, ${b.rbi}타점, ${b.games}경기)`);
 }
 
-/** 팀 주요 투수 스탯 */
+/** 팀 주요 투수 스탯 - 현재 로스터에 있는 선수만 */
 function getTeamPitchers(teamId: number) {
   const teamName = getTeamShortName(teamId);
   return (pitcherStats as Array<{ name: string; team: string; era: string; wins: number; losses: number; saves: number; holds: number; ip: string; so: number; games: number; whip?: string }>)
-    .filter(p => p.team === teamName)
+    .filter(p => p.team === teamName && currentRosterSet.has(`${teamName}:${p.name}`))
     .sort((a, b) => parseFloat(a.era) - parseFloat(b.era))
     .slice(0, 6)
     .map(p => `${p.name} (ERA ${p.era}, ${p.wins}승${p.losses}패, ${p.saves}세이브, ${p.so}삼진, ${p.ip}이닝, ${p.games}경기)`);
