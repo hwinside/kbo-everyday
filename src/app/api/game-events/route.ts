@@ -126,7 +126,7 @@ export async function GET(req: NextRequest) {
       fetch(`${KBO_SCHEDULE}/GetBoxScore`, {
         method: "POST",
         headers: HEADERS,
-        body: `leId=1&srId=${date >= "20260312" && date <= "20260321" ? "1" : "0"}&seasonId=${date.slice(0, 4)}&gameId=${gameId}`,
+        body: `leId=1&srId=0,1&seasonId=${date.slice(0, 4)}&gameId=${gameId}`,
         cache: "no-store",
       }).then(r => r.ok ? r.json() : null).catch(() => null),
     ]);
