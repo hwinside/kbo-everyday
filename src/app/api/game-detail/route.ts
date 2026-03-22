@@ -407,12 +407,14 @@ export async function GET(req: NextRequest) {
 
   const seasonId = req.nextUrl.searchParams.get("seasonId") || new Date().getFullYear().toString();
 
-  // Send srId=0,1 to cover both regular & preseason (KBO API accepts comma-separated)
-  const srId = req.nextUrl.searchParams.get("srId") || "0,1";
-  const body = `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${gameId}`;
+  // KBO Schedule API (GetScoreBoard/GetBoxScore/GetLineUpAnalysis) only accepts
+  // a single integer srId — NOT comma-separated like GetKboGameList.
+  // Try srId=0 (regular) first; if ScoreBoard returns empty, retry with srId=1 (preseason).
+  const overrideSrId = req.nextUrl.searchParams.get("srId");
 
-  try {
-    const [scoreBoardRes, lineupRes, boxScoreRes] = await Promise.all([
+  async function fetchWithSrId(srId: string) {
+    const body = `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${gameId}`;
+    return Promise.all([
       fetch(`${KBO_BASE}/GetScoreBoard`, {
         method: "POST", headers: HEADERS, body,
         next: { revalidate: 10 },
@@ -428,6 +430,20 @@ export async function GET(req: NextRequest) {
         next: { revalidate: 30 },
       }).then(r => r.ok ? r.json() : null).catch(() => null),
     ]);
+  }
+
+  try {
+    let [scoreBoardRes, lineupRes, boxScoreRes] = overrideSrId
+      ? await fetchWithSrId(overrideSrId)
+      : await fetchWithSrId("0");
+
+    // If no override and srId=0 returned empty ScoreBoard, retry with srId=1 (preseason)
+    if (!overrideSrId) {
+      const sb = parseScoreBoard(scoreBoardRes ?? []);
+      if (!sb.meta) {
+        [scoreBoardRes, lineupRes, boxScoreRes] = await fetchWithSrId("1");
+      }
+    }
 
     const { meta, linescore, status: scoreBoardStatus } = parseScoreBoard(scoreBoardRes ?? []);
     const lineup = parseLineup(lineupRes ?? []);

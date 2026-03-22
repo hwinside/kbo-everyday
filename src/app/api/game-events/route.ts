@@ -115,25 +115,26 @@ export async function GET(req: NextRequest) {
 
   try {
     // Fetch live game list + BoxScore in parallel
-    const [liveRes, boxScoreRes] = await Promise.all([
-      fetch(`${KBO_MAIN}/GetKboGameList`, {
-        method: "POST",
-        headers: HEADERS,
-        body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
-        cache: "no-store",
-      }).then(r => r.ok ? r.json() : null).catch(() => null),
-
-      fetch(`${KBO_SCHEDULE}/GetBoxScore`, {
-        method: "POST",
-        headers: HEADERS,
-        body: `leId=1&srId=0,1&seasonId=${date.slice(0, 4)}&gameId=${gameId}`,
-        cache: "no-store",
-      }).then(r => r.ok ? r.json() : null).catch(() => null),
-    ]);
+    // Fetch live game list first (GetKboGameList accepts comma-separated srId)
+    const liveRes = await fetch(`${KBO_MAIN}/GetKboGameList`, {
+      method: "POST",
+      headers: HEADERS,
+      body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
+      cache: "no-store",
+    }).then(r => r.ok ? r.json() : null).catch(() => null);
 
     // Find this game in the live list
     const games = liveRes?.game || [];
     const rawGame = games.find((g: KboRawGame) => g.G_ID === gameId);
+
+    // Use SR_ID from live data (GetBoxScore only accepts single integer srId)
+    const srId = rawGame?.SR_ID ?? "0";
+    const boxScoreRes = await fetch(`${KBO_SCHEDULE}/GetBoxScore`, {
+      method: "POST",
+      headers: HEADERS,
+      body: `leId=1&srId=${srId}&seasonId=${date.slice(0, 4)}&gameId=${gameId}`,
+      cache: "no-store",
+    }).then(r => r.ok ? r.json() : null).catch(() => null);
 
     if (!rawGame) {
       const existing = eventHistory.get(gameId) || [];
