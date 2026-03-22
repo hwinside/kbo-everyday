@@ -407,15 +407,8 @@ export async function GET(req: NextRequest) {
 
   const seasonId = req.nextUrl.searchParams.get("seasonId") || new Date().getFullYear().toString();
 
-  // Determine srId from gameId date (preseason: srId=1, regular: srId=0)
-  let srId = req.nextUrl.searchParams.get("srId") || "0";
-  if (!req.nextUrl.searchParams.has("srId") && gameId.length >= 8) {
-    const dateStr = gameId.slice(0, 8); // YYYYMMDD
-    // 2026 preseason: 3/12 ~ 3/21 (regular season starts 3/22)
-    if (dateStr >= "20260312" && dateStr <= "20260321") {
-      srId = "1";
-    }
-  }
+  // Send srId=0,1 to cover both regular & preseason (KBO API accepts comma-separated)
+  const srId = req.nextUrl.searchParams.get("srId") || "0,1";
   const body = `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${gameId}`;
 
   try {
