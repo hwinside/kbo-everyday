@@ -411,8 +411,8 @@ export async function GET(req: NextRequest) {
   let srId = req.nextUrl.searchParams.get("srId") || "0";
   if (!req.nextUrl.searchParams.has("srId") && gameId.length >= 8) {
     const dateStr = gameId.slice(0, 8); // YYYYMMDD
-    // 2026 preseason: 3/12 ~ 3/24
-    if (dateStr >= "20260312" && dateStr <= "20260324") {
+    // 2026 preseason: 3/12 ~ 3/21 (regular season starts 3/22)
+    if (dateStr >= "20260312" && dateStr <= "20260321") {
       srId = "1";
     }
   }
