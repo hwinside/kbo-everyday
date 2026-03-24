@@ -503,6 +503,120 @@ function extractMatchup(allTextRelays: NaverTextRelay[]): MatchupStats | undefin
   return undefined;
 }
 
+// ===== Record API parser (accurate pitcher/batter stats with names) =====
+
+interface NaverRecordPitcher {
+  name: string;
+  pcode: string;
+  inn: string;
+  hit: number;
+  r: number;
+  er: number;
+  bb: number;
+  kk: number;
+  hr: number;
+  bf: number;
+  ab: number;
+  pa: number;
+  era: string;
+  w: string;
+  l: string;
+  s: string;
+  wls: string;
+  bbhp: number;
+  seasonWin: number;
+  seasonLose: number;
+  tb: string;
+}
+
+interface NaverRecordBatter {
+  name: string;
+  playerCode: string;
+  batOrder: number;
+  pos: string;
+  ab: number;
+  hit: number;
+  hr: number;
+  bb: number;
+  kk: number;
+  rbi: number;
+  run: number;
+  sb: number;
+  hra: string;
+}
+
+interface NaverRecordResponse {
+  code: number;
+  success: boolean;
+  result?: {
+    recordData?: {
+      pitchersBoxscore?: { away: NaverRecordPitcher[]; home: NaverRecordPitcher[] };
+      battersBoxscore?: { away: NaverRecordBatter[]; home: NaverRecordBatter[] };
+    };
+  };
+}
+
+const POS_MAP: Record<string, string> = {
+  "중": "중견수", "좌": "좌익수", "우": "우익수", "유": "유격수",
+  "1": "1루수", "2": "2루수", "3": "3루수", "포": "포수", "지": "지명타자",
+  "투": "투수",
+};
+
+function extractPlayerStatsFromRecord(data: NaverRecordResponse | null): RelayPlayerStats | null {
+  const rd = data?.result?.recordData;
+  if (!rd?.pitchersBoxscore || !rd?.battersBoxscore) return null;
+
+  const pb = rd.pitchersBoxscore;
+  const bb = rd.battersBoxscore;
+
+  // Pitchers: record API has full names + individual stats
+  function toPitcherStats(pitchers: NaverRecordPitcher[]): RelayPitcherStat[] {
+    return pitchers.map((p) => {
+      // Parse np from bf (total pitches not directly available, use bf as approximation)
+      const pitchCount = p.bf || 0;
+      return {
+        name: p.name,
+        pitchCount,
+        strikeCount: 0,
+        ballCount: 0,
+        strikeouts: p.kk,
+        walks: p.bb + (p.bbhp || 0),
+        hits: p.hit,
+        earnedRuns: p.er,
+        runs: p.r,
+        inn: p.inn || "-",
+        seasonEra: parseFloat(p.era) || 0,
+        hr: p.hr,
+      };
+    });
+  }
+
+  function toBatterStats(batters: NaverRecordBatter[]): RelayBatterStat[] {
+    return batters.map((b) => ({
+      name: b.name,
+      batOrder: b.batOrder,
+      posName: POS_MAP[b.pos] || b.pos,
+      pa: b.ab + b.bb, // approximate PA
+      ab: b.ab,
+      hit: b.hit,
+      hr: b.hr,
+      bb: b.bb,
+      so: b.kk,
+      rbi: b.rbi,
+      run: b.run,
+      seasonAvg: parseFloat(b.hra) || 0,
+      todayAvg: b.ab > 0 ? b.hit / b.ab : 0,
+    }));
+  }
+
+  return {
+    awayBatters: toBatterStats(bb.away),
+    homeBatters: toBatterStats(bb.home),
+    awayPitchers: toPitcherStats(pb.away),
+    homePitchers: toPitcherStats(pb.home),
+  };
+}
+
 // ===== Route handler =====
 
 const NAVER_API_BASE =
@@ -580,7 +694,23 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const allTextRelays = await Promise.all(inningPromises);
+    // Fetch record API in parallel for accurate pitcher/batter stats with names
+    const recordPromise = fetch(
+      `${NAVER_API_BASE}/${naverGameId}/record`,
+      {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
+        cache: "no-store",
+      }
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+
+    const [allTextRelaysResult, recordData] = await Promise.all([
+      Promise.all(inningPromises),
+      recordPromise,
+    ]);
+
+    const allTextRelays = allTextRelaysResult;
 
     // Combine all text relays and parse
     const combined = allTextRelays.flat();
@@ -591,8 +721,8 @@ export async function GET(req: NextRequest) {
     const lastInningRelays = allTextRelays[allTextRelays.length - 1] ?? [];
     const matchup = extractMatchup(lastInningRelays);
 
-    // Extract all player stats for stats tab
-    const playerStats = extractPlayerStats(combined);
+    // Extract player stats: prefer record API (has pitcher names), fallback to relay parsing
+    const playerStats = extractPlayerStatsFromRecord(recordData) ?? extractPlayerStats(combined);
 
     // Build linescore from naver relay data
     const trd = firstData.result?.textRelayData;
