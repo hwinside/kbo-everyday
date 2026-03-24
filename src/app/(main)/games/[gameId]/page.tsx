@@ -155,8 +155,11 @@ export default function GameDetailPage() {
   const innings = getInningsForGame(gameId);
   const plays = getPlaysForGame(gameId);
   const staticGameStats = getStatsForGame(gameId);
+  // BoxScore가 유효하려면 타자 + 투수 모두 있어야 함
+  // 라이브 중 KBO API가 타자만 채우고 투수는 비어있는 반쪽 상태 방지
   const hasBoxScoreData = gameDetail?.boxScore &&
-    (gameDetail.boxScore.awayBatters.length > 0 || gameDetail.boxScore.homeBatters.length > 0);
+    (gameDetail.boxScore.awayBatters.length > 0 || gameDetail.boxScore.homeBatters.length > 0) &&
+    (gameDetail.boxScore.awayPitchers.length > 0 || gameDetail.boxScore.homePitchers.length > 0);
   const gameStats = staticGameStats ?? (hasBoxScoreData
     ? boxScoreToGameStats(gameId, gameDetail.boxScore!, game.awayTeamId, game.homeTeamId)
     : null);
