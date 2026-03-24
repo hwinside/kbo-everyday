@@ -370,6 +370,7 @@ export default function GameDetailPage() {
                   currentPitcher={d.currentPitcher}
                   awayStarterName={liveGame?.awayStarterName || ""}
                   homeStarterName={liveGame?.homeStarterName || ""}
+                  isTop={liveGame?.isTop}
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center h-32 gap-2">

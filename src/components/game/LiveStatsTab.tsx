@@ -15,6 +15,7 @@ interface LiveStatsTabProps {
   currentPitcher?: string | null;
   awayStarterName?: string;
   homeStarterName?: string;
+  isTop?: boolean;
 }
 
 function getPlayStyle(type: PlayEvent["type"]) {
@@ -74,7 +75,7 @@ function relayToGameStats(
   relay: GameRelayResponse,
   awayTeamId: number,
   homeTeamId: number,
-  pitcherNames?: { awayStarter?: string; homeStarter?: string; currentPitcher?: string | null },
+  pitcherNames?: { awayStarter?: string; homeStarter?: string; currentPitcher?: string | null; isTop?: boolean },
 ): GameStats | null {
   const ps = relay.playerStats;
   if (!ps || (ps.awayBatters.length === 0 && ps.homeBatters.length === 0)) return null;
@@ -99,38 +100,63 @@ function relayToGameStats(
     }));
   }
 
-  function toPitcherStats(pitchers: RP, fallbackName?: string): PitcherStat[] {
-    return pitchers.map((p, i) => ({
-      name: p.name || (i === 0 && fallbackName ? fallbackName : "투수"),
-      ip: p.inn || "-",
-      h: p.hits,
-      r: p.runs,
-      er: p.earnedRuns,
-      bb: p.walks,
-      so: p.strikeouts,
-      hr: p.hr,
-      bf: 0,
-      ab: 0,
-      np: p.pitchCount,
-      g: 0,
-      w: 0,
-      l: 0,
-      sv: 0,
-      era: p.seasonEra > 0 ? p.seasonEra.toFixed(2) : "-",
-    }));
+  function toPitcherStats(pitchers: RP, fallbackName?: string, currentPitcherName?: string | null): PitcherStat[] {
+    // 투수가 1명뿐이고 이름이 없으면 currentPitcher를 사용
+    // 투수가 여러 명이면 마지막(현재 등판 중) 투수만 currentPitcher로 대체
+    return pitchers.map((p, i) => {
+      let name = p.name;
+      if (!name) {
+        if (pitchers.length === 1 && currentPitcherName) {
+          // 투수가 1명뿐 → currentPitcher 사용
+          name = currentPitcherName;
+        } else if (i === pitchers.length - 1 && currentPitcherName) {
+          // 여러 투수 중 마지막 투수 → currentPitcher 사용
+          name = currentPitcherName;
+        } else if (i === 0 && fallbackName) {
+          // 첫 투수는 선발 이름 사용
+          name = fallbackName;
+        } else {
+          name = "투수";
+        }
+      }
+      return {
+        name,
+        ip: p.inn || "-",
+        h: p.hits,
+        r: p.runs,
+        er: p.earnedRuns,
+        bb: p.walks,
+        so: p.strikeouts,
+        hr: p.hr,
+        bf: 0,
+        ab: 0,
+        np: p.pitchCount,
+        g: 0,
+        w: 0,
+        l: 0,
+        sv: 0,
+        era: p.seasonEra > 0 ? p.seasonEra.toFixed(2) : "-",
+      };
+    });
   }
+
+  // currentPitcher는 현재 수비팀 투수 → 이닝 초(top)=away 수비=home 타석 → currentPitcher는 away 투수
+  // 이닝 말(bottom)=home 수비=away 타석 → currentPitcher는 home 투수
+  const isTop = pitcherNames?.isTop;
+  const awayCurrent = isTop === true ? pitcherNames?.currentPitcher : null;
+  const homeCurrent = isTop === false ? pitcherNames?.currentPitcher : null;
 
   return {
     gameId: relay.gameId,
     away: {
       teamId: awayTeamId,
       batters: toBatterStats(ps.awayBatters),
-      pitchers: toPitcherStats(ps.awayPitchers, pitcherNames?.awayStarter),
+      pitchers: toPitcherStats(ps.awayPitchers, pitcherNames?.awayStarter, awayCurrent),
     },
     home: {
       teamId: homeTeamId,
       batters: toBatterStats(ps.homeBatters),
-      pitchers: toPitcherStats(ps.homePitchers, pitcherNames?.homeStarter),
+      pitchers: toPitcherStats(ps.homePitchers, pitcherNames?.homeStarter, homeCurrent),
     },
   };
 }
@@ -218,6 +244,7 @@ export default function LiveStatsTab({
   currentPitcher,
   awayStarterName,
   homeStarterName,
+  isTop,
 }: LiveStatsTabProps) {
   const [collapseInnings, setCollapseInnings] = useState(false);
 
@@ -228,6 +255,7 @@ export default function LiveStatsTab({
     awayStarter: awayStarterName,
     homeStarter: homeStarterName,
     currentPitcher,
+    isTop,
   });
 
   if (orderedInnings.length === 0 && !gameStats) {
