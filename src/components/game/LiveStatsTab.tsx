@@ -140,11 +140,12 @@ function relayToGameStats(
     });
   }
 
-  // currentPitcher는 현재 수비팀 투수 → 이닝 초(top)=away 수비=home 타석 → currentPitcher는 away 투수
-  // 이닝 말(bottom)=home 수비=away 타석 → currentPitcher는 home 투수
+  // currentPitcher는 현재 수비팀 투수
+  // 이닝 초(top)=away 공격, home 수비 → currentPitcher는 home 투수
+  // 이닝 말(bottom)=home 공격, away 수비 → currentPitcher는 away 투수
   const isTop = pitcherNames?.isTop;
-  const awayCurrent = isTop === true ? pitcherNames?.currentPitcher : null;
-  const homeCurrent = isTop === false ? pitcherNames?.currentPitcher : null;
+  const awayCurrent = isTop === false ? pitcherNames?.currentPitcher : null;
+  const homeCurrent = isTop === true ? pitcherNames?.currentPitcher : null;
 
   return {
     gameId: relay.gameId,
