@@ -61,7 +61,7 @@ export default function PlayerStatCard({
 
       {/* Key Numbers */}
       <motion.div variants={item} className="glass-card p-5">
-        <h3 className="mb-4 text-base font-semibold text-text-secondary">핵심 스탯</h3>
+        <h3 className="mb-4 text-base font-semibold text-text-secondary">핵심 기록</h3>
         <div className="grid grid-cols-3 gap-4">
           {isPitcher ? (
             <>

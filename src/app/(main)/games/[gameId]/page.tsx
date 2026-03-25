@@ -41,7 +41,7 @@ type Tab = "kgwan" | "lineup" | "stats";
 const TABS: { id: Tab; label: string }[] = [
   { id: "kgwan", label: "크관" },
   { id: "lineup", label: "라인업" },
-  { id: "stats", label: "스탯" },
+  { id: "stats", label: "기록" },
 ];
 
 /* boxScore → GameStats 변환 */
@@ -380,7 +380,7 @@ export default function GameDetailPage() {
                     <span className="text-yellow-400 text-sm">&#9888;&#65039;</span>
                     <span className="text-sm text-yellow-400/90">
                       {liveGame?.isLive
-                        ? "경기 진행 중입니다. 스탯은 경기 종료 후 업데이트됩니다."
+                        ? "경기 진행 중입니다. 기록은 경기 종료 후 업데이트됩니다."
                         : d.isFinal
                         ? "경기 상세 데이터 준비 중입니다."
                         : `${game.time}시 경기가 시작된 후 확인하실 수 있습니다.`}

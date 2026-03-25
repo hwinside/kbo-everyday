@@ -106,7 +106,7 @@ function BatterStats({ data, teamColor }: { data: BatterAdvanced; teamColor: str
         </table>
       </GlassCard>
       <GlassCard className="p-4 overflow-x-auto">
-        <h3 className="text-sm font-bold text-text-primary mb-3">🔥 상황별 스탯</h3>
+        <h3 className="text-sm font-bold text-text-primary mb-3">🔥 상황별 기록</h3>
         <table className="w-full text-xs">
           <thead><tr className="text-text-tertiary border-b border-border">
             <th className="text-left py-1.5 pr-2">상황</th><th className="text-right py-1.5 px-2">타율</th><th className="text-right py-1.5 px-2">타석</th><th className="text-right py-1.5 px-2">홈런</th><th className="text-right py-1.5 pl-2">타점</th>

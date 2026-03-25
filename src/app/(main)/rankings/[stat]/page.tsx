@@ -164,7 +164,7 @@ function RankingContent() {
       <div className="min-h-screen bg-bg-primary text-text-primary px-5 pt-safe">
         <div className="py-3 flex items-center gap-3">
           <button onClick={() => router.back()} className="text-xl">←</button>
-          <h1 className="text-lg font-bold">알 수 없는 스탯</h1>
+          <h1 className="text-lg font-bold">알 수 없는 기록</h1>
         </div>
       </div>
     );

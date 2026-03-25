@@ -109,7 +109,7 @@ export default function PlayerDetailPage() {
                   : "bg-bg-glass text-text-secondary"
               }`}
             >
-              {tab === "stats" ? "스탯" : "게시판"}
+              {tab === "stats" ? "기록" : "게시판"}
             </button>
           ))}
         </div>

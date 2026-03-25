@@ -11,7 +11,7 @@ export const metadata: Metadata = {
   title: "크보팬 — 내 팀 경기, 오늘 할 얘기는 여기서 끝",
   description:
     "내 팀 경기, 오늘 할 얘기는 여기서 끝. 실시간 스코어, 승부예측, 구단/선수별 게시판, 하이라이트.",
-  keywords: ["KBO", "야구", "커뮤니티", "실시간", "승부예측", "스탯"],
+  keywords: ["KBO", "야구", "커뮤니티", "실시간", "승부예측", "기록"],
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
