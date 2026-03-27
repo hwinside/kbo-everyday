@@ -541,7 +541,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
     // 승부처 (리치하게)
     let turningPoint: string;
     if (isDraw) {
-      turningPoint = `양 팀 모두 ${homeR}점씩 주고받은 팽팽한 접전. 시범경기 규정에 따라 무승부로 마무리되었습니다.`;
+      turningPoint = `양 팀 모두 ${homeR}점씩 주고받은 팽팽한 접전 끝에 무승부로 마무리되었습니다.`;
     } else {
       const winBatters = homeWon ? boxScore.homeBatters : boxScore.awayBatters;
       const winHits = winBatters.reduce((s, b) => s + b.hits, 0);
