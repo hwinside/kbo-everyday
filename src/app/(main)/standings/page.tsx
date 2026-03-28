@@ -29,7 +29,7 @@ export default function StandingsPage() {
   })();
 
   const [realStandings, setRealStandings] = useState<TeamStanding[] | null>(null);
-  const [season, setSeason] = useState<2025 | 2026>(2025);
+  const [season, setSeason] = useState<2025 | 2026>(2026);
 
   useEffect(() => {
     // 2025 시즌은 확정 데이터 사용, API fetch 불필요
@@ -62,12 +62,12 @@ export default function StandingsPage() {
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (season !== 2025) { setRealBatters(null); setRealPitchers(null); return; }
-    fetch("/api/stats?type=batter&season=2025")
+    setRealBatters(null); setRealPitchers(null);
+    fetch(`/api/stats?type=batter&season=${season}`)
       .then(r => r.json())
       .then(d => d.stats?.length && setRealBatters(d.stats))
       .catch(() => {});
-    fetch("/api/stats?type=pitcher&season=2025")
+    fetch(`/api/stats?type=pitcher&season=${season}`)
       .then(r => r.json())
       .then(d => d.stats?.length && setRealPitchers(d.stats))
       .catch(() => {});
@@ -121,13 +121,7 @@ export default function StandingsPage() {
       ))}
       </div>
 
-      {season === 2026 ? (
-        <div className="py-20 text-center">
-          <p className="text-4xl mb-4">⚾</p>
-          <p className="text-base font-medium text-text-secondary">시즌 개막 후 확인하실 수 있습니다</p>
-          <p className="text-sm text-text-tertiary mt-2">2026 정규시즌 개막: 3월 29일</p>
-        </div>
-      ) : (<>
+      {(<>
       {/* Team standings */}
       {mainTab === "team" && (
         <motion.div
