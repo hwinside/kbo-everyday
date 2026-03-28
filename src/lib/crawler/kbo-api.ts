@@ -82,6 +82,7 @@ interface KboGameRaw {
 
 function parseGame(raw: KboGameRaw): KboGame {
   const status = parseGameStatus(raw.GAME_STATE_SC?.toString(), raw.CANCEL_SC_ID?.toString());
+  const isTop = raw.GAME_TB_SC === "T";
   return {
     gameId: raw.G_ID,
     date: raw.G_DT,
@@ -94,7 +95,7 @@ function parseGame(raw: KboGameRaw): KboGame {
     awayScore: status !== "scheduled" ? parseInt(raw.T_SCORE_CN) || 0 : null,
     homeScore: status !== "scheduled" ? parseInt(raw.B_SCORE_CN) || 0 : null,
     inning: raw.GAME_INN_NO ?? 0,
-    isTop: raw.GAME_TB_SC === "T",
+    isTop,
     status,
     awayStarterName: raw.T_PIT_P_NM?.trim() ?? "",
     homeStarterName: raw.B_PIT_P_NM?.trim() ?? "",
@@ -109,8 +110,8 @@ function parseGame(raw: KboGameRaw): KboGame {
       second: (raw.B2_BAT_ORDER_NO ?? 0) > 0,
       third: (raw.B3_BAT_ORDER_NO ?? 0) > 0,
     },
-    currentPitcher: raw.B_P_NM?.trim() ?? "",
-    currentBatter: raw.T_P_NM?.trim() ?? "",
+    currentPitcher: isTop ? (raw.B_P_NM?.trim() ?? "") : (raw.T_P_NM?.trim() ?? ""),
+    currentBatter: isTop ? (raw.T_P_NM?.trim() ?? "") : (raw.B_P_NM?.trim() ?? ""),
     awayRank: raw.T_RANK_NO ?? 0,
     homeRank: raw.B_RANK_NO ?? 0,
   };
