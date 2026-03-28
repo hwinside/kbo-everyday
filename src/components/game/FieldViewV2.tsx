@@ -5,7 +5,7 @@ import Link from "next/link";
 import type { LineupPlayer } from "@/lib/constants/games";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import playersRoster from "@/lib/constants/players-roster.json";
-import { getTeamById } from "@/lib/constants/teams";
+
 
 interface FieldViewV2Props {
   defenders: LineupPlayer[];
@@ -56,8 +56,7 @@ function PlayerMarker({
   const rosterPlayer = (playersRoster as { name: string; kboId: string; teamId: number }[]).find(
     (p) => p.name === name
   );
-  const teamSlug = rosterPlayer ? getTeamById(rosterPlayer.teamId)?.slug : null;
-  const playerHref = rosterPlayer && teamSlug ? `/teams/${teamSlug}/players/${rosterPlayer.kboId}` : null;
+  const playerHref = rosterPlayer ? `/community/players/${rosterPlayer.kboId}` : null;
 
   const content = (
     <>
