@@ -9,10 +9,11 @@ interface PitcherTitleTabProps {
   realPitchers: RealPitcherStat[] | null;
   myTeamId: number | null;
   favoriteNames: Set<string>;
+  season?: number;
 }
 
-export default function PitcherTitleTab({ realPitchers, myTeamId, favoriteNames }: PitcherTitleTabProps) {
-  if (!realPitchers) return <div className="text-center py-8 text-text-tertiary text-sm">2025 시즌 데이터 로딩 중...</div>;
+export default function PitcherTitleTab({ realPitchers, myTeamId, favoriteNames, season = 2026 }: PitcherTitleTabProps) {
+  if (!realPitchers) return <div className="text-center py-8 text-text-tertiary text-sm">{season} 시즌 데이터 로딩 중...</div>;
   if (realPitchers.length === 0) return <div className="text-center py-8 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</div>;
 
   // KBO 규정이닝: 팀경기수(144) × 1.0 = 144이닝
@@ -52,7 +53,7 @@ export default function PitcherTitleTab({ realPitchers, myTeamId, favoriteNames 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
       {categories.map((cat) => (
-        <LeaderSection key={cat.id} title={`${cat.label} (2025)`} leaders={cat.leaders} myTeamId={myTeamId} favoriteNames={favoriteNames} />
+        <LeaderSection key={cat.id} title={`${cat.label} (${season})`} leaders={cat.leaders} myTeamId={myTeamId} favoriteNames={favoriteNames} />
       ))}
     </motion.div>
   );

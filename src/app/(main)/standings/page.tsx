@@ -190,12 +190,12 @@ export default function StandingsPage() {
 
       {/* Batter titles */}
       {mainTab === "batter" && (
-        <BatterTitleTab realBatters={realBatters} myTeamId={myTeamId} favoriteNames={favoriteNames} />
+        <BatterTitleTab realBatters={realBatters} myTeamId={myTeamId} favoriteNames={favoriteNames} season={season} />
       )}
 
       {/* Pitcher titles */}
       {mainTab === "pitcher" && (
-        <PitcherTitleTab realPitchers={realPitchers} myTeamId={myTeamId} favoriteNames={favoriteNames} />
+        <PitcherTitleTab realPitchers={realPitchers} myTeamId={myTeamId} favoriteNames={favoriteNames} season={season} />
       )}
 
       </>)}
