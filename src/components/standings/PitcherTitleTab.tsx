@@ -16,8 +16,11 @@ export default function PitcherTitleTab({ realPitchers, myTeamId, favoriteNames,
   if (!realPitchers) return <div className="text-center py-8 text-text-tertiary text-sm">{season} 시즌 데이터 로딩 중...</div>;
   if (realPitchers.length === 0) return <div className="text-center py-8 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</div>;
 
-  // KBO 규정이닝: 팀경기수(144) × 1.0 = 144이닝
-  const qualifiedP = realPitchers.filter((p) => Number(p.ip || 0) >= 144 || (!(p.ip) && Number(p.games || 0) >= 40));
+  // KBO 규정이닝: 팀경기수(144) × 1.0 = 144이닝 — 2025(확정 시즌)만 적용
+  // 2026(현재 시즌)은 KBO 기록실 크롤링 데이터(top 30)를 그대로 사용
+  const qualifiedP = season === 2025
+    ? realPitchers.filter((p) => Number(p.ip || 0) >= 144 || (!(p.ip) && Number(p.games || 0) >= 40))
+    : realPitchers;
   const toLeader = (p: RealPitcherStat, valKey: string): TitleLeader => ({
     rank: p.rank, name: p.name, teamId: TEAM_NAME_TO_ID[p.team] ?? 0,
     value: String(p[valKey] ?? 0), playerId: PLAYER_PHOTO_MAP[p.name],

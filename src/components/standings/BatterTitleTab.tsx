@@ -16,8 +16,11 @@ export default function BatterTitleTab({ realBatters, myTeamId, favoriteNames, s
   if (!realBatters) return <div className="text-center py-8 text-text-tertiary text-sm">{season} 시즌 데이터 로딩 중...</div>;
   if (realBatters.length === 0) return <div className="text-center py-8 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</div>;
 
-  // KBO 규정타석: 팀경기수(144) × 3.1 = 446타석
-  const qualified = realBatters.filter((b) => Number(b.pa || 0) >= 446 || (!(b.pa) && Number(b.games || 0) >= 120));
+  // KBO 규정타석: 팀경기수(144) × 3.1 = 446타석 — 2025(확정 시즌)만 적용
+  // 2026(현재 시즌)은 KBO 기록실 크롤링 데이터(top 30)를 그대로 사용
+  const qualified = season === 2025
+    ? realBatters.filter((b) => Number(b.pa || 0) >= 446 || (!(b.pa) && Number(b.games || 0) >= 120))
+    : realBatters;
   const toLeader = (b: RealBatterStat, valKey: string): TitleLeader => ({
     rank: b.rank, name: b.name, teamId: TEAM_NAME_TO_ID[b.team] ?? 0,
     value: String(b[valKey] ?? 0), playerId: PLAYER_PHOTO_MAP[b.name],
