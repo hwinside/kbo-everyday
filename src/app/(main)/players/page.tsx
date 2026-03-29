@@ -119,6 +119,15 @@ function PlayersPageContent() {
     return sortPlayers(result, sortMode);
   }, [filterMode, filterTeam, filterPosition, searchQuery, sortMode]);
 
+  // 동명이인 감지: 이름이 같은 선수가 2명 이상이면 Set에 추가
+  const duplicateNames = useMemo(() => {
+    const nameCount: Record<string, number> = {};
+    for (const p of filtered) {
+      nameCount[p.name] = (nameCount[p.name] || 0) + 1;
+    }
+    return new Set(Object.entries(nameCount).filter(([, c]) => c > 1).map(([n]) => n));
+  }, [filtered]);
+
   useEffect(() => {
     const el = loadMoreRef.current;
     if (!el) return;
@@ -291,6 +300,11 @@ function PlayersPageContent() {
                     {player.name}
                   </span>
                   <TeamBadge teamId={player.teamId} size="xs" />
+                  {duplicateNames.has(player.name) && (
+                    <span className="text-xs text-text-tertiary font-medium">
+                      {player.team}
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-text-tertiary mt-0.5">
                   #{player.backNo} · {player.position}
