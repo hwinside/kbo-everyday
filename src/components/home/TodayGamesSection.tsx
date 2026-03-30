@@ -50,7 +50,11 @@ export default function TodayGamesSection({ todayGames, isPreseason, myTeamId }:
                     <span className="text-sm font-bold" style={{ color: getTeamColor(game.awayTeamId) }}>
                       {getTeamShortName(game.awayTeamId)}
                     </span>
-                    <span className="text-lg font-bold tabular-nums text-text-primary">{game.status === "scheduled" ? "-" : game.awayScore}</span>
+                    {game.status === "scheduled" ? (
+                      <span className="text-xs font-medium text-accent">예정</span>
+                    ) : (
+                      <span className="text-lg font-bold tabular-nums text-text-primary">{game.awayScore}</span>
+                    )}
                   </div>
                   <span className="text-xs text-text-tertiary">vs</span>
                   <div className="flex flex-col items-center gap-1 flex-1">
@@ -60,7 +64,11 @@ export default function TodayGamesSection({ todayGames, isPreseason, myTeamId }:
                     <span className="text-sm font-bold" style={{ color: getTeamColor(game.homeTeamId) }}>
                       {getTeamShortName(game.homeTeamId)}
                     </span>
-                    <span className="text-lg font-bold tabular-nums text-text-primary">{game.status === "scheduled" ? "-" : game.homeScore}</span>
+                    {game.status === "scheduled" ? (
+                      <span className="text-xs font-medium text-accent">예정</span>
+                    ) : (
+                      <span className="text-lg font-bold tabular-nums text-text-primary">{game.homeScore}</span>
+                    )}
                   </div>
                 </div>
                 <p className="text-center text-xs text-text-tertiary">

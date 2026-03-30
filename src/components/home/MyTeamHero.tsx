@@ -56,11 +56,17 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
               <span className="text-sm font-bold text-accent">{getTeamShortName(myTeamGame.awayTeamId)}</span>
             </div>
             <div className="text-center">
+              {myTeamGame.status === "scheduled" ? (
+                <div className="px-3 py-1 rounded-full bg-accent/10">
+                  <span className="text-sm font-semibold text-accent">경기 예정</span>
+                </div>
+              ) : (
               <div className="flex items-center gap-3">
-                <span className="text-2xl font-black tabular-nums text-text-primary">{myTeamGame.status === "scheduled" ? "-" : myTeamGame.awayScore}</span>
+                <span className="text-2xl font-black tabular-nums text-text-primary">{myTeamGame.awayScore}</span>
                 <span className="text-sm text-text-tertiary">:</span>
-                <span className="text-2xl font-black tabular-nums text-text-primary">{myTeamGame.status === "scheduled" ? "-" : myTeamGame.homeScore}</span>
+                <span className="text-2xl font-black tabular-nums text-text-primary">{myTeamGame.homeScore}</span>
               </div>
+              )}
               <span className={`text-xs font-semibold mt-1 px-2 py-0.5 rounded-full ${
                 myTeamGame.status === "live" ? "bg-red-500/20 text-red-400 animate-pulse" :
                 myTeamGame.status === "final" ? "bg-text-tertiary/20 text-text-tertiary" :

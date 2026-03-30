@@ -58,9 +58,13 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
               {away.shortName}
             </span>
           </div>
-          <span className={`text-lg font-bold tabular-nums ${awayWin ? "text-text-primary" : "text-text-secondary"}`}>
-            {game.status === "scheduled" ? "-" : game.awayScore}
-          </span>
+          {game.status === "scheduled" ? (
+            <span className="text-xs font-medium text-accent">예정</span>
+          ) : (
+            <span className={`text-lg font-bold tabular-nums ${awayWin ? "text-text-primary" : "text-text-secondary"}`}>
+              {game.awayScore}
+            </span>
+          )}
         </div>
 
         {/* Home team row */}
@@ -73,9 +77,13 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
               {home.shortName}
             </span>
           </div>
-          <span className={`text-lg font-bold tabular-nums ${homeWin ? "text-text-primary" : "text-text-secondary"}`}>
-            {game.status === "scheduled" ? "-" : game.homeScore}
-          </span>
+          {game.status === "scheduled" ? (
+            <span className="text-xs font-medium text-accent">예정</span>
+          ) : (
+            <span className={`text-lg font-bold tabular-nums ${homeWin ? "text-text-primary" : "text-text-secondary"}`}>
+              {game.homeScore}
+            </span>
+          )}
         </div>
       </div>
     </Link>
