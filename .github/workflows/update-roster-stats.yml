@@ -1,0 +1,105 @@
+name: Update Roster & Stats
+
+on:
+  schedule:
+    # 매일 새벽 5시 KST (UTC 20:00 전일)
+    - cron: '0 20 * * *'
+  workflow_dispatch: # 수동 실행 가능
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium --with-deps
+
+      - name: Crawl roster
+        run: node scripts/crawl-roster-v2.mjs
+
+      - name: Normalize roster schema
+        run: |
+          node -e "
+            const fs = require('fs');
+            const path = 'src/lib/constants/players-roster.json';
+            const data = JSON.parse(fs.readFileSync(path, 'utf-8'));
+            for (const p of data) {
+              if (!p.team && p.teamName) p.team = p.teamName;
+              for (const k of Object.keys(p)) {
+                if (!['name','kboId','team','teamId','position','backNo'].includes(k)) delete p[k];
+              }
+            }
+            fs.writeFileSync(path, JSON.stringify(data, null, 2));
+            console.log('Normalized', data.length, 'entries');
+          "
+
+      - name: Crawl 2026 stats
+        run: node scripts/crawl-stats.mjs --season 2026
+
+      - name: Update player photos
+        run: node scripts/update-player-photos.mjs
+
+      - name: Check for changes
+        id: changes
+        run: |
+          git diff --stat
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            ROSTER_COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('src/lib/constants/players-roster.json','utf-8')).length)")
+            BATTER_COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('src/lib/constants/stats-2026-batters.json','utf-8')).length)")
+            PITCHER_COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('src/lib/constants/stats-2026-pitchers.json','utf-8')).length)")
+            echo "roster_count=$ROSTER_COUNT" >> $GITHUB_OUTPUT
+            echo "batter_count=$BATTER_COUNT" >> $GITHUB_OUTPUT
+            echo "pitcher_count=$PITCHER_COUNT" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create PR
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          BRANCH="auto/update-roster-stats-$(date +%Y%m%d)"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "data: roster/stats/photos 자동 업데이트 $(date +%Y-%m-%d)
+
+          - Roster: ${{ steps.changes.outputs.roster_count }}명
+          - 타자 스탯: ${{ steps.changes.outputs.batter_count }}명
+          - 투수 스탯: ${{ steps.changes.outputs.pitcher_count }}명"
+
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "📊 Roster/Stats 자동 업데이트 $(date +%Y-%m-%d)" \
+            --body "## 자동 업데이트 (GitHub Actions)
+
+          | 항목 | 수량 |
+          |------|------|
+          | Roster | ${{ steps.changes.outputs.roster_count }}명 |
+          | 타자 스탯 | ${{ steps.changes.outputs.batter_count }}명 |
+          | 투수 스탯 | ${{ steps.changes.outputs.pitcher_count }}명 |
+
+          매일 새벽 5시(KST) 자동 크롤링 결과입니다.
+          변경사항 확인 후 머지해주세요." \
+            --base main \
+            --head "$BRANCH"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
