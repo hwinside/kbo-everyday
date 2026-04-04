@@ -28,14 +28,19 @@ export default function PitcherTitleTab({ realPitchers, myTeamId, favoriteNames,
   const sorted = (key: string, desc = true) =>
     [...qualifiedP].sort((a, b) => desc ? Number(b[key] || 0) - Number(a[key] || 0) : Number(a[key] || 0) - Number(b[key] || 0))
       .slice(0, 20).map((p, i) => ({ ...toLeader(p, key), rank: i + 1 }));
-  // 세이브/홀드는 규정이닝 무관 → 전체 투수에서 정렬, 의미있는 데이터 없으면 정적 데이터 fallback
+  // 세이브/홀드는 규정이닝 무관 → 전체 투수에서 정렬
+  // 2025(확정 시즌)만 정적 fallback 허용, 2026은 실제 데이터만 표시
   const sortedAll = (key: string) => {
     const all = [...realPitchers].sort((a, b) => Number(b[key] || 0) - Number(a[key] || 0))
+      .filter((p) => Number(p[key] || 0) > 0)
       .slice(0, 20).map((p, i) => ({ ...toLeader(p, key), rank: i + 1 }));
-    // 1위가 0이면 데이터 부족 → 정적 데이터 사용
-    if (all.length === 0 || Number(all[0].value) === 0) {
-      const fallback = PITCHER_TITLES.find(t => t.id === key);
-      return fallback?.leaders ?? all;
+    // 데이터 부족 시: 2025만 정적 fallback, 2026은 빈 배열 반환 (거짓 데이터 방지)
+    if (all.length === 0) {
+      if (season === 2025) {
+        const fallback = PITCHER_TITLES.find(t => t.id === key);
+        return fallback?.leaders ?? all;
+      }
+      return all;
     }
     return all;
   };
@@ -56,7 +61,14 @@ export default function PitcherTitleTab({ realPitchers, myTeamId, favoriteNames,
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
       {categories.map((cat) => (
-        <LeaderSection key={cat.id} title={`${cat.label} (${season})`} leaders={cat.leaders} myTeamId={myTeamId} favoriteNames={favoriteNames} />
+        cat.leaders.length > 0 ? (
+          <LeaderSection key={cat.id} title={`${cat.label} (${season})`} leaders={cat.leaders} myTeamId={myTeamId} favoriteNames={favoriteNames} />
+        ) : (
+          <div key={cat.id} className="glass-card p-4">
+            <h3 className="text-base font-semibold text-text-tertiary mb-2">{cat.label} ({season})</h3>
+            <p className="text-sm text-text-tertiary text-center py-4">⚔️ 시즌 초반 — 데이터 축적 중</p>
+          </div>
+        )
       ))}
     </motion.div>
   );
