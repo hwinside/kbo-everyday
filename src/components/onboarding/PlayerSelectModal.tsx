@@ -56,25 +56,20 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
     : showAll ? [...allPlayers].sort((a, b) => a.name.localeCompare(b.name, 'ko')) : myTeamPlayers;
   const displayPlayers = allDisplayPlayers.slice(0, visibleCount);
 
-  // 무한스크롤 IntersectionObserver
-  const sentinelRef = useRef<HTMLDivElement>(null);
+  // 무한스크롤 onScroll (iOS Safari IntersectionObserver 불안정 대응)
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    const container = scrollContainerRef.current;
-    if (!sentinel || !container) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && visibleCount < allDisplayPlayers.length) {
-          setVisibleCount(v => Math.min(v + 30, allDisplayPlayers.length));
-        }
-      },
-      { root: container, threshold: 0.1 }
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [visibleCount, allDisplayPlayers.length]);
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    // 하단 200px 이내 도달 시 다음 배치 로드
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200) {
+      setVisibleCount(v => {
+        const total = allDisplayPlayers.length;
+        return v < total ? Math.min(v + 30, total) : v;
+      });
+    }
+  }, [allDisplayPlayers.length]);
 
   const toggle = (player: PlayerInfo) => {
     setSelected(prev => {
@@ -145,9 +140,10 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
           </div>
         )}
 
-        <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }}
+        <div
           ref={scrollContainerRef}
-          className="space-y-2 max-h-[45vh] overflow-y-auto">
+          onScroll={handleScroll}
+          className="space-y-2 max-h-[45vh] overflow-y-auto overscroll-contain">
           {displayPlayers.length === 0 ? (
             <div className="text-center py-8 text-text-tertiary text-sm">검색 결과가 없습니다</div>
           ) : displayPlayers.map((player) => {
@@ -175,11 +171,11 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
             );
           })}
           {visibleCount < allDisplayPlayers.length && (
-            <div ref={sentinelRef} className="w-full py-3 text-center text-xs text-text-tertiary">
+            <div className="w-full py-3 text-center text-xs text-text-tertiary">
               로딩 중...
             </div>
           )}
-        </motion.div>
+        </div>
 
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="mt-5 space-y-2">
           <button onClick={handleComplete} disabled={selected.size === 0}
