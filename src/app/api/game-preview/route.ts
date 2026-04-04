@@ -14,7 +14,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
-const PREVIEW_VERSION = 3;
+const PREVIEW_VERSION = 4;
 
 // Build a set of current roster players (teamShortName:playerName) for filtering
 const currentRosterSet = new Set<string>();
@@ -401,6 +401,19 @@ export async function POST(req: NextRequest) {
   const body: PreviewRequest = await req.json();
   if (!body.gameId || !body.awayTeamId || !body.homeTeamId) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+  }
+
+  // 선발투수가 없으면 fetchGames로 오늘 경기에서 선발투수 조회
+  if (!body.awayStarter || !body.homeStarter) {
+    try {
+      const dateStr = getDateFromGameId(body.gameId);
+      const todayGames = await fetchGames(dateStr);
+      const thisGame = todayGames.find(g => g.gameId === body.gameId);
+      if (thisGame) {
+        if (!body.awayStarter && thisGame.awayStarterName) body.awayStarter = thisGame.awayStarterName;
+        if (!body.homeStarter && thisGame.homeStarterName) body.homeStarter = thisGame.homeStarterName;
+      }
+    } catch { /* graceful fallback — proceed without starters */ }
   }
 
   // 캐시 확인
