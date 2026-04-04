@@ -7,6 +7,20 @@ import { getTeamById } from "@/lib/constants/teams";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 import batterStats from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
+import rosterData from "@/lib/constants/players-roster.json";
+
+interface RosterEntry {
+  name: string;
+  kboId: string;
+  backNo: string;
+  position: string;
+  teamId: number;
+  team: string;
+}
+
+const rosterMap = new Map(
+  (rosterData as RosterEntry[]).filter((r) => r.backNo).map((r) => [r.kboId, r])
+);
 
 interface BatterStat {
   playerId: string;
@@ -65,6 +79,13 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
           // position이 정확히 "투수"가 아니더라도 pitcher stats에 있으면 투수로 표시
           const isPitcher = pitcher ? (!batter || player.position === "투수") : false;
           const hasStats = !!pitcher || !!batter;
+          // roster에서 실제 등번호 가져오기 (favorite 저장값이 0인 경우 대응)
+          const rosterEntry = rosterMap.get(player.playerId);
+          const displayNumber = (player.number && player.number !== 0)
+            ? player.number
+            : rosterEntry?.backNo
+              ? Number(rosterEntry.backNo)
+              : null;
 
           return (
             <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
@@ -75,12 +96,16 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                   name={player.name}
                   teamId={player.teamId}
                   photoUrl={getPlayerPhotoUrl(player.name, player.playerId)}
-                  number={player.number}
+                  number={displayNumber ?? player.number}
                   size={56}
                 />
                 <div className="text-center">
                   <p className="text-[15px] leading-[22px] font-medium text-text-primary">{player.name}</p>
-                  <p className="text-xs leading-[18px] text-text-tertiary">#{player.number} {player.position}</p>
+                  {displayNumber ? (
+                    <p className="text-xs leading-[18px] text-text-tertiary">#{displayNumber} {player.position}</p>
+                  ) : (
+                    <p className="text-xs leading-[18px] text-text-tertiary">{player.position}</p>
+                  )}
                 </div>
                 {hasStats ? (
                   <div className="w-full space-y-1">
