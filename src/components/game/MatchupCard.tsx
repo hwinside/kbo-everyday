@@ -3,8 +3,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
-import batterStatsJson from "@/lib/constants/stats-2025-batters.json";
-import pitcherStatsJson from "@/lib/constants/stats-2025-pitchers.json";
+import batterStatsJson from "@/lib/constants/stats-2026-batters.json";
+import pitcherStatsJson from "@/lib/constants/stats-2026-pitchers.json";
 import playersRoster from "@/lib/constants/players-roster.json";
 import { getTeamById } from "@/lib/constants/teams";
 import type { MatchupStats } from "@/app/api/game-relay/route";

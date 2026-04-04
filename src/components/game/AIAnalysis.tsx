@@ -16,6 +16,8 @@ interface AIAnalysisProps {
   awayTeamId: number;
   homeTeamId: number;
   gameId: string;
+  awayStarter?: string;
+  homeStarter?: string;
 }
 
 interface KeyPlayer {
@@ -41,6 +43,9 @@ interface AnalysisData {
   prediction: string;
   awayKeyPlayers: KeyPlayer[];
   homeKeyPlayers: KeyPlayer[];
+  seriesContext: string | null;
+  standingsImpact: string | null;
+  hotPlayers: string[];
 }
 
 // Roster lookup for kboId by name+teamId
@@ -54,7 +59,7 @@ function getKboId(teamId: number, name: string): string {
   return player?.kboId ?? "0";
 }
 
-export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, gameId }: AIAnalysisProps) {
+export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, gameId, awayStarter, homeStarter }: AIAnalysisProps) {
   const router = useRouter();
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -84,6 +89,8 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, ga
               gameId,
               awayTeamId,
               homeTeamId,
+              awayStarter,
+              homeStarter,
             }),
           });
           const genData = await genRes.json();
@@ -128,6 +135,9 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, ga
           prediction: preview.prediction,
           awayKeyPlayers,
           homeKeyPlayers,
+          seriesContext: preview.seriesContext || null,
+          standingsImpact: preview.standingsImpact || null,
+          hotPlayers: preview.hotPlayers || [],
         });
       } catch (err) {
         console.error("AI Analysis fetch error:", err);
@@ -138,7 +148,7 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, ga
     }
 
     fetchAnalysis();
-  }, [isOpen, gameId, awayTeamId, homeTeamId, awayTeam, homeTeam]);
+  }, [isOpen, gameId, awayTeamId, homeTeamId, awayTeam, homeTeam, awayStarter, homeStarter]);
 
   useEffect(() => {
     if (isOpen) {
@@ -282,6 +292,45 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, ga
                     </div>
                     <p className="readable-body whitespace-pre-line">{analysis.keyMatchup}</p>
                   </div>
+
+                  {/* Series & Standings context */}
+                  {(analysis.seriesContext || analysis.standingsImpact) && (
+                    <div className="glass-card p-4 space-y-2">
+                      {analysis.seriesContext && (
+                        <div>
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span className="text-xs">📊</span>
+                            <span className="text-xs font-semibold text-text-secondary">시리즈 맥락</span>
+                          </div>
+                          <p className="readable-body">{analysis.seriesContext}</p>
+                        </div>
+                      )}
+                      {analysis.standingsImpact && (
+                        <div>
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span className="text-xs">🏆</span>
+                            <span className="text-xs font-semibold text-text-secondary">순위 영향</span>
+                          </div>
+                          <p className="readable-body">{analysis.standingsImpact}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Hot Players */}
+                  {analysis.hotPlayers.length > 0 && (
+                    <div className="glass-card p-4">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <span className="text-xs">🔥</span>
+                        <span className="text-xs font-semibold text-text-secondary">최근 핫 플레이어</span>
+                      </div>
+                      <div className="space-y-1">
+                        {analysis.hotPlayers.map((hp, i) => (
+                          <p key={i} className="readable-body">• {hp}</p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Prediction */}
                   <motion.div

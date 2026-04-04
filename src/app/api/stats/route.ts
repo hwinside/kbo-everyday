@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import playersRoster from "@/lib/constants/players-roster.json";
 import batterStats2025 from "@/lib/constants/stats-2025-batters.json";
 import pitcherStats2025 from "@/lib/constants/stats-2025-pitchers.json";
+import batterStats2026 from "@/lib/constants/stats-2026-batters.json";
+import pitcherStats2026 from "@/lib/constants/stats-2026-pitchers.json";
 import type { RosterPlayer } from "@/types/api";
 
 const KBO_BASE = "https://www.koreabaseball.com";
@@ -133,6 +135,14 @@ function setCache(key: string, data: StatsResult) {
 export async function GET(req: NextRequest) {
   const type = req.nextUrl.searchParams.get("type") || "batter";
   const season = req.nextUrl.searchParams.get("season") || "current";
+
+  // 2026 시즌 — static data
+  if (season === "2026") {
+    const stats = type === "pitcher"
+      ? (pitcherStats2026 as unknown as PlayerStat[])
+      : (batterStats2026 as unknown as PlayerStat[]);
+    return NextResponse.json({ stats, type, count: stats.length, season: 2026 });
+  }
 
   // 2025 시즌 — static full data (300 batters + 277 pitchers)
   if (season === "2025") {

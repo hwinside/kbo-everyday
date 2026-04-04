@@ -1,5 +1,7 @@
 /* ===== KBO 공식 API 크롤러 ===== */
 
+import playersRoster from "@/lib/constants/players-roster.json";
+
 const KBO_BASE = "https://www.koreabaseball.com";
 
 // KBO 팀 코드 → 앱 teamId 매핑
@@ -205,6 +207,202 @@ export async function fetchStandings(): Promise<TeamStanding[]> {
   }
 
   return standings;
+}
+
+// ===== BoxScore types & parser (shared with game-detail) =====
+
+const KBO_SCHEDULE_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
+const SCHEDULE_HEADERS = {
+  "Content-Type": "application/x-www-form-urlencoded",
+  "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+};
+
+export interface BoxScoreBatterRecord {
+  order: number;
+  position: string;
+  name: string;
+  atBats: number;
+  hits: number;
+  runs: number;
+  rbi: number;
+  hr: number;
+  bb: number;
+  so: number;
+  sb: number;
+  avg: string;
+  isSubstitute: boolean;
+}
+
+export interface BoxScorePitcherRecord {
+  name: string;
+  inningsPitched: string;
+  decision: string;
+  pitchCount: number;
+  hits: number;
+  runs: number;
+  hr: number;
+  strikeouts: number;
+  walks: number;
+  earnedRuns: number;
+  era: string;
+}
+
+export interface BoxScoreResult {
+  awayBatters: BoxScoreBatterRecord[];
+  homeBatters: BoxScoreBatterRecord[];
+  awayPitchers: BoxScorePitcherRecord[];
+  homePitchers: BoxScorePitcherRecord[];
+}
+
+function bsSafeInt(v: unknown): number {
+  if (v == null || v === "" || v === "&nbsp;") return 0;
+  const n = parseInt(String(v), 10);
+  return isNaN(n) ? 0 : n;
+}
+
+function bsSafeStr(v: unknown): string {
+  if (v == null) return "";
+  const s = String(v).trim();
+  return s === "&nbsp;" ? "" : s;
+}
+
+function bsStripHtml(s: string): string {
+  return s.replace(/<[^>]*>/g, "").trim();
+}
+
+const BS_POS_MAP: Record<string, string> = {
+  "투수": "P", "포수": "C", "1루수": "1B", "2루수": "2B",
+  "3루수": "3B", "유격수": "SS", "좌익수": "LF", "중견수": "CF",
+  "우익수": "RF", "지명타자": "DH",
+  "타지": "DH", "타좌": "LF", "타우": "RF", "타중": "CF",
+  "타1": "1B", "타2": "2B", "타3": "3B", "타유": "SS", "타포": "C",
+  "주좌": "LF", "주우": "RF", "주중": "CF", "주1": "1B", "주2": "2B", "주3": "3B", "주유": "SS",
+  "대타": "DH", "대주": "DH",
+};
+
+export function parseBoxScore(data: unknown): BoxScoreResult | null {
+  const obj = data as { tables?: unknown[]; code?: string };
+  if (!obj?.tables || !Array.isArray(obj.tables) || obj.tables.length < 5) return null;
+
+  // Parse stolen bases from key plays table (table[0])
+  const sbMap = new Map<string, number>();
+  const keyPlaysTable = obj.tables[0] as { rows?: { row: { Text: string }[] }[] };
+  if (keyPlaysTable?.rows) {
+    for (const r of keyPlaysTable.rows) {
+      const cells = r.row.map(c => bsSafeStr(c.Text));
+      if (bsStripHtml(cells[0]) === "도루") {
+        const text = bsStripHtml(cells[1] || "");
+        const matches = text.matchAll(/([가-힣]+?)(\d*)\(/g);
+        for (const m of matches) {
+          const name = m[1];
+          const count = m[2] ? parseInt(m[2]) : 1;
+          sbMap.set(name, (sbMap.get(name) || 0) + count);
+        }
+      }
+    }
+  }
+
+  function parseBatters(table: { rows?: { row: { Text: string }[] }[] }, sbLookup: Map<string, number>): BoxScoreBatterRecord[] {
+    if (!table?.rows) return [];
+    let prevOrder = -1;
+    return table.rows.map(r => {
+      const cells = r.row.map(c => bsSafeStr(c.Text));
+      const tail = cells.slice(cells.length - 5);
+      const atBatResults = cells.slice(3, cells.length - 5).map(c => bsStripHtml(c)).filter(c => c && c !== "&nbsp;");
+
+      let hr = 0, bb = 0, so = 0;
+      for (const ab of atBatResults) {
+        if (ab.includes("홈")) hr++;
+        if (ab === "4구") bb++;
+        if (ab.includes("삼진")) so++;
+      }
+
+      const order = bsSafeInt(bsStripHtml(cells[0]));
+      const posRaw = bsStripHtml(cells[1] || "");
+      const isSubstitute = order === prevOrder || posRaw.startsWith("타") || posRaw.startsWith("주") || posRaw.startsWith("대");
+      prevOrder = order;
+
+      return {
+        order,
+        position: BS_POS_MAP[posRaw] || posRaw,
+        name: bsStripHtml(cells[2] || ""),
+        atBats: bsSafeInt(bsStripHtml(tail[0])),
+        hits: bsSafeInt(bsStripHtml(tail[1])),
+        rbi: bsSafeInt(bsStripHtml(tail[2])),
+        runs: bsSafeInt(bsStripHtml(tail[3])),
+        hr,
+        bb,
+        so,
+        sb: sbLookup.get(bsStripHtml(cells[2] || "")) || 0,
+        avg: bsStripHtml(tail[4]) || ".000",
+        isSubstitute,
+      };
+    }).filter(b => b.name !== "").map(b => {
+      if (/^\d+$/.test(b.name)) {
+        const player = (playersRoster as { kboId: string; name: string }[]).find(
+          r => String(r.kboId) === b.name
+        );
+        b.name = player ? player.name : `선수(${b.name.slice(-3)})`;
+      }
+      return b;
+    });
+  }
+
+  function parsePitchers(table: { rows?: { row: { Text: string }[] }[] }): BoxScorePitcherRecord[] {
+    if (!table?.rows) return [];
+    return table.rows.map(r => {
+      const cells = r.row.map(c => bsSafeStr(c.Text));
+      const ip = bsStripHtml(cells[6] || "");
+      return {
+        name: bsStripHtml(cells[0] || ""),
+        inningsPitched: ip,
+        decision: bsStripHtml(cells[2] || ""),
+        pitchCount: bsSafeInt(bsStripHtml(cells[8])),
+        hits: bsSafeInt(bsStripHtml(cells[10])),
+        hr: bsSafeInt(bsStripHtml(cells[11])),
+        walks: bsSafeInt(bsStripHtml(cells[12])),
+        strikeouts: bsSafeInt(bsStripHtml(cells[13])),
+        runs: bsSafeInt(bsStripHtml(cells[14])),
+        earnedRuns: bsSafeInt(bsStripHtml(cells[15])),
+        era: bsStripHtml(cells[16] || "") || "0.00",
+      };
+    }).filter(p => p.name !== "").map(p => {
+      if (/^\d+$/.test(p.name)) {
+        const player = (playersRoster as { kboId: string; name: string }[]).find(
+          r => String(r.kboId) === p.name
+        );
+        p.name = player ? player.name : `선수(${p.name.slice(-3)})`;
+      }
+      return p;
+    });
+  }
+
+  const tables = obj.tables as { rows?: { row: { Text: string }[] }[] }[];
+
+  return {
+    awayBatters: parseBatters(tables[1], sbMap),
+    homeBatters: parseBatters(tables[2], sbMap),
+    awayPitchers: parsePitchers(tables[3]),
+    homePitchers: parsePitchers(tables[4]),
+  };
+}
+
+/** BoxScore 조회 (특정 경기) */
+export async function fetchBoxScore(gameId: string, seasonId?: string): Promise<BoxScoreResult | null> {
+  try {
+    const sid = seasonId || new Date().getFullYear().toString();
+    const body = `leId=1&srId=0&seasonId=${sid}&gameId=${gameId}`;
+    const res = await fetch(`${KBO_SCHEDULE_BASE}/GetBoxScore`, {
+      method: "POST",
+      headers: SCHEDULE_HEADERS,
+      body,
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return parseBoxScore(data);
+  } catch {
+    return null;
+  }
 }
 
 export interface PlayerBattingStat {
