@@ -4,7 +4,7 @@ import playersRoster from "@/lib/constants/players-roster.json";
 import batterStats from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 import { TEAMS } from "@/lib/constants/teams";
-import { fetchStandings, fetchGames, fetchBoxScore, type TeamStanding, type BoxScoreResult } from "@/lib/crawler/kbo-api";
+import { fetchStandings, fetchGames, fetchBoxScore, type TeamStanding, type BoxScoreResult, type KboGame } from "@/lib/crawler/kbo-api";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -177,35 +177,45 @@ async function getStandingsContext(awayTeamId: number, homeTeamId: number): Prom
   };
 }
 
-/** 최근 3~4경기 BoxScore에서 Hot/Cold 선수 추출 */
+/** 최근 3~4경기 BoxScore에서 Hot/Cold 선수 추출 (경기 수 기준, 최대 10일 역추적) */
 async function getRecentForm(gameId: string, teamId: number): Promise<HotColdPlayer[]> {
   const dateStr = getDateFromGameId(gameId);
-  // 최근 4일간 경기 조회
-  const dates = [shiftDate(dateStr, -1), shiftDate(dateStr, -2), shiftDate(dateStr, -3), shiftDate(dateStr, -4)];
-  const allGames = await Promise.all(dates.map(d => fetchGames(d).catch(() => [])));
-  const flat = allGames.flat();
+  const teamShortName = getTeamShortName(teamId);
+  const TARGET_GAMES = 4;
+  const MAX_LOOKBACK_DAYS = 10;
 
-  const teamGames = flat.filter(g =>
-    g.status === "final" &&
-    (g.awayTeamId === teamId || g.homeTeamId === teamId)
-  ).slice(0, 4); // 최대 4경기
+  // 경기 수 기준으로 역추적 (우천취소/휴식일 대응)
+  const teamGames: KboGame[] = [];
+  for (let dayOffset = 1; dayOffset <= MAX_LOOKBACK_DAYS && teamGames.length < TARGET_GAMES; dayOffset++) {
+    const d = shiftDate(dateStr, -dayOffset);
+    const games = await fetchGames(d).catch(() => []);
+    const matching = games.filter(g =>
+      g.status === "final" &&
+      (g.awayTeamId === teamId || g.homeTeamId === teamId)
+    );
+    teamGames.push(...matching);
+  }
 
-  if (teamGames.length === 0) return [];
+  // 최대 4경기만
+  const recentGames = teamGames.slice(0, TARGET_GAMES);
+  if (recentGames.length === 0) return [];
 
   // BoxScore 병렬 조회
   const boxScores = await Promise.all(
-    teamGames.map(g => fetchBoxScore(g.gameId).catch(() => null))
+    recentGames.map(g => fetchBoxScore(g.gameId).catch(() => null))
   );
 
   // 타자 성적 집계
   const batterMap = new Map<string, { hits: number; atBats: number; hr: number; rbi: number; games: number }>();
 
-  for (let i = 0; i < teamGames.length; i++) {
+  for (let i = 0; i < recentGames.length; i++) {
     const bs = boxScores[i];
     if (!bs) continue;
-    const batters = teamGames[i].awayTeamId === teamId ? bs.awayBatters : bs.homeBatters;
+    const batters = recentGames[i].awayTeamId === teamId ? bs.awayBatters : bs.homeBatters;
     for (const b of batters) {
       if (b.atBats === 0) continue;
+      // 현재 로스터 필터 — 부상/말소 선수 제외
+      if (!currentRosterSet.has(`${teamShortName}:${b.name}`)) continue;
       const prev = batterMap.get(b.name) || { hits: 0, atBats: 0, hr: 0, rbi: 0, games: 0 };
       prev.hits += b.hits;
       prev.atBats += b.atBats;
