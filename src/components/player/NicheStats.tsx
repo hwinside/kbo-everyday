@@ -194,44 +194,23 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!playerId) { setRealSaber(null); return; }
     setLoading(true);
-    if (season === 2026) {
-      fetch(`/api/stats?season=2026&type=${isPitcher ? "pitcher" : "batter"}`)
-        .then(r => r.json())
-        .then(d => {
-          const stats = (d.stats || []) as Record<string, string | number>[];
-          const found = stats.find((s) => String(s.kboId || s.playerId) === playerId) || stats.find((s) => s.name === playerName);
-          if (found) {
-            // JSON values are strings, coerce to numbers
-            const numFound: Record<string, number | string> = {};
-            for (const [k, v] of Object.entries(found)) {
-              numFound[k] = typeof v === "string" && !isNaN(Number(v)) ? Number(v) : v;
-            }
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const saber = isPitcher
-              ? calcPitcherSaber(numFound as any)
-              : calcBatterSaber(numFound as any);
-            setRealSaber(saber);
-          } else {
-            setRealSaber(null);
-          }
-          setLoading(false);
-        })
-        .catch(() => setLoading(false));
-    } else {
-      fetch(`/api/player-stats?id=${playerId}&pos=${encodeURIComponent(position)}`)
-        .then(r => r.json())
-        .then(d => {
-          if (d.stats) {
-            const saber = isPitcher
-              ? calcPitcherSaber({ ...d.stats, so: d.stats.so ?? 0 })
-              : calcBatterSaber({ ...d.stats, so: d.stats.so ?? 0 });
-            setRealSaber(saber);
-          }
-          setLoading(false);
-        })
-        .catch(() => setLoading(false));
-    }
-  }, [season, playerId, isPitcher, position, playerName]);
+    // 2025/2026 모두 KBO 개별 선수 상세 크롤링 (모든 선수 커버)
+    // KBO 상세 페이지는 현재 시즌(2026) 데이터 반환
+    fetch(`/api/player-stats?id=${playerId}&pos=${encodeURIComponent(position)}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.stats) {
+          const saber = isPitcher
+            ? calcPitcherSaber({ ...d.stats, so: d.stats.so ?? 0 })
+            : calcBatterSaber({ ...d.stats, so: d.stats.so ?? 0 });
+          setRealSaber(saber);
+        } else {
+          setRealSaber(null);
+        }
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [season, playerId, isPitcher, position]);
 
   {
     if (loading) return <div className="text-center py-8 text-text-tertiary text-sm">계산 중...</div>;

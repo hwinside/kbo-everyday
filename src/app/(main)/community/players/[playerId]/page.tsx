@@ -131,12 +131,20 @@ export default function PlayerBoardPage() {
   }, [playerName]);
 
   // 시즌별 스탯 로드
+  // 2026: KBO 개별 선수 상세 페이지 크롤링 (현재 시즌, 모든 선수 커버)
+  // 2025: static JSON 데이터 (확정)
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!player) { setRealStats(null); return; }
     if (statSeason === 2026) {
-      // 2026 시즌: static JSON에서 로드
-      fetch(`/api/stats?season=2026&type=${player.position === "투수" ? "pitcher" : "batter"}`)
+      // KBO 개별 선수 상세 페이지 크롤링 (모든 선수 커버, 상위 30명 제한 없음)
+      fetch(`/api/player-stats?id=${kboId}&pos=${encodeURIComponent(player.position)}`)
+        .then(r => r.json())
+        .then(d => { setRealStats(d.stats || null); })
+        .catch(() => { setRealStats(null); });
+    } else {
+      // 2025: 확정 static JSON
+      fetch(`/api/stats?season=2025&type=${player.position === "투수" ? "pitcher" : "batter"}`)
         .then(r => r.json())
         .then(d => {
           const stats = (d.stats || []) as Record<string, string | number>[];
@@ -144,11 +152,6 @@ export default function PlayerBoardPage() {
           setRealStats(found || null);
         })
         .catch(() => { setRealStats(null); });
-    } else {
-      fetch(`/api/player-stats?id=${kboId}&pos=${encodeURIComponent(player.position)}`)
-        .then(r => r.json())
-        .then(d => { setRealStats(d.stats || null); })
-        .catch(() => {});
     }
   }, [statSeason, player, kboId, playerName]);
 
