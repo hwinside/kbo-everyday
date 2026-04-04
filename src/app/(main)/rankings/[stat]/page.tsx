@@ -113,7 +113,7 @@ function RankingContent() {
     if (!def) return;
     const type = def.type === "batter" ? "batter" : "pitcher";
 
-    fetch(`/api/stats?type=${type}&season=2025`)
+    fetch(`/api/stats?type=${type}&season=2026`)
       .then((r) => r.json())
       .then((data: { stats?: PlayerRow[] }) => {
         const rows: PlayerRow[] = data.stats || [];
