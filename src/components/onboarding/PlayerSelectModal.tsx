@@ -62,14 +62,15 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
 
   useEffect(() => {
     const sentinel = sentinelRef.current;
-    if (!sentinel) return;
+    const container = scrollContainerRef.current;
+    if (!sentinel || !container) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && visibleCount < allDisplayPlayers.length) {
           setVisibleCount(v => Math.min(v + 30, allDisplayPlayers.length));
         }
       },
-      { threshold: 0.1 }
+      { root: container, threshold: 0.1 }
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
