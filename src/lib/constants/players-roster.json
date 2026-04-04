@@ -154,10 +154,10 @@
   {
     "name": "고종욱",
     "kboId": "61353",
-    "team": "KIA",
     "teamId": 6,
     "position": "외야수",
-    "backNo": "57"
+    "backNo": "57",
+    "team": "KIA"
   },
   {
     "name": "고준혁",
@@ -1074,10 +1074,10 @@
   {
     "name": "김정우",
     "kboId": "68830",
-    "team": "두산",
     "teamId": 2,
     "position": "투수",
-    "backNo": "16"
+    "backNo": "16",
+    "team": "두산"
   },
   {
     "name": "김정율",
@@ -1656,6 +1656,14 @@
     "kboId": "FP011"
   },
   {
+    "name": "목지훈",
+    "kboId": "53973",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "",
+    "team": "NC"
+  },
+  {
     "name": "문동주",
     "kboId": "52701",
     "teamId": 9,
@@ -1874,10 +1882,10 @@
   {
     "name": "박상준",
     "kboId": "52634",
-    "team": "KIA",
     "teamId": 6,
     "position": "내야수",
-    "backNo": "50"
+    "backNo": "50",
+    "team": "KIA"
   },
   {
     "name": "박성빈",
@@ -2074,10 +2082,10 @@
   {
     "name": "박정수",
     "kboId": "65639",
-    "team": "두산",
     "teamId": 2,
     "position": "투수",
-    "backNo": "17"
+    "backNo": "17",
+    "team": "두산"
   },
   {
     "name": "박정우",
