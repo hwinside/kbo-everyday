@@ -123,10 +123,10 @@ interface StatsResult {
 
 const cache: Record<string, { data: StatsResult; ts: number }> = {};
 
-// 경기시간대(KST 13~24시) 10분, 그 외 1시간
+// 경기시간대(KST 11~24시) 10분, 그 외 1시간 — 더블헤더/주말 조기경기 대응
 function getCacheTtl(): number {
   const kstHour = new Date(Date.now() + 9 * 3600_000).getUTCHours();
-  return kstHour >= 13 && kstHour < 24 ? 10 * 60 * 1000 : 60 * 60 * 1000;
+  return kstHour >= 11 && kstHour < 24 ? 10 * 60 * 1000 : 60 * 60 * 1000;
 }
 
 function getCached(key: string) {
