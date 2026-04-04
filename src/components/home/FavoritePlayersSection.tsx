@@ -42,6 +42,9 @@ interface PitcherStat {
   so: number;
   whip: string;
   games: number;
+  wins: number;
+  losses: number;
+  saves: number;
 }
 
 const batterMap = new Map(
@@ -116,8 +119,8 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                           <span className="font-medium tabular-nums text-text-primary">{pitcher.era}</span>
                         </div>
                         <div className="flex justify-between text-xs leading-[18px]">
-                          <span className="text-text-tertiary">WHIP</span>
-                          <span className="font-medium tabular-nums text-text-primary">{pitcher.whip}</span>
+                          <span className="text-text-tertiary">승·패·세</span>
+                          <span className="font-medium tabular-nums text-text-primary">{pitcher.wins ?? 0} · {pitcher.losses ?? 0} · {pitcher.saves ?? 0}</span>
                         </div>
                         <div className="flex justify-between text-xs leading-[18px]">
                           <span className="text-text-tertiary">이닝·K</span>
@@ -140,9 +143,6 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                         </div>
                       </>
                     ) : null}
-                    <div className="text-[11px] leading-[16px] text-text-tertiary text-center">
-                      {(isPitcher ? pitcher?.games : batter?.games) ?? 0}G 출전
-                    </div>
                   </div>
                 ) : (
                   <p className="text-[11px] leading-[16px] text-text-tertiary text-center">
