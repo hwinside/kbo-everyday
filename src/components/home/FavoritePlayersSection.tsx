@@ -91,8 +91,12 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                           <span className="font-medium tabular-nums text-text-primary">{pitcher.era}</span>
                         </div>
                         <div className="flex justify-between text-xs leading-[18px]">
-                          <span className="text-text-tertiary">이닝·K·WHIP</span>
-                          <span className="font-medium tabular-nums text-text-primary">{pitcher.ip} · {pitcher.so} · {pitcher.whip}</span>
+                          <span className="text-text-tertiary">WHIP</span>
+                          <span className="font-medium tabular-nums text-text-primary">{pitcher.whip}</span>
+                        </div>
+                        <div className="flex justify-between text-xs leading-[18px]">
+                          <span className="text-text-tertiary">이닝·K</span>
+                          <span className="font-medium tabular-nums text-text-primary">{pitcher.ip} · {pitcher.so}</span>
                         </div>
                       </>
                     ) : batter ? (
