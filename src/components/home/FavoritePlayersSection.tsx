@@ -106,8 +106,12 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                           <span className="font-medium tabular-nums text-text-primary">{Number(batter.avg).toFixed(3)}</span>
                         </div>
                         <div className="flex justify-between text-xs leading-[18px]">
-                          <span className="text-text-tertiary">HR·RBI·도루</span>
-                          <span className="font-medium tabular-nums text-text-primary">{batter.hr} · {batter.rbi} · {batter.sb}</span>
+                          <span className="text-text-tertiary">HR·타점</span>
+                          <span className="font-medium tabular-nums text-text-primary">{batter.hr} · {batter.rbi}</span>
+                        </div>
+                        <div className="flex justify-between text-xs leading-[18px]">
+                          <span className="text-text-tertiary">도루</span>
+                          <span className="font-medium tabular-nums text-text-primary">{batter.sb}</span>
                         </div>
                       </>
                     ) : null}
