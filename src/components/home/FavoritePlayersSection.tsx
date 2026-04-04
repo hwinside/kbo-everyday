@@ -1,46 +1,36 @@
 import Link from "next/link";
-import { getTeamById } from "@/lib/constants/teams";
 
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import SectionHeader from "@/components/ui/SectionHeader";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import type { FavoritePlayer } from "@/lib/store/favorites";
+import batterStats from "@/lib/constants/stats-2026-batters.json";
+import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 
-interface PlayerMockStats {
+interface BatterStat {
+  playerId: string;
   avg: string;
-  recent: string;
-  trend: string;
   hr: number;
   rbi: number;
-  era?: string;
-  wins?: number;
+  sb: number;
+  games: number;
 }
 
-const MOCK_TRENDS: Record<string, PlayerMockStats> = {
-  p1: { avg: ".312", recent: "5경기 8타수 4안타", trend: "🔥", hr: 32, rbi: 85 },
-  p4: { avg: ".334", recent: "5경기 9타수 5안타", trend: "🔥🔥", hr: 36, rbi: 100 },
-  p10: { avg: ".298", recent: "5경기 7타수 2안타", trend: "📉", hr: 20, rbi: 68 },
-  p2: { avg: "", recent: "최근 7이닝 1실점", trend: "🔥", hr: 0, rbi: 0, era: "2.89", wins: 17 },
-  p5: { avg: "", recent: "최근 8이닝 무실점", trend: "🔥🔥", hr: 0, rbi: 0, era: "2.45", wins: 14 },
-};
-
-// Stable mock stats keyed by playerId to avoid random values on re-render
-function getPlayerStats(playerId: string): PlayerMockStats {
-  if (MOCK_TRENDS[playerId]) return MOCK_TRENDS[playerId];
-  // Use a deterministic hash based on playerId
-  let hash = 0;
-  for (let i = 0; i < playerId.length; i++) {
-    hash = ((hash << 5) - hash + playerId.charCodeAt(i)) | 0;
-  }
-  const absHash = Math.abs(hash);
-  return {
-    avg: (0.260 + (absHash % 60) / 1000).toFixed(3),
-    recent: "5경기 활약 중",
-    trend: absHash % 2 === 0 ? "🔥" : "→",
-    hr: (absHash % 25) + 5,
-    rbi: (absHash % 60) + 20,
-  };
+interface PitcherStat {
+  playerId: string;
+  era: string;
+  ip: string;
+  so: number;
+  whip: string;
+  games: number;
 }
+
+const batterMap = new Map(
+  (batterStats as BatterStat[]).map((s) => [s.playerId, s])
+);
+const pitcherMap = new Map(
+  (pitcherStats as PitcherStat[]).map((s) => [s.playerId, s])
+);
 
 export default function FavoritePlayersSection({ favPlayers }: { favPlayers: FavoritePlayer[] }) {
   if (favPlayers.length === 0) return null;
@@ -50,9 +40,11 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
       <SectionHeader title="⭐ 나의 최애 선수" />
       <div className="flex gap-3 overflow-x-auto hide-scrollbar pb-2">
         {favPlayers.map((player) => {
-          const team = getTeamById(player.teamId);
-          const stats = getPlayerStats(player.playerId);
           const isPitcher = player.position === "투수";
+          const batter = batterMap.get(player.playerId);
+          const pitcher = pitcherMap.get(player.playerId);
+          const hasStats = isPitcher ? !!pitcher : !!batter;
+
           return (
             <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
               <div
@@ -69,34 +61,40 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                   <p className="text-[15px] leading-[22px] font-medium text-text-primary">{player.name}</p>
                   <p className="text-xs leading-[18px] text-text-tertiary">#{player.number} {player.position}</p>
                 </div>
-                <div className="w-full space-y-1">
-                  {isPitcher ? (
-                    <>
-                      <div className="flex justify-between text-xs leading-[18px]">
-                        <span className="text-text-tertiary">ERA</span>
-                        <span className="font-medium tabular-nums text-text-primary">{stats.era ?? "3.20"}</span>
-                      </div>
-                      <div className="flex justify-between text-xs leading-[18px]">
-                        <span className="text-text-tertiary">승</span>
-                        <span className="font-medium tabular-nums text-text-primary">{stats.wins ?? 10}</span>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="flex justify-between text-xs leading-[18px]">
-                        <span className="text-text-tertiary">타율</span>
-                        <span className="font-medium tabular-nums text-text-primary">{stats.avg}</span>
-                      </div>
-                      <div className="flex justify-between text-xs leading-[18px]">
-                        <span className="text-text-tertiary">HR/RBI</span>
-                        <span className="font-medium tabular-nums text-text-primary">{stats.hr}/{stats.rbi}</span>
-                      </div>
-                    </>
-                  )}
-                </div>
-                <div className="text-xs leading-[18px] text-text-tertiary text-center">
-                  {stats.trend} {stats.recent}
-                </div>
+                {hasStats ? (
+                  <div className="w-full space-y-1">
+                    {isPitcher && pitcher ? (
+                      <>
+                        <div className="flex justify-between text-xs leading-[18px]">
+                          <span className="text-text-tertiary">ERA</span>
+                          <span className="font-medium tabular-nums text-text-primary">{pitcher.era}</span>
+                        </div>
+                        <div className="flex justify-between text-xs leading-[18px]">
+                          <span className="text-text-tertiary">이닝·K·WHIP</span>
+                          <span className="font-medium tabular-nums text-text-primary">{pitcher.ip} · {pitcher.so} · {pitcher.whip}</span>
+                        </div>
+                      </>
+                    ) : batter ? (
+                      <>
+                        <div className="flex justify-between text-xs leading-[18px]">
+                          <span className="text-text-tertiary">타율</span>
+                          <span className="font-medium tabular-nums text-text-primary">{Number(batter.avg).toFixed(3)}</span>
+                        </div>
+                        <div className="flex justify-between text-xs leading-[18px]">
+                          <span className="text-text-tertiary">HR·RBI·도루</span>
+                          <span className="font-medium tabular-nums text-text-primary">{batter.hr} · {batter.rbi} · {batter.sb}</span>
+                        </div>
+                      </>
+                    ) : null}
+                    <div className="text-[11px] leading-[16px] text-text-tertiary text-center">
+                      {(isPitcher ? pitcher?.games : batter?.games) ?? 0}G 출전
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[11px] leading-[16px] text-text-tertiary text-center">
+                    2026 시즌 기록 준비 중
+                  </p>
+                )}
               </div>
             </Link>
           );
