@@ -95,7 +95,7 @@ export default function PlayerBoardPage() {
   const { posts: livePosts, loading: postsLoading, reload } = usePosts("player", rawId);
   const [showWrite, setShowWrite] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
-  const [statSeason, setStatSeason] = useState<2025 | 2026>(2025);
+  const [statSeason, setStatSeason] = useState<2025 | 2026>(2026);
   const [realStats, setRealStats] = useState<Record<string, string | number> | null>(null);
   const { user } = useAuth();
   const { newBadges, checkBadges, clearBadges } = useBadgeCheck();
@@ -130,15 +130,27 @@ export default function PlayerBoardPage() {
     });
   }, [playerName]);
 
-  // 2025 스탯 로드 (개별 선수)
+  // 시즌별 스탯 로드
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (statSeason !== 2025 || !player) { setRealStats(null); return; }
-    fetch(`/api/player-stats?id=${kboId}&pos=${encodeURIComponent(player.position)}`)
-      .then(r => r.json())
-      .then(d => { setRealStats(d.stats || null); })
-      .catch(() => {});
-  }, [statSeason, player, kboId]);
+    if (!player) { setRealStats(null); return; }
+    if (statSeason === 2026) {
+      // 2026 시즌: static JSON에서 로드
+      fetch(`/api/stats?season=2026&type=${player.position === "투수" ? "pitcher" : "batter"}`)
+        .then(r => r.json())
+        .then(d => {
+          const stats = (d.stats || []) as Record<string, string | number>[];
+          const found = stats.find((s) => String(s.kboId || s.playerId) === kboId) || stats.find((s) => s.name === (playerName || player.name));
+          setRealStats(found || null);
+        })
+        .catch(() => { setRealStats(null); });
+    } else {
+      fetch(`/api/player-stats?id=${kboId}&pos=${encodeURIComponent(player.position)}`)
+        .then(r => r.json())
+        .then(d => { setRealStats(d.stats || null); })
+        .catch(() => {});
+    }
+  }, [statSeason, player, kboId, playerName]);
 
   if (loading) {
     return <div className="flex items-center justify-center h-screen text-text-secondary">로딩 중...</div>;
@@ -237,15 +249,9 @@ export default function PlayerBoardPage() {
             ))}
           </div>
 
-          {statSeason === 2026 ? (
-            <div className="glass-card p-6 mb-4 text-center">
-              <p className="text-lg mb-1">⚾</p>
-              <p className="text-sm font-bold text-text-primary">2026 시즌 개막 후 확인 가능합니다</p>
-              <p className="text-xs text-text-tertiary mt-1">개막일: 2026년 3월 28일 (토)</p>
-            </div>
-          ) : realStats ? (
+          {realStats ? (
             <div className="glass-card p-4 mb-4">
-              <h3 className="text-sm font-bold text-text-primary mb-3">2025 시즌 기록</h3>
+              <h3 className="text-sm font-bold text-text-primary mb-3">{statSeason} 시즌 기록</h3>
               <div className="grid grid-cols-3 gap-3">
                 {player.position === "투수" ? (
                   <>

@@ -192,32 +192,57 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (season !== 2025 || !playerId) { setRealSaber(null); return; }
+    if (!playerId) { setRealSaber(null); return; }
     setLoading(true);
-    fetch(`/api/player-stats?id=${playerId}&pos=${encodeURIComponent(position)}`)
-      .then(r => r.json())
-      .then(d => {
-        if (d.stats) {
-          const saber = isPitcher
-            ? calcPitcherSaber({ ...d.stats, so: d.stats.so ?? 0 })
-            : calcBatterSaber({ ...d.stats, so: d.stats.so ?? 0 });
-          setRealSaber(saber);
-        }
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, [season, playerId, isPitcher, position]);
+    if (season === 2026) {
+      fetch(`/api/stats?season=2026&type=${isPitcher ? "pitcher" : "batter"}`)
+        .then(r => r.json())
+        .then(d => {
+          const stats = (d.stats || []) as Record<string, string | number>[];
+          const found = stats.find((s) => String(s.kboId || s.playerId) === playerId) || stats.find((s) => s.name === playerName);
+          if (found) {
+            // JSON values are strings, coerce to numbers
+            const numFound: Record<string, number | string> = {};
+            for (const [k, v] of Object.entries(found)) {
+              numFound[k] = typeof v === "string" && !isNaN(Number(v)) ? Number(v) : v;
+            }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const saber = isPitcher
+              ? calcPitcherSaber(numFound as any)
+              : calcBatterSaber(numFound as any);
+            setRealSaber(saber);
+          } else {
+            setRealSaber(null);
+          }
+          setLoading(false);
+        })
+        .catch(() => setLoading(false));
+    } else {
+      fetch(`/api/player-stats?id=${playerId}&pos=${encodeURIComponent(position)}`)
+        .then(r => r.json())
+        .then(d => {
+          if (d.stats) {
+            const saber = isPitcher
+              ? calcPitcherSaber({ ...d.stats, so: d.stats.so ?? 0 })
+              : calcBatterSaber({ ...d.stats, so: d.stats.so ?? 0 });
+            setRealSaber(saber);
+          }
+          setLoading(false);
+        })
+        .catch(() => setLoading(false));
+    }
+  }, [season, playerId, isPitcher, position, playerName]);
 
-  if (season === 2025) {
+  {
     if (loading) return <div className="text-center py-8 text-text-tertiary text-sm">계산 중...</div>;
-    if (!realSaber) return <div className="glass-card p-4 mb-4 text-center text-text-tertiary text-sm">2025 세이버메트릭스 데이터를 찾을 수 없습니다</div>;
+    if (!realSaber) return <div className="glass-card p-4 mb-4 text-center text-text-tertiary text-sm">{season} 세이버메트릭스 데이터를 찾을 수 없습니다</div>;
 
     if (isPitcher) {
       const ps = realSaber as CalcPitcherSaber;
       return (
         <div className="space-y-4">
           <GlassCard className="p-4">
-            <h3 className="text-sm font-bold text-text-primary mb-3">📊 2025 세이버메트릭스 (실데이터 기반)</h3>
+            <h3 className="text-sm font-bold text-text-primary mb-3">📊 세이버메트릭스 (실데이터 기반)</h3>
             <div className="grid grid-cols-4 gap-3">
               <StatBox label="FIP" value={ps.FIP.toFixed(2)} desc="순수 투구력" />
               <StatBox label="WHIP" value={typeof ps.WHIP === "number" ? ps.WHIP.toFixed(2) : ps.WHIP} desc="출루 허용" />
@@ -237,7 +262,7 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
     return (
       <div className="space-y-4">
         <GlassCard className="p-4">
-          <h3 className="text-sm font-bold text-text-primary mb-3">📊 2025 세이버메트릭스 (실데이터 기반)</h3>
+          <h3 className="text-sm font-bold text-text-primary mb-3">📊 세이버메트릭스 (실데이터 기반)</h3>
           <div className="grid grid-cols-4 gap-3">
             <StatBox label="wRC+" value={String(bs.wRC_plus)} desc="득점 생산" />
             <StatBox label="OPS" value={bs.OPS.toFixed(3)} desc="출루+장타" />
@@ -255,12 +280,5 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
     );
   }
 
-  // 2026 — 시즌 개막 전
-  return (
-    <div className="glass-card p-6 mb-4 text-center">
-      <p className="text-lg mb-1">⚾</p>
-      <p className="text-sm font-bold text-text-primary">2026 시즌 개막 후 확인 가능합니다</p>
-      <p className="text-xs text-text-tertiary mt-1">개막일: 2026년 3월 28일 (토)</p>
-    </div>
-  );
+  return null;
 }
