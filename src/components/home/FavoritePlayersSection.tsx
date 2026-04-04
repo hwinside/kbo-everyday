@@ -3,12 +3,15 @@ import Link from "next/link";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import SectionHeader from "@/components/ui/SectionHeader";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
+import { getTeamById } from "@/lib/constants/teams";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 import batterStats from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 
 interface BatterStat {
   playerId: string;
+  name: string;
+  team: string;
   avg: string;
   hr: number;
   rbi: number;
@@ -18,6 +21,8 @@ interface BatterStat {
 
 interface PitcherStat {
   playerId: string;
+  name: string;
+  team: string;
   era: string;
   ip: string;
   so: number;
@@ -32,6 +37,21 @@ const pitcherMap = new Map(
   (pitcherStats as PitcherStat[]).map((s) => [s.playerId, s])
 );
 
+// Fallback: 동명이인 등 playerId 불일치 시 name+team으로 재검색
+function findBatter(playerId: string, name: string, teamId: number): BatterStat | undefined {
+  const direct = batterMap.get(playerId);
+  if (direct) return direct;
+  const teamShort = getTeamById(teamId)?.shortName;
+  return (batterStats as BatterStat[]).find((s) => s.name === name && s.team === teamShort);
+}
+
+function findPitcher(playerId: string, name: string, teamId: number): PitcherStat | undefined {
+  const direct = pitcherMap.get(playerId);
+  if (direct) return direct;
+  const teamShort = getTeamById(teamId)?.shortName;
+  return (pitcherStats as PitcherStat[]).find((s) => s.name === name && s.team === teamShort);
+}
+
 export default function FavoritePlayersSection({ favPlayers }: { favPlayers: FavoritePlayer[] }) {
   if (favPlayers.length === 0) return null;
 
@@ -41,14 +61,14 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
       <div className="flex gap-3 overflow-x-auto hide-scrollbar pb-2">
         {favPlayers.map((player) => {
           const isPitcher = player.position === "투수";
-          const batter = batterMap.get(player.playerId);
-          const pitcher = pitcherMap.get(player.playerId);
+          const batter = findBatter(player.playerId, player.name, player.teamId);
+          const pitcher = findPitcher(player.playerId, player.name, player.teamId);
           const hasStats = isPitcher ? !!pitcher : !!batter;
 
           return (
             <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
               <div
-                className="min-w-[160px] rounded-2xl p-3 flex flex-col items-center gap-2 border border-border bg-bg-secondary"
+                className="min-w-[160px] min-h-[200px] rounded-2xl p-3 flex flex-col items-center gap-2 border border-border bg-bg-secondary"
               >
                 <PlayerAvatar
                   name={player.name}
