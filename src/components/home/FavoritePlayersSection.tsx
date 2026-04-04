@@ -60,10 +60,11 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
       <SectionHeader title="⭐ 나의 최애 선수" />
       <div className="flex gap-3 overflow-x-auto hide-scrollbar pb-2">
         {favPlayers.map((player) => {
-          const isPitcher = player.position === "투수";
           const batter = findBatter(player.playerId, player.name, player.teamId);
           const pitcher = findPitcher(player.playerId, player.name, player.teamId);
-          const hasStats = isPitcher ? !!pitcher : !!batter;
+          // position이 정확히 "투수"가 아니더라도 pitcher stats에 있으면 투수로 표시
+          const isPitcher = pitcher ? (!batter || player.position === "투수") : false;
+          const hasStats = !!pitcher || !!batter;
 
           return (
             <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
