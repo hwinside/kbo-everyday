@@ -19,6 +19,10 @@ function renderText(text: string) {
 }
 
 export default function PlayerProfile({ playerName, teamColor, kboId }: Props) {
+  // 🚧 선수 프로필 전체 비노출 (품질 검증 후 재오픈 예정)
+  // 사유: 나무위키 스팸/오염 데이터 유입 + 동명이인 미파싱 + 빈 프로필 다수
+  return null;
+
   // 외국인 선수 이름 매핑 (roster 약칭 → 프로필 풀네임)
   const NAME_ALIASES: Record<string, string> = { "디아즈": "르윈 디아즈", "레예스": "빅토르 레예스", "에르난데스": "윌켈 에르난데스" };
   const profile = PLAYER_PROFILES[playerName] || PLAYER_PROFILES[NAME_ALIASES[playerName] || ""];
