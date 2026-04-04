@@ -46,7 +46,6 @@ function PlayerMarker({
   posLabel?: string; // 포지션명 (CF, 2B 등)
   className: string;
 }) {
-  const photoUrl = getPlayerPhotoUrl(name);
   const borderColor = BORDER_COLORS[type];
   const isHighlight = type === "pitcher" || type === "runner" || type === "batter";
   const nameColor =
@@ -57,6 +56,7 @@ function PlayerMarker({
     (p) => p.name === name
   );
   const playerHref = rosterPlayer ? `/community/players/${rosterPlayer.kboId}` : null;
+  const photoUrl = getPlayerPhotoUrl(name, rosterPlayer?.kboId);
 
   const content = (
     <>

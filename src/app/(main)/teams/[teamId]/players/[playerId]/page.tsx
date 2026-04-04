@@ -93,7 +93,7 @@ export default function PlayerDetailPage() {
           >
             <ChevronLeft size={24} />
           </Link>
-          <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name)} number={player.number} size={72} />
+          <PlayerAvatar name={player.name} teamId={team.id} photoUrl={getPlayerPhotoUrl(player.name, String(playerId))} number={player.number} size={72} />
           <h1 className="text-xl font-bold text-text-primary">{player.name}</h1>
         </div>
 

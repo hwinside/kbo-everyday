@@ -8,6 +8,7 @@ import CountIndicator from "./CountIndicator";
 import type { GameState } from "@/lib/types";
 import type { GameLineup } from "@/lib/constants/games";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
+import playersRoster from "@/lib/constants/players-roster.json";
 
 interface LiveScoreboardProps {
   gameId: string;
@@ -64,11 +65,13 @@ export default function LiveScoreboard({
   // Defensive team is the fielding team
   const defensiveSide = isTop ? lineup?.home : lineup?.away;
 
+  const pitcherRoster = state.currentPitcher ? (playersRoster as { name: string; kboId: string }[]).find(p => p.name === state.currentPitcher) : null;
+  const batterRoster = state.currentBatter ? (playersRoster as { name: string; kboId: string }[]).find(p => p.name === state.currentBatter) : null;
   const pitcherPhotoUrl = state.currentPitcher
-    ? getPlayerPhotoUrl(state.currentPitcher)
+    ? getPlayerPhotoUrl(state.currentPitcher, pitcherRoster?.kboId)
     : null;
   const batterPhotoUrl = state.currentBatter
-    ? getPlayerPhotoUrl(state.currentBatter)
+    ? getPlayerPhotoUrl(state.currentBatter, batterRoster?.kboId)
     : null;
 
   return (

@@ -21,6 +21,34 @@ const CDN_BASE = 'https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle
 const KBO_DETAIL_BASE = 'https://www.koreabaseball.com/Record/Player/HitterDetail/Basic.aspx?playerId=';
 const KBO_PITCHER_BASE = 'https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=';
 
+// 임시/비표준 KBO ID를 기존 headshot으로 연결해야 하는 케이스
+// 예: 재입단 외국인, 팀 이동 선수, 로스터 수집 시 임시 ID(FP/AQ/TR) 사용
+const PHOTO_ALIAS_BY_KBO_ID = {
+  TR001: '62934', // SSG 김성욱
+  AQ001: '56719', // 왕옌청
+  AQ003: '56415', // 미야지 유라
+  AQ007: '56011', // 스기모토 고우키
+  FP002: '56724', // 오웬 화이트
+  FP006: '54400', // 르윈 디아즈
+  FP010: '56928', // 드루 버하겐
+  FP012: '56036', // 케일럽 보쉴리
+  FP013: '56034', // 샘 힐리어드
+  FP015: '56523', // 제러미 비슬리
+  FP016: '56626', // 해럴드 카스트로
+  FP017: '50234', // 크리스 플렉센
+};
+
+// KBO 기본 headshot 경로에 없는 신규 외국인/아시아쿼터 선수 수동 소스
+// 공식 프로필이 없을 때는 보도사진으로 우선 blank state를 해소한다.
+const MANUAL_PHOTO_URL_BY_KBO_ID = {
+  AQ005: 'http://file.osen.co.kr/article_thumb/2026/03/19/202603191343779118_69bb7f0476bc4_300x.jpg', // 다케다 쇼타
+  AQ006: 'https://wimg.mk.co.kr/news/cms/202603/02/news-p.v1.20260302.719f505021ce45b1bf90147a0a1dc234_P1.jpg', // 도다 나츠키
+  AQ008: 'https://cdn.stnsports.co.kr/news/photo/202512/309575_312284_104.jpg', // 교야마 마사야
+  AQ009: 'https://menu.mt.co.kr/cdn-cgi/image/w=1200,h=929,fit=cover,bg=whilte,f=auto,quality=high,sharpen=2,g=face/mobile/osen/data/2026/03/12/202603121615779085_1.jpg', // 다무라 이치로
+  AQ010: 'http://file.osen.co.kr/article_thumb/2026/03/28/202603281810775678_69c79aeabb08c_300x.jpg', // 가나쿠보 유토
+  FP005: 'http://file.osen.co.kr/article_thumb/2026/02/20/202602201057771560_6997bf8d5db9d_300x.jpg', // 맷 매닝
+};
+
 // Rate limit helper
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -48,6 +76,21 @@ async function downloadPhoto(kboId, destPath) {
     if (!contentType.includes('image')) return false;
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.length < 500) return false; // skip tiny placeholder images
+    fs.writeFileSync(destPath, buf);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function downloadPhotoFromUrl(url, destPath) {
+  try {
+    const res = await fetchWithRetry(url);
+    if (res.status !== 200) return false;
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('image')) return false;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length < 500) return false;
     fs.writeFileSync(destPath, buf);
     return true;
   } catch {
@@ -146,7 +189,7 @@ async function main() {
 
   const photoMap = {}; // name → kboId
   const photoIdSet = new Set(); // all kboIds with photos
-  const stats = { updated: 0, newDownloads: 0, failed: 0, skipped: 0, foreignExtracted: 0 };
+  const stats = { updated: 0, newDownloads: 0, failed: 0, skipped: 0, foreignExtracted: 0, aliasCopied: 0, manualDownloaded: 0 };
 
   // Group players: numeric IDs (CDN) vs non-numeric (need page scraping)
   const cdnPlayers = roster.filter(p => /^\d+$/.test(p.kboId));
@@ -198,12 +241,34 @@ async function main() {
       stats.foreignExtracted++;
       console.log(`  ✅ ${p.team} ${p.name} (${p.kboId})`);
     } else {
+      // 1) Keep existing current-id photo if already present
       if (existingPhotos.has(p.kboId)) {
         photoMap[p.name] = p.kboId;
         photoIdSet.add(p.kboId);
       } else {
-        stats.failed++;
-        console.log(`  ❌ ${p.team} ${p.name} (${p.kboId})`);
+        // 2) Reuse historic/local headshot via alias map when current roster ID is temporary
+        const aliasId = PHOTO_ALIAS_BY_KBO_ID[p.kboId];
+        const aliasPath = aliasId ? path.join(PHOTOS_DIR, `${aliasId}.jpg`) : null;
+        if (aliasPath && fs.existsSync(aliasPath)) {
+          fs.copyFileSync(aliasPath, destPath);
+          photoMap[p.name] = p.kboId;
+          photoIdSet.add(p.kboId);
+          stats.aliasCopied++;
+          console.log(`  ↪️  ${p.team} ${p.name} (${p.kboId}) <- alias ${aliasId}`);
+        } else {
+          // 3) Final fallback: curated manual source
+          const manualUrl = MANUAL_PHOTO_URL_BY_KBO_ID[p.kboId];
+          const ok = manualUrl ? await downloadPhotoFromUrl(manualUrl, destPath) : false;
+          if (ok) {
+            photoMap[p.name] = p.kboId;
+            photoIdSet.add(p.kboId);
+            stats.manualDownloaded++;
+            console.log(`  🖼️  ${p.team} ${p.name} (${p.kboId}) <- manual source`);
+          } else {
+            stats.failed++;
+            console.log(`  ❌ ${p.team} ${p.name} (${p.kboId})`);
+          }
+        }
       }
     }
     await sleep(500); // Be gentle with KBO server
@@ -225,6 +290,8 @@ async function main() {
   console.log(`Updated (re-downloaded): ${stats.updated}`);
   console.log(`New downloads: ${stats.newDownloads}`);
   console.log(`Foreign extracted: ${stats.foreignExtracted}`);
+  console.log(`Alias copied: ${stats.aliasCopied}`);
+  console.log(`Manual downloaded: ${stats.manualDownloaded}`);
   console.log(`Failed: ${stats.failed}`);
   console.log(`Kept existing (CDN 404): ${stats.skipped}`);
   console.log(`Total photos: ${photoIdSet.size}`);

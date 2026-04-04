@@ -57,7 +57,8 @@ function lookupPitcherEra(name: string): string | null {
 }
 
 function PlayerPhoto({ name, type }: { name: string; type: "pitcher" | "batter" }) {
-  const photoUrl = getPlayerPhotoUrl(name);
+  const rosterPlayer = (playersRoster as { name: string; kboId: string }[]).find(p => p.name === name);
+  const photoUrl = getPlayerPhotoUrl(name, rosterPlayer?.kboId);
   const borderColor = "#7ecb4a";
 
   return (
