@@ -1,6 +1,6 @@
-const CACHE_NAME = "kbo-everyday-v14";
+const CACHE_NAME = "kbo-everyday-v15";
 
-const PRECACHE_ASSETS = ["/", "/offline"];
+const PRECACHE_ASSETS = ["/offline"];
 
 const CACHEABLE_EXTENSIONS = [
   ".js", ".css", ".woff2", ".woff",
