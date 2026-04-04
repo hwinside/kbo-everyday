@@ -21,7 +21,7 @@ async function fetchHtml(url: string): Promise<string> {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
       "Referer": KBO_BASE,
     },
-    next: { revalidate: 3600 },
+    next: { revalidate: 0 },  // 캐싱은 인메모리 캐시에서 관리 (getCacheTtl)
   });
   return res.text();
 }
@@ -118,14 +118,20 @@ interface StatsResult {
   stats: PlayerStat[];
   type: string;
   count: number;
+  source?: string;
 }
 
 const cache: Record<string, { data: StatsResult; ts: number }> = {};
-const CACHE_TTL = 5 * 60 * 1000;
+
+// 경기시간대(KST 13~24시) 10분, 그 외 1시간
+function getCacheTtl(): number {
+  const kstHour = new Date(Date.now() + 9 * 3600_000).getUTCHours();
+  return kstHour >= 13 && kstHour < 24 ? 10 * 60 * 1000 : 60 * 60 * 1000;
+}
 
 function getCached(key: string) {
   const entry = cache[key];
-  if (entry && Date.now() - entry.ts < CACHE_TTL) return entry.data;
+  if (entry && Date.now() - entry.ts < getCacheTtl()) return entry.data;
   return null;
 }
 function setCache(key: string, data: StatsResult) {
@@ -136,15 +142,7 @@ export async function GET(req: NextRequest) {
   const type = req.nextUrl.searchParams.get("type") || "batter";
   const season = req.nextUrl.searchParams.get("season") || "current";
 
-  // 2026 시즌 — static data
-  if (season === "2026") {
-    const stats = type === "pitcher"
-      ? (pitcherStats2026 as unknown as PlayerStat[])
-      : (batterStats2026 as unknown as PlayerStat[]);
-    return NextResponse.json({ stats, type, count: stats.length, season: 2026 });
-  }
-
-  // 2025 시즌 — static full data (300 batters + 277 pitchers)
+  // 2025 시즌 — 확정 static data (300 batters + 277 pitchers)
   if (season === "2025") {
     const stats = type === "pitcher"
       ? (pitcherStats2025 as unknown as PlayerStat[])
@@ -152,17 +150,24 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ stats, type, count: stats.length, season: 2025 });
   }
 
-  // Current season — live crawl (top 30)
-  const cacheKey = `stats-${type}`;
+  // 2026 시즌 + current — 라이브 크롤링 (캐시: 경기시간대 10분 / 평시 1시간)
+  const cacheKey = `stats-${type}-${season}`;
   const cached = getCached(cacheKey);
   if (cached) return NextResponse.json(cached);
 
   try {
     const stats = type === "pitcher" ? await fetchPitcherStats() : await fetchBatterStats();
-    const result = { stats, type, count: stats.length };
+    const result: StatsResult = { stats, type, count: stats.length, source: "live" };
     setCache(cacheKey, result);
     return NextResponse.json(result);
   } catch (e: unknown) {
+    // 크롤링 실패 시 static JSON fallback (빈화면 방지)
+    if (season === "2026") {
+      const fallback = type === "pitcher"
+        ? (pitcherStats2026 as unknown as PlayerStat[])
+        : (batterStats2026 as unknown as PlayerStat[]);
+      return NextResponse.json({ stats: fallback, type, count: fallback.length, season: 2026, source: "fallback" });
+    }
     return NextResponse.json({ error: (e as Error).message, stats: [] }, { status: 500 });
   }
 }
