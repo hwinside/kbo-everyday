@@ -397,6 +397,106 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
   };
 }
 
+// ===== Naver record API fallback =====
+
+const NAVER_API = "https://api-gw.sports.naver.com/schedule/games";
+
+function naverGameId(kboGameId: string): string {
+  // KBO gameId: 20260405LGWO0 → Naver: 20260405LGWO02026
+  const year = kboGameId.slice(0, 4);
+  return `${kboGameId}${year}`;
+}
+
+const POS_SHORT_TO_FULL: Record<string, string> = {
+  "투": "P", "포": "C", "1": "1B", "2": "2B", "3": "3B",
+  "유": "SS", "좌": "LF", "중": "CF", "우": "RF", "지": "DH",
+};
+
+async function fetchNaverRecord(kboGameId: string): Promise<{
+  boxScore: GameDetailResponse["boxScore"];
+  linescore: GameDetailResponse["linescore"];
+} | null> {
+  try {
+    const nId = naverGameId(kboGameId);
+    const res = await fetch(`${NAVER_API}/${nId}/record`, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
+      next: { revalidate: 30 },
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const rd = json?.result?.recordData;
+    if (!rd?.battersBoxscore || !rd?.pitchersBoxscore) return null;
+
+    function toBatters(arr: Record<string, unknown>[]): BatterRecord[] {
+      return (arr || []).map((b) => ({
+        order: Number(b.batOrder) || 0,
+        position: POS_SHORT_TO_FULL[String(b.pos)] || String(b.pos || ""),
+        positionFull: positionFullName(String(b.pos || "")),
+        name: String(b.name || ""),
+        atBats: Number(b.ab) || 0,
+        hits: Number(b.hit) || 0,
+        runs: Number(b.run) || 0,
+        rbi: Number(b.rbi) || 0,
+        hr: Number(b.hr) || 0,
+        bb: Number(b.bb) || 0,
+        so: Number(b.kk) || 0,
+        sb: Number(b.sb) || 0,
+        avg: String(b.hra || ""),
+        isSubstitute: Number(b.batOrder) === 0,
+      }));
+    }
+
+    function toPitchers(arr: Record<string, unknown>[]): PitcherRecord[] {
+      return (arr || []).map((p) => ({
+        name: String(p.name || ""),
+        inningsPitched: String(p.inn || "0"),
+        decision: String(p.wls || ""),
+        pitchCount: 0, // Naver record doesn't provide pitch count
+        hits: Number(p.hit) || 0,
+        runs: Number(p.r) || 0,
+        hr: Number(p.hr) || 0,
+        strikeouts: Number(p.kk) || 0,
+        walks: Number(p.bb) || 0,
+        earnedRuns: Number(p.er) || 0,
+        battersFaced: Number(p.pa) || 0,
+        atBats: Number(p.ab) || 0,
+        era: String(p.era || "0.00"),
+      }));
+    }
+
+    const boxScore: GameDetailResponse["boxScore"] = {
+      awayBatters: toBatters(rd.battersBoxscore.away),
+      homeBatters: toBatters(rd.battersBoxscore.home),
+      awayPitchers: toPitchers(rd.pitchersBoxscore.away),
+      homePitchers: toPitchers(rd.pitchersBoxscore.home),
+    };
+
+    // Linescore from scoreBoard
+    let linescore: GameDetailResponse["linescore"] = null;
+    const sb = rd.scoreBoard;
+    if (sb?.inn && sb?.rheb) {
+      linescore = {
+        away: {
+          innings: (sb.inn.away || []).map((v: number | null) => v),
+          R: sb.rheb.away?.r ?? 0,
+          H: sb.rheb.away?.h ?? 0,
+          E: sb.rheb.away?.e ?? 0,
+        },
+        home: {
+          innings: (sb.inn.home || []).map((v: number | null) => v),
+          R: sb.rheb.home?.r ?? 0,
+          H: sb.rheb.home?.h ?? 0,
+          E: sb.rheb.home?.e ?? 0,
+        },
+      };
+    }
+
+    return { boxScore, linescore };
+  } catch {
+    return null;
+  }
+}
+
 // ===== Route handler =====
 
 export async function GET(req: NextRequest) {
@@ -445,15 +545,32 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const { meta, linescore, status: scoreBoardStatus } = parseScoreBoard(scoreBoardRes ?? []);
+    const { meta, linescore: kboLinescore, status: scoreBoardStatus } = parseScoreBoard(scoreBoardRes ?? []);
     const lineup = parseLineup(lineupRes ?? []);
-    const boxScore = parseBoxScore(boxScoreRes);
+    let boxScore = parseBoxScore(boxScoreRes);
+    let linescore = kboLinescore;
 
     // ScoreBoard가 scheduled인데 BoxScore에 실데이터가 있으면 → 종료된 경기
     const hasRealBoxScore = boxScore &&
       (boxScore.awayBatters.some(b => b.atBats > 0) || boxScore.homeBatters.some(b => b.atBats > 0));
+
+    // KBO BoxScore가 비어있으면 네이버 record API fallback
+    if (!hasRealBoxScore) {
+      const naver = await fetchNaverRecord(gameId);
+      if (naver?.boxScore) {
+        const naverHasData = naver.boxScore.awayBatters.some(b => b.atBats > 0)
+          || naver.boxScore.homeBatters.some(b => b.atBats > 0);
+        if (naverHasData) {
+          boxScore = naver.boxScore;
+          if (!linescore && naver.linescore) linescore = naver.linescore;
+        }
+      }
+    }
+
+    const hasRealBoxScoreFinal = boxScore &&
+      (boxScore.awayBatters.some(b => b.atBats > 0) || boxScore.homeBatters.some(b => b.atBats > 0));
     const status: GameDetailResponse["status"] =
-      scoreBoardStatus === "scheduled" && hasRealBoxScore ? "final" : scoreBoardStatus;
+      scoreBoardStatus === "scheduled" && hasRealBoxScoreFinal ? "final" : scoreBoardStatus;
 
     const response: GameDetailResponse = {
       gameId,
