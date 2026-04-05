@@ -5,7 +5,7 @@ import { fetchStandings, fetchGames } from "@/lib/crawler/kbo-api";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 7; // v7: 환각 방지 강화 (비디오판독/파울/관중반응 등 창작 금지)
+const PROMPT_VERSION = 8; // v8: 이닝+선수+타격종류 조합 추측 금지 (팀 단위 서술 강제)
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -231,6 +231,11 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
    - 타구 굤적, 투구 코스, 수비 플레이 세부 → 박스스코어에 없음
    - "홀런성 타구", "담장을 넘긴 타구가 파울", "책사포 데이터" → 수치 확인 불가, 절대 쓰지 마라
    → **확인할 수 없는 세부 장면을 만드는 것보다, 확인된 수치로만 서술하는 것이 100배 낫다.**
+   **이닝별 득점 주체 추측 금지:**
+   - 박스스코어는 선수별 '총 스탯'만 제공한다. 몇 회에 누가 쳤는지는 없다.
+   - 따라서 "문보경의 1회초 2점 홈런" 같은 이닝+선수+타격종류 조합은 추측이며, 틀릴 수 있다.
+   - **이닝별 서술은 '팀 단위'("이 이닝에 LG가 2점") 또는 '득점 타임라인 데이터 그대로'만 쓴다.**
+   - 선수 이름은 MVP 선정이나 경기 전체 활약 요약에서만 사용하라 ("문보경 3안타 2타점으로 활약" OK / "문보경의 1회 홈런" NG).
 4. **이닝 해석 규칙 (경기 구조 반드시 준수).** 원정팀=이닝 초 공격, 홈팀=이닝 말 공격. 득점 타임라인이 주어졌으면 그 순서를 절대 바꾸지 마라. 예: "9회초 원정팀 2점" 다음에 "9회말 홈팀 4점"이라면, 홈팀이 나중에 득점한 것이다. 순서를 뒤집어 "홈팀이 먼저 역전하고 원정팀이 다시 재역전" 같은 물리적으로 불가능한 서사를 쓰면 절대 안 된다.
 4. **숫자를 서사로.** "3안타 4타점"을 나열하지 말고, 그 숫자가 경기 흐름에서 왜 중요했는지 해석하라.
 5. **빈 칸보다 침묵.** 해당 없는 필드는 null로 두라. 억지로 채우면 품질이 떨어진다.
