@@ -253,11 +253,7 @@ function parseLineup(data: unknown[]): GameDetailResponse["lineup"] {
         positionKr: posKr,
         name: stripHtml(cells[2] || ""),
         war: parseFloat(cells[3] || "0") || 0,
-        avg: (() => {
-          const raw = safeStr(cells[3]);
-          // 시범경기 첫날 등 0.00인 경우 "-" 표시
-          return (!raw || raw === "0.00" || raw === "0" || raw === ".000") ? "-" : raw;
-        })(),
+        avg: "",  // lineup API에는 타율 없음 (cells[3]은 WAR). boxScore에서 merge
       };
     }).filter(e => e.name !== "");
   }
@@ -577,7 +573,25 @@ export async function GET(req: NextRequest) {
       status,
       meta,
       linescore,
-      lineup,
+      lineup: (() => {
+        // Merge boxScore avg into lineup batters
+        if (!lineup || !boxScore) return lineup;
+        const mergeAvg = (lineupSide: typeof lineup.away, batters: BatterRecord[]) => {
+          const avgMap = new Map<string, string>();
+          for (const b of batters) {
+            if (b.avg && b.avg !== ".000") avgMap.set(b.name, b.avg);
+          }
+          return lineupSide.map(p => ({
+            ...p,
+            avg: avgMap.get(p.name) || p.avg,
+          }));
+        };
+        return {
+          ...lineup,
+          away: mergeAvg(lineup.away, boxScore.awayBatters),
+          home: mergeAvg(lineup.home, boxScore.homeBatters),
+        };
+      })(),
       boxScore,
     };
 
