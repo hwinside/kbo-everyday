@@ -160,7 +160,7 @@ export default function LineupTab({
                           {away.name}
                         </span>
                         {away.avg && away.avg !== "-" && (
-                          <span className="text-[11px] text-text-tertiary tabular-nums leading-tight">
+                          <span className="text-xs text-text-secondary tabular-nums leading-tight">
                             {formatAvg(away.avg)}
                           </span>
                         )}
@@ -177,7 +177,7 @@ export default function LineupTab({
                           {home.name}
                         </span>
                         {home.avg && home.avg !== "-" && (
-                          <span className="text-[11px] text-text-tertiary tabular-nums leading-tight">
+                          <span className="text-xs text-text-secondary tabular-nums leading-tight">
                             {formatAvg(home.avg)}
                           </span>
                         )}
