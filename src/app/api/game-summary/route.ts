@@ -5,7 +5,7 @@ import { fetchStandings, fetchGames } from "@/lib/crawler/kbo-api";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 5; // v5: 이닝 초/말 명시 + 득점 타임라인 구조화 + 해석 규칙 강화
+const PROMPT_VERSION = 6; // v6: 상투구 블랙리스트 + 리드문 다양성 강화
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -229,6 +229,16 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
 4. **숫자를 서사로.** "3안타 4타점"을 나열하지 말고, 그 숫자가 경기 흐름에서 왜 중요했는지 해석하라.
 5. **빈 칸보다 침묵.** 해당 없는 필드는 null로 두라. 억지로 채우면 품질이 떨어진다.
 6. **경기 맥락을 활용하라.** 시리즈 상황(스윕, 위닝시리즈), 순위 영향이 있으면 자연스럽게 녹여서 경기의 의미를 부여하라.
+7. **상투구/클리셰 절대 금지.** 아래 표현은 쓰지 마라. 더 구체적이고 이 경기만의 표현으로 대체:
+   - "팽팽한 투수전 양상" → 구체적 상황 ("양 선발이 5회까지 무안타로 맞섰다" 등)
+   - "경기의 결정적인 승부처는" → 바로 장면부터 시작 ("5회말 2사 만루, X의 타석에서~")
+   - "분위기를 가져왔다/반전에 성공" → 구체적 결과로 ("이 안타로 2점 리드를 만들며~")
+   - "흐름을 결정지었다/바꾸었다" → 실제 스코어 변화로 서술
+   - "침묵을 깨고/깨뜨렸다" → "X이닝 만에 첫 안타가 나왔고" 등 팩트로
+   - "여세를 몰아 갔다/발판을 마련" → 후속 득점의 구체적 전개로
+   - "한 치 앞을 알 수 없는" → 실제 스코어 변동으로 긴장감 전달
+   - "명승부" → 쓰지 말고 독자가 읽고 느끼게 하라
+   핵심: 추상적 평가어 대신 **구체적 장면 + 숫자**로 서술하라.
 
 ## 경기 데이터
 ${awayTeam}(원정) ${awayScore} : ${homeScore} ${homeTeam}(홈) (${result})
