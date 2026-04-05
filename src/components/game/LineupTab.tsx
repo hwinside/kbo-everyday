@@ -7,6 +7,14 @@ import type { GameLineup } from "@/lib/constants/games";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 
+/** 0.333 → .333, 1.000 → 1.000 */
+function formatAvg(avg: string): string {
+  const num = parseFloat(avg);
+  if (isNaN(num)) return avg;
+  if (num >= 1) return avg;
+  return avg.replace(/^0\./, ".");
+}
+
 interface LineupTabProps {
   lineup: GameLineup;
   awayTeam: TeamData;
@@ -147,14 +155,16 @@ export default function LineupTab({
                       <span className="text-xs text-text-tertiary w-6 text-center shrink-0">
                         {away.position}
                       </span>
-                      <span className="text-sm text-text-primary font-medium whitespace-nowrap">
-                        {away.name}
-                      </span>
-                      {away.avg && away.avg !== "-" && (
-                        <span className="text-xs text-text-tertiary tabular-nums">
-                          {away.avg}
+                      <div className="flex flex-col">
+                        <span className="text-sm text-text-primary font-medium whitespace-nowrap">
+                          {away.name}
                         </span>
-                      )}
+                        {away.avg && away.avg !== "-" && (
+                          <span className="text-[11px] text-text-tertiary tabular-nums leading-tight">
+                            {formatAvg(away.avg)}
+                          </span>
+                        )}
+                      </div>
                     </Link>
                   </td>
                   <td className="py-2 text-center">
@@ -162,14 +172,16 @@ export default function LineupTab({
                   </td>
                   <td className="py-2 text-right">
                     <Link href={homeHref} className="flex items-center justify-end gap-1.5 hover:opacity-80">
-                      {home.avg && home.avg !== "-" && (
-                        <span className="text-xs text-text-tertiary tabular-nums">
-                          {home.avg}
+                      <div className="flex flex-col items-end">
+                        <span className="text-sm text-text-primary font-medium whitespace-nowrap">
+                          {home.name}
                         </span>
-                      )}
-                      <span className="text-sm text-text-primary font-medium whitespace-nowrap">
-                        {home.name}
-                      </span>
+                        {home.avg && home.avg !== "-" && (
+                          <span className="text-[11px] text-text-tertiary tabular-nums leading-tight">
+                            {formatAvg(home.avg)}
+                          </span>
+                        )}
+                      </div>
                       <span className="text-xs text-text-tertiary w-6 text-center shrink-0">
                         {home.position}
                       </span>
