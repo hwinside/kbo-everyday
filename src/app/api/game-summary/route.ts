@@ -5,7 +5,7 @@ import { fetchStandings, fetchGames } from "@/lib/crawler/kbo-api";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 4; // v4: 기사형 분석 + 맥락 데이터
+const PROMPT_VERSION = 5; // v5: 이닝 초/말 명시 + 득점 타임라인 구조화 + 해석 규칙 강화
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -123,12 +123,35 @@ ${homeShort}: ${homeRank}위 (${homeSt.wins}승 ${homeSt.losses}패, 승률 ${ho
 function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx: string | null): string {
   const { awayTeam, homeTeam, awayScore, homeScore, linescore, awayBatters, homeBatters, awayPitchers, homePitchers } = data;
 
-  // 이닝별 점수
+  // 이닝별 점수 + 득점 흐름 구조화
   let linescoreStr = "";
+  let scoringNarrative = "";
   if (linescore) {
-    const awayInnings = linescore.away.innings.map((v, i) => `${i + 1}회: ${v ?? "-"}`).join(", ");
-    const homeInnings = linescore.home.innings.map((v, i) => `${i + 1}회: ${v ?? "-"}`).join(", ");
-    linescoreStr = `\n이닝별 점수:\n${awayTeam}: ${awayInnings}\n${homeTeam}: ${homeInnings}`;
+    const awayInnings = linescore.away.innings.map((v, i) => `${i + 1}회초: ${v ?? "-"}`).join(", ");
+    const homeInnings = linescore.home.innings.map((v, i) => `${i + 1}회말: ${v ?? "-"}`).join(", ");
+    linescoreStr = `\n이닝별 점수 (${awayTeam}=원정=초 공격, ${homeTeam}=홈=말 공격):\n${awayTeam}(초): ${awayInnings}\n${homeTeam}(말): ${homeInnings}`;
+
+    // 서버에서 이닝별 득점 흐름 계산 → LLM 환각 방지
+    const awayInns = linescore.away.innings;
+    const homeInns = linescore.home.innings;
+    let aRunning = 0, hRunning = 0;
+    const events: string[] = [];
+    const maxInn = Math.max(awayInns.length, homeInns.length);
+    for (let i = 0; i < maxInn; i++) {
+      const aScore = awayInns[i] ?? 0;
+      const hScore = homeInns[i] ?? 0;
+      if (aScore > 0) {
+        aRunning += aScore;
+        events.push(`${i + 1}회초: ${awayTeam} ${aScore}점 득점 (누적 ${aRunning}-${hRunning})`);
+      }
+      if (hScore > 0) {
+        hRunning += hScore;
+        events.push(`${i + 1}회말: ${homeTeam} ${hScore}점 득점 (누적 ${aRunning}-${hRunning})`);
+      }
+    }
+    if (events.length > 0) {
+      scoringNarrative = `\n## 득점 타임라인 (사실 — 이 순서를 절대 바꾸지 마세요)\n${events.join("\n")}`;
+    }
   }
 
   // 에러
@@ -202,14 +225,15 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
    - 홈런이 결정적이었으면 홈런 장면이 리드
 2. **템플릿 금지.** "X팀이 Y팀을 Z-W로 꺾었다"로 시작하는 판에 박은 리드를 쓰지 마라.
 3. **팩트만.** 박스스코어와 이닝별 점수에 있는 것만 사용. 없는 장면, 없는 감정, 없는 관중 반응을 절대 만들지 마라. "선수(숫자)" 형식의 이름은 언급하지 말고 팀명으로 대체.
+4. **이닝 해석 규칙 (경기 구조 반드시 준수).** 원정팀=이닝 초 공격, 홈팀=이닝 말 공격. 득점 타임라인이 주어졌으면 그 순서를 절대 바꾸지 마라. 예: "9회초 원정팀 2점" 다음에 "9회말 홈팀 4점"이라면, 홈팀이 나중에 득점한 것이다. 순서를 뒤집어 "홈팀이 먼저 역전하고 원정팀이 다시 재역전" 같은 물리적으로 불가능한 서사를 쓰면 절대 안 된다.
 4. **숫자를 서사로.** "3안타 4타점"을 나열하지 말고, 그 숫자가 경기 흐름에서 왜 중요했는지 해석하라.
 5. **빈 칸보다 침묵.** 해당 없는 필드는 null로 두라. 억지로 채우면 품질이 떨어진다.
 6. **경기 맥락을 활용하라.** 시리즈 상황(스윕, 위닝시리즈), 순위 영향이 있으면 자연스럽게 녹여서 경기의 의미를 부여하라.
 
 ## 경기 데이터
-${awayTeam} ${awayScore} : ${homeScore} ${homeTeam} (${result})
+${awayTeam}(원정) ${awayScore} : ${homeScore} ${homeTeam}(홈) (${result})
 경기 성격: ${gameCharacter || "일반"}
-${linescoreStr}${errorStr}
+${linescoreStr}${scoringNarrative}${errorStr}
 
 ## 주요 팩트
 - 홈런: ${hrHitters.length > 0 ? hrHitters.join(", ") : "없음"}
