@@ -79,39 +79,65 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
   });
 }
 
+function parsePitcherRow(c: string[], roster: RosterPlayer[]): PlayerStat {
+  const name = c[1] || "";
+  const found = roster.find((p) => p.name === name);
+  return {
+    rank: 0,
+    name,
+    team: c[2] || "",
+    era: c[3] || "0.00",
+    games: parseInt(c[4]) || 0,
+    wins: parseInt(c[5]) || 0,
+    losses: parseInt(c[6]) || 0,
+    saves: parseInt(c[7]) || 0,
+    holds: parseInt(c[8]) || 0,
+    wpct: c[9] || "0.000",
+    ip: c[10] || "0",
+    h: parseInt(c[11]) || 0,
+    hr: parseInt(c[12]) || 0,
+    bb: parseInt(c[13]) || 0,
+    hbp: parseInt(c[14]) || 0,
+    so: parseInt(c[15]) || 0,
+    r: parseInt(c[16]) || 0,
+    er: parseInt(c[17]) || 0,
+    whip: c[18] || "0.00",
+    kboId: found?.kboId || "",
+    playerId: found?.kboId || "",
+  };
+}
+
 async function fetchPitcherStats(): Promise<PlayerStat[]> {
-  // 순위(0) 선수명(1) 팀명(2) ERA(3) G(4) W(5) L(6) SV(7) HLD(8) WPCT(9) IP(10) H(11) HR(12) BB(13) HBP(14) SO(15) R(16) ER(17) WHIP(18)
-  const url = `${KBO_BASE}/Record/Player/PitcherBasic/Basic1.aspx?sort=ERA_RT`;
-  const html = await fetchHtml(url);
-  const rows = parseTable(html);
+  // ERA_RT는 규정이닝 투수만 반환 (시즌초 17명 등), SV/HOLD/W/KK는 전체 30명
+  // 여러 정렬로 크롤링 후 병합해야 세이브/홀드 리더가 빠지지 않음
+  const sortKeys = ["ERA_RT", "SV_CN", "HOLD_CN", "W_CN", "KK_CN"];
   const roster = playersRoster as RosterPlayer[];
-  return rows.map((c, i) => {
-    const name = c[1] || "";
-    const found = roster.find((p) => p.name === name);
-    return {
-      rank: i + 1,
-      name,
-      team: c[2] || "",
-      era: c[3] || "0.00",
-      games: parseInt(c[4]) || 0,
-      wins: parseInt(c[5]) || 0,
-      losses: parseInt(c[6]) || 0,
-      saves: parseInt(c[7]) || 0,
-      holds: parseInt(c[8]) || 0,
-      wpct: c[9] || "0.000",
-      ip: c[10] || "0",
-      h: parseInt(c[11]) || 0,
-      hr: parseInt(c[12]) || 0,
-      bb: parseInt(c[13]) || 0,
-      hbp: parseInt(c[14]) || 0,
-      so: parseInt(c[15]) || 0,
-      r: parseInt(c[16]) || 0,
-      er: parseInt(c[17]) || 0,
-      whip: c[18] || "0.00",
-      kboId: found?.kboId || "",
-      playerId: found?.kboId || "",
-    };
-  });
+  const merged = new Map<string, PlayerStat>(); // key: name+team
+
+  const results = await Promise.all(
+    sortKeys.map(async (sort) => {
+      const url = `${KBO_BASE}/Record/Player/PitcherBasic/Basic1.aspx?sort=${sort}`;
+      const html = await fetchHtml(url);
+      return parseTable(html);
+    })
+  );
+
+  for (const rows of results) {
+    for (const c of rows) {
+      const name = c[1] || "";
+      const team = c[2] || "";
+      const key = `${name}::${team}`;
+      if (!merged.has(key)) {
+        merged.set(key, parsePitcherRow(c, roster));
+      }
+    }
+  }
+
+  // ERA 기준 정렬 후 순위 부여
+  const stats = [...merged.values()]
+    .sort((a, b) => Number(a.era || 99) - Number(b.era || 99));
+  stats.forEach((p, i) => { p.rank = i + 1; });
+  return stats;
 }
 
 interface StatsResult {
