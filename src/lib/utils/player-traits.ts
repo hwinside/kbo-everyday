@@ -31,9 +31,9 @@ export function getBatterTraits(stats: {
     : 0;
 
   // 최소 출전 필터
-  if (stats.games < 10 || pa < 30) return traits;
-  const g162 = 162; // 풀시즌 기준
-  const pace = (g: number) => stats.games >= 50 ? Math.round(g / stats.games * g162) : 0; // 162경기 페이스 환산
+  if (stats.games < 5 || pa < 15) return traits;
+  const g144 = 144; // KBO 풀시즌 기준
+  const pace = (g: number) => stats.games >= 10 ? Math.round(g / stats.games * g144) : 0; // 10경기부터 페이스 환산
 
   // 💣 파워히터 (홈런 15+)
   if (stats.hr >= 15 || (stats.games >= 10 && pace(stats.hr) >= 20)) traits.push({ emoji: "💣", label: "파워히터", statKey: "hr", desc: `${stats.hr}홈런`, criteria: "시즌 15홈런 이상" });
@@ -105,7 +105,9 @@ export function getPitcherTraits(stats: {
   const kbb = stats.bb > 0 ? stats.so / stats.bb : stats.so;
 
   // 최소 출전 필터
-  if (stats.games < 10) return traits;
+  if (stats.games < 5) return traits;
+  const g144 = 144;
+  const pace = (g: number) => stats.games >= 10 ? Math.round(g / stats.games * g144) : 0;
 
   // 👑 에이스 (10승+ & ERA 3.5 이하)
   if (stats.wins >= 10 && era <= 3.50) traits.push({ emoji: "👑", label: "에이스", statKey: "wins", desc: `${stats.wins}승 ERA ${stats.era}`, criteria: "10승+ & ERA 3.50 이하" });
@@ -120,16 +122,16 @@ export function getPitcherTraits(stats: {
   if (whip <= 1.10 && ip >= 50) traits.push({ emoji: "🧊", label: "포커페이스", statKey: "whip", desc: `WHIP ${stats.whip}`, criteria: "WHIP 1.10 이하 (50이닝+)" });
 
   // 💪 마무리 (세이브 20+)
-  if (stats.saves >= 20) traits.push({ emoji: "💪", label: "마무리", statKey: "saves", desc: `${stats.saves}세이브`, criteria: "시즌 20세이브 이상" });
+  if (stats.saves >= 20 || pace(stats.saves) >= 25) traits.push({ emoji: "💪", label: "마무리", statKey: "saves", desc: `${stats.saves}세이브`, criteria: "시즌 20세이브 이상" });
 
   // 🧱 벽 (홀드 20+)
-  if (stats.holds >= 20) traits.push({ emoji: "🧱", label: "벽", statKey: "holds", desc: `${stats.holds}홀드`, criteria: "시즌 20홀드 이상" });
+  if (stats.holds >= 20 || pace(stats.holds) >= 25) traits.push({ emoji: "🧱", label: "벽", statKey: "holds", desc: `${stats.holds}홀드`, criteria: "시즌 20홀드 이상" });
 
   // 🏔️ 이닝이터 (이닝 150+)
-  if (ip >= 150) traits.push({ emoji: "🏔️", label: "이닝이터", statKey: "ip", desc: `${stats.ip}이닝`, criteria: "시즌 150이닝 이상" });
+  if (ip >= 150 || pace(Math.round(ip)) >= 160) traits.push({ emoji: "🏔️", label: "이닝이터", statKey: "ip", desc: `${stats.ip}이닝`, criteria: "시즌 150이닝 이상" });
 
   // 😤 다승 (15승+)
-  if (stats.wins >= 15) traits.push({ emoji: "😤", label: "다승", statKey: "wins", desc: `${stats.wins}승`, criteria: "시즌 15승 이상" });
+  if (stats.wins >= 15 || pace(stats.wins) >= 18) traits.push({ emoji: "😤", label: "다승", statKey: "wins", desc: `${stats.wins}승`, criteria: "시즌 15승 이상" });
 
   // 🛡️ 철벽 (ERA 2.50 이하 & 이닝 50+)
   if (era <= 2.50 && ip >= 50) traits.push({ emoji: "🛡️", label: "철벽", statKey: "era", desc: `ERA ${stats.era}`, criteria: "ERA 2.50 이하 (50이닝+)" });
@@ -138,7 +140,7 @@ export function getPitcherTraits(stats: {
   if (kbb >= 4.0 && stats.so >= 50) traits.push({ emoji: "🧨", label: "폭탄해체반", statKey: "so_pitcher", desc: `K/BB ${kbb.toFixed(1)}`, criteria: "K/BB 4.0 이상" });
 
   // 🔋 풀타임 (경기 60+, 불펜)
-  if (stats.games >= 60) traits.push({ emoji: "🔋", label: "불펜철인", statKey: "games_pitcher", desc: `${stats.games}경기 등판`, criteria: "시즌 60경기 이상 등판" });
+  if (stats.games >= 60 || pace(stats.games) >= 65) traits.push({ emoji: "🔋", label: "불펜철인", statKey: "games_pitcher", desc: `${stats.games}경기 등판`, criteria: "시즌 60경기 이상 등판" });
 
   // 🏆 완봉 (완봉 1+)
   if (stats.sho >= 1) traits.push({ emoji: "🏆", label: "완봉장인", statKey: "wins", desc: `${stats.sho}완봉`, criteria: "시즌 1완봉 이상" });
