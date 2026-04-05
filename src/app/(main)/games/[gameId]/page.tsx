@@ -306,6 +306,7 @@ export default function GameDetailPage() {
                 plays={plays}
                 teamColor={battingTeamColor}
                 boxScore={gameDetail?.boxScore ?? null}
+                linescore={gameDetail?.linescore ?? gameRelay?.linescore ?? null}
                 starterNames={{
                   away: liveGame?.awayStarterName || gameDetail?.boxScore?.awayPitchers?.[0]?.name || "",
                   home: liveGame?.homeStarterName || gameDetail?.boxScore?.homePitchers?.[0]?.name || "",

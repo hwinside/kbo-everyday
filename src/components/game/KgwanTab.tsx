@@ -22,6 +22,10 @@ interface KgwanTabProps {
   plays: GamePlay[];
   teamColor: string;
   boxScore: GameDetailResponse["boxScore"] | null;
+  linescore?: {
+    away: { innings: (number | null)[]; R: number; H: number; E: number };
+    home: { innings: (number | null)[]; R: number; H: number; E: number };
+  } | null;
   starterNames?: { away: string; home: string };
   lineupConfirmed?: boolean;
   gameRelay?: GameRelayResponse | null;
@@ -391,11 +395,15 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
 }
 
 /* ===== Final: AI Summary + Chat ===== */
-function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
+function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
   gameId: string;
   homeTeamId: number;
   awayTeamId: number;
   boxScore: GameDetailResponse["boxScore"] | null;
+  linescore?: {
+    away: { innings: (number | null)[]; R: number; H: number; E: number };
+    home: { innings: (number | null)[]; R: number; H: number; E: number };
+  } | null;
 }) {
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -408,6 +416,8 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
     mvpBatter: string | { name: string; stats: string; reason: string } | null;
     mvpPitcher: string | { name: string; stats: string; reason: string } | null;
     insight: string;
+    seriesContext?: string | null;
+    standingsImpact?: string | null;
   } | null>(null);
   const [llmLoading, setLlmLoading] = useState(false);
 
@@ -448,6 +458,10 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
           homeTeam: homeTeam.shortName,
           awayScore: awayR,
           homeScore: homeR,
+          linescore: linescore ? {
+            away: { innings: linescore.away.innings, R: linescore.away.R, H: linescore.away.H, E: linescore.away.E },
+            home: { innings: linescore.home.innings, R: linescore.home.R, H: linescore.home.H, E: linescore.home.E },
+          } : undefined,
           awayBatters: boxScore.awayBatters.map(b => ({
             name: b.name, ab: b.atBats, r: b.runs, h: b.hits,
             rbi: b.rbi, hr: b.hr, bb: b.bb, so: b.so, avg: b.avg || "",
@@ -485,7 +499,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
     };
 
     fetchLlmSummary();
-  }, [hasRealBoxScore, boxScore, gameId, llmSummary, awayTeam, homeTeam]);
+  }, [hasRealBoxScore, boxScore, gameId, llmSummary, awayTeam, homeTeam, linescore]);
 
   // 기존 템플릿 기반 fallback
   const fallbackSummary = useMemo(() => {
@@ -628,6 +642,8 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
             ? `${llmSummary.mvpPitcher.name} (${llmSummary.mvpPitcher.stats}) — ${llmSummary.mvpPitcher.reason}`
             : null,
         insight: llmSummary.insight,
+        seriesContext: llmSummary.seriesContext || null,
+        standingsImpact: llmSummary.standingsImpact || null,
       }
     : null;
 
@@ -720,6 +736,30 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
               </div>
             )}
 
+            {/* 시리즈 맥락 + 순위 영향 */}
+            {(summary.seriesContext || summary.standingsImpact) && (
+              <div className="space-y-2">
+                {summary.seriesContext && (
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className="text-xs">⚾</span>
+                      <span className="text-[11px] font-semibold text-text-tertiary">시리즈</span>
+                    </div>
+                    <p className="readable-body">{summary.seriesContext}</p>
+                  </div>
+                )}
+                {summary.standingsImpact && (
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className="text-xs">🏆</span>
+                      <span className="text-[11px] font-semibold text-text-tertiary">순위 영향</span>
+                    </div>
+                    <p className="readable-body">{summary.standingsImpact}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             <p className="text-center text-[10px] text-text-tertiary pt-1 border-t border-border/30">
               박스스코어 기반 자동 생성 · 실제와 다를 수 있습니다
             </p>
@@ -765,6 +805,7 @@ export default function KgwanTab({
   teamColor: _teamColor,
   plays: _plays,
   boxScore,
+  linescore,
   starterNames,
   lineupConfirmed,
   gameRelay,
@@ -778,5 +819,5 @@ export default function KgwanTab({
   }
 
   // final
-  return <FinalView gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} boxScore={boxScore} />;
+  return <FinalView gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} boxScore={boxScore} linescore={linescore} />;
 }
