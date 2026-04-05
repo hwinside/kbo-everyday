@@ -415,14 +415,14 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
   const hasRealBoxScore = boxScore &&
     (boxScore.awayBatters.length > 0 || boxScore.homeBatters.length > 0);
 
-  // LLM 요약 fetch
+  // LLM 요약 fetch — 캐시는 항상 확인, 생성은 boxScore 있을 때만
   useEffect(() => {
-    if (!hasRealBoxScore || llmSummary) return;
+    if (llmSummary) return;
 
     const fetchLlmSummary = async () => {
       setLlmLoading(true);
       try {
-        // 1. 캐시 확인
+        // 1. 캐시 확인 (boxScore 없어도 항상 시도)
         const cacheRes = await fetch(`/api/game-summary?gameId=${gameId}`);
         const cacheData = await cacheRes.json();
         if (cacheData.summary) {
@@ -430,7 +430,9 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore }: {
           return;
         }
 
-        // 2. 생성 요청 — 데이터 유효성 먼저 확인
+        // 2. 생성 요청 — boxScore 데이터 필수
+        if (!hasRealBoxScore || !boxScore) return;
+
         const homeR = boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);
         const awayR = boxScore.awayBatters.reduce((s, b) => s + b.runs, 0);
         const totalAB = [...boxScore.awayBatters, ...boxScore.homeBatters].reduce((s, b) => s + b.atBats, 0);
