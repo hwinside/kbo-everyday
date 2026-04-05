@@ -5,7 +5,7 @@ import { fetchStandings, fetchGames } from "@/lib/crawler/kbo-api";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 6; // v6: 상투구 블랙리스트 + 리드문 다양성 강화
+const PROMPT_VERSION = 7; // v7: 환각 방지 강화 (비디오판독/파울/관중반응 등 창작 금지)
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -224,7 +224,13 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
    - 투수전이면 투수 대결의 서사
    - 홈런이 결정적이었으면 홈런 장면이 리드
 2. **템플릿 금지.** "X팀이 Y팀을 Z-W로 꺾었다"로 시작하는 판에 박은 리드를 쓰지 마라.
-3. **팩트만.** 박스스코어와 이닝별 점수에 있는 것만 사용. 없는 장면, 없는 감정, 없는 관중 반응을 절대 만들지 마라. "선수(숫자)" 형식의 이름은 언급하지 말고 팀명으로 대체.
+3. **팩트만. 창작 절대 금지.** 박스스코어와 이닝별 점수에 있는 것만 사용. 없는 장면, 없는 감정, 없는 관중 반응을 절대 만들지 마라. "선수(숫자)" 형식의 이름은 언급하지 말고 팀명으로 대체.
+   **특히 금지하는 창작 유형:**
+   - 비디오 판독, 파울 판정, 심판 판정 논란 → 박스스코어에 없음
+   - 관중 함성/반응, 감독 표정/작전, 덤아웃 분위기 → 박스스코어에 없음
+   - 타구 굤적, 투구 코스, 수비 플레이 세부 → 박스스코어에 없음
+   - "홀런성 타구", "담장을 넘긴 타구가 파울", "책사포 데이터" → 수치 확인 불가, 절대 쓰지 마라
+   → **확인할 수 없는 세부 장면을 만드는 것보다, 확인된 수치로만 서술하는 것이 100배 낫다.**
 4. **이닝 해석 규칙 (경기 구조 반드시 준수).** 원정팀=이닝 초 공격, 홈팀=이닝 말 공격. 득점 타임라인이 주어졌으면 그 순서를 절대 바꾸지 마라. 예: "9회초 원정팀 2점" 다음에 "9회말 홈팀 4점"이라면, 홈팀이 나중에 득점한 것이다. 순서를 뒤집어 "홈팀이 먼저 역전하고 원정팀이 다시 재역전" 같은 물리적으로 불가능한 서사를 쓰면 절대 안 된다.
 4. **숫자를 서사로.** "3안타 4타점"을 나열하지 말고, 그 숫자가 경기 흐름에서 왜 중요했는지 해석하라.
 5. **빈 칸보다 침묵.** 해당 없는 필드는 null로 두라. 억지로 채우면 품질이 떨어진다.
@@ -398,7 +404,7 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
-          temperature: 0.85,
+          temperature: 0.7,
           maxOutputTokens: 2560,
           responseMimeType: "application/json",
           thinkingConfig: { thinkingBudget: 0 },
