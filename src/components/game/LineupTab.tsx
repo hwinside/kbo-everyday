@@ -150,6 +150,11 @@ export default function LineupTab({
                       <span className="text-sm text-text-primary font-medium whitespace-nowrap">
                         {away.name}
                       </span>
+                      {away.avg && away.avg !== "-" && (
+                        <span className="text-xs text-text-tertiary tabular-nums">
+                          {away.avg}
+                        </span>
+                      )}
                     </Link>
                   </td>
                   <td className="py-2 text-center">
@@ -157,6 +162,11 @@ export default function LineupTab({
                   </td>
                   <td className="py-2 text-right">
                     <Link href={homeHref} className="flex items-center justify-end gap-1.5 hover:opacity-80">
+                      {home.avg && home.avg !== "-" && (
+                        <span className="text-xs text-text-tertiary tabular-nums">
+                          {home.avg}
+                        </span>
+                      )}
                       <span className="text-sm text-text-primary font-medium whitespace-nowrap">
                         {home.name}
                       </span>
