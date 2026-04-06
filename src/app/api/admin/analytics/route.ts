@@ -6,9 +6,14 @@ function verifyPin(req: NextRequest): boolean {
 }
 
 function getClient() {
-  return new BetaAnalyticsDataClient({
-    credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY!),
-  });
+  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+  if (!raw) throw new Error("GOOGLE_SERVICE_ACCOUNT_KEY not set");
+  const credentials = JSON.parse(raw);
+  // Vercel env may double-escape \n in private_key
+  if (credentials.private_key) {
+    credentials.private_key = credentials.private_key.replace(/\\n/g, "\n");
+  }
+  return new BetaAnalyticsDataClient({ credentials });
 }
 
 const PROPERTY = "properties/" + process.env.GA4_PROPERTY_ID;
@@ -19,6 +24,14 @@ export async function GET(req: NextRequest) {
   }
 
   const type = req.nextUrl.searchParams.get("type") ?? "dau";
+
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY || !process.env.GA4_PROPERTY_ID) {
+    return NextResponse.json(
+      { error: "GA4 not configured", details: { hasKey: !!process.env.GOOGLE_SERVICE_ACCOUNT_KEY, hasPropertyId: !!process.env.GA4_PROPERTY_ID } },
+      { status: 500 }
+    );
+  }
+
   const client = getClient();
 
   try {
