@@ -16,6 +16,7 @@ import {
 import { Loader2, FileText } from "lucide-react";
 import { TEAMS } from "@/lib/constants/teams";
 import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
+import ROSTER from "@/lib/constants/players-roster.json";
 
 const tooltipStyle = {
   contentStyle: {
@@ -75,6 +76,8 @@ function boardIdToTeamName(boardId: string, boardType?: string | null): string {
   const inferredType = boardType || (TEAMS.some(t => t.slug === boardId || String(t.id) === boardId) ? "team" : "player");
 
   if (inferredType === "player") {
+    const rosterEntry = (ROSTER as { kboId: string; name: string; team: string }[]).find(r => r.kboId === boardId);
+    if (rosterEntry) return `⚾ ${rosterEntry.team}/${rosterEntry.name}`;
     const entry = Object.entries(PLAYER_PHOTO_MAP).find(([, id]) => id === boardId);
     return entry ? `⚾ ${entry[0]}` : `⚾ 선수 #${boardId}`;
   }

@@ -464,7 +464,7 @@ export async function POST(req: NextRequest) {
     // 스코어 검증
     const headlineStr = (summary.headline || "").toLowerCase();
     const isZeroZero = body.awayScore === 0 && body.homeScore === 0;
-    const headlineSaysZero = /0대0|0-0|무승부/.test(headlineStr) || /득점\s*없/.test(headlineStr);
+    const headlineSaysZero = /0대0|0-0/.test(headlineStr) || /득점\s*없/.test(headlineStr);
     if (!isZeroZero && headlineSaysZero) {
       console.error(`Score mismatch: actual ${body.awayScore}-${body.homeScore}, headline says 0-0. Discarding.`);
       return NextResponse.json({ error: "Generated summary score mismatch, discarded" }, { status: 422 });
