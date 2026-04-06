@@ -22,12 +22,10 @@ interface JobLogRow {
 }
 
 const JOB_INFOS = [
-  { name: "kbo-scores", label: "KBO 스코어 크롤러", schedule: "매 5분", description: "KBO 공식 사이트에서 실시간 스코어 수집" },
-  { name: "naver-news", label: "네이버 뉴스 크롤러", schedule: "매 30분", description: "네이버 스포츠 뉴스 수집" },
-  { name: "youtube-highlights", label: "유튜브 하이라이트", schedule: "매 1시간", description: "구단별 유튜브 채널 하이라이트 수집" },
-  { name: "stats-update", label: "선수 스탯 업데이트", schedule: "매일 06:00", description: "KBO 선수 기록 일괄 업데이트" },
-  { name: "daily-aggregation", label: "일별 집계 배치", schedule: "매일 00:05", description: "일별 통계 집계 (UV/PV/가입/게시글)" },
-  { name: "anomaly-check", label: "이상 감지 체크", schedule: "매 10분", description: "트래픽/에러율/성능 이상 감지" },
+  { name: "youtube-highlights", label: "유튜브 하이라이트", schedule: "매 4시간", description: "구단별 유튜브 하이라이트 영상 수집" },
+  { name: "roster-update", label: "로스터 업데이트", schedule: "매일 06:00", description: "KBO 기록 페이지에서 선수 목록 수집" },
+  { name: "stats-update", label: "선수 스탯 업데이트", schedule: "매일 06:00", description: "KBO 타자/투수 스탯 크롤링 → Supabase 저장" },
+  { name: "photos-check", label: "선수 사진 모니터링", schedule: "매주 일 06:00", description: "KBO CDN 선수 사진 존재 여부 확인" },
 ];
 
 function JobStatusBadge({ status }: { status: string }) {

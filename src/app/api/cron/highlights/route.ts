@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { YouTubeSearchItem, HighlightRow } from "@/types/api";
+import { startJob, finishJob } from "@/lib/admin/job-logger";
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
@@ -49,23 +50,39 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "YouTube API not configured" }, { status: 500 });
   }
 
+  const logId = await startJob("youtube-highlights");
+
   const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   const results: Record<string, number> = {};
+  let errorCount = 0;
 
-  for (const [team, query] of Object.entries(QUERIES)) {
-    try {
-      const videos = await fetchYouTube(query);
-      if (videos.length > 0) {
-        await supabase.from("highlights").delete().eq("team", team);
-        await supabase.from("highlights").insert(
-          videos.slice(0, 30).map((v: HighlightRow) => ({ ...v, team }))
-        );
+  try {
+    for (const [team, query] of Object.entries(QUERIES)) {
+      try {
+        const videos = await fetchYouTube(query);
+        if (videos.length > 0) {
+          await supabase.from("highlights").delete().eq("team", team);
+          await supabase.from("highlights").insert(
+            videos.slice(0, 30).map((v: HighlightRow) => ({ ...v, team }))
+          );
+        }
+        results[team] = videos.length;
+      } catch {
+        results[team] = -1;
+        errorCount++;
       }
-      results[team] = videos.length;
-    } catch {
-      results[team] = -1;
+      await new Promise((r) => setTimeout(r, 500));
     }
-    await new Promise((r) => setTimeout(r, 500));
+
+    const totalVideos = Object.values(results).filter((n) => n > 0).reduce((a, b) => a + b, 0);
+    await finishJob(
+      logId,
+      errorCount === 0 ? "success" : "error",
+      `${Object.keys(QUERIES).length}팀 처리, 총 ${totalVideos}개 영상`,
+      errorCount > 0 ? `${errorCount}팀 실패` : undefined,
+    );
+  } catch (e) {
+    await finishJob(logId, "error", undefined, (e as Error).message);
   }
 
   return NextResponse.json({ ok: true, timestamp: new Date().toISOString(), results });
