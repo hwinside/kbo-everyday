@@ -1,16 +1,34 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState, useEffect } from "react";
 import {
   CheckCircle,
   XCircle,
   Loader2,
   Clock,
-  Play,
   ChevronDown,
+  Bot,
 } from "lucide-react";
-import { generateJobInfos, generateJobLogs } from "@/lib/admin/mock-data";
-import type { JobInfo, JobLog } from "@/lib/admin/types";
+
+interface JobLogRow {
+  id: number;
+  job_name: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+  result_summary: string | null;
+  error_message: string | null;
+}
+
+const JOB_INFOS = [
+  { name: "kbo-scores", label: "KBO 스코어 크롤러", schedule: "매 5분", description: "KBO 공식 사이트에서 실시간 스코어 수집" },
+  { name: "naver-news", label: "네이버 뉴스 크롤러", schedule: "매 30분", description: "네이버 스포츠 뉴스 수집" },
+  { name: "youtube-highlights", label: "유튜브 하이라이트", schedule: "매 1시간", description: "구단별 유튜브 채널 하이라이트 수집" },
+  { name: "stats-update", label: "선수 스탯 업데이트", schedule: "매일 06:00", description: "KBO 선수 기록 일괄 업데이트" },
+  { name: "daily-aggregation", label: "일별 집계 배치", schedule: "매일 00:05", description: "일별 통계 집계 (UV/PV/가입/게시글)" },
+  { name: "anomaly-check", label: "이상 감지 체크", schedule: "매 10분", description: "트래픽/에러율/성능 이상 감지" },
+];
 
 function JobStatusBadge({ status }: { status: string }) {
   if (status === "success") {
@@ -34,12 +52,28 @@ function JobStatusBadge({ status }: { status: string }) {
   );
 }
 
-function JobCard({ job }: { job: JobInfo }) {
+function JobCard({
+  job,
+  latestLog,
+}: {
+  job: (typeof JOB_INFOS)[number];
+  latestLog: JobLogRow | undefined;
+}) {
+  const status = latestLog?.status ?? "unknown";
+  const lastRun = latestLog?.started_at;
+  const duration = latestLog?.duration_ms;
+
   return (
     <div className="glass-card p-5 space-y-3">
       <div className="flex items-start justify-between">
         <h3 className="font-semibold">{job.label}</h3>
-        <JobStatusBadge status={job.status} />
+        {latestLog ? (
+          <JobStatusBadge status={status} />
+        ) : (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-white/5 text-[#636366]">
+            기록 없음
+          </span>
+        )}
       </div>
       <p className="text-xs text-[#8E8E93]">{job.description}</p>
       <div className="grid grid-cols-2 gap-2 text-xs">
@@ -48,32 +82,69 @@ function JobCard({ job }: { job: JobInfo }) {
           <span>{job.schedule}</span>
         </div>
         <div className="text-right text-[#8E8E93]">
-          {(job.duration / 1000).toFixed(1)}초
+          {duration != null ? `${(duration / 1000).toFixed(1)}초` : "-"}
         </div>
       </div>
-      <div className="flex items-center justify-between pt-2 border-t border-white/8">
+      <div className="pt-2 border-t border-white/8">
         <span className="text-xs text-[#636366]">
-          {new Date(job.lastRun).toLocaleString("ko-KR")}
+          {lastRun
+            ? new Date(lastRun).toLocaleString("ko-KR")
+            : "실행 기록 없음"}
         </span>
-        <button className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#6366F1]/15 text-[#6366F1] text-xs font-medium hover:bg-[#6366F1]/25 transition-colors">
-          <Play className="w-3 h-3" /> 수동 실행
-        </button>
       </div>
     </div>
   );
 }
 
 export default function AdminJobsPage() {
-  const jobs = useMemo(() => generateJobInfos(), []);
-  const allLogs = useMemo(() => generateJobLogs(), []);
+  const [logs, setLogs] = useState<JobLogRow[]>([]);
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  const filteredLogs = allLogs.filter((log) => {
-    if (filter !== "all" && log.jobName !== filter) return false;
+  useEffect(() => {
+    async function fetchLogs() {
+      try {
+        const pin = sessionStorage.getItem("admin-pin") ?? "";
+        const res = await fetch("/api/admin/jobs", {
+          headers: { "x-admin-pin": pin },
+        });
+        if (!res.ok) throw new Error("fetch failed");
+        const json = await res.json();
+        setLogs(json.data ?? []);
+      } catch {
+        setLogs([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchLogs();
+  }, []);
+
+  // Build a map of latest log per job_name
+  const latestLogByJob = new Map<string, JobLogRow>();
+  for (const log of logs) {
+    const existing = latestLogByJob.get(log.job_name);
+    if (!existing || new Date(log.started_at) > new Date(existing.started_at)) {
+      latestLogByJob.set(log.job_name, log);
+    }
+  }
+
+  const filteredLogs = logs.filter((log) => {
+    if (filter !== "all" && log.job_name !== filter) return false;
     if (statusFilter !== "all" && log.status !== statusFilter) return false;
     return true;
   });
+
+  const jobLabelMap = new Map(JOB_INFOS.map((j) => [j.name, j.label]));
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-32">
+        <Loader2 className="w-8 h-8 animate-spin text-[#6366F1]" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -81,8 +152,12 @@ export default function AdminJobsPage() {
 
       {/* Job Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {jobs.map((j) => (
-          <JobCard key={j.name} job={j} />
+        {JOB_INFOS.map((j) => (
+          <JobCard
+            key={j.name}
+            job={j}
+            latestLog={latestLogByJob.get(j.name)}
+          />
         ))}
       </div>
 
@@ -98,7 +173,7 @@ export default function AdminJobsPage() {
                 className="appearance-none bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 pr-8 text-sm outline-none focus:border-[#6366F1]"
               >
                 <option value="all">전체 작업</option>
-                {jobs.map((j) => (
+                {JOB_INFOS.map((j) => (
                   <option key={j.name} value={j.name}>
                     {j.label}
                   </option>
@@ -122,42 +197,53 @@ export default function AdminJobsPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-white/8">
-                <th className="text-left py-2 text-[#8E8E93] font-medium">작업</th>
-                <th className="text-left py-2 text-[#8E8E93] font-medium">상태</th>
-                <th className="text-left py-2 text-[#8E8E93] font-medium">시작 시간</th>
-                <th className="text-right py-2 text-[#8E8E93] font-medium">소요시간</th>
-                <th className="text-left py-2 text-[#8E8E93] font-medium">결과</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredLogs.slice(0, 50).map((log) => (
-                <tr key={log.id} className="border-b border-white/5">
-                  <td className="py-2.5 font-medium">{log.jobName}</td>
-                  <td className="py-2.5">
-                    <JobStatusBadge status={log.status} />
-                  </td>
-                  <td className="py-2.5 text-[#8E8E93]">
-                    {new Date(log.startedAt).toLocaleString("ko-KR")}
-                  </td>
-                  <td className="py-2.5 text-right tabular-nums text-[#8E8E93]">
-                    {log.durationMs ? `${(log.durationMs / 1000).toFixed(1)}초` : "-"}
-                  </td>
-                  <td className="py-2.5 text-[#8E8E93] max-w-[200px] truncate">
-                    {log.errorMessage ? (
-                      <span className="text-[#FF453A]">{log.errorMessage}</span>
-                    ) : (
-                      log.resultSummary || "-"
-                    )}
-                  </td>
+        {filteredLogs.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-[#636366]">
+            <Bot className="w-10 h-10 mb-3 opacity-40" />
+            <p className="text-sm">등록된 작업 없음</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-white/8">
+                  <th className="text-left py-2 text-[#8E8E93] font-medium">작업</th>
+                  <th className="text-left py-2 text-[#8E8E93] font-medium">상태</th>
+                  <th className="text-left py-2 text-[#8E8E93] font-medium">시작 시간</th>
+                  <th className="text-right py-2 text-[#8E8E93] font-medium">소요시간</th>
+                  <th className="text-left py-2 text-[#8E8E93] font-medium">결과</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {filteredLogs.slice(0, 50).map((log) => (
+                  <tr key={log.id} className="border-b border-white/5">
+                    <td className="py-2.5 font-medium">
+                      {jobLabelMap.get(log.job_name) ?? log.job_name}
+                    </td>
+                    <td className="py-2.5">
+                      <JobStatusBadge status={log.status} />
+                    </td>
+                    <td className="py-2.5 text-[#8E8E93]">
+                      {new Date(log.started_at).toLocaleString("ko-KR")}
+                    </td>
+                    <td className="py-2.5 text-right tabular-nums text-[#8E8E93]">
+                      {log.duration_ms != null
+                        ? `${(log.duration_ms / 1000).toFixed(1)}초`
+                        : "-"}
+                    </td>
+                    <td className="py-2.5 text-[#8E8E93] max-w-[200px] truncate">
+                      {log.error_message ? (
+                        <span className="text-[#FF453A]">{log.error_message}</span>
+                      ) : (
+                        log.result_summary || "-"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

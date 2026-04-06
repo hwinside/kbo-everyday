@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BarChart,
   Bar,
@@ -11,9 +11,10 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import { Inbox, Eye, CheckCircle, XCircle, ChevronDown } from "lucide-react";
-import { generateFeedbackItems } from "@/lib/admin/mock-data";
+import { Inbox, Eye, CheckCircle, XCircle, ChevronDown, Loader2 } from "lucide-react";
 import type { FeedbackItem } from "@/lib/admin/types";
+
+/* ── Labels & Colors ── */
 
 const TYPE_LABELS: Record<string, string> = {
   bug: "버그",
@@ -53,36 +54,145 @@ function StatusIcon({ status }: { status: string }) {
   }
 }
 
-export default function AdminFeedbackPage() {
-  const items = useMemo(() => generateFeedbackItems(), []);
-  const [typeFilter, setTypeFilter] = useState<string>("all");
-  const [selectedItem, setSelectedItem] = useState<FeedbackItem | null>(null);
+/* ── Data Mapping ── */
 
-  const statusCounts = {
-    received: items.filter((i) => i.status === "received").length,
-    reviewing: items.filter((i) => i.status === "reviewing").length,
-    done: items.filter((i) => i.status === "done").length,
-    rejected: items.filter((i) => i.status === "rejected").length,
+function mapFeedback(raw: any): FeedbackItem {
+  return {
+    id: raw.id,
+    userId: raw.user_id,
+    type: raw.type,
+    title: raw.title,
+    body: raw.body,
+    pageUrl: raw.page_url,
+    deviceInfo: raw.device_info,
+    status: raw.status,
+    adminNote: raw.admin_note,
+    createdAt: raw.created_at,
   };
+}
 
-  const filteredItems = typeFilter === "all" ? items : items.filter((i) => i.type === typeFilter);
+/* ── Chart Data Helper ── */
 
-  // Chart: feedback by type over last 7 days
-  /* eslint-disable react-hooks/purity */
-  const chartData = Array.from({ length: 7 }, (_, i) => {
+function buildChartData(items: FeedbackItem[]) {
+  const days: string[] = [];
+  for (let i = 6; i >= 0; i--) {
     const d = new Date();
-    d.setDate(d.getDate() - (6 - i));
-    const dateStr = d.toISOString().slice(5, 10);
+    d.setDate(d.getDate() - i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+
+  return days.map((dateStr) => {
+    const label = dateStr.slice(5); // MM-DD
+    const dayItems = items.filter((it) => it.createdAt.slice(0, 10) === dateStr);
     return {
-      date: dateStr,
-      버그: Math.floor(Math.random() * 5),
-      "데이터 수정": Math.floor(Math.random() * 3),
-      "기능 제안": Math.floor(Math.random() * 4),
-      콘텐츠: Math.floor(Math.random() * 2),
-      기타: Math.floor(Math.random() * 2),
+      date: label,
+      버그: dayItems.filter((it) => it.type === "bug").length,
+      "데이터 수정": dayItems.filter((it) => it.type === "data").length,
+      "기능 제안": dayItems.filter((it) => it.type === "feature").length,
+      콘텐츠: dayItems.filter((it) => it.type === "content").length,
+      기타: dayItems.filter((it) => it.type === "other").length,
     };
   });
-  /* eslint-enable react-hooks/purity */
+}
+
+/* ── Page Component ── */
+
+export default function AdminFeedbackPage() {
+  const [items, setItems] = useState<FeedbackItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [noteValues, setNoteValues] = useState<Record<number, string>>({});
+
+  const getPin = useCallback(() => {
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem("admin-pin") ?? "";
+    }
+    return "";
+  }, []);
+
+  /* ── Fetch ── */
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      try {
+        const res = await fetch("/api/admin/feedback", {
+          headers: { "x-admin-pin": getPin() },
+        });
+        if (!res.ok) throw new Error("fetch failed");
+        const json = await res.json();
+        if (!cancelled) {
+          const mapped = (json.data as any[]).map(mapFeedback);
+          setItems(mapped);
+        }
+      } catch {
+        if (!cancelled) setItems([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [getPin]);
+
+  /* ── Derived ── */
+
+  const statusCounts = useMemo(
+    () => ({
+      received: items.filter((i) => i.status === "received").length,
+      reviewing: items.filter((i) => i.status === "reviewing").length,
+      done: items.filter((i) => i.status === "done").length,
+      rejected: items.filter((i) => i.status === "rejected").length,
+    }),
+    [items],
+  );
+
+  const filteredItems = useMemo(
+    () => (typeFilter === "all" ? items : items.filter((i) => i.type === typeFilter)),
+    [items, typeFilter],
+  );
+
+  const chartData = useMemo(() => buildChartData(items), [items]);
+
+  /* ── Handlers ── */
+
+  async function handleStatusChange(id: number, status: string) {
+    const res = await fetch("/api/admin/feedback", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-pin": getPin(),
+      },
+      body: JSON.stringify({ id, status }),
+    });
+    if (res.ok) {
+      setItems((prev) =>
+        prev.map((it) => (it.id === id ? { ...it, status: status as FeedbackItem["status"] } : it)),
+      );
+    }
+  }
+
+  async function handleSaveNote(id: number, adminNote: string) {
+    const res = await fetch("/api/admin/feedback", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-pin": getPin(),
+      },
+      body: JSON.stringify({ id, admin_note: adminNote }),
+    });
+    if (res.ok) {
+      setItems((prev) =>
+        prev.map((it) => (it.id === id ? { ...it, adminNote } : it)),
+      );
+    }
+  }
+
+  /* ── Tooltip Style ── */
 
   const tooltipStyle = {
     contentStyle: {
@@ -93,6 +203,26 @@ export default function AdminFeedbackPage() {
     },
     labelStyle: { color: "#8E8E93" },
   };
+
+  /* ── Loading State ── */
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-32">
+        <Loader2 className="w-8 h-8 animate-spin text-[#6366F1]" />
+      </div>
+    );
+  }
+
+  /* ── Empty State ── */
+
+  if (items.length === 0) {
+    return (
+      <div className="flex items-center justify-center py-32 text-[#8E8E93]">
+        건의 없음
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -150,51 +280,91 @@ export default function AdminFeedbackPage() {
         </div>
 
         <div className="space-y-2">
-          {filteredItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setSelectedItem(selectedItem?.id === item.id ? null : item)}
-              className="w-full text-left p-4 rounded-xl bg-white/3 hover:bg-white/5 transition-colors"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span
-                      className="inline-block w-2 h-2 rounded-full"
-                      style={{ background: TYPE_COLORS[item.type] }}
-                    />
-                    <span className="text-xs text-[#8E8E93]">{TYPE_LABELS[item.type]}</span>
-                    <span className="text-xs text-[#636366]">
-                      {new Date(item.createdAt).toLocaleDateString("ko-KR")}
-                    </span>
-                  </div>
-                  <p className="font-medium text-sm truncate">{item.title}</p>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <StatusIcon status={item.status} />
-                  <span className="text-xs text-[#8E8E93]">{STATUS_LABELS[item.status]}</span>
-                </div>
-              </div>
+          {filteredItems.map((item) => {
+            const isExpanded = expandedId === item.id;
+            const noteKey = item.id;
+            const currentNote = noteValues[noteKey] ?? item.adminNote ?? "";
 
-              {selectedItem?.id === item.id && (
-                <div className="mt-3 pt-3 border-t border-white/8 space-y-2 text-sm">
-                  {item.body && <p className="text-[#8E8E93]">{item.body}</p>}
-                  {item.pageUrl && (
-                    <p className="text-xs text-[#636366]">페이지: {item.pageUrl}</p>
-                  )}
-                  {item.deviceInfo && (
-                    <p className="text-xs text-[#636366]">기기: {item.deviceInfo}</p>
-                  )}
-                  {item.adminNote && (
-                    <div className="p-2 rounded-lg bg-[#6366F1]/10 text-xs">
-                      <span className="text-[#6366F1] font-medium">관리자 메모:</span>{" "}
-                      {item.adminNote}
+            return (
+              <div
+                key={item.id}
+                className="rounded-xl bg-white/3 hover:bg-white/5 transition-colors"
+              >
+                <button
+                  onClick={() => setExpandedId(isExpanded ? null : item.id)}
+                  className="w-full text-left p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span
+                          className="inline-block w-2 h-2 rounded-full"
+                          style={{ background: TYPE_COLORS[item.type] }}
+                        />
+                        <span className="text-xs text-[#8E8E93]">{TYPE_LABELS[item.type]}</span>
+                        <span className="text-xs text-[#636366]">
+                          {new Date(item.createdAt).toLocaleDateString("ko-KR")}
+                        </span>
+                      </div>
+                      <p className="font-medium text-sm truncate">{item.title}</p>
                     </div>
-                  )}
-                </div>
-              )}
-            </button>
-          ))}
+                    <div className="flex items-center gap-1 shrink-0">
+                      <StatusIcon status={item.status} />
+                      <span className="text-xs text-[#8E8E93]">{STATUS_LABELS[item.status]}</span>
+                    </div>
+                  </div>
+                </button>
+
+                {isExpanded && (
+                  <div className="px-4 pb-4 space-y-3 text-sm">
+                    <div className="pt-3 border-t border-white/8 space-y-2">
+                      {item.body && <p className="text-[#8E8E93]">{item.body}</p>}
+                      {item.pageUrl && (
+                        <p className="text-xs text-[#636366]">페이지: {item.pageUrl}</p>
+                      )}
+                      {item.deviceInfo && (
+                        <p className="text-xs text-[#636366]">기기: {item.deviceInfo}</p>
+                      )}
+                    </div>
+
+                    {/* Status Change */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-[#8E8E93]">상태:</span>
+                      <select
+                        value={item.status}
+                        onChange={(e) => handleStatusChange(item.id, e.target.value)}
+                        className="appearance-none bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs outline-none focus:border-[#6366F1]"
+                      >
+                        <option value="received">접수</option>
+                        <option value="reviewing">검토중</option>
+                        <option value="done">완료</option>
+                        <option value="rejected">반려</option>
+                      </select>
+                    </div>
+
+                    {/* Admin Note */}
+                    <div className="space-y-2">
+                      <textarea
+                        value={currentNote}
+                        onChange={(e) =>
+                          setNoteValues((prev) => ({ ...prev, [noteKey]: e.target.value }))
+                        }
+                        placeholder="관리자 메모..."
+                        rows={2}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none focus:border-[#6366F1] resize-none placeholder:text-[#636366]"
+                      />
+                      <button
+                        onClick={() => handleSaveNote(item.id, currentNote)}
+                        className="px-3 py-1 rounded-lg bg-[#6366F1] hover:bg-[#6366F1]/80 text-xs font-medium transition-colors"
+                      >
+                        저장
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

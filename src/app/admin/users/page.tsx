@@ -1,14 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
+import { useState, useEffect } from "react";
 import {
-  LineChart,
-  Line,
-  BarChart,
-  Bar,
   PieChart,
   Pie,
   Cell,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -16,12 +14,20 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import {
-  generateDailyStats,
-  generateCohortData,
-  TEAM_DISTRIBUTION,
-  LEVEL_DISTRIBUTION,
-} from "@/lib/admin/mock-data";
+import { Loader2, Users, BarChart3 } from "lucide-react";
+
+const TEAM_MAP: Record<number, { name: string; color: string }> = {
+  1: { name: "LG", color: "#C60C30" },
+  2: { name: "두산", color: "#131230" },
+  3: { name: "KT", color: "#E85050" },
+  4: { name: "SSG", color: "#CE0E2D" },
+  5: { name: "NC", color: "#315288" },
+  6: { name: "KIA", color: "#EA0029" },
+  7: { name: "롯데", color: "#002856" },
+  8: { name: "삼성", color: "#074CA1" },
+  9: { name: "한화", color: "#FF6600" },
+  10: { name: "키움", color: "#820024" },
+};
 
 const tooltipStyle = {
   contentStyle: {
@@ -33,190 +39,216 @@ const tooltipStyle = {
   labelStyle: { color: "#8E8E93" },
 };
 
-function CohortHeatmap() {
-  const cohort = useMemo(() => generateCohortData(), []);
-  const days = [0, 1, 2, 3, 5, 7, 14, 21, 30];
+function getPin(): string | null {
+  if (typeof window === "undefined") return null;
+  return sessionStorage.getItem("admin-pin");
+}
 
-  return (
-    <div className="glass-card p-5 overflow-x-auto">
-      <h2 className="text-lg font-semibold mb-4">코호트 리텐션 히트맵</h2>
-      <table className="w-full text-xs">
-        <thead>
-          <tr>
-            <th className="text-left py-2 px-2 text-[#8E8E93] font-medium">가입 주차</th>
-            <th className="py-2 px-1 text-[#8E8E93] font-medium">코호트</th>
-            {days.map((d) => (
-              <th key={d} className="py-2 px-1 text-[#8E8E93] font-medium">
-                D{d}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {cohort.map((row) => (
-            <tr key={row.week}>
-              <td className="py-1.5 px-2 text-[#F5F5F7] font-medium">{row.week}</td>
-              <td className="py-1.5 px-1 text-center text-[#8E8E93]">{row.cohortSize}</td>
-              {days.map((d) => {
-                const val = row.retention[d];
-                if (val < 0) {
-                  return <td key={d} className="py-1.5 px-1" />;
-                }
-                const alpha = val / 100;
-                return (
-                  <td key={d} className="py-1.5 px-1">
-                    <div
-                      className="w-full text-center py-1 rounded"
-                      style={{
-                        background: `rgba(48, 209, 88, ${alpha * 0.7})`,
-                        color: alpha > 0.4 ? "#fff" : "#8E8E93",
-                      }}
-                    >
-                      {val}%
-                    </div>
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+async function apiFetch<T>(path: string): Promise<T> {
+  const pin = getPin();
+  const res = await fetch(path, {
+    headers: pin ? { "x-admin-pin": pin } : {},
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+interface TeamDistItem {
+  team_id: number | null;
+  count: number;
+}
+
+interface RecentUser {
+  nickname: string;
+  team_id: number | null;
+  created_at: string;
+}
+
+interface UsersResponse {
+  totalUsers: number;
+  teamDistribution: TeamDistItem[];
+  recentUsers: RecentUser[];
+}
+
+interface DailyStat {
+  date: string;
+  new_users: number;
+  uv: number;
 }
 
 export default function AdminUsersPage() {
-  const stats = useMemo(() => generateDailyStats(), []);
+  const [loading, setLoading] = useState(true);
+  const [usersData, setUsersData] = useState<UsersResponse | null>(null);
+  const [statsData, setStatsData] = useState<DailyStat[]>([]);
 
-  const signupVsUv = stats.map((s) => ({
+  useEffect(() => {
+    async function load() {
+      try {
+        const [users, stats] = await Promise.all([
+          apiFetch<UsersResponse>("/api/admin/users"),
+          apiFetch<DailyStat[]>("/api/admin/stats?days=30"),
+        ]);
+        setUsersData(users);
+        setStatsData(stats);
+      } catch (e) {
+        console.error("Failed to load admin users data:", e);
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Loader2 className="w-8 h-8 animate-spin text-[#636366]" />
+      </div>
+    );
+  }
+
+  if (!usersData) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-[#636366]">
+        <Users className="w-10 h-10 mb-2" />
+        <p>데이터를 불러올 수 없습니다</p>
+      </div>
+    );
+  }
+
+  // Team distribution pie data
+  const pieData = usersData.teamDistribution.map((item) => {
+    if (item.team_id === null) {
+      return { name: "미선택", value: item.count, color: "#636366" };
+    }
+    const team = TEAM_MAP[item.team_id];
+    return {
+      name: team?.name ?? `팀${item.team_id}`,
+      value: item.count,
+      color: team?.color ?? "#636366",
+    };
+  });
+
+  // Signup vs UV chart data
+  const signupVsUv = statsData.map((s) => ({
     date: s.date.slice(5),
-    가입자: s.newUsers,
+    가입자: s.new_users,
     UV: s.uv,
   }));
 
-  // Simulate DAU/WAU/MAU
-  const dauWauMau = stats.map((s, i) => ({
-    date: s.date.slice(5),
-    DAU: s.uv,
-    WAU: Math.round(s.uv * 2.5 + i * 10),
-    MAU: Math.round(s.uv * 5 + i * 20),
+  // Recent users with mapped team names
+  const recentUsers = usersData.recentUsers.map((u) => ({
+    nickname: u.nickname,
+    team: u.team_id !== null ? (TEAM_MAP[u.team_id]?.name ?? "미선택") : "미선택",
+    joinedAt: new Date(u.created_at).toLocaleString("ko-KR"),
   }));
-
-  /* eslint-disable react-hooks/purity */
-  const recentUsers = Array.from({ length: 20 }, (_, i) => ({
-    id: i + 1,
-    nickname: `유저${1000 + i}`,
-    team: TEAM_DISTRIBUTION[i % 10].team,
-    joinedAt: new Date(Date.now() - i * 3600000 * 4).toLocaleString("ko-KR"),
-    posts: Math.floor(Math.random() * 20),
-  }));
-  /* eslint-enable react-hooks/purity */
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">유저 분석</h1>
 
+      {/* KPI — Total Users */}
+      <div className="glass-card p-5 flex items-center gap-3">
+        <Users className="w-6 h-6 text-[#6366F1]" />
+        <span className="text-lg font-semibold">
+          총 가입자 <span className="tabular-nums">{usersData.totalUsers.toLocaleString()}</span>명
+        </span>
+      </div>
+
       {/* Signup vs UV */}
       <div className="glass-card p-5">
         <h2 className="text-lg font-semibold mb-4">가입자 vs UV 추이</h2>
-        <ResponsiveContainer width="100%" height={280}>
-          <LineChart data={signupVsUv}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-            <XAxis dataKey="date" stroke="#636366" fontSize={12} />
-            <YAxis yAxisId="left" stroke="#636366" fontSize={12} />
-            <YAxis yAxisId="right" orientation="right" stroke="#636366" fontSize={12} />
-            <Tooltip {...tooltipStyle} />
-            <Legend />
-            <Line yAxisId="right" type="monotone" dataKey="UV" stroke="#6366F1" strokeWidth={2} dot={false} />
-            <Line yAxisId="left" type="monotone" dataKey="가입자" stroke="#FFD60A" strokeWidth={2} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
+        {signupVsUv.length > 0 ? (
+          <ResponsiveContainer width="100%" height={280}>
+            <LineChart data={signupVsUv}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+              <XAxis dataKey="date" stroke="#636366" fontSize={12} />
+              <YAxis yAxisId="left" stroke="#636366" fontSize={12} />
+              <YAxis yAxisId="right" orientation="right" stroke="#636366" fontSize={12} />
+              <Tooltip {...tooltipStyle} />
+              <Legend />
+              <Line yAxisId="right" type="monotone" dataKey="UV" stroke="#6366F1" strokeWidth={2} dot={false} />
+              <Line yAxisId="left" type="monotone" dataKey="가입자" stroke="#FFD60A" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="flex flex-col items-center justify-center h-[280px] text-[#636366]">
+            <BarChart3 className="w-8 h-8 mb-2" />
+            <p>데이터 수집 전</p>
+          </div>
+        )}
       </div>
 
-      {/* DAU / WAU / MAU */}
+      {/* DAU / WAU / MAU — empty state */}
       <div className="glass-card p-5">
         <h2 className="text-lg font-semibold mb-4">DAU / WAU / MAU</h2>
-        <ResponsiveContainer width="100%" height={280}>
-          <LineChart data={dauWauMau}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-            <XAxis dataKey="date" stroke="#636366" fontSize={12} />
-            <YAxis stroke="#636366" fontSize={12} />
-            <Tooltip {...tooltipStyle} />
-            <Legend />
-            <Line type="monotone" dataKey="DAU" stroke="#6366F1" strokeWidth={2} dot={false} />
-            <Line type="monotone" dataKey="WAU" stroke="#30D158" strokeWidth={2} dot={false} />
-            <Line type="monotone" dataKey="MAU" stroke="#FF453A" strokeWidth={2} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
+        <div className="flex flex-col items-center justify-center h-[280px] text-[#636366]">
+          <BarChart3 className="w-8 h-8 mb-2" />
+          <p>DAU/WAU/MAU — 수집 체계 준비 중</p>
+        </div>
       </div>
 
-      {/* Team + Level Distribution */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="glass-card p-5">
-          <h2 className="text-lg font-semibold mb-4">팀별 분포</h2>
+      {/* Team Distribution */}
+      <div className="glass-card p-5">
+        <h2 className="text-lg font-semibold mb-4">팀별 분포</h2>
+        {pieData.length > 0 ? (
           <ResponsiveContainer width="100%" height={280}>
             <PieChart>
               <Pie
-                data={TEAM_DISTRIBUTION}
+                data={pieData}
                 dataKey="value"
-                nameKey="team"
+                nameKey="name"
                 cx="50%"
                 cy="50%"
                 innerRadius={60}
                 outerRadius={100}
                 paddingAngle={2}
-                label={({ name, value }) => `${name ?? ""} ${value}%`}
+                label={({ name, value }) => `${name ?? ""} ${value}`}
                 fontSize={11}
               >
-                {TEAM_DISTRIBUTION.map((entry) => (
-                  <Cell key={entry.team} fill={entry.color} />
+                {pieData.map((entry, idx) => (
+                  <Cell key={idx} fill={entry.color} />
                 ))}
               </Pie>
               <Tooltip {...tooltipStyle} />
             </PieChart>
           </ResponsiveContainer>
-        </div>
-
-        <div className="glass-card p-5">
-          <h2 className="text-lg font-semibold mb-4">레벨 분포</h2>
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={LEVEL_DISTRIBUTION}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-              <XAxis dataKey="level" stroke="#636366" fontSize={11} />
-              <YAxis stroke="#636366" fontSize={12} />
-              <Tooltip {...tooltipStyle} />
-              <Bar dataKey="count" fill="#6366F1" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center h-[280px] text-[#636366]">
+            <Users className="w-8 h-8 mb-2" />
+            <p>팀 분포 데이터 없음</p>
+          </div>
+        )}
       </div>
-
-      {/* Cohort Heatmap */}
-      <CohortHeatmap />
 
       {/* Recent Users */}
       <div className="glass-card p-5 overflow-x-auto">
         <h2 className="text-lg font-semibold mb-4">최근 가입자</h2>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-white/8">
-              <th className="text-left py-2 text-[#8E8E93] font-medium">닉네임</th>
-              <th className="text-left py-2 text-[#8E8E93] font-medium">팀</th>
-              <th className="text-left py-2 text-[#8E8E93] font-medium">가입일</th>
-              <th className="text-right py-2 text-[#8E8E93] font-medium">게시글</th>
-            </tr>
-          </thead>
-          <tbody>
-            {recentUsers.map((u) => (
-              <tr key={u.id} className="border-b border-white/5">
-                <td className="py-2.5">{u.nickname}</td>
-                <td className="py-2.5 text-[#8E8E93]">{u.team}</td>
-                <td className="py-2.5 text-[#8E8E93]">{u.joinedAt}</td>
-                <td className="py-2.5 text-right tabular-nums">{u.posts}</td>
+        {recentUsers.length > 0 ? (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/8">
+                <th className="text-left py-2 text-[#8E8E93] font-medium">닉네임</th>
+                <th className="text-left py-2 text-[#8E8E93] font-medium">팀</th>
+                <th className="text-left py-2 text-[#8E8E93] font-medium">가입일</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {recentUsers.map((u, i) => (
+                <tr key={i} className="border-b border-white/5">
+                  <td className="py-2.5">{u.nickname}</td>
+                  <td className="py-2.5 text-[#8E8E93]">{u.team}</td>
+                  <td className="py-2.5 text-[#8E8E93]">{u.joinedAt}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div className="flex flex-col items-center justify-center h-[200px] text-[#636366]">
+            <Users className="w-8 h-8 mb-2" />
+            <p>최근 가입자 없음</p>
+          </div>
+        )}
       </div>
     </div>
   );
