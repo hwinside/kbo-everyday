@@ -105,7 +105,7 @@ export default function AdminJobsPage() {
   useEffect(() => {
     async function fetchLogs() {
       try {
-        const pin = sessionStorage.getItem("admin-pin") ?? "";
+        const pin = sessionStorage.getItem("admin_pin") || "";
         const res = await fetch("/api/admin/jobs", {
           headers: { "x-admin-pin": pin },
         });

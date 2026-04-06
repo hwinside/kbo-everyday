@@ -55,7 +55,7 @@ interface ContentData {
 
 function getPin(): string | null {
   if (typeof window === "undefined") return null;
-  return sessionStorage.getItem("admin-pin");
+  return sessionStorage.getItem("admin_pin") || "";
 }
 
 async function apiFetch(path: string): Promise<ContentData> {

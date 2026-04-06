@@ -106,7 +106,7 @@ export default function AdminFeedbackPage() {
 
   const getPin = useCallback(() => {
     if (typeof window !== "undefined") {
-      return sessionStorage.getItem("admin-pin") ?? "";
+      return sessionStorage.getItem("admin_pin") || "";
     }
     return "";
   }, []);

@@ -41,7 +41,7 @@ const tooltipStyle = {
 
 function getPin(): string | null {
   if (typeof window === "undefined") return null;
-  return sessionStorage.getItem("admin-pin");
+  return sessionStorage.getItem("admin_pin") || "";
 }
 
 async function apiFetch<T>(path: string): Promise<T> {
@@ -86,10 +86,10 @@ export default function AdminUsersPage() {
       try {
         const [users, stats] = await Promise.all([
           apiFetch<UsersResponse>("/api/admin/users"),
-          apiFetch<DailyStat[]>("/api/admin/stats?days=30"),
+          apiFetch<{ data: DailyStat[] }>("/api/admin/stats?days=30"),
         ]);
         setUsersData(users);
-        setStatsData(stats);
+        setStatsData(stats.data ?? []);
       } catch (e) {
         console.error("Failed to load admin users data:", e);
       } finally {

@@ -46,22 +46,26 @@ interface UsersResponse {
 }
 
 interface ContentResponse {
-  daily: { date: string; posts: number; comments: number; photos: number }[];
+  dailyPosts: { date: string; posts: number; comments: number; photos: number }[];
 }
 
 interface StatsResponse {
   data: { date: string; uv: number; pv: number }[];
 }
 
+interface FeedbackResponse {
+  data: FeedbackItem[];
+}
+
 interface JobsResponse {
-  logs: { id: number; status: string }[];
+  data: { id: number; status: string }[];
 }
 
 interface OverviewData {
   users: UsersResponse;
   content: ContentResponse;
   stats: StatsResponse;
-  feedback: FeedbackItem[];
+  feedback: FeedbackResponse;
   jobs: JobsResponse;
 }
 
@@ -118,7 +122,7 @@ export default function AdminOverviewPage() {
       apiFetch<UsersResponse>("/api/admin/users"),
       apiFetch<ContentResponse>("/api/admin/content?days=1"),
       apiFetch<StatsResponse>("/api/admin/stats?days=30"),
-      apiFetch<FeedbackItem[]>("/api/admin/feedback?status=received"),
+      apiFetch<FeedbackResponse>("/api/admin/feedback?status=received"),
       apiFetch<JobsResponse>("/api/admin/jobs?status=error&limit=10"),
     ])
       .then(([users, content, stats, feedback, jobs]) => {
@@ -142,13 +146,13 @@ export default function AdminOverviewPage() {
   /* ── extract KPI values ── */
   const todaySignups = data?.users?.todaySignups ?? 0;
 
-  const todayContent = data?.content?.daily ?? [];
+  const todayContent = data?.content?.dailyPosts ?? [];
   const todayPosts = todayContent.reduce((s, d) => s + (d.posts ?? 0), 0);
   const todayComments = todayContent.reduce((s, d) => s + (d.comments ?? 0), 0);
   const todayPhotos = todayContent.reduce((s, d) => s + (d.photos ?? 0), 0);
 
-  const pendingFeedback = data?.feedback?.length ?? 0;
-  const crawlerErrors = data?.jobs?.logs?.filter((l) => l.status === "error").length ?? 0;
+  const pendingFeedback = data?.feedback?.data?.length ?? 0;
+  const crawlerErrors = data?.jobs?.data?.filter((l) => l.status === "error").length ?? 0;
 
   /* ── traffic chart data ── */
   const statsData = data?.stats?.data ?? [];
@@ -159,7 +163,7 @@ export default function AdminOverviewPage() {
   }));
 
   /* ── recent feedback (3) ── */
-  const recentFeedback = (data?.feedback ?? []).slice(0, 3);
+  const recentFeedback = (data?.feedback?.data ?? []).slice(0, 3);
 
   /* ── recent users (5) ── */
   const recentUsers = (data?.users?.recentUsers ?? []).slice(0, 5);
