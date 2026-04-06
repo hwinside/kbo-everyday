@@ -53,11 +53,12 @@ function fetchBatterStats(roster: RosterPlayer[]): Promise<PlayerStat[]> {
     .then((rows) =>
       rows.map((c, i) => {
         const name = c[1] || "";
-        const found = roster.find((p) => p.name === name);
+        const team = c[2] || "";
+        const found = roster.find((p) => p.name === name && p.team === team) || roster.find((p) => p.name === name);
         return {
           rank: i + 1,
           name,
-          team: c[2] || "",
+          team,
           avg: c[3] || ".000",
           games: parseInt(c[4]) || 0,
           pa: parseInt(c[5]) || 0,
@@ -80,11 +81,12 @@ function fetchBatterStats(roster: RosterPlayer[]): Promise<PlayerStat[]> {
 
 function parsePitcherRow(c: string[], roster: RosterPlayer[]): PlayerStat {
   const name = c[1] || "";
-  const found = roster.find((p) => p.name === name);
+  const team = c[2] || "";
+  const found = roster.find((p) => p.name === name && p.team === team) || roster.find((p) => p.name === name);
   return {
     rank: 0,
     name,
-    team: c[2] || "",
+    team,
     era: c[3] || "0.00",
     games: parseInt(c[4]) || 0,
     wins: parseInt(c[5]) || 0,
