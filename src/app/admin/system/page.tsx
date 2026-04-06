@@ -151,10 +151,11 @@ export default function AdminSystemPage() {
   }
 
   /* ── API usage chart data ── */
+  const apiUsageSource = (apiUsage as Record<string, unknown>)?.source === "deployments" ? "일별 배포 횟수" : "API 호출량";
   const apiUsageData = (() => {
     if (!apiUsage || typeof apiUsage !== "object") return [];
     const u = apiUsage as Record<string, unknown>;
-    if (u.fallback) return [];
+    if (u.fallback && (!u.usage || !(u.usage as unknown[]).length)) return [];
     if (Array.isArray(u.usage)) {
       return (u.usage as { date?: string; requests?: number }[]).map((d) => ({
         date: d.date ?? "",
@@ -181,7 +182,7 @@ export default function AdminSystemPage() {
         <div className="glass-card p-5">
           <div className="flex items-center gap-2 mb-4">
             <Globe className="w-5 h-5 text-[#6366F1]" />
-            <h2 className="text-lg font-semibold">API 호출량 (7일)</h2>
+            <h2 className="text-lg font-semibold">{apiUsageSource} (7일)</h2>
           </div>
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={apiUsageData}>
