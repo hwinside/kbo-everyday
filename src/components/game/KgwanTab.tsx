@@ -420,6 +420,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
     standingsImpact?: string | null;
   } | null>(null);
   const [llmLoading, setLlmLoading] = useState(false);
+  const regeneratingRef = useRef(false); // de-dupe: prevent duplicate background POST
 
   // BoxScore가 실질적 데이터를 갖고 있는지 확인 (빈 배열이면 무의미)
   const hasRealBoxScore = boxScore &&
@@ -437,6 +438,52 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
         const cacheData = await cacheRes.json();
         if (cacheData.summary) {
           setLlmSummary(cacheData.summary);
+          // If outdated, trigger background re-generation (don't block UI)
+          if (cacheData.outdated && hasRealBoxScore && boxScore && !regeneratingRef.current) {
+            regeneratingRef.current = true; // prevent re-entry on re-render
+            const homeR = boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);
+            const awayR = boxScore.awayBatters.reduce((s, b) => s + b.runs, 0);
+            const totalAB = [...boxScore.awayBatters, ...boxScore.homeBatters].reduce((s, b) => s + b.atBats, 0);
+            if (totalAB > 0) {
+              const payload = {
+                gameId,
+                awayTeam: awayTeam.shortName,
+                homeTeam: homeTeam.shortName,
+                awayScore: awayR,
+                homeScore: homeR,
+                linescore: linescore ? {
+                  away: { innings: linescore.away.innings, R: linescore.away.R, H: linescore.away.H, E: linescore.away.E },
+                  home: { innings: linescore.home.innings, R: linescore.home.R, H: linescore.home.H, E: linescore.home.E },
+                } : undefined,
+                awayBatters: boxScore.awayBatters.map(b => ({
+                  name: b.name, ab: b.atBats, r: b.runs, h: b.hits,
+                  rbi: b.rbi, hr: b.hr, bb: b.bb, so: b.so, avg: b.avg || "",
+                })),
+                homeBatters: boxScore.homeBatters.map(b => ({
+                  name: b.name, ab: b.atBats, r: b.runs, h: b.hits,
+                  rbi: b.rbi, hr: b.hr, bb: b.bb, so: b.so, avg: b.avg || "",
+                })),
+                awayPitchers: boxScore.awayPitchers.map(p => ({
+                  name: p.name, ip: p.inningsPitched, h: p.hits, r: p.runs,
+                  er: p.earnedRuns, bb: p.walks, so: p.strikeouts, hr: p.hr,
+                  np: p.pitchCount, result: p.decision || undefined,
+                })),
+                homePitchers: boxScore.homePitchers.map(p => ({
+                  name: p.name, ip: p.inningsPitched, h: p.hits, r: p.runs,
+                  er: p.earnedRuns, bb: p.walks, so: p.strikeouts, hr: p.hr,
+                  np: p.pitchCount, result: p.decision || undefined,
+                })),
+              };
+              // Fire-and-forget background re-generation
+              fetch("/api/game-summary", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+              }).then(res => res.json()).then(data => {
+                if (data.summary) setLlmSummary(data.summary);
+              }).catch(() => {});
+            }
+          }
           return;
         }
 

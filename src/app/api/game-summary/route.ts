@@ -316,17 +316,19 @@ function sanitizePlayerNames(data: BoxScoreInput): BoxScoreInput {
 // ===== Cache =====
 
 function cacheKey(gameId: string) {
-  return `${gameId}_v${PROMPT_VERSION}`;
+  return gameId; // pure gameId, no version suffix
 }
 
-async function getCached(gameId: string) {
+async function getCached(gameId: string): Promise<{ summary: Record<string, unknown>; outdated: boolean } | null> {
   try {
     const { data } = await supabase
       .from("game_summaries")
-      .select("summary")
+      .select("summary, prompt_version")
       .eq("game_id", cacheKey(gameId))
       .single();
-    return data?.summary ?? null;
+    if (!data?.summary) return null;
+    const outdated = (data.prompt_version ?? 0) < PROMPT_VERSION;
+    return { summary: data.summary as Record<string, unknown>, outdated };
   } catch {
     return null;
   }
@@ -336,7 +338,10 @@ async function saveCache(gameId: string, summary: Record<string, unknown>) {
   try {
     await supabase
       .from("game_summaries")
-      .upsert({ game_id: cacheKey(gameId), summary, created_at: new Date().toISOString() }, { onConflict: "game_id" });
+      .upsert(
+        { game_id: cacheKey(gameId), summary, prompt_version: PROMPT_VERSION, created_at: new Date().toISOString() },
+        { onConflict: "game_id" }
+      );
   } catch { /* ignore */ }
 }
 
@@ -361,7 +366,11 @@ export async function GET(req: NextRequest) {
 
   const cached = await getCached(gameId);
   if (cached) {
-    return NextResponse.json({ summary: normalizeSummary(cached as Record<string, unknown>), source: "cache" });
+    return NextResponse.json({
+      summary: normalizeSummary(cached.summary),
+      source: "cache",
+      outdated: cached.outdated,
+    });
   }
   return NextResponse.json({ summary: null, source: "none" });
 }
@@ -387,8 +396,8 @@ export async function POST(req: NextRequest) {
 
   // 캐시 확인
   const cached = await getCached(body.gameId);
-  if (cached) {
-    return NextResponse.json({ summary: normalizeSummary(cached as Record<string, unknown>), source: "cache" });
+  if (cached && !cached.outdated) {
+    return NextResponse.json({ summary: normalizeSummary(cached.summary), source: "cache" });
   }
 
   // 맥락 데이터 병렬 조회 (실패해도 진행)

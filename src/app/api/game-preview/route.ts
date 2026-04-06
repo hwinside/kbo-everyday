@@ -355,17 +355,19 @@ ${standingsSection}${seriesSection}${recentFormSection}
 }
 
 function cacheKey(gameId: string) {
-  return `preview_${gameId}_v${PREVIEW_VERSION}`;
+  return `preview_${gameId}`; // no version suffix
 }
 
-async function getCached(gameId: string) {
+async function getCached(gameId: string): Promise<{ summary: Record<string, unknown>; outdated: boolean } | null> {
   try {
     const { data } = await supabase
       .from("game_summaries")
-      .select("summary")
+      .select("summary, prompt_version")
       .eq("game_id", cacheKey(gameId))
       .single();
-    return data?.summary ?? null;
+    if (!data?.summary) return null;
+    const outdated = (data.prompt_version ?? 0) < PREVIEW_VERSION;
+    return { summary: data.summary as Record<string, unknown>, outdated };
   } catch {
     return null;
   }
@@ -376,7 +378,7 @@ async function saveCache(gameId: string, summary: Record<string, unknown>) {
     await supabase
       .from("game_summaries")
       .upsert(
-        { game_id: cacheKey(gameId), summary, created_at: new Date().toISOString() },
+        { game_id: cacheKey(gameId), summary, prompt_version: PREVIEW_VERSION, created_at: new Date().toISOString() },
         { onConflict: "game_id" }
       );
   } catch { /* ignore */ }
@@ -388,7 +390,7 @@ export async function GET(req: NextRequest) {
 
   const cached = await getCached(gameId);
   if (cached) {
-    return NextResponse.json({ preview: cached, source: "cache" });
+    return NextResponse.json({ preview: cached.summary, source: "cache", outdated: cached.outdated });
   }
   return NextResponse.json({ preview: null, source: "none" });
 }
@@ -418,8 +420,8 @@ export async function POST(req: NextRequest) {
 
   // 캐시 확인
   const cached = await getCached(body.gameId);
-  if (cached) {
-    return NextResponse.json({ preview: cached, source: "cache" });
+  if (cached && !cached.outdated) {
+    return NextResponse.json({ preview: cached.summary, source: "cache" });
   }
 
   try {
