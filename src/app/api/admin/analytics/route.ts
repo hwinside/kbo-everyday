@@ -41,22 +41,24 @@ export async function GET(req: NextRequest) {
         pageViews: Number(r.metricValues![1].value),
       }));
 
-      // WAU: 7-day rolling window
-      const wau =
-        daily.length >= 7
-          ? daily.slice(-7).reduce((s, d) => s + d.activeUsers, 0)
-          : daily.reduce((s, d) => s + d.activeUsers, 0);
+      // Today's DAU
+      const todayDau = daily.length > 0 ? daily[daily.length - 1].activeUsers : 0;
 
-      // MAU: 30-day total unique (use GA4 metric directly)
+      // WAU: 7-day unique active users (single GA4 query, NOT sum of daily)
+      const [wauRes] = await client.runReport({
+        property: PROPERTY,
+        dateRanges: [{ startDate: "7daysAgo", endDate: "today" }],
+        metrics: [{ name: "activeUsers" }],
+      });
+      const wau = Number(wauRes.rows?.[0]?.metricValues?.[0]?.value ?? 0);
+
+      // MAU: 30-day unique active users (single GA4 query)
       const [mauRes] = await client.runReport({
         property: PROPERTY,
         dateRanges: [{ startDate: "30daysAgo", endDate: "today" }],
         metrics: [{ name: "activeUsers" }],
       });
       const mau = Number(mauRes.rows?.[0]?.metricValues?.[0]?.value ?? 0);
-
-      // Today's DAU
-      const todayDau = daily.length > 0 ? daily[daily.length - 1].activeUsers : 0;
 
       return NextResponse.json({ daily, dau: todayDau, wau, mau });
     }
@@ -81,41 +83,41 @@ export async function GET(req: NextRequest) {
     }
 
     if (type === "cohort") {
-      // Cohort — weekly retention Week 0~4
+      // Weekly user breakdown — new vs returning
+      // Note: This is NOT cohort retention analysis.
+      // Label: "주간 신규/복귀 유저" (not "코호트")
       const [response] = await client.runReport({
         property: PROPERTY,
         dateRanges: [{ startDate: "35daysAgo", endDate: "today" }],
         dimensions: [
           { name: "newVsReturning" },
-          { name: "week" },
+          { name: "isoYearIsoWeek" },
         ],
         metrics: [{ name: "activeUsers" }],
-        orderBys: [{ dimension: { dimensionName: "week" } }],
+        orderBys: [{ dimension: { dimensionName: "isoYearIsoWeek" } }],
       });
 
-      // Build a simple weekly breakdown
       const weeks: Record<string, { new: number; returning: number }> = {};
       for (const row of response.rows ?? []) {
-        const week = row.dimensionValues![1].value!;
-        const type = row.dimensionValues![0].value!;
+        const week = row.dimensionValues![0].value!;
+        const segment = row.dimensionValues![0].value!;
+        const weekKey = row.dimensionValues![1].value!;
         const users = Number(row.metricValues![0].value);
-        if (!weeks[week]) weeks[week] = { new: 0, returning: 0 };
-        if (type === "new") weeks[week].new = users;
-        else weeks[week].returning = users;
+        if (!weeks[weekKey]) weeks[weekKey] = { new: 0, returning: 0 };
+        if (segment === "new") weeks[weekKey].new = users;
+        else weeks[weekKey].returning = users;
       }
 
-      const cohort = Object.entries(weeks)
+      const weeklyUsers = Object.entries(weeks)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([week, data]) => ({
           week,
           newUsers: data.new,
           returningUsers: data.returning,
-          retention: data.new > 0
-            ? Math.round((data.returning / (data.new + data.returning)) * 100)
-            : 0,
+          total: data.new + data.returning,
         }));
 
-      return NextResponse.json({ cohort });
+      return NextResponse.json({ weeklyUsers });
     }
 
     return NextResponse.json({ error: "Invalid type" }, { status: 400 });

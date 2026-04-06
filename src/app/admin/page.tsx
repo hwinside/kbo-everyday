@@ -77,7 +77,7 @@ interface PagesResponse {
 }
 
 interface CohortResponse {
-  cohort: { week: string; newUsers: number; returningUsers: number; retention: number }[];
+  weeklyUsers: { week: string; newUsers: number; returningUsers: number; total: number }[];
 }
 
 interface OverviewData {
@@ -223,7 +223,7 @@ export default function AdminOverviewPage() {
   const popularPages = data?.ga4Pages?.pages ?? [];
 
   /* ── cohort ── */
-  const cohortData = data?.ga4Cohort?.cohort ?? [];
+  const cohortData = data?.ga4Cohort?.weeklyUsers ?? [];
 
   /* ── KPI definitions ── */
   const kpis: KpiDef[] = [
@@ -335,7 +335,7 @@ export default function AdminOverviewPage() {
         <div className="glass-card p-5">
           <div className="flex items-center gap-2 mb-4">
             <TrendingUp className="w-5 h-5 text-[#30D158]" />
-            <h2 className="text-lg font-semibold">주간 리텐션</h2>
+            <h2 className="text-lg font-semibold">주간 신규/복귀 유저</h2>
           </div>
           {cohortData.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8 text-[#636366]">
