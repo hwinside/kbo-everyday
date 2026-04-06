@@ -10,10 +10,21 @@ function verifyPin(req: NextRequest): boolean {
  * (Replaces @google-analytics/data SDK to avoid bundle size issues on Vercel)
  */
 async function getAccessToken(): Promise<string> {
+  let rawJson: string;
+
+  // Support base64-encoded key (recommended for Vercel env)
+  const b64 = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_B64;
   const raw = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-  if (!raw) throw new Error("GOOGLE_SERVICE_ACCOUNT_KEY not set");
-  const creds = JSON.parse(raw);
-  // Fix double-escaped newlines from Vercel env
+
+  if (b64) {
+    rawJson = Buffer.from(b64, "base64").toString("utf-8");
+  } else if (raw) {
+    rawJson = raw;
+  } else {
+    throw new Error("GOOGLE_SERVICE_ACCOUNT_KEY not set");
+  }
+
+  const creds = JSON.parse(rawJson);
   const privateKey = (creds.private_key as string).replace(/\\n/g, "\n");
 
   const now = Math.floor(Date.now() / 1000);
@@ -71,12 +82,12 @@ export async function GET(req: NextRequest) {
 
   const type = req.nextUrl.searchParams.get("type") ?? "dau";
 
-  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY || !process.env.GA4_PROPERTY_ID) {
+  if ((!process.env.GOOGLE_SERVICE_ACCOUNT_KEY && !process.env.GOOGLE_SERVICE_ACCOUNT_KEY_B64) || !process.env.GA4_PROPERTY_ID) {
     return NextResponse.json(
       {
         error: "GA4 not configured",
         details: {
-          hasKey: !!process.env.GOOGLE_SERVICE_ACCOUNT_KEY,
+          hasKey: !!(process.env.GOOGLE_SERVICE_ACCOUNT_KEY || process.env.GOOGLE_SERVICE_ACCOUNT_KEY_B64),
           hasPropertyId: !!process.env.GA4_PROPERTY_ID,
         },
       },
