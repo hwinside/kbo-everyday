@@ -10,6 +10,8 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
+  BarChart,
+  Bar,
 } from "recharts";
 import {
   Loader2,
@@ -20,6 +22,8 @@ import {
   Camera,
   AlertTriangle,
   Bot,
+  Globe,
+  TrendingUp,
 } from "lucide-react";
 import type { FeedbackItem } from "@/lib/admin/types";
 
@@ -61,12 +65,30 @@ interface JobsResponse {
   data: { id: number; status: string }[];
 }
 
+interface DauResponse {
+  daily: { date: string; activeUsers: number; pageViews: number }[];
+  dau: number;
+  wau: number;
+  mau: number;
+}
+
+interface PagesResponse {
+  pages: { path: string; views: number }[];
+}
+
+interface CohortResponse {
+  cohort: { week: string; newUsers: number; returningUsers: number; retention: number }[];
+}
+
 interface OverviewData {
   users: UsersResponse;
   content: ContentResponse;
   stats: StatsResponse;
   feedback: FeedbackResponse;
   jobs: JobsResponse;
+  ga4Dau: DauResponse | null;
+  ga4Pages: PagesResponse | null;
+  ga4Cohort: CohortResponse | null;
 }
 
 /* ── chart tooltip style ─────────────────────────────── */
@@ -85,7 +107,7 @@ const chartTooltipStyle = {
 
 interface KpiDef {
   label: string;
-  value: number;
+  value: number | string;
   icon: React.ReactNode;
 }
 
@@ -96,7 +118,9 @@ function KpiCard({ label, value, icon }: KpiDef) {
         {icon}
         <p className="text-sm text-[#8E8E93]">{label}</p>
       </div>
-      <p className="text-3xl font-bold tabular-nums">{value.toLocaleString()}</p>
+      <p className="text-3xl font-bold tabular-nums">
+        {typeof value === "number" ? value.toLocaleString() : value}
+      </p>
     </div>
   );
 }
@@ -111,6 +135,14 @@ const feedbackDotColor: Record<FeedbackItem["type"], string> = {
   other: "#8E8E93",
 };
 
+/* ── date formatting helper ──────────────────────────── */
+
+function formatGaDate(d: string) {
+  // GA4 returns "20260405" format
+  if (d.length === 8) return `${d.slice(4, 6)}/${d.slice(6)}`;
+  return d.slice(5);
+}
+
 /* ── page component ──────────────────────────────────── */
 
 export default function AdminOverviewPage() {
@@ -118,19 +150,28 @@ export default function AdminOverviewPage() {
   const [data, setData] = useState<OverviewData | null>(null);
 
   useEffect(() => {
+    const fetchGA4 = async <T,>(type: string): Promise<T | null> => {
+      try {
+        return await apiFetch<T>(`/api/admin/analytics?type=${type}`);
+      } catch {
+        return null;
+      }
+    };
+
     Promise.all([
       apiFetch<UsersResponse>("/api/admin/users"),
       apiFetch<ContentResponse>("/api/admin/content?days=1"),
       apiFetch<StatsResponse>("/api/admin/stats?days=30"),
       apiFetch<FeedbackResponse>("/api/admin/feedback?status=received"),
       apiFetch<JobsResponse>("/api/admin/jobs?status=error&limit=10"),
+      fetchGA4<DauResponse>("dau"),
+      fetchGA4<PagesResponse>("pages"),
+      fetchGA4<CohortResponse>("cohort"),
     ])
-      .then(([users, content, stats, feedback, jobs]) => {
-        setData({ users, content, stats, feedback, jobs });
+      .then(([users, content, stats, feedback, jobs, ga4Dau, ga4Pages, ga4Cohort]) => {
+        setData({ users, content, stats, feedback, jobs, ga4Dau, ga4Pages, ga4Cohort });
       })
-      .catch(() => {
-        /* silently fail — UI will show zeros / empty states */
-      })
+      .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
@@ -154,19 +195,35 @@ export default function AdminOverviewPage() {
   const pendingFeedback = data?.feedback?.data?.length ?? 0;
   const crawlerErrors = data?.jobs?.data?.filter((l) => l.status === "error").length ?? 0;
 
-  /* ── traffic chart data ── */
+  /* ── GA4 data ── */
+  const ga4Daily = data?.ga4Dau?.daily ?? [];
+  const ga4ChartData = ga4Daily.map((d) => ({
+    date: formatGaDate(d.date),
+    DAU: d.activeUsers,
+    PV: d.pageViews,
+  }));
+
+  /* ── traffic chart data (fallback to admin_daily_stats if no GA4) ── */
   const statsData = data?.stats?.data ?? [];
-  const chartData = statsData.map((s) => ({
+  const fallbackChartData = statsData.map((s) => ({
     date: s.date.slice(5),
     UV: s.uv,
     PV: s.pv,
   }));
+
+  const hasGA4 = ga4ChartData.length > 0;
 
   /* ── recent feedback (3) ── */
   const recentFeedback = (data?.feedback?.data ?? []).slice(0, 3);
 
   /* ── recent users (5) ── */
   const recentUsers = (data?.users?.recentUsers ?? []).slice(0, 5);
+
+  /* ── popular pages ── */
+  const popularPages = data?.ga4Pages?.pages ?? [];
+
+  /* ── cohort ── */
+  const cohortData = data?.ga4Cohort?.cohort ?? [];
 
   /* ── KPI definitions ── */
   const kpis: KpiDef[] = [
@@ -177,6 +234,15 @@ export default function AdminOverviewPage() {
     { label: "미처리 피드백", value: pendingFeedback, icon: <AlertTriangle className="w-4 h-4 text-[#FF453A]" /> },
     { label: "크롤러 실패", value: crawlerErrors, icon: <Bot className="w-4 h-4 text-[#FF453A]" /> },
   ];
+
+  /* ── GA4 DAU/WAU/MAU KPIs ── */
+  const ga4Kpis: KpiDef[] = data?.ga4Dau
+    ? [
+        { label: "DAU (오늘)", value: data.ga4Dau.dau, icon: <TrendingUp className="w-4 h-4 text-[#6366F1]" /> },
+        { label: "WAU (7일)", value: data.ga4Dau.wau, icon: <TrendingUp className="w-4 h-4 text-[#30D158]" /> },
+        { label: "MAU (30일)", value: data.ga4Dau.mau, icon: <TrendingUp className="w-4 h-4 text-[#FF9F0A]" /> },
+      ]
+    : [];
 
   return (
     <div className="space-y-6">
@@ -189,17 +255,40 @@ export default function AdminOverviewPage() {
         ))}
       </div>
 
-      {/* Traffic Chart */}
+      {/* GA4 DAU/WAU/MAU */}
+      {ga4Kpis.length > 0 && (
+        <div className="grid grid-cols-3 gap-3">
+          {ga4Kpis.map((k) => (
+            <KpiCard key={k.label} {...k} />
+          ))}
+        </div>
+      )}
+
+      {/* Traffic Chart — GA4 or fallback */}
       <div className="glass-card p-5">
-        <h2 className="text-lg font-semibold mb-4">일별 트래픽 추이 (30일)</h2>
-        {chartData.length === 0 ? (
+        <h2 className="text-lg font-semibold mb-4">
+          {hasGA4 ? "일별 DAU · PV (GA4, 30일)" : "일별 트래픽 추이 (30일)"}
+        </h2>
+        {(hasGA4 ? ga4ChartData : fallbackChartData).length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 gap-3 text-[#636366]">
             <BarChart3 className="w-10 h-10" />
             <p className="text-sm">데이터 수집 전</p>
           </div>
+        ) : hasGA4 ? (
+          <ResponsiveContainer width="100%" height={320}>
+            <LineChart data={ga4ChartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+              <XAxis dataKey="date" stroke="#636366" fontSize={12} />
+              <YAxis stroke="#636366" fontSize={12} />
+              <Tooltip {...chartTooltipStyle} />
+              <Legend />
+              <Line type="monotone" dataKey="DAU" stroke="#6366F1" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="PV" stroke="#30D158" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
         ) : (
           <ResponsiveContainer width="100%" height={320}>
-            <LineChart data={chartData}>
+            <LineChart data={fallbackChartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
               <XAxis dataKey="date" stroke="#636366" fontSize={12} />
               <YAxis stroke="#636366" fontSize={12} />
@@ -210,6 +299,68 @@ export default function AdminOverviewPage() {
             </LineChart>
           </ResponsiveContainer>
         )}
+      </div>
+
+      {/* Popular Pages + Cohort row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Popular Pages */}
+        <div className="glass-card p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Globe className="w-5 h-5 text-[#6366F1]" />
+            <h2 className="text-lg font-semibold">인기 페이지 (7일)</h2>
+          </div>
+          {popularPages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 text-[#636366]">
+              <Globe className="w-10 h-10 mb-3 opacity-40" />
+              <p className="text-sm">데이터 없음</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {popularPages.map((p, i) => (
+                <div key={p.path} className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-xs text-[#636366] w-5 text-right shrink-0">{i + 1}</span>
+                    <span className="text-sm truncate">{p.path}</span>
+                  </div>
+                  <span className="text-sm font-medium tabular-nums text-[#8E8E93] shrink-0">
+                    {p.views.toLocaleString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Cohort Retention */}
+        <div className="glass-card p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <TrendingUp className="w-5 h-5 text-[#30D158]" />
+            <h2 className="text-lg font-semibold">주간 리텐션</h2>
+          </div>
+          {cohortData.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 text-[#636366]">
+              <TrendingUp className="w-10 h-10 mb-3 opacity-40" />
+              <p className="text-sm">데이터 없음</p>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={cohortData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                <XAxis dataKey="week" stroke="#636366" fontSize={12} tickFormatter={(w) => `W${w}`} />
+                <YAxis stroke="#636366" fontSize={12} />
+                <Tooltip
+                  {...chartTooltipStyle}
+                  formatter={(value?: number | string, name?: string) =>
+                    [Number(value ?? 0).toLocaleString(), name === "newUsers" ? "신규" : "복귀"]
+                  }
+                  labelFormatter={(w) => `Week ${w}`}
+                />
+                <Bar dataKey="newUsers" fill="#6366F1" name="신규" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="returningUsers" fill="#30D158" name="복귀" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
       </div>
 
       {/* Bottom row: Recent Feedback + Recent Users */}
