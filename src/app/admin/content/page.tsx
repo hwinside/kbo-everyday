@@ -15,6 +15,7 @@ import {
 } from "recharts";
 import { Loader2, FileText } from "lucide-react";
 import { TEAMS } from "@/lib/constants/teams";
+import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 
 const tooltipStyle = {
   contentStyle: {
@@ -37,9 +38,11 @@ interface PopularPost {
   id: string;
   title: string;
   board_id: string;
+  board_type?: string | null;
   like_count: number;
   comment_count: number;
   created_at: string;
+  image_urls?: string[];
 }
 
 interface TeamActivity {
@@ -67,9 +70,26 @@ async function apiFetch(path: string): Promise<ContentData> {
   return res.json();
 }
 
-function boardIdToTeamName(boardId: string): string {
+function boardIdToTeamName(boardId: string, boardType?: string | null): string {
+  // Determine type: if boardType is set, use it; otherwise infer from boardId format
+  const inferredType = boardType || (TEAMS.some(t => t.slug === boardId || String(t.id) === boardId) ? "team" : "player");
+
+  if (inferredType === "player") {
+    const entry = Object.entries(PLAYER_PHOTO_MAP).find(([, id]) => id === boardId);
+    return entry ? `⚾ ${entry[0]}` : `⚾ 선수 #${boardId}`;
+  }
   const team = TEAMS.find((t) => t.slug === boardId || String(t.id) === boardId);
   return team ? team.shortName : boardId;
+}
+
+function postLabel(p: PopularPost): string {
+  if (p.title && p.title.trim()) return p.title;
+  // Photo posts have no title by design → emoji + name + datetime
+  const isTeam = TEAMS.some(t => t.slug === p.board_id || String(t.id) === p.board_id);
+  const name = boardIdToTeamName(p.board_id, p.board_type);
+  const prefix = isTeam ? "🏟️ " : "";
+  const dt = p.created_at?.slice(0, 16).replace("T", " ").replace(/-/g, ".") ?? "";
+  return `${prefix}${name} · ${dt}`;
 }
 
 export default function AdminContentPage() {
@@ -202,20 +222,20 @@ export default function AdminContentPage() {
                 <th className="text-left py-2 text-[#8E8E93] font-medium">#</th>
                 <th className="text-left py-2 text-[#8E8E93] font-medium">제목</th>
                 <th className="text-left py-2 text-[#8E8E93] font-medium">팀</th>
-                <th className="text-right py-2 text-[#8E8E93] font-medium">반응</th>
-                <th className="text-right py-2 text-[#8E8E93] font-medium">날짜</th>
+                <th className="text-right py-2 text-[#8E8E93] font-medium pr-3">반응</th>
+                <th className="text-right py-2 text-[#8E8E93] font-medium pl-3">날짜</th>
               </tr>
             </thead>
             <tbody>
               {popularPosts.map((p, i) => (
                 <tr key={p.id} className="border-b border-white/5">
                   <td className="py-2.5 text-[#636366]">{i + 1}</td>
-                  <td className="py-2.5 font-medium">{p.title}</td>
-                  <td className="py-2.5 text-[#8E8E93]">{boardIdToTeamName(p.board_id)}</td>
-                  <td className="py-2.5 text-right tabular-nums">
+                  <td className="py-2.5 font-medium max-w-[200px] truncate">{postLabel(p)}</td>
+                  <td className="py-2.5 text-[#8E8E93]">{boardIdToTeamName(p.board_id, p.board_type)}</td>
+                  <td className="py-2.5 text-right tabular-nums pr-3">
                     {(p.like_count + p.comment_count).toLocaleString()}
                   </td>
-                  <td className="py-2.5 text-right text-[#8E8E93]">
+                  <td className="py-2.5 text-right text-[#8E8E93] pl-3">
                     {p.created_at.slice(5, 10)}
                   </td>
                 </tr>

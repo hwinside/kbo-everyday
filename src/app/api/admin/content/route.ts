@@ -61,7 +61,7 @@ export async function GET(req: NextRequest) {
   // Popular posts top 10
   const { data: popularPosts, error: popularError } = await supabase
     .from("posts")
-    .select("id, title, board_id, like_count, comment_count, created_at")
+    .select("id, title, board_id, board_type, like_count, comment_count, created_at, image_urls")
     .order("like_count", { ascending: false })
     .limit(10);
 
