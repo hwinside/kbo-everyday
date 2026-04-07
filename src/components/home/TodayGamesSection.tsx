@@ -64,7 +64,7 @@ function CompactRowCard({ game, isPreseason, isMyGame, myTeamId }: { game: HomeG
           <div className="w-6 h-6 rounded-full bg-gray-100 dark:bg-white p-0.5 flex items-center justify-center flex-shrink-0">
             <Image src={away.logo} alt={away.name} width={16} height={16} unoptimized className="object-contain" />
           </div>
-          <span className="text-lg font-bold truncate" style={{ color: away.color }}>{away.short}</span>
+          <span className="text-base font-bold truncate" style={{ color: away.color }}>{away.short}</span>
         </div>
 
         {/* Score */}
@@ -73,16 +73,16 @@ function CompactRowCard({ game, isPreseason, isMyGame, myTeamId }: { game: HomeG
             <span className="text-sm text-text-tertiary">vs</span>
           ) : (
             <>
-              <span className={`text-2xl font-extrabold tabular-nums ${awayWin ? "text-text-primary" : isFinal ? "text-text-tertiary" : "text-text-primary"}`}>{game.awayScore}</span>
-              <span className="text-sm text-text-tertiary">:</span>
-              <span className={`text-2xl font-extrabold tabular-nums ${homeWin ? "text-text-primary" : isFinal ? "text-text-tertiary" : "text-text-primary"}`}>{game.homeScore}</span>
+              <span className={`text-xl font-extrabold tabular-nums ${awayWin ? "text-text-primary" : isFinal ? "text-text-tertiary" : "text-text-primary"}`}>{game.awayScore}</span>
+              <span className="text-xs text-text-tertiary">:</span>
+              <span className={`text-xl font-extrabold tabular-nums ${homeWin ? "text-text-primary" : isFinal ? "text-text-tertiary" : "text-text-primary"}`}>{game.homeScore}</span>
             </>
           )}
         </div>
 
         {/* Home team */}
         <div className={`flex items-center gap-1.5 flex-1 min-w-0 justify-end ${isFinal && !homeWin ? "opacity-45" : ""}`}>
-          <span className="text-lg font-bold truncate" style={{ color: home.color }}>{home.short}</span>
+          <span className="text-base font-bold truncate" style={{ color: home.color }}>{home.short}</span>
           <div className="w-6 h-6 rounded-full bg-gray-100 dark:bg-white p-0.5 flex items-center justify-center flex-shrink-0">
             <Image src={home.logo} alt={home.name} width={16} height={16} unoptimized className="object-contain" />
           </div>

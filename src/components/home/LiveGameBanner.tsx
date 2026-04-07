@@ -36,16 +36,16 @@ function LiveGameCard({ game }: { game: LiveGameData }) {
       <div className="flex items-center justify-between">
         <div className="flex flex-col items-center gap-1 flex-1">
           {away && <TeamLogo team={away} size={28} />}
-          <span className="text-xs font-bold" style={{ color: awayColor }}>{game.awayName}</span>
+          <span className="text-base font-bold" style={{ color: awayColor }}>{game.awayName}</span>
         </div>
         <div className="flex items-center gap-3 px-2">
-          <span className="text-2xl font-black tabular-nums" style={{ color: awayColor }}>{game.awayScore}</span>
+          <span className="text-2xl font-black tabular-nums text-text-primary">{game.awayScore}</span>
           <span className="text-sm text-text-tertiary">:</span>
-          <span className="text-2xl font-black tabular-nums" style={{ color: homeColor }}>{game.homeScore}</span>
+          <span className="text-2xl font-black tabular-nums text-text-primary">{game.homeScore}</span>
         </div>
         <div className="flex flex-col items-center gap-1 flex-1">
           {home && <TeamLogo team={home} size={28} />}
-          <span className="text-xs font-bold" style={{ color: homeColor }}>{game.homeName}</span>
+          <span className="text-base font-bold" style={{ color: homeColor }}>{game.homeName}</span>
         </div>
       </div>
 
