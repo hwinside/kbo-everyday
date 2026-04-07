@@ -91,15 +91,22 @@ function GridGameCard({ game, isPreseason, isMyGame }: { game: HomeGame; isPrese
   );
 }
 
-export default function TodayGamesSection({ todayGames, isPreseason, myTeamId }: { todayGames: HomeGame[]; isPreseason: boolean; myTeamId?: number | null }) {
+export default function TodayGamesSection({ todayGames, isPreseason, myTeamId, liveGameIds }: { todayGames: HomeGame[]; isPreseason: boolean; myTeamId?: number | null; liveGameIds?: string[] }) {
   const daysToPreseason = useMemo(() => daysFromKSTToday(PRESEASON_START_STR), []);
   const daysToRegular = useMemo(() => daysFromKSTToday(REGULAR_SEASON_START_STR), []);
+  const liveSet = useMemo(() => new Set(liveGameIds ?? []), [liveGameIds]);
+  // LIVE 경기는 LiveGameBanner에서 이미 표시 → 여기선 제외 (전부 live면 fallback으로 전체 표시)
+  const displayGames = useMemo(() => {
+    if (liveSet.size === 0) return todayGames;
+    const filtered = todayGames.filter(g => !liveSet.has(g.id));
+    return filtered.length > 0 ? filtered : todayGames;
+  }, [todayGames, liveSet]);
   return (
     <motion.section variants={item} className="mb-6 -mx-5 px-5 py-4 bg-bg-tertiary/50 dark:bg-transparent rounded-none">
       <SectionHeader title={isPreseason ? "오늘의 시범경기" : "오늘의 경기"} href="/games" icon="⚾" />
-      {todayGames.length > 0 && !todayGames[0]?.id?.startsWith("placeholder") ? (
+      {displayGames.length > 0 && !displayGames[0]?.id?.startsWith("placeholder") ? (
         <div className="grid grid-cols-2 gap-2.5">
-          {todayGames.map((game) => {
+          {displayGames.map((game) => {
             const isMyGame = myTeamId != null && (game.homeTeamId === myTeamId || game.awayTeamId === myTeamId);
             return (
               <GridGameCard key={game.id} game={game} isPreseason={isPreseason} isMyGame={isMyGame} />
