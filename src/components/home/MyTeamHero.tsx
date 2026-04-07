@@ -32,28 +32,29 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
     <div className="mb-3">
       <Link href={`/games/${myTeamGame.id}`}>
         <div
-          className="relative rounded-2xl p-5 overflow-hidden myteam-card"
+          className="relative rounded-2xl p-3 overflow-hidden myteam-card"
           style={{ ['--team-bg' as string]: getTeamBgColor(myTeam) }}
         >
           {/* Team logo watermark */}
           <div className="absolute right-3 top-3 opacity-[0.08] dark:opacity-15">
-            <Image src={myTeam.logoPath} alt="" width={80} height={80} unoptimized className="object-contain" />
+            <Image src={myTeam.logoPath} alt="" width={64} height={64} unoptimized className="object-contain" />
           </div>
 
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-8 h-8 rounded-full bg-bg-tertiary dark:bg-white p-0.5 flex items-center justify-center">
-              <Image src={myTeam.logoPath} alt="" width={22} height={22} unoptimized className="object-contain" />
+          {/* Header: MY TEAM */}
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-7 h-7 rounded-full bg-bg-tertiary dark:bg-white p-0.5 flex items-center justify-center">
+              <Image src={myTeam.logoPath} alt="" width={18} height={18} unoptimized className="object-contain" />
             </div>
             <span className="text-sm leading-[20px] font-bold tracking-wide text-accent">MY TEAM</span>
           </div>
 
-          {/* Score */}
-          <div className="flex items-center justify-between">
-            <div className="flex flex-col items-center gap-1">
-              <div className="w-12 h-12 rounded-full bg-white p-1 flex items-center justify-center">
-                <Image src={getTeamLogo(myTeamGame.awayTeamId)} alt="" width={32} height={32} unoptimized className="object-contain" />
+          {/* Score row */}
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex flex-col items-center gap-0.5 flex-1">
+              <div className="w-8 h-8 rounded-full bg-white p-0.5 flex items-center justify-center">
+                <Image src={getTeamLogo(myTeamGame.awayTeamId)} alt="" width={24} height={24} unoptimized className="object-contain" />
               </div>
-              <span className="text-sm font-bold text-accent">{getTeamShortName(myTeamGame.awayTeamId)}</span>
+              <span className="text-base font-bold text-accent">{getTeamShortName(myTeamGame.awayTeamId)}</span>
             </div>
             <div className="text-center">
               {myTeamGame.status === "scheduled" ? (
@@ -61,11 +62,11 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
                   <span className="text-sm font-semibold text-accent">경기 예정</span>
                 </div>
               ) : (
-              <div className="flex items-center gap-3">
-                <span className="text-2xl font-black tabular-nums text-text-primary">{myTeamGame.awayScore}</span>
-                <span className="text-sm text-text-tertiary">:</span>
-                <span className="text-2xl font-black tabular-nums text-text-primary">{myTeamGame.homeScore}</span>
-              </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl font-black tabular-nums text-text-primary">{myTeamGame.awayScore}</span>
+                  <span className="text-sm text-text-tertiary">:</span>
+                  <span className="text-2xl font-black tabular-nums text-text-primary">{myTeamGame.homeScore}</span>
+                </div>
               )}
               <span className={`text-xs font-semibold mt-1 px-2 py-0.5 rounded-full ${
                 myTeamGame.status === "live" ? "bg-red-500/20 text-red-400 animate-pulse" :
@@ -75,36 +76,36 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
                 {myTeamGame.status === "live" ? `LIVE ${myTeamGame.inning}` : myTeamGame.status === "final" ? "경기 종료" : myTeamGame.time}
               </span>
             </div>
-            <div className="flex flex-col items-center gap-1">
-              <div className="w-12 h-12 rounded-full bg-white p-1 flex items-center justify-center">
-                <Image src={getTeamLogo(myTeamGame.homeTeamId)} alt="" width={32} height={32} unoptimized className="object-contain" />
+            <div className="flex flex-col items-center gap-0.5 flex-1">
+              <div className="w-8 h-8 rounded-full bg-white p-0.5 flex items-center justify-center">
+                <Image src={getTeamLogo(myTeamGame.homeTeamId)} alt="" width={24} height={24} unoptimized className="object-contain" />
               </div>
-              <span className="text-sm font-bold text-accent">{getTeamShortName(myTeamGame.homeTeamId)}</span>
+              <span className="text-base font-bold text-accent">{getTeamShortName(myTeamGame.homeTeamId)}</span>
             </div>
           </div>
 
-          {/* Live details: BSO + Diamond + Pitcher/Batter */}
+          {/* Live details: BSO + P/AB + Diamond — 한 블록 */}
           {myTeamGame.status === "live" && (
-            <div className="mt-3 pt-3 border-t border-white/10">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3 text-[11px] font-mono">
+            <div className="flex items-center justify-between pt-2 border-t border-white/10">
+              <div className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-2 text-[11px] font-mono">
                   <span>B <span className="text-green-400">{"●".repeat(myTeamGame.balls)}{"○".repeat(4 - myTeamGame.balls)}</span></span>
                   <span>S <span className="text-yellow-400">{"●".repeat(myTeamGame.strikes)}{"○".repeat(3 - myTeamGame.strikes)}</span></span>
                   <span>O <span className="text-red-400">{"●".repeat(myTeamGame.outs)}{"○".repeat(3 - myTeamGame.outs)}</span></span>
                 </div>
-                <Diamond
-                  runner1b={myTeamGame.runner1b}
-                  runner2b={myTeamGame.runner2b}
-                  runner3b={myTeamGame.runner3b}
-                  teamColor="var(--accent)"
-                />
+                {(myTeamGame.currentPitcher || myTeamGame.currentBatter) && (
+                  <div className="text-[10px] text-text-tertiary truncate">
+                    {myTeamGame.currentPitcher && <span>P {myTeamGame.currentPitcher}</span>}
+                    {myTeamGame.currentBatter && <span className="ml-2">AB {myTeamGame.currentBatter}</span>}
+                  </div>
+                )}
               </div>
-              {(myTeamGame.currentPitcher || myTeamGame.currentBatter) && (
-                <div className="mt-2 text-xs text-text-tertiary truncate">
-                  {myTeamGame.currentPitcher && <span>P {myTeamGame.currentPitcher}</span>}
-                  {myTeamGame.currentBatter && <span className="ml-3">AB {myTeamGame.currentBatter}</span>}
-                </div>
-              )}
+              <Diamond
+                runner1b={myTeamGame.runner1b}
+                runner2b={myTeamGame.runner2b}
+                runner3b={myTeamGame.runner3b}
+                teamColor="var(--accent)"
+              />
             </div>
           )}
         </div>
