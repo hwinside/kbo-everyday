@@ -21,21 +21,22 @@ function LiveGameCard({ game }: { game: LiveGameData }) {
 
   return (
     <motion.div
-      className="flex-shrink-0 w-[300px] rounded-2xl bg-gradient-to-br from-bg-secondary to-bg-tertiary border border-border p-4 cursor-pointer"
+      className="flex-shrink-0 w-[300px] rounded-2xl bg-gradient-to-br from-bg-secondary to-bg-tertiary border border-border p-3 cursor-pointer"
       whileTap={{ scale: 0.97 }}
       onClick={() => game.gameId && router.push("/games/" + game.gameId)}
     >
-      <div className="flex items-center gap-2 mb-3">
+      {/* Header: LIVE + inning + stadium */}
+      <div className="flex items-center gap-2 mb-2">
         <motion.div className="w-2 h-2 rounded-full bg-red-500" animate={{ opacity: [1, 0.3, 1] }} transition={{ repeat: Infinity, duration: 1.5 }} />
         <span className="text-xs font-bold text-red-400">LIVE</span>
         <span className="text-xs text-accent font-bold">{game.currentInning}</span>
         {game.stadium && <span className="text-xs text-text-tertiary ml-auto">{game.stadium}</span>}
       </div>
 
-      {/* Horizontal layout: away left, score center, home right */}
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col items-center gap-1 flex-1">
-          {away && <TeamLogo team={away} size={28} />}
+      {/* Score row: away - score - home */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex flex-col items-center gap-0.5 flex-1">
+          {away && <TeamLogo team={away} size={24} />}
           <span className="text-base font-bold" style={{ color: awayColor }}>{game.awayName}</span>
         </div>
         <div className="flex items-center gap-3 px-2">
@@ -43,27 +44,29 @@ function LiveGameCard({ game }: { game: LiveGameData }) {
           <span className="text-sm text-text-tertiary">:</span>
           <span className="text-2xl font-black tabular-nums text-text-primary">{game.homeScore}</span>
         </div>
-        <div className="flex flex-col items-center gap-1 flex-1">
-          {home && <TeamLogo team={home} size={28} />}
+        <div className="flex flex-col items-center gap-0.5 flex-1">
+          {home && <TeamLogo team={home} size={24} />}
           <span className="text-base font-bold" style={{ color: homeColor }}>{game.homeName}</span>
         </div>
       </div>
 
-      <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
-        <div className="flex items-center gap-3 text-[11px] font-mono">
-          <span>B <span className="text-green-400">{"●".repeat(game.balls)}{"○".repeat(4 - game.balls)}</span></span>
-          <span>S <span className="text-yellow-400">{"●".repeat(game.strikes)}{"○".repeat(3 - game.strikes)}</span></span>
-          <span>O <span className="text-red-400">{"●".repeat(game.outs)}{"○".repeat(3 - game.outs)}</span></span>
+      {/* BSO + Diamond + P/AB — 한 줄 */}
+      <div className="flex items-center justify-between pt-2 border-t border-border">
+        <div className="flex flex-col gap-0.5">
+          <div className="flex items-center gap-2 text-[11px] font-mono">
+            <span>B <span className="text-green-400">{"●".repeat(game.balls)}{"○".repeat(4 - game.balls)}</span></span>
+            <span>S <span className="text-yellow-400">{"●".repeat(game.strikes)}{"○".repeat(3 - game.strikes)}</span></span>
+            <span>O <span className="text-red-400">{"●".repeat(game.outs)}{"○".repeat(3 - game.outs)}</span></span>
+          </div>
+          {(game.currentBatter || game.currentPitcher) && (
+            <div className="text-[10px] text-text-tertiary truncate">
+              {game.currentPitcher && <span>P {game.currentPitcher}</span>}
+              {game.currentBatter && <span className="ml-2">AB {game.currentBatter}</span>}
+            </div>
+          )}
         </div>
         <Diamond runner1b={game.runner1b} runner2b={game.runner2b} runner3b={game.runner3b} teamColor={game.isTop ? awayColor : homeColor} />
       </div>
-
-      {(game.currentBatter || game.currentPitcher) && (
-        <div className="mt-2 text-xs text-text-tertiary truncate">
-          {game.currentPitcher && <span>P {game.currentPitcher}</span>}
-          {game.currentBatter && <span className="ml-3">AB {game.currentBatter}</span>}
-        </div>
-      )}
     </motion.div>
   );
 }
