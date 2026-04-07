@@ -157,7 +157,7 @@ export default function HomePage() {
       </div>
 
       <LiveGameBanner excludeGameId={myTeamGameBase?.id} liveGames={liveGames} />
-      <TodayGamesSection todayGames={todayGames} isPreseason={isPreseason} myTeamId={myTeamId} liveGameIds={liveGames.map(g => g.gameId).filter(Boolean) as string[]} />
+      <TodayGamesSection todayGames={todayGames} isPreseason={isPreseason} myTeamId={myTeamId} />
 
       {/* 퀵액션 버튼 */}
       <motion.div variants={item} className="flex gap-3 mb-6">
