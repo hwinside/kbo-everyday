@@ -27,9 +27,9 @@ const item = {
   show: { opacity: 1, y: 0, transition: { duration: 0.35 } },
 };
 
-function RowGameCard({ game, isPreseason, isMyGame }: { game: HomeGame; isPreseason: boolean; isMyGame: boolean }) {
-  const away = { name: getTeamName(game.awayTeamId), short: getTeamShortName(game.awayTeamId), color: getTeamColor(game.awayTeamId), logo: getTeamLogo(game.awayTeamId) };
-  const home = { name: getTeamName(game.homeTeamId), short: getTeamShortName(game.homeTeamId), color: getTeamColor(game.homeTeamId), logo: getTeamLogo(game.homeTeamId) };
+function CompactRowCard({ game, isPreseason, isMyGame }: { game: HomeGame; isPreseason: boolean; isMyGame: boolean }) {
+  const away = { short: getTeamShortName(game.awayTeamId), color: getTeamColor(game.awayTeamId), logo: getTeamLogo(game.awayTeamId), name: getTeamName(game.awayTeamId) };
+  const home = { short: getTeamShortName(game.homeTeamId), color: getTeamColor(game.homeTeamId), logo: getTeamLogo(game.homeTeamId), name: getTeamName(game.homeTeamId) };
   const isLive = game.status === "live";
   const isFinal = game.status === "final";
   const awayWin = isFinal && game.awayScore > game.homeScore;
@@ -37,54 +37,48 @@ function RowGameCard({ game, isPreseason, isMyGame }: { game: HomeGame; isPresea
 
   return (
     <Link href={`/games/${game.id}`}>
-      <GlassCard pressable className={`p-3.5 ${isMyGame ? "border-l-[3px] border-l-accent" : ""}`}>
-        {/* Top: status + stadium */}
-        <div className="flex items-center justify-between mb-2.5">
-          <div className="flex items-center gap-2">
-            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
-              isLive ? "bg-red-500/20 text-red-400" :
-              isFinal ? "bg-text-tertiary/20 text-text-tertiary" :
-              "bg-accent/20 text-accent"
-            }`}>
-              {isLive ? `LIVE ${game.inning || ""}` : isFinal ? "종료" : game.time}
-            </span>
-            {isPreseason && (
-              <span className="text-[9px] font-medium px-1 py-0.5 rounded bg-yellow-500/15 text-yellow-500">시범</span>
-            )}
+      <div className={`flex items-center gap-3 px-3 py-2.5 rounded-xl bg-bg-secondary/60 hover:bg-bg-tertiary transition-colors ${isMyGame ? "border-l-[3px] border-l-accent" : ""}`}>
+        {/* Status badge */}
+        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap flex-shrink-0 ${
+          isLive ? "bg-red-500/20 text-red-400" :
+          isFinal ? "bg-text-tertiary/20 text-text-tertiary" :
+          "bg-accent/20 text-accent"
+        }`}>
+          {isLive ? `LIVE ${game.inning || ""}` : isFinal ? "종료" : game.time}
+        </span>
+
+        {/* Away team */}
+        <div className={`flex items-center gap-1.5 flex-1 min-w-0 ${isFinal && !awayWin ? "opacity-45" : ""}`}>
+          <div className="w-6 h-6 rounded-full bg-gray-100 dark:bg-white p-0.5 flex items-center justify-center flex-shrink-0">
+            <Image src={away.logo} alt={away.name} width={16} height={16} unoptimized className="object-contain" />
           </div>
-          <span className="text-[11px] text-text-tertiary">{game.stadium}</span>
+          <span className="text-[13px] font-semibold truncate" style={{ color: away.color }}>{away.short}</span>
         </div>
 
-        {/* Away row */}
-        <div className={`flex items-center justify-between py-1 ${isFinal && !awayWin ? "opacity-45" : ""}`}>
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-gray-100 dark:bg-white p-0.5 flex items-center justify-center flex-shrink-0">
-              <Image src={away.logo} alt={away.name} width={20} height={20} unoptimized className="object-contain" />
-            </div>
-            <span className="text-sm font-semibold" style={{ color: away.color }}>{away.short}</span>
-          </div>
+        {/* Score */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           {game.status === "scheduled" ? (
-            <span className="text-xs text-text-tertiary">예정</span>
+            <span className="text-xs text-text-tertiary">vs</span>
           ) : (
-            <span className={`text-lg font-bold tabular-nums ${awayWin ? "text-text-primary" : "text-text-secondary"}`}>{game.awayScore}</span>
+            <>
+              <span className={`text-base font-bold tabular-nums ${awayWin ? "text-text-primary" : isFinal ? "text-text-tertiary" : "text-text-primary"}`}>{game.awayScore}</span>
+              <span className="text-xs text-text-tertiary">:</span>
+              <span className={`text-base font-bold tabular-nums ${homeWin ? "text-text-primary" : isFinal ? "text-text-tertiary" : "text-text-primary"}`}>{game.homeScore}</span>
+            </>
           )}
         </div>
 
-        {/* Home row */}
-        <div className={`flex items-center justify-between py-1 ${isFinal && !homeWin ? "opacity-45" : ""}`}>
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-gray-100 dark:bg-white p-0.5 flex items-center justify-center flex-shrink-0">
-              <Image src={home.logo} alt={home.name} width={20} height={20} unoptimized className="object-contain" />
-            </div>
-            <span className="text-sm font-semibold" style={{ color: home.color }}>{home.short}</span>
+        {/* Home team */}
+        <div className={`flex items-center gap-1.5 flex-1 min-w-0 justify-end ${isFinal && !homeWin ? "opacity-45" : ""}`}>
+          <span className="text-[13px] font-semibold truncate" style={{ color: home.color }}>{home.short}</span>
+          <div className="w-6 h-6 rounded-full bg-gray-100 dark:bg-white p-0.5 flex items-center justify-center flex-shrink-0">
+            <Image src={home.logo} alt={home.name} width={16} height={16} unoptimized className="object-contain" />
           </div>
-          {game.status === "scheduled" ? (
-            <span className="text-xs text-text-tertiary">예정</span>
-          ) : (
-            <span className={`text-lg font-bold tabular-nums ${homeWin ? "text-text-primary" : "text-text-secondary"}`}>{game.homeScore}</span>
-          )}
         </div>
-      </GlassCard>
+
+        {/* Stadium */}
+        <span className="text-[10px] text-text-tertiary flex-shrink-0">{game.stadium}</span>
+      </div>
     </Link>
   );
 }
@@ -96,11 +90,11 @@ export default function TodayGamesSection({ todayGames, isPreseason, myTeamId }:
     <motion.section variants={item} className="mb-6 -mx-5 px-5 py-4 bg-bg-tertiary/50 dark:bg-transparent rounded-none">
       <SectionHeader title={isPreseason ? "오늘의 시범경기" : "오늘의 경기"} href="/games" icon="⚾" />
       {todayGames.length > 0 && !todayGames[0]?.id?.startsWith("placeholder") ? (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1.5">
           {todayGames.map((game) => {
             const isMyGame = myTeamId != null && (game.homeTeamId === myTeamId || game.awayTeamId === myTeamId);
             return (
-              <RowGameCard key={game.id} game={game} isPreseason={isPreseason} isMyGame={isMyGame} />
+              <CompactRowCard key={game.id} game={game} isPreseason={isPreseason} isMyGame={isMyGame} />
             );
           })}
         </div>
