@@ -64,25 +64,25 @@ function CompactRowCard({ game, isPreseason, isMyGame, myTeamId }: { game: HomeG
           <div className="w-6 h-6 rounded-full bg-gray-100 dark:bg-white p-0.5 flex items-center justify-center flex-shrink-0">
             <Image src={away.logo} alt={away.name} width={16} height={16} unoptimized className="object-contain" />
           </div>
-          <span className="text-sm font-bold truncate" style={{ color: away.color }}>{away.short}</span>
+          <span className="text-lg font-bold truncate" style={{ color: away.color }}>{away.short}</span>
         </div>
 
         {/* Score */}
         <div className="flex items-center gap-1.5 flex-shrink-0">
           {game.status === "scheduled" ? (
-            <span className="text-xs text-text-tertiary">vs</span>
+            <span className="text-sm text-text-tertiary">vs</span>
           ) : (
             <>
-              <span className={`text-lg font-extrabold tabular-nums ${awayWin ? "text-text-primary" : isFinal ? "text-text-tertiary" : "text-text-primary"}`}>{game.awayScore}</span>
-              <span className="text-xs text-text-tertiary">:</span>
-              <span className={`text-lg font-extrabold tabular-nums ${homeWin ? "text-text-primary" : isFinal ? "text-text-tertiary" : "text-text-primary"}`}>{game.homeScore}</span>
+              <span className={`text-2xl font-extrabold tabular-nums ${awayWin ? "text-text-primary" : isFinal ? "text-text-tertiary" : "text-text-primary"}`}>{game.awayScore}</span>
+              <span className="text-sm text-text-tertiary">:</span>
+              <span className={`text-2xl font-extrabold tabular-nums ${homeWin ? "text-text-primary" : isFinal ? "text-text-tertiary" : "text-text-primary"}`}>{game.homeScore}</span>
             </>
           )}
         </div>
 
         {/* Home team */}
         <div className={`flex items-center gap-1.5 flex-1 min-w-0 justify-end ${isFinal && !homeWin ? "opacity-45" : ""}`}>
-          <span className="text-sm font-bold truncate" style={{ color: home.color }}>{home.short}</span>
+          <span className="text-lg font-bold truncate" style={{ color: home.color }}>{home.short}</span>
           <div className="w-6 h-6 rounded-full bg-gray-100 dark:bg-white p-0.5 flex items-center justify-center flex-shrink-0">
             <Image src={home.logo} alt={home.name} width={16} height={16} unoptimized className="object-contain" />
           </div>
@@ -102,7 +102,7 @@ export default function TodayGamesSection({ todayGames, isPreseason, myTeamId }:
     <motion.section variants={item} className="mb-6 -mx-5 px-5 py-4 bg-bg-tertiary/50 dark:bg-transparent rounded-none">
       <div className="flex items-center gap-2 mb-3">
         <span className="text-lg">⚾</span>
-        <h2 className="text-lg leading-[26px] font-semibold text-text-primary">{isPreseason ? "오늘의 시범경기" : "오늘의 경기"}</h2>
+        <h2 className="text-lg leading-[26px] font-semibold text-text-primary">{isPreseason ? "전체 시범경기 현황" : "전체 경기 현황"}</h2>
       </div>
       {todayGames.length > 0 && !todayGames[0]?.id?.startsWith("placeholder") ? (
         <div className="flex flex-col gap-1.5">
