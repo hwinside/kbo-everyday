@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import GlassCard from "@/components/ui/GlassCard";
-import { BADGES, RARITY_COLORS, CATEGORY_LABELS } from "@/lib/constants/badges";
+import { BADGES, ACTIVE_BADGE_IDS, RARITY_COLORS, CATEGORY_LABELS } from "@/lib/constants/badges";
 import type { BadgeDefinition } from "@/lib/constants/badges";
 import { getBadgeInfo } from "@/lib/utils/badges";
 
@@ -53,7 +53,7 @@ export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: Bad
       })}
 
       <p className="text-center text-xs text-text-tertiary">
-        {badges.length}개 획득 / {BADGES.length}개 중
+        {badges.filter(b => ACTIVE_BADGE_IDS.has(b.badge_id)).length}개 획득 / {BADGES.length}개 중
       </p>
     </div>
   );
