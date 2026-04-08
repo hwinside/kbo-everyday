@@ -51,26 +51,6 @@ export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: Bad
           </GlassCard>
         );
       })}
-      {/* 동적 배지 (선수/팀 덕후) */}
-      {badges.filter(b => b.badge_id.startsWith("fan-")).length > 0 && (
-        <GlassCard className="p-4">
-          <h3 className="text-sm font-bold text-text-primary mb-3">⚾ 나의 덕질 배지</h3>
-          <div className="grid grid-cols-4 gap-3">
-            {badges.filter(b => b.badge_id.startsWith("fan-")).map(b => {
-              const info = getBadgeInfo(b.badge_id);
-              if (!info) return null;
-              return (
-                <motion.div key={b.badge_id} className="text-center p-2 rounded-xl bg-black/5 dark:bg-white/5">
-                  <span className="text-2xl">{info.icon}</span>
-                  <p className="text-[10px] mt-1 font-medium" style={{ color: RARITY_COLORS[info.rarity] }}>
-                    {info.name}
-                  </p>
-                </motion.div>
-              );
-            })}
-          </div>
-        </GlassCard>
-      )}
 
       <p className="text-center text-xs text-text-tertiary">
         {badges.length}개 획득 / {BADGES.length}개 중
