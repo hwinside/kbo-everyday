@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 가입일 기준: 배포 이후 가입한 유저에게만 발송 (기존 유저 오발송 방지)
-    const DEPLOY_DATE = process.env.WELCOME_DM_CUTOFF || "2026-04-08T06:00:00Z";
+    const DEPLOY_DATE = process.env.WELCOME_DM_CUTOFF || "2026-04-08T00:00:00Z";
     const userCreatedAt = user.created_at;
     if (userCreatedAt && new Date(userCreatedAt) < new Date(DEPLOY_DATE)) {
       return NextResponse.json({ ok: true, skipped: true, reason: "existing_user" });
