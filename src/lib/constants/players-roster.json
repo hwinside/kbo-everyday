@@ -154,10 +154,10 @@
   {
     "name": "고종욱",
     "kboId": "61353",
-    "team": "KIA",
     "teamId": 6,
     "position": "외야수",
-    "backNo": "57"
+    "backNo": "57",
+    "team": "KIA"
   },
   {
     "name": "고준혁",
@@ -697,19 +697,19 @@
   },
   {
     "name": "김범준",
+    "kboId": "50710",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "40",
+    "team": "한화"
+  },
+  {
+    "name": "김범준",
     "kboId": "69980",
     "team": "NC",
     "teamId": 5,
     "position": "외야수",
     "backNo": "115"
-  },
-  {
-    "name": "김범준",
-    "kboId": "50710",
-    "team": "한화",
-    "teamId": 9,
-    "position": "투수",
-    "backNo": "40"
   },
   {
     "name": "김병휘",
@@ -1074,10 +1074,10 @@
   {
     "name": "김정우",
     "kboId": "68830",
-    "team": "두산",
     "teamId": 2,
     "position": "투수",
-    "backNo": "16"
+    "backNo": "16",
+    "team": "두산"
   },
   {
     "name": "김정율",
@@ -1178,10 +1178,10 @@
   {
     "name": "김지석",
     "kboId": "56326",
-    "team": "키움",
     "teamId": 10,
     "position": "내야수",
-    "backNo": "26"
+    "backNo": "26",
+    "team": "키움"
   },
   {
     "name": "김지성",
@@ -1286,6 +1286,14 @@
     "position": "투수",
     "backNo": "",
     "team": "KIA"
+  },
+  {
+    "name": "김태훈",
+    "kboId": "65040",
+    "teamId": 8,
+    "position": "야수",
+    "backNo": "",
+    "team": "삼성"
   },
   {
     "name": "김택연",
@@ -1656,6 +1664,14 @@
     "kboId": "FP011"
   },
   {
+    "name": "목지훈",
+    "kboId": "53973",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "",
+    "team": "NC"
+  },
+  {
     "name": "문동주",
     "kboId": "52701",
     "teamId": 9,
@@ -1874,10 +1890,10 @@
   {
     "name": "박상준",
     "kboId": "52634",
-    "team": "KIA",
     "teamId": 6,
     "position": "내야수",
-    "backNo": "50"
+    "backNo": "50",
+    "team": "KIA"
   },
   {
     "name": "박성빈",
@@ -2074,10 +2090,10 @@
   {
     "name": "박정수",
     "kboId": "65639",
-    "team": "두산",
     "teamId": 2,
     "position": "투수",
-    "backNo": "17"
+    "backNo": "17",
+    "team": "두산"
   },
   {
     "name": "박정우",
@@ -4024,6 +4040,14 @@
     "team": "LG"
   },
   {
+    "name": "이원석",
+    "kboId": "68700",
+    "teamId": 9,
+    "position": "야수",
+    "backNo": "",
+    "team": "한화"
+  },
+  {
     "name": "이원재",
     "kboId": "52295",
     "team": "KT",
@@ -4222,6 +4246,14 @@
     "teamId": 3,
     "position": "투수",
     "backNo": "95"
+  },
+  {
+    "name": "이준우",
+    "kboId": "55301",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "",
+    "team": "키움"
   },
   {
     "name": "이준혁",
@@ -4770,10 +4802,10 @@
   {
     "name": "전사민",
     "kboId": "69969",
-    "team": "NC",
     "teamId": 5,
     "position": "투수",
-    "backNo": "57"
+    "backNo": "57",
+    "team": "NC"
   },
   {
     "name": "전상현",
@@ -4825,19 +4857,19 @@
   },
   {
     "name": "정다훈",
+    "kboId": "56345",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "45",
+    "team": "키움"
+  },
+  {
+    "name": "정다훈",
     "kboId": "56627",
     "team": "KIA",
     "teamId": 6,
     "position": "투수",
     "backNo": "126"
-  },
-  {
-    "name": "정다훈",
-    "kboId": "56345",
-    "team": "키움",
-    "teamId": 10,
-    "position": "투수",
-    "backNo": "45"
   },
   {
     "name": "정동윤",
@@ -5006,6 +5038,14 @@
     "position": "투수",
     "backNo": "",
     "team": "KIA"
+  },
+  {
+    "name": "정현수",
+    "kboId": "54537",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "",
+    "team": "롯데"
   },
   {
     "name": "정현우",
@@ -5458,10 +5498,10 @@
   {
     "name": "최이준",
     "kboId": "68036",
-    "team": "롯데",
     "teamId": 7,
     "position": "투수",
-    "backNo": "49"
+    "backNo": "49",
+    "team": "롯데"
   },
   {
     "name": "최인호",
@@ -5598,6 +5638,14 @@
     "position": "야수",
     "backNo": "",
     "team": "SSG"
+  },
+  {
+    "name": "최충연",
+    "kboId": "66451",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "",
+    "team": "롯데"
   },
   {
     "name": "최하늘",
@@ -5914,10 +5962,10 @@
   {
     "name": "한재승",
     "kboId": "51994",
-    "team": "KIA",
     "teamId": 6,
     "position": "투수",
-    "backNo": "55"
+    "backNo": "55",
+    "team": "KIA"
   },
   {
     "name": "한재환",
@@ -6258,10 +6306,10 @@
   {
     "name": "황준서",
     "kboId": "54729",
-    "team": "한화",
     "teamId": 9,
     "position": "투수",
-    "backNo": "29"
+    "backNo": "29",
+    "team": "한화"
   },
   {
     "name": "황희성",
