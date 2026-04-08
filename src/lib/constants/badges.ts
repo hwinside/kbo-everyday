@@ -7,7 +7,15 @@ export interface BadgeDefinition {
   rarity: "common" | "rare" | "epic" | "legendary";
 }
 
-export const BADGES: BadgeDefinition[] = [
+// 1차 프로필에서 노출하는 뱃지 ID (데이터 추적 가능한 것만)
+export const ACTIVE_BADGE_IDS = new Set([
+  "founder",
+  "debut", "writer-1", "writer-2", "writer-3", "writer-4", "writer-5",
+  "popular-1", "popular-2", "popular-3", "popular-4", "popular-5",
+  "inviter-1", "inviter-3", "inviter-10", "inviter-30",
+]);
+
+export const ALL_BADGES: BadgeDefinition[] = [
   // === 특별 ===
   { id: "founder", name: "파운더", icon: "👑", description: "크보팬 초창기 멤버", category: "special", rarity: "legendary" },
   { id: "wiki", name: "위키 기여자", icon: "📝", description: "선수 프로필 제보 채택", category: "special", rarity: "epic" },
@@ -72,7 +80,10 @@ export const BADGES: BadgeDefinition[] = [
   { id: "autumn-2026", name: "가을야구 생존자", icon: "🍂", description: "2026 포스트시즌 활동", category: "season", rarity: "epic" },
 ];
 
-export const BADGE_MAP = Object.fromEntries(BADGES.map(b => [b.id, b]));
+// 활성 뱃지만 노출
+export const BADGES = ALL_BADGES.filter(b => ACTIVE_BADGE_IDS.has(b.id));
+
+export const BADGE_MAP = Object.fromEntries(ALL_BADGES.map(b => [b.id, b]));
 
 export const RARITY_COLORS: Record<string, string> = {
   common: "#9CA3AF",
