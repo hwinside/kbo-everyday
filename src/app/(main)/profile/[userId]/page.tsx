@@ -15,6 +15,7 @@ import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import InviteTab from "@/components/profile/InviteTab";
 import BadgeDetailModal from "@/components/profile/BadgeDetailModal";
 import BadgesTab from "@/components/profile/BadgesTab";
+import DMButton from "@/components/ui/DMButton";
 
 interface UserProfile {
   id: string;
@@ -148,6 +149,11 @@ export default function ProfilePage() {
           <p className="text-sm text-text-tertiary mt-2">{profile.bio}</p>
         )}
         <p className="text-xs text-text-tertiary mt-1">가입일 {timeAgo(profile.joined_at || profile.id)}</p>
+        {!isOwn && (
+          <div className="mt-3">
+            <DMButton targetUserId={profile.id} size="md" />
+          </div>
+        )}
       </div>
 
       {/* Stats */}

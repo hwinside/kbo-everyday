@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
+import { useBlockedIds } from "./useBlock";
 
 export interface DMConversation {
   id: string;
@@ -23,12 +24,13 @@ export interface DMMessage {
   is_read: boolean;
   created_at: string;
   sender_nickname?: string;
-  sender_team_id?: number;
+  sender_team_id?: number | null;
 }
 
-// 대화 목록
+// 대화 목록 (N+1 개선: batch fetch)
 export function useDMList() {
   const { user } = useAuth();
+  const { blockedIds } = useBlockedIds();
   const [conversations, setConversations] = useState<DMConversation[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -41,25 +43,41 @@ export function useDMList() {
       .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`)
       .order("last_message_at", { ascending: false });
 
-    if (!data) { setLoading(false); return; }
+    if (!data || data.length === 0) { setConversations([]); setLoading(false); return; }
 
-    const mapped = await Promise.all(
-      data.map(async (conv: { id: string; user1_id: string; user2_id: string; last_message: string | null; last_message_at: string }) => {
+    // 상대방 ID 추출
+    const otherIds = data.map((conv: { user1_id: string; user2_id: string }) =>
+      conv.user1_id === user.id ? conv.user2_id : conv.user1_id
+    );
+
+    // batch fetch profiles
+    const { data: profiles } = await supabase
+      .from("profiles")
+      .select("id, nickname, team_id, avatar_url")
+      .in("id", otherIds);
+
+    const profileMap = new Map(
+      (profiles ?? []).map((p: { id: string; nickname: string; team_id: number | null; avatar_url: string | null }) => [p.id, p])
+    );
+
+    // batch fetch unread counts — 한 쿼리로 모든 대화의 안 읽은 메시지 카운트
+    const convIds = data.map((c: { id: string }) => c.id);
+    const { data: unreadRows } = await supabase
+      .from("dm_messages")
+      .select("conversation_id")
+      .in("conversation_id", convIds)
+      .eq("is_read", false)
+      .neq("sender_id", user.id);
+
+    const unreadMap = new Map<string, number>();
+    (unreadRows ?? []).forEach((r: { conversation_id: string }) => {
+      unreadMap.set(r.conversation_id, (unreadMap.get(r.conversation_id) ?? 0) + 1);
+    });
+
+    const mapped: DMConversation[] = data
+      .map((conv: { id: string; user1_id: string; user2_id: string; last_message: string | null; last_message_at: string }) => {
         const otherId = conv.user1_id === user.id ? conv.user2_id : conv.user1_id;
-        const { data: prof } = await supabase
-          .from("profiles")
-          .select("nickname, team_id, avatar_url")
-          .eq("id", otherId)
-          .single();
-
-        // 안 읽은 메시지 수
-        const { count } = await supabase
-          .from("dm_messages")
-          .select("*", { count: "exact", head: true })
-          .eq("conversation_id", conv.id)
-          .eq("is_read", false)
-          .neq("sender_id", user.id);
-
+        const prof = profileMap.get(otherId);
         return {
           id: conv.id,
           other_user_id: otherId,
@@ -68,14 +86,15 @@ export function useDMList() {
           other_avatar_url: prof?.avatar_url ?? null,
           last_message: conv.last_message,
           last_message_at: conv.last_message_at,
-          unread_count: count ?? 0,
+          unread_count: unreadMap.get(conv.id) ?? 0,
         };
       })
-    );
+      // 차단된 유저 대화 필터링
+      .filter((conv: DMConversation) => !blockedIds.has(conv.other_user_id));
 
     setConversations(mapped);
     setLoading(false);
-  }, [user]);
+  }, [user, blockedIds]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load(); }, [load]);
@@ -102,20 +121,25 @@ export function useDMChat(conversationId: string) {
         .limit(100);
 
       if (data) {
-        const mapped = await Promise.all(
-          data.reverse().map(async (m: DMMessage) => {
-            const { data: prof } = await supabase
-              .from("profiles")
-              .select("nickname, team_id")
-              .eq("id", m.sender_id)
-              .single();
-            return {
-              ...m,
-              sender_nickname: prof?.nickname ?? "익명",
-              sender_team_id: prof?.team_id,
-            };
-          })
+        // batch fetch sender profiles
+        const senderIds = [...new Set(data.map((m: DMMessage) => m.sender_id))];
+        const { data: profiles } = await supabase
+          .from("profiles")
+          .select("id, nickname, team_id")
+          .in("id", senderIds);
+
+        const profileMap = new Map(
+          (profiles ?? []).map((p: { id: string; nickname: string; team_id: number | null }) => [p.id, p])
         );
+
+        const mapped = data.reverse().map((m: DMMessage) => {
+          const prof = profileMap.get(m.sender_id);
+          return {
+            ...m,
+            sender_nickname: prof?.nickname ?? "익명",
+            sender_team_id: prof?.team_id,
+          };
+        });
         setMessages(mapped);
       }
       setLoading(false);
@@ -178,10 +202,33 @@ export function useDMChat(conversationId: string) {
     return () => { supabase.removeChannel(channel); };
   }, [conversationId, user]);
 
-  // 메시지 전송
+  // 메시지 전송 (차단 체크)
   const sendMessage = useCallback(
     async (content: string) => {
       if (!user || !content.trim()) return false;
+
+      // 차단 여부 체크
+      const { data: conv } = await supabase
+        .from("dm_conversations")
+        .select("user1_id, user2_id")
+        .eq("id", conversationId)
+        .single();
+
+      if (conv) {
+        const otherId = conv.user1_id === user.id ? conv.user2_id : conv.user1_id;
+
+        // 내가 상대를 차단했거나, 상대가 나를 차단했는지
+        const { data: blocked } = await supabase
+          .from("user_blocks")
+          .select("id")
+          .or(`and(blocker_id.eq.${user.id},blocked_id.eq.${otherId}),and(blocker_id.eq.${otherId},blocked_id.eq.${user.id})`)
+          .limit(1);
+
+        if (blocked && blocked.length > 0) {
+          console.error("차단된 사용자에게 메시지를 보낼 수 없습니다.");
+          return false;
+        }
+      }
 
       const { error } = await supabase.from("dm_messages").insert({
         conversation_id: conversationId,
@@ -205,8 +252,20 @@ export function useDMChat(conversationId: string) {
   return { messages, loading, sendMessage, isLoggedIn: !!user };
 }
 
-// 대화 시작 (or 기존 대화 찾기)
+// 대화 시작 (or 기존 대화 찾기) — 차단 체크 포함
 export async function getOrCreateConversation(myId: string, otherId: string): Promise<string | null> {
+  // 차단 여부 체크
+  const { data: blocked } = await supabase
+    .from("user_blocks")
+    .select("id")
+    .or(`and(blocker_id.eq.${myId},blocked_id.eq.${otherId}),and(blocker_id.eq.${otherId},blocked_id.eq.${myId})`)
+    .limit(1);
+
+  if (blocked && blocked.length > 0) {
+    console.error("차단된 사용자와 대화할 수 없습니다.");
+    return null;
+  }
+
   // 정렬해서 저장 (user1 < user2)
   const [u1, u2] = [myId, otherId].sort();
 

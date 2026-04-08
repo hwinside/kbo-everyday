@@ -1,13 +1,16 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { ArrowLeft, MessageCircle } from "lucide-react";
+import { ArrowLeft, MessageCircle, Settings, X, ShieldBan } from "lucide-react";
 import { useDMList } from "@/lib/supabase/useDM";
+import { useBlockList } from "@/lib/supabase/useBlock";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
+import { supabase } from "@/lib/supabase/client";
 import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 
 function timeAgo(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -23,7 +26,22 @@ export default function MessagesPage() {
   const router = useRouter();
   const { user } = useAuth();
   const { conversations, loading } = useDMList();
+  const { blockedUsers, loading: blocksLoading, refresh: refreshBlocks } = useBlockList();
   const [showLogin, setShowLogin] = useState(false);
+  const [showBlockList, setShowBlockList] = useState(false);
+  const [unblocking, setUnblocking] = useState<string | null>(null);
+
+  const handleUnblock = async (blockedId: string) => {
+    if (!user) return;
+    setUnblocking(blockedId);
+    await supabase
+      .from("user_blocks")
+      .delete()
+      .eq("blocker_id", user.id)
+      .eq("blocked_id", blockedId);
+    await refreshBlocks();
+    setUnblocking(null);
+  };
 
   if (!user) {
     return (
@@ -52,7 +70,10 @@ export default function MessagesPage() {
         <button onClick={() => router.back()} className="p-1">
           <ArrowLeft size={24} className="text-text-primary" />
         </button>
-        <h1 className="text-lg font-bold text-text-primary">쪽지</h1>
+        <h1 className="text-lg font-bold text-text-primary flex-1">쪽지</h1>
+        <button onClick={() => setShowBlockList(true)} className="p-1.5 rounded-full hover:bg-bg-tertiary transition-colors">
+          <Settings size={20} className="text-text-tertiary" />
+        </button>
       </div>
 
       {loading ? (
@@ -99,6 +120,68 @@ export default function MessagesPage() {
           ))}
         </div>
       )}
+
+      {/* Block List Bottom Sheet */}
+      <AnimatePresence>
+        {showBlockList && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
+            onClick={() => setShowBlockList(false)}
+          >
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              onClick={(e) => e.stopPropagation()}
+              className="absolute bottom-0 left-0 right-0 rounded-t-2xl bg-bg-secondary border-t border-border p-5 pb-safe max-h-[70vh] overflow-y-auto"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <ShieldBan size={18} className="text-text-secondary" />
+                  <h3 className="text-base font-bold text-text-primary">차단 관리</h3>
+                </div>
+                <button onClick={() => setShowBlockList(false)} className="p-1">
+                  <X size={20} className="text-text-tertiary" />
+                </button>
+              </div>
+
+              {blocksLoading ? (
+                <div className="text-center py-8 text-sm text-text-tertiary">불러오는 중...</div>
+              ) : blockedUsers.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-sm text-text-tertiary">차단한 유저가 없습니다</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {blockedUsers.map((bu) => (
+                    <div key={bu.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-bg-tertiary">
+                      <div className="w-8 h-8 rounded-full bg-bg-primary flex items-center justify-center flex-shrink-0">
+                        {bu.team_id ? (
+                          <TeamBadge teamId={bu.team_id} size="xs" />
+                        ) : (
+                          <span className="text-sm">👤</span>
+                        )}
+                      </div>
+                      <span className="flex-1 text-sm font-semibold text-text-primary">{bu.nickname}</span>
+                      <button
+                        onClick={() => handleUnblock(bu.blocked_id)}
+                        disabled={unblocking === bu.blocked_id}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-500/15 text-red-500 hover:bg-red-500/25 transition-colors disabled:opacity-50"
+                      >
+                        {unblocking === bu.blocked_id ? "..." : "해제"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

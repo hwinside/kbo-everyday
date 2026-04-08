@@ -11,6 +11,7 @@ interface TabItem {
   href: string;
   label: string;
   icon: LucideIcon;
+  badge?: boolean;
 }
 
 const tabs: TabItem[] = [
@@ -24,6 +25,7 @@ const tabs: TabItem[] = [
 export default function TabBar() {
   const pathname = usePathname();
   const { profile } = useAuth();
+
 
   // 지정팀 컬러 (없으면 시스템 accent)
   const team = profile?.team_id ? getTeamById(profile.team_id) : undefined;
@@ -45,13 +47,16 @@ export default function TabBar() {
               key={tab.href}
               href={tab.href}
               className={clsx(
-                "flex flex-col items-center gap-0.5 px-3 py-1.5 transition-colors",
+                "relative flex flex-col items-center gap-0.5 px-2 py-1.5 transition-colors",
                 active ? (teamColor ? "" : "text-accent") : "text-text-secondary",
               )}
               style={active && teamColor ? { color: teamColor } : undefined}
             >
-              <Icon size={22} strokeWidth={active ? 2 : 1.5} fill={active ? "currentColor" : "none"} className={active ? "opacity-90" : ""} />
-              <span className="text-xs font-medium">{tab.label}</span>
+              <div className="relative">
+                <Icon size={22} strokeWidth={active ? 2 : 1.5} fill={active ? "currentColor" : "none"} className={active ? "opacity-90" : ""} />
+
+              </div>
+              <span className="text-[10px] font-medium">{tab.label}</span>
             </Link>
           );
         })}

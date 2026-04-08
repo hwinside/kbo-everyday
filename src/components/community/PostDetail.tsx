@@ -12,6 +12,7 @@ import LinkPreview from "@/components/community/LinkPreview";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
+import DMButton from "@/components/ui/DMButton";
 
 interface PostDetailProps {
   postId: number;
@@ -95,6 +96,9 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           <span className="text-sm font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => post.author_id && router.push(`/profile/${post.author_id}`)}>{post.nickname || "익명"}</span>
           {post.grade === 'staff' && (
             <span className='ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
+          )}
+          {post.author_id && user && post.author_id !== user.id && (
+            <DMButton targetUserId={post.author_id} size="sm" />
           )}
           <span className="text-xs text-text-tertiary ml-auto">{timeAgo(post.created_at)}</span>
         </div>
