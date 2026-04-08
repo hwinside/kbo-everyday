@@ -65,12 +65,17 @@ export function useMoodGauge(
   // ── 2) 최근 10분 채팅 메시지 team_id 집계 (primary) ──
   const fetchChatMood = useCallback(async () => {
     const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-    const roomId = `game:${gameId}`;
+    // 전체 + 홈팬방 + 어웨이팬방 모두 집계
+    const roomIds = [
+      `game:${gameId}`,
+      `game:${gameId}:home`,
+      `game:${gameId}:away`,
+    ];
 
     const { data } = await supabase
       .from("chat_messages")
       .select("user_id, profiles(team_id)")
-      .eq("room_id", roomId)
+      .in("room_id", roomIds)
       .gte("created_at", tenMinAgo);
 
     let home = 0;
@@ -96,9 +101,8 @@ export function useMoodGauge(
     return () => clearInterval(interval);
   }, [fetchChatMood]);
 
-  // Realtime INSERT 시에도 갱신
+  // Realtime INSERT 시에도 갱신 (전체 + 팬방)
   useEffect(() => {
-    const roomId = `game:${gameId}`;
     const channel = supabase
       .channel(`mood-chat:${gameId}`)
       .on(
@@ -107,10 +111,9 @@ export function useMoodGauge(
           event: "INSERT",
           schema: "public",
           table: "chat_messages",
-          filter: `room_id=eq.${roomId}`,
+          filter: `room_id=like.game:${gameId}%`,
         },
         () => {
-          // 새 메시지 들어오면 재집계
           fetchChatMood();
         },
       )
