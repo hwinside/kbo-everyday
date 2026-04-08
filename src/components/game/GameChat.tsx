@@ -8,6 +8,7 @@ import Image from "next/image";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getTeamById } from "@/lib/constants/teams";
 import { useChat } from "@/lib/supabase/useChat";
+import { useMoodGauge } from "@/lib/supabase/useMoodGauge";
 import { useAuth } from "@/lib/supabase/AuthContext";
 
 type ChatRoom = "all" | "home" | "away";
@@ -62,6 +63,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const [room, setRoom] = useState<ChatRoom>("all");
   const roomId = getRoomId(gameId, room);
   const { messages, loading, sendMessage, isLoggedIn } = useChat(roomId);
+  const { homePct } = useMoodGauge(gameId, homeTeamId, awayTeamId);
   const { user, profile } = useAuth();
   const [input, setInput] = useState("");
   const [showRoomPicker, setShowRoomPicker] = useState(false);
@@ -168,7 +170,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       </div>
 
       {/* Mood gauge */}
-      <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={58} />
+      <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-2 space-y-0.5">
