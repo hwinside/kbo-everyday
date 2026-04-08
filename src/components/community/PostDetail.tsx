@@ -74,7 +74,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   return (
     <div className="min-h-screen bg-bg-primary pb-20">
       {/* Header */}
-      <div className="sticky top-0 z-30 border-b bg-bg-primary" style={{ borderColor: post.team_id ? getTeamBorderColorById(post.team_id) : undefined }}>
+      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ borderColor: post.team_id ? getTeamBorderColorById(post.team_id) : undefined }}>
         <div className="flex items-center gap-3 px-4 py-3">
           <button onClick={() => router.back()}>
             <ChevronLeft size={24} className="text-text-secondary" />
