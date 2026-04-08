@@ -25,20 +25,20 @@ export default function PostCard({ post, onPress, playerLabel }: PostCardProps) 
       transition={{ type: "spring", stiffness: 400, damping: 25 }}
     >
       {/* Author info */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 min-w-0">
         {playerLabel ? (
           <TeamBadge teamId={playerLabel.teamId} playerName={playerLabel.playerName} />
         ) : (
           post.author?.myTeamId && <TeamBadge teamId={post.author.myTeamId} />
         )}
-        <span className="text-base font-medium text-text-primary">
+        <span className="text-base font-medium text-text-primary truncate">
           {post.author?.nickname ?? "익명"}
         </span>
         {post.author?.grade === 'staff' && (
           <span className='ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
         )}
         {post.author && <LevelBadge level={post.author.level} />}
-        <span className="ml-auto text-base text-text-tertiary">{timeAgo}</span>
+        <span className="ml-auto text-base text-text-tertiary whitespace-nowrap shrink-0">{timeAgo}</span>
       </div>
 
       {/* Title */}

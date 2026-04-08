@@ -24,7 +24,7 @@ export default function TeamBadge({
   return (
     <span
       className={clsx(
-        "inline-flex items-center gap-1 rounded-full font-semibold text-white",
+        "inline-flex items-center gap-1 rounded-full font-semibold text-white whitespace-nowrap shrink-0",
         size === "xs" && "py-0.5 pl-0.5 pr-1.5 text-[10px]",
         size === "sm" && "py-0.5 pl-0.5 pr-2 text-xs",
         size === "md" && "py-1.5 pl-1 pr-3.5 text-base",
