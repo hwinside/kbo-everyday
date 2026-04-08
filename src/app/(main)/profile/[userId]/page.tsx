@@ -12,10 +12,12 @@ import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import type { BadgeDefinition } from "@/lib/constants/badges";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
+import { getTeamBgColorById } from "@/lib/utils/team";
 import InviteTab from "@/components/profile/InviteTab";
 import BadgeDetailModal from "@/components/profile/BadgeDetailModal";
 import BadgesTab from "@/components/profile/BadgesTab";
 import DMButton from "@/components/ui/DMButton";
+import LevelBadge from "@/components/ui/LevelBadge";
 
 interface UserProfile {
   id: string;
@@ -123,61 +125,61 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {/* Profile Header */}
-      <div className="px-5 py-6 text-center">
+      {/* Profile Header — compact, 8pt grid */}
+      <div className="px-5 pt-5 pb-4 text-center">
         <div className="relative inline-block">
           <div
-            className="w-20 h-20 rounded-full flex items-center justify-center text-3xl font-bold mx-auto"
-            style={{ backgroundColor: teamColor + "30", color: teamColor }}
+            className="w-[72px] h-[72px] rounded-full flex items-center justify-center text-2xl font-bold mx-auto ring-1 ring-white/10"
+            style={{ backgroundColor: getTeamBgColorById(profile.team_id), color: "#fff" }}
           >
             {profile.nickname.charAt(0)}
           </div>
           {founderBadge && (
-            <span className="absolute -top-1 -right-1 text-2xl">👑</span>
+            <span className="absolute -top-1 -right-1 text-xl">👑</span>
           )}
         </div>
 
-        <h1 className="text-xl font-bold text-text-primary mt-3">{profile.nickname}</h1>
+        <h1 className="text-lg font-semibold leading-[26px] text-text-primary mt-3">{profile.nickname}</h1>
         <div className="flex items-center justify-center gap-2 mt-1">
           {team && <TeamBadge teamId={team.id} size="sm" />}
-          <span className="text-sm text-text-secondary">Lv.{profile.level} {profile.grade}</span>
+          <LevelBadge points={profile.points} showTitle />
           {profile.is_founder && (
             <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400">FOUNDER</span>
           )}
         </div>
         {profile.bio && (
-          <p className="text-sm text-text-tertiary mt-2">{profile.bio}</p>
+          <p className="text-sm leading-[22px] text-text-tertiary mt-1.5">{profile.bio}</p>
         )}
-        <p className="text-xs text-text-tertiary mt-1">가입일 {timeAgo(profile.joined_at || profile.id)}</p>
+        <p className="text-xs leading-[18px] text-text-tertiary mt-1">가입일 {timeAgo(profile.joined_at || profile.id)}</p>
         {!isOwn && (
-          <div className="mt-3">
+          <div className="mt-3 flex justify-center">
             <DMButton targetUserId={profile.id} size="md" />
           </div>
         )}
       </div>
 
-      {/* Stats */}
+      {/* Stats — compact card, tabular-nums */}
       <div className="px-5 mb-4">
-        <GlassCard className="p-4">
+        <GlassCard className="p-3">
           <div className="grid grid-cols-3 text-center">
             <div>
-              <p className="text-lg font-bold text-text-primary">{profile.total_posts || 0}</p>
-              <p className="text-xs text-text-tertiary">글</p>
+              <p className="text-xl font-bold text-text-primary tabular-nums">{profile.total_posts || 0}</p>
+              <p className="text-xs leading-[18px] text-text-tertiary mt-0.5">글</p>
             </div>
             <div className="border-x border-border">
-              <p className="text-lg font-bold text-text-primary">{profile.total_comments || 0}</p>
-              <p className="text-xs text-text-tertiary">댓글</p>
+              <p className="text-xl font-bold text-text-primary tabular-nums">{profile.total_comments || 0}</p>
+              <p className="text-xs leading-[18px] text-text-tertiary mt-0.5">댓글</p>
             </div>
             <div>
-              <p className="text-lg font-bold text-text-primary">{profile.total_likes_received || 0}</p>
-              <p className="text-xs text-text-tertiary">❤️</p>
+              <p className="text-xl font-bold text-text-primary tabular-nums">{profile.total_likes_received || 0}</p>
+              <p className="text-xs leading-[18px] text-text-tertiary mt-0.5">❤️</p>
             </div>
           </div>
         </GlassCard>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 mx-5 mb-4 bg-bg-tertiary rounded-lg p-1">
+      {/* Tabs — UnderlineTabs */}
+      <div className="flex gap-4 mx-5 mb-4 border-b border-border">
         {([
           { id: "badges" as const, label: `🏅 배지 (${badges.length})` },
           { id: "posts" as const, label: "📝 글" },
@@ -186,8 +188,10 @@ export default function ProfilePage() {
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex-1 py-2 rounded-md text-sm font-medium transition-all ${
-              activeTab === tab.id ? "bg-black/8 dark:bg-white/10 text-text-primary" : "text-text-tertiary"
+            className={`py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === tab.id
+                ? "text-text-primary border-accent"
+                : "text-text-tertiary border-transparent hover:text-text-secondary"
             }`}
           >
             {tab.label}
