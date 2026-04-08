@@ -25,6 +25,18 @@ export async function GET(request: NextRequest) {
 
   // 개별 대화 메시지 조회
   if (conversationId) {
+    // 운영팀 대화인지 검증
+    const { data: conv } = await admin
+      .from("dm_conversations")
+      .select("id, user1_id, user2_id")
+      .eq("id", conversationId)
+      .or(`user1_id.eq.${systemUserId},user2_id.eq.${systemUserId}`)
+      .maybeSingle();
+
+    if (!conv) {
+      return NextResponse.json({ error: "not_found_or_unauthorized" }, { status: 403 });
+    }
+
     const { data: messages } = await admin
       .from("dm_messages")
       .select("*")
@@ -125,6 +137,18 @@ export async function POST(request: NextRequest) {
   }
 
   const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceKey);
+
+  // 운영팀 대화인지 검증
+  const { data: conv } = await admin
+    .from("dm_conversations")
+    .select("id")
+    .eq("id", conversationId)
+    .or(`user1_id.eq.${systemUserId},user2_id.eq.${systemUserId}`)
+    .maybeSingle();
+
+  if (!conv) {
+    return NextResponse.json({ error: "not_found_or_unauthorized" }, { status: 403 });
+  }
 
   const { error: msgError } = await admin
     .from("dm_messages")
