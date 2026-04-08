@@ -29,7 +29,7 @@ export default function PostCard({ post, onPress, playerLabel }: PostCardProps) 
         {playerLabel ? (
           <TeamBadge teamId={playerLabel.teamId} playerName={playerLabel.playerName} />
         ) : (
-          post.author?.myTeamId && <TeamBadge teamId={post.author.myTeamId} />
+          post.author?.myTeamId ? <TeamBadge teamId={post.author.myTeamId} /> : null
         )}
         <span className="text-base font-medium text-text-primary truncate">
           {post.author?.nickname ?? "익명"}

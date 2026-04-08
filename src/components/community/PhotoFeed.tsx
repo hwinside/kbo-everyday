@@ -114,7 +114,7 @@ function PhotoCarousel({
           alt="photo"
           width={800}
           height={1000}
-          className="w-full object-contain pointer-events-none select-none" draggable={false}
+          className="w-full object-cover pointer-events-none select-none" draggable={false}
           style={{ aspectRatio: "4/5", WebkitTouchCallout: "none" } as React.CSSProperties}
           sizes="(max-width: 768px) 100vw, 600px"
         />
@@ -146,7 +146,7 @@ function PhotoCarousel({
               alt={`photo ${i + 1}`}
               width={800}
               height={1000}
-              className="w-full object-contain pointer-events-none select-none" draggable={false}
+              className="w-full object-cover pointer-events-none select-none" draggable={false}
               style={{ aspectRatio: "4/5", WebkitTouchCallout: "none" } as React.CSSProperties}
               sizes="(max-width: 768px) 100vw, 600px"
             />
@@ -265,7 +265,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 {boardType === "player" && playerLabels?.[post.id] ? (
                   <TeamBadge teamId={playerLabels[post.id].teamId} playerName={playerLabels[post.id].playerName} />
                 ) : (
-                  post.team_id && <TeamBadge teamId={post.team_id} />
+                  post.team_id ? <TeamBadge teamId={post.team_id} /> : null
                 )}
                 <span className="text-base font-medium text-text-primary truncate">
                   {post.nickname || "익명"}

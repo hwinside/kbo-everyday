@@ -92,7 +92,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
       {/* Post */}
       <div className="px-5 py-4">
         <div className="flex items-center gap-2 mb-3">
-          {post.team_id && <TeamBadge teamId={post.team_id} size="xs" />}
+          {post.team_id ? <TeamBadge teamId={post.team_id} size="xs" /> : null}
           <span className="text-sm font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => post.author_id && router.push(`/profile/${post.author_id}`)}>{post.nickname || "익명"}</span>
           {post.grade === 'staff' && (
             <span className='ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
