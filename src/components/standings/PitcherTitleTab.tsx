@@ -23,7 +23,7 @@ export default function PitcherTitleTab({ realPitchers, myTeamId, favoriteNames,
     : realPitchers;
   const toLeader = (p: RealPitcherStat, valKey: string): TitleLeader => ({
     rank: p.rank, name: p.name, teamId: TEAM_NAME_TO_ID[p.team] ?? 0,
-    value: String(p[valKey] ?? 0), playerId: PLAYER_PHOTO_MAP[p.name],
+    value: String(p[valKey] ?? 0), playerId: (p as Record<string, unknown>).kboId as string || (p as Record<string, unknown>).playerId as string || PLAYER_PHOTO_MAP[p.name],
   });
   const sorted = (key: string, desc = true) =>
     [...qualifiedP].sort((a, b) => desc ? Number(b[key] || 0) - Number(a[key] || 0) : Number(a[key] || 0) - Number(b[key] || 0))

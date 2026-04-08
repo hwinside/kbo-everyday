@@ -1,0 +1,1 @@
+{"nodes": [{"id": "opengraph_image", "label": "opengraph-image.tsx", "file_type": "code", "source_file": "src/app/opengraph-image.tsx", "source_location": "L1"}], "edges": [{"source": "opengraph_image", "target": "og", "relation": "imports_from", "confidence": "EXTRACTED", "source_file": "src/app/opengraph-image.tsx", "source_location": "L1", "weight": 1.0}]}
