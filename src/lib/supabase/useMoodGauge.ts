@@ -101,21 +101,25 @@ export function useMoodGauge(
     return () => clearInterval(interval);
   }, [fetchChatMood]);
 
-  // Realtime INSERT 시에도 갱신 (전체 + 팬방)
+  // Realtime INSERT 시에도 갱신 (전체 + 팬방, eq 3개 구독)
   useEffect(() => {
+    const prefix = `game:${gameId}`;
     const channel = supabase
       .channel(`mood-chat:${gameId}`)
       .on(
         "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "chat_messages",
-          filter: `room_id=like.game:${gameId}%`,
-        },
-        () => {
-          fetchChatMood();
-        },
+        { event: "INSERT", schema: "public", table: "chat_messages", filter: `room_id=eq.${prefix}` },
+        () => fetchChatMood(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "chat_messages", filter: `room_id=eq.${prefix}:home` },
+        () => fetchChatMood(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "chat_messages", filter: `room_id=eq.${prefix}:away` },
+        () => fetchChatMood(),
       )
       .subscribe();
 
