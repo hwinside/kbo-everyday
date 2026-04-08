@@ -43,7 +43,7 @@ export function useHomeInit() {
   const [todayGames, setTodayGames] = useState<HomeGame[]>([]);
   const [isPreseason, setIsPreseason] = useState(false);
 
-  // 로그인 후 1회 환영 토스트
+  // 로그인 후 1회 환영 토스트 + 환영 DM
   useEffect(() => {
     if (user && profile?.nickname) {
       const key = `welcome_shown_${user.id}`;
@@ -53,6 +53,19 @@ export function useHomeInit() {
           setWelcomeToast(true);
           setTimeout(() => setWelcomeToast(false), 3000);
         });
+
+        // 환영 DM 발송 (서버에서 중복 체크하므로 안전)
+        (async () => {
+          try {
+            const { data: { session } } = await (await import("@/lib/supabase/client")).supabase.auth.getSession();
+            if (session?.access_token) {
+              await fetch("/api/welcome-dm", {
+                method: "POST",
+                headers: { Authorization: `Bearer ${session.access_token}` },
+              });
+            }
+          } catch { /* 환영 DM 실패해도 무시 */ }
+        })();
       }
     }
   }, [user, profile]);
