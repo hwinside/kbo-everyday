@@ -9,6 +9,7 @@ import {
   FileText,
   Bot,
   MessageSquare,
+  Mail,
   Activity,
   Menu,
   X,
@@ -20,6 +21,7 @@ const NAV_ITEMS = [
   { href: "/admin/users", label: "유저", icon: Users },
   { href: "/admin/content", label: "콘텐츠", icon: FileText },
   { href: "/admin/jobs", label: "크롤러/배치", icon: Bot },
+  { href: "/admin/messages", label: "쪽지함", icon: Mail },
   { href: "/admin/feedback", label: "건의함", icon: MessageSquare },
   { href: "/admin/system", label: "시스템", icon: Activity },
 ] as const;
