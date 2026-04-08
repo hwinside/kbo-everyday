@@ -55,7 +55,13 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
   const roster = playersRoster as RosterPlayer[];
   return rows.map((c, i) => {
     const name = c[1] || "";
-    const found = roster.find((p) => p.name === name);
+    const team = c[2] || "";
+    // 동명이인 대응: name + team으로 매칭 (name만 쓰면 첫 번째 동명이인이 잡힘)
+    const exactMatch = roster.find((p) => p.name === name && p.team === team);
+    const found = exactMatch || roster.find((p) => p.name === name);
+    if (!exactMatch && found) {
+      console.warn(`[stats] roster name-only fallback: ${name} (team=${team}, matched=${found.team}/${found.kboId})`);
+    }
     return {
       rank: i + 1,
       name,
@@ -81,7 +87,13 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
 
 function parsePitcherRow(c: string[], roster: RosterPlayer[]): PlayerStat {
   const name = c[1] || "";
-  const found = roster.find((p) => p.name === name);
+  const team = c[2] || "";
+  // 동명이인 대응: name + team으로 매칭
+  const exactMatch = roster.find((p) => p.name === name && p.team === team);
+  const found = exactMatch || roster.find((p) => p.name === name);
+  if (!exactMatch && found) {
+    console.warn(`[stats] roster name-only fallback (pitcher): ${name} (team=${team}, matched=${found.team}/${found.kboId})`);
+  }
   return {
     rank: 0,
     name,
