@@ -43,8 +43,8 @@ function CompactRowCard({ game, isPreseason, isMyGame, myTeamId }: { game: HomeG
         className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-bg-secondary/60 hover:bg-bg-tertiary transition-colors"
         style={myTeamBg ? { background: myTeamBg } : undefined}
       >
-        {/* Status badges — LIVE와 이닝 분리 */}
-        <div className="flex items-center gap-1 flex-shrink-0">
+        {/* Status badges — LIVE와 이닝 분리, 고정 너비로 alignment 유지 */}
+        <div className="flex items-center gap-1 flex-shrink-0" style={{ minWidth: 72 }}>
           {isLive ? (
             <>
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400">LIVE</span>
