@@ -15,7 +15,7 @@ interface RawGameData {
   stadium: string;
   homeScore?: number;
   awayScore?: number;
-  status: string;
+  status: "scheduled" | "live" | "final" | "cancelled";
   inning?: string;
   isTop?: boolean;
 }
@@ -28,7 +28,7 @@ export interface HomeGame {
   stadium: string;
   homeScore: number;
   awayScore: number;
-  status: "scheduled" | "live" | "final";
+  status: "scheduled" | "live" | "final" | "cancelled";
   inning: string | null;
 }
 
@@ -87,7 +87,7 @@ export function useHomeInit() {
           stadium: g.stadium,
           homeScore: g.homeScore ?? 0,
           awayScore: g.awayScore ?? 0,
-          status: g.status === "cancelled" ? "final" as const : g.status,
+          status: g.status,
           inning: g.status === "live" ? `${g.inning}회${g.isTop ? "초" : "말"}` : null,
         }));
         if (games.length > 0) {

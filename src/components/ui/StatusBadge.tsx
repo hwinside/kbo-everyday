@@ -10,5 +10,8 @@ export default function StatusBadge({ status, inning }: { status: string; inning
   if (status === "final") {
     return <span className="text-sm text-text-secondary">종료</span>;
   }
+  if (status === "cancelled") {
+    return <span className="text-sm text-text-secondary">취소</span>;
+  }
   return <span className="text-sm text-text-secondary">예정</span>;
 }

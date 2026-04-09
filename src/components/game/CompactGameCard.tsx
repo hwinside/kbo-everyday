@@ -13,7 +13,7 @@ interface CompactGameCardProps {
     homeTeamId: number;
     awayScore: number | null;
     homeScore: number | null;
-    status: "scheduled" | "live" | "final";
+    status: "scheduled" | "live" | "final" | "cancelled";
     inning?: string;
     time: string;
     stadium: string;
@@ -25,6 +25,7 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
   const home = getTeamById(game.homeTeamId)!;
   const isLive = game.status === "live";
   const isFinal = game.status === "final";
+  const isCancelled = game.status === "cancelled";
   const awayWin = isFinal && (game.awayScore ?? 0) > (game.homeScore ?? 0);
   const homeWin = isFinal && (game.homeScore ?? 0) > (game.awayScore ?? 0);
 
@@ -36,10 +37,11 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
           <div className="flex items-center gap-2">
             <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
               isLive ? "bg-red-500/20 text-red-400 animate-pulse" :
+              isCancelled ? "bg-text-tertiary/20 text-text-tertiary" :
               isFinal ? "bg-text-tertiary/20 text-text-tertiary" :
               "bg-accent/20 text-accent"
             }`}>
-              {isLive ? `LIVE ${game.inning}` : isFinal ? "종료" : game.time}
+              {isLive ? `LIVE ${game.inning}` : isCancelled ? "취소" : isFinal ? "종료" : game.time}
             </span>
             {isPreseason && (
               <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-500">시범경기</span>
@@ -60,6 +62,8 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
           </div>
           {game.status === "scheduled" ? (
             <span className="text-xs font-medium text-accent">예정</span>
+          ) : game.status === "cancelled" ? (
+            <span className="text-xs font-medium text-text-tertiary">취소</span>
           ) : (
             <span className={`text-lg font-bold tabular-nums ${awayWin ? "text-text-primary" : "text-text-secondary"}`}>
               {game.awayScore}
@@ -79,6 +83,8 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
           </div>
           {game.status === "scheduled" ? (
             <span className="text-xs font-medium text-accent">예정</span>
+          ) : game.status === "cancelled" ? (
+            <span className="text-xs font-medium text-text-tertiary">취소</span>
           ) : (
             <span className={`text-lg font-bold tabular-nums ${homeWin ? "text-text-primary" : "text-text-secondary"}`}>
               {game.homeScore}

@@ -14,7 +14,7 @@ interface HomeGame {
   stadium: string;
   homeScore: number;
   awayScore: number;
-  status: "scheduled" | "live" | "final";
+  status: "scheduled" | "live" | "final" | "cancelled";
   inning: string | null;
   balls: number;
   strikes: number;
@@ -61,6 +61,10 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
                 <div className="px-3 py-1 rounded-full bg-accent/10">
                   <span className="text-sm font-semibold text-accent">경기 예정</span>
                 </div>
+              ) : myTeamGame.status === "cancelled" ? (
+                <div className="px-3 py-1 rounded-full bg-white/10">
+                  <span className="text-sm font-semibold text-text-primary">경기 취소</span>
+                </div>
               ) : (
                 <div className="flex items-center gap-3">
                   <span className="text-2xl font-black tabular-nums text-text-primary">{myTeamGame.awayScore}</span>
@@ -70,10 +74,11 @@ export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; m
               )}
               <span className={`text-xs font-semibold mt-1 px-2 py-0.5 rounded-full ${
                 myTeamGame.status === "live" ? "bg-red-500/20 text-red-400 animate-pulse" :
+                myTeamGame.status === "cancelled" ? "bg-text-tertiary/20 text-text-tertiary" :
                 myTeamGame.status === "final" ? "bg-text-tertiary/20 text-text-tertiary" :
                 "bg-accent/20 text-accent"
               }`}>
-                {myTeamGame.status === "live" ? `LIVE ${myTeamGame.inning}` : myTeamGame.status === "final" ? "경기 종료" : myTeamGame.time}
+                {myTeamGame.status === "live" ? `LIVE ${myTeamGame.inning}` : myTeamGame.status === "cancelled" ? "경기 취소" : myTeamGame.status === "final" ? "경기 종료" : myTeamGame.time}
               </span>
             </div>
             <div className="flex flex-col items-center gap-0.5 flex-1">

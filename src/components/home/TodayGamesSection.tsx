@@ -14,7 +14,7 @@ interface HomeGame {
   stadium: string;
   homeScore: number;
   awayScore: number;
-  status: "scheduled" | "live" | "final";
+  status: "scheduled" | "live" | "final" | "cancelled";
   inning: string | null;
 }
 
@@ -31,6 +31,7 @@ function CompactRowCard({ game, isPreseason, isMyGame, myTeamId }: { game: HomeG
   const home = { short: getTeamShortName(game.homeTeamId), color: getTeamColor(game.homeTeamId), logo: getTeamLogo(game.homeTeamId), name: getTeamName(game.homeTeamId) };
   const isLive = game.status === "live";
   const isFinal = game.status === "final";
+  const isCancelled = game.status === "cancelled";
   const awayWin = isFinal && game.awayScore > game.homeScore;
   const homeWin = isFinal && game.homeScore > game.awayScore;
 
@@ -52,9 +53,10 @@ function CompactRowCard({ game, isPreseason, isMyGame, myTeamId }: { game: HomeG
             </>
           ) : (
             <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap ${
+              isCancelled ? "bg-text-tertiary/20 text-text-tertiary" :
               isFinal ? "bg-text-tertiary/20 text-text-tertiary" : "bg-accent/20 text-accent"
             }`}>
-              {isFinal ? "종료" : game.time}
+              {isCancelled ? "취소" : isFinal ? "종료" : game.time}
             </span>
           )}
         </div>
@@ -71,6 +73,8 @@ function CompactRowCard({ game, isPreseason, isMyGame, myTeamId }: { game: HomeG
         <div className="flex items-center gap-1.5 flex-shrink-0">
           {game.status === "scheduled" ? (
             <span className="text-sm text-text-tertiary">vs</span>
+          ) : game.status === "cancelled" ? (
+            <span className="text-sm font-medium text-text-tertiary">취소</span>
           ) : (
             <>
               <span className={`text-xl font-extrabold tabular-nums ${awayWin ? "text-text-primary" : isFinal ? "text-text-tertiary" : "text-text-primary"}`}>{game.awayScore}</span>

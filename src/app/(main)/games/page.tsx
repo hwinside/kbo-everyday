@@ -19,7 +19,7 @@ interface GameData {
   homeTeamId: number;
   awayScore: number | null;
   homeScore: number | null;
-  status: "scheduled" | "live" | "final";
+  status: "scheduled" | "live" | "final" | "cancelled";
   time: string;
   stadium: string;
   inning?: string;
@@ -76,13 +76,13 @@ export default function GamesPage() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      const mapped: GameData[] = (data.games ?? []).map((g: { gameId: string; awayTeamId: number; homeTeamId: number; awayScore: number | null; homeScore: number | null; status: string; time: string; stadium: string; inning?: string; isTop?: boolean; awayStarterName?: string; homeStarterName?: string }) => ({
+      const mapped: GameData[] = (data.games ?? []).map((g: { gameId: string; awayTeamId: number; homeTeamId: number; awayScore: number | null; homeScore: number | null; status: "scheduled" | "live" | "final" | "cancelled"; time: string; stadium: string; inning?: string; isTop?: boolean; awayStarterName?: string; homeStarterName?: string }) => ({
         id: g.gameId,
         awayTeamId: g.awayTeamId,
         homeTeamId: g.homeTeamId,
         awayScore: g.awayScore,
         homeScore: g.homeScore,
-        status: g.status === "cancelled" ? "final" as const : g.status,
+        status: g.status,
         time: g.time,
         stadium: g.stadium,
         inning: g.status === "live" ? `${g.inning}회${g.isTop ? "초" : "말"}` : undefined,
@@ -122,6 +122,7 @@ export default function GamesPage() {
 
   const liveGames = games.filter(g => g.status === "live");
   const finalGames = games.filter(g => g.status === "final");
+  const cancelledGames = games.filter(g => g.status === "cancelled");
   const scheduledGames = games.filter(g => g.status === "scheduled");
 
   return (
@@ -179,6 +180,19 @@ export default function GamesPage() {
               <h2 className="text-sm font-semibold text-text-tertiary mb-2">종료</h2>
               <div className="space-y-2">
                 {finalGames.map(g => (
+                  <motion.div key={g.id} variants={item}>
+                    <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} />
+                  </motion.div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {cancelledGames.length > 0 && (
+            <div>
+              <h2 className="text-sm font-semibold text-text-tertiary mb-2">취소</h2>
+              <div className="space-y-2">
+                {cancelledGames.map(g => (
                   <motion.div key={g.id} variants={item}>
                     <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} />
                   </motion.div>

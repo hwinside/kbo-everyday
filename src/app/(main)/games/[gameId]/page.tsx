@@ -187,7 +187,14 @@ export default function GameDetailPage() {
     >
       <GameDetailHeader status={d.derivedStatus} time={game.time} stadium={liveGame?.stadium || game.stadium} />
 
-      {d.isLive ? (
+      {d.derivedStatus === "cancelled" ? (
+        <div className="px-4 py-5">
+          <div className="rounded-2xl border border-border bg-bg-secondary px-4 py-5 text-center">
+            <p className="text-base font-semibold text-text-primary">경기가 취소되었습니다</p>
+            <p className="text-sm text-text-tertiary mt-1">우천 등 경기 운영 사유로 정상 진행되지 않았습니다.</p>
+          </div>
+        </div>
+      ) : d.isLive ? (
         <ScoreBar
           awayTeam={awayTeam}
           homeTeam={homeTeam}

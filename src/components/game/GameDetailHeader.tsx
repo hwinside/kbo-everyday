@@ -14,6 +14,7 @@ export default function GameDetailHeader({ status, time, stadium }: GameDetailHe
 
   const titleText =
     status === "live" ? "경기 중" :
+    status === "cancelled" ? "경기 취소" :
     status === "final" ? "경기 종료" :
     `${time} 예정`;
 
