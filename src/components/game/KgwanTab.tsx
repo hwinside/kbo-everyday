@@ -842,18 +842,10 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
   );
 }
 
-function CancelledView({ homeTeamId, awayTeamId }: { homeTeamId: number; awayTeamId: number }) {
-  const homeTeam = getTeamById(homeTeamId)!;
-  const awayTeam = getTeamById(awayTeamId)!;
-
+function CancelledView() {
   return (
     <div className="px-4 py-6">
       <div className="glass-card p-5 text-center space-y-3">
-        <div className="flex items-center justify-center gap-3">
-          <Image src={awayTeam.logoPath} alt="" width={28} height={28} unoptimized className="object-contain" />
-          <span className="text-sm font-semibold text-text-secondary">vs</span>
-          <Image src={homeTeam.logoPath} alt="" width={28} height={28} unoptimized className="object-contain" />
-        </div>
         <p className="text-base font-bold text-text-primary">경기가 취소되었습니다</p>
         <p className="text-sm text-text-tertiary">우천 등 경기 운영 사유로 취소된 경기입니다.</p>
       </div>
@@ -885,7 +877,7 @@ export default function KgwanTab({
   }
 
   if (status === "cancelled") {
-    return <CancelledView homeTeamId={homeTeamId} awayTeamId={awayTeamId} />;
+    return <CancelledView />;
   }
 
   // final

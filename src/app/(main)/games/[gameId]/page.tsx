@@ -131,6 +131,17 @@ function parseKboGameId(gameId: string) {
   };
 }
 
+function CancelledTabCard() {
+  return (
+    <div className="px-4 py-6">
+      <div className="glass-card p-5 text-center space-y-3">
+        <p className="text-base font-bold text-text-primary">경기가 취소되었습니다</p>
+        <p className="text-sm text-text-tertiary">우천 등 경기 운영 사유로 취소된 경기입니다.</p>
+      </div>
+    </div>
+  );
+}
+
 export default function GameDetailPage() {
   const params = useParams();
   const gameId = params.gameId as string;
@@ -325,7 +336,9 @@ export default function GameDetailPage() {
           )}
           {activeTab === "lineup" && (
             <motion.div key="lineup" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              {d.detailLineup ? (
+              {d.derivedStatus === "cancelled" ? (
+                <CancelledTabCard />
+              ) : d.detailLineup ? (
                 <LineupTab
                   lineup={{
                     gameId,
@@ -371,7 +384,9 @@ export default function GameDetailPage() {
           )}
           {activeTab === "stats" && (
             <motion.div key="stats" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              {gameStats ? (
+              {d.derivedStatus === "cancelled" ? (
+                <CancelledTabCard />
+              ) : gameStats ? (
                 <GameStatsTab stats={gameStats} awayTeam={awayTeam} homeTeam={homeTeam} relay={gameRelay} />
               ) : liveGame?.isLive && gameRelay && gameRelay.innings.length > 0 ? (
                 <LiveStatsTab
