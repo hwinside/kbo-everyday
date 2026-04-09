@@ -4,6 +4,14 @@ import { NextResponse, type NextRequest } from "next/server";
 const CANONICAL_HOST = "keubo.fan";
 
 export async function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  // Never canonical-redirect API routes. Vercel cron/functions may invoke
+  // the deployment host directly, and redirecting those requests breaks job execution.
+  if (pathname.startsWith("/api/")) {
+    return NextResponse.next({ request });
+  }
+
   // Force canonical domain: *.vercel.app → keubo.fan (prevents PWA breakage)
   const host = request.headers.get("host") || "";
   if (
