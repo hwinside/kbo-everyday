@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { fetchGames } from "@/lib/crawler/kbo-api";
 
 // ===== Types =====
 
@@ -565,8 +566,20 @@ export async function GET(req: NextRequest) {
 
     const hasRealBoxScoreFinal = boxScore &&
       (boxScore.awayBatters.some(b => b.atBats > 0) || boxScore.homeBatters.some(b => b.atBats > 0));
+
+    let liveListStatus: GameDetailResponse["status"] | null = null;
+    try {
+      const dateStr = gameId.slice(0, 8);
+      const games = await fetchGames(dateStr);
+      liveListStatus = games.find(g => g.gameId === gameId)?.status ?? null;
+    } catch {
+      liveListStatus = null;
+    }
+
     const status: GameDetailResponse["status"] =
-      scoreBoardStatus === "scheduled" && hasRealBoxScoreFinal ? "final" : scoreBoardStatus;
+      liveListStatus === "cancelled" ? "cancelled" :
+      scoreBoardStatus === "scheduled" && hasRealBoxScoreFinal ? "final" :
+      scoreBoardStatus;
 
     const response: GameDetailResponse = {
       gameId,
