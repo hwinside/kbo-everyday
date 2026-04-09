@@ -373,6 +373,17 @@ async function getCached(gameId: string): Promise<{ summary: Record<string, unkn
   }
 }
 
+
+async function getGameStatus(gameId: string): Promise<KboGame["status"] | null> {
+  try {
+    const dateStr = getDateFromGameId(gameId);
+    const games = await fetchGames(dateStr);
+    return games.find(g => g.gameId === gameId)?.status ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function saveCache(gameId: string, summary: Record<string, unknown>) {
   try {
     await supabase
@@ -387,6 +398,11 @@ async function saveCache(gameId: string, summary: Record<string, unknown>) {
 export async function GET(req: NextRequest) {
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) return NextResponse.json({ error: "gameId required" }, { status: 400 });
+
+  const status = await getGameStatus(gameId);
+  if (status === "cancelled") {
+    return NextResponse.json({ preview: null, source: "cancelled" });
+  }
 
   const cached = await getCached(gameId);
   if (cached) {
@@ -403,6 +419,11 @@ export async function POST(req: NextRequest) {
   const body: PreviewRequest = await req.json();
   if (!body.gameId || !body.awayTeamId || !body.homeTeamId) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+  }
+
+  const status = await getGameStatus(body.gameId);
+  if (status === "cancelled") {
+    return NextResponse.json({ preview: null, source: "cancelled" });
   }
 
   // 선발투수가 없으면 fetchGames로 오늘 경기에서 선발투수 조회
