@@ -201,46 +201,83 @@ export default function AdminJobsPage() {
             <p className="text-sm">등록된 작업 없음</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-white/8">
-                  <th className="text-left py-2 text-[#8E8E93] font-medium">작업</th>
-                  <th className="text-left py-2 text-[#8E8E93] font-medium">상태</th>
-                  <th className="text-left py-2 text-[#8E8E93] font-medium">시작 시간</th>
-                  <th className="text-right py-2 text-[#8E8E93] font-medium">소요시간</th>
-                  <th className="text-left py-2 text-[#8E8E93] font-medium">결과</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredLogs.slice(0, 50).map((log) => (
-                  <tr key={log.id} className="border-b border-white/5">
-                    <td className="py-2.5 font-medium">
-                      {jobLabelMap.get(log.job_name) ?? log.job_name}
-                    </td>
-                    <td className="py-2.5">
-                      <JobStatusBadge status={log.status} />
-                    </td>
-                    <td className="py-2.5 text-[#8E8E93]">
-                      {new Date(log.started_at).toLocaleString("ko-KR")}
-                    </td>
-                    <td className="py-2.5 text-right tabular-nums text-[#8E8E93]">
-                      {log.duration_ms != null
-                        ? `${(log.duration_ms / 1000).toFixed(1)}초`
-                        : "-"}
-                    </td>
-                    <td className="py-2.5 text-[#8E8E93] max-w-[200px] truncate">
-                      {log.error_message ? (
-                        <span className="text-[#FF453A]">{log.error_message}</span>
-                      ) : (
-                        log.result_summary || "-"
-                      )}
-                    </td>
+          <>
+            <div className="space-y-3 md:hidden">
+              {filteredLogs.slice(0, 50).map((log) => (
+                <div key={log.id} className="rounded-xl border border-white/8 bg-white/[0.03] p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium leading-snug">
+                        {jobLabelMap.get(log.job_name) ?? log.job_name}
+                      </p>
+                      <p className="mt-1 text-xs text-[#8E8E93]">
+                        {new Date(log.started_at).toLocaleString("ko-KR")}
+                      </p>
+                    </div>
+                    <JobStatusBadge status={log.status} />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-xs text-[#636366] mb-1">소요시간</p>
+                      <p className="tabular-nums text-[#E5E5EA]">
+                        {log.duration_ms != null
+                          ? `${(log.duration_ms / 1000).toFixed(1)}초`
+                          : "-"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-[#636366] mb-1">결과</p>
+                      <p className={`text-sm leading-snug break-words ${log.error_message ? "text-[#FF453A]" : "text-[#8E8E93]"}`}>
+                        {log.error_message || log.result_summary || "-"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-white/8">
+                    <th className="text-left py-2 text-[#8E8E93] font-medium">작업</th>
+                    <th className="text-left py-2 text-[#8E8E93] font-medium">상태</th>
+                    <th className="text-left py-2 text-[#8E8E93] font-medium">시작 시간</th>
+                    <th className="text-right py-2 text-[#8E8E93] font-medium">소요시간</th>
+                    <th className="text-left py-2 text-[#8E8E93] font-medium">결과</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {filteredLogs.slice(0, 50).map((log) => (
+                    <tr key={log.id} className="border-b border-white/5">
+                      <td className="py-2.5 font-medium">
+                        {jobLabelMap.get(log.job_name) ?? log.job_name}
+                      </td>
+                      <td className="py-2.5">
+                        <JobStatusBadge status={log.status} />
+                      </td>
+                      <td className="py-2.5 text-[#8E8E93]">
+                        {new Date(log.started_at).toLocaleString("ko-KR")}
+                      </td>
+                      <td className="py-2.5 text-right tabular-nums text-[#8E8E93]">
+                        {log.duration_ms != null
+                          ? `${(log.duration_ms / 1000).toFixed(1)}초`
+                          : "-"}
+                      </td>
+                      <td className="py-2.5 text-[#8E8E93] max-w-[200px] truncate">
+                        {log.error_message ? (
+                          <span className="text-[#FF453A]">{log.error_message}</span>
+                        ) : (
+                          log.result_summary || "-"
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
     </div>
