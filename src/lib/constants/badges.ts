@@ -12,7 +12,7 @@ export const ACTIVE_BADGE_IDS = new Set([
   "founder",
   "debut", "writer-1", "writer-2", "writer-3", "writer-4", "writer-5",
   "popular-1", "popular-2", "popular-3", "popular-4", "popular-5",
-  "inviter-1", "inviter-3", "inviter-10", "inviter-30",
+  "inviter-1", "inviter-5", "inviter-10", "inviter-30", "inviter-50", "pioneer-2026",
 ]);
 
 export const ALL_BADGES: BadgeDefinition[] = [
@@ -24,9 +24,10 @@ export const ALL_BADGES: BadgeDefinition[] = [
 
   // === 초대 ===
   { id: "inviter-1", name: "리크루터 Lv.1", icon: "🤝", description: "친구 1명 초대", category: "special", rarity: "common" },
-  { id: "inviter-3", name: "리크루터 Lv.2", icon: "🤝", description: "친구 3명 초대", category: "special", rarity: "rare" },
+  { id: "inviter-5", name: "리크루터 Lv.2", icon: "🤝", description: "친구 5명 초대", category: "special", rarity: "rare" },
   { id: "inviter-10", name: "리크루터 Lv.3", icon: "🤝", description: "친구 10명 초대", category: "special", rarity: "epic" },
   { id: "inviter-30", name: "초대왕", icon: "🎪", description: "친구 30명 초대", category: "special", rarity: "legendary" },
+  { id: "inviter-50", name: "전설의 초대왕", icon: "🏆", description: "친구 50명 초대", category: "special", rarity: "legendary" },
 
   // === 커뮤니티 ===
   { id: "debut", name: "데뷔전", icon: "🎬", description: "첫 글 작성", category: "community", rarity: "common" },
@@ -74,6 +75,9 @@ export const ALL_BADGES: BadgeDefinition[] = [
   { id: "graduate", name: "야구학도", icon: "🎓", description: "야구 튜토리얼 전체 완료", category: "knowledge", rarity: "rare" },
   { id: "analyst", name: "분석가", icon: "📊", description: "세이버메트릭스 10회 조회", category: "knowledge", rarity: "common" },
   { id: "explorer", name: "KBO 탐험가", icon: "🗺️", description: "10팀 페이지 모두 방문", category: "knowledge", rarity: "rare" },
+
+  // === 시즌 한정 (초대) ===
+  { id: "pioneer-2026", name: "초기 개척자", icon: "🏴", description: "2026년 6월까지 20명 초대 달성", category: "season", rarity: "legendary" },
 
   // === 시즌 한정 ===
   { id: "first-pitch-2026", name: "2026 퍼스트피치", icon: "⚾", description: "2026 시즌 개막전 참여", category: "season", rarity: "epic" },

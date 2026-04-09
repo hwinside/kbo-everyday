@@ -206,6 +206,14 @@ export async function createPost(params: {
     .single();
 
   if (error) throw error;
+
+  // 초대 활성화 체크 (fire-and-forget)
+  fetch("/api/invite/activate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId: user.id }),
+  }).catch(() => {});
+
   return data;
 }
 
@@ -247,6 +255,12 @@ export async function createComment(postId: number, content: string) {
 
   if (error) throw error;
 
+  // 초대 활성화 체크 (fire-and-forget)
+  fetch("/api/invite/activate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId: user.id }),
+  }).catch(() => {});
 }
 
 /** 좋아요 토글 */

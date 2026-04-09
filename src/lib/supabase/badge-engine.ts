@@ -56,9 +56,12 @@ const BADGE_RULES: BadgeRule[] = [
 
   // 초대
   { id: "inviter-1", check: s => s.inviteCount >= 1 },
-  { id: "inviter-3", check: s => s.inviteCount >= 3 },
+  { id: "inviter-5", check: s => s.inviteCount >= 5 },
   { id: "inviter-10", check: s => s.inviteCount >= 10 },
   { id: "inviter-30", check: s => s.inviteCount >= 30 },
+  { id: "inviter-50", check: s => s.inviteCount >= 50 },
+  // 시즌 한정: 초기 개척자
+  { id: "pioneer-2026", check: s => s.inviteCount >= 20 && new Date() <= new Date("2026-07-01T00:00:00+09:00") },
 
   // 지식
   { id: "graduate", check: s => s.tutorialComplete },
@@ -106,12 +109,13 @@ async function getUserStats(userId: string): Promise<UserStats> {
     .eq("author_id", userId);
   const totalLikes = (myPosts || []).reduce((sum, p) => sum + (p.like_count || 0), 0);
 
-  // 초대 수
+  // 초대 수 (활성화 + 어뷰징 미의심만 카운트)
   const { count: inviteCount } = await supabase
     .from("invitations")
     .select("*", { count: "exact", head: true })
     .eq("inviter_id", userId)
-    .not("used_at", "is", null);
+    .not("activated_at", "is", null)
+    .neq("flagged", true);
 
   // 선수 게시판 활동 (board_type = 'player')
   const { data: playerPosts } = await supabase
