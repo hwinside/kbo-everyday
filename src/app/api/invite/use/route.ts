@@ -37,6 +37,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "본인의 초대코드는 사용할 수 없습니다" }, { status: 403 });
   }
 
+  // 이미 초대받은 유저 중복 등록 차단 (서버 가드)
+  const { data: existingProfile } = await supabase
+    .from("profiles")
+    .select("invited_by")
+    .eq("id", userId)
+    .single();
+
+  if (existingProfile?.invited_by) {
+    return NextResponse.json({ error: "이미 초대코드가 등록된 계정입니다" }, { status: 409 });
+  }
+
   // 어뷰징 체크
   let flagged = false;
   let flaggedReason: string | null = null;

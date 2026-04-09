@@ -10,7 +10,7 @@ export default function InviteCodePage() {
   const { code } = useParams<{ code: string }>();
   const router = useRouter();
   const { user, profile, loading: authLoading } = useAuth();
-  const [status, setStatus] = useState<"idle" | "loading" | "success" | "already" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "confirm" | "loading" | "success" | "already" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
@@ -35,10 +35,9 @@ export default function InviteCodePage() {
       return;
     }
 
-    // 코드 등록 시도
-    registerCode();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading, user, profile]);
+    // 자동등록 안 함 — 명시적 확인 대기
+    setStatus("confirm");
+  }, [authLoading, user, profile, code, router]);
 
   async function registerCode() {
     setStatus("loading");
@@ -85,9 +84,31 @@ export default function InviteCodePage() {
             <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mx-auto">
               <Gift size={32} className="text-accent" />
             </div>
-            <h1 className="text-xl font-bold text-text-primary">초대코드 등록 중...</h1>
-            <p className="text-sm text-text-secondary">코드: <span className="font-mono font-bold">{code}</span></p>
+            <h1 className="text-xl font-bold text-text-primary">{status === "loading" ? "초대코드 등록 중..." : "준비 중..."}</h1>
             <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin mx-auto" />
+          </>
+        ) : status === "confirm" ? (
+          <>
+            <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mx-auto">
+              <Gift size={32} className="text-accent" />
+            </div>
+            <h1 className="text-xl font-bold text-text-primary">초대코드가 도착했어요!</h1>
+            <p className="text-sm text-text-secondary">코드: <span className="font-mono font-bold">{code}</span></p>
+            <p className="text-sm text-text-secondary">이 초대코드를 등록하시겠어요?</p>
+            <div className="flex gap-3 justify-center">
+              <button
+                onClick={() => registerCode()}
+                className="inline-flex items-center gap-2 bg-accent text-white font-semibold px-6 py-3 rounded-xl"
+              >
+                등록하기
+              </button>
+              <button
+                onClick={() => router.push("/")}
+                className="inline-flex items-center gap-2 bg-bg-tertiary text-text-primary font-semibold px-6 py-3 rounded-xl"
+              >
+                건너뛰기
+              </button>
+            </div>
           </>
         ) : status === "success" ? (
           <>
