@@ -16,6 +16,7 @@ interface Profile {
   points: number;
   grade: string;
   avatar_url: string | null;
+  invited_by: string | null;
 }
 
 interface AuthContextType {

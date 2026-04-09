@@ -19,6 +19,7 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import FeedbackSheet from "@/components/feedback/FeedbackSheet";
 import AvatarSelectSheet from "@/components/profile/AvatarSelectSheet";
 import ProfileCard from "@/components/my/ProfileCard";
+import InviteSection from "@/components/my/InviteSection";
 import FavoritePlayersCard from "@/components/my/FavoritePlayersCard";
 import NotificationCard from "@/components/my/NotificationCard";
 import MenuSection from "@/components/my/MenuSection";
@@ -82,6 +83,9 @@ export default function MyPage() {
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
         <ProfileCard user={user} profile={profile} team={team} onAvatarClick={() => user && setShowAvatarSelect(true)} />
       </motion.div>
+
+      {/* 친구 초대 */}
+      <InviteSection />
 
       {/* 응원 구단 변경 */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }} className="mt-5">

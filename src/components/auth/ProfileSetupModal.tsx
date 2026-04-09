@@ -96,7 +96,7 @@ export default function ProfileSetupModal({ isOpen }: Props) {
       }
 
       await refreshProfile();
-      setStep(3);
+      setStep(4);
     } catch (e: unknown) {
       setError((e as Error).message || "프로필 생성에 실패했습니다");
     } finally {
@@ -179,18 +179,49 @@ export default function ProfileSetupModal({ isOpen }: Props) {
                   이전
                 </button>
                 <button
-                  onClick={handleComplete}
-                  disabled={!selectedTeam || loading}
+                  onClick={() => { setError(""); setStep(3); }}
+                  disabled={!selectedTeam}
                   className="flex-1 py-3 rounded-xl bg-accent text-white font-semibold disabled:opacity-40"
                 >
-                  {loading ? "생성 중..." : "완료"}
+                  다음
                 </button>
               </div>
             </div>
           )}
 
-          {/* Step 3: Done */}
-          {step === 3 && selectedTeamData && (
+          {/* Step 3: Invite Code (optional) */}
+          {step === 3 && (
+            <div className="p-6">
+              <h2 className="text-xl font-bold text-text-primary mb-2">초대코드가 있나요? 🎟️</h2>
+              <p className="text-sm text-text-secondary mb-6">친구에게 받은 초대코드가 있다면 입력해주세요 (선택)</p>
+
+              <input
+                type="text"
+                value={inviteCode}
+                onChange={(e) => { setInviteCode(e.target.value.toUpperCase()); setError(""); }}
+                placeholder="KBO-XXXXXX"
+                maxLength={10}
+                className="w-full bg-bg-tertiary border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 text-text-primary placeholder:text-text-tertiary font-mono tracking-wider focus:outline-none focus:border-accent"
+              />
+              {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
+
+              <div className="flex gap-3 mt-6">
+                <button onClick={() => setStep(2)} className="flex-1 py-3 rounded-xl bg-bg-tertiary text-text-secondary font-semibold">
+                  이전
+                </button>
+                <button
+                  onClick={handleComplete}
+                  disabled={loading}
+                  className="flex-1 py-3 rounded-xl bg-accent text-white font-semibold disabled:opacity-40"
+                >
+                  {loading ? "생성 중..." : inviteCode.trim() ? "등록하고 완료" : "건너뛰기"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 4: Done */}
+          {step === 4 && selectedTeamData && (
             <div className="p-6 text-center">
               <div className="w-20 h-20 rounded-full bg-white p-2 flex items-center justify-center mx-auto mb-4">
                 <Image src={selectedTeamData.logoPath} alt="" width={56} height={56} unoptimized className="object-contain" />
