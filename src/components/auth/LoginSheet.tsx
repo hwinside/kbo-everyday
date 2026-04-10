@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
 import { signInWithGoogle, signInWithKakao } from "@/lib/supabase/auth";
@@ -10,6 +12,14 @@ interface LoginSheetProps {
 }
 
 export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
+  const [agreed, setAgreed] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setAgreed(false);
+    }
+  }, [isOpen]);
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -39,10 +49,24 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
               로그인하면 예측, 채팅, 게시판을 이용할 수 있어요
             </p>
 
+            <label className="flex items-start gap-3 rounded-2xl border border-border bg-bg-tertiary/70 p-4">
+              <input
+                type="checkbox"
+                checked={agreed}
+                onChange={(e) => setAgreed(e.target.checked)}
+                className="mt-1 accent-accent"
+              />
+              <span className="text-xs leading-6 text-text-secondary">
+                [필수] <Link href="/terms" className="font-semibold text-text-primary underline underline-offset-2">이용약관</Link> 및{" "}
+                <Link href="/privacy" className="font-semibold text-text-primary underline underline-offset-2">개인정보처리방침</Link>에 동의합니다.
+              </span>
+            </label>
+
             <div className="space-y-3">
               <button
                 onClick={() => signInWithKakao()}
-                className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-medium text-sm transition-transform active:scale-[0.98]"
+                disabled={!agreed}
+                className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-medium text-sm transition-transform active:scale-[0.98] disabled:opacity-40 disabled:active:scale-100"
                 style={{ backgroundColor: "#FEE500", color: "#191919" }}
               >
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -53,7 +77,8 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
 
               <button
                 onClick={() => signInWithGoogle()}
-                className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-medium text-sm border border-black/10 dark:border-white/10 bg-white text-gray-800 transition-transform active:scale-[0.98]"
+                disabled={!agreed}
+                className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-medium text-sm border border-black/10 dark:border-white/10 bg-white text-gray-800 transition-transform active:scale-[0.98] disabled:opacity-40 disabled:active:scale-100"
               >
                 <svg width="20" height="20" viewBox="0 0 20 20">
                   <path d="M19.6 10.23c0-.68-.06-1.36-.17-2.02H10v3.83h5.38a4.6 4.6 0 01-2 3.02v2.5h3.24c1.89-1.74 2.98-4.3 2.98-7.33z" fill="#4285F4"/>
@@ -66,7 +91,7 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
             </div>
 
             <p className="text-[11px] text-text-tertiary text-center mt-4">
-              로그인 시 서비스 이용약관에 동의합니다
+              동의 후 로그인하면 커뮤니티, 예측, 쪽지 기능을 이용할 수 있어요.
             </p>
           </motion.div>
         </>
