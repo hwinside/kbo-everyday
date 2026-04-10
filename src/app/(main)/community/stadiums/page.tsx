@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import Image from "next/image";
 import Link from "next/link";
-import { MapPin } from "lucide-react";
+import { MapPin, TrainFront } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { STADIUMS } from "@/lib/constants/stadiums";
 import { getTeamById } from "@/lib/constants/teams";
@@ -51,9 +51,8 @@ export default function CommunityStadiumsPage() {
                         <span className="text-xs text-text-tertiary">· {stadium.capacity}석</span>
                       </div>
                       <div className="flex items-center gap-1.5 mt-2">
-                        {teams.map((t) => (
-                          <span key={t.id} className="text-xs text-text-secondary">{t.name}</span>
-                        ))}
+                        <TrainFront size={12} className="text-text-tertiary" />
+                        <span className="text-xs text-text-tertiary">{stadium.transit.subway}</span>
                       </div>
                     </div>
                   </div>

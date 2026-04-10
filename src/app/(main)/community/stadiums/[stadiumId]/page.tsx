@@ -8,7 +8,7 @@ import { useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { ChevronLeft, MapPin, Ticket, UtensilsCrossed, Armchair, MessageCircle, PenLine } from "lucide-react";
+import { ChevronLeft, MapPin, Ticket, UtensilsCrossed, Armchair, MessageCircle, PenLine, Car, TrainFront, Bus } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { STADIUMS } from "@/lib/constants/stadiums";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
@@ -166,42 +166,104 @@ export default function StadiumDetailPage() {
 
       <div className="px-5 py-4">
         {active === "info" && (
-          <section>
-            <h2 className="text-base font-bold text-text-primary mb-3">🏟️ 기본 정보</h2>
-            <GlassCard className="p-4">
-              <div className="space-y-3 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-text-tertiary">구장명</span>
-                  <span className="text-text-primary font-medium">{stadium.name}</span>
+          <section className="space-y-4">
+            <div>
+              <h2 className="text-base font-bold text-text-primary mb-3">🏟️ 기본 정보</h2>
+              <GlassCard className="p-4">
+                <div className="space-y-3 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-text-tertiary">구장명</span>
+                    <span className="text-text-primary font-medium">{stadium.name}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-text-tertiary">위치</span>
+                    <span className="text-text-primary font-medium">{stadium.city}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-text-tertiary">수용 인원</span>
+                    <span className="text-text-primary font-medium">{stadium.capacity}석</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-text-tertiary">연고팀</span>
+                    <span className="text-text-primary font-medium">{teams.map(t => t.name).join(", ")}</span>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-text-tertiary">위치</span>
-                  <span className="text-text-primary font-medium">{stadium.city}</span>
+              </GlassCard>
+            </div>
+
+            <div>
+              <h2 className="text-base font-bold text-text-primary mb-3">🎫 티켓</h2>
+              <GlassCard className="p-4">
+                <div className="space-y-3 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-text-tertiary">구매처</span>
+                    <span className="text-text-primary font-medium text-right">{stadium.ticketing.provider}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-text-tertiary">가격대</span>
+                    <span className="text-text-primary font-medium text-right">{stadium.ticketing.priceRange}</span>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-text-tertiary">수용 인원</span>
-                  <span className="text-text-primary font-medium">{stadium.capacity}석</span>
+              </GlassCard>
+            </div>
+
+            <div>
+              <h2 className="text-base font-bold text-text-primary mb-3">🅿️ 주차</h2>
+              <GlassCard className="p-4">
+                <div className="space-y-3 text-sm">
+                  <div className="flex items-start gap-3">
+                    <Car size={16} className="text-text-tertiary mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-text-primary font-medium">{stadium.parking.fee}</p>
+                      <p className="text-text-tertiary mt-1">{stadium.parking.tips}</p>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-text-tertiary">연고팀</span>
-                  <span className="text-text-primary font-medium">{teams.map(t => t.name).join(", ")}</span>
+              </GlassCard>
+            </div>
+
+            <div>
+              <h2 className="text-base font-bold text-text-primary mb-3">🚇 대중교통</h2>
+              <GlassCard className="p-4">
+                <div className="space-y-4 text-sm">
+                  <div className="flex items-start gap-3">
+                    <TrainFront size={16} className="text-text-tertiary mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-xs text-text-tertiary mb-0.5">지하철</p>
+                      <p className="text-text-primary">{stadium.transit.subway}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <Bus size={16} className="text-text-tertiary mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-xs text-text-tertiary mb-0.5">버스</p>
+                      <p className="text-text-primary">{stadium.transit.bus}</p>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </GlassCard>
-            <p className="text-xs text-text-tertiary/60 mt-3 text-center">
-              좌석 가격, 주차, 대중교통 등 상세 정보를 준비 중이에요 🔨
-            </p>
+              </GlassCard>
+            </div>
           </section>
         )}
 
         {active === "food" && (
           <section>
             <h2 className="text-base font-bold text-text-primary mb-3">🍗 먹거리</h2>
-            <EmptyState
-              icon={<UtensilsCrossed size={32} />}
-              title="아직 제보가 없어요"
-              subtitle="구장 맛집 정보를 준비 중이에요"
-            />
+            <GlassCard className="p-4">
+              <div className="flex flex-wrap gap-2">
+                {stadium.foodBrands.map((brand) => (
+                  <span
+                    key={brand}
+                    className="inline-block px-3 py-1.5 rounded-full bg-bg-tertiary text-sm text-text-secondary font-medium"
+                  >
+                    {brand}
+                  </span>
+                ))}
+              </div>
+            </GlassCard>
+            <p className="text-xs text-text-tertiary/60 mt-3 text-center">
+              매점 구성은 시즌에 따라 변경될 수 있어요
+            </p>
           </section>
         )}
 
