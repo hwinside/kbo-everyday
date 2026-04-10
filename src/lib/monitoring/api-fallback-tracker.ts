@@ -3,9 +3,24 @@
  * 
  * 외부 API 의존성 모니터링:
  * - Primary API 실패 시 fallback 이벤트 추적
+ * - Supabase 영구 저장
  * - 임계치 초과 시 텔레그램 알림
  * - 알림 스팸 방지 (쿨다운)
  */
+
+import { createClient } from "@supabase/supabase-js";
+
+// Supabase 클라이언트 (서버사이드 전용)
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!, // 서비스 롤 키 필요
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  }
+);
 
 interface FallbackEvent {
   apiName: string;
@@ -39,8 +54,13 @@ export async function trackFallback(
     errorMessage: options?.errorMessage,
   };
 
-  // 이벤트 추가
+  // 이벤트 추가 (메모리)
   recentFallbacks.push(event);
+
+  // Supabase 영구 저장 (비동기, 실패해도 알림은 계속)
+  saveToSupabase(event).catch(err => {
+    console.error("[API Fallback] Failed to save to Supabase:", err.message);
+  });
 
   // 5분 이상 된 이벤트 제거 (메모리 관리)
   const cutoff = Date.now() - ALERT_WINDOW_MS;
@@ -127,6 +147,24 @@ ${reasonText}${errorInfo}
     });
   } catch (error) {
     console.error("[API Fallback] Failed to send Telegram alert:", error);
+  }
+}
+
+/**
+ * Supabase 저장
+ */
+async function saveToSupabase(event: FallbackEvent) {
+  const { error } = await supabase.from("api_fallback_events").insert({
+    api_name: event.apiName,
+    reason: event.reason,
+    status_code: event.statusCode || null,
+    error_message: event.errorMessage || null,
+    timestamp: event.timestamp.toISOString(),
+    alert_sent: false, // 알림 발송 전이므로 false
+  });
+
+  if (error) {
+    throw new Error(`Supabase insert failed: ${error.message}`);
   }
 }
 
