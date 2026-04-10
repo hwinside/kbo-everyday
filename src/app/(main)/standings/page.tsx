@@ -38,18 +38,35 @@ export default function StandingsPage() {
       .then(r => r.json())
       .then(data => {
         if (data.standings?.length) {
-          const mapped: TeamStanding[] = data.standings.map((s: RawStanding, i: number) => ({
-            teamId: TEAM_NAME_TO_ID[s.teamName] ?? 0,
-            season: 2026,
-            rank: i + 1,
-            wins: s.wins,
-            losses: s.losses,
-            draws: s.draws,
-            pct: s.winRate,
-            gb: s.gamesBehind,
-            streak: "",
-            last10: "",
-          }));
+          // API 원본 ranking 우선 사용, 없으면 승률 기반 공동순위 계산
+          const hasRanking = data.standings.some((s: RawStanding & { ranking?: number }) => s.ranking != null && s.ranking > 0);
+          let currentRank = 1;
+          const mapped: TeamStanding[] = data.standings.map((s: RawStanding & { ranking?: number }, i: number) => {
+            let rank: number;
+            if (hasRanking) {
+              rank = s.ranking!;
+            } else {
+              if (i > 0) {
+                const prev = data.standings[i - 1] as RawStanding;
+                if (s.winRate !== prev.winRate) {
+                  currentRank = i + 1;
+                }
+              }
+              rank = currentRank;
+            }
+            return {
+              teamId: TEAM_NAME_TO_ID[s.teamName] ?? 0,
+              season: 2026,
+              rank,
+              wins: s.wins,
+              losses: s.losses,
+              draws: s.draws,
+              pct: s.winRate,
+              gb: s.gamesBehind,
+              streak: "",
+              last10: "",
+            };
+          });
           setRealStandings(mapped);
         }
       })

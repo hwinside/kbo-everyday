@@ -230,6 +230,7 @@ export async function fetchStandings(): Promise<TeamStanding[]> {
           draws: team.drawnGameCount ?? 0,
           winRate: team.wra ?? 0,
           gamesBehind: team.gameBehind ?? 0,
+          ranking: team.ranking ?? 0,
         }));
       }
     }
