@@ -4,80 +4,16 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { getTeamBorderColor } from "@/lib/utils/team-border-color";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { ChevronLeft } from "lucide-react";
-import {
-  ArrowLeft,
-  Star,
-  MapPin,
-  UtensilsCrossed,
-  Armchair,
-  MessageCircle,
-  Heart,
-  PenLine,
-  Ticket,
-} from "lucide-react";
+import { ChevronLeft, MapPin, Ticket, UtensilsCrossed, Armchair, MessageCircle, PenLine } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { STADIUMS } from "@/lib/constants/stadiums";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 
-const MOCK_REVIEWS = [
-  {
-    id: 1,
-    author: "직관러88",
-    teamId: 1,
-    rating: 5,
-    content:
-      "잠실 치킨거리는 직관 전 필수 코스! 사직동 닭똥집도 맛있지만 여기가 원탑",
-    timeAgo: "2시간 전",
-    likes: 45,
-  },
-  {
-    id: 2,
-    author: "야구초보",
-    teamId: 2,
-    rating: 4,
-    content:
-      "처음 직관 갔는데 외야 잔디석 분위기 최고였어요. 다만 경기는 잘 안 보임 ㅋㅋ",
-    timeAgo: "5시간 전",
-    likes: 32,
-  },
-  {
-    id: 3,
-    author: "시즌권자",
-    teamId: 1,
-    rating: 4,
-    content:
-      "테이블석 예매가 전쟁이에요... 오픈런 필수. 근데 한번 앉으면 천국",
-    timeAgo: "1일 전",
-    likes: 89,
-  },
-  {
-    id: 4,
-    author: "먹방투어",
-    teamId: 2,
-    rating: 5,
-    content:
-      "방이동 먹자골목 새로 생긴 양꼬치집 강추! 경기 끝나고 2차로 최고",
-    timeAgo: "2일 전",
-    likes: 67,
-  },
-  {
-    id: 5,
-    author: "아빠랑야구",
-    teamId: 1,
-    rating: 3,
-    content:
-      "아이랑 가기엔 좌석이 좁아요. 그래도 분위기는 좋아서 아이가 좋아함",
-    timeAgo: "3일 전",
-    likes: 28,
-  },
-];
-
-type Section = "food" | "seats" | "reviews";
+type Section = "info" | "food" | "seats" | "reviews";
 
 function SectionChip({
   active,
@@ -106,22 +42,27 @@ function SectionChip({
   );
 }
 
+function EmptyState({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {
+  return (
+    <div className="text-center py-10">
+      <div className="mx-auto mb-2 opacity-40">{icon}</div>
+      <p className="text-sm text-text-tertiary">{title}</p>
+      <p className="text-xs text-text-tertiary/60 mt-1">{subtitle}</p>
+    </div>
+  );
+}
+
 export default function StadiumDetailPage() {
   const { stadiumId } = useParams();
   const router = useRouter();
   const { user } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
+  const [active, setActive] = useState<Section>("info");
 
   const stadium = useMemo(
     () => STADIUMS.find((s) => s.id === stadiumId),
     [stadiumId]
   );
-
-  const foodRef = useRef<HTMLDivElement | null>(null);
-  const seatsRef = useRef<HTMLDivElement | null>(null);
-  const reviewsRef = useRef<HTMLDivElement | null>(null);
-
-  const [active, setActive] = useState<Section>("food");
 
   if (!stadium)
     return (
@@ -132,18 +73,6 @@ export default function StadiumDetailPage() {
 
   const teams = stadium.teamIds.map((id) => getTeamById(id)!).filter(Boolean);
   const primaryTeam = teams[0];
-
-  function scrollTo(section: Section) {
-    setActive(section);
-    const el =
-      section === "food"
-        ? foodRef.current
-        : section === "seats"
-          ? seatsRef.current
-          : reviewsRef.current;
-    if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
@@ -188,11 +117,6 @@ export default function StadiumDetailPage() {
             {stadium.city}
           </span>
           <span>{stadium.capacity}석</span>
-          <span className="flex items-center gap-1 text-yellow-400">
-            <Star size={14} fill="currentColor" />
-            {stadium.rating}
-          </span>
-          <span>리뷰 {stadium.reviewCount}</span>
         </div>
 
         {/* Ticket CTA */}
@@ -202,7 +126,7 @@ export default function StadiumDetailPage() {
             className="inline-flex items-center gap-2 rounded-full bg-accent/20 text-accent px-4 py-2 text-sm font-semibold"
           >
             <Ticket size={16} />
-            티켓 양도 보기 ({stadium.name})
+            티켓 양도 보기
           </Link>
         </div>
       </div>
@@ -214,139 +138,94 @@ export default function StadiumDetailPage() {
       >
         <div className="mx-auto max-w-lg px-5 py-3 flex items-center gap-2 overflow-x-auto hide-scrollbar">
           <SectionChip
+            active={active === "info"}
+            onClick={() => setActive("info")}
+            label="기본정보"
+            icon={<MapPin size={14} />}
+          />
+          <SectionChip
             active={active === "food"}
-            onClick={() => scrollTo("food")}
-            label="맛집"
+            onClick={() => setActive("food")}
+            label="먹거리"
             icon={<UtensilsCrossed size={14} />}
           />
           <SectionChip
             active={active === "seats"}
-            onClick={() => scrollTo("seats")}
+            onClick={() => setActive("seats")}
             label="좌석팁"
             icon={<Armchair size={14} />}
           />
           <SectionChip
             active={active === "reviews"}
-            onClick={() => scrollTo("reviews")}
+            onClick={() => setActive("reviews")}
             label="후기"
             icon={<MessageCircle size={14} />}
           />
         </div>
       </div>
 
-      <div className="px-5 py-4 space-y-10">
-        {/* 맛집 */}
-        <section ref={foodRef}>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-bold text-text-primary">🍗 맛집</h2>
-          </div>
-          <div className="space-y-3">
-            {stadium.foodSpots.map((spot, i) => (
-              <GlassCard key={i} className="p-4">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-text-primary">
-                      {spot.name}
-                    </h3>
-                    <div className="flex items-center gap-2 mt-1 text-xs text-text-tertiary">
-                      <span className="px-1.5 py-0.5 rounded-full bg-bg-tertiary">
-                        {spot.category}
-                      </span>
-                      <span>{spot.distance}</span>
-                    </div>
-                  </div>
-                  <span className="flex items-center gap-1 text-yellow-400 text-sm">
-                    <Star size={14} fill="currentColor" />
-                    {spot.rating}
-                  </span>
+      <div className="px-5 py-4">
+        {active === "info" && (
+          <section>
+            <h2 className="text-base font-bold text-text-primary mb-3">🏟️ 기본 정보</h2>
+            <GlassCard className="p-4">
+              <div className="space-y-3 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-text-tertiary">구장명</span>
+                  <span className="text-text-primary font-medium">{stadium.name}</span>
                 </div>
-              </GlassCard>
-            ))}
-          </div>
-        </section>
-
-        {/* 좌석팁 */}
-        <section ref={seatsRef}>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-bold text-text-primary">💺 좌석팁</h2>
-          </div>
-          <div className="space-y-3">
-            {stadium.seatTips.map((seat, i) => (
-              <GlassCard key={i} className="p-4">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <h3 className="text-sm font-bold text-text-primary">
-                      {seat.zone}
-                    </h3>
-                    <p className="text-xs text-text-secondary mt-1">
-                      {seat.tip}
-                    </p>
-                  </div>
-                  <span className="flex items-center gap-1 text-yellow-400 text-xs ml-3">
-                    <Star size={12} fill="currentColor" />
-                    {seat.rating}
-                  </span>
+                <div className="flex justify-between">
+                  <span className="text-text-tertiary">위치</span>
+                  <span className="text-text-primary font-medium">{stadium.city}</span>
                 </div>
-              </GlassCard>
-            ))}
-          </div>
-        </section>
+                <div className="flex justify-between">
+                  <span className="text-text-tertiary">수용 인원</span>
+                  <span className="text-text-primary font-medium">{stadium.capacity}석</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-tertiary">연고팀</span>
+                  <span className="text-text-primary font-medium">{teams.map(t => t.name).join(", ")}</span>
+                </div>
+              </div>
+            </GlassCard>
+            <p className="text-xs text-text-tertiary/60 mt-3 text-center">
+              좌석 가격, 주차, 대중교통 등 상세 정보를 준비 중이에요 🔨
+            </p>
+          </section>
+        )}
 
-        {/* 후기 */}
-        <section ref={reviewsRef}>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-bold text-text-primary">💬 후기</h2>
-          </div>
-          <div className="space-y-3">
-            {MOCK_REVIEWS.map((review) => {
-              const t = getTeamById(review.teamId);
-              return (
-                <GlassCard key={review.id} className="p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    {t && (
-                      <div className="w-5 h-5 rounded-full bg-white p-0.5 flex items-center justify-center">
-                        <Image
-                          src={t.logoPath}
-                          alt=""
-                          width={14}
-                          height={14}
-                          unoptimized
-                          className="object-contain"
-                        />
-                      </div>
-                    )}
-                    <span className="text-sm font-semibold text-text-primary">
-                      {review.author}
-                    </span>
-                    <div className="flex gap-0.5">
-                      {Array.from({ length: 5 }).map((_, i) => (
-                        <Star
-                          key={i}
-                          size={10}
-                          fill={i < review.rating ? "#FBBF24" : "none"}
-                          className={
-                            i < review.rating
-                              ? "text-yellow-400"
-                              : "text-text-tertiary"
-                          }
-                        />
-                      ))}
-                    </div>
-                    <span className="ml-auto text-xs text-text-tertiary">
-                      {review.timeAgo}
-                    </span>
-                  </div>
-                  <p className="readable-body">
-                    {review.content}
-                  </p>
-                  <div className="mt-2 flex items-center gap-1 text-xs text-text-tertiary">
-                    <Heart size={12} /> {review.likes}
-                  </div>
-                </GlassCard>
-              );
-            })}
-          </div>
-        </section>
+        {active === "food" && (
+          <section>
+            <h2 className="text-base font-bold text-text-primary mb-3">🍗 먹거리</h2>
+            <EmptyState
+              icon={<UtensilsCrossed size={32} />}
+              title="아직 제보가 없어요"
+              subtitle="구장 맛집 정보를 준비 중이에요"
+            />
+          </section>
+        )}
+
+        {active === "seats" && (
+          <section>
+            <h2 className="text-base font-bold text-text-primary mb-3">💺 좌석팁</h2>
+            <EmptyState
+              icon={<Armchair size={32} />}
+              title="아직 제보가 없어요"
+              subtitle="좌석별 꿀팁을 준비 중이에요"
+            />
+          </section>
+        )}
+
+        {active === "reviews" && (
+          <section>
+            <h2 className="text-base font-bold text-text-primary mb-3">💬 후기</h2>
+            <EmptyState
+              icon={<MessageCircle size={32} />}
+              title="아직 후기가 없어요"
+              subtitle="첫 번째 후기를 남겨보세요!"
+            />
+          </section>
+        )}
       </div>
 
       {/* FAB */}

@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import Image from "next/image";
 import Link from "next/link";
-import { MapPin, Star, MessageCircle, UtensilsCrossed, Armchair } from "lucide-react";
+import { MapPin } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { STADIUMS } from "@/lib/constants/stadiums";
 import { getTeamById } from "@/lib/constants/teams";
@@ -15,7 +15,7 @@ export default function CommunityStadiumsPage() {
   return (
     <div className="mx-auto max-w-lg px-5 pb-24">
       <div className="mt-4 mb-2">
-        <p className="text-sm text-text-tertiary">맛집 · 좌석 리뷰 · 직관 꿀팁</p>
+        <p className="text-sm text-text-tertiary">KBO 10개 구장 정보</p>
       </div>
 
       <motion.div variants={container} initial="hidden" animate="show" className="space-y-4">
@@ -50,19 +50,10 @@ export default function CommunityStadiumsPage() {
                         <span className="text-xs text-text-tertiary">{stadium.city}</span>
                         <span className="text-xs text-text-tertiary">· {stadium.capacity}석</span>
                       </div>
-                      <div className="flex items-center flex-wrap gap-x-4 gap-y-1 mt-2 text-xs">
-                        <span className="flex items-center gap-1 text-yellow-400">
-                          <Star size={12} fill="currentColor" /> {stadium.rating}
-                        </span>
-                        <span className="flex items-center gap-1 text-text-tertiary">
-                          <MessageCircle size={12} /> 리뷰 {stadium.reviewCount}
-                        </span>
-                        <span className="flex items-center gap-1 text-text-tertiary">
-                          <UtensilsCrossed size={12} /> 맛집 {stadium.foodSpots.length}
-                        </span>
-                        <span className="flex items-center gap-1 text-text-tertiary">
-                          <Armchair size={12} /> 좌석팁 {stadium.seatTips.length}
-                        </span>
+                      <div className="flex items-center gap-1.5 mt-2">
+                        {teams.map((t) => (
+                          <span key={t.id} className="text-xs text-text-secondary">{t.name}</span>
+                        ))}
                       </div>
                     </div>
                   </div>
