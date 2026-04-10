@@ -174,7 +174,42 @@ export interface TeamStanding {
 }
 
 /** 팀 순위 (HTML 파싱) */
+/** 팀 순위 (네이버 API → KBO HTML 폴백) */
 export async function fetchStandings(): Promise<TeamStanding[]> {
+  try {
+    // Primary: 네이버 실시간 API (빠름)
+    const naverRes = await fetch(
+      "https://api-gw.sports.naver.com/statistics/categories/kbo/seasons/2026/teams?gameType=REGULAR_SEASON",
+      {
+        headers: {
+          "Referer": "https://sports.news.naver.com/",
+          "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+        },
+        signal: AbortSignal.timeout(5000),
+        cache: "no-store",
+      }
+    );
+
+    if (naverRes.ok) {
+      const data = await naverRes.json();
+      if (data.success && data.result?.seasonTeamStats) {
+        return data.result.seasonTeamStats.map((team: any) => ({
+          teamName: team.teamName,
+          teamId: TEAM_CODE_MAP[team.teamId] ?? 0,
+          games: team.gameCount ?? 0,
+          wins: team.winGameCount ?? 0,
+          losses: team.loseGameCount ?? 0,
+          draws: team.drawnGameCount ?? 0,
+          winRate: team.wra ?? 0,
+          gamesBehind: team.gameBehind ?? 0,
+        }));
+      }
+    }
+  } catch (e) {
+    console.warn("[fetchStandings] Naver API failed, falling back to KBO HTML:", (e as Error).message);
+  }
+
+  // Fallback: KBO HTML 크롤링 (느림)
   const res = await fetch(`${KBO_BASE}/Record/TeamRank/TeamRank.aspx`);
   const html = await res.text();
 
