@@ -122,22 +122,49 @@ function parseGame(raw: KboGameRaw): KboGame {
 
 /** 특정 날짜 경기 목록 조회 */
 export async function fetchGames(date: string): Promise<KboGame[]> {
-  const res = await fetch(`${KBO_BASE}/ws/Main.asmx/GetKboGameList`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      "X-Requested-With": "XMLHttpRequest",
-    },
-    body: JSON.stringify({ leId: "1", srId: "0,1,3,4,5,7,9", date }),
-  });
+  try {
+    const res = await fetch(`${KBO_BASE}/ws/Main.asmx/GetKboGameList`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      body: JSON.stringify({ leId: "1", srId: "0,1,3,4,5,7,9", date }),
+      signal: AbortSignal.timeout(10000),
+    });
 
-  const text = await res.text();
-  // ASP.NET 에러 HTML이 뒤에 붙을 수 있음
-  const jsonEnd = text.indexOf("}<!") ;
-  const jsonStr = jsonEnd > 0 ? text.slice(0, jsonEnd + 1) : text;
-  const data = JSON.parse(jsonStr);
+    if (!res.ok) {
+      await trackFallback("kbo-games", "http-error", {
+        statusCode: res.status,
+        errorMessage: `HTTP ${res.status} ${res.statusText}`,
+      });
+      throw new Error(`HTTP ${res.status}`);
+    }
 
-  return (data.game ?? []).map(parseGame);
+    const text = await res.text();
+    // ASP.NET 에러 HTML이 뒤에 붙을 수 있음
+    const jsonEnd = text.indexOf("}<!");
+    const jsonStr = jsonEnd > 0 ? text.slice(0, jsonEnd + 1) : text;
+    const data = JSON.parse(jsonStr);
+
+    return (data.game ?? []).map(parseGame);
+  } catch (e) {
+    const error = e as Error;
+    let reason: "timeout" | "http-error" | "schema-error" | "network-error" = "network-error";
+    if (error.name === "TimeoutError" || error.message.includes("timeout")) {
+      reason = "timeout";
+    } else if (error.message.includes("HTTP")) {
+      reason = "http-error";
+    } else if (error.message.includes("JSON")) {
+      reason = "schema-error";
+    }
+
+    await trackFallback("kbo-games", reason, {
+      errorMessage: error.message,
+    });
+
+    throw error;
+  }
 }
 
 /** 이전/다음 경기일 조회 */
@@ -447,11 +474,34 @@ export async function fetchBoxScore(gameId: string, seasonId?: string): Promise<
       method: "POST",
       headers: SCHEDULE_HEADERS,
       body,
+      signal: AbortSignal.timeout(10000),
     });
-    if (!res.ok) return null;
+
+    if (!res.ok) {
+      await trackFallback("kbo-boxscore", "http-error", {
+        statusCode: res.status,
+        errorMessage: `HTTP ${res.status} ${res.statusText}`,
+      });
+      return null;
+    }
+
     const data = await res.json();
     return parseBoxScore(data);
-  } catch {
+  } catch (e) {
+    const error = e as Error;
+    let reason: "timeout" | "http-error" | "schema-error" | "network-error" = "network-error";
+    if (error.name === "TimeoutError" || error.message.includes("timeout")) {
+      reason = "timeout";
+    } else if (error.message.includes("HTTP")) {
+      reason = "http-error";
+    } else if (error.message.includes("JSON")) {
+      reason = "schema-error";
+    }
+
+    await trackFallback("kbo-boxscore", reason, {
+      errorMessage: error.message,
+    });
+
     return null;
   }
 }

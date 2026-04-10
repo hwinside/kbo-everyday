@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { trackFallback } from "@/lib/monitoring/api-fallback-tracker";
 
 // Vercel 서버리스에서 캐시 방지 (라이브 데이터는 항상 최신이어야 함)
 export const dynamic = "force-dynamic";
@@ -645,10 +646,15 @@ export async function GET(req: NextRequest) {
           "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
         },
         cache: "no-store",
+        signal: AbortSignal.timeout(10000),
       }
     );
 
     if (!firstRes.ok) {
+      await trackFallback("naver-relay", "http-error", {
+        statusCode: firstRes.status,
+        errorMessage: `HTTP ${firstRes.status} ${firstRes.statusText}`,
+      });
       return NextResponse.json(
         {
           gameId,
@@ -768,7 +774,21 @@ export async function GET(req: NextRequest) {
     };
 
     return NextResponse.json(response);
-  } catch {
+  } catch (e) {
+    const error = e as Error;
+    let reason: "timeout" | "http-error" | "schema-error" | "network-error" = "network-error";
+    if (error.name === "TimeoutError" || error.message?.includes("timeout")) {
+      reason = "timeout";
+    } else if (error.message?.includes("HTTP")) {
+      reason = "http-error";
+    } else if (error.message?.includes("JSON")) {
+      reason = "schema-error";
+    }
+
+    await trackFallback("naver-relay", reason, {
+      errorMessage: error.message,
+    });
+
     return NextResponse.json(
       {
         gameId,
