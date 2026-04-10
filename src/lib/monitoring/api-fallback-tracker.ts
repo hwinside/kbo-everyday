@@ -82,7 +82,7 @@ async function checkAndAlert(apiName: string, events: FallbackEvent[]) {
  */
 async function sendTelegramAlert(apiName: string, events: FallbackEvent[]) {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID || "8619454921"; // 하린아빠
+  const chatId = process.env.TELEGRAM_CHAT_ID || "6796048731"; // 하린아빠 (수정: 2026-04-10)
 
   if (!botToken) {
     console.warn("[API Fallback] TELEGRAM_BOT_TOKEN not set, skipping alert");
