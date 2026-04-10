@@ -1,6 +1,7 @@
 /* ===== KBO 공식 API 크롤러 ===== */
 
 import playersRoster from "@/lib/constants/players-roster.json";
+import { trackFallback } from "@/lib/monitoring/api-fallback-tracker";
 
 const KBO_BASE = "https://www.koreabaseball.com";
 
@@ -206,7 +207,22 @@ export async function fetchStandings(): Promise<TeamStanding[]> {
       }
     }
   } catch (e) {
-    console.warn("[fetchStandings] Naver API failed, falling back to KBO HTML:", (e as Error).message);
+    const error = e as Error;
+    console.warn("[fetchStandings] Naver API failed, falling back to KBO HTML:", error.message);
+
+    // Fallback 추적 + 알림
+    let reason: "timeout" | "http-error" | "schema-error" | "network-error" = "network-error";
+    if (error.name === "TimeoutError" || error.message.includes("timeout")) {
+      reason = "timeout";
+    } else if (error.message.includes("HTTP") || error.message.includes("status")) {
+      reason = "http-error";
+    } else if (error.message.includes("JSON") || error.message.includes("schema")) {
+      reason = "schema-error";
+    }
+
+    await trackFallback("naver-standings", reason, {
+      errorMessage: error.message,
+    });
   }
 
   // Fallback: KBO HTML 크롤링 (느림)
