@@ -43,6 +43,7 @@ function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
   gameId: string; awayTeamId: number; homeTeamId: number; starterNames?: { away: string; home: string };
 }) {
   const [preview, setPreview] = useState<PreviewData | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const fetchedRef = useRef(false);
   const awayTeam = getTeamById(awayTeamId)!;
@@ -57,6 +58,11 @@ function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
         // 1) 캐시 확인
         const cacheRes = await fetch(`/api/game-preview?gameId=${gameId}`);
         const cacheData = await cacheRes.json();
+        if (cacheData.source === "too_early") {
+          setNotice(cacheData.message || "경기 12시간 전부터 AI 경기 예측 조회가 가능합니다.");
+          setLoading(false);
+          return;
+        }
         if (cacheData.preview) {
           setPreview(cacheData.preview);
           setLoading(false);
@@ -76,6 +82,10 @@ function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
           }),
         });
         const genData = await genRes.json();
+        if (genData.source === "too_early") {
+          setNotice(genData.message || "경기 12시간 전부터 AI 경기 예측 조회가 가능합니다.");
+          return;
+        }
         if (genData.preview) {
           setPreview(genData.preview);
         }
@@ -102,6 +112,14 @@ function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
             <span className="ml-2 text-xs text-text-tertiary">AI가 분석 중...</span>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  if (notice) {
+    return (
+      <div className="glass-card p-4">
+        <p className="text-center text-sm font-medium text-text-secondary">{notice}</p>
       </div>
     );
   }

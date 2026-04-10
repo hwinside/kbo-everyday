@@ -31,6 +31,12 @@ interface PreviewRequest {
   homeStarter?: string;
 }
 
+interface PreviewAvailability {
+  allowed: boolean;
+  message?: string;
+  availableFrom?: string;
+}
+
 function getTeamShortName(teamId: number): string {
   return TEAMS.find(t => t.id === teamId)?.shortName || `팀${teamId}`;
 }
@@ -374,14 +380,55 @@ async function getCached(gameId: string): Promise<{ summary: Record<string, unkn
 }
 
 
-async function getGameStatus(gameId: string): Promise<KboGame["status"] | null> {
+async function getGame(gameId: string): Promise<KboGame | null> {
   try {
     const dateStr = getDateFromGameId(gameId);
     const games = await fetchGames(dateStr);
-    return games.find(g => g.gameId === gameId)?.status ?? null;
+    return games.find(g => g.gameId === gameId) ?? null;
   } catch {
     return null;
   }
+}
+
+async function getGameStatus(gameId: string): Promise<KboGame["status"] | null> {
+  const game = await getGame(gameId);
+  return game?.status ?? null;
+}
+
+function formatKstIso(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}:00+09:00`;
+}
+
+function parseKstGameDateTime(game: KboGame): Date | null {
+  const dateMatch = game.date.match(/^(\d{4})(\d{2})(\d{2})$/);
+  const timeMatch = game.time.match(/^(\d{1,2}):(\d{2})$/);
+  if (!dateMatch || !timeMatch) return null;
+
+  const [, year, month, day] = dateMatch;
+  const [, hour, minute] = timeMatch;
+  return new Date(`${year}-${month}-${day}T${hour.padStart(2, "0")}:${minute}:00+09:00`);
+}
+
+async function getPreviewAvailability(gameId: string): Promise<PreviewAvailability> {
+  const game = await getGame(gameId);
+  if (!game) return { allowed: true };
+  if (game.status !== "scheduled") return { allowed: true };
+
+  const gameStart = parseKstGameDateTime(game);
+  if (!gameStart) return { allowed: true };
+
+  const availableAt = new Date(gameStart.getTime() - 12 * 60 * 60 * 1000);
+  const now = new Date();
+
+  if (now < availableAt) {
+    return {
+      allowed: false,
+      message: "경기 12시간 전부터 AI 경기 예측 조회가 가능합니다.",
+      availableFrom: formatKstIso(availableAt),
+    };
+  }
+
+  return { allowed: true, availableFrom: formatKstIso(availableAt) };
 }
 
 async function saveCache(gameId: string, summary: Record<string, unknown>) {
@@ -404,11 +451,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ preview: null, source: "cancelled" });
   }
 
+  const availability = await getPreviewAvailability(gameId);
+  if (!availability.allowed) {
+    return NextResponse.json({
+      preview: null,
+      source: "too_early",
+      message: availability.message,
+      availableFrom: availability.availableFrom,
+    });
+  }
+
   const cached = await getCached(gameId);
   if (cached) {
-    return NextResponse.json({ preview: cached.summary, source: "cache", outdated: cached.outdated });
+    return NextResponse.json({ preview: cached.summary, source: "cache", outdated: cached.outdated, availableFrom: availability.availableFrom });
   }
-  return NextResponse.json({ preview: null, source: "none" });
+  return NextResponse.json({ preview: null, source: "none", availableFrom: availability.availableFrom });
 }
 
 export async function POST(req: NextRequest) {
@@ -424,6 +481,16 @@ export async function POST(req: NextRequest) {
   const status = await getGameStatus(body.gameId);
   if (status === "cancelled") {
     return NextResponse.json({ preview: null, source: "cancelled" });
+  }
+
+  const availability = await getPreviewAvailability(body.gameId);
+  if (!availability.allowed) {
+    return NextResponse.json({
+      preview: null,
+      source: "too_early",
+      message: availability.message,
+      availableFrom: availability.availableFrom,
+    });
   }
 
   // 선발투수가 없으면 fetchGames로 오늘 경기에서 선발투수 조회

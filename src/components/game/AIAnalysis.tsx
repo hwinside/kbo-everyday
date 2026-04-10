@@ -64,6 +64,7 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, ga
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const fetchedRef = useRef(false);
 
   const awayTeam = getTeamById(awayTeamId);
@@ -78,6 +79,11 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, ga
         // 1) 캐시 확인
         const cacheRes = await fetch(`/api/game-preview?gameId=${gameId}`);
         const cacheData = await cacheRes.json();
+        if (cacheData.source === "too_early") {
+          setNotice(cacheData.message || "경기 12시간 전부터 AI 경기 예측 조회가 가능합니다.");
+          return;
+        }
+
         let preview = cacheData.preview;
 
         if (!preview) {
@@ -94,6 +100,10 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, ga
             }),
           });
           const genData = await genRes.json();
+          if (genData.source === "too_early") {
+            setNotice(genData.message || "경기 12시간 전부터 AI 경기 예측 조회가 가능합니다.");
+            return;
+          }
           preview = genData.preview;
         }
 
@@ -197,6 +207,10 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, ga
                 <div className="flex flex-col items-center justify-center py-16 gap-3">
                   <div className="w-6 h-6 border-2 border-text-tertiary border-t-accent rounded-full animate-spin" />
                   <span className="text-sm text-text-tertiary">AI가 분석 중...</span>
+                </div>
+              ) : notice ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-2 px-6 text-center">
+                  <span className="text-sm text-text-secondary">{notice}</span>
                 </div>
               ) : error || !analysis ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-2">
