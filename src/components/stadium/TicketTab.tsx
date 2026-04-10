@@ -26,13 +26,7 @@ interface TicketData {
   nickname: string;
 }
 
-const MOCK_TICKETS: TicketData[] = [
-  { id: 1, team_id: 1, venue_id: "jamsil", game_date: "2026-03-28", opponent_team_id: 6, seat_area: "1루 응원석", seat_detail: "블록 108 열 15", quantity: 2, price: 20000, original_price: 20000, status: "open", contact_method: "카톡 오픈채팅", contact_info: "https://open.kakao.com/example", description: "개막전 티켓 2장 양도합니다. 연석이에요!", nickname: "엘지빠" },
-  { id: 2, team_id: 1, venue_id: "jamsil", game_date: "2026-03-29", opponent_team_id: 6, seat_area: "테이블석", seat_detail: "T구역 12번", quantity: 4, price: 35000, original_price: 35000, status: "open", contact_method: "댓글", contact_info: null, description: "4인 테이블석 통째로! 치맥하기 최고 자리", nickname: "직관마스터" },
-  { id: 3, team_id: 2, venue_id: "jamsil", game_date: "2026-04-01", opponent_team_id: 8, seat_area: "3루 내야", seat_detail: "블록 305 열 8", quantity: 1, price: 18000, original_price: 18000, status: "open", contact_method: "카톡 오픈채팅", contact_info: null, description: "정가 양도합니다. 두산 vs 삼성", nickname: "곰돌이" },
-  { id: 4, team_id: 1, venue_id: "jamsil", game_date: "2026-04-05", opponent_team_id: 4, seat_area: "외야 잔디석", seat_detail: null, quantity: 3, price: 15000, original_price: 15000, status: "open", contact_method: "댓글", contact_info: null, description: "잔디석 3자리. 돗자리 별도 준비하세요~", nickname: "잔디러버" },
-  { id: 5, team_id: 1, venue_id: "jamsil", game_date: "2026-04-12", opponent_team_id: 3, seat_area: "1루 내야", seat_detail: "블록 112 열 5", quantity: 2, price: 15000, original_price: 20000, status: "open", contact_method: "카톡 오픈채팅", contact_info: null, description: "급한 일로 못가서 싸게 양도합니다!", nickname: "야구보고싶다" },
-];
+const MOCK_TICKETS: TicketData[] = [];
 
 function PriceBadge({ price, original }: { price: number; original: number | null }) {
   const isDiscount = original != null && price < original;
