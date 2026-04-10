@@ -34,7 +34,7 @@ export default function StandingsPage() {
   useEffect(() => {
     // 2025 시즌은 확정 데이터 사용, API fetch 불필요
     if (season !== 2026) { setRealStandings(null); return; }
-    fetch("/api/standings")
+    fetch("/api/standings", { cache: "no-store" })
       .then(r => r.json())
       .then(data => {
         if (data.standings?.length) {
