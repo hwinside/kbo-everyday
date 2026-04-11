@@ -143,11 +143,17 @@ export async function GET(req: NextRequest) {
 
     const totalVideos = Object.values(results).filter((n) => n > 0).reduce((a, b) => a + b, 0);
     const totalTeams = Object.keys(TEAM_CHANNELS).length + Object.keys(API_QUERIES).length;
+    // RSS 실패는 에러, API(_ALL) 실패는 경고 (quota 소진 허용)
+    const rssErrors = Object.entries(results)
+      .filter(([team, count]) => team in TEAM_CHANNELS && count === -1).length;
+    const apiErrors = errorCount - rssErrors;
+    const status = rssErrors > 0 ? "error" : "success";
+    const warnings = apiErrors > 0 ? ` (API ${apiErrors}건 실패-quota)` : "";
     await finishJob(
       logId,
-      errorCount === 0 ? "success" : "error",
-      `${totalTeams}팀 처리 (RSS ${rssCount}팀, API ${apiCount}팀), 총 ${totalVideos}개 영상`,
-      errorCount > 0 ? `${errorCount}팀 실패` : undefined,
+      status,
+      `${totalTeams}팀 처리 (RSS ${rssCount}팀, API ${apiCount}팀), 총 ${totalVideos}개 영상${warnings}`,
+      rssErrors > 0 ? `RSS ${rssErrors}팀 실패` : undefined,
     );
   } catch (e) {
     await finishJob(logId, "error", undefined, (e as Error).message);
