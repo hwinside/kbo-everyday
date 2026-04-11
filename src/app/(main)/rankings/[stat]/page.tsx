@@ -117,12 +117,24 @@ function RankingContent() {
       .then((r) => r.json())
       .then((data: { stats?: PlayerRow[] }) => {
         const rows: PlayerRow[] = data.stats || [];
-        // 비율 스탯(avg/era/obp/ops/whip/slg)은 KBO 기록실 규정 기준 적용
-        // → 이미 KBO가 규정타석/규정이닝 충족자만 제공하므로 추가 필터 불필요
+        // 비율 스탯 필터링:
+        // - 타자: avg/obp/ops/slg → 최소 30타석 (시즌 초 기준)
+        // - 투수: era/whip → 최소 8이닝 (시즌 초 기준, 정규시즌 진행되면 1경기당 1이닝 규정 적용)
         // 누적 스탯(hr/rbi/wins/so 등)은 최소 경기수만 체크
+        const parseIP = (ip: string | number): number => {
+          if (typeof ip === "number") return ip;
+          const s = String(ip).trim();
+          const match = s.match(/^(\d+)(?:\s+(\d+)\/(\d+))?$/);
+          if (!match) return 0;
+          const whole = parseInt(match[1]) || 0;
+          const frac = match[2] && match[3] ? parseInt(match[2]) / parseInt(match[3]) : 0;
+          return whole + frac;
+        };
         const isRateStat = ["avg", "era", "obp", "ops", "whip"].includes(stat);
         const filtered = isRateStat
-          ? rows // KBO 기록실 데이터 = 이미 규정 충족자만 포함
+          ? def.type === "batter"
+            ? rows.filter((p) => (Number(p['pa']) || 0) >= 30) // 타자: 최소 30타석
+            : rows.filter((p) => parseIP((p['ip'] as string | number) || 0) >= 8) // 투수: 최소 8이닝
           : def.type === "batter"
             ? rows.filter((p) => (p.games || 0) >= 10)
             : rows.filter((p) => (p.games || 0) >= 5);
