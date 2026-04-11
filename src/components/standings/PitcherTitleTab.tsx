@@ -17,35 +17,67 @@ export default function PitcherTitleTab({ realPitchers, myTeamId, favoriteNames,
   if (realPitchers.length === 0) return <div className="text-center py-8 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</div>;
 
   // KBO 규정이닝: 팀경기수(144) × 1.0 = 144이닝 — 2025(확정 시즌)만 적용
-  // 2026(현재 시즌)은 KBO 기록실 크롤링 데이터(top 30)를 그대로 사용
+  // 2026(현재 시즌c): 비율 스탯은 최소 8이닝 (시즌 초 기준)
   const qualifiedP = season === 2025
     ? realPitchers.filter((p) => Number(p.ip || 0) >= 144 || (!(p.ip) && Number(p.games || 0) >= 40))
     : realPitchers;
+  const parseIP = (ip: string | number): number => {
+    if (typeof ip === "number") return ip;
+    const s = String(ip).trim();
+    const match = s.match(/^(\d+)(?:\s+(\d+)\/(\d+))?$/);
+    if (!match) return 0;
+    const whole = parseInt(match[1]) || 0;
+    const frac = match[2] && match[3] ? parseInt(match[2]) / parseInt(match[3]) : 0;
+    return whole + frac;
+  };
+  const qualifiedRate = season === 2026
+    ? realPitchers.filter((p) => parseIP(p.ip || 0) >= 8)
+    : qualifiedP;
   const toLeader = (p: RealPitcherStat, valKey: string): TitleLeader => ({
     rank: p.rank, name: p.name, teamId: TEAM_NAME_TO_ID[p.team] ?? 0,
     value: String(p[valKey] ?? 0), playerId: (p as Record<string, unknown>).kboId as string || (p as Record<string, unknown>).playerId as string || PLAYER_PHOTO_MAP[p.name],
   });
-  const sorted = (key: string, desc = true) =>
-    [...qualifiedP].sort((a, b) => desc ? Number(b[key] || 0) - Number(a[key] || 0) : Number(a[key] || 0) - Number(b[key] || 0))
-      .slice(0, 20).map((p, i) => ({ ...toLeader(p, key), rank: i + 1 }));
+  // 공동 순위 적용 (competition ranking)
+  const sorted = (key: string, desc = true, pool = qualifiedP) => {
+    const arr = [...pool].sort((a, b) => desc ? Number(b[key] || 0) - Number(a[key] || 0) : Number(a[key] || 0) - Number(b[key] || 0));
+    let currentRank = 1;
+    return arr.slice(0, 20).map((p, i) => {
+      if (i > 0) {
+        const prev = arr[i - 1];
+        if (Number(p[key] || 0) !== Number(prev[key] || 0)) {
+          currentRank = i + 1;
+        }
+      }
+      return { ...toLeader(p, key), rank: currentRank };
+    });
+  };
   // 세이브/홀드는 규정이닝 무관 → 전체 투수에서 정렬
   // 2025(확정 시즌)만 정적 fallback 허용, 2026은 실제 데이터만 표시
   const sortedAll = (key: string) => {
     const all = [...realPitchers].sort((a, b) => Number(b[key] || 0) - Number(a[key] || 0))
-      .filter((p) => Number(p[key] || 0) > 0)
-      .slice(0, 20).map((p, i) => ({ ...toLeader(p, key), rank: i + 1 }));
+      .filter((p) => Number(p[key] || 0) > 0);
+    let currentRank = 1;
+    const ranked = all.slice(0, 20).map((p, i) => {
+      if (i > 0) {
+        const prev = all[i - 1];
+        if (Number(p[key] || 0) !== Number(prev[key] || 0)) {
+          currentRank = i + 1;
+        }
+      }
+      return { ...toLeader(p, key), rank: currentRank };
+    });
     // 데이터 부족 시: 2025만 정적 fallback, 2026은 빈 배열 반환 (거짓 데이터 방지)
-    if (all.length === 0) {
+    if (ranked.length === 0) {
       if (season === 2025) {
         const fallback = PITCHER_TITLES.find(t => t.id === key);
-        return fallback?.leaders ?? all;
+        return fallback?.leaders ?? ranked;
       }
-      return all;
+      return ranked;
     }
-    return all;
+    return ranked;
   };
-  const eraTop = [...qualifiedP].sort((a, b) => Number(a.era || 99) - Number(b.era || 99)).slice(0, 20).map((p, i) => ({ ...toLeader(p, "era"), rank: i + 1 }));
-  const whipTop = [...qualifiedP].filter((p) => p.whip).sort((a, b) => Number(a.whip || 99) - Number(b.whip || 99)).slice(0, 20).map((p, i) => ({ ...toLeader(p, "whip"), rank: i + 1 }));
+  const eraTop = sorted("era", false, qualifiedRate);
+  const whipTop = sorted("whip", false, qualifiedRate.filter((p) => p.whip));
 
   const categories = [
     { id: "era", label: "평균자책", leaders: eraTop },
