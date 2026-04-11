@@ -8,6 +8,7 @@ import {
   Clock,
   ChevronDown,
   Bot,
+  Play,
 } from "lucide-react";
 
 interface JobLogRow {
@@ -53,9 +54,13 @@ function JobStatusBadge({ status }: { status: string }) {
 function JobCard({
   job,
   latestLog,
+  onRun,
+  running,
 }: {
   job: (typeof JOB_INFOS)[number];
   latestLog: JobLogRow | undefined;
+  onRun: (jobName: string) => void;
+  running: boolean;
 }) {
   const status = latestLog?.status ?? "unknown";
   const lastRun = latestLog?.started_at;
@@ -83,12 +88,24 @@ function JobCard({
           {duration != null ? `${(duration / 1000).toFixed(1)}초` : "-"}
         </div>
       </div>
-      <div className="pt-2 border-t border-white/8">
+      <div className="pt-2 border-t border-white/8 flex items-center justify-between">
         <span className="text-xs text-[#636366]">
           {lastRun
             ? new Date(lastRun).toLocaleString("ko-KR")
             : "실행 기록 없음"}
         </span>
+        <button
+          onClick={() => onRun(job.name)}
+          disabled={running}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[#6366F1]/15 text-[#6366F1] hover:bg-[#6366F1]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {running ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Play className="w-3.5 h-3.5" />
+          )}
+          {running ? "실행중..." : "수동 실행"}
+        </button>
       </div>
     </div>
   );
@@ -99,6 +116,8 @@ export default function AdminJobsPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [runningJob, setRunningJob] = useState<string | null>(null);
+  const [runResult, setRunResult] = useState<{ job: string; ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
     async function fetchLogs() {
@@ -118,6 +137,36 @@ export default function AdminJobsPage() {
     }
     fetchLogs();
   }, []);
+
+  async function handleRunJob(jobName: string) {
+    setRunningJob(jobName);
+    setRunResult(null);
+    try {
+      const pin = sessionStorage.getItem("admin_pin") || "";
+      const res = await fetch("/api/admin/jobs/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-pin": pin },
+        body: JSON.stringify({ job: jobName }),
+      });
+      const json = await res.json();
+      const label = JOB_INFOS.find((j) => j.name === jobName)?.label ?? jobName;
+      if (json.ok) {
+        setRunResult({ job: jobName, ok: true, message: `${label} 실행 성공` });
+        // Refresh logs
+        const logsRes = await fetch("/api/admin/jobs", { headers: { "x-admin-pin": pin } });
+        if (logsRes.ok) {
+          const logsJson = await logsRes.json();
+          setLogs(logsJson.data ?? []);
+        }
+      } else {
+        setRunResult({ job: jobName, ok: false, message: json.error || json.data?.error || "실행 실패" });
+      }
+    } catch (e) {
+      setRunResult({ job: jobName, ok: false, message: (e as Error).message });
+    } finally {
+      setRunningJob(null);
+    }
+  }
 
   // Build a map of latest log per job_name
   const latestLogByJob = new Map<string, JobLogRow>();
@@ -148,6 +197,26 @@ export default function AdminJobsPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">크롤러 / 배치 작업</h1>
 
+      {/* Run Result Toast */}
+      {runResult && (
+        <div
+          className={`flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-medium ${
+            runResult.ok
+              ? "bg-[#30D158]/15 text-[#30D158]"
+              : "bg-[#FF453A]/15 text-[#FF453A]"
+          }`}
+        >
+          {runResult.ok ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+          {runResult.message}
+          <button
+            onClick={() => setRunResult(null)}
+            className="ml-auto text-xs opacity-60 hover:opacity-100"
+          >
+            닫기
+          </button>
+        </div>
+      )}
+
       {/* Job Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {JOB_INFOS.map((j) => (
@@ -155,6 +224,8 @@ export default function AdminJobsPage() {
             key={j.name}
             job={j}
             latestLog={latestLogByJob.get(j.name)}
+            onRun={handleRunJob}
+            running={runningJob === j.name}
           />
         ))}
       </div>
