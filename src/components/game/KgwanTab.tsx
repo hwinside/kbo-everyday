@@ -459,8 +459,9 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
           // If outdated, trigger background re-generation (don't block UI)
           if (cacheData.outdated && hasRealBoxScore && boxScore && !regeneratingRef.current) {
             regeneratingRef.current = true; // prevent re-entry on re-render
-            const homeR = boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);
-            const awayR = boxScore.awayBatters.reduce((s, b) => s + b.runs, 0);
+            // linescore.R 우선, boxScore 합산 fallback (승패 뒤집힘 방지)
+            const homeR = linescore?.home.R ?? boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);
+            const awayR = linescore?.away.R ?? boxScore.awayBatters.reduce((s, b) => s + b.runs, 0);
             const totalAB = [...boxScore.awayBatters, ...boxScore.homeBatters].reduce((s, b) => s + b.atBats, 0);
             if (totalAB > 0) {
               const payload = {
@@ -508,8 +509,9 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
         // 2. 생성 요청 — boxScore 데이터 필수
         if (!hasRealBoxScore || !boxScore) return;
 
-        const homeR = boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);
-        const awayR = boxScore.awayBatters.reduce((s, b) => s + b.runs, 0);
+        // linescore.R 우선, boxScore 합산 fallback (승패 뒤집힘 방지)
+        const homeR = linescore?.home.R ?? boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);
+        const awayR = linescore?.away.R ?? boxScore.awayBatters.reduce((s, b) => s + b.runs, 0);
         const totalAB = [...boxScore.awayBatters, ...boxScore.homeBatters].reduce((s, b) => s + b.atBats, 0);
         if (totalAB === 0) {
           // BoxScore 데이터 미완성 → 생성 건너뜀 (다음 렌더에서 재시도)
@@ -570,8 +572,9 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
   const fallbackSummary = useMemo(() => {
     if (!hasRealBoxScore) return null;
 
-    const homeR = boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);
-    const awayR = boxScore.awayBatters.reduce((s, b) => s + b.runs, 0);
+    // linescore.R 우선, boxScore 합산 fallback (승패 뒤집힘 방지)
+    const homeR = linescore?.home.R ?? boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);
+    const awayR = linescore?.away.R ?? boxScore.awayBatters.reduce((s, b) => s + b.runs, 0);
     const isDraw = homeR === awayR;
     const homeWon = homeR > awayR;
     const winnerName = isDraw ? null : (homeWon ? homeTeam.shortName : awayTeam.shortName);
