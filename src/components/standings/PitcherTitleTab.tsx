@@ -17,7 +17,7 @@ export default function PitcherTitleTab({ realPitchers, myTeamId, favoriteNames,
   if (realPitchers.length === 0) return <div className="text-center py-8 text-text-tertiary text-sm">시즌 데이터가 아직 없습니다</div>;
 
   // KBO 규정이닝: 팀경기수(144) × 1.0 = 144이닝 — 2025(확정 시즌)만 적용
-  // 2026(현재 시즌c): ERA/WHIP는 최소 15이닝 (네이버 SSOT 기준)
+  // 2026(현재 시즌c): ERA/WHIP는 최소 12이닝 (KBO 공식 규정이닝 기준)
   const qualifiedP = season === 2025
     ? realPitchers.filter((p) => Number(p.ip || 0) >= 144 || (!(p.ip) && Number(p.games || 0) >= 40))
     : realPitchers;
@@ -31,7 +31,7 @@ export default function PitcherTitleTab({ realPitchers, myTeamId, favoriteNames,
     return whole + frac;
   };
   const qualifiedRate = season === 2026
-    ? realPitchers.filter((p) => parseIP(p.ip || 0) >= 15)
+    ? realPitchers.filter((p) => parseIP(p.ip || 0) >= 12)
     : qualifiedP;
   const toLeader = (p: RealPitcherStat, valKey: string): TitleLeader => ({
     rank: p.rank, name: p.name, teamId: TEAM_NAME_TO_ID[p.team] ?? 0,

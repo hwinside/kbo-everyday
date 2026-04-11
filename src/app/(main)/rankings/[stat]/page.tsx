@@ -120,7 +120,7 @@ function RankingContent() {
         const rows: PlayerRow[] = data.stats || [];
         // 비율 스탯 필터링:
         // - 타자: avg/obp/ops/slg → 최소 30타석 (시즌 초 기준)
-        // - 투수: era/whip → 최소 15이닝 (네이버 SSOT 기준, 시즌 초반)
+        // - 투수: era/whip → 최소 12이닝 (KBO 공식 규정이닝 기준, 시즌 초반)
         // 누적 스탯(hr/rbi/wins/so 등)은 최소 경기수만 체크
         const parseIP = (ip: string | number): number => {
           if (typeof ip === "number") return ip;
@@ -135,7 +135,7 @@ function RankingContent() {
         const filtered = isRateStat
           ? def.type === "batter"
             ? rows.filter((p) => (Number(p['pa']) || 0) >= 30) // 타자: 최소 30타석
-            : rows.filter((p) => parseIP((p['ip'] as string | number) || 0) >= 15) // 투수: 최소 15이닝
+            : rows.filter((p) => parseIP((p['ip'] as string | number) || 0) >= 12) // 투수: 최소 12이닝
           : def.type === "batter"
             ? rows.filter((p) => (p.games || 0) >= 10)
             : rows.filter((p) => (p.games || 0) >= 5);
