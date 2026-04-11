@@ -8,17 +8,22 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 const CRON_SECRET = process.env.CRON_SECRET || "";
 
-const QUERIES: Record<string, string> = {
-  LG: "LG 트윈스 하이라이트",
-  "두산": "두산 베어스 하이라이트",
-  KT: "KT 위즈 하이라이트",
-  SSG: "SSG 랜더스 하이라이트",
-  NC: "NC 다이노스 하이라이트",
-  KIA: "KIA 타이거즈 하이라이트",
-  "삼성": "삼성 라이온즈 하이라이트",
-  "롯데": "롯데 자이언츠 하이라이트",
-  "한화": "한화 이글스 하이라이트",
-  "키움": "키움 히어로즈 하이라이트",
+// ── RSS 기반: 구단 공식 채널 (quota 0) ──
+const TEAM_CHANNELS: Record<string, string> = {
+  LG: "UCL6QZZxb-HR4hCh_eFAnQWA",
+  "두산": "UCsebzRfMhwYfjeBIxNX1brg",
+  KT: "UCvScyjGkBUx2CJDMNAi9Twg",
+  SSG: "UCt8iRtgjVqm5rJHNl1TUojg",
+  NC: "UC8_FRgynMX8wlGsU6Jh3zKg",
+  KIA: "UCKp8knO8a6tSI1oaLjfd9XA",
+  "삼성": "UCMWAku3a3h65QpLm63Jf2pw",
+  "롯데": "UCAZQZdSY5_YrziMPqXi-Zfw",
+  "한화": "UCdq4Ji3772xudYRUatdzRrg",
+  "키움": "UC_MA8-XEaVmvyayPzG66IKg",
+};
+
+// ── API 기반: 범용 검색 (quota 사용) ──
+const API_QUERIES: Record<string, string> = {
   "_ALL": "프로야구 하이라이트",
 };
 
@@ -27,6 +32,46 @@ function decodeHtml(s: string) {
     .replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&apos;/g, "'");
 }
 
+// ── RSS fetch (quota 0) ──
+interface RssEntry {
+  video_id: string;
+  title: string;
+  thumbnail: string;
+  channel: string;
+  published_at: string;
+}
+
+async function fetchRss(channelId: string): Promise<RssEntry[]> {
+  const url = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
+  const res = await fetch(url, { next: { revalidate: 0 } });
+  if (!res.ok) throw new Error(`RSS fetch failed: ${res.status}`);
+  const xml = await res.text();
+
+  const entries: RssEntry[] = [];
+  const entryBlocks = xml.split("<entry>").slice(1);
+
+  for (const block of entryBlocks) {
+    const videoId = block.match(/<yt:videoId>([^<]+)<\/yt:videoId>/)?.[1] || "";
+    const title = decodeHtml(block.match(/<title>([^<]+)<\/title>/)?.[1] || "");
+    const thumbnail = block.match(/<media:thumbnail url="([^"]+)"/)?.[1] || "";
+    const channel = decodeHtml(block.match(/<name>([^<]+)<\/name>/)?.[1] || "");
+    const publishedAt = block.match(/<published>([^<]+)<\/published>/)?.[1] || "";
+
+    if (videoId) {
+      entries.push({
+        video_id: videoId,
+        title,
+        thumbnail,
+        channel,
+        published_at: publishedAt,
+      });
+    }
+  }
+
+  return entries;
+}
+
+// ── YouTube API fetch (quota 100/call) ──
 async function fetchYouTube(query: string) {
   const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&maxResults=30&order=date&videoDuration=short&videoEmbeddable=true&key=${YOUTUBE_API_KEY}`;
   const res = await fetch(url);
@@ -46,39 +91,62 @@ export async function GET(req: NextRequest) {
   if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!YOUTUBE_API_KEY) {
-    return NextResponse.json({ error: "YouTube API not configured" }, { status: 500 });
-  }
 
   const logId = await startJob("youtube-highlights");
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   const results: Record<string, number> = {};
   let errorCount = 0;
+  let rssCount = 0;
+  let apiCount = 0;
 
   try {
-    for (const [team, query] of Object.entries(QUERIES)) {
+    // 1) RSS: 구단 공식 채널 (quota 0)
+    for (const [team, channelId] of Object.entries(TEAM_CHANNELS)) {
       try {
-        const videos = await fetchYouTube(query);
+        const videos = await fetchRss(channelId);
         if (videos.length > 0) {
           await supabase.from("highlights").delete().eq("team", team);
           await supabase.from("highlights").insert(
-            videos.slice(0, 30).map((v: HighlightRow) => ({ ...v, team }))
+            videos.slice(0, 15).map((v) => ({ ...v, team }))
           );
         }
         results[team] = videos.length;
+        rssCount++;
       } catch {
         results[team] = -1;
         errorCount++;
       }
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 200));
+    }
+
+    // 2) API: 범용 검색 (quota 100/query)
+    if (YOUTUBE_API_KEY) {
+      for (const [team, query] of Object.entries(API_QUERIES)) {
+        try {
+          const videos = await fetchYouTube(query);
+          if (videos.length > 0) {
+            await supabase.from("highlights").delete().eq("team", team);
+            await supabase.from("highlights").insert(
+              videos.slice(0, 30).map((v: HighlightRow) => ({ ...v, team }))
+            );
+          }
+          results[team] = videos.length;
+          apiCount++;
+        } catch {
+          results[team] = -1;
+          errorCount++;
+        }
+        await new Promise((r) => setTimeout(r, 500));
+      }
     }
 
     const totalVideos = Object.values(results).filter((n) => n > 0).reduce((a, b) => a + b, 0);
+    const totalTeams = Object.keys(TEAM_CHANNELS).length + Object.keys(API_QUERIES).length;
     await finishJob(
       logId,
       errorCount === 0 ? "success" : "error",
-      `${Object.keys(QUERIES).length}팀 처리, 총 ${totalVideos}개 영상`,
+      `${totalTeams}팀 처리 (RSS ${rssCount}팀, API ${apiCount}팀), 총 ${totalVideos}개 영상`,
       errorCount > 0 ? `${errorCount}팀 실패` : undefined,
     );
   } catch (e) {
