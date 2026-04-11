@@ -43,7 +43,7 @@ interface RssEntry {
 
 async function fetchRss(channelId: string): Promise<RssEntry[]> {
   const url = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
-  const res = await fetch(url, { next: { revalidate: 0 } });
+  const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`RSS fetch failed: ${res.status}`);
   const xml = await res.text();
 
