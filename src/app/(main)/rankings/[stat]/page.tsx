@@ -45,6 +45,7 @@ type PlayerRow = {
   games?: number;
   doubles?: number;
   triples?: number;
+  rank?: number;
   [key: string]: unknown;
 };
 
@@ -149,7 +150,28 @@ function RankingContent() {
           return def.higherIsBetter ? bVal - aVal : aVal - bVal;
         });
 
-        setPlayers(sorted.slice(0, 100));
+        // 공동 순위 적용 (competition ranking: 같은 값이면 같은 rank, 다음 순위는 건너뛰기)
+        const withRank: PlayerRow[] = sorted.map((p, i) => {
+          let currentVal = Number(p[def.key] ?? 0) || 0;
+          if (stat === "doubles") {
+            currentVal = (p.doubles || 0) + (p.triples || 0);
+          }
+          let rank = 1;
+          if (i > 0) {
+            let prevVal = Number(sorted[i - 1][def.key] ?? 0) || 0;
+            if (stat === "doubles") {
+              prevVal = (sorted[i - 1].doubles || 0) + (sorted[i - 1].triples || 0);
+            }
+            if (currentVal === prevVal) {
+              rank = sorted[i - 1].rank || i;
+            } else {
+              rank = i + 1;
+            }
+          }
+          return { ...p, rank };
+        });
+
+        setPlayers(withRank.slice(0, 100));
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -275,16 +297,16 @@ function RankingContent() {
                     {/* 순위 */}
                     <span
                       className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold flex-shrink-0 ${
-                        i === 0
+                        (p.rank || i + 1) === 1
                           ? "bg-yellow-500/20 text-yellow-400"
-                          : i === 1
+                          : (p.rank || i + 1) === 2
                             ? "bg-gray-400/20 text-gray-300"
-                            : i === 2
+                            : (p.rank || i + 1) === 3
                               ? "bg-amber-700/20 text-amber-600"
                               : "bg-bg-tertiary text-text-tertiary"
                       }`}
                     >
-                      {i + 1}
+                      {p.rank || i + 1}
                     </span>
 
                     {/* 선수 */}

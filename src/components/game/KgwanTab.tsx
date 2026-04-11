@@ -713,7 +713,22 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
         seriesContext: llmSummary.seriesContext || null,
         standingsImpact: llmSummary.standingsImpact || null,
       }
-    : null;
+    : fallbackSummary
+      ? {
+          headline: fallbackSummary.headline,
+          gameFlow: fallbackSummary.gameFlow || undefined,
+          turningPoint: fallbackSummary.turningPoint,
+          mvpBatterLabel: fallbackSummary.mvpText,
+          mvpBatterReason: null,
+          mvpText: fallbackSummary.mvpText,
+          pitcherLabel: fallbackSummary.pitcherHighlight,
+          pitcherReason: null,
+          pitcherHighlight: fallbackSummary.pitcherHighlight,
+          insight: fallbackSummary.insight,
+          seriesContext: null,
+          standingsImpact: null,
+        }
+      : null;
 
   return (
     <div className="flex flex-col h-full">
