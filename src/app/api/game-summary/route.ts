@@ -5,7 +5,7 @@ import { fetchStandings, fetchGames } from "@/lib/crawler/kbo-api";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 8; // v8: 이닝+선수+타격종류 조합 추측 금지 (팀 단위 서술 강제)
+const PROMPT_VERSION = 9; // v9: 승패 검증 강화 — 헤드라인/본문에서 승패 뒤집힘 방지
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -177,6 +177,8 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
   const awayStarter = awayPitchers[0];
   const homeStarter = homePitchers[0];
   const result = awayScore === homeScore ? "무승부" : awayScore > homeScore ? `${awayTeam} 승리` : `${homeTeam} 승리`;
+  const winnerTeam = awayScore > homeScore ? awayTeam : homeScore > awayScore ? homeTeam : null;
+  const loserTeam = awayScore > homeScore ? homeTeam : homeScore > awayScore ? awayTeam : null;
   const scoreDiff = Math.abs(awayScore - homeScore);
 
   // 경기 성격 힌트 (LLM이 서사 방향을 잡는 데 도움)
@@ -253,6 +255,7 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
 
 ## 경기 데이터
 ${awayTeam}(원정) ${awayScore} : ${homeScore} ${homeTeam}(홈) (${result})
+★★★ 최종 결과: ${result} (${awayTeam} ${awayScore}점, ${homeTeam} ${homeScore}점) — 헤드라인과 본문에서 승패를 절대 뒤집지 마라 ★★★
 경기 성격: ${gameCharacter || "일반"}
 ${linescoreStr}${scoringNarrative}${errorStr}
 
@@ -277,7 +280,8 @@ ${contextSection}
 
 ## 출력 형식 (JSON 객체 하나만 출력. 마크다운/설명 텍스트 절대 금지.)
 {
-  "headline": "신문 1면 헤드라인. 핵심 이벤트+점수+팀명. 임팩트 있게. 매번 다른 구조로. (예: '오스틴 끝내기 2점포! LG, 9회 대역전극', '원태인 7이닝 1실점 역투, 삼성 투수전 제압')",
+  "winner": "${winnerTeam || '무승부'}",
+  "headline": "신문 1면 헤드라인. 핵심 이벤트+점수+팀명. 임팩트 있게. 매번 다른 구조로. 반드시 ${result}을 정확히 반영. (예: '오스틴 끝내기 2점포! LG, 9회 대역전극', '원태인 7이닝 1실점 역투, 삼성 투수전 제압')",
   "gameFlow": {
     "early": "초반(1~3회) 경기 흐름. 선발 투수 상태, 선취점 상황. 이닝별 점수 참고. 2~3문장.",
     "mid": "중반(4~6회) 경기 흐름. 전환점, 추가 득점, 투수 교체 등. 2~3문장.",
@@ -469,6 +473,47 @@ export async function POST(req: NextRequest) {
       console.error(`Score mismatch: actual ${body.awayScore}-${body.homeScore}, headline says 0-0. Discarding.`);
       return NextResponse.json({ error: "Generated summary score mismatch, discarded" }, { status: 422 });
     }
+
+    // 승패 검증 — headline + insight에서 패팀을 승자로 언급하면 reject
+    if (body.awayScore !== body.homeScore) {
+      const winnerTeam = body.awayScore > body.homeScore ? body.awayTeam : body.homeTeam;
+      const loserTeam = body.awayScore > body.homeScore ? body.homeTeam : body.awayTeam;
+      const fullText = `${summary.headline || ""} ${summary.insight || ""}`;
+      const winPatterns = ["승리", "승", "신승", "대승", "완승", "역전승", "끝내기", "이기", "꺾", "잡았", "제압", "대파"];
+      const loserClaimedWin = winPatterns.some(pat => {
+        // "패팀 + 승리 패턴"이 있고 "승자팀 + 승리 패턴"이 없으면 뒤집힘
+        const loserWinRe = new RegExp(`${loserTeam}[^.]{0,20}${pat}`);
+        return loserWinRe.test(fullText);
+      });
+      if (loserClaimedWin) {
+        console.error(`Winner mismatch: actual winner=${winnerTeam}, but summary credits ${loserTeam}. Headline: ${summary.headline}`);
+        return NextResponse.json({ error: "Generated summary winner mismatch, discarded" }, { status: 422 });
+      }
+    }
+
+    // 승패 검증 — 헤드라인에서 진 팀이 이긴 것처럼 표현되면 reject
+    const actualWinner = body.awayScore > body.homeScore ? body.awayTeam : body.homeScore > body.awayScore ? body.homeTeam : null;
+    const actualLoser = body.awayScore > body.homeScore ? body.homeTeam : body.homeScore > body.awayScore ? body.awayTeam : null;
+    if (actualWinner && actualLoser) {
+      const winPatterns = /승리|신승|꺾|제압|격파|대승|완승|이기|잡았다|올라|등극|위닝/;
+      const headline = summary.headline || "";
+      // 진 팀 이름 뒤에 승리 키워드가 나오면 승패 뒤집힘
+      const loserWinRegex = new RegExp(`${actualLoser}[^.!?]{0,15}(${winPatterns.source})`);
+      // 이긴 팀 이름이 헤드라인에 아예 없고 진 팀만 있으면서 승리 키워드가 있는 경우도 체크
+      const winnerMentioned = headline.includes(actualWinner);
+      const loserClaimsWin = loserWinRegex.test(headline);
+      // winner 필드 검증 (LLM이 출력한 winner가 실제와 다르면)
+      const llmWinner = summary.winner;
+      const winnerFieldWrong = llmWinner && llmWinner !== "무승부" && llmWinner !== actualWinner;
+
+      if (loserClaimsWin || winnerFieldWrong) {
+        console.error(`Winner mismatch: actual winner=${actualWinner}, headline="${headline}", llmWinner=${llmWinner}. Discarding.`);
+        return NextResponse.json({ error: "Generated summary has wrong winner, discarded" }, { status: 422 });
+      }
+    }
+
+    // winner 필드는 내부 검증용이므로 클라이언트에 보내기 전 제거
+    delete summary.winner;
 
     await saveCache(body.gameId, summary);
     return NextResponse.json({ summary, source: "generated" });
