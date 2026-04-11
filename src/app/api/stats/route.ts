@@ -49,23 +49,60 @@ function parseTable(html: string): string[][] {
 
 async function fetchBatterStats(): Promise<PlayerStat[]> {
   // Basic1: 순위(0) 선수명(1) 팀명(2) AVG(3) G(4) PA(5) AB(6) R(7) H(8) 2B(9) 3B(10) HR(11) TB(12) RBI(13) SAC(14) SF(15)
-  const url = `${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=HRA_RT`;
-  const html = await fetchHtml(url);
-  const rows = parseTable(html);
+  // Basic2: 순위(0) 선수명(1) 팀명(2) AVG(3) BB(4) IBB(5) HBP(6) SO(7) GDP(8) SLG(9) OBP(10) OPS(11) MH(12) RISP(13) PH-BA(14)
+  // Runner: 순위(0) 선수명(1) 팀명(2) G(3) SBA(4) SB(5) CS(6) SB%(7) OOB(8) PKO(9)
+  const [basic1Html, basic2Html, runnerHtml] = await Promise.all([
+    fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=HRA_RT`),
+    fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic2.aspx?sort=BB_CN`),
+    fetchHtml(`${KBO_BASE}/Record/Player/Runner/Basic.aspx?sort=SB_CN`),
+  ]);
+  const rows = parseTable(basic1Html);
+  const basic2Rows = parseTable(basic2Html);
+  const runnerRows = parseTable(runnerHtml);
   const roster = playersRoster as RosterPlayer[];
+
+  // Basic2 lookup: name+team → { bb, ibb, hbp, so, gdp, slg, obp, ops }
+  const basic2Map = new Map<string, { bb: number; ibb: number; hbp: number; so: number; gdp: number; slg: string; obp: string; ops: string }>();
+  for (const c of basic2Rows) {
+    const key = `${(c[1] || "").trim()}::${(c[2] || "").trim()}`;
+    basic2Map.set(key, {
+      bb: parseInt(c[4]) || 0,
+      ibb: parseInt(c[5]) || 0,
+      hbp: parseInt(c[6]) || 0,
+      so: parseInt(c[7]) || 0,
+      gdp: parseInt(c[8]) || 0,
+      slg: c[9] || ".000",
+      obp: c[10] || ".000",
+      ops: c[11] || ".000",
+    });
+  }
+
+  // Runner lookup: name+team → { sb, cs }
+  const runnerMap = new Map<string, { sb: number; cs: number }>();
+  for (const c of runnerRows) {
+    const key = `${(c[1] || "").trim()}::${(c[2] || "").trim()}`;
+    runnerMap.set(key, {
+      sb: parseInt(c[5]) || 0,
+      cs: parseInt(c[6]) || 0,
+    });
+  }
+
   return rows.map((c, i) => {
-    const name = c[1] || "";
-    const team = c[2] || "";
+    const name = (c[1] || "").trim();
+    const team = (c[2] || "").trim();
+    const lookupKey = `${name}::${team}`;
     // 동명이인 대응: name + team으로 매칭 (name만 쓰면 첫 번째 동명이인이 잡힘)
     const exactMatch = roster.find((p) => p.name === name && p.team === team);
     const found = exactMatch || roster.find((p) => p.name === name);
     if (!exactMatch && found) {
       console.warn(`[stats] roster name-only fallback: ${name} (team=${team}, matched=${found.team}/${found.kboId})`);
     }
+    const b2 = basic2Map.get(lookupKey);
+    const runner = runnerMap.get(lookupKey);
     return {
       rank: i + 1,
       name,
-      team: c[2] || "",
+      team,
       avg: c[3] || ".000",
       games: parseInt(c[4]) || 0,
       pa: parseInt(c[5]) || 0,
@@ -79,6 +116,18 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
       rbi: parseInt(c[13]) || 0,
       sac: parseInt(c[14]) || 0,
       sf: parseInt(c[15]) || 0,
+      // Basic2 stats
+      bb: b2?.bb || 0,
+      ibb: b2?.ibb || 0,
+      hbp: b2?.hbp || 0,
+      so: b2?.so || 0,
+      gdp: b2?.gdp || 0,
+      slg: b2?.slg || ".000",
+      obp: b2?.obp || ".000",
+      ops: b2?.ops || ".000",
+      // Runner stats
+      sb: runner?.sb || 0,
+      cs: runner?.cs || 0,
       kboId: found?.kboId || "",
       playerId: found?.kboId || "",
     };
