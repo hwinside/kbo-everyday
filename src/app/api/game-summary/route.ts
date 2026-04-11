@@ -497,8 +497,10 @@ export async function POST(req: NextRequest) {
           summary.standingsImpact || "",
         ].join(" ");
         const winKws = ["승리", "신승", "대승", "완승", "역전승", "끝내기", "이기", "꺾", "잡았", "제압", "대파", "격파", "등극", "위닝시리즈"];
+        // 패팀이 목적격 조사(에/를/을/한테/에게) 뒤에 승리 키워드가 오면 패팀은 목적어(오탐 방지)
+        // 예: "KIA, 한화에 역전승" = KIA가 이김 (한화는 진 팀)
         const loserClaimedWin = winKws.some(kw => {
-          const re = new RegExp(`${actualLoser}[^.!?]{0,20}${kw}`);
+          const re = new RegExp(`${actualLoser}(?!에|를|을|한테|에게)[^.!?]{0,20}${kw}`);
           return re.test(fullText);
         });
         // winner 필드 검증
