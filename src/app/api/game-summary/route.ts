@@ -411,114 +411,125 @@ export async function POST(req: NextRequest) {
     meta ? fetchStandingsContext(meta.awayTeamId, meta.homeTeamId).catch(() => null) : Promise.resolve(null),
   ]);
 
-  // Gemini 호출
-  try {
-    const sanitized = sanitizePlayerNames(body);
-    const prompt = buildPrompt(sanitized, seriesCtx, standingsCtx);
+  // Gemini 호출 + 승패 검증 (실패 시 1회 재시도)
+  const sanitized = sanitizePlayerNames(body);
+  const prompt = buildPrompt(sanitized, seriesCtx, standingsCtx);
+  const MAX_ATTEMPTS = 2;
 
-    const geminiRes = await fetch(GEMINI_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 2560,
-          responseMimeType: "application/json",
-          thinkingConfig: { thinkingBudget: 0 },
-        },
-      }),
-    });
-
-    if (!geminiRes.ok) {
-      const errText = await geminiRes.text();
-      console.error("Gemini API error:", geminiRes.status, errText);
-      return NextResponse.json({ error: "Gemini API failed" }, { status: 502 });
-    }
-
-    const geminiData = await geminiRes.json();
-    const parts = geminiData.candidates?.[0]?.content?.parts ?? [];
-    const textParts = parts.filter((p: { text?: string }) => p.text);
-    const rawText = textParts.length > 0 ? textParts[textParts.length - 1].text : null;
-
-    if (!rawText) {
-      return NextResponse.json({ error: "Empty Gemini response" }, { status: 502 });
-    }
-
-    let summary;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      summary = JSON.parse(rawText);
-    } catch {
-      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try { summary = JSON.parse(jsonMatch[0]); }
-        catch {
-          console.error("JSON parse failed:", jsonMatch[0].slice(0, 500));
-          return NextResponse.json({ error: "Invalid Gemini response format" }, { status: 502 });
-        }
-      } else {
-        console.error("No JSON found:", rawText.slice(0, 500));
-        return NextResponse.json({ error: "Invalid Gemini response format" }, { status: 502 });
-      }
-    }
-
-    // 정규화
-    normalizeSummary(summary);
-
-    // 스코어 검증
-    const headlineStr = (summary.headline || "").toLowerCase();
-    const isZeroZero = body.awayScore === 0 && body.homeScore === 0;
-    const headlineSaysZero = /0대0|0-0/.test(headlineStr) || /득점\s*없/.test(headlineStr);
-    if (!isZeroZero && headlineSaysZero) {
-      console.error(`Score mismatch: actual ${body.awayScore}-${body.homeScore}, headline says 0-0. Discarding.`);
-      return NextResponse.json({ error: "Generated summary score mismatch, discarded" }, { status: 422 });
-    }
-
-    // 승패 검증 — headline + insight에서 패팀을 승자로 언급하면 reject
-    if (body.awayScore !== body.homeScore) {
-      const winnerTeam = body.awayScore > body.homeScore ? body.awayTeam : body.homeTeam;
-      const loserTeam = body.awayScore > body.homeScore ? body.homeTeam : body.awayTeam;
-      const fullText = `${summary.headline || ""} ${summary.insight || ""}`;
-      const winPatterns = ["승리", "승", "신승", "대승", "완승", "역전승", "끝내기", "이기", "꺾", "잡았", "제압", "대파"];
-      const loserClaimedWin = winPatterns.some(pat => {
-        // "패팀 + 승리 패턴"이 있고 "승자팀 + 승리 패턴"이 없으면 뒤집힘
-        const loserWinRe = new RegExp(`${loserTeam}[^.]{0,20}${pat}`);
-        return loserWinRe.test(fullText);
+      const geminiRes = await fetch(GEMINI_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: attempt === 1 ? 0.7 : 0.3, // 재시도 시 더 보수적으로
+            maxOutputTokens: 2560,
+            responseMimeType: "application/json",
+            thinkingConfig: { thinkingBudget: 0 },
+          },
+        }),
       });
-      if (loserClaimedWin) {
-        console.error(`Winner mismatch: actual winner=${winnerTeam}, but summary credits ${loserTeam}. Headline: ${summary.headline}`);
-        return NextResponse.json({ error: "Generated summary winner mismatch, discarded" }, { status: 422 });
+
+      if (!geminiRes.ok) {
+        const errText = await geminiRes.text();
+        console.error(`Gemini API error (attempt ${attempt}):`, geminiRes.status, errText);
+        if (attempt === MAX_ATTEMPTS) return NextResponse.json({ error: "Gemini API failed" }, { status: 502 });
+        continue;
+      }
+
+      const geminiData = await geminiRes.json();
+      const parts = geminiData.candidates?.[0]?.content?.parts ?? [];
+      const textParts = parts.filter((p: { text?: string }) => p.text);
+      const rawText = textParts.length > 0 ? textParts[textParts.length - 1].text : null;
+
+      if (!rawText) {
+        if (attempt === MAX_ATTEMPTS) return NextResponse.json({ error: "Empty Gemini response" }, { status: 502 });
+        continue;
+      }
+
+      let summary;
+      try {
+        summary = JSON.parse(rawText);
+      } catch {
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try { summary = JSON.parse(jsonMatch[0]); }
+          catch {
+            console.error("JSON parse failed:", jsonMatch[0].slice(0, 500));
+            if (attempt === MAX_ATTEMPTS) return NextResponse.json({ error: "Invalid Gemini response format" }, { status: 502 });
+            continue;
+          }
+        } else {
+          console.error("No JSON found:", rawText.slice(0, 500));
+          if (attempt === MAX_ATTEMPTS) return NextResponse.json({ error: "Invalid Gemini response format" }, { status: 502 });
+          continue;
+        }
+      }
+
+      // 정규화
+      normalizeSummary(summary);
+
+      // 스코어 검증
+      const headlineStr = (summary.headline || "").toLowerCase();
+      const isZeroZero = body.awayScore === 0 && body.homeScore === 0;
+      const headlineSaysZero = /0대0|0-0/.test(headlineStr) || /득점\s*없/.test(headlineStr);
+      if (!isZeroZero && headlineSaysZero) {
+        console.error(`Score mismatch (attempt ${attempt}): actual ${body.awayScore}-${body.homeScore}, headline says 0-0.`);
+        if (attempt === MAX_ATTEMPTS) return NextResponse.json({ error: "Generated summary score mismatch, discarded" }, { status: 422 });
+        continue;
+      }
+
+      // 승패 검증 — headline + 본문 전체(insight/turningPoint/gameFlow/standingsImpact)에서 패팀을 승자로 언급하면 reject
+      let winnerMismatch = false;
+      if (body.awayScore !== body.homeScore) {
+        const actualWinner = body.awayScore > body.homeScore ? body.awayTeam : body.homeTeam;
+        const actualLoser = body.awayScore > body.homeScore ? body.homeTeam : body.awayTeam;
+        const gf = summary.gameFlow as Record<string, string> | undefined;
+        const fullText = [
+          summary.headline || "",
+          summary.insight || "",
+          summary.turningPoint || "",
+          gf?.early || "",
+          gf?.mid || "",
+          gf?.late || "",
+          summary.standingsImpact || "",
+        ].join(" ");
+        const winKws = ["승리", "신승", "대승", "완승", "역전승", "끝내기", "이기", "꺾", "잡았", "제압", "대파", "격파", "등극", "위닝시리즈"];
+        const loserClaimedWin = winKws.some(kw => {
+          const re = new RegExp(`${actualLoser}[^.!?]{0,20}${kw}`);
+          return re.test(fullText);
+        });
+        // winner 필드 검증
+        const llmWinner = summary.winner;
+        const winnerFieldWrong = llmWinner && llmWinner !== "무승부" && llmWinner !== actualWinner;
+
+        if (loserClaimedWin || winnerFieldWrong) {
+          console.error(`Winner mismatch (attempt ${attempt}): actual=${actualWinner}, headline="${summary.headline}", llmWinner=${llmWinner}`);
+          winnerMismatch = true;
+        }
+      }
+
+      if (winnerMismatch) {
+        if (attempt === MAX_ATTEMPTS) {
+          return NextResponse.json({ error: "Generated summary winner mismatch after retries, discarded" }, { status: 422 });
+        }
+        continue;
+      }
+
+      // winner 필드는 내부 검증용이므로 클라이언트에 보내기 전 제거
+      delete summary.winner;
+
+      await saveCache(body.gameId, summary);
+      return NextResponse.json({ summary, source: "generated" });
+    } catch (err) {
+      console.error(`Game summary generation error (attempt ${attempt}):`, err);
+      if (attempt === MAX_ATTEMPTS) {
+        return NextResponse.json({ error: "Generation failed" }, { status: 500 });
       }
     }
-
-    // 승패 검증 — 헤드라인에서 진 팀이 이긴 것처럼 표현되면 reject
-    const actualWinner = body.awayScore > body.homeScore ? body.awayTeam : body.homeScore > body.awayScore ? body.homeTeam : null;
-    const actualLoser = body.awayScore > body.homeScore ? body.homeTeam : body.homeScore > body.awayScore ? body.awayTeam : null;
-    if (actualWinner && actualLoser) {
-      const winPatterns = /승리|신승|꺾|제압|격파|대승|완승|이기|잡았다|올라|등극|위닝/;
-      const headline = summary.headline || "";
-      // 진 팀 이름 뒤에 승리 키워드가 나오면 승패 뒤집힘
-      const loserWinRegex = new RegExp(`${actualLoser}[^.!?]{0,15}(${winPatterns.source})`);
-      // 이긴 팀 이름이 헤드라인에 아예 없고 진 팀만 있으면서 승리 키워드가 있는 경우도 체크
-      const winnerMentioned = headline.includes(actualWinner);
-      const loserClaimsWin = loserWinRegex.test(headline);
-      // winner 필드 검증 (LLM이 출력한 winner가 실제와 다르면)
-      const llmWinner = summary.winner;
-      const winnerFieldWrong = llmWinner && llmWinner !== "무승부" && llmWinner !== actualWinner;
-
-      if (loserClaimsWin || winnerFieldWrong) {
-        console.error(`Winner mismatch: actual winner=${actualWinner}, headline="${headline}", llmWinner=${llmWinner}. Discarding.`);
-        return NextResponse.json({ error: "Generated summary has wrong winner, discarded" }, { status: 422 });
-      }
-    }
-
-    // winner 필드는 내부 검증용이므로 클라이언트에 보내기 전 제거
-    delete summary.winner;
-
-    await saveCache(body.gameId, summary);
-    return NextResponse.json({ summary, source: "generated" });
-  } catch (err) {
-    console.error("Game summary generation error:", err);
-    return NextResponse.json({ error: "Generation failed" }, { status: 500 });
   }
+
+  return NextResponse.json({ error: "Generation failed after retries" }, { status: 500 });
 }
