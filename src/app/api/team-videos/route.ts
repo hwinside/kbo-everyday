@@ -26,6 +26,50 @@ function decodeHtml(s: string) {
     .replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&apos;/g, "'");
 }
 
+function parseIsoDurationSeconds(iso: string): number {
+  const match = iso.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
+  if (!match) return 0;
+  const hours = Number(match[1] || 0);
+  const minutes = Number(match[2] || 0);
+  const seconds = Number(match[3] || 0);
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+function isShortVideo(title: string, durationSeconds: number): boolean {
+  const normalized = title.toLowerCase();
+  return durationSeconds > 0 && (
+    durationSeconds <= 70 ||
+    normalized.includes("#shorts") ||
+    normalized.includes("shorts") ||
+    title.includes("숏츠") ||
+    title.includes("쇼츠")
+  );
+}
+
+async function fetchVideoDetails(videoIds: string[]) {
+  if (!YOUTUBE_API_KEY || videoIds.length === 0) {
+    return new Map<string, { durationSeconds: number }>();
+  }
+
+  try {
+    const res = await fetch(
+      `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videoIds.join(",")}&key=${YOUTUBE_API_KEY}`
+    );
+    const data = await res.json();
+    const map = new Map<string, { durationSeconds: number }>();
+
+    for (const item of (data.items || [])) {
+      map.set(item.id, {
+        durationSeconds: parseIsoDurationSeconds(item.contentDetails?.duration || ""),
+      });
+    }
+
+    return map;
+  } catch {
+    return new Map<string, { durationSeconds: number }>();
+  }
+}
+
 export async function GET(req: NextRequest) {
   const teamSlug = req.nextUrl.searchParams.get("team");
   const type = req.nextUrl.searchParams.get("type") || "long"; // long | short
@@ -51,12 +95,22 @@ export async function GET(req: NextRequest) {
 
     if (data.error) return fallback(team.shortName, type);
 
-    const items: TeamVideoItem[] = (data.items || []).map((item: YouTubeSearchItem) => ({
-      id: item.id.videoId,
-      title: decodeHtml(item.snippet.title),
-      thumbnail: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url,
-      publishedAt: item.snippet.publishedAt,
-    }));
+    const rawItems: YouTubeSearchItem[] = data.items || [];
+    const detailMap = await fetchVideoDetails(rawItems.map((item) => item.id.videoId).filter(Boolean));
+
+    const items: TeamVideoItem[] = rawItems
+      .filter((item) => {
+        const detail = detailMap.get(item.id.videoId);
+        if (!detail) return false;
+        const short = isShortVideo(decodeHtml(item.snippet.title), detail.durationSeconds);
+        return type === "short" ? short : !short;
+      })
+      .map((item: YouTubeSearchItem) => ({
+        id: item.id.videoId,
+        title: decodeHtml(item.snippet.title),
+        thumbnail: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url,
+        publishedAt: item.snippet.publishedAt,
+      }));
 
     if (items.length === 0) return fallback(team.shortName, type);
 
@@ -81,8 +135,13 @@ async function fallback(teamShortName: string, type: string) {
       .limit(type === "short" ? 20 : 10);
 
     if (data && data.length > 0) {
+      const filtered = data.filter((v) => {
+        const short = isShortVideo(v.title, 0);
+        return type === "short" ? short : !short;
+      });
+
       return NextResponse.json({
-        items: data.map((v) => ({
+        items: filtered.map((v) => ({
           id: v.video_id,
           title: v.title,
           thumbnail: v.thumbnail,

@@ -19,7 +19,52 @@ function decodeHtml(s: string) {
     .replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&apos;/g, "'");
 }
 
-async function searchYouTube(query: string, maxResults: number): Promise<HighlightVideo[]> {
+function parseIsoDurationSeconds(iso: string): number {
+  const match = iso.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
+  if (!match) return 0;
+  const hours = Number(match[1] || 0);
+  const minutes = Number(match[2] || 0);
+  const seconds = Number(match[3] || 0);
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+function isActualShort(title: string, durationSeconds: number): boolean {
+  const normalized = title.toLowerCase();
+  return durationSeconds > 0 && (
+    durationSeconds <= 70 ||
+    normalized.includes("#shorts") ||
+    normalized.includes("shorts") ||
+    title.includes("숏츠") ||
+    title.includes("쇼츠")
+  );
+}
+
+async function fetchVideoDetails(videoIds: string[]) {
+  if (!YOUTUBE_API_KEY || videoIds.length === 0) {
+    return new Map<string, { durationSeconds: number; channelId: string }>();
+  }
+
+  try {
+    const res = await fetch(
+      `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet&id=${videoIds.join(",")}&key=${YOUTUBE_API_KEY}`
+    );
+    const data = await res.json();
+    const map = new Map<string, { durationSeconds: number; channelId: string }>();
+
+    for (const item of (data.items || [])) {
+      map.set(item.id, {
+        durationSeconds: parseIsoDurationSeconds(item.contentDetails?.duration || ""),
+        channelId: item.snippet?.channelId || "",
+      });
+    }
+
+    return map;
+  } catch {
+    return new Map<string, { durationSeconds: number; channelId: string }>();
+  }
+}
+
+async function searchYouTube(query: string, maxResults: number, excludeChannelId?: string): Promise<HighlightVideo[]> {
   if (!YOUTUBE_API_KEY) return [];
   try {
     const res = await fetch(
@@ -27,13 +72,24 @@ async function searchYouTube(query: string, maxResults: number): Promise<Highlig
     );
     const data = await res.json();
     if (data.error) return [];
-    return (data.items || []).map((item: YouTubeSearchItem) => ({
-      id: item.id.videoId,
-      title: decodeHtml(item.snippet.title),
-      thumbnail: item.snippet.thumbnails?.high?.url,
-      channel: item.snippet.channelTitle,
-      publishedAt: item.snippet.publishedAt,
-    }));
+
+    const rawItems: YouTubeSearchItem[] = data.items || [];
+    const detailMap = await fetchVideoDetails(rawItems.map((item) => item.id.videoId).filter(Boolean));
+
+    return rawItems
+      .filter((item) => {
+        const detail = detailMap.get(item.id.videoId);
+        if (!detail) return false;
+        if (excludeChannelId && detail.channelId === excludeChannelId) return false;
+        return isActualShort(decodeHtml(item.snippet.title), detail.durationSeconds);
+      })
+      .map((item: YouTubeSearchItem) => ({
+        id: item.id.videoId,
+        title: decodeHtml(item.snippet.title),
+        thumbnail: item.snippet.thumbnails?.high?.url,
+        channel: item.snippet.channelTitle,
+        publishedAt: item.snippet.publishedAt,
+      }));
   } catch {
     return [];
   }
@@ -70,27 +126,10 @@ export async function GET(req: NextRequest) {
     ? `${team}:${playerNames.sort().join(",")}`
     : team;
 
-  // 1. Supabase (Cron이 채운 데이터) — 선수 검색 없는 경우만
-  if (SUPABASE_URL && playerNames.length === 0) {
-    try {
-      const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-      const { data } = await supabase
-        .from("highlights")
-        .select("video_id, title, thumbnail, channel, published_at")
-        .eq("team", team)
-        .order("published_at", { ascending: false })
-        .limit(30);
-
-      if (data && data.length > 0) {
-        return NextResponse.json({
-          items: data.map((v) => ({
-            id: v.video_id, title: v.title, thumbnail: v.thumbnail,
-            channel: v.channel, publishedAt: v.published_at,
-          })),
-        });
-      }
-    } catch { /* fallback */ }
-  }
+  // 1. Supabase fast-path 제거
+  // cron이 저장한 RSS 데이터는 공식채널 전체 영상(롱폼 포함)이므로
+  // 숏츠 섹션에 그대로 쓰면 롱폼 혼입 + 공식영상 중복 발생.
+  // → mem-cache + YouTube API 경로(isActualShort + 공식채널 제외)로 통일.
 
   // 2. 메모리 캐시
   const cached = memCache.get(cacheKey);
@@ -102,15 +141,16 @@ export async function GET(req: NextRequest) {
   // 정식 팀명 사용 (예: "LG" → "LG 트윈스") — "LG 하이라이트"는 LG전자/농구 등 노이즈 유발
   const teamObj = TEAMS.find(t => t.shortName === team);
   const teamFullName = teamObj?.name || team;
+  const officialChannelId = teamObj?.youtubeChannelId;
   const teamQuery = team === "_ALL" ? "프로야구 하이라이트" : `${teamFullName} 하이라이트`;
   const teamMaxResults = playerNames.length > 0 ? 10 : 30;
 
   const searches = [
-    searchYouTube(teamQuery, teamMaxResults).then(items =>
+    searchYouTube(teamQuery, teamMaxResults, officialChannelId).then(items =>
       items.map(v => ({ ...v, _label: team }))
     ),
     ...playerNames.map(name =>
-      searchYouTube(`${name} 하이라이트`, 5).then(items =>
+      searchYouTube(`${name} 하이라이트`, 5, officialChannelId).then(items =>
         items.map(v => ({ ...v, _label: name }))
       )
     ),
@@ -139,11 +179,21 @@ export async function GET(req: NextRequest) {
   }
 
   // YouTube 결과가 비어있으면 Supabase fallback (쿼터 초과 등)
+  // fallback 데이터도 제목 기반 숏츠 필터링 + 공식채널 제외 적용
   if (merged.length === 0) {
     const fallbackItems = await getSupabaseFallback(team);
     if (fallbackItems.length > 0) {
-      const result = { items: fallbackItems };
-      return NextResponse.json(result);
+      const officialChannelId = teamObj?.youtubeChannelId;
+      const filtered = fallbackItems.filter(v => {
+        // 제목 기반 숏츠 판별 (duration 없으므로 키워드만)
+        const t = v.title.toLowerCase();
+        const likelyShort = t.includes("#shorts") || t.includes("shorts") || v.title.includes("숏츠") || v.title.includes("쇼츠");
+        return likelyShort;
+      });
+      if (filtered.length > 0) {
+        const result = { items: filtered };
+        return NextResponse.json(result);
+      }
     }
   }
 
