@@ -31,59 +31,37 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
     const favPlayers = getFavoritePlayers().slice(0, 5);
     const favNames = favPlayers.map(p => p.name);
     const teamObj = TEAMS.find(t => t.shortName === team);
-    const teamSlug = teamObj?.slug || team;
 
     // 선수 이름을 API에 전달 → 서버에서 선수별 개별 검색
     const playersParam = favNames.length > 0
       ? `&players=${encodeURIComponent(favNames.join(","))}`
       : "";
 
-    // 2개 소스 병렬: 하이라이트(팀+선수) + 공식채널 숏츠
-    Promise.all([
-      fetch(`/api/highlights?team=${encodeURIComponent(team)}${playersParam}`)
-        .then(r => r.json())
-        .catch(() => ({ items: [] })),
-      fetch(`/api/team-videos?team=${encodeURIComponent(teamSlug)}&type=short`)
-        .then(r => r.json())
-        .catch(() => ({ items: [] })),
-    ]).then(([highlightData, officialData]) => {
-      const seen = new Set<string>();
+    // 하이라이트(팀+선수)만 사용 — 공식채널 영상은 HomeOfficialVideos에서 별도 노출
+    fetch(`/api/highlights?team=${encodeURIComponent(team)}${playersParam}`)
+      .then(r => r.json())
+      .then((highlightData) => {
+        const seen = new Set<string>();
 
-      // 하이라이트 영상: 선수별 vs 팀 분리
-      const playerItems: VideoItem[] = [];
-      const teamItems: VideoItem[] = [];
-      for (const v of (highlightData.items || [])) {
-        if (seen.has(v.id)) continue;
-        seen.add(v.id);
-        // 서버에서 label이 팀명이 아닌 = 선수 이름
-        const isPlayer = v.label && v.label !== team && !TEAMS.some((t: typeof TEAMS[number]) => t.shortName === v.label);
-        if (isPlayer) playerItems.push(v);
-        else teamItems.push(v);
-      }
-
-      // 공식채널 숏츠
-      const officialItems: VideoItem[] = (officialData.items || [])
-        .map((v: { id: string; title: string; thumbnail: string; publishedAt: string }) => ({
-          id: v.id,
-          title: v.title,
-          thumbnail: v.thumbnail,
-          channel: teamObj?.name || team,
-          publishedAt: v.publishedAt,
-          label: "공식",
-        }))
-        .filter((v: VideoItem) => {
-          if (seen.has(v.id)) return false;
+        // 하이라이트 영상: 선수별 vs 팀 분리
+        const playerItems: VideoItem[] = [];
+        const teamItems: VideoItem[] = [];
+        for (const v of (highlightData.items || [])) {
+          if (seen.has(v.id)) continue;
           seen.add(v.id);
-          return true;
-        });
+          // 서버에서 label이 팀명이 아닌 = 선수 이름
+          const isPlayer = v.label && v.label !== team && !TEAMS.some((t: typeof TEAMS[number]) => t.shortName === v.label);
+          if (isPlayer) playerItems.push(v);
+          else teamItems.push(v);
+        }
 
-      // 선수 영상 우선 → 공식 → 팀 순으로 인터리빙
-      const merged = [...playerItems, ...officialItems, ...teamItems]
-        .slice(0, 30);
+        // 선수 영상 우선 → 팀 순
+        const merged = [...playerItems, ...teamItems]
+          .slice(0, 30);
 
-      setVideos(merged);
-      setLoading(false);
-    }).catch(() => setLoading(false));
+        setVideos(merged);
+        setLoading(false);
+      }).catch(() => setLoading(false));
   }, [team]);
 
   if (loading || videos.length === 0) return null;

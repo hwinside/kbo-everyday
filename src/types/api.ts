@@ -15,6 +15,7 @@ export interface YouTubeSearchItem {
   id: { videoId: string };
   snippet: {
     title: string;
+    channelId?: string;
     channelTitle: string;
     publishedAt: string;
     thumbnails?: {
