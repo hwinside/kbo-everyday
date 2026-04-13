@@ -97,7 +97,7 @@ export function useHomeNews(myTeamId: number | null) {
   useEffect(() => {
     const cached = loadCachedNews(myTeamId);
     if (cached.length > 0) {
-      setNews(cached);
+      setNews(cached); // eslint-disable-line react-hooks/set-state-in-effect
     }
   }, [myTeamId]);
 

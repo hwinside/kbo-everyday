@@ -51,6 +51,7 @@ test.describe("사진 게시글 작성 플로우 QA", () => {
         // @supabase/ssr createBrowserClient caches a singleton
         const { createBrowserClient } = await import("@supabase/ssr");
         const supabase = createBrowserClient(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (window as any).__NEXT_DATA__?.props?.pageProps?.supabaseUrl || 
           document.querySelector('meta[name="supabase-url"]')?.getAttribute("content") || 
           "https://lbmbdjgsnenqjwjotoei.supabase.co",
@@ -143,6 +144,7 @@ test.describe("사진 게시글 작성 플로우 QA", () => {
     const testImagePath = path.join(__dirname, "test-image.png");
     if (!fs.existsSync(testImagePath)) {
       // Generate a simple PNG
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { execSync } = require("child_process");
       execSync(`convert -size 800x400 xc:navy -fill white -pointsize 40 -gravity center -annotate 0 "QA Test Image" ${testImagePath} 2>/dev/null || python3 -c "
 from PIL import Image as PILImage, ImageDraw

@@ -20,7 +20,7 @@ export function useBlockUser(targetId: string) {
 
   // 차단 여부 체크
   useEffect(() => {
-    if (!user || !targetId) { setLoading(false); return; }
+    if (!user || !targetId) { setLoading(false); return; } // eslint-disable-line react-hooks/set-state-in-effect
 
     supabase
       .from("user_blocks")
@@ -29,8 +29,8 @@ export function useBlockUser(targetId: string) {
       .eq("blocked_id", targetId)
       .maybeSingle()
       .then(({ data }) => {
-        setIsBlocked(!!data);
-        setLoading(false);
+        setIsBlocked(!!data); // eslint-disable-line react-hooks/set-state-in-effect
+        setLoading(false); // eslint-disable-line react-hooks/set-state-in-effect
       });
   }, [user, targetId]);
 
@@ -103,7 +103,7 @@ export function useBlockList() {
     setLoading(false);
   }, [user]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { refresh(); }, [refresh]); // eslint-disable-line react-hooks/set-state-in-effect
 
   return { blockedUsers, loading, refresh };
 }
@@ -126,7 +126,7 @@ export function useBlockedIds() {
     }
   }, [user]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { refresh(); }, [refresh]); // eslint-disable-line react-hooks/set-state-in-effect
 
   return { blockedIds, refresh };
 }

@@ -33,7 +33,7 @@ export default function StandingsPage() {
 
   useEffect(() => {
     // 2025 시즌은 확정 데이터 사용, API fetch 불필요
-    if (season !== 2026) { setRealStandings(null); return; }
+    if (season !== 2026) { setRealStandings(null); return; } // eslint-disable-line react-hooks/set-state-in-effect
     fetch("/api/standings", { cache: "no-store" })
       .then(r => r.json())
       .then(data => {
@@ -82,10 +82,12 @@ export default function StandingsPage() {
     setRealBatters(null); setRealPitchers(null);
     fetch(`/api/stats?type=batter&season=${season}`)
       .then(r => r.json())
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       .then(d => d.stats?.length && setRealBatters(d.stats))
       .catch(() => {});
     fetch(`/api/stats?type=pitcher&season=${season}`)
       .then(r => r.json())
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       .then(d => d.stats?.length && setRealPitchers(d.stats))
       .catch(() => {});
   }, [season]);

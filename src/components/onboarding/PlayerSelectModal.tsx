@@ -3,7 +3,7 @@
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Check, Star, Search } from "lucide-react";
 import Image from "next/image";
@@ -59,7 +59,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
   // 무한스크롤 onScroll (iOS Safari IntersectionObserver 불안정 대응)
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  const handleScroll = useCallback(() => {
+  const handleScroll = () => {
     const el = scrollContainerRef.current;
     if (!el) return;
     // 하단 200px 이내 도달 시 다음 배치 로드
@@ -69,7 +69,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
         return v < total ? Math.min(v + 30, total) : v;
       });
     }
-  }, [allDisplayPlayers.length]);
+  };
 
   const toggle = (player: PlayerInfo) => {
     setSelected(prev => {

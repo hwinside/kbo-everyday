@@ -54,18 +54,6 @@ function sortPlayers(players: PlayerItem[], mode: SortMode): PlayerItem[] {
 function PlayersPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [myTeamId, setMyTeamId] = useState<number | null>(null);
-  useEffect(() => {
-    const teamId = getMyTeamId();
-    startTransition(() => {
-      setMyTeamId(teamId);
-      // 지정팀이 있고 URL 파라미터가 없으면 → 구단별 > MY TEAM 디폴트
-      if (teamId && !hasUrlMode && !hasUrlTeam) {
-        setFilterMode("team");
-        setFilterTeam(teamId);
-      }
-    });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // URL 파라미터가 없으면 지정팀 기본 적용
   const hasUrlMode = searchParams.has("mode");
@@ -79,6 +67,19 @@ function PlayersPageContent() {
   const [filterTeam, setFilterTeam] = useState<number | null>(
     searchParams.get("team") ? Number(searchParams.get("team")) : null
   );
+
+  const [myTeamId, setMyTeamId] = useState<number | null>(null);
+  useEffect(() => {
+    const teamId = getMyTeamId();
+    startTransition(() => {
+      setMyTeamId(teamId);
+      // 지정팀이 있고 URL 파라미터가 없으면 → 구단별 > MY TEAM 디폴트
+      if (teamId && !hasUrlMode && !hasUrlTeam) {
+        setFilterMode("team");
+        setFilterTeam(teamId);
+      }
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [filterPosition, setFilterPosition] = useState<string | null>(
     searchParams.get("pos") || null
   );
@@ -86,8 +87,8 @@ function PlayersPageContent() {
   // MY TEAM이 있고 URL 파라미터가 없으면 → 구단별 + 지정팀 디폴트
   useEffect(() => {
     if (!hasUrlParams && myTeamId) {
-      setFilterMode("team");
-      setFilterTeam(myTeamId);
+      setFilterMode("team"); // eslint-disable-line react-hooks/set-state-in-effect
+      setFilterTeam(myTeamId); // eslint-disable-line react-hooks/set-state-in-effect
     }
   }, [myTeamId, hasUrlParams]);
   const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");

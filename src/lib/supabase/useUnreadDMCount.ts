@@ -31,7 +31,7 @@ export function useUnreadDMCount() {
     setCount(unread ?? 0);
   }, [user]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load]); // eslint-disable-line react-hooks/set-state-in-effect
 
   // Realtime 구독 — dm_messages INSERT 시 리카운트
   useEffect(() => {

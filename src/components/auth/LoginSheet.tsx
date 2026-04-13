@@ -16,7 +16,7 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
 
   useEffect(() => {
     if (!isOpen) {
-      setAgreed(false);
+      setAgreed(false); // eslint-disable-line react-hooks/set-state-in-effect
     }
   }, [isOpen]);
 

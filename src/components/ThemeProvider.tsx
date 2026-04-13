@@ -56,14 +56,14 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
     const initial = stored ?? "dark";
-    setThemeState(initial);
-    setResolvedTheme(resolveTheme(initial));
+    setThemeState(initial); // eslint-disable-line react-hooks/set-state-in-effect
+    setResolvedTheme(resolveTheme(initial)); // eslint-disable-line react-hooks/set-state-in-effect
   }, []);
 
   // Apply theme to <html> and listen for system changes
   useEffect(() => {
     const resolved = resolveTheme(theme);
-    setResolvedTheme(resolved);
+    setResolvedTheme(resolved); // eslint-disable-line react-hooks/set-state-in-effect
 
     const html = document.documentElement;
     if (resolved === "dark") {

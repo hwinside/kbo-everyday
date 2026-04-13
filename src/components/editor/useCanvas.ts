@@ -208,7 +208,7 @@ export function useCanvas(
   }, []);
 
   return {
-    canvas: canvasRef.current,
+    get canvas() { return canvasRef.current; },
     loadImage,
     exportBlob,
     addText,
