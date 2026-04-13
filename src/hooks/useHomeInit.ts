@@ -32,7 +32,13 @@ export interface HomeGame {
   inning: string | null;
 }
 
-export function useHomeInit() {
+interface UseHomeInitOptions {
+  /** 서버에서 prefetch한 경기 데이터 — 있으면 /api/games 재호출 스킵 */
+  initialGames?: HomeGame[];
+  initialIsPreseason?: boolean;
+}
+
+export function useHomeInit(options?: UseHomeInitOptions) {
   const { user, profile, loading } = useAuth();
   const [myTeamId, setMyTeam] = useState<number | null>(null);
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
@@ -40,8 +46,8 @@ export function useHomeInit() {
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
   const [showPlayerSetupCTA, setShowPlayerSetupCTA] = useState(false);
   const [welcomeToast, setWelcomeToast] = useState(false);
-  const [todayGames, setTodayGames] = useState<HomeGame[]>([]);
-  const [isPreseason, setIsPreseason] = useState(false);
+  const [todayGames, setTodayGames] = useState<HomeGame[]>(options?.initialGames ?? []);
+  const [isPreseason, setIsPreseason] = useState(options?.initialIsPreseason ?? false);
 
   // 로그인 후 1회 환영 토스트 + 환영 DM
   useEffect(() => {
@@ -71,7 +77,10 @@ export function useHomeInit() {
   }, [user, profile]);
 
   // 오늘의 경기 (API + 시범경기 fallback)
+  // initialGames가 서버에서 전달되었으면 클라이언트 재호출 스킵
   useEffect(() => {
+    if (options?.initialGames && options.initialGames.length > 0) return;
+
     const today = new Date();
     const dateStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
     const yyyymmdd = dateStr.replace(/-/g, "");

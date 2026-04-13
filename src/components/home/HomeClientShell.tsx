@@ -65,13 +65,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     showOnboarding, showPlayerSelect, setShowPlayerSelect,
     showPlayerSetupCTA, setShowPlayerSetupCTA,
     welcomeToast,
-    todayGames: clientGames, isPreseason: clientIsPreseason,
+    todayGames, isPreseason,
     handleOnboardingComplete, handlePlayerSelect,
-  } = useHomeInit();
-
-  // 서버에서 받은 초기 데이터 사용, 클라이언트 fetch 완료 시 교체
-  const todayGames = clientGames.length > 0 ? clientGames : initialGames;
-  const isPreseason = clientGames.length > 0 ? clientIsPreseason : initialIsPreseason;
+  } = useHomeInit({ initialGames, initialIsPreseason });
 
   // useHomeNews — lazy import to avoid SSR issues
   const [realNews, setRealNews] = useState<{ id: number; title: string; link: string; pubDate: string; label: string; source: string; sourceUrl: string; thumbnailUrl: null; timeAgo: string; teamId: number | null; type: "news" }[]>([]);
