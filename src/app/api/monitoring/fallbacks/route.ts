@@ -7,19 +7,8 @@
  * - api: 특정 API만 필터 (선택)
  */
 
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  }
-);
 
 export async function GET(request: NextRequest) {
   try {

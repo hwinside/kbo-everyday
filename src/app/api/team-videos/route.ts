@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { TEAMS } from "@/lib/constants/teams";
 import type { YouTubeSearchItem } from "@/types/api";
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
 interface TeamVideoItem {
   id: string;
@@ -19,7 +17,18 @@ interface TeamVideoResult {
 }
 
 const cache = new Map<string, { data: TeamVideoResult; ts: number }>();
-const TTL = 24 * 60 * 60 * 1000; // 24hr
+
+/** KST 기준 경기 시간대(11~24시)인지 확인 */
+function isGameTimeKST(): boolean {
+  const now = new Date();
+  const kstHour = (now.getUTCHours() + 9) % 24;
+  return kstHour >= 11;
+}
+
+/** 경기 시간대: 2시간, 비경기: 24시간 */
+function getTeamVideosTTL(): number {
+  return isGameTimeKST() ? 2 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+}
 
 function decodeHtml(s: string) {
   return s.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<")
@@ -80,7 +89,7 @@ export async function GET(req: NextRequest) {
 
   const cacheKey = `${team.slug}-${type}`;
   const cached = cache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < TTL) {
+  if (cached && Date.now() - cached.ts < getTeamVideosTTL()) {
     return NextResponse.json(cached.data);
   }
 
@@ -124,9 +133,9 @@ export async function GET(req: NextRequest) {
 
 // YouTube API 실패 시 highlights 테이블에서 같은 팀 데이터로 fallback
 async function fallback(teamShortName: string, type: string) {
-  if (!SUPABASE_URL) return NextResponse.json({ items: [] });
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return NextResponse.json({ items: [] });
   try {
-    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    const supabase = supabaseAdmin;
     const { data } = await supabase
       .from("highlights")
       .select("video_id, title, thumbnail, published_at")

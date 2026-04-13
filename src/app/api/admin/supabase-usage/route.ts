@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminRequest } from "@/lib/admin/pin";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 function verifyPin(req: NextRequest): boolean {
   return isAdminRequest(req);
@@ -11,10 +11,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  const supabase = supabaseAdmin;
 
   try {
     // Table row counts via count queries

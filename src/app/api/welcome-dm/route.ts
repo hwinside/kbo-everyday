@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
 
 const WELCOME_MESSAGE = `안녕하세요, 크보팬 운영팀입니다 ⚾
@@ -14,10 +14,9 @@ const WELCOME_MESSAGE = `안녕하세요, 크보팬 운영팀입니다 ⚾
 써보시면서 아쉬운 점 있으면 편하게 알려주세요 :)`;
 
 export async function POST(request: NextRequest) {
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const systemUserId = process.env.SYSTEM_USER_ID;
 
-  if (!serviceKey || !systemUserId) {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY || !systemUserId) {
     return NextResponse.json({ ok: false, reason: "missing_config" }, { status: 500 });
   }
 
@@ -29,10 +28,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const admin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceKey
-    );
+    const admin = getSupabaseAdmin();
 
     // 토큰으로 유저 검증
     const { data: { user }, error: authError } = await admin.auth.getUser(token);

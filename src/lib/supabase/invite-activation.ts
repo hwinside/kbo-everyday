@@ -1,10 +1,5 @@
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { checkAndAwardBadges } from "./badge-engine";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 /**
  * 초대 활성화 체크.

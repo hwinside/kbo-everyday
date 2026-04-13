@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminRequest } from "@/lib/admin/pin";
 
@@ -12,13 +12,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const systemUserId = process.env.SYSTEM_USER_ID;
-  if (!serviceKey || !systemUserId) {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY || !systemUserId) {
     return NextResponse.json({ error: "missing_config" }, { status: 500 });
   }
 
-  const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceKey);
+  const admin = getSupabaseAdmin();
   const conversationId = request.nextUrl.searchParams.get("conversationId");
 
   // 개별 대화 메시지 조회
@@ -123,9 +122,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const systemUserId = process.env.SYSTEM_USER_ID;
-  if (!serviceKey || !systemUserId) {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY || !systemUserId) {
     return NextResponse.json({ error: "missing_config" }, { status: 500 });
   }
 
@@ -134,7 +132,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "missing_params" }, { status: 400 });
   }
 
-  const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceKey);
+  const admin = getSupabaseAdmin();
 
   // 운영팀 대화인지 검증
   const { data: conv } = await admin

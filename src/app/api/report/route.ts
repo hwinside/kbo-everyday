@@ -1,11 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 // AI 필터 — 간단한 금칙어 체크 (추후 LLM 연동)
 const BLOCKED_WORDS = [

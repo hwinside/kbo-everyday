@@ -1,14 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { startJob, finishJob } from "@/lib/admin/job-logger";
 import playersRoster from "@/lib/constants/players-roster.json";
 import type { RosterPlayer } from "@/types/api";
 
 const KBO_BASE = "https://www.koreabaseball.com";
 const CRON_SECRET = process.env.CRON_SECRET || "";
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const SUPABASE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
 interface PlayerStat {
   rank: number;
@@ -147,7 +144,7 @@ export async function GET(req: NextRequest) {
   }
 
   const logId = await startJob("stats-update");
-  const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  const supabase = supabaseAdmin;
   const roster = playersRoster as RosterPlayer[];
 
   try {

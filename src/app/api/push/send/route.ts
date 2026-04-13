@@ -1,13 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import webpush from "web-push";
 import type { PushSubscriptionRow, WebPushError } from "@/types/api";
 import { isAdminRequest } from "@/lib/admin/pin";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-);
 
 function getWebPush() {
   if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {

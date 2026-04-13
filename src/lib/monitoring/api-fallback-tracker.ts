@@ -8,19 +8,7 @@
  * - 알림 스팸 방지 (쿨다운)
  */
 
-import { createClient } from "@supabase/supabase-js";
-
-// Supabase 클라이언트 (서버사이드 전용)
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!, // 서비스 롤 키 필요
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  }
-);
+import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 
 interface FallbackEvent {
   apiName: string;

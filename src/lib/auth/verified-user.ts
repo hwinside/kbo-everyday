@@ -1,4 +1,5 @@
-import { createClient, type User } from "@supabase/supabase-js";
+import type { User } from "@supabase/supabase-js";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 function getBearerToken(request: Request): string {
   const authHeader = request.headers.get("authorization") || "";
@@ -8,14 +9,9 @@ function getBearerToken(request: Request): string {
 
 export async function getVerifiedUserFromRequest(request: Request): Promise<{ user: User; token: string } | null> {
   const token = getBearerToken(request);
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!token || !process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
 
-  if (!token || !serviceKey) return null;
-
-  const adminClient = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    serviceKey,
-  );
+  const adminClient = getSupabaseAdmin();
 
   const {
     data: { user },

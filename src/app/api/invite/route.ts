@@ -1,13 +1,8 @@
 import { randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-);
 
 function generateCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";

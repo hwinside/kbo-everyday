@@ -50,6 +50,11 @@ export function useLiveGame(gameId?: string, pollInterval = 30000) {
   }, []);
 
   useEffect(() => {
+    // pollInterval=0 이면 폴링 비활성 (비경기시간 등)
+    if (pollInterval <= 0) {
+      setLoading(false);
+      return;
+    }
     fetchGames();
     const interval = setInterval(fetchGames, pollInterval);
     return () => clearInterval(interval);

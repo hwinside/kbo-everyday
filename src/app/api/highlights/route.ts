@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { TEAMS } from "@/lib/constants/teams";
 import type { YouTubeSearchItem, HighlightVideo } from "@/types/api";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
 
 interface HighlightResult {
@@ -12,7 +10,18 @@ interface HighlightResult {
 }
 
 const memCache = new Map<string, { data: HighlightResult; ts: number }>();
-const MEM_TTL = 4 * 60 * 60 * 1000;
+
+/** KST 기준 경기 시간대(11~24시)인지 확인 */
+function isGameTimeKST(): boolean {
+  const now = new Date();
+  const kstHour = (now.getUTCHours() + 9) % 24;
+  return kstHour >= 11; // 11시~자정
+}
+
+/** 경기 시간대: 1시간, 비경기: 4시간 */
+function getHighlightsTTL(): number {
+  return isGameTimeKST() ? 1 * 60 * 60 * 1000 : 4 * 60 * 60 * 1000;
+}
 
 function decodeHtml(s: string) {
   return s.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<")
@@ -97,9 +106,9 @@ async function searchYouTube(query: string, maxResults: number, excludeChannelId
 
 // Supabase fallback: 팀 기반 하이라이트 (YouTube API 실패 시)
 async function getSupabaseFallback(team: string): Promise<HighlightVideo[]> {
-  if (!SUPABASE_URL) return [];
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return [];
   try {
-    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    const supabase = supabaseAdmin;
     const { data } = await supabase
       .from("highlights")
       .select("video_id, title, thumbnail, channel, published_at")
@@ -133,8 +142,10 @@ export async function GET(req: NextRequest) {
 
   // 2. 메모리 캐시
   const cached = memCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < MEM_TTL) {
-    return NextResponse.json(cached.data);
+  if (cached && Date.now() - cached.ts < getHighlightsTTL()) {
+    return NextResponse.json(cached.data, {
+      headers: { "Cache-Control": `public, s-maxage=${isGameTimeKST() ? 1800 : 14400}, stale-while-revalidate=60` },
+    });
   }
 
   // 3. YouTube 검색: 팀 + 선수별 병렬
@@ -203,5 +214,7 @@ export async function GET(req: NextRequest) {
   const items = merged.map(({ _label, ...rest }) => ({ ...rest, label: _label }));
   const result = { items };
   if (items.length > 0) memCache.set(cacheKey, { data: result, ts: Date.now() });
-  return NextResponse.json(result);
+  return NextResponse.json(result, {
+    headers: { "Cache-Control": `public, s-maxage=${isGameTimeKST() ? 1800 : 14400}, stale-while-revalidate=60` },
+  });
 }

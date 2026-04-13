@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { TEAMS } from "@/lib/constants/teams";
 import { fetchStandings, fetchGames } from "@/lib/crawler/kbo-api";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 const PROMPT_VERSION = 9; // v9: 승패 검증 강화 — 헤드라인/본문에서 승패 뒤집힘 방지
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
 
 // ===== Types =====
 

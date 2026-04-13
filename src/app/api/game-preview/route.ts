@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import playersRoster from "@/lib/constants/players-roster.json";
 import batterStats from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
@@ -8,11 +8,6 @@ import { fetchStandings, fetchGames, fetchBoxScore, type TeamStanding, type BoxS
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
 
 const PREVIEW_VERSION = 4;
 

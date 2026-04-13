@@ -1,21 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { hasAdminPinConfig, verifyAdminPinValue } from "@/lib/admin/pin";
 
 const MAX_BACKOFF_SECONDS = 15 * 60;
 
 function getClientIp(req: NextRequest): string {
   return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-}
-
-function getSupabaseAdmin() {
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!serviceKey) return null;
-
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    serviceKey,
-  );
 }
 
 export async function POST(req: NextRequest) {

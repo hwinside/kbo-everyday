@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, startTransition } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState, useEffect } from "react";
+import { LazyMotion, domAnimation, m, AnimatePresence } from "framer-motion";
 import { Bell, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import GlassCard from "@/components/ui/GlassCard";
@@ -10,7 +10,7 @@ import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
 import LoginSheet from "@/components/auth/LoginSheet";
 import PWAInstallBanner from "@/components/ui/PWAInstallBanner";
 import { TEAMS, getTeamById } from "@/lib/constants/teams";
-import { useLiveGame } from "@/lib/hooks/useLiveGame";
+import { useLiveGame, type LiveGameData } from "@/lib/hooks/useLiveGame";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
 import { useHomeInit, type HomeGame } from "@/hooks/useHomeInit";
@@ -43,12 +43,19 @@ function SectionSkeleton({ height = 120 }: { height?: number }) {
   );
 }
 
+/** KST 기준 경기 시간대(11~24시)인지 확인 */
+function isGameTimeKST(): boolean {
+  const kstHour = (new Date().getUTCHours() + 9) % 24;
+  return kstHour >= 11;
+}
+
 interface HomeClientShellProps {
   initialGames: HomeGame[];
+  initialLiveGames: LiveGameData[];
   initialIsPreseason: boolean;
 }
 
-export default function HomeClientShell({ initialGames, initialIsPreseason }: HomeClientShellProps) {
+export default function HomeClientShell({ initialGames, initialLiveGames, initialIsPreseason }: HomeClientShellProps) {
   const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number; gameId: string} | null>(null);
   const [showLogin, setShowLogin] = useState(false);
 
@@ -75,10 +82,21 @@ export default function HomeClientShell({ initialGames, initialIsPreseason }: Ho
     });
   }, [myTeamId]);
 
+  // 라이브 데이터: 경기시간대만 폴링, 비경기시간은 서버 초기 데이터만 사용
+  const gameTime = isGameTimeKST();
+  const { liveGames: polledLiveGames } = useLiveGame(
+    undefined,
+    gameTime ? 15000 : 0 // 0이면 폴링 안 함
+  );
+  // 서버 초기 → 클라이언트 폴링으로 점진 교체
+  const liveGames = polledLiveGames.length > 0 ? polledLiveGames :
+    initialLiveGames.filter(g => g.isLive);
+
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
   const myTeamGameBase = todayGames.find(g => g.homeTeamId === myTeamId || g.awayTeamId === myTeamId);
-  const { liveGames } = useLiveGame(undefined, 15000);
-  const myTeamLive = myTeamGameBase ? liveGames.find(g => g.gameId === myTeamGameBase.id) : undefined;
+  const allLiveData = polledLiveGames.length > 0 ? polledLiveGames :
+    (initialLiveGames as LiveGameData[]);
+  const myTeamLive = myTeamGameBase ? allLiveData.find(g => g.gameId === myTeamGameBase.id) : undefined;
   const myTeamGame = myTeamGameBase ? {
     ...myTeamGameBase,
     balls: myTeamLive?.balls ?? 0,
@@ -99,29 +117,29 @@ export default function HomeClientShell({ initialGames, initialIsPreseason }: Ho
   } : undefined;
 
   return (
-    <>
+    <LazyMotion features={domAnimation}>
     {/* 환영 토스트 */}
     <AnimatePresence>
       {welcomeToast && (
-        <motion.div
+        <m.div
           initial={{ opacity: 0, y: -40 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -40 }}
           className="fixed top-14 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl bg-bg-secondary border border-black/10 dark:border-white/10 shadow-lg"
         >
           <p className="text-sm font-medium text-text-primary">👋 {profile?.nickname}님 환영합니다!</p>
-        </motion.div>
+        </m.div>
       )}
     </AnimatePresence>
 
-    <motion.div
+    <m.div
       variants={container}
       initial="hidden"
       animate="show"
       className="mx-auto max-w-lg px-5"
     >
       {/* Header */}
-      <motion.header variants={item} className="flex items-center justify-between py-3 border-b mb-2 -mx-5 px-5" style={{ borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)' }}>
+      <m.header variants={item} className="flex items-center justify-between py-3 border-b mb-2 -mx-5 px-5" style={{ borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)' }}>
         <div className="flex flex-col">
           <img src="/logo-mark-light.png" alt="크보팬" style={{height: "52px", objectFit: "contain"}} className="-ml-0.5 dark:hidden" />
           <img src="/logo-mark.png" alt="크보팬" style={{height: "52px", objectFit: "contain"}} className="-ml-0.5 hidden dark:block" />
@@ -134,13 +152,13 @@ export default function HomeClientShell({ initialGames, initialIsPreseason }: Ho
             <HeaderAvatar user={user} profile={profile} />
           </Link>
         </div>
-      </motion.header>
+      </m.header>
 
       <PWAInstallBanner />
 
       {/* 스킵 유저: 최애선수 설정 CTA */}
       {showPlayerSetupCTA && myTeamId && (
-        <motion.div variants={item} className="mb-3">
+        <m.div variants={item} className="mb-3">
           <button
             onClick={() => setShowPlayerSelect(true)}
             className="w-full p-4 rounded-2xl flex items-center gap-3 transition-colors"
@@ -158,7 +176,7 @@ export default function HomeClientShell({ initialGames, initialIsPreseason }: Ho
             </div>
             <ChevronRight size={18} className="text-text-tertiary" />
           </button>
-        </motion.div>
+        </m.div>
       )}
 
       {/* News Carousel */}
@@ -192,7 +210,7 @@ export default function HomeClientShell({ initialGames, initialIsPreseason }: Ho
       <TodayGamesSection todayGames={todayGames} isPreseason={isPreseason} myTeamId={myTeamId} />
 
       {/* 퀵액션 버튼 */}
-      <motion.div variants={item} className="flex gap-3 mb-6">
+      <m.div variants={item} className="flex gap-3 mb-6">
         <Link href="/community/tickets" className="flex-1">
           <GlassCard pressable className="flex items-center gap-3 !p-4">
             <span className="text-lg">🎫</span>
@@ -205,11 +223,11 @@ export default function HomeClientShell({ initialGames, initialIsPreseason }: Ho
             <span className="text-[15px] leading-[22px] font-medium text-text-primary">구장가이드</span>
           </GlassCard>
         </Link>
-      </motion.div>
+      </m.div>
 
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
       <div className="h-4" />
-    </motion.div>
+    </m.div>
 
     {showOnboarding && (
       <OnboardingFlow onComplete={handleOnboardingComplete} />
@@ -233,6 +251,6 @@ export default function HomeClientShell({ initialGames, initialIsPreseason }: Ho
         gameId={aiGame.gameId}
       />
     )}
-    </>
+    </LazyMotion>
   );
 }

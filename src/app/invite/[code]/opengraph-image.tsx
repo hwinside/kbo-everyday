@@ -1,5 +1,5 @@
 import { ImageResponse } from "next/og";
-import { createClient } from "@supabase/supabase-js";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "edge";
 export const alt = "크보팬 초대";
@@ -11,10 +11,7 @@ export default async function OGImage({ params }: { params: Promise<{ code: stri
 
   let inviterNickname: string | null = null;
   try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
+    const supabase = getSupabaseAdmin();
     const { data: invitation } = await supabase
       .from("invitations")
       .select("inviter_id")

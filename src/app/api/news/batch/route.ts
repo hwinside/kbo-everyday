@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { NaverNewsRawItem, NewsItem } from "@/types/api";
 
+export const runtime = "edge";
+
 const NAVER_CLIENT_ID = process.env.NAVER_CLIENT_ID || "";
 const NAVER_CLIENT_SECRET = process.env.NAVER_CLIENT_SECRET || "";
 

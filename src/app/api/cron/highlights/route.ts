@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import type { YouTubeSearchItem, HighlightRow } from "@/types/api";
 import { startJob, finishJob } from "@/lib/admin/job-logger";
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 const CRON_SECRET = process.env.CRON_SECRET || "";
 
 // ── RSS 기반: 구단 공식 채널 (quota 0) ──
@@ -94,7 +92,7 @@ export async function GET(req: NextRequest) {
 
   const logId = await startJob("youtube-highlights");
 
-  const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  const supabase = supabaseAdmin;
   const results: Record<string, number> = {};
   let errorCount = 0;
   let rssCount = 0;

@@ -6,19 +6,8 @@
  * - 텔레그램으로 요약 리포트 전송
  */
 
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { NextResponse } from "next/server";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  }
-);
 
 export async function GET() {
   try {

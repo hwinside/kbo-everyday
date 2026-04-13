@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
@@ -16,10 +16,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const adminClient = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceKey
-    );
+    const adminClient = getSupabaseAdmin();
 
     // 토큰으로 유저 검증
     const { data: { user }, error: authError } = await adminClient.auth.getUser(token);
