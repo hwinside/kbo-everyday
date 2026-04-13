@@ -152,6 +152,11 @@ export default function GameDetailPage() {
   const liveIsFinal = !!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0);
   const { data: gameRelay } = useGameRelay(gameId, liveGame?.isLive ?? false, 30000, liveGame?.inning ?? 0, liveIsFinal);
 
+  // useCallback must be called before any early returns (React hooks rules)
+  const handleRefresh = useCallback(async () => {
+    await Promise.all([refetchLive(), refetchDetail()]);
+  }, [refetchLive, refetchDetail]);
+
   const game = getGameById(gameId) ?? getPreseasonGameById(gameId) ?? parseKboGameId(gameId);
   if (!game) {
     return (
@@ -186,10 +191,6 @@ export default function GameDetailPage() {
   const tabIndicatorTeam = myTeamInGame ? getTeamById(myTeamId)! : homeTeam;
 
   const d = deriveGameState(liveGame, game, gameDetail);
-
-  const handleRefresh = useCallback(async () => {
-    await Promise.all([refetchLive(), refetchDetail()]);
-  }, [refetchLive, refetchDetail]);
 
   return (
     <PullToRefresh
