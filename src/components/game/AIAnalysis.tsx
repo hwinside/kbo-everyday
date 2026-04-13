@@ -150,7 +150,6 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, ga
           hotPlayers: preview.hotPlayers || [],
         });
       } catch (err) {
-        console.error("AI Analysis fetch error:", err);
         setError(true);
       } finally {
         setLoading(false);

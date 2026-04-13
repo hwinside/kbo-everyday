@@ -56,16 +56,31 @@ function StatusIcon({ status }: { status: string }) {
 
 /* ── Data Mapping ── */
 
-function mapFeedback(raw: any): FeedbackItem {
+/* ── Raw DB row shape ── */
+
+interface FeedbackRaw {
+  id: number;
+  user_id: string;
+  type: string;
+  title: string;
+  body: string | null;
+  page_url: string | null;
+  device_info: string | null;
+  status: string;
+  admin_note: string | null;
+  created_at: string;
+}
+
+function mapFeedback(raw: FeedbackRaw): FeedbackItem {
   return {
     id: raw.id,
     userId: raw.user_id,
-    type: raw.type,
+    type: raw.type as FeedbackItem["type"],
     title: raw.title,
     body: raw.body,
     pageUrl: raw.page_url,
     deviceInfo: raw.device_info,
-    status: raw.status,
+    status: raw.status as FeedbackItem["status"],
     adminNote: raw.admin_note,
     createdAt: raw.created_at,
   };
@@ -124,7 +139,7 @@ export default function AdminFeedbackPage() {
         if (!res.ok) throw new Error("fetch failed");
         const json = await res.json();
         if (!cancelled) {
-          const mapped = (json.data as any[]).map(mapFeedback);
+          const mapped = (json.data as FeedbackRaw[]).map(mapFeedback);
           setItems(mapped);
         }
       } catch {

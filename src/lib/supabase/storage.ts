@@ -58,7 +58,6 @@ export async function uploadImage(file: File, folder: string = "posts"): Promise
     });
 
   if (error) {
-    console.error("Upload error:", error);
     return null;
   }
 

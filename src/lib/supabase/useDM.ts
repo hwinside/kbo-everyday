@@ -225,7 +225,7 @@ export function useDMChat(conversationId: string) {
           .limit(1);
 
         if (blocked && blocked.length > 0) {
-          console.error("차단된 사용자에게 메시지를 보낼 수 없습니다.");
+          // 차단된 사용자에게 메시지를 보낼 수 없습니다.
           return false;
         }
       }
@@ -262,7 +262,7 @@ export async function getOrCreateConversation(myId: string, otherId: string): Pr
     .limit(1);
 
   if (blocked && blocked.length > 0) {
-    console.error("차단된 사용자와 대화할 수 없습니다.");
+    // 차단된 사용자와 대화할 수 없습니다.
     return null;
   }
 
@@ -286,6 +286,6 @@ export async function getOrCreateConversation(myId: string, otherId: string): Pr
     .select("id")
     .single();
 
-  if (error) { console.error("DM create error:", error); return null; }
+  if (error) { return null; }
   return created?.id ?? null;
 }

@@ -90,7 +90,7 @@ function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
           setPreview(genData.preview);
         }
       } catch (err) {
-        console.error("Preview fetch error:", err);
+        // preview fetch error — silent
       } finally {
         setLoading(false);
       }
@@ -515,7 +515,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
         const totalAB = [...boxScore.awayBatters, ...boxScore.homeBatters].reduce((s, b) => s + b.atBats, 0);
         if (totalAB === 0) {
           // BoxScore 데이터 미완성 → 생성 건너뜀 (다음 렌더에서 재시도)
-          console.warn("BoxScore data incomplete (0 AB), skipping summary generation");
+          // BoxScore data incomplete (0 AB), skipping summary generation
           return;
         }
         
@@ -559,7 +559,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
           setLlmSummary(genData.summary);
         }
       } catch (err) {
-        console.error("LLM summary fetch failed:", err);
+        // LLM summary fetch error — silent
       } finally {
         setLlmLoading(false);
       }

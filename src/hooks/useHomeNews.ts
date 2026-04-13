@@ -159,8 +159,65 @@ export function useHomeNews(myTeamId: number | null) {
           setNews(toHomeNewsItems(items, myTeamId));
         }
       })
-      .catch(console.error);
+      .catch(() => {});
   }, [myTeamId]);
 
   return news;
+}
+
+/**
+ * Standalone fetch for lazy import from HomeClientShell.
+ * Returns cached news immediately, then fetches fresh in background.
+ */
+export async function fetchHomeNews(myTeamId: number | null): Promise<HomeNewsItem[]> {
+  if (myTeamId === null) return [];
+
+  // 1. Try cache first
+  const cached = loadCachedNews(myTeamId);
+  if (cached.length > 0 && !shouldRefresh()) {
+    return cached;
+  }
+
+  // 2. Fetch fresh
+  const team = TEAMS.find(t => t.id === myTeamId)?.shortName || "";
+  let favPlayers = getFavoritePlayers().slice(0, 5);
+
+  if (favPlayers.length === 0 && team) {
+    const defaultPlayers: Record<string, string[]> = {
+      "LG": ["오스틴", "문보경", "홍창기"],
+      "두산": ["양의지", "허경민", "곽빈"],
+      "KT": ["강백호", "로하스", "소형준"],
+      "SSG": ["최정", "추신수", "김광현"],
+      "NC": ["손아섭", "박건우", "에릭"],
+      "KIA": ["김도영", "나성범", "양현종"],
+      "삼성": ["구자욱", "김영웅", "원태인"],
+      "롯데": ["전준우", "레이예스", "윌커슨"],
+      "한화": ["노시환", "이범호", "주현상"],
+      "키움": ["이정후", "김하성", "송성문"],
+    };
+    const names = defaultPlayers[team] || [];
+    const teamObj = TEAMS.find(t => t.shortName === team);
+    favPlayers = names.map(name => ({ playerId: "", name, teamId: teamObj?.id || 0, position: "", number: 0 }));
+  }
+
+  const players = favPlayers.map(p => {
+    const pTeam = TEAMS.find(t => t.id === p.teamId);
+    return { name: p.name, teamName: pTeam ? `${pTeam.shortName} ${pTeam.name}` : "" };
+  });
+
+  try {
+    const res = await fetch("/api/news/batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ team: team ? `${team}` : "", players }),
+    });
+    const data = await res.json();
+    const items: NewsItem[] = data.items || [];
+    if (items.length > 0) {
+      saveCachedNews(items, myTeamId);
+      return toHomeNewsItems(items, myTeamId);
+    }
+  } catch { /* ignore */ }
+
+  return cached.length > 0 ? cached : [];
 }

@@ -41,7 +41,6 @@ export default function PlayerNews({ playerName, teamId }: PlayerNewsProps) {
         setLoading(false);
       })
       .catch(e => {
-        console.error('[PlayerNews] Error:', e);
         setLoading(false);
       });
   }, [playerName, teamId]);

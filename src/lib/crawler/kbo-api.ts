@@ -221,7 +221,7 @@ export async function fetchStandings(): Promise<TeamStanding[]> {
     if (naverRes.ok) {
       const data = await naverRes.json();
       if (data.success && data.result?.seasonTeamStats) {
-        return data.result.seasonTeamStats.map((team: any) => ({
+        return data.result.seasonTeamStats.map((team: { teamName: string; teamId: string; gameCount?: number; winGameCount?: number; loseGameCount?: number; drawnGameCount?: number; wra?: number; gameBehind?: number; ranking?: number }) => ({
           teamName: team.teamName,
           teamId: TEAM_CODE_MAP[team.teamId] ?? 0,
           games: team.gameCount ?? 0,

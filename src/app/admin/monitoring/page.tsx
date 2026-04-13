@@ -52,8 +52,8 @@ export default function MonitoringPage() {
       const data = await res.json();
       setEvents(data.events.slice(0, 20)); // 최근 20건만
       setSummary(data.summary);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
     }
