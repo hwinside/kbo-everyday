@@ -117,6 +117,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data: { session } } = await supabase.auth.getSession();
       setUser(session?.user ?? null);
       if (session?.user && session.access_token) {
+        // 계정 전환 감지 (syncSession 경로)
+        try {
+          const prevId = localStorage.getItem('kbo-auth-uid');
+          if (prevId && prevId !== session.user.id) {
+            ['kbo-my-team', 'kbo-onboarding-status', 'favorite_players'].forEach(k => localStorage.removeItem(k));
+            sessionStorage.clear();
+          }
+          localStorage.setItem('kbo-auth-uid', session.user.id);
+        } catch { /* SSR safety */ }
         await loadProfile(session.access_token, session.user.id);
       } else {
         setProfile(null);
@@ -130,6 +139,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       async (_event, session) => {
         setUser(session?.user ?? null);
         if (session?.user && session.access_token) {
+          // 계정 전환 감지: userId가 바뀌면 이전 계정 localStorage 즉시 정리
+          try {
+            const prevId = localStorage.getItem('kbo-auth-uid');
+            if (prevId && prevId !== session.user.id) {
+              ['kbo-my-team', 'kbo-onboarding-status', 'favorite_players'].forEach(k => localStorage.removeItem(k));
+              sessionStorage.clear();
+            }
+            localStorage.setItem('kbo-auth-uid', session.user.id);
+          } catch { /* SSR safety */ }
+
           await loadProfile(session.access_token, session.user.id);
 
           // Google Ads conversion: 신규 가입 감지 (created_at이 60초 이내, 세션당 1회)
@@ -180,6 +199,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       signOut: async () => {
         try { await supabase.auth.signOut(); } catch { /* ignore */ }
+        // 계정 전환 시 이전 계정 localStorage 잔존 방지
+        try {
+          const keysToRemove = ['kbo-my-team', 'kbo-onboarding-status', 'favorite_players'];
+          keysToRemove.forEach(k => localStorage.removeItem(k));
+          // welcome toast / gads conversion 등 session 키도 정리
+          sessionStorage.clear();
+        } catch { /* SSR safety */ }
         window.location.href = "/";
       },
       refreshProfile,
