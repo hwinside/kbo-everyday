@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isAdminRequest } from "@/lib/admin/pin";
 import { SignJWT, importPKCS8 } from "jose";
 
 function verifyPin(req: NextRequest): boolean {
-  return req.headers.get("x-admin-pin") === process.env.ADMIN_PIN;
+  return isAdminRequest(req);
 }
 
 /**

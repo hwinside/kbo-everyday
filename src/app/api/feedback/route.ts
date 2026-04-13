@@ -1,18 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
+import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
 );
 
 const VALID_TYPES = ["bug", "data", "feature", "content", "other"];
 
 export async function POST(req: NextRequest) {
-  const { userId, type, title, body, pageUrl, deviceInfo } = await req.json();
+  const verified = await getVerifiedUserFromRequest(req);
+  if (!verified) {
+    return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
+  }
 
-  if (!userId || !title?.trim()) {
+  const { type, title, body, pageUrl, deviceInfo } = await req.json();
+
+  if (!title?.trim()) {
     return NextResponse.json({ error: "필수 값 누락" }, { status: 400 });
   }
 
@@ -20,14 +26,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "유효하지 않은 유형입니다" }, { status: 400 });
   }
 
-  // Rate limit: 10 per day per user
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
   const { count, error: countError } = await supabase
     .from("feedback")
     .select("*", { count: "exact", head: true })
-    .eq("user_id", userId)
+    .eq("user_id", verified.user.id)
     .gte("created_at", todayStart.toISOString());
 
   if (countError) return supabaseErrorResponse(countError);
@@ -37,7 +42,7 @@ export async function POST(req: NextRequest) {
   }
 
   const { error } = await supabase.from("feedback").insert({
-    user_id: userId,
+    user_id: verified.user.id,
     type,
     title: title.trim(),
     body: body || null,

@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkAndActivateInvite } from "@/lib/supabase/invite-activation";
+import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 
-// POST: 초대 활성화 체크 (글/댓글 작성 후 호출)
 export async function POST(req: NextRequest) {
-  const { userId } = await req.json();
-  if (!userId) return NextResponse.json({ error: "userId required" }, { status: 400 });
+  const verified = await getVerifiedUserFromRequest(req);
+  if (!verified) {
+    return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
+  }
 
-  await checkAndActivateInvite(userId);
+  await checkAndActivateInvite(verified.user.id);
 
   return NextResponse.json({ ok: true });
 }

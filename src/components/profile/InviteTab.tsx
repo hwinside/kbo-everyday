@@ -3,13 +3,20 @@
 import { useState, useEffect } from "react";
 import { Copy, Check } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
+import { supabase } from "@/lib/supabase/client";
 
 interface InviteTabProps {
   userId: string;
   inviteCount: number;
 }
 
-export default function InviteTab({ userId, inviteCount }: InviteTabProps) {
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const accessToken = session?.access_token;
+  return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+}
+
+export default function InviteTab({ userId: _userId, inviteCount }: InviteTabProps) {
   const [codes, setCodes] = useState<string[]>([]);
   const [friends, setFriends] = useState<{ id: string; nickname: string }[]>([]);
   const [totalInvited, setTotalInvited] = useState(0);
@@ -18,22 +25,26 @@ export default function InviteTab({ userId, inviteCount }: InviteTabProps) {
   const [remaining, setRemaining] = useState(inviteCount);
 
   useEffect(() => {
-    fetch(`/api/invite?userId=${userId}`)
+    getAuthHeaders()
+      .then(headers => fetch("/api/invite", { headers }))
       .then(r => r.json())
       .then(data => {
         setCodes((data.invitations || []).filter((i: { code: string; used_at: string | null }) => !i.used_at).map((i: { code: string; used_at: string | null }) => i.code));
         setFriends(data.friends || []);
         setTotalInvited(data.totalInvited || 0);
       });
-  }, [userId]);
+  }, [_userId]);
 
   async function generateCode() {
     if (remaining <= 0) return;
     setGenerating(true);
+    const authHeaders = await getAuthHeaders();
     const res = await fetch("/api/invite", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId }),
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
     });
     const data = await res.json();
     if (data.code) {

@@ -1,11 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
-
-const ADMIN_PIN = process.env.ADMIN_PIN || "kbo2025";
+import { isAdminRequest } from "@/lib/admin/pin";
 
 function checkPin(request: NextRequest) {
-  const pin = request.headers.get("x-admin-pin") || "";
-  return pin === ADMIN_PIN;
+  return isAdminRequest(request);
 }
 
 // GET: 운영팀 계정의 대화 목록 + 메시지

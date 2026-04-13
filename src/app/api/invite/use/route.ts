@@ -1,23 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
+import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
 );
 
-// POST: 초대코드 사용 (가입 시)
 export async function POST(req: NextRequest) {
-  const { code, userId, fingerprint } = await req.json();
-  const ipAddress =
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-
-  if (!code || !userId) {
-    return NextResponse.json({ error: "code, userId required" }, { status: 400 });
+  const verified = await getVerifiedUserFromRequest(req);
+  if (!verified) {
+    return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
   }
 
-  // 코드 유효성 체크
+  const { code, fingerprint } = await req.json();
+  const userId = verified.user.id;
+  const ipAddress = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+
+  if (!code) {
+    return NextResponse.json({ error: "code required" }, { status: 400 });
+  }
+
   const { data: invitation, error: findError } = await supabase
     .from("invitations")
     .select("id, inviter_id, used_at")
@@ -32,12 +36,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "이미 사용된 초대코드입니다" }, { status: 409 });
   }
 
-  // 자기 초대 차단
   if (invitation.inviter_id === userId) {
     return NextResponse.json({ error: "본인의 초대코드는 사용할 수 없습니다" }, { status: 403 });
   }
 
-  // 이미 초대받은 유저 중복 등록 차단 (서버 가드)
   const { data: existingProfile } = await supabase
     .from("profiles")
     .select("invited_by")
@@ -48,11 +50,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "이미 초대코드가 등록된 계정입니다" }, { status: 409 });
   }
 
-  // 어뷰징 체크
   let flagged = false;
   let flaggedReason: string | null = null;
 
-  // 1. fingerprint 중복 체크
   if (fingerprint) {
     const { count: fpCount } = await supabase
       .from("invite_abuse_check")
@@ -65,7 +65,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 2. IP 24시간 내 3건 이상 체크
   if (!flagged && ipAddress !== "unknown") {
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { count: ipCount } = await supabase
@@ -80,18 +79,17 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // invite_abuse_check 기록
   await supabase.from("invite_abuse_check").insert({
     invitee_id: userId,
     fingerprint: fingerprint || null,
     ip_address: ipAddress !== "unknown" ? ipAddress : null,
   });
 
-  // invitations 업데이트
   const updateData: Record<string, unknown> = {
     invitee_id: userId,
     used_at: new Date().toISOString(),
   };
+
   if (flagged) {
     updateData.flagged = true;
     updateData.flagged_reason = flaggedReason;
@@ -105,11 +103,17 @@ export async function POST(req: NextRequest) {
 
   if (updateError) return supabaseErrorResponse(updateError);
 
-  // profiles.invited_by 설정
   await supabase
     .from("profiles")
-    .update({ invited_by: invitation.inviter_id })
+    .update({
+      invited_by: invitation.inviter_id,
+      is_founder: true,
+    })
     .eq("id", userId);
+
+  await supabase
+    .from("user_badges")
+    .upsert({ user_id: userId, badge_id: "founder" }, { onConflict: "user_id,badge_id" });
 
   return NextResponse.json({ success: true, flagged });
 }

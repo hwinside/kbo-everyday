@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Send } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { supabase } from "@/lib/supabase/client";
 
 type FeedbackType = "bug" | "data" | "feature" | "other";
 
@@ -53,11 +54,21 @@ export default function FeedbackSheet({ isOpen, onClose, defaultType }: Feedback
     setError("");
 
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+
+      if (!accessToken) {
+        setError("로그인이 필요합니다");
+        return;
+      }
+
       const res = await fetch("/api/feedback", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
         body: JSON.stringify({
-          userId: user.id,
           type,
           title: title.trim(),
           body: body.trim() || null,

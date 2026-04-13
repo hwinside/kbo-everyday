@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isAdminRequest } from "@/lib/admin/pin";
 import { checkAnomalies } from "@/lib/admin/anomaly";
 
 function verifyPin(req: NextRequest): boolean {
-  const pin = req.headers.get("x-admin-pin");
-  return pin === process.env.ADMIN_PIN;
+  return isAdminRequest(req);
 }
 
 export async function POST(req: NextRequest) {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isAdminRequest } from "@/lib/admin/pin";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 
@@ -10,8 +11,7 @@ const JOB_PATHS: Record<string, string> = {
 };
 
 function verifyPin(req: NextRequest): boolean {
-  const pin = req.headers.get("x-admin-pin");
-  return pin === process.env.ADMIN_PIN;
+  return isAdminRequest(req);
 }
 
 export async function POST(req: NextRequest) {

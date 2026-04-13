@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import webpush from "web-push";
 import type { PushSubscriptionRow, WebPushError } from "@/types/api";
+import { isAdminRequest } from "@/lib/admin/pin";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
 );
 
 function getWebPush() {
@@ -13,13 +14,17 @@ function getWebPush() {
     webpush.setVapidDetails(
       "mailto:harinclaw@gmail.com",
       process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
-      process.env.VAPID_PRIVATE_KEY
+      process.env.VAPID_PRIVATE_KEY,
     );
   }
   return webpush;
 }
 
 export async function POST(req: NextRequest) {
+  if (!isAdminRequest(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const wp = getWebPush();
   const { title, body, url, tag, userIds } = await req.json();
 
@@ -44,7 +49,7 @@ export async function POST(req: NextRequest) {
           await supabase.from("push_subscriptions").delete().eq("endpoint", s.subscription.endpoint);
         }
       }
-    })
+    }),
   );
 
   return NextResponse.json({ sent, failed });

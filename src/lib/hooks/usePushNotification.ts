@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { supabase } from "@/lib/supabase/client";
 
 export function usePushNotification() {
   const [permission, setPermission] = useState<NotificationPermission>("default");
@@ -31,10 +32,15 @@ export function usePushNotification() {
 
     setSubscription(sub);
 
-    // 서버에 구독 정보 저장
+    const { data: { session } } = await supabase.auth.getSession();
+    const accessToken = session?.access_token;
+
     await fetch("/api/push/subscribe", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
       body: JSON.stringify({ subscription: sub.toJSON() }),
     });
 

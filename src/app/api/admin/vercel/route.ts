@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isAdminRequest } from "@/lib/admin/pin";
 
 function verifyPin(req: NextRequest): boolean {
-  return req.headers.get("x-admin-pin") === process.env.ADMIN_PIN;
+  return isAdminRequest(req);
 }
 
 const HEADERS = () => ({

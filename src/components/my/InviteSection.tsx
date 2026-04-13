@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Gift, Copy, Share2, Check, UserPlus, Ticket } from "lucide-react";
+import { Gift, Share2, Check, UserPlus, Ticket } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { supabase } from "@/lib/supabase/client";
 
 interface Invitation {
   code: string;
@@ -28,6 +29,12 @@ interface InviteData {
   remainingCodes: number;
 }
 
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const accessToken = session?.access_token;
+  return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+}
+
 export default function InviteSection() {
   const { user, profile } = useAuth();
   const [data, setData] = useState<InviteData | null>(null);
@@ -44,7 +51,8 @@ export default function InviteSection() {
     if (!user) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/invite?userId=${user.id}`);
+      const headers = await getAuthHeaders();
+      const res = await fetch("/api/invite", { headers });
       if (res.ok) setData(await res.json());
     } finally {
       setLoading(false);
@@ -62,10 +70,13 @@ export default function InviteSection() {
   async function handleGenerate() {
     setGenerating(true);
     try {
+      const authHeaders = await getAuthHeaders();
       const res = await fetch("/api/invite", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user!.id }),
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders,
+        },
       });
       if (res.ok) await fetchData();
     } finally {
@@ -92,10 +103,14 @@ export default function InviteSection() {
     setRegisterLoading(true);
     setRegisterError("");
     try {
+      const authHeaders = await getAuthHeaders();
       const res = await fetch("/api/invite/use", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, userId: user!.id }),
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders,
+        },
+        body: JSON.stringify({ code }),
       });
       if (res.ok) {
         setRegisterSuccess(true);

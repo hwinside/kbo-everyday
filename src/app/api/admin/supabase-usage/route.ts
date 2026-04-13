@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isAdminRequest } from "@/lib/admin/pin";
 import { createClient } from "@supabase/supabase-js";
 
 function verifyPin(req: NextRequest): boolean {
-  return req.headers.get("x-admin-pin") === process.env.ADMIN_PIN;
+  return isAdminRequest(req);
 }
 
 export async function GET(req: NextRequest) {

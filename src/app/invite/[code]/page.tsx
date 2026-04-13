@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Gift, ArrowRight, CheckCircle, XCircle } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { supabase } from "@/lib/supabase/client";
 
 export default function InviteCodePage() {
   const { code } = useParams<{ code: string }>();
@@ -29,23 +30,22 @@ export default function InviteCodePage() {
       return;
     }
 
-    // 이미 초대받은 계정
-    if (profile.invited_by) {
-      setStatus("already");
-      return;
-    }
-
-    // 자동등록 안 함 — 명시적 확인 대기
-    setStatus("confirm");
+    const nextStatus = profile.invited_by ? "already" : "confirm";
+    queueMicrotask(() => setStatus(nextStatus));
   }, [authLoading, user, profile, code, router]);
 
   async function registerCode() {
     setStatus("loading");
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
       const res = await fetch("/api/invite/use", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, userId: user!.id }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+        body: JSON.stringify({ code }),
       });
       if (res.ok) {
         setStatus("success");

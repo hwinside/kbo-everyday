@@ -208,10 +208,13 @@ export async function createPost(params: {
   if (error) throw error;
 
   // 초대 활성화 체크 (fire-and-forget)
+  const { data: { session } } = await supabase.auth.getSession();
   fetch("/api/invite/activate", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ userId: user.id }),
+    headers: {
+      "Content-Type": "application/json",
+      ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+    },
   }).catch(() => {});
 
   return data;
@@ -256,10 +259,13 @@ export async function createComment(postId: number, content: string) {
   if (error) throw error;
 
   // 초대 활성화 체크 (fire-and-forget)
+  const { data: { session } } = await supabase.auth.getSession();
   fetch("/api/invite/activate", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ userId: user.id }),
+    headers: {
+      "Content-Type": "application/json",
+      ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+    },
   }).catch(() => {});
 }
 
