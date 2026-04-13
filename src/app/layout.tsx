@@ -6,6 +6,7 @@ import { ThemeProvider, themeScript } from "@/components/ThemeProvider";
 import { Analytics } from "@vercel/analytics/next";
 
 const GA_ID = "G-C0TE4TFLZ4";
+const GADS_ID = "AW-18082281693";
 
 export const metadata: Metadata = {
   title: "크보팬 — 내 팀 경기, 오늘 할 얘기는 여기서 끝",
@@ -55,7 +56,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <Script src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`} strategy="afterInteractive" />
         <Script id="gtag-init" strategy="afterInteractive">
-          {`window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${GA_ID}');`}
+          {`window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${GA_ID}');gtag('config','${GADS_ID}');`}
         </Script>
         <link
           rel="stylesheet"
