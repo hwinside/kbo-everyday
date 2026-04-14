@@ -26,7 +26,7 @@ create table if not exists daily_stats_snapshot (
   player_name   text    not null,
   team          text    not null,
   value         float   not null,
-  primary key (date, category, rank)
+  primary key (date, category, player_name, team)
 );
 
 alter table daily_stats_snapshot enable row level security;

@@ -364,7 +364,7 @@ export async function GET(req: NextRequest) {
 
     const { error: statsErr } = await supabase
       .from("daily_stats_snapshot")
-      .upsert(todayStatsSnapshots, { onConflict: "date,category,rank" });
+      .upsert(todayStatsSnapshots, { onConflict: "date,category,player_name,team" });
 
     if (standingsErr) console.error("Standings snapshot upsert error:", standingsErr.message);
     if (statsErr) console.error("Stats snapshot upsert error:", statsErr.message);
