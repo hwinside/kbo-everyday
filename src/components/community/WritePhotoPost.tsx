@@ -114,11 +114,13 @@ export default function WritePhotoPost({
       const isVideo = file.type === "video/mp4";
       const isGif = file.type === "image/gif";
 
+      // mp4와 GIF 모두 20MB 제한
+      if ((isVideo || isGif) && file.size > 20 * 1024 * 1024) {
+        alert(isVideo ? "동영상은 20MB 이하만 업로드 가능합니다" : "GIF는 20MB 이하만 업로드 가능합니다");
+        continue;
+      }
+
       if (isVideo) {
-        if (file.size > 20 * 1024 * 1024) {
-          alert("동영상은 20MB 이하만 업로드 가능합니다");
-          continue;
-        }
         try {
           await checkVideoDuration(file);
         } catch (err) {
@@ -193,8 +195,12 @@ export default function WritePhotoPost({
       let videoUrls: string[] = [];
 
       if (imageItems.length > 0) {
+        // GIF는 압축하면 애니메이션이 깨지므로 원본 업로드
+        const gifItems = imageItems.filter((m) => m.file.type === "image/gif");
+        const nonGifItems = imageItems.filter((m) => m.file.type !== "image/gif");
+
         const compressed = await Promise.all(
-          imageItems.map((img) =>
+          nonGifItems.map((img) =>
             imageCompression(img.file, {
               maxWidthOrHeight: 1200,
               maxSizeMB: 1,
@@ -202,7 +208,8 @@ export default function WritePhotoPost({
             })
           )
         );
-        imageUrls = await uploadImages(compressed);
+        const allImageFiles = [...compressed, ...gifItems.map((g) => g.file)];
+        imageUrls = await uploadImages(allImageFiles);
       }
 
       if (videoItems.length > 0) {

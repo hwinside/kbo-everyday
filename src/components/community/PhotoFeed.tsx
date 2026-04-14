@@ -67,6 +67,7 @@ function MediaElement({ url, isVideo, sizes }: { url: string; isVideo: boolean; 
         muted
         loop
         playsInline
+        preload="metadata"
         className="w-full object-cover pointer-events-none select-none"
         style={{ aspectRatio: "4/5", WebkitTouchCallout: "none" } as React.CSSProperties}
       />
