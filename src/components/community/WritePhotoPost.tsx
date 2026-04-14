@@ -114,9 +114,9 @@ export default function WritePhotoPost({
       const isVideo = file.type === "video/mp4";
       const isGif = file.type === "image/gif";
 
-      // mp4와 GIF 모두 20MB 제한
-      if ((isVideo || isGif) && file.size > 20 * 1024 * 1024) {
-        alert(isVideo ? "동영상은 20MB 이하만 업로드 가능합니다" : "GIF는 20MB 이하만 업로드 가능합니다");
+      // 모든 파일 20MB 제한 (선택 시점 즉시 차단)
+      if (file.size > 20 * 1024 * 1024) {
+        alert("파일 크기가 20MB를 초과했어요. 20MB 이하 파일만 업로드할 수 있습니다.");
         continue;
       }
 
