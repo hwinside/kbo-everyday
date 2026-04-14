@@ -13,6 +13,7 @@ export interface Post {
   title: string;
   content: string;
   image_urls: string[];
+  video_urls?: string[];
   like_count: number;
   comment_count: number;
   created_at: string;
@@ -51,7 +52,7 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
       setLoading(true);
       const { data } = await supabase
         .from("posts")
-        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)")
+        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)")
         .eq("board_type", boardType)
         .eq("board_id", boardId)
         .eq("content_type", contentType)
@@ -65,6 +66,7 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
           ...p,
           content_type: (p.content_type ?? "general") as "general" | "photo",
           image_urls: (p.image_urls ?? []) as string[],
+          video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
           nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
           team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
           grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
@@ -82,7 +84,7 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
     setLoading(true);
     const { data } = await supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)")
       .eq("board_type", boardType)
       .eq("board_id", boardId)
       .eq("content_type", contentType)
@@ -95,6 +97,7 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
         ...p,
         content_type: (p.content_type ?? "general") as "general" | "photo",
         image_urls: (p.image_urls ?? []) as string[],
+        video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
         nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
         team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
         grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
@@ -128,6 +131,7 @@ export function usePostDetail(postId: number) {
         setPost({
           ...p,
           image_urls: p.image_urls ?? [],
+          video_urls: (p as Record<string, unknown>).video_urls as string[] ?? [],
           nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
           team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
           grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
@@ -177,6 +181,7 @@ export async function createPost(params: {
   title: string;
   content: string;
   imageUrls?: string[];
+  videoUrls?: string[];
   contentType?: "general" | "photo";
   gameId?: string;
   playerTags?: string[];
@@ -193,6 +198,7 @@ export async function createPost(params: {
     title: params.title,
     content: params.content,
     image_urls: params.imageUrls ?? [],
+    video_urls: params.videoUrls ?? [],
   };
 
   if (params.gameId) row.game_id = params.gameId;
@@ -238,6 +244,31 @@ export async function uploadImages(files: File[]): Promise<string[]> {
 
     const { data: urlData } = supabase.storage
       .from("photos")
+      .getPublicUrl(path);
+
+    urls.push(urlData.publicUrl);
+  }
+  return urls;
+}
+
+/** 동영상 업로드 (Supabase Storage — videos 버킷) */
+export async function uploadVideos(files: File[]): Promise<string[]> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("로그인 필요");
+
+  const urls: string[] = [];
+  for (const file of files) {
+    const ext = file.name.split(".").pop() || "mp4";
+    const path = `${user.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+    const { error } = await supabase.storage
+      .from("videos")
+      .upload(path, file, { contentType: file.type });
+
+    if (error) throw error;
+
+    const { data: urlData } = supabase.storage
+      .from("videos")
       .getPublicUrl(path);
 
     urls.push(urlData.publicUrl);

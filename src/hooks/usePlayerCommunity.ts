@@ -21,6 +21,7 @@ interface SupabasePostRow {
   title: string;
   content: string;
   image_urls?: string[];
+  video_urls?: string[];
   like_count: number;
   comment_count: number;
   created_at: string;
@@ -64,7 +65,7 @@ export function usePlayerCommunity() {
 
     let query = supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
       .eq("board_type", "player")
       .eq("content_type", "general")
       .in("board_id", favPlayerIds)
@@ -121,7 +122,7 @@ export function usePlayerCommunity() {
 
     let query = supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
       .eq("board_type", "player")
       .eq("content_type", "photo")
       .in("board_id", favPlayerIds)
@@ -153,6 +154,7 @@ export function usePlayerCommunity() {
             title: p.title,
             content: p.content,
             image_urls: p.image_urls ?? [],
+            video_urls: p.video_urls ?? [],
             like_count: p.like_count,
             comment_count: p.comment_count,
             created_at: p.created_at,

@@ -2,10 +2,10 @@
 
 import { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Plus, XCircle, Loader2, ChevronLeft, Pencil, SkipForward } from "lucide-react";
+import { X, Plus, XCircle, Loader2, ChevronLeft, Pencil, SkipForward, Play } from "lucide-react";
 import Image from "next/image";
 import imageCompression from "browser-image-compression";
-import { createPost, uploadImages } from "@/lib/supabase/usePosts";
+import { createPost, uploadImages, uploadVideos } from "@/lib/supabase/usePosts";
 import MemeEditor from "@/components/editor/MemeEditor";
 import GamePicker, { type PickedGame } from "./GamePicker";
 import PlayerTagger from "./PlayerTagger";
@@ -25,10 +25,11 @@ interface WritePhotoPostProps {
 
 type Step = 1 | 2 | 3;
 
-interface ImageItem {
+interface MediaItem {
   preview: string;
   file: File;
   edited: boolean;
+  type: "image" | "video";
 }
 
 interface PlayerTag {
@@ -47,7 +48,7 @@ export default function WritePhotoPost({
   onSuccess,
 }: WritePhotoPostProps) {
   const [step, setStep] = useState<Step>(1);
-  const [images, setImages] = useState<ImageItem[]>([]);
+  const [media, setMedia] = useState<MediaItem[]>([]);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [caption, setCaption] = useState("");
   const [selectedGame, setSelectedGame] = useState<PickedGame | null>(null);
@@ -103,21 +104,58 @@ export default function WritePhotoPost({
     return [...new Set(tags)];
   }, [selectedGame, selectedPlayers, boardType, boardId]);
 
-  function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
     if (!files) return;
-    const remaining = 3 - images.length;
-    Array.from(files)
-      .slice(0, remaining)
-      .forEach((file) => {
-        const preview = URL.createObjectURL(file);
-        setImages((prev) => [...prev, { preview, file, edited: false }]);
-      });
+    const remaining = 3 - media.length;
+    const selected = Array.from(files).slice(0, remaining);
+
+    for (const file of selected) {
+      const isVideo = file.type === "video/mp4";
+      const isGif = file.type === "image/gif";
+
+      if (isVideo) {
+        if (file.size > 20 * 1024 * 1024) {
+          alert("동영상은 20MB 이하만 업로드 가능합니다");
+          continue;
+        }
+        try {
+          await checkVideoDuration(file);
+        } catch (err) {
+          alert((err as Error).message);
+          continue;
+        }
+      }
+
+      const preview = URL.createObjectURL(file);
+      const type: "image" | "video" = isVideo ? "video" : "image";
+      setMedia((prev) => [...prev, { preview, file, edited: false, type }]);
+    }
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  function removeImage(index: number) {
-    setImages((prev) => {
+  function checkVideoDuration(file: File): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const video = document.createElement("video");
+      video.preload = "metadata";
+      video.src = URL.createObjectURL(file);
+      video.onloadedmetadata = () => {
+        URL.revokeObjectURL(video.src);
+        if (video.duration > 15) {
+          reject(new Error("15초 이하 영상만 업로드 가능합니다"));
+        } else {
+          resolve();
+        }
+      };
+      video.onerror = () => {
+        URL.revokeObjectURL(video.src);
+        reject(new Error("영상 파일을 읽을 수 없습니다"));
+      };
+    });
+  }
+
+  function removeMedia(index: number) {
+    setMedia((prev) => {
       URL.revokeObjectURL(prev[index].preview);
       return prev.filter((_, i) => i !== index);
     });
@@ -125,11 +163,11 @@ export default function WritePhotoPost({
 
   function handleEditorSave(file: File) {
     if (editingIndex === null) return;
-    setImages((prev) =>
-      prev.map((img, i) => {
-        if (i !== editingIndex) return img;
-        URL.revokeObjectURL(img.preview);
-        return { preview: URL.createObjectURL(file), file, edited: true };
+    setMedia((prev) =>
+      prev.map((item, i) => {
+        if (i !== editingIndex) return item;
+        URL.revokeObjectURL(item.preview);
+        return { preview: URL.createObjectURL(file), file, edited: true, type: item.type };
       })
     );
     setEditingIndex(null);
@@ -144,35 +182,46 @@ export default function WritePhotoPost({
   }, []);
 
   async function handleSubmit() {
-    if (images.length === 0) return;
+    if (media.length === 0) return;
     setSubmitting(true);
 
     try {
-      const compressed = await Promise.all(
-        images.map((img) =>
-          imageCompression(img.file, {
-            maxWidthOrHeight: 1200,
-            maxSizeMB: 1,
-            useWebWorker: true,
-          })
-        )
-      );
+      const imageItems = media.filter((m) => m.type === "image");
+      const videoItems = media.filter((m) => m.type === "video");
 
-      const urls = await uploadImages(compressed);
+      let imageUrls: string[] = [];
+      let videoUrls: string[] = [];
+
+      if (imageItems.length > 0) {
+        const compressed = await Promise.all(
+          imageItems.map((img) =>
+            imageCompression(img.file, {
+              maxWidthOrHeight: 1200,
+              maxSizeMB: 1,
+              useWebWorker: true,
+            })
+          )
+        );
+        imageUrls = await uploadImages(compressed);
+      }
+
+      if (videoItems.length > 0) {
+        videoUrls = await uploadVideos(videoItems.map((v) => v.file));
+      }
 
       await createPost({
         boardType,
         boardId,
         title: "",
         content: caption.trim(),
-        imageUrls: urls,
+        imageUrls,
+        videoUrls,
         contentType: "photo",
         gameId: selectedGame?.id,
         playerTags: selectedPlayers.map((p) => formatPlayerTag(p.kboId, p.name)),
         hashtags: hashtags,
       });
 
-      // Reset & close
       resetState();
       onClose();
       onSuccess?.();
@@ -186,8 +235,8 @@ export default function WritePhotoPost({
   function resetState() {
     setStep(1);
     setCaption("");
-    images.forEach((img) => URL.revokeObjectURL(img.preview));
-    setImages([]);
+    media.forEach((m) => URL.revokeObjectURL(m.preview));
+    setMedia([]);
     setSelectedGame(null);
     setSelectedPlayers(defaultPlayerTag ? [defaultPlayerTag] : []);
     setHashtags([]);
@@ -262,32 +311,43 @@ export default function WritePhotoPost({
                     exit={{ opacity: 0, x: 20 }}
                     className="flex-1 flex flex-col space-y-4"
                   >
-                    <p className="text-sm text-text-secondary">사진을 선택하세요 (최대 3장)</p>
+                    <p className="text-sm text-text-secondary">사진 · 영상을 선택하세요 (최대 3개, 영상 15초/20MB)</p>
 
                     <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-1">
-                      {images.map((img, i) => (
+                      {media.map((item, i) => (
                         <div key={i} className="relative flex-shrink-0 w-28 h-28 rounded-xl overflow-hidden bg-bg-tertiary">
-                          <Image src={img.preview} alt={`preview ${i}`} fill className="object-cover" />
+                          {item.type === "video" ? (
+                            <>
+                              <video src={item.preview} className="w-full h-full object-cover" muted playsInline />
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="w-8 h-8 rounded-full bg-black/50 flex items-center justify-center">
+                                  <Play size={16} className="text-white ml-0.5" fill="white" />
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <Image src={item.preview} alt={`preview ${i}`} fill className="object-cover" />
+                          )}
                           <button
-                            onClick={() => removeImage(i)}
+                            onClick={() => removeMedia(i)}
                             className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5"
                           >
                             <XCircle size={20} className="text-white" />
                           </button>
-                          {img.edited && (
+                          {item.edited && (
                             <div className="absolute bottom-1 left-1 bg-accent/80 rounded-full px-1.5 py-0.5 text-[9px] text-white font-medium">
                               편집됨
                             </div>
                           )}
                         </div>
                       ))}
-                      {images.length < 3 && (
+                      {media.length < 3 && (
                         <button
                           onClick={() => fileInputRef.current?.click()}
                           className="flex-shrink-0 w-28 h-28 rounded-xl bg-bg-tertiary flex flex-col items-center justify-center gap-1 text-text-tertiary hover:text-text-secondary transition-colors"
                         >
                           <Plus size={28} />
-                          <span className="text-xs">{images.length}/3</span>
+                          <span className="text-xs">{media.length}/3</span>
                         </button>
                       )}
                     </div>
@@ -295,9 +355,9 @@ export default function WritePhotoPost({
                     <input
                       ref={fileInputRef}
                       type="file"
-                      accept="image/*"
+                      accept="image/*,video/mp4"
                       multiple
-                      onChange={handleImageSelect}
+                      onChange={handleFileSelect}
                       className="hidden"
                     />
                   </motion.div>
@@ -314,18 +374,30 @@ export default function WritePhotoPost({
                     <p className="text-sm text-text-secondary">밈 편집 (선택사항)</p>
 
                     <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-1">
-                      {images.map((img, i) => (
+                      {media.map((item, i) => (
                         <div key={i} className="relative flex-shrink-0">
                           <div className="w-28 h-28 rounded-xl overflow-hidden bg-bg-tertiary">
-                            <Image src={img.preview} alt={`preview ${i}`} fill className="object-cover" />
+                            {item.type === "video" ? (
+                              <video src={item.preview} className="w-full h-full object-cover" muted playsInline />
+                            ) : (
+                              <Image src={item.preview} alt={`preview ${i}`} fill className="object-cover" />
+                            )}
                           </div>
-                          <button
-                            onClick={() => setEditingIndex(i)}
-                            className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-xl"
-                          >
-                            <Pencil size={24} className="text-white" />
-                          </button>
-                          {img.edited && (
+                          {item.type === "image" ? (
+                            <button
+                              onClick={() => setEditingIndex(i)}
+                              className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-xl"
+                            >
+                              <Pencil size={24} className="text-white" />
+                            </button>
+                          ) : (
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <div className="w-8 h-8 rounded-full bg-black/50 flex items-center justify-center">
+                                <Play size={16} className="text-white ml-0.5" fill="white" />
+                              </div>
+                            </div>
+                          )}
+                          {item.edited && (
                             <div className="absolute bottom-1 left-1 bg-accent/80 rounded-full px-1.5 py-0.5 text-[9px] text-white font-medium">
                               편집됨
                             </div>
@@ -345,11 +417,22 @@ export default function WritePhotoPost({
                     className="flex-1 flex flex-col space-y-5 pb-4"
                   >
                     {/* Thumbnail preview — sized so 3 fit in one row */}
-                    <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(images.length, 3)}, 1fr)` }}>
-                      {images.map((img, i) => (
+                    <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(media.length, 3)}, 1fr)` }}>
+                      {media.map((item, i) => (
                         <div key={i} className="relative aspect-square rounded-xl overflow-hidden bg-bg-tertiary">
-                          <Image src={img.preview} alt={`thumb ${i}`} fill className="object-cover" />
-                          {img.edited && (
+                          {item.type === "video" ? (
+                            <>
+                              <video src={item.preview} className="w-full h-full object-cover" muted playsInline />
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="w-8 h-8 rounded-full bg-black/50 flex items-center justify-center">
+                                  <Play size={16} className="text-white ml-0.5" fill="white" />
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <Image src={item.preview} alt={`thumb ${i}`} fill className="object-cover" />
+                          )}
+                          {item.edited && (
                             <div className="absolute bottom-1 left-1 bg-accent/80 rounded-full px-1.5 py-0.5 text-[9px] text-white font-medium">
                               편집됨
                             </div>
@@ -402,7 +485,7 @@ export default function WritePhotoPost({
               {step === 1 && (
                 <button
                   onClick={() => setStep(2)}
-                  disabled={images.length === 0}
+                  disabled={media.length === 0}
                   className="w-full rounded-xl bg-accent py-3.5 text-base font-semibold text-white disabled:opacity-40 transition-opacity"
                 >
                   다음
@@ -456,9 +539,9 @@ export default function WritePhotoPost({
 
           {/* Meme Editor overlay */}
           <AnimatePresence>
-            {editingIndex !== null && images[editingIndex] && (
+            {editingIndex !== null && media[editingIndex] && media[editingIndex].type === "image" && (
               <MemeEditor
-                imageUrl={images[editingIndex].preview}
+                imageUrl={media[editingIndex].preview}
                 onSave={handleEditorSave}
                 onCancel={() => setEditingIndex(null)}
               />

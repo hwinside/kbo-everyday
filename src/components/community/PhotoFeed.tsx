@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle } from "lucide-react";
+import { MessageCircle, Play } from "lucide-react";
 import { GRADES } from "@/lib/constants/grades";
 import { getTeamById } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
@@ -53,11 +53,44 @@ function getGradeInfo(gradeId?: string) {
   return GRADES.find((g) => g.id === gradeId) ?? GRADES[0];
 }
 
+interface MediaSlide {
+  url: string;
+  isVideo: boolean;
+}
+
+function MediaElement({ url, isVideo, sizes }: { url: string; isVideo: boolean; sizes?: string }) {
+  if (isVideo) {
+    return (
+      <video
+        src={url}
+        autoPlay
+        muted
+        loop
+        playsInline
+        className="w-full object-cover pointer-events-none select-none"
+        style={{ aspectRatio: "4/5", WebkitTouchCallout: "none" } as React.CSSProperties}
+      />
+    );
+  }
+  return (
+    <Image
+      src={url}
+      alt="photo"
+      width={800}
+      height={1000}
+      className="w-full object-cover pointer-events-none select-none"
+      draggable={false}
+      style={{ aspectRatio: "4/5", WebkitTouchCallout: "none" } as React.CSSProperties}
+      sizes={sizes ?? "(max-width: 768px) 100vw, 600px"}
+    />
+  );
+}
+
 function PhotoCarousel({
-  images,
+  slides,
   onDoubleTap,
 }: {
-  images: string[];
+  slides: MediaSlide[];
   onDoubleTap: () => void;
 }) {
   const [current, setCurrent] = useState(0);
@@ -83,13 +116,13 @@ function PhotoCarousel({
   const handleTouchEnd = useCallback(() => {
     setIsSwiping(false);
     const threshold = 50;
-    if (touchDeltaX.current < -threshold && current < images.length - 1) {
+    if (touchDeltaX.current < -threshold && current < slides.length - 1) {
       setCurrent((prev) => prev + 1);
     } else if (touchDeltaX.current > threshold && current > 0) {
       setCurrent((prev) => prev - 1);
     }
     setTranslateX(0);
-  }, [current, images.length]);
+  }, [current, slides.length]);
 
   // Double-tap detection for mobile
   const handleTap = useCallback(() => {
@@ -102,22 +135,14 @@ function PhotoCarousel({
     }
   }, [onDoubleTap]);
 
-  if (images.length === 1) {
+  if (slides.length === 1) {
     return (
       <div
         className="relative w-full overflow-hidden bg-bg-tertiary"
         onDoubleClick={onDoubleTap}
         onClick={handleTap}
       >
-        <Image
-          src={images[0]}
-          alt="photo"
-          width={800}
-          height={1000}
-          className="w-full object-cover pointer-events-none select-none" draggable={false}
-          style={{ aspectRatio: "4/5", WebkitTouchCallout: "none" } as React.CSSProperties}
-          sizes="(max-width: 768px) 100vw, 600px"
-        />
+        <MediaElement url={slides[0].url} isVideo={slides[0].isVideo} />
       </div>
     );
   }
@@ -139,23 +164,15 @@ function PhotoCarousel({
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
-        {images.map((url, i) => (
+        {slides.map((slide, i) => (
           <div key={i} className="w-full flex-shrink-0">
-            <Image
-              src={url}
-              alt={`photo ${i + 1}`}
-              width={800}
-              height={1000}
-              className="w-full object-cover pointer-events-none select-none" draggable={false}
-              style={{ aspectRatio: "4/5", WebkitTouchCallout: "none" } as React.CSSProperties}
-              sizes="(max-width: 768px) 100vw, 600px"
-            />
+            <MediaElement url={slide.url} isVideo={slide.isVideo} />
           </div>
         ))}
       </div>
       {/* Dot indicators */}
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
-        {images.map((_, i) => (
+        {slides.map((_, i) => (
           <div
             key={i}
             className={`w-1.5 h-1.5 rounded-full transition-colors ${
@@ -281,11 +298,14 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 </span>
               </div>
 
-              {/* Photo carousel — full bleed, no padding, no rounded corners */}
-              {post.image_urls.length > 0 && (
+              {/* Photo/video carousel — full bleed, no padding, no rounded corners */}
+              {(post.image_urls.length > 0 || (post.video_urls && post.video_urls.length > 0)) && (
                 <div className="relative">
                   <PhotoCarousel
-                    images={post.image_urls}
+                    slides={[
+                      ...post.image_urls.map((url) => ({ url, isVideo: false })),
+                      ...(post.video_urls ?? []).map((url) => ({ url, isVideo: true })),
+                    ]}
                     onDoubleTap={() => handleDoubleTap(post.id)}
                   />
                   <HeartOverlay show={heartPostId === post.id} />

@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Heart, MessageCircle } from "lucide-react";
+import { Heart, MessageCircle, Play } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
 import LinkPreview from "@/components/community/LinkPreview";
@@ -62,6 +62,14 @@ export default function PostCard({ post, onPress, playerLabel }: PostCardProps) 
           {post.imageUrls.slice(0, 3).map((_, i) => (
             <div key={i} className="h-20 w-20 flex-shrink-0 rounded-lg bg-bg-tertiary" />
           ))}
+        </div>
+      )}
+
+      {/* Video indicator */}
+      {post.videoUrls && post.videoUrls.length > 0 && (
+        <div className="mt-2 flex items-center gap-1.5 text-text-tertiary">
+          <Play size={16} fill="currentColor" />
+          <span className="text-xs">영상 {post.videoUrls.length}개</span>
         </div>
       )}
 

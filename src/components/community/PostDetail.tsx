@@ -118,6 +118,22 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           </div>
         )}
 
+        {/* Videos */}
+        {post.video_urls && post.video_urls.length > 0 && (
+          <div className="mt-4 space-y-2">
+            {post.video_urls.map((url: string, i: number) => (
+              <video
+                key={i}
+                src={url}
+                controls
+                playsInline
+                className="rounded-xl w-full"
+                style={{ backgroundColor: "#000" }}
+              />
+            ))}
+          </div>
+        )}
+
         {/* Actions */}
         <div className="flex items-center gap-4 mt-4 pt-3 border-t border-border">
           <button onClick={handleLike} className="flex items-center gap-1.5 min-h-[44px] min-w-[44px] px-2 -ml-2 rounded-lg active:bg-bg-tertiary transition-colors">

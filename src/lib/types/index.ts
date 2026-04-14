@@ -47,6 +47,7 @@ export interface Post {
   title: string | null;
   content: string;
   imageUrls: string[];
+  videoUrls?: string[];
   likeCount: number;
   commentCount: number;
   isReported: boolean;
