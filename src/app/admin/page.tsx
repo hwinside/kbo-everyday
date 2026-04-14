@@ -26,6 +26,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import type { FeedbackItem } from "@/lib/admin/types";
+import { getTeamById } from "@/lib/constants/teams";
 
 /* ── helpers ─────────────────────────────────────────── */
 
@@ -403,7 +404,7 @@ export default function AdminOverviewPage() {
                     <Users className="w-4 h-4 text-[#8E8E93] shrink-0" />
                     <span className="text-sm font-medium truncate">{u.nickname}</span>
                     {u.team_id && (
-                      <span className="text-xs text-[#8E8E93] shrink-0">{u.team_id}</span>
+                      <span className="text-xs text-[#8E8E93] shrink-0">{getTeamById(Number(u.team_id))?.shortName ?? u.team_id}</span>
                     )}
                   </div>
                   <span className="text-xs text-[#636366] shrink-0 ml-2">
