@@ -96,7 +96,7 @@ export default function MessagesPage() {
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-bg-tertiary flex items-center justify-center flex-shrink-0 overflow-hidden">
                   {conv.other_nickname === "크보팬 운영팀" ? (
-                    <img src="/favicon.png" alt="크보팬" className="w-full h-full object-cover" />
+                    <img src="/apple-touch-icon.png" alt="크보팬" className="w-full h-full object-cover" />
                   ) : conv.other_team_id ? (
                     <TeamBadge teamId={conv.other_team_id} size="sm" />
                   ) : (

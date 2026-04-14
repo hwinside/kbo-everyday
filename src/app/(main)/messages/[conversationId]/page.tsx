@@ -117,7 +117,7 @@ export default function DMChatPage() {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             {otherName === "크보팬 운영팀" ? (
-              <img src="/favicon.png" alt="크보팬" className="w-5 h-5 rounded-full object-cover" />
+              <img src="/apple-touch-icon.png" alt="크보팬" className="w-5 h-5 rounded-full object-cover" />
             ) : otherTeamId ? (
               <TeamBadge teamId={otherTeamId} size="xs" />
             ) : null}
