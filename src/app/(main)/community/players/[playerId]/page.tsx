@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
@@ -11,8 +11,12 @@ import NicheStats from "@/components/player/NicheStats";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
-import { usePosts, createPost } from "@/lib/supabase/usePosts";
+import { usePosts, createPost, toggleLike } from "@/lib/supabase/usePosts";
+import type { Post } from "@/lib/supabase/usePosts";
+import { supabase } from "@/lib/supabase/client";
 import WritePost from "@/components/community/WritePost";
+import WritePhotoPost from "@/components/community/WritePhotoPost";
+import PhotoFeed from "@/components/community/PhotoFeed";
 import { useBadgeCheck } from "@/lib/hooks/useBadgeCheck";
 import BadgeToast from "@/components/ui/BadgeToast";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -21,7 +25,7 @@ import CheerSong from "@/components/player/CheerSong";
 import PlayerProfile from "@/components/player/PlayerProfile";
 import PlayerRadar from "@/components/player/PlayerRadar";
 import PlayerNews from "@/components/player/PlayerNews";
-import PhotoGallery from "@/components/player/PhotoGallery";
+import { formatPlayerTag } from "@/lib/utils/player-tags";
 
 // kboId → name 역매핑 (roster 기반 — 전체 선수 커버)
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
@@ -94,11 +98,48 @@ export default function PlayerBoardPage() {
   const [activeTab, setActiveTab] = useState<"stats" | "photo" | "latest" | "hot">("stats");
   const { posts: livePosts, loading: postsLoading, reload } = usePosts("player", rawId);
   const [showWrite, setShowWrite] = useState(false);
+  const [showPhotoWrite, setShowPhotoWrite] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [statSeason, setStatSeason] = useState<2025 | 2026>(2026);
+  const [photoPosts, setPhotoPosts] = useState<Post[]>([]);
+  const [photoLoading, setPhotoLoading] = useState(true);
   const [realStats, setRealStats] = useState<Record<string, string | number> | null>(null);
   const { user } = useAuth();
   const { newBadges, checkBadges, clearBadges } = useBadgeCheck();
+
+  const loadPhotoPosts = useCallback(async () => {
+    if (!playerName) return;
+    setPhotoLoading(true);
+    const tag = formatPlayerTag(kboId, playerName);
+    const { data } = await supabase
+      .from("posts")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)")
+      .eq("content_type", "photo")
+      .neq("is_hidden", true)
+      .or(`player_tags.cs.{"${tag}"},and(board_type.eq.player,board_id.eq.${kboId})`)
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    if (data) {
+      setPhotoPosts(data.map((p) => ({
+        ...p,
+        content_type: (p.content_type ?? "general") as "general" | "photo",
+        image_urls: (p.image_urls ?? []) as string[],
+        video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
+        nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
+        team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
+        grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
+        points: ((p.profiles as unknown as Record<string, unknown> | null)?.points as number) ?? 0,
+      })));
+    }
+    setPhotoLoading(false);
+  }, [kboId, playerName]);
+
+  useEffect(() => { loadPhotoPosts(); }, [loadPhotoPosts]);
+
+  const handlePhotoLike = async (postId: number) => {
+    try { await toggleLike(postId); } catch { /* ignore */ }
+  };
 
   // KBO 검색 API로 선수 정보 로드
   useEffect(() => {
@@ -298,10 +339,15 @@ export default function PlayerBoardPage() {
         </div>
       )}
 
-      {/* 직찍 갤러리 */}
+      {/* 직찍 피드 */}
       {activeTab === "photo" && (
         <div className="py-2">
-          <PhotoGallery teamColor={teamColor} />
+          <PhotoFeed
+            posts={photoPosts}
+            loading={photoLoading}
+            onLike={handlePhotoLike}
+            boardType="player"
+          />
         </div>
       )}
 
@@ -351,6 +397,16 @@ export default function PlayerBoardPage() {
       </button>
       )}
 
+      {activeTab === "photo" && (
+      <button
+        onClick={() => user ? setShowPhotoWrite(true) : setShowLogin(true)}
+        className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
+        style={{ backgroundColor: teamColor }}
+      >
+        <PenLine className="w-9 h-9 text-white" />
+      </button>
+      )}
+
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
       <WritePost
         isOpen={showWrite}
@@ -362,6 +418,15 @@ export default function PlayerBoardPage() {
           reload();
         }}
         teamName={player.name}
+      />
+      <WritePhotoPost
+        isOpen={showPhotoWrite}
+        onClose={() => setShowPhotoWrite(false)}
+        teamName={player.name}
+        boardType="player"
+        boardId={kboId}
+        defaultPlayerTag={player ? { kboId, name: player.name, teamId: player.teamId } : undefined}
+        onSuccess={() => loadPhotoPosts()}
       />
     </div>
   );

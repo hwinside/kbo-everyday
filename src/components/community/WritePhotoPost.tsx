@@ -233,7 +233,12 @@ export default function WritePhotoPost({
       onClose();
       onSuccess?.();
     } catch (e: unknown) {
-      alert("업로드 실패: " + ((e as Error).message || JSON.stringify(e)));
+      const msg = (e as Error).message || JSON.stringify(e);
+      if (msg.includes("exceeded") || msg.includes("maximum")) {
+        alert("파일 크기가 제한을 초과했어요. 이미지/GIF는 20MB, 동영상은 20MB 이하로 업로드해주세요.");
+      } else {
+        alert("업로드 실패: " + msg);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -492,9 +497,9 @@ export default function WritePhotoPost({
               {step === 1 && (
                 <button
                   onClick={() => {
-                    // 편집 가능한 이미지가 없으면 밈 편집 스킵
-                    const hasImages = media.some((m) => m.type === "image");
-                    setStep(hasImages ? 2 : 3);
+                    // 편집 가능한 이미지가 없으면 밈 편집 스킵 (GIF도 편집 불가)
+                    const hasEditableImages = media.some((m) => m.type === "image" && m.file.type !== "image/gif");
+                    setStep(hasEditableImages ? 2 : 3);
                   }}
                   disabled={media.length === 0}
                   className="w-full rounded-xl bg-accent py-3.5 text-base font-semibold text-white disabled:opacity-40 transition-opacity"
