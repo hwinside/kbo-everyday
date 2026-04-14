@@ -24,6 +24,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
   const [current, setCurrent] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const restartTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isAutoScrolling = useRef(false);
   const isPaused = useRef(false);
 
@@ -47,12 +48,23 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    // pending restart도 정리
+    if (restartTimeoutRef.current) {
+      clearTimeout(restartTimeoutRef.current);
+      restartTimeoutRef.current = null;
+    }
   }
 
   // 마운트 시 자동 전환 시작
   useEffect(() => {
     startAutoTimer();
-    return () => stopAutoTimer();
+    return () => {
+      stopAutoTimer();
+      if (restartTimeoutRef.current) {
+        clearTimeout(restartTimeoutRef.current);
+        restartTimeoutRef.current = null;
+      }
+    };
   }, [slides.length]);
 
   // 슬라이드 이동
@@ -66,11 +78,16 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
   }, [current]);
 
   // 터치/포인터 시 즉시 정지, 놓으면 재시작
-  function handleTouchStart() {
+  function handleInteractionStart() {
     stopAutoTimer();
   }
-  function handleTouchEnd() {
-    setTimeout(() => startAutoTimer(), AUTO_INTERVAL);
+  function handleInteractionEnd() {
+    // 이전 pending restart 정리 후 새로 예약
+    if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
+    restartTimeoutRef.current = setTimeout(() => {
+      restartTimeoutRef.current = null;
+      startAutoTimer();
+    }, AUTO_INTERVAL);
   }
 
   // 수동 스크롤 시 현재 인덱스 업데이트 (자동 스크롤 중에는 무시)
@@ -90,10 +107,12 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-        onMouseDown={handleTouchStart}
-        onMouseUp={handleTouchEnd}
+        onTouchStart={handleInteractionStart}
+        onTouchEnd={handleInteractionEnd}
+        onMouseDown={handleInteractionStart}
+        onMouseUp={handleInteractionEnd}
+        onMouseLeave={handleInteractionEnd}
+        onPointerLeave={handleInteractionEnd}
         className="flex snap-x snap-mandatory overflow-x-auto hide-scrollbar"
       >
         {slides.map((item, i) => {
