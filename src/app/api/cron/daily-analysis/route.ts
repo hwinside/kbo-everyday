@@ -400,9 +400,30 @@ export async function GET(req: NextRequest) {
     let pitcherCopy = "";
 
     if (noGames) {
-      standingsCopy = "어제 경기가 없어 순위 변동이 없습니다.";
-      batterCopy = "어제 경기가 없어 타자 타이틀 변동이 없습니다.";
-      pitcherCopy = "어제 경기가 없어 투수 타이틀 변동이 없습니다.";
+      // 경기 없는 날: 어제 분석을 그대로 유지하고 스냅샷만 갱신
+      const { data: lastAnalysis } = await supabase
+        .from("daily_analysis")
+        .select("type, generated_copy, delta_json")
+        .eq("date", yesterdayISO);
+
+      if (lastAnalysis?.length) {
+        // 어제 분석을 오늘 날짜로 복사 + 업데이트 일자 표시
+        const lastMap = new Map(lastAnalysis.map((r: { type: string; generated_copy: string; delta_json: unknown }) => [r.type, r]));
+        const lastStandings = lastMap.get("standings");
+        const lastBatter = lastMap.get("batter_titles");
+        const lastPitcher = lastMap.get("pitcher_titles");
+        standingsCopy = lastStandings?.generated_copy ?? "";
+        batterCopy = lastBatter?.generated_copy ?? "";
+        pitcherCopy = lastPitcher?.generated_copy ?? "";
+        // delta_json에 경기 없음 표시 추가
+        Object.assign(standingsDelta, { noGames: true, lastUpdated: yesterdayISO });
+        Object.assign(batterDelta, { noGames: true, lastUpdated: yesterdayISO });
+        Object.assign(pitcherDelta, { noGames: true, lastUpdated: yesterdayISO });
+      } else {
+        standingsCopy = "";
+        batterCopy = "";
+        pitcherCopy = "";
+      }
     } else if (GEMINI_API_KEY) {
       [standingsCopy, batterCopy, pitcherCopy] = await Promise.all([
         callGemini(buildStandingsPrompt(standingsDelta, gameEvents, teamNames)),

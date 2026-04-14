@@ -22,13 +22,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const result: Record<string, { copy: string | null; delta: unknown; prompt_version: number; created_at: string }> = {};
+  const result: Record<string, { copy: string | null; delta: unknown; prompt_version: number; created_at: string; lastUpdated?: string }> = {};
   for (const row of data ?? []) {
+    const delta = row.delta_json as Record<string, unknown> | null;
     result[row.type] = {
       copy: row.generated_copy,
       delta: row.delta_json,
       prompt_version: row.prompt_version,
       created_at: row.created_at,
+      ...(delta?.lastUpdated ? { lastUpdated: delta.lastUpdated as string } : {}),
     };
   }
 
