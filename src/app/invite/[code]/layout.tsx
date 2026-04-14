@@ -35,7 +35,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const title = inviterNickname
     ? `${inviterNickname}님이 크보팬에 초대했어요 ⚾`
     : "크보팬에 초대받았어요 ⚾";
-  const description = "내 팀 경기, 오늘 할 얘기는 여기서 끝. 실시간 스코어 · 승부예측 · 팬 커뮤니티";
+  const description = "프로야구팬이라면, 크보팬";
   const url = `https://keubo.fan/invite/${code}`;
   const imageUrl = `https://keubo.fan/invite/${code}/opengraph-image`;
 

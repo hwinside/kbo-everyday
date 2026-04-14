@@ -86,7 +86,7 @@ export default function InviteSection() {
 
   async function handleShare(code: string) {
     const inviteUrl = `https://keubo.fan/invite/${code}`;
-    const text = `크보팬에서 같이 야구 봐! ⚾\n초대코드: ${code}\n${inviteUrl}`;
+    const text = `크보팬에서 같이 야구 봐요! ⚾\n${inviteUrl}`;
     if (navigator.share) {
       try {
         await navigator.share({ text, url: inviteUrl });

@@ -77,7 +77,7 @@ export default async function OGImage({ params }: { params: Promise<{ code: stri
 
         {/* Subtext */}
         <p style={{ fontSize: "24px", color: "#999" }}>
-          내 팀 경기, 오늘 할 얘기는 여기서 끝.
+          프로야구팬이라면, 크보팬
         </p>
 
         {/* Feature pills */}
