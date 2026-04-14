@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { LazyMotion, domAnimation, m, AnimatePresence } from "framer-motion";
-import { Bell, ChevronRight } from "lucide-react";
+import { Bell, ChevronRight, MessageCircle } from "lucide-react";
 import Link from "next/link";
 import GlassCard from "@/components/ui/GlassCard";
 import OnboardingFlow from "@/components/onboarding/OnboardingFlow";
@@ -141,6 +141,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           <img src="/logo-mark.png" alt="크보팬" style={{height: "52px", objectFit: "contain"}} className="-ml-0.5 hidden dark:block" />
         </div>
         <div className="flex items-center gap-1">
+          <Link href="/messages" className="relative rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
+            <MessageCircle size={22} />
+          </Link>
           <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
             <Bell size={22} />
           </button>
