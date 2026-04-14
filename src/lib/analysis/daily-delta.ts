@@ -1,4 +1,4 @@
-import type { KboGame, TeamStanding } from "@/lib/crawler/kbo-api";
+import type { KboGame, TeamStanding, BoxScoreResult } from "@/lib/crawler/kbo-api";
 
 // ===== Types =====
 
@@ -236,4 +236,143 @@ export function extractGameEvents(games: KboGame[]): GameEvent[] {
         scoreDiff: diff,
       };
     });
+}
+
+// ===== Game Highlights Extraction =====
+
+export interface GameHighlight {
+  type: "streak" | "blowout" | "homer" | "walks" | "strikeouts" | "shutout" | "player";
+  text: string;
+  team: string;
+  priority: number;
+}
+
+const HIGHLIGHT_PRIORITY: Record<GameHighlight["type"], number> = {
+  streak: 1,
+  shutout: 2,
+  blowout: 3,
+  homer: 4,
+  player: 4,
+  strikeouts: 5,
+  walks: 6,
+};
+
+export function extractHighlights(
+  events: GameEvent[],
+  boxScores: Map<string, BoxScoreResult>,
+  standings: StandingsSnapshot[],
+  teamNames?: Map<number, string>,
+): GameHighlight[] {
+  const highlights: GameHighlight[] = [];
+
+  for (const s of standings) {
+    if (!s.streak) continue;
+    const count = parseInt(s.streak) || 0;
+    if (Math.abs(count) >= 3) {
+      const type = s.streak.includes("연승") ? "연승" : "연패";
+      highlights.push({
+        type: "streak",
+        text: `${Math.abs(count)}${type} 중`,
+        team: teamNames?.get(s.team_id) ?? `팀${s.team_id}`,
+        priority: HIGHLIGHT_PRIORITY.streak,
+      });
+    }
+  }
+
+  for (const ev of events) {
+    const box = boxScores.get(ev.gameId);
+
+    if (ev.awayScore >= 10 || ev.homeScore >= 10 || ev.scoreDiff >= 7) {
+      const winner = ev.awayScore > ev.homeScore ? ev.awayTeam : ev.homeTeam;
+      highlights.push({
+        type: "blowout",
+        text: `${ev.awayTeam} ${ev.awayScore}:${ev.homeScore} 대승`,
+        team: winner,
+        priority: HIGHLIGHT_PRIORITY.blowout,
+      });
+    }
+
+    if (!box) continue;
+
+    const allBatters = [...box.awayBatters, ...box.homeBatters];
+    const allPitchers = [...box.awayPitchers, ...box.homePitchers];
+
+    for (const b of allBatters) {
+      if (b.hr >= 2) {
+        const team = box.awayBatters.includes(b) ? ev.awayTeam : ev.homeTeam;
+        highlights.push({
+          type: "homer",
+          text: `${b.name} ${b.hr}홈런`,
+          team,
+          priority: HIGHLIGHT_PRIORITY.homer,
+        });
+      }
+    }
+
+    const awayHr = box.awayBatters.reduce((sum, b) => sum + b.hr, 0);
+    const homeHr = box.homeBatters.reduce((sum, b) => sum + b.hr, 0);
+    if (awayHr >= 4) {
+      highlights.push({
+        type: "homer",
+        text: `팀 합계 ${awayHr}홈런`,
+        team: ev.awayTeam,
+        priority: HIGHLIGHT_PRIORITY.homer,
+      });
+    }
+    if (homeHr >= 4) {
+      highlights.push({
+        type: "homer",
+        text: `팀 합계 ${homeHr}홈런`,
+        team: ev.homeTeam,
+        priority: HIGHLIGHT_PRIORITY.homer,
+      });
+    }
+
+    for (const p of allPitchers) {
+      if (p.strikeouts >= 10) {
+        const team = box.awayPitchers.includes(p) ? ev.awayTeam : ev.homeTeam;
+        highlights.push({
+          type: "strikeouts",
+          text: `${p.name} ${p.strikeouts}K`,
+          team,
+          priority: HIGHLIGHT_PRIORITY.strikeouts,
+        });
+      }
+    }
+
+    const awayWalks = box.awayPitchers.reduce((sum, p) => sum + p.walks, 0);
+    const homeWalks = box.homePitchers.reduce((sum, p) => sum + p.walks, 0);
+    if (awayWalks >= 8) {
+      highlights.push({
+        type: "walks",
+        text: `투수진 볼넷 ${awayWalks}개`,
+        team: ev.awayTeam,
+        priority: HIGHLIGHT_PRIORITY.walks,
+      });
+    }
+    if (homeWalks >= 8) {
+      highlights.push({
+        type: "walks",
+        text: `투수진 볼넷 ${homeWalks}개`,
+        team: ev.homeTeam,
+        priority: HIGHLIGHT_PRIORITY.walks,
+      });
+    }
+
+    const checkShutout = (pitchers: typeof allPitchers, opponentScore: number, team: string) => {
+      if (opponentScore === 0 && pitchers.length === 1) {
+        highlights.push({
+          type: "shutout",
+          text: `${pitchers[0].name} 완봉승`,
+          team,
+          priority: HIGHLIGHT_PRIORITY.shutout,
+        });
+      }
+    };
+    checkShutout(box.awayPitchers, ev.homeScore, ev.awayTeam);
+    checkShutout(box.homePitchers, ev.awayScore, ev.homeTeam);
+  }
+
+  highlights.sort((a, b) => a.priority - b.priority);
+  return highlights.slice(0, 3);
 }
