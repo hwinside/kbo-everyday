@@ -21,6 +21,17 @@ export async function GET(request: NextRequest) {
   const conversationId = request.nextUrl.searchParams.get("conversationId");
   const tab = request.nextUrl.searchParams.get("tab") || "inbox";
 
+  // 발송 로그 조회 (발송함 탭)
+  if (tab === "sent") {
+    const { data: logs } = await admin
+      .from("admin_broadcast_logs")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    return NextResponse.json({ broadcastLogs: logs ?? [] });
+  }
+
   // 개별 대화 메시지 조회
   if (conversationId) {
     // 운영팀 대화인지 검증
@@ -255,6 +266,23 @@ export async function POST(request: NextRequest) {
         failCount++;
       }
     }
+
+    // broadcast 로그 저장
+    const targetLabel = (!teamIds || teamIds.length === 0 || teamIds.length >= 10)
+      ? "전체"
+      : teamIds.map((id: number) => {
+          const names: Record<number, string> = {1:"LG",2:"두산",3:"KT",4:"SSG",5:"NC",6:"KIA",7:"롯데",8:"삼성",9:"한화",10:"키움"};
+          return names[id] ?? `팀${id}`;
+        }).join(", ");
+
+    await admin.from("admin_broadcast_logs").insert({
+      content: content.trim().substring(0, 500),
+      target_label: targetLabel,
+      target_team_ids: (!teamIds || teamIds.length === 0) ? null : teamIds,
+      total_count: targetUsers.length,
+      success_count: successCount,
+      fail_count: failCount,
+    }).then(() => {}, () => {}); // best-effort
 
     return NextResponse.json({
       ok: true,

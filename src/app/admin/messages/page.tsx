@@ -38,6 +38,16 @@ interface Message {
   created_at: string;
 }
 
+interface BroadcastLog {
+  id: number;
+  content: string;
+  target_label: string;
+  total_count: number;
+  success_count: number;
+  fail_count: number;
+  created_at: string;
+}
+
 interface BroadcastResult {
   total: number;
   success: number;
@@ -85,6 +95,7 @@ export default function AdminMessagesPage() {
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const [broadcastLogs, setBroadcastLogs] = useState<BroadcastLog[]>([]);
   // 전체발송 상태
   const [selectedTeams, setSelectedTeams] = useState<number[]>([]);
   const [allTeamsSelected, setAllTeamsSelected] = useState(true);
@@ -99,7 +110,7 @@ export default function AdminMessagesPage() {
     return "";
   }, []);
 
-  // 대화 목록 로드
+  // 대화 목록 / 발송 로그 로드
   const loadConversations = useCallback(
     async (targetTab: Tab) => {
       if (targetTab === "broadcast") return;
@@ -110,7 +121,13 @@ export default function AdminMessagesPage() {
         });
         if (res.ok) {
           const json = await res.json();
-          setConversations(json.conversations || []);
+          if (targetTab === "sent") {
+            setBroadcastLogs(json.broadcastLogs || []);
+            setConversations([]);
+          } else {
+            setConversations(json.conversations || []);
+            setBroadcastLogs([]);
+          }
         }
       } catch {
         /* ignore */
@@ -453,6 +470,46 @@ export default function AdminMessagesPage() {
             </div>
           )}
         </div>
+      ) : tab === "sent" ? (
+        <>
+          {/* 발송함 — broadcast 로그 집계형 */}
+          <div className="text-sm text-[#8E8E93]">
+            {loading ? "로딩 중..." : `${broadcastLogs.length}건 발송 기록`}
+          </div>
+
+          {loading ? (
+            <div className="flex items-center justify-center py-32">
+              <Loader2 className="w-8 h-8 animate-spin text-[#6366F1]" />
+            </div>
+          ) : broadcastLogs.length === 0 ? (
+            <div className="glass-card p-12 text-center">
+              <SendHorizonal className="w-12 h-12 text-[#636366] mx-auto mb-3" />
+              <p className="text-[#8E8E93]">발송 기록이 없습니다</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {broadcastLogs.map((log) => (
+                <div key={log.id} className="glass-card p-4 rounded-xl">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <Megaphone className="w-4 h-4 text-[#6366F1]" />
+                      <span className="text-sm font-medium">대상: {log.target_label}</span>
+                    </div>
+                    <span className="text-xs text-[#636366]">{timeAgo(log.created_at)}</span>
+                  </div>
+                  <p className="text-sm text-[#8E8E93] truncate mb-2">{log.content}</p>
+                  <div className="flex gap-4 text-xs">
+                    <span className="text-[#8E8E93]">전체 <span className="text-white font-medium">{log.total_count}명</span></span>
+                    <span className="text-[#8E8E93]">성공 <span className="text-[#30D158] font-medium">{log.success_count}명</span></span>
+                    {log.fail_count > 0 && (
+                      <span className="text-[#8E8E93]">실패 <span className="text-[#FF453A] font-medium">{log.fail_count}명</span></span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       ) : (
         <>
           {/* 대화 목록 헤더 */}
@@ -480,7 +537,7 @@ export default function AdminMessagesPage() {
             <div className="glass-card p-12 text-center">
               <MessageCircle className="w-12 h-12 text-[#636366] mx-auto mb-3" />
               <p className="text-[#8E8E93]">
-                {tab === "inbox" ? "수신된 쪽지가 없습니다" : "발송된 쪽지가 없습니다"}
+                {tab === "inbox" ? "수신된 쪽지가 없습니다" : "대화가 없습니다"}
               </p>
             </div>
           ) : (
