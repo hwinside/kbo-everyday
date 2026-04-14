@@ -6,15 +6,17 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
 import LinkPreview from "@/components/community/LinkPreview";
 import type { Post } from "@/lib/types";
+import type { CommunitySourceLabel } from "@/lib/utils/community-board";
 
 interface PostCardProps {
   post: Post;
   onPress?: () => void;
   /** 선수 게시판: "LG 김진성" 같은 통합 레이블 (팀 뱃지 대체) */
   playerLabel?: { teamId: number; playerName: string } | null;
+  sourceLabel?: CommunitySourceLabel | null;
 }
 
-export default function PostCard({ post, onPress, playerLabel }: PostCardProps) {
+export default function PostCard({ post, onPress, playerLabel, sourceLabel }: PostCardProps) {
   const timeAgo = getTimeAgo(post.createdAt);
 
   return (
@@ -40,6 +42,19 @@ export default function PostCard({ post, onPress, playerLabel }: PostCardProps) 
         {post.author && <LevelBadge level={post.author.level} />}
         <span className="ml-auto text-base text-text-tertiary whitespace-nowrap shrink-0">{timeAgo}</span>
       </div>
+
+      {/* Source board */}
+      {sourceLabel && (
+        <div className="mt-2">
+          {sourceLabel.teamId ? (
+            <TeamBadge teamId={sourceLabel.teamId} playerName={sourceLabel.playerName} size="xs" />
+          ) : (
+            <span className="inline-flex items-center rounded-full bg-bg-tertiary px-2 py-0.5 text-xs font-medium text-text-secondary">
+              {sourceLabel.text}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Title */}
       {post.title && (

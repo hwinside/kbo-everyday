@@ -12,6 +12,7 @@ import { parsePlayerTag } from "@/lib/utils/player-tags";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
 import type { Post } from "@/lib/supabase/usePosts";
+import type { CommunitySourceLabel } from "@/lib/utils/community-board";
 import CommentSheet from "./CommentSheet";
 
 function findPlayerByName(name: string): { kboId: string; teamId: number } | null {
@@ -35,6 +36,7 @@ interface PhotoFeedProps {
   boardType?: "team" | "player";
   /** 선수 게시판: post별 playerLabel 맵 (postId → {teamId, playerName}) */
   playerLabels?: Record<number, { teamId: number; playerName: string }>;
+  sourceLabels?: Record<number, CommunitySourceLabel>;
 }
 
 function timeAgo(dateStr: string): string {
@@ -232,7 +234,7 @@ function HeartOverlay({ show }: { show: boolean }) {
   );
 }
 
-export default function PhotoFeed({ posts, loading, onLike, boardType = "team", playerLabels }: PhotoFeedProps) {
+export default function PhotoFeed({ posts, loading, onLike, boardType = "team", playerLabels, sourceLabels }: PhotoFeedProps) {
   const [likedPosts, setLikedPosts] = useState<Set<number>>(new Set());
   const [heartPostId, setHeartPostId] = useState<number | null>(null);
   const [commentPostId, setCommentPostId] = useState<number | null>(null);
@@ -317,6 +319,22 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   {timeAgo(post.created_at)}
                 </span>
               </div>
+
+              {sourceLabels?.[post.id] && (
+                <div className="px-4 pb-2">
+                  {sourceLabels[post.id].teamId ? (
+                    <TeamBadge
+                      teamId={sourceLabels[post.id].teamId!}
+                      playerName={sourceLabels[post.id].playerName}
+                      size="xs"
+                    />
+                  ) : (
+                    <span className="inline-flex items-center rounded-full bg-bg-tertiary px-2 py-0.5 text-xs font-medium text-text-secondary">
+                      {sourceLabels[post.id].text}
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Photo/video carousel — full bleed, no padding, no rounded corners */}
               {(post.image_urls.length > 0 || (post.video_urls && post.video_urls.length > 0)) && (

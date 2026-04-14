@@ -57,6 +57,7 @@ export default function WritePhotoPost({
   );
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Sync defaultPlayerTag when modal opens or player changes
@@ -116,7 +117,7 @@ export default function WritePhotoPost({
 
       // 모든 파일 20MB 제한 (선택 시점 즉시 차단)
       if (file.size > 20 * 1024 * 1024) {
-        alert("파일 크기가 20MB를 초과했어요. 20MB 이하 파일만 업로드할 수 있습니다.");
+        setToast("파일 크기가 20MB를 초과했어요. 20MB 이하만 업로드 가능합니다.");
         continue;
       }
 
@@ -124,7 +125,7 @@ export default function WritePhotoPost({
         try {
           await checkVideoDuration(file);
         } catch (err) {
-          alert((err as Error).message);
+          setToast((err as Error).message);
           continue;
         }
       }
@@ -235,9 +236,9 @@ export default function WritePhotoPost({
     } catch (e: unknown) {
       const msg = (e as Error).message || JSON.stringify(e);
       if (msg.includes("exceeded") || msg.includes("maximum")) {
-        alert("파일 크기가 제한을 초과했어요. 이미지/GIF는 20MB, 동영상은 20MB 이하로 업로드해주세요.");
+        setToast("파일 크기가 제한을 초과했어요. 20MB 이하만 업로드 가능합니다.");
       } else {
-        alert("업로드 실패: " + msg);
+        setToast("업로드 실패: " + msg);
       }
     } finally {
       setSubmitting(false);
@@ -286,6 +287,20 @@ export default function WritePhotoPost({
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
             className="fixed inset-0 z-[60] bg-bg-primary overflow-y-auto flex flex-col"
           >
+            {/* Toast */}
+            <AnimatePresence>
+              {toast && (
+                <motion.div
+                  initial={{ opacity: 0, y: -20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  className="fixed top-12 left-4 right-4 z-[70] bg-red-500 text-white text-sm font-medium px-4 py-3 rounded-xl shadow-lg text-center"
+                  onAnimationComplete={() => { setTimeout(() => setToast(null), 3000); }}
+                >
+                  {toast}
+                </motion.div>
+              )}
+            </AnimatePresence>
             {/* Header */}
             <div
               className="flex items-center justify-between px-4 py-2"

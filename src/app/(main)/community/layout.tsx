@@ -4,13 +4,15 @@ import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ChevronLeft, MessageSquare, Users, User, Ticket, MapPin } from "lucide-react";
+import { ChevronLeft, MessageSquare, Users, User, Ticket, MapPin, FileText, Images } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamById, getTeamBySlug } from "@/lib/constants/teams";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamBorderColor } from "@/lib/utils/team-border-color";
 
 const COMMUNITY_TABS = [
+  { key: "all-posts", label: "전체글", href: "/community/all-posts", icon: FileText },
+  { key: "all-photos", label: "전체사진", href: "/community/all-photos", icon: Images },
   { key: "teams", label: "팀", href: "/community/teams", icon: Users },
   { key: "players", label: "선수", href: "/community/players", icon: User },
   { key: "tickets", label: "티켓", href: "/community/tickets", icon: Ticket },

@@ -4,11 +4,13 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import PostCard from "./PostCard";
 import type { Post } from "@/lib/types";
+import type { CommunitySourceLabel } from "@/lib/utils/community-board";
 
 interface PostListProps {
   posts: Post[];
   /** 선수 게시판: post별 playerLabel 맵 (postId → {teamId, playerName}) */
   playerLabels?: Record<number, { teamId: number; playerName: string }>;
+  sourceLabels?: Record<number, CommunitySourceLabel>;
 }
 
 const container = {
@@ -21,7 +23,7 @@ const item = {
   show: { opacity: 1, y: 0, transition: { duration: 0.2 } },
 };
 
-export default function PostList({ posts, playerLabels }: PostListProps) {
+export default function PostList({ posts, playerLabels, sourceLabels }: PostListProps) {
   const router = useRouter();
   if (posts.length === 0) {
     return (
@@ -44,6 +46,7 @@ export default function PostList({ posts, playerLabels }: PostListProps) {
           <PostCard
             post={post}
             playerLabel={playerLabels?.[post.id] ?? null}
+            sourceLabel={sourceLabels?.[post.id] ?? null}
             onPress={() => {
               if (post.boardType === "player") {
                 router.push(`/community/players/${post.boardId}/posts/${post.id}`);

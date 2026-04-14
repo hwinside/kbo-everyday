@@ -1,0 +1,99 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import PhotoFeed from "@/components/community/PhotoFeed";
+import { supabase } from "@/lib/supabase/client";
+import { toggleLike, type Post } from "@/lib/supabase/usePosts";
+import { getCommunitySourceLabel } from "@/lib/utils/community-board";
+
+type SortTab = "latest" | "hot";
+
+export default function AllPhotosPage() {
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sortTab, setSortTab] = useState<SortTab>("latest");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      const { data } = await supabase
+        .from("posts")
+        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)")
+        .in("board_type", ["team", "player"])
+        .eq("content_type", "photo")
+        .neq("is_hidden", true)
+        .order("created_at", { ascending: false })
+        .limit(100);
+
+      if (cancelled) return;
+
+      setPosts((data ?? []).map((p) => {
+        const profileRaw = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
+        const profile = (profileRaw ?? null) as unknown as Record<string, unknown> | null;
+        return {
+          ...p,
+          content_type: (p.content_type ?? "photo") as "general" | "photo",
+          image_urls: (p.image_urls ?? []) as string[],
+          video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
+          nickname: profile?.nickname as string | undefined,
+          team_id: profile?.team_id as number | undefined,
+          grade: profile?.grade as string | undefined,
+          points: (profile?.points as number) ?? 0,
+        };
+      }));
+      setLoading(false);
+    }
+
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  const sortedPosts = useMemo(() => {
+    if (sortTab === "latest") return posts;
+    return [...posts]
+      .filter((p) => Date.now() - new Date(p.created_at).getTime() < 30 * 24 * 60 * 60 * 1000)
+      .sort((a, b) => b.like_count - a.like_count || new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [posts, sortTab]);
+
+  const sourceLabels = useMemo(
+    () => Object.fromEntries(sortedPosts.map((post) => [post.id, getCommunitySourceLabel(post.board_type, post.board_id)])),
+    [sortedPosts],
+  );
+
+  const handleLike = async (postId: number) => {
+    try {
+      await toggleLike(postId);
+    } catch {
+      // ignore if not logged in
+    }
+  };
+
+  return (
+    <div className="mx-auto max-w-lg pb-24">
+      <div className="px-5 pt-4 pb-2">
+        <p className="text-sm text-text-tertiary">팀과 선수 사진글을 서비스 전체 기준으로 모아봅니다.</p>
+      </div>
+
+      <div className="px-5 pb-2">
+        <div className="flex gap-2">
+          {(["latest", "hot"] as const).map((sort) => (
+            <button
+              key={sort}
+              onClick={() => setSortTab(sort)}
+              className={`px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                sortTab === sort ? "bg-bg-tertiary text-text-primary" : "text-text-tertiary hover:text-text-secondary"
+              }`}
+            >
+              {sort === "latest" ? "최신" : "인기"}
+            </button>
+          ))}
+          {sortTab === "hot" && <span className="flex items-center text-xs text-text-tertiary ml-1">최근 30일</span>}
+        </div>
+      </div>
+
+      <PhotoFeed posts={sortedPosts} loading={loading} onLike={handleLike} sourceLabels={sourceLabels} />
+    </div>
+  );
+}
