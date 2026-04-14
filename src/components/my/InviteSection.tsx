@@ -85,10 +85,11 @@ export default function InviteSection() {
   }
 
   async function handleShare(code: string) {
-    const text = `크보팬에서 같이 야구 봐! ⚾ 초대코드: ${code} → keubo.fan/invite/${code}`;
+    const inviteUrl = `https://keubo.fan/invite/${code}`;
+    const text = `크보팬에서 같이 야구 봐! ⚾\n초대코드: ${code}\n${inviteUrl}`;
     if (navigator.share) {
       try {
-        await navigator.share({ text });
+        await navigator.share({ text, url: inviteUrl });
         return;
       } catch { /* user cancelled */ }
     }

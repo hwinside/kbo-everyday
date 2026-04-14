@@ -116,7 +116,11 @@ export default function DMChatPage() {
         </button>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            {otherTeamId && <TeamBadge teamId={otherTeamId} size="xs" />}
+            {otherName === "크보팬 운영팀" ? (
+              <img src="/logo.png" alt="크보팬" className="w-5 h-5 rounded-full object-cover" />
+            ) : otherTeamId ? (
+              <TeamBadge teamId={otherTeamId} size="xs" />
+            ) : null}
             <h1 className="text-base font-bold text-text-primary truncate">{otherName}</h1>
           </div>
           <p className="text-[10px] text-text-tertiary">1:1 쪽지</p>

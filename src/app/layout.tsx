@@ -9,6 +9,7 @@ const GA_ID = "G-C0TE4TFLZ4";
 const GADS_ID = "AW-18082281693";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://keubo.fan"),
   title: "크보팬 — 내 팀 경기, 오늘 할 얘기는 여기서 끝",
   description:
     "내 팀 경기, 오늘 할 얘기는 여기서 끝. 실시간 스코어, 승부예측, 구단/선수별 게시판, 하이라이트.",

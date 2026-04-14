@@ -94,8 +94,10 @@ export default function MessagesPage() {
               onClick={() => router.push(`/messages/${conv.id}`)}
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-bg-tertiary flex items-center justify-center flex-shrink-0">
-                  {conv.other_team_id ? (
+                <div className="w-10 h-10 rounded-full bg-bg-tertiary flex items-center justify-center flex-shrink-0 overflow-hidden">
+                  {conv.other_nickname === "크보팬 운영팀" ? (
+                    <img src="/logo.png" alt="크보팬" className="w-full h-full object-cover" />
+                  ) : conv.other_team_id ? (
                     <TeamBadge teamId={conv.other_team_id} size="sm" />
                   ) : (
                     <span className="text-lg">👤</span>
