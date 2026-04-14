@@ -482,6 +482,7 @@ export async function GET(req: NextRequest) {
     } else if (GEMINI_API_KEY) {
       // 뉴스 헤드라인 가져오기 (Google Search grounding)
       const newsHeadlines = await fetchNewsHeadlines(yesterdayISO);
+      console.log(`News headlines (${newsHeadlines.length}):`, newsHeadlines);
       const promises: Promise<string>[] = [];
       // 순위 분석: 어제 순위 스냅샷이 있으면 생성
       promises.push(hasYesterdayStandings
@@ -506,7 +507,7 @@ export async function GET(req: NextRequest) {
       {
         date: todayISO,
         type: "standings",
-        delta_json: standingsDelta,
+        delta_json: { ...standingsDelta, _highlights: gameHighlights.map(h => h.text) },
         generated_copy: standingsCopy,
         prompt_version: PROMPT_VERSION,
         created_at: new Date().toISOString(),
