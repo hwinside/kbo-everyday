@@ -55,10 +55,31 @@ export async function GET(req: NextRequest) {
 
   if (recentError) return supabaseErrorResponse(recentError);
 
+  // Daily signup counts (last 30 days) — from profiles.created_at
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { data: signupRows, error: signupError } = await supabase
+    .from("profiles")
+    .select("created_at")
+    .gte("created_at", thirtyDaysAgo)
+    .order("created_at", { ascending: true });
+
+  let dailySignups: { date: string; count: number }[] = [];
+  if (!signupError && signupRows) {
+    const dayMap = new Map<string, number>();
+    for (const row of signupRows) {
+      const d = new Date(row.created_at).toISOString().slice(0, 10);
+      dayMap.set(d, (dayMap.get(d) ?? 0) + 1);
+    }
+    dailySignups = Array.from(dayMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, count]) => ({ date, count }));
+  }
+
   return NextResponse.json({
     totalUsers,
     todaySignups,
     teamDistribution,
     recentUsers,
+    dailySignups,
   });
 }

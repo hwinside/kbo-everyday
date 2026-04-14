@@ -14,7 +14,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import { Loader2, Users, BarChart3 } from "lucide-react";
+import { Loader2, Users, BarChart3, TrendingUp } from "lucide-react";
 
 const TEAM_MAP: Record<number, { name: string; color: string }> = {
   1: { name: "LG", color: "#C60C30" },
@@ -68,28 +68,30 @@ interface UsersResponse {
   totalUsers: number;
   teamDistribution: TeamDistItem[];
   recentUsers: RecentUser[];
+  dailySignups?: { date: string; count: number }[];
 }
 
-interface DailyStat {
-  date: string;
-  new_users: number;
-  uv: number;
+interface GA4DauResponse {
+  daily: { date: string; activeUsers: number; pageViews: number }[];
+  dau: number;
+  wau: number;
+  mau: number;
 }
 
 export default function AdminUsersPage() {
   const [loading, setLoading] = useState(true);
   const [usersData, setUsersData] = useState<UsersResponse | null>(null);
-  const [statsData, setStatsData] = useState<DailyStat[]>([]);
+  const [ga4Data, setGa4Data] = useState<GA4DauResponse | null>(null);
 
   useEffect(() => {
     async function load() {
       try {
-        const [users, stats] = await Promise.all([
+        const [users, ga4] = await Promise.all([
           apiFetch<UsersResponse>("/api/admin/users"),
-          apiFetch<{ data: DailyStat[] }>("/api/admin/stats?days=30"),
+          apiFetch<GA4DauResponse>("/api/admin/analytics?type=dau").catch(() => null),
         ]);
         setUsersData(users);
-        setStatsData(stats.data ?? []);
+        setGa4Data(ga4);
       } catch (e) {
         console.error("Failed to load admin users data:", e);
       } finally {
@@ -129,12 +131,28 @@ export default function AdminUsersPage() {
     };
   });
 
-  // Signup vs UV chart data
-  const signupVsUv = statsData.map((s) => ({
-    date: s.date.slice(5),
-    가입자: s.new_users,
-    UV: s.uv,
+  // Signup vs UV chart data — combine profiles dailySignups + GA4 UV
+  const ga4Daily = ga4Data?.daily ?? [];
+  const ga4UvMap = new Map(ga4Daily.map((d) => {
+    // GA4 date format: "20260414" → "04/14"
+    return [`${d.date.slice(4, 6)}/${d.date.slice(6)}`, d.activeUsers];
   }));
+
+  const dailySignups = usersData.dailySignups ?? [];
+  const signupVsUv = dailySignups.length > 0
+    ? dailySignups.map((s) => {
+        const label = s.date.slice(5).replace("-", "/");
+        return {
+          date: label,
+          가입자: s.count,
+          UV: ga4UvMap.get(label) ?? 0,
+        };
+      })
+    : ga4Daily.map((d) => ({
+        date: `${d.date.slice(4, 6)}/${d.date.slice(6)}`,
+        가입자: 0,
+        UV: d.activeUsers,
+      }));
 
   // Recent users with mapped team names
   const recentUsers = usersData.recentUsers.map((u) => ({
@@ -179,13 +197,49 @@ export default function AdminUsersPage() {
         )}
       </div>
 
-      {/* DAU / WAU / MAU — empty state */}
+      {/* DAU / WAU / MAU */}
       <div className="glass-card p-5">
         <h2 className="text-lg font-semibold mb-4">DAU / WAU / MAU</h2>
-        <div className="flex flex-col items-center justify-center h-[280px] text-[#636366]">
-          <BarChart3 className="w-8 h-8 mb-2" />
-          <p>DAU/WAU/MAU — 수집 체계 준비 중</p>
-        </div>
+        {ga4Data ? (
+          <div className="space-y-6">
+            {/* KPI Cards */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "DAU (오늘)", value: ga4Data.dau, color: "#6366F1" },
+                { label: "WAU (7일)", value: ga4Data.wau, color: "#30D158" },
+                { label: "MAU (30일)", value: ga4Data.mau, color: "#FF9F0A" },
+              ].map((k) => (
+                <div key={k.label} className="bg-white/5 rounded-xl p-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <TrendingUp className="w-4 h-4" style={{ color: k.color }} />
+                    <span className="text-xs text-[#8E8E93]">{k.label}</span>
+                  </div>
+                  <p className="text-2xl font-bold tabular-nums">{k.value.toLocaleString()}</p>
+                </div>
+              ))}
+            </div>
+            {/* DAU Trend Chart */}
+            {ga4Daily.length > 0 && (
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={ga4Daily.map((d) => ({
+                  date: `${d.date.slice(4, 6)}/${d.date.slice(6)}`,
+                  DAU: d.activeUsers,
+                }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                  <XAxis dataKey="date" stroke="#636366" fontSize={12} />
+                  <YAxis stroke="#636366" fontSize={12} />
+                  <Tooltip {...tooltipStyle} />
+                  <Line type="monotone" dataKey="DAU" stroke="#6366F1" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center h-[280px] text-[#636366]">
+            <BarChart3 className="w-8 h-8 mb-2" />
+            <p>DAU/WAU/MAU — 수집 체계 준비 중</p>
+          </div>
+        )}
       </div>
 
       {/* Team Distribution */}
