@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
 
 interface AnalysisEntry {
@@ -26,6 +27,8 @@ function formatReferenceDate(date: string | null, entry: AnalysisEntry | undefin
 }
 
 export default function DailyAnalysisCard({ type, date, analysis, loading }: DailyAnalysisCardProps) {
+  const [expanded, setExpanded] = useState(false);
+
   if (loading) {
     return (
       <div className="glass-card p-4 mt-3 space-y-2">
@@ -45,6 +48,7 @@ export default function DailyAnalysisCard({ type, date, analysis, loading }: Dai
   if (!entry?.copy) return null;
 
   const refDate = formatReferenceDate(date, entry);
+  const isLong = entry.copy.length > 150;
 
   return (
     <motion.div
@@ -60,9 +64,19 @@ export default function DailyAnalysisCard({ type, date, analysis, loading }: Dai
           <span className="text-xs text-text-tertiary ml-auto">{refDate}</span>
         )}
       </div>
-      <p className="text-sm text-text-primary leading-relaxed whitespace-pre-line">
-        {entry.copy}
-      </p>
+      <div className={!expanded && isLong ? "line-clamp-3" : undefined}>
+        <p className="text-sm text-text-primary leading-relaxed whitespace-pre-line">
+          {entry.copy}
+        </p>
+      </div>
+      {isLong && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="text-xs text-accent font-medium mt-1.5"
+        >
+          {expanded ? "접기" : "더보기"}
+        </button>
+      )}
     </motion.div>
   );
 }
