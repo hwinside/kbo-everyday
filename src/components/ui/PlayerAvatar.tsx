@@ -1,11 +1,14 @@
 "use client";
 
 import Image from "next/image";
+import { useState, useCallback } from "react";
 import { TEAMS } from "@/lib/constants/teams";
+import { getPlayerLocalUrl } from "@/lib/constants/player-photos";
 
 interface PlayerAvatarProps {
   name: string;
   teamId?: number;
+  kboId?: string;
   photoUrl?: string | null;
   size?: number;
   showTeamBadge?: boolean;
@@ -15,6 +18,7 @@ interface PlayerAvatarProps {
 export default function PlayerAvatar({
   name,
   teamId,
+  kboId,
   photoUrl,
   size = 48,
   showTeamBadge = true,
@@ -26,17 +30,35 @@ export default function PlayerAvatar({
   const logoPath = team?.logoPath ?? "";
   const badgeSize = Math.max(12, Math.round(size * 0.4));
 
+  const [imgSrc, setImgSrc] = useState<string | null>(photoUrl ?? null);
+  const [triedFallback, setTriedFallback] = useState(false);
+
+  const handleError = useCallback(() => {
+    if (!triedFallback) {
+      // CDN 실패 → 로컬 fallback
+      const localUrl = getPlayerLocalUrl(name, kboId);
+      if (localUrl && localUrl !== imgSrc) {
+        setImgSrc(localUrl);
+        setTriedFallback(true);
+        return;
+      }
+    }
+    // 로컬도 실패 → 이니셜 표시
+    setImgSrc(null);
+  }, [triedFallback, name, kboId, imgSrc]);
+
   return (
     <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
-      {photoUrl ? (
+      {imgSrc ? (
         <Image
-          src={photoUrl}
+          src={imgSrc}
           alt={name}
           width={size}
           height={size}
           unoptimized
           className="rounded-full object-cover ring-1 ring-white/10"
           style={{ width: size, height: size }}
+          onError={handleError}
         />
       ) : (
         <div

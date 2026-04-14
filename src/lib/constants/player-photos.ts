@@ -841,20 +841,44 @@ export const PLAYER_PHOTO_ID_SET = new Set([
   "TR001",
 ]);
 
-export function getPlayerPhotoUrl(name: string, kboId?: string): string | null {
-  // kboId가 제공되면 우선 사용 (동명이인 대응)
+const KBO_CDN_BASE = "https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2026";
+
+/** CDN URL을 반환. 숫자 kboId만 CDN에 존재. */
+export function getPlayerCdnUrl(kboId: string): string | null {
+  if (/^\d+$/.test(kboId)) {
+    return `${KBO_CDN_BASE}/${kboId}.jpg`;
+  }
+  return null;
+}
+
+/** 로컬 fallback URL을 반환. */
+export function getPlayerLocalUrl(name: string, kboId?: string): string | null {
   if (kboId && PLAYER_PHOTO_ID_SET.has(kboId)) {
     return `/players/${kboId}.jpg`;
   }
-  // kboId가 명시적으로 제공됐지만 사진이 없으면 → null (다른 동명이인 사진 방지)
   if (kboId) return null;
-  // name 기반 fallback (kboId가 없는 경우만 — 라이브 경기 등)
   const mappedId = PLAYER_PHOTO_MAP[name];
   if (!mappedId) return null;
   return `/players/${mappedId}.jpg`;
 }
 
+/**
+ * 선수 사진 URL 반환 (CDN 우선, 없으면 로컬)
+ * CDN 로딩 실패는 PlayerAvatar의 onError에서 fallback 처리
+ */
+export function getPlayerPhotoUrl(name: string, kboId?: string): string | null {
+  // CDN URL 우선 (숫자 kboId만)
+  if (kboId) {
+    const cdnUrl = getPlayerCdnUrl(kboId);
+    if (cdnUrl) return cdnUrl;
+  }
+  // CDN 불가 → 로컬 fallback
+  return getPlayerLocalUrl(name, kboId);
+}
+
 export function getPlayerPhotoByKboId(kboId: string): string | null {
+  const cdnUrl = getPlayerCdnUrl(kboId);
+  if (cdnUrl) return cdnUrl;
   if (!PLAYER_PHOTO_ID_SET.has(kboId)) return null;
   return `/players/${kboId}.jpg`;
 }

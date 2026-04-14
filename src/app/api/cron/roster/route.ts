@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { startJob, finishJob } from "@/lib/admin/job-logger";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 const KBO_BASE = "https://www.koreabaseball.com";
 const CRON_SECRET = process.env.CRON_SECRET || "";
@@ -130,16 +131,42 @@ export async function GET(req: NextRequest) {
     }
     const totalPlayers = allPlayers.length;
 
+    // Upsert to Supabase players_roster table
+    const playersWithId = allPlayers.filter((p) => p.kboId);
+    let upsertCount = 0;
+    if (playersWithId.length > 0) {
+      const supabase = getSupabaseAdmin();
+      const rows = playersWithId.map((p) => ({
+        kbo_id: p.kboId,
+        name: p.name,
+        team: p.team,
+        team_id: p.teamId,
+        position: p.position,
+        back_no: "",
+        updated_at: new Date().toISOString(),
+      }));
+      const BATCH = 200;
+      for (let i = 0; i < rows.length; i += BATCH) {
+        const batch = rows.slice(i, i + BATCH);
+        const { error } = await supabase
+          .from("players_roster")
+          .upsert(batch, { onConflict: "kbo_id", ignoreDuplicates: false });
+        if (error) throw new Error(`Supabase upsert failed: ${error.message}`);
+        upsertCount += batch.length;
+      }
+    }
+
     const summary = Object.entries(teamResults)
       .map(([t, n]) => `${t}:${n}`)
       .join(", ");
 
-    await finishJob(logId, "success", `총 ${totalPlayers}명 수집 (${summary})`);
+    await finishJob(logId, "success", `총 ${totalPlayers}명 수집, ${upsertCount}명 upsert (${summary})`);
 
     return NextResponse.json({
       ok: true,
       timestamp: new Date().toISOString(),
       totalPlayers,
+      upsertCount,
       teamResults,
     });
   } catch (e) {

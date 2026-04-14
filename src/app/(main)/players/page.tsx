@@ -10,7 +10,7 @@ import { TEAMS, getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getMyTeamId } from "@/lib/store/myteam";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
-import playersRoster from "@/lib/constants/players-roster.json";
+import playersRosterStatic from "@/lib/constants/players-roster.json";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 
 interface PlayerItem {
@@ -22,7 +22,7 @@ interface PlayerItem {
   backNo: string;
 }
 
-const PLAYERS: PlayerItem[] = playersRoster as PlayerItem[];
+const STATIC_PLAYERS: PlayerItem[] = playersRosterStatic as PlayerItem[];
 
 type FilterMode = "all" | "team" | "position";
 type SortMode = "name" | "posts" | "photos";
@@ -54,6 +54,17 @@ function sortPlayers(players: PlayerItem[], mode: SortMode): PlayerItem[] {
 function PlayersPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+
+  // Supabase roster 로딩 (fallback: 정적 JSON)
+  const [players, setPlayers] = useState<PlayerItem[]>(STATIC_PLAYERS);
+  useEffect(() => {
+    fetch("/api/roster")
+      .then((res) => res.json())
+      .then((data: PlayerItem[]) => {
+        if (Array.isArray(data) && data.length > 0) setPlayers(data);
+      })
+      .catch(() => { /* fallback to static */ });
+  }, []);
 
   // URL 파라미터가 없으면 지정팀 기본 적용
   const hasUrlMode = searchParams.has("mode");
@@ -99,7 +110,7 @@ function PlayersPageContent() {
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
   const filtered = useMemo(() => {
-    let result = PLAYERS;
+    let result = players;
 
     if (filterMode === "team" && filterTeam) {
       result = result.filter(p => p.teamId === filterTeam);
