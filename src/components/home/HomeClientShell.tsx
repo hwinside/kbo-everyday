@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { LazyMotion, domAnimation, m, AnimatePresence } from "framer-motion";
-import { Bell, ChevronRight, MessageCircle } from "lucide-react";
+import { ChevronRight, MessageCircle } from "lucide-react";
 import Link from "next/link";
 import GlassCard from "@/components/ui/GlassCard";
 import OnboardingFlow from "@/components/onboarding/OnboardingFlow";
@@ -144,9 +144,6 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           <Link href="/messages" className="relative rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
             <MessageCircle size={22} />
           </Link>
-          <button className="rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
-            <Bell size={22} />
-          </button>
           <Link href="/my" className="rounded-full p-2 hover:bg-bg-tertiary transition-colors">
             <HeaderAvatar user={user} profile={profile} />
           </Link>
