@@ -157,6 +157,9 @@ export default function StandingsPage() {
 
       {(<>
       {/* Team standings */}
+      {mainTab === "team" && season === 2026 && (
+        <DailyAnalysisCard type="standings" date={dailyAnalysis?.date ?? null} analysis={dailyAnalysis?.analysis ?? null} loading={dailyAnalysisLoading} />
+      )}
       {mainTab === "team" && (
         <motion.div
           initial={{ opacity: 0, y: 12 }}
@@ -221,24 +224,21 @@ export default function StandingsPage() {
           </table>
         </motion.div>
       )}
-      {mainTab === "team" && season === 2026 && (
-        <DailyAnalysisCard type="standings" date={dailyAnalysis?.date ?? null} analysis={dailyAnalysis?.analysis ?? null} loading={dailyAnalysisLoading} />
-      )}
 
       {/* Batter titles */}
-      {mainTab === "batter" && (
-        <BatterTitleTab realBatters={realBatters} myTeamId={myTeamId} favoriteNames={favoriteNames} season={season} />
-      )}
       {mainTab === "batter" && season === 2026 && (
         <DailyAnalysisCard type="batter_titles" date={dailyAnalysis?.date ?? null} analysis={dailyAnalysis?.analysis ?? null} loading={dailyAnalysisLoading} />
       )}
+      {mainTab === "batter" && (
+        <BatterTitleTab realBatters={realBatters} myTeamId={myTeamId} favoriteNames={favoriteNames} season={season} />
+      )}
 
       {/* Pitcher titles */}
-      {mainTab === "pitcher" && (
-        <PitcherTitleTab realPitchers={realPitchers} myTeamId={myTeamId} favoriteNames={favoriteNames} season={season} />
-      )}
       {mainTab === "pitcher" && season === 2026 && (
         <DailyAnalysisCard type="pitcher_titles" date={dailyAnalysis?.date ?? null} analysis={dailyAnalysis?.analysis ?? null} loading={dailyAnalysisLoading} />
+      )}
+      {mainTab === "pitcher" && (
+        <PitcherTitleTab realPitchers={realPitchers} myTeamId={myTeamId} favoriteNames={favoriteNames} season={season} />
       )}
 
       </>)}
