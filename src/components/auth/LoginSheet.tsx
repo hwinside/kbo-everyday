@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
 import { signInWithGoogle, signInWithKakao, signInWithNaver } from "@/lib/supabase/auth";
@@ -12,13 +12,6 @@ interface LoginSheetProps {
 }
 
 export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
-  const [agreed, setAgreed] = useState(false);
-
-  useEffect(() => {
-    if (!isOpen) {
-      setAgreed(false); // eslint-disable-line react-hooks/set-state-in-effect
-    }
-  }, [isOpen]);
 
   return (
     <AnimatePresence>
@@ -49,26 +42,12 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
               로그인하면 예측, 채팅, 게시판을 이용할 수 있어요
             </p>
 
-            <label className="flex items-start gap-3 rounded-2xl border border-border bg-bg-tertiary/70 p-4">
-              <input
-                type="checkbox"
-                checked={agreed}
-                onChange={(e) => setAgreed(e.target.checked)}
-                className="mt-1 accent-accent"
-              />
-              <span className="text-xs leading-6 text-text-secondary">
-                [필수] <Link href="/terms" className="font-semibold text-text-primary underline underline-offset-2">이용약관</Link> 및{" "}
-                <Link href="/privacy" className="font-semibold text-text-primary underline underline-offset-2">개인정보처리방침</Link>에 동의합니다.
-              </span>
-            </label>
-
             <div className="space-y-3">
               {/* 네이버 로그인: 검수 승인 후 NEXT_PUBLIC_NAVER_LOGIN_ENABLED=true 로 활성화 */}
               {process.env.NEXT_PUBLIC_NAVER_LOGIN_ENABLED === "true" && (
                 <button
                   onClick={() => signInWithNaver()}
-                  disabled={!agreed}
-                  className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-medium text-sm transition-transform active:scale-[0.98] disabled:opacity-40 disabled:active:scale-100"
+                  className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-medium text-sm transition-transform active:scale-[0.98]"
                   style={{ backgroundColor: "#03C75A", color: "#FFFFFF" }}
                 >
                   <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -80,8 +59,7 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
 
               <button
                 onClick={() => signInWithKakao()}
-                disabled={!agreed}
-                className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-medium text-sm transition-transform active:scale-[0.98] disabled:opacity-40 disabled:active:scale-100"
+                className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-medium text-sm transition-transform active:scale-[0.98]"
                 style={{ backgroundColor: "#FEE500", color: "#191919" }}
               >
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -92,8 +70,7 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
 
               <button
                 onClick={() => signInWithGoogle()}
-                disabled={!agreed}
-                className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-medium text-sm border border-black/10 dark:border-white/10 bg-white text-gray-800 transition-transform active:scale-[0.98] disabled:opacity-40 disabled:active:scale-100"
+                className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-medium text-sm border border-black/10 dark:border-white/10 bg-white text-gray-800 transition-transform active:scale-[0.98]"
               >
                 <svg width="20" height="20" viewBox="0 0 20 20">
                   <path d="M19.6 10.23c0-.68-.06-1.36-.17-2.02H10v3.83h5.38a4.6 4.6 0 01-2 3.02v2.5h3.24c1.89-1.74 2.98-4.3 2.98-7.33z" fill="#4285F4"/>
@@ -106,7 +83,8 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
             </div>
 
             <p className="text-[11px] text-text-tertiary text-center mt-4">
-              동의 후 로그인하면 커뮤니티, 예측, 쪽지 기능을 이용할 수 있어요.
+              시작하면 <Link href="/terms" className="underline underline-offset-2">이용약관</Link> 및{" "}
+              <Link href="/privacy" className="underline underline-offset-2">개인정보처리방침</Link>에 동의하는 것으로 간주합니다.
             </p>
           </motion.div>
         </>
