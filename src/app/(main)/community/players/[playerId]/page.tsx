@@ -218,6 +218,13 @@ export default function PlayerBoardPage() {
         style={{ top: 'env(safe-area-inset-top, 0px)', background: `linear-gradient(135deg, ${teamColor}15, transparent)` }}
       >
         <div className="flex items-center gap-4 px-5 py-4">
+          <button
+            onClick={() => router.back()}
+            className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors shrink-0"
+            aria-label="뒤로가기"
+          >
+            <ArrowLeft size={22} />
+          </button>
           <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name, kboId)} number={player.number} size={64} />
           <div className="flex-1">
             <div className="flex items-center gap-3">

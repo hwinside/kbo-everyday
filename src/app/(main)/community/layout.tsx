@@ -105,6 +105,8 @@ export default function CommunityLayout({
   // 상세 페이지에서는 1뎁스 헤더+탭 전체 숨김
   const isDetailPage =
     pathname.includes("/posts/") ||
+    // 선수 상세: /community/players/[playerId] (독립 페이지로 취급)
+    (pathname.startsWith("/community/players/") && pathname !== "/community/players") ||
     (pathname.startsWith("/community/stadiums/") && pathname !== "/community/stadiums") ||
     (pathname.startsWith("/community/free/") && pathname !== "/community/free");
 
