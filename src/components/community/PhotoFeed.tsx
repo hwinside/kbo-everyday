@@ -68,8 +68,8 @@ function MediaElement({ url, isVideo, sizes }: { url: string; isVideo: boolean; 
         loop
         playsInline
         preload="metadata"
-        className="w-full object-cover pointer-events-none select-none"
-        style={{ aspectRatio: "4/5", WebkitTouchCallout: "none" } as React.CSSProperties}
+        className="w-full object-contain pointer-events-none select-none bg-black"
+        style={{ maxHeight: "80vh", WebkitTouchCallout: "none" } as React.CSSProperties}
       />
     );
   }
