@@ -16,6 +16,7 @@
     { "path": "/api/cron/roster", "schedule": "0 21 * * *" },
     { "path": "/api/cron/stats", "schedule": "0 21 * * *" },
     { "path": "/api/cron/photos", "schedule": "0 21 * * 0" },
-    { "path": "/api/cron/daily-fallback-report", "schedule": "0 0 * * *" }
+    { "path": "/api/cron/daily-fallback-report", "schedule": "0 0 * * *" },
+    { "path": "/api/cron/daily-analysis", "schedule": "0 20 * * *" }
   ]
 }
