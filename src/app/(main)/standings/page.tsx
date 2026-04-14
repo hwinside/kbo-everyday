@@ -17,6 +17,7 @@ import { STANDINGS_2025, MOCK_STANDINGS, TEAM_NAME_TO_ID, type RawStanding, type
 import { getTeam, getStreakIcon } from "@/lib/utils/standings";
 import BatterTitleTab from "@/components/standings/BatterTitleTab";
 import PitcherTitleTab from "@/components/standings/PitcherTitleTab";
+import DailyAnalysisCard from "@/components/standings/DailyAnalysisCard";
 
 export default function StandingsPage() {
   const { profile } = useAuth();
@@ -30,6 +31,20 @@ export default function StandingsPage() {
 
   const [realStandings, setRealStandings] = useState<TeamStanding[] | null>(null);
   const [season, setSeason] = useState<2025 | 2026>(2026);
+
+  const [dailyAnalysis, setDailyAnalysis] = useState<{ date: string; analysis: Record<string, { copy: string | null; lastUpdated?: string }> } | null>(null);
+  const [dailyAnalysisLoading, setDailyAnalysisLoading] = useState(true);
+
+  useEffect(() => {
+    if (season !== 2026) { setDailyAnalysis(null); setDailyAnalysisLoading(false); return; }
+    setDailyAnalysisLoading(true);
+    const today = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10).replace(/-/g, "");
+    fetch(`/api/daily-analysis?date=${today}`)
+      .then(r => r.json())
+      .then(data => { if (data.analysis) setDailyAnalysis(data); })
+      .catch(() => {})
+      .finally(() => setDailyAnalysisLoading(false));
+  }, [season]);
 
   useEffect(() => {
     // 2025 시즌은 확정 데이터 사용, API fetch 불필요
@@ -206,15 +221,24 @@ export default function StandingsPage() {
           </table>
         </motion.div>
       )}
+      {mainTab === "team" && season === 2026 && (
+        <DailyAnalysisCard type="standings" date={dailyAnalysis?.date ?? null} analysis={dailyAnalysis?.analysis ?? null} loading={dailyAnalysisLoading} />
+      )}
 
       {/* Batter titles */}
       {mainTab === "batter" && (
         <BatterTitleTab realBatters={realBatters} myTeamId={myTeamId} favoriteNames={favoriteNames} season={season} />
       )}
+      {mainTab === "batter" && season === 2026 && (
+        <DailyAnalysisCard type="batter_titles" date={dailyAnalysis?.date ?? null} analysis={dailyAnalysis?.analysis ?? null} loading={dailyAnalysisLoading} />
+      )}
 
       {/* Pitcher titles */}
       {mainTab === "pitcher" && (
         <PitcherTitleTab realPitchers={realPitchers} myTeamId={myTeamId} favoriteNames={favoriteNames} season={season} />
+      )}
+      {mainTab === "pitcher" && season === 2026 && (
+        <DailyAnalysisCard type="pitcher_titles" date={dailyAnalysis?.date ?? null} analysis={dailyAnalysis?.analysis ?? null} loading={dailyAnalysisLoading} />
       )}
 
       </>)}
