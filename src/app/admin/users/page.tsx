@@ -145,13 +145,13 @@ export default function AdminUsersPage() {
         return {
           date: label,
           가입자: s.count,
-          UV: ga4UvMap.get(label) ?? 0,
+          활성사용자: ga4UvMap.get(label) ?? 0,
         };
       })
     : ga4Daily.map((d) => ({
         date: `${d.date.slice(4, 6)}/${d.date.slice(6)}`,
         가입자: 0,
-        UV: d.activeUsers,
+        활성사용자: d.activeUsers,
       }));
 
   // Recent users with mapped team names
@@ -175,7 +175,7 @@ export default function AdminUsersPage() {
 
       {/* Signup vs UV */}
       <div className="glass-card p-5">
-        <h2 className="text-lg font-semibold mb-4">가입자 vs UV 추이</h2>
+        <h2 className="text-lg font-semibold mb-4">가입자 vs 활성 사용자 추이</h2>
         {signupVsUv.length > 0 ? (
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={signupVsUv}>
@@ -185,7 +185,7 @@ export default function AdminUsersPage() {
               <YAxis yAxisId="right" orientation="right" stroke="#636366" fontSize={12} />
               <Tooltip {...tooltipStyle} />
               <Legend />
-              <Line yAxisId="right" type="monotone" dataKey="UV" stroke="#6366F1" strokeWidth={2} dot={false} />
+              <Line yAxisId="right" type="monotone" dataKey="활성사용자" stroke="#6366F1" strokeWidth={2} dot={false} />
               <Line yAxisId="left" type="monotone" dataKey="가입자" stroke="#FFD60A" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
