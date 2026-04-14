@@ -370,7 +370,9 @@ export async function GET(req: NextRequest) {
     if (statsErr) console.error("Stats snapshot upsert error:", statsErr.message);
 
     // 7. Check if yesterday data exists — if not, skip analysis (first run)
-    if (!yesterdayStandings?.length || !yesterdayStats?.length) {
+    const hasYesterdayStandings = !!yesterdayStandings?.length;
+    const hasYesterdayStats = !!yesterdayStats?.length;
+    if (!hasYesterdayStandings && !hasYesterdayStats) {
       const msg = "첫 실행: 어제 스냅샷 없음 — 스냅샷만 저장, 분석 skip";
       await finishJob(logId, "success", msg);
       return NextResponse.json({ ok: true, message: msg, snapshotsOnly: true });
@@ -425,11 +427,19 @@ export async function GET(req: NextRequest) {
         pitcherCopy = "";
       }
     } else if (GEMINI_API_KEY) {
-      [standingsCopy, batterCopy, pitcherCopy] = await Promise.all([
-        callGemini(buildStandingsPrompt(standingsDelta, gameEvents, teamNames)),
-        callGemini(buildTitlePrompt(batterDelta, gameEvents, "batter")),
-        callGemini(buildTitlePrompt(pitcherDelta, gameEvents, "pitcher")),
-      ]);
+      const promises: Promise<string>[] = [];
+      // 순위 분석: 어제 순위 스냅샷이 있으면 생성
+      promises.push(hasYesterdayStandings
+        ? callGemini(buildStandingsPrompt(standingsDelta, gameEvents, teamNames))
+        : Promise.resolve(""));
+      // 타자/투수 분석: 어제 스탯 스냅샷이 있으면 생성
+      promises.push(hasYesterdayStats
+        ? callGemini(buildTitlePrompt(batterDelta, gameEvents, "batter"))
+        : Promise.resolve(""));
+      promises.push(hasYesterdayStats
+        ? callGemini(buildTitlePrompt(pitcherDelta, gameEvents, "pitcher"))
+        : Promise.resolve(""));
+      [standingsCopy, batterCopy, pitcherCopy] = await Promise.all(promises);
     } else {
       standingsCopy = standingsDelta.summary;
       batterCopy = batterDelta.summary;
