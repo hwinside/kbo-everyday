@@ -155,7 +155,7 @@ async function fetchPitcherTitleEntries(): Promise<TitleEntry[]> {
 
 // ===== Gemini prompts =====
 
-function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNames: Map<number, string>, highlights: GameHighlight[] = []): string {
+function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNames: Map<number, string>, highlights: GameHighlight[] = [], newsHeadlines: string[] = []): string {
   const eventLines = events.map(
     (e) => `${e.awayTeam} ${e.awayScore}:${e.homeScore} ${e.homeTeam} (승: ${e.winPitcher || "-"}, 패: ${e.losePitcher || "-"})`,
   ).join("\n");
@@ -180,7 +180,8 @@ function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNa
 6. 상위권/중위권/하위권으로 나누지 말고, 순위 변동이 있는 팀들을 중심으로 서술하세요. 변동 없는 팀은 간략히 또는 생략.
 7. 어제 경기 전체를 조망하는 느낌으로 쓰세요. "순위표 해설"이 아니라 "어제 KBO에서 무슨 일이 있었는지" 요약.
 8. 게임차는 순위 변동과 함께 언급하면 자연스럽습니다.
-9. '어제의 주요 이벤트'가 있으면 반드시 본문에 녹여서 언급하세요.
+9. '어제의 주요 이벤트'와 '뉴스 헤드라인'이 있으면 반드시 본문에 녹여서 언급하세요.
+10. 뉴스 헤드라인은 맥락 보강용으로만 사용. 스코어/순위 등 팩트는 반드시 위 경기 데이터 기준으로 작성하세요.
 10. 순위 변동 + 이벤트를 엮어서 '어제 KBO에서 무슨 일이 있었는지' 하나의 이야기로 만드세요.
 11. 이벤트가 없으면 순위 변동만으로 서술하세요.
 
@@ -190,7 +191,7 @@ ${eventLines || "경기 없음"}
 ## 현재 순위 (변동 포함)
 ${teamDeltas}
 
-${highlights.length > 0 ? `## 어제의 주요 이벤트\n${highlights.map((h) => `- ${h.team} ${h.text}`).join("\n")}\n\n` : ""}## 출력 형식 (JSON 객체 하나만 출력)
+${highlights.length > 0 ? `## 어제의 주요 이벤트\n${highlights.map((h) => `- ${h.team} ${h.text}`).join("\n")}\n\n` : ""}${newsHeadlines.length > 0 ? `## 어제 뉴스 헤드라인 (맥락 보강용, 팩트는 위 데이터 기준)\n${newsHeadlines.map((h) => `- ${h}`).join("\n")}\n\n` : ""}## 출력 형식 (JSON 객체 하나만 출력)
 { "content": "어제 KBO 전체 조망 요약 (순위 변동팀 중심, 150~250자, 마크다운/날짜 금지)" }`;
 }
 
@@ -248,6 +249,31 @@ ${catData}
 }
 
 // ===== Gemini call =====
+
+async function fetchNewsHeadlines(dateStr: string): Promise<string[]> {
+  if (!GEMINI_API_KEY) return [];
+  try {
+    const res = await fetch(GEMINI_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: `${dateStr} KBO 프로야구 주요 뉴스 헤드라인 5개를 알려줘. 제목만 간결하게, 한 줄씩.` }] }],
+        tools: [{ google_search: {} }],
+        generationConfig: { maxOutputTokens: 500, thinkingConfig: { thinkingBudget: 0 } },
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const text = data.candidates?.[0]?.content?.parts?.find((p: { text?: string }) => p.text)?.text || "";
+    // Parse bullet points or numbered list
+    const lines = text.split("\n").map((l: string) => l.replace(/^[\s*\-\d.]+/, "").trim()).filter((l: string) => l.length > 5);
+    return lines.slice(0, 5);
+  } catch (e) {
+    console.error("News headlines fetch failed:", (e as Error).message);
+    return [];
+  }
+}
 
 async function callGemini(prompt: string): Promise<string> {
   const MAX_ATTEMPTS = 2;
@@ -454,10 +480,12 @@ export async function GET(req: NextRequest) {
         pitcherCopy = "";
       }
     } else if (GEMINI_API_KEY) {
+      // 뉴스 헤드라인 가져오기 (Google Search grounding)
+      const newsHeadlines = await fetchNewsHeadlines(yesterdayISO);
       const promises: Promise<string>[] = [];
       // 순위 분석: 어제 순위 스냅샷이 있으면 생성
       promises.push(hasYesterdayStandings
-        ? callGemini(buildStandingsPrompt(standingsDelta, gameEvents, teamNames, gameHighlights))
+        ? callGemini(buildStandingsPrompt(standingsDelta, gameEvents, teamNames, gameHighlights, newsHeadlines))
         : Promise.resolve(""));
       // 타자/투수 분석: 어제 스탯 스냅샷이 있으면 생성
       promises.push(hasYesterdayStats
