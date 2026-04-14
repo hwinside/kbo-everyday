@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { LazyMotion, domAnimation, m, AnimatePresence } from "framer-motion";
 import { ChevronRight, MessageCircle } from "lucide-react";
 import Link from "next/link";
+import PullToRefresh from "@/components/PullToRefresh";
 import GlassCard from "@/components/ui/GlassCard";
 import OnboardingFlow from "@/components/onboarding/OnboardingFlow";
 import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
@@ -56,6 +58,7 @@ interface HomeClientShellProps {
 }
 
 export default function HomeClientShell({ initialGames, initialLiveGames, initialIsPreseason }: HomeClientShellProps) {
+  const router = useRouter();
   const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number; gameId: string} | null>(null);
   const [showLogin, setShowLogin] = useState(false);
 
@@ -88,6 +91,20 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   const liveGames = polledLiveGames.length > 0 ? polledLiveGames :
     initialLiveGames.filter(g => g.isLive);
 
+  // Pull-to-refresh: 홈 데이터 갱신 (router.refresh로 서버 컴포넌트 revalidate + 뉴스 refetch)
+  const handleRefresh = useCallback(async () => {
+    // 1) Next.js server component revalidation (games + live data)
+    router.refresh();
+    // 2) Client-side news refetch
+    if (myTeamId !== null) {
+      try {
+        const { fetchHomeNews } = await import("@/hooks/useHomeNews");
+        const news = await fetchHomeNews(myTeamId);
+        setRealNews(news);
+      } catch { /* news refresh 실패해도 무시 */ }
+    }
+  }, [router, myTeamId]);
+
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
   const myTeamGameBase = todayGames.find(g => g.homeTeamId === myTeamId || g.awayTeamId === myTeamId);
   const allLiveData = polledLiveGames.length > 0 ? polledLiveGames :
@@ -113,6 +130,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   } : undefined;
 
   return (
+    <PullToRefresh onRefresh={handleRefresh}>
     <LazyMotion features={domAnimation}>
     {/* 환영 토스트 */}
     <AnimatePresence>
@@ -248,5 +266,6 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       />
     )}
     </LazyMotion>
+    </PullToRefresh>
   );
 }

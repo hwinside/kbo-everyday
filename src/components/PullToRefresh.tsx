@@ -22,7 +22,10 @@ export default function PullToRefresh({ onRefresh, children, className }: PullTo
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     if (isRefreshing) return;
     const container = containerRef.current;
-    if (!container || container.scrollTop > 0) return;
+    if (!container) return;
+    // Support both scrollable containers (overflow-y-auto) and page-level scroll
+    const scrolled = container.scrollTop > 0 || window.scrollY > 0;
+    if (scrolled) return;
     startYRef.current = e.touches[0].clientY;
     isPullingRef.current = true;
   }, [isRefreshing]);
@@ -30,7 +33,7 @@ export default function PullToRefresh({ onRefresh, children, className }: PullTo
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
     if (!isPullingRef.current || isRefreshing) return;
     const container = containerRef.current;
-    if (!container || container.scrollTop > 0) {
+    if (!container || container.scrollTop > 0 || window.scrollY > 0) {
       isPullingRef.current = false;
       setPullDistance(0);
       return;
