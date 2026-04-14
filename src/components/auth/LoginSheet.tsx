@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
-import { signInWithGoogle, signInWithKakao } from "@/lib/supabase/auth";
+import { signInWithGoogle, signInWithKakao, signInWithNaver } from "@/lib/supabase/auth";
 
 interface LoginSheetProps {
   isOpen: boolean;
@@ -63,6 +63,18 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
             </label>
 
             <div className="space-y-3">
+              <button
+                onClick={() => signInWithNaver()}
+                disabled={!agreed}
+                className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-medium text-sm transition-transform active:scale-[0.98] disabled:opacity-40 disabled:active:scale-100"
+                style={{ backgroundColor: "#03C75A", color: "#FFFFFF" }}
+              >
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                  <path d="M13.56 10.7L6.17 0H0v20h6.44V9.3L13.83 20H20V0h-6.44v10.7z" fill="#FFFFFF" transform="scale(0.8) translate(2.5,2.5)"/>
+                </svg>
+                네이버로 시작하기
+              </button>
+
               <button
                 onClick={() => signInWithKakao()}
                 disabled={!agreed}

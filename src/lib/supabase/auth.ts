@@ -24,6 +24,21 @@ export async function signInWithGoogle() {
   return { data, error };
 }
 
+/** 네이버 로그인 — Supabase Custom OIDC provider */
+export async function signInWithNaver() {
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: "custom:naver-login" as any,
+    options: {
+      redirectTo: CALLBACK_URL,
+      skipBrowserRedirect: true,
+    },
+  });
+  if (data?.url) {
+    window.location.assign(data.url);
+  }
+  return { data, error };
+}
+
 /** 카카오 로그인 — PWA 동일 탭에서 OAuth 진행 (Safari VC 방지) */
 export async function signInWithKakao() {
   const { data, error } = await supabase.auth.signInWithOAuth({
