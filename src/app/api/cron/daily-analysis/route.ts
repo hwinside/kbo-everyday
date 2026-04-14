@@ -155,10 +155,20 @@ async function fetchPitcherTitleEntries(): Promise<TitleEntry[]> {
 
 // ===== Gemini prompts =====
 
-function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNames: Map<number, string>, highlights: GameHighlight[] = [], newsHeadlines: string[] = []): string {
-  const eventLines = events.map(
-    (e) => `${e.awayTeam} ${e.awayScore}:${e.homeScore} ${e.homeTeam} (승: ${e.winPitcher || "-"}, 패: ${e.losePitcher || "-"})`,
-  ).join("\n");
+function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNames: Map<number, string>, highlights: GameHighlight[] = [], newsHeadlines: string[] = [], boxScores: Map<string, BoxScoreResult> = new Map()): string {
+  const eventLines = events.map((e) => {
+    const box = boxScores.get(e.gameId);
+    let starterInfo = "";
+    if (box) {
+      const awaySP = box.awayPitchers[0];
+      const homeSP = box.homePitchers[0];
+      const parts: string[] = [];
+      if (awaySP) parts.push(`${e.awayTeam}선발 ${awaySP.name} ${awaySP.inningsPitched}이닝 ${awaySP.earnedRuns}자책`);
+      if (homeSP) parts.push(`${e.homeTeam}선발 ${homeSP.name} ${homeSP.inningsPitched}이닝 ${homeSP.earnedRuns}자책`);
+      if (parts.length > 0) starterInfo = ` [${parts.join(", ")}]`;
+    }
+    return `${e.awayTeam} ${e.awayScore}:${e.homeScore} ${e.homeTeam} (승: ${e.winPitcher || "-"}, 패: ${e.losePitcher || "-"})${starterInfo}`;
+  }).join("\n");
 
   const teamDeltas = [...delta.top, ...delta.mid, ...delta.bottom].map((d) => {
     const name = teamNames.get(d.team_id) || `팀${d.team_id}`;
@@ -182,9 +192,10 @@ function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNa
 8. 총론/도입부 없이 바로 핵심 사건부터 시작하세요.
 9. 언급 팀은 최대 3~4팀으로 제한. 나머지는 과감히 생략.
 10. **선수 이름 필수**: 본문에 선수명을 최소 1~2명 포함하세요. 팀 단위만 쓰면 AI 느낌이 납니다.
-11. **뉴스 헤드라인 반드시 반영**: 뉴스 헤드라인이 있으면 최소 1개는 구체적 사건으로 본문에 녹여야 합니다. 특히 선수명이 언급된 뉴스는 우선 반영.
-12. 스코어/순위 팩트는 반드시 위 경기 데이터 기준. 뉴스는 맥락 보강용.
-13. 이벤트가 없으면 순위 변동만으로 서술.
+11. **승리투수 ≠ 경기 주인공**: 승리투수라는 이유만으로 "호투로 이겼다" 금지. 선발이 5이닝+ 투구했으면 선발 서사 우선. 결승타/만루포 친 타자가 있으면 타자 서사 우선.
+12. **뉴스 헤드라인 반드시 반영**: 헤드라인 중 최소 1개는 구체적 사건으로 본문에 녹여야 합니다. 선수명 언급된 뉴스 우선.
+13. 스코어/순위 팩트는 반드시 위 경기 데이터 기준. 뉴스는 맥락 보강용.
+14. 이벤트가 없으면 순위 변동만으로 서술.
 
 ## 어제 경기 결과
 ${eventLines || "경기 없음"}
@@ -487,7 +498,7 @@ export async function GET(req: NextRequest) {
       const promises: Promise<string>[] = [];
       // 순위 분석: 어제 순위 스냅샷이 있으면 생성
       promises.push(hasYesterdayStandings
-        ? callGemini(buildStandingsPrompt(standingsDelta, gameEvents, teamNames, gameHighlights, newsHeadlines))
+        ? callGemini(buildStandingsPrompt(standingsDelta, gameEvents, teamNames, gameHighlights, newsHeadlines, boxScores))
         : Promise.resolve(""));
       // 타자/투수 분석: 어제 스탯 스냅샷이 있으면 생성
       promises.push(hasYesterdayStats
