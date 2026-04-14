@@ -139,10 +139,13 @@ export default function AdminContentPage() {
     직찍: s.photos,
   }));
 
-  const teamActivityData = teamActivity.map((t) => ({
-    팀: boardIdToTeamName(t.board_id),
-    게시글: t.count,
-  }));
+  const teamActivityData = teamActivity
+    .filter((t) => TEAMS.some((team) => team.slug === t.board_id || String(team.id) === t.board_id))
+    .map((t) => ({
+      팀: boardIdToTeamName(t.board_id),
+      게시글: t.count,
+    }))
+    .sort((a, b) => b.게시글 - a.게시글);
 
   return (
     <div className="space-y-6">
