@@ -161,7 +161,9 @@ function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNa
   const teamDeltas = [...delta.top, ...delta.mid, ...delta.bottom].map((d) => {
     const name = teamNames.get(d.team_id) || `팀${d.team_id}`;
     const change = d.rankChange > 0 ? `↑${d.rankChange}` : d.rankChange < 0 ? `↓${Math.abs(d.rankChange)}` : "-";
-    return `${d.newRank}위 ${name}: ${d.wins}승${d.losses}패${d.draws}무 (승률 ${d.win_rate.toFixed(3)}, ${d.games_behind}게임차) 순위변동: ${change}, 연승연패: ${d.streak || "-"}`;
+    const streakNum = parseInt(d.streak || "0");
+    const streakText = Math.abs(streakNum) >= 3 ? `${Math.abs(streakNum)}${streakNum > 0 ? "연승" : "연패"} 중` : "";
+    return `${d.newRank}위 ${name}: ${d.wins}승${d.losses}패${d.draws}무 (${d.games_behind}게임차) 순위변동: ${change}${streakText ? `, ${streakText}` : ""}`;
   }).join("\n");
 
   return `당신은 KBO 프로야구 전문 데이터 분석 기자입니다.
@@ -169,12 +171,13 @@ function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNa
 
 ## 핵심 원칙
 1. 제공된 데이터 외의 정보를 사용하지 마세요.
-2. 날짜를 절대 직접 언급하지 마세요. "오늘", "4월 17일" 등 구체적 날짜 표현 금지. UI에서 날짜를 별도 표시합니다.
-3. 마크다운/HTML 문법 금지. ##, **, *, - 등 서식 없이 순수 텍스트로만 작성하세요.
-4. 상위권(1~3위), 중위권(4~7위), 하위권(8~10위) 3단으로 나누되 각 단락을 짧게 쓰세요.
-5. 순위 변동이 있는 팀을 중심으로, 어제 경기 결과와 연결하세요.
-6. 연승/연패 중인 팀은 반드시 언급하세요.
-7. 구체적 숫자(승률, 게임차)를 자연스럽게 녹여 서술하세요.
+2. 날짜를 절대 직접 언급하지 마세요. "오늘", "4월 17일" 등 구체적 날짜 표현 금지.
+3. 마크다운/HTML 문법 금지. ##, **, *, - 등 서식 없이 순수 텍스트로만 작성.
+4. 승률은 언급하지 마세요. 팬들은 승률에 관심 없습니다.
+5. 3연승/3연패 미만의 streak는 언급하지 마세요. 1승을 "연승"이라 하지 않습니다.
+6. 상위권/중위권/하위권으로 나누지 말고, 순위 변동이 있는 팀들을 중심으로 서술하세요. 변동 없는 팀은 간략히 또는 생략.
+7. 어제 경기 전체를 조망하는 느낌으로 쓰세요. "순위표 해설"이 아니라 "어제 KBO에서 무슨 일이 있었는지" 요약.
+8. 게임차는 순위 변동과 함께 언급하면 자연스럽습니다.
 
 ## 어제 경기 결과
 ${eventLines || "경기 없음"}
@@ -183,7 +186,7 @@ ${eventLines || "경기 없음"}
 ${teamDeltas}
 
 ## 출력 형식 (JSON 객체 하나만 출력)
-{ "content": "순위 동향 기사 본문 (상위권/중위권/하위권 3단, 총 200~300자, 마크다운 금지, 날짜 언급 금지)" }`;
+{ "content": "어제 KBO 전체 조망 요약 (순위 변동팀 중심, 150~250자, 마크다운/날짜 금지)" }`;
 }
 
 function buildTitlePrompt(
