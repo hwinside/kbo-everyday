@@ -201,7 +201,7 @@ export default function InviteSection() {
                         type="text"
                         value={registerCode}
                         onChange={e => { setRegisterCode(e.target.value); setRegisterError(""); }}
-                        placeholder="KBO-XXXXXX"
+                        placeholder="KEUBO-XXXXXX"
                         className="flex-1 bg-bg-tertiary border border-white/10 rounded-lg px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary font-mono uppercase focus:outline-none focus:border-accent"
                       />
                       <button
