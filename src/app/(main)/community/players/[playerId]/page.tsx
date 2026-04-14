@@ -112,27 +112,52 @@ export default function PlayerBoardPage() {
   const loadPhotoPosts = useCallback(async () => {
     if (!playerName) return;
     setPhotoLoading(true);
-    const tag = formatPlayerTag(kboId, playerName);
-    const { data } = await supabase
+    const cols = "id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)";
+
+    // 1) 선수 게시판 직접 게시물
+    const boardQuery = supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)")
+      .select(cols)
+      .eq("board_type", "player")
+      .eq("board_id", kboId)
       .neq("is_hidden", true)
-      .or(`player_tags.cs.{"${tag}"},and(board_type.eq.player,board_id.eq.${kboId})`)
       .order("created_at", { ascending: false })
       .limit(50);
 
-    if (data) {
-      setPhotoPosts(data.map((p) => ({
-        ...p,
-        content_type: (p.content_type ?? "general") as "general" | "photo",
-        image_urls: (p.image_urls ?? []) as string[],
-        video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
-        nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
-        team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
-        grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
-        points: ((p.profiles as unknown as Record<string, unknown> | null)?.points as number) ?? 0,
-      })));
-    }
+    // 2) 다른 게시판에서 player_tags로 태그된 게시물 (cross-board)
+    const tag = formatPlayerTag(kboId, playerName);
+    const tagQuery = supabase
+      .from("posts")
+      .select(cols)
+      .contains("player_tags", [tag])
+      .neq("is_hidden", true)
+      .neq("board_type", "player") // 선수 게시판 중복 방지
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    const [boardResult, tagResult] = await Promise.all([boardQuery, tagQuery]);
+    const boardPosts = boardResult.data ?? [];
+    const tagPosts = tagResult.data ?? []; // player_tags 콜론 파싱 에러 시 빈 배열 fallback
+    // 중복 제거 후 합치기
+    const seen = new Set<number>();
+    const merged = [...boardPosts, ...tagPosts].filter((p) => {
+      if (seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    });
+    // 시간순 정렬
+    merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    setPhotoPosts(merged.map((p) => ({
+      ...p,
+      content_type: (p.content_type ?? "general") as "general" | "photo",
+      image_urls: (p.image_urls ?? []) as string[],
+      video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
+      nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
+      team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
+      grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
+      points: ((p.profiles as unknown as Record<string, unknown> | null)?.points as number) ?? 0,
+    })));
     setPhotoLoading(false);
   }, [kboId, playerName]);
 
