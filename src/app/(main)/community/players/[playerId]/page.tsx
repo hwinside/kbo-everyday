@@ -6,6 +6,8 @@ import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowLeft, Heart, MessageCircle, Share2, PenLine } from "lucide-react";
 import Link from "next/link";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
+import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import GlassCard from "@/components/ui/GlassCard";
 import NicheStats from "@/components/player/NicheStats";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
@@ -209,23 +211,29 @@ export default function PlayerBoardPage() {
   }
 
   const teamColor = getTeamColor(player.teamId);
+  const teamBorder = player.teamId ? getTeamBorderColorById(player.teamId) : 'var(--color-border)';
 
   return (
     <div className="min-h-screen bg-bg-primary pb-20">
-      {/* Header */}
+      {/* 독립 헤더: 선수 목록과 동일 */}
+      <div className="sticky z-40 bg-bg-primary border-b" style={{ top: 'env(safe-area-inset-top, 0px)', borderColor: teamBorder }}>
+        <div className="mx-auto max-w-lg">
+          <header className="py-3 px-5 flex items-center gap-3">
+            <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors" aria-label="뒤로가기">
+              <ArrowLeft size={24} />
+            </button>
+            <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">선수</h1>
+            <HeaderProfileLink />
+          </header>
+        </div>
+      </div>
+
+      {/* 선수 프로필 헤더 */}
       <div
         className="sticky z-30 border-b border-border backdrop-blur-xl"
-        style={{ top: 'env(safe-area-inset-top, 0px)', background: `linear-gradient(135deg, ${teamColor}15, transparent)` }}
+        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 56px)', background: `linear-gradient(135deg, ${teamColor}15, transparent)` }}
       >
         <div className="flex items-center gap-4 px-5 py-4">
-          <button
-            onClick={() => router.back()}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors shrink-0"
-            aria-label="뒤로가기"
-          >
-            <ArrowLeft size={20} />
-            <span className="text-sm font-medium">선수</span>
-          </button>
           <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name, kboId)} number={player.number} size={64} />
           <div className="flex-1">
             <div className="flex items-center gap-3">
