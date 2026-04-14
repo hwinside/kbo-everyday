@@ -41,6 +41,7 @@ export default function InviteSection() {
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
   const [registerCode, setRegisterCode] = useState("");
   const [registerLoading, setRegisterLoading] = useState(false);
@@ -222,28 +223,36 @@ export default function InviteSection() {
               <p className="text-xs text-green-400 text-center">초대코드가 등록되었습니다!</p>
             )}
 
-            {/* 초대 현황 */}
+            {/* 초대 현황 — 접기/펼치기 */}
             {data && data.invitations.length > 0 && (
               <div className="space-y-2">
-                <p className="text-xs text-text-tertiary font-semibold">초대 현황</p>
-                <div className="space-y-1.5 max-h-32 overflow-y-auto">
-                  {data.invitations.map(inv => {
-                    const friendName = inv.invitee_id ? friendMap.get(inv.invitee_id) : null;
-                    const isActivated = !!inv.activated_at && !inv.flagged;
-                    const isUsed = !!inv.used_at;
-                    return (
-                      <div key={inv.code} className="flex items-center justify-between text-sm">
-                        <div className="flex items-center gap-2">
-                          <span>{isActivated ? "✅" : isUsed ? "⏳" : "📩"}</span>
-                          <span className="text-text-secondary font-mono text-xs">{inv.code}</span>
+                <button
+                  onClick={() => setShowHistory(prev => !prev)}
+                  className="flex items-center gap-1 text-xs text-text-tertiary font-semibold"
+                >
+                  <span className={`transition-transform ${showHistory ? "rotate-90" : ""}`}>▶</span>
+                  초대 현황 ({data.invitations.length})
+                </button>
+                {showHistory && (
+                  <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                    {data.invitations.map(inv => {
+                      const friendName = inv.invitee_id ? friendMap.get(inv.invitee_id) : null;
+                      const isActivated = !!inv.activated_at && !inv.flagged;
+                      const isUsed = !!inv.used_at;
+                      return (
+                        <div key={inv.code} className="flex items-center justify-between text-sm">
+                          <div className="flex items-center gap-2">
+                            <span>{isActivated ? "✅" : isUsed ? "⏳" : "📩"}</span>
+                            <span className="text-text-secondary font-mono text-xs">{inv.code}</span>
+                          </div>
+                          <span className="text-xs text-text-tertiary">
+                            {friendName || (isUsed ? "가입 대기" : "미사용")}
+                          </span>
                         </div>
-                        <span className="text-xs text-text-tertiary">
-                          {friendName || (isUsed ? "가입 대기" : "미사용")}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 
