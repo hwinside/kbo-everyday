@@ -220,10 +220,11 @@ export default function PlayerBoardPage() {
         <div className="flex items-center gap-4 px-5 py-4">
           <button
             onClick={() => router.back()}
-            className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors shrink-0"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors shrink-0"
             aria-label="뒤로가기"
           >
-            <ArrowLeft size={22} />
+            <ArrowLeft size={20} />
+            <span className="text-sm font-medium">선수</span>
           </button>
           <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name, kboId)} number={player.number} size={64} />
           <div className="flex-1">
