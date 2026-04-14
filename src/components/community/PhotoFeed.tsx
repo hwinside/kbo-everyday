@@ -59,6 +59,8 @@ interface MediaSlide {
 }
 
 function MediaElement({ url, isVideo, sizes }: { url: string; isVideo: boolean; sizes?: string }) {
+  const isGif = !isVideo && url.toLowerCase().endsWith(".gif");
+
   if (isVideo) {
     return (
       <video
@@ -73,6 +75,23 @@ function MediaElement({ url, isVideo, sizes }: { url: string; isVideo: boolean; 
       />
     );
   }
+
+  if (isGif) {
+    return (
+      <Image
+        src={url}
+        alt="gif"
+        width={800}
+        height={600}
+        unoptimized
+        className="w-full object-contain pointer-events-none select-none bg-black"
+        draggable={false}
+        style={{ maxHeight: "80vh", WebkitTouchCallout: "none" } as React.CSSProperties}
+        sizes={sizes ?? "(max-width: 768px) 100vw, 600px"}
+      />
+    );
+  }
+
   return (
     <Image
       src={url}
