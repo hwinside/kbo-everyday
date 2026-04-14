@@ -19,18 +19,40 @@ function getNewsBg(teamId: number | null) {
 }
 
 export default function NewsCarousel({ news }: NewsCarouselProps) {
+  const AUTO_INTERVAL = 4000; // 4초 간격 자동 전환
+
   const [current, setCurrent] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const isAutoScrolling = useRef(false);
+  const isPaused = useRef(false);
 
   const slides = news.slice(0, 10);
 
-  // 자동 스크롤
-  useEffect(() => {
+  // 자동 전환 타이머 시작/재시작
+  function startAutoTimer() {
+    if (timerRef.current) clearInterval(timerRef.current);
+    isPaused.current = false;
     timerRef.current = setInterval(() => {
+      if (isPaused.current) return;
+      isAutoScrolling.current = true;
       setCurrent((prev) => (prev + 1) % slides.length);
-    }, 4000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    }, AUTO_INTERVAL);
+  }
+
+  // 타이머 정지
+  function stopAutoTimer() {
+    isPaused.current = true;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
+  // 마운트 시 자동 전환 시작
+  useEffect(() => {
+    startAutoTimer();
+    return () => stopAutoTimer();
   }, [slides.length]);
 
   // 슬라이드 이동
@@ -38,20 +60,27 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
     const el = containerRef.current;
     if (!el) return;
     el.scrollTo({ left: current * el.offsetWidth, behavior: "smooth" });
+    // 자동 스크롤 플래그 해제
+    const timeout = setTimeout(() => { isAutoScrolling.current = false; }, 500);
+    return () => clearTimeout(timeout);
   }, [current]);
 
-  // 수동 스크롤 시 현재 인덱스 업데이트
+  // 터치/포인터 시 즉시 정지, 놓으면 재시작
+  function handleTouchStart() {
+    stopAutoTimer();
+  }
+  function handleTouchEnd() {
+    setTimeout(() => startAutoTimer(), AUTO_INTERVAL);
+  }
+
+  // 수동 스크롤 시 현재 인덱스 업데이트 (자동 스크롤 중에는 무시)
   function handleScroll() {
+    if (isAutoScrolling.current) return;
     const el = containerRef.current;
     if (!el) return;
     const idx = Math.round(el.scrollLeft / el.offsetWidth);
     if (idx !== current) {
       setCurrent(idx);
-      // 수동 스크롤 시 타이머 리셋
-      if (timerRef.current) clearInterval(timerRef.current);
-      timerRef.current = setInterval(() => {
-        setCurrent((prev) => (prev + 1) % slides.length);
-      }, 4000);
     }
   }
 
@@ -61,6 +90,10 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
       <div
         ref={containerRef}
         onScroll={handleScroll}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onMouseDown={handleTouchStart}
+        onMouseUp={handleTouchEnd}
         className="flex snap-x snap-mandatory overflow-x-auto hide-scrollbar"
       >
         {slides.map((item, i) => {
