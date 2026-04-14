@@ -189,6 +189,10 @@ export default function AdminMessagesPage() {
   // 전체발송
   async function handleBroadcast() {
     if (!broadcastContent.trim() || broadcasting) return;
+    const targetDesc = allTeamsSelected
+      ? "전체 유저"
+      : `${selectedTeams.length}개 팀 유저`;
+    if (!confirm(`${targetDesc}에게 쪽지를 발송합니다. 계속하시겠습니까?`)) return;
     setBroadcasting(true);
     setBroadcastResult(null);
     try {
