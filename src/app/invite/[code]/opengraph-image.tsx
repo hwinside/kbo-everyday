@@ -7,7 +7,8 @@ export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
 export default async function OGImage({ params }: { params: Promise<{ code: string }> }) {
-  const { code } = await params;
+  const { code: rawCode } = await params;
+  const code = rawCode?.replace(/^KBO-/i, "KEUBO-");
 
   let inviterNickname: string | null = null;
   try {

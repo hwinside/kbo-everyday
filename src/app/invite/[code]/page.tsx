@@ -8,7 +8,9 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { supabase } from "@/lib/supabase/client";
 
 export default function InviteCodePage() {
-  const { code } = useParams<{ code: string }>();
+  const { code: rawCode } = useParams<{ code: string }>();
+  // 기존 KBO- URL 호환
+  const code = rawCode?.replace(/^KBO-/i, "KEUBO-");
   const router = useRouter();
   const { user, profile, loading: authLoading } = useAuth();
   const [status, setStatus] = useState<"idle" | "confirm" | "loading" | "success" | "already" | "error">("idle");

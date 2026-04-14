@@ -9,8 +9,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
   }
 
-  const { code, fingerprint } = await req.json();
+  const { code: rawCode, fingerprint } = await req.json();
   const userId = verified.user.id;
+  // 기존 KBO- 코드 호환: 입력값 정규화
+  const code = rawCode?.replace(/^KBO-/i, "KEUBO-");
   const ipAddress = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
 
   if (!code) {

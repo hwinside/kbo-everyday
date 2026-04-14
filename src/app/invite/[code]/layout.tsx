@@ -7,7 +7,9 @@ interface Props {
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { code } = await params;
+  const { code: rawCode } = await params;
+  // 기존 KBO- URL 호환
+  const code = rawCode?.replace(/^KBO-/i, "KEUBO-");
 
   let inviterNickname: string | null = null;
   try {
