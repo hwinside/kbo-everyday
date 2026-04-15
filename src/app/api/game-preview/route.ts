@@ -9,7 +9,7 @@ import { fetchStandings, fetchGames, fetchBoxScore, type TeamStanding, type BoxS
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
-const PREVIEW_VERSION = 4;
+const PREVIEW_VERSION = 5; // v5: 기사체 반말 전환 (존댓말 금지)
 
 // Build a set of current roster players (teamShortName:playerName) for filtering
 const currentRosterSet = new Set<string>();
@@ -329,6 +329,7 @@ ${homePitchers.join("\n")}
 ${standingsSection}${seriesSection}${recentFormSection}
 
 ## 작성 규칙
+0. 존댓말(~습니다/~합니다) 절대 금지. 기사체 반말(~했다/~이다/~있다)로만 작성하세요.
 1. 반드시 위에 제공된 실제 스탯만 사용. 없는 수치를 만들지 마세요.
 2. 두 팀의 장단점을 구체적 수치와 함께 비교 분석하세요.
 3. 선발투수의 스타일과 상대 타선의 매치업을 분석하세요.
