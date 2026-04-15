@@ -175,7 +175,8 @@ function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNa
     const change = d.rankChange > 0 ? `↑${d.rankChange}` : d.rankChange < 0 ? `↓${Math.abs(d.rankChange)}` : "-";
     const streakNum = parseInt(d.streak || "0");
     const streakText = Math.abs(streakNum) >= 3 ? `${Math.abs(streakNum)}${streakNum > 0 ? "연승" : "연패"} 중` : "";
-    return `${d.newRank}위 ${name}: ${d.wins}승${d.losses}패${d.draws}무 (${d.games_behind}게임차) 순위변동: ${change}${streakText ? `, ${streakText}` : ""}`;
+    const rankInfo = d.rankChange !== 0 ? `${d.oldRank}위→${d.newRank}위(${change})` : `${d.newRank}위(변동없음)`;
+    return `${rankInfo} ${name}: ${d.wins}승${d.losses}패${d.draws}무 (${d.games_behind}게임차)${streakText ? `, ${streakText}` : ""}`;
   }).join("\n");
 
   return `당신은 KBO 프로야구 전문 데이터 분석 기자입니다.
@@ -191,9 +192,10 @@ function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNa
 7. "순위표 해설"이 아니라 "어제 KBO에서 무슨 일이 있었는지" 요약하는 느낌으로.
 8. 총론/도입부 없이 바로 핵심 사건부터 시작하세요.
 9. 언급 팀은 최대 3~4팀으로 제한. 나머지는 과감히 생략.
-10. **선수 이름 필수**: 본문에 선수명을 최소 1~2명 포함하세요. 팀 단위만 쓰면 AI 느낌이 납니다.
-11. **승리투수 ≠ 경기 주인공**: 승리투수라는 이유만으로 "호투로 이겼다" 금지. 선발이 5이닝+ 투구했으면 선발 서사 우선. 결승타/만루포 친 타자가 있으면 타자 서사 우선.
-12. **뉴스 헤드라인 반드시 반영**: 헤드라인 중 최소 1개는 구체적 사건으로 본문에 녹여야 합니다. 선수명 언급된 뉴스 우선.
+10. 순위 변동 정확성 필수: 데이터에 X위→Y위로 명시되어 있으니 반드시 그대로 사용. 올랐다/떨어졌다는 실제 순위 변동이 있을 때만. 변동없음이면 X위를 유지했다로 쓰세요.
+11. 선수 이름 필수: 본문에 선수명을 최소 1~2명 포함하세요. 팀 단위만 쓰면 AI 느낌이 납니다.
+12. 승리투수 = 경기 주인공이 아닙니다. 승리투수라는 이유만으로 호투로 이겼다 금지. 선발이 5이닝+ 투구했으면 선발 서사 우선. 결승타/만루포 친 타자가 있으면 타자 서사 우선.
+13. 뉴스 헤드라인 반드시 반영: 헤드라인 중 최소 1개는 구체적 사건으로 본문에 녹여야 합니다. 선수명 언급된 뉴스 우선.
 13. 스코어/순위 팩트는 반드시 위 경기 데이터 기준. 뉴스는 맥락 보강용.
 14. 이벤트가 없으면 순위 변동만으로 서술.
 
