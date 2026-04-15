@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { isAdminRequest } from "@/lib/admin/pin";
+import { getKSTTodayStart, toKSTDateString } from "@/lib/utils/date-kst";
 
 function verifyPin(req: NextRequest): boolean {
   return isAdminRequest(req);
@@ -19,14 +20,11 @@ export async function GET(req: NextRequest) {
 
   if (countError) return supabaseErrorResponse(countError);
 
-  // Today's signups
-  const todayStart = new Date();
-  todayStart.setUTCHours(0, 0, 0, 0);
-
+  // Today's signups (KST)
   const { count: todaySignups, error: todayError } = await supabase
     .from("profiles")
     .select("*", { count: "exact", head: true })
-    .gte("created_at", todayStart.toISOString());
+    .gte("created_at", getKSTTodayStart());
 
   if (todayError) return supabaseErrorResponse(todayError);
 
@@ -67,7 +65,7 @@ export async function GET(req: NextRequest) {
   if (!signupError && signupRows) {
     const dayMap = new Map<string, number>();
     for (const row of signupRows) {
-      const d = new Date(row.created_at).toISOString().slice(0, 10);
+      const d = toKSTDateString(row.created_at);
       dayMap.set(d, (dayMap.get(d) ?? 0) + 1);
     }
     dailySignups = Array.from(dayMap.entries())

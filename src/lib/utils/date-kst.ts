@@ -20,6 +20,26 @@ export function getKSTNow(): Date {
   return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
 }
 
+/** Start of today in KST as ISO string (for Supabase .gte() queries) */
+export function getKSTTodayStart(): string {
+  const todayStr = getKSTToday();
+  return new Date(todayStr + "T00:00:00+09:00").toISOString();
+}
+
+/** Convert a UTC ISO timestamp to KST date string (YYYY-MM-DD) */
+export function toKSTDateString(utcTimestamp: string): string {
+  const d = new Date(utcTimestamp);
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+  return kst.toISOString().slice(0, 10);
+}
+
+/** Yesterday in KST as YYYY-MM-DD */
+export function getKSTYesterday(): string {
+  const now = new Date();
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000 - 86400000);
+  return kst.toISOString().slice(0, 10);
+}
+
 /** Days from KST today to a target date string (YYYY-MM-DD). 0 = today, negative = past. */
 export function daysFromKSTToday(targetDateStr: string): number {
   const target = new Date(targetDateStr + "T00:00:00+09:00").getTime();

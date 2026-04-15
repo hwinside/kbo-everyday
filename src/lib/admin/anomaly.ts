@@ -1,4 +1,5 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
+import { getKSTToday, getKSTYesterday } from "@/lib/utils/date-kst";
 
 interface AnomalyCheckResult {
   triggered: boolean;
@@ -12,8 +13,8 @@ export async function checkAnomalies(): Promise<AnomalyCheckResult[]> {
   const results: AnomalyCheckResult[] = [];
 
   // 1. Traffic drop/spike check
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const today = getKSTToday();
+  const yesterday = getKSTYesterday();
 
   const { data: todayStats } = await supabase
     .from("admin_daily_stats")

@@ -86,6 +86,11 @@ function mapFeedback(raw: FeedbackRaw): FeedbackItem {
   };
 }
 
+function getKSTDateStr(d: Date): string {
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+  return kst.toISOString().slice(0, 10);
+}
+
 /* ── Chart Data Helper ── */
 
 function buildChartData(items: FeedbackItem[]) {
@@ -93,7 +98,7 @@ function buildChartData(items: FeedbackItem[]) {
   for (let i = 6; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    days.push(d.toISOString().slice(0, 10));
+    days.push(getKSTDateStr(d));
   }
 
   return days.map((dateStr) => {

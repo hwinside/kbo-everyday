@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { isAdminRequest } from "@/lib/admin/pin";
+import { getKSTToday, toKSTDateString } from "@/lib/utils/date-kst";
 
 function verifyPin(req: NextRequest): boolean {
   return isAdminRequest(req);
@@ -13,7 +14,9 @@ export async function GET(req: NextRequest) {
   }
 
   const days = Number(req.nextUrl.searchParams.get("days") ?? "30");
-  const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  const todayKST = getKSTToday();
+  const sinceDate = new Date(new Date(todayKST + "T00:00:00+09:00").getTime() - days * 86400000);
+  const since = sinceDate.toISOString().slice(0, 10);
 
   // Posts
   const { data: posts, error: postsError } = await supabase
@@ -35,7 +38,7 @@ export async function GET(req: NextRequest) {
   const dailyMap = new Map<string, { posts: number; comments: number; photos: number }>();
 
   for (const post of posts ?? []) {
-    const date = post.created_at.slice(0, 10);
+    const date = toKSTDateString(post.created_at);
     const entry = dailyMap.get(date) ?? { posts: 0, comments: 0, photos: 0 };
     entry.posts += 1;
     if (post.content_type === "photo") entry.photos += 1;
@@ -43,7 +46,7 @@ export async function GET(req: NextRequest) {
   }
 
   for (const comment of comments ?? []) {
-    const date = comment.created_at.slice(0, 10);
+    const date = toKSTDateString(comment.created_at);
     const entry = dailyMap.get(date) ?? { posts: 0, comments: 0, photos: 0 };
     entry.comments += 1;
     dailyMap.set(date, entry);
