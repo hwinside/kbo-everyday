@@ -24,19 +24,15 @@ export async function signInWithGoogle() {
   return { data, error };
 }
 
-/** 네이버 로그인 — Supabase Custom OIDC provider */
+/**
+ * 네이버 로그인 — 수동 OAuth flow (/api/auth/naver)
+ * Supabase Custom OIDC가 openid scope를 강제 추가하는데 네이버는 OIDC 미지원이라
+ * GoTrue를 우회하고 직접 OAuth flow를 처리
+ */
 export async function signInWithNaver() {
-  const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: "custom:naver-login" as any,
-    options: {
-      redirectTo: CALLBACK_URL,
-      skipBrowserRedirect: true,
-    },
-  });
-  if (data?.url) {
-    window.location.assign(data.url);
-  }
-  return { data, error };
+  // 서버 API route가 네이버 OAuth URL로 redirect
+  window.location.assign("/api/auth/naver");
+  return { data: null, error: null };
 }
 
 /** 카카오 로그인 — PWA 동일 탭에서 OAuth 진행 (Safari VC 방지) */
