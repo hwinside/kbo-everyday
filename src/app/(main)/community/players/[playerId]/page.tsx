@@ -255,8 +255,8 @@ export default function PlayerBoardPage() {
 
       {/* 선수 프로필 헤더 */}
       <div
-        className="sticky z-30 border-b border-border backdrop-blur-xl"
-        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 56px)', background: `linear-gradient(135deg, ${teamColor}15, transparent)` }}
+        className="border-b border-border"
+        style={{ background: `linear-gradient(135deg, ${teamColor}15, transparent)` }}
       >
         <div className="flex items-center gap-4 px-5 py-4">
           <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name, kboId)} number={player.number} size={64} />
