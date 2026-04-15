@@ -241,7 +241,7 @@ export default function PlayerBoardPage() {
   return (
     <div className="min-h-screen bg-bg-primary pb-20">
       {/* 독립 헤더: 선수 목록과 동일 */}
-      <div className="sticky z-40 bg-bg-primary border-b" style={{ top: 'env(safe-area-inset-top, 0px)', borderColor: teamBorder }}>
+      <div className="bg-bg-primary border-b" style={{ borderColor: teamBorder }}>
         <div className="mx-auto max-w-lg">
           <header className="py-3 px-5 flex items-center gap-3">
             <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors" aria-label="뒤로가기">
