@@ -713,7 +713,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
         seriesContext: llmSummary.seriesContext || null,
         standingsImpact: llmSummary.standingsImpact || null,
       }
-    : fallbackSummary
+    : (!llmLoading && fallbackSummary)
       ? {
           headline: fallbackSummary.headline,
           gameFlow: fallbackSummary.gameFlow || undefined,
