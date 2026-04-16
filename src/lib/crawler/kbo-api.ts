@@ -1,7 +1,25 @@
 /* ===== KBO 공식 API 크롤러 ===== */
 
 import playersRoster from "@/lib/constants/players-roster.json";
+import { FOREIGN_NUMERIC_TO_ALPHA } from "@/lib/constants/foreign-id-map";
 import { trackFallback } from "@/lib/monitoring/api-fallback-tracker";
+
+/** 숫자 kboId로 로스터 조회 — 직접 매칭 실패 시 외국인 선수 매핑 fallback */
+function findPlayerByNumericId(numericId: string): { name: string } | undefined {
+  // 1차: 직접 매칭
+  const direct = (playersRoster as { kboId: string; name: string }[]).find(
+    r => String(r.kboId) === numericId
+  );
+  if (direct) return direct;
+  // 2차: 외국인 선수 숫자→영문 매핑
+  const alphaId = FOREIGN_NUMERIC_TO_ALPHA[numericId];
+  if (alphaId) {
+    return (playersRoster as { kboId: string; name: string }[]).find(
+      r => String(r.kboId) === alphaId
+    );
+  }
+  return undefined;
+}
 
 const KBO_BASE = "https://www.koreabaseball.com";
 
@@ -418,9 +436,7 @@ export function parseBoxScore(data: unknown): BoxScoreResult | null {
       };
     }).filter(b => b.name !== "").map(b => {
       if (/^\d+$/.test(b.name)) {
-        const player = (playersRoster as { kboId: string; name: string }[]).find(
-          r => String(r.kboId) === b.name
-        );
+        const player = findPlayerByNumericId(b.name);
         b.name = player ? player.name : `선수(${b.name.slice(-3)})`;
       }
       return b;
@@ -447,9 +463,7 @@ export function parseBoxScore(data: unknown): BoxScoreResult | null {
       };
     }).filter(p => p.name !== "").map(p => {
       if (/^\d+$/.test(p.name)) {
-        const player = (playersRoster as { kboId: string; name: string }[]).find(
-          r => String(r.kboId) === p.name
-        );
+        const player = findPlayerByNumericId(p.name);
         p.name = player ? player.name : `선수(${p.name.slice(-3)})`;
       }
       return p;

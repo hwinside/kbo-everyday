@@ -1,5 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchGames } from "@/lib/crawler/kbo-api";
+import playersRoster from "@/lib/constants/players-roster.json";
+import { FOREIGN_NUMERIC_TO_ALPHA } from "@/lib/constants/foreign-id-map";
+
+/** 숫자 kboId로 로스터 조회 — 직접 매칭 실패 시 외국인 선수 매핑 fallback */
+function findPlayerByNumericId(numericId: string): { name: string } | undefined {
+  const direct = (playersRoster as { kboId: string; name: string }[]).find(
+    r => String(r.kboId) === numericId
+  );
+  if (direct) return direct;
+  const alphaId = FOREIGN_NUMERIC_TO_ALPHA[numericId];
+  if (alphaId) {
+    return (playersRoster as { kboId: string; name: string }[]).find(
+      r => String(r.kboId) === alphaId
+    );
+  }
+  return undefined;
+}
 
 // ===== Types =====
 
@@ -113,8 +130,6 @@ function positionFullName(abbr: string): string {
   });
   return parts.join("·") || abbr;
 }
-
-import playersRoster from "@/lib/constants/players-roster.json";
 
 const KBO_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
 const HEADERS = {
@@ -337,9 +352,7 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
     }).filter(b => b.name !== "").map(b => {
       // KBO sometimes returns player IDs instead of names
       if (/^\d+$/.test(b.name)) {
-        const player = (playersRoster as { kboId: string; name: string }[]).find(
-          r => String(r.kboId) === b.name
-        );
+        const player = findPlayerByNumericId(b.name);
         b.name = player ? player.name : `선수(${b.name.slice(-3)})`;
       }
       return b;
@@ -375,9 +388,7 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
     }).filter(p => p.name !== "").map(p => {
       // KBO sometimes returns player IDs instead of names for foreign players
       if (/^\d+$/.test(p.name)) {
-        const player = (playersRoster as { kboId: string; name: string }[]).find(
-          r => String(r.kboId) === p.name
-        );
+        const player = findPlayerByNumericId(p.name);
         p.name = player ? player.name : `선수(${p.name.slice(-3)})`;
       }
       return p;
