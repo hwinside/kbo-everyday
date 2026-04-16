@@ -20,7 +20,12 @@ interface EventPayload {
 
 const EVENTS_KEY = "kbo-analytics-events";
 
-export function trackEvent(event: string, properties?: Record<string, unknown>): void {
+interface TrackOptions {
+  /** true면 Meta Pixel 표준 이벤트로도 발화 (기본 false) */
+  meta?: boolean;
+}
+
+export function trackEvent(event: string, properties?: Record<string, unknown>, options?: TrackOptions): void {
   if (typeof window === "undefined") return;
 
   const payload: EventPayload = {
@@ -49,9 +54,8 @@ export function trackEvent(event: string, properties?: Record<string, unknown>):
     (window as unknown as GtagWindow).gtag!("event", event, payload.properties);
   }
 
-  // Meta Pixel 연동 (fbq 있으면)
-  if (typeof window !== "undefined" && (window as unknown as GtagWindow).fbq) {
-    // Meta 표준 이벤트 매핑
+  // Meta Pixel 연동 — 명시적으로 meta: true 인 경우만 발화 (중복 방지)
+  if (options?.meta && typeof window !== "undefined" && (window as unknown as GtagWindow).fbq) {
     const metaEventMap: Record<string, string> = {
       [OnboardingEvents.ONBOARDING_COMPLETE]: "CompleteRegistration",
       [OnboardingEvents.TEAM_SELECTED]: "Subscribe",

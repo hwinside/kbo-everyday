@@ -106,9 +106,9 @@ export default function ProfileSetupModal({ isOpen }: Props) {
         localStorage.setItem("kbo-my-team", String(selectedTeam));
       }
 
-      // Meta Pixel: CompleteRegistration + Subscribe(팀선택)
-      trackEvent(OnboardingEvents.ONBOARDING_COMPLETE, { nickname: nickname.trim(), team_id: selectedTeam });
-      trackEvent(OnboardingEvents.TEAM_SELECTED, { team_id: selectedTeam });
+      // Meta Pixel: CompleteRegistration + Subscribe(팀선택) — 신규 가입만 meta: true
+      trackEvent(OnboardingEvents.ONBOARDING_COMPLETE, { nickname: nickname.trim(), team_id: selectedTeam }, { meta: true });
+      trackEvent(OnboardingEvents.TEAM_SELECTED, { team_id: selectedTeam }, { meta: true });
 
       await refreshProfile();
       setStep(4);
