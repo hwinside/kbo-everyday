@@ -10,9 +10,9 @@ const GADS_ID = "AW-18082281693";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://keubo.fan"),
-  title: "크보팬 — 내 팀 경기, 오늘 할 얘기는 여기서 끝",
+  title: "크보팬 — 야구팬이 가장 오래 머무는 곳",
   description:
-    "내 팀 경기, 오늘 할 얘기는 여기서 끝. 실시간 스코어, 승부예측, 구단/선수별 게시판, 하이라이트.",
+    "야구팬이 가장 오래 머무는 곳, 크보팬. 실시간 스코어, 승부예측, 구단/선수별 게시판, 하이라이트.",
   keywords: ["KBO", "야구", "커뮤니티", "실시간", "승부예측", "기록"],
   manifest: "/manifest.json",
   appleWebApp: {
@@ -21,17 +21,26 @@ export const metadata: Metadata = {
     title: "크보팬",
   },
   openGraph: {
-    title: "크보팬 — 내 팀 경기, 오늘 할 얘기는 여기서 끝",
-    description: "내 팀 경기, 오늘 할 얘기는 여기서 끝. 실시간 스코어 · 승부예측 · 팬 커뮤니티 · 하이라이트",
+    title: "크보팬 — 야구팬이 가장 오래 머무는 곳",
+    description: "야구팬이 가장 오래 머무는 곳, 크보팬. 실시간 스코어 · 승부예측 · 팬 커뮤니티 · 하이라이트",
     type: "website",
     url: "https://keubo.fan",
     siteName: "크보팬",
     locale: "ko_KR",
+    images: [
+      {
+        url: "https://keubo.fan/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "야구팬이 가장 오래 머무는 곳, 크보팬",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "크보팬 — 내 팀 경기, 오늘 할 얘기는 여기서 끝",
-    description: "내 팀 경기, 오늘 할 얘기는 여기서 끝. 실시간 스코어 · 승부예측 · 팬 커뮤니티 · 하이라이트",
+    title: "크보팬 — 야구팬이 가장 오래 머무는 곳",
+    description: "야구팬이 가장 오래 머무는 곳, 크보팬. 실시간 스코어 · 승부예측 · 팬 커뮤니티 · 하이라이트",
+    images: ["https://keubo.fan/og-image.png"],
   },
 };
 
