@@ -312,6 +312,96 @@ async function getRecentTeamRecord(gameId: string, teamId: number, count = 5): P
   return record;
 }
 
+interface StarterVsOpponent {
+  games: number;
+  wins: number;
+  losses: number;
+  totalIP: number;
+  totalER: number;
+  totalK: number;
+  era: string; // calculated
+  summary: string;
+}
+
+/** 선발투수의 상대팀 대상 최근 등판 기록 */
+async function getStarterVsOpponent(
+  gameId: string,
+  starterName: string,
+  starterTeamId: number,
+  opponentTeamId: number,
+): Promise<StarterVsOpponent | null> {
+  const dateStr = getDateFromGameId(gameId);
+  const MAX_LOOKBACK = 90;
+  const MAX_GAMES = 5;
+
+  let games = 0, wins = 0, losses = 0, totalIP = 0, totalER = 0, totalK = 0;
+  const gameDetails: string[] = [];
+
+  for (let offset = 1; offset <= MAX_LOOKBACK && games < MAX_GAMES; offset++) {
+    const d = shiftDate(dateStr, -offset);
+    const dayGames = await fetchGames(d).catch(() => [] as KboGame[]);
+    // 해당 투수가 선발로 나온 상대팀 경기만 필터
+    const matchups = dayGames.filter(g => {
+      if (g.status !== "final") return false;
+      const isAway = g.awayTeamId === starterTeamId;
+      const isHome = g.homeTeamId === starterTeamId;
+      if (!isAway && !isHome) return false;
+      const oppId = isAway ? g.homeTeamId : g.awayTeamId;
+      if (oppId !== opponentTeamId) return false;
+      const starter = isAway ? g.awayStarterName : g.homeStarterName;
+      return starter === starterName;
+    });
+
+    for (const g of matchups) {
+      if (games >= MAX_GAMES) break;
+      const bs = await fetchBoxScore(g.gameId).catch(() => null);
+      if (!bs) continue;
+      const isAway = g.awayTeamId === starterTeamId;
+      const pitchers = isAway ? bs.awayPitchers : bs.homePitchers;
+      // 선발투수는 첫 번째 투수
+      const sp = pitchers[0];
+      if (!sp || sp.name !== starterName) continue;
+
+      games++;
+      const ip = parseIP(sp.inningsPitched);
+      totalIP += ip;
+      totalER += sp.earnedRuns;
+      totalK += sp.strikeouts;
+      if (sp.decision === "승") wins++;
+      else if (sp.decision === "패") losses++;
+
+      const dateLabel = `${d.slice(4, 6)}/${d.slice(6, 8)}`;
+      const oppShort = getTeamShortName(opponentTeamId);
+      gameDetails.push(`${dateLabel} vs ${oppShort}: ${sp.inningsPitched}이닝 ${sp.earnedRuns}자책 ${sp.strikeouts}K (${sp.decision || "ND"})`);
+    }
+  }
+
+  if (games === 0) return null;
+
+  const era = totalIP > 0 ? ((totalER / totalIP) * 9).toFixed(2) : "0.00";
+  const oppShort = getTeamShortName(opponentTeamId);
+  const summary = `vs ${oppShort} 최근 ${games}등판: ERA ${era}, ${wins}승${losses}패, ${totalK}K / ${gameDetails.join(" | ")}`;
+
+  return { games, wins, losses, totalIP, totalER, totalK, era, summary };
+}
+
+/** 이닝 문자열 파싱 ("5 2/3" → 5.667) */
+function parseIP(ip: string): number {
+  const parts = ip.trim().split(/\s+/);
+  let total = 0;
+  if (parts[0]) total += parseInt(parts[0], 10) || 0;
+  if (parts[1]) {
+    const frac = parts[1].split("/");
+    if (frac.length === 2) total += (parseInt(frac[0], 10) || 0) / (parseInt(frac[1], 10) || 1);
+  }
+  // Handle "5.1" or "5.2" format (KBO style: .1 = 1/3, .2 = 2/3)
+  if (parts.length === 1 && ip.includes(".")) {
+    const [whole, dec] = ip.split(".");
+    total = (parseInt(whole, 10) || 0) + (parseInt(dec, 10) || 0) / 3;
+  }
+  return total;
+}
+
 async function getHeadToHead(gameId: string, awayTeamId: number, homeTeamId: number): Promise<HeadToHeadRecord> {
   const dateStr = getDateFromGameId(gameId);
   const MAX_LOOKBACK = 60;
@@ -531,7 +621,8 @@ async function buildPreviewPrompt(req: PreviewRequest): Promise<string> {
   // 런타임 데이터 병렬 조회 (모두 try-catch로 감싸서 실패해도 기존 동작 유지)
   const [seriesCtx, standingsCtx, awayHotPlayers, homeHotPlayers,
     awayLineup, homeLineup, awayPrevLineup, homePrevLineup,
-    awayRecentRecord, homeRecentRecord, h2hRecord] = await Promise.all([
+    awayRecentRecord, homeRecentRecord, h2hRecord,
+    awayStarterVsOpp, homeStarterVsOpp] = await Promise.all([
     getSeriesContext(req.gameId, req.awayTeamId, req.homeTeamId).catch(() => null),
     getStandingsContext(req.awayTeamId, req.homeTeamId).catch(() => null),
     getRecentForm(req.gameId, req.awayTeamId).catch(() => []),
@@ -543,6 +634,8 @@ async function buildPreviewPrompt(req: PreviewRequest): Promise<string> {
     getRecentTeamRecord(req.gameId, req.awayTeamId).catch(() => ({ wins: 0, losses: 0, draws: 0, results: [] as string[] })),
     getRecentTeamRecord(req.gameId, req.homeTeamId).catch(() => ({ wins: 0, losses: 0, draws: 0, results: [] as string[] })),
     getHeadToHead(req.gameId, req.awayTeamId, req.homeTeamId).catch(() => ({ awayWins: 0, homeWins: 0, draws: 0, results: [] as string[] })),
+    req.awayStarter ? getStarterVsOpponent(req.gameId, req.awayStarter, req.awayTeamId, req.homeTeamId).catch(() => null) : Promise.resolve(null),
+    req.homeStarter ? getStarterVsOpponent(req.gameId, req.homeStarter, req.homeTeamId, req.awayTeamId).catch(() => null) : Promise.resolve(null),
   ]);
 
   // 오늘 실제 라인업 섹션
@@ -629,10 +722,10 @@ ${req.awayStarter ? `원정 선발: ${req.awayStarter}` : "원정 선발: 미정
 ${req.homeStarter ? `홈 선발: ${req.homeStarter}` : "홈 선발: 미정"}
 
 ## ${awayShort} 선발투수 상세
-${awayStarterInfo || "스탯 미확인"}
+${awayStarterInfo || "스탯 미확인"}${awayStarterVsOpp ? `\n상대팀 등판 기록: ${awayStarterVsOpp.summary}` : ""}
 
 ## ${homeShort} 선발투수 상세
-${homeStarterInfo || "스탯 미확인"}
+${homeStarterInfo || "스탯 미확인"}${homeStarterVsOpp ? `\n상대팀 등판 기록: ${homeStarterVsOpp.summary}` : ""}
 ${todayLineupSection}${lineupDiffSection}${!todayLineupSection ? `
 ## ${awayShort} 주요 타자 (2026 시즌 기록)
 ${awayBatters.join("\n")}
