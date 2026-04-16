@@ -331,8 +331,8 @@ export default function GameDetailPage() {
                 boxScore={gameDetail?.boxScore ?? null}
                 linescore={gameDetail?.linescore ?? gameRelay?.linescore ?? null}
                 starterNames={{
-                  away: liveGame?.awayStarterName || gameDetail?.boxScore?.awayPitchers?.[0]?.name || "",
-                  home: liveGame?.homeStarterName || gameDetail?.boxScore?.homePitchers?.[0]?.name || "",
+                  away: liveGame?.awayStarterName || (gameDetail?.boxScore?.awayPitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.awayPitchers[0].name) ? gameDetail.boxScore.awayPitchers[0].name : ""),
+                  home: liveGame?.homeStarterName || (gameDetail?.boxScore?.homePitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.homePitchers[0].name) ? gameDetail.boxScore.homePitchers[0].name : ""),
                 }}
                 lineupConfirmed={!!d.detailLineup}
                 gameRelay={gameRelay}
