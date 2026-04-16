@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { useState, useEffect, useRef } from "react";
 
 import { clsx } from "clsx";
 import { type TeamData } from "@/lib/constants/teams";
@@ -15,10 +16,16 @@ function formatAvg(avg: string): string {
   return avg.replace(/^0\./, ".");
 }
 
+interface LineupAnalysis {
+  battery: string;
+  lineup: string;
+}
+
 interface LineupTabProps {
   lineup: GameLineup;
   awayTeam: TeamData;
   homeTeam: TeamData;
+  gameId: string;
 }
 
 function PitcherCard({
@@ -60,10 +67,126 @@ function PitcherCard({
   );
 }
 
+function AiLineupAnalysisCard({
+  gameId,
+  awayTeamId,
+  homeTeamId,
+  lineup,
+}: {
+  gameId: string;
+  awayTeamId: number;
+  homeTeamId: number;
+  lineup: GameLineup;
+}) {
+  const [analysis, setAnalysis] = useState<LineupAnalysis | null>(null);
+  const [loading, setLoading] = useState(true);
+  const fetchedGameId = useRef<string | null>(null);
+
+  useEffect(() => {
+    // 같은 gameId + 같은 라인업이면 재요청 방지
+    const lineupKey = `${gameId}:${lineup.away.startingPitcher.name}:${lineup.home.startingPitcher.name}`;
+    if (fetchedGameId.current === lineupKey) return;
+    fetchedGameId.current = lineupKey;
+    setLoading(true);
+    setAnalysis(null);
+
+    async function load() {
+      try {
+        const getRes = await fetch(`/api/lineup-analysis?gameId=${gameId}`);
+        const getData = await getRes.json();
+        if (getData.analysis) {
+          setAnalysis(getData.analysis);
+          setLoading(false);
+          return;
+        }
+
+        const catcher = (side: typeof lineup.away) =>
+          side.batters.find(b => b.position === "C")?.name || "";
+
+        const postRes = await fetch("/api/lineup-analysis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            gameId,
+            awayTeamId,
+            homeTeamId,
+            lineup: {
+              away: {
+                startingPitcher: lineup.away.startingPitcher.name,
+                catcher: catcher(lineup.away),
+                batters: lineup.away.batters.map(b => ({
+                  order: b.order,
+                  position: b.position,
+                  name: b.name,
+                })),
+              },
+              home: {
+                startingPitcher: lineup.home.startingPitcher.name,
+                catcher: catcher(lineup.home),
+                batters: lineup.home.batters.map(b => ({
+                  order: b.order,
+                  position: b.position,
+                  name: b.name,
+                })),
+              },
+            },
+          }),
+        });
+        const postData = await postRes.json();
+        if (postData.analysis) {
+          setAnalysis(postData.analysis);
+        }
+      } catch {
+        // silently fail
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    load();
+  }, [gameId, awayTeamId, homeTeamId, lineup]);
+
+  if (!loading && !analysis) return null;
+
+  return (
+    <div className="glass-card p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <span className="text-base">🤖</span>
+        <span className="text-sm font-semibold text-text-primary">AI 라인업 분석</span>
+      </div>
+      {loading ? (
+        <div className="flex items-center justify-center py-3">
+          <div className="w-5 h-5 border-2 border-text-tertiary border-t-text-primary rounded-full animate-spin" />
+          <span className="ml-2 text-sm text-text-tertiary">분석 생성 중...</span>
+        </div>
+      ) : analysis ? (
+        <div className="space-y-2.5">
+          <div>
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className="text-sm">⚾</span>
+              <span className="text-xs font-medium text-text-secondary">투수·포수</span>
+            </div>
+            <p className="text-sm text-text-primary leading-relaxed">{analysis.battery}</p>
+          </div>
+          <div className="border-t border-border/50" />
+          <div>
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className="text-sm">📋</span>
+              <span className="text-xs font-medium text-text-secondary">타순 변경</span>
+            </div>
+            <p className="text-sm text-text-primary leading-relaxed">{analysis.lineup}</p>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function LineupTab({
   lineup,
   awayTeam,
   homeTeam,
+  gameId,
 }: LineupTabProps) {
   const awaySp = lineup.away.startingPitcher.name;
   const homeSp = lineup.home.startingPitcher.name;
@@ -101,6 +224,16 @@ export default function LineupTab({
           label={homeTeam.shortName}
         />
       </div>
+
+      {/* AI Lineup Analysis — 라인업 확정 시에만 표시 */}
+      {!isLineupPartial && (
+        <AiLineupAnalysisCard
+          gameId={gameId}
+          awayTeamId={awayTeam.id}
+          homeTeamId={homeTeam.id}
+          lineup={lineup}
+        />
+      )}
 
       {/* Lineup table */}
       <div className="glass-card p-5 overflow-hidden">

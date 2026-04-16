@@ -341,6 +341,7 @@ export default function GameDetailPage() {
                 <CancelledTabCard />
               ) : d.detailLineup ? (
                 <LineupTab
+                  gameId={gameId}
                   lineup={{
                     gameId,
                     away: {
