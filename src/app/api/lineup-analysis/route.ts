@@ -7,7 +7,7 @@ import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
-const ANALYSIS_VERSION = 2;
+const ANALYSIS_VERSION = 3;
 
 const KBO_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
 const HEADERS = {
@@ -228,7 +228,121 @@ function getStarterEra(name: string, teamId: number): string | null {
   return pitcher ? `ERA ${pitcher.era}, ${pitcher.wins}승${pitcher.losses}패` : null;
 }
 
-function buildPrompt(diff: LineupDiff, req: LineupRequest): string {
+interface RotationResult {
+  type: "normal" | "reordered" | "new_starter" | "unknown";
+  rotationNames?: string[];
+  expectedStarter?: string;
+  message?: string;
+}
+
+async function fetchRecentStarters(
+  teamId: number,
+  gameId: string,
+  count = 15,
+): Promise<{ date: string; starterName: string }[]> {
+  const dateStr = getDateFromGameId(gameId);
+  const starters: { date: string; starterName: string }[] = [];
+  const MAX_LOOKBACK = 30; // look back up to 30 days to find 15 games
+
+  for (let offset = 1; offset <= MAX_LOOKBACK && starters.length < count; offset++) {
+    const d = shiftDate(dateStr, -offset);
+    const games = await fetchGames(d).catch(() => [] as KboGame[]);
+    const teamGames = games.filter(
+      g => g.status === "final" && g.gameId !== gameId && (g.awayTeamId === teamId || g.homeTeamId === teamId)
+    );
+    for (const g of teamGames) {
+      const starterName = g.awayTeamId === teamId ? g.awayStarterName : g.homeStarterName;
+      if (starterName) {
+        starters.push({ date: g.date, starterName });
+      }
+      if (starters.length >= count) break;
+    }
+  }
+
+  // Return in chronological order (oldest first)
+  return starters.reverse();
+}
+
+function detectRotationPattern(
+  starters: { date: string; starterName: string }[],
+  todayStarter: string,
+): RotationResult {
+  if (starters.length < 8) {
+    return { type: "unknown" };
+  }
+
+  // Check new_starter first
+  const allNames = new Set(starters.map(s => s.starterName));
+  if (!allNames.has(todayStarter)) {
+    return {
+      type: "new_starter",
+      rotationNames: [...allNames],
+      message: `${todayStarter}은(는) 최근 ${starters.length}경기에 등판 기록이 없는 투수다.`,
+    };
+  }
+
+  // Try to detect rotation cycle length (4, 5, 6)
+  for (const cycleLen of [5, 4, 6]) {
+    const result = tryDetectCycle(starters, todayStarter, cycleLen);
+    if (result) return result;
+  }
+
+  return { type: "unknown" };
+}
+
+function tryDetectCycle(
+  starters: { date: string; starterName: string }[],
+  todayStarter: string,
+  cycleLen: number,
+): RotationResult | null {
+  // Need at least 2 full cycles to establish a pattern
+  if (starters.length < cycleLen * 2) return null;
+
+  // Take the most recent starters and look for repeating cycle
+  const recent = starters.slice(-cycleLen * 3); // up to 3 cycles worth
+  const names = recent.map(s => s.starterName);
+
+  // Extract candidate rotation from the last cycle
+  const lastCycle = names.slice(-cycleLen);
+  const uniqueInCycle = new Set(lastCycle);
+
+  // A valid cycle should have exactly cycleLen unique pitchers
+  if (uniqueInCycle.size !== cycleLen) return null;
+
+  // Check if the cycle before last matches
+  if (names.length < cycleLen * 2) return null;
+  const prevCycle = names.slice(-(cycleLen * 2), -cycleLen);
+
+  // Count how many positions match between last two cycles
+  let matches = 0;
+  for (let i = 0; i < cycleLen; i++) {
+    if (prevCycle[i] === lastCycle[i]) matches++;
+  }
+
+  // Require strong match: at least (cycleLen - 1) positions match
+  if (matches < cycleLen - 1) return null;
+
+  const rotationNames = lastCycle;
+
+  // Determine expected next starter
+  // The last starter in history is at the end; next would be the one after in rotation
+  const lastStarterIdx = rotationNames.indexOf(names[names.length - 1]);
+  const expectedIdx = (lastStarterIdx + 1) % cycleLen;
+  const expectedStarter = rotationNames[expectedIdx];
+
+  if (todayStarter === expectedStarter) {
+    return { type: "normal", rotationNames };
+  }
+
+  return {
+    type: "reordered",
+    rotationNames,
+    expectedStarter,
+    message: `최근 순환에서 벗어난 기용이다. 로테이션 멤버: ${rotationNames.join(", ")}.`,
+  };
+}
+
+function buildPrompt(diff: LineupDiff, req: LineupRequest, rotations?: { away: RotationResult; home: RotationResult }): string {
   const awayName = getTeamShortName(req.awayTeamId);
   const homeName = getTeamShortName(req.homeTeamId);
 
@@ -271,12 +385,33 @@ function buildPrompt(diff: LineupDiff, req: LineupRequest): string {
     lineupSection = "양 팀 모두 직전 경기와 동일한 라인업\n";
   }
 
+  // 로테이션 분석 섹션 (reordered 또는 new_starter만 포함)
+  let rotationSection = "";
+  if (rotations) {
+    for (const side of [
+      { name: awayName, r: rotations.away, sp: req.lineup.away.startingPitcher },
+      { name: homeName, r: rotations.home, sp: req.lineup.home.startingPitcher },
+    ]) {
+      if (side.r.type === "reordered") {
+        rotationSection += `[${side.name}] ${side.r.message}\n`;
+      } else if (side.r.type === "new_starter") {
+        rotationSection += `[${side.name}] ${side.r.message}\n`;
+      }
+    }
+  }
+
+  const rotationPromptSection = rotationSection
+    ? `\n## 로테이션 분석\n${rotationSection}`
+    : "";
+
+  const hasRotationData = !!rotationSection;
+
   return `당신은 KBO 프로야구 전문 기자입니다. 오늘 경기의 선발 매치업과 직전 경기 대비 라인업 변경사항을 분석하세요.
 
 ## 오늘 선발 매치업
 ${batterySection}
 ## 타순 변경 (직전 경기 대비)
-${lineupSection}
+${lineupSection}${rotationPromptSection}
 ## 작성 규칙
 1. 존댓말(~습니다/~합니다) 절대 금지. 기사체 반말(~했다/~이다/~있다)로만 작성.
 2. 마크다운/HTML 금지, 순수 텍스트만.
@@ -285,11 +420,12 @@ ${lineupSection}
 5. 선발투수는 로테이션이므로 "변경"이 아닌 오늘 매치업 소개로 작성. 직전 경기 선발과 비교하지 말 것.
 6. 포수 변경은 동일 팀 내 의미있는 변경이므로 diff로 언급 가능.
 7. 제공된 diff 정보만 사용. 없는 정보를 만들지 마세요.
+8. 로테이션 관련: "원래 누구 차례였다" 식의 표현 금지. "최근 순환에서 벗어난 기용" 등 중립 표현 사용.
 
 ## 출력 형식 (JSON만 출력)
 {
   "battery": "선발 매치업 + 포수 변경 분석 50~100자",
-  "lineup": "타순 분석 80~150자"
+  "lineup": "타순 분석 80~150자"${hasRotationData ? ',\n  "rotation": "로테이션 분석 30~80자"' : ""}
 }`;
 }
 
@@ -353,14 +489,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ analysis: cached.summary, source: "cache" });
   }
 
-  const [awayPrev, homePrev] = await Promise.all([
+  const [awayPrev, homePrev, awayStarters, homeStarters] = await Promise.all([
     fetchPrevGameLineup(body.gameId, body.awayTeamId),
     fetchPrevGameLineup(body.gameId, body.homeTeamId),
+    fetchRecentStarters(body.awayTeamId, body.gameId),
+    fetchRecentStarters(body.homeTeamId, body.gameId),
   ]);
 
   if (!awayPrev && !homePrev) {
     return NextResponse.json({ analysis: null, source: "no_prev" });
   }
+
+  const rotations = {
+    away: detectRotationPattern(awayStarters, body.lineup.away.startingPitcher),
+    home: detectRotationPattern(homeStarters, body.lineup.home.startingPitcher),
+  };
 
   const diff: LineupDiff = {
     away: awayPrev
@@ -382,7 +525,7 @@ export async function POST(req: NextRequest) {
   );
 
   try {
-    const prompt = buildPrompt(diff, body);
+    const prompt = buildPrompt(diff, body, rotations);
 
     const geminiRes = await fetch(GEMINI_URL, {
       method: "POST",
