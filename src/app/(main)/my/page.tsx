@@ -15,9 +15,11 @@ import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { usePushNotification } from "@/lib/hooks/usePushNotification";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { updateProfile } from "@/lib/supabase/auth";
+import { supabase } from "@/lib/supabase/client";
 import LoginSheet from "@/components/auth/LoginSheet";
 import FeedbackSheet from "@/components/feedback/FeedbackSheet";
 import AvatarSelectSheet from "@/components/profile/AvatarSelectSheet";
+import NicknameEditSheet from "@/components/profile/NicknameEditSheet";
 import ProfileCard from "@/components/my/ProfileCard";
 import InviteSection from "@/components/my/InviteSection";
 import FavoritePlayersCard from "@/components/my/FavoritePlayersCard";
@@ -27,6 +29,14 @@ import ThemeToggleCard from "@/components/my/ThemeToggleCard";
 import PwaGuideModal from "@/components/my/PwaGuideModal";
 
 export default function MyPage() {
+  const [nicknameStatus, setNicknameStatus] = useState<{
+    nickname: string;
+    used: number;
+    remaining: number;
+    limit: number;
+    windowDays: number;
+    resetAt: string | null;
+  } | null>(null);
   const [teamId, setTeamId] = useState<number | null>(null);
   const [showTeamSelect, setShowTeamSelect] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
@@ -36,6 +46,7 @@ export default function MyPage() {
   const [showPwaGuide, setShowPwaGuide] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [showAvatarSelect, setShowAvatarSelect] = useState(false);
+  const [showNicknameEdit, setShowNicknameEdit] = useState(false);
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
   const router = useRouter();
 
@@ -44,6 +55,33 @@ export default function MyPage() {
     setTeamId(getMyTeamId());
     setFavPlayers(getFavoritePlayers());
   }, [profile]);
+
+  useEffect(() => {
+    async function loadNicknameStatus() {
+      if (!user) {
+        setNicknameStatus(null);
+        return;
+      }
+
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+
+      if (!token) return;
+
+      const res = await fetch("/api/me/nickname", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) return;
+
+      const json = await res.json();
+      setNicknameStatus(json);
+    }
+
+    loadNicknameStatus();
+  }, [user, profile?.nickname]);
 
   const team = teamId ? getTeamById(teamId) ?? null : null;
 
@@ -81,7 +119,13 @@ export default function MyPage() {
 
       {/* Profile card */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
-        <ProfileCard user={user} profile={profile} team={team} onAvatarClick={() => user && setShowAvatarSelect(true)} />
+        <ProfileCard
+          user={user}
+          profile={profile}
+          team={team}
+          onAvatarClick={() => user && setShowAvatarSelect(true)}
+          onNicknameClick={() => user && setShowNicknameEdit(true)}
+        />
       </motion.div>
 
       {/* 친구 초대 */}
@@ -202,6 +246,26 @@ export default function MyPage() {
         currentAvatarUrl={profile?.avatar_url ?? null}
         teamId={teamId}
         nickname={profile?.nickname ?? ""}
+      />
+      <NicknameEditSheet
+        isOpen={showNicknameEdit}
+        onClose={() => setShowNicknameEdit(false)}
+        currentNickname={profile?.nickname ?? ""}
+        status={nicknameStatus}
+        onSaved={async () => {
+          await refreshProfile();
+
+          const { data } = await supabase.auth.getSession();
+          const token = data.session?.access_token;
+          if (!token) return;
+
+          const res = await fetch("/api/me/nickname", {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) return;
+          const json = await res.json();
+          setNicknameStatus(json);
+        }}
       />
       <PlayerSelectModal
         isOpen={showPlayerSelect}

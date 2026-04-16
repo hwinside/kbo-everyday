@@ -1,6 +1,6 @@
 "use client";
 
-import { Settings } from "lucide-react";
+import { ChevronRight, Settings } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
@@ -14,9 +14,10 @@ interface ProfileCardProps {
   profile: { nickname?: string; avatar_url?: string | null; points?: number } | null;
   team: TeamData | null;
   onAvatarClick: () => void;
+  onNicknameClick: () => void;
 }
 
-export default function ProfileCard({ user, profile, team, onAvatarClick }: ProfileCardProps) {
+export default function ProfileCard({ user, profile, team, onAvatarClick, onNicknameClick }: ProfileCardProps) {
   return (
     <GlassCard className="p-5">
       <div className="flex items-center gap-4">
@@ -44,10 +45,18 @@ export default function ProfileCard({ user, profile, team, onAvatarClick }: Prof
         </button>
         <div className="flex-1">
           <div className="flex items-center gap-3">
-            <span className="text-lg font-semibold text-text-primary">{user ? (profile?.nickname || user.email || "유저") : "게스트"}</span>
+            {user ? (
+              <button onClick={onNicknameClick} className="flex items-center gap-1 rounded-full -ml-1 px-1 py-0.5 text-left hover:bg-bg-tertiary transition-colors">
+                <span className="text-lg font-semibold text-text-primary">{profile?.nickname || user.email || "유저"}</span>
+                <ChevronRight size={16} className="text-text-tertiary" />
+              </button>
+            ) : (
+              <span className="text-lg font-semibold text-text-primary">게스트</span>
+            )}
             {team && <TeamBadge teamId={team.id} />}
           </div>
           <LevelBadge level={15} showTitle />
+          {user && <p className="mt-1 text-xs text-text-tertiary">닉네임을 누르면 변경할 수 있어요</p>}
           <p className="mt-0.5 text-base text-text-tertiary">{user ? `${profile?.points || 0} 포인트` : "로그인 해주세요"}</p>
         </div>
       </div>
