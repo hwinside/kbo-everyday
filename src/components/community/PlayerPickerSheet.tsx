@@ -104,9 +104,18 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
             className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-bg-secondary overflow-hidden flex flex-col"
             style={{ maxHeight: "92dvh" }}
           >
-            <div className="flex justify-center pt-3">
+            {/* Swipe-down handle */}
+            <motion.div
+              className="flex justify-center pt-3 cursor-grab active:cursor-grabbing"
+              drag="y"
+              dragConstraints={{ top: 0, bottom: 0 }}
+              dragElastic={{ top: 0, bottom: 0.8 }}
+              onDragEnd={(_e, info) => {
+                if (info.offset.y > 80 || info.velocity.y > 300) handleClose();
+              }}
+            >
               <div className="h-1 w-10 rounded-full bg-text-tertiary" />
-            </div>
+            </motion.div>
 
             <div className="sticky top-0 bg-bg-secondary px-5 pt-3 pb-2 z-10 space-y-3">
               <h3 className="text-lg font-bold text-text-primary">어떤 선수 게시판에 쓸까요?</h3>
