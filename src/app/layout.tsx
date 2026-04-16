@@ -7,7 +7,7 @@ import { Analytics } from "@vercel/analytics/next";
 
 const GA_ID = "G-C0TE4TFLZ4";
 const GADS_ID = "AW-18082281693";
-const META_PIXEL_ID = "1869802563605653";
+const META_PIXEL_ID = process.env.NEXT_PUBLIC_META_PIXEL_ID || "";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://keubo.fan"),
