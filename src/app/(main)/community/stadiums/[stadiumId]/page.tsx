@@ -2,6 +2,8 @@
 
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
+import WritePost from "@/components/community/WritePost";
+import { createPost, usePosts } from "@/lib/supabase/usePosts";
 import { getTeamBorderColor } from "@/lib/utils/team-border-color";
 
 import { useMemo, useState } from "react";
@@ -57,6 +59,7 @@ export default function StadiumDetailPage() {
   const router = useRouter();
   const { user } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
+  const [showWrite, setShowWrite] = useState(false);
   const [active, setActive] = useState<Section>("info");
 
   const stadium = useMemo(
@@ -73,6 +76,10 @@ export default function StadiumDetailPage() {
 
   const teams = stadium.teamIds.map((id) => getTeamById(id)!).filter(Boolean);
   const primaryTeam = teams[0];
+  const seatBoardId = `stadium:${stadium.id}:seats`;
+  const reviewBoardId = `stadium:${stadium.id}:reviews`;
+  const { posts: seatPosts, reload: reloadSeatPosts } = usePosts("stadium", seatBoardId, "general");
+  const { posts: reviewPosts, reload: reloadReviewPosts } = usePosts("stadium", reviewBoardId, "general");
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
@@ -270,39 +277,98 @@ export default function StadiumDetailPage() {
         {active === "seats" && (
           <section>
             <h2 className="text-base font-bold text-text-primary mb-3">💺 좌석팁</h2>
-            <EmptyState
-              icon={<Armchair size={32} />}
-              title="아직 제보가 없어요"
-              subtitle="좌석별 꿀팁을 준비 중이에요"
-            />
+            {seatPosts.length === 0 ? (
+              <EmptyState
+                icon={<Armchair size={32} />}
+                title="아직 제보가 없어요"
+                subtitle="좌석별 꿀팁을 남겨보세요"
+              />
+            ) : (
+              <div className="space-y-3">
+                {seatPosts.map((post) => (
+                  <GlassCard key={post.id} className="p-4">
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <p className="text-sm font-semibold text-text-primary">{post.title}</p>
+                      <span className="text-xs text-text-tertiary whitespace-nowrap">
+                        {new Date(post.created_at).toLocaleDateString("ko-KR")}
+                      </span>
+                    </div>
+                    <p className="text-sm text-text-secondary whitespace-pre-wrap">{post.content}</p>
+                    <p className="text-xs text-text-tertiary mt-3">{post.nickname || "익명"}</p>
+                  </GlassCard>
+                ))}
+              </div>
+            )}
           </section>
         )}
 
         {active === "reviews" && (
           <section>
             <h2 className="text-base font-bold text-text-primary mb-3">💬 후기</h2>
-            <EmptyState
-              icon={<MessageCircle size={32} />}
-              title="아직 후기가 없어요"
-              subtitle="첫 번째 후기를 남겨보세요!"
-            />
+            {reviewPosts.length === 0 ? (
+              <EmptyState
+                icon={<MessageCircle size={32} />}
+                title="아직 후기가 없어요"
+                subtitle="첫 번째 후기를 남겨보세요!"
+              />
+            ) : (
+              <div className="space-y-3">
+                {reviewPosts.map((post) => (
+                  <GlassCard key={post.id} className="p-4">
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <p className="text-sm font-semibold text-text-primary">{post.title}</p>
+                      <span className="text-xs text-text-tertiary whitespace-nowrap">
+                        {new Date(post.created_at).toLocaleDateString("ko-KR")}
+                      </span>
+                    </div>
+                    <p className="text-sm text-text-secondary whitespace-pre-wrap">{post.content}</p>
+                    <p className="text-xs text-text-tertiary mt-3">{post.nickname || "익명"}</p>
+                  </GlassCard>
+                ))}
+              </div>
+            )}
           </section>
         )}
       </div>
 
       {/* FAB */}
-      <button
-        onClick={() => {
-          if (!user) {
-            setShowLogin(true);
-            return;
+      {(active === "seats" || active === "reviews") && (
+        <button
+          onClick={() => {
+            if (!user) {
+              setShowLogin(true);
+              return;
+            }
+            setShowWrite(true);
+          }}
+          className="fixed bottom-24 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
+        >
+          <PenLine className="w-6 h-6" />
+        </button>
+      )}
+
+      <WritePost
+        isOpen={showWrite}
+        onClose={() => setShowWrite(false)}
+        teamName={`${stadium.name} ${active === "seats" ? "좌석팁" : "후기"}`}
+        onSubmit={async (title, content, imageUrls) => {
+          await createPost({
+            boardType: "stadium",
+            boardId: active === "seats" ? seatBoardId : reviewBoardId,
+            title,
+            content,
+            imageUrls,
+            contentType: "general",
+          });
+
+          if (active === "seats") {
+            await reloadSeatPosts();
+          } else {
+            await reloadReviewPosts();
           }
-          /* TODO(Phase 2): navigate to write post page with board_type='stadium' and board_id=stadiumId pre-filled */
+          setShowWrite(false);
         }}
-        className="fixed bottom-24 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
-      >
-        <PenLine className="w-6 h-6" />
-      </button>
+      />
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
     </div>
   );
