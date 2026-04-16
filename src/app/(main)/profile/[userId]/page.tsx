@@ -12,6 +12,7 @@ import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import type { BadgeDefinition } from "@/lib/constants/badges";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
+import { getAvatarPath } from "@/lib/constants/avatars";
 import { getTeamBgColorById } from "@/lib/utils/team";
 import InviteTab from "@/components/profile/InviteTab";
 import BadgeDetailModal from "@/components/profile/BadgeDetailModal";
@@ -22,6 +23,7 @@ import LevelBadge from "@/components/ui/LevelBadge";
 interface UserProfile {
   id: string;
   nickname: string;
+  avatar_url?: string | null;
   team_id: number;
   grade: string;
   level: number;
@@ -54,7 +56,7 @@ interface UserPost {
 export default function ProfilePage() {
   const { userId } = useParams();
   const router = useRouter();
-  const { user, profile: myProfile } = useAuth();
+  const { user } = useAuth();
   const isOwn = user?.id === userId;
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -99,7 +101,6 @@ export default function ProfilePage() {
   if (!profile) return <div className="flex items-center justify-center h-screen text-text-secondary">유저를 찾을 수 없습니다</div>;
 
   const team = getTeamById(profile.team_id);
-  const teamColor = team?.colorPrimary ?? "#666";
   const earnedBadgeIds = new Set(badges.map(b => b.badge_id));
   const founderBadge = earnedBadgeIds.has("founder");
 
@@ -109,38 +110,44 @@ export default function ProfilePage() {
   };
 
   return (
-    <div className="min-h-screen bg-bg-primary pb-24">
+    <div className="mx-auto min-h-screen max-w-lg bg-bg-primary px-5 pb-24">
       {/* Header */}
-      <div className="sticky top-0 z-30 pt-safe border-b bg-bg-primary/80 backdrop-blur-xl" style={{ borderColor: myProfile?.team_id ? getTeamBorderColorById(myProfile.team_id) : 'var(--color-border)' }}>
-        <div className="flex items-center gap-3 px-4 py-3">
-          <button onClick={() => router.back()}>
-            <ChevronLeft size={24} className="text-text-secondary" />
+      <div className="border-b -mx-5 px-5" style={{ borderColor: profile?.team_id ? getTeamBorderColorById(profile.team_id) : 'var(--color-border)' }}>
+        <div className="flex items-center gap-3 py-3">
+          <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
+            <ChevronLeft size={24} />
           </button>
           <span className="text-lg font-semibold leading-[26px] text-text-primary flex-1">프로필</span>
           {isOwn && (
-            <button onClick={() => {}}>
-              <Settings size={20} className="text-text-tertiary" />
+            <button onClick={() => {}} className="rounded-full p-1 text-text-tertiary hover:bg-bg-tertiary transition-colors">
+              <Settings size={20} />
             </button>
           )}
         </div>
       </div>
 
-      {/* Profile Header — compact, 8pt grid */}
-      <div className="px-5 pt-5 pb-4 text-center">
+      {/* Profile Header */}
+      <div className="pt-6 pb-4 text-center">
         <div className="relative inline-block">
-          <div
-            className="w-[72px] h-[72px] rounded-full flex items-center justify-center text-2xl font-bold mx-auto ring-1 ring-white/10"
-            style={{ backgroundColor: getTeamBgColorById(profile.team_id), color: "#fff" }}
-          >
-            {profile.nickname.charAt(0)}
+          <div className="mx-auto h-24 w-24 overflow-hidden rounded-full ring-1 ring-white/10">
+            {profile.avatar_url && getAvatarPath(profile.avatar_url) ? (
+              <img src={getAvatarPath(profile.avatar_url)!} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <div
+                className="flex h-full w-full items-center justify-center text-3xl font-bold"
+                style={{ backgroundColor: getTeamBgColorById(profile.team_id), color: "#fff" }}
+              >
+                {profile.nickname.charAt(0)}
+              </div>
+            )}
           </div>
           {founderBadge && (
             <span className="absolute -top-1 -right-1 text-xl">👑</span>
           )}
         </div>
 
-        <h1 className="text-lg font-semibold leading-[26px] text-text-primary mt-3">{profile.nickname}</h1>
-        <div className="flex items-center justify-center gap-2 mt-1">
+        <h1 className="mt-4 text-2xl font-bold tracking-tight text-text-primary">{profile.nickname}</h1>
+        <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
           {team && <TeamBadge teamId={team.id} size="sm" />}
           <LevelBadge points={profile.points} showTitle />
           {profile.is_founder && (
@@ -148,18 +155,18 @@ export default function ProfilePage() {
           )}
         </div>
         {profile.bio && (
-          <p className="text-sm leading-[22px] text-text-tertiary mt-1.5">{profile.bio}</p>
+          <p className="mt-2 text-sm leading-[22px] text-text-tertiary">{profile.bio}</p>
         )}
-        <p className="text-xs leading-[18px] text-text-tertiary mt-1">가입일 {timeAgo(profile.joined_at || profile.id)}</p>
+        <p className="mt-1 text-xs leading-[18px] text-text-tertiary">가입일 {timeAgo(profile.joined_at || profile.id)}</p>
         {!isOwn && (
-          <div className="mt-3 flex justify-center">
+          <div className="mt-4 flex justify-center">
             <DMButton targetUserId={profile.id} size="md" />
           </div>
         )}
       </div>
 
       {/* Stats — compact card, tabular-nums */}
-      <div className="px-5 mb-4">
+      <div className="mb-4">
         <GlassCard className="p-3">
           <div className="grid grid-cols-3 text-center">
             <div>
@@ -179,7 +186,7 @@ export default function ProfilePage() {
       </div>
 
       {/* Tabs — UnderlineTabs */}
-      <div className="flex gap-4 mx-5 mb-4 border-b border-border">
+      <div className="flex gap-4 mb-4 border-b border-border">
         {([
           { id: "badges" as const, label: `🏅 배지 (${badges.length})` },
           { id: "posts" as const, label: "📝 글" },
@@ -206,7 +213,7 @@ export default function ProfilePage() {
 
       {/* Posts Tab */}
       {activeTab === "posts" && (
-        <div className="px-5 space-y-3">
+        <div className="space-y-3">
           {!profile.show_posts && !isOwn ? (
             <div className="text-center py-8 text-text-tertiary text-sm">비공개 프로필입니다</div>
           ) : posts.length === 0 ? (
