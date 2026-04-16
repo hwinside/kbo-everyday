@@ -141,6 +141,210 @@ function shiftDate(dateStr: string, days: number): string {
   return `${yy}${mm}${dd}`;
 }
 
+// ===== KBO Lineup API =====
+
+const KBO_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
+const KBO_HEADERS = {
+  "Content-Type": "application/x-www-form-urlencoded",
+  "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+};
+
+const POS_MAP: Record<string, string> = {
+  "투수": "P", "포수": "C", "1루수": "1B", "2루수": "2B",
+  "3루수": "3B", "유격수": "SS", "좌익수": "LF", "중견수": "CF",
+  "우익수": "RF", "지명타자": "DH",
+  "타지": "DH", "타좌": "LF", "타우": "RF", "타중": "CF",
+  "타1": "1B", "타2": "2B", "타3": "3B", "타유": "SS", "타포": "C",
+  "주좌": "LF", "주우": "RF", "주중": "CF", "주1": "1B", "주2": "2B", "주3": "3B", "주유": "SS",
+  "대타": "DH", "대주": "DH",
+};
+
+function stripHtml(s: string): string {
+  return s.replace(/<[^>]*>/g, "").trim();
+}
+
+function safeStr(v: unknown): string {
+  if (v == null) return "";
+  const s = String(v).trim();
+  return s === "&nbsp;" ? "" : s;
+}
+
+function safeInt(v: unknown): number {
+  if (v == null || v === "" || v === "&nbsp;") return 0;
+  const n = parseInt(String(v), 10);
+  return isNaN(n) ? 0 : n;
+}
+
+function parseLineupRows(raw: unknown): LineupPlayer[] {
+  let parsed: { rows: { row: { Text: string }[] }[] };
+  try {
+    const val = Array.isArray(raw) && raw.length > 0 ? raw[0] : raw;
+    parsed = typeof val === "string" ? JSON.parse(val) : val;
+  } catch {
+    return [];
+  }
+  if (!parsed?.rows) return [];
+  return parsed.rows.map(r => {
+    const cells = r.row.map(c => safeStr(c.Text));
+    const posKr = stripHtml(cells[1] || "");
+    return {
+      order: safeInt(cells[0]),
+      position: POS_MAP[posKr] || posKr,
+      name: stripHtml(cells[2] || ""),
+    };
+  }).filter(e => e.name !== "");
+}
+
+async function fetchTodayLineup(gameId: string, teamId: number, isAway: boolean): Promise<TodayLineup | null> {
+  const seasonId = gameId.slice(0, 4);
+  const reqBody = `leId=1&srId=0&seasonId=${seasonId}&gameId=${gameId}`;
+  try {
+    const res = await fetch(`${KBO_BASE}/GetLineUpAnalysis`, {
+      method: "POST",
+      headers: KBO_HEADERS,
+      body: reqBody,
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length < 5) return null;
+    const batters = parseLineupRows(isAway ? data[4] : data[3]);
+    if (batters.length === 0) return null;
+    return { batters, startingPitcher: "" };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchPrevGameLineup(gameId: string, teamId: number): Promise<LineupPlayer[] | null> {
+  const dateStr = getDateFromGameId(gameId);
+  const MAX_LOOKBACK = 5;
+  for (let offset = 1; offset <= MAX_LOOKBACK; offset++) {
+    const d = shiftDate(dateStr, -offset);
+    const games = await fetchGames(d).catch(() => [] as KboGame[]);
+    const teamGames = games.filter(
+      g => g.status === "final" && g.gameId !== gameId && (g.awayTeamId === teamId || g.homeTeamId === teamId)
+    );
+    const teamGame = teamGames.length > 0 ? teamGames[teamGames.length - 1] : null;
+    if (!teamGame) continue;
+    const isAway = teamGame.awayTeamId === teamId;
+    const seasonId = teamGame.gameId.slice(0, 4);
+    const reqBody = `leId=1&srId=0&seasonId=${seasonId}&gameId=${teamGame.gameId}`;
+    try {
+      const res = await fetch(`${KBO_BASE}/GetLineUpAnalysis`, {
+        method: "POST",
+        headers: KBO_HEADERS,
+        body: reqBody,
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (!Array.isArray(data) || data.length < 5) continue;
+      const batters = parseLineupRows(isAway ? data[4] : data[3]);
+      if (batters.length > 0) return batters;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function computeLineupDiff(today: LineupPlayer[], prev: LineupPlayer[]): LineupDiffSignal {
+  const todayNames = new Set(today.map(b => b.name));
+  const prevNames = new Set(prev.map(b => b.name));
+  const prevMap = new Map(prev.map(b => [b.name, b]));
+  const todayMap = new Map(today.map(b => [b.name, b]));
+
+  const newEntries = [...todayNames].filter(n => !prevNames.has(n));
+  const removed = [...prevNames].filter(n => !todayNames.has(n));
+
+  const keyOrderChanges: string[] = [];
+  for (const name of todayNames) {
+    if (!prevNames.has(name)) continue;
+    const p = prevMap.get(name)!;
+    const c = todayMap.get(name)!;
+    if (p.order !== c.order && (p.order <= 5 || c.order <= 5)) {
+      keyOrderChanges.push(`${name} ${p.order}번→${c.order}번`);
+    }
+  }
+
+  const prevCatcher = prev.find(b => b.position === "C");
+  const todayCatcher = today.find(b => b.position === "C");
+  const catcherChanged = (prevCatcher && todayCatcher && prevCatcher.name !== todayCatcher.name)
+    ? { from: prevCatcher.name, to: todayCatcher.name }
+    : null;
+
+  return { newEntries, removed, keyOrderChanges, catcherChanged };
+}
+
+// ===== Recent Record & Head-to-Head =====
+
+async function getRecentTeamRecord(gameId: string, teamId: number, count = 5): Promise<RecentRecord> {
+  const dateStr = getDateFromGameId(gameId);
+  const MAX_LOOKBACK = 15;
+  const record: RecentRecord = { wins: 0, losses: 0, draws: 0, results: [] };
+
+  for (let offset = 1; offset <= MAX_LOOKBACK && record.results.length < count; offset++) {
+    const d = shiftDate(dateStr, -offset);
+    const games = await fetchGames(d).catch(() => [] as KboGame[]);
+    const teamGames = games.filter(
+      g => g.status === "final" && (g.awayTeamId === teamId || g.homeTeamId === teamId)
+    );
+    teamGames.sort((a, b) => b.time.localeCompare(a.time));
+    for (const g of teamGames) {
+      if (record.results.length >= count) break;
+      const isAway = g.awayTeamId === teamId;
+      const myScore = isAway ? (g.awayScore ?? 0) : (g.homeScore ?? 0);
+      const oppScore = isAway ? (g.homeScore ?? 0) : (g.awayScore ?? 0);
+      const oppName = isAway ? getTeamShortName(g.homeTeamId) : getTeamShortName(g.awayTeamId);
+      if (myScore > oppScore) {
+        record.wins++;
+        record.results.push(`W ${myScore}-${oppScore} vs ${oppName}`);
+      } else if (myScore < oppScore) {
+        record.losses++;
+        record.results.push(`L ${myScore}-${oppScore} vs ${oppName}`);
+      } else {
+        record.draws++;
+        record.results.push(`D ${myScore}-${oppScore} vs ${oppName}`);
+      }
+    }
+  }
+  return record;
+}
+
+async function getHeadToHead(gameId: string, awayTeamId: number, homeTeamId: number): Promise<HeadToHeadRecord> {
+  const dateStr = getDateFromGameId(gameId);
+  const MAX_LOOKBACK = 60;
+  const h2h: HeadToHeadRecord = { awayWins: 0, homeWins: 0, draws: 0, results: [] };
+
+  for (let offset = 1; offset <= MAX_LOOKBACK; offset++) {
+    const d = shiftDate(dateStr, -offset);
+    const games = await fetchGames(d).catch(() => [] as KboGame[]);
+    const matchups = games.filter(
+      g => g.status === "final" &&
+        ((g.awayTeamId === awayTeamId && g.homeTeamId === homeTeamId) ||
+         (g.awayTeamId === homeTeamId && g.homeTeamId === awayTeamId))
+    );
+    for (const g of matchups) {
+      const aScore = g.awayScore ?? 0;
+      const hScore = g.homeScore ?? 0;
+      const dateLabel = `${d.slice(4, 6)}/${d.slice(6, 8)}`;
+      const awayIsOurAway = g.awayTeamId === awayTeamId;
+      if (awayIsOurAway) {
+        if (aScore > hScore) h2h.awayWins++;
+        else if (hScore > aScore) h2h.homeWins++;
+        else h2h.draws++;
+      } else {
+        if (aScore > hScore) h2h.homeWins++;
+        else if (hScore > aScore) h2h.awayWins++;
+        else h2h.draws++;
+      }
+      h2h.results.push(`${dateLabel} ${getTeamShortName(g.awayTeamId)} ${aScore}-${hScore} ${getTeamShortName(g.homeTeamId)}`);
+    }
+  }
+  return h2h;
+}
+
 /** 3연전(시리즈) 맥락 추출 — 전후 1~2일 경기에서 같은 팀 대결 찾기 */
 async function getSeriesContext(gameId: string, awayTeamId: number, homeTeamId: number): Promise<SeriesContext | null> {
   const dateStr = getDateFromGameId(gameId);
@@ -325,12 +529,67 @@ async function buildPreviewPrompt(req: PreviewRequest): Promise<string> {
   const homeStarterInfo = req.homeStarter ? getStarterStats(req.homeStarter, req.homeTeamId) : null;
 
   // 런타임 데이터 병렬 조회 (모두 try-catch로 감싸서 실패해도 기존 동작 유지)
-  const [seriesCtx, standingsCtx, awayHotPlayers, homeHotPlayers] = await Promise.all([
+  const [seriesCtx, standingsCtx, awayHotPlayers, homeHotPlayers,
+    awayLineup, homeLineup, awayPrevLineup, homePrevLineup,
+    awayRecentRecord, homeRecentRecord, h2hRecord] = await Promise.all([
     getSeriesContext(req.gameId, req.awayTeamId, req.homeTeamId).catch(() => null),
     getStandingsContext(req.awayTeamId, req.homeTeamId).catch(() => null),
     getRecentForm(req.gameId, req.awayTeamId).catch(() => []),
     getRecentForm(req.gameId, req.homeTeamId).catch(() => []),
+    fetchTodayLineup(req.gameId, req.awayTeamId, true).catch(() => null),
+    fetchTodayLineup(req.gameId, req.homeTeamId, false).catch(() => null),
+    fetchPrevGameLineup(req.gameId, req.awayTeamId).catch(() => null),
+    fetchPrevGameLineup(req.gameId, req.homeTeamId).catch(() => null),
+    getRecentTeamRecord(req.gameId, req.awayTeamId).catch(() => ({ wins: 0, losses: 0, draws: 0, results: [] as string[] })),
+    getRecentTeamRecord(req.gameId, req.homeTeamId).catch(() => ({ wins: 0, losses: 0, draws: 0, results: [] as string[] })),
+    getHeadToHead(req.gameId, req.awayTeamId, req.homeTeamId).catch(() => ({ awayWins: 0, homeWins: 0, draws: 0, results: [] as string[] })),
   ]);
+
+  // 오늘 실제 라인업 섹션
+  let todayLineupSection = "";
+  if (awayLineup && awayLineup.batters.length > 0) {
+    const enriched = enrichLineupWithStats(awayLineup.batters, req.awayTeamId);
+    todayLineupSection += `\n## ${awayShort} 오늘 선발 라인업\n${enriched.join("\n")}`;
+  }
+  if (homeLineup && homeLineup.batters.length > 0) {
+    const enriched = enrichLineupWithStats(homeLineup.batters, req.homeTeamId);
+    todayLineupSection += `\n## ${homeShort} 오늘 선발 라인업\n${enriched.join("\n")}`;
+  }
+
+  // 라인업 diff 시그널
+  let lineupDiffSection = "";
+  if (awayLineup && awayPrevLineup) {
+    const diff = computeLineupDiff(awayLineup.batters, awayPrevLineup);
+    const diffText = formatDiffSignal(diff, awayShort);
+    if (diffText) lineupDiffSection += diffText;
+  }
+  if (homeLineup && homePrevLineup) {
+    const diff = computeLineupDiff(homeLineup.batters, homePrevLineup);
+    const diffText = formatDiffSignal(diff, homeShort);
+    if (diffText) lineupDiffSection += diffText;
+  }
+  if (lineupDiffSection) {
+    lineupDiffSection = `\n## 라인업 변경 시그널 (직전 경기 대비)\n${lineupDiffSection}`;
+  }
+
+  // 최근 5경기 팀 전적
+  let recentRecordSection = "";
+  if (awayRecentRecord.results.length > 0 || homeRecentRecord.results.length > 0) {
+    recentRecordSection = `\n## 최근 5경기 팀 전적`;
+    if (awayRecentRecord.results.length > 0) {
+      recentRecordSection += `\n${awayShort}: ${awayRecentRecord.wins}승 ${awayRecentRecord.losses}패${awayRecentRecord.draws > 0 ? ` ${awayRecentRecord.draws}무` : ""} — ${awayRecentRecord.results.join(", ")}`;
+    }
+    if (homeRecentRecord.results.length > 0) {
+      recentRecordSection += `\n${homeShort}: ${homeRecentRecord.wins}승 ${homeRecentRecord.losses}패${homeRecentRecord.draws > 0 ? ` ${homeRecentRecord.draws}무` : ""} — ${homeRecentRecord.results.join(", ")}`;
+    }
+  }
+
+  // 시즌 상대전적
+  let h2hSection = "";
+  const totalH2h = h2hRecord.awayWins + h2hRecord.homeWins + h2hRecord.draws;
+  if (totalH2h > 0) {
+    h2hSection = `\n## 시즌 상대전적\n${awayShort} ${h2hRecord.awayWins}승 vs ${homeShort} ${h2hRecord.homeWins}승${h2hRecord.draws > 0 ? ` (${h2hRecord.draws}무)` : ""}\n${h2hRecord.results.join(", ")}`;
+  }
 
   // 순위 & 시리즈 섹션 빌드
   let standingsSection = "";
@@ -374,29 +633,30 @@ ${awayStarterInfo || "스탯 미확인"}
 
 ## ${homeShort} 선발투수 상세
 ${homeStarterInfo || "스탯 미확인"}
-
+${todayLineupSection}${lineupDiffSection}${!todayLineupSection ? `
 ## ${awayShort} 주요 타자 (2026 시즌 기록)
 ${awayBatters.join("\n")}
 
 ## ${homeShort} 주요 타자 (2026 시즌 기록)
-${homeBatters.join("\n")}
+${homeBatters.join("\n")}` : ""}
 
 ## ${awayShort} 투수진 (2026 시즌 기록)
 ${awayPitchers.join("\n")}
 
 ## ${homeShort} 투수진 (2026 시즌 기록)
 ${homePitchers.join("\n")}
-${standingsSection}${seriesSection}${recentFormSection}
+${standingsSection}${seriesSection}${recentRecordSection}${h2hSection}${recentFormSection}
 
 ## 작성 규칙
 0. 존댓말(~습니다/~합니다) 절대 금지. 기사체 반말(~했다/~이다/~있다)로만 작성하세요.
 1. 반드시 위에 제공된 실제 스탯만 사용. 없는 수치를 만들지 마세요.
 2. 두 팀의 장단점을 구체적 수치와 함께 비교 분석하세요.
 3. 선발투수의 스타일과 상대 타선의 매치업을 분석하세요.
-4. 승률 예측은 선발투수 ERA, 타선 타율, 홈/원정, 순위, 최근 폼 등을 종합 고려하세요.
+4. 승률 예측은 선발투수 ERA, 오늘 선발 라인업, 홈/원정, 순위, 최근 팀 전적, 상대전적, 최근 폼 등을 종합 고려하세요.
 5. 핵심 포인트는 이 경기만의 고유한 이야기를 담으세요 (선수 간 대결, 기록 도전 등).
-6. 부상자 명단에 포함된 선수는 제외하세요. 스탯에 있더라도 최근 경기 출전이 없다면 주의하세요.
-7. 한국어로 작성.
+6. "오늘 선발 라인업" 정보가 있으면, 오늘 실제 출전 선수 중심으로 분석. keyPlayers는 반드시 오늘 라인업에 있는 선수여야 함.
+7. 라인업 변경 시그널이 있으면, 예측 근거에 활용 (신규 합류/제외 선수가 전력에 미치는 영향).
+8. 한국어로 작성.
 
 ## 출력 형식 (JSON만 출력)
 {
