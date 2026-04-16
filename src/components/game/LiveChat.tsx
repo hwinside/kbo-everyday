@@ -27,7 +27,7 @@ const GRADE_EMOJI: Record<string, string> = {
 };
 
 export default function LiveChat({ gameId, homeTeamId, awayTeamId }: LiveChatProps) {
-  const roomId = `game:${gameId}:all`;
+  const roomId = `game:${gameId}`;  // 표준: game:{id} (GameChat과 통일)
   const { messages, loading, sendMessage, isLoggedIn } = useChat(roomId);
   const [input, setInput] = useState("");
   const [showLogin, setShowLogin] = useState(false);
