@@ -30,7 +30,16 @@ export async function GET(request: NextRequest) {
       }
     );
 
-    await supabase.auth.exchangeCodeForSession(code);
+    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    if (error) {
+      console.error("[auth/callback] exchangeCodeForSession failed:", error.message, error);
+      // 세션 교환 실패 시 에러 내용을 URL에 포함해서 디버깅 가능하게
+      const errorUrl = new URL(CANONICAL_ORIGIN);
+      errorUrl.searchParams.set("auth_error", error.message);
+      return NextResponse.redirect(errorUrl.toString());
+    }
+  } else {
+    console.warn("[auth/callback] No code parameter in callback URL");
   }
 
   // Redirect to canonical domain (not requestUrl.origin which can be Vercel URL).
