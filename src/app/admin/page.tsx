@@ -188,13 +188,25 @@ export default function AdminOverviewPage() {
   /* ── extract KPI values ── */
   const todaySignups = data?.users?.todaySignups ?? 0;
 
+  // KST 오늘 날짜 (YYYY-MM-DD) — 일별 카운트 필터용
+  const todayKSTStr = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
+
   const todayContent = data?.content?.dailyPosts ?? [];
-  const todayPosts = todayContent.reduce((s, d) => s + (d.posts ?? 0), 0);
-  const todayComments = todayContent.reduce((s, d) => s + (d.comments ?? 0), 0);
-  const todayPhotos = todayContent.reduce((s, d) => s + (d.photos ?? 0), 0);
+  const todayEntry = todayContent.find((d) => d.date === todayKSTStr);
+  const todayPosts = todayEntry?.posts ?? 0;
+  const todayComments = todayEntry?.comments ?? 0;
+  const todayPhotos = todayEntry?.photos ?? 0;
 
   const pendingFeedback = data?.feedback?.data?.length ?? 0;
-  const crawlerErrors = data?.jobs?.data?.filter((l) => l.status === "error").length ?? 0;
+
+  // 크롤러 실패: 오늘 KST 기준 에러만 카운트
+  const crawlerErrors = (data?.jobs?.data ?? []).filter((l) => {
+    if (l.status !== "error") return false;
+    const startedAt = (l as { started_at?: string }).started_at;
+    if (!startedAt) return false;
+    const jobDateKST = new Date(startedAt).toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
+    return jobDateKST === todayKSTStr;
+  }).length;
 
   /* ── GA4 data ── */
   const ga4Daily = data?.ga4Dau?.daily ?? [];
