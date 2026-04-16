@@ -164,7 +164,7 @@ export default function AdminOverviewPage() {
       apiFetch<ContentResponse>("/api/admin/content?days=1"),
       apiFetch<StatsResponse>("/api/admin/stats?days=30"),
       apiFetch<FeedbackResponse>("/api/admin/feedback?status=received"),
-      apiFetch<JobsResponse>("/api/admin/jobs?status=error&limit=10"),
+      apiFetch<JobsResponse>("/api/admin/jobs?status=error&today=1"),
       fetchGA4<DauResponse>("dau"),
       fetchGA4<PagesResponse>("pages"),
       fetchGA4<CohortResponse>("cohort"),
@@ -199,14 +199,8 @@ export default function AdminOverviewPage() {
 
   const pendingFeedback = data?.feedback?.data?.length ?? 0;
 
-  // 크롤러 실패: 오늘 KST 기준 에러만 카운트
-  const crawlerErrors = (data?.jobs?.data ?? []).filter((l) => {
-    if (l.status !== "error") return false;
-    const startedAt = (l as { started_at?: string }).started_at;
-    if (!startedAt) return false;
-    const jobDateKST = new Date(startedAt).toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
-    return jobDateKST === todayKSTStr;
-  }).length;
+  // 크롤러 실패: API에서 오늘 KST 기준 에러만 반환
+  const crawlerErrors = data?.jobs?.data?.length ?? 0;
 
   /* ── GA4 data ── */
   const ga4Daily = data?.ga4Dau?.daily ?? [];
