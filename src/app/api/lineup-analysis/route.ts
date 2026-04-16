@@ -250,6 +250,8 @@ async function fetchRecentStarters(
     const teamGames = games.filter(
       g => g.status === "final" && g.gameId !== gameId && (g.awayTeamId === teamId || g.homeTeamId === teamId)
     );
+    // 더블헤더 시간순 보장: time("14:00" 등) 기준 정렬
+    teamGames.sort((a, b) => a.time.localeCompare(b.time));
     for (const g of teamGames) {
       const starterName = g.awayTeamId === teamId ? g.awayStarterName : g.homeStarterName;
       if (starterName) {
