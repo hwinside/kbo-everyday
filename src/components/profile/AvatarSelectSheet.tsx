@@ -114,8 +114,8 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
-            className="fixed bottom-0 left-0 right-0 z-[60] mx-auto max-w-lg rounded-t-3xl bg-bg-secondary border-t border-black/10 dark:border-white/10"
-            style={{ maxHeight: "80dvh" }}
+            className="fixed bottom-0 left-0 right-0 z-[60] mx-auto max-w-lg rounded-t-3xl bg-bg-secondary border-t border-black/10 dark:border-white/10 flex flex-col"
+            style={{ maxHeight: "75dvh" }}
           >
             {/* Handle */}
             <div className="mx-auto mt-3 mb-2 h-1 w-10 rounded-full bg-text-tertiary/30" />
@@ -131,9 +131,8 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             {/* 스크롤 영역 */}
             <div
               ref={scrollRef}
-              className="overflow-y-auto px-5"
+              className="overflow-y-auto px-5 flex-1 min-h-0"
               style={{
-                maxHeight: "calc(80dvh - 148px)",
                 overscrollBehavior: "contain",
                 paddingBottom: "16px",
               }}
@@ -183,7 +182,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
               </div>
             </div>
 
-            <div className="border-t border-black/10 dark:border-white/10 px-5 pt-3 pb-[calc(16px+env(safe-area-inset-bottom,0px))]">
+            <div className="border-t border-black/10 dark:border-white/10 px-5 pt-3 pb-[calc(16px+env(safe-area-inset-bottom,0px))] flex-shrink-0">
               <button
                 onClick={handleConfirm}
                 disabled={saving}
