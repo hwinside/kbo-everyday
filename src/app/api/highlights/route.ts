@@ -198,49 +198,14 @@ export async function GET(req: NextRequest) {
         const t = v.title.toLowerCase();
         const title = v.title;
         
-        // 1) 명시적 숏츠 키워드
-        if (t.includes("#shorts") || t.includes("shorts") || title.includes("숏츠") || title.includes("쇼츠") || title.includes("#핫클립")) {
-          return true;
-        }
+        // 1) 키워드 기반 숏츠
+        const hasShortKeyword = t.includes("#shorts") || t.includes("shorts") || title.includes("숏츠") || title.includes("쇼츠");
         
-        // 2) 명확한 롱폼 패턴 제외
-        if (title.includes("정규시즌 H/L") || title.includes("[LIVE]") || /하이라이트.*\|/.test(title)) {
-          return false;
-        }
+        // 2) 공식 클립 패턴: [날짜 vs 팀] 시작 + H/L·직캠 제외
+        const isOfficialClip = /^\[\d+\.\d+\s+vs\s+/.test(title); // [4.14 vs ...]
+        const isLongForm = title.includes("H/L") || title.includes("직캠");
         
-        // 3) 팀별 숏츠 패턴 (allowlist)
-        // LG: [4.14 vs 롯데] 형식
-        if (/^\[\d+\.\d+\s+vs\s+/.test(title)) {
-          return true;
-        }
-        // 키움: | 26.04.15. vs팀 형식
-        if (/\|\s*\d{2,4}\.\d{2}\.\d{2}\.\s*vs/.test(title)) {
-          return true;
-        }
-        // SSG: 덕캠
-        if (title.includes("덕캠")) {
-          return true;
-        }
-        // NC: ㅣ 4월 14일 형식 (중괄호 사용)
-        if (/ㅣ\s*\d+월\s+\d+일/.test(title)) {
-          return true;
-        }
-        
-        // 4) 채널명 패턴 ([채널])
-        const channelMatch = title.match(/\[([^\]]+)\]/);
-        if (channelMatch) {
-          const channelName = channelMatch[1].toLowerCase();
-          // 롱폼 채널 제외
-          if (channelName.includes("직캠") || channelName.includes("애프터")) {
-            return false;
-          }
-          // 숏츠 채널 (덕후/덕관/티비/비티/캠)
-          if (channelName.includes("덕") || channelName.includes("티비") || channelName.includes("비티") || channelName.includes("캠")) {
-            return true;
-          }
-        }
-        
-        return false;
+        return hasShortKeyword || (isOfficialClip && !isLongForm);
       });
       if (filtered.length > 0) {
         const result = { items: filtered };
