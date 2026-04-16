@@ -116,7 +116,7 @@ export default function ProfilePage() {
           <button onClick={() => router.back()}>
             <ChevronLeft size={24} className="text-text-secondary" />
           </button>
-          <span className="text-base font-semibold text-text-primary flex-1">프로필</span>
+          <span className="text-lg font-semibold leading-[26px] text-text-primary flex-1">프로필</span>
           {isOwn && (
             <button onClick={() => {}}>
               <Settings size={20} className="text-text-tertiary" />
