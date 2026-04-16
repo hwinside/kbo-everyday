@@ -9,7 +9,7 @@ import { fetchStandings, fetchGames, fetchBoxScore, type TeamStanding, type BoxS
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
-const PREVIEW_VERSION = 5; // v5: 기사체 반말 전환 (존댓말 금지)
+const PREVIEW_VERSION = 6; // v6: 실제 라인업 + 최근5경기 + 상대전적 + 투수등판기록
 
 // Build a set of current roster players (teamShortName:playerName) for filtering
 const currentRosterSet = new Set<string>();
@@ -404,7 +404,7 @@ function parseIP(ip: string): number {
 
 async function getHeadToHead(gameId: string, awayTeamId: number, homeTeamId: number): Promise<HeadToHeadRecord> {
   const dateStr = getDateFromGameId(gameId);
-  const MAX_LOOKBACK = 60;
+  const MAX_LOOKBACK = 200; // 시즌 전체 커버 (3월 말~10월)
   const h2h: HeadToHeadRecord = { awayWins: 0, homeWins: 0, draws: 0, results: [] };
 
   for (let offset = 1; offset <= MAX_LOOKBACK; offset++) {
