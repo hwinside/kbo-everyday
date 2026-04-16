@@ -404,11 +404,14 @@ function parseIP(ip: string): number {
 
 async function getHeadToHead(gameId: string, awayTeamId: number, homeTeamId: number): Promise<HeadToHeadRecord> {
   const dateStr = getDateFromGameId(gameId);
+  const seasonYear = dateStr.slice(0, 4); // 같은 시즌만 필터
   const MAX_LOOKBACK = 200; // 시즌 전체 커버 (3월 말~10월)
   const h2h: HeadToHeadRecord = { awayWins: 0, homeWins: 0, draws: 0, results: [] };
 
   for (let offset = 1; offset <= MAX_LOOKBACK; offset++) {
     const d = shiftDate(dateStr, -offset);
+    // 전시즌 도달하면 중단
+    if (d.slice(0, 4) !== seasonYear) break;
     const games = await fetchGames(d).catch(() => [] as KboGame[]);
     const matchups = games.filter(
       g => g.status === "final" &&
@@ -726,10 +729,9 @@ ${awayStarterInfo || "스탯 미확인"}${awayStarterVsOpp ? `\n상대팀 등판
 
 ## ${homeShort} 선발투수 상세
 ${homeStarterInfo || "스탯 미확인"}${homeStarterVsOpp ? `\n상대팀 등판 기록: ${homeStarterVsOpp.summary}` : ""}
-${todayLineupSection}${lineupDiffSection}${!todayLineupSection ? `
+${todayLineupSection}${lineupDiffSection}${!(awayLineup && awayLineup.batters.length > 0) ? `
 ## ${awayShort} 주요 타자 (2026 시즌 기록)
-${awayBatters.join("\n")}
-
+${awayBatters.join("\n")}` : ""}${!(homeLineup && homeLineup.batters.length > 0) ? `
 ## ${homeShort} 주요 타자 (2026 시즌 기록)
 ${homeBatters.join("\n")}` : ""}
 
