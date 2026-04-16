@@ -73,7 +73,7 @@ export default function ProfileSetupModal({ isOpen }: Props) {
           favorite_players: [],
           invited_by: null,
           is_founder: false,
-          invite_count: 0,
+          invite_count: 5,
           joined_at: new Date().toISOString(),
         });
       if (insertError) throw insertError;
