@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import Image from "next/image";
+import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 
 interface Props {
   isOpen: boolean;
@@ -104,6 +105,10 @@ export default function ProfileSetupModal({ isOpen }: Props) {
       if (typeof window !== "undefined") {
         localStorage.setItem("kbo-my-team", String(selectedTeam));
       }
+
+      // Meta Pixel: CompleteRegistration + Subscribe(팀선택)
+      trackEvent(OnboardingEvents.ONBOARDING_COMPLETE, { nickname: nickname.trim(), team_id: selectedTeam });
+      trackEvent(OnboardingEvents.TEAM_SELECTED, { team_id: selectedTeam });
 
       await refreshProfile();
       setStep(4);

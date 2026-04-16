@@ -9,6 +9,7 @@ import { getGuestId } from "@/lib/store/onboarding";
 
 interface GtagWindow extends Window {
   gtag?: (command: string, event: string, params?: Record<string, unknown>) => void;
+  fbq?: (command: string, event: string, params?: Record<string, unknown>) => void;
 }
 
 interface EventPayload {
@@ -46,6 +47,19 @@ export function trackEvent(event: string, properties?: Record<string, unknown>):
   // GA4 연동 (gtag 있으면)
   if (typeof window !== "undefined" && (window as unknown as GtagWindow).gtag) {
     (window as unknown as GtagWindow).gtag!("event", event, payload.properties);
+  }
+
+  // Meta Pixel 연동 (fbq 있으면)
+  if (typeof window !== "undefined" && (window as unknown as GtagWindow).fbq) {
+    // Meta 표준 이벤트 매핑
+    const metaEventMap: Record<string, string> = {
+      [OnboardingEvents.ONBOARDING_COMPLETE]: "CompleteRegistration",
+      [OnboardingEvents.TEAM_SELECTED]: "Subscribe",
+    };
+    const metaEvent = metaEventMap[event];
+    if (metaEvent) {
+      (window as unknown as GtagWindow).fbq!("track", metaEvent, payload.properties);
+    }
   }
 
   // Phase 2: development logging via GA4 debug mode
