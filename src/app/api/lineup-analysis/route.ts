@@ -7,7 +7,7 @@ import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
-const ANALYSIS_VERSION = 1;
+const ANALYSIS_VERSION = 2;
 
 const KBO_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
 const HEADERS = {
@@ -181,9 +181,8 @@ function computeDiff(
     positionChanges: [],
   };
 
-  if (prev.starterName && current.startingPitcher && prev.starterName !== current.startingPitcher) {
-    diff.starterChanged = { from: prev.starterName, to: current.startingPitcher };
-  }
+  // 선발투수는 5일 로테이션이므로 직전 경기와 비교하는 것은 무의미.
+  // starterChanged를 diff 대상에서 제외하고, 프롬프트에서 오늘 선발 매치업만 소개.
 
   const prevNames = new Set(prev.batters.map(b => b.name));
   const currNames = new Set(current.batters.map(b => b.name));
@@ -233,27 +232,16 @@ function buildPrompt(diff: LineupDiff, req: LineupRequest): string {
   const awayName = getTeamShortName(req.awayTeamId);
   const homeName = getTeamShortName(req.homeTeamId);
 
-  let batterySection = "";
+  // 오늘 선발 매치업 정보 (변경이 아닌 소개)
+  let batterySection = "오늘 선발 매치업:\n";
   for (const side of [
-    { d: diff.away, name: awayName, sp: req.lineup.away.startingPitcher, teamId: req.awayTeamId },
-    { d: diff.home, name: homeName, sp: req.lineup.home.startingPitcher, teamId: req.homeTeamId },
+    { name: awayName, sp: req.lineup.away.startingPitcher, teamId: req.awayTeamId, d: diff.away },
+    { name: homeName, sp: req.lineup.home.startingPitcher, teamId: req.homeTeamId, d: diff.home },
   ]) {
-    if (side.d.starterChanged) {
-      const eraInfo = getStarterEra(side.d.starterChanged.to, side.teamId);
-      batterySection += `${side.name} 선발투수 변경: ${side.d.starterChanged.from} → ${side.d.starterChanged.to}${eraInfo ? ` (${eraInfo})` : ""}\n`;
-    }
+    const eraInfo = getStarterEra(side.sp, side.teamId);
+    batterySection += `${side.name} 선발: ${side.sp}${eraInfo ? ` (${eraInfo})` : ""}\n`;
     if (side.d.catcherChanged) {
       batterySection += `${side.name} 포수 변경: ${side.d.catcherChanged.from} → ${side.d.catcherChanged.to}\n`;
-    }
-  }
-  if (!batterySection) {
-    batterySection = "투수/포수 변경 없음\n";
-    for (const side of [
-      { name: awayName, sp: req.lineup.away.startingPitcher, teamId: req.awayTeamId },
-      { name: homeName, sp: req.lineup.home.startingPitcher, teamId: req.homeTeamId },
-    ]) {
-      const eraInfo = getStarterEra(side.sp, side.teamId);
-      if (eraInfo) batterySection += `${side.name} 선발: ${side.sp} (${eraInfo})\n`;
     }
   }
 
@@ -283,22 +271,24 @@ function buildPrompt(diff: LineupDiff, req: LineupRequest): string {
     lineupSection = "양 팀 모두 직전 경기와 동일한 라인업\n";
   }
 
-  return `당신은 KBO 프로야구 전문 기자입니다. 직전 경기 대비 오늘 라인업 변경사항을 분석하세요.
+  return `당신은 KBO 프로야구 전문 기자입니다. 오늘 경기의 선발 매치업과 직전 경기 대비 라인업 변경사항을 분석하세요.
 
-## 투수/포수 변경
+## 오늘 선발 매치업
 ${batterySection}
-## 타순 변경
+## 타순 변경 (직전 경기 대비)
 ${lineupSection}
 ## 작성 규칙
 1. 존댓말(~습니다/~합니다) 절대 금지. 기사체 반말(~했다/~이다/~있다)로만 작성.
 2. 마크다운/HTML 금지, 순수 텍스트만.
 3. '콜업', '승격' 등 단정적 표현 금지. 새로 합류한 선수는 '새롭게 선발 라인업에 합류한 선수' 정도로 중립 표현.
 4. 변경사항이 없으면 "직전 경기와 동일한 라인업을 유지했다" 정도로 간결하게.
-5. 제공된 diff 정보만 사용. 없는 정보를 만들지 마세요.
+5. 선발투수는 로테이션이므로 "변경"이 아닌 오늘 매치업 소개로 작성. 직전 경기 선발과 비교하지 말 것.
+6. 포수 변경은 동일 팀 내 의미있는 변경이므로 diff로 언급 가능.
+7. 제공된 diff 정보만 사용. 없는 정보를 만들지 마세요.
 
 ## 출력 형식 (JSON만 출력)
 {
-  "battery": "투수/포수 분석 50~100자",
+  "battery": "선발 매치업 + 포수 변경 분석 50~100자",
   "lineup": "타순 분석 80~150자"
 }`;
 }
@@ -383,10 +373,10 @@ export async function POST(req: NextRequest) {
   };
 
   diff.hasDiff = !!(
-    diff.away.starterChanged || diff.away.catcherChanged ||
+    diff.away.catcherChanged ||
     diff.away.newEntries.length || diff.away.removed.length ||
     diff.away.orderChanges.length || diff.away.positionChanges.length ||
-    diff.home.starterChanged || diff.home.catcherChanged ||
+    diff.home.catcherChanged ||
     diff.home.newEntries.length || diff.home.removed.length ||
     diff.home.orderChanges.length || diff.home.positionChanges.length
   );
