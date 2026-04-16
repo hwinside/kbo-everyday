@@ -19,6 +19,7 @@ function formatAvg(avg: string): string {
 interface LineupAnalysis {
   battery: string;
   lineup: string;
+  rotation?: string;
 }
 
 interface LineupTabProps {
@@ -176,6 +177,18 @@ function AiLineupAnalysisCard({
             </div>
             <p className="text-sm text-text-primary leading-relaxed">{analysis.lineup}</p>
           </div>
+          {analysis.rotation && (
+            <>
+              <div className="border-t border-border/50" />
+              <div>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="text-sm">🔄</span>
+                  <span className="text-xs font-medium text-text-secondary">로테이션</span>
+                </div>
+                <p className="text-sm text-text-primary leading-relaxed">{analysis.rotation}</p>
+              </div>
+            </>
+          )}
         </div>
       ) : null}
     </div>
