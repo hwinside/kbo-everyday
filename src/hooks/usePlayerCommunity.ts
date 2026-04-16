@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase/client";
 import { getFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import type { Post } from "@/lib/types";
 import type { Post as RawPost } from "@/lib/supabase/usePosts";
+import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
 interface SupabaseProfileJoin {
   nickname?: string;
@@ -31,8 +32,10 @@ interface SupabasePostRow {
 
 export type ContentTab = "general" | "photo";
 export type SortTab = "latest" | "hot";
+// Filter mode: null = favorites all, "myTeam" = user's team all, string = specific player
+export type PlayerFilter = null | "myTeam" | string;
 
-export function usePlayerCommunity() {
+export function usePlayerCommunity(userTeamId?: number) {
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
   const [favLoaded, setFavLoaded] = useState(false);
   const [posts, setPosts] = useState<Post[]>([]);
@@ -41,7 +44,7 @@ export function usePlayerCommunity() {
   const [photoLoading, setPhotoLoading] = useState(false);
   const [contentTab, setContentTab] = useState<ContentTab>("general");
   const [sortTab, setSortTab] = useState<SortTab>("latest");
-  const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
+  const [selectedPlayer, setSelectedPlayer] = useState<PlayerFilter>(null);
 
   // Derived
   const favPlayerIds = useMemo(() => favPlayers.map((p) => p.playerId), [favPlayers]);
@@ -58,9 +61,23 @@ export function usePlayerCommunity() {
     setFavLoaded(true);
   }, []);
 
+  // My team roster player IDs
+  const myTeamPlayerIds = useMemo(() => {
+    if (!userTeamId) return [];
+    return PLAYERS_ROSTER.filter((p) => p.teamId === userTeamId).map((p) => p.kboId);
+  }, [userTeamId]);
+
+  // Resolve which player IDs to query
+  const getQueryIds = useCallback((): string[] => {
+    if (selectedPlayer === "myTeam") return myTeamPlayerIds;
+    if (selectedPlayer && selectedPlayer !== "myTeam") return [selectedPlayer];
+    return favPlayerIds; // null = favorites all
+  }, [selectedPlayer, favPlayerIds, myTeamPlayerIds]);
+
   // Load general posts
   const loadPosts = useCallback(async () => {
-    if (favPlayerIds.length === 0) return;
+    const queryIds = getQueryIds();
+    if (queryIds.length === 0) return;
     setLoading(true);
 
     let query = supabase
@@ -68,7 +85,7 @@ export function usePlayerCommunity() {
       .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
       .eq("board_type", "player")
       .eq("content_type", "general")
-      .in("board_id", favPlayerIds)
+      .in("board_id", queryIds)
       .neq("is_hidden", true);
 
     if (sortTab === "hot") {
@@ -113,11 +130,12 @@ export function usePlayerCommunity() {
       );
     }
     setLoading(false);
-  }, [favPlayerIds, sortTab]);
+  }, [getQueryIds, sortTab]);
 
   // Load photo posts
   const loadPhotoPosts = useCallback(async () => {
-    if (favPlayerIds.length === 0) return;
+    const queryIds = getQueryIds();
+    if (queryIds.length === 0) return;
     setPhotoLoading(true);
 
     let query = supabase
@@ -125,7 +143,7 @@ export function usePlayerCommunity() {
       .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
       .eq("board_type", "player")
       .eq("content_type", "photo")
-      .in("board_id", favPlayerIds)
+      .in("board_id", queryIds)
       .neq("is_hidden", true);
 
     if (sortTab === "hot") {
@@ -166,24 +184,20 @@ export function usePlayerCommunity() {
       );
     }
     setPhotoLoading(false);
-  }, [favPlayerIds, sortTab]);
+  }, [getQueryIds, sortTab]);
 
   useEffect(() => {
-    if (favPlayerIds.length > 0) {
+    const queryIds = getQueryIds();
+    if (queryIds.length > 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       if (contentTab === "general") loadPosts();
       else loadPhotoPosts();
     }
-  }, [loadPosts, loadPhotoPosts, favPlayerIds.length, contentTab]);
+  }, [loadPosts, loadPhotoPosts, getQueryIds, contentTab]);
 
-  // Filter by selected chip
-  const filteredPosts = selectedPlayer
-    ? posts.filter((p) => p.boardId === selectedPlayer)
-    : posts;
-
-  const filteredPhotoPosts = selectedPlayer
-    ? photoPosts.filter((p) => p.board_id === selectedPlayer)
-    : photoPosts;
+  // With the new query-level filtering, no additional client-side filter needed
+  const filteredPosts = posts;
+  const filteredPhotoPosts = photoPosts;
 
   // Handle tab change
   const handleTabChange = (tab: ContentTab) => {

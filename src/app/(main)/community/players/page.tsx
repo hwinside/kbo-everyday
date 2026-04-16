@@ -13,7 +13,7 @@ import PlayerPostContent from "@/components/community/PlayerPostContent";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { createPost, toggleLike } from "@/lib/supabase/usePosts";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
-import { TEAMS } from "@/lib/constants/teams";
+import { TEAMS, getTeamById } from "@/lib/constants/teams";
 import { usePlayerCommunity } from "@/hooks/usePlayerCommunity";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
@@ -39,7 +39,7 @@ export default function CommunityPlayersPage() {
     handleSortChange,
     loadPosts,
     loadPhotoPosts,
-  } = usePlayerCommunity();
+  } = usePlayerCommunity(userTeamId);
 
   // favIds Set for quick lookup (비최애 판별)
   const favIds = useMemo(() => new Set(favPlayers.map((p) => p.playerId)), [favPlayers]);
@@ -200,13 +200,26 @@ export default function CommunityPlayersPage() {
 
         {/* Player chip filters */}
         <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+          {/* 내 팀 선수 전체 */}
+          {userTeamId && (
+            <button
+              onClick={() => setSelectedPlayer("myTeam")}
+              className={`px-3.5 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
+                selectedPlayer === "myTeam" ? "text-white" : "bg-bg-glass text-text-secondary"
+              }`}
+              style={selectedPlayer === "myTeam" ? { backgroundColor: getTeamById(userTeamId)?.colorPrimary || "#E8364E" } : {}}
+            >
+              {getTeamById(userTeamId)?.shortName || "내 팀"}선수 전체
+            </button>
+          )}
+          {/* 최애선수 전체 */}
           <button
             onClick={() => setSelectedPlayer(null)}
             className={`px-3.5 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
               selectedPlayer === null ? "bg-accent text-white" : "bg-bg-glass text-text-secondary"
             }`}
           >
-            전체
+            최애선수 전체
           </button>
           {favPlayers.map((player) => (
             <button
