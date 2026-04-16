@@ -1,18 +1,80 @@
 "use client";
 
+import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { Search } from "lucide-react";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
+import { getTeamById, TEAMS } from "@/lib/constants/teams";
 import type { FavoritePlayer } from "@/lib/store/favorites";
+import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
 interface PlayerPickerSheetProps {
   open: boolean;
   onClose: () => void;
   players: FavoritePlayer[];
   onSelect: (playerId: string) => void;
+  /** User's team id for prioritising roster list */
+  userTeamId?: number;
 }
 
-export default function PlayerPickerSheet({ open, onClose, players, onSelect }: PlayerPickerSheetProps) {
+export default function PlayerPickerSheet({ open, onClose, players: favPlayers, onSelect, userTeamId }: PlayerPickerSheetProps) {
+  const [search, setSearch] = useState("");
+
+  const favIds = useMemo(() => new Set(favPlayers.map((p) => p.playerId)), [favPlayers]);
+
+  // All roster players grouped: favorites first, then user's team, then rest
+  const allPlayers = useMemo(() => {
+    const roster = PLAYERS_ROSTER.map((p) => ({
+      playerId: p.kboId,
+      name: p.name,
+      teamId: p.teamId,
+    }));
+
+    // Dedupe by kboId
+    const seen = new Set<string>();
+    return roster.filter((p) => {
+      if (seen.has(p.playerId)) return false;
+      seen.add(p.playerId);
+      return true;
+    });
+  }, []);
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return [];
+    const q = search.trim().toLowerCase();
+    return allPlayers
+      .filter((p) => !favIds.has(p.playerId)) // exclude favorites (shown separately)
+      .filter((p) => {
+        const team = getTeamById(p.teamId);
+        return (
+          p.name.toLowerCase().includes(q) ||
+          (team?.shortName?.toLowerCase().includes(q)) ||
+          (team?.name?.toLowerCase().includes(q))
+        );
+      })
+      .slice(0, 30);
+  }, [search, allPlayers, favIds]);
+
+  // When no search: show user's team players (excluding favorites)
+  const myTeamPlayers = useMemo(() => {
+    if (search.trim()) return [];
+    if (!userTeamId) return [];
+    return allPlayers
+      .filter((p) => p.teamId === userTeamId && !favIds.has(p.playerId))
+      .slice(0, 30);
+  }, [allPlayers, userTeamId, favIds, search]);
+
+  function handleSelect(playerId: string) {
+    setSearch("");
+    onSelect(playerId);
+  }
+
+  function handleClose() {
+    setSearch("");
+    onClose();
+  }
+
   return (
     <AnimatePresence>
       {open && (
@@ -22,44 +84,153 @@ export default function PlayerPickerSheet({ open, onClose, players, onSelect }: 
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 bg-black/60"
-            onClick={onClose}
+            onClick={handleClose}
           />
           <motion.div
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
-            className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-bg-secondary overflow-y-auto"
+            className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-bg-secondary overflow-hidden flex flex-col"
             style={{ maxHeight: "92dvh" }}
           >
             <div className="flex justify-center pt-3">
               <div className="h-1 w-10 rounded-full bg-text-tertiary" />
             </div>
-            <div className="flex flex-col h-full">
-              <div className="sticky top-0 bg-bg-secondary px-5 pt-3 pb-2 z-10">
-                <h3 className="text-lg font-bold text-text-primary">어떤 선수 게시판에 쓸까요?</h3>
+
+            <div className="sticky top-0 bg-bg-secondary px-5 pt-3 pb-2 z-10 space-y-3">
+              <h3 className="text-lg font-bold text-text-primary">어떤 선수 게시판에 쓸까요?</h3>
+              {/* Search */}
+              <div className="relative">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
+                <input
+                  type="text"
+                  placeholder="선수 이름 또는 팀명으로 검색"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+                />
               </div>
-              <div className="px-5 pb-24 space-y-2 overflow-y-auto flex-1">
-                {players.map((player) => (
-                  <button
-                    key={player.playerId}
-                    onClick={() => onSelect(player.playerId)}
-                    className="w-full flex items-center gap-3 text-left rounded-xl bg-bg-tertiary px-4 py-3 text-base font-semibold text-text-primary hover:bg-bg-glass active:scale-[0.98] transition-all"
-                  >
-                    <PlayerAvatar
-                      name={player.name}
-                      teamId={player.teamId}
-                      photoUrl={getPlayerPhotoUrl(player.name, player.playerId)}
-                      size={36}
-                    />
-                    {player.name}
-                  </button>
-                ))}
-              </div>
+            </div>
+
+            <div className="px-5 pb-24 overflow-y-auto flex-1">
+              {/* Favorites section */}
+              {favPlayers.length > 0 && !search.trim() && (
+                <div className="mb-4">
+                  <p className="text-xs font-medium text-text-tertiary mb-2 px-1">⭐ 내 최애선수</p>
+                  <div className="space-y-1.5">
+                    {favPlayers.map((player) => (
+                      <PlayerRow
+                        key={player.playerId}
+                        playerId={player.playerId}
+                        name={player.name}
+                        teamId={player.teamId}
+                        onSelect={handleSelect}
+                        highlight
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Search results */}
+              {search.trim() && (
+                <div>
+                  {/* Also show matching favorites */}
+                  {favPlayers
+                    .filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()))
+                    .map((player) => (
+                      <PlayerRow
+                        key={player.playerId}
+                        playerId={player.playerId}
+                        name={player.name}
+                        teamId={player.teamId}
+                        onSelect={handleSelect}
+                        highlight
+                      />
+                    ))}
+                  {filtered.length === 0 && favPlayers.filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase())).length === 0 && (
+                    <p className="text-sm text-text-tertiary text-center py-8">검색 결과가 없습니다</p>
+                  )}
+                  <div className="space-y-1.5">
+                    {filtered.map((player) => (
+                      <PlayerRow
+                        key={player.playerId}
+                        playerId={player.playerId}
+                        name={player.name}
+                        teamId={player.teamId}
+                        onSelect={handleSelect}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* My team section (no search) */}
+              {!search.trim() && myTeamPlayers.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-xs font-medium text-text-tertiary mb-2 px-1">
+                    {getTeamById(userTeamId!)?.shortName ?? "내 팀"} 선수
+                  </p>
+                  <div className="space-y-1.5">
+                    {myTeamPlayers.map((player) => (
+                      <PlayerRow
+                        key={player.playerId}
+                        playerId={player.playerId}
+                        name={player.name}
+                        teamId={player.teamId}
+                        onSelect={handleSelect}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Prompt to search */}
+              {!search.trim() && (
+                <p className="text-xs text-text-tertiary text-center py-4">
+                  다른 선수는 이름으로 검색해보세요 🔍
+                </p>
+              )}
             </div>
           </motion.div>
         </>
       )}
     </AnimatePresence>
+  );
+}
+
+function PlayerRow({
+  playerId,
+  name,
+  teamId,
+  onSelect,
+  highlight,
+}: {
+  playerId: string;
+  name: string;
+  teamId: number;
+  onSelect: (id: string) => void;
+  highlight?: boolean;
+}) {
+  const team = getTeamById(teamId);
+  return (
+    <button
+      onClick={() => onSelect(playerId)}
+      className={`w-full flex items-center gap-3 text-left rounded-xl px-4 py-3 text-sm font-semibold text-text-primary hover:bg-bg-glass active:scale-[0.98] transition-all ${
+        highlight ? "bg-bg-tertiary" : "bg-bg-tertiary/50"
+      }`}
+    >
+      <PlayerAvatar
+        name={name}
+        teamId={teamId}
+        photoUrl={getPlayerPhotoUrl(name, playerId)}
+        size={36}
+      />
+      <span className="flex-1">{name}</span>
+      {team && (
+        <span className="text-xs text-text-tertiary">{team.shortName}</span>
+      )}
+    </button>
   );
 }

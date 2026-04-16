@@ -19,7 +19,8 @@ import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
 export default function CommunityPlayersPage() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
+  const userTeamId = (profile as Record<string, unknown> | null)?.team_id as number | undefined;
 
   const {
     favPlayers,
@@ -48,12 +49,13 @@ export default function CommunityPlayersPage() {
 
   const handleWrite = () => {
     if (!user) { setShowLogin(true); return; }
-    if (favPlayerIds.length === 0) { router.push("/my"); return; }
-    if (favPlayerIds.length === 1 || selectedPlayer) {
-      setWritePlayerTarget(selectedPlayer || favPlayerIds[0]);
+    // 선수가 이미 선택(필터)된 상태면 바로 글쓰기
+    if (selectedPlayer) {
+      setWritePlayerTarget(selectedPlayer);
       if (contentTab === "photo") setWritePhotoOpen(true);
       else setWriteOpen(true);
     } else {
+      // 최애선수 유무 관계없이 선수 선택 시트 열기 (최애선수 상단 + 전체 검색)
       setPlayerPickerOpen(true);
     }
   };
@@ -102,6 +104,64 @@ export default function CommunityPlayersPage() {
             선수 선택하기
           </Link>
         </div>
+
+        {/* 최애선수 없어도 글쓰기 FAB + 선수 선택 시트 */}
+        <button
+          onClick={handleWrite}
+          className="fixed bottom-24 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
+        >
+          <Pencil size={24} />
+        </button>
+
+        <PlayerPickerSheet
+          open={playerPickerOpen}
+          onClose={() => setPlayerPickerOpen(false)}
+          players={favPlayers}
+          userTeamId={userTeamId}
+          onSelect={(playerId) => {
+            setWritePlayerTarget(playerId);
+            setPlayerPickerOpen(false);
+            if (contentTab === "photo") setWritePhotoOpen(true);
+            else setWriteOpen(true);
+          }}
+        />
+
+        <WritePost
+          isOpen={writeOpen}
+          onClose={() => { setWriteOpen(false); setWritePlayerTarget(null); }}
+          teamName={writePlayerTarget ? (() => {
+            const r = PLAYERS_ROSTER.find((p) => p.kboId === writePlayerTarget);
+            const team = r ? TEAMS.find((t) => t.id === r.teamId) : null;
+            const label = team ? `${team.shortName} ${r!.name} 선수` : writePlayerTarget + " 선수";
+            return label + " 게시판";
+          })() : "선수 게시판"}
+          onSubmit={async (title, content, imageUrls) => {
+            await createPost({ boardType: "player", boardId: writePlayerTarget || "", title, content, imageUrls, contentType: "general" });
+            setWriteOpen(false);
+            setWritePlayerTarget(null);
+          }}
+        />
+
+        <WritePhotoPost
+          isOpen={writePhotoOpen}
+          onClose={() => { setWritePhotoOpen(false); setWritePlayerTarget(null); }}
+          teamName={writePlayerTarget ? (() => {
+            const r = PLAYERS_ROSTER.find((p) => p.kboId === writePlayerTarget);
+            const team = r ? TEAMS.find((t) => t.id === r.teamId) : null;
+            return team ? `${team.shortName} ${r!.name} 선수` : writePlayerTarget + " 선수";
+          })() : "선수"}
+          boardType="player"
+          boardId={writePlayerTarget || ""}
+          defaultPlayerTag={(() => {
+            if (!writePlayerTarget) return undefined;
+            const r = PLAYERS_ROSTER.find((p) => p.kboId === writePlayerTarget);
+            if (!r) return undefined;
+            return { kboId: r.kboId, name: r.name, teamId: r.teamId };
+          })()}
+          onSuccess={() => { setWritePhotoOpen(false); setWritePlayerTarget(null); }}
+        />
+
+        {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
       </div>
     );
   }
@@ -184,6 +244,7 @@ export default function CommunityPlayersPage() {
         open={playerPickerOpen}
         onClose={() => setPlayerPickerOpen(false)}
         players={favPlayers}
+        userTeamId={userTeamId}
         onSelect={(playerId) => {
           setWritePlayerTarget(playerId);
           setPlayerPickerOpen(false);
