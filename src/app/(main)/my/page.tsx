@@ -113,7 +113,7 @@ export default function MyPage() {
       <div className="border-b -mx-5 px-5" style={{ borderColor: profile?.team_id ? getTeamBorderColorById(profile.team_id) : 'var(--color-border)' }}>
         <header className="py-3 flex items-center gap-3">
           <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
-          <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">마이페이지</h1>
+          <h1 className="text-lg font-semibold leading-[26px] text-text-primary flex-1">마이페이지</h1>
         </header>
       </div>
 
