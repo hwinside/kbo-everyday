@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { LazyMotion, domAnimation, m, AnimatePresence } from "framer-motion";
 import { ChevronRight, MessageCircle } from "lucide-react";
@@ -61,6 +61,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   const router = useRouter();
   const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number; gameId: string} | null>(null);
   const [showLogin, setShowLogin] = useState(false);
+  const lastRefreshAtRef = useRef(0);
 
   const {
     user, profile,
@@ -93,6 +94,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
 
   // Pull-to-refresh: 홈 데이터 갱신 (router.refresh로 서버 컴포넌트 revalidate + 뉴스 refetch)
   const handleRefresh = useCallback(async () => {
+    lastRefreshAtRef.current = Date.now();
     // 1) Next.js server component revalidation (games + live data)
     router.refresh();
     // 2) Client-side news refetch
@@ -104,6 +106,31 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       } catch { /* news refresh 실패해도 무시 */ }
     }
   }, [router, myTeamId]);
+
+  useEffect(() => {
+    const maybeRefresh = () => {
+      const now = Date.now();
+      if (now - lastRefreshAtRef.current < 60_000) return;
+      lastRefreshAtRef.current = now;
+      router.refresh();
+    };
+
+    if (gameTime) {
+      maybeRefresh();
+    }
+
+    const onFocus = () => maybeRefresh();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") maybeRefresh();
+    };
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [router, gameTime]);
 
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
   const myTeamGameBase = todayGames.find(g => g.homeTeamId === myTeamId || g.awayTeamId === myTeamId);

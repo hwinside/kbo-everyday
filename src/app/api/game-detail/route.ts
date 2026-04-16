@@ -578,8 +578,9 @@ export async function GET(req: NextRequest) {
 
     const status: GameDetailResponse["status"] =
       liveListStatus === "cancelled" ? "cancelled" :
+      liveListStatus === "live" ? "live" :
       scoreBoardStatus === "scheduled" && hasRealBoxScoreFinal ? "final" :
-      scoreBoardStatus;
+      liveListStatus ?? scoreBoardStatus;
 
     const response: GameDetailResponse = {
       gameId,
