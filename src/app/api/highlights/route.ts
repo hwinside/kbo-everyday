@@ -198,14 +198,19 @@ export async function GET(req: NextRequest) {
         const t = v.title.toLowerCase();
         const title = v.title;
         
-        // 1) 키워드 기반 숏츠
-        const hasShortKeyword = t.includes("#shorts") || t.includes("shorts") || title.includes("숏츠") || title.includes("쇼츠");
+        // 1) 키워드 기반 숏츠 (명시적 표시)
+        if (t.includes("#shorts") || t.includes("shorts") || title.includes("숏츠") || title.includes("쇼츠") || title.includes("#핫클립")) {
+          return true;
+        }
         
-        // 2) 공식 클립 패턴: [날짜 vs 팀] 시작 + H/L·직캠 제외
-        const isOfficialClip = /^\[\d+\.\d+\s+vs\s+/.test(title); // [4.14 vs ...]
-        const isLongForm = title.includes("H/L") || title.includes("직캠");
+        // 2) 롱폼 키워드 제외 (대소문자 무시)
+        const longFormKeywords = ["h/l", "직캠", "live", "하이라이트", "highlight", "인터뷰", "엔터뷰", "애프터"];
+        if (longFormKeywords.some(kw => t.includes(kw))) {
+          return false;
+        }
         
-        return hasShortKeyword || (isOfficialClip && !isLongForm);
+        // 3) 제목 길이 기반 (80자 이하 = 숏츠 가능성)
+        return title.length <= 80;
       });
       if (filtered.length > 0) {
         const result = { items: filtered };
