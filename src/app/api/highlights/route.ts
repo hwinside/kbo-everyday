@@ -203,9 +203,8 @@ export async function GET(req: NextRequest) {
           return true;
         }
         
-        // 2) 롱폼 키워드 제외
-        const longFormKeywords = ["h/l", "직캠", "live", "하이라이트", "highlight", "인터뷰", "엔터뷰", "애프터"];
-        if (longFormKeywords.some(kw => t.includes(kw))) {
+        // 2) 명확한 롱폼 패턴 제외
+        if (title.includes("정규시즌 H/L") || title.includes("[LIVE]") || /하이라이트.*\|/.test(title)) {
           return false;
         }
         
@@ -222,9 +221,23 @@ export async function GET(req: NextRequest) {
         if (title.includes("덕캠")) {
           return true;
         }
-        // NC: ㅃ14월 14일 KT vs NC 형식
-        if (/ㅃ\s*\d+월\s+\d+일/.test(title)) {
+        // NC: ㅣ 4월 14일 형식 (중괄호 사용)
+        if (/ㅣ\s*\d+월\s+\d+일/.test(title)) {
           return true;
+        }
+        
+        // 4) 채널명 패턴 ([채널])
+        const channelMatch = title.match(/\[([^\]]+)\]/);
+        if (channelMatch) {
+          const channelName = channelMatch[1].toLowerCase();
+          // 롱폼 채널 제외
+          if (channelName.includes("직캠") || channelName.includes("애프터")) {
+            return false;
+          }
+          // 숏츠 채널 (덕후/덕관/티비/비티/캠)
+          if (channelName.includes("덕") || channelName.includes("티비") || channelName.includes("비티") || channelName.includes("캠")) {
+            return true;
+          }
         }
         
         return false;
