@@ -176,14 +176,6 @@
     "team": "NC"
   },
   {
-    "name": "고준휘",
-    "kboId": "59372",
-    "team": "NC",
-    "teamId": 5,
-    "position": "외야수",
-    "backNo": null
-  },
-  {
     "name": "곽도규",
     "kboId": "53609",
     "team": "KIA",
@@ -366,14 +358,6 @@
     "teamId": 5,
     "position": "내야수",
     "backNo": "52"
-  },
-  {
-    "name": "김건",
-    "kboId": "59374",
-    "team": "NC",
-    "teamId": 5,
-    "position": "내야수",
-    "backNo": null
   },
   {
     "name": "김건",
@@ -822,14 +806,6 @@
     "position": "야수",
     "backNo": "",
     "team": "SSG"
-  },
-  {
-    "name": "김성욱",
-    "team": "SSG",
-    "teamId": 4,
-    "position": "외야수",
-    "backNo": "0",
-    "kboId": "TR001"
   },
   {
     "name": "김성윤",
@@ -3473,14 +3449,6 @@
   },
   {
     "name": "윤서현",
-    "kboId": "59380",
-    "team": "NC",
-    "teamId": 5,
-    "position": "투수",
-    "backNo": null
-  },
-  {
-    "name": "윤서현",
     "kboId": "56945",
     "team": "NC",
     "teamId": 5,
@@ -4262,14 +4230,6 @@
     "teamId": 5,
     "position": "포수",
     "backNo": "32"
-  },
-  {
-    "name": "이희성",
-    "kboId": "59368",
-    "team": "NC",
-    "teamId": 5,
-    "position": "포수",
-    "backNo": null
   },
   {
     "name": "이희성",
@@ -5848,14 +5808,6 @@
     "team": "NC"
   },
   {
-    "name": "허윤",
-    "kboId": "59373",
-    "team": "NC",
-    "teamId": 5,
-    "position": "내야수",
-    "backNo": null
-  },
-  {
     "name": "허윤동",
     "kboId": "50449",
     "team": "삼성",
@@ -6014,14 +5966,6 @@
     "teamId": 6,
     "position": "내야수",
     "backNo": "127"
-  },
-  {
-    "name": "황석민",
-    "kboId": "59375",
-    "team": "KIA",
-    "teamId": 6,
-    "position": "내야수",
-    "backNo": null
   },
   {
     "name": "황성빈",
