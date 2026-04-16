@@ -190,7 +190,7 @@ export async function GET(req: NextRequest) {
   }
 
   // YouTube 결과가 비어있으면 Supabase fallback (쿼터 초과 등)
-  // fallback 데이터도 제목 기반 숏츠 필터링 적용
+  // fallback 데이터도 제목 기반 숏츠 필터링 + 선수 이름 매칭 적용
   if (merged.length === 0) {
     const fallbackItems = await getSupabaseFallback(team);
     if (fallbackItems.length > 0) {
@@ -202,13 +202,21 @@ export async function GET(req: NextRequest) {
         const hasShortKeyword = t.includes("#shorts") || t.includes("shorts") || title.includes("숏츠") || title.includes("쇼츠");
         
         // 2) 공식 클립 패턴: [날짜 vs 팀] 시작 + H/L·직캠 제외
-        const isOfficialClip = /^\[\d+\.\d+\s+vs\s+/.test(title); // [4.14 vs ...]
+        const isOfficialClip = /^\[\d+\.\d+\s+vs\s+/.test(title);
         const isLongForm = title.includes("H/L") || title.includes("직캠");
         
-        return hasShortKeyword || (isOfficialClip && !isLongForm);
+        // 3) 최애선수 이름이 제목에 포함된 영상 (롱폼 제외)
+        const matchesPlayer = playerNames.length > 0 && playerNames.some(name => title.includes(name));
+        
+        return hasShortKeyword || (matchesPlayer && !isLongForm) || (isOfficialClip && !isLongForm);
       });
       if (filtered.length > 0) {
-        const result = { items: filtered };
+        // fallback 결과는 캐시 TTL을 짧게 (10분) — YouTube API 복구 시 빠른 갱신
+        const result = { items: filtered.map(v => {
+          const matchedPlayer = playerNames.find(name => v.title.includes(name));
+          return { ...v, label: matchedPlayer || team };
+        }) };
+        memCache.set(cacheKey, { data: result, ts: Date.now() - getHighlightsTTL() + 10 * 60 * 1000 });
         return NextResponse.json(result);
       }
     }
