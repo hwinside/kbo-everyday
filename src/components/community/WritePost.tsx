@@ -16,6 +16,7 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit }: Write
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [images, setImages] = useState<{preview: string; file: File}[]>([]);
+  const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -34,13 +35,16 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit }: Write
   }
 
   async function handleSubmit() {
-    if (!title.trim() || !content.trim()) return;
+    if (!title.trim() || !content.trim() || submitting) return;
+    setSubmitting(true);
     try {
       if (onSubmit) await onSubmit(title.trim(), content.trim(), []);
     } catch (e: unknown) {
       alert("등록 실패: " + ((e as Error).message || JSON.stringify(e)));
+      setSubmitting(false);
       return;
     }
+    setSubmitting(false);
     onClose();
     setTitle("");
     setContent("");
@@ -74,10 +78,10 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit }: Write
               </h2>
               <button
                 onClick={handleSubmit}
-                disabled={!title.trim() || !content.trim()}
+                disabled={!title.trim() || !content.trim() || submitting}
                 className="rounded-full bg-accent px-4 py-1.5 text-base font-semibold text-white disabled:opacity-40 transition-opacity"
               >
-                등록
+                {submitting ? "등록 중..." : "등록"}
               </button>
             </div>
             <div className="px-5 pb-8 space-y-4 flex-1 flex flex-col">
