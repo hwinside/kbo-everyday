@@ -77,20 +77,23 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const nameQuery = searchParams.get("name");
 
-  // 단건 조회 (이름 지정 시) — 빠름
+  // 단건 조회 (이름 지정 시) — 동명이인 전원 반환
   if (nameQuery) {
-    let result = await searchPlayer(nameQuery);
-    // KBO API 실패 시 roster fallback
-    if (!result) {
-      try {
-        const roster = (await import("@/lib/constants/players-roster.json")).default as RosterPlayer[];
-        const found = roster.find((p) => p.name === nameQuery);
-        if (found) {
-          result = { name: found.name, kboId: found.kboId, team: found.team, teamId: found.teamId, position: found.position, backNo: found.backNo };
-        }
-      } catch {}
+    const results: PlayerTeamInfo[] = [];
+    // 1) roster에서 동명이인 전원 조회
+    try {
+      const roster = (await import("@/lib/constants/players-roster.json")).default as RosterPlayer[];
+      const matches = roster.filter((p) => p.name === nameQuery);
+      for (const m of matches) {
+        results.push({ name: m.name, kboId: m.kboId, team: m.team, teamId: m.teamId, position: m.position, backNo: m.backNo });
+      }
+    } catch {}
+    // 2) roster에 없으면 KBO API fallback
+    if (results.length === 0) {
+      const apiResult = await searchPlayer(nameQuery);
+      if (apiResult) results.push(apiResult);
     }
-    return NextResponse.json({ players: result ? [result] : [], count: result ? 1 : 0, cached: false });
+    return NextResponse.json({ players: results, count: results.length, cached: false });
   }
 
   // 전체 조회 (캐시)
