@@ -37,8 +37,16 @@ function parseIsoDurationSeconds(iso: string): number {
   return hours * 3600 + minutes * 60 + seconds;
 }
 
+/** 비선수성/노이즈 키워드 — 숏츠 섹션에 어울리는 콘텐츠 제외 */
+const NON_PLAYER_KEYWORDS = ["시구", "CUT", "팬영상", "콘서트", "응원가", "무대인사", "인터뷰", "엔터뷰", "기자회견", "오늘의 컷"];
+
+function isNonPlayerNoise(title: string): boolean {
+  return NON_PLAYER_KEYWORDS.some(kw => title.includes(kw));
+}
+
 function isActualShort(title: string, durationSeconds: number): boolean {
   const normalized = title.toLowerCase();
+  if (isNonPlayerNoise(title)) return false;
   return durationSeconds > 0 && (
     durationSeconds <= 70 ||
     normalized.includes("#shorts") ||
@@ -208,6 +216,9 @@ export async function GET(req: NextRequest) {
         // 3) 최애선수 이름이 제목에 포함된 영상 (롱폼 제외)
         const matchesPlayer = playerNames.length > 0 && playerNames.some(name => title.includes(name));
         
+        // 4) 비선수성 노이즈 제외
+        if (isNonPlayerNoise(title)) return false;
+        
         return hasShortKeyword || (matchesPlayer && !isLongForm) || (isOfficialClip && !isLongForm);
       });
       if (filtered.length > 0) {
@@ -222,10 +233,18 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 최신순 정렬
-  merged.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+  // 비선수성 노이즈 제거
+  const cleaned = merged.filter(v => !isNonPlayerNoise(v.title));
 
-  const items = merged.map(({ _label, ...rest }) => ({ ...rest, label: _label }));
+  // 선수 라벨 우선 정렬 → 최신순
+  cleaned.sort((a, b) => {
+    const aIsPlayer = a._label !== team;
+    const bIsPlayer = b._label !== team;
+    if (aIsPlayer !== bIsPlayer) return aIsPlayer ? -1 : 1;
+    return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
+  });
+
+  const items = cleaned.map(({ _label, ...rest }) => ({ ...rest, label: _label }));
   const result = { items };
   if (items.length > 0) memCache.set(cacheKey, { data: result, ts: Date.now() });
   return NextResponse.json(result, {

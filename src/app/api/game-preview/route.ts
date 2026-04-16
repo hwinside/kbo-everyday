@@ -92,6 +92,38 @@ interface HotColdPlayer {
   summary: string;
 }
 
+interface RecentRecord {
+  wins: number;
+  losses: number;
+  draws: number;
+  results: string[];
+}
+
+interface HeadToHeadRecord {
+  awayWins: number;
+  homeWins: number;
+  draws: number;
+  results: string[];
+}
+
+interface LineupPlayer {
+  order: number;
+  position: string;
+  name: string;
+}
+
+interface TodayLineup {
+  batters: LineupPlayer[];
+  startingPitcher: string;
+}
+
+interface LineupDiffSignal {
+  newEntries: string[];
+  removed: string[];
+  keyOrderChanges: string[];
+  catcherChanged: { from: string; to: string } | null;
+}
+
 /** gameId 앞 8자리에서 날짜 추출 → YYYYMMDD */
 function getDateFromGameId(gameId: string): string {
   return gameId.slice(0, 8);
@@ -248,6 +280,34 @@ async function getRecentForm(gameId: string, teamId: number): Promise<HotColdPla
       return (bStats.hits / bStats.atBats) - (aStats.hits / aStats.atBats);
     })
     .slice(0, 3);
+}
+
+/** 라인업 선수에 시즌 스탯 붙이기 */
+function enrichLineupWithStats(batters: LineupPlayer[], teamId: number): string[] {
+  const teamName = getTeamShortName(teamId);
+  const statsMap = new Map(
+    (batterStats as Array<{ name: string; team: string; avg: string; hr: number; rbi: number; games: number }>)
+      .filter(b => b.team === teamName)
+      .map(b => [b.name, b])
+  );
+  return batters.map(b => {
+    const s = statsMap.get(b.name);
+    if (s) {
+      return `${b.order}번 ${b.position} ${b.name} (타율 ${s.avg}, ${s.hr}홈런, ${s.rbi}타점, ${s.games}경기)`;
+    }
+    return `${b.order}번 ${b.position} ${b.name}`;
+  });
+}
+
+/** diff 시그널을 프롬프트용 텍스트로 포맷 */
+function formatDiffSignal(diff: LineupDiffSignal, teamShort: string): string {
+  const parts: string[] = [];
+  if (diff.newEntries.length > 0) parts.push(`신규 합류: ${diff.newEntries.join(", ")}`);
+  if (diff.removed.length > 0) parts.push(`제외: ${diff.removed.join(", ")}`);
+  if (diff.keyOrderChanges.length > 0) parts.push(`타순 변경: ${diff.keyOrderChanges.join(", ")}`);
+  if (diff.catcherChanged) parts.push(`포수 변경: ${diff.catcherChanged.from} → ${diff.catcherChanged.to}`);
+  if (parts.length === 0) return "";
+  return `${teamShort}: ${parts.join(" / ")}\n`;
 }
 
 async function buildPreviewPrompt(req: PreviewRequest): Promise<string> {
