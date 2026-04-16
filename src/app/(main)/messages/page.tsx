@@ -50,7 +50,7 @@ export default function MessagesPage() {
           <button onClick={() => router.back()} className="p-1">
             <ArrowLeft size={24} className="text-text-primary" />
           </button>
-          <h1 className="text-lg font-bold text-text-primary">쪽지</h1>
+          <h1 className="text-lg font-semibold leading-[26px] text-text-primary">쪽지</h1>
         </div>
         <div className="text-center py-20">
           <MessageCircle size={40} className="mx-auto mb-3 text-text-tertiary opacity-50" />
