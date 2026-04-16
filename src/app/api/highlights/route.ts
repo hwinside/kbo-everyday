@@ -190,16 +190,22 @@ export async function GET(req: NextRequest) {
   }
 
   // YouTube 결과가 비어있으면 Supabase fallback (쿼터 초과 등)
-  // fallback 데이터도 제목 기반 숏츠 필터링 + 공식채널 제외 적용
+  // fallback 데이터도 제목 기반 숏츠 필터링 적용
   if (merged.length === 0) {
     const fallbackItems = await getSupabaseFallback(team);
     if (fallbackItems.length > 0) {
-      const officialChannelId = teamObj?.youtubeChannelId;
       const filtered = fallbackItems.filter(v => {
-        // 제목 기반 숏츠 판별 (duration 없으므로 키워드만)
         const t = v.title.toLowerCase();
-        const likelyShort = t.includes("#shorts") || t.includes("shorts") || v.title.includes("숏츠") || v.title.includes("쇼츠");
-        return likelyShort;
+        const title = v.title;
+        
+        // 1) 키워드 기반 숏츠
+        const hasShortKeyword = t.includes("#shorts") || t.includes("shorts") || title.includes("숏츠") || title.includes("쇼츠");
+        
+        // 2) 공식 클립 패턴: [날짜 vs 팀] 시작 + H/L·직캠 제외
+        const isOfficialClip = /^\[\d+\.\d+\s+vs\s+/.test(title); // [4.14 vs ...]
+        const isLongForm = title.includes("H/L") || title.includes("직캠");
+        
+        return hasShortKeyword || (isOfficialClip && !isLongForm);
       });
       if (filtered.length > 0) {
         const result = { items: filtered };
