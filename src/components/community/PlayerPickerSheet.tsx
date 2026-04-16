@@ -23,12 +23,21 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
 
   const favIds = useMemo(() => new Set(favPlayers.map((p) => p.playerId)), [favPlayers]);
 
+  // Enrich favorites with roster info (position/backNo)
+  const rosterMap = useMemo(() => {
+    const m = new Map<string, { position: string; backNo: string }>();
+    for (const p of PLAYERS_ROSTER) m.set(p.kboId, { position: p.position || "", backNo: p.backNo || "" });
+    return m;
+  }, []);
+
   // All roster players grouped: favorites first, then user's team, then rest
   const allPlayers = useMemo(() => {
     const roster = PLAYERS_ROSTER.map((p) => ({
       playerId: p.kboId,
       name: p.name,
       teamId: p.teamId,
+      position: p.position || "",
+      backNo: p.backNo || "",
     }));
 
     // Dedupe by kboId
@@ -50,7 +59,8 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
         return (
           p.name.toLowerCase().includes(q) ||
           (team?.shortName?.toLowerCase().includes(q)) ||
-          (team?.name?.toLowerCase().includes(q))
+          (team?.name?.toLowerCase().includes(q)) ||
+          p.backNo.includes(q)
         );
       })
       .slice(0, 30);
@@ -119,16 +129,21 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
                 <div className="mb-4">
                   <p className="text-xs font-medium text-text-tertiary mb-2 px-1">⭐ 내 최애선수</p>
                   <div className="space-y-1.5">
-                    {favPlayers.map((player) => (
-                      <PlayerRow
-                        key={player.playerId}
-                        playerId={player.playerId}
-                        name={player.name}
-                        teamId={player.teamId}
-                        onSelect={handleSelect}
-                        highlight
-                      />
-                    ))}
+                    {favPlayers.map((player) => {
+                      const ri = rosterMap.get(player.playerId);
+                      return (
+                        <PlayerRow
+                          key={player.playerId}
+                          playerId={player.playerId}
+                          name={player.name}
+                          teamId={player.teamId}
+                          position={ri?.position}
+                          backNo={ri?.backNo}
+                          onSelect={handleSelect}
+                          highlight
+                        />
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -139,16 +154,21 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
                   {/* Also show matching favorites */}
                   {favPlayers
                     .filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()))
-                    .map((player) => (
-                      <PlayerRow
-                        key={player.playerId}
-                        playerId={player.playerId}
-                        name={player.name}
-                        teamId={player.teamId}
-                        onSelect={handleSelect}
-                        highlight
-                      />
-                    ))}
+                    .map((player) => {
+                      const ri = rosterMap.get(player.playerId);
+                      return (
+                        <PlayerRow
+                          key={player.playerId}
+                          playerId={player.playerId}
+                          name={player.name}
+                          teamId={player.teamId}
+                          position={ri?.position}
+                          backNo={ri?.backNo}
+                          onSelect={handleSelect}
+                          highlight
+                        />
+                      );
+                    })}
                   {filtered.length === 0 && favPlayers.filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase())).length === 0 && (
                     <p className="text-sm text-text-tertiary text-center py-8">검색 결과가 없습니다</p>
                   )}
@@ -159,6 +179,8 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
                         playerId={player.playerId}
                         name={player.name}
                         teamId={player.teamId}
+                        position={player.position}
+                        backNo={player.backNo}
                         onSelect={handleSelect}
                       />
                     ))}
@@ -179,6 +201,8 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
                         playerId={player.playerId}
                         name={player.name}
                         teamId={player.teamId}
+                        position={player.position}
+                        backNo={player.backNo}
                         onSelect={handleSelect}
                       />
                     ))}
@@ -204,16 +228,21 @@ function PlayerRow({
   playerId,
   name,
   teamId,
+  position,
+  backNo,
   onSelect,
   highlight,
 }: {
   playerId: string;
   name: string;
   teamId: number;
+  position?: string;
+  backNo?: string;
   onSelect: (id: string) => void;
   highlight?: boolean;
 }) {
   const team = getTeamById(teamId);
+  const sub = [team?.shortName, position, backNo ? `#${backNo}` : ""].filter(Boolean).join(" · ");
   return (
     <button
       onClick={() => onSelect(playerId)}
@@ -227,10 +256,10 @@ function PlayerRow({
         photoUrl={getPlayerPhotoUrl(name, playerId)}
         size={36}
       />
-      <span className="flex-1">{name}</span>
-      {team && (
-        <span className="text-xs text-text-tertiary">{team.shortName}</span>
-      )}
+      <div className="flex-1 min-w-0">
+        <span className="block">{name}</span>
+        {sub && <span className="block text-xs font-normal text-text-tertiary truncate">{sub}</span>}
+      </div>
     </button>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Pencil } from "lucide-react";
@@ -40,6 +40,9 @@ export default function CommunityPlayersPage() {
     loadPosts,
     loadPhotoPosts,
   } = usePlayerCommunity();
+
+  // favIds Set for quick lookup (비최애 판별)
+  const favIds = useMemo(() => new Set(favPlayers.map((p) => p.playerId)), [favPlayers]);
 
   const [writeOpen, setWriteOpen] = useState(false);
   const [writePhotoOpen, setWritePhotoOpen] = useState(false);
@@ -136,9 +139,11 @@ export default function CommunityPlayersPage() {
             return label + " 게시판";
           })() : "선수 게시판"}
           onSubmit={async (title, content, imageUrls) => {
-            await createPost({ boardType: "player", boardId: writePlayerTarget || "", title, content, imageUrls, contentType: "general" });
+            const targetId = writePlayerTarget || "";
+            await createPost({ boardType: "player", boardId: targetId, title, content, imageUrls, contentType: "general" });
             setWriteOpen(false);
             setWritePlayerTarget(null);
+            if (targetId) router.push(`/community/players/${targetId}`);
           }}
         />
 
@@ -158,7 +163,12 @@ export default function CommunityPlayersPage() {
             if (!r) return undefined;
             return { kboId: r.kboId, name: r.name, teamId: r.teamId };
           })()}
-          onSuccess={() => { setWritePhotoOpen(false); setWritePlayerTarget(null); }}
+          onSuccess={() => {
+            const targetId = writePlayerTarget;
+            setWritePhotoOpen(false);
+            setWritePlayerTarget(null);
+            if (targetId) router.push(`/community/players/${targetId}`);
+          }}
         />
 
         {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
@@ -270,10 +280,16 @@ export default function CommunityPlayersPage() {
           return label + " 게시판";
         })() : "선수 게시판"}
         onSubmit={async (title, content, imageUrls) => {
-          await createPost({ boardType: "player", boardId: writePlayerTarget || favPlayerIds[0], title, content, imageUrls, contentType: "general" });
+          const targetId = writePlayerTarget || favPlayerIds[0];
+          await createPost({ boardType: "player", boardId: targetId, title, content, imageUrls, contentType: "general" });
           setWriteOpen(false);
           setWritePlayerTarget(null);
-          loadPosts();
+          // 비최애 선수면 해당 선수 게시판으로 이동 (P0: 작성 직후 내 글 확인 보장)
+          if (targetId && !favIds.has(targetId)) {
+            router.push(`/community/players/${targetId}`);
+          } else {
+            loadPosts();
+          }
         }}
       />
 
@@ -293,7 +309,17 @@ export default function CommunityPlayersPage() {
           if (!r) return undefined;
           return { kboId: r.kboId, name: r.name, teamId: r.teamId };
         })()}
-        onSuccess={() => { setWritePhotoOpen(false); setWritePlayerTarget(null); loadPhotoPosts(); }}
+        onSuccess={() => {
+          const targetId = writePlayerTarget;
+          setWritePhotoOpen(false);
+          setWritePlayerTarget(null);
+          // 비최애 선수면 해당 선수 게시판으로 이동
+          if (targetId && !favIds.has(targetId)) {
+            router.push(`/community/players/${targetId}`);
+          } else {
+            loadPhotoPosts();
+          }
+        }}
       />
 
       {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
