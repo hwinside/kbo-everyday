@@ -125,6 +125,7 @@ export default function MyPage() {
           team={team}
           onAvatarClick={() => user && setShowAvatarSelect(true)}
           onNicknameClick={() => user && setShowNicknameEdit(true)}
+          onViewProfile={() => user && router.push(`/profile/${user.id}`)}
         />
       </motion.div>
 

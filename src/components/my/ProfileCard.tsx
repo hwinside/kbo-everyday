@@ -15,9 +15,10 @@ interface ProfileCardProps {
   team: TeamData | null;
   onAvatarClick: () => void;
   onNicknameClick: () => void;
+  onViewProfile?: () => void;
 }
 
-export default function ProfileCard({ user, profile, team, onAvatarClick, onNicknameClick }: ProfileCardProps) {
+export default function ProfileCard({ user, profile, team, onAvatarClick, onNicknameClick, onViewProfile }: ProfileCardProps) {
   return (
     <GlassCard className="p-5">
       <div className="flex items-center gap-4">
@@ -60,6 +61,16 @@ export default function ProfileCard({ user, profile, team, onAvatarClick, onNick
           <p className="mt-0.5 text-base text-text-tertiary">{user ? `${profile?.points || 0} 포인트` : "로그인 해주세요"}</p>
         </div>
       </div>
+
+      {user && onViewProfile && (
+        <button
+          onClick={onViewProfile}
+          className="mt-4 flex w-full items-center justify-between rounded-2xl bg-bg-tertiary px-4 py-3 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+        >
+          <span className="text-sm font-medium text-text-primary">내 프로필 보기</span>
+          <ChevronRight size={18} className="text-text-tertiary" />
+        </button>
+      )}
     </GlassCard>
   );
 }
