@@ -52,6 +52,11 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
 
   useBodyScrollLock(isOpen);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    setSelected(getPresetKey(currentAvatarUrl));
+  }, [isOpen, currentAvatarUrl]);
+
   // ESC 닫기
   useEffect(() => {
     if (!isOpen) return;
@@ -65,17 +70,27 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isOpen, onClose]);
 
-  const handleSelect = async (key: string | null) => {
+  const handleSelect = (key: string | null) => {
     if (!user || saving) return;
     setSelected(key);
+  };
+
+  const handleConfirm = async () => {
+    if (!user || saving) return;
     setSaving(true);
-    const avatarUrl = key ? `preset:${key}` : null;
-    await supabase
+    const avatarUrl = selected ? `preset:${selected}` : null;
+    const { error } = await supabase
       .from("profiles")
       .update({ avatar_url: avatarUrl })
       .eq("id", user.id);
+    if (error) {
+      console.error("아바타 저장 실패:", error);
+      setSaving(false);
+      return;
+    }
     await refreshProfile();
     setSaving(false);
+    onClose();
   };
 
   if (typeof window === "undefined") return null;
@@ -100,7 +115,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
             className="fixed bottom-0 left-0 right-0 z-[60] mx-auto max-w-lg rounded-t-3xl bg-bg-secondary border-t border-black/10 dark:border-white/10"
-            style={{ maxHeight: "80vh" }}
+            style={{ maxHeight: "80dvh" }}
           >
             {/* Handle */}
             <div className="mx-auto mt-3 mb-2 h-1 w-10 rounded-full bg-text-tertiary/30" />
@@ -118,9 +133,9 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
               ref={scrollRef}
               className="overflow-y-auto px-5"
               style={{
-                maxHeight: "calc(80vh - 80px)",
+                maxHeight: "calc(80dvh - 148px)",
                 overscrollBehavior: "contain",
-                paddingBottom: "calc(32px + env(safe-area-inset-bottom, 0px))",
+                paddingBottom: "16px",
               }}
             >
               {/* 기본(이니셜) 옵션 */}
@@ -146,7 +161,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
                   <button
                     key={avatar.key}
                     onClick={() => handleSelect(avatar.key)}
-                    className={`flex flex-col items-center gap-1.5 p-2 rounded-xl transition-all ${
+                    className={`relative flex flex-col items-center gap-1.5 p-2 rounded-xl transition-all ${
                       selected === avatar.key
                         ? 'bg-accent/10 ring-2 ring-accent scale-105'
                         : 'hover:bg-bg-tertiary active:scale-95'
@@ -166,6 +181,16 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
                   </button>
                 ))}
               </div>
+            </div>
+
+            <div className="border-t border-black/10 dark:border-white/10 px-5 pt-3 pb-[calc(16px+env(safe-area-inset-bottom,0px))]">
+              <button
+                onClick={handleConfirm}
+                disabled={saving}
+                className="w-full rounded-2xl bg-accent py-3 text-sm font-semibold text-white transition-opacity disabled:opacity-50"
+              >
+                {saving ? "저장 중..." : "선택 완료"}
+              </button>
             </div>
           </motion.div>
         </>
