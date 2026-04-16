@@ -77,13 +77,13 @@ export default function LiveGameBanner({ excludeGameId, liveGames }: { excludeGa
 
   return (
     <div className="mb-4">
-      <div className="mb-3 flex items-center justify-between px-5">
+      <div className="mb-3 flex items-center justify-between">
         <h2 className="flex items-center gap-2 text-lg leading-[26px] font-semibold text-text-primary">
-          <Radio size={18} className="text-red-400" /> 실시간 경기
+          <Radio size={18} className="text-red-400" /> 다른 팀 실시간
         </h2>
         <span className="text-xs text-text-tertiary">{filteredGames.length}경기 진행 중</span>
       </div>
-      <div className="flex gap-3 overflow-x-auto hide-scrollbar px-5">
+      <div className="flex gap-3 overflow-x-auto hide-scrollbar -mx-5 px-5">
         {filteredGames.map(game => (
           <LiveGameCard key={game.gameId} game={game} />
         ))}
