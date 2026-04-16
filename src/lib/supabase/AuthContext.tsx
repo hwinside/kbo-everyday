@@ -98,7 +98,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(data);
         syncProfileToLocal(data);
       } else {
-        setProfile(null);
+        // 1회 retry (1초 후) - 네트워크 일시 실패 대비
+        console.warn("[AuthContext] profile load failed, retrying in 1s...", error?.message);
+        await new Promise(r => setTimeout(r, 1000));
+        const retry = await supabase.from("profiles").select("*").eq("id", userId).single();
+        if (!retry.error && retry.data) {
+          setProfile(retry.data);
+          syncProfileToLocal(retry.data);
+        } else {
+          setProfile(null);
+        }
       }
     } catch {
       setProfile(null);

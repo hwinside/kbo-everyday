@@ -64,7 +64,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const roomId = getRoomId(gameId, room);
   const { messages, loading, sendMessage, isLoggedIn } = useChat(roomId);
   const { homePct } = useMoodGauge(gameId, homeTeamId, awayTeamId);
-  const { user, profile } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const [input, setInput] = useState("");
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -79,9 +79,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const awayTeam = getTeamById(awayTeamId)!;
 
   // 팬방 글쓰기 권한 체크: 전체는 누구나, 팬방은 해당 팀 팬만
-  const myTeamId = profile?.team_id;
+  const myTeamId = profile?.team_id != null ? Number(profile.team_id) : undefined;
   const canWrite = (() => {
     if (!isLoggedIn) return false;
+    if (authLoading) return false;  // 프로필 로딩 중엔 입력 차단 (오판 방지)
     if (room === "all") return true;
     if (room === "home") return myTeamId === homeTeamId;
     if (room === "away") return myTeamId === awayTeamId;
@@ -90,6 +91,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
   const writeBlockedReason = (() => {
     if (!isLoggedIn) return "로그인 후 채팅 가능";
+    if (authLoading) return "로딩 중...";
     if (!canWrite) {
       const teamName = room === "home" ? homeTeam.shortName : awayTeam.shortName;
       return `${teamName} 팬만 글쓰기 가능`;

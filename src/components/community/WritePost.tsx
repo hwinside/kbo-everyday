@@ -17,6 +17,7 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit }: Write
   const [content, setContent] = useState("");
   const [images, setImages] = useState<{preview: string; file: File}[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -35,15 +36,18 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit }: Write
   }
 
   async function handleSubmit() {
-    if (!title.trim() || !content.trim() || submitting) return;
+    if (!title.trim() || !content.trim() || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       if (onSubmit) await onSubmit(title.trim(), content.trim(), []);
     } catch (e: unknown) {
       alert("등록 실패: " + ((e as Error).message || JSON.stringify(e)));
+      submittingRef.current = false;
       setSubmitting(false);
       return;
     }
+    submittingRef.current = false;
     setSubmitting(false);
     onClose();
     setTitle("");

@@ -57,6 +57,7 @@ export default function WritePhotoPost({
   );
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [toast, setToast] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -185,7 +186,8 @@ export default function WritePhotoPost({
   }, []);
 
   async function handleSubmit() {
-    if (media.length === 0) return;
+    if (media.length === 0 || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
 
     try {
@@ -241,6 +243,7 @@ export default function WritePhotoPost({
         setToast("업로드 실패: " + msg);
       }
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }

@@ -24,29 +24,39 @@ export function useChat(roomId: string) {
   // 최근 메시지 로드
   useEffect(() => {
     if (!roomId) return;
+    setLoading(true);  // 방 전환 시 로딩 리셋
 
     async function load() {
-      const { data } = await supabase
-        .from("chat_messages")
-        .select("*, profiles(nickname, team_id, grade)")
-        .eq("room_id", roomId)
-        .order("created_at", { ascending: false })
-        .limit(50);
+      try {
+        const { data, error } = await supabase
+          .from("chat_messages")
+          .select("*, profiles(nickname, team_id, grade)")
+          .eq("room_id", roomId)
+          .order("created_at", { ascending: false })
+          .limit(50);
 
-      if (data) {
-        const mapped = data.reverse().map((m: ChatMessage & { profiles?: { nickname?: string; team_id?: number; grade?: string } }) => ({
-          id: m.id,
-          room_id: m.room_id,
-          user_id: m.user_id,
-          content: m.content,
-          created_at: m.created_at,
-          nickname: m.profiles?.nickname,
-          team_id: m.profiles?.team_id,
-          grade: m.profiles?.grade,
-        }));
-        setMessages(mapped);
+        if (error) {
+          console.error("[useChat] load error:", error.message);
+        }
+
+        if (data) {
+          const mapped = data.reverse().map((m: ChatMessage & { profiles?: { nickname?: string; team_id?: number; grade?: string } }) => ({
+            id: m.id,
+            room_id: m.room_id,
+            user_id: m.user_id,
+            content: m.content,
+            created_at: m.created_at,
+            nickname: m.profiles?.nickname,
+            team_id: m.profiles?.team_id,
+            grade: m.profiles?.grade,
+          }));
+          setMessages(mapped);
+        }
+      } catch (err) {
+        console.error("[useChat] unexpected error:", err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     }
 
     load();
