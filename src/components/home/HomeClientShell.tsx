@@ -187,14 +187,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         </div>
         <div className="flex items-center gap-1">
           {user ? (
-            <>
-              <Link href="/messages" className="relative rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
-                <MessageCircle size={22} />
-              </Link>
-              <Link href="/my" className="rounded-full p-2 hover:bg-bg-tertiary transition-colors">
-                <HeaderAvatar user={user} profile={profile} />
-              </Link>
-            </>
+            <Link href="/messages" className="relative rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
+              <MessageCircle size={22} />
+            </Link>
           ) : (
             <button
               onClick={() => setShowLogin(true)}
@@ -203,6 +198,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
               회원가입
             </button>
           )}
+          <Link href="/my" className="rounded-full p-2 hover:bg-bg-tertiary transition-colors">
+            <HeaderAvatar user={user} profile={profile} />
+          </Link>
         </div>
       </m.header>
 
