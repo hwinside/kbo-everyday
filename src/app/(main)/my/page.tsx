@@ -117,24 +117,13 @@ export default function MyPage() {
         </header>
       </div>
 
-      {!user && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
-          <GlassCard className="flex flex-col items-center gap-3 py-6">
-            <p className="text-sm text-text-tertiary">회원가입하고 응원팀, 최애선수, 활동 내역을 저장해보세요</p>
-            <button onClick={() => setShowLogin(true)} className="rounded-full bg-accent px-8 py-2.5 text-sm font-semibold text-white">
-              회원가입
-            </button>
-          </GlassCard>
-        </motion.div>
-      )}
-
       {/* 회원가입 CTA (비로그인 시 최상단) */}
       {!user && (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
-          <GlassCard className="flex flex-col items-center gap-3 py-6">
+          <GlassCard className="flex flex-col items-center gap-4 py-6">
             <p className="text-base font-semibold text-text-primary">크보팬에 가입하고 더 많은 기능을 이용하세요</p>
-            <p className="text-sm text-text-tertiary">승부예측, 커뮤니티, 쓰지 등 회원 전용 기능</p>
-            <button onClick={() => setShowLogin(true)} className="rounded-full bg-accent px-8 py-2.5 text-sm font-semibold text-white mt-1">
+            <p className="text-sm text-text-tertiary">승부예측, 커뮤니티, 쪽지 등 회원 전용 기능</p>
+            <button onClick={() => setShowLogin(true)} className="w-full max-w-[240px] rounded-full bg-accent px-8 py-3 text-sm font-semibold text-white transition-transform active:scale-95">
               회원가입 / 로그인
             </button>
           </GlassCard>
