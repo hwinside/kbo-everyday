@@ -3,7 +3,7 @@
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Check, Star, Search } from "lucide-react";
 import Image from "next/image";
@@ -19,6 +19,8 @@ interface PlayerInfo {
   name: string;
   team: string;
   teamId: number;
+  position?: string;
+  backNo?: string;
 }
 
 interface PlayerSelectModalProps {
@@ -42,11 +44,30 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
   const [showAll, setShowAll] = useState(false);
   const team = getTeamById(teamId);
 
-  const allPlayers = useMemo<PlayerInfo[]>(() =>
-    (playersRoster as { kboId: string; name: string; team: string; teamId: number; position: string; backNo: string }[]).map((p) => ({
-      id: p.kboId, name: p.name, team: p.team, teamId: p.teamId,
-    })),
-  []);
+  const allPlayers = useMemo<PlayerInfo[]>(() => {
+    const roster = playersRoster as { kboId: string; name: string; team: string; teamId: number; position: string; backNo: string }[];
+    const seen = new Set<string>();
+    const result: PlayerInfo[] = [];
+
+    for (const p of roster) {
+      // kboId 우선, 없으면 teamId:name:position:backNo 복합키
+      const key = p.kboId
+        ? p.kboId
+        : `${p.teamId}:${p.name}:${p.position || ""}:${p.backNo || ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push({
+        id: p.kboId,
+        name: p.name,
+        team: p.team,
+        teamId: p.teamId,
+        position: p.position,
+        backNo: p.backNo,
+      });
+    }
+
+    return result;
+  }, []);
 
   const myTeamPlayers = allPlayers.filter(p => p.teamId === teamId);
   const otherPlayers = allPlayers.filter(p => p.teamId !== teamId);
@@ -84,7 +105,13 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
   const handleComplete = () => {
     const favs: FavoritePlayer[] = allPlayers
       .filter(p => selected.has(p.id))
-      .map(p => ({ playerId: p.id, name: p.name, teamId: p.teamId, position: "", number: 0 }));
+      .map(p => ({
+        playerId: p.id,
+        name: p.name,
+        teamId: p.teamId,
+        position: p.position || "",
+        number: p.backNo ? parseInt(p.backNo, 10) || 0 : 0,
+      }));
     onComplete(favs);
   };
 
