@@ -124,8 +124,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     ...(myTeamLive ? {
       homeScore: myTeamLive.homeScore,
       awayScore: myTeamLive.awayScore,
-      status: myTeamLive.isLive ? "live" as const : "final" as const,
-      inning: myTeamLive.currentInning || null,
+      status: myTeamLive.status ?? (myTeamLive.isLive ? "live" as const : myTeamGameBase.status),
+      inning: (myTeamLive.status ?? (myTeamLive.isLive ? "live" : myTeamGameBase.status)) === "live" ? (myTeamLive.currentInning || null) : null,
     } : {}),
   } : undefined;
 

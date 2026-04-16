@@ -26,7 +26,9 @@ export interface LiveGameData {
   currentPitcher: string | null;
   currentInning: string;
   stadium: string;
+  status?: "scheduled" | "live" | "final" | "cancelled";
   isLive: boolean;
+  time?: string;
   awayStarterName: string | null;
   homeStarterName: string | null;
 }

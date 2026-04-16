@@ -16,7 +16,7 @@ export default function GameDetailHeader({ status, time, stadium }: GameDetailHe
     status === "live" ? "경기 중" :
     status === "cancelled" ? "경기 취소" :
     status === "final" ? "경기 종료" :
-    `${time} 예정`;
+    time ? `${time} 예정` : "경기 예정";
 
   return (
     <div className="flex items-center gap-3 px-5 py-3 sticky top-0 z-[100] bg-bg-primary border-b border-border">

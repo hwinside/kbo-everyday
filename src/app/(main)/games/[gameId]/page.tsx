@@ -119,7 +119,7 @@ function parseKboGameId(gameId: string) {
   return {
     id: gameId,
     date: `${dateStr.slice(0,4)}-${dateStr.slice(4,6)}-${dateStr.slice(6,8)}`,
-    time: "13:00",
+    time: "",
     homeTeamId,
     awayTeamId,
     status: "scheduled" as const,
@@ -197,7 +197,11 @@ export default function GameDetailPage() {
       onRefresh={handleRefresh}
       className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto pb-[104px] max-w-[640px] mx-auto w-full"
     >
-      <GameDetailHeader status={d.derivedStatus} time={game.time} stadium={liveGame?.stadium || game.stadium} />
+      <GameDetailHeader
+        status={d.derivedStatus}
+        time={gameDetail?.meta?.startTime || liveGame?.time || game.time}
+        stadium={gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium}
+      />
 
       {d.derivedStatus === "cancelled" ? (
         <div className="px-4 py-5">
