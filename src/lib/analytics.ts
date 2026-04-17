@@ -25,6 +25,8 @@ interface TrackOptions {
   meta?: boolean;
   /** true면 Google Ads 전환 이벤트도 발화 (기본 false) */
   gads?: boolean;
+  /** false면 GA4 기본 발화 스킵 (Ads-only / Meta-only 분리용, 기본 true) */
+  ga4?: boolean;
 }
 
 // Google Ads 전환 라벨 매핑 (AW-18082281693)
@@ -57,8 +59,8 @@ export function trackEvent(event: string, properties?: Record<string, unknown>, 
     // storage full — skip
   }
 
-  // GA4 연동 (gtag 있으면)
-  if (typeof window !== "undefined" && (window as unknown as GtagWindow).gtag) {
+  // GA4 연동 (gtag 있으면) — options.ga4 명시적 false가 아닌 경우만
+  if (options?.ga4 !== false && typeof window !== "undefined" && (window as unknown as GtagWindow).gtag) {
     (window as unknown as GtagWindow).gtag!("event", event, payload.properties);
   }
 

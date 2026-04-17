@@ -29,7 +29,7 @@ export default function WelcomePage() {
       trackEvent(
         OnboardingEvents.ONBOARDING_COMPLETE,
         { team_id: profile.team_id, user_id: user.id, source: "welcome_page" },
-        { gads: true }
+        { gads: true, ga4: false }
       );
     } catch {
       // localStorage 접근 실패 시 중복 우려 있지만 측정 누락보다는 허용
