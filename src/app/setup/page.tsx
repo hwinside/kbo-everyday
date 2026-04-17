@@ -143,6 +143,9 @@ export default function SetupPage() {
       // 회원가입 완료 — Google Ads 전환 + Meta Pixel 동시 발화 후 event_callback으로 redirect
       // 기존 /welcome 페이지를 전환 포인트로 쓰던 구조는 AuthContext hydrate race로 33명 중 0명 발화
       // → /setup POST 성공 직후(회원가입 실제 확정 시점)로 옮겨 beacon 유실 방지
+      //
+      // ⚠️ loading=true 를 고정 유지 (finally에서 setLoading(false) 하지 않음)
+      // 이유: event_callback 대기 중 버튼 재클릭/중복 submit 방지 (삼순이 리뷰 지적)
       trackEvent(
         OnboardingEvents.ONBOARDING_COMPLETE,
         { nickname: nickname.trim(), team_id: selectedTeam },
@@ -154,10 +157,12 @@ export default function SetupPage() {
           },
         }
       );
+      // 최종 안전장치: event_callback + timeout이 어떤 이유로돓 실패해도 redirect 보장
+      // (analytics.ts 내부 fireCallbackOnce로 중복 redirect는 방지됨)
+      return; // ← finally로 내려가지 않게 명시 종료, loading 상태 고정
     } catch (e: unknown) {
       setError((e as Error).message || "프로필 생성에 실패했습니다");
-    } finally {
-      setLoading(false);
+      setLoading(false); // 에러 시에만 버튼 재활성화
     }
   }
 

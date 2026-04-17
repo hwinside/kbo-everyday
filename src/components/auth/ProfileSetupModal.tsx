@@ -113,6 +113,9 @@ export default function ProfileSetupModal({ isOpen }: Props) {
 
       // 회원가입 완료 — Google Ads 전환 + Meta Pixel 동시 발화 후 router.push
       // event_callback으로 beacon 전송 확정 후 이동 (navigation race 방지)
+      //
+      // ⚠️ loading=true 고정 유지 (finally에서 setLoading(false) 하지 않음)
+      // 이유: event_callback 대기 중 버튼 재클릭/중복 submit 방지
       trackEvent(
         OnboardingEvents.ONBOARDING_COMPLETE,
         { nickname: nickname.trim(), team_id: selectedTeam },
@@ -125,10 +128,10 @@ export default function ProfileSetupModal({ isOpen }: Props) {
           },
         }
       );
+      return; // loading 고정 좌략
     } catch (e: unknown) {
       setError((e as Error).message || "프로필 생성에 실패했습니다");
-    } finally {
-      setLoading(false);
+      setLoading(false); // 에러 시에만 재활성화
     }
   }
 
