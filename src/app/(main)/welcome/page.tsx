@@ -2,6 +2,7 @@
 
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { TEAMS } from "@/lib/constants/teams";
+import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -17,6 +18,23 @@ export default function WelcomePage() {
       router.replace("/");
     }
   }, [loading, user, profile, router]);
+
+  // Google Ads 회원가입 전환 이벤트 — /welcome 도달 = 진짜 가입 완료 시점, 유저당 1회만
+  useEffect(() => {
+    if (loading || !user?.id || !profile?.nickname || !profile?.team_id) return;
+    try {
+      const firedKey = `gads_signup_fired_${user.id}`;
+      if (localStorage.getItem(firedKey)) return;
+      localStorage.setItem(firedKey, "1");
+      trackEvent(
+        OnboardingEvents.ONBOARDING_COMPLETE,
+        { team_id: profile.team_id, user_id: user.id, source: "welcome_page" },
+        { gads: true }
+      );
+    } catch {
+      // localStorage 접근 실패 시 중복 우려 있지만 측정 누락보다는 허용
+    }
+  }, [loading, user?.id, profile?.nickname, profile?.team_id]);
 
   // 회원가입 완료 전환 이벤트는 /setup POST 성공 시 단일 경로에서만 발화
   // (중복 집계 방지 — GA4/Meta/Google Ads 모두 /setup에서 1회만)

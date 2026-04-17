@@ -110,7 +110,7 @@ export default function ProfileSetupModal({ isOpen }: Props) {
 
       // Meta Pixel: CompleteRegistration + Subscribe(팀선택)
       // ⚠️ Google Ads 전환은 /welcome 페이지에서 발화함 (router.push 직전 gtag beacon 유실 방지)
-      trackEvent(OnboardingEvents.ONBOARDING_COMPLETE, { nickname: nickname.trim(), team_id: selectedTeam }, { meta: true });
+      trackEvent(OnboardingEvents.ONBOARDING_COMPLETE, { nickname: nickname.trim(), team_id: selectedTeam }, { meta: true, gads: true });
       trackEvent(OnboardingEvents.TEAM_SELECTED, { team_id: selectedTeam }, { meta: true });
 
       await refreshProfile();
