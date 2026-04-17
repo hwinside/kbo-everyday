@@ -210,16 +210,44 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // 신규 유저 또는 프로필 미완 유저는 /setup으로, 완료된 유저는 홈으로
+    // (Google/Kakao auth/callback과 동일한 정책)
+    let redirectPath = "";
+    try {
+      const { data: profile } = await supabaseAdmin
+        .from("profiles")
+        .select("id, nickname, team_id")
+        .eq("id", userId)
+        .maybeSingle();
+      const needsSetup = !profile || !profile.nickname || !profile.team_id;
+      redirectPath = needsSetup ? "/setup" : "";
+    } catch (e) {
+      console.error("[Naver OAuth] profile check failed:", e);
+      // 체크 실패해도 홈으로 보냄 (안전한 기본값)
+    }
+
     // state 쿠키 정리 + verifyOtp 쿠키를 response에 전달
-    const response = NextResponse.redirect(CANONICAL_ORIGIN);
+    const response = NextResponse.redirect(`${CANONICAL_ORIGIN}${redirectPath}`);
     response.cookies.delete("naver_oauth_state");
     // verifyOtp이 설정한 Supabase auth 쿠키를 redirect 응답에 복사
+    // (path/sameSite/httpOnly 누락 방지 — Google/Kakao flow와 동일)
     for (const { name, value, options } of pendingCookies) {
       response.cookies.set(name, value, {
         ...options,
+        path: (options?.path as string) || "/",
+        sameSite: (options?.sameSite as "lax" | "strict" | "none") || "lax",
+        httpOnly: (options?.httpOnly as boolean) ?? false,
         secure: process.env.NODE_ENV !== "development",
       });
     }
+
+    console.log("[Naver OAuth] success", {
+      userId: userId.slice(0, 8),
+      email,
+      needsSetup: redirectPath === "/setup",
+      cookieCount: pendingCookies.length,
+    });
+
     return response;
   } catch (err) {
     console.error("[Naver OAuth] Unexpected error:", err);
