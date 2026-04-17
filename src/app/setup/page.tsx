@@ -105,51 +105,32 @@ export default function SetupPage() {
   async function handleComplete() {
     if (!selectedTeam) return;
     setLoading(true);
+    setError("");
     try {
-      const normalizedInviteCode = inviteCode.trim().toUpperCase();
-      if (normalizedInviteCode) {
-        const { data: invite } = await supabase
-          .from("invitations")
-          .select("id, used_at")
-          .eq("code", normalizedInviteCode)
-          .maybeSingle();
-        if (!invite) { setError("유효하지 않은 초대코드입니다"); setLoading(false); return; }
-        if (invite.used_at) { setError("이미 사용된 초대코드입니다"); setLoading(false); return; }
-      }
+      // 세션 토큰 확보 (hash에서 복원된 것 포함)
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
 
-      const { error: insertError } = await supabase
-        .from("profiles")
-        .insert({
-          id: user!.id,
+      // 서버 API로 프로필 생성 (클라이언트 Supabase 직접 쓰지 않음 — 세션 hang 방지)
+      const res = await fetch("/api/setup", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+        body: JSON.stringify({
           nickname: nickname.trim(),
           team_id: selectedTeam,
-          favorite_players: [],
-          invited_by: null,
-          is_founder: false,
-          invite_count: 5,
-          joined_at: new Date().toISOString(),
-        });
-      if (insertError) throw insertError;
+          invite_code: inviteCode.trim() || undefined,
+        }),
+      });
 
-      if (normalizedInviteCode) {
-        const { data: { session } } = await supabase.auth.getSession();
-        const accessToken = session?.access_token;
-        const inviteRes = await fetch("/api/invite/use", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-          },
-          body: JSON.stringify({ code: normalizedInviteCode }),
-        });
+      const result = await res.json();
 
-        if (!inviteRes.ok) {
-          const inviteJson = await inviteRes.json().catch(() => ({}));
-          await supabase.from("profiles").delete().eq("id", user!.id);
-          setError(inviteJson.error || "초대코드 등록에 실패했습니다");
-          setLoading(false);
-          return;
-        }
+      if (!res.ok) {
+        setError(result.error || "프로필 생성에 실패했습니다");
+        setLoading(false);
+        return;
       }
 
       if (typeof window !== "undefined") {
@@ -159,7 +140,7 @@ export default function SetupPage() {
       trackEvent(OnboardingEvents.ONBOARDING_COMPLETE, { nickname: nickname.trim(), team_id: selectedTeam }, { meta: true });
       trackEvent(OnboardingEvents.TEAM_SELECTED, { team_id: selectedTeam }, { meta: true });
 
-      await refreshProfile();
+      try { await refreshProfile(); } catch { /* best effort */ }
       router.push("/welcome");
     } catch (e: unknown) {
       setError((e as Error).message || "프로필 생성에 실패했습니다");
