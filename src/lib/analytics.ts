@@ -8,7 +8,7 @@
 import { getGuestId } from "@/lib/store/onboarding";
 
 interface GtagWindow extends Window {
-  gtag?: (command: string, event: string, params?: Record<string, unknown>) => void;
+  gtag?: (command: string, event: string, params?: Record<string, unknown> | (() => void)) => void;
   fbq?: (command: string, event: string, params?: Record<string, unknown>) => void;
 }
 
@@ -27,6 +27,14 @@ interface TrackOptions {
   gads?: boolean;
   /** false면 GA4 기본 발화 스킵 (Ads-only / Meta-only 분리용, 기본 true) */
   ga4?: boolean;
+  /**
+   * Google Ads 전환 발화 후 호출되는 콜백. gtag `event_callback` 경로로 연결되어
+   * beacon 전송 완료/타임아웃 후 실행됨. redirect 직전 호출에 사용 (navigation race 방지).
+   * gads가 true가 아니거나 gtag가 없으면 즉시 동기 호출됨.
+   */
+  onGadsComplete?: () => void;
+  /** onGadsComplete 호출 전까지 기다릴 최대 시간(ms). 기본 2000. */
+  gadsCallbackTimeout?: number;
 }
 
 // Google Ads 전환 라벨 매핑 (AW-18082281693)
@@ -65,6 +73,16 @@ export function trackEvent(event: string, properties?: Record<string, unknown>, 
   }
 
   // Google Ads 전환 연동 — gads: true 인 경우만 발화 (세션당 1회 제한)
+  // onGadsComplete가 있으면 gtag event_callback으로 연결 (redirect 직전 beacon flush)
+  let gadsCallbackFired = false;
+  const fireCallbackOnce = () => {
+    if (gadsCallbackFired) return;
+    gadsCallbackFired = true;
+    if (options?.onGadsComplete) {
+      try { options.onGadsComplete(); } catch { /* ignore */ }
+    }
+  };
+
   if (options?.gads && typeof window !== "undefined" && (window as unknown as GtagWindow).gtag) {
     const sendTo = GADS_CONVERSION_MAP[event];
     if (sendTo) {
@@ -72,16 +90,33 @@ export function trackEvent(event: string, properties?: Record<string, unknown>, 
       try {
         if (!sessionStorage.getItem(convKey)) {
           sessionStorage.setItem(convKey, "1");
-          (window as unknown as GtagWindow).gtag!("event", "conversion", {
+          const conversionParams: Record<string, unknown> = {
             send_to: sendTo,
             value: 1.0,
             currency: "KRW",
-          });
+          };
+          if (options?.onGadsComplete) {
+            conversionParams.event_callback = fireCallbackOnce;
+            // 안전장치: beacon이 지연되거나 차단되어도 지정 시간 후 강제 진행
+            const timeoutMs = options.gadsCallbackTimeout ?? 2000;
+            window.setTimeout(fireCallbackOnce, timeoutMs);
+          }
+          (window as unknown as GtagWindow).gtag!("event", "conversion", conversionParams);
+        } else if (options?.onGadsComplete) {
+          // 이미 세션 내 발화됨 — 콜백만 즉시 실행
+          fireCallbackOnce();
         }
       } catch {
-        // sessionStorage 접근 실패 — 정책상 skip
+        // sessionStorage 접근 실패 — 정책상 skip + 콜백만 실행
+        if (options?.onGadsComplete) fireCallbackOnce();
       }
+    } else if (options?.onGadsComplete) {
+      // 매핑 없는 이벤트 — 콜백만 실행
+      fireCallbackOnce();
     }
+  } else if (options?.onGadsComplete) {
+    // gads 옵션 없거나 gtag 미로드 — 콜백만 즉시 실행
+    fireCallbackOnce();
   }
 
   // Meta Pixel 연동 — 명시적으로 meta: true 인 경우만 발화 (중복 방지)

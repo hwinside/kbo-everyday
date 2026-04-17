@@ -137,14 +137,23 @@ export default function SetupPage() {
         localStorage.setItem("kbo-my-team", String(selectedTeam));
       }
 
-      // Meta Pixel: CompleteRegistration + Subscribe(팀선택)
-      // ⚠️ Google Ads 전환은 /welcome 페이지에서 발화 (window.location.href 직전 beacon 유실 방지)
-      trackEvent(OnboardingEvents.ONBOARDING_COMPLETE, { nickname: nickname.trim(), team_id: selectedTeam }, { meta: true });
+      // Meta Pixel: Subscribe(팀선택) — CompleteRegistration은 ONBOARDING_COMPLETE 호출에 포함됨
       trackEvent(OnboardingEvents.TEAM_SELECTED, { team_id: selectedTeam }, { meta: true });
 
-      // refreshProfile() 사용 안 함 — 내부적으로 Supabase 클라이언트 사용해서 hang 가능
-      // /welcome 페이지에서 profile을 새로 로드하거나, 홈으로 이동 시 자연 로드
-      window.location.href = "/welcome";
+      // 회원가입 완료 — Google Ads 전환 + Meta Pixel 동시 발화 후 event_callback으로 redirect
+      // 기존 /welcome 페이지를 전환 포인트로 쓰던 구조는 AuthContext hydrate race로 33명 중 0명 발화
+      // → /setup POST 성공 직후(회원가입 실제 확정 시점)로 옮겨 beacon 유실 방지
+      trackEvent(
+        OnboardingEvents.ONBOARDING_COMPLETE,
+        { nickname: nickname.trim(), team_id: selectedTeam },
+        {
+          meta: true,
+          gads: true,
+          onGadsComplete: () => {
+            window.location.href = "/welcome";
+          },
+        }
+      );
     } catch (e: unknown) {
       setError((e as Error).message || "프로필 생성에 실패했습니다");
     } finally {

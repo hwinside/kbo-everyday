@@ -108,14 +108,23 @@ export default function ProfileSetupModal({ isOpen }: Props) {
         localStorage.setItem("kbo-my-team", String(selectedTeam));
       }
 
-      // Meta Pixel: CompleteRegistration + Subscribe(팀선택)
-      // ⚠️ Google Ads 전환은 /welcome 페이지에서 발화함 (router.push 직전 gtag beacon 유실 방지)
-      trackEvent(OnboardingEvents.ONBOARDING_COMPLETE, { nickname: nickname.trim(), team_id: selectedTeam }, { meta: true });
+      // Meta Pixel: Subscribe(팀선택)
       trackEvent(OnboardingEvents.TEAM_SELECTED, { team_id: selectedTeam }, { meta: true });
 
-      await refreshProfile();
-      // 가입 완료 → 환영 페이지로 이동
-      router.push("/welcome");
+      // 회원가입 완료 — Google Ads 전환 + Meta Pixel 동시 발화 후 router.push
+      // event_callback으로 beacon 전송 확정 후 이동 (navigation race 방지)
+      trackEvent(
+        OnboardingEvents.ONBOARDING_COMPLETE,
+        { nickname: nickname.trim(), team_id: selectedTeam },
+        {
+          meta: true,
+          gads: true,
+          onGadsComplete: async () => {
+            await refreshProfile();
+            router.push("/welcome");
+          },
+        }
+      );
     } catch (e: unknown) {
       setError((e as Error).message || "프로필 생성에 실패했습니다");
     } finally {
