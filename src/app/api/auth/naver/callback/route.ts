@@ -198,7 +198,7 @@ export async function GET(request: NextRequest) {
       }
     );
 
-    const { error: verifyError } = await supabaseServer.auth.verifyOtp({
+    const { data: verifyData, error: verifyError } = await supabaseServer.auth.verifyOtp({
       type: "magiclink",
       token_hash: tokenHash,
     });
@@ -226,8 +226,15 @@ export async function GET(request: NextRequest) {
       // 체크 실패해도 홈으로 보냄 (안전한 기본값)
     }
 
+    // Hash fallback — iOS Safari/PWA에서 서드파티 쿠키가 미작동하는 상황 대비
+    // (/auth/callback과 동일 패턴 — 클라이언트가 setSession()으로 복구)
+    const session = verifyData?.session;
+    const hashParams = session
+      ? `#access_token=${session.access_token}&refresh_token=${session.refresh_token}&type=recovery`
+      : "";
+
     // state 쿠키 정리 + verifyOtp 쿠키를 response에 전달
-    const response = NextResponse.redirect(`${CANONICAL_ORIGIN}${redirectPath}`);
+    const response = NextResponse.redirect(`${CANONICAL_ORIGIN}${redirectPath}${hashParams}`);
     response.cookies.delete("naver_oauth_state");
     // verifyOtp이 설정한 Supabase auth 쿠키를 redirect 응답에 복사
     // (path/sameSite/httpOnly 누락 방지 — Google/Kakao flow와 동일)
@@ -246,6 +253,7 @@ export async function GET(request: NextRequest) {
       email,
       needsSetup: redirectPath === "/setup",
       cookieCount: pendingCookies.length,
+      hasHash: !!hashParams,
     });
 
     return response;
