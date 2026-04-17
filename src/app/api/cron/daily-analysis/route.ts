@@ -199,12 +199,18 @@ function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNa
     return `${e.awayTeam} ${e.awayScore}:${e.homeScore} ${e.homeTeam} (승: ${e.winPitcher || "-"}, 패: ${e.losePitcher || "-"})${starterInfo}`;
   }).join("\n");
 
-  const teamDeltas = [...delta.top, ...delta.mid, ...delta.bottom].map((d) => {
+  const allDeltas = [...delta.top, ...delta.mid, ...delta.bottom];
+  // 공동 순위 그룹 감지 (newRank 기준)
+  const rankGroups = new Map<number, number>();
+  for (const d of allDeltas) rankGroups.set(d.newRank, (rankGroups.get(d.newRank) ?? 0) + 1);
+  const teamDeltas = allDeltas.map((d) => {
     const name = teamNames.get(d.team_id) || `팀${d.team_id}`;
     const change = d.rankChange > 0 ? `↑${d.rankChange}` : d.rankChange < 0 ? `↓${Math.abs(d.rankChange)}` : "-";
     const streakNum = parseInt(d.streak || "0");
     const streakText = Math.abs(streakNum) >= 3 ? `${Math.abs(streakNum)}${streakNum > 0 ? "연승" : "연패"} 중` : "";
-    const rankInfo = d.rankChange !== 0 ? `${d.oldRank}위→${d.newRank}위(${change})` : `${d.newRank}위(변동없음)`;
+    const isTie = (rankGroups.get(d.newRank) ?? 0) > 1;
+    const newRankLabel = isTie ? `공동 ${d.newRank}위` : `${d.newRank}위`;
+    const rankInfo = d.rankChange !== 0 ? `${d.oldRank}위→${newRankLabel}(${change})` : `${newRankLabel}(변동없음)`;
     return `${rankInfo} ${name}: ${d.wins}승${d.losses}패${d.draws}무 (${d.games_behind}게임차)${streakText ? `, ${streakText}` : ""}`;
   }).join("\n");
 
@@ -228,6 +234,7 @@ function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNa
 13. 뉴스 헤드라인 반드시 반영: 헤드라인 중 최소 1개는 구체적 사건으로 본문에 녹여야 합니다. 선수명 언급된 뉴스 우선.
 13. 스코어/순위 팩트는 반드시 위 경기 데이터 기준. 뉴스는 맥락 보강용.
 14. 이벤트가 없으면 순위 변동만으로 서술.
+15. 동률 처리 필수: 데이터에 "공동 N위"로 표기된 팀은 반드시 "공동 N위"로 서술하세요. 순서만 나열해서 단독 N위처럼 만들지 마세요. 예: "공동 2위 LG, 공동 2위 KIA" → "LG와 KIA가 공동 2위를 다투고 있다" 형태로 묶거나, 다르게 언급할 때도 반드시 "공동" 접두어 유지.
 
 ## 어제 경기 결과
 ${eventLines || "경기 없음"}
