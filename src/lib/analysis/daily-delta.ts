@@ -98,6 +98,7 @@ export interface CategoryDelta {
     player_name: string;
     team: string;
     value: number;
+    rank: number;
     rankChange: number;
     valueChange: number;
   }[];
@@ -135,6 +136,7 @@ export function computeTitlesDelta(
         player_name: row.player_name,
         team: row.team,
         value: row.value,
+        rank: row.rank,
         rankChange: yRow ? yRow.rank - row.rank : 0,
         valueChange: yRow ? row.value - yRow.value : 0,
       };

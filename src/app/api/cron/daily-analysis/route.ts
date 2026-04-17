@@ -93,39 +93,64 @@ const PITCHER_TITLES: { category: string; sort: string; colIndex: number }[] = [
   { category: "whip", sort: "WHIP_RT", colIndex: 18 },
 ];
 
+// Assign competition (tie-aware) ranks: equal values share the same rank,
+// next distinct value jumps to (index+1). e.g. 5,5,5,4 -> 1,1,1,4.
+// `lowerIsBetter` handles ERA/WHIP where smaller value = better rank.
+function assignTieAwareRanks<T extends { value: number; rank: number }>(
+  entries: T[],
+  lowerIsBetter = false,
+): T[] {
+  const sorted = [...entries].sort((a, b) =>
+    lowerIsBetter ? a.value - b.value : b.value - a.value,
+  );
+  let prevValue: number | null = null;
+  let prevRank = 0;
+  sorted.forEach((e, i) => {
+    if (prevValue !== null && e.value === prevValue) {
+      e.rank = prevRank;
+    } else {
+      e.rank = i + 1;
+      prevRank = i + 1;
+      prevValue = e.value;
+    }
+  });
+  return sorted;
+}
+
 async function fetchBatterTitleEntries(): Promise<TitleEntry[]> {
   const entries: TitleEntry[] = [];
 
   for (const title of BATTER_TITLES) {
+    const catEntries: TitleEntry[] = [];
     if (title.category === "sb") {
       const html = await fetchHtml(`${KBO_BASE}/Record/Player/Runner/Basic.aspx?sort=SB_CN`);
       const rows = parseTable(html);
       for (let i = 0; i < Math.min(10, rows.length); i++) {
         const c = rows[i];
-        entries.push({
+        catEntries.push({
           category: "sb",
-          rank: i + 1,
+          rank: 0, // filled below
           player_name: c[1] || "",
           team: c[2] || "",
           value: parseInt(c[3]) || 0, // SB column in Runner page
         });
       }
-      continue;
+    } else {
+      const html = await fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=${title.sort}`);
+      const rows = parseTable(html);
+      for (let i = 0; i < Math.min(10, rows.length); i++) {
+        const c = rows[i];
+        const raw = c[title.colIndex] || "0";
+        catEntries.push({
+          category: title.category,
+          rank: 0,
+          player_name: c[1] || "",
+          team: c[2] || "",
+          value: parseFloat(raw) || 0,
+        });
+      }
     }
-
-    const html = await fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=${title.sort}`);
-    const rows = parseTable(html);
-    for (let i = 0; i < Math.min(10, rows.length); i++) {
-      const c = rows[i];
-      const raw = c[title.colIndex] || "0";
-      entries.push({
-        category: title.category,
-        rank: i + 1,
-        player_name: c[1] || "",
-        team: c[2] || "",
-        value: parseFloat(raw) || 0,
-      });
-    }
+    entries.push(...assignTieAwareRanks(catEntries));
   }
 
   return entries;
@@ -137,17 +162,21 @@ async function fetchPitcherTitleEntries(): Promise<TitleEntry[]> {
   for (const title of PITCHER_TITLES) {
     const html = await fetchHtml(`${KBO_BASE}/Record/Player/PitcherBasic/Basic1.aspx?sort=${title.sort}`);
     const rows = parseTable(html);
+    const catEntries: TitleEntry[] = [];
     for (let i = 0; i < Math.min(10, rows.length); i++) {
       const c = rows[i];
       const raw = c[title.colIndex] || "0";
-      entries.push({
+      catEntries.push({
         category: title.category,
-        rank: i + 1,
+        rank: 0,
         player_name: c[1] || "",
         team: c[2] || "",
         value: parseFloat(raw) || 0,
       });
     }
+    // ERA/WHIP: lower is better
+    const lowerIsBetter = title.category === "era" || title.category === "whip";
+    entries.push(...assignTieAwareRanks(catEntries, lowerIsBetter));
   }
 
   return entries;
@@ -232,12 +261,20 @@ function buildTitlePrompt(
     .filter((c) => cats.includes(c.category))
     .map((c) => {
       const name = catNames[c.category] || c.category;
-      const leader = c.leaderChanged
-        ? `1위 교체: ${c.oldLeader?.player_name}(${c.oldLeader?.team}) → ${c.newLeader.player_name}(${c.newLeader.team})`
-        : `1위 유지: ${c.newLeader.player_name}(${c.newLeader.team}, ${c.newLeader.value})`;
+      // 공동 1위 감지: top5 중 rank === 1 인 모든 선수
+      const coLeaders = c.top5.filter((p) => p.rank === 1);
+      let leader: string;
+      if (coLeaders.length > 1) {
+        const names = coLeaders.map((p) => `${p.player_name}(${p.team})`).join(", ");
+        leader = `공동 1위 (${coLeaders.length}명, ${c.newLeader.value}): ${names}`;
+      } else if (c.leaderChanged) {
+        leader = `1위 교체: ${c.oldLeader?.player_name}(${c.oldLeader?.team}) → ${c.newLeader.player_name}(${c.newLeader.team})`;
+      } else {
+        leader = `1위 유지: ${c.newLeader.player_name}(${c.newLeader.team}, ${c.newLeader.value})`;
+      }
       const top5 = c.top5.map((p) => {
         const rc = p.rankChange > 0 ? `↑${p.rankChange}` : p.rankChange < 0 ? `↓${Math.abs(p.rankChange)}` : "-";
-        return `  ${p.player_name}(${p.team}) ${p.value} [순위변동: ${rc}]`;
+        return `  ${p.rank}위 ${p.player_name}(${p.team}) ${p.value} [순위변동: ${rc}]`;
       }).join("\n");
       return `### ${name}\n${leader}\n${top5}`;
     }).join("\n\n");
@@ -253,6 +290,8 @@ function buildTitlePrompt(
 4. 각 카테고리별 변동을 서술하되, 1위 교체가 있으면 중점적으로 다루세요.
 5. 어제 경기 결과와 연결해서 왜 수치가 변했는지 설명하세요.
 6. 구체적 수치를 자연스럽게 녹여 서술하세요.
+7. 동률 처리 필수: 데이터에 순위가 명시되어 있으므로 그대로 따르세요. 같은 순위(예: 1위 여러 명)는 반드시 "공동 1위"로 묶어서 한 문장으로 서술하고, 절대 1위/2위/3위로 임의 서열화하지 마세요. 예: 홈런 5개 공동 1위 3명 → "오스틴, 장성우, 레이예스가 나란히 홈런 5개로 공동 1위에 올랐다".
+8. 공동 N위가 여러 카테고리에 걸쳐 나오면 각각 동일 규칙 적용. 순위 숫자 앞에 "공동"을 반드시 붙이세요.
 
 ## 어제 경기 결과
 ${eventLines || "경기 없음"}
