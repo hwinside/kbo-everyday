@@ -1,0 +1,267 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { motion } from "framer-motion";
+import { supabase } from "@/lib/supabase/client";
+import { useAuth } from "@/lib/supabase/AuthContext";
+import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
+import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { trackEvent, OnboardingEvents } from "@/lib/analytics";
+
+export default function SetupPage() {
+  const { user, refreshProfile } = useAuth();
+  const router = useRouter();
+  const [step, setStep] = useState(1);
+  const [nickname, setNickname] = useState("");
+  const [selectedTeam, setSelectedTeam] = useState<number | null>(null);
+  const [error, setError] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  // user가 아직 hydrate 안 됐을 수 있으니 대기
+  useEffect(() => {
+    const timer = setTimeout(() => setAuthLoading(false), 3000);
+    if (user) {
+      setAuthLoading(false);
+      setNickname(user.user_metadata?.name || user.user_metadata?.full_name || "");
+      clearTimeout(timer);
+    }
+    return () => clearTimeout(timer);
+  }, [user]);
+
+  // 이미 프로필 있으면 홈으로
+  const { profile } = useAuth();
+  useEffect(() => {
+    if (profile?.nickname && profile?.team_id) {
+      router.replace("/");
+    }
+  }, [profile, router]);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-bg-primary flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-bg-primary flex flex-col items-center justify-center px-6">
+        <p className="text-text-secondary mb-4">로그인이 필요합니다</p>
+        <button
+          onClick={() => router.replace("/")}
+          className="px-6 py-3 bg-accent text-white rounded-xl font-semibold"
+        >
+          홈으로 가기
+        </button>
+      </div>
+    );
+  }
+
+  const selectedTeamData = KBO_TEAMS.find(t => t.id === selectedTeam);
+
+  async function handleNicknameNext() {
+    const trimmed = nickname.trim();
+    if (trimmed.length < 2 || trimmed.length > 12) {
+      setError("닉네임은 2~12자로 입력해주세요");
+      return;
+    }
+    if (!/^[가-힣a-zA-Z0-9]+$/.test(trimmed)) {
+      setError("한글, 영문, 숫자만 사용 가능합니다");
+      return;
+    }
+    const { data } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("nickname", trimmed)
+      .maybeSingle();
+    if (data) {
+      setError("이미 사용 중인 닉네임입니다");
+      return;
+    }
+    setError("");
+    setStep(2);
+  }
+
+  async function handleComplete() {
+    if (!selectedTeam) return;
+    setLoading(true);
+    try {
+      const normalizedInviteCode = inviteCode.trim().toUpperCase();
+      if (normalizedInviteCode) {
+        const { data: invite } = await supabase
+          .from("invitations")
+          .select("id, used_at")
+          .eq("code", normalizedInviteCode)
+          .maybeSingle();
+        if (!invite) { setError("유효하지 않은 초대코드입니다"); setLoading(false); return; }
+        if (invite.used_at) { setError("이미 사용된 초대코드입니다"); setLoading(false); return; }
+      }
+
+      const { error: insertError } = await supabase
+        .from("profiles")
+        .insert({
+          id: user!.id,
+          nickname: nickname.trim(),
+          team_id: selectedTeam,
+          favorite_players: [],
+          invited_by: null,
+          is_founder: false,
+          invite_count: 5,
+          joined_at: new Date().toISOString(),
+        });
+      if (insertError) throw insertError;
+
+      if (normalizedInviteCode) {
+        const { data: { session } } = await supabase.auth.getSession();
+        const accessToken = session?.access_token;
+        const inviteRes = await fetch("/api/invite/use", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          },
+          body: JSON.stringify({ code: normalizedInviteCode }),
+        });
+
+        if (!inviteRes.ok) {
+          const inviteJson = await inviteRes.json().catch(() => ({}));
+          await supabase.from("profiles").delete().eq("id", user!.id);
+          setError(inviteJson.error || "초대코드 등록에 실패했습니다");
+          setLoading(false);
+          return;
+        }
+      }
+
+      if (typeof window !== "undefined") {
+        localStorage.setItem("kbo-my-team", String(selectedTeam));
+      }
+
+      trackEvent(OnboardingEvents.ONBOARDING_COMPLETE, { nickname: nickname.trim(), team_id: selectedTeam }, { meta: true });
+      trackEvent(OnboardingEvents.TEAM_SELECTED, { team_id: selectedTeam }, { meta: true });
+
+      await refreshProfile();
+      router.push("/welcome");
+    } catch (e: unknown) {
+      setError((e as Error).message || "프로필 생성에 실패했습니다");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-bg-primary flex items-center justify-center p-5">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="w-full max-w-md bg-bg-secondary rounded-2xl border border-black/10 dark:border-white/10 overflow-hidden"
+      >
+        {/* Step 1: Nickname */}
+        {step === 1 && (
+          <div className="p-6">
+            <h2 className="text-xl font-bold text-text-primary mb-2">환영합니다! 🎉</h2>
+            <p className="text-sm text-text-secondary mb-6">크보팬에서 사용할 닉네임을 정해주세요</p>
+            
+            <input
+              type="text"
+              value={nickname}
+              onChange={(e) => { setNickname(e.target.value); setError(""); }}
+              placeholder="닉네임 (2~12자)"
+              maxLength={12}
+              className="w-full bg-bg-tertiary border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
+            />
+            {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
+            <p className="text-xs text-text-tertiary mt-2">한글, 영문, 숫자만 사용 가능</p>
+
+            <button
+              onClick={handleNicknameNext}
+              disabled={nickname.trim().length < 2}
+              className="w-full mt-6 bg-accent text-white font-semibold py-3 rounded-xl disabled:opacity-40 transition-all"
+            >
+              다음
+            </button>
+          </div>
+        )}
+
+        {/* Step 2: Team Selection */}
+        {step === 2 && (
+          <div className="p-6">
+            <h2 className="text-xl font-bold text-text-primary mb-2">응원 구단 선택 ⚾</h2>
+            <p className="text-sm text-text-secondary mb-4">어떤 팀을 응원하시나요?</p>
+
+            <div className="grid grid-cols-2 gap-3 max-h-[50vh] overflow-y-auto">
+              {KBO_TEAMS.map((team) => (
+                <button
+                  key={team.id}
+                  onClick={() => setSelectedTeam(team.id)}
+                  className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${
+                    selectedTeam === team.id
+                      ? "border-current bg-black/5 dark:bg-white/5"
+                      : "border-transparent bg-bg-tertiary/50 hover:bg-bg-tertiary"
+                  }`}
+                  style={selectedTeam === team.id ? { borderColor: team.colorLight } : {}}
+                >
+                  <div className="w-10 h-10 rounded-full bg-white p-1 flex items-center justify-center flex-shrink-0">
+                    <Image src={team.logoPath} alt="" width={28} height={28} unoptimized className="object-contain" />
+                  </div>
+                  <span className="text-sm font-bold whitespace-nowrap" style={{ color: selectedTeam === team.id ? team.colorLight : undefined }}>
+                    {team.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
+
+            <div className="flex gap-3 mt-4">
+              <button onClick={() => setStep(1)} className="flex-1 py-3 rounded-xl bg-bg-tertiary text-text-secondary font-semibold">
+                이전
+              </button>
+              <button
+                onClick={() => { setError(""); setStep(3); }}
+                disabled={!selectedTeam}
+                className="flex-1 py-3 rounded-xl bg-accent text-white font-semibold disabled:opacity-40"
+              >
+                다음
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3: Invite Code (optional) */}
+        {step === 3 && (
+          <div className="p-6">
+            <h2 className="text-xl font-bold text-text-primary mb-2">초대코드가 있나요? 🎟️</h2>
+            <p className="text-sm text-text-secondary mb-6">친구에게 받은 초대코드가 있다면 입력해주세요 (선택)</p>
+
+            <input
+              type="text"
+              value={inviteCode}
+              onChange={(e) => { setInviteCode(e.target.value.toUpperCase()); setError(""); }}
+              placeholder="KEUBO-XXXXXX"
+              maxLength={12}
+              className="w-full bg-bg-tertiary border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 text-text-primary placeholder:text-text-tertiary font-mono tracking-wider focus:outline-none focus:border-accent"
+            />
+            {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
+
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setStep(2)} className="flex-1 py-3 rounded-xl bg-bg-tertiary text-text-secondary font-semibold">
+                이전
+              </button>
+              <button
+                onClick={handleComplete}
+                disabled={loading}
+                className="flex-1 py-3 rounded-xl bg-accent text-white font-semibold disabled:opacity-40"
+              >
+                {loading ? "생성 중..." : inviteCode.trim() ? "등록하고 완료" : "건너뛰기"}
+              </button>
+            </div>
+          </div>
+        )}
+      </motion.div>
+    </div>
+  );
+}

@@ -1,20 +1,40 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 // Always redirect to the canonical domain so iOS PWA doesn't end up
 // in the Vercel preview URL after OAuth.
 const CANONICAL_ORIGIN =
   process.env.NEXT_PUBLIC_SITE_URL || "https://keubo.fan";
 
+function buildRedirectWithCookies(
+  url: string,
+  pendingCookies: { name: string; value: string; options: any }[]
+): NextResponse {
+  const response = NextResponse.redirect(url);
+  for (const { name, value, options } of pendingCookies) {
+    response.cookies.set(name, value, {
+      ...options,
+      // Supabase 세션 쿠키 기본값 보장 (path 누락 시 /auth/callback 한정으로 유실됨)
+      path: (options?.path as string) || "/",
+      sameSite: (options?.sameSite as "lax" | "strict" | "none") || "lax",
+      httpOnly: (options?.httpOnly as boolean) ?? false,
+      secure: process.env.NODE_ENV !== "development",
+    });
+  }
+  return response;
+}
+
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get("code");
 
+  // 세션 쿠키를 redirect 응답에 확실히 실기 위해 수집
+  const pendingCookies: { name: string; value: string; options: any }[] = [];
+
   if (code) {
     const cookieStore = await cookies();
-    // exchangeCodeForSession이 설정할 쿠키를 수집 (redirect 응답에 복사하기 위해)
-    const pendingCookies: { name: string; value: string; options: any }[] = [];
 
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -34,32 +54,51 @@ export async function GET(request: NextRequest) {
       }
     );
 
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
     if (error) {
       console.error("[auth/callback] exchangeCodeForSession failed:", error.message, error);
-      // 세션 교환 실패 시 에러 내용을 URL에 포함해서 디버깅 가능하게
       const errorUrl = new URL(CANONICAL_ORIGIN);
       errorUrl.searchParams.set("auth_error", error.message);
       return NextResponse.redirect(errorUrl.toString());
     }
 
-    // auth 쿠키를 redirect 응답에 명시적으로 복사 (cookieStore.set만으로는 유실 가능)
-    const response = NextResponse.redirect(CANONICAL_ORIGIN);
-    for (const { name, value, options } of pendingCookies) {
-      response.cookies.set(name, value, {
-        ...options,
-        // Supabase 세션 쿠키 기본값 보장 (path 누락 시 /auth/callback 한정으로 유실됨)
-        path: (options?.path as string) || "/",
-        sameSite: (options?.sameSite as "lax" | "strict" | "none") || "lax",
-        httpOnly: (options?.httpOnly as boolean) ?? false,
-        secure: process.env.NODE_ENV !== "development",
-      });
+    // 서버사이드에서 프로필 존재 여부 확인 → 없으면 /setup으로 직접 이동
+    // 클라이언트 모달에 의존하지 않으므로 쿠키/세션 상태와 무관하게 확실히 동작
+    if (data.user) {
+      try {
+        const admin = getSupabaseAdmin();
+        const { data: profile } = await admin
+          .from("profiles")
+          .select("id, nickname, team_id")
+          .eq("id", data.user.id)
+          .maybeSingle();
+
+        const needsSetup = !profile || !profile.nickname || !profile.team_id;
+        const redirectUrl = needsSetup
+          ? `${CANONICAL_ORIGIN}/setup`
+          : CANONICAL_ORIGIN;
+
+        console.log("[auth/callback]", {
+          userId: data.user.id.slice(0, 8),
+          email: data.user.email,
+          hasProfile: !!profile,
+          needsSetup,
+          redirectUrl,
+          cookieCount: pendingCookies.length,
+        });
+
+        return buildRedirectWithCookies(redirectUrl, pendingCookies);
+      } catch (e) {
+        console.error("[auth/callback] profile check failed:", e);
+        // 프로필 체크 실패해도 홈으로는 보냄
+        return buildRedirectWithCookies(CANONICAL_ORIGIN, pendingCookies);
+      }
     }
-    return response;
+
+    return buildRedirectWithCookies(CANONICAL_ORIGIN, pendingCookies);
   } else {
     console.warn("[auth/callback] No code parameter in callback URL");
   }
 
-  // Redirect to canonical domain (not requestUrl.origin which can be Vercel URL).
   return NextResponse.redirect(CANONICAL_ORIGIN);
 }
