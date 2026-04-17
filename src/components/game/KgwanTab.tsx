@@ -438,6 +438,8 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
     standingsImpact?: string | null;
   } | null>(null);
   const [llmLoading, setLlmLoading] = useState(false);
+  const [llmError, setLlmError] = useState<"timeout" | "network" | "parse" | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0); // manual retry trigger
   const regeneratingRef = useRef(false); // de-dupe: prevent duplicate background POST
 
   // BoxScore가 실질적 데이터를 갖고 있는지 확인 (빈 배열이면 무의미)
@@ -445,14 +447,20 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
     (boxScore.awayBatters.length > 0 || boxScore.homeBatters.length > 0);
 
   // LLM 요약 fetch — 캐시는 항상 확인, 생성은 boxScore 있을 때만
+  // 30초 타임아웃 + 실패 시 에러 상태 유지 (자동 fallback 복귀 절대 금지)
   useEffect(() => {
     if (llmSummary) return;
 
+    const TIMEOUT_MS = 30_000;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
     const fetchLlmSummary = async () => {
       setLlmLoading(true);
+      setLlmError(null);
       try {
         // 1. 캐시 확인 (boxScore 없어도 항상 시도)
-        const cacheRes = await fetch(`/api/game-summary?gameId=${gameId}`);
+        const cacheRes = await fetch(`/api/game-summary?gameId=${gameId}`, { signal: controller.signal });
         const cacheData = await cacheRes.json();
         if (cacheData.summary) {
           setLlmSummary(cacheData.summary);
@@ -493,11 +501,12 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
                   np: p.pitchCount, result: p.decision || undefined,
                 })),
               };
-              // Fire-and-forget background re-generation
+              // Fire-and-forget background re-generation (outdated 재생성은 기존 캐시 노출 중이므로 에러 처리 생략)
               fetch("/api/game-summary", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
+                signal: controller.signal,
               }).then(res => res.json()).then(data => {
                 if (data.summary) setLlmSummary(data.summary);
               }).catch(() => {});
@@ -553,128 +562,41 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
+          signal: controller.signal,
         });
+        if (!genRes.ok) {
+          // 5xx/422 등 → 에러 상태 유지 (자동 fallback 금지)
+          setLlmError("network");
+          return;
+        }
         const genData = await genRes.json();
         if (genData.summary) {
           setLlmSummary(genData.summary);
+        } else {
+          // summary 필드 없음 → parse 실패로 간주
+          setLlmError("parse");
         }
       } catch (err) {
-        // LLM summary fetch error — silent
+        // AbortError(timeout) vs 네트워크 에러 구분 — 둘 다 수동 재시도 유도
+        if (err instanceof Error && err.name === "AbortError") {
+          setLlmError("timeout");
+        } else {
+          setLlmError("network");
+        }
       } finally {
+        clearTimeout(timeoutId);
         setLlmLoading(false);
       }
     };
 
     fetchLlmSummary();
-  }, [hasRealBoxScore, boxScore, gameId, llmSummary, awayTeam, homeTeam, linescore]);
 
-  // 기존 템플릿 기반 fallback
-  const fallbackSummary = useMemo(() => {
-    if (!hasRealBoxScore) return null;
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [hasRealBoxScore, boxScore, gameId, llmSummary, awayTeam, homeTeam, linescore, retryNonce]);
 
-    // linescore.R 우선, boxScore 합산 fallback (승패 뒤집힘 방지)
-    const homeR = linescore?.home.R ?? boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);
-    const awayR = linescore?.away.R ?? boxScore.awayBatters.reduce((s, b) => s + b.runs, 0);
-    const isDraw = homeR === awayR;
-    const homeWon = homeR > awayR;
-    const winnerName = isDraw ? null : (homeWon ? homeTeam.shortName : awayTeam.shortName);
-    const loserName = isDraw ? null : (homeWon ? awayTeam.shortName : homeTeam.shortName);
-
-    // 모든 타자 통합
-    const allBatters = [
-      ...boxScore.homeBatters.map(b => ({ ...b, team: homeTeam.shortName, teamColor: homeTeam.colorLight })),
-      ...boxScore.awayBatters.map(b => ({ ...b, team: awayTeam.shortName, teamColor: awayTeam.colorLight })),
-    ];
-    // 모든 투수 통합
-    const allPitchers = [
-      ...boxScore.homePitchers.map(p => ({ ...p, team: homeTeam.shortName })),
-      ...boxScore.awayPitchers.map(p => ({ ...p, team: awayTeam.shortName })),
-    ];
-
-    // MVP: 타점 → 안타 → 홈런 순으로
-    const mvpBatter = [...allBatters].sort((a, b) => (b.rbi - a.rbi) || (b.hits - a.hits) || (b.hr - a.hr))[0];
-    // 최다 탈삼진 투수
-    const topPitcher = [...allPitchers].sort((a, b) => b.strikeouts - a.strikeouts)[0];
-    // 홈런 타자들
-    const hrHitters = allBatters.filter(b => b.hr > 0);
-    // 멀티히트 타자들
-    const multiHitters = allBatters.filter(b => b.hits >= 2);
-    // 에러
-    const homeErrors = boxScore.homeBatters.reduce((s, b) => s + (("errors" in b) ? (b as { errors: number }).errors : 0), 0);
-    const awayErrors = boxScore.awayBatters.reduce((s, b) => s + (("errors" in b) ? (b as { errors: number }).errors : 0), 0);
-
-    // 가장 많은 득점이 난 이닝 찾기 (linescore 없이 boxScore만으로는 제한적 → 간접 추론)
-    const totalH = boxScore.homeBatters.reduce((s, b) => s + b.hits, 0) + boxScore.awayBatters.reduce((s, b) => s + b.hits, 0);
-    const totalK = allPitchers.reduce((s, p) => s + p.strikeouts, 0);
-
-    // 헤드라인
-    let headline: string;
-    if (isDraw) {
-      headline = `${homeTeam.shortName} vs ${awayTeam.shortName}, ${homeR}-${awayR} 무승부!`;
-    } else {
-      const margin = Math.abs(homeR - awayR);
-      if (margin >= 5) {
-        headline = `${winnerName}, ${Math.max(homeR, awayR)}-${Math.min(homeR, awayR)}로 ${loserName} 대파!`;
-      } else if (margin === 1) {
-        headline = `${winnerName}, ${Math.max(homeR, awayR)}-${Math.min(homeR, awayR)} 짜릿한 1점차 승리!`;
-      } else {
-        headline = `${winnerName}, ${Math.max(homeR, awayR)}-${Math.min(homeR, awayR)}로 ${loserName}에 승리!`;
-      }
-    }
-
-    // 승부처 (리치하게)
-    let turningPoint: string;
-    if (isDraw) {
-      turningPoint = `양 팀 모두 ${homeR}점씩 주고받은 팽팽한 접전 끝에 무승부로 마무리되었습니다.`;
-    } else {
-      const winBatters = homeWon ? boxScore.homeBatters : boxScore.awayBatters;
-      const winHits = winBatters.reduce((s, b) => s + b.hits, 0);
-      const winRbi = winBatters.reduce((s, b) => s + b.rbi, 0);
-      turningPoint = `${winnerName}이 ${winHits}안타 ${winRbi}타점으로 효과적으로 공략했습니다.`;
-      if (hrHitters.length > 0) {
-        turningPoint += ` ${hrHitters.map(h => `${h.team} ${h.name}`).join(", ")}의 홈런이 터졌습니다.`;
-      }
-    }
-
-    // MVP 카드 (리치)
-    let mvpText: string | null = null;
-    if (mvpBatter && (mvpBatter.hits > 0 || mvpBatter.rbi > 0)) {
-      const parts = [`${mvpBatter.hits}안타`];
-      if (mvpBatter.rbi > 0) parts.push(`${mvpBatter.rbi}타점`);
-      if (mvpBatter.hr > 0) parts.push(`${mvpBatter.hr}홈런`);
-      if (mvpBatter.runs > 0) parts.push(`${mvpBatter.runs}득점`);
-      if (mvpBatter.bb > 0) parts.push(`${mvpBatter.bb}볼넷`);
-      mvpText = `${mvpBatter.team} ${mvpBatter.name} (${parts.join(" ")})`;
-    }
-
-    // 투수 하이라이트
-    let pitcherHighlight: string | null = null;
-    if (topPitcher && topPitcher.strikeouts >= 3) {
-      pitcherHighlight = `${topPitcher.team} ${topPitcher.name} — ${topPitcher.inningsPitched}이닝 ${topPitcher.strikeouts}탈삼진`;
-      if (topPitcher.earnedRuns === 0) pitcherHighlight += " 무실점";
-    }
-
-    // 종합 인사이트 (리치)
-    let insight: string;
-    if (isDraw) {
-      insight = `총 ${totalH}안타, ${totalK}탈삼진이 오간 균형 잡힌 경기였습니다.`;
-      if (multiHitters.length > 0) {
-        insight += ` 멀티히트: ${multiHitters.map(h => `${h.team} ${h.name}(${h.hits}안타)`).join(", ")}.`;
-      }
-    } else {
-      const losePitchers = homeWon ? boxScore.awayPitchers : boxScore.homePitchers;
-      const loseEr = losePitchers.reduce((s, p) => s + p.earnedRuns, 0);
-      insight = `${loserName} 투수진이 ${loseEr}자책점을 허용하며 흔들렸습니다.`;
-      if (multiHitters.length >= 2) {
-        insight += ` ${winnerName} 타선에서 ${multiHitters.filter(h => h.team === winnerName).map(h => `${h.name}(${h.hits}안타)`).join(", ")} 등이 활약했습니다.`;
-      }
-      if (homeErrors + awayErrors >= 2) {
-        insight += ` 양 팀 합산 ${homeErrors + awayErrors}실책도 경기 흐름에 영향을 줬습니다.`;
-      }
-    }
-
-    return { headline, gameFlow: undefined as { early: string; mid: string; late: string } | undefined, turningPoint, mvpText, pitcherHighlight, insight };
-  }, [hasRealBoxScore, boxScore, homeTeam, awayTeam]);
 
   // LLM 요약만 사용 (fallback/숏버전 폐기)
   const summary = llmSummary
@@ -713,22 +635,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
         seriesContext: llmSummary.seriesContext || null,
         standingsImpact: llmSummary.standingsImpact || null,
       }
-    : (!llmLoading && fallbackSummary)
-      ? {
-          headline: fallbackSummary.headline,
-          gameFlow: fallbackSummary.gameFlow || undefined,
-          turningPoint: fallbackSummary.turningPoint,
-          mvpBatterLabel: fallbackSummary.mvpText,
-          mvpBatterReason: null,
-          mvpText: fallbackSummary.mvpText,
-          pitcherLabel: fallbackSummary.pitcherHighlight,
-          pitcherReason: null,
-          pitcherHighlight: fallbackSummary.pitcherHighlight,
-          insight: fallbackSummary.insight,
-          seriesContext: null,
-          standingsImpact: null,
-        }
-      : null;
+    : null;
 
   return (
     <div className="flex flex-col h-full">
@@ -849,23 +756,45 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
           </div>
         ) : (
           <div className="glass-card p-5 text-center">
+            {/* 상태 우선순위: 생성중 > 에러(수동재시도) > 데이터없음(집계중) */}
             {llmLoading ? (
               <div className="flex flex-col items-center gap-3 py-4">
                 <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
                 <div>
                   <p className="text-sm font-medium text-text-primary">🤖 AI 경기 요약 생성 중...</p>
-                  <p className="text-xs text-text-tertiary mt-1">BoxScore 기반으로 분석하고 있습니다</p>
+                  <p className="text-xs text-text-tertiary mt-1">박스스코어 기반으로 분석하고 있어요 (최대 30초)</p>
                 </div>
+              </div>
+            ) : llmError ? (
+              <div className="flex flex-col items-center gap-3 py-4">
+                <div className="text-2xl">⚠️</div>
+                <div>
+                  <p className="text-sm font-medium text-text-primary">
+                    {llmError === "timeout" ? "분석이 오래 걸리고 있어요" : "분석을 불러오지 못했어요"}
+                  </p>
+                  <p className="text-xs text-text-tertiary mt-1">
+                    {llmError === "timeout" ? "잠시 후 다시 시도해 주세요" : "네트워크 확인 후 다시 시도해 주세요"}
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setLlmError(null);
+                    setRetryNonce(n => n + 1);
+                  }}
+                  className="mt-1 px-4 py-1.5 rounded-full text-xs font-semibold bg-accent/20 text-accent hover:bg-accent/30 transition-colors"
+                >
+                  🔄 다시 시도
+                </button>
               </div>
             ) : hasRealBoxScore ? (
               <div className="py-4">
-                <p className="text-sm text-text-tertiary">요약을 불러올 수 없습니다.</p>
-                <p className="text-xs text-text-tertiary mt-1">잠시 후 다시 시도해 주세요.</p>
+                <p className="text-sm text-text-tertiary">AI 요약 준비 중...</p>
+                <p className="text-xs text-text-tertiary/60 mt-1">곧 분석이 완료됩니다</p>
               </div>
             ) : (
               <div className="py-4">
-                <p className="text-sm text-text-tertiary">경기 데이터 집계 중...</p>
-                <p className="text-xs text-text-tertiary/60 mt-1">곧 AI경기 분석을 확인하실 수 있습니다.</p>
+                <p className="text-sm text-text-tertiary">경기 기록 집계 중...</p>
+                <p className="text-xs text-text-tertiary/60 mt-1">박스스코어가 준비되면 AI 분석이 시작됩니다</p>
               </div>
             )}
           </div>
