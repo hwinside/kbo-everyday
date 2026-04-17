@@ -428,10 +428,26 @@ export async function GET(req: NextRequest) {
       (yesterdayStandings ?? []).map((s: StandingsSnapshot) => [s.team_id, s.streak]),
     );
 
-    const todayStandingsSnapshots: StandingsSnapshot[] = standingsSorted.map((s, i) => ({
+    // tie-aware rank: 승률+게임차가 모두 같을 때만 공동 순위 (거의 없지만 안전을 위해)
+    const standingsWithRank: (typeof standingsSorted[number] & { rank: number })[] = [];
+    let prevWr: number | null = null;
+    let prevGb: number | null = null;
+    let prevRank = 0;
+    standingsSorted.forEach((s, i) => {
+      const tie = prevWr !== null && s.winRate === prevWr && s.gamesBehind === prevGb;
+      const rank = tie ? prevRank : i + 1;
+      if (!tie) {
+        prevRank = i + 1;
+        prevWr = s.winRate;
+        prevGb = s.gamesBehind;
+      }
+      standingsWithRank.push({ ...s, rank });
+    });
+
+    const todayStandingsSnapshots: StandingsSnapshot[] = standingsWithRank.map((s) => ({
       date: todayISO,
       team_id: s.teamId,
-      rank: i + 1,
+      rank: s.rank,
       wins: s.wins,
       losses: s.losses,
       draws: s.draws,
