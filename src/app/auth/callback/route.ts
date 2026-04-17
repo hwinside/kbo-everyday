@@ -13,6 +13,9 @@ export async function GET(request: NextRequest) {
 
   if (code) {
     const cookieStore = await cookies();
+    // exchangeCodeForSession이 설정할 쿠키를 수집 (redirect 응답에 복사하기 위해)
+    const pendingCookies: { name: string; value: string; options: any }[] = [];
+
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -22,9 +25,10 @@ export async function GET(request: NextRequest) {
             return cookieStore.getAll();
           },
           setAll(cookiesToSet) {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            );
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+              pendingCookies.push({ name, value, options });
+            });
           },
         },
       }
@@ -38,6 +42,16 @@ export async function GET(request: NextRequest) {
       errorUrl.searchParams.set("auth_error", error.message);
       return NextResponse.redirect(errorUrl.toString());
     }
+
+    // auth 쿠키를 redirect 응답에 명시적으로 복사 (cookieStore.set만으로는 유실 가능)
+    const response = NextResponse.redirect(CANONICAL_ORIGIN);
+    for (const { name, value, options } of pendingCookies) {
+      response.cookies.set(name, value, {
+        ...options,
+        secure: process.env.NODE_ENV !== "development",
+      });
+    }
+    return response;
   } else {
     console.warn("[auth/callback] No code parameter in callback URL");
   }
