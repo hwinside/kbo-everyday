@@ -187,26 +187,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
           await loadProfile(session.access_token, session.user.id);
 
-          // Google Ads conversion: 신규 가입 감지 (created_at이 60초 이내, 세션당 1회)
-          if (_event === "SIGNED_IN" && session.user.created_at) {
-            const createdAt = new Date(session.user.created_at).getTime();
-            const now = Date.now();
-            const convKey = `gads_conv_${session.user.id}`;
-            if (now - createdAt < 60_000 && !sessionStorage.getItem(convKey)) {
-              sessionStorage.setItem(convKey, "1");
-              // 신규 회원가입 — Google Ads 전환 이벤트 발화 (1회만)
-              if (typeof window !== "undefined") {
-                const w = window as unknown as { gtag?: (cmd: string, evt: string, params?: Record<string, unknown>) => void };
-                if (w.gtag) {
-                  w.gtag("event", "conversion", {
-                    send_to: "AW-18082281693/-AI9CJa8l5ocEN3xpq5D",
-                    value: 1.0,
-                    currency: "KRW",
-                  });
-                }
-              }
-            }
-          }
+          // Google Ads 전환은 ProfileSetupModal.handleComplete()에서 발화함
+          // (닉네임+팀 선택 완료 시점 = 실제 회원가입 완료)
         } else {
           setProfile(null);
         }

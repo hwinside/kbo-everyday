@@ -137,7 +137,7 @@ export default function SetupPage() {
         localStorage.setItem("kbo-my-team", String(selectedTeam));
       }
 
-      trackEvent(OnboardingEvents.ONBOARDING_COMPLETE, { nickname: nickname.trim(), team_id: selectedTeam }, { meta: true });
+      trackEvent(OnboardingEvents.ONBOARDING_COMPLETE, { nickname: nickname.trim(), team_id: selectedTeam }, { meta: true, gads: true });
       trackEvent(OnboardingEvents.TEAM_SELECTED, { team_id: selectedTeam }, { meta: true });
 
       // refreshProfile() 사용 안 함 — 내부적으로 Supabase 클라이언트 사용해서 hang 가능
