@@ -18,6 +18,9 @@ export default function WelcomePage() {
     }
   }, [loading, user, profile, router]);
 
+  // 회원가입 완료 전환 이벤트는 /setup POST 성공 시 단일 경로에서만 발화
+  // (중복 집계 방지 — GA4/Meta/Google Ads 모두 /setup에서 1회만)
+
   if (loading || !profile?.team_id) {
     return (
       <div className="min-h-screen bg-bg-primary flex items-center justify-center">
