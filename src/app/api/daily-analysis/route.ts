@@ -36,6 +36,14 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json(
     { date: isoDate, analysis: result },
-    { headers: { "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=600" } },
+    {
+      headers: {
+        // 매 요청 실시간 — 재생성 직후 구버전 캐시 히트 방지
+        "Cache-Control": "no-store, must-revalidate",
+      },
+    },
   );
 }
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;

@@ -39,7 +39,7 @@ export default function StandingsPage() {
     if (season !== 2026) { setDailyAnalysis(null); setDailyAnalysisLoading(false); return; }
     setDailyAnalysisLoading(true);
     const today = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10).replace(/-/g, "");
-    fetch(`/api/daily-analysis?date=${today}`)
+    fetch(`/api/daily-analysis?date=${today}&t=${Date.now()}`, { cache: "no-store" })
       .then(r => r.json())
       .then(data => { if (data.analysis) setDailyAnalysis(data); })
       .catch(() => {})
