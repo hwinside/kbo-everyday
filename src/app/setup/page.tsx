@@ -9,7 +9,7 @@ import { useRouter } from "next/navigation";
 import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 
 export default function SetupPage() {
-  const { user, refreshProfile } = useAuth();
+  const { user } = useAuth();
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [nickname, setNickname] = useState("");
@@ -132,8 +132,9 @@ export default function SetupPage() {
       trackEvent(OnboardingEvents.ONBOARDING_COMPLETE, { nickname: nickname.trim(), team_id: selectedTeam }, { meta: true });
       trackEvent(OnboardingEvents.TEAM_SELECTED, { team_id: selectedTeam }, { meta: true });
 
-      try { await refreshProfile(); } catch { /* best effort */ }
-      router.push("/welcome");
+      // refreshProfile() 사용 안 함 — 내부적으로 Supabase 클라이언트 사용해서 hang 가능
+      // /welcome 페이지에서 profile을 새로 로드하거나, 홈으로 이동 시 자연 로드
+      window.location.href = "/welcome";
     } catch (e: unknown) {
       setError((e as Error).message || "프로필 생성에 실패했습니다");
     } finally {
