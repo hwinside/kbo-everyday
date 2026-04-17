@@ -96,14 +96,19 @@ export default function SetupPage() {
       setError("한글, 영문, 숫자만 사용 가능합니다");
       return;
     }
-    const { data } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("nickname", trimmed)
-      .maybeSingle();
-    if (data) {
-      setError("이미 사용 중인 닉네임입니다");
-      return;
+    try {
+      const { data, error: queryError } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("nickname", trimmed)
+        .maybeSingle();
+      // RLS/세션 에러는 무시하고 통과 (중복 체크는 베스트 에포트)
+      if (!queryError && data) {
+        setError("이미 사용 중인 닉네임입니다");
+        return;
+      }
+    } catch {
+      // 네트워크 에러 시 통과 (프로필 생성 시점에 unique constraint에서 잡힘)
     }
     setError("");
     setStep(2);
