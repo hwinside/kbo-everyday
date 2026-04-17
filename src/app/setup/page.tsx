@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import Image from "next/image";
@@ -20,39 +19,33 @@ export default function SetupPage() {
   const [loading, setLoading] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
 
-  // URL hash에서 세션 토큰 복원 (쿠키가 안 붙을 때의 fallback)
+  const [hashToken, setHashToken] = useState<string | null>(null);
+
+  // URL hash에서 access_token 추출 (Supabase 클라이언트 사용 안 함 — hang 방지)
   useEffect(() => {
-    async function restoreSession() {
-      if (typeof window === "undefined") return;
-      const hash = window.location.hash;
-      if (hash && hash.includes("access_token")) {
-        // hash fragment에서 토큰 추출
-        const params = new URLSearchParams(hash.slice(1));
-        const accessToken = params.get("access_token");
-        const refreshToken = params.get("refresh_token");
-        if (accessToken && refreshToken) {
-          await supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: refreshToken,
-          });
-          // hash 정리 (URL에 토큰 노출 방지)
-          window.history.replaceState(null, "", window.location.pathname);
-        }
-      }
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash;
+    if (hash && hash.includes("access_token")) {
+      const params = new URLSearchParams(hash.slice(1));
+      const token = params.get("access_token");
+      if (token) setHashToken(token);
+      // hash 정리
+      window.history.replaceState(null, "", window.location.pathname);
     }
-    restoreSession();
   }, []);
 
-  // user가 아직 hydrate 안 됐을 수 있으니 대기
+  // user hydrate 대기 — hash token이 있으면 user 없이도 진행 허용
   useEffect(() => {
-    const timer = setTimeout(() => setAuthLoading(false), 3000);
-    if (user) {
+    const timer = setTimeout(() => setAuthLoading(false), 2000);
+    if (user || hashToken) {
       setAuthLoading(false);
-      setNickname(user.user_metadata?.name || user.user_metadata?.full_name || "");
+      if (user) {
+        setNickname(user.user_metadata?.name || user.user_metadata?.full_name || "");
+      }
       clearTimeout(timer);
     }
     return () => clearTimeout(timer);
-  }, [user]);
+  }, [user, hashToken]);
 
   // 이미 프로필 있으면 홈으로
   const { profile } = useAuth();
@@ -70,7 +63,7 @@ export default function SetupPage() {
     );
   }
 
-  if (!user) {
+  if (!user && !hashToken) {
     return (
       <div className="min-h-screen bg-bg-primary flex flex-col items-center justify-center px-6">
         <p className="text-text-secondary mb-4">로그인이 필요합니다</p>
@@ -107,9 +100,8 @@ export default function SetupPage() {
     setLoading(true);
     setError("");
     try {
-      // 세션 토큰 확보 (hash에서 복원된 것 포함)
-      const { data: { session } } = await supabase.auth.getSession();
-      const accessToken = session?.access_token;
+      // hash에서 추출한 토큰 우선, 없으면 쿠키 fallback (API route에서 처리)
+      const accessToken = hashToken || undefined;
 
       // 서버 API로 프로필 생성 (클라이언트 Supabase 직접 쓰지 않음 — 세션 hang 방지)
       const res = await fetch("/api/setup", {
