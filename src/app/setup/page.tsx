@@ -20,6 +20,29 @@ export default function SetupPage() {
   const [loading, setLoading] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
 
+  // URL hash에서 세션 토큰 복원 (쿠키가 안 붙을 때의 fallback)
+  useEffect(() => {
+    async function restoreSession() {
+      if (typeof window === "undefined") return;
+      const hash = window.location.hash;
+      if (hash && hash.includes("access_token")) {
+        // hash fragment에서 토큰 추출
+        const params = new URLSearchParams(hash.slice(1));
+        const accessToken = params.get("access_token");
+        const refreshToken = params.get("refresh_token");
+        if (accessToken && refreshToken) {
+          await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          // hash 정리 (URL에 토큰 노출 방지)
+          window.history.replaceState(null, "", window.location.pathname);
+        }
+      }
+    }
+    restoreSession();
+  }, []);
+
   // user가 아직 hydrate 안 됐을 수 있으니 대기
   useEffect(() => {
     const timer = setTimeout(() => setAuthLoading(false), 3000);

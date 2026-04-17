@@ -74,16 +74,23 @@ export async function GET(request: NextRequest) {
           .maybeSingle();
 
         const needsSetup = !profile || !profile.nickname || !profile.team_id;
+
+        // 세션 토큰을 URL hash로 전달 — 쿠키가 안 붙더라도 클라이언트에서 setSession() 가능
+        const session = data.session;
+        const hashParams = session
+          ? `#access_token=${session.access_token}&refresh_token=${session.refresh_token}&type=recovery`
+          : "";
+
         const redirectUrl = needsSetup
-          ? `${CANONICAL_ORIGIN}/setup`
-          : CANONICAL_ORIGIN;
+          ? `${CANONICAL_ORIGIN}/setup${hashParams}`
+          : `${CANONICAL_ORIGIN}${hashParams}`;
 
         console.log("[auth/callback]", {
           userId: data.user.id.slice(0, 8),
           email: data.user.email,
           hasProfile: !!profile,
           needsSetup,
-          redirectUrl,
+          hasHash: !!hashParams,
           cookieCount: pendingCookies.length,
         });
 
