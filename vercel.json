@@ -13,6 +13,8 @@
   ],
   "crons": [
     { "path": "/api/cron/highlights", "schedule": "0 */4 * * *" },
+    { "path": "/api/cron/videos", "schedule": "15 */6 * * *" },
+    { "path": "/api/cron/videos-shorts", "schedule": "30 */6 * * *" },
     { "path": "/api/cron/roster", "schedule": "0 21 * * *" },
     { "path": "/api/cron/stats", "schedule": "0 21 * * *" },
     { "path": "/api/cron/photos", "schedule": "0 21 * * 0" },
