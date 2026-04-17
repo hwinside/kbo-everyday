@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 
 interface Props {
@@ -14,6 +15,7 @@ interface Props {
 
 export default function ProfileSetupModal({ isOpen }: Props) {
   const { user, refreshProfile } = useAuth();
+  const router = useRouter();
   const [step, setStep] = useState(1);
   const [nickname, setNickname] = useState(user?.user_metadata?.name || user?.user_metadata?.full_name || "");
   const [selectedTeam, setSelectedTeam] = useState<number | null>(null);
@@ -111,7 +113,8 @@ export default function ProfileSetupModal({ isOpen }: Props) {
       trackEvent(OnboardingEvents.TEAM_SELECTED, { team_id: selectedTeam }, { meta: true });
 
       await refreshProfile();
-      setStep(4);
+      // 가입 완료 → 환영 페이지로 이동
+      router.push("/welcome");
     } catch (e: unknown) {
       setError((e as Error).message || "프로필 생성에 실패했습니다");
     } finally {
