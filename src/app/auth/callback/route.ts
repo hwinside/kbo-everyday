@@ -48,6 +48,10 @@ export async function GET(request: NextRequest) {
     for (const { name, value, options } of pendingCookies) {
       response.cookies.set(name, value, {
         ...options,
+        // Supabase 세션 쿠키 기본값 보장 (path 누락 시 /auth/callback 한정으로 유실됨)
+        path: (options?.path as string) || "/",
+        sameSite: (options?.sameSite as "lax" | "strict" | "none") || "lax",
+        httpOnly: (options?.httpOnly as boolean) ?? false,
         secure: process.env.NODE_ENV !== "development",
       });
     }
