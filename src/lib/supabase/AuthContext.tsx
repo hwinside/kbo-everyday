@@ -123,7 +123,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     async function syncSession() {
-      const { data: { session } } = await supabase.auth.getSession();
+      let session: Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] = null;
+
+      // 1차: 일반 세션 (쿠키 기반)
+      try {
+        const result = await supabase.auth.getSession();
+        session = result.data.session;
+      } catch { /* getSession fail */ }
+
+      // 2차: sessionStorage에 pending token이 있으면 setSession으로 복원
+      // (iOS Safari에서 쿠키가 안 붙을 때의 fallback)
+      if (!session && typeof window !== "undefined") {
+        try {
+          const pending = sessionStorage.getItem("kbo-pending-session");
+          if (pending) {
+            const { access_token, refresh_token } = JSON.parse(pending);
+            if (access_token && refresh_token) {
+              const { data } = await supabase.auth.setSession({
+                access_token,
+                refresh_token,
+              });
+              session = data.session;
+            }
+            // 사용 후 제거 (1회성)
+            sessionStorage.removeItem("kbo-pending-session");
+          }
+        } catch { sessionStorage.removeItem("kbo-pending-session"); }
+      }
+
       setUser(session?.user ?? null);
       if (session?.user && session.access_token) {
         // 계정 전환 감지 (syncSession 경로)

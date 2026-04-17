@@ -27,8 +27,16 @@ export default function SetupPage() {
     const hash = window.location.hash;
     if (hash && hash.includes("access_token")) {
       const params = new URLSearchParams(hash.slice(1));
-      const token = params.get("access_token");
-      if (token) setHashToken(token);
+      const accessToken = params.get("access_token");
+      const refreshToken = params.get("refresh_token");
+      if (accessToken) {
+        setHashToken(accessToken);
+        // sessionStorage에 저장 — 홈 페이지에서 세션 복원용
+        sessionStorage.setItem("kbo-pending-session", JSON.stringify({
+          access_token: accessToken,
+          refresh_token: refreshToken || "",
+        }));
+      }
       // hash 정리
       window.history.replaceState(null, "", window.location.pathname);
     }
