@@ -30,6 +30,18 @@ export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get("code");
 
+  // 진단용 요청 메타 (PKCE 간헐 에러 원인 추적 목적 — 2026-04-18)
+  // User-Agent / Referer / x-forwarded-* 기록해 모바일 vs 데스크톱, 출발 페이지 파악 가능하도록.
+  const diagnosticMeta = {
+    ua: request.headers.get("user-agent")?.slice(0, 220),
+    secChUaMobile: request.headers.get("sec-ch-ua-mobile"),
+    secChUaPlatform: request.headers.get("sec-ch-ua-platform"),
+    referer: request.headers.get("referer")?.slice(0, 200),
+    host: request.headers.get("host"),
+    xfHost: request.headers.get("x-forwarded-host"),
+    xfProto: request.headers.get("x-forwarded-proto"),
+  };
+
   // 세션 쿠키를 redirect 응답에 확실히 실기 위해 수집
   const pendingCookies: { name: string; value: string; options: any }[] = [];
 
@@ -56,7 +68,13 @@ export async function GET(request: NextRequest) {
 
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
     if (error) {
-      console.error("[auth/callback] exchangeCodeForSession failed:", error.message, error);
+      // PKCE 에러 등 exchange 실패 시 UA/referer/host 같이 남겨서 모바일여부 및 상이한 온라우저 컨텍스트 파악
+      console.error(
+        "[auth/callback] exchangeCodeForSession failed:",
+        error.message,
+        { errorCode: (error as any).code, ...diagnosticMeta },
+        error
+      );
       const errorUrl = new URL(CANONICAL_ORIGIN);
       errorUrl.searchParams.set("auth_error", error.message);
       return NextResponse.redirect(errorUrl.toString());
@@ -92,6 +110,8 @@ export async function GET(request: NextRequest) {
           needsSetup,
           hasHash: !!hashParams,
           cookieCount: pendingCookies.length,
+          // 진단 메타 (모바일 vs 데스크톱 / apex vs www 통계 용, 1일짜리)
+          ...diagnosticMeta,
         });
 
         return buildRedirectWithCookies(redirectUrl, pendingCookies);
