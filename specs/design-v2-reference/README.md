@@ -2,7 +2,7 @@
 
 > 출처: Claude Design 프로젝트 `072601fd-98cc-45df-84c1-101133fcfb99`
 > 받음: 2026-04-19 04:52 KST (하린아빠 슬랙 `#discussion`)
-> 상태: ⚠️ *v0 DRAFT* — Claude Design에서 제작 진행 중. 최종본 도착 시 이 폴더 전체를 덮어씁니다. (하린아빠 04:59 확인)
+> 상태: ✅ *FINAL* — 2026-04-19 05:33 하린아빠 최종본 수령 완료. `FREEZE-DIFF.md`에 v0→final 변경 요약. 삼순이 freeze 리뷰 대기.
 > 역할: `specs/design-v2-migration.md`의 *시각 기준본(visual SSOT)*. 구현 중 "조금씩 다른 V2" 발생 시 이 폴더가 정답.
 
 ## 🚧 최종본 도착 전 취급 주의

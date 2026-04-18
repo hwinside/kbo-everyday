@@ -145,6 +145,54 @@ function Donut({ value, max = 1, color, bg, size = 64, stroke = 8, label }) {
 
 // ─────────────────────────── 2) Player profile
 
+// Portrait silhouette placeholder — stylized baseball cap + shoulders in team color
+function PlayerPortrait({ team, size = 180 }) {
+  // Cap color = team primary, subtle gradient background
+  return (
+    <svg width={size} height={size * 1.15} viewBox="0 0 180 210" style={{ display: 'block' }}>
+      <defs>
+        <linearGradient id={`pp-${team.slug}-bg`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor={waP(team.primary, 0.12)}/>
+          <stop offset="1" stopColor="transparent"/>
+        </linearGradient>
+        <clipPath id={`pp-${team.slug}-clip`}>
+          <rect x="10" y="10" width="160" height="200" rx="12"/>
+        </clipPath>
+      </defs>
+      <g clipPath={`url(#pp-${team.slug}-clip)`}>
+        <rect x="10" y="10" width="160" height="200" fill={`url(#pp-${team.slug}-bg)`}/>
+        {/* Shoulders / jersey */}
+        <path d="M 25 210 Q 30 150 60 140 L 120 140 Q 150 150 155 210 Z"
+              fill={waP(team.primary, 0.85)}/>
+        {/* Neck */}
+        <rect x="78" y="120" width="24" height="30" fill={waP('#E4B590', 0.9)}/>
+        {/* Head */}
+        <ellipse cx="90" cy="95" rx="32" ry="38" fill="#E4B590"/>
+        {/* Jaw shadow */}
+        <path d="M 62 95 Q 64 125 90 133 Q 116 125 118 95" fill={waP('#000', 0.12)}/>
+        {/* Ears */}
+        <ellipse cx="59" cy="98" rx="5" ry="8" fill="#D9A27F"/>
+        <ellipse cx="121" cy="98" rx="5" ry="8" fill="#D9A27F"/>
+        {/* Cap base */}
+        <path d="M 56 78 Q 60 55 90 52 Q 120 55 124 78 L 124 85 L 56 85 Z" fill={team.primary}/>
+        <path d="M 56 78 Q 60 55 90 52 Q 120 55 124 78 L 124 85 L 56 85 Z" fill="none" stroke={team.light} strokeWidth="0.5" opacity="0.6"/>
+        {/* Cap brim */}
+        <path d="M 54 82 L 140 82 Q 140 88 136 90 L 54 90 Z" fill={waP('#000', 0.7)}/>
+        {/* Cap logo area */}
+        <circle cx="88" cy="72" r="8" fill={waP('#fff', 0.15)}/>
+        <text x="88" y="76" textAnchor="middle" fontSize="11" fontWeight="900" fill="#fff" fontFamily="system-ui">{team.short[0]}</text>
+        {/* Eye hints */}
+        <ellipse cx="78" cy="99" rx="2.5" ry="1.5" fill="#3a2d22"/>
+        <ellipse cx="102" cy="99" rx="2.5" ry="1.5" fill="#3a2d22"/>
+        {/* Stubble / beard hint */}
+        <path d="M 68 113 Q 90 125 112 113 Q 110 125 90 128 Q 70 125 68 113" fill={waP('#3a2d22', 0.55)}/>
+        {/* Jersey collar V */}
+        <path d="M 70 140 L 90 155 L 110 140" fill="none" stroke={waP('#fff', 0.3)} strokeWidth="1"/>
+      </g>
+    </svg>
+  );
+}
+
 function ScreenPlayerProfile({ team, palette }) {
   // Always show the team's star — or KIA's Kim Do-young when neutral
   const p = palette.isNeutral ? PLAYERS.gu_gim : (
@@ -153,157 +201,249 @@ function ScreenPlayerProfile({ team, palette }) {
     team.slug === 'kia' ? PLAYERS.gu_gim :
     team.slug === 'ssg' ? PLAYERS.ja_choi :
     team.slug === 'kt' ? PLAYERS.bh_park :
+    team.slug === 'lg' ? { name: '오스틴', pos: '내야수', team: 'lg', no: 23, avg: '.358', hr: 5, h: 24 } :
     PLAYERS.gu_gim
   );
   const playerTeam = TP[p.team];
   const isPitcher = p.pos === 'SP' || p.pos === 'RP' || p.pos === 'CP';
 
+  // Real stats for hero right column
+  const heroStats = isPitcher ? [
+    { l: '방어', v: p.era },
+    { l: '승',   v: p.w },
+    { l: 'K',    v: p.k },
+  ] : [
+    { l: '타율', v: p.avg },
+    { l: '홈런', v: p.hr },
+    { l: '안타', v: p.h || '126' },
+  ];
+
   return (
     <>
       <StatusBar tint={NP.text1}/>
-      <div style={{ position: 'absolute', top: 44, right: 14, display: 'flex', gap: 14, zIndex: 10 }}>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-          <path d="M12 21s-7-4.5-7-11a4 4 0 017-2.6A4 4 0 0119 10c0 6.5-7 11-7 11z" stroke={palette.accent} strokeWidth="1.8" fill={waP(palette.base, 0.15)}/>
-        </svg>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-          <path d="M4 4h16v16l-8-5-8 5V4z" stroke={NP.text2} strokeWidth="1.8"/>
-        </svg>
-      </div>
-      <div style={{ position: 'absolute', top: 44, left: 14, zIndex: 10 }}>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-          <path d="M15 5l-7 7 7 7" stroke={NP.text1} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      </div>
 
-      {/* Hero */}
+      {/* Header — matches reference design */}
       <div style={{
-        padding: '80px 16px 20px', marginTop: -44,
-        background: `linear-gradient(155deg, ${waP(playerTeam.primary, 0.55)} 0%, ${waP(playerTeam.primary, 0.15)} 70%, ${NP.bg0} 100%)`,
-        position: 'relative', overflow: 'hidden',
+        height: 44, padding: '0 14px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       }}>
-        {/* Watermark number */}
-        <div style={{
-          position: 'absolute', top: -20, right: -30,
-          fontSize: 240, fontWeight: 900, color: waP(playerTeam.primary, 0.25),
-          letterSpacing: -10, lineHeight: 1, fontVariantNumeric: 'tabular-nums',
-          pointerEvents: 'none',
-        }}>{p.no}</div>
-
-        {/* Team chip */}
-        <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: 6,
-          padding: '4px 10px 4px 4px', borderRadius: 999,
-          background: waP('#000', 0.35), backdropFilter: 'blur(8px)',
-          marginBottom: 14,
-        }}>
-          <TeamLogo team={playerTeam} size={18}/>
-          <span style={{ fontSize: 11, fontWeight: 800, color: '#fff', letterSpacing: -0.2 }}>{playerTeam.short}</span>
-          <span style={{ fontSize: 10, color: waP('#fff', 0.6) }}>#{p.no}</span>
-        </div>
-
-        {/* Name */}
-        <div style={{ fontSize: 36, fontWeight: 900, color: NP.text1, letterSpacing: -1.5, lineHeight: 1, marginBottom: 6, position: 'relative' }}>
-          {p.name}
-        </div>
-        <div style={{ fontSize: 12, fontWeight: 700, color: NP.text2, letterSpacing: -0.2, position: 'relative' }}>
-          {p.pos} · 만 21세 · 우투좌타 · 183cm / 82kg
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <path d="M15 5l-7 7 7 7" stroke={NP.text1} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+        <div style={{ fontSize: 17, fontWeight: 800, color: NP.text1, letterSpacing: -0.3 }}>선수</div>
+        <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <path d="M4 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H9l-4 4V5z" stroke={NP.text1} strokeWidth="1.8" strokeLinejoin="round"/>
+          </svg>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <path d="M12 3l2.6 6 6.4.5-4.9 4.2 1.5 6.3L12 17l-5.6 3 1.5-6.3L3 9.5 9.4 9z" fill="#FFB23F"/>
+          </svg>
         </div>
       </div>
 
-      {/* Key stat row */}
-      <div style={{ padding: '14px 16px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-          {(isPitcher ? [
-            { l: 'ERA', v: p.era, sub: '리그 3위' },
-            { l: '승',   v: p.w, sub: `${p.l}패` },
-            { l: 'K',    v: p.k, sub: `${p.ip}이닝` },
-            { l: 'WHIP', v: p.whip, sub: '리그 5위' },
-          ] : [
-            { l: 'AVG',  v: p.avg, sub: '리그 1위' },
-            { l: 'HR',   v: p.hr, sub: '리그 1위' },
-            { l: 'RBI',  v: p.rbi, sub: '리그 1위' },
-            { l: 'OPS',  v: p.ops, sub: '리그 1위' },
-          ]).map((s, i) => (
-            <div key={i} style={{
-              padding: '10px 6px 9px', borderRadius: 12,
-              background: NP.bg2, border: `1px solid ${NP.line}`,
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1,
-            }}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: NP.text3, letterSpacing: 0.5 }}>{s.l}</div>
-              <div style={{ fontSize: 17, fontWeight: 900, fontVariantNumeric: 'tabular-nums', letterSpacing: -0.5, color: NP.text1 }}>{s.v}</div>
-              <div style={{ fontSize: 8.5, color: palette.accent, fontWeight: 700 }}>{s.sub}</div>
+      {/* Ad banner placeholder — preserved per reference */}
+      <div style={{ padding: '4px 12px 8px' }}>
+        <div style={{
+          height: 36, borderRadius: 4,
+          background: waP('#000', 0.35),
+          border: `1px dashed ${waP('#fff', 0.1)}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 9, color: NP.text4, letterSpacing: 0.5,
+        }}>AD</div>
+      </div>
+
+      {/* Hero — reference layout */}
+      <div style={{
+        padding: '4px 14px 10px',
+        position: 'relative',
+        borderLeft: `3px solid ${playerTeam.light}`,
+        marginLeft: 14, paddingLeft: 12,
+      }}>
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10,
+          alignItems: 'stretch',
+        }}>
+          {/* Left: team + name + number + pos */}
+          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', paddingRight: 4 }}>
+            <div>
+              <div style={{
+                display: 'inline-block',
+                fontSize: 11, fontWeight: 800, color: playerTeam.light,
+                letterSpacing: 0.3, marginBottom: 2,
+              }}>{playerTeam.short}</div>
+              <div style={{ fontSize: 34, fontWeight: 900, color: NP.text1, letterSpacing: -1.5, lineHeight: 1, marginBottom: 10 }}>
+                {p.name}
+              </div>
             </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <ChipTabs tabs={['개요', '스탯', '경기별', '응원글', '커리어']} active="개요" palette={palette}/>
-
-      {/* Form gauges */}
-      <div style={{ padding: '0 16px 14px' }}>
-        <div style={{
-          borderRadius: 16, padding: 14,
-          background: NP.bg2, border: `1px solid ${NP.line}`,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <span style={{ fontSize: 11, fontWeight: 800, color: NP.text1, letterSpacing: -0.2 }}>최근 10경기 폼</span>
-            <span style={{ fontSize: 10, fontWeight: 800, color: NP.win, padding: '2px 8px', borderRadius: 6, background: waP(NP.win, 0.15) }}>↑ HOT</span>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: NP.text2, letterSpacing: -0.3, fontVariantNumeric: 'tabular-nums', marginBottom: 2 }}>#{p.no}</div>
+              <div style={{ fontSize: 12, color: NP.text3, letterSpacing: -0.2 }}>{p.pos === 'SP' ? '투수' : (p.pos.includes('B') ? '내야수' : p.pos === 'C' ? '포수' : p.pos)}</div>
+            </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 14 }}>
-            {[
-              { l: '타율',  v: '.412', max: 0.4, color: NP.win },
-              { l: '출루',  v: '.489', max: 0.5, color: palette.accent },
-              { l: '장타',  v: '.751', max: 0.8, color: NP.warn },
-            ].map((g, i) => (
-              <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                <div style={{ position: 'relative' }}>
-                  <Donut value={parseFloat(g.v)} max={g.max} color={g.color} size={60} stroke={6}/>
-                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <div style={{ fontSize: 12, fontWeight: 900, color: NP.text1, letterSpacing: -0.3, fontVariantNumeric: 'tabular-nums' }}>{g.v}</div>
-                  </div>
-                </div>
-                <div style={{ fontSize: 9, color: NP.text3, fontWeight: 700 }}>{g.l}</div>
+
+          {/* Middle: portrait */}
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-end', marginBottom: -10 }}>
+            <PlayerPortrait team={playerTeam} size={140}/>
+          </div>
+
+          {/* Right: stats column */}
+          <div style={{
+            display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+            paddingLeft: 4, textAlign: 'right',
+          }}>
+            {heroStats.map((s, i) => (
+              <div key={i}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: NP.text3, marginBottom: 1 }}>{s.l}</div>
+                <div style={{
+                  fontSize: i === 0 ? 26 : 20,
+                  fontWeight: 900, color: NP.text1,
+                  letterSpacing: -0.8, lineHeight: 1,
+                  fontVariantNumeric: 'tabular-nums',
+                  marginBottom: 6,
+                }}>{s.v}</div>
               </div>
             ))}
           </div>
-          {/* Hit streak bar */}
-          <div style={{ display: 'flex', gap: 3, alignItems: 'end', height: 32, paddingTop: 8, borderTop: `1px solid ${NP.line}` }}>
-            {[1.5, 2, 0, 3, 1, 2.5, 1, 3, 2, 2].map((h, i) => (
-              <div key={i} style={{
-                flex: 1, height: `${Math.max(h * 25, 4)}%`,
-                background: h === 0 ? waP(NP.text4, 0.3) : waP(palette.base, 0.8),
-                borderRadius: 2,
-              }}/>
-            ))}
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: NP.text4, marginTop: 4 }}>
-            <span>10경기 전</span><span>오늘</span>
-          </div>
         </div>
       </div>
 
-      {/* Today's game */}
-      <div style={{ padding: '0 16px 12px' }}>
-        <div style={{
-          borderRadius: 14, padding: '10px 14px',
-          background: `linear-gradient(135deg, ${waP(palette.base, 0.14)}, ${NP.bg2} 80%)`,
-          border: `1px solid ${waP(palette.base, 0.22)}`,
-          display: 'flex', alignItems: 'center', gap: 10,
-        }}>
-          <div style={{ width: 5, height: 5, borderRadius: '50%', background: NP.live, boxShadow: `0 0 5px ${NP.live}`, flexShrink: 0 }}/>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 10, fontWeight: 800, color: NP.live, letterSpacing: 0.5, marginBottom: 1 }}>오늘 경기</div>
-            <div style={{ fontSize: 11.5, color: NP.text1, fontWeight: 600 }}>
-              vs KT · <b style={{ color: palette.accent, fontVariantNumeric: 'tabular-nums' }}>3타수 2안타 1홈런</b>
+      {/* Icon tabs — reference style */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
+        borderBottom: `1px solid ${NP.line}`, marginTop: 6,
+      }}>
+        {[
+          { l: '선수정보', i: '⚾', active: true },
+          { l: '사진',     i: '📸' },
+          { l: '최신글',   i: '📝' },
+          { l: '인기글',   i: '🔥' },
+        ].map((t, i) => (
+          <div key={i} style={{
+            padding: '10px 4px 8px',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+            borderBottom: t.active ? `2px solid ${NP.live}` : '2px solid transparent',
+            marginBottom: -1,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ fontSize: 13 }}>{t.i}</span>
+              <span style={{
+                fontSize: 12, fontWeight: t.active ? 800 : 600,
+                color: t.active ? NP.text1 : NP.text3,
+                letterSpacing: -0.2,
+              }}>{t.l}</span>
             </div>
           </div>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke={NP.text3} strokeWidth="1.8"/></svg>
+        ))}
+      </div>
+
+      {/* Radar chart — ability spider */}
+      <div style={{ padding: '14px 16px 6px', position: 'relative' }}>
+        <div style={{ position: 'absolute', top: 14, right: 20 }}>
+          <div style={{ width: 18, height: 18, borderRadius: '50%', border: `1px solid ${NP.text3}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: NP.text3, fontWeight: 700 }}>i</div>
         </div>
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <RadarChart
+            labels={['타격', '파워', '선구안', '주루', '안정감', '출루']}
+            player={[85, 78, 72, 45, 68, 82]}
+            league={[60, 55, 58, 55, 60, 58]}
+            color={palette.accent}
+            leagueColor={waP('#fff', 0.25)}
+          />
+        </div>
+        <div style={{ textAlign: 'center', fontSize: 10, color: NP.text3, marginTop: 6 }}>
+          점선 = 리그 평균 기준
+        </div>
+      </div>
+
+      {/* Trait chips */}
+      <div style={{ padding: '8px 16px 14px', display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+        {[
+          { i: '💪', l: '파워히터', v: `${p.hr || 5}홈런` },
+          { i: '🎯', l: '방망이장인', v: `타율 ${p.avg || '.358'}` },
+        ].map((c, i) => (
+          <div key={i} style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            padding: '6px 12px', borderRadius: 999,
+            background: NP.bg2, border: `1px solid ${NP.line}`,
+          }}>
+            <span style={{ fontSize: 13 }}>{c.i}</span>
+            <span style={{ fontSize: 11.5, fontWeight: 800, color: NP.text1, letterSpacing: -0.2 }}>{c.l}</span>
+            <span style={{ fontSize: 10, color: NP.text3, fontVariantNumeric: 'tabular-nums' }}>{c.v}</span>
+          </div>
+        ))}
       </div>
 
       <TabBar active="players" palette={palette}/>
     </>
+  );
+}
+
+// Radar chart — hex with player polygon + league reference
+function RadarChart({ labels, player, league, color, leagueColor }) {
+  const size = 200;
+  const cx = size / 2, cy = size / 2 + 6;
+  const radius = 68;
+  const n = labels.length;
+
+  const pointAt = (i, r) => {
+    const angle = (Math.PI * 2 * i) / n - Math.PI / 2;
+    return [cx + Math.cos(angle) * r, cy + Math.sin(angle) * r];
+  };
+
+  const buildPoly = (values, maxVal = 100) => {
+    return values.map((v, i) => {
+      const r = (v / maxVal) * radius;
+      return pointAt(i, r).join(',');
+    }).join(' ');
+  };
+
+  return (
+    <svg width={size} height={size + 30} viewBox={`0 0 ${size} ${size + 30}`}>
+      {/* Grid rings */}
+      {[0.25, 0.5, 0.75, 1].map((scale, si) => (
+        <polygon key={si}
+          points={Array.from({ length: n }).map((_, i) => pointAt(i, radius * scale).join(',')).join(' ')}
+          fill="none"
+          stroke={waP('#fff', 0.08)}
+          strokeWidth="1"
+          strokeDasharray={scale === 1 ? '0' : '2 3'}
+        />
+      ))}
+      {/* Spokes */}
+      {Array.from({ length: n }).map((_, i) => (
+        <line key={i}
+          x1={cx} y1={cy}
+          x2={pointAt(i, radius)[0]} y2={pointAt(i, radius)[1]}
+          stroke={waP('#fff', 0.05)} strokeWidth="1"
+        />
+      ))}
+      {/* League reference (dashed) */}
+      <polygon points={buildPoly(league)}
+        fill="none" stroke={leagueColor} strokeWidth="1.3"
+        strokeDasharray="3 3"
+      />
+      {/* Player polygon */}
+      <polygon points={buildPoly(player)}
+        fill={waP(color, 0.25)}
+        stroke={color} strokeWidth="1.8"
+      />
+      {/* Player dots */}
+      {player.map((v, i) => {
+        const [x, y] = pointAt(i, (v / 100) * radius);
+        return <circle key={i} cx={x} cy={y} r="3" fill={color} stroke={NP.bg0} strokeWidth="1.5"/>;
+      })}
+      {/* Labels */}
+      {labels.map((label, i) => {
+        const [x, y] = pointAt(i, radius + 14);
+        return (
+          <text key={i} x={x} y={y}
+            textAnchor="middle" dominantBaseline="middle"
+            fontSize="10" fontWeight="700" fill={NP.text2}
+            fontFamily="system-ui"
+          >{label}</text>
+        );
+      })}
+    </svg>
   );
 }
 
