@@ -223,10 +223,12 @@ export function useHomeInit(options?: UseHomeInitOptions) {
       player_count: players.length,
       player_ids: players.map(p => p.playerId),
     });
-    trackEvent(OnboardingEvents.ONBOARDING_COMPLETE, {
+    // 2026-04-18: ONBOARDING_COMPLETE 를 여기서 발화하면 GA4에 가짜 회원가입 전환으로
+    // 누적됨 (이미 가입한 유저가 skip 했다가 나중에 플레이어 고르는 경로).
+    // → 별도 이벤트로 분리하고 Google Ads 전환 신호에서는 제외.
+    trackEvent(OnboardingEvents.ONBOARDING_PLAYER_UPGRADED, {
       team_id: myTeamId,
       player_count: players.length,
-      upgraded_from_skip: true,
     });
   }
 

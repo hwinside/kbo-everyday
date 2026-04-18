@@ -2,7 +2,6 @@
 
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { TEAMS } from "@/lib/constants/teams";
-import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -19,25 +18,10 @@ export default function WelcomePage() {
     }
   }, [loading, user, profile, router]);
 
-  // Google Ads 회원가입 전환 이벤트 — /welcome 도달 = 진짜 가입 완료 시점, 유저당 1회만
-  useEffect(() => {
-    if (loading || !user?.id || !profile?.nickname || !profile?.team_id) return;
-    try {
-      const firedKey = `gads_signup_fired_${user.id}`;
-      if (localStorage.getItem(firedKey)) return;
-      localStorage.setItem(firedKey, "1");
-      trackEvent(
-        OnboardingEvents.ONBOARDING_COMPLETE,
-        { team_id: profile.team_id, user_id: user.id, source: "welcome_page" },
-        { gads: true, ga4: false }
-      );
-    } catch {
-      // localStorage 접근 실패 시 중복 우려 있지만 측정 누락보다는 허용
-    }
-  }, [loading, user?.id, profile?.nickname, profile?.team_id]);
-
-  // 회원가입 완료 전환 이벤트는 /setup POST 성공 시 단일 경로에서만 발화
-  // (중복 집계 방지 — GA4/Meta/Google Ads 모두 /setup에서 1회만)
+  // 회원가입 완료 이벤트(ONBOARDING_COMPLETE)는 /setup POST 성공 직후에서만 발화.
+  // 2026-04-18 이전에는 이 페이지에서도 보조 발화했으나, 재방문/여러 기기 로그인 시
+  // GA4 `onboarding_complete` = 가짜 전환으로 누적됨 → Smart Bidding 학습 오염 유발.
+  // /setup 단일 경로를 사실상 유일 진실분으로 정리 (Supabase profiles 증가분과 1:1 일치).
 
   if (loading || !profile?.team_id) {
     return (

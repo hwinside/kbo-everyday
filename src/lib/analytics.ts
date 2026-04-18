@@ -135,12 +135,24 @@ export function trackEvent(event: string, properties?: Record<string, unknown>, 
 }
 
 // 온보딩 이벤트
+//
+// ⚠️ ONBOARDING_COMPLETE 발화 규칙 (2026-04-18 확정):
+// - 단 한 곳에서만 발화: /setup POST 성공 직후 (src/app/setup/page.tsx)
+// - = "신규 회원가입 확정" 시점 1회.
+// - 다른 경로(welcome 재방문, 플레이어 선택 완료, skip→upgrade 등)에서는
+//   별도 이벤트(PROFILE_FAVORITES_SET, ONBOARDING_PLAYER_UPGRADED)를 쓸 것.
+// - 배경: GA4/Ads 전환 정의를 DB `profiles` 증가분과 1:1로 일치시켜야
+//   Smart Bidding 학습 신호가 오염되지 않음.
 export const OnboardingEvents = {
   TEAM_SELECT_VIEW: "team_select_view",
   TEAM_SELECTED: "team_selected",
   PLAYER_SELECTED: "player_selected",
   ONBOARDING_COMPLETE: "onboarding_complete",
   ONBOARDING_SKIPPED: "onboarding_skipped",
+  // 회원가입 이후 최애선수 목록이 갱신될 때 (가입 완료와 분리)
+  PROFILE_FAVORITES_SET: "profile_favorites_set",
+  // 가입 시 skip → 나중에 플레이어 선택으로 업그레이드
+  ONBOARDING_PLAYER_UPGRADED: "onboarding_player_upgraded",
 } as const;
 
 // 홈/예측 이벤트 (Day 2)

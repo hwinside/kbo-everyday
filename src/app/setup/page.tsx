@@ -148,7 +148,7 @@ export default function SetupPage() {
       // 이유: event_callback 대기 중 버튼 재클릭/중복 submit 방지 (삼순이 리뷰 지적)
       trackEvent(
         OnboardingEvents.ONBOARDING_COMPLETE,
-        { nickname: nickname.trim(), team_id: selectedTeam },
+        { nickname: nickname.trim(), team_id: selectedTeam, source: "setup_page" },
         {
           meta: true,
           gads: true,

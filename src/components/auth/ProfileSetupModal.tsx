@@ -116,9 +116,13 @@ export default function ProfileSetupModal({ isOpen }: Props) {
       //
       // ⚠️ loading=true 고정 유지 (finally에서 setLoading(false) 하지 않음)
       // 이유: event_callback 대기 중 버튼 재클릭/중복 submit 방지
+      //
+      // ⚠️ 2026-04-18: ONBOARDING_COMPLETE는 profiles.insert 성공 직후에만 발화되어야
+      // DB 가입수와 1:1 일치. 이 경로는 insertError throw 시 이미 catch로 빠지므로
+      // 이 라인에 도달 = 실제 가입 완료. source 구분자 추가로 /setup 경로와 교차검증 가능.
       trackEvent(
         OnboardingEvents.ONBOARDING_COMPLETE,
-        { nickname: nickname.trim(), team_id: selectedTeam },
+        { nickname: nickname.trim(), team_id: selectedTeam, source: "profile_setup_modal" },
         {
           meta: true,
           gads: true,

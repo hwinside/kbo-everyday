@@ -63,7 +63,10 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       player_count: players.length,
       player_ids: players.map((p) => p.playerId),
     });
-    trackEvent(OnboardingEvents.ONBOARDING_COMPLETE, {
+    // 2026-04-18: 이 흐름은 신규/기존 유저가 모두 타가능 → ONBOARDING_COMPLETE로 쓰면
+    // GA4 가짜 회원가입 전환 집계 유발. PROFILE_FAVORITES_SET으로 분리.
+    // ONBOARDING_COMPLETE는 /setup POST 성공 직후 1회만 발화.
+    trackEvent(OnboardingEvents.PROFILE_FAVORITES_SET, {
       team_id: teamId,
       player_count: players.length,
     });
