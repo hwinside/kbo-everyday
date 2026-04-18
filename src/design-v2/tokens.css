@@ -1,0 +1,120 @@
+/**
+ * Design V2 Tokens (T1.1.2)
+ *
+ * Spec: specs/design-v2-migration.md (v0.5)
+ * Plan: specs/design-v2-migration-plan.md (v0.3 §2.2)
+ * Reference: specs/design-v2-reference/redesign/shared/tokens.js (FROZEN)
+ *
+ * 구조: [data-design="v2"] 루트에 전체 V2 스코프 적용
+ *      [data-team="..."] 로 팀별 primary/light/secondary 오버라이드
+ *
+ * 변경: NEUTRAL accent 는 삼순이 05:42 추천대로 KBO 블루 채택
+ *      (reference의 빨강 #E03A3A → #1E4B8C)
+ *
+ * 규칙: 색상 리터럴은 여기서만 정의. 컴포넌트는 var(--token)만 참조.
+ */
+
+/* ─────────────────────────────────────────────────────
+ * 1. NEUTRAL 다크 기본 (V2 전체 공통)
+ * ──────────────────────────────────────────────────── */
+[data-design="v2"] {
+  /* Surface */
+  --bg-0: #07070A;
+  --bg-1: #0E0E12;
+  --bg-2: #15151B;
+  --bg-3: #1D1D24;
+
+  /* Lines */
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.14);
+
+  /* Text */
+  --text-1: rgba(255, 255, 255, 0.96);
+  --text-2: rgba(255, 255, 255, 0.68);
+  --text-3: rgba(255, 255, 255, 0.44);
+  --text-4: rgba(255, 255, 255, 0.28);
+
+  /* Status */
+  --status-live: #FF453A;
+  --status-win: #30D158;
+  --status-warn: #FFD60A;
+
+  /* NEUTRAL accent (KBO 블루) — 팀 미선택 시 기본값 */
+  --team-primary: #1E4B8C;
+  --team-light: #4A78B8;
+  --team-secondary: #1E4B8C;
+
+  /* AdSlot (자리만 설계, T1.4.19) */
+  --ad-bg: var(--bg-2);
+  --ad-border: var(--line);
+  --ad-label-color: var(--text-3);
+
+  /* Accessibility */
+  --motion-duration-fast: 120ms;
+  --motion-duration-base: 200ms;
+  --motion-duration-slow: 360ms;
+  --focus-ring: 0 0 0 2px var(--bg-0), 0 0 0 4px var(--team-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-design="v2"] {
+    --motion-duration-fast: 0ms;
+    --motion-duration-base: 0ms;
+    --motion-duration-slow: 0ms;
+  }
+}
+
+/* ─────────────────────────────────────────────────────
+ * 2. 팀별 오버라이드 — reference tokens.js 원본 값 유지
+ * ──────────────────────────────────────────────────── */
+
+[data-design="v2"][data-team="lg"] {
+  --team-primary: #C60C30;
+  --team-light: #E04050;
+  --team-secondary: #1D1D1B;
+}
+[data-design="v2"][data-team="doosan"] {
+  --team-primary: #131230;
+  --team-light: #9BA8D4;
+  --team-secondary: #ED1C24;
+}
+[data-design="v2"][data-team="kt"] {
+  --team-primary: #1A1A1A;
+  --team-light: #E85050;
+  --team-secondary: #EB1F25;
+}
+[data-design="v2"][data-team="ssg"] {
+  --team-primary: #CE0E2D;
+  --team-light: #FFB81C;
+  --team-secondary: #FFB81C;
+}
+[data-design="v2"][data-team="nc"] {
+  --team-primary: #315288;
+  --team-light: #7DA3C9;
+  --team-secondary: #C1A260;
+}
+[data-design="v2"][data-team="kia"] {
+  --team-primary: #EA0029;
+  --team-light: #D45C5C;
+  --team-secondary: #07101E;
+}
+[data-design="v2"][data-team="lotte"] {
+  --team-primary: #002856;
+  --team-light: #6BC4E8;
+  --team-secondary: #D00F31;
+}
+[data-design="v2"][data-team="samsung"] {
+  --team-primary: #074CA1;
+  --team-light: #5A8FBD;
+  --team-secondary: #C0C0C0;
+}
+[data-design="v2"][data-team="hanwha"] {
+  --team-primary: #FF6600;
+  --team-light: #FFA766;
+  --team-secondary: #1D1D1B;
+}
+[data-design="v2"][data-team="kiwoom"] {
+  --team-primary: #820024;
+  --team-light: #C97088;
+  --team-secondary: #D4AF37;
+}
