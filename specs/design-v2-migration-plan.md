@@ -46,13 +46,13 @@
 
 ## 🚨 User Exposure Lockdown (Hard Rule)
 
-*디자인 freeze 전에는 실주여 유저 노출 람프를 열지 않는다.* 단 한 명도. (삼순이 05:02 요청 반영)
+*디자인 freeze 전에는 실제 유저 노출 람프를 열지 않는다.* 단 한 명도. (삼순이 05:02 요청 반영)
 
 - 인프라(DB 컬럼, middleware, AuthContext, playground) 만 점진 구축
 - `?v2=1` 쿰키 세팅은 *내부자 수동 테스트만* 허용 (하린아빠·삼식·삼순 + 하린엄마 QA 계정)
 - `profiles.design_version` DB 업데이트는 금지 (시안 확정 전까지 Admin UI 자체를 닫아둔다)
 - 광고/SNS/발형 앞으로도 V2 노출 금지
-- Design Freeze Gate PASS 전까지는 middleware에 *실수 방지 가드* 유지: 실주여 유저 `design_version=v2` 나와도 V1으로 강제 fallback
+- Design Freeze Gate PASS 전까지는 middleware에 *실수 방지 가드* 유지: 실제 유저 `design_version=v2` 나와도 V1으로 강제 fallback
 - *위반 시*: 중간 시안이 실험군에 섞여 베타 해석 오염 → Phase 5 KPI 무효화 위험
 
 유저 노출 해제 시점: Design Freeze Gate 삼순이 GO + 하린아빠 명시 승인 이후에만.
