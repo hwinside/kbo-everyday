@@ -396,6 +396,38 @@ async function callGemini(prompt: string): Promise<string> {
   throw new Error("Gemini call exhausted all attempts");
 }
 
+// ===== Post-process sanitizer =====
+// LLM이 아무리 강화된 프롬프트에도 가끔 "오늘~" 도입부를 생성함.
+// 저장/반환 전 마지막 안전장치로 문자열 후처리를 수행한다.
+// 전략: 첫 문장(첫 마침표 전까지)에서 금지 도입구만 "어제"로 치환.
+// 그래도 잔류 시 도입구 통째로 제거.
+function sanitizeCopy(copy: string): string {
+  if (!copy) return copy;
+  let out = copy.trimStart();
+
+  // 1. 가장 흔한 패턴: 도입구 "오늘 X" → "어제 X"
+  //    단, 첫 문장에서만 치환 (본문 중간의 "오늘"은 다른 맥락일 수 있음 — 실제로는 거의 없지만)
+  const firstPeriod = out.indexOf("다.");
+  const firstSentenceEnd = firstPeriod >= 0 ? firstPeriod + 2 : out.length;
+  let firstSentence = out.slice(0, firstSentenceEnd);
+  const rest = out.slice(firstSentenceEnd);
+
+  // 2. "오늘 KBO에서는", "오늘 경기에서는", "오늘 타자 타이틀", "오늘 투수 타이틀", "오늘의 순위는" 등
+  //    일관되게 "어제"로 시작하도록 치환 (문장 서두만)
+  firstSentence = firstSentence.replace(/^오늘\s+/, "어제 ");
+  firstSentence = firstSentence.replace(/^오늘의\s+/, "어제 ");
+
+  // 3. 첫 문장 안에 "오늘"이 또 남아있으면 한 번 더 "어제"로 치환 (과교정 방지 위해 1회만)
+  firstSentence = firstSentence.replace(/\s오늘\s+/, " 어제 ");
+
+  out = firstSentence + rest;
+
+  // 4. 본문 중 "오늘의 경기" 류 잔류 케이스도 치환 (문맥상 과거형 경기 의미)
+  out = out.replace(/오늘의\s+경기/g, "어제 경기");
+
+  return out;
+}
+
 // ===== Main route =====
 
 export async function GET(req: NextRequest) {
@@ -577,7 +609,11 @@ export async function GET(req: NextRequest) {
       promises.push(hasYesterdayStats
         ? callGemini(buildTitlePrompt(pitcherDelta, gameEvents, "pitcher"))
         : Promise.resolve(""));
-      [standingsCopy, batterCopy, pitcherCopy] = await Promise.all(promises);
+      const [rawStandings, rawBatter, rawPitcher] = await Promise.all(promises);
+      // Post-process 가드: LLM이 "오늘~" 도입부를 만들어도 저장 전에 "어제~"로 강제 치환
+      standingsCopy = sanitizeCopy(rawStandings);
+      batterCopy = sanitizeCopy(rawBatter);
+      pitcherCopy = sanitizeCopy(rawPitcher);
     } else {
       standingsCopy = standingsDelta.summary;
       batterCopy = batterDelta.summary;
