@@ -42,6 +42,11 @@ export const metadata: Metadata = {
     description: "실시간 스코어, AI경기예측/분석, 라이브 채팅 배틀, 팀/선수별 커뮤니티",
     images: ["https://keubo.fan/og-image.png"],
   },
+  verification: {
+    other: {
+      "naver-site-verification": "25cb4d3f0ff7ada33807dc30d155c5c707e1ad5c",
+    },
+  },
 };
 
 export const viewport: Viewport = {
