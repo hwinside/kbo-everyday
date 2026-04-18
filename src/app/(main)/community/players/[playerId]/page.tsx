@@ -26,6 +26,7 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import CheerSong from "@/components/player/CheerSong";
 import PlayerProfile from "@/components/player/PlayerProfile";
+import PlayerHero, { buildHeroStats, hasHeroImage } from "@/components/player/PlayerHero";
 import PlayerRadar from "@/components/player/PlayerRadar";
 import PlayerNews from "@/components/player/PlayerNews";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
@@ -256,42 +257,58 @@ export default function PlayerBoardPage() {
         </div>
       </div>
 
-      {/* 선수 프로필 헤더 */}
-      <div
-        className="border-b border-border"
-        style={{ background: `linear-gradient(135deg, ${teamColor}15, transparent)` }}
-      >
-        <div className="flex items-center gap-4 px-5 py-4">
-          <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name, kboId)} number={player.number} size={64} />
-          <div className="flex-1">
-            <div className="flex items-center gap-3">
-              <h1 className="text-lg font-semibold text-text-primary">{player.name}</h1>
-              {player.number > 0 && (
-                <span className="text-base px-1.5 py-0.5 rounded-full" style={{ backgroundColor: teamColor + "20", color: teamColor }}>
-                  #{player.number}
-                </span>
-              )}
+      {/* 선수 프로필 헤더 — Hero variant (cutout 있는 선수) 또는 기존 작은 바 */}
+      {hasHeroImage(kboId) ? (
+        <PlayerHero
+          kboId={kboId}
+          playerName={player.name}
+          teamName={player.team || getTeamShortName(player.teamId) || ""}
+          teamBg={teamColor}
+          backNo={player.number}
+          position={player.position}
+          stats={buildHeroStats(realStats ?? {}, player.position ?? "")}
+          showTopBar={false}
+          showShare
+        />
+      ) : (
+        <div
+          className="border-b border-border"
+          style={{ background: `linear-gradient(135deg, ${teamColor}15, transparent)` }}
+        >
+          <div className="flex items-center gap-4 px-5 py-4">
+            <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name, kboId)} number={player.number} size={64} />
+            <div className="flex-1">
+              <div className="flex items-center gap-3">
+                <h1 className="text-lg font-semibold text-text-primary">{player.name}</h1>
+                {player.number > 0 && (
+                  <span className="text-base px-1.5 py-0.5 rounded-full" style={{ backgroundColor: teamColor + "20", color: teamColor }}>
+                    #{player.number}
+                  </span>
+                )}
+              </div>
+              <p className="text-base text-text-tertiary">
+                {[getTeamShortName(player.teamId) || player.team, player.position].filter(Boolean).join(" · ") || "선수"}
+              </p>
             </div>
-            <p className="text-base text-text-tertiary">
-              {[getTeamShortName(player.teamId) || player.team, player.position].filter(Boolean).join(" · ") || "선수"}
-            </p>
-          </div>
-          
-          <button onClick={async () => {
-            const url = window.location.href;
-            if (navigator.share) {
-              await navigator.share({ title: `${player.name} - 크보팬`, url });
-            } else {
-              await navigator.clipboard.writeText(url);
-              alert("링크가 복사되었습니다!");
-            }
-          }}>
-            <Share2 className="w-5 h-5 text-text-tertiary" />
-          </button>
-        </div>
 
-        {/* Tabs */}
-        <div className="flex border-t border-border">
+            <button onClick={async () => {
+              const url = window.location.href;
+              if (navigator.share) {
+                await navigator.share({ title: `${player.name} - 크보팬`, url });
+              } else {
+                await navigator.clipboard.writeText(url);
+                alert("링크가 복사되었습니다!");
+              }
+            }}>
+              <Share2 className="w-5 h-5 text-text-tertiary" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Tabs (Hero/fallback 공통) */}
+      <div className="border-b border-border">
+        <div className="flex">
           {((["stats", "photo", "latest", "hot"] as const)).map((tab) => (
             <button
               key={tab}
