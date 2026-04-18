@@ -143,15 +143,16 @@ export default function PlayerHero({
   );
 
   // 팀컬러 기반 배경: 상단에 팀컬러 힌트, 하단으로 갈수록 중성 다크
+  // spotlight 없이 배경 gradient에만 팀컬러 노출 — cutout(유니폼/피부)에 팀컬러 오버레이 없음
   const bgGradient =
-    `linear-gradient(180deg, ${teamBg}28 0%, ${teamBg}12 35%, #0F0F12 75%, #0A0A0B 100%)`;
+    `linear-gradient(180deg, ${teamBg}40 0%, ${teamBg}1A 40%, #0F0F12 78%, #0A0A0B 100%)`;
 
   return (
     <div
       className="relative overflow-hidden pt-safe"
       style={{ background: bgGradient }}
     >
-      {/* Top bar (back 버튼만, 공유 제거 — 현재 미동작) */}
+      {/* Top bar (back 버튼만, 공유 제거) — 호출측에 전역 헤더가 있으면 showTopBar=false로 완전 생략 */}
       {showTopBar && (
         <div className="relative z-20 flex items-center px-4 pt-2">
           {BackButton}
@@ -159,7 +160,7 @@ export default function PlayerHero({
       )}
 
       {/* Hero content: 좌 텍스트 · 중앙 선수 · 우 스탯 */}
-      <div className="relative px-4 pb-0 pt-0" style={{ minHeight: 240 }}>
+      <div className="relative px-4 pb-0 pt-0" style={{ minHeight: 196 }}>
         {/* Left: 이름/등번호/포지션 */}
         <div className="absolute left-4 top-2 z-10 text-left" style={{ letterSpacing: "-0.05em" }}>
           <div className="flex items-center gap-1.5">
@@ -190,23 +191,19 @@ export default function PlayerHero({
 
         {/* Center: cutout */}
         {/* 그라데이션 마스크: 75%까지 완전 노출(턱 라인 위까지), 95%에서 fade — 상반신만 자연스럽게 사라짐 */}
+        {/* spotlight(radial-gradient) 제거: cutout 위 오버레이없이 팀컬러는 컨테이너 배경 그라데이션으로만 노출 (유니폼 오염 완전 차단) */}
         <div
-          className="pointer-events-none absolute left-1/2 top-0 z-0 -translate-x-1/2 h-[220px] w-[220px] overflow-hidden"
+          className="pointer-events-none absolute left-1/2 top-0 z-0 -translate-x-1/2 h-[200px] w-[200px] overflow-hidden"
           style={{
             maskImage: "linear-gradient(180deg, #000 0%, #000 75%, transparent 95%)",
             WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 75%, transparent 95%)",
           }}
         >
-          {/* 선수 뒤 spotlight — 팀컬러 glow */}
-          <div
-            className="absolute inset-x-0 bottom-0 h-[180px] rounded-full opacity-55 blur-2xl"
-            style={{ background: `radial-gradient(ellipse at 50% 70%, ${teamBg} 0%, ${teamBg}55 35%, transparent 70%)` }}
-          />
           <Image
             src={`/players-hero/${kboId}.webp`}
             alt={playerName}
             fill
-            sizes="240px"
+            sizes="220px"
             className="relative object-contain object-top"
             priority
             unoptimized
