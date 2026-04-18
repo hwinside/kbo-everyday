@@ -22,23 +22,43 @@ export type HeroStat = { label: string; value: string };
  * 투수: 기본 ERA, 5승패 이상 + 상위 10위 내인 종목 추가 (승/패, 탈삼진, 세이브, 홀드)
  * ※ 현재는 목업 기준으로 임계치만 적용. 실서비스는 실시간 랭킹 API로 교체.
  */
+// string/number 모두 허용 (일부 API가 문자열 반환)
+function toNum(v: any): number | null {
+  if (v == null || v === "") return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function fmt(n: number | null, digits: number): string {
+  return n == null ? "-" : n.toFixed(digits);
+}
+
 export function buildHeroStats(stats: any, position: string): HeroStat[] {
-  const isPitcher = /투수|P$|SP|RP|CP/i.test(position) || stats?.era != null;
   const out: HeroStat[] = [];
   if (!stats) return out;
+  const avg = toNum(stats.avg);
+  const hr = toNum(stats.hr);
+  const hits = toNum(stats.hits);
+  const sb = toNum(stats.sb);
+  const era = toNum(stats.era);
+  const wins = toNum(stats.wins);
+  const losses = toNum(stats.losses);
+  const so = toNum(stats.so);
+  const saves = toNum(stats.saves);
+  const holds = toNum(stats.holds);
+  const isPitcher = /투수|P$|SP|RP|CP/i.test(position) || era != null;
   if (!isPitcher) {
-    out.push({ label: "타율", value: stats.avg != null ? stats.avg.toFixed(3).replace(/^0/, "") : "-" });
-    if (stats.hr != null && stats.hr >= 20) out.push({ label: "홈런", value: String(stats.hr) });
-    if (stats.hits != null && stats.hits >= 130) out.push({ label: "안타", value: String(stats.hits) });
-    if (stats.sb != null && stats.sb >= 20) out.push({ label: "도루", value: String(stats.sb) });
+    out.push({ label: "타율", value: avg != null ? fmt(avg, 3).replace(/^0/, "") : "-" });
+    if (hr != null && hr >= 20) out.push({ label: "홈런", value: String(hr) });
+    if (hits != null && hits >= 130) out.push({ label: "안타", value: String(hits) });
+    if (sb != null && sb >= 20) out.push({ label: "도루", value: String(sb) });
   } else {
-    out.push({ label: "ERA", value: stats.era != null ? stats.era.toFixed(2) : "-" });
-    const w = stats.wins ?? 0;
-    const l = stats.losses ?? 0;
+    out.push({ label: "ERA", value: fmt(era, 2) });
+    const w = wins ?? 0;
+    const l = losses ?? 0;
     if (w + l >= 5) out.push({ label: "승/패", value: `${w}-${l}` });
-    if (stats.so != null && stats.so >= 100) out.push({ label: "탈삼진", value: String(stats.so) });
-    if (stats.saves != null && stats.saves >= 10) out.push({ label: "세이브", value: String(stats.saves) });
-    if (stats.holds != null && stats.holds >= 10) out.push({ label: "홀드", value: String(stats.holds) });
+    if (so != null && so >= 100) out.push({ label: "탈삼진", value: String(so) });
+    if (saves != null && saves >= 10) out.push({ label: "세이브", value: String(saves) });
+    if (holds != null && holds >= 10) out.push({ label: "홀드", value: String(holds) });
   }
   return out.slice(0, 4);
 }
