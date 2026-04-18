@@ -104,12 +104,14 @@ export default function PlayerHero({
     </button>
   );
 
+  // 팀컬러 기반 배경: 상단에 팀컬러 힌트, 하단으로 갈수록 중성 다크
+  const bgGradient =
+    `linear-gradient(180deg, ${teamBg}28 0%, ${teamBg}12 35%, #0F0F12 75%, #0A0A0B 100%)`;
+
   return (
     <div
       className="relative overflow-hidden pt-safe"
-      style={{
-        background: `linear-gradient(180deg, #17171A 0%, #0F0F12 60%, #0A0A0B 100%)`,
-      }}
+      style={{ background: bgGradient }}
     >
       {/* Top bar */}
       {(showTopBar || showShare) && (
@@ -177,9 +179,10 @@ export default function PlayerHero({
             WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 55%, transparent 90%)",
           }}
         >
+          {/* 선수 뒤 spotlight — 팀컬러 glow */}
           <div
-            className="absolute inset-x-0 bottom-0 h-[200px] rounded-full opacity-45 blur-2xl"
-            style={{ background: `radial-gradient(ellipse at 50% 70%, #1f1f24 0%, transparent 65%)` }}
+            className="absolute inset-x-0 bottom-0 h-[220px] rounded-full opacity-55 blur-2xl"
+            style={{ background: `radial-gradient(ellipse at 50% 70%, ${teamBg} 0%, ${teamBg}55 35%, transparent 70%)` }}
           />
           <Image
             src={`/players-hero/${kboId}.webp`}
