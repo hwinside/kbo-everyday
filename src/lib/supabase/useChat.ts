@@ -62,7 +62,7 @@ export function useChat(roomId: string) {
     load();
   }, [roomId]);
 
-  // Realtime 구독
+  // Realtime 구독 (보조 경로: 다른 유저 메시지 수신용)
   useEffect(() => {
     if (!roomId) return;
 
@@ -92,7 +92,11 @@ export function useChat(roomId: string) {
             grade: prof?.grade,
           };
 
-          setMessages((prev) => [...prev, newMsg]);
+          // id dedupe: 본인 optimistic append와 중복 방지
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === newMsg.id)) return prev;
+            return [...prev, newMsg];
+          });
         }
       )
       .subscribe();
@@ -102,20 +106,47 @@ export function useChat(roomId: string) {
     };
   }, [roomId]);
 
-  // 메시지 전송
+  // 메시지 전송 (주 경로: insert 결과 즉시 local append)
   const sendMessage = useCallback(
     async (content: string) => {
       if (!user || !content.trim()) return false;
 
-      const { error } = await supabase.from("chat_messages").insert({
-        room_id: roomId,
-        user_id: user.id,
-        content: content.trim(),
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .insert({
+          room_id: roomId,
+          user_id: user.id,
+          content: content.trim(),
+        })
+        .select("*, profiles(nickname, team_id, grade)")
+        .single();
+
+      if (error || !data) {
+        console.error("[useChat] send error:", error?.message);
+        return false;
+      }
+
+      const row = data as ChatMessage & { profiles?: { nickname?: string; team_id?: number; grade?: string } };
+      const newMsg: ChatMessage = {
+        id: row.id,
+        room_id: row.room_id,
+        user_id: row.user_id,
+        content: row.content,
+        created_at: row.created_at,
+        nickname: row.profiles?.nickname ?? profile?.nickname ?? "익명",
+        team_id: row.profiles?.team_id ?? (profile?.team_id != null ? Number(profile.team_id) : undefined),
+        grade: row.profiles?.grade ?? profile?.grade,
+      };
+
+      // Realtime 이벤트와 dedupe: id 기준
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === newMsg.id)) return prev;
+        return [...prev, newMsg];
       });
 
-      return !error;
+      return true;
     },
-    [user, roomId]
+    [user, profile, roomId]
   );
 
   return { messages, loading, sendMessage, isLoggedIn: !!user };
