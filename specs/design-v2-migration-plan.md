@@ -44,6 +44,19 @@
 - *QA 자동화*: WCAG AA 대비 검사 스크립트 + 10팀 × 상태별 비주얼 리그레션
 - *Rollback 단위*: 페이지 1개 단위 (profile flag 토글 1분 내 복귀)
 
+## 🚨 User Exposure Lockdown (Hard Rule)
+
+*디자인 freeze 전에는 실주여 유저 노출 람프를 열지 않는다.* 단 한 명도. (삼순이 05:02 요청 반영)
+
+- 인프라(DB 컬럼, middleware, AuthContext, playground) 만 점진 구축
+- `?v2=1` 쿰키 세팅은 *내부자 수동 테스트만* 허용 (하린아빠·삼식·삼순 + 하린엄마 QA 계정)
+- `profiles.design_version` DB 업데이트는 금지 (시안 확정 전까지 Admin UI 자체를 닫아둔다)
+- 광고/SNS/발형 앞으로도 V2 노출 금지
+- Design Freeze Gate PASS 전까지는 middleware에 *실수 방지 가드* 유지: 실주여 유저 `design_version=v2` 나와도 V1으로 강제 fallback
+- *위반 시*: 중간 시안이 실험군에 섞여 베타 해석 오염 → Phase 5 KPI 무효화 위험
+
+유저 노출 해제 시점: Design Freeze Gate 삼순이 GO + 하린아빠 명시 승인 이후에만.
+
 ---
 
 ## 1. 파일 구조 (target)
@@ -373,6 +386,21 @@ SELECT id FROM profiles WHERE favorite_team_id IN (
 - 일별: 재방문율 D1/D7, 홈 CTA 4개 CTR, JS crash 수, API error rate
 - 피드백: 디스코드 투표 결과 + 직접 메시지 기록
 
+### 6.3 실험군 편향 방지 (삼순이 05:00 지적 반영)
+
+베타 해석이 오염되지 않도록 *옵트인/옵트아웃 정책*에 다음 가드 적용:
+
+1. *옵트인 방식 채택* (자발적) — 자동 배정 NO
+   - 이유: 자동 배정 시 V2를 받은 유저의 놀람/불만이 V2 자체 평가 오염
+   - 단점: 자발 참여자는 "호의적 편향" 내재 → 이를 보정하려 다양성 코호트(헤비/중립/저사양/비로그인/신규/하위권팀) 강제 포함
+2. *옵트아웃 시 기록 유지* — `design_version='v1'`로 복귀해도 `v2_optout_at` 타임스탬프와 `v2_optout_reason` 자유 텍스트 저장
+   - 분석 시 "V2를 끝까지 쓴 유저"와 "중도 포기 유저"를 분리 집계
+3. *실험군 락다운* — 베타 기간 중 신규 모집 금지. 샘플 크기 변경 시 해석 불가
+4. *대조군 매칭* — 베타 15~20명과 동일 프로필(팀/활동량/기기)의 V1 유저 15~20명을 "shadow control"로 지정. 양 그룹 KPI를 직접 비교
+5. *네트워크 효과 차단* — 베타 유저는 커뮤니티에서 V2 UI를 자랑하지 않도록 초대 DM에 명시. 스크린샷 외부 공유 자제 요청 (강제는 아님)
+6. *조기 종료 룰* — 베타 3일차 KPI가 복합 기준 중 2개 이상 30% 이상 악화 시 즉시 중단 + 코호트 V1 복귀
+7. *코호트별 분리 집계* — 전체 평균으로 판정 금지. 헤비/중립/저사양/비로그인/신규/하위권팀 각각 독립 판정 후 *다수결*이 아니라 *최약 코호트 기준*으로 GO/NO-GO
+
 ---
 
 ## 7. 구현 순서 (Phase 별 기술 세부)
@@ -439,12 +467,35 @@ V2 코드는 V1 미침범 → 해당 커밋 revert로 안전 (main 브랜치 PR 
 
 ## 9. 관측 & 메트릭
 
-### 9.1 GA4 이벤트 확장
+### 9.1 GA4 이벤트 확장 — 계측 전수성 필수 (삼순이 05:00 지적)
 
-기존 이벤트에 `design_version` 파라미터 추가:
-- `page_view` → `design_version`
-- `onboarding_complete` → `design_version`
-- `game_cta_click` (신규) → `{cta: 'live_chat'|'predict'|'lineup'|'highlight', design_version}`
+*모든 핵심 퍼널 이벤트에 `design_version` 파라미터가 빠짐없이 붙으는 지* 사전 검증 필수. 누락 시 베타 해석 불가.
+
+#### 9.1.1 필수 커버리지 이벤트 (전수 발화 필수)
+| 이벤트 | 트리거 | 파라미터 필수 |
+|---|---|---|
+| `page_view` | 경로 진입 | `design_version`, `page_path`, `team_slug` |
+| `onboarding_complete` | `/setup` POST 성공 + profile insert 성공 | `design_version`, `source` |
+| `home_cta_click` (신규) | 홈 4개 CTA 클릭 | `design_version`, `cta` ('live_chat' | 'predict' | 'lineup' | 'highlight') |
+| `game_tab_switch` (신규) | 경기 상세 탭 전환 | `design_version`, `from_tab`, `to_tab` |
+| `community_post_create` (신규) | 포스트 작성 성공 | `design_version`, `board_slug` |
+| `community_reaction` (신규) | 리액션 클릭 | `design_version`, `reaction_type` |
+| `chat_message_send` (신규) | 경기 채팅 전송 성공 | `design_version`, `game_id` |
+| `predict_vote` (신규) | 승부 예측 투표 | `design_version`, `prediction` |
+| `design_v2_optout` (신규) | V1로 복귀 | `reason`, `dwell_seconds` |
+
+#### 9.1.2 계측 검증 게이트 (Phase 5 진입 전 필수)
+1. *자동 검사*: `scripts/verify-ga4-instrumentation.ts` — 위 9개 이벤트가 모두 `design_version` 파라미터 포함해 발화되는지 Playwright + GA4 Measurement Protocol Debug로 검증. 누락 1개라도 하면 CI 블로킹
+2. *DebugView 수동 점검*: QA용 `?v2=1` + `?debug_mode=1`로 9개 이벤트 수동 재현 → GA4 DebugView에서 `design_version=v2` 실시간 확인
+3. *24시간 대조*: 동일 24시간 구간의 V1 vs V2 퍼널 전환율 차이 10%포인트 이내 — 전환율 랭격 시 계측 누락 의심
+4. *중복 발화 가드*: `onboarding_complete` 는 이미 2026-04-18 핫픽스에서 표준화됨. V2 코드는 *동일 단드 지점*(setup POST 성공 + profile insert)에서만 발화 — 재발화/중복발화 금지
+5. *ad campaign 연동*: Meta/Google Ads conversion pixel에도 동일 `design_version` 파라미터 전달
+
+#### 9.1.3 대시보드
+`/admin/design-v2-cohort`에 다음 실시간 지표 추가:
+- `design_version` 미포함 이벤트 개수 (0이 아니면 경로)
+- 이벤트 별 v1 vs v2 발화율 차이
+- `onboarding_complete` vs `profiles.design_version='v2'` 신규 INSERT 1:1 일치율
 
 ### 9.2 주간 리포트
 
@@ -453,6 +504,8 @@ Phase 5~6 중 매주 월요일 #marketing 스레드에 자동 포스트:
 - D1/D7 재방문율 V1 vs V2
 - CTA CTR V1 vs V2
 - 에러율 V1 vs V2 (Sentry 연동)
+- *cohort별 분리* (헤비/중립/저사양/비로그인/신규/하위권) KPI
+- *옵트아웃율 및 사유 분포*
 - 베타 피드백 요약
 
 ---
@@ -471,10 +524,12 @@ Phase 5~6 중 매주 월요일 #marketing 스레드에 자동 포스트:
 
 ## 11. 오픈 질문
 
-1. 베타 cohort 선정 시 *옵트인(디스코드 모집) vs 옵트아웃(자동 배정 후 opt-out 링크)* 어느 쪽? — CS 부담 vs cohort 품질 트레이드오프
-2. V2 전환 시 *onboarding re-tour*를 보여줄 것인가? — 중립팬의 "뭐가 바뀐지 모름" 방지 vs 시끄러움
+1. ~~베타 cohort: 옵트인 vs 옵트아웃~~ → *옵트인만 채택* (§6.3에 반영, 편향 보정으로 다양성 코호트 강제)
+2. V2 전환 시 *onboarding re-tour*를 보여줄 것인가? — 중립팬의 "뭐가 바뀐지 모름" 방지 vs 시끄러움 (Phase 4 마지막에 결정)
 3. Phase 6 cutover 후 *V1 코드 유지 기간*은 몇 주? (롤백 안전망 vs 코드 정리) — 제안: 2주
 4. `design_version` GA4 파라미터가 *기존 custom dimension 한도* 초과 안 하는지 확인 필요
+5. *Shadow control 15명*이 신뢰도 있는 KPI 대조군으로 충분한가? — 통계적 유의성 부족 시 대안
+6. *Phase 5 조기 종료 트리거*가 그럴듯하게 정량화돼 있는지 — §6.3(조기 종료)+§6 대조사 복합 기준이 충분한지 삼순이 추가 검토
 
 ---
 
