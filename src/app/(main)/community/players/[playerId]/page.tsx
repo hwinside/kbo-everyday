@@ -297,7 +297,6 @@ export default function PlayerBoardPage() {
           position={player.position}
           stats={buildHeroStats(realStats ?? {}, player.position ?? "", playerRanks)}
           showTopBar={false}
-          showShare
         />
       ) : (
         <div

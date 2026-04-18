@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { ChevronLeft, Share2 } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import type { ReactNode } from "react";
 
 // Hero 이미지 매핑: kboId → public/players-hero/{kboId}.webp 존재 여부
@@ -98,7 +98,7 @@ interface PlayerHeroProps {
   backHref?: string;
   /** 좌상단 back 버튼 표시 여부 (페이지 상단에 별도 헤더가 이미 있으면 false) */
   showTopBar?: boolean;
-  /** 우상단 공유 버튼 노출 (서브 title = {playerName} - 크보팬) */
+  /** 우상단 공유 버튼 노출 (현재 동작 안 해 기본 false) */
   showShare?: boolean;
   /** Hero 하단 ~ 페이지 본문 사이에 넣을 부가 요소 (탭 등) */
   children?: ReactNode;
@@ -151,38 +151,17 @@ export default function PlayerHero({
       className="relative overflow-hidden pt-safe"
       style={{ background: bgGradient }}
     >
-      {/* Top bar */}
-      {(showTopBar || showShare) && (
-        <div className="relative z-20 flex items-center justify-between px-4 pt-3">
-          {showTopBar ? BackButton : <span />}
-          {showShare && (
-            <button
-              type="button"
-              onClick={async () => {
-                if (typeof window === "undefined") return;
-                const url = window.location.href;
-                try {
-                  if (navigator.share) {
-                    await navigator.share({ title: `${playerName} - 크보팬`, url });
-                  } else {
-                    await navigator.clipboard.writeText(url);
-                    alert("링크가 복사되었습니다!");
-                  }
-                } catch { /* cancelled */ }
-              }}
-              className="rounded-full bg-black/40 p-2 text-white backdrop-blur-sm transition-colors hover:bg-black/60"
-              aria-label="공유"
-            >
-              <Share2 size={18} />
-            </button>
-          )}
+      {/* Top bar (back 버튼만, 공유 제거 — 현재 미동작) */}
+      {showTopBar && (
+        <div className="relative z-20 flex items-center px-4 pt-2">
+          {BackButton}
         </div>
       )}
 
       {/* Hero content: 좌 텍스트 · 중앙 선수 · 우 스탯 */}
-      <div className="relative px-4 pb-0 pt-1" style={{ minHeight: 300 }}>
+      <div className="relative px-4 pb-0 pt-0" style={{ minHeight: 240 }}>
         {/* Left: 이름/등번호/포지션 */}
-        <div className="absolute left-4 top-7 z-10 text-left" style={{ letterSpacing: "-0.05em" }}>
+        <div className="absolute left-4 top-2 z-10 text-left" style={{ letterSpacing: "-0.05em" }}>
           <div className="flex items-center gap-1.5">
             <div className="h-3 w-[3px] rounded-full" style={{ backgroundColor: teamBg }} />
             <div className="text-[11px] font-bold tracking-[0.12em] text-white/55">
@@ -210,23 +189,24 @@ export default function PlayerHero({
         </div>
 
         {/* Center: cutout */}
+        {/* 그라데이션 마스크: 75%까지 완전 노출(턱 라인 위까지), 95%에서 fade — 상반신만 자연스럽게 사라짐 */}
         <div
-          className="pointer-events-none absolute left-1/2 top-1 z-0 -translate-x-1/2 h-[260px] w-[240px] overflow-hidden"
+          className="pointer-events-none absolute left-1/2 top-0 z-0 -translate-x-1/2 h-[220px] w-[220px] overflow-hidden"
           style={{
-            maskImage: "linear-gradient(180deg, #000 0%, #000 55%, transparent 90%)",
-            WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 55%, transparent 90%)",
+            maskImage: "linear-gradient(180deg, #000 0%, #000 75%, transparent 95%)",
+            WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 75%, transparent 95%)",
           }}
         >
           {/* 선수 뒤 spotlight — 팀컬러 glow */}
           <div
-            className="absolute inset-x-0 bottom-0 h-[220px] rounded-full opacity-55 blur-2xl"
+            className="absolute inset-x-0 bottom-0 h-[180px] rounded-full opacity-55 blur-2xl"
             style={{ background: `radial-gradient(ellipse at 50% 70%, ${teamBg} 0%, ${teamBg}55 35%, transparent 70%)` }}
           />
           <Image
             src={`/players-hero/${kboId}.webp`}
             alt={playerName}
             fill
-            sizes="260px"
+            sizes="240px"
             className="relative object-contain object-top"
             priority
             unoptimized
@@ -235,7 +215,7 @@ export default function PlayerHero({
 
         {/* Right: 스탯 */}
         {stats.length > 0 && (
-          <div className="absolute right-4 top-7 z-10 flex flex-col items-end gap-3 text-right" style={{ letterSpacing: "-0.05em" }}>
+          <div className="absolute right-4 top-2 z-10 flex flex-col items-end gap-3 text-right" style={{ letterSpacing: "-0.05em" }}>
             {stats.map((s, i) => (
               <div key={i} className="text-right">
                 <div className="text-[11px] font-semibold tracking-[0.08em] text-white/55 whitespace-nowrap">
@@ -255,8 +235,8 @@ export default function PlayerHero({
         )}
       </div>
 
-      {/* Bottom fade */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-16 h-28 bg-gradient-to-b from-transparent via-bg-primary/60 to-bg-primary z-[5]" />
+      {/* Bottom fade — 탭과 Hero 사이 부드러운 경계 */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-b from-transparent to-bg-primary z-[5]" />
 
       {/* children slot (탭 등) */}
       {children && (
