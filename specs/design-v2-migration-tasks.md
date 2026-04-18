@@ -1,55 +1,69 @@
 # 크보팬 Design V2 Migration — Tasks
 
-> 상태: Draft (v0.1)
+> 상태: Draft (v0.2 — Provisional/Frozen 구분 추가)
 > 작성: 2026-04-19 삼식이
-> 상위: `specs/design-v2-migration.md` (v0.4), `specs/design-v2-migration-plan.md` (v0.1)
-> 시각 SSOT: `specs/design-v2-reference/`
+> 상위: `specs/design-v2-migration.md` (v0.4), `specs/design-v2-migration-plan.md` (v0.2)
+> 시각 SSOT: `specs/design-v2-reference/` ⚠️ v0 DRAFT — 최종본 도착 시 덮어쓰기
 
 > *원자 단위 = 커밋 1개* — 빅뱅 금지. 각 태스크 ≤ 4시간 이내.
 > 체크박스 업데이트는 PR 머지 시에만.
+
+> 🚧 *Provisional / Frozen 구분* (삼순이 04:59 반영)
+> - 🔒 **[FROZEN]** — 최종 ZIP과 무관, 지금 착수 가능
+> - ⏸️ **[PROVISIONAL]** — 최종 ZIP 도착 후 design-freeze 리뷰 후 착수
+> - [PROVISIONAL] 태스크를 먼저 시작하면 되돌림 비용 발생.
+> - 최종 ZIP 수령 시: reference 폴더 전체 덮어쓰기 → diff 테이블 작성 → 삼순이 freeze 리뷰 GO → [PROVISIONAL] 진입 허가.
 
 ---
 
 ## Phase 1 — Foundation (Week 1, 7 days)
 
 ### 1.1 Design tokens & helpers
-- [ ] T1.1.1 `public/team-logos/` 에 reference `logos/*.svg` 10개 복사 + gitignore 제외
-- [ ] T1.1.2 `src/design-v2/tokens.css` 작성 — 10팀 + NEUTRAL 다크 토큰 (Plan §2.2 기준)
-- [ ] T1.1.3 `src/design-v2/team-palette.ts` — reference `tokens.js`의 4 helper (mix/withAlpha/luminance/teamPalette) TS 포팅 + 단위 테스트 10팀 × 2 intensity = 20 케이스
-- [ ] T1.1.4 `src/design-v2/TEAMS.ts` — 10팀+neutral 상수, DB team_id 매핑 포함
-- [ ] T1.1.5 `src/lib/design-v2/contrast.ts` — WCAG AA 대비 계산 함수 + 단위 테스트
+- [ ] ⏸️ [PROVISIONAL] T1.1.1 `public/team-logos/` 에 reference `logos/*.svg` 10개 복사
+- [ ] ⏸️ [PROVISIONAL] T1.1.2 `src/design-v2/tokens.css` 작성 — 10팀 + NEUTRAL 다크 토큰
+- [ ] ⏸️ [PROVISIONAL] T1.1.3 `src/design-v2/team-palette.ts` — 4 helper TS 포팅 + 단위 테스트 20 케이스
+- [ ] 🔒 [FROZEN] T1.1.4 `src/design-v2/TEAMS.ts` — 10팀+neutral 상수, DB team_id 매핑 (slug/id는 고정)
+- [ ] 🔒 [FROZEN] T1.1.5 `src/lib/design-v2/contrast.ts` — WCAG AA 대비 계산 함수 + 단위 테스트
 
-### 1.2 ThemeProvider & SSR
-- [ ] T1.2.1 `src/design-v2/theme-provider.tsx` — team slug 기반 data-attr + CSS var 주입
-- [ ] T1.2.2 `useTeamTheme()` hook — AuthContext 연동, fallback neutral
-- [ ] T1.2.3 SSR cookie 읽기 — `<html data-team>` 서버에서 세팅 (FOUC 방지)
-- [ ] T1.2.4 beforeInteractive inline script — 쿠키 없을 때 neutral 기본값 세팅
+### 1.2 ThemeProvider & SSR — 전체 🔒 [FROZEN] (구조만, 값 placeholder)
+- [ ] 🔒 [FROZEN] T1.2.1 `src/design-v2/theme-provider.tsx` — team slug 기반 data-attr + CSS var 주입
+- [ ] 🔒 [FROZEN] T1.2.2 `useTeamTheme()` hook — AuthContext 연동, fallback neutral
+- [ ] 🔒 [FROZEN] T1.2.3 SSR cookie 읽기 — `<html data-team>` 서버에서 세팅 (FOUC 방지)
+- [ ] 🔒 [FROZEN] T1.2.4 beforeInteractive inline script — 쿠키 없을 때 neutral 기본값
 
-### 1.3 Feature Flag
-- [ ] T1.3.1 DB 마이그레이션: `profiles.design_version` 컬럼 + index (Plan §3.3)
-- [ ] T1.3.2 `src/middleware.ts` 확장 — `?v2=1/0` 쿠키 set/delete, `/v2/*` 가드
-- [ ] T1.3.3 `src/lib/feature-flags/design-version.ts` — getDesignVersion() 유틸
-- [ ] T1.3.4 AuthContext에 `designVersion` 상태 추가 → DB → cookie → 'v1' 순서로 해석
+### 1.3 Feature Flag — 전체 🔒 [FROZEN]
+- [ ] 🔒 [FROZEN] T1.3.1 DB 마이그레이션: `profiles.design_version` 컬럼 + index
+- [ ] 🔒 [FROZEN] T1.3.2 `src/middleware.ts` 확장 — `?v2=1/0` 쿠키 set/delete, `/v2/*` 가드
+- [ ] 🔒 [FROZEN] T1.3.3 `src/lib/feature-flags/design-version.ts` — getDesignVersion() 유틸
+- [ ] 🔒 [FROZEN] T1.3.4 AuthContext에 `designVersion` 상태 추가 → DB → cookie → 'v1'
 
-### 1.4 Primitive 컴포넌트 12종
-- [ ] T1.4.1 `Button.tsx` (primary/weak/ghost/underline 4 variants)
-- [ ] T1.4.2 `Card.tsx` — cardTint 배경
-- [ ] T1.4.3 `Stat.tsx` — tabular-nums + right-align
-- [ ] T1.4.4 `Badge.tsx` — W/L/LIVE/HR/SO 등 상태 프리셋
-- [ ] T1.4.5 `ChipTabs.tsx` — 경기 상세 탭 전환
-- [ ] T1.4.6 `UnderlineTabs.tsx` — 홈/커뮤니티 상단 탭
-- [ ] T1.4.7 `Chip.tsx` — 필터 칩 / 팀 칩
-- [ ] T1.4.8 `TeamLogo.tsx` — next/image 기반, 원형 컨테이너 + padding
-- [ ] T1.4.9 `Diamond.tsx` — 베이스러너 SVG (reference 1:1 포팅)
-- [ ] T1.4.10 `Pips.tsx` — B/S/O dots
-- [ ] T1.4.11 `ScoreCard.tsx` — reference `ScreenGameLive` 스코어 영역 추출
-- [ ] T1.4.12 `WinProbabilityBar.tsx` — 승리확률 게이지 (승팀 큰 숫자)
+### 1.4 Primitive 컴포넌트 12종 — 전체 ⏸️ [PROVISIONAL]
+- [ ] ⏸️ [PROVISIONAL] T1.4.1 `Button.tsx` (primary/weak/ghost/underline 4 variants)
+- [ ] ⏸️ [PROVISIONAL] T1.4.2 `Card.tsx` — cardTint 배경
+- [ ] ⏸️ [PROVISIONAL] T1.4.3 `Stat.tsx` — tabular-nums + right-align
+- [ ] ⏸️ [PROVISIONAL] T1.4.4 `Badge.tsx` — W/L/LIVE/HR/SO 프리셋
+- [ ] ⏸️ [PROVISIONAL] T1.4.5 `ChipTabs.tsx` — 경기 상세 탭
+- [ ] ⏸️ [PROVISIONAL] T1.4.6 `UnderlineTabs.tsx` — 홈/커뮤니티 상단 탭
+- [ ] ⏸️ [PROVISIONAL] T1.4.7 `Chip.tsx` — 필터 칩 / 팀 칩
+- [ ] ⏸️ [PROVISIONAL] T1.4.8 `TeamLogo.tsx` — next/image 원형 컨테이너
+- [ ] ⏸️ [PROVISIONAL] T1.4.9 `Diamond.tsx` — 베이스러너 SVG
+- [ ] ⏸️ [PROVISIONAL] T1.4.10 `Pips.tsx` — B/S/O dots
+- [ ] ⏸️ [PROVISIONAL] T1.4.11 `ScoreCard.tsx` — ScreenGameLive 스코어 영역
+- [ ] ⏸️ [PROVISIONAL] T1.4.12 `WinProbabilityBar.tsx` — 승리확률 게이지
 
 ### 1.5 Playground & QA
-- [ ] T1.5.1 `/v2/playground` 페이지 — 10팀 × 모든 primitive 렌더링
-- [ ] T1.5.2 `scripts/check-design-contrast.ts` — WCAG AA 자동 검사 (120 케이스)
-- [ ] T1.5.3 `npm run contrast-check` package.json 추가 + CI (GitHub Actions) 블로킹
-- [ ] T1.5.4 10팀 × 6 항목 수동 체크리스트 (Plan §5.2) — playground 스크린샷 첨부
+- [ ] 🔒 [FROZEN] T1.5.1a `/v2/playground` 빈 라우트 셸 (ThemeProvider wrap만)
+- [ ] ⏸️ [PROVISIONAL] T1.5.1b `/v2/playground` 전체 콘텐츠 — 10팀 × 모든 primitive
+- [ ] 🔒 [FROZEN] T1.5.2 `scripts/check-design-contrast.ts` — WCAG AA 자동 검사 엔진 (테스트 색상은 placeholder)
+- [ ] 🔒 [FROZEN] T1.5.3 `npm run contrast-check` package.json + CI 블로킹
+- [ ] ⏸️ [PROVISIONAL] T1.5.4 10팀 × 6 항목 수동 체크리스트 — 최종 ZIP 값으로
+
+### 🚧 Design Freeze Gate (최종 ZIP 도착 시 선 통과 필수)
+- [ ] 최종 ZIP 수령 + `specs/design-v2-reference/` 덮어쓰기
+- [ ] v0 vs final diff 테이블 작성 (팀 컬러·신규 섹션·카피 변경)
+- [ ] Plan/Tasks · reference README의 [PROVISIONAL] 태그 [FROZEN]으로 전환
+- [ ] 삼순이 design-freeze 리뷰 GO
+- [ ] ⇒ ⏸️ [PROVISIONAL] 태스크 진입 허가
 
 ### 🚪 Phase 1 Gate
 - [ ] 삼순이 디자인 토큰 리뷰 GO

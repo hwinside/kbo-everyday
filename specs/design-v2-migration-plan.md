@@ -1,10 +1,38 @@
 # 크보팬 Design V2 Migration — Technical Plan
 
-> 상태: Draft (v0.1)
+> 상태: Draft (v0.2)
 > 작성: 2026-04-19 삼식이
 > 상위 문서: `specs/design-v2-migration.md` (v0.4)
-> 시각 SSOT: `specs/design-v2-reference/`
+> 시각 SSOT: `specs/design-v2-reference/` ⚠️ *v0 DRAFT* — Claude Design 제작 중
 > 선행 리뷰: 삼순이 GO (2026-04-19 04:45)
+
+## 🚧 Provisional / Freeze 원칙 (삼순이 04:59 반영)
+
+해당 문서에서 `[PROVISIONAL]` 태그가 붙은 항목은 *최종 ZIP 도착 후 다시 잠금*해야 하는 영역. 구현을 먼저 시작하면 되돌림 비용 발생.
+
+### Provisional (최종본 도착 전까지 테스트용 placeholder)
+- 색상값: 팀별 primary/light/secondary, NEUTRAL 다크 토큰, 중립 accent 머플드 레드
+- 간격: padding/margin/radius 수치
+- 카피: 섹션 타이틀·라벨·CTA 텍스트
+- 우선 화면 구성: 홈 4종 CTA 종류·순서, My 배지 구성
+
+### Frozen (최종본과 무관 — 바로 구현 가능)
+- CSS 변수 스코프 충체계 (`data-design="v2"[data-team="..."]`)
+- Feature Flag 2중 구조 (URL · cookie · profile flag)
+- `profiles.design_version` DB 스키마
+- Middleware 라우팅 제어
+- WCAG AA 대비 계산 함수 + CI 블로킹
+- Rollback 플로 (유저/페이지/전역/코드 4단)
+- GA4 `design_version` 파라미터 추가 설계
+- 베타 cohort 선정 SQL
+
+### Design Freeze 체크포인트
+최종 ZIP 수령 시점에 이 차례로 진행:
+1. `specs/design-v2-reference/` 전체 덮어쓰기
+2. v0 대비 diff 테이블 작성 (팀 컬러 변경·신규 섹션 등)
+3. Plan 문서의 [PROVISIONAL] 태그 모두 해제 또는 반영
+4. 삼순이 design-freeze 리뷰 GO
+5. 구현 Phase 착수
 
 ---
 
@@ -103,7 +131,7 @@ HTML 속성 기반 — 서버 렌더링 친화적, 전환 시 re-render 불필�
 - `data-design="v2"` — V2
 - `data-team="lg|doosan|kt|ssg|nc|kia|lotte|samsung|hanwha|kiwoom|neutral"` — V2에서만 사용
 
-### 2.2 tokens.css 구조
+### 2.2 tokens.css 구조 `[PROVISIONAL]` — 값은 v0 ZIP 기준
 
 ```css
 /* -- Neutral 다크 기본 (V2 전체 공통) -- */

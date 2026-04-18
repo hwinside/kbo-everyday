@@ -2,7 +2,15 @@
 
 > 출처: Claude Design 프로젝트 `072601fd-98cc-45df-84c1-101133fcfb99`
 > 받음: 2026-04-19 04:52 KST (하린아빠 슬랙 `#discussion`)
+> 상태: ⚠️ *v0 DRAFT* — Claude Design에서 제작 진행 중. 최종본 도착 시 이 폴더 전체를 덮어씁니다. (하린아빠 04:59 확인)
 > 역할: `specs/design-v2-migration.md`의 *시각 기준본(visual SSOT)*. 구현 중 "조금씩 다른 V2" 발생 시 이 폴더가 정답.
+
+## 🚧 최종본 도착 전 취급 주의
+
+- 현재의 토큰 값(팀별 primary/light/secondary)은 *v0 draft 기준*. 하드코딩 메타니 시작하지 말 것.
+- *구현 시작 가능*: Feature Flag 인프라, DB 마이그레이션, WCAG 대비 계산 함수, ThemeProvider 뼈대, `/v2/playground` 빈 라우트
+- *대기 필수*: `tokens.css`, `team-palette.ts`, 프리미티브 12종, 페이지 구현 전부
+- 최종본 도착 시점: 하린아빠가 새 ZIP 공유 → 이 폴더 전체 덮어쓰기 → 2차 README 리랍
 
 ## 파일 구조
 
