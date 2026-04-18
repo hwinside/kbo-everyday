@@ -26,7 +26,7 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import CheerSong from "@/components/player/CheerSong";
 import PlayerProfile from "@/components/player/PlayerProfile";
-import PlayerHero, { buildHeroStats, hasHeroImage } from "@/components/player/PlayerHero";
+import PlayerHero, { buildHeroStats, hasHeroImage, type PlayerRanks } from "@/components/player/PlayerHero";
 import PlayerRadar from "@/components/player/PlayerRadar";
 import PlayerNews from "@/components/player/PlayerNews";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
@@ -110,6 +110,7 @@ export default function PlayerBoardPage() {
   const [photoPosts, setPhotoPosts] = useState<Post[]>([]);
   const [photoLoading, setPhotoLoading] = useState(true);
   const [realStats, setRealStats] = useState<Record<string, string | number> | null>(null);
+  const [playerRanks, setPlayerRanks] = useState<PlayerRanks>({});
   const { user } = useAuth();
   const { newBadges, checkBadges, clearBadges } = useBadgeCheck();
 
@@ -226,6 +227,34 @@ export default function PlayerBoardPage() {
     }
   }, [statSeason, player, kboId, playerName]);
 
+  // Hero 스탯 랜킹: 전체 타자/투수 리스트에서 해당 선수의 종목별 순위 추출
+  // 필요 조건: Hero 노출 대상 선수(5명)일 때만 fetch (기타 선수는 작은 바라 불필요)
+  useEffect(() => {
+    if (!player || !kboId) { setPlayerRanks({}); return; }
+    if (!hasHeroImage(kboId)) { setPlayerRanks({}); return; }
+    const isPitcher = player.position === "투수";
+    fetch(`/api/stats?season=2026&type=${isPitcher ? "pitcher" : "batter"}`)
+      .then(r => r.json())
+      .then(d => {
+        const list = (d.stats || []) as Record<string, string | number>[];
+        // 각 종목별 내림차순 정렬 후 해당 선수 위치 찾기
+        const numOf = (v: string | number | undefined) => {
+          if (v == null) return Number.NEGATIVE_INFINITY;
+          const n = typeof v === "number" ? v : Number(v);
+          return Number.isFinite(n) ? n : Number.NEGATIVE_INFINITY;
+        };
+        const rankOf = (key: string): number | undefined => {
+          const sorted = [...list].sort((a, b) => numOf(b[key]) - numOf(a[key]));
+          const idx = sorted.findIndex(s => String(s.kboId || s.playerId) === kboId || s.name === player.name);
+          return idx === -1 ? undefined : idx + 1;
+        };
+        setPlayerRanks(isPitcher
+          ? { so: rankOf("so"), saves: rankOf("saves"), holds: rankOf("holds") }
+          : { hr: rankOf("hr"), hits: rankOf("hits"), sb: rankOf("sb") });
+      })
+      .catch(() => setPlayerRanks({}));
+  }, [player, kboId]);
+
   if (loading) {
     return <div className="flex items-center justify-center h-screen text-text-secondary">로딩 중...</div>;
   }
@@ -266,7 +295,7 @@ export default function PlayerBoardPage() {
           teamBg={teamColor}
           backNo={player.number}
           position={player.position}
-          stats={buildHeroStats(realStats ?? {}, player.position ?? "")}
+          stats={buildHeroStats(realStats ?? {}, player.position ?? "", playerRanks)}
           showTopBar={false}
           showShare
         />

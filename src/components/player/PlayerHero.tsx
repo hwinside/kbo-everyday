@@ -32,7 +32,24 @@ function fmt(n: number | null, digits: number): string {
   return n == null ? "-" : n.toFixed(digits);
 }
 
-export function buildHeroStats(stats: any, position: string): HeroStat[] {
+/**
+ * 선수 랜킹 기반 조건부 노출 — 시즌 초반 접대 임계치 미도달 문제 해결
+ * rankings: 해당 선수가 각 종목에서 몇 위인지 (rank ≤ 10이면 상위 10위)
+ */
+export type PlayerRanks = {
+  hr?: number;      // 홈런 순위
+  hits?: number;    // 안타 순위
+  sb?: number;      // 도루 순위
+  so?: number;      // 탈삼진 순위
+  saves?: number;   // 세이브 순위
+  holds?: number;   // 홀드 순위
+};
+
+export function buildHeroStats(
+  stats: any,
+  position: string,
+  ranks: PlayerRanks = {},
+): HeroStat[] {
   const out: HeroStat[] = [];
   if (!stats) return out;
   const avg = toNum(stats.avg);
@@ -46,19 +63,20 @@ export function buildHeroStats(stats: any, position: string): HeroStat[] {
   const saves = toNum(stats.saves);
   const holds = toNum(stats.holds);
   const isPitcher = /투수|P$|SP|RP|CP/i.test(position) || era != null;
+  const top10 = (r?: number) => r != null && r >= 1 && r <= 10;
   if (!isPitcher) {
     out.push({ label: "타율", value: avg != null ? fmt(avg, 3).replace(/^0/, "") : "-" });
-    if (hr != null && hr >= 20) out.push({ label: "홈런", value: String(hr) });
-    if (hits != null && hits >= 130) out.push({ label: "안타", value: String(hits) });
-    if (sb != null && sb >= 20) out.push({ label: "도루", value: String(sb) });
+    if (hr != null && top10(ranks.hr)) out.push({ label: "홈런", value: String(hr) });
+    if (hits != null && top10(ranks.hits)) out.push({ label: "안타", value: String(hits) });
+    if (sb != null && top10(ranks.sb)) out.push({ label: "도루", value: String(sb) });
   } else {
     out.push({ label: "ERA", value: fmt(era, 2) });
     const w = wins ?? 0;
     const l = losses ?? 0;
     if (w + l >= 5) out.push({ label: "승/패", value: `${w}-${l}` });
-    if (so != null && so >= 100) out.push({ label: "탈삼진", value: String(so) });
-    if (saves != null && saves >= 10) out.push({ label: "세이브", value: String(saves) });
-    if (holds != null && holds >= 10) out.push({ label: "홀드", value: String(holds) });
+    if (so != null && top10(ranks.so)) out.push({ label: "탈삼진", value: String(so) });
+    if (saves != null && top10(ranks.saves)) out.push({ label: "세이브", value: String(saves) });
+    if (holds != null && top10(ranks.holds)) out.push({ label: "홀드", value: String(holds) });
   }
   return out.slice(0, 4);
 }
