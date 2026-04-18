@@ -25,6 +25,8 @@ interface LineupRequest {
   gameId: string;
   awayTeamId: number;
   homeTeamId: number;
+  // KBO LINEUP_CK=true일 때만 true. false면 fallback 라인업일 가능성 높으므로 거부.
+  isLineupConfirmed?: boolean;
   lineup: {
     away: {
       startingPitcher: string;
@@ -484,6 +486,12 @@ export async function POST(req: NextRequest) {
 
   if (!body.lineup.away.batters.length || !body.lineup.home.batters.length) {
     return NextResponse.json({ analysis: null, source: "no_lineup" });
+  }
+
+  // KBO LINEUP_CK=false면 fallback 라인업일 가능성 높으므로 AI 생성/캐시 거부.
+  // 소비 측(page.tsx / LineupTab)에서도 gate하고 있지만, 서버 측 이중 방어.
+  if (body.isLineupConfirmed === false) {
+    return NextResponse.json({ analysis: null, source: "not_confirmed" });
   }
 
   const cached = await getCached(body.gameId);

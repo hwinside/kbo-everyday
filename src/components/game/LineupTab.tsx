@@ -27,6 +27,7 @@ interface LineupTabProps {
   awayTeam: TeamData;
   homeTeam: TeamData;
   gameId: string;
+  isLineupConfirmed: boolean;
 }
 
 function PitcherCard({
@@ -73,11 +74,13 @@ function AiLineupAnalysisCard({
   awayTeamId,
   homeTeamId,
   lineup,
+  isLineupConfirmed,
 }: {
   gameId: string;
   awayTeamId: number;
   homeTeamId: number;
   lineup: GameLineup;
+  isLineupConfirmed: boolean;
 }) {
   const [analysis, setAnalysis] = useState<LineupAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
@@ -111,6 +114,7 @@ function AiLineupAnalysisCard({
             gameId,
             awayTeamId,
             homeTeamId,
+            isLineupConfirmed,
             lineup: {
               away: {
                 startingPitcher: lineup.away.startingPitcher.name,
@@ -200,10 +204,13 @@ export default function LineupTab({
   awayTeam,
   homeTeam,
   gameId,
+  isLineupConfirmed,
 }: LineupTabProps) {
   const awaySp = lineup.away.startingPitcher.name;
   const homeSp = lineup.home.startingPitcher.name;
-  const isLineupPartial = !awaySp || !homeSp;
+  // batters가 비어있으면 라인업 미확정 (KBO LINEUP_CK=false fallback 차단)
+  const hasBatters = lineup.away.batters.length > 0 && lineup.home.batters.length > 0;
+  const isLineupPartial = !awaySp || !homeSp || !hasBatters;
 
   return (
     <div className="px-4 py-4 space-y-5 overflow-y-auto">
@@ -239,12 +246,13 @@ export default function LineupTab({
       </div>
 
       {/* AI Lineup Analysis — 라인업 확정 시에만 표시 */}
-      {!isLineupPartial && (
+      {!isLineupPartial && isLineupConfirmed && (
         <AiLineupAnalysisCard
           gameId={gameId}
           awayTeamId={awayTeam.id}
           homeTeamId={homeTeam.id}
           lineup={lineup}
+          isLineupConfirmed={isLineupConfirmed}
         />
       )}
 

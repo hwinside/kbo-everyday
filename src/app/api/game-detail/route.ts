@@ -280,8 +280,9 @@ function parseLineup(data: unknown[]): GameDetailResponse["lineup"] {
 
   if (away.length === 0 && home.length === 0) return null;
 
-  // 실제 라인업 데이터가 존재하면 LINEUP_CK 무관하게 반환
-  // KBO ScoreBoard가 "scheduled"로 내려와도 라인업은 이미 확정된 경우 있음
+  // 데이터 레이어는 raw 그대로 리턴 (isToday 플래그 포함).
+  // 미확정 경기에 대해 KBO가 직전 라인업을 fallback으로 돌려주는 패턴이 있지만,
+  // gate는 소비 측(page / LineupTab / lineup-analysis POST)에서 isToday===true로 판정함.
   return { isToday, away, home };
 }
 

@@ -334,7 +334,7 @@ export default function GameDetailPage() {
                   away: liveGame?.awayStarterName || (gameDetail?.boxScore?.awayPitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.awayPitchers[0].name) ? gameDetail.boxScore.awayPitchers[0].name : ""),
                   home: liveGame?.homeStarterName || (gameDetail?.boxScore?.homePitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.homePitchers[0].name) ? gameDetail.boxScore.homePitchers[0].name : ""),
                 }}
-                lineupConfirmed={!!d.detailLineup}
+                lineupConfirmed={!!d.detailLineup && d.detailLineup.isToday === true}
                 gameRelay={gameRelay}
               />
             </motion.div>
@@ -343,7 +343,7 @@ export default function GameDetailPage() {
             <motion.div key="lineup" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
               {d.derivedStatus === "cancelled" ? (
                 <CancelledTabCard />
-              ) : d.detailLineup ? (
+              ) : (d.detailLineup && d.detailLineup.isToday === true) ? (
                 <LineupTab
                   gameId={gameId}
                   lineup={{
@@ -379,6 +379,7 @@ export default function GameDetailPage() {
                   }}
                   awayTeam={awayTeam}
                   homeTeam={homeTeam}
+                  isLineupConfirmed={true}
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center h-32 gap-2">
