@@ -149,7 +149,7 @@ export default function PlayerHero({
 
   return (
     <div
-      className="relative overflow-hidden pt-safe"
+      className="relative overflow-hidden"
       style={{ background: bgGradient }}
     >
       {/* Top bar (back 버튼만, 공유 제거) — 호출측에 전역 헤더가 있으면 showTopBar=false로 완전 생략 */}
@@ -160,9 +160,9 @@ export default function PlayerHero({
       )}
 
       {/* Hero content: 좌 텍스트 · 중앙 선수 · 우 스탯 */}
-      <div className="relative px-4 pb-0 pt-0" style={{ minHeight: 196 }}>
+      <div className="relative px-4 pb-0 pt-0" style={{ minHeight: 184 }}>
         {/* Left: 이름/등번호/포지션 */}
-        <div className="absolute left-4 top-2 z-10 text-left" style={{ letterSpacing: "-0.05em" }}>
+        <div className="absolute left-4 top-1 z-10 text-left" style={{ letterSpacing: "-0.05em" }}>
           <div className="flex items-center gap-1.5">
             <div className="h-3 w-[3px] rounded-full" style={{ backgroundColor: teamBg }} />
             <div className="text-[11px] font-bold tracking-[0.12em] text-white/55">
@@ -170,7 +170,7 @@ export default function PlayerHero({
             </div>
           </div>
           <h1
-            className="mt-1.5 font-black leading-[0.95] text-white drop-shadow-lg whitespace-nowrap"
+            className="mt-1 font-black leading-[0.95] text-white drop-shadow-lg whitespace-nowrap"
             style={{ letterSpacing: "-0.1em", fontSize: nameSize }}
           >
             {playerName}
@@ -210,24 +210,33 @@ export default function PlayerHero({
           />
         </div>
 
-        {/* Right: 스탯 */}
+        {/* Right: 스탯 — 첫 스탯(타율/ERA) 라벨은 좌측 "| LG"와 동일 행에 두고, 값은 이름과 동일 size+baseline 정렬 */}
         {stats.length > 0 && (
-          <div className="absolute right-4 top-2 z-10 flex flex-col items-end gap-3 text-right" style={{ letterSpacing: "-0.05em" }}>
-            {stats.map((s, i) => (
-              <div key={i} className="text-right">
-                <div className="text-[11px] font-semibold tracking-[0.08em] text-white/55 whitespace-nowrap">
-                  {s.label}
+          <div className="absolute right-4 top-1 z-10 flex flex-col items-end text-right" style={{ letterSpacing: "-0.05em" }}>
+            {/* 좌측 "| LG" 행과 동일 높이(11px label) */}
+            <div className="text-[11px] font-bold tracking-[0.12em] text-white/55 leading-[12px]">
+              {stats[0].label}
+            </div>
+            {/* 첫 스탯 값: 왼쪽 이름과 동일 사이즈 + baseline (좌우 완벽 대칭) */}
+            <div
+              className="mt-1 font-black leading-[0.95] text-white drop-shadow-lg whitespace-nowrap"
+              style={{ letterSpacing: "-0.1em", fontSize: nameSize }}
+            >
+              {stats[0].value}
+            </div>
+            {/* 추가 스탯들 (#/포지션 높이와 정렬) */}
+            <div className="mt-3 flex flex-col gap-1">
+              {stats.slice(1).map((s, i) => (
+                <div key={i} className="text-right whitespace-nowrap">
+                  <span className="text-[11px] font-semibold tracking-[0.08em] text-white/55 mr-1.5">
+                    {s.label}
+                  </span>
+                  <span className="text-lg font-extrabold text-white/85" style={{ letterSpacing: "-0.05em" }}>
+                    {s.value}
+                  </span>
                 </div>
-                <div
-                  className={`font-black leading-[0.95] text-white drop-shadow-md whitespace-nowrap ${
-                    i === 0 ? "text-[40px]" : "text-[22px]"
-                  }`}
-                  style={{ letterSpacing: "-0.1em" }}
-                >
-                  {s.value}
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         )}
       </div>
