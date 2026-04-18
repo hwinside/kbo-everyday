@@ -28,23 +28,50 @@
 ## 2. 범위 (Scope)
 
 ### In scope (🔒 FROZEN — V2 1차)
-- *디자인 토큰* V2 확장 (팀 컬러 테마 10개 + 중립 테마)
-- *공통 컴포넌트* V2: Button, Card, Stat, Badge, Tabs, Chip, ScoreCard, WinProbabilityBar
-- *페이지 5종만* V2: 홈 / 경기 상세 / 순위 / 커뮤니티 / My
+- *디자인 토큰* V2 확장 (팀 컬러 테마 10개 + 중립 테마 = KBO 블루 계열)
+- *공통 프리미티브 18종*:
+  - 기본 12종: Button (variant 5: primary/primary-hero/weak/ghost/underline), Card, Stat, Badge (emphasis 3: primary/secondary/muted), ChipTabs, UnderlineTabs, Chip, TeamLogo, Diamond, Pips, ScoreCard, WinProbabilityBar
+  - 모달 6종 (공통 UI 인프라): ModalSheet, ToastStack, ContextMenu, TeamPickerModal, ComposerModal, CommentSheetModal
+- *AdSlot 프리미티브 + 토큰* (자리만 설계, 후일 연동)
+- *페이지 5종* V2: 홈 (내 팀 중심) / 경기 상세 / 순위 / 커뮤니티 / My (야구 앱 My 범위)
 - *테마 컨텍스트* (내 팀 기반 자동 적용 + 중립 fallback)
 - *Feature Flag*: URL 파라미터 `?v2=1` + profile flag `design_version`
+- *TabBar*: 5탭 (`홈 · 경기 · 순위 · 커뮤 · My`) — 홈 = 내 팀 중심, 경기 = 전체 스케줄
+
+### 디자인 상위 원칙 4개 (🔒 Phase 1 가드레일, 삼순이 05:36)
+1. *정보 위계 정리* — 화면당 강조 1개만 제일 세게. 나머지는 한 단계 톤다운
+2. *CTA 선명화* — 첫 진입 시 "눈 닿을 것"이 즐쇄성 하나
+3. *순위/커뮤니티 밀도 완화* — 포털 느낌 방지
+4. *선수 상세 해석 보조* — 숫자만 도출하는 안 놓기
 
 ### Out of scope (V2 1차에서 절대 손대지 않음)
-- *신규 기능 추가 금지* — 디자인/정보구조 교체만. 기능 아이디어는 V2 GA 이후로 백로그화
+
+*1) 신규 기능 7종 NO-GO* (삼순이 05:37, 05:40 재확인)
+- DM/메시지
+- 팔로우 시스템
+- 친구 초대
+- 뉴스 페이지
+- 티켓팅
+- 구장 정보
+- 선수 Radar Chart (range creep 우려로 제외)
+
+*2) 레벨 시스템 표시 비활성화* — V1 실구현 없으면 V2도 미표시 (초반 포털화 방지)
+
+*3) 포털화 요소 제거*
+- My 페이지: 소셜 앱 스타일 NO — "야구 앱 My" 범위만
+- 커뮤니티 레벨·태그 동시 강조 NO
+- 선수 Radar Chart NO
+
+*4) 기타*
 - 관리자(/admin) V2화
-- 선수 프로필 페이지 재설계 (이미 Hero Phase 1 완료)
-- 선수 커뮤니티 페이지 (`community/players/[playerId]`) V2화
-- 라이브 채팅 UI 재설계
+- 선수 프로필 페이지 재설계 (이미 Hero Phase 1 완료 — V2 토큰으로 스타일링만)
+- 선수 커뮤니티 페이지 V2화
+- 라이브 채팅 UI 재설계 (현 UI 유지)
 - 온보딩/로그인 플로우 개편
 - 이메일/알림 템플릿 V2화
 - 기술 스택 변경 (Next.js, Supabase, Tailwind 유지)
 
-### Scope creep 차단 룰 (삼순이 지적 반영)
+### Scope creep 차단 룰
 범위 확장 요청 시 *무조건 V2 GA 이후로 미룸*. 예외는 보안/크래시 P0 핫픽스뿐. "이왕 고치는 김에" 금지.
 
 ---

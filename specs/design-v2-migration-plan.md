@@ -1,6 +1,6 @@
 # 크보팬 Design V2 Migration — Technical Plan
 
-> 상태: Draft (v0.2)
+> 상태: Draft (v0.3 — 최종본 freeze 반영)
 > 작성: 2026-04-19 삼식이
 > 상위 문서: `specs/design-v2-migration.md` (v0.4)
 > 시각 SSOT: `specs/design-v2-reference/` ⚠️ *v0 DRAFT* — Claude Design 제작 중
@@ -40,7 +40,7 @@
 
 - *레이어*: CSS 변수 테마 시스템 + React Context + Feature Flag 2중 (URL · profile)
 - *저장소 분리 NO, 폴더 분리 YES*: `src/design-v2/` (토큰·프리미티브) + `src/app/(v2)/` (라우트 그룹) + `src/components/v2/` (페이지 섹션)
-- *reference → 구현 1:1 매핑*: tokens.js → tokens.css, atoms.jsx → React primitives 7종
+- *reference → 구현 1:1 매핑*: tokens.js → tokens.css, atoms.jsx → React primitives 18종 (기본 12 + 모달 6)
 - *QA 자동화*: WCAG AA 대비 검사 스크립트 + 10팀 × 상태별 비주얼 리그레션
 - *Rollback 단위*: 페이지 1개 단위 (profile flag 토글 1분 내 복귀)
 
@@ -168,7 +168,7 @@ HTML 속성 기반 — 서버 렌더링 친화적, 전환 시 re-render 불필�
 [data-team="lg"]      { --team-primary: #C60C30; --team-light: #E04050; --team-secondary: #1D1D1B; }
 [data-team="doosan"]  { --team-primary: #131230; --team-light: #9BA8D4; --team-secondary: #ED1C24; }
 /* ... 나머지 8팀 동일 패턴 */
-[data-team="neutral"] { --team-primary: #6E6E73; --team-light: #A8A8AD; --team-accent: #E03A3A; }
+[data-team="neutral"] { --team-primary: #1E4B8C; --team-light: #4A78B8; --team-accent: #1E4B8C; } /* KBO 블루 — 삼순이 05:42 채택 */
 
 /* -- 파생 토큰 (teamPalette 결과 주입) -- */
 /* JS에서 <html>의 style에 inline으로 주입 (저채도 팀 자동 보정 때문) */
