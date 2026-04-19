@@ -6,17 +6,16 @@ import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import batterStatsJson from "@/lib/constants/stats-2026-batters.json";
 import pitcherStatsJson from "@/lib/constants/stats-2026-pitchers.json";
 import playersRoster from "@/lib/constants/players-roster.json";
-import { getTeamById } from "@/lib/constants/teams";
 import type { MatchupStats } from "@/app/api/game-relay/route";
 
 function getPlayerHref(name: string): string | null {
+  // 신규 통합 선수 라우트 사용 (755명 roster + KBO API 실시간)
+  // 레거시 `/teams/[slug]/players/[id]`는 LG 6명만 하드코딩되어 있어 대부분 선수 404 발생.
   const player = (playersRoster as { name: string; kboId: string; teamId: number }[]).find(
     (p) => p.name === name
   );
   if (!player) return null;
-  const team = getTeamById(player.teamId);
-  if (!team) return null;
-  return `/teams/${team.slug}/players/${player.kboId}`;
+  return `/community/players/${player.kboId}`;
 }
 
 interface PitcherTodayStats {

@@ -7,7 +7,7 @@ import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
-const ANALYSIS_VERSION = 3;
+const ANALYSIS_VERSION = 4;
 
 const KBO_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
 const HEADERS = {
@@ -425,6 +425,8 @@ ${lineupSection}${rotationPromptSection}
 6. 포수 변경은 동일 팀 내 의미있는 변경이므로 diff로 언급 가능.
 7. 제공된 diff 정보만 사용. 없는 정보를 만들지 마세요.
 8. 로테이션 관련: "원래 누구 차례였다" 식의 표현 금지. "최근 순환에서 벗어난 기용" 등 중립 표현 사용.
+9. **시점 규칙 (매우 중요)**: 이 문장은 **경기 시작 전**에 작성된다. 경기 결과·승패·이닝 내용 등 아직 일어나지 않은 일을 단정하지 말 것. 선발 등판·맞대결·로테이션·포수 기용 사실은 *일어난 일*이므로 "~한다", "~했다" 같은 기사체 반말로 기술 가능. 다만 "시즌 첫 승을 노렸다", "완봉을 노렸다", "호투했다", "무너졌다" 등 **경기 전개·결과를 예단/회고하는 표현 금지**. 예측이 필요하면 "~할 전망이다", "~이(가) 관건이다" 같이 중립적으로.
+10. **숫자 규칙 (매우 중요)**: ERA, 승패, 방어율, 타율, 홈런 수 등 **모든 수치는 프롬프트에 명시된 값만 사용**. 프롬프트에 ERA가 없으면 "ERA 몇점대" 같은 추측도 금지. 없는 숫자를 만들어내면 안 된다. 수치 언급이 꼭 필요한 부분은 제공된 "ERA X.XX, N승M패" 문자열을 그대로 인용하거나 생략.
 
 ## 출력 형식 (JSON만 출력)
 {
