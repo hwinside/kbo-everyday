@@ -7,6 +7,19 @@ import { type TeamData } from "@/lib/constants/teams";
 import type { GameLineup } from "@/lib/constants/games";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
+import playersRoster from "@/lib/constants/players-roster.json";
+
+// 선수 kboId 해살 (SSOT: /community/players/[kboId] 단일 라우트)
+// 라인업 데이터에 kboId가 없어도 roster에서 name→kboId 매핑으로 kboId 확보.
+// 정 안 되면(신규 외국인 등 드물 상황) name fallback 유지.
+function resolvePlayerHref(batter: { name: string; kboId?: string; teamId?: number }): string {
+  if (batter.kboId) return `/community/players/${batter.kboId}`;
+  const rosterHit = (playersRoster as { name: string; kboId: string; teamId: number }[]).find(
+    (p) => p.name === batter.name && (batter.teamId == null || p.teamId === batter.teamId)
+  );
+  if (rosterHit) return `/community/players/${rosterHit.kboId}`;
+  return `/community/players/${encodeURIComponent(batter.name)}`;
+}
 
 /** 0.333 → .333, 1.000 → 1.000 */
 function formatAvg(avg: string): string {
@@ -280,12 +293,8 @@ export default function LineupTab({
             {Array.from({ length: 9 }, (_, i) => {
               const away = lineup.away.batters[i];
               const home = lineup.home.batters[i];
-              const awayHref = away.kboId
-                ? `/community/players/${away.kboId}`
-                : `/community/players/${away.name}`;
-              const homeHref = home.kboId
-                ? `/community/players/${home.kboId}`
-                : `/community/players/${home.name}`;
+              const awayHref = resolvePlayerHref(away);
+              const homeHref = resolvePlayerHref(home);
               return (
                 <tr
                   key={i}
