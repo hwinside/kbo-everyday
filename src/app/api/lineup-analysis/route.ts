@@ -7,7 +7,7 @@ import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
-const ANALYSIS_VERSION = 5;
+const ANALYSIS_VERSION = 6;
 
 const KBO_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
 const HEADERS = {
@@ -364,13 +364,16 @@ function buildPrompt(diff: LineupDiff, req: LineupRequest, rotations?: { away: R
   // 오늘 선발 매치업 정보 (변경이 아닌 소개)
   let batterySection = "오늘 선발 매치업:\n";
   for (const side of [
-    { name: awayName, sp: req.lineup.away.startingPitcher, era: req.lineup.away.startingPitcherEra, teamId: req.awayTeamId, d: diff.away },
-    { name: homeName, sp: req.lineup.home.startingPitcher, era: req.lineup.home.startingPitcherEra, teamId: req.homeTeamId, d: diff.home },
+    { name: awayName, sp: req.lineup.away.startingPitcher, era: req.lineup.away.startingPitcherEra, catcher: req.lineup.away.catcher, teamId: req.awayTeamId, d: diff.away },
+    { name: homeName, sp: req.lineup.home.startingPitcher, era: req.lineup.home.startingPitcherEra, catcher: req.lineup.home.catcher, teamId: req.homeTeamId, d: diff.home },
   ]) {
     const eraInfo = getStarterEra(side.sp, side.teamId, side.era);
     batterySection += `${side.name} 선발: ${side.sp}${eraInfo ? ` (${eraInfo})` : ""}\n`;
     if (side.d.catcherChanged) {
       batterySection += `${side.name} 포수 변경: ${side.d.catcherChanged.from} → ${side.d.catcherChanged.to}\n`;
+    } else if (side.catcher) {
+      // 포수 변경 없으면 직전 경기와 동일 포수. 이름을 명시적으로 감지하여 문장에 들어가도록 함.
+      batterySection += `${side.name} 포수: ${side.catcher} (직전 경기와 동일)\n`;
     }
   }
 
@@ -433,7 +436,12 @@ ${lineupSection}${rotationPromptSection}
 3. '콜업', '승격' 등 단정적 표현 금지. 새로 합류한 선수는 '새롭게 선발 라인업에 합류한 선수' 정도로 중립 표현.
 4. 변경사항이 없으면 "직전 경기와 동일한 라인업을 유지했다" 정도로 간결하게.
 5. 선발투수는 로테이션이므로 "변경"이 아닌 오늘 매치업 소개로 작성. 직전 경기 선발과 비교하지 말 것.
-6. 포수 변경은 동일 팀 내 의미있는 변경이므로 diff로 언급 가능.
+6. 포수 문장 규칙 (피포몰하게):
+   - 한 팀만 동일하면 해당 팀 포수 이름 명시: "LG 포수는 직전 경기와 동일한 박동원이 출전한다"
+   - 양 팀 다 동일하면 각 팀 포수 이름을 모두 써준다: "LG 박동원, 삼성 강민호가 직전 경기와 동일하게 마스크를 쓴다"
+   - 포수 변경이 있으면 diff 대로 언급 (변경 전·후 이름 모두 명시)
+   - 정보가 약하거나 포수 이름이 프롬프트에 없으면 **포수 문장 자체를 생략** — 선발 투수 소개만으로 충분하다
+   - 처단 금지: "양 팀 포수 라인업은 직전 경기와 동일했다" 같은 이름 없는 추상 표현
 7. 제공된 diff 정보만 사용. 없는 정보를 만들지 마세요.
 8. 로테이션 관련: "원래 누구 차례였다" 식의 표현 금지. "최근 순환에서 벗어난 기용" 등 중립 표현 사용.
 9. **시점 규칙 (매우 중요)**: 이 문장은 **경기 시작 전**에 작성된다. 경기 결과·승패·이닝 내용 등 아직 일어나지 않은 일을 단정하지 말 것. 선발 등판·맞대결·로테이션·포수 기용 사실은 *일어난 일*이므로 "~한다", "~했다" 같은 기사체 반말로 기술 가능. 다만 "시즌 첫 승을 노렸다", "완봉을 노렸다", "호투했다", "무너졌다" 등 **경기 전개·결과를 예단/회고하는 표현 금지**. 예측이 필요하면 "~할 전망이다", "~이(가) 관건이다" 같이 중립적으로.
