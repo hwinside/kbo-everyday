@@ -35,22 +35,18 @@ function teamNameById(teamId: number | null): string | null {
 }
 
 function buildMessage(newNickname: string, teamId: number | null): string {
-  // 삼순이 최종 추천 드래프트 (짧고 덜 방어적) + 하린아빠 팀별 응원 1줄
-  const lines = [
+  // 삼순이 최종 추천본 — 짧고 덜 방어적 + 마지막 단락에 문의 안내와 응원을 합친 틀
+  const teamName = teamNameById(teamId);
+  const cheer = teamName
+    ? `즐겁게 크보팬 이용하시길 바랍니다. <${teamName}> 가즈아!! ⚾`
+    : "즐겁게 크보팬 이용하시길 바랍니다 ⚾";
+
+  return [
     "안녕하세요, 크보팬 운영팀입니다.",
     `닉네임 중복체크 기능 문제로 동일한 닉네임이 중복 생성된 점을 확인했고,\n그에 따라 회원님의 닉네임을 임시로 *${newNickname}*으로 변경했습니다.`,
     "마이페이지에서 원하시는 닉네임으로 직접 변경하실 수 있습니다.\n이용에 불편을 드려 정말 죄송합니다.",
-    "문의가 있으시면 이 쪽지에 답장해주세요.",
-  ];
-
-  const teamName = teamNameById(teamId);
-  if (teamName) {
-    lines.push(`즐겁게 크보팬 이용하시길 바랍니다. <${teamName}> 가즈아!! ⚾`);
-  } else {
-    lines.push("즐겁게 크보팬 이용하시길 바랍니다 ⚾");
-  }
-
-  return lines.join("\n\n");
+    `문의가 있으시면 이 쪽지에 답장해주세요.\n${cheer}`,
+  ].join("\n\n");
 }
 
 async function ensureConversation(userId: string): Promise<string> {
