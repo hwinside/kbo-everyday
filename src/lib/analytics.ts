@@ -6,6 +6,7 @@
  */
 
 import { getGuestId } from "@/lib/store/onboarding";
+import { getStoredAttributionForEvent, getStoredGclid } from "@/hooks/useAdAttribution";
 
 interface GtagWindow extends Window {
   gtag?: (command: string, event: string, params?: Record<string, unknown> | (() => void)) => void;
@@ -67,9 +68,16 @@ export function trackEvent(event: string, properties?: Record<string, unknown>, 
     // storage full — skip
   }
 
+  // ONBOARDING_COMPLETE 이벤트에만 ad attribution 필드 병합 (2026-04-19)
+  // OAuth 왕복으로 세션 source/medium이 유실되는 케이스 보완 — event scope custom dimension으로 수집
+  // 범위는 가입 확정 이벤트 1개에만 집중 (삼순이 리뷰: 1차 확인축 단순화)
+  const eventAttribution =
+    event === OnboardingEvents.ONBOARDING_COMPLETE ? getStoredAttributionForEvent() : {};
+  const ga4Params = { ...payload.properties, ...eventAttribution };
+
   // GA4 연동 (gtag 있으면) — options.ga4 명시적 false가 아닌 경우만
   if (options?.ga4 !== false && typeof window !== "undefined" && (window as unknown as GtagWindow).gtag) {
-    (window as unknown as GtagWindow).gtag!("event", event, payload.properties);
+    (window as unknown as GtagWindow).gtag!("event", event, ga4Params);
   }
 
   // Google Ads 전환 연동 — gads: true 인 경우만 발화 (세션당 1회 제한)
@@ -95,6 +103,12 @@ export function trackEvent(event: string, properties?: Record<string, unknown>, 
             value: 1.0,
             currency: "KRW",
           };
+          // OAuth 이후 세션에서 자동태깅 gclid가 유실된 케이스를 위한 수동 전달 (2026-04-19)
+          // sessionStorage에 랜딩 시점 gclid가 남아있으면 conversion 매칭에 사용
+          const storedGclid = getStoredGclid();
+          if (storedGclid) {
+            conversionParams.gclid = storedGclid;
+          }
           if (options?.onGadsComplete) {
             conversionParams.event_callback = fireCallbackOnce;
             // 안전장치: beacon이 지연되거나 차단되어도 지정 시간 후 강제 진행

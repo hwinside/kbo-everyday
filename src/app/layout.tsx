@@ -3,6 +3,7 @@ import Script from "next/script";
 import "@/styles/globals.css";
 import { AuthProvider } from "@/lib/supabase/AuthContext";
 import { ThemeProvider, themeScript } from "@/components/ThemeProvider";
+import { AdAttributionMount } from "@/components/AdAttributionMount";
 import { Analytics } from "@vercel/analytics/next";
 
 const GA_ID = "G-C0TE4TFLZ4";
@@ -95,6 +96,7 @@ export default function RootLayout({
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
       <body className="font-pretendard antialiased bg-bg-primary text-text-primary">
+        <AdAttributionMount />
         <ThemeProvider>
           <AuthProvider>{children}</AuthProvider>
         </ThemeProvider>
