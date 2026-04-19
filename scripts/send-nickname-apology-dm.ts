@@ -29,11 +29,12 @@ if (!SUPABASE_URL || !SERVICE_ROLE || !SYSTEM_USER_ID) {
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
 
 function buildMessage(newNickname: string): string {
+  // 삼순이 최종 추천 드래프트 (짧고 덜 방어적)
   return [
-    "안녕하세요, 크보팬입니다.",
-    "닉네임 중복체크 기능 이상으로 동일한 닉네임이 중복 생성된 문제가 확인되어, 부득이하게 회원님의 닉네임을 임시 변경했습니다.",
-    `현재 닉네임은 *${newNickname}*이며, 마이페이지에서 원하시는 닉네임으로 직접 변경하실 수 있습니다.`,
-    "이용에 불편을 드려 정말 죄송합니다.",
+    "안녕하세요, 크보팬 운영팀입니다.",
+    `닉네임 중복체크 기능 문제로 동일한 닉네임이 중복 생성된 점을 확인했고,\n그에 따라 회원님의 닉네임을 임시로 *${newNickname}*으로 변경했습니다.`,
+    "마이페이지에서 원하시는 닉네임으로 직접 변경하실 수 있습니다.\n이용에 불편을 드려 정말 죄송합니다.",
+    "문의가 있으시면 이 쪽지에 답장해주세요.",
   ].join("\n\n");
 }
 
@@ -66,7 +67,7 @@ async function alreadySentApology(conversationId: string): Promise<boolean> {
     .select("id, content")
     .eq("conversation_id", conversationId)
     .eq("sender_id", SYSTEM_USER_ID)
-    .like("content", "%닉네임 중복체크 기능 이상%")
+    .like("content", "%닉네임 중복체크 기능 문제%")
     .limit(1);
   return !!(data && data.length > 0);
 }
