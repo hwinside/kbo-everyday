@@ -16,6 +16,7 @@
 
 import "dotenv/config";
 import { createClient } from "@supabase/supabase-js";
+import { TEAMS } from "../src/lib/constants/teams";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -28,14 +29,28 @@ if (!SUPABASE_URL || !SERVICE_ROLE || !SYSTEM_USER_ID) {
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
 
-function buildMessage(newNickname: string): string {
-  // 삼순이 최종 추천 드래프트 (짧고 덜 방어적)
-  return [
+function teamNameById(teamId: number | null): string | null {
+  if (!teamId) return null;
+  return TEAMS.find((t) => t.id === teamId)?.name ?? null;
+}
+
+function buildMessage(newNickname: string, teamId: number | null): string {
+  // 삼순이 최종 추천 드래프트 (짧고 덜 방어적) + 하린아빠 팀별 응원 1줄
+  const lines = [
     "안녕하세요, 크보팬 운영팀입니다.",
     `닉네임 중복체크 기능 문제로 동일한 닉네임이 중복 생성된 점을 확인했고,\n그에 따라 회원님의 닉네임을 임시로 *${newNickname}*으로 변경했습니다.`,
     "마이페이지에서 원하시는 닉네임으로 직접 변경하실 수 있습니다.\n이용에 불편을 드려 정말 죄송합니다.",
     "문의가 있으시면 이 쪽지에 답장해주세요.",
-  ].join("\n\n");
+  ];
+
+  const teamName = teamNameById(teamId);
+  if (teamName) {
+    lines.push(`즐겁게 크보팬 이용하시길 바랍니다. <${teamName}> 가즈아!! ⚾`);
+  } else {
+    lines.push("즐겁게 크보팬 이용하시길 바랍니다 ⚾");
+  }
+
+  return lines.join("\n\n");
 }
 
 async function ensureConversation(userId: string): Promise<string> {
@@ -83,6 +98,14 @@ async function main() {
     .gte("changed_at", todayStart.toISOString())
     .order("changed_at", { ascending: true });
 
+  // team_id는 별도로 profiles에서 조회 (changes에는 team_id 없음)
+  const userIds = (changes ?? []).map((c) => c.user_id as string);
+  const { data: teamRows } = userIds.length
+    ? await admin.from("profiles").select("id, team_id").in("id", userIds)
+    : { data: [] as { id: string; team_id: number | null }[] };
+  const teamByUser = new Map<string, number | null>();
+  for (const r of teamRows ?? []) teamByUser.set(r.id as string, (r.team_id as number | null) ?? null);
+
   if (error) {
     console.error("fetch changes failed:", error);
     process.exit(1);
@@ -107,7 +130,7 @@ async function main() {
         continue;
       }
 
-      const message = buildMessage(newNick);
+      const message = buildMessage(newNick, teamByUser.get(userId) ?? null);
       const msg = await admin
         .from("dm_messages")
         .insert({ conversation_id: convId, sender_id: SYSTEM_USER_ID, content: message });
