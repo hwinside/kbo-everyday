@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { TEAMS } from "@/lib/constants/teams";
-import { fetchStandings, fetchGames } from "@/lib/crawler/kbo-api";
+import { fetchStandings } from "@/lib/crawler/kbo-api";
+import { computeSeriesSnapshot, serializeSeriesSnapshot } from "@/lib/series/snapshot";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 9; // v9: 승패 검증 강화 — 헤드라인/본문에서 승패 뒤집힘 방지
+const PROMPT_VERSION = 10; // v10: 시리즈 스냅샷 주입 — 취소/완료/진행 분기 + 우천 취소 무승부 마무리 표현
 
 // ===== Types =====
 
@@ -48,51 +49,12 @@ function parseGameMeta(gameId: string): { dateStr: string; awayTeamId: number; h
 
 // ===== Context helpers (server-side) =====
 
-function shiftDate(dateStr: string, days: number): string {
-  const y = parseInt(dateStr.slice(0, 4));
-  const m = parseInt(dateStr.slice(4, 6)) - 1;
-  const d = parseInt(dateStr.slice(6, 8));
-  const dt = new Date(y, m, d + days);
-  return `${dt.getFullYear()}${String(dt.getMonth() + 1).padStart(2, "0")}${String(dt.getDate()).padStart(2, "0")}`;
-}
-
 async function fetchSeriesContext(gameId: string, awayTeamId: number, homeTeamId: number): Promise<string | null> {
-  const dateStr = gameId.slice(0, 8);
-  const dates = [shiftDate(dateStr, -2), shiftDate(dateStr, -1), shiftDate(dateStr, 1)];
-  const allGames = await Promise.all(dates.map(d => fetchGames(d).catch(() => [])));
-  const flat = allGames.flat();
-
-  const seriesGames = flat.filter(g =>
-    g.gameId !== gameId &&
-    ((g.awayTeamId === awayTeamId && g.homeTeamId === homeTeamId) ||
-     (g.awayTeamId === homeTeamId && g.homeTeamId === awayTeamId))
-  );
-
-  if (seriesGames.length === 0) return null;
-
+  const snap = await computeSeriesSnapshot(gameId, awayTeamId, homeTeamId);
+  if (!snap) return null;
   const awayShort = getTeamShortName(awayTeamId);
   const homeShort = getTeamShortName(homeTeamId);
-  let awayWins = 0, homeWins = 0;
-  const results: string[] = [];
-
-  for (const g of seriesGames) {
-    if (g.status !== "final") continue;
-    const aScore = g.awayScore ?? 0;
-    const hScore = g.homeScore ?? 0;
-    if (g.awayTeamId === awayTeamId) {
-      if (aScore > hScore) awayWins++;
-      else if (hScore > aScore) homeWins++;
-    } else {
-      if (aScore > hScore) homeWins++;
-      else if (hScore > aScore) awayWins++;
-    }
-    results.push(`${g.date}: ${g.awayName} ${aScore}-${hScore} ${g.homeName}`);
-  }
-
-  const totalGames = seriesGames.length + 1;
-  let ctx = `${totalGames}연전 중 — ${awayShort} ${awayWins}승, ${homeShort} ${homeWins}승`;
-  if (results.length > 0) ctx += `\n이전 결과: ${results.join(", ")}`;
-  return ctx;
+  return serializeSeriesSnapshot(snap, awayTeamId, awayShort, homeTeamId, homeShort);
 }
 
 async function fetchStandingsContext(awayTeamId: number, homeTeamId: number): Promise<string | null> {
@@ -204,9 +166,9 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
   if (totalK >= 15 && totalH <= 10) gameCharacter += " / 투수전";
   if (hrHitters.length >= 3) gameCharacter += " / 홈런 퍼레이드";
 
-  // 맥락 섹션
+  // 맥락 섹션 — seriesCtx 는 snapshot.ts 가 이미 '## 시리즈 스냅샷' 헤딩 포함해서 바로 append
   let contextSection = "";
-  if (seriesCtx) contextSection += `\n## 시리즈 맥락\n${seriesCtx}`;
+  if (seriesCtx) contextSection += `\n${seriesCtx}`;
   if (standingsCtx) contextSection += `\n## 현재 순위\n${standingsCtx}`;
 
   return `당신은 KBO 프로야구를 20년 넘게 현장에서 취재해온 베테란 스포츠 기자입니다.
@@ -237,6 +199,13 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
 4. **숫자를 서사로.** "3안타 4타점"을 나열하지 말고, 그 숫자가 경기 흐름에서 왜 중요했는지 해석하라.
 5. **빈 칸보다 침묵.** 해당 없는 필드는 null로 두라. 억지로 채우면 품질이 떨어진다.
 6. **경기 맥락을 활용하라.** 시리즈 상황(스윕, 위닝시리즈), 순위 영향이 있으면 자연스럽게 녹여서 경기의 의미를 부여하라.
+   **시리즈 문구 분기 (아래 '## 시리즈 스냅샷' 섹션의 '상태' 값과 '## 시리즈 문구 규칙'을 반드시 준수):**
+   - 상태 in_progress: "원점으로 돌렸다 / 추격의 발판 / 시리즈 리드 / 열세 만회 / 스윕 직전" 같은 진행형 표현 허용.
+   - 상태 completed: 확정형만. "원점 / 추격 / 리드 굳힘 / 발판" 금지. "이번 시리즈를 N승 N패로 마쳤다 / 스윕으로 마감" 등.
+   - 상태 completed_with_cancellation + 동률: 반드시 "우천 취소로 이번 시리즈는 N승 N패 무승부로 마무리됐다" 패턴. "원점으로 돌렸다" 절대 금지.
+   - 상태 completed_with_cancellation + 승패 결정: 결과 중심으로 "이번 시리즈를 N승 N패로 마무리했다". "N경기로 축소된 시리즈" 표현은 필요할 때만 보조로.
+   - seriesCanceledCount가 0이면 취소 언급 자체 금지.
+   - 시리즈 승수·날짜·스코어는 '## 시리즈 스냅샷'에 있는 값만 사용. 창작 금지.
 7. **상투구/클리셰 절대 금지.** 아래 표현은 쓰지 마라. 더 구체적이고 이 경기만의 표현으로 대체:
    - "팽팽한 투수전 양상" → 구체적 상황 ("양 선발이 5회까지 무안타로 맞섰다" 등)
    - "경기의 결정적인 승부처는" → 바로 장면부터 시작 ("5회말 2사 만루, X의 타석에서~")
@@ -290,7 +259,7 @@ ${contextSection}
   },
   "mvpPitcher": null 또는 { "name": "...", "stats": "...", "reason": "..." },
   "insight": "경기 총평. 양 팀 입장에서 이 경기의 의미. 팬이 기억해야 할 포인트. 시리즈/순위 맥락이 있으면 자연스럽게 포함. 3~4문장.",
-  "seriesContext": "시리즈 맥락 요약 — 스윕/위닝시리즈/시리즈 분위기 (데이터 없으면 null)",
+  "seriesContext": "시리즈 맥락을 1문장으로 요약. 상태(in_progress/completed/completed_with_cancellation)에 맞는 문구만 사용. 스냅샷의 승수·취소 날짜와 일치해야 함. 시리즈 맥락이 없으면 null. 시리즈 데이터가 1경기 끼리면 null.",
   "standingsImpact": "현재 순위 맥락에서 이 경기의 의미를 한 줄로 (예: '4위 경쟁이 치열한 상황에서 중요한 1승'). 순위 데이터가 없거나 의미 있는 해석이 어려우면 null. 주의: 순위 변동을 단정짓지 마라 — '올라갔다/떨어졌다' 확정은 금지, '~에 유리해졌다/중요한 경기였다' 수준으로."
 }`;
 }
