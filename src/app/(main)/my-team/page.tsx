@@ -8,6 +8,17 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import TeamLogo from "@/components/ui/TeamLogo";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { LG_BATTERS, POSITION_LABELS } from "@/lib/constants/players";
+import playersRoster from "@/lib/constants/players-roster.json";
+
+// 선수명 → kboId 매핑 (SSOT: /community/players/[kboId] 단일 라우트 사용)
+// 레거시 /teams/[slug]/players/[mockId] 라우트는 redirect로 전환됨.
+function getPlayerHref(name: string, teamId: number): string {
+  const player = (playersRoster as { name: string; kboId: string; teamId: number }[]).find(
+    (p) => p.name === name && p.teamId === teamId
+  );
+  // kboId를 못 찾으면 name으로라도 /community/players 페이지로 보냄 (해당 페이지는 name fallback 지원)
+  return `/community/players/${player?.kboId ?? encodeURIComponent(name)}`;
+}
 
 const MY_TEAM_ID = 1; // LG 트윈스
 
@@ -134,7 +145,7 @@ export default function MyTeamPage() {
 
           {/* SP */}
           <div className="mb-3">
-            <Link href={`/teams/${team.slug}/players/201`}>
+            <Link href={getPlayerHref("케이시 켈리", team.id)}>
               <GlassCard pressable className="!p-4">
                 <div className="flex items-center gap-4">
                   <div
@@ -162,7 +173,7 @@ export default function MyTeamPage() {
           {/* Batting Order */}
           <div className="space-y-2">
             {STARTING_LINEUP.map(({ order, player }) => (
-              <Link key={player.id} href={`/teams/${team.slug}/players/${player.id}`}>
+              <Link key={player.id} href={getPlayerHref(player.name, team.id)}>
                 <GlassCard pressable className="!p-3">
                   <div className="flex items-center gap-4">
                     <span className="w-5 text-center text-base font-bold text-text-tertiary">
