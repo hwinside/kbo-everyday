@@ -105,7 +105,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "프로필을 찾을 수 없습니다" }, { status: 404 });
   }
 
-  if (profile.nickname === nickname) {
+  // 2026-04-19: 동일닉 체크도 case-insensitive (대소문자만 바꿸 동일닉 취급 정련 필요)
+  if (profile.nickname.toLowerCase() === nickname.toLowerCase()) {
     const changes = await getRecentNicknameChanges(verified.user.id);
     return NextResponse.json({
       success: true,
@@ -115,10 +116,11 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // 2026-04-19: case-insensitive 중복 체크 (ktwiz/Ktwiz 사례)
   const { data: duplicate, error: duplicateError } = await supabase
     .from("profiles")
     .select("id")
-    .eq("nickname", nickname)
+    .ilike("nickname", nickname)
     .neq("id", verified.user.id)
     .maybeSingle();
 

@@ -21,6 +21,11 @@ export default function SetupPage() {
 
   const [hashToken, setHashToken] = useState<string | null>(null);
 
+  // 닉네임 실시간 가용성 체크 (debounced 400ms)
+  // status: idle | checking | available | unavailable | format-error
+  const [nickStatus, setNickStatus] = useState<"idle" | "checking" | "available" | "unavailable" | "format-error">("idle");
+  const [nickHint, setNickHint] = useState<string>("");
+
   // URL hash에서 access_token 추출 (Supabase 클라이언트 사용 안 함 — hang 방지)
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -54,6 +59,63 @@ export default function SetupPage() {
     }
     return () => clearTimeout(timer);
   }, [user, hashToken]);
+
+  // 닉네임 입력 변경 시 debounce 후 /api/check-nickname 호출
+  useEffect(() => {
+    const trimmed = nickname.trim();
+    if (!trimmed) {
+      setNickStatus("idle");
+      setNickHint("");
+      return;
+    }
+    // 형식 검증 먼저 — 형식 위반이면 네트워크 호출하지 않음
+    if (trimmed.length < 2 || trimmed.length > 12) {
+      setNickStatus("format-error");
+      setNickHint("닉네임은 2~12자로 입력해주세요");
+      return;
+    }
+    if (!/^[가-힣a-zA-Z0-9]+$/.test(trimmed)) {
+      setNickStatus("format-error");
+      setNickHint("한글, 영문, 숫자만 사용 가능합니다");
+      return;
+    }
+
+    setNickStatus("checking");
+    setNickHint("확인 중…");
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/check-nickname?nickname=${encodeURIComponent(trimmed)}`, {
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        if (controller.signal.aborted) return;
+        // 서버 일시 오류(5xx)는 비차단—최종 submit 시 서버 검증 안전망이 잡음 (삼순이 P1 메모 반영)
+        if (!res.ok && res.status >= 500) {
+          setNickStatus("idle");
+          setNickHint("");
+          return;
+        }
+        const data = await res.json().catch(() => ({}));
+        if (data?.available === true) {
+          setNickStatus("available");
+          setNickHint("사용 가능한 닉네임입니다");
+        } else {
+          setNickStatus("unavailable");
+          setNickHint(data?.reason || "이미 사용 중인 닉네임입니다");
+        }
+      } catch (e) {
+        if (controller.signal.aborted) return;
+        // 네트워크 실패도 차단하지 않음 — 최종 submit 시 서버 검증 안전망이 잡음
+        setNickStatus("idle");
+        setNickHint("");
+      }
+    }, 400);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [nickname]);
 
   // 이미 프로필 있으면 홈으로
   const { profile } = useAuth();
@@ -97,8 +159,17 @@ export default function SetupPage() {
       setError("한글, 영문, 숫자만 사용 가능합니다");
       return;
     }
-    // 중복 체크는 프로필 insert 시 unique constraint에서 잡힘
-    // 여기서는 동기 검증만 (async Supabase 쿼리는 세션 없을 때 hang 발생)
+    // 실시간 체크에서 중복 확인된 경우 차단
+    if (nickStatus === "unavailable") {
+      setError(nickHint || "이미 사용 중인 닉네임입니다");
+      return;
+    }
+    // checking 중이면 사용자에게 잠시 대기 안내
+    if (nickStatus === "checking") {
+      setError("닉네임 확인 중입니다. 잠시 후 다시 시도해주세요");
+      return;
+    }
+    // available / idle (네트워크 실패 fallback) 둘 다 통과 — 최종 submit 시 unique 제약이 안전망
     setError("");
     setStep(2);
   }
@@ -179,20 +250,56 @@ export default function SetupPage() {
             <h2 className="text-xl font-bold text-text-primary mb-2">환영합니다! 🎉</h2>
             <p className="text-sm text-text-secondary mb-6">크보팬에서 사용할 닉네임을 정해주세요</p>
             
-            <input
-              type="text"
-              value={nickname}
-              onChange={(e) => { setNickname(e.target.value); setError(""); }}
-              placeholder="닉네임 (2~12자)"
-              maxLength={12}
-              className="w-full bg-bg-tertiary border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
-            />
-            {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
-            <p className="text-xs text-text-tertiary mt-2">한글, 영문, 숫자만 사용 가능</p>
+            <div className="relative">
+              <input
+                type="text"
+                value={nickname}
+                onChange={(e) => { setNickname(e.target.value); setError(""); }}
+                placeholder="닉네임 (2~12자)"
+                maxLength={12}
+                className={`w-full bg-bg-tertiary border rounded-xl px-4 py-3 pr-10 text-text-primary placeholder:text-text-tertiary focus:outline-none transition-colors ${
+                  nickStatus === "available"
+                    ? "border-emerald-500 focus:border-emerald-500"
+                    : nickStatus === "unavailable" || nickStatus === "format-error"
+                      ? "border-red-500 focus:border-red-500"
+                      : "border-black/10 dark:border-white/10 focus:border-accent"
+                }`}
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm" aria-live="polite">
+                {nickStatus === "checking" && (
+                  <span className="inline-block w-4 h-4 border-2 border-text-tertiary border-t-transparent rounded-full animate-spin" />
+                )}
+                {nickStatus === "available" && <span className="text-emerald-500">✓</span>}
+                {(nickStatus === "unavailable" || nickStatus === "format-error") && <span className="text-red-500">✕</span>}
+              </span>
+            </div>
+            {/* 우선순위: submit 시 setError가 채운 값 → 실시간 hint */}
+            {error ? (
+              <p className="text-red-400 text-xs mt-2">{error}</p>
+            ) : nickHint ? (
+              <p
+                className={`text-xs mt-2 ${
+                  nickStatus === "available"
+                    ? "text-emerald-500"
+                    : nickStatus === "unavailable" || nickStatus === "format-error"
+                      ? "text-red-400"
+                      : "text-text-tertiary"
+                }`}
+              >
+                {nickHint}
+              </p>
+            ) : (
+              <p className="text-xs text-text-tertiary mt-2">한글, 영문, 숫자만 사용 가능</p>
+            )}
 
             <button
               onClick={handleNicknameNext}
-              disabled={nickname.trim().length < 2}
+              disabled={
+                nickname.trim().length < 2 ||
+                nickStatus === "checking" ||
+                nickStatus === "unavailable" ||
+                nickStatus === "format-error"
+              }
               className="w-full mt-6 bg-accent text-white font-semibold py-3 rounded-xl disabled:opacity-40 transition-all"
             >
               다음
