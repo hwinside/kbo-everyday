@@ -34,12 +34,34 @@ export async function GET(req: NextRequest) {
 
   if (commentsError) return supabaseErrorResponse(commentsError);
 
+  // 크관(경기 중계) 채팅: room_id LIKE 'game:%'
+  const { data: chats, error: chatsError } = await supabase
+    .from("chat_messages")
+    .select("created_at")
+    .like("room_id", "game:%")
+    .gte("created_at", since);
+
+  if (chatsError) return supabaseErrorResponse(chatsError);
+
+  // 게시글 좋아요
+  const { data: likes, error: likesError } = await supabase
+    .from("likes")
+    .select("created_at")
+    .gte("created_at", since);
+
+  if (likesError) return supabaseErrorResponse(likesError);
+
   // Daily aggregation
-  const dailyMap = new Map<string, { posts: number; comments: number; photos: number }>();
+  const dailyMap = new Map<
+    string,
+    { posts: number; comments: number; photos: number; chats: number; likes: number }
+  >();
+
+  const makeEntry = () => ({ posts: 0, comments: 0, photos: 0, chats: 0, likes: 0 });
 
   for (const post of posts ?? []) {
     const date = toKSTDateString(post.created_at);
-    const entry = dailyMap.get(date) ?? { posts: 0, comments: 0, photos: 0 };
+    const entry = dailyMap.get(date) ?? makeEntry();
     entry.posts += 1;
     if (post.content_type === "photo") entry.photos += 1;
     dailyMap.set(date, entry);
@@ -47,8 +69,22 @@ export async function GET(req: NextRequest) {
 
   for (const comment of comments ?? []) {
     const date = toKSTDateString(comment.created_at);
-    const entry = dailyMap.get(date) ?? { posts: 0, comments: 0, photos: 0 };
+    const entry = dailyMap.get(date) ?? makeEntry();
     entry.comments += 1;
+    dailyMap.set(date, entry);
+  }
+
+  for (const chat of chats ?? []) {
+    const date = toKSTDateString(chat.created_at);
+    const entry = dailyMap.get(date) ?? makeEntry();
+    entry.chats += 1;
+    dailyMap.set(date, entry);
+  }
+
+  for (const like of likes ?? []) {
+    const date = toKSTDateString(like.created_at);
+    const entry = dailyMap.get(date) ?? makeEntry();
+    entry.likes += 1;
     dailyMap.set(date, entry);
   }
 

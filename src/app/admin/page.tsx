@@ -24,6 +24,8 @@ import {
   Bot,
   Globe,
   TrendingUp,
+  MessagesSquare,
+  Heart,
 } from "lucide-react";
 import type { FeedbackItem } from "@/lib/admin/types";
 import { getTeamById } from "@/lib/constants/teams";
@@ -51,7 +53,14 @@ interface UsersResponse {
 }
 
 interface ContentResponse {
-  dailyPosts: { date: string; posts: number; comments: number; photos: number }[];
+  dailyPosts: {
+    date: string;
+    posts: number;
+    comments: number;
+    photos: number;
+    chats: number;
+    likes: number;
+  }[];
 }
 
 interface StatsResponse {
@@ -196,6 +205,8 @@ export default function AdminOverviewPage() {
   const todayPosts = todayEntry?.posts ?? 0;
   const todayComments = todayEntry?.comments ?? 0;
   const todayPhotos = todayEntry?.photos ?? 0;
+  const todayChats = todayEntry?.chats ?? 0;
+  const todayLikes = todayEntry?.likes ?? 0;
 
   const pendingFeedback = data?.feedback?.data?.length ?? 0;
 
@@ -238,6 +249,8 @@ export default function AdminOverviewPage() {
     { label: "오늘 게시글", value: todayPosts, icon: <FileText className="w-4 h-4 text-[#30D158]" /> },
     { label: "오늘 댓글", value: todayComments, icon: <MessageSquare className="w-4 h-4 text-[#FFD60A]" /> },
     { label: "오늘 직찍", value: todayPhotos, icon: <Camera className="w-4 h-4 text-[#FF9F0A]" /> },
+    { label: "오늘 채팅(크관)", value: todayChats, icon: <MessagesSquare className="w-4 h-4 text-[#32D4EB]" /> },
+    { label: "오늘 좋아유", value: todayLikes, icon: <Heart className="w-4 h-4 text-[#FF375F]" /> },
     { label: "미처리 피드백", value: pendingFeedback, icon: <AlertTriangle className="w-4 h-4 text-[#FF453A]" /> },
     { label: "크롤러 실패", value: crawlerErrors, icon: <Bot className="w-4 h-4 text-[#FF453A]" /> },
   ];
