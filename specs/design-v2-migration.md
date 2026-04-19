@@ -225,3 +225,27 @@ CSS 변수 기반 팀 테마 — `<html data-team="LG">` 속성으로 스코프.
 - `specs/constitution.md` — SDD 원칙
 - `wiki/pages/크보팬/` — 페이지별 현행 문서
 - 원본 시안: Claude Design 출력 4장 (중립·LG·두산·삼성, 2026-04-19 새벽) + My 페이지 + ZIP export (04:52)
+
+---
+
+## 🚨 2026-04-19 13:42 KST — middleware.ts 임시 제거 공지
+
+*design-v2 작업 세션이 다시 시작할 때 반드시 읽을 것*
+
+- Phase 1로 추가된 `src/middleware.ts` (V2 쿠키 가드 + lockdown)가 *기존 `src/proxy.ts`와 공존 불가* (Next.js 16.1.6 빌드 차단)
+  ```
+  Error: Both middleware file "./src/middleware.ts" and proxy file "./src/proxy.ts" are detected.
+  Please use "./src/proxy.ts" only.
+  ```
+- 닉네임 대소문자 P0 핫픽스 배포 중 발견 → production 39분 stale 사고 (자세한 내용: `wiki/pages/크보팬/postmortem-2026-04-19-middleware-proxy-conflict.md`)
+- *핫픽스 `e18b58b`에서 `src/middleware.ts`를 일시 삭제*해 빌드 unblock + P0 살림
+- 하린아빠 + 삼순이 GO → C-2 선택 (middleware.ts 제거, proxy.ts만 유지)
+
+*design-v2 Phase 재개 시 해야 할 일*:
+1. `src/middleware.ts`의 V2 가드 로직(`?v2=1/0` 쿠키 toggle, `/v2/*` 접근 가드, lockdown)을 *`src/proxy.ts`의 `proxy()` 함수 안에 통합*
+2. `DESIGN_VERSION_COOKIE`, `USER_EXPOSURE_LOCKDOWN` import 경로 유지
+3. 기존 `proxy.ts`의 canonical host redirect + Supabase auth refresh 로직 *절대 건드리지 말 것* (이 둘은 이미 production 의존)
+4. `matcher` 재설정: proxy.ts 기존 매처와 V2 가드 매처 합집합
+5. 별도 PR로 올리고 반드시 *로컬 `npm run build` 통과* 확인 후 push
+
+*참고 diff*: `git show e18b58b` — 삭제된 86줄이 통합 대상. `feature/design-v2-phase1` 브랜치에서 옛 파일 참조 가능.
