@@ -1,20 +1,23 @@
 /**
- * 닉네임 중복 정리 후 사과 쪽지 발송 (일회성)
+ * 닉네임 중복 정리 후 사과 쪽지 발송 (일회성, 화이트리스트 방식)
  * 작성: 삼식이 / 톤: 삼순이 / 승인: 하린아빠
  *
- * 실행 순서:
- *   1. migrations/2026-04-19-nickname-unique.sql 실행 완료 후
- *   2. profile_nickname_changes 테이블에 오늘 자 변경 이력이 기록된 상태에서
- *   3. npx tsx scripts/send-nickname-apology-dm.ts
+ * ⚠️ 2026-04-19 사고 학습:
+ *   초기 버전은 'profile_nickname_changes에서 오늘 자 변경분 전부' 필터를 써서
+ *   자발적 닉네임 변경 유저까지 같이 발송됨 (2명 오발송 → 정정 사과로 복구)
+ *   → 이후 명시적 user_id 화이트리스트만 받도록 강제
+ *
+ * 실행:
+ *   USER_IDS="uuid1,uuid2,..." npx tsx scripts/send-nickname-apology-dm.ts
  *
  * 동작:
- *   - profile_nickname_changes에서 changed_at >= 오늘 0시(UTC)인 row 조회
- *   - 각 user_id에 대해 운영자(SYSTEM_USER_ID)와 dm_conversation 보장
- *   - dm_messages에 사과쪽지 insert + last_message_at 갱신
- *   - 동일 conversation에 이미 같은 메시지가 있으면 skip (재실행 안전)
+ *   - USER_IDS env로 받은 user_id 화이트리스트만 발송 대상
+ *   - 각 user의 현재 nickname + team_id를 profiles에서 join
+ *   - 운영자(SYSTEM_USER_ID)와 dm_conversation 보장
+ *   - dm_messages insert + last_message_at 갱신
+ *   - 동일 conversation에 이미 같은 사과 메시지가 있으면 skip (재실행 안전)
  */
 
-import "dotenv/config";
 import { createClient } from "@supabase/supabase-js";
 import { TEAMS } from "../src/lib/constants/teams";
 
@@ -84,40 +87,47 @@ async function alreadySentApology(conversationId: string): Promise<boolean> {
 }
 
 async function main() {
-  // 오늘 변경된 닉네임 row 조회 (UTC 기준 오늘)
-  const todayStart = new Date();
-  todayStart.setUTCHours(0, 0, 0, 0);
-
-  const { data: changes, error } = await admin
-    .from("profile_nickname_changes")
-    .select("user_id, old_nickname, new_nickname, changed_at")
-    .gte("changed_at", todayStart.toISOString())
-    .order("changed_at", { ascending: true });
-
-  // team_id는 별도로 profiles에서 조회 (changes에는 team_id 없음)
-  const userIds = (changes ?? []).map((c) => c.user_id as string);
-  const { data: teamRows } = userIds.length
-    ? await admin.from("profiles").select("id, team_id").in("id", userIds)
-    : { data: [] as { id: string; team_id: number | null }[] };
-  const teamByUser = new Map<string, number | null>();
-  for (const r of teamRows ?? []) teamByUser.set(r.id as string, (r.team_id as number | null) ?? null);
-
-  if (error) {
-    console.error("fetch changes failed:", error);
+  // ⚠️ 화이트리스트 강제 — USER_IDS env 없으면 즉시 abort
+  const rawIds = (process.env.USER_IDS ?? "").trim();
+  if (!rawIds) {
+    console.error('USER_IDS env required, e.g. USER_IDS="uuid1,uuid2" npx tsx ...');
     process.exit(1);
   }
-  if (!changes || changes.length === 0) {
-    console.log("no nickname changes today — nothing to send");
+  const userIds = rawIds.split(",").map((s) => s.trim()).filter(Boolean);
+  if (userIds.length === 0) {
+    console.error("USER_IDS parsed to empty list");
+    process.exit(1);
+  }
+
+  // 화이트리스트 user들의 현재 nickname + team_id 조회
+  const { data: profiles, error } = await admin
+    .from("profiles")
+    .select("id, nickname, team_id")
+    .in("id", userIds);
+
+  if (error) {
+    console.error("fetch profiles failed:", error);
+    process.exit(1);
+  }
+  if (!profiles || profiles.length === 0) {
+    console.log("no matching profiles — nothing to send");
     return;
   }
 
-  console.log(`발송 대상: ${changes.length}명`);
+  // 누락된 id 경고
+  const fetchedIds = new Set(profiles.map((p) => p.id as string));
+  for (const id of userIds) {
+    if (!fetchedIds.has(id)) console.warn(`  [warn] user ${id} not found in profiles — skipped`);
+  }
+
+  console.log(`발송 대상: ${profiles.length}명 (화이트리스트 ${userIds.length}명 중)`);
   let sent = 0;
   let skipped = 0;
 
-  for (const ch of changes) {
-    const userId = ch.user_id as string;
-    const newNick = ch.new_nickname as string;
+  for (const p of profiles) {
+    const userId = p.id as string;
+    const newNick = p.nickname as string;
+    const teamId = (p.team_id as number | null) ?? null;
     try {
       const convId = await ensureConversation(userId);
       if (await alreadySentApology(convId)) {
@@ -126,7 +136,7 @@ async function main() {
         continue;
       }
 
-      const message = buildMessage(newNick, teamByUser.get(userId) ?? null);
+      const message = buildMessage(newNick, teamId);
       const msg = await admin
         .from("dm_messages")
         .insert({ conversation_id: convId, sender_id: SYSTEM_USER_ID, content: message });
@@ -143,14 +153,14 @@ async function main() {
         })
         .eq("id", convId);
 
-      console.log(`  [sent] ${userId} (${ch.old_nickname} → ${newNick})`);
+      console.log(`  [sent] ${userId} (현재닉: ${newNick})`);
       sent++;
     } catch (e: any) {
       console.error(`  [error] ${userId}:`, e?.message ?? e);
     }
   }
 
-  console.log(`\n완료: 발송 ${sent}건 / 스킵 ${skipped}건 / 전체 ${changes.length}건`);
+  console.log(`\n완료: 발송 ${sent}건 / 스킵 ${skipped}건 / 매칭 ${profiles.length}건`);
 }
 
 main().catch((e) => {
