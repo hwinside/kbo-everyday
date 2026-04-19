@@ -131,6 +131,7 @@ function AiLineupAnalysisCard({
             lineup: {
               away: {
                 startingPitcher: lineup.away.startingPitcher.name,
+                startingPitcherEra: lineup.away.startingPitcher.era,
                 catcher: catcher(lineup.away),
                 batters: lineup.away.batters.map(b => ({
                   order: b.order,
@@ -140,6 +141,7 @@ function AiLineupAnalysisCard({
               },
               home: {
                 startingPitcher: lineup.home.startingPitcher.name,
+                startingPitcherEra: lineup.home.startingPitcher.era,
                 catcher: catcher(lineup.home),
                 batters: lineup.home.batters.map(b => ({
                   order: b.order,

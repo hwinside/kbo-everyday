@@ -7,7 +7,7 @@ import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
-const ANALYSIS_VERSION = 4;
+const ANALYSIS_VERSION = 5;
 
 const KBO_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
 const HEADERS = {
@@ -30,11 +30,14 @@ interface LineupRequest {
   lineup: {
     away: {
       startingPitcher: string;
+      // 진짜 ERA (카드 상단과 동일 소스, KBO API 박스스코어/통산). 제공되면 이 값 우선.
+      startingPitcherEra?: string;
       catcher: string;
       batters: LineupPlayer[];
     };
     home: {
       startingPitcher: string;
+      startingPitcherEra?: string;
       catcher: string;
       batters: LineupPlayer[];
     };
@@ -223,11 +226,19 @@ function computeDiff(
   return diff;
 }
 
-function getStarterEra(name: string, teamId: number): string | null {
+function getStarterEra(name: string, teamId: number, clientEra?: string): string | null {
+  // 1순위: 클라이언트가 전달한 ERA (KBO API 박스스코어 실시간, 카드 상단과 동일 소스)
+  if (clientEra && clientEra !== "-" && clientEra !== "0.00") {
+    return `ERA ${clientEra}`;
+  }
+  // 2순위 (fallback): 2026시즌 누적 JSON. 단, *소수샘플 필터* — 최소 5경기 이상일 때만 올바른 시즌 ERA로 간주.
+  // 1~4경기만 던진 선수는 ERA 21.00 같은 극단 값이 나와 사용자 혼란 유발 → 언급 생략.
   const teamName = getTeamShortName(teamId);
-  const pitcher = (pitcherStats as Array<{ name: string; team: string; era: string; wins: number; losses: number }>)
+  const pitcher = (pitcherStats as Array<{ name: string; team: string; era: string; games: number; wins: number; losses: number }>)
     .find(p => p.name === name && p.team === teamName);
-  return pitcher ? `ERA ${pitcher.era}, ${pitcher.wins}승${pitcher.losses}패` : null;
+  if (!pitcher) return null;
+  if (pitcher.games < 5) return null; // 소수샘플 제외 — 프롬프트에서 아예 언급 안 함
+  return `ERA ${pitcher.era}, ${pitcher.wins}승${pitcher.losses}패`;
 }
 
 interface RotationResult {
@@ -353,10 +364,10 @@ function buildPrompt(diff: LineupDiff, req: LineupRequest, rotations?: { away: R
   // 오늘 선발 매치업 정보 (변경이 아닌 소개)
   let batterySection = "오늘 선발 매치업:\n";
   for (const side of [
-    { name: awayName, sp: req.lineup.away.startingPitcher, teamId: req.awayTeamId, d: diff.away },
-    { name: homeName, sp: req.lineup.home.startingPitcher, teamId: req.homeTeamId, d: diff.home },
+    { name: awayName, sp: req.lineup.away.startingPitcher, era: req.lineup.away.startingPitcherEra, teamId: req.awayTeamId, d: diff.away },
+    { name: homeName, sp: req.lineup.home.startingPitcher, era: req.lineup.home.startingPitcherEra, teamId: req.homeTeamId, d: diff.home },
   ]) {
-    const eraInfo = getStarterEra(side.sp, side.teamId);
+    const eraInfo = getStarterEra(side.sp, side.teamId, side.era);
     batterySection += `${side.name} 선발: ${side.sp}${eraInfo ? ` (${eraInfo})` : ""}\n`;
     if (side.d.catcherChanged) {
       batterySection += `${side.name} 포수 변경: ${side.d.catcherChanged.from} → ${side.d.catcherChanged.to}\n`;
