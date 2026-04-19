@@ -89,8 +89,14 @@ export default function SetupPage() {
           signal: controller.signal,
           cache: "no-store",
         });
-        const data = await res.json().catch(() => ({}));
         if (controller.signal.aborted) return;
+        // 서버 일시 오류(5xx)는 비차단—최종 submit 시 서버 검증 안전망이 잡음 (삼순이 P1 메모 반영)
+        if (!res.ok && res.status >= 500) {
+          setNickStatus("idle");
+          setNickHint("");
+          return;
+        }
+        const data = await res.json().catch(() => ({}));
         if (data?.available === true) {
           setNickStatus("available");
           setNickHint("사용 가능한 닉네임입니다");
@@ -100,7 +106,7 @@ export default function SetupPage() {
         }
       } catch (e) {
         if (controller.signal.aborted) return;
-        // 네트워크 실패는 차단하지 않음 — 최종 submit 시 서버 unique 제약이 잡음
+        // 네트워크 실패도 차단하지 않음 — 최종 submit 시 서버 검증 안전망이 잡음
         setNickStatus("idle");
         setNickHint("");
       }

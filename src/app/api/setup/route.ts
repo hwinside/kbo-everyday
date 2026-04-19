@@ -47,10 +47,29 @@ export async function POST(request: NextRequest) {
 
     const admin = getSupabaseAdmin();
 
-    // 2. 프로필 생성
+    // 2. 서버측 닉네임 중복 조회 (현재 DB에 nickname UNIQUE constraint 없음 — 애플리케이션 레벨에서 강제)
+    // 단, race condition 완전 차단은 도 떨어질 수 있으니 (동시 두 사람이 같은 닉으로 POST 가능)
+    // 후속 마이그레이션으로 UNIQUE 추가 예정. 그때까지는 상필 수준 차단.
+    const trimmedNickname = nickname.trim();
+    const { data: dupCheck, error: dupError } = await admin
+      .from("profiles")
+      .select("id")
+      .eq("nickname", trimmedNickname)
+      .limit(1)
+      .maybeSingle();
+
+    if (dupError) {
+      console.error("[api/setup] dup check error:", dupError);
+      return NextResponse.json({ error: "닉네임 확인 중 오류가 발생했습니다" }, { status: 500 });
+    }
+    if (dupCheck) {
+      return NextResponse.json({ error: "이미 사용 중인 닉네임입니다" }, { status: 409 });
+    }
+
+    // 3. 프로필 생성
     const { error: insertError } = await admin.from("profiles").insert({
       id: userId,
-      nickname: nickname.trim(),
+      nickname: trimmedNickname,
       team_id,
       favorite_players: [],
       invited_by: null,
