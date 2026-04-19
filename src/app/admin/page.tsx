@@ -128,7 +128,7 @@ function KpiCard({ label, value, icon }: KpiDef) {
         {icon}
         <p className="text-sm text-[#8E8E93]">{label}</p>
       </div>
-      <p className="text-3xl font-bold tabular-nums">
+      <p className="text-xl sm:text-2xl md:text-3xl font-bold tabular-nums tracking-tight whitespace-nowrap">
         {typeof value === "number" ? value.toLocaleString() : value}
       </p>
     </div>
