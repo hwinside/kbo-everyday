@@ -250,7 +250,7 @@ export default function AdminOverviewPage() {
     { label: "오늘 댓글", value: todayComments, icon: <MessageSquare className="w-4 h-4 text-[#FFD60A]" /> },
     { label: "오늘 직찍", value: todayPhotos, icon: <Camera className="w-4 h-4 text-[#FF9F0A]" /> },
     { label: "오늘 채팅(크관)", value: todayChats, icon: <MessagesSquare className="w-4 h-4 text-[#32D4EB]" /> },
-    { label: "오늘 좋아유", value: todayLikes, icon: <Heart className="w-4 h-4 text-[#FF375F]" /> },
+    { label: "오늘 좋아요", value: todayLikes, icon: <Heart className="w-4 h-4 text-[#FF375F]" /> },
     { label: "미처리 피드백", value: pendingFeedback, icon: <AlertTriangle className="w-4 h-4 text-[#FF453A]" /> },
     { label: "크롤러 실패", value: crawlerErrors, icon: <Bot className="w-4 h-4 text-[#FF453A]" /> },
   ];
