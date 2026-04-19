@@ -42,10 +42,12 @@ export async function GET(req: NextRequest) {
 
   try {
     const admin = getSupabaseAdmin();
+    // 2026-04-19: case-insensitive 비교 (ktwiz/Ktwiz 같은 대소문자 중복 차단)
+    // validateFormat이 [가-힣a-zA-Z0-9]+만 허용하므로 ilike wildcard(%,_) 주입 위험 없음
     const { data, error } = await admin
       .from("profiles")
       .select("id")
-      .eq("nickname", nickname)
+      .ilike("nickname", nickname)
       .limit(1)
       .maybeSingle();
 

@@ -37,11 +37,11 @@ export default function ProfileSetupModal({ isOpen }: Props) {
       setError("한글, 영문, 숫자만 사용 가능합니다");
       return;
     }
-    // 중복 확인
+    // 2026-04-19: case-insensitive 중복 체크 (ktwiz/Ktwiz 사례)
     const { data } = await supabase
       .from("profiles")
       .select("id")
-      .eq("nickname", trimmed)
+      .ilike("nickname", trimmed)
       .maybeSingle();
     if (data) {
       setError("이미 사용 중인 닉네임입니다");

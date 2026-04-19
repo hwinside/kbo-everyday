@@ -51,10 +51,11 @@ export async function POST(request: NextRequest) {
     // 단, race condition 완전 차단은 도 떨어질 수 있으니 (동시 두 사람이 같은 닉으로 POST 가능)
     // 후속 마이그레이션으로 UNIQUE 추가 예정. 그때까지는 상필 수준 차단.
     const trimmedNickname = nickname.trim();
+    // 2026-04-19: case-insensitive 비교 (ktwiz/Ktwiz 중복 실사례)
     const { data: dupCheck, error: dupError } = await admin
       .from("profiles")
       .select("id")
-      .eq("nickname", trimmedNickname)
+      .ilike("nickname", trimmedNickname)
       .limit(1)
       .maybeSingle();
 
