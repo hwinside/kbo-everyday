@@ -418,23 +418,26 @@ export default function EventInvitePage() {
           </div>
         </div>
 
-        {/* 어뷰징 방지 안내 (PDF SSOT) */}
-        <div className="mt-5 rounded-xl p-4 bg-red-500/5 border border-red-500/15">
-          <div className="flex items-center gap-1.5 mb-2">
-            <Trophy size={14} className="text-red-400" />
-            <p className="text-sm font-bold text-red-400">건전한 커뮤니티를 위한 안내</p>
-          </div>
-          <p className="text-[11px] text-white/60 font-semibold mt-2 mb-1">초대 트랙</p>
-          <ul className="space-y-1.5 text-[11px] text-white/70 leading-relaxed">
-            <li>• 초대가 실적으로 인정되려면, 피초대자가 팀을 선택하고 글 또는 댓글을 1건 이상 작성해야 합니다</li>
-            <li>• 본인 초대코드 입력, 동일 디바이스·동일 IP 반복 가입 등 어뷰징 징후는 검수에서 제외될 수 있습니다</li>
-          </ul>
-          <p className="text-[11px] text-white/60 font-semibold mt-3 mb-1">글쓰기 트랙 (운영 안전핀)</p>
-          <ul className="space-y-1.5 text-[11px] text-white/70 leading-relaxed">
-            <li>• 최종 순위에 해당하는 단일 상품 1개만 지급</li>
-            <li>• 점수 획득만을 위한 글과 도배성 활동은 운영 판단으로 제외</li>
-            <li>• 제외 판정이 3건 이상 누적되면 리더보드에서 제외 가능</li>
-            <li>• 셀프 초대·비정상 패턴은 검수 후 집계 제외 가능</li>
+        {/* 운영 안전핀 — PDF SSOT 독립 카드 */}
+        <div className="mt-5 rounded-2xl p-5 bg-white/[0.04] border border-white/10">
+          <h3 className="text-base font-black mb-3">운영 안전핀</h3>
+          <ul className="space-y-2.5 text-sm text-white/80 leading-relaxed">
+            <li className="flex gap-2">
+              <span className="text-red-400 shrink-0">•</span>
+              <span>최종 순위에 해당하는 단일 상품 1개만 지급</span>
+            </li>
+            <li className="flex gap-2">
+              <span className="text-red-400 shrink-0">•</span>
+              <span>점수 획득만을 위한 글과 도배성 활동은 운영 판단으로 제외</span>
+            </li>
+            <li className="flex gap-2">
+              <span className="text-red-400 shrink-0">•</span>
+              <span>제외 판정이 3건 이상 누적되면 리더보드에서 제외 가능</span>
+            </li>
+            <li className="flex gap-2">
+              <span className="text-red-400 shrink-0">•</span>
+              <span>셀프 초대, 비정상 패턴은 검수 후 집계 제외 가능</span>
+            </li>
           </ul>
         </div>
 
