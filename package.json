@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "qa:ui:comment-crud": "node scripts/qa/ui-smoke-comment-crud.mjs",
     "lint": "eslint",
     "validate:roster": "node scripts/validate-roster.mjs"
   },
