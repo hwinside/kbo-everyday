@@ -306,7 +306,7 @@ export default function EventInvitePage() {
             <Calendar size={14} className="text-yellow-400" />
             참여 방법
           </h3>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-2">
             <StepCard
               num={1}
               title="이벤트 확인"
@@ -563,12 +563,14 @@ function TopPreview({
 
 function StepCard({ num, title, desc }: { num: number; title: string; desc: string }) {
   return (
-    <div className="rounded-xl p-3 bg-gray-900/5 dark:bg-white/5 border border-gray-900/10 dark:border-white/10">
-      <div className="w-7 h-7 rounded-full bg-yellow-400/20 text-yellow-400 font-black text-xs flex items-center justify-center mb-2">
+    <div className="rounded-xl p-3 bg-gray-900/5 dark:bg-white/5 border border-gray-900/10 dark:border-white/10 flex items-start gap-3">
+      <div className="w-8 h-8 rounded-full bg-yellow-400/20 text-yellow-400 font-black text-sm flex items-center justify-center shrink-0">
         {num}
       </div>
-      <p className="font-bold text-sm">{title}</p>
-      <p className="text-[11px] text-gray-900/60 dark:text-white/60 mt-1 leading-relaxed">{desc}</p>
+      <div className="flex-1 min-w-0">
+        <p className="font-bold text-sm">{title}</p>
+        <p className="text-xs text-gray-900/60 dark:text-white/60 mt-0.5 leading-relaxed">{desc}</p>
+      </div>
     </div>
   );
 }
