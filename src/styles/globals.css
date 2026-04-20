@@ -262,6 +262,21 @@ body {
   padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
 }
 
+/*
+ * ===== Keyboard-open mode =====
+ * Toggled by the post detail page (and other composer pages) when the
+ * comment composer gains focus. Hides the global TabBar and drops the
+ * main's bottom padding so a sticky composer can sit flush against the
+ * viewport bottom — iOS Safari then docks it just above the keyboard via
+ * its natural viewport shrink. No JS-based positioning, no fixed overlay.
+ */
+body.kbd-open [data-global-tabbar] {
+  display: none;
+}
+body.kbd-open main.pb-tab-bar {
+  padding-bottom: 0;
+}
+
 /* Safe area for notch/dynamic island */
 .pt-safe {
   padding-top: env(safe-area-inset-top, 0px);

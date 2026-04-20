@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, MoreHorizontal, Check } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
@@ -27,6 +27,12 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   const { post, comments, loading, liked, setLiked, setComments } = usePostDetail(postId);
   const [comment, setComment] = useState("");
   const [likeCount, setLikeCount] = useState(0);
+  const composerInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Ensure body.kbd-open is cleared if the component unmounts while focused.
+  useEffect(() => {
+    return () => document.body.classList.remove("kbd-open");
+  }, []);
 
   // 게시글 메뉴/편집 상태
   const [postMenuOpen, setPostMenuOpen] = useState(false);
@@ -165,7 +171,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   };
 
   return (
-    <div className="min-h-screen bg-bg-primary pb-20">
+    <div className="flex flex-col min-h-[calc(100dvh-4rem-env(safe-area-inset-bottom,0px))] bg-bg-primary">
       {/* Header */}
       <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ borderColor: post.team_id ? getTeamBorderColorById(post.team_id) : undefined }}>
         <div className="flex items-center gap-3 px-4 py-3">
@@ -393,16 +399,29 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         </div>
       </div>
 
-      {/* Comment Input — positioned above TabBar (TabBar ≈ 4rem + safe-area-inset-bottom) */}
-      <div className="fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40" style={{ bottom: "calc(4rem + env(safe-area-inset-bottom, 0px))" }}>
+      {/* Spacer so short posts push composer to the bottom of the viewport. */}
+      <div className="flex-1" />
+
+      {/*
+        Comment Input — sticky at the bottom of the page. With body.kbd-open
+        toggled on focus, the global TabBar hides and <main>'s pb-tab-bar
+        collapses to 0, so this bar sits flush at the viewport bottom; iOS
+        Safari's natural visualViewport resize then keeps it just above the
+        keyboard without any JS positioning. When not focused, the bar stays
+        visible above the global TabBar thanks to <main>'s pb-tab-bar.
+      */}
+      <div className="sticky bottom-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40" style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))" }}>
         {(() => {
           const teamColor = post.team_id ? getTeamById(post.team_id)?.colorPrimary : undefined;
           return (
             <>
               <input
+                ref={composerInputRef}
                 type="text"
                 value={comment}
                 onChange={e => setComment(e.target.value)}
+                onFocus={() => document.body.classList.add("kbd-open")}
+                onBlur={() => document.body.classList.remove("kbd-open")}
                 placeholder={user ? "댓글을 입력하세요" : "로그인 후 댓글 작성 가능"}
                 disabled={!user}
                 className="flex-1 bg-bg-secondary rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none border"
