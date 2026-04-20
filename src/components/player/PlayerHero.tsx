@@ -200,7 +200,8 @@ export default function PlayerHero({
             alt={playerName}
             fill
             sizes="220px"
-            className="relative object-contain object-top"
+            className="relative object-contain"
+            style={{ objectPosition: "center -45px" }}
             priority
             unoptimized
           />
