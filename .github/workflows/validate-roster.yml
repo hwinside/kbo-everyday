@@ -1,0 +1,35 @@
+name: Roster SSOT Validator
+
+# specs/roster-ssot-fortress.md §3.1
+# roster JSON이 변경된 모든 PR에서 SSOT 규칙 검증
+
+on:
+  pull_request:
+    paths:
+      - "src/lib/constants/players-roster.json"
+      - "scripts/validate-roster.mjs"
+      - ".github/workflows/validate-roster.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/lib/constants/players-roster.json"
+      - "scripts/validate-roster.mjs"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run roster validator
+        env:
+          # PR body / commit message에 "roster-size-change" 포함 시 선수 수 변경 허용
+          PR_BODY: ${{ github.event.pull_request.body }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: node scripts/validate-roster.mjs

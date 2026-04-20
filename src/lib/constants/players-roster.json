@@ -544,14 +544,6 @@
     "backNo": "144"
   },
   {
-    "name": "김명규\r\n",
-    "kboId": "59378",
-    "team": "NC",
-    "teamId": 5,
-    "position": "내야수",
-    "backNo": null
-  },
-  {
     "name": "김명신",
     "kboId": "67246",
     "team": "두산",
@@ -2792,14 +2784,6 @@
     "team": "NC"
   },
   {
-    "name": "신재인\r\n",
-    "kboId": "59377",
-    "team": "NC",
-    "teamId": 5,
-    "position": "내야수",
-    "backNo": null
-  },
-  {
     "name": "신정환",
     "kboId": "52440",
     "team": "삼성",
@@ -4046,14 +4030,6 @@
     "position": "투수",
     "backNo": "31",
     "team": "LG"
-  },
-  {
-    "name": "이정준",
-    "kboId": "96153",
-    "team": "LG",
-    "teamId": 1,
-    "position": "",
-    "backNo": ""
   },
   {
     "name": "이정현",

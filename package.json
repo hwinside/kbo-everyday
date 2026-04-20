@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "validate:roster": "node scripts/validate-roster.mjs"
   },
   "dependencies": {
     "@nivo/bar": "^0.99.0",
