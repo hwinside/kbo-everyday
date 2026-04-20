@@ -1,0 +1,286 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+  ChevronLeft,
+  Trophy,
+  Users,
+  MessageSquare,
+  Gift,
+  ChevronRight,
+  Calendar,
+} from "lucide-react";
+import GlassCard from "@/components/ui/GlassCard";
+import { getTeamById } from "@/lib/constants/teams";
+import { useAuth } from "@/lib/supabase/AuthContext";
+
+type Track = "invite" | "writing";
+
+interface InviteRow {
+  user_id: string;
+  nickname: string;
+  team_id: number | null;
+  invite_count: number;
+}
+interface WritingRow {
+  user_id: string;
+  nickname: string;
+  team_id: number | null;
+  total_points: number;
+}
+
+/**
+ * 이벤트 랜딩 페이지 — 크보팬 얼리멤버 커뮤니티 활성화 이벤트
+ * 2026-04-20 ~ 2026-05-31
+ *
+ * 하단에 초대/글쓰기 Top 10 프리뷰 + 리더보드 전체 보기 CTA
+ */
+export default function EventInvitePage() {
+  const router = useRouter();
+  const { user } = useAuth();
+  const [topInvite, setTopInvite] = useState<InviteRow[]>([]);
+  const [topWriting, setTopWriting] = useState<WritingRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const [a, b] = await Promise.all([
+          fetch("/api/leaderboard/invite?limit=10", { cache: "no-store" }),
+          fetch("/api/leaderboard/writing?limit=10", { cache: "no-store" }),
+        ]);
+        const [ja, jb] = await Promise.all([a.json(), b.json()]);
+        if (cancelled) return;
+        setTopInvite(ja.rows ?? []);
+        setTopWriting(jb.rows ?? []);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-[#0A0A0B] text-white pb-24">
+      {/* Header */}
+      <div className="sticky top-0 z-10 bg-[#0A0A0B]/90 backdrop-blur border-b border-white/10">
+        <div className="max-w-screen-sm mx-auto px-4 py-3 flex items-center gap-3">
+          <button
+            onClick={() => router.back()}
+            className="p-1 -ml-1"
+            aria-label="뒤로"
+          >
+            <ChevronLeft size={24} />
+          </button>
+          <h1 className="font-bold text-lg">얼리멤버 이벤트</h1>
+        </div>
+      </div>
+
+      <div className="max-w-screen-sm mx-auto px-4 pt-5">
+        {/* Hero */}
+        <div className="rounded-2xl p-5 bg-gradient-to-br from-yellow-400/15 via-orange-400/10 to-red-400/10 border border-yellow-400/20">
+          <div className="flex items-center gap-1.5 text-xs text-yellow-400 font-semibold mb-2">
+            <Calendar size={13} />
+            2026.04.20 ~ 2026.05.31
+          </div>
+          <h2 className="text-2xl font-black leading-tight mb-2">
+            친구 초대하고 응원글 쓰면,
+            <br />
+            <span className="text-yellow-400">에어팟 프로 3</span>까지 노릴 수 있어요
+          </h2>
+          <p className="text-sm text-white/70 leading-relaxed">
+            각 부문 상위 50명은 시즌 한정 얼리멤버 뱃지와 상품을 받고, 1등은
+            에어팟 프로 3의 주인공이 됩니다.
+          </p>
+        </div>
+
+        {/* 2트랙 설명 */}
+        <div className="grid grid-cols-2 gap-2 mt-4">
+          <TrackCard
+            icon={<Users size={18} />}
+            title="초대 트랙"
+            desc="친구를 초대하고 활성화시킨 만큼"
+            accent="text-blue-400"
+            bg="from-blue-500/10 to-indigo-500/5 border-blue-500/20"
+          />
+          <TrackCard
+            icon={<MessageSquare size={18} />}
+            title="글쓰기 트랙"
+            desc="채팅/댓글/글로 포인트 획득"
+            accent="text-green-400"
+            bg="from-green-500/10 to-emerald-500/5 border-green-500/20"
+          />
+        </div>
+
+        {/* Top 10 프리뷰 — 초대 */}
+        <TopPreview
+          title="초대 랭킹 TOP 10"
+          icon={<Users size={16} />}
+          rows={topInvite}
+          track="invite"
+          loading={loading}
+          currentUserId={user?.id}
+        />
+
+        {/* Top 10 프리뷰 — 글쓰기 */}
+        <TopPreview
+          title="글쓰기 랭킹 TOP 10"
+          icon={<MessageSquare size={16} />}
+          rows={topWriting}
+          track="writing"
+          loading={loading}
+          currentUserId={user?.id}
+        />
+
+        {/* 전체 리더보드 CTA */}
+        <Link
+          href="/events/invite/leaderboard"
+          className="mt-5 flex items-center justify-center gap-2 w-full py-3.5 rounded-xl bg-gradient-to-r from-yellow-400 to-orange-400 text-black font-bold"
+        >
+          <Trophy size={18} />
+          전체 리더보드 보기
+          <ChevronRight size={18} />
+        </Link>
+
+        {/* 상세 규정 안내 */}
+        <GlassCard className="mt-4 p-4">
+          <div className="flex items-center gap-1.5 mb-2">
+            <Gift size={14} className="text-yellow-400" />
+            <p className="text-xs font-bold">점수 & 집계 규칙</p>
+          </div>
+          <ul className="text-xs text-white/70 leading-relaxed space-y-1 pl-0">
+            <li>
+              초대가 실적으로 인정되려면, 피초대자가 <strong>팀을 선택하고 글 또는 댓글을 1건 이상</strong> 작성해야 합니다
+            </li>
+            <li>글쓰기 점수: 채팅 1pt · 댓글 2pt · 글 3pt · 사진글 5pt</li>
+            <li>일일 상한: 채팅 30pt · 댓글 40pt · 글 30pt · 사진글 50pt · 총 150pt</li>
+            <li>운영자/테스트 계정은 집계 제외</li>
+            <li>셀프 초대·비정상 패턴은 검수 후 집계 제외될 수 있습니다</li>
+          </ul>
+        </GlassCard>
+      </div>
+    </div>
+  );
+}
+
+function TrackCard({
+  icon,
+  title,
+  desc,
+  accent,
+  bg,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  desc: string;
+  accent: string;
+  bg: string;
+}) {
+  return (
+    <div className={`rounded-xl p-3 bg-gradient-to-br ${bg} border`}>
+      <div className={`${accent} mb-1.5`}>{icon}</div>
+      <p className="font-bold text-sm">{title}</p>
+      <p className="text-xs text-white/60 mt-0.5">{desc}</p>
+    </div>
+  );
+}
+
+function TopPreview({
+  title,
+  icon,
+  rows,
+  track,
+  loading,
+  currentUserId,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  rows: (InviteRow | WritingRow)[];
+  track: Track;
+  loading: boolean;
+  currentUserId?: string;
+}) {
+  return (
+    <div className="mt-5">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5 text-sm font-bold">
+          {icon}
+          {title}
+        </div>
+        <Link
+          href="/events/invite/leaderboard"
+          className="text-xs text-white/50 flex items-center gap-0.5"
+        >
+          전체 보기
+          <ChevronRight size={13} />
+        </Link>
+      </div>
+      {loading ? (
+        <div className="text-xs text-white/40 text-center py-6 bg-white/5 rounded-lg">
+          불러오는 중…
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="text-xs text-white/40 text-center py-6 bg-white/5 rounded-lg">
+          {track === "invite"
+            ? "첫 초대자를 기다립니다 🌱"
+            : "첫 참가자를 기다립니다 🌱"}
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {rows.map((row, idx) => {
+            const team = row.team_id ? getTeamById(row.team_id) : null;
+            const score =
+              track === "invite"
+                ? (row as InviteRow).invite_count
+                : (row as WritingRow).total_points;
+            const unit = track === "invite" ? "명" : "pt";
+            const medal =
+              idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : null;
+            const isMe = currentUserId === row.user_id;
+
+            return (
+              <div
+                key={row.user_id}
+                className={`flex items-center justify-between px-3 py-2 rounded-lg border text-sm ${
+                  isMe
+                    ? "bg-yellow-400/5 border-yellow-400/30"
+                    : "bg-white/5 border-white/5"
+                }`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="w-6 text-center font-bold shrink-0 text-xs">
+                    {medal ?? idx + 1}
+                  </span>
+                  <span className="truncate font-semibold">{row.nickname}</span>
+                  {team && (
+                    <span
+                      className="text-xs px-1.5 py-0.5 rounded shrink-0"
+                      style={{
+                        background: `${team.colorPrimary}30`,
+                        color: team.colorPrimary,
+                      }}
+                    >
+                      {team.shortName}
+                    </span>
+                  )}
+                </div>
+                <span className="font-bold text-sm shrink-0">
+                  {score}
+                  <span className="text-xs font-normal text-white/50 ml-0.5">
+                    {unit}
+                  </span>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
