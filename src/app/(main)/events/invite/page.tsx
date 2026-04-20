@@ -103,19 +103,14 @@ export default function EventInvitePage() {
             에어팟 프로 3의 주인공이 됩니다.
           </p>
 
-          {/* 에어팟 프로 3 이미지 */}
-          <div className="rounded-2xl bg-white/90 p-4 flex items-center justify-center">
+          {/* 에어팟 프로 3 이미지 — 라벨 이미 이미지에 포함 */}
+          <div className="rounded-2xl bg-white/90 p-6 flex items-center justify-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/event-airpods.png"
-              alt="1등 경품 — 에어팟 프로 3"
-              className="w-full max-w-[200px] h-auto"
+              alt="1등 경품 — 에어팟 프로 3 (트랙별 1대씩, 총 2대)"
+              className="w-full max-w-[260px] h-auto"
             />
-          </div>
-          <div className="mt-3 text-center">
-            <p className="text-xs text-white/60">1등 통합 대표 경품</p>
-            <p className="text-lg font-black text-yellow-400">에어팟 프로 3</p>
-            <p className="text-xs text-white/50">트랙별 1대씩, 총 2대 지급</p>
           </div>
         </div>
 
