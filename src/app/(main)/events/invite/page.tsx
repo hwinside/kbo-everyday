@@ -11,7 +11,6 @@ import {
   Gift,
   ChevronRight,
   Calendar,
-  Shield,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { getTeamById } from "@/lib/constants/teams";
@@ -119,24 +118,70 @@ export default function EventInvitePage() {
           </p>
         </div>
 
-        {/* 2트랙 구조 */}
-        <div className="grid grid-cols-2 gap-2 mt-4">
-          <TrackCard
-            icon={<Users size={18} />}
-            title="초대 트랙"
-            desc="활성화 초대 수 기준 순위"
-            accent="text-blue-400"
-            bg="from-blue-500/10 to-indigo-500/5 border-blue-500/20"
-          />
-          <TrackCard
-            icon={<MessageSquare size={18} />}
-            title="글쓰기 트랙"
-            desc="포인트 누적 리더보드"
-            accent="text-green-400"
-            bg="from-green-500/10 to-emerald-500/5 border-green-500/20"
-          />
+        {/* 2트랙 상세 — PDF SSOT 원문 bullet 그대로 */}
+        <div className="mt-4 space-y-3">
+          {/* 초대 트랙 */}
+          <div className="rounded-2xl p-4 bg-white/5 border border-white/10">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/15 text-blue-300 text-xs font-semibold mb-3">
+              💎 초대 트랙
+            </div>
+            <h3 className="text-lg font-black mb-3">친구 초대하고 순위 올리기</h3>
+            <ul className="space-y-2 text-xs text-white/80 leading-relaxed">
+              <li className="flex gap-2">
+                <span className="text-blue-400 shrink-0">•</span>
+                <span>초대가 실적으로 인정되려면, 피초대자가 <span className="font-bold text-white">팀을 선택하고 글 또는 댓글을 1건 이상 작성</span>해야 합니다</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-blue-400 shrink-0">•</span>
+                <span>친구가 내 초대 코드를 입력·등록하면 초대 실적으로 집계됩니다</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-blue-400 shrink-0">•</span>
+                <span>카카오톡이나 공유 링크로 가입하면 초대 코드가 자동 등록됩니다</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-blue-400 shrink-0">•</span>
+                <span>한 친구는 한 명에게만 귀속되며, 먼저 등록한 초대자에게 카운트됩니다</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-blue-400 shrink-0">•</span>
+                <span>본인 초대코드 입력, 동일 디바이스 또는 동일 IP 반복 가입 등 어뷰징 징후는 검수에서 제외될 수 있습니다</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-blue-400 shrink-0">•</span>
+                <span>최종 순위에 따라 상품 1개와 시즌 한정 뱃지가 지급되며, 최종 집계는 <span className="font-bold text-white">5월 31일</span> 기준으로 확정됩니다</span>
+              </li>
+            </ul>
+          </div>
+
+          {/* 글쓰기 트랙 */}
+          <div className="rounded-2xl p-4 bg-white/5 border border-white/10">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-yellow-500/15 text-yellow-300 text-xs font-semibold mb-3">
+              🌾 글쓰기 트랙
+            </div>
+            <h3 className="text-lg font-black mb-3">활동 포인트로 순위 올리기</h3>
+            <ul className="space-y-2 text-xs text-white/80 leading-relaxed">
+              <li className="flex gap-2">
+                <span className="text-yellow-400 shrink-0">•</span>
+                <span><span className="font-bold text-white">경기 중계 채팅 1점, 댓글 2점, 글 3점, 사진글 5점</span></span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-yellow-400 shrink-0">•</span>
+                <span>하루 총 상한 <span className="font-bold text-white">150점</span>, 활동별 상한 별도 적용</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-yellow-400 shrink-0">•</span>
+                <span>최종 순위에 따라 상품 1개와 시즌 한정 뱃지 지급</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-yellow-400 shrink-0">•</span>
+                <span>점수용 도배나 어뷰징은 운영 판단으로 제외</span>
+              </li>
+            </ul>
+          </div>
         </div>
-        <p className="text-[11px] text-white/50 mt-2 leading-relaxed">
+
+        <p className="text-[11px] text-white/50 mt-3 leading-relaxed">
           ※ 두 트랙 중복 수상 가능 · 초대 1등 + 글쓰기 1등 동시 수상 OK
         </p>
 
@@ -376,7 +421,7 @@ export default function EventInvitePage() {
         {/* 어뷰징 방지 안내 (PDF SSOT) */}
         <div className="mt-5 rounded-xl p-4 bg-red-500/5 border border-red-500/15">
           <div className="flex items-center gap-1.5 mb-2">
-            <Shield size={14} className="text-red-400" />
+            <Trophy size={14} className="text-red-400" />
             <p className="text-sm font-bold text-red-400">건전한 커뮤니티를 위한 안내</p>
           </div>
           <p className="text-[11px] text-white/60 font-semibold mt-2 mb-1">초대 트랙</p>
@@ -402,28 +447,6 @@ export default function EventInvitePage() {
           5만원 초과 경품의 제세공과금(22%) 크보팬 대납
         </p>
       </div>
-    </div>
-  );
-}
-
-function TrackCard({
-  icon,
-  title,
-  desc,
-  accent,
-  bg,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  desc: string;
-  accent: string;
-  bg: string;
-}) {
-  return (
-    <div className={`rounded-xl p-3 bg-gradient-to-br ${bg} border`}>
-      <div className={`${accent} mb-1.5`}>{icon}</div>
-      <p className="font-bold text-sm">{title}</p>
-      <p className="text-xs text-white/60 mt-0.5">{desc}</p>
     </div>
   );
 }
