@@ -73,11 +73,11 @@ export default function EventInvitePage() {
   }, []);
 
   return (
-    <div className="min-h-screen text-white">
+    <div className="min-h-screen text-gray-900 dark:text-white">
       <div className="max-w-screen-sm mx-auto px-4 py-4 flex items-center gap-2">
         <button
           onClick={() => router.back()}
-          className="p-2 -ml-2 rounded-lg hover:bg-white/5"
+          className="p-2 -ml-2 rounded-lg hover:bg-gray-900/5 dark:bg-white/5"
           aria-label="뒤로"
         >
           <ChevronLeft size={20} />
@@ -97,7 +97,7 @@ export default function EventInvitePage() {
             <br />
             <span className="text-yellow-400">에어팟 프로 3</span>까지 노릴 수 있어요
           </h2>
-          <p className="text-sm text-white/70 leading-relaxed mb-4">
+          <p className="text-sm text-gray-900/70 dark:text-white/70 leading-relaxed mb-4">
             각 부문 상위 50명은 시즌 한정 얼리멤버 뱃지와 상품을 받고, 1등은
             에어팟 프로 3의 주인공이 됩니다.
           </p>
@@ -106,12 +106,12 @@ export default function EventInvitePage() {
           <div className="flex items-center justify-center py-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/event-airpods.png"
+              src="/event-airpods-v3.png"
               alt="1등 경품 — 에어팟 프로 3"
               className="w-full max-w-[280px] h-auto"
             />
           </div>
-          <p className="mt-2 text-center text-xs text-white/60">
+          <p className="mt-2 text-center text-xs text-gray-900/60 dark:text-white/60">
             <span className="font-bold text-yellow-400">1등 경품 · 에어팟 프로 3</span>
             <br />
             Apple 공식가 ₩369,000 · 트랙별 1대씩 · 총 2대
@@ -121,15 +121,15 @@ export default function EventInvitePage() {
         {/* 2트랙 상세 — PDF SSOT 원문 bullet 그대로 */}
         <div className="mt-4 space-y-3">
           {/* 초대 트랙 */}
-          <div className="rounded-2xl p-4 bg-white/5 border border-white/10">
+          <div className="rounded-2xl p-4 bg-gray-900/5 dark:bg-white/5 border border-gray-900/10 dark:border-white/10">
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/15 text-blue-300 text-xs font-semibold mb-3">
               💎 초대 트랙
             </div>
             <h3 className="text-lg font-black mb-3">친구 초대하고 순위 올리기</h3>
-            <ul className="space-y-2 text-xs text-white/80 leading-relaxed">
+            <ul className="space-y-2 text-xs text-gray-900/80 dark:text-white/80 leading-relaxed">
               <li className="flex gap-2">
                 <span className="text-blue-400 shrink-0">•</span>
-                <span>초대가 실적으로 인정되려면, 피초대자가 <span className="font-bold text-white">팀을 선택하고 글 또는 댓글을 1건 이상 작성</span>해야 합니다</span>
+                <span>초대가 실적으로 인정되려면, 피초대자가 <span className="font-bold text-gray-900 dark:text-white">팀을 선택하고 글 또는 댓글을 1건 이상 작성</span>해야 합니다</span>
               </li>
               <li className="flex gap-2">
                 <span className="text-blue-400 shrink-0">•</span>
@@ -149,25 +149,25 @@ export default function EventInvitePage() {
               </li>
               <li className="flex gap-2">
                 <span className="text-blue-400 shrink-0">•</span>
-                <span>최종 순위에 따라 상품 1개와 시즌 한정 뱃지가 지급되며, 최종 집계는 <span className="font-bold text-white">5월 31일</span> 기준으로 확정됩니다</span>
+                <span>최종 순위에 따라 상품 1개와 시즌 한정 뱃지가 지급되며, 최종 집계는 <span className="font-bold text-gray-900 dark:text-white">5월 31일</span> 기준으로 확정됩니다</span>
               </li>
             </ul>
           </div>
 
           {/* 글쓰기 트랙 */}
-          <div className="rounded-2xl p-4 bg-white/5 border border-white/10">
+          <div className="rounded-2xl p-4 bg-gray-900/5 dark:bg-white/5 border border-gray-900/10 dark:border-white/10">
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-yellow-500/15 text-yellow-300 text-xs font-semibold mb-3">
               🌾 글쓰기 트랙
             </div>
             <h3 className="text-lg font-black mb-3">활동 포인트로 순위 올리기</h3>
-            <ul className="space-y-2 text-xs text-white/80 leading-relaxed">
+            <ul className="space-y-2 text-xs text-gray-900/80 dark:text-white/80 leading-relaxed">
               <li className="flex gap-2">
                 <span className="text-yellow-400 shrink-0">•</span>
-                <span><span className="font-bold text-white">경기 중계 채팅 1점, 댓글 2점, 글 3점, 사진글 5점</span></span>
+                <span><span className="font-bold text-gray-900 dark:text-white">경기 중계 채팅 1점, 댓글 2점, 글 3점, 사진글 5점</span></span>
               </li>
               <li className="flex gap-2">
                 <span className="text-yellow-400 shrink-0">•</span>
-                <span>하루 총 상한 <span className="font-bold text-white">150점</span>, 활동별 상한 별도 적용</span>
+                <span>하루 총 상한 <span className="font-bold text-gray-900 dark:text-white">150점</span>, 활동별 상한 별도 적용</span>
               </li>
               <li className="flex gap-2">
                 <span className="text-yellow-400 shrink-0">•</span>
@@ -181,25 +181,25 @@ export default function EventInvitePage() {
           </div>
         </div>
 
-        <p className="text-[11px] text-white/50 mt-3 leading-relaxed">
+        <p className="text-[11px] text-gray-900/50 dark:text-white/50 mt-3 leading-relaxed">
           ※ 두 트랙 중복 수상 가능 · 초대 1등 + 글쓰기 1등 동시 수상 OK
         </p>
 
         {/* 경품 표 — 트랙 공통 (인원·상품 동일) */}
-        <div className="mt-5 rounded-2xl bg-white/5 border border-white/10 overflow-hidden">
-          <div className="px-4 py-3 bg-white/5 border-b border-white/10 flex items-center gap-1.5">
+        <div className="mt-5 rounded-2xl bg-gray-900/5 dark:bg-white/5 border border-gray-900/10 dark:border-white/10 overflow-hidden">
+          <div className="px-4 py-3 bg-gray-900/5 dark:bg-white/5 border-b border-gray-900/10 dark:border-white/10 flex items-center gap-1.5">
             <Gift size={14} className="text-yellow-400" />
             <p className="text-sm font-bold">상위 50명 경품 — 트랙별 동일</p>
           </div>
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-white/50 bg-white/[0.02]">
+              <tr className="text-gray-900/50 dark:text-white/50 bg-gray-900/[0.02] dark:bg-white/[0.02]">
                 <th className="text-left px-3 py-2 font-semibold">순위</th>
                 <th className="text-left px-3 py-2 font-semibold">인원</th>
                 <th className="text-left px-3 py-2 font-semibold">상품</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
+            <tbody className="divide-y divide-gray-900/5 dark:divide-white/5">
               <tr className="text-yellow-400 font-bold">
                 <td className="px-3 py-2.5">1등</td>
                 <td className="px-3 py-2.5">1명</td>
@@ -232,7 +232,7 @@ export default function EventInvitePage() {
               </tr>
             </tbody>
           </table>
-          <div className="px-3 py-2.5 text-[10px] text-white/40 bg-white/[0.02] border-t border-white/5 leading-relaxed">
+          <div className="px-3 py-2.5 text-[10px] text-gray-900/40 dark:text-white/40 bg-gray-900/[0.02] dark:bg-white/[0.02] border-t border-gray-900/5 dark:border-white/5 leading-relaxed">
             ※ 최종 순위에 해당하는 단일 상품만 지급 (중복 지급 없음)
             <br />※ 5만원 초과 경품의 제세공과금(22%)은 크보팬 대납
           </div>
@@ -260,7 +260,7 @@ export default function EventInvitePage() {
 
         <Link
           href="/events/invite/leaderboard"
-          className="mt-4 block w-full rounded-xl py-3 bg-white/10 hover:bg-white/15 text-center text-sm font-semibold border border-white/10 transition-colors"
+          className="mt-4 block w-full rounded-xl py-3 bg-gray-900/10 dark:bg-white/10 hover:bg-gray-900/15 dark:bg-white/15 text-center text-sm font-semibold border border-gray-900/10 dark:border-white/10 transition-colors"
         >
           전체 리더보드 보기
         </Link>
@@ -295,7 +295,7 @@ export default function EventInvitePage() {
             <BadgeCard emoji="💬" title="기자단" rank="20~39등 · 20명" tone="bronze" />
             <BadgeCard emoji="📢" title="서포터즈" rank="40~50등 · 11명" tone="bronze" />
           </div>
-          <p className="text-[11px] text-white/50 mt-2">
+          <p className="text-[11px] text-gray-900/50 dark:text-white/50 mt-2">
             ※ 시즌 한정 뱃지 · 프로필 상시 표시 · 2026 시즌 종료까지 유지 · 중복 수상 시 두 뱃지 모두 부여
           </p>
         </div>
@@ -328,8 +328,8 @@ export default function EventInvitePage() {
               desc="이벤트 종료 후 최종 검수와 함께 상품과 시즌 한정 뱃지가 지급돼요."
             />
           </div>
-          <p className="text-[11px] text-white/50 mt-2 leading-relaxed">
-            초대는 <span className="text-white">/my → 친구 초대 카드 → 공유</span> 3단계로 참여할 수 있어요.
+          <p className="text-[11px] text-gray-900/50 dark:text-white/50 mt-2 leading-relaxed">
+            초대는 <span className="text-gray-900 dark:text-white">/my → 친구 초대 카드 → 공유</span> 3단계로 참여할 수 있어요.
           </p>
         </div>
 
@@ -341,32 +341,32 @@ export default function EventInvitePage() {
           </div>
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-white/50 border-b border-white/10">
+              <tr className="text-gray-900/50 dark:text-white/50 border-b border-gray-900/10 dark:border-white/10">
                 <th className="text-left py-2 font-semibold">활동</th>
                 <th className="text-right py-2 font-semibold">점수</th>
                 <th className="text-right py-2 font-semibold">일일 상한</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
+            <tbody className="divide-y divide-gray-900/5 dark:divide-white/5">
               <tr>
                 <td className="py-2">경기 중계 채팅</td>
                 <td className="text-right py-2">1점</td>
-                <td className="text-right py-2 text-white/60">30점</td>
+                <td className="text-right py-2 text-gray-900/60 dark:text-white/60">30점</td>
               </tr>
               <tr>
                 <td className="py-2">커뮤니티 댓글</td>
                 <td className="text-right py-2">2점</td>
-                <td className="text-right py-2 text-white/60">40점</td>
+                <td className="text-right py-2 text-gray-900/60 dark:text-white/60">40점</td>
               </tr>
               <tr>
                 <td className="py-2">커뮤니티 글</td>
                 <td className="text-right py-2">3점</td>
-                <td className="text-right py-2 text-white/60">30점</td>
+                <td className="text-right py-2 text-gray-900/60 dark:text-white/60">30점</td>
               </tr>
               <tr>
                 <td className="py-2">사진 게시판 사진글</td>
                 <td className="text-right py-2">5점</td>
-                <td className="text-right py-2 text-white/60">50점</td>
+                <td className="text-right py-2 text-gray-900/60 dark:text-white/60">50점</td>
               </tr>
               <tr className="font-bold text-yellow-400">
                 <td className="py-2">하루 총 상한</td>
@@ -383,11 +383,11 @@ export default function EventInvitePage() {
             <Users size={14} className="text-blue-400" />
             <p className="text-sm font-bold">초대 트랙 집계 기준</p>
           </div>
-          <ul className="space-y-1.5 text-xs text-white/70 leading-relaxed">
-            <li>• 초대 인정 조건: <span className="text-white">피초대자가 팀을 선택하고 글 또는 댓글을 1건 이상 작성</span></li>
+          <ul className="space-y-1.5 text-xs text-gray-900/70 dark:text-white/70 leading-relaxed">
+            <li>• 초대 인정 조건: <span className="text-gray-900 dark:text-white">피초대자가 팀을 선택하고 글 또는 댓글을 1건 이상 작성</span></li>
             <li>• 카카오톡·공유 링크로 가입하면 초대 코드가 자동 등록</li>
             <li>• 한 친구는 한 명에게만 귀속, 먼저 등록한 초대자에게 카운트</li>
-            <li>• <span className="text-white">기존 누적 초대 + 이벤트 기간 신규 분</span> 모두 합산</li>
+            <li>• <span className="text-gray-900 dark:text-white">기존 누적 초대 + 이벤트 기간 신규 분</span> 모두 합산</li>
             <li>• 최종 집계는 5월 31일 기준으로 확정</li>
           </ul>
         </GlassCard>
@@ -419,9 +419,9 @@ export default function EventInvitePage() {
         </div>
 
         {/* 운영 안전핀 — PDF SSOT 독립 카드 */}
-        <div className="mt-5 rounded-2xl p-5 bg-white/[0.04] border border-white/10">
+        <div className="mt-5 rounded-2xl p-5 bg-gray-900/[0.04] dark:bg-white/[0.04] border border-gray-900/10 dark:border-white/10">
           <h3 className="text-base font-black mb-3">운영 안전핀</h3>
-          <ul className="space-y-2.5 text-sm text-white/80 leading-relaxed">
+          <ul className="space-y-2.5 text-sm text-gray-900/80 dark:text-white/80 leading-relaxed">
             <li className="flex gap-2">
               <span className="text-red-400 shrink-0">•</span>
               <span>최종 순위에 해당하는 단일 상품 1개만 지급</span>
@@ -442,7 +442,7 @@ export default function EventInvitePage() {
         </div>
 
         {/* Footer */}
-        <p className="mt-6 text-[10px] text-white/30 text-center leading-relaxed">
+        <p className="mt-6 text-[10px] text-gray-900/30 dark:text-white/30 text-center leading-relaxed">
           이벤트 기간 2026.04.20 ~ 2026.05.31 · 마감 2026-05-31 23:59 KST
           <br />
           최종 집계는 5월 31일 기준 · 당첨자 안내는 종료 후 개별 진행
@@ -478,29 +478,29 @@ function TopPreview({
         </div>
         <Link
           href="/events/invite/leaderboard"
-          className="text-xs text-white/50 flex items-center gap-0.5"
+          className="text-xs text-gray-900/50 dark:text-white/50 flex items-center gap-0.5"
         >
           전체 보기
           <ChevronRight size={13} />
         </Link>
       </div>
       {loading ? (
-        <div className="text-xs text-white/40 text-center py-6 bg-white/5 rounded-lg">
+        <div className="text-xs text-gray-900/40 dark:text-white/40 text-center py-6 bg-gray-900/5 dark:bg-white/5 rounded-lg">
           불러오는 중…
         </div>
       ) : rows.length === 0 ? (
         <div className="space-y-1.5">
-          <div className="flex items-center gap-2.5 px-3 py-3 rounded-lg bg-white/5 border border-white/5">
-            <div className="w-6 h-6 rounded-full bg-white/5 flex items-center justify-center shrink-0">
-              <Trophy size={12} className="text-white/30" />
+          <div className="flex items-center gap-2.5 px-3 py-3 rounded-lg bg-gray-900/5 dark:bg-white/5 border border-gray-900/5 dark:border-white/5">
+            <div className="w-6 h-6 rounded-full bg-gray-900/5 dark:bg-white/5 flex items-center justify-center shrink-0">
+              <Trophy size={12} className="text-gray-900/30 dark:text-white/30" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-white/70">
+              <p className="text-xs font-semibold text-gray-900/70 dark:text-white/70">
                 {track === "invite"
                   ? "아직 활성화 초대가 없습니다"
                   : "아직 집계된 점수가 없습니다"}
               </p>
-              <p className="text-[10px] text-white/40 mt-0.5 leading-relaxed">
+              <p className="text-[10px] text-gray-900/40 dark:text-white/40 mt-0.5 leading-relaxed">
                 {track === "invite"
                   ? "친구가 팀 선택 + 글/댓글 1건 작성 시 등장"
                   : "채팅·댓글·글·사진글로 포인트를 쌓아보세요"}
@@ -510,13 +510,13 @@ function TopPreview({
           {[1, 2, 3].map((n) => (
             <div
               key={n}
-              className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06]"
+              className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-gray-900/[0.03] dark:bg-white/[0.03] border border-white/[0.06]"
             >
-              <span className="w-6 text-center font-bold text-xs text-white/40">
+              <span className="w-6 text-center font-bold text-xs text-gray-900/40 dark:text-white/40">
                 {n}
               </span>
-              <span className="flex-1 text-xs text-white/30">-</span>
-              <span className="text-[10px] text-white/30">-</span>
+              <span className="flex-1 text-xs text-gray-900/30 dark:text-white/30">-</span>
+              <span className="text-[10px] text-gray-900/30 dark:text-white/30">-</span>
             </div>
           ))}
         </div>
@@ -539,7 +539,7 @@ function TopPreview({
                 className={`flex items-center justify-between px-3 py-2 rounded-lg border text-sm ${
                   isMe
                     ? "bg-yellow-400/5 border-yellow-400/30"
-                    : "bg-white/5 border-white/5"
+                    : "bg-gray-900/5 dark:bg-white/5 border-gray-900/5 dark:border-white/5"
                 }`}
               >
                 <div className="flex items-center gap-2.5 min-w-0">
@@ -561,7 +561,7 @@ function TopPreview({
                 </div>
                 <span className="font-bold text-sm shrink-0">
                   {score}
-                  <span className="text-xs font-normal text-white/50 ml-0.5">
+                  <span className="text-xs font-normal text-gray-900/50 dark:text-white/50 ml-0.5">
                     {unit}
                   </span>
                 </span>
@@ -576,12 +576,12 @@ function TopPreview({
 
 function StepCard({ num, title, desc }: { num: number; title: string; desc: string }) {
   return (
-    <div className="rounded-xl p-3 bg-white/5 border border-white/10">
+    <div className="rounded-xl p-3 bg-gray-900/5 dark:bg-white/5 border border-gray-900/10 dark:border-white/10">
       <div className="w-7 h-7 rounded-full bg-yellow-400/20 text-yellow-400 font-black text-xs flex items-center justify-center mb-2">
         {num}
       </div>
       <p className="font-bold text-sm">{title}</p>
-      <p className="text-[11px] text-white/60 mt-1 leading-relaxed">{desc}</p>
+      <p className="text-[11px] text-gray-900/60 dark:text-white/60 mt-1 leading-relaxed">{desc}</p>
     </div>
   );
 }
@@ -606,11 +606,11 @@ function BadgeCard({
 
   return (
     <div className={`rounded-xl p-3 bg-gradient-to-br ${bg} border`}>
-      <div className="w-11 h-11 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-2xl mb-2">
+      <div className="w-11 h-11 rounded-xl bg-gray-900/10 dark:bg-white/10 border border-gray-900/10 dark:border-white/10 flex items-center justify-center text-2xl mb-2">
         {emoji}
       </div>
-      <p className="text-[10px] text-white/50 mb-0.5">{rank}</p>
-      <p className="text-xs text-white/70">크보팬 얼리멤버</p>
+      <p className="text-[10px] text-gray-900/50 dark:text-white/50 mb-0.5">{rank}</p>
+      <p className="text-xs text-gray-900/70 dark:text-white/70">크보팬 얼리멤버</p>
       <p className="font-bold text-sm mt-0.5">· {title}</p>
     </div>
   );
@@ -618,9 +618,9 @@ function BadgeCard({
 
 function FaqItem({ q, a }: { q: string; a: string }) {
   return (
-    <div className="rounded-xl p-3.5 bg-white/5 border border-white/10">
+    <div className="rounded-xl p-3.5 bg-gray-900/5 dark:bg-white/5 border border-gray-900/10 dark:border-white/10">
       <p className="font-bold text-sm mb-1.5">Q. {q}</p>
-      <p className="text-xs text-white/70 leading-relaxed">{a}</p>
+      <p className="text-xs text-gray-900/70 dark:text-white/70 leading-relaxed">{a}</p>
     </div>
   );
 }
