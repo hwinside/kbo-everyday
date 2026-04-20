@@ -11,7 +11,7 @@ import { X } from "lucide-react";
  * 홈/커뮤니티 상단 노출. 클릭 → /events/invite 랜딩.
  * 우상단 X 클릭 시 7일간 localStorage 기반 dismiss.
  *
- * 배너 에셋: /public/event-banner-home.jpg (718x154, v5-final에서 크롭)
+ * 배너 에셋: /public/event-banner-home.png (780x120, v20 최종본 — 배경 제거 + 카피 확정)
  * 배너 교체 시 같은 경로로 덮어쓰면 됨. 디자이너 원본 오면 무중단 업데이트 가능.
  */
 
@@ -160,10 +160,10 @@ export default function EventBanner({ source = "home" }: Props) {
         aria-label="얼리멤버 이벤트 — 친구 초대하고 글 쓰면 에어팟 프로 3까지"
       >
         <Image
-          src="/event-banner-home.jpg"
+          src="/event-banner-home.png"
           alt="친구 초대하고 글 쓰면 에어팟 프로 3까지 · 5월 31일까지"
-          width={718}
-          height={154}
+          width={780}
+          height={120}
           sizes="(max-width: 640px) 100vw, 640px"
           priority
           className="w-full h-auto block"
