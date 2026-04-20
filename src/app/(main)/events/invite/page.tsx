@@ -219,6 +219,74 @@ export default function EventInvitePage() {
             <li>셀프 초대·비정상 패턴은 검수 후 집계 제외될 수 있습니다</li>
           </ul>
         </GlassCard>
+
+        {/* 참여 방법 4단계 — event-draft.html .steps 섹션 기반 */}
+        <div className="mt-5">
+          <h3 className="text-sm font-bold mb-3 flex items-center gap-1.5">
+            <Calendar size={14} className="text-yellow-400" />
+            참여 방법 4단계
+          </h3>
+          <div className="grid grid-cols-2 gap-2">
+            <StepCard num={1} title="로그인" desc="크보팬 계정으로 로그인하고 내 팀을 설정합니다." />
+            <StepCard num={2} title="초대 또는 글쓰기" desc="친구 초대 링크를 공유하거나, 채팅·댓글·글로 포인트를 쌓으세요." />
+            <StepCard num={3} title="실적 쌓기" desc="피초대자가 팀 설정 + 글/댓글 1건 시 초대 1건 인정." />
+            <StepCard num={4} title="랭킹 등재" desc="5월 31일 자정 마감, 트랙별 상위 50명 경품 지급." />
+          </div>
+        </div>
+
+        {/* 얼리멤버 뱃지 — .badge-grid 섹션 기반 */}
+        <div className="mt-5">
+          <h3 className="text-sm font-bold mb-3 flex items-center gap-1.5">
+            <Trophy size={14} className="text-yellow-400" />
+            얼리멤버 한정 뱃지
+          </h3>
+          <div className="grid grid-cols-2 gap-2">
+            <BadgeCard icon="🥇" name="금빛 얼리멤버" rank="트랙 1~5등" tone="gold" />
+            <BadgeCard icon="🥈" name="은빛 얼리멤버" rank="트랙 6~15등" tone="silver" />
+            <BadgeCard icon="🥉" name="동빛 얼리멤버" rank="트랙 16~50등" tone="bronze" />
+            <BadgeCard icon="🌟" name="크보팬 서포터" rank="이벤트 참여 전원" tone="neutral" />
+          </div>
+          <p className="text-[10px] text-white/40 mt-2 leading-relaxed">
+            ※ 뱃지는 시즌 한정 · 프로필에 표시 · 2026 시즌 종료 시까지 유지
+          </p>
+        </div>
+
+        {/* FAQ — .faq .faq-item 섹션 기반 */}
+        <div className="mt-5">
+          <h3 className="text-sm font-bold mb-3 flex items-center gap-1.5">
+            <MessageSquare size={14} className="text-yellow-400" />
+            자주 묻는 질문
+          </h3>
+          <div className="space-y-2">
+            <FaqItem
+              q="초대가 언제 실적으로 인정되나요?"
+              a="피초대자가 크보팬 가입 후 팀을 선택하고, 글 또는 댓글을 1건 이상 작성했을 때 초대 1건으로 인정됩니다."
+            />
+            <FaqItem
+              q="두 트랙에 모두 참여할 수 있나요?"
+              a="네. 초대와 글쓰기는 별도 트랙으로 각각 랭킹이 집계됩니다. 한 사람이 양쪽에서 모두 입상할 수 있습니다."
+            />
+            <FaqItem
+              q="일일 포인트 상한이 있나요?"
+              a="글쓰기 트랙에는 도배 방지를 위해 일일 상한이 있습니다. 채팅 30pt · 댓글 40pt · 글 30pt · 사진글 50pt · 총 150pt."
+            />
+            <FaqItem
+              q="셀프 초대나 부계정 사용도 인정되나요?"
+              a="동일 디바이스/IP/알고리즘 패턴이 감지되면 검수 후 집계에서 제외될 수 있습니다. 건전한 커뮤니티를 위해 협조 부탁드려요."
+            />
+            <FaqItem
+              q="경품은 언제 어떻게 받나요?"
+              a="5월 31일 마감 후 1주 내 입상자에게 개별 연락드립니다. 기프티콘은 가입 이메일, 실물 상품은 수령 주소 확인 후 발송됩니다."
+            />
+          </div>
+        </div>
+
+        {/* Footer note */}
+        <p className="mt-6 text-[10px] text-white/30 text-center leading-relaxed">
+          이벤트 기간 2026.04.20 ~ 2026.05.31 · 마감 KST 자정
+          <br />
+          운영자/테스트 계정 및 비정상 패턴은 검수 후 집계 제외
+        </p>
       </div>
     </div>
   );
@@ -364,6 +432,61 @@ function TopPreview({
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// 참여 방법 단계 카드 — event-draft.html .step 섹션 기반
+function StepCard({ num, title, desc }: { num: number; title: string; desc: string }) {
+  return (
+    <div className="rounded-xl p-3 bg-white/5 border border-white/10">
+      <div className="w-7 h-7 rounded-full bg-yellow-400/20 text-yellow-400 font-black text-xs flex items-center justify-center mb-2">
+        {num}
+      </div>
+      <p className="font-bold text-sm">{title}</p>
+      <p className="text-[11px] text-white/60 mt-1 leading-relaxed">{desc}</p>
+    </div>
+  );
+}
+
+// 얼리멤버 뱃지 카드 — event-draft.html .badge-card 섹션 기반
+function BadgeCard({
+  icon,
+  name,
+  rank,
+  tone,
+}: {
+  icon: string;
+  name: string;
+  rank: string;
+  tone: "gold" | "silver" | "bronze" | "neutral";
+}) {
+  const bg =
+    tone === "gold"
+      ? "from-yellow-400/15 to-orange-400/10 border-yellow-400/30"
+      : tone === "silver"
+      ? "from-gray-300/10 to-gray-400/5 border-gray-300/20"
+      : tone === "bronze"
+      ? "from-orange-500/10 to-amber-600/5 border-orange-500/20"
+      : "from-blue-400/10 to-cyan-400/5 border-blue-400/20";
+
+  return (
+    <div className={`rounded-xl p-3 bg-gradient-to-br ${bg} border`}>
+      <div className="w-11 h-11 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-2xl mb-2">
+        {icon}
+      </div>
+      <p className="text-[10px] text-white/50 mb-0.5">{rank}</p>
+      <p className="font-bold text-sm">{name}</p>
+    </div>
+  );
+}
+
+// FAQ 아이템 — event-draft.html .faq-item 섹션 기반
+function FaqItem({ q, a }: { q: string; a: string }) {
+  return (
+    <div className="rounded-xl p-3.5 bg-white/5 border border-white/10">
+      <p className="font-bold text-sm mb-1.5">Q. {q}</p>
+      <p className="text-xs text-white/70 leading-relaxed">{a}</p>
     </div>
   );
 }
