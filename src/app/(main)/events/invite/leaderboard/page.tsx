@@ -171,7 +171,7 @@ export default function LeaderboardPage() {
 
 function PrizeTable({ track }: { track: Track }) {
   const prizes = getPrizesByTrack(track);
-  const trackLabel = track === "invite" ? "초대 트랙" : "글쓰기 트랙";
+  const trackLabel = track === "invite" ? "초대 이벤트" : "글쓰기 이벤트";
 
   return (
     <div className="mt-8">

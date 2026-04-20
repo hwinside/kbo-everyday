@@ -114,16 +114,16 @@ export default function EventInvitePage() {
           <p className="mt-2 text-center text-xs text-gray-900/60 dark:text-white/60">
             <span className="font-bold text-yellow-400">1등 경품 · 에어팟 프로 3</span>
             <br />
-            Apple 공식가 ₩369,000 · 트랙별 1대씩 · 총 2대
+            Apple 공식가 ₩369,000 · 이벤트별 1대씩 · 총 2대
           </p>
         </div>
 
-        {/* 2트랙 상세 — PDF SSOT 원문 bullet 그대로 */}
+        {/* 2이벤트 상세 — PDF SSOT 원문 bullet 그대로 */}
         <div className="mt-4 space-y-3">
-          {/* 초대 트랙 */}
+          {/* 초대 이벤트 */}
           <div className="rounded-2xl p-4 bg-gray-900/5 dark:bg-white/5 border border-gray-900/10 dark:border-white/10">
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/15 text-blue-700 dark:text-blue-300 text-xs font-bold mb-3">
-              💎 초대 트랙
+              💎 초대 이벤트
             </div>
             <h3 className="text-lg font-black mb-3">친구 초대하고 순위 올리기</h3>
             <ul className="space-y-2 text-xs text-gray-900/80 dark:text-white/80 leading-relaxed">
@@ -154,10 +154,10 @@ export default function EventInvitePage() {
             </ul>
           </div>
 
-          {/* 글쓰기 트랙 */}
+          {/* 글쓰기 이벤트 */}
           <div className="rounded-2xl p-4 bg-gray-900/5 dark:bg-white/5 border border-gray-900/10 dark:border-white/10">
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-yellow-500/20 text-yellow-800 dark:text-yellow-300 text-xs font-bold mb-3">
-              🌾 글쓰기 트랙
+              🌾 글쓰기 이벤트
             </div>
             <h3 className="text-lg font-black mb-3">활동 포인트로 순위 올리기</h3>
             <ul className="space-y-2 text-xs text-gray-900/80 dark:text-white/80 leading-relaxed">
@@ -182,14 +182,14 @@ export default function EventInvitePage() {
         </div>
 
         <p className="text-[11px] text-gray-900/50 dark:text-white/50 mt-3 leading-relaxed">
-          ※ 두 트랙 중복 수상 가능 · 초대 1등 + 글쓰기 1등 동시 수상 OK
+          ※ 두 이벤트 중복 수상 가능 · 초대 1등 + 글쓰기 1등 동시 수상 OK
         </p>
 
-        {/* 경품 표 — 트랙 공통 (인원·상품 동일) */}
+        {/* 경품 표 — 이벤트 공통 (인원·상품 동일) */}
         <div className="mt-5 rounded-2xl bg-gray-900/5 dark:bg-white/5 border border-gray-900/10 dark:border-white/10 overflow-hidden">
           <div className="px-4 py-3 bg-gray-900/5 dark:bg-white/5 border-b border-gray-900/10 dark:border-white/10 flex items-center gap-1.5">
             <Gift size={14} className="text-yellow-400" />
-            <p className="text-sm font-bold">상위 50명 경품 — 트랙별 동일</p>
+            <p className="text-sm font-bold">상위 50명 경품 — 이벤트별 동일</p>
           </div>
           <table className="w-full text-xs">
             <thead>
@@ -265,11 +265,11 @@ export default function EventInvitePage() {
           전체 리더보드 보기
         </Link>
 
-        {/* 뱃지 — 초대 트랙 (PDF SSOT 기준) */}
+        {/* 뱃지 — 초대 이벤트 (PDF SSOT 기준) */}
         <div className="mt-6">
           <h3 className="text-sm font-bold mb-3 flex items-center gap-1.5">
             <Users size={14} className="text-blue-400" />
-            초대 트랙 뱃지 — 크보팬 얼리멤버
+            초대 이벤트 뱃지 — 크보팬 얼리멤버
           </h3>
           <div className="space-y-2">
             <BadgeCard emoji="🏆" title="초대 챔피언" rank="1등 · 1명" tone="gold" />
@@ -281,11 +281,11 @@ export default function EventInvitePage() {
           </div>
         </div>
 
-        {/* 뱃지 — 글쓰기 트랙 (PDF SSOT 기준) */}
+        {/* 뱃지 — 글쓰기 이벤트 (PDF SSOT 기준) */}
         <div className="mt-5">
           <h3 className="text-sm font-bold mb-3 flex items-center gap-1.5">
             <MessageSquare size={14} className="text-green-400" />
-            글쓰기 트랙 뱃지 — 크보팬 얼리멤버
+            글쓰기 이벤트 뱃지 — 크보팬 얼리멤버
           </h3>
           <div className="space-y-2">
             <BadgeCard emoji="🏆" title="단장" rank="1등 · 1명" tone="gold" />
@@ -310,7 +310,7 @@ export default function EventInvitePage() {
             <StepCard
               num={1}
               title="이벤트 확인"
-              desc="랜딩 페이지에서 초대와 글쓰기 두 트랙의 보상 구조를 확인해요."
+              desc="랜딩 페이지에서 초대와 글쓰기 두 이벤트의 보상 구조를 확인해요."
             />
             <StepCard
               num={2}
@@ -333,11 +333,11 @@ export default function EventInvitePage() {
           </p>
         </div>
 
-        {/* 글쓰기 트랙 포인트 체계 (PDF SSOT) */}
+        {/* 글쓰기 이벤트 포인트 체계 (PDF SSOT) */}
         <GlassCard className="mt-5 p-4">
           <div className="flex items-center gap-1.5 mb-3">
             <MessageSquare size={14} className="text-green-400" />
-            <p className="text-sm font-bold">글쓰기 트랙 포인트 체계</p>
+            <p className="text-sm font-bold">글쓰기 이벤트 포인트 체계</p>
           </div>
           <table className="w-full text-xs">
             <thead>
@@ -377,11 +377,11 @@ export default function EventInvitePage() {
           </table>
         </GlassCard>
 
-        {/* 초대 트랙 집계 기준 (PDF SSOT) */}
+        {/* 초대 이벤트 집계 기준 (PDF SSOT) */}
         <GlassCard className="mt-4 p-4">
           <div className="flex items-center gap-1.5 mb-2">
             <Users size={14} className="text-blue-400" />
-            <p className="text-sm font-bold">초대 트랙 집계 기준</p>
+            <p className="text-sm font-bold">초대 이벤트 집계 기준</p>
           </div>
           <ul className="space-y-1.5 text-xs text-gray-900/70 dark:text-white/70 leading-relaxed">
             <li>• 초대 인정 조건: <span className="text-gray-900 dark:text-white">피초대자가 팀을 선택하고 글 또는 댓글을 1건 이상 작성</span></li>
