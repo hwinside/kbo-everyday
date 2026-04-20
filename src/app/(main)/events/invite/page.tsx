@@ -36,8 +36,8 @@ interface WritingRow {
  * 크보팬 얼리멤버 커뮤니티 활성화 이벤트 랜딩
  * 2026-04-20 ~ 2026-05-31
  *
- * 본 페이지 내용은 specs/event-opening-season.md에 락됨.
- * 카피·경품·뱃지·포인트 규칙 변경 시 스펙 먼저 수정.
+ * SSOT: PDF "크보팬 얼리멤버 커뮤니티 활성화 이벤트.pdf"
+ * (2026-04-20 #marketing 스레드 1776644364.098599에서 하린아빠 공유)
  */
 export default function EventInvitePage() {
   const router = useRouter();
@@ -86,7 +86,7 @@ export default function EventInvitePage() {
         <h1 className="font-bold">얼리멤버 이벤트</h1>
       </div>
 
-      <div className="max-w-screen-sm mx-auto px-4 pt-2">
+      <div className="max-w-screen-sm mx-auto px-4 pt-2 pb-24">
         {/* Hero */}
         <div className="rounded-2xl p-5 bg-gradient-to-br from-yellow-400/15 via-orange-400/10 to-red-400/10 border border-yellow-400/20">
           <div className="flex items-center gap-1.5 text-xs text-yellow-400 font-semibold mb-2">
@@ -103,15 +103,18 @@ export default function EventInvitePage() {
             에어팟 프로 3의 주인공이 됩니다.
           </p>
 
-          {/* 에어팟 프로 3 이미지 — 라벨 이미 이미지에 포함 */}
+          {/* 에어팟 프로 3 이미지 — 라벨 이미지에 포함됨 */}
           <div className="rounded-2xl bg-white/90 p-6 flex items-center justify-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/event-airpods.png"
-              alt="1등 경품 — 에어팟 프로 3 (트랙별 1대씩, 총 2대)"
+              alt="1등 경품 — 에어팟 프로 3 (Apple ₩369,000, 트랙별 1대씩 총 2대)"
               className="w-full max-w-[260px] h-auto"
             />
           </div>
+          <p className="mt-3 text-center text-xs text-white/50">
+            Apple 공식가 ₩369,000 · 트랙별 1대씩 · 총 2대
+          </p>
         </div>
 
         {/* 2트랙 구조 */}
@@ -135,7 +138,7 @@ export default function EventInvitePage() {
           ※ 두 트랙 중복 수상 가능 · 초대 1등 + 글쓰기 1등 동시 수상 OK
         </p>
 
-        {/* 경품 표 — 트랙별 동일, specs/event-opening-season.md 2.2 기준 */}
+        {/* 경품 표 — 트랙 공통 (인원·상품 동일) */}
         <div className="mt-5 rounded-2xl bg-white/5 border border-white/10 overflow-hidden">
           <div className="px-4 py-3 bg-white/5 border-b border-white/10 flex items-center gap-1.5">
             <Gift size={14} className="text-yellow-400" />
@@ -184,7 +187,7 @@ export default function EventInvitePage() {
           </table>
           <div className="px-3 py-2.5 text-[10px] text-white/40 bg-white/[0.02] border-t border-white/5 leading-relaxed">
             ※ 최종 순위에 해당하는 단일 상품만 지급 (중복 지급 없음)
-            <br />※ 에어팟·신세계 10만원권 제세공과금 22%는 크보팬 대납
+            <br />※ 5만원 초과 경품의 제세공과금(22%)은 크보팬 대납
           </div>
         </div>
 
@@ -208,7 +211,6 @@ export default function EventInvitePage() {
           currentUserId={user?.id}
         />
 
-        {/* 전체 리더보드 CTA */}
         <Link
           href="/events/invite/leaderboard"
           className="mt-4 block w-full rounded-xl py-3 bg-white/10 hover:bg-white/15 text-center text-sm font-semibold border border-white/10 transition-colors"
@@ -216,29 +218,42 @@ export default function EventInvitePage() {
           전체 리더보드 보기
         </Link>
 
-        {/* 뱃지 — 두 트랙 통일 야구단 프런트 테마 */}
+        {/* 뱃지 — 초대 트랙 (PDF SSOT 기준) */}
         <div className="mt-6">
           <h3 className="text-sm font-bold mb-3 flex items-center gap-1.5">
-            <Trophy size={14} className="text-yellow-400" />
-            시즌 한정 얼리멤버 뱃지
+            <Users size={14} className="text-blue-400" />
+            초대 트랙 뱃지 — 크보팬 얼리멤버
           </h3>
-          <p className="text-[11px] text-white/60 leading-relaxed mb-3">
-            두 트랙(초대 / 글쓰기) 동일 뱃지 체계 · 누적 수상 시 모두 부여
-          </p>
           <div className="grid grid-cols-2 gap-2">
-            <BadgeCard emoji="🏆" title="단장" rank="1등" tone="gold" />
-            <BadgeCard emoji="💼" title="운영팀장" rank="2~4등" tone="gold" />
-            <BadgeCard emoji="🔍" title="스카우트" rank="5~9등" tone="silver" />
-            <BadgeCard emoji="🎙️" title="해설위원" rank="10~19등" tone="silver" />
-            <BadgeCard emoji="📝" title="기자단" rank="20~39등" tone="bronze" />
-            <BadgeCard emoji="📣" title="서포터즈" rank="40~50등" tone="bronze" />
+            <BadgeCard emoji="🏆" title="초대 챔피언" rank="1등 · 1명" tone="gold" />
+            <BadgeCard emoji="🥈" title="초대 마스터" rank="2~4등 · 3명" tone="gold" />
+            <BadgeCard emoji="🎖️" title="초대 레전드" rank="5~9등 · 5명" tone="silver" />
+            <BadgeCard emoji="⭐" title="초대 에이스" rank="10~19등 · 10명" tone="silver" />
+            <BadgeCard emoji="🤝" title="리크루터" rank="20~39등 · 20명" tone="bronze" />
+            <BadgeCard emoji="🔗" title="커넥터" rank="40~50등 · 11명" tone="bronze" />
+          </div>
+        </div>
+
+        {/* 뱃지 — 글쓰기 트랙 (PDF SSOT 기준) */}
+        <div className="mt-5">
+          <h3 className="text-sm font-bold mb-3 flex items-center gap-1.5">
+            <MessageSquare size={14} className="text-green-400" />
+            글쓰기 트랙 뱃지 — 크보팬 얼리멤버
+          </h3>
+          <div className="grid grid-cols-2 gap-2">
+            <BadgeCard emoji="🏆" title="단장" rank="1등 · 1명" tone="gold" />
+            <BadgeCard emoji="🥈" title="운영팀장" rank="2~4등 · 3명" tone="gold" />
+            <BadgeCard emoji="🎖️" title="스카우트" rank="5~9등 · 5명" tone="silver" />
+            <BadgeCard emoji="⭐" title="해설위원" rank="10~19등 · 10명" tone="silver" />
+            <BadgeCard emoji="💬" title="기자단" rank="20~39등 · 20명" tone="bronze" />
+            <BadgeCard emoji="📢" title="서포터즈" rank="40~50등 · 11명" tone="bronze" />
           </div>
           <p className="text-[11px] text-white/50 mt-2">
-            ※ 시즌 한정 뱃지 · 프로필 상시 표시 · 2026 시즌 종료까지 유지
+            ※ 시즌 한정 뱃지 · 프로필 상시 표시 · 2026 시즌 종료까지 유지 · 중복 수상 시 두 뱃지 모두 부여
           </p>
         </div>
 
-        {/* 참여 방법 4단계 */}
+        {/* 참여 방법 4단계 (PDF SSOT) */}
         <div className="mt-6">
           <h3 className="text-sm font-bold mb-3 flex items-center gap-1.5">
             <Calendar size={14} className="text-yellow-400" />
@@ -247,28 +262,31 @@ export default function EventInvitePage() {
           <div className="grid grid-cols-2 gap-2">
             <StepCard
               num={1}
-              title="로그인 + 팀 설정"
-              desc="크보팬 계정으로 로그인하고 내 팀을 선택합니다."
+              title="이벤트 확인"
+              desc="랜딩 페이지에서 초대와 글쓰기 두 트랙의 보상 구조를 확인해요."
             />
             <StepCard
               num={2}
-              title="초대 또는 글쓰기"
-              desc="친구 초대 링크를 공유하거나, 경기 채팅·댓글·글·사진글로 포인트를 쌓습니다."
+              title="활동 시작"
+              desc="친구를 초대하거나 경기 중계 채팅·댓글·글 작성으로 포인트를 쌓아요."
             />
             <StepCard
               num={3}
-              title="실적 누적"
-              desc="활성화 초대 수(초대 트랙) · 누적 포인트(글쓰기 트랙)가 실시간 랭킹에 반영됩니다."
+              title="리더보드 확인"
+              desc="내 순위와 남은 기간을 보면서 상위 50위 진입을 노려요."
             />
             <StepCard
               num={4}
-              title="5/31 자정 스냅샷"
-              desc="트랙별 상위 50명에게 뱃지와 경품 지급. 당첨자 개별 안내."
+              title="검수 후 지급"
+              desc="이벤트 종료 후 최종 검수와 함께 상품과 시즌 한정 뱃지가 지급돼요."
             />
           </div>
+          <p className="text-[11px] text-white/50 mt-2 leading-relaxed">
+            초대는 <span className="text-white">/my → 친구 초대 카드 → 공유</span> 3단계로 참여할 수 있어요.
+          </p>
         </div>
 
-        {/* 포인트 체계 — 글쓰기 트랙 */}
+        {/* 글쓰기 트랙 포인트 체계 (PDF SSOT) */}
         <GlassCard className="mt-5 p-4">
           <div className="flex items-center gap-1.5 mb-3">
             <MessageSquare size={14} className="text-green-400" />
@@ -286,22 +304,22 @@ export default function EventInvitePage() {
               <tr>
                 <td className="py-2">경기 중계 채팅</td>
                 <td className="text-right py-2">1점</td>
-                <td className="text-right py-2 text-white/60">30점 (30회)</td>
+                <td className="text-right py-2 text-white/60">30점</td>
               </tr>
               <tr>
                 <td className="py-2">커뮤니티 댓글</td>
                 <td className="text-right py-2">2점</td>
-                <td className="text-right py-2 text-white/60">40점 (20회)</td>
+                <td className="text-right py-2 text-white/60">40점</td>
               </tr>
               <tr>
                 <td className="py-2">커뮤니티 글</td>
                 <td className="text-right py-2">3점</td>
-                <td className="text-right py-2 text-white/60">30점 (10회)</td>
+                <td className="text-right py-2 text-white/60">30점</td>
               </tr>
               <tr>
-                <td className="py-2">커뮤니티 사진글</td>
+                <td className="py-2">사진 게시판 사진글</td>
                 <td className="text-right py-2">5점</td>
-                <td className="text-right py-2 text-white/60">50점 (10회)</td>
+                <td className="text-right py-2 text-white/60">50점</td>
               </tr>
               <tr className="font-bold text-yellow-400">
                 <td className="py-2">하루 총 상한</td>
@@ -310,25 +328,24 @@ export default function EventInvitePage() {
               </tr>
             </tbody>
           </table>
-          <p className="text-[10px] text-white/40 mt-3 leading-relaxed">
-            ※ 42일 최대 6,300점 · 초과 분은 자동 차단
-          </p>
         </GlassCard>
 
-        {/* 초대 트랙 집계 기준 */}
+        {/* 초대 트랙 집계 기준 (PDF SSOT) */}
         <GlassCard className="mt-4 p-4">
           <div className="flex items-center gap-1.5 mb-2">
             <Users size={14} className="text-blue-400" />
             <p className="text-sm font-bold">초대 트랙 집계 기준</p>
           </div>
           <ul className="space-y-1.5 text-xs text-white/70 leading-relaxed">
-            <li>• 피초대자가 가입 + 팀 선택 + 글/댓글 1건 작성 시 <span className="text-white">활성화 초대 1건</span> 인정</li>
-            <li>• <span className="text-white">기존 달성분 + 이벤트 기간 신규 분</span> 모두 합산</li>
-            <li>• 동률 시 마지막 활성화 시각이 빠른 유저 우선</li>
+            <li>• 초대 인정 조건: <span className="text-white">피초대자가 팀을 선택하고 글 또는 댓글을 1건 이상 작성</span></li>
+            <li>• 카카오톡·공유 링크로 가입하면 초대 코드가 자동 등록</li>
+            <li>• 한 친구는 한 명에게만 귀속, 먼저 등록한 초대자에게 카운트</li>
+            <li>• <span className="text-white">기존 누적 초대 + 이벤트 기간 신규 분</span> 모두 합산</li>
+            <li>• 최종 집계는 5월 31일 기준으로 확정</li>
           </ul>
         </GlassCard>
 
-        {/* FAQ — specs 10.3 락 기준 */}
+        {/* FAQ — PDF SSOT 4개 그대로 */}
         <div className="mt-6">
           <h3 className="text-sm font-bold mb-3 flex items-center gap-1.5">
             <Trophy size={14} className="text-yellow-400" />
@@ -337,63 +354,56 @@ export default function EventInvitePage() {
           <div className="space-y-2">
             <FaqItem
               q="순위권에 들면 어떻게 지급되나요?"
-              a="최종 순위에 해당하는 단일 상품 1개만 지급됩니다. 예를 들어 5등이면 신세계 상품권 5만원권 1개를 받으며, 그 아래 순위 구간 상품은 중복 지급되지 않습니다."
+              a="최종 순위에 해당하는 단일 상품 1개만 지급됩니다. 예를 들어 5등이면 신세계 상품권 5만원권 1개를 받으며, 그 아래 순위 구간 상품은 중복 지급되지 않아요."
             />
             <FaqItem
               q="예전에 이미 초대 뱃지를 달성했는데 이번 이벤트 보상도 받을 수 있나요?"
-              a="네, 이번 이벤트는 누적 활성화 초대 수 기준으로 집계되어 기존 달성분도 인정됩니다. 단, 이벤트 기간 중 새로 활성화된 초대도 합산되어 순위 다툼은 42일 동안 계속됩니다."
+              a="네. 기존 누적 초대도 인정되며, 이벤트 기간 중 새로 활성화된 초대도 함께 합산돼요. 단, 모두 피초대자가 팀을 선택하고 글 또는 댓글을 1건 이상 작성해 활성화 조건을 충족한 건만 인정됩니다."
             />
             <FaqItem
-              q="하루에 받을 수 있는 포인트에 한도가 있나요?"
-              a="네, 하루 총 150점까지 적립 가능하며, 활동 유형별 상한도 있습니다 (경기 중계 채팅 30점 / 댓글 40점 / 글 30점 / 사진글 50점)."
-            />
-            <FaqItem
-              q="어떤 글이 점수 적용에서 제외되나요?"
-              a="중복 도배, 초단문 스팸, 점수 획득 목적으로만 작성된 것으로 판단되는 글 등은 운영진 검토 후 점수 적용에서 제외될 수 있습니다. 제외가 3건 이상 누적되면 해당 계정은 순위표에서 제외됩니다."
-            />
-            <FaqItem
-              q="셀프 초대로 여러 계정을 만들면 어떻게 되나요?"
-              a="동일 기기·비정상 패턴·수동 검수 결과에 따라 이벤트 집계 및 보상에서 제외될 수 있습니다."
+              q="어떤 활동이 점수 적용에서 제외되나요?"
+              a="복붙, 도배, 의미 없는 반복 활동, 점수 획득만을 위한 글은 운영진 판단으로 점수 적용에서 제외될 수 있어요."
             />
             <FaqItem
               q="에어팟 프로 3는 언제 어떻게 받나요?"
-              a="이벤트 종료 후 최종 검수를 거쳐 1주 내 개별 안내 및 배송될 예정입니다. 제세공과금(22%)은 크보팬이 대납합니다."
-            />
-            <FaqItem
-              q="스타벅스·신세계 상품권은 언제 받나요?"
-              a="시즌 종료 후 최종 검수를 거쳐 일괄 지급됩니다 (디지털 모바일 상품권)."
+              a="이벤트 종료 후 최종 검수를 거쳐 개별 안내 및 배송될 예정이며, 5만원 초과 경품의 제세공과금은 크보팬이 대납해요."
             />
           </div>
         </div>
 
-        {/* 어뷰징 방지 안내 */}
+        {/* 어뷰징 방지 안내 (PDF SSOT) */}
         <div className="mt-5 rounded-xl p-4 bg-red-500/5 border border-red-500/15">
           <div className="flex items-center gap-1.5 mb-2">
             <Shield size={14} className="text-red-400" />
             <p className="text-sm font-bold text-red-400">건전한 커뮤니티를 위한 안내</p>
           </div>
+          <p className="text-[11px] text-white/60 font-semibold mt-2 mb-1">초대 트랙</p>
           <ul className="space-y-1.5 text-[11px] text-white/70 leading-relaxed">
-            <li>• 중복 도배 / 초단문 스팸 / AI 생성 의심 글은 자동 필터 + 운영진 검수로 점수 제외</li>
-            <li>• 점수 제외 3건 누적 시 해당 계정은 리더보드·수상 대상에서 제외</li>
-            <li>• 셀프 초대·부계정·비정상 패턴은 fingerprint/IP 기반으로 탐지</li>
-            <li>• 이벤트 중단 권한: 크보팬 운영자 판단 하에 언제든 중단 가능 (환불·당첨 무효 포함)</li>
+            <li>• 초대가 실적으로 인정되려면, 피초대자가 팀을 선택하고 글 또는 댓글을 1건 이상 작성해야 합니다</li>
+            <li>• 본인 초대코드 입력, 동일 디바이스·동일 IP 반복 가입 등 어뷰징 징후는 검수에서 제외될 수 있습니다</li>
+          </ul>
+          <p className="text-[11px] text-white/60 font-semibold mt-3 mb-1">글쓰기 트랙 (운영 안전핀)</p>
+          <ul className="space-y-1.5 text-[11px] text-white/70 leading-relaxed">
+            <li>• 최종 순위에 해당하는 단일 상품 1개만 지급</li>
+            <li>• 점수 획득만을 위한 글과 도배성 활동은 운영 판단으로 제외</li>
+            <li>• 제외 판정이 3건 이상 누적되면 리더보드에서 제외 가능</li>
+            <li>• 셀프 초대·비정상 패턴은 검수 후 집계 제외 가능</li>
           </ul>
         </div>
 
-        {/* Footer note */}
+        {/* Footer */}
         <p className="mt-6 text-[10px] text-white/30 text-center leading-relaxed">
           이벤트 기간 2026.04.20 ~ 2026.05.31 · 마감 2026-05-31 23:59 KST
           <br />
-          당첨자 발표 6월 1주 내 · 상품 배송·발송 일괄 진행
+          최종 집계는 5월 31일 기준 · 당첨자 안내는 종료 후 개별 진행
           <br />
-          제세공과금(과세 대상 상품) 22% 크보팬 대납 · 원천징수영수증 별도 제공
+          5만원 초과 경품의 제세공과금(22%) 크보팬 대납
         </p>
       </div>
     </div>
   );
 }
 
-// 트랙 소개 카드
 function TrackCard({
   icon,
   title,
@@ -416,7 +426,6 @@ function TrackCard({
   );
 }
 
-// Top 10 프리뷰
 function TopPreview({
   title,
   icon,
@@ -537,7 +546,6 @@ function TopPreview({
   );
 }
 
-// 참여 방법 단계 카드
 function StepCard({ num, title, desc }: { num: number; title: string; desc: string }) {
   return (
     <div className="rounded-xl p-3 bg-white/5 border border-white/10">
@@ -550,7 +558,6 @@ function StepCard({ num, title, desc }: { num: number; title: string; desc: stri
   );
 }
 
-// 얼리멤버 뱃지 카드
 function BadgeCard({
   emoji,
   title,
@@ -581,7 +588,6 @@ function BadgeCard({
   );
 }
 
-// FAQ 아이템
 function FaqItem({ q, a }: { q: string; a: string }) {
   return (
     <div className="rounded-xl p-3.5 bg-white/5 border border-white/10">
