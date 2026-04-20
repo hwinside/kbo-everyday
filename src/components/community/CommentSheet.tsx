@@ -54,7 +54,9 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const inputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const dragStartY = useRef(0);
+  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const { user, profile } = useAuth();
   const shouldRender = isOpen && postId !== null;
 
@@ -107,14 +109,46 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     }
   }, [shouldRender]);
 
-  // Focus input when opened
+  // Reset input when sheet closes. Focus is handled after open animation completes
+  // (see onAnimationComplete on the motion.div below) to avoid iOS keyboard/animation race.
   useEffect(() => {
-    if (shouldRender) {
-      setTimeout(() => inputRef.current?.focus(), 300);
-    } else {
+    if (!shouldRender) {
       setInput("");
     }
   }, [shouldRender]);
+
+  // Track visualViewport for iOS keyboard-aware sheet height
+  useEffect(() => {
+    if (!shouldRender) return;
+    if (typeof window === "undefined" || !window.visualViewport) {
+      setViewportHeight(window.innerHeight);
+      return;
+    }
+    const vv = window.visualViewport;
+    const update = () => setViewportHeight(vv.height);
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, [shouldRender]);
+
+  // When keyboard opens (viewport shrinks) or list updates, keep the latest
+  // comment visible — but ONLY if user was already near the bottom. This avoids
+  // yanking a user who was scrolled up reading older comments (삼순이 리뷰 피드백).
+  useEffect(() => {
+    if (!shouldRender) return;
+    const el = listRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (!nearBottom) return;
+    const id = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(id);
+  }, [shouldRender, viewportHeight, comments.length]);
 
   // 댓글 목록 DB 재조회 (optimistic → 실제 데이터 교체)
   const refetchComments = useCallback(async (pid: number) => {
@@ -251,10 +285,19 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             onClick={onClose}
           />
 
-          {/* Sheet */}
+          {/* Sheet — height follows visualViewport so iOS keyboard never occludes input */}
           <motion.div
+            ref={sheetRef}
             className="fixed inset-x-0 bottom-0 flex flex-col bg-bg-secondary rounded-t-2xl"
-            style={{ zIndex: 9999, maxHeight: "85vh", minHeight: "50vh" }}
+            style={{
+              zIndex: 9999,
+              maxHeight: viewportHeight
+                ? `${Math.min(viewportHeight * 0.92, viewportHeight - 24)}px`
+                : "85vh",
+              minHeight: viewportHeight
+                ? `${Math.min(viewportHeight * 0.5, 360)}px`
+                : "50vh",
+            }}
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
@@ -284,7 +327,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             </div>
 
             {/* Comment list */}
-            <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-3 space-y-4">
+            <div ref={listRef} className="flex-1 overflow-y-auto overscroll-contain px-4 py-3 space-y-4">
               {loading ? (
                 <div className="space-y-4">
                   {[...Array(4)].map((_, i) => (
@@ -425,6 +468,12 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                     type="text"
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
+                    onFocus={() => {
+                      // When keyboard opens, scroll latest comment into view above input
+                      requestAnimationFrame(() => {
+                        if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+                      });
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.nativeEvent.isComposing) {
                         e.preventDefault();
