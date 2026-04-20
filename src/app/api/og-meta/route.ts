@@ -4,6 +4,16 @@ import { NextRequest, NextResponse } from "next/server";
 const cache = new Map<string, { data: OGData; ts: number }>();
 const CACHE_TTL = 1000 * 60 * 60; // 1 hour
 
+// Client must never serve from its own HTTP cache for this endpoint; CDN can still
+// serve from edge for 1h with stale-while-revalidate. This unblocks devices that
+// already cached a null fallback response from the old 50KB-slice bug.
+const CACHE_HEADER = "private, no-store, max-age=0, must-revalidate";
+
+/** Treat as successful OG only if at least title or image is present. Null fallbacks must not be cached. */
+function hasUsefulOG(d: OGData): boolean {
+  return !!(d.title || d.image);
+}
+
 interface OGData {
   title: string | null;
   description: string | null;
@@ -36,7 +46,7 @@ export async function GET(req: NextRequest) {
   const cached = cache.get(url);
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     return NextResponse.json(cached.data, {
-      headers: { "Cache-Control": "public, max-age=3600" },
+      headers: { "Cache-Control": CACHE_HEADER },
     });
   }
 
@@ -61,9 +71,9 @@ export async function GET(req: NextRequest) {
           siteName: "YouTube",
           url,
         };
-        cache.set(url, { data, ts: Date.now() });
+        if (hasUsefulOG(data)) cache.set(url, { data, ts: Date.now() });
         return NextResponse.json(data, {
-          headers: { "Cache-Control": "public, max-age=3600" },
+          headers: { "Cache-Control": CACHE_HEADER },
         });
       }
     } catch {
@@ -152,17 +162,18 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Cache result
-    cache.set(url, { data, ts: Date.now() });
-
-    // Limit cache size
-    if (cache.size > 500) {
-      const oldest = cache.keys().next().value;
-      if (oldest) cache.delete(oldest);
+    // Cache result only when we actually got useful OG data — don't freeze null fallbacks.
+    if (hasUsefulOG(data)) {
+      cache.set(url, { data, ts: Date.now() });
+      // Limit cache size
+      if (cache.size > 500) {
+        const oldest = cache.keys().next().value;
+        if (oldest) cache.delete(oldest);
+      }
     }
 
     return NextResponse.json(data, {
-      headers: { "Cache-Control": "public, max-age=3600" },
+      headers: { "Cache-Control": CACHE_HEADER },
     });
   } catch (e: unknown) {
     return NextResponse.json(

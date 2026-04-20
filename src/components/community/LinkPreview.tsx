@@ -57,7 +57,8 @@ export default function LinkPreview({ text, maxPreviews = 3, stopPropagation = f
       setPreviews((prev) => new Map(prev).set(url, "loading"));
 
       // Fetch OG metadata
-      fetch(`/api/og-meta?url=${encodeURIComponent(url)}`)
+      // v=2 cache-buster forces new URL after 2026-04-21 OG parser fix
+      fetch(`/api/og-meta?url=${encodeURIComponent(url)}&v=2`)
         .then((r) => r.ok ? r.json() : Promise.reject())
         .then((data: OGData) => {
           setPreviews((prev) => new Map(prev).set(url, data));
