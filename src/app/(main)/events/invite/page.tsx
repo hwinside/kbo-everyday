@@ -418,25 +418,25 @@ export default function EventInvitePage() {
           </div>
         </div>
 
-        {/* 운영 안전핀 — PDF SSOT 독립 카드 */}
+        {/* 운영 참고사항 — PDF SSOT 독립 카드 */}
         <div className="mt-5 rounded-2xl p-5 bg-gray-900/[0.04] dark:bg-white/[0.04] border border-gray-900/10 dark:border-white/10">
-          <h3 className="text-base font-black mb-3">운영 안전핀</h3>
+          <h3 className="text-base font-black mb-3">운영 참고사항</h3>
           <ul className="space-y-2.5 text-sm text-gray-900/80 dark:text-white/80 leading-relaxed">
             <li className="flex gap-2">
               <span className="text-red-400 shrink-0">•</span>
-              <span>최종 순위에 해당하는 단일 상품 1개만 지급</span>
+              <span>최종 순위 기준으로 1인당 단일 상품 1개만 지급</span>
             </li>
             <li className="flex gap-2">
               <span className="text-red-400 shrink-0">•</span>
-              <span>점수 획득만을 위한 글과 도배성 활동은 운영 판단으로 제외</span>
+              <span>점수 획득만을 위한 글이나 도배성 활동은 운영 판단에 따라 집계에서 제외</span>
             </li>
             <li className="flex gap-2">
               <span className="text-red-400 shrink-0">•</span>
-              <span>제외 판정이 3건 이상 누적되면 리더보드에서 제외 가능</span>
+              <span>제외 판정이 3회 이상 누적되면 리더보드에서 제외</span>
             </li>
             <li className="flex gap-2">
               <span className="text-red-400 shrink-0">•</span>
-              <span>셀프 초대, 비정상 패턴은 검수 후 집계 제외 가능</span>
+              <span>셀프 초대, 비정상 패턴은 검수 후 집계에서 제외</span>
             </li>
           </ul>
         </div>
