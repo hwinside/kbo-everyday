@@ -5,14 +5,10 @@ import { ChevronLeft } from "lucide-react";
 import type { ReactNode } from "react";
 
 // Hero 이미지 매핑: kboId → public/players-hero/{kboId}.webp 존재 여부
-// 현재 확보된 선수 cutout 목록. 신규 추가 시 이 set에 kboId 추가.
-const HERO_KBOIDS = new Set<string>([
-  "53123", // 오스틴
-  "66108", // 홍창기
-  "69102", // 문보경
-  "65207", // 신민재
-  "68119", // 문성주
-]);
+// 소스: scripts/generate-hero-manifest.sh 가 public/players-hero/*.webp 스캔해서 생성.
+// 신규 cutout 추가 시 이 명령을 다시 돌리면 됩니다.
+import heroKboIdsList from "@/lib/constants/hero-kboids.json";
+const HERO_KBOIDS = new Set<string>(heroKboIdsList as string[]);
 
 export type HeroStat = { label: string; value: string };
 
