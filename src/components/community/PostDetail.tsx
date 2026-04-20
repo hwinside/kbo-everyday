@@ -254,8 +254,8 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           </>
         )}
 
-        {/* Link previews */}
-        <LinkPreview text={post.content} maxPreviews={3} />
+        {/* Link previews (수정된 content 반영) */}
+        <LinkPreview text={postPatch.content ?? post.content} maxPreviews={3} />
 
         {/* Images */}
         {post.image_urls.length > 0 && (
