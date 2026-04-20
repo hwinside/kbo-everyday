@@ -21,6 +21,8 @@ interface CommentSheetProps {
   teamId?: number | null;
   /** 댓글 작성 성공 시 부모에게 알림 (comment_count 동기화용) */
   onCommentAdded?: (postId: number) => void;
+  /** 댓글 삭제 성공 시 부모에게 알림 (comment_count 동기화용) */
+  onCommentDeleted?: (postId: number) => void;
 }
 
 function timeAgo(dateStr: string): string {
@@ -39,12 +41,7 @@ function getGradeInfo(gradeId?: string) {
   return GRADES.find((g) => g.id === gradeId) ?? GRADES[0];
 }
 
-interface CommentSheetPropsInternal extends CommentSheetProps {
-  /** 댓글 삭제 성공 시 부모에게 알림 (comment_count 동기화용) */
-  onCommentDeleted?: (postId: number) => void;
-}
-
-export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommentAdded, onCommentDeleted }: CommentSheetPropsInternal) {
+export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommentAdded, onCommentDeleted }: CommentSheetProps) {
   const [input, setInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
