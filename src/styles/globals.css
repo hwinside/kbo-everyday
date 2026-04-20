@@ -303,4 +303,4 @@ body {
    directly above the iOS keyboard instead of stacking on top of a 64px tab bar
    that is already pushed behind the keyboard. PostDetail.tsx toggles .kbd-open
    on document.body when window.visualViewport detects keyboard. */
-body.kbd-open nav.fixed.bottom-0 { display: none !important; }
+body.kbd-open nav[data-tabbar] { display: none !important; }

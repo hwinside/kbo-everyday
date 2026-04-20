@@ -30,25 +30,65 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
 
   // iOS keyboard-aware comment bar: subscribe to visualViewport, hide global TabBar
   // while keyboard is open, and anchor the input bar right above the keyboard.
+  //
+  // iOS Safari quirk: on first focus the `resize` event can lag, and `offsetTop`
+  // may already be non-zero. We use (innerHeight - vv.height) as the canonical
+  // keyboard height — it's the only reliable number across Safari versions. We
+  // also listen on both `resize` and `scroll` because Safari sometimes fires
+  // only one of them during the keyboard open transition.
   const [keyboardOffset, setKeyboardOffset] = useState(0);
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
     const vv = window.visualViewport;
     const update = () => {
-      // layoutViewport - visualViewport = keyboard (plus any browser UI diff).
-      const diff = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-      // Small threshold to avoid toggling on minor browser UI shifts.
-      const kbd = diff > 80 ? diff : 0;
+      const diff = Math.max(0, window.innerHeight - vv.height);
+      // Only set offset if we actually have a keyboard-sized diff.
+      const kbd = diff > 60 ? diff : 0;
       setKeyboardOffset(kbd);
+      // Don't remove kbd-open here — focus-based toggling handles open/close.
+      // This avoids viewport jitter race where scroll events briefly report
+      // diff=0 while the keyboard is still up.
       if (kbd > 0) document.body.classList.add("kbd-open");
-      else document.body.classList.remove("kbd-open");
     };
     update();
     vv.addEventListener("resize", update);
     vv.addEventListener("scroll", update);
+    // Fallback (삼순이 제안): on any text input focus inside this page,
+    // immediately add kbd-open so the TabBar hides even before visualViewport
+    // reports a height change. Remove it on blur.
+    const onFocusIn = (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) {
+        document.body.classList.add("kbd-open");
+      }
+      // Still poll visualViewport for accurate keyboardOffset number.
+      let ticks = 0;
+      const id = setInterval(() => {
+        update();
+        if (++ticks >= 10) clearInterval(id); // 10 * 50ms = 500ms coverage
+      }, 50);
+    };
+    const onFocusOut = (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) {
+        // Defer: if focus is moving to another input, don't flash the TabBar.
+        setTimeout(() => {
+          const active = document.activeElement as HTMLElement | null;
+          const stillInputFocus = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+          if (!stillInputFocus) {
+            document.body.classList.remove("kbd-open");
+            setKeyboardOffset(0);
+          }
+        }, 50);
+      }
+    };
+    window.addEventListener("focusin", onFocusIn);
+    window.addEventListener("focusout", onFocusOut);
     return () => {
       vv.removeEventListener("resize", update);
       vv.removeEventListener("scroll", update);
+      window.removeEventListener("focusin", onFocusIn);
+      window.removeEventListener("focusout", onFocusOut);
       document.body.classList.remove("kbd-open");
     };
   }, []);
