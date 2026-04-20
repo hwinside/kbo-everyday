@@ -271,7 +271,7 @@ export default function EventInvitePage() {
             <Users size={14} className="text-blue-400" />
             초대 트랙 뱃지 — 크보팬 얼리멤버
           </h3>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-2">
             <BadgeCard emoji="🏆" title="초대 챔피언" rank="1등 · 1명" tone="gold" />
             <BadgeCard emoji="🥈" title="초대 마스터" rank="2~4등 · 3명" tone="gold" />
             <BadgeCard emoji="🎖️" title="초대 레전드" rank="5~9등 · 5명" tone="silver" />
@@ -287,7 +287,7 @@ export default function EventInvitePage() {
             <MessageSquare size={14} className="text-green-400" />
             글쓰기 트랙 뱃지 — 크보팬 얼리멤버
           </h3>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-2">
             <BadgeCard emoji="🏆" title="단장" rank="1등 · 1명" tone="gold" />
             <BadgeCard emoji="🥈" title="운영팀장" rank="2~4등 · 3명" tone="gold" />
             <BadgeCard emoji="🎖️" title="스카우트" rank="5~9등 · 5명" tone="silver" />
@@ -592,13 +592,15 @@ function BadgeCard({
       : "from-orange-500/10 to-amber-600/5 border-orange-500/20";
 
   return (
-    <div className={`rounded-xl p-3 bg-gradient-to-br ${bg} border`}>
-      <div className="w-11 h-11 rounded-xl bg-gray-900/10 dark:bg-white/10 border border-gray-900/10 dark:border-white/10 flex items-center justify-center text-2xl mb-2">
+    <div className={`rounded-xl p-3 bg-gradient-to-br ${bg} border flex items-center gap-3`}>
+      <div className="w-11 h-11 rounded-xl bg-gray-900/10 dark:bg-white/10 border border-gray-900/10 dark:border-white/10 flex items-center justify-center text-2xl shrink-0">
         {emoji}
       </div>
-      <p className="text-[10px] text-gray-900/50 dark:text-white/50 mb-0.5">{rank}</p>
-      <p className="text-xs text-gray-900/70 dark:text-white/70">크보팬 얼리멤버</p>
-      <p className="font-bold text-sm mt-0.5">· {title}</p>
+      <div className="flex-1 min-w-0">
+        <p className="text-[10px] text-gray-900/50 dark:text-white/50 mb-0.5">{rank}</p>
+        <p className="font-bold text-sm">{title}</p>
+        <p className="text-[11px] text-gray-900/60 dark:text-white/60 mt-0.5">크보팬 얼리멤버</p>
+      </div>
     </div>
   );
 }
