@@ -122,7 +122,7 @@ export default function EventInvitePage() {
         <div className="mt-4 space-y-3">
           {/* 초대 트랙 */}
           <div className="rounded-2xl p-4 bg-gray-900/5 dark:bg-white/5 border border-gray-900/10 dark:border-white/10">
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/15 text-blue-300 text-xs font-semibold mb-3">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/15 text-blue-700 dark:text-blue-300 text-xs font-bold mb-3">
               💎 초대 트랙
             </div>
             <h3 className="text-lg font-black mb-3">친구 초대하고 순위 올리기</h3>
@@ -156,7 +156,7 @@ export default function EventInvitePage() {
 
           {/* 글쓰기 트랙 */}
           <div className="rounded-2xl p-4 bg-gray-900/5 dark:bg-white/5 border border-gray-900/10 dark:border-white/10">
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-yellow-500/15 text-yellow-300 text-xs font-semibold mb-3">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-yellow-500/20 text-yellow-800 dark:text-yellow-300 text-xs font-bold mb-3">
               🌾 글쓰기 트랙
             </div>
             <h3 className="text-lg font-black mb-3">활동 포인트로 순위 올리기</h3>
