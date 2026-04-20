@@ -15,7 +15,8 @@ import { X } from "lucide-react";
  * 배너 교체 시 같은 경로로 덮어쓰면 됨. 디자이너 원본 오면 무중단 업데이트 가능.
  */
 
-const DISMISS_KEY = "event_banner_invite_dismissed_at";
+// v2: button-in-anchor 패치 + 초기 dismiss 리셋용으로 key 신랴화
+const DISMISS_KEY = "event_banner_invite_dismissed_at_v2";
 const DISMISS_DAYS = 7;
 const EVENT_END = new Date("2026-06-01T00:00:00+09:00"); // 이벤트 종료 시점 (KST 5/31 24:00)
 
