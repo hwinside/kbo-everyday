@@ -201,7 +201,7 @@ export default function PlayerHero({
             fill
             sizes="220px"
             className="relative object-contain"
-            style={{ objectPosition: "center -45px" }}
+            style={{ objectPosition: "center -35px" }}
             priority
             unoptimized
           />
