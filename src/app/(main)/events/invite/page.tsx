@@ -610,8 +610,8 @@ function BadgeCard({
         {emoji}
       </div>
       <p className="text-[10px] text-white/50 mb-0.5">{rank}</p>
-      <p className="font-bold text-sm">크보팬 얼리멤버</p>
-      <p className="text-xs text-white/80 mt-0.5">· {title}</p>
+      <p className="text-xs text-white/70">크보팬 얼리멤버</p>
+      <p className="font-bold text-sm mt-0.5">· {title}</p>
     </div>
   );
 }
