@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
@@ -9,6 +9,8 @@ import Link from "next/link";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import GlassCard from "@/components/ui/GlassCard";
+import PostList from "@/components/community/PostList";
+import type { Post as PostDTO } from "@/lib/types";
 import NicheStats from "@/components/player/NicheStats";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
@@ -103,6 +105,30 @@ export default function PlayerBoardPage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<"stats" | "photo" | "latest" | "hot">("stats");
   const { posts: livePosts, loading: postsLoading, reload } = usePosts("player", rawId);
+  // Adapt snake_case usePosts rows to the PostDTO shape expected by PostList/PostCard.
+  // Hot tab shares latest ordering for now — sort refinement is out of scope of this fix.
+  const listPosts: PostDTO[] = useMemo(() => livePosts.map((p) => ({
+    id: p.id,
+    boardType: (p.board_type as PostDTO["boardType"]) ?? "player",
+    boardId: p.board_id,
+    authorId: p.author_id,
+    title: p.title,
+    content: p.content,
+    imageUrls: (p.image_urls ?? []) as string[],
+    videoUrls: (p.video_urls ?? []) as string[],
+    likeCount: p.like_count,
+    commentCount: p.comment_count,
+    isReported: false,
+    createdAt: p.created_at,
+    author: {
+      nickname: p.nickname || "익명",
+      avatarUrl: null,
+      myTeamId: p.team_id ?? null,
+      level: 1,
+      title: "",
+      grade: p.grade,
+    },
+  })), [livePosts]);
   const [showWrite, setShowWrite] = useState(false);
   const [showPhotoWrite, setShowPhotoWrite] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
@@ -441,39 +467,15 @@ export default function PlayerBoardPage() {
         </div>
       )}
 
-      {/* Posts */}
-      {activeTab !== "stats" && activeTab !== "photo" && <div className="px-5 py-4 space-y-5">
-        {(livePosts.length === 0 && !postsLoading) ? (
-          <div className="text-center py-12 text-text-tertiary">
-            <p className="text-sm">아직 게시글이 없어요</p>
-            <p className="text-xs mt-1">첫 번째 글을 작성해보세요!</p>
-          </div>
-        ) : livePosts.map((post, i) => (
-          <motion.div
-            key={post.id}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.03 }}
-          >
-            <Link href={`/community/players/${rawId}/posts/${post.id}`}><GlassCard pressable className="p-4">
-              <p className="text-base font-medium text-text-primary">{post.title}</p>
-              <div className="mt-2 flex items-center justify-between text-base text-text-tertiary">
-                <div className="flex items-center">
-                  <span>{post.nickname || "익명"}</span>
-                  {post.grade === 'staff' && (
-                    <span className='ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
-                  )}
-                  <span className="ml-1">· {new Date(post.created_at).toLocaleDateString("ko-KR")}</span>
-                </div>
-                <div className="flex items-center gap-4">
-                  <span className="flex items-center gap-1"><Heart size={22} /> {post.like_count}</span>
-                  <span className="flex items-center gap-1"><MessageCircle size={22} /> {post.comment_count}</span>
-                </div>
-              </div>
-            </GlassCard></Link>
-          </motion.div>
-        ))}
-      </div>}
+      {/* Posts — PostCard-based list so link previews (OG cards) render in the feed too,
+          matching /community/free and /community/all-posts behaviour. */}
+      {activeTab !== "stats" && activeTab !== "photo" && (
+        <div className="px-5 py-4">
+          {postsLoading ? null : (
+            <PostList posts={listPosts} />
+          )}
+        </div>
+      )}
 
       {/* FAB */}
 
