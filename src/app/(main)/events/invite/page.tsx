@@ -216,28 +216,15 @@ export default function EventInvitePage() {
           전체 리더보드 보기
         </Link>
 
-        {/* 뱃지 — 초대 트랙, 얼리멤버 · 커뮤니티 리크루터 */}
+        {/* 뱃지 — 두 트랙 통일 야구단 프런트 테마 */}
         <div className="mt-6">
           <h3 className="text-sm font-bold mb-3 flex items-center gap-1.5">
-            <Users size={14} className="text-blue-400" />
-            초대 트랙 뱃지 — 크보팬 얼리멤버
+            <Trophy size={14} className="text-yellow-400" />
+            시즌 한정 얼리멤버 뱃지
           </h3>
-          <div className="grid grid-cols-2 gap-2">
-            <BadgeCard emoji="🏆" title="초대 챔피언" rank="1등" tone="gold" />
-            <BadgeCard emoji="👑" title="초대 마스터" rank="2~4등" tone="gold" />
-            <BadgeCard emoji="🏅" title="초대 레전드" rank="5~9등" tone="silver" />
-            <BadgeCard emoji="⭐" title="초대 에이스" rank="10~19등" tone="silver" />
-            <BadgeCard emoji="🤝" title="리크루터" rank="20~39등" tone="bronze" />
-            <BadgeCard emoji="🔗" title="커넥터" rank="40~50등" tone="bronze" />
-          </div>
-        </div>
-
-        {/* 뱃지 — 글쓰기 트랙, 야구단 프런트 컨셉 */}
-        <div className="mt-5">
-          <h3 className="text-sm font-bold mb-3 flex items-center gap-1.5">
-            <MessageSquare size={14} className="text-green-400" />
-            글쓰기 트랙 뱃지 — 크보팬 얼리멤버 · 야구단 프런트
-          </h3>
+          <p className="text-[11px] text-white/60 leading-relaxed mb-3">
+            두 트랙(초대 / 글쓰기) 동일 뱃지 체계 · 누적 수상 시 모두 부여
+          </p>
           <div className="grid grid-cols-2 gap-2">
             <BadgeCard emoji="🏆" title="단장" rank="1등" tone="gold" />
             <BadgeCard emoji="💼" title="운영팀장" rank="2~4등" tone="gold" />
