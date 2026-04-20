@@ -40,6 +40,37 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // YouTube shortcut — oEmbed API returns clean metadata without 1MB+ HTML fetch
+  const ytId = extractYouTubeId(parsed);
+  if (ytId) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${ytId}`)}&format=json`;
+      const r = await fetch(oembedUrl, {
+        signal: controller.signal,
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; KeuboFanBot/1.0)" },
+      });
+      clearTimeout(timeout);
+      if (r.ok) {
+        const json = await r.json() as { title?: string; author_name?: string; thumbnail_url?: string };
+        const data: OGData = {
+          title: json.title || null,
+          description: json.author_name ? `YouTube · ${json.author_name}` : null,
+          image: json.thumbnail_url || `https://i.ytimg.com/vi/${ytId}/maxresdefault.jpg`,
+          siteName: "YouTube",
+          url,
+        };
+        cache.set(url, { data, ts: Date.now() });
+        return NextResponse.json(data, {
+          headers: { "Cache-Control": "public, max-age=3600" },
+        });
+      }
+    } catch {
+      // Fall through to generic path
+    }
+  }
+
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
@@ -101,9 +132,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(data);
     }
 
-    // Only read first 50KB to avoid memory issues
-    const text = await finalRes.text();
-    const html = text.slice(0, 50000);
+    // Stream body and stop at </head> or 500KB cap
+    const html = await readHeadOnly(finalRes, 500_000);
 
     const data: OGData = {
       title: extractMeta(html, "og:title") || extractTag(html, "title"),
@@ -140,6 +170,51 @@ export async function GET(req: NextRequest) {
       { status: 502 }
     );
   }
+}
+
+/** Extract YouTube video id from youtu.be/VIDEO_ID, youtube.com/watch?v=, /embed/, /shorts/ */
+function extractYouTubeId(u: URL): string | null {
+  const host = u.hostname.toLowerCase();
+  if (host === "youtu.be" || host === "www.youtu.be") {
+    const id = u.pathname.slice(1).split("/")[0];
+    return /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : null;
+  }
+  if (host === "youtube.com" || host === "www.youtube.com" || host === "m.youtube.com" || host === "music.youtube.com") {
+    const v = u.searchParams.get("v");
+    if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+    const embed = u.pathname.match(/^\/(?:embed|shorts|v)\/([a-zA-Z0-9_-]{11})/);
+    if (embed?.[1]) return embed[1];
+  }
+  return null;
+}
+
+/** Stream response body, stop at </head> or byteCap, whichever comes first. */
+async function readHeadOnly(res: Response, byteCap: number): Promise<string> {
+  if (!res.body) return (await res.text()).slice(0, byteCap);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  let html = "";
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      html += decoder.decode(value, { stream: true });
+      // Stop as soon as </head> shows up — OG/meta tags live inside <head>
+      // Case-insensitive match for robust handling of </HEAD>, </Head>, etc.
+      if (html.toLowerCase().includes("</head>")) break;
+      if (bytes >= byteCap) break;
+    }
+    html += decoder.decode();
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
+  }
+  return html;
 }
 
 function extractMeta(html: string, property: string): string | null {
