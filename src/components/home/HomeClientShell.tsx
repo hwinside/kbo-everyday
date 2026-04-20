@@ -21,6 +21,7 @@ import MyTeamHero from "@/components/home/MyTeamHero";
 import FavoritePlayersSection from "@/components/home/FavoritePlayersSection";
 import TodayGamesSection from "@/components/home/TodayGamesSection";
 import LiveGameBanner from "@/components/home/LiveGameBanner";
+import EventBanner from "@/components/home/EventBanner";
 import AIAnalysis from "@/components/game/AIAnalysis";
 
 // Lazy load heavy sections
@@ -244,6 +245,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       {myTeam && myTeamGame && (
         <MyTeamHero myTeam={myTeam} myTeamGame={myTeamGame} />
       )}
+
+      <EventBanner source="home" />
 
       <div className="mb-3">
         <FavoritePlayersSection favPlayers={favPlayers} />
