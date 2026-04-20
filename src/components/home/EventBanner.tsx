@@ -3,21 +3,18 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { X } from "lucide-react";
 
 /**
  * 얼리멤버 이벤트 배너 (2026-04-20 ~ 2026-05-31)
  *
  * 홈/커뮤니티 상단 노출. 클릭 → /events/invite 랜딩.
- * 우상단 X 클릭 시 7일간 localStorage 기반 dismiss.
  *
- * 배너 에셋: /public/event-banner-home.png (780x120, v20 최종본 — 배경 제거 + 카피 확정)
- * 배너 교체 시 같은 경로로 덮어쓰면 됨. 디자이너 원본 오면 무중단 업데이트 가능.
+ * 2026-04-20 하린아빠 지시 — X 닫기 버튼 제거. 이벤트 종료(6/1) 시까지 상시 노출.
+ *
+ * 배너 에셋: /public/event-banner-home.png (780x120, v20 최종본)
+ * 배너 교체 시 같은 경로로 덮어쓰면 됨.
  */
 
-// v2: button-in-anchor 패치 + 초기 dismiss 리셋용으로 key 신랴화
-const DISMISS_KEY = "event_banner_invite_dismissed_at_v2";
-const DISMISS_DAYS = 7;
 const EVENT_END = new Date("2026-06-01T00:00:00+09:00"); // 이벤트 종료 시점 (KST 5/31 24:00)
 
 // GA4 헬퍼 — 타입 가드 + noop fallback
@@ -54,29 +51,15 @@ export default function EventBanner({ source = "home" }: Props) {
       setVisible(false);
       return;
     }
-    try {
-      const raw = localStorage.getItem(DISMISS_KEY);
-      if (raw) {
-        const dismissedAt = parseInt(raw, 10);
-        const daysPassed = (Date.now() - dismissedAt) / (1000 * 60 * 60 * 24);
-        if (daysPassed < DISMISS_DAYS) {
-          setVisible(false);
-          return;
-        }
-      }
-    } catch {
-      // localStorage 불가 환경(프라이빗 브라우저 등) — 그냥 노출
-    }
     setVisible(true);
   }, []);
 
-  // Impression tracker: 50% 브표트 + 1쌀 체류 시 1회 발화 (세션당 source별 1회)
+  // Impression tracker: 50% 뷰포트 + 1초 체류 시 1회 발화 (세션당 source별 1회)
   useEffect(() => {
     if (!visible) return;
     const el = linkRef.current;
     if (!el) return;
 
-    // 이미 세션 내 발화했으면 skip
     try {
       if (sessionStorage.getItem(impressionSessionKey)) {
         impressionFiredRef.current = true;
@@ -91,7 +74,6 @@ export default function EventBanner({ source = "home" }: Props) {
       (entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
-            // 1쌀 체류 게이팅
             if (!dwellTimer && !impressionFiredRef.current) {
               dwellTimer = setTimeout(() => {
                 if (impressionFiredRef.current) return;
@@ -125,22 +107,6 @@ export default function EventBanner({ source = "home" }: Props) {
     };
   }, [visible, source, impressionSessionKey]);
 
-  const handleDismiss = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    try {
-      localStorage.setItem(DISMISS_KEY, String(Date.now()));
-    } catch {
-      // noop
-    }
-    trackEvent("event_banner_dismiss", {
-      banner: BANNER_ID,
-      source,
-      slot: "top",
-    });
-    setVisible(false);
-  };
-
   const handleClick = () => {
     trackEvent("event_banner_click", {
       banner: BANNER_ID,
@@ -152,7 +118,7 @@ export default function EventBanner({ source = "home" }: Props) {
   if (!visible) return null;
 
   return (
-    <div className="mb-4 relative">
+    <div className="mb-4">
       <Link
         ref={linkRef}
         href="/events/invite"
@@ -170,15 +136,6 @@ export default function EventBanner({ source = "home" }: Props) {
           className="w-full h-auto block"
         />
       </Link>
-      {/* button-in-anchor HTML invalid 해소 — 외부 배치 + absolute 레이아웃 유지 */}
-      <button
-        type="button"
-        onClick={handleDismiss}
-        className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/40 hover:bg-black/60 flex items-center justify-center backdrop-blur-sm z-10"
-        aria-label="배너 닫기"
-      >
-        <X size={14} className="text-white/90" />
-      </button>
     </div>
   );
 }
