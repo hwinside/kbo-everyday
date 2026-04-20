@@ -489,36 +489,23 @@ function TopPreview({
           불러오는 중…
         </div>
       ) : rows.length === 0 ? (
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2.5 px-3 py-3 rounded-lg bg-gray-900/5 dark:bg-white/5 border border-gray-900/5 dark:border-white/5">
-            <div className="w-6 h-6 rounded-full bg-gray-900/5 dark:bg-white/5 flex items-center justify-center shrink-0">
-              <Trophy size={12} className="text-gray-900/30 dark:text-white/30" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-gray-900/70 dark:text-white/70">
-                {track === "invite"
-                  ? "아직 활성화 초대가 없습니다"
-                  : "아직 집계된 점수가 없습니다"}
-              </p>
-              <p className="text-[10px] text-gray-900/40 dark:text-white/40 mt-0.5 leading-relaxed">
-                {track === "invite"
-                  ? "친구가 팀 선택 + 글/댓글 1건 작성 시 등장"
-                  : "채팅·댓글·글·사진글로 포인트를 쌓아보세요"}
-              </p>
-            </div>
-          </div>
-          {[1, 2, 3].map((n) => (
-            <div
-              key={n}
-              className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-gray-900/[0.03] dark:bg-white/[0.03] border border-white/[0.06]"
-            >
-              <span className="w-6 text-center font-bold text-xs text-gray-900/40 dark:text-white/40">
-                {n}
-              </span>
-              <span className="flex-1 text-xs text-gray-900/30 dark:text-white/30">-</span>
-              <span className="text-[10px] text-gray-900/30 dark:text-white/30">-</span>
-            </div>
-          ))}
+        <div className="rounded-xl p-5 bg-gradient-to-br from-yellow-400/10 to-orange-400/5 border border-yellow-400/20 text-center">
+          <div className="text-3xl mb-2">🏁</div>
+          <p className="text-sm font-bold mb-1">
+            {track === "invite"
+              ? "첫 초대 챔피언을 노려보세요!"
+              : "첫 점수 획득을 노려보세요!"}
+          </p>
+          <p className="text-xs text-gray-900/60 dark:text-white/60 leading-relaxed mb-3">
+            {track === "invite"
+              ? "이벤트가 방금 시작됐어요. 친구 1명만 데려와도 1등!"
+              : "이벤트가 방금 시작됐어요. 채팅 한 마디에도 순위권!"}
+          </p>
+          <p className="text-[11px] text-gray-900/50 dark:text-white/50">
+            {track === "invite"
+              ? "친구가 팀 선택 + 글/댓글 1건 작성 시 인정"
+              : "채팅 1점 · 댓글 2점 · 글 3점 · 사진글 5점"}
+          </p>
         </div>
       ) : (
         <div className="space-y-1.5">
