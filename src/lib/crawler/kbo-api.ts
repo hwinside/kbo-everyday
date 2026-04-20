@@ -217,6 +217,8 @@ export interface TeamStanding {
   draws: number;
   winRate: number;
   gamesBehind: number;
+  /** 연승/연패 원본 문자열 (예: "3승", "1패"). 없으면 undefined. */
+  continuousGameResult?: string;
 }
 
 /** 팀 순위 (HTML 파싱) */
@@ -239,7 +241,7 @@ export async function fetchStandings(): Promise<TeamStanding[]> {
     if (naverRes.ok) {
       const data = await naverRes.json();
       if (data.success && data.result?.seasonTeamStats) {
-        return data.result.seasonTeamStats.map((team: { teamName: string; teamId: string; gameCount?: number; winGameCount?: number; loseGameCount?: number; drawnGameCount?: number; wra?: number; gameBehind?: number; ranking?: number }) => ({
+        return data.result.seasonTeamStats.map((team: { teamName: string; teamId: string; gameCount?: number; winGameCount?: number; loseGameCount?: number; drawnGameCount?: number; wra?: number; gameBehind?: number; ranking?: number; continuousGameResult?: string }) => ({
           teamName: team.teamName,
           teamId: TEAM_CODE_MAP[team.teamId] ?? 0,
           games: team.gameCount ?? 0,
@@ -249,6 +251,7 @@ export async function fetchStandings(): Promise<TeamStanding[]> {
           winRate: team.wra ?? 0,
           gamesBehind: team.gameBehind ?? 0,
           ranking: team.ranking ?? 0,
+          continuousGameResult: team.continuousGameResult,
         }));
       }
     }

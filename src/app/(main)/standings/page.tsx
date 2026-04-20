@@ -69,6 +69,9 @@ export default function StandingsPage() {
               }
               rank = currentRank;
             }
+            // 네이버 API 원본 "3승"/"1패"/"2무" 그대로 사용. 패턴 불일치 시 빈 값.
+            const streakRaw = s.continuousGameResult?.trim() || "";
+            const streakNormalized = /^\d+[승패무]$/.test(streakRaw) ? streakRaw : "";
             return {
               teamId: TEAM_NAME_TO_ID[s.teamName] ?? 0,
               season: 2026,
@@ -78,7 +81,7 @@ export default function StandingsPage() {
               draws: s.draws,
               pct: s.winRate,
               gb: s.gamesBehind,
-              streak: "",
+              streak: streakNormalized,
               last10: "",
             };
           });
@@ -170,10 +173,11 @@ export default function StandingsPage() {
             <colgroup>
               <col className="w-8" />
               <col />
-              <col className="w-11" />
-              <col className="w-11" />
-              <col className="w-9" />
-              <col className="w-14" />
+              <col className="w-10" />
+              <col className="w-10" />
+              <col className="w-8" />
+              <col className="w-12" />
+              <col className="w-10" />
               <col className="w-11" />
             </colgroup>
             <thead>
@@ -185,6 +189,7 @@ export default function StandingsPage() {
                 <th className="py-2 text-right pr-2">무</th>
                 <th className="py-2 text-right pr-2">승률</th>
                 <th className="py-2 text-right pr-2">차</th>
+                <th className="py-2 text-right pr-2">연속</th>
               </tr>
             </thead>
             <tbody>
@@ -217,6 +222,9 @@ export default function StandingsPage() {
                     <td className="py-2.5 text-right pr-2 tabular-nums text-text-secondary">{standing.draws}</td>
                     <td className="py-2.5 text-right pr-2 tabular-nums font-semibold text-text-primary">{standing.pct >= 1 ? "1.000" : standing.pct.toFixed(3).slice(1)}</td>
                     <td className="py-2.5 text-right pr-2 tabular-nums text-text-secondary">{standing.gb === 0 ? "-" : standing.gb}</td>
+                    <td className="py-2.5 text-right pr-2 tabular-nums text-text-primary">
+                      {standing.streak || <span className="text-text-secondary">-</span>}
+                    </td>
                   </motion.tr>
                 );
               })}

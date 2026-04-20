@@ -7,6 +7,8 @@ export interface RawStanding {
   draws: number;
   winRate: number;
   gamesBehind: number;
+  /** 네이버 API continuousGameResult (예: "3승", "1패") */
+  continuousGameResult?: string;
 }
 
 export interface RealBatterStat {
