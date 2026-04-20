@@ -83,7 +83,7 @@ export default function EventInvitePage() {
       </div>
 
       <div className="max-w-screen-sm mx-auto px-4 pt-5">
-        {/* Hero */}
+        {/* Hero — event-draft.html 시안 기반 */}
         <div className="rounded-2xl p-5 bg-gradient-to-br from-yellow-400/15 via-orange-400/10 to-red-400/10 border border-yellow-400/20">
           <div className="flex items-center gap-1.5 text-xs text-yellow-400 font-semibold mb-2">
             <Calendar size={13} />
@@ -94,10 +94,65 @@ export default function EventInvitePage() {
             <br />
             <span className="text-yellow-400">에어팟 프로 3</span>까지 노릴 수 있어요
           </h2>
-          <p className="text-sm text-white/70 leading-relaxed">
+          <p className="text-sm text-white/70 leading-relaxed mb-4">
             각 부문 상위 50명은 시즌 한정 얼리멤버 뱃지와 상품을 받고, 1등은
             에어팟 프로 3의 주인공이 됩니다.
           </p>
+          {/* 에어팟 프로 3 이미지 */}
+          <div className="rounded-2xl bg-white/90 p-4 flex items-center justify-center">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/event-airpods.png"
+              alt="1등 경품 — 에어팟 프로 3"
+              className="w-full max-w-[200px] h-auto"
+            />
+          </div>
+          <div className="mt-3 text-center">
+            <p className="text-xs text-white/60">1등 통합 대표 경품</p>
+            <p className="text-lg font-black text-yellow-400">에어팟 프로 3</p>
+            <p className="text-xs text-white/50">트랙별 1대씩, 총 2대 지급</p>
+          </div>
+        </div>
+
+        {/* 경품 표 — event-draft.html 시안 기반 */}
+        <div className="mt-4 rounded-2xl bg-white/5 border border-white/10 overflow-hidden">
+          <div className="px-4 py-3 bg-white/5 border-b border-white/10">
+            <p className="text-sm font-bold">상위 50명 경품 — 트랙별 동일</p>
+          </div>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-white/50 bg-white/[0.02]">
+                <th className="text-left px-3 py-2 font-semibold">순위</th>
+                <th className="text-left px-3 py-2 font-semibold">인원</th>
+                <th className="text-left px-3 py-2 font-semibold">경품</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              <tr className="text-yellow-400 font-bold">
+                <td className="px-3 py-2.5">1등</td>
+                <td className="px-3 py-2.5">1명</td>
+                <td className="px-3 py-2.5">에어팟 프로 3</td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2.5">2~5등</td>
+                <td className="px-3 py-2.5">4명</td>
+                <td className="px-3 py-2.5">스타벅스 기프티콘 10만원</td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2.5">6~15등</td>
+                <td className="px-3 py-2.5">10명</td>
+                <td className="px-3 py-2.5">KBO 구단별 굿즈</td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2.5">16~50등</td>
+                <td className="px-3 py-2.5">35명</td>
+                <td className="px-3 py-2.5">얼리멤버 한정 뱃지 + 크보팬 리워드</td>
+              </tr>
+            </tbody>
+          </table>
+          <div className="px-3 py-2.5 text-[10px] text-white/40 bg-white/[0.02] border-t border-white/5">
+            ※ 초대/글쓰기 2개 트랙에 동일 적용 · 총 100명 경품 수상
+          </div>
         </div>
 
         {/* 2트랙 설명 */}
