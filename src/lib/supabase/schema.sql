@@ -28,12 +28,14 @@ CREATE TABLE posts (
   image_urls JSONB DEFAULT '[]',
   like_count INT DEFAULT 0,
   comment_count INT DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT now()
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ
 );
 ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Anyone can read posts" ON posts FOR SELECT USING (true);
 CREATE POLICY "Auth users create" ON posts FOR INSERT WITH CHECK (auth.uid() = author_id);
 CREATE POLICY "Authors update own" ON posts FOR UPDATE USING (auth.uid() = author_id);
+CREATE POLICY "Authors delete own posts" ON posts FOR DELETE USING (auth.uid() = author_id);
 
 -- 3. 댓글
 CREATE TABLE comments (
@@ -41,11 +43,14 @@ CREATE TABLE comments (
   post_id BIGINT REFERENCES posts(id) ON DELETE CASCADE,
   author_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
   content TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ
 );
 ALTER TABLE comments ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Anyone can read" ON comments FOR SELECT USING (true);
 CREATE POLICY "Auth users create" ON comments FOR INSERT WITH CHECK (auth.uid() = author_id);
+CREATE POLICY "Authors update own comments" ON comments FOR UPDATE USING (auth.uid() = author_id) WITH CHECK (auth.uid() = author_id);
+CREATE POLICY "Authors delete own comments" ON comments FOR DELETE USING (auth.uid() = author_id);
 
 -- 4. 좋아요
 CREATE TABLE likes (

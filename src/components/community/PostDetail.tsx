@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag } from "lucide-react";
+import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, MoreHorizontal, Check } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { GRADES } from "@/lib/constants/grades";
 import { getAvatarPath } from "@/lib/constants/avatars";
-import { usePostDetail, createComment, toggleLike } from "@/lib/supabase/usePosts";
+import { usePostDetail, createComment, toggleLike, updatePost, deletePost, updateComment, deleteComment } from "@/lib/supabase/usePosts";
 import ReportSheet from "@/components/community/ReportSheet";
 import LinkPreview from "@/components/community/LinkPreview";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -28,8 +28,101 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   const [comment, setComment] = useState("");
   const [likeCount, setLikeCount] = useState(0);
 
+  // 게시글 메뉴/편집 상태
+  const [postMenuOpen, setPostMenuOpen] = useState(false);
+  const [postEditing, setPostEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editContent, setEditContent] = useState("");
+  const [savingPost, setSavingPost] = useState(false);
+  const [deletingPost, setDeletingPost] = useState(false);
+  const [postPatch, setPostPatch] = useState<{ title?: string; content?: string; updated_at?: string }>({});
+
+  // 댓글 메뉴/편집 상태
+  const [cmtMenuOpenId, setCmtMenuOpenId] = useState<number | null>(null);
+  const [cmtEditingId, setCmtEditingId] = useState<number | null>(null);
+  const [cmtEditInput, setCmtEditInput] = useState("");
+  const [cmtSaving, setCmtSaving] = useState(false);
+
   if (loading) return <div className="flex items-center justify-center h-screen text-text-secondary">로딩 중...</div>;
   if (!post) return <div className="flex items-center justify-center h-screen text-text-secondary">게시글을 찾을 수 없습니다</div>;
+
+  const isPostMine = !!user && post.author_id === user.id;
+
+  function startPostEdit() {
+    setPostMenuOpen(false);
+    setEditTitle(post!.title);
+    setEditContent(post!.content);
+    setPostEditing(true);
+  }
+
+  function cancelPostEdit() {
+    setPostEditing(false);
+  }
+
+  async function savePostEdit() {
+    if (savingPost) return;
+    const t = editTitle.trim();
+    if (!t) { alert("제목을 입력해주세요"); return; }
+    setSavingPost(true);
+    try {
+      await updatePost(post!.id, { title: t, content: editContent });
+      setPostPatch({ title: t, content: editContent, updated_at: new Date().toISOString() });
+      setPostEditing(false);
+    } catch {
+      alert("게시글 수정에 실패했어요");
+    } finally {
+      setSavingPost(false);
+    }
+  }
+
+  async function handleDeletePost() {
+    setPostMenuOpen(false);
+    if (!confirm("이 게시글을 삭제할까요? 댓글/좋아요도 함께 삭제됩니다.")) return;
+    setDeletingPost(true);
+    try {
+      await deletePost(post!.id);
+      router.back();
+    } catch {
+      alert("게시글 삭제에 실패했어요");
+      setDeletingPost(false);
+    }
+  }
+
+  function startCmtEdit(c: { id: number; content: string }) {
+    setCmtMenuOpenId(null);
+    setCmtEditingId(c.id);
+    setCmtEditInput(c.content);
+  }
+
+  async function saveCmtEdit() {
+    if (cmtEditingId === null || cmtSaving) return;
+    const t = cmtEditInput.trim();
+    if (!t) return;
+    setCmtSaving(true);
+    try {
+      await updateComment(cmtEditingId, t);
+      setComments(prev => prev.map(c =>
+        c.id === cmtEditingId ? { ...c, content: t, updated_at: new Date().toISOString() } : c
+      ));
+      setCmtEditingId(null);
+      setCmtEditInput("");
+    } catch {
+      alert("댓글 수정에 실패했어요");
+    } finally {
+      setCmtSaving(false);
+    }
+  }
+
+  async function handleDeleteComment(id: number) {
+    setCmtMenuOpenId(null);
+    if (!confirm("이 댓글을 삭제할까요?")) return;
+    try {
+      await deleteComment(id);
+      setComments(prev => prev.filter(c => c.id !== id));
+    } catch {
+      alert("댓글 삭제에 실패했어요");
+    }
+  }
 
   async function handleLike() {
     if (!user) { alert("로그인이 필요합니다"); return; }
@@ -100,11 +193,66 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           {post.author_id && user && post.author_id !== user.id && (
             <DMButton targetUserId={post.author_id} size="sm" />
           )}
-          <span className="text-xs text-text-tertiary ml-auto">{timeAgo(post.created_at)}</span>
+          <span className="text-xs text-text-tertiary ml-auto">
+            {timeAgo(post.created_at)}{(postPatch.updated_at || post.updated_at) ? " · 수정됨" : ""}
+          </span>
+          {isPostMine && !postEditing && (
+            <div className="relative">
+              <button
+                onClick={(e) => { e.stopPropagation(); setPostMenuOpen(v => !v); }}
+                className="p-1 text-text-tertiary hover:text-text-primary"
+                aria-label="게시글 메뉴"
+                disabled={deletingPost}
+              >
+                <MoreHorizontal size={18} />
+              </button>
+              {postMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setPostMenuOpen(false)} />
+                  <div className="absolute right-0 top-8 z-20 min-w-[112px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
+                    <button onClick={startPostEdit} className="block w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">수정</button>
+                    <button onClick={handleDeletePost} className="block w-full px-3 py-2 text-left text-sm text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
-        <h1 className="text-lg font-bold text-text-primary mb-3">{post.title}</h1>
-        <p className="readable-body whitespace-pre-line">{stripUrls(post.content)}</p>
+        {postEditing ? (
+          <div className="space-y-2 mb-3">
+            <input
+              type="text"
+              value={editTitle}
+              onChange={e => setEditTitle(e.target.value)}
+              placeholder="제목"
+              className="w-full bg-bg-secondary rounded-lg px-3 py-2 text-base text-text-primary outline-none border border-border"
+            />
+            <textarea
+              value={editContent}
+              onChange={e => setEditContent(e.target.value)}
+              placeholder="내용"
+              rows={6}
+              className="w-full bg-bg-secondary rounded-lg px-3 py-2 text-sm text-text-primary outline-none border border-border resize-y"
+            />
+            <div className="flex items-center gap-2">
+              <button
+                onClick={savePostEdit}
+                disabled={savingPost || !editTitle.trim()}
+                className="px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
+                style={{ backgroundColor: post.team_id ? (() => { const t = getTeamById(post.team_id); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}
+              >
+                {savingPost ? "저장 중..." : "저장"}
+              </button>
+              <button onClick={cancelPostEdit} className="px-4 py-2 rounded-lg text-sm text-text-secondary hover:bg-bg-tertiary">취소</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <h1 className="text-lg font-bold text-text-primary mb-3">{postPatch.title ?? post.title}</h1>
+            <p className="readable-body whitespace-pre-line">{stripUrls(postPatch.content ?? post.content)}</p>
+          </>
+        )}
 
         {/* Link previews */}
         <LinkPreview text={post.content} maxPreviews={3} />
@@ -159,6 +307,9 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
             comments.map(c => {
               const grade = GRADES.find((g) => g.id === c.grade) ?? GRADES[0];
               const avatarPath = getAvatarPath(c.avatar_url ?? null);
+              const isCmtMine = !!user && c.author_id === user.id;
+              const isCmtEditing = cmtEditingId === c.id;
+              const isCmtEdited = !!c.updated_at;
               return (
                 <div key={c.id} className="flex gap-2.5">
                   {avatarPath ? (
@@ -183,9 +334,57 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                       >
                         {grade.name}
                       </span>
-                      <span className="text-xs text-text-tertiary ml-auto flex-shrink-0">{timeAgo(c.created_at)}</span>
+                      <span className="text-xs text-text-tertiary ml-auto flex-shrink-0">
+                        {timeAgo(c.created_at)}{isCmtEdited ? " · 수정됨" : ""}
+                      </span>
+                      {isCmtMine && !isCmtEditing && (
+                        <div className="relative flex-shrink-0">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setCmtMenuOpenId(prev => prev === c.id ? null : c.id); }}
+                            className="p-1 text-text-tertiary hover:text-text-primary"
+                            aria-label="댓글 메뉴"
+                          >
+                            <MoreHorizontal size={14} />
+                          </button>
+                          {cmtMenuOpenId === c.id && (
+                            <>
+                              <div className="fixed inset-0 z-10" onClick={() => setCmtMenuOpenId(null)} />
+                              <div className="absolute right-0 top-6 z-20 min-w-[96px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
+                                <button onClick={() => startCmtEdit(c)} className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">수정</button>
+                                <button onClick={() => handleDeleteComment(c.id)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <p className="readable-body mt-0.5 break-words">{c.content}</p>
+                    {isCmtEditing ? (
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <input
+                          autoFocus
+                          type="text"
+                          value={cmtEditInput}
+                          onChange={e => setCmtEditInput(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); saveCmtEdit(); }
+                            else if (e.key === "Escape") { e.preventDefault(); setCmtEditingId(null); }
+                          }}
+                          className="flex-1 bg-bg-tertiary rounded-lg px-3 py-1.5 text-sm text-text-primary outline-none border border-border"
+                        />
+                        <button
+                          onClick={saveCmtEdit}
+                          disabled={!cmtEditInput.trim() || cmtSaving}
+                          className="flex items-center justify-center w-7 h-7 rounded-full text-white disabled:opacity-50"
+                          style={{ backgroundColor: post.team_id ? (() => { const t = getTeamById(post.team_id); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}
+                          aria-label="저장"
+                        >
+                          <Check size={14} />
+                        </button>
+                        <button onClick={() => setCmtEditingId(null)} className="text-[11px] text-text-tertiary px-1">취소</button>
+                      </div>
+                    ) : (
+                      <p className="readable-body mt-0.5 break-words">{c.content}</p>
+                    )}
                   </div>
                 </div>
               );

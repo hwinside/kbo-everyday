@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, Play } from "lucide-react";
+import { MessageCircle, Play, MoreHorizontal } from "lucide-react";
 import { GRADES } from "@/lib/constants/grades";
 import { getTeamById } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
@@ -12,6 +12,8 @@ import { parsePlayerTag } from "@/lib/utils/player-tags";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
 import type { Post } from "@/lib/supabase/usePosts";
+import { deletePost } from "@/lib/supabase/usePosts";
+import { useAuth } from "@/lib/supabase/AuthContext";
 import type { CommunitySourceLabel } from "@/lib/utils/community-board";
 import CommentSheet from "./CommentSheet";
 
@@ -235,12 +237,27 @@ function HeartOverlay({ show }: { show: boolean }) {
 }
 
 export default function PhotoFeed({ posts, loading, onLike, boardType = "team", playerLabels, sourceLabels }: PhotoFeedProps) {
+  const { user } = useAuth();
   const [likedPosts, setLikedPosts] = useState<Set<number>>(new Set());
   const [heartPostId, setHeartPostId] = useState<number | null>(null);
   const [commentPostId, setCommentPostId] = useState<number | null>(null);
   const [commentTeamId, setCommentTeamId] = useState<number | null>(null);
   // 댓글 추가 시 로컬 카운트 보정값
   const [commentDeltas, setCommentDeltas] = useState<Record<number, number>>({});
+  // 게시글 메뉴 / 삭제 상태
+  const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
+  const [deletedIds, setDeletedIds] = useState<Set<number>>(new Set());
+
+  const handleDelete = useCallback(async (postId: number) => {
+    setMenuOpenId(null);
+    if (!confirm("이 게시글을 삭제할까요? 댓글/좋아요도 함께 삭제됩니다.")) return;
+    try {
+      await deletePost(postId);
+      setDeletedIds(prev => { const n = new Set(prev); n.add(postId); return n; });
+    } catch {
+      alert("게시글 삭제에 실패했어요");
+    }
+  }, []);
 
   const handleLike = (postId: number) => {
     setLikedPosts((prev) => {
@@ -292,6 +309,9 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
       {posts.map((post, index) => {
         const grade = getGradeInfo(post.grade);
         const isLiked = likedPosts.has(post.id);
+        const isMine = !!user && post.author_id === user.id;
+
+        if (deletedIds.has(post.id)) return null;
 
         return (
           <div key={post.id}>
@@ -316,8 +336,32 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   </span>
                 )}
                 <span className="ml-auto text-base text-text-tertiary flex-shrink-0">
-                  {timeAgo(post.created_at)}
+                  {timeAgo(post.created_at)}{post.updated_at ? " · 수정됨" : ""}
                 </span>
+                {isMine && (
+                  <div className="relative flex-shrink-0">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setMenuOpenId(prev => prev === post.id ? null : post.id); }}
+                      className="p-1 text-text-tertiary hover:text-text-primary"
+                      aria-label="게시글 메뉴"
+                    >
+                      <MoreHorizontal size={20} />
+                    </button>
+                    {menuOpenId === post.id && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setMenuOpenId(null)} />
+                        <div className="absolute right-0 top-8 z-20 min-w-[112px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
+                          <button
+                            onClick={() => handleDelete(post.id)}
+                            className="block w-full px-3 py-2 text-left text-sm text-[#FF453A] hover:bg-bg-tertiary"
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
 
               {sourceLabels?.[post.id] && (

@@ -17,6 +17,7 @@ export interface Post {
   like_count: number;
   comment_count: number;
   created_at: string;
+  updated_at?: string | null;
   // meme editor fields
   game_id?: string | null;
   player_tags?: string[];
@@ -34,6 +35,7 @@ export interface Comment {
   author_id: string;
   content: string;
   created_at: string;
+  updated_at?: string | null;
   nickname?: string;
   team_id?: number;
   grade?: string;
@@ -226,6 +228,49 @@ export async function createPost(params: {
   return data;
 }
 
+/** 게시글 수정 (본인만)
+ *  v1: title/content만 수정. 이미지/태그 재편집은 v2.
+ */
+export async function updatePost(postId: number, params: { title?: string; content?: string }) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("로그인 필요");
+
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (typeof params.title === "string") {
+    const t = params.title.trim();
+    if (!t) throw new Error("제목 필수");
+    patch.title = t;
+  }
+  if (typeof params.content === "string") {
+    patch.content = params.content; // trim은 UI에서 처리 (사진게시법은 빈 content 허용)
+  }
+
+  const { error } = await supabase
+    .from("posts")
+    .update(patch)
+    .eq("id", postId)
+    .eq("author_id", user.id);
+
+  if (error) throw error;
+}
+
+/** 게시글 삭제 (본인만)
+ *  CASCADE로 comments/likes 자동 삭제.
+ *  v1: Storage 이미지/비디오는 고아로 남김 (정리는 별도 cron/v2).
+ */
+export async function deletePost(postId: number) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("로그인 필요");
+
+  const { error } = await supabase
+    .from("posts")
+    .delete()
+    .eq("id", postId)
+    .eq("author_id", user.id);
+
+  if (error) throw error;
+}
+
 /** 이미지 업로드 (Supabase Storage) */
 export async function uploadImages(files: File[]): Promise<string[]> {
   const { data: { user } } = await supabase.auth.getUser();
@@ -274,6 +319,37 @@ export async function uploadVideos(files: File[]): Promise<string[]> {
     urls.push(urlData.publicUrl);
   }
   return urls;
+}
+
+/** 댓글 수정 (본인만) */
+export async function updateComment(commentId: number, content: string) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("로그인 필요");
+
+  const trimmed = content.trim();
+  if (!trimmed) throw new Error("빈 댓글");
+
+  const { error } = await supabase
+    .from("comments")
+    .update({ content: trimmed, updated_at: new Date().toISOString() })
+    .eq("id", commentId)
+    .eq("author_id", user.id); // RLS + client-side 이중 가드
+
+  if (error) throw error;
+}
+
+/** 댓글 삭제 (본인만) */
+export async function deleteComment(commentId: number) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("로그인 필요");
+
+  const { error } = await supabase
+    .from("comments")
+    .delete()
+    .eq("id", commentId)
+    .eq("author_id", user.id);
+
+  if (error) throw error;
 }
 
 /** 댓글 작성 */

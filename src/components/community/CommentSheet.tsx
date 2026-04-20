@@ -3,10 +3,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, X } from "lucide-react";
+import { Send, X, MoreHorizontal, Check } from "lucide-react";
 import { GRADES } from "@/lib/constants/grades";
 import { getAvatarPath } from "@/lib/constants/avatars";
-import { createComment } from "@/lib/supabase/usePosts";
+import { createComment, updateComment, deleteComment } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { supabase } from "@/lib/supabase/client";
@@ -39,13 +39,23 @@ function getGradeInfo(gradeId?: string) {
   return GRADES.find((g) => g.id === gradeId) ?? GRADES[0];
 }
 
-export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommentAdded }: CommentSheetProps) {
+interface CommentSheetPropsInternal extends CommentSheetProps {
+  /** 댓글 삭제 성공 시 부모에게 알림 (comment_count 동기화용) */
+  onCommentDeleted?: (postId: number) => void;
+}
+
+export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommentAdded, onCommentDeleted }: CommentSheetPropsInternal) {
   const [input, setInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
   const [showLogin, setShowLogin] = useState(false);
+  const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editInput, setEditInput] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const dragStartY = useRef(0);
   const { user, profile } = useAuth();
@@ -160,6 +170,69 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     }
   }, [input, postId, submitting, user, onCommentAdded, profile, refetchComments]);
 
+  // 댓글 수정 시작
+  const startEdit = useCallback((comment: Comment) => {
+    setMenuOpenId(null);
+    setEditingId(comment.id);
+    setEditInput(comment.content);
+    setTimeout(() => editInputRef.current?.focus(), 50);
+  }, []);
+
+  const cancelEdit = useCallback(() => {
+    setEditingId(null);
+    setEditInput("");
+  }, []);
+
+  const saveEdit = useCallback(async () => {
+    if (editingId === null || savingEdit) return;
+    const trimmed = editInput.trim();
+    if (!trimmed) return;
+
+    setSavingEdit(true);
+    try {
+      await updateComment(editingId, trimmed);
+      // optimistic
+      setComments((prev) =>
+        prev.map((c) =>
+          c.id === editingId
+            ? { ...c, content: trimmed, updated_at: new Date().toISOString() }
+            : c
+        )
+      );
+      setEditingId(null);
+      setEditInput("");
+      if (postId) refetchComments(postId);
+    } catch {
+      alert("댓글 수정에 실패했어요");
+    } finally {
+      setSavingEdit(false);
+    }
+  }, [editingId, editInput, savingEdit, postId, refetchComments]);
+
+  const handleDelete = useCallback(async (commentId: number) => {
+    setMenuOpenId(null);
+    if (!confirm("이 댓글을 삭제할까요?")) return;
+
+    try {
+      await deleteComment(commentId);
+      setComments((prev) => prev.filter((c) => c.id !== commentId));
+      if (postId) onCommentDeleted?.(postId);
+    } catch {
+      alert("댓글 삭제에 실패했어요");
+    }
+  }, [postId, onCommentDeleted]);
+
+  // 외부 클릭 시 메뉴 닫기
+  useEffect(() => {
+    if (menuOpenId === null) return;
+    const handler = () => setMenuOpenId(null);
+    const t = setTimeout(() => document.addEventListener("click", handler), 0);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("click", handler);
+    };
+  }, [menuOpenId]);
+
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
@@ -235,6 +308,9 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                 comments.map((comment) => {
                   const grade = getGradeInfo(comment.grade);
                   const avatarPath = getAvatarPath((comment as Comment & { avatar_url?: string }).avatar_url ?? null);
+                  const isMine = !!user && comment.author_id === user.id;
+                  const isEditing = editingId === comment.id;
+                  const isEdited = !!comment.updated_at;
                   return (
                     <div key={comment.id} className="flex gap-2.5">
                       {avatarPath ? (
@@ -261,12 +337,81 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                             {grade.name}
                           </span>
                           <span className="text-[11px] text-text-tertiary ml-auto flex-shrink-0">
-                            {timeAgo(comment.created_at)}
+                            {timeAgo(comment.created_at)}{isEdited ? " · 수정됨" : ""}
                           </span>
+                          {isMine && !isEditing && (
+                            <div className="relative flex-shrink-0">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setMenuOpenId((prev) => (prev === comment.id ? null : comment.id));
+                                }}
+                                className="p-1 text-text-tertiary hover:text-text-primary transition-colors"
+                                aria-label="댓글 메뉴"
+                              >
+                                <MoreHorizontal size={14} />
+                              </button>
+                              {menuOpenId === comment.id && (
+                                <div
+                                  className="absolute right-0 top-6 z-10 min-w-[96px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <button
+                                    onClick={() => startEdit(comment)}
+                                    className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary"
+                                  >
+                                    수정
+                                  </button>
+                                  <button
+                                    onClick={() => handleDelete(comment.id)}
+                                    className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary"
+                                  >
+                                    삭제
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        <p className="readable-body mt-0.5 break-words">
-                          {comment.content}
-                        </p>
+                        {isEditing ? (
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <input
+                              ref={editInputRef}
+                              type="text"
+                              value={editInput}
+                              onChange={(e) => setEditInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                                  e.preventDefault();
+                                  saveEdit();
+                                } else if (e.key === "Escape") {
+                                  e.preventDefault();
+                                  cancelEdit();
+                                }
+                              }}
+                              className="flex-1 bg-bg-tertiary rounded-lg px-3 py-1.5 text-sm text-text-primary outline-none border border-border"
+                            />
+                            <button
+                              onClick={saveEdit}
+                              disabled={!editInput.trim() || savingEdit}
+                              className="flex items-center justify-center w-7 h-7 rounded-full text-white disabled:opacity-50 transition-opacity"
+                              style={{ backgroundColor: teamId ? (() => { const t = getTeamById(teamId); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}
+                              aria-label="저장"
+                            >
+                              <Check size={14} />
+                            </button>
+                            <button
+                              onClick={cancelEdit}
+                              className="text-[11px] text-text-tertiary px-1"
+                            >
+                              취소
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="readable-body mt-0.5 break-words">
+                            {comment.content}
+                          </p>
+                        )}
                       </div>
                     </div>
                   );
