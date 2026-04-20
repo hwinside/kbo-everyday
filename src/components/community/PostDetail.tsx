@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, MoreHorizontal, Check } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
@@ -164,14 +163,6 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
     if (hr < 24) return `${hr}시간 전`;
     return `${Math.floor(hr / 24)}일 전`;
   };
-
-  // Portal-mount state: only render composer portal on the client after hydration.
-  const [portalReady, setPortalReady] = useState(false);
-  useEffect(() => {
-    setPortalReady(true);
-    // Cleanup kbd-open class if user navigates away while focused.
-    return () => { document.body.classList.remove("kbd-open"); };
-  }, []);
 
   return (
     <div className="min-h-screen bg-bg-primary pb-20">
@@ -402,44 +393,29 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         </div>
       </div>
 
-      {/*
-        Comment Input — rendered via React Portal into <body> so that the
-        PostDetail layout never interferes with composer positioning.
-
-        Positioning strategy (no JS math):
-        - position: fixed; bottom: calc(4rem + safe-area)  ← sits above global TabBar
-        - body.kbd-open → bottom: 0                         ← keyboard open, TabBar hidden
-        - viewport interactiveWidget=resizes-content (layout.tsx) shrinks the layout
-          viewport on iOS 16.4+/Chrome 108+, so fixed-bottom elements auto-dock
-          above the keyboard without any visualViewport math.
-      */}
-      {portalReady && createPortal(
-        <div className="composer-portal fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-[60]">
-          {(() => {
-            const teamColor = post.team_id ? getTeamById(post.team_id)?.colorPrimary : undefined;
-            return (
-              <>
-                <input
-                  type="text"
-                  value={comment}
-                  onChange={e => setComment(e.target.value)}
-                  onFocus={() => document.body.classList.add("kbd-open")}
-                  onBlur={() => document.body.classList.remove("kbd-open")}
-                  placeholder={user ? "댓글을 입력하세요" : "로그인 후 댓글 작성 가능"}
-                  disabled={!user}
-                  className="flex-1 bg-bg-secondary rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none border"
-                  style={{ borderColor: teamColor ? `${teamColor}80` : 'rgba(255,255,255,0.15)' }}
-                  onKeyDown={e => e.key === "Enter" && handleComment()}
-                />
-                <button onClick={handleComment} disabled={!comment.trim() || !user} className="w-9 h-9 rounded-full flex items-center justify-center text-white disabled:opacity-50 transition-opacity" style={{ backgroundColor: post.team_id ? (() => { const t = getTeamById(post.team_id); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}>
-                  <Send size={16} />
-                </button>
-              </>
-            );
-          })()}
-        </div>,
-        document.body
-      )}
+      {/* Comment Input — positioned above TabBar (TabBar ≈ 4rem + safe-area-inset-bottom) */}
+      <div className="fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40" style={{ bottom: "calc(4rem + env(safe-area-inset-bottom, 0px))" }}>
+        {(() => {
+          const teamColor = post.team_id ? getTeamById(post.team_id)?.colorPrimary : undefined;
+          return (
+            <>
+              <input
+                type="text"
+                value={comment}
+                onChange={e => setComment(e.target.value)}
+                placeholder={user ? "댓글을 입력하세요" : "로그인 후 댓글 작성 가능"}
+                disabled={!user}
+                className="flex-1 bg-bg-secondary rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none border"
+                style={{ borderColor: teamColor ? `${teamColor}80` : 'rgba(255,255,255,0.15)' }}
+                onKeyDown={e => e.key === "Enter" && handleComment()}
+              />
+              <button onClick={handleComment} disabled={!comment.trim() || !user} className="w-9 h-9 rounded-full flex items-center justify-center text-white disabled:opacity-50 transition-opacity" style={{ backgroundColor: post.team_id ? (() => { const t = getTeamById(post.team_id); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}>
+                <Send size={16} />
+              </button>
+            </>
+          );
+        })()}
+      </div>
       <ReportSheet isOpen={showReport} onClose={() => setShowReport(false)} targetType={reportTarget.type} targetId={reportTarget.id} />
     </div>
   );

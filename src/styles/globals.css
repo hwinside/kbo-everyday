@@ -262,28 +262,6 @@ body {
   padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
 }
 
-/*
- * PostDetail composer (React Portal into <body>).
- * Default: sits above the global TabBar.
- * On keyboard focus (body.kbd-open): TabBar hides, composer drops to bottom:0.
- * Combined with viewport interactiveWidget=resizes-content (layout.tsx), the
- * layout viewport itself shrinks on iOS 16.4+/Chrome 108+, so the composer
- * automatically docks above the keyboard without any JS math.
- */
-.composer-portal {
-  bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-body.kbd-open .composer-portal {
-  bottom: 0;
-}
-body.kbd-open [data-global-tabbar] {
-  display: none;
-}
-body.kbd-open main.pb-tab-bar {
-  padding-bottom: 0;
-}
-
 /* Safe area for notch/dynamic island */
 .pt-safe {
   padding-top: env(safe-area-inset-top, 0px);
