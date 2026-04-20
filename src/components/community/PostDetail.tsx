@@ -58,18 +58,13 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
     // reports a height change. Remove it on blur.
     const onFocusIn = (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
-      const isInput = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA");
-      if (isInput) document.body.classList.add("kbd-open");
-      // iOS Safari auto-scrolls the page to bring focused input into view,
-      // even when input is position:fixed. This pushes the post body off the
-      // top of the screen. Counter by pinning window scroll to its pre-focus
-      // value during the keyboard open transition (~500ms). The input bar
-      // is fixed, so it stays visible regardless.
-      const anchorY = isInput ? window.scrollY : null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) {
+        document.body.classList.add("kbd-open");
+      }
+      // Still poll visualViewport for accurate keyboardOffset number.
       let ticks = 0;
       const id = setInterval(() => {
         update();
-        if (anchorY !== null && window.scrollY !== anchorY) window.scrollTo(0, anchorY);
         if (++ticks >= 10) clearInterval(id); // 10 * 50ms = 500ms coverage
       }, 50);
     };
