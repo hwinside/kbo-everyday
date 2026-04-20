@@ -151,7 +151,7 @@ export default function EventBanner({ source = "home" }: Props) {
   if (!visible) return null;
 
   return (
-    <div className="mb-4">
+    <div className="mb-4 relative">
       <Link
         ref={linkRef}
         href="/events/invite"
@@ -168,15 +168,16 @@ export default function EventBanner({ source = "home" }: Props) {
           priority
           className="w-full h-auto block"
         />
-        <button
-          type="button"
-          onClick={handleDismiss}
-          className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/40 hover:bg-black/60 flex items-center justify-center backdrop-blur-sm"
-          aria-label="배너 닫기"
-        >
-          <X size={14} className="text-white/90" />
-        </button>
       </Link>
+      {/* button-in-anchor HTML invalid 해소 — 외부 배치 + absolute 레이아웃 유지 */}
+      <button
+        type="button"
+        onClick={handleDismiss}
+        className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/40 hover:bg-black/60 flex items-center justify-center backdrop-blur-sm z-10"
+        aria-label="배너 닫기"
+      >
+        <X size={14} className="text-white/90" />
+      </button>
     </div>
   );
 }
