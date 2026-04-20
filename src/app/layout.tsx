@@ -55,6 +55,10 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   viewportFit: "cover",
+  // interactive-widget=resizes-content (iOS 16.4+/Chrome 108+): when a soft keyboard
+  // opens, the layout viewport itself shrinks so that `position:fixed; bottom:0`
+  // elements auto-dock just above the keyboard without any JS math.
+  interactiveWidget: "resizes-content",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#F2F2F7" },
     { media: "(prefers-color-scheme: dark)", color: "#0A0A0B" },
