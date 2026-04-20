@@ -50,8 +50,8 @@ export default function EventInvitePage() {
     async function load() {
       try {
         const [inviteRes, writingRes] = await Promise.all([
-          fetch("/api/event/leaderboard?track=invite&limit=10"),
-          fetch("/api/event/leaderboard?track=writing&limit=10"),
+          fetch("/api/leaderboard/invite?limit=10"),
+          fetch("/api/leaderboard/writing?limit=10"),
         ]);
         const [inviteData, writingData] = await Promise.all([
           inviteRes.ok ? inviteRes.json() : { rows: [] },
