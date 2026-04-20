@@ -119,22 +119,24 @@ export default function PlayerBoardPage() {
     setPhotoLoading(true);
     const cols = "id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)";
 
-    // 1) 선수 게시판 직접 게시물
+    // 1) 선수 게시판 직접 게시물 (사진 게시물만)
     const boardQuery = supabase
       .from("posts")
       .select(cols)
       .eq("board_type", "player")
       .eq("board_id", kboId)
+      .eq("content_type", "photo")
       .neq("is_hidden", true)
       .order("created_at", { ascending: false })
       .limit(50);
 
-    // 2) 다른 게시판에서 player_tags로 태그된 게시물 (cross-board)
+    // 2) 다른 게시판에서 player_tags로 태그된 게시물 (cross-board, 사진 게시물만)
     const tag = formatPlayerTag(kboId, playerName);
     const tagQuery = supabase
       .from("posts")
       .select(cols)
       .contains("player_tags", [tag])
+      .eq("content_type", "photo")
       .neq("is_hidden", true)
       .neq("board_type", "player") // 선수 게시판 중복 방지
       .order("created_at", { ascending: false })
