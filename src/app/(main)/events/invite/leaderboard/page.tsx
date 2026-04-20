@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Trophy, Users, MessageSquare } from "lucide-react";
+import { ChevronLeft, Trophy, Users, MessageSquare, Gift, Crown } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { getTeamById } from "@/lib/constants/teams";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { supabase } from "@/lib/supabase/client";
+import { getPrizesByTrack, PrizeTier } from "@/lib/events/prizes";
 
 type Track = "invite" | "writing";
 
@@ -38,7 +39,8 @@ interface MyRank {
 export default function LeaderboardPage() {
   const router = useRouter();
   const { user } = useAuth();
-  const [track, setTrack] = useState<Track>("invite");
+  // 2026-04-20 삼순이/하린아빠 합의: 기본 탭은 글쓰기 — 데이터 더 풍부한 쪽을 먼저 노출
+  const [track, setTrack] = useState<Track>("writing");
   const [rows, setRows] = useState<(InviteRow | WritingRow)[]>([]);
   const [myRank, setMyRank] = useState<MyRank | null>(null);
   const [loading, setLoading] = useState(true);
@@ -99,19 +101,19 @@ export default function LeaderboardPage() {
       </div>
 
       <div className="max-w-screen-sm mx-auto px-4 pt-4">
-        {/* Track Tabs */}
+        {/* Track Tabs — 2026-04-20 하린아빠 지시: 글쓰기가 좌측(기본) */}
         <div className="grid grid-cols-2 gap-2 mb-4">
-          <TrackTab
-            active={track === "invite"}
-            onClick={() => setTrack("invite")}
-            icon={<Users size={16} />}
-            label="초대 랭킹"
-          />
           <TrackTab
             active={track === "writing"}
             onClick={() => setTrack("writing")}
             icon={<MessageSquare size={16} />}
             label="글쓰기 랭킹"
+          />
+          <TrackTab
+            active={track === "invite"}
+            onClick={() => setTrack("invite")}
+            icon={<Users size={16} />}
+            label="초대 랭킹"
           />
         </div>
 
@@ -150,13 +152,79 @@ export default function LeaderboardPage() {
 
         {/* Footer info */}
         <div className="mt-8 text-xs text-white/40 text-center leading-relaxed">
-          <p>이벤트 기간: 2026-04-20 ~ 2026-05-31</p>
+          <p>이벤트 기간: 2026-04-20 ~ 2026-05-31 (전체 누적 집계)</p>
           <p className="mt-1">
             {track === "invite"
               ? "활성화된 초대만 집계 (팀 선택 + 글/댓글 1건)"
               : "채팅 1pt · 댓글 2pt · 글 3pt · 사진글 5pt · 일 150pt 상한"}
           </p>
         </div>
+
+        {/* 순위별 상품 표 — 2026-04-20 하린아빠/삼순이 추가 지시 */}
+        <PrizeTable track={track} />
+
+        <div className="h-20" />
+      </div>
+    </div>
+  );
+}
+
+function PrizeTable({ track }: { track: Track }) {
+  const prizes = getPrizesByTrack(track);
+  const trackLabel = track === "invite" ? "초대 트랙" : "글쓰기 트랙";
+
+  return (
+    <div className="mt-8">
+      <div className="flex items-center gap-2 mb-3 px-1">
+        <Gift size={16} className="text-yellow-400/80" />
+        <h2 className="font-bold text-sm text-white/90">
+          {trackLabel} 순위별 상품
+        </h2>
+      </div>
+      <div className="space-y-1.5">
+        {prizes.map((tier) => (
+          <PrizeRow key={tier.rank} tier={tier} />
+        ))}
+      </div>
+      <p className="mt-3 text-[11px] text-white/40 text-center leading-relaxed">
+        · 상위 50명에게 시즌 한정 얼리멤버 뱃지와 상품 1개 지급
+        <br />
+        · 최종 순위는 5월 31일 기준으로 확정
+      </p>
+    </div>
+  );
+}
+
+function PrizeRow({ tier }: { tier: PrizeTier }) {
+  return (
+    <div
+      className={`flex items-center gap-3 px-3 py-3 rounded-xl ${
+        tier.highlight
+          ? "bg-gradient-to-r from-yellow-500/15 to-yellow-500/5 border border-yellow-500/30"
+          : "bg-white/5 border border-white/10"
+      }`}
+    >
+      <div className="w-14 shrink-0 flex items-center gap-1">
+        {tier.highlight && <Crown size={13} className="text-yellow-400" />}
+        <span
+          className={`text-xs font-bold ${
+            tier.highlight ? "text-yellow-300" : "text-white/80"
+          }`}
+        >
+          {tier.rank}
+        </span>
+      </div>
+      <div className="flex-1 min-w-0">
+        <p
+          className={`text-sm font-semibold ${
+            tier.highlight ? "text-yellow-200" : "text-white/90"
+          }`}
+        >
+          {tier.prize}
+        </p>
+        <p className="text-[11px] text-white/50 mt-0.5">
+          {tier.count}명 · 시즌 한정 뱃지 · <span className="text-white/70">{tier.badge}</span>
+        </p>
       </div>
     </div>
   );
@@ -302,18 +370,45 @@ function RankRow({
   );
 }
 
+/**
+ * EmptyState — 순위표 프레임을 유지한 채 "아직 없음" 안내 렌더
+ * 2026-04-20 하린아빠 지시: "공백화면" 제거, 남이 보는 것과 동일한 순위표 레이아웃 + 안내 메시지
+ */
 function EmptyState({ track }: { track: Track }) {
+  const message =
+    track === "invite"
+      ? "아직 완료된 초대가 없습니다"
+      : "아직 집계된 글쓰기 점수가 없습니다";
+  const hint =
+    track === "invite"
+      ? "초대한 친구가 팀을 선택하고 글/댓글 1건을 작성하면 자동으로 등장해요"
+      : "채팅 · 댓글 · 글로 점수를 쌓아보세요";
+
   return (
-    <div className="text-center py-16">
-      <Trophy size={48} className="mx-auto mb-4 text-white/20" />
-      <p className="text-white/60 font-semibold mb-1">
-        {track === "invite" ? "첫 초대자를 기다립니다" : "첫 참가자를 기다립니다"}
-      </p>
-      <p className="text-xs text-white/40">
-        {track === "invite"
-          ? "친구를 초대하고 첫 1위가 되어보세요"
-          : "채팅 · 댓글 · 글로 점수를 쌓아보세요"}
-      </p>
+    <div className="space-y-2">
+      {/* 상단 안내 카드 */}
+      <div className="flex items-center gap-3 px-3 py-3.5 rounded-xl bg-white/5 border border-white/10">
+        <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center shrink-0">
+          <Trophy size={16} className="text-white/40" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-white/80">{message}</p>
+          <p className="text-xs text-white/50 mt-0.5 leading-relaxed">{hint}</p>
+        </div>
+      </div>
+      {/* 1/2/3위 슬롯 — 랭킹 프레임은 그대로, row 값은 `-` 처리 (삼순이 권장) */}
+      {[1, 2, 3].map((n) => (
+        <div
+          key={n}
+          className="flex items-center gap-3 px-3 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06]"
+        >
+          <span className="w-6 text-center font-bold text-sm text-white/40">
+            {n}
+          </span>
+          <span className="flex-1 text-sm text-white/30">-</span>
+          <span className="text-xs text-white/30">-</span>
+        </div>
+      ))}
     </div>
   );
 }

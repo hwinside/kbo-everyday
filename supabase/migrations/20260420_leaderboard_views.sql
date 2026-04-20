@@ -74,18 +74,16 @@ ORDER BY invite_count DESC, MAX(inv.activated_at) ASC;
 
 CREATE OR REPLACE VIEW v_leaderboard_writing AS
 WITH
-  -- 기간 경계 (수정): KST 2026-04-20 00:00:00 ~ 2026-05-31 23:59:59 정확히
-  --   start: UTC 2026-04-19 15:00:00 (포함)
-  --   end:   UTC 2026-05-31 15:00:00 (미만) = KST 2026-06-01 00:00:00 (미만) = KST 2026-05-31 23:59:59.999까지 포함
+  -- 집계 정책 (2026-04-20 하린아빠 확정): 전체 누적 (lifetime) — 기간 필터 없음
+  -- 이벤트 기간은 공지상 운영 프레임일 뿐, 집계는 가입 이후 모든 활동 포함
+  -- 일일 측은 날짜별 스팸 방지 목적으로 그대로 유지
   chat_daily AS (
     SELECT
       user_id,
       (created_at AT TIME ZONE 'Asia/Seoul')::date AS day,
       LEAST(COUNT(*) * 1, 30) AS pts
     FROM chat_messages
-    WHERE created_at >= '2026-04-19T15:00:00Z'::timestamptz  -- KST 2026-04-20 00:00:00
-      AND created_at <  '2026-05-31T15:00:00Z'::timestamptz  -- KST 2026-06-01 00:00:00 (미만)
-      AND user_id <> ALL (leaderboard_internal_user_ids())
+    WHERE user_id <> ALL (leaderboard_internal_user_ids())
     GROUP BY user_id, day
   ),
   comment_daily AS (
@@ -94,9 +92,7 @@ WITH
       (created_at AT TIME ZONE 'Asia/Seoul')::date AS day,
       LEAST(COUNT(*) * 2, 40) AS pts
     FROM comments
-    WHERE created_at >= '2026-04-19T15:00:00Z'::timestamptz
-      AND created_at <  '2026-05-31T15:00:00Z'::timestamptz
-      AND is_hidden = FALSE
+    WHERE is_hidden = FALSE
       AND author_id <> ALL (leaderboard_internal_user_ids())
     GROUP BY author_id, day
   ),
@@ -106,9 +102,7 @@ WITH
       (created_at AT TIME ZONE 'Asia/Seoul')::date AS day,
       LEAST(COUNT(*) * 3, 30) AS pts
     FROM posts
-    WHERE created_at >= '2026-04-19T15:00:00Z'::timestamptz
-      AND created_at <  '2026-05-31T15:00:00Z'::timestamptz
-      AND is_hidden = FALSE
+    WHERE is_hidden = FALSE
       AND (content_type IS NULL OR content_type <> 'photo')
       AND author_id <> ALL (leaderboard_internal_user_ids())
     GROUP BY author_id, day
@@ -119,9 +113,7 @@ WITH
       (created_at AT TIME ZONE 'Asia/Seoul')::date AS day,
       LEAST(COUNT(*) * 5, 50) AS pts
     FROM posts
-    WHERE created_at >= '2026-04-19T15:00:00Z'::timestamptz
-      AND created_at <  '2026-05-31T15:00:00Z'::timestamptz
-      AND is_hidden = FALSE
+    WHERE is_hidden = FALSE
       AND content_type = 'photo'
       AND author_id <> ALL (leaderboard_internal_user_ids())
     GROUP BY author_id, day

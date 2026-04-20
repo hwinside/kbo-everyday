@@ -118,22 +118,22 @@ export default function EventInvitePage() {
           />
         </div>
 
+        {/* Top 10 프리뷰 — 글쓰기를 먼저 (데이터 더 풍부, 2026-04-20 합의) */}
+        <TopPreview
+          title="글쓰기 랭킹 TOP 10"
+          icon={<MessageSquare size={16} />}
+          rows={topWriting}
+          track="writing"
+          loading={loading}
+          currentUserId={user?.id}
+        />
+
         {/* Top 10 프리뷰 — 초대 */}
         <TopPreview
           title="초대 랭킹 TOP 10"
           icon={<Users size={16} />}
           rows={topInvite}
           track="invite"
-          loading={loading}
-          currentUserId={user?.id}
-        />
-
-        {/* Top 10 프리뷰 — 글쓰기 */}
-        <TopPreview
-          title="글쓰기 랭킹 TOP 10"
-          icon={<MessageSquare size={16} />}
-          rows={topWriting}
-          track="writing"
           loading={loading}
           currentUserId={user?.id}
         />
@@ -226,10 +226,38 @@ function TopPreview({
           불러오는 중…
         </div>
       ) : rows.length === 0 ? (
-        <div className="text-xs text-white/40 text-center py-6 bg-white/5 rounded-lg">
-          {track === "invite"
-            ? "첫 초대자를 기다립니다 🌱"
-            : "첫 참가자를 기다립니다 🌱"}
+        <div className="space-y-1.5">
+          {/* 순위표 프레임 유지 — 안내 방식 */}
+          <div className="flex items-center gap-2.5 px-3 py-3 rounded-lg bg-white/5 border border-white/5">
+            <div className="w-6 h-6 rounded-full bg-white/5 flex items-center justify-center shrink-0">
+              <Trophy size={12} className="text-white/30" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-white/70">
+                {track === "invite"
+                  ? "아직 완료된 초대가 없습니다"
+                  : "아직 집계된 점수가 없습니다"}
+              </p>
+              <p className="text-[10px] text-white/40 mt-0.5 leading-relaxed">
+                {track === "invite"
+                  ? "친구가 팀 선택 + 글/댓글 1건 작성 시 등장"
+                  : "채팅·댓글·글로 점수를 쌓아보세요"}
+              </p>
+            </div>
+          </div>
+          {/* 1/2/3위 슬롯 — row 값은 `-` 처리 */}
+          {[1, 2, 3].map((n) => (
+            <div
+              key={n}
+              className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06]"
+            >
+              <span className="w-6 text-center font-bold text-xs text-white/40">
+                {n}
+              </span>
+              <span className="flex-1 text-xs text-white/30">-</span>
+              <span className="text-[10px] text-white/30">-</span>
+            </div>
+          ))}
         </div>
       ) : (
         <div className="space-y-1.5">
