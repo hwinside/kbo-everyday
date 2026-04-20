@@ -60,13 +60,16 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
       const t = e.target as HTMLElement | null;
       const isInput = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA");
       if (isInput) document.body.classList.add("kbd-open");
-      // Poll visualViewport to get accurate keyboardOffset number. Let Safari
-      // auto-scroll naturally — combined with the dynamic paddingBottom on the
-      // root container, the page will settle so the last comment sits just
-      // above the input bar (normal messenger UX).
+      // iOS Safari auto-scrolls the page to bring focused input into view,
+      // even when input is position:fixed. This pushes the post body off the
+      // top of the screen. Counter by pinning window scroll to its pre-focus
+      // value during the keyboard open transition (~500ms). The input bar
+      // is fixed, so it stays visible regardless.
+      const anchorY = isInput ? window.scrollY : null;
       let ticks = 0;
       const id = setInterval(() => {
         update();
+        if (anchorY !== null && window.scrollY !== anchorY) window.scrollTo(0, anchorY);
         if (++ticks >= 10) clearInterval(id); // 10 * 50ms = 500ms coverage
       }, 50);
     };
@@ -232,19 +235,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   };
 
   return (
-    <div
-      className="min-h-screen bg-bg-primary"
-      style={{
-        // Reserve space at the bottom so the fixed input bar never overlaps
-        // the last comment. When the keyboard is closed: 80px (TabBar + input).
-        // When the keyboard is open: keyboardOffset + input bar height (~72) + 16.
-        paddingBottom:
-          keyboardOffset > 0
-            ? `${keyboardOffset + 88}px`
-            : "calc(5rem + env(safe-area-inset-bottom, 0px))",
-        transition: "padding-bottom 0.18s ease-out",
-      }}
-    >
+    <div className="min-h-screen bg-bg-primary pb-20">
       {/* Header */}
       <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ borderColor: post.team_id ? getTeamBorderColorById(post.team_id) : undefined }}>
         <div className="flex items-center gap-3 px-4 py-3">
