@@ -1,6 +1,6 @@
 import Image from "next/image";
 import { clsx } from "clsx";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 
 interface TeamBadgeProps {
   teamId: number;
@@ -31,7 +31,7 @@ export default function TeamBadge({
         size === "lg" && "py-2 pl-1.5 pr-4 text-lg",
         className,
       )}
-      style={{ backgroundColor: team.colorPrimary }}
+      style={{ backgroundColor: getTeamBgColor(team) }}
     >
       <span
         className="inline-flex shrink-0 items-center justify-center rounded-full bg-white"

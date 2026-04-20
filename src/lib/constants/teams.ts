@@ -6,6 +6,9 @@ export interface TeamData {
   colorPrimary: string;
   colorLight: string;
   colorSecondary: string;
+  /** 다크 배경에서 뱃지 배경으로 사용할 색상 (colorPrimary가 너무 어두운 경우 override).
+   *  지정되면 getTeamBgColor가 colorPrimary/colorLight 대신 이 값을 반환. */
+  colorBadgeOverride?: string;
   logoPath: string;
   youtubeChannelId: string;
 }
@@ -41,6 +44,8 @@ export const TEAMS: TeamData[] = [
     colorPrimary: "#000000",
     colorLight: "#E85050",
     colorSecondary: "#EB1F25",
+    // KT 팀컬러(#000)가 다크 배경(#0A0A0B)에 묻혀 가독성 0 → 뱃지 전용 진회색 지정
+    colorBadgeOverride: "#2B2B2B",
     logoPath: "/logos/kt.svg",
     youtubeChannelId: "UCvScyjGkBUx2CJDMNAi9Twg",
   },
@@ -144,9 +149,12 @@ function hexLuminance(hex: string): number {
 }
 
 /** 다크모드 배경에서 사용할 팀 컬러.
- *  colorPrimary가 너무 어두우면(luminance < 0.05) colorLight를 반환.
+ *  1) colorBadgeOverride가 있으면 그 값 사용 (KT 등 어두운 팀)
+ *  2) colorPrimary가 너무 어두우면(luminance < 0.05) colorLight를 반환
+ *  3) 그 외는 colorPrimary
  */
 export function getTeamBgColor(team: TeamData): string {
+  if (team.colorBadgeOverride) return team.colorBadgeOverride;
   return hexLuminance(team.colorPrimary) < 0.05 ? team.colorLight : team.colorPrimary;
 }
 
