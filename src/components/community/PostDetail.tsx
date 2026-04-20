@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, MoreHorizontal, Check } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
@@ -27,6 +27,31 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   const { post, comments, loading, liked, setLiked, setComments } = usePostDetail(postId);
   const [comment, setComment] = useState("");
   const [likeCount, setLikeCount] = useState(0);
+
+  // iOS keyboard-aware comment bar: subscribe to visualViewport, hide global TabBar
+  // while keyboard is open, and anchor the input bar right above the keyboard.
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    const update = () => {
+      // layoutViewport - visualViewport = keyboard (plus any browser UI diff).
+      const diff = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      // Small threshold to avoid toggling on minor browser UI shifts.
+      const kbd = diff > 80 ? diff : 0;
+      setKeyboardOffset(kbd);
+      if (kbd > 0) document.body.classList.add("kbd-open");
+      else document.body.classList.remove("kbd-open");
+    };
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+      document.body.classList.remove("kbd-open");
+    };
+  }, []);
 
   // 게시글 메뉴/편집 상태
   const [postMenuOpen, setPostMenuOpen] = useState(false);
@@ -393,8 +418,20 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         </div>
       </div>
 
-      {/* Comment Input — positioned above TabBar (TabBar ≈ 4rem + safe-area-inset-bottom) */}
-      <div className="fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40" style={{ bottom: "calc(4rem + env(safe-area-inset-bottom, 0px))" }}>
+      {/* Comment Input — keyboard-aware. When keyboard is closed, sit above global
+          TabBar (4rem + safe-area). When keyboard is open, TabBar is hidden via
+          body.kbd-open CSS and the input bar anchors right above the keyboard
+          using the visualViewport offset. */}
+      <div
+        className="fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40"
+        style={{
+          bottom:
+            keyboardOffset > 0
+              ? `${keyboardOffset}px`
+              : "calc(4rem + env(safe-area-inset-bottom, 0px))",
+          transition: "bottom 0.18s ease-out",
+        }}
+      >
         {(() => {
           const teamColor = post.team_id ? getTeamById(post.team_id)?.colorPrimary : undefined;
           return (

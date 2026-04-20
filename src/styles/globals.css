@@ -298,3 +298,9 @@ body {
 .dark .myteam-card .text-text-primary { color: #F5F5F7 !important; }
 .dark .myteam-card .text-text-secondary { color: #D1D1D6 !important; }
 .dark .myteam-card .text-text-tertiary { color: #A1A1A6 !important; }
+
+/* Keyboard open state: hide the global TabBar so the comment input bar can sit
+   directly above the iOS keyboard instead of stacking on top of a 64px tab bar
+   that is already pushed behind the keyboard. PostDetail.tsx toggles .kbd-open
+   on document.body when window.visualViewport detects keyboard. */
+body.kbd-open nav.fixed.bottom-0 { display: none !important; }
