@@ -186,13 +186,14 @@ export default function PlayerHero({
         </div>
 
         {/* Center: cutout */}
-        {/* 그라데이션 마스크: 75%까지 완전 노출(턱 라인 위까지), 95%에서 fade — 상반신만 자연스럽게 사라짐 */}
-        {/* spotlight(radial-gradient) 제거: cutout 위 오버레이없이 팀컬러는 컨테이너 배경 그라데이션으로만 노출 (유니폼 오염 완전 차단) */}
+        {/* 상단 safe space 6px + 하단 그라데이션 fade(어깨선 자연스럽게 사라짐) */}
+        {/* - container: top-[6px] h-[194px] → 상단 여유 6px 확보 (모자 끝이 Hero 상단에 닿는 케이스 방지) */}
+        {/* - mask: 0~60% 완전 노출 → 60~100% fade (어깨 라인이 점진적으로 fade out) */}
         <div
-          className="pointer-events-none absolute left-1/2 top-0 z-0 -translate-x-1/2 h-[200px] w-[200px] overflow-hidden"
+          className="pointer-events-none absolute left-1/2 top-[6px] z-0 -translate-x-1/2 h-[194px] w-[200px] overflow-hidden"
           style={{
-            maskImage: "linear-gradient(180deg, #000 0%, #000 75%, transparent 95%)",
-            WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 75%, transparent 95%)",
+            maskImage: "linear-gradient(180deg, #000 0%, #000 60%, transparent 100%)",
+            WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 60%, transparent 100%)",
           }}
         >
           <Image
@@ -201,7 +202,7 @@ export default function PlayerHero({
             fill
             sizes="220px"
             className="relative object-contain"
-            style={{ objectPosition: "center -35px" }}
+            style={{ objectPosition: "center -30px" }}
             priority
             unoptimized
           />
