@@ -208,6 +208,55 @@ async function main() {
     await changeSelectAndWait(page, teamSel, "", 5000).catch(() => {});
   }
 
+  // ===== BACK NUMBERS (등번호 보강) =====
+  // 기록 페이지(HitterBasic/PitcherBasic)에는 등번호 컬럼이 없어 backNo=""로 들어옴.
+  // 선수 상세 페이지(PitcherDetail/HitterDetail)에서 #lblBackNo 스팬을 긁어 채움.
+  // 이미 등번호가 있는 선수는 skip — 신규/공란만 방문해서 부하 최소화.
+  const needsBackNo = [...allPlayers.values()].filter((p) => {
+    if (p.backNo && String(p.backNo).trim() !== "") return false;
+    // KBO 숫자형 kboId만 상세 페이지가 존재 (FP*/AQ*/TR* 외국인 임시 코드 제외)
+    return /^\d+$/.test(p.kboId || "");
+  });
+  if (needsBackNo.length > 0) {
+    console.log(`\n🔢 등번호 보강: ${needsBackNo.length}명 개별 상세 페이지 방문`);
+    let filled = 0;
+    let failed = 0;
+    for (let i = 0; i < needsBackNo.length; i++) {
+      const p = needsBackNo[i];
+      // 포지션에 따라 Pitcher/Hitter detail URL 선택 (둘 다 구조 동일, 실패 시 다른 쪽 재시도)
+      const urls = p.position === "투수"
+        ? [
+            `https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=${p.kboId}`,
+            `https://www.koreabaseball.com/Record/Player/HitterDetail/Basic.aspx?playerId=${p.kboId}`,
+          ]
+        : [
+            `https://www.koreabaseball.com/Record/Player/HitterDetail/Basic.aspx?playerId=${p.kboId}`,
+            `https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=${p.kboId}`,
+          ];
+      let backNo = "";
+      for (const url of urls) {
+        try {
+          await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
+          backNo = await page.$eval(
+            "#cphContents_cphContents_cphContents_playerProfile_lblBackNo",
+            (el) => el.textContent.trim()
+          ).catch(() => "");
+          if (backNo) break;
+        } catch { /* try next url */ }
+      }
+      if (backNo) {
+        allPlayers.get(p.kboId).backNo = backNo;
+        filled++;
+      } else {
+        failed++;
+      }
+      if ((i + 1) % 20 === 0) {
+        console.log(`  진행 ${i + 1}/${needsBackNo.length} (fill=${filled}, fail=${failed})`);
+      }
+    }
+    console.log(`  ✅ 등번호 보강 완료: 성공 ${filled}명, 실패 ${failed}명`);
+  }
+
   await browser.close();
 
   // Merge with existing roster (keep existing players who have no 2026 stats yet)

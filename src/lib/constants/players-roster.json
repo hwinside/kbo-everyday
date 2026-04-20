@@ -204,7 +204,7 @@
     "kboId": "68220",
     "teamId": 2,
     "position": "투수",
-    "backNo": "",
+    "backNo": "47",
     "team": "두산"
   },
   {
@@ -372,7 +372,7 @@
     "kboId": "51867",
     "teamId": 4,
     "position": "투수",
-    "backNo": "",
+    "backNo": "39",
     "team": "SSG"
   },
   {
@@ -380,7 +380,7 @@
     "kboId": "53312",
     "teamId": 10,
     "position": "야수",
-    "backNo": "",
+    "backNo": "12",
     "team": "키움"
   },
   {
@@ -452,7 +452,7 @@
     "kboId": "69620",
     "teamId": 6,
     "position": "투수",
-    "backNo": "",
+    "backNo": "53",
     "team": "KIA"
   },
   {
@@ -484,7 +484,7 @@
     "kboId": "54705",
     "teamId": 9,
     "position": "투수",
-    "backNo": "",
+    "backNo": "46",
     "team": "한화"
   },
   {
@@ -676,7 +676,7 @@
     "kboId": "64004",
     "teamId": 3,
     "position": "외야수",
-    "backNo": "",
+    "backNo": "53",
     "team": "KT"
   },
   {
@@ -684,7 +684,7 @@
     "kboId": "65269",
     "teamId": 2,
     "position": "내야수",
-    "backNo": "",
+    "backNo": "10",
     "team": "두산"
   },
   {
@@ -820,7 +820,7 @@
     "kboId": "62934",
     "teamId": 4,
     "position": "야수",
-    "backNo": "",
+    "backNo": "31",
     "team": "SSG"
   },
   {
@@ -828,7 +828,7 @@
     "kboId": "67449",
     "teamId": 8,
     "position": "야수",
-    "backNo": "",
+    "backNo": "39",
     "team": "삼성"
   },
   {
@@ -836,7 +836,7 @@
     "kboId": "51301",
     "teamId": 10,
     "position": "투수",
-    "backNo": "",
+    "backNo": "21",
     "team": "키움"
   },
   {
@@ -884,7 +884,7 @@
     "kboId": "68928",
     "teamId": 6,
     "position": "투수",
-    "backNo": "",
+    "backNo": "61",
     "team": "KIA"
   },
   {
@@ -1020,7 +1020,7 @@
     "kboId": "67391",
     "teamId": 10,
     "position": "투수",
-    "backNo": "",
+    "backNo": "28",
     "team": "키움"
   },
   {
@@ -1028,7 +1028,7 @@
     "kboId": "65062",
     "teamId": 8,
     "position": "투수",
-    "backNo": "",
+    "backNo": "62",
     "team": "삼성"
   },
   {
@@ -1036,7 +1036,7 @@
     "kboId": "62332",
     "teamId": 10,
     "position": "야수",
-    "backNo": "",
+    "backNo": "32",
     "team": "키움"
   },
   {
@@ -1044,7 +1044,7 @@
     "kboId": "78224",
     "teamId": 4,
     "position": "야수",
-    "backNo": "",
+    "backNo": "32",
     "team": "SSG"
   },
   {
@@ -1196,7 +1196,7 @@
     "kboId": "50458",
     "teamId": 8,
     "position": "야수",
-    "backNo": "",
+    "backNo": "58",
     "team": "삼성"
   },
   {
@@ -1228,7 +1228,7 @@
     "kboId": "67954",
     "teamId": 5,
     "position": "투수",
-    "backNo": "",
+    "backNo": "54",
     "team": "NC"
   },
   {
@@ -1252,7 +1252,7 @@
     "kboId": "78122",
     "teamId": 6,
     "position": "야수",
-    "backNo": "",
+    "backNo": "42",
     "team": "KIA"
   },
   {
@@ -1260,7 +1260,7 @@
     "kboId": "66704",
     "teamId": 9,
     "position": "야수",
-    "backNo": "",
+    "backNo": "25",
     "team": "한화"
   },
   {
@@ -1268,7 +1268,7 @@
     "kboId": "64984",
     "teamId": 10,
     "position": "야수",
-    "backNo": "",
+    "backNo": "1",
     "team": "키움"
   },
   {
@@ -1276,7 +1276,7 @@
     "kboId": "55610",
     "teamId": 6,
     "position": "투수",
-    "backNo": "",
+    "backNo": "10",
     "team": "KIA"
   },
   {
@@ -1284,7 +1284,7 @@
     "kboId": "65040",
     "teamId": 8,
     "position": "야수",
-    "backNo": "",
+    "backNo": "25",
     "team": "삼성"
   },
   {
@@ -1292,7 +1292,7 @@
     "kboId": "54263",
     "teamId": 2,
     "position": "투수",
-    "backNo": "",
+    "backNo": "63",
     "team": "두산"
   },
   {
@@ -1300,7 +1300,7 @@
     "kboId": "65343",
     "teamId": 4,
     "position": "투수",
-    "backNo": "",
+    "backNo": "43",
     "team": "SSG"
   },
   {
@@ -1308,7 +1308,7 @@
     "kboId": "50902",
     "teamId": 5,
     "position": "야수",
-    "backNo": "",
+    "backNo": "13",
     "team": "NC"
   },
   {
@@ -1324,7 +1324,7 @@
     "kboId": "61404",
     "teamId": 8,
     "position": "야수",
-    "backNo": "",
+    "backNo": "32",
     "team": "삼성"
   },
   {
@@ -1396,7 +1396,7 @@
     "kboId": "51344",
     "teamId": 5,
     "position": "야수",
-    "backNo": "",
+    "backNo": "44",
     "team": "NC"
   },
   {
@@ -1404,7 +1404,7 @@
     "kboId": "67539",
     "teamId": 7,
     "position": "투수",
-    "backNo": "",
+    "backNo": "43",
     "team": "롯데"
   },
   {
@@ -1412,7 +1412,7 @@
     "kboId": "62947",
     "teamId": 6,
     "position": "야수",
-    "backNo": "",
+    "backNo": "47",
     "team": "KIA"
   },
   {
@@ -1596,7 +1596,7 @@
     "kboId": "76715",
     "teamId": 9,
     "position": "투수",
-    "backNo": "",
+    "backNo": "99",
     "team": "한화"
   },
   {
@@ -1636,7 +1636,7 @@
     "kboId": "53973",
     "teamId": 5,
     "position": "투수",
-    "backNo": "",
+    "backNo": "20",
     "team": "NC"
   },
   {
@@ -1692,7 +1692,7 @@
     "kboId": "67419",
     "teamId": 3,
     "position": "투수",
-    "backNo": "",
+    "backNo": "18",
     "team": "KT"
   },
   {
@@ -1876,7 +1876,7 @@
     "kboId": "67893",
     "teamId": 4,
     "position": "야수",
-    "backNo": "",
+    "backNo": "2",
     "team": "SSG"
   },
   {
@@ -1908,7 +1908,7 @@
     "kboId": "62244",
     "teamId": 8,
     "position": "야수",
-    "backNo": "",
+    "backNo": "52",
     "team": "삼성"
   },
   {
@@ -1964,7 +1964,7 @@
     "kboId": "50812",
     "teamId": 4,
     "position": "투수",
-    "backNo": "",
+    "backNo": "57",
     "team": "SSG"
   },
   {
@@ -2036,7 +2036,7 @@
     "kboId": "55636",
     "teamId": 6,
     "position": "야수",
-    "backNo": "",
+    "backNo": "15",
     "team": "KIA"
   },
   {
@@ -2172,7 +2172,7 @@
     "kboId": "55252",
     "teamId": 2,
     "position": "야수",
-    "backNo": "",
+    "backNo": "52",
     "team": "두산"
   },
   {
@@ -2180,7 +2180,7 @@
     "kboId": "52731",
     "teamId": 9,
     "position": "투수",
-    "backNo": "",
+    "backNo": "96",
     "team": "한화"
   },
   {
@@ -2188,7 +2188,7 @@
     "kboId": "54503",
     "teamId": 7,
     "position": "투수",
-    "backNo": "",
+    "backNo": "58",
     "team": "롯데"
   },
   {
@@ -2212,7 +2212,7 @@
     "kboId": "50204",
     "teamId": 2,
     "position": "야수",
-    "backNo": "",
+    "backNo": "37",
     "team": "두산"
   },
   {
@@ -2220,7 +2220,7 @@
     "kboId": "56066",
     "teamId": 3,
     "position": "투수",
-    "backNo": "",
+    "backNo": "66",
     "team": "KT"
   },
   {
@@ -2276,7 +2276,7 @@
     "kboId": "67266",
     "teamId": 2,
     "position": "투수",
-    "backNo": "",
+    "backNo": "1",
     "team": "두산"
   },
   {
@@ -2284,7 +2284,7 @@
     "kboId": "56304",
     "teamId": 10,
     "position": "야수",
-    "backNo": "",
+    "backNo": "4",
     "team": "키움"
   },
   {
@@ -2292,7 +2292,7 @@
     "kboId": "62415",
     "teamId": 1,
     "position": "야수",
-    "backNo": "",
+    "backNo": "17",
     "team": "LG"
   },
   {
@@ -2420,7 +2420,7 @@
     "kboId": "56841",
     "teamId": 4,
     "position": "투수",
-    "backNo": "",
+    "backNo": "41",
     "team": "SSG"
   },
   {
@@ -2508,7 +2508,7 @@
     "kboId": "68159",
     "teamId": 1,
     "position": "투수",
-    "backNo": "",
+    "backNo": "34",
     "team": "LG"
   },
   {
@@ -2516,7 +2516,7 @@
     "kboId": "54610",
     "teamId": 6,
     "position": "투수",
-    "backNo": "",
+    "backNo": "65",
     "team": "KIA"
   },
   {
@@ -2716,7 +2716,7 @@
     "kboId": "68902",
     "teamId": 5,
     "position": "투수",
-    "backNo": "",
+    "backNo": "18",
     "team": "NC"
   },
   {
@@ -2924,7 +2924,7 @@
     "kboId": "67006",
     "teamId": 3,
     "position": "야수",
-    "backNo": "",
+    "backNo": "8",
     "team": "KT"
   },
   {
@@ -2932,7 +2932,7 @@
     "kboId": "79608",
     "teamId": 10,
     "position": "야수",
-    "backNo": "",
+    "backNo": "9",
     "team": "키움"
   },
   {
@@ -3076,7 +3076,7 @@
     "kboId": "55392",
     "teamId": 10,
     "position": "야수",
-    "backNo": "",
+    "backNo": "92",
     "team": "키움"
   },
   {
@@ -3084,7 +3084,7 @@
     "kboId": "65056",
     "teamId": 9,
     "position": "투수",
-    "backNo": "",
+    "backNo": "11",
     "team": "한화"
   },
   {
@@ -3124,7 +3124,7 @@
     "kboId": "55339",
     "teamId": 10,
     "position": "야수",
-    "backNo": "",
+    "backNo": "39",
     "team": "키움"
   },
   {
@@ -3140,7 +3140,7 @@
     "kboId": "56464",
     "teamId": 8,
     "position": "투수",
-    "backNo": "",
+    "backNo": "64",
     "team": "삼성"
   },
   {
@@ -3236,7 +3236,7 @@
     "kboId": "51991",
     "teamId": 5,
     "position": "야수",
-    "backNo": "",
+    "backNo": "65",
     "team": "NC"
   },
   {
@@ -3276,7 +3276,7 @@
     "kboId": "51996",
     "teamId": 5,
     "position": "야수",
-    "backNo": "",
+    "backNo": "6",
     "team": "NC"
   },
   {
@@ -3292,7 +3292,7 @@
     "kboId": "55633",
     "teamId": 6,
     "position": "투수",
-    "backNo": "",
+    "backNo": "33",
     "team": "KIA"
   },
   {
@@ -3412,7 +3412,7 @@
     "kboId": "69446",
     "teamId": 8,
     "position": "투수",
-    "backNo": "",
+    "backNo": "18",
     "team": "삼성"
   },
   {
@@ -3492,7 +3492,7 @@
     "kboId": "54404",
     "teamId": 8,
     "position": "투수",
-    "backNo": "",
+    "backNo": "4",
     "team": "삼성"
   },
   {
@@ -3516,7 +3516,7 @@
     "kboId": "69213",
     "teamId": 9,
     "position": "투수",
-    "backNo": "",
+    "backNo": "49",
     "team": "한화"
   },
   {
@@ -3556,7 +3556,7 @@
     "kboId": "67588",
     "teamId": 7,
     "position": "투수",
-    "backNo": "",
+    "backNo": "55",
     "team": "롯데"
   },
   {
@@ -3612,7 +3612,7 @@
     "kboId": "52202",
     "teamId": 2,
     "position": "투수",
-    "backNo": "",
+    "backNo": "65",
     "team": "두산"
   },
   {
@@ -3636,7 +3636,7 @@
     "kboId": "56006",
     "teamId": 3,
     "position": "야수",
-    "backNo": "",
+    "backNo": "6",
     "team": "KT"
   },
   {
@@ -3668,7 +3668,7 @@
     "kboId": "69205",
     "teamId": 9,
     "position": "투수",
-    "backNo": "",
+    "backNo": "31",
     "team": "한화"
   },
   {
@@ -3740,7 +3740,7 @@
     "kboId": "53892",
     "teamId": 4,
     "position": "투수",
-    "backNo": "",
+    "backNo": "92",
     "team": "SSG"
   },
   {
@@ -3884,7 +3884,7 @@
     "kboId": "60146",
     "teamId": 8,
     "position": "투수",
-    "backNo": "",
+    "backNo": "26",
     "team": "삼성"
   },
   {
@@ -3892,7 +3892,7 @@
     "kboId": "51454",
     "teamId": 8,
     "position": "투수",
-    "backNo": "",
+    "backNo": "57",
     "team": "삼성"
   },
   {
@@ -3916,7 +3916,7 @@
     "kboId": "66291",
     "teamId": 2,
     "position": "투수",
-    "backNo": "",
+    "backNo": "50",
     "team": "두산"
   },
   {
@@ -3924,7 +3924,7 @@
     "kboId": "77211",
     "teamId": 2,
     "position": "투수",
-    "backNo": "",
+    "backNo": "45",
     "team": "두산"
   },
   {
@@ -3948,7 +3948,7 @@
     "kboId": "68700",
     "teamId": 9,
     "position": "야수",
-    "backNo": "",
+    "backNo": "37",
     "team": "한화"
   },
   {
@@ -4020,7 +4020,7 @@
     "kboId": "52415",
     "teamId": 8,
     "position": "야수",
-    "backNo": "",
+    "backNo": "7",
     "team": "삼성"
   },
   {
@@ -4156,7 +4156,7 @@
     "kboId": "55301",
     "teamId": 10,
     "position": "투수",
-    "backNo": "",
+    "backNo": "42",
     "team": "키움"
   },
   {
@@ -4164,7 +4164,7 @@
     "kboId": "52992",
     "teamId": 5,
     "position": "투수",
-    "backNo": "",
+    "backNo": "40",
     "team": "NC"
   },
   {
@@ -4196,7 +4196,7 @@
     "kboId": "79456",
     "teamId": 4,
     "position": "야수",
-    "backNo": "",
+    "backNo": "56",
     "team": "SSG"
   },
   {
@@ -4252,7 +4252,7 @@
     "kboId": "60768",
     "teamId": 6,
     "position": "투수",
-    "backNo": "",
+    "backNo": "44",
     "team": "KIA"
   },
   {
@@ -4276,7 +4276,7 @@
     "kboId": "69416",
     "teamId": 8,
     "position": "야수",
-    "backNo": "",
+    "backNo": "3",
     "team": "삼성"
   },
   {
@@ -4332,7 +4332,7 @@
     "kboId": "68504",
     "teamId": 6,
     "position": "야수",
-    "backNo": "",
+    "backNo": "36",
     "team": "KIA"
   },
   {
@@ -4340,7 +4340,7 @@
     "kboId": "54598",
     "teamId": 7,
     "position": "야수",
-    "backNo": "",
+    "backNo": "30",
     "team": "롯데"
   },
   {
@@ -4732,7 +4732,7 @@
     "kboId": "69047",
     "teamId": 3,
     "position": "투수",
-    "backNo": "",
+    "backNo": "29",
     "team": "KT"
   },
   {
@@ -4940,7 +4940,7 @@
     "kboId": "50662",
     "teamId": 6,
     "position": "투수",
-    "backNo": "",
+    "backNo": "62",
     "team": "KIA"
   },
   {
@@ -4948,7 +4948,7 @@
     "kboId": "54537",
     "teamId": 7,
     "position": "투수",
-    "backNo": "",
+    "backNo": "57",
     "team": "롯데"
   },
   {
@@ -4956,7 +4956,7 @@
     "kboId": "55313",
     "teamId": 10,
     "position": "투수",
-    "backNo": "",
+    "backNo": "13",
     "team": "키움"
   },
   {
@@ -4964,7 +4964,7 @@
     "kboId": "55926",
     "teamId": 6,
     "position": "야수",
-    "backNo": "",
+    "backNo": "12",
     "team": "KIA"
   },
   {
@@ -5156,7 +5156,7 @@
     "kboId": "65060",
     "teamId": 3,
     "position": "투수",
-    "backNo": "",
+    "backNo": "38",
     "team": "KT"
   },
   {
@@ -5228,7 +5228,7 @@
     "kboId": "50054",
     "teamId": 1,
     "position": "야수",
-    "backNo": "",
+    "backNo": "53",
     "team": "LG"
   },
   {
@@ -5236,7 +5236,7 @@
     "kboId": "67905",
     "teamId": 5,
     "position": "야수",
-    "backNo": "",
+    "backNo": "23",
     "team": "NC"
   },
   {
@@ -5356,7 +5356,7 @@
     "kboId": "65320",
     "teamId": 8,
     "position": "투수",
-    "backNo": "",
+    "backNo": "20",
     "team": "삼성"
   },
   {
@@ -5428,7 +5428,7 @@
     "kboId": "78288",
     "teamId": 9,
     "position": "야수",
-    "backNo": "",
+    "backNo": "13",
     "team": "한화"
   },
   {
@@ -5532,7 +5532,7 @@
     "kboId": "52639",
     "teamId": 6,
     "position": "투수",
-    "backNo": "",
+    "backNo": "39",
     "team": "KIA"
   },
   {
@@ -5540,7 +5540,7 @@
     "kboId": "50854",
     "teamId": 4,
     "position": "야수",
-    "backNo": "",
+    "backNo": "54",
     "team": "SSG"
   },
   {
@@ -5548,7 +5548,7 @@
     "kboId": "66451",
     "teamId": 7,
     "position": "투수",
-    "backNo": "",
+    "backNo": "61",
     "team": "롯데"
   },
   {
@@ -5604,7 +5604,7 @@
     "kboId": "56548",
     "teamId": 7,
     "position": "투수",
-    "backNo": "",
+    "backNo": "48",
     "team": "롯데"
   },
   {
@@ -5612,7 +5612,7 @@
     "kboId": "56760",
     "teamId": 9,
     "position": "투수",
-    "backNo": "",
+    "backNo": "60",
     "team": "한화"
   },
   {
@@ -5628,7 +5628,7 @@
     "kboId": "56218",
     "teamId": 2,
     "position": "투수",
-    "backNo": "",
+    "backNo": "18",
     "team": "두산"
   },
   {
@@ -5636,7 +5636,7 @@
     "kboId": "56823",
     "teamId": 4,
     "position": "투수",
-    "backNo": "",
+    "backNo": "23",
     "team": "SSG"
   },
   {
@@ -5812,7 +5812,7 @@
     "kboId": "61666",
     "teamId": 3,
     "position": "투수",
-    "backNo": "",
+    "backNo": "35",
     "team": "KT"
   },
   {
@@ -5892,7 +5892,7 @@
     "kboId": "52568",
     "teamId": 7,
     "position": "야수",
-    "backNo": "",
+    "backNo": "6",
     "team": "롯데"
   },
   {
@@ -5908,7 +5908,7 @@
     "kboId": "63248",
     "teamId": 1,
     "position": "투수",
-    "backNo": "",
+    "backNo": "11",
     "team": "LG"
   },
   {
@@ -5916,7 +5916,7 @@
     "kboId": "55440",
     "teamId": 8,
     "position": "야수",
-    "backNo": "",
+    "backNo": "40",
     "team": "삼성"
   },
   {
@@ -5996,7 +5996,7 @@
     "kboId": "61643",
     "teamId": 6,
     "position": "투수",
-    "backNo": "",
+    "backNo": "52",
     "team": "KIA"
   },
   {
