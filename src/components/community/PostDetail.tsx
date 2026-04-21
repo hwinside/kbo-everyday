@@ -28,18 +28,18 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   const [comment, setComment] = useState("");
   const [likeCount, setLikeCount] = useState(0);
 
-  // iOS Safari keyboard-aware composer: track visualViewport so the comment
-  // input sits flush on top of the keyboard instead of being pushed around by
-  // Safari's default fixed-element handling.
+  // iOS Safari keyboard-aware composer. Use the *initial* visualViewport height
+  // as the baseline (keyboard closed) and compute keyboard height as the shrink
+  // delta. window.innerHeight is unreliable on iOS (varies by Safari version).
   const [keyboardInset, setKeyboardInset] = useState(0);
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
     const vv = window.visualViewport;
+    let baseline = vv.height;
     const update = () => {
-      // Keyboard height = hidden portion of the layout viewport.
-      const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-      // Treat tiny deltas as "closed" to avoid flicker from browser chrome.
-      setKeyboardInset(hidden > 40 ? hidden : 0);
+      if (vv.height > baseline) baseline = vv.height;
+      const hidden = Math.max(0, baseline - vv.height);
+      setKeyboardInset(hidden > 80 ? hidden : 0);
     };
     update();
     vv.addEventListener("resize", update);
