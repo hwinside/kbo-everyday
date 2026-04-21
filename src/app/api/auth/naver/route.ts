@@ -25,12 +25,18 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // 로컬 개발 시 localhost를 사용하고, prod에서는 canonical domain 사용
-  const requestOrigin = request.nextUrl.origin;
-  const CANONICAL_ORIGIN =
-    process.env.NODE_ENV === "development"
-      ? requestOrigin
-      : process.env.NEXT_PUBLIC_SITE_URL || "https://keubo.fan";
+  // ⚠️ 2026-04-21 fryfish 모바일 로그인 실패 원인 확정 — state 쿠키 도메인 불일치
+  //
+  // 문제: 기존 코드는 prod에서 `NEXT_PUBLIC_SITE_URL` (apex `keubo.fan`)로 redirect_uri 강제 →
+  //       사용자가 `www.keubo.fan`으로 접속하면 state 쿠키는 www에 설정되는데
+  //       네이버 callback은 apex `keubo.fan`으로 돌아와서 쿠키 없음 → state mismatch → 로그인 실패.
+  // 해법: 들어온 요청의 origin(host)을 그대로 redirect_uri에 사용.
+  //       www 진입 → www로 callback / apex 진입 → apex로 callback.
+  //       state 쿠키와 callback 도메인이 항상 일치하므로 subdomain boundary에서 쿠키 탈락 없음.
+  //
+  // 주의: callback route의 `getOrigin()`도 동일하게 `request.nextUrl.origin` 우선 정책으로 변경함.
+  //       로그인 후 redirect하는 홈 경로도 진입 호스트 그대로 유지 → www 유저는 www에서 로그인 유지.
+  const CANONICAL_ORIGIN = request.nextUrl.origin;
 
   // state 파라미터: CSRF 방지
   const state = crypto.randomUUID();

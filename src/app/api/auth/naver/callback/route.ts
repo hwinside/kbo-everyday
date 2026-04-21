@@ -3,12 +3,11 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-// prod에서는 canonical domain, 로컬에서는 request origin 사용
+// ⚠️ 2026-04-21 state 쿠키 도메인 불일치 수정 (fryfish P0)
+// start route와 callback route가 동일 호스트를 사용해야 쿠키 공유 가능.
+// 들어온 요청의 origin(www 혹은 apex)을 그대로 사용 → start와 callback이 항상 일치.
 function getOrigin(request: NextRequest) {
-  if (process.env.NODE_ENV === "development") {
-    return request.nextUrl.origin;
-  }
-  return process.env.NEXT_PUBLIC_SITE_URL || "https://keubo.fan";
+  return request.nextUrl.origin;
 }
 
 /**
