@@ -137,10 +137,33 @@ export async function GET(request: NextRequest) {
     );
 
     // 이메일로 기존 유저 조회
-    const { data: existingUsers } = await supabaseAdmin.auth.admin.listUsers();
-    const existingUser = existingUsers?.users?.find(
-      (u) => u.email === email
-    );
+    //
+    // 버그 수정 (2026-04-21): listUsers() 기본 perPage=50이라 655명 중 50명만 조회 →
+    // 중간/초기 가입자를 못 찾아 중복 createUser() 시도 → "email already registered" AuthApiError.
+    // 해결: email 정규화(소문자+trim) 후 페이지네이션으로 전수 순회.
+    const normalizedEmail = String(email).trim().toLowerCase();
+    let existingUser: Awaited<ReturnType<typeof supabaseAdmin.auth.admin.listUsers>>["data"]["users"][number] | undefined;
+    for (let page = 1; page <= 20; page++) {
+      const { data: pageData, error: pageErr } =
+        await supabaseAdmin.auth.admin.listUsers({ page, perPage: 1000 });
+      if (pageErr) {
+        console.error("[Naver OAuth] listUsers error:", pageErr.message);
+        break;
+      }
+      const hit = pageData?.users?.find(
+        (u) => (u.email ? u.email.trim().toLowerCase() : "") === normalizedEmail
+      );
+      if (hit) {
+        existingUser = hit;
+        break;
+      }
+      if (!pageData?.users || pageData.users.length < 1000) break; // 마지막 페이지
+    }
+    console.log("[Naver OAuth][step3.5] user lookup", {
+      email: normalizedEmail,
+      found: !!existingUser,
+      userId: existingUser?.id?.slice(0, 8) ?? null,
+    });
 
     let userId: string;
 
