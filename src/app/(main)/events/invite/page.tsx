@@ -13,8 +13,9 @@ import {
   Calendar,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { useTheme } from "@/components/ThemeProvider";
 
 type Track = "invite" | "writing";
 
@@ -469,6 +470,10 @@ function TopPreview({
   loading: boolean;
   currentUserId?: string;
 }) {
+  const { resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  const theme: "dark" | "light" = mounted ? resolvedTheme : "dark";
   return (
     <div className="mt-5">
       <div className="flex items-center justify-between mb-2">
@@ -534,17 +539,20 @@ function TopPreview({
                     {medal ?? idx + 1}
                   </span>
                   <span className="truncate font-semibold">{row.nickname}</span>
-                  {team && (
-                    <span
-                      className="text-xs px-1.5 py-0.5 rounded shrink-0"
-                      style={{
-                        background: `${team.colorPrimary}30`,
-                        color: team.colorPrimary,
-                      }}
-                    >
-                      {team.shortName}
-                    </span>
-                  )}
+                  {team && (() => {
+                    const bg = getTeamBgColor(team, theme);
+                    return (
+                      <span
+                        className="text-xs px-1.5 py-0.5 rounded shrink-0"
+                        style={{
+                          background: `${bg}30`,
+                          color: bg,
+                        }}
+                      >
+                        {team.shortName}
+                      </span>
+                    );
+                  })()}
                 </div>
                 <span className="font-bold text-sm shrink-0">
                   {score}

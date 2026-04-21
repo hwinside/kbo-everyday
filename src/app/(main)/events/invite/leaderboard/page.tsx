@@ -4,8 +4,9 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Trophy, Users, MessageSquare, Gift, Crown } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { useTheme } from "@/components/ThemeProvider";
 import { supabase } from "@/lib/supabase/client";
 import { getPrizesByTrack, PrizeTier } from "@/lib/events/prizes";
 
@@ -258,6 +259,10 @@ function TrackTab({
 
 function MyRankCard({ myRank, track }: { myRank: MyRank; track: Track }) {
   const team = myRank.team_id ? getTeamById(myRank.team_id) : null;
+  const { resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  const theme: "dark" | "light" = mounted ? resolvedTheme : "dark";
 
   if (myRank.rank === null) {
     return (
@@ -287,17 +292,20 @@ function MyRankCard({ myRank, track }: { myRank: MyRank; track: Track }) {
             <p className="text-xs text-white/50">내 순위 · {myRank.total}명 중</p>
             <p className="font-bold flex items-center gap-1.5">
               {myRank.nickname}
-              {team && (
-                <span
-                  className="text-xs px-1.5 py-0.5 rounded"
-                  style={{
-                    background: `${team.colorPrimary}30`,
-                    color: team.colorPrimary,
-                  }}
-                >
-                  {team.shortName}
-                </span>
-              )}
+              {team && (() => {
+                const bg = getTeamBgColor(team, theme);
+                return (
+                  <span
+                    className="text-xs px-1.5 py-0.5 rounded"
+                    style={{
+                      background: `${bg}30`,
+                      color: bg,
+                    }}
+                  >
+                    {team.shortName}
+                  </span>
+                );
+              })()}
             </p>
           </div>
         </div>
@@ -326,6 +334,10 @@ function RankRow({
   isMe: boolean;
 }) {
   const team = row.team_id ? getTeamById(row.team_id) : null;
+  const { resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  const theme: "dark" | "light" = mounted ? resolvedTheme : "dark";
   const score = track === "invite"
     ? (row as InviteRow).invite_count
     : (row as WritingRow).total_points;
@@ -348,17 +360,20 @@ function RankRow({
         <div className="min-w-0">
           <p className="font-semibold truncate flex items-center gap-1.5">
             {row.nickname}
-            {team && (
-              <span
-                className="text-xs px-1.5 py-0.5 rounded shrink-0"
-                style={{
-                  background: `${team.colorPrimary}30`,
-                  color: team.colorPrimary,
-                }}
-              >
-                {team.shortName}
-              </span>
-            )}
+            {team && (() => {
+              const bg = getTeamBgColor(team, theme);
+              return (
+                <span
+                  className="text-xs px-1.5 py-0.5 rounded shrink-0"
+                  style={{
+                    background: `${bg}30`,
+                    color: bg,
+                  }}
+                >
+                  {team.shortName}
+                </span>
+              );
+            })()}
           </p>
         </div>
       </div>
