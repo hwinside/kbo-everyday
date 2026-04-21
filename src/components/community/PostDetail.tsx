@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, MoreHorizontal, Check } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
@@ -27,6 +27,28 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   const { post, comments, loading, liked, setLiked, setComments } = usePostDetail(postId);
   const [comment, setComment] = useState("");
   const [likeCount, setLikeCount] = useState(0);
+
+  // iOS Safari keyboard-aware composer: track visualViewport so the comment
+  // input sits flush on top of the keyboard instead of being pushed around by
+  // Safari's default fixed-element handling.
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    const update = () => {
+      // Keyboard height = hidden portion of the layout viewport.
+      const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      // Treat tiny deltas as "closed" to avoid flicker from browser chrome.
+      setKeyboardInset(hidden > 40 ? hidden : 0);
+    };
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, []);
 
   // 게시글 메뉴/편집 상태
   const [postMenuOpen, setPostMenuOpen] = useState(false);
@@ -164,8 +186,19 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
     return `${Math.floor(hr / 24)}일 전`;
   };
 
+  // When keyboard is open, hug the keyboard and ignore the TabBar offset.
+  // When closed, sit above the TabBar (≈ 4rem + safe-area).
+  const composerBottom = keyboardInset > 0
+    ? `${keyboardInset}px`
+    : "calc(4rem + env(safe-area-inset-bottom, 0px))";
+  // Reserve enough scroll padding so the content isn't stuck under the composer.
+  // Composer ≈ 64px. Add TabBar (64px) only when keyboard closed.
+  const pagePaddingBottom = keyboardInset > 0
+    ? `${keyboardInset + 72}px`
+    : "calc(4rem + 72px + env(safe-area-inset-bottom, 0px))";
+
   return (
-    <div className="min-h-screen bg-bg-primary pb-20">
+    <div className="min-h-screen bg-bg-primary" style={{ paddingBottom: pagePaddingBottom }}>
       {/* Header */}
       <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ borderColor: post.team_id ? getTeamBorderColorById(post.team_id) : undefined }}>
         <div className="flex items-center gap-3 px-4 py-3">
@@ -393,8 +426,8 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         </div>
       </div>
 
-      {/* Comment Input — positioned above TabBar (TabBar ≈ 4rem + safe-area-inset-bottom) */}
-      <div className="fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40" style={{ bottom: "calc(4rem + env(safe-area-inset-bottom, 0px))" }}>
+      {/* Comment Input — sits above TabBar when idle, hugs keyboard when focused (iOS Safari). */}
+      <div className="fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40" style={{ bottom: composerBottom, transition: "bottom 120ms ease-out" }}>
         {(() => {
           const teamColor = post.team_id ? getTeamById(post.team_id)?.colorPrimary : undefined;
           return (
