@@ -1,6 +1,10 @@
+"use client";
+
 import Image from "next/image";
 import { clsx } from "clsx";
-import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
+import { useEffect, useState } from "react";
+import { getTeamById, getTeamBgColor, getTeamBgBorder } from "@/lib/constants/teams";
+import { useTheme } from "@/components/ThemeProvider";
 
 interface TeamBadgeProps {
   teamId: number;
@@ -17,9 +21,21 @@ export default function TeamBadge({
   playerName,
 }: TeamBadgeProps) {
   const team = getTeamById(teamId);
+  const { resolvedTheme } = useTheme();
+  // SSR 하이드레이션 mismatch 방지: 초기엔 다크 기준으로 렌더,
+  // 마운트 후 실제 테마로 스왑. 색상이 잠깐 다크→라이트로 바뀔 수 있으나 FOUC 수준은 themeScript로 충분히 억제됨.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  const theme: "dark" | "light" = mounted ? resolvedTheme : "dark";
+
   if (!team) return null;
 
   const logoSize = size === "xs" ? 12 : size === "sm" ? 14 : size === "md" ? 20 : 28;
+
+  const bgColor = getTeamBgColor(team, theme);
+  const borderColor = getTeamBgBorder(team, theme);
 
   return (
     <span
@@ -31,7 +47,12 @@ export default function TeamBadge({
         size === "lg" && "py-2 pl-1.5 pr-4 text-lg",
         className,
       )}
-      style={{ backgroundColor: getTeamBgColor(team) }}
+      style={{
+        backgroundColor: bgColor,
+        ...(borderColor && {
+          boxShadow: `inset 0 0 0 1px ${borderColor}`,
+        }),
+      }}
     >
       <span
         className="inline-flex shrink-0 items-center justify-center rounded-full bg-white"

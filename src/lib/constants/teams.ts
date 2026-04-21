@@ -6,9 +6,16 @@ export interface TeamData {
   colorPrimary: string;
   colorLight: string;
   colorSecondary: string;
-  /** 다크 배경에서 뱃지 배경으로 사용할 색상 (colorPrimary가 너무 어두운 경우 override).
-   *  지정되면 getTeamBgColor가 colorPrimary/colorLight 대신 이 값을 반환. */
-  colorBadgeOverride?: string;
+  /** 뱃지 배경색 오버라이드. 테마별 값 + 선택적 보더.
+   *  colorPrimary가 다크에서 묻히거나 라이트에서 너무 눈에 튀는 팀에 적용. */
+  colorBadgeOverride?: {
+    dark: string;
+    light: string;
+    /** 다크 모드 1px 외근 보더 (속/배경 대비 부족 보강). */
+    borderDark?: string;
+    /** 라이트 모드 1px 외근 보더. */
+    borderLight?: string;
+  };
   logoPath: string;
   youtubeChannelId: string;
 }
@@ -44,8 +51,14 @@ export const TEAMS: TeamData[] = [
     colorPrimary: "#000000",
     colorLight: "#E85050",
     colorSecondary: "#EB1F25",
-    // KT 팀컬러(#000)가 다크 배경(#0A0A0B)에 묻혀 가독성 0 → 뱃지 전용 진회색 지정
-    colorBadgeOverride: "#2B2B2B",
+    // KT 팀컬러(#000) 가독성 보정:
+    // - 다크: colorLight(#E85050) + 1px 밝은 보더 (칩 경계 보강)
+    // - 라이트: 진회색(#2B2B2B, 2026-04-21 하린아빠 "잘 보임" 상태 유지), 보더 없음
+    colorBadgeOverride: {
+      dark: "#E85050",
+      light: "#2B2B2B",
+      borderDark: "rgba(255,255,255,0.18)",
+    },
     logoPath: "/logos/kt.svg",
     youtubeChannelId: "UCvScyjGkBUx2CJDMNAi9Twg",
   },
@@ -148,14 +161,26 @@ function hexLuminance(hex: string): number {
   return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
 }
 
-/** 다크모드 배경에서 사용할 팀 컬러.
- *  1) colorBadgeOverride가 있으면 그 값 사용 (KT 등 어두운 팀)
- *  2) colorPrimary가 너무 어두우면(luminance < 0.05) colorLight를 반환
+/** 팀 뱃지 배경색. 테마 인식.
+ *  1) colorBadgeOverride가 있으면 테마별 값
+ *  2) 다크에서 colorPrimary가 너무 어두우면(luminance < 0.05) colorLight
  *  3) 그 외는 colorPrimary
  */
-export function getTeamBgColor(team: TeamData): string {
-  if (team.colorBadgeOverride) return team.colorBadgeOverride;
-  return hexLuminance(team.colorPrimary) < 0.05 ? team.colorLight : team.colorPrimary;
+export function getTeamBgColor(team: TeamData, resolvedTheme: "dark" | "light" = "dark"): string {
+  if (team.colorBadgeOverride) {
+    return resolvedTheme === "light" ? team.colorBadgeOverride.light : team.colorBadgeOverride.dark;
+  }
+  if (resolvedTheme === "dark" && hexLuminance(team.colorPrimary) < 0.05) {
+    return team.colorLight;
+  }
+  return team.colorPrimary;
+}
+
+/** 팀 뱃지 외근 보더. override에 보더 지정이 있을 때만 반환. */
+export function getTeamBgBorder(team: TeamData, resolvedTheme: "dark" | "light" = "dark"): string | undefined {
+  const ov = team.colorBadgeOverride;
+  if (!ov) return undefined;
+  return resolvedTheme === "light" ? ov.borderLight : ov.borderDark;
 }
 
 /** 다크모드 바 차트용 팀 컬러.
