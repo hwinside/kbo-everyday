@@ -69,6 +69,26 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // iOS Safari keyboard-aware composer (same pattern as PostDetail/CommentSheet).
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    let baseline = vv.height;
+    const update = () => {
+      if (vv.height > baseline) baseline = vv.height;
+      const hidden = Math.max(0, baseline - vv.height);
+      setKeyboardInset(hidden > 80 ? hidden : 0);
+    };
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, []);
+
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -214,10 +234,17 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         )}
       </div>
 
-      {/* Fixed Input — above bottom tab bar */}
+      {/* Fixed Input — above bottom tab bar when idle, hugs keyboard when focused (iOS). */}
       <div
-        className="fixed bottom-[calc(52px+env(safe-area-inset-bottom,0px))] left-0 right-0 z-[98] border-t border-border"
-        style={{ background: "var(--chat-input-bg, rgba(10,10,15,0.95))", backdropFilter: "blur(12px)" }}
+        className="fixed left-0 right-0 z-[98] border-t border-border"
+        style={{
+          bottom: keyboardInset > 0
+            ? `${keyboardInset}px`
+            : "calc(52px + env(safe-area-inset-bottom, 0px))",
+          transition: "bottom 120ms ease-out",
+          background: "var(--chat-input-bg, rgba(10,10,15,0.95))",
+          backdropFilter: "blur(12px)",
+        }}
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
           <input

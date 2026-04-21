@@ -129,10 +129,13 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       return;
     }
     const vv = window.visualViewport;
+    // Baseline = largest vv.height while keyboard is closed; shrink delta = keyboard height.
+    let baseline = vv.height;
     const update = () => {
+      if (vv.height > baseline) baseline = vv.height;
       setViewportHeight(vv.height);
-      const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-      setKeyboardInset(hidden > 40 ? hidden : 0);
+      const hidden = Math.max(0, baseline - vv.height);
+      setKeyboardInset(hidden > 80 ? hidden : 0);
     };
     update();
     vv.addEventListener("resize", update);
