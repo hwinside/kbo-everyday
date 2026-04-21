@@ -48,3 +48,8 @@ specs/design-v2-reference/uploads/
 specs/design-v2-reference/scraps/
 design-v2-reference.v0-backup/
 tmp/
+
+# cutouts-v2 배치 산출물 (logs/백업/런타임 생성 JSON 제외)
+scripts/cutouts-v2/logs/
+scripts/cutouts-v2/phase2-todo-backup-*.json
+scripts/cutouts-v2/phase2-todo-new-*.json
