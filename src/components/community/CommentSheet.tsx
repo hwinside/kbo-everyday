@@ -57,6 +57,10 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const listRef = useRef<HTMLDivElement>(null);
   const dragStartY = useRef(0);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
+  // iOS Safari: when the keyboard opens, `position:fixed; bottom:0` stays
+  // anchored to the layout viewport (under the keyboard). Track the visual
+  // viewport so we can offset the sheet to sit flush on top of the keyboard.
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const { user, profile } = useAuth();
   const shouldRender = isOpen && postId !== null;
 
@@ -125,7 +129,11 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       return;
     }
     const vv = window.visualViewport;
-    const update = () => setViewportHeight(vv.height);
+    const update = () => {
+      setViewportHeight(vv.height);
+      const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      setKeyboardInset(hidden > 40 ? hidden : 0);
+    };
     update();
     vv.addEventListener("resize", update);
     vv.addEventListener("scroll", update);
@@ -288,15 +296,17 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
           {/* Sheet — height follows visualViewport so iOS keyboard never occludes input */}
           <motion.div
             ref={sheetRef}
-            className="fixed inset-x-0 bottom-0 flex flex-col bg-bg-secondary rounded-t-2xl"
+            className="fixed inset-x-0 flex flex-col bg-bg-secondary rounded-t-2xl"
             style={{
               zIndex: 9999,
+              bottom: keyboardInset,
               maxHeight: viewportHeight
                 ? `${Math.min(viewportHeight * 0.92, viewportHeight - 24)}px`
                 : "85vh",
               minHeight: viewportHeight
                 ? `${Math.min(viewportHeight * 0.5, 360)}px`
                 : "50vh",
+              transition: "bottom 120ms ease-out",
             }}
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
