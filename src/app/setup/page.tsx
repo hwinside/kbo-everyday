@@ -174,13 +174,14 @@ export default function SetupPage() {
     setStep(2);
   }
 
-  async function handleComplete() {
+  async function handleComplete(opts?: { skipInvite?: boolean }) {
     if (!selectedTeam) return;
     setLoading(true);
     setError("");
     try {
       // hash에서 추출한 토큰 우선, 없으면 쿠키 fallback (API route에서 처리)
       const accessToken = hashToken || undefined;
+      const effectiveInviteCode = opts?.skipInvite ? undefined : (inviteCode.trim() || undefined);
 
       // 서버 API로 프로필 생성 (클라이언트 Supabase 직접 쓰지 않음 — 세션 hang 방지)
       const res = await fetch("/api/setup", {
@@ -192,7 +193,7 @@ export default function SetupPage() {
         body: JSON.stringify({
           nickname: nickname.trim(),
           team_id: selectedTeam,
-          invite_code: inviteCode.trim() || undefined,
+          invite_code: effectiveInviteCode,
         }),
       });
 
@@ -373,13 +374,23 @@ export default function SetupPage() {
                 이전
               </button>
               <button
-                onClick={handleComplete}
-                disabled={loading}
+                onClick={() => handleComplete()}
+                disabled={loading || !inviteCode.trim()}
                 className="flex-1 py-3 rounded-xl bg-accent text-white font-semibold disabled:opacity-40"
               >
-                {loading ? "생성 중..." : inviteCode.trim() ? "등록하고 완료" : "건너뛰기"}
+                {loading ? "생성 중..." : "등록하고 완료"}
               </button>
             </div>
+
+            {/* 허위 선택지 방지: '건너뛰기' 항상 노출 (2026-04-21 lotteworry P1)
+                삼순이 리뷰 코멘트: 넓은 터치 영역(p-3) + 대비 강화로 시인성 확보 */}
+            <button
+              onClick={() => handleComplete({ skipInvite: true })}
+              disabled={loading}
+              className="w-full mt-3 py-3 rounded-xl bg-bg-tertiary/60 hover:bg-bg-tertiary text-text-secondary text-sm font-medium disabled:opacity-40 border border-black/5 dark:border-white/10"
+            >
+              초대코드 없이 건너뛰기 →
+            </button>
           </div>
         )}
       </motion.div>

@@ -51,12 +51,12 @@ export default function ProfileSetupModal({ isOpen }: Props) {
     setStep(2);
   }
 
-  async function handleComplete() {
+  async function handleComplete(opts?: { skipInvite?: boolean }) {
     if (!selectedTeam) return;
     setLoading(true);
     try {
-      // 초대코드 사전 검증 (있으면)
-      const normalizedInviteCode = inviteCode.trim().toUpperCase();
+      // 초대코드 사전 검증 (있으면). skipInvite=true면 타이핑된 값과 무관하게 건너뜁
+      const normalizedInviteCode = opts?.skipInvite ? "" : inviteCode.trim().toUpperCase();
       if (normalizedInviteCode) {
         const { data: invite } = await supabase
           .from("invitations")
@@ -245,13 +245,22 @@ export default function ProfileSetupModal({ isOpen }: Props) {
                   이전
                 </button>
                 <button
-                  onClick={handleComplete}
-                  disabled={loading}
+                  onClick={() => handleComplete()}
+                  disabled={loading || !inviteCode.trim()}
                   className="flex-1 py-3 rounded-xl bg-accent text-white font-semibold disabled:opacity-40"
                 >
-                  {loading ? "생성 중..." : inviteCode.trim() ? "등록하고 완료" : "건너뛰기"}
+                  {loading ? "생성 중..." : "등록하고 완료"}
                 </button>
               </div>
+
+              {/* 허위 선택지 방지: '건너뛰기' 항상 노출 (2026-04-21 lotteworry P1) */}
+              <button
+                onClick={() => handleComplete({ skipInvite: true })}
+                disabled={loading}
+                className="w-full mt-3 py-3 rounded-xl bg-bg-tertiary/60 hover:bg-bg-tertiary text-text-secondary text-sm font-medium disabled:opacity-40 border border-black/5 dark:border-white/10"
+              >
+                초대코드 없이 건너뛰기 →
+              </button>
             </div>
           )}
 
