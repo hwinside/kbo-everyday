@@ -10,6 +10,50 @@ function getOrigin(request: NextRequest) {
   return request.nextUrl.origin;
 }
 
+/**
+ * naver provider identity를 auth.identities에 upsert.
+ *
+ * Supabase는 네이버를 공식 OAuth provider로 지원하지 않아서
+ * auth.admin 공식 API로 identity 링크 불가 → service_role에게 허용된
+ * auth schema 직접 접근이 필요. 다른 OAuth provider들(kakao/google)이
+ * 자동 생성하는 identity row와 동일한 스키마로 생성한다.
+ *
+ * on_conflict(provider, provider_id): 이미 존재하면 identity_data/updated_at만 갱신.
+ */
+async function upsertNaverIdentity(
+  supabaseAdmin: any,
+  opts: { userId: string; naverId: string; email: string; name: string; avatarUrl: string }
+) {
+  const { userId, naverId, email, name, avatarUrl } = opts;
+  const now = new Date().toISOString();
+  const identity_data = {
+    sub: naverId,
+    iss: "https://nid.naver.com",
+    email,
+    email_verified: true,
+    phone_verified: false,
+    full_name: name,
+    name,
+    provider_id: naverId,
+    avatar_url: avatarUrl,
+  };
+
+  // Supabase PostgREST는 기본적으로 public 스키마만 노출함.
+  // auth 스키마 접근은 raw SQL이 필요 → service_role에 허용된 rpc 함수 경유.
+  // 프로젝트에 `upsert_naver_identity(uuid, text, jsonb)` rpc가 존재한다고 가정 → 없으면 미리 생성 필요.
+  const { data, error } = await (supabaseAdmin as any).rpc("upsert_naver_identity", {
+    p_user_id: userId,
+    p_provider_id: naverId,
+    p_identity_data: identity_data,
+    p_created_at: now,
+  });
+  if (error) {
+    // rpc 미존재하면 에러 날림 → 너기는 상위에서 캐치해 로그 남김
+    throw new Error(`upsert_naver_identity rpc failed: ${error.message}`);
+  }
+  return data;
+}
+
 const IOS_NATIVE_CALLBACK_ORIGIN = "fan.keubo.app://auth/callback";
 
 /**
@@ -201,6 +245,26 @@ export async function GET(request: NextRequest) {
         );
       }
       userId = newUser.user.id;
+    }
+
+    // 3.5 naver provider identity upsert (Supabase 공식 OAuth 미지원 → 수동 insert)
+    //     이 단계가 없으면 auth.identities에 email provider만 남아서
+    //     향후 연동/세션 복원 등에서 네이버 provider 식별 불가 (2026-04-21 fryfish 사례)
+    try {
+      await upsertNaverIdentity(supabaseAdmin, {
+        userId,
+        naverId: String(naverId),
+        email,
+        name,
+        avatarUrl: naverProfile.profile_image || "",
+      });
+      console.log("[Naver OAuth][step3.5] identity linked", { userId: userId.slice(0, 8) });
+    } catch (linkErr) {
+      // identity 링크 실패해도 로그인 자체는 진행 (기존 동작 유지)
+      console.error("[Naver OAuth][step3.5] identity link failed", {
+        userId: userId.slice(0, 8),
+        message: (linkErr as any)?.message,
+      });
     }
 
     // 4. 매직 링크 대신 OTP 없는 세션 생성
