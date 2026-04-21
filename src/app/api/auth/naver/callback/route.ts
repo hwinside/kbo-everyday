@@ -25,6 +25,18 @@ export async function GET(request: NextRequest) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const error = url.searchParams.get("error");
+  const userAgent = request.headers.get("user-agent") || "";
+  const referer = request.headers.get("referer") || "";
+  // Structured diag log for mobile login triage (2026-04-21)
+  console.log("[Naver OAuth][step0] callback hit", {
+    hasCode: !!code,
+    hasState: !!state,
+    error: error || null,
+    isMobile: /Mobi|Android|iPhone|iPad/i.test(userAgent),
+    isInApp: /Instagram|KAKAOTALK|FBAN|FBAV|Line|NAVER\(inapp/i.test(userAgent),
+    uaShort: userAgent.slice(0, 120),
+    referer: referer.slice(0, 80),
+  });
 
   // 에러 처리
   if (error) {
@@ -46,7 +58,12 @@ export async function GET(request: NextRequest) {
   const pendingCookies: { name: string; value: string; options: any }[] = [];
   const savedState = cookieStore.get("naver_oauth_state")?.value;
   if (!savedState || savedState !== state) {
-    console.error("[Naver OAuth] State mismatch:", { savedState, state });
+    console.error("[Naver OAuth][step1] State mismatch", {
+      savedState: savedState ? savedState.slice(0, 8) : null,
+      stateFromQuery: state ? state.slice(0, 8) : null,
+      allCookies: cookieStore.getAll().map((c) => c.name),
+      isInApp: /Instagram|KAKAOTALK|FBAN|FBAV|Line|NAVER\(inapp/i.test(userAgent),
+    });
     return NextResponse.redirect(
       `${CANONICAL_ORIGIN}?login_error=state_mismatch`
     );
@@ -70,6 +87,11 @@ export async function GET(request: NextRequest) {
     });
 
     const tokenData = await tokenRes.json();
+    console.log("[Naver OAuth][step2] token exchange", {
+      ok: !tokenData.error,
+      hasAccessToken: !!tokenData.access_token,
+      error: tokenData.error || null,
+    });
     if (tokenData.error) {
       console.error("[Naver OAuth] Token error:", tokenData);
       return NextResponse.redirect(
@@ -96,6 +118,10 @@ export async function GET(request: NextRequest) {
     const naverId = naverProfile.id;
     const email = naverProfile.email;
     const name = naverProfile.name || naverProfile.nickname || "";
+    console.log("[Naver OAuth][step3] profile fetched", {
+      hasEmail: !!email,
+      naverIdPrefix: naverId ? String(naverId).slice(0, 8) : null,
+    });
 
     if (!email) {
       console.error("[Naver OAuth] No email in profile:", naverProfile);
@@ -204,11 +230,22 @@ export async function GET(request: NextRequest) {
     });
 
     if (verifyError) {
-      console.error("[Naver OAuth] Verify OTP error:", verifyError);
+      console.error("[Naver OAuth][step4] Verify OTP error", {
+        code: (verifyError as any)?.code,
+        status: (verifyError as any)?.status,
+        name: (verifyError as any)?.name,
+        message: verifyError.message,
+      });
       return NextResponse.redirect(
         `${CANONICAL_ORIGIN}?login_error=verify_error`
       );
     }
+    console.log("[Naver OAuth][step4] verifyOtp ok", {
+      hasSession: !!verifyData?.session,
+      hasUser: !!verifyData?.user,
+      pendingCookieCount: pendingCookies.length,
+      pendingCookieNames: pendingCookies.map((c) => c.name),
+    });
 
     // 신규 유저 또는 프로필 미완 유저는 /setup으로, 완료된 유저는 홈으로
     // (Google/Kakao auth/callback과 동일한 정책)

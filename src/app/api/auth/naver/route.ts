@@ -9,6 +9,15 @@ import crypto from "crypto";
  */
 export async function GET(request: NextRequest) {
   const NAVER_CLIENT_ID = process.env.NAVER_CLIENT_ID;
+  const userAgent = request.headers.get("user-agent") || "";
+  const referer = request.headers.get("referer") || "";
+  // Structured diag log for mobile login triage (2026-04-21)
+  console.log("[Naver OAuth][start] authorize init", {
+    isMobile: /Mobi|Android|iPhone|iPad/i.test(userAgent),
+    isInApp: /Instagram|KAKAOTALK|FBAN|FBAV|Line|NAVER\(inapp/i.test(userAgent),
+    uaShort: userAgent.slice(0, 120),
+    referer: referer.slice(0, 80),
+  });
   if (!NAVER_CLIENT_ID) {
     return NextResponse.json(
       { error: "NAVER_CLIENT_ID not configured" },
