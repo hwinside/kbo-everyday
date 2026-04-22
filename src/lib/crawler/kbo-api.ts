@@ -1,24 +1,12 @@
 /* ===== KBO 공식 API 크롤러 ===== */
 
-import playersRoster from "@/lib/constants/players-roster.json";
-import { FOREIGN_NUMERIC_TO_ALPHA } from "@/lib/constants/foreign-id-map";
+import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { trackFallback } from "@/lib/monitoring/api-fallback-tracker";
 
-/** 숫자 kboId로 로스터 조회 — 직접 매칭 실패 시 외국인 선수 매핑 fallback */
+/** 숫자 kboId로 로스터 조회 — 외국인 숫자→영문 변환 포함 */
 function findPlayerByNumericId(numericId: string): { name: string } | undefined {
-  // 1차: 직접 매칭
-  const direct = (playersRoster as { kboId: string; name: string }[]).find(
-    r => String(r.kboId) === numericId
-  );
-  if (direct) return direct;
-  // 2차: 외국인 선수 숫자→영문 매핑
-  const alphaId = FOREIGN_NUMERIC_TO_ALPHA[numericId];
-  if (alphaId) {
-    return (playersRoster as { kboId: string; name: string }[]).find(
-      r => String(r.kboId) === alphaId
-    );
-  }
-  return undefined;
+  const resolved = resolvePlayer(String(numericId), undefined, { context: "kbo-api:boxscore" });
+  return resolved ? { name: resolved.name } : undefined;
 }
 
 const KBO_BASE = "https://www.koreabaseball.com";

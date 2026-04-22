@@ -5,17 +5,9 @@ import pitcherStats2025 from "@/lib/constants/stats-2025-pitchers.json";
 import batterStats2026 from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats2026 from "@/lib/constants/stats-2026-pitchers.json";
 import type { RosterPlayer } from "@/types/api";
+import { resolvePlayer } from "@/lib/utils/resolve-player";
 
 const KBO_BASE = "https://www.koreabaseball.com";
-
-// 외국인 선수 이름 매칭: KBO는 성만 표시("웰스"), 로스터는 풀네임("라클란 웰스")
-// exact → name+team suffix → name-only suffix 순서로 fallback
-function findRosterPlayer(name: string, team: string, roster: RosterPlayer[]): RosterPlayer | undefined {
-  return roster.find((p) => p.name === name && p.team === team)
-    || roster.find((p) => p.name === name)
-    || roster.find((p) => p.name.endsWith(name) && p.team === team)
-    || roster.find((p) => p.name.endsWith(name));
-}
 
 interface PlayerStat {
   rank: number;
@@ -100,7 +92,7 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
     const name = (c[1] || "").trim();
     const team = (c[2] || "").trim();
     const lookupKey = `${name}::${team}`;
-    const found = findRosterPlayer(name, team, roster);
+    const found = resolvePlayer({ name, team }, roster, { context: "api/stats:batter" });
     const b2 = basic2Map.get(lookupKey);
     const runner = runnerMap.get(lookupKey);
     return {
@@ -141,7 +133,7 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
 function parsePitcherRow(c: string[], roster: RosterPlayer[]): PlayerStat {
   const name = c[1] || "";
   const team = c[2] || "";
-  const found = findRosterPlayer(name, team, roster);
+  const found = resolvePlayer({ name, team }, roster, { context: "api/stats:pitcher" });
   return {
     rank: 0,
     name,

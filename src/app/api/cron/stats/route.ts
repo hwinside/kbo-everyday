@@ -3,17 +3,10 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { startJob, finishJob } from "@/lib/admin/job-logger";
 import playersRoster from "@/lib/constants/players-roster.json";
 import type { RosterPlayer } from "@/types/api";
+import { resolvePlayer } from "@/lib/utils/resolve-player";
 
 const KBO_BASE = "https://www.koreabaseball.com";
 const CRON_SECRET = process.env.CRON_SECRET || "";
-
-// 외국인 선수 이름 매칭: KBO는 성만 표시("웰스"), 로스터는 풀네임("라클란 웰스")
-function findRosterPlayer(name: string, team: string, roster: RosterPlayer[]): RosterPlayer | undefined {
-  return roster.find((p) => p.name === name && p.team === team)
-    || roster.find((p) => p.name === name)
-    || roster.find((p) => p.name.endsWith(name) && p.team === team)
-    || roster.find((p) => p.name.endsWith(name));
-}
 
 interface PlayerStat {
   rank: number;
@@ -59,7 +52,7 @@ function fetchBatterStats(roster: RosterPlayer[]): Promise<PlayerStat[]> {
       rows.map((c, i) => {
         const name = c[1] || "";
         const team = c[2] || "";
-        const found = findRosterPlayer(name, team, roster);
+        const found = resolvePlayer({ name, team }, roster, { context: "cron/stats:batter" });
         return {
           rank: i + 1,
           name,
@@ -87,7 +80,7 @@ function fetchBatterStats(roster: RosterPlayer[]): Promise<PlayerStat[]> {
 function parsePitcherRow(c: string[], roster: RosterPlayer[]): PlayerStat {
   const name = c[1] || "";
   const team = c[2] || "";
-  const found = findRosterPlayer(name, team, roster);
+  const found = resolvePlayer({ name, team }, roster, { context: "cron/stats:pitcher" });
   return {
     rank: 0,
     name,

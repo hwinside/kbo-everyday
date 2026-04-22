@@ -1,21 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchGames } from "@/lib/crawler/kbo-api";
-import playersRoster from "@/lib/constants/players-roster.json";
-import { FOREIGN_NUMERIC_TO_ALPHA } from "@/lib/constants/foreign-id-map";
+import { resolvePlayer } from "@/lib/utils/resolve-player";
 
-/** 숫자 kboId로 로스터 조회 — 직접 매칭 실패 시 외국인 선수 매핑 fallback */
+/** 숫자 kboId로 로스터 조회 — 외국인 숫자→영문 변환 포함 */
 function findPlayerByNumericId(numericId: string): { name: string } | undefined {
-  const direct = (playersRoster as { kboId: string; name: string }[]).find(
-    r => String(r.kboId) === numericId
-  );
-  if (direct) return direct;
-  const alphaId = FOREIGN_NUMERIC_TO_ALPHA[numericId];
-  if (alphaId) {
-    return (playersRoster as { kboId: string; name: string }[]).find(
-      r => String(r.kboId) === alphaId
-    );
-  }
-  return undefined;
+  const resolved = resolvePlayer(String(numericId));
+  return resolved ? { name: resolved.name } : undefined;
 }
 
 // ===== Types =====

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { FOREIGN_ALPHA_TO_NUMERIC } from "@/lib/constants/foreign-id-map";
+import { resolvePlayer } from "@/lib/utils/resolve-player";
 
 const KBO_BASE = "https://www.koreabaseball.com";
 
@@ -92,8 +92,8 @@ export async function GET(req: NextRequest) {
   const pos = req.nextUrl.searchParams.get("pos") || "타자";
   if (!rawId) return NextResponse.json({ error: "id required" }, { status: 400 });
 
-  // 영문 ID(AQ002 등)는 KBO 사이트가 인식 못함 → 숫자 ID로 변환
-  const id = FOREIGN_ALPHA_TO_NUMERIC[rawId] || rawId;
+  // KBO 공식 사이트는 숫자 ID만 인식 → resolvePlayer가 외국인 alpha→numeric 변환 처리
+  const id = resolvePlayer(rawId)?.numericId || rawId;
 
   const cacheKey = `player-${id}-${pos}`;
   const cached = cache[cacheKey];
