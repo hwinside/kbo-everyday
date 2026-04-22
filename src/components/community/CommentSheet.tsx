@@ -57,6 +57,12 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const listRef = useRef<HTMLDivElement>(null);
   const dragStartY = useRef(0);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
+  // iOS Safari: `position:fixed; bottom:0` is anchored to the *layout* viewport
+  // and the browser also tries to scroll focused inputs into view on its own,
+  // which produces visible jumps. To defeat both behaviours we pin the sheet
+  // to the *visual* viewport by computing top/bottom offsets explicitly.
+  const [vvTop, setVvTop] = useState(0);
+  const [vvBottom, setVvBottom] = useState(0);
   const { user, profile } = useAuth();
   const shouldRender = isOpen && postId !== null;
 
@@ -125,7 +131,17 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       return;
     }
     const vv = window.visualViewport;
-    const update = () => setViewportHeight(vv.height);
+    // Track the visual viewport box so the sheet can sit exactly inside it.
+    let layoutHeight = window.innerHeight;
+    const update = () => {
+      if (vv.height + vv.offsetTop > layoutHeight) {
+        layoutHeight = vv.height + vv.offsetTop;
+      }
+      setViewportHeight(vv.height);
+      setVvTop(vv.offsetTop);
+      // space below the visual viewport inside the layout viewport (= keyboard + accessory bar)
+      setVvBottom(Math.max(0, layoutHeight - vv.offsetTop - vv.height));
+    };
     update();
     vv.addEventListener("resize", update);
     vv.addEventListener("scroll", update);
@@ -285,18 +301,18 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             onClick={onClose}
           />
 
-          {/* Sheet — height follows visualViewport so iOS keyboard never occludes input */}
+          {/* Sheet — pinned to the visual viewport (defeats iOS focus-into-view jumps). */}
           <motion.div
             ref={sheetRef}
-            className="fixed inset-x-0 bottom-0 flex flex-col bg-bg-secondary rounded-t-2xl"
+            className="fixed inset-x-0 flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
             style={{
               zIndex: 9999,
-              maxHeight: viewportHeight
-                ? `${Math.min(viewportHeight * 0.92, viewportHeight - 24)}px`
-                : "85vh",
-              minHeight: viewportHeight
-                ? `${Math.min(viewportHeight * 0.5, 360)}px`
-                : "50vh",
+              // Top edge of the sheet inside the visual viewport (~8% from the top so you still see backdrop).
+              top: viewportHeight
+                ? `${vvTop + Math.max(24, viewportHeight * 0.08)}px`
+                : "8vh",
+              bottom: vvBottom,
+              transition: "bottom 120ms ease-out, top 120ms ease-out",
             }}
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
@@ -459,8 +475,8 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
               )}
             </div>
 
-            {/* Input area — snug above safe area (sheet covers tab bar) */}
-            <div className="border-t border-border px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+            {/* Input area — flex-none so list (flex-1) absorbs keyboard resize. */}
+            <div className="flex-none border-t border-border px-4 py-3" style={{ paddingBottom: vvBottom > 0 ? "0.75rem" : "calc(0.75rem + env(safe-area-inset-bottom))" }}>
               <div className="flex items-center gap-2">
                 {user ? (
                   <input
