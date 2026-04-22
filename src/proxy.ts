@@ -13,12 +13,16 @@ export async function proxy(request: NextRequest) {
   }
 
   // Force canonical domain: *.vercel.app → keubo.fan (prevents PWA breakage)
+  // Exception: allow `*-hwinsides-projects.vercel.app` preview URLs for QA.
+  // This exception MUST NOT ship to main; keep it only on hotfix/QA branches.
   const host = request.headers.get("host") || "";
+  const isPreviewQa = host.endsWith(".vercel.app") && host.includes("-hwinsides-projects");
   if (
     host !== CANONICAL_HOST &&
     host !== `www.${CANONICAL_HOST}` &&
     !host.startsWith("localhost") &&
-    !host.startsWith("127.0.0.1")
+    !host.startsWith("127.0.0.1") &&
+    !isPreviewQa
   ) {
     const url = request.nextUrl.clone();
     url.host = CANONICAL_HOST;
