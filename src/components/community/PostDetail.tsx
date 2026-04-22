@@ -279,6 +279,28 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   //
   // Reserve bottom padding on the scroll area = composer height (~64px) + inset,
   // so post/comments never hide beneath the composer.
+  // DEBUG BANNER — temporary, will be removed after verification.
+  // Shows vv state so we can eyeball what's happening on real iPhone.
+  const [debugState, setDebugState] = useState({ innerH: 0, vvH: 0, vvTop: 0, hidden: 0, lock: false, inset: 0, kbdOpen: false });
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    const snap = () => {
+      const h = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      setDebugState({
+        innerH: Math.round(window.innerHeight),
+        vvH: Math.round(vv.height),
+        vvTop: Math.round(vv.offsetTop),
+        hidden: Math.round(h),
+        lock: focusLockRef.current,
+        inset: keyboardInset,
+        kbdOpen: document.body.classList.contains("kbd-open"),
+      });
+    };
+    const id = setInterval(snap, 250);
+    return () => clearInterval(id);
+  }, [keyboardInset]);
+
   const composerHeight = 64; // approximate; matches py-3 + input height
   const scrollPaddingBottom = keyboardInset > 0
     ? `${composerHeight + keyboardInset}px`
@@ -528,6 +550,13 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         z-index (composer z-40 stays under TabBar z-50 visually because the
         layout container is shorter than 100svh in idle state).
       */}
+      {/* DEBUG BANNER — remove after verification */}
+      <div
+        className="fixed top-12 left-2 right-2 z-[9999] text-[10px] leading-tight bg-red-600 text-white px-2 py-1 rounded pointer-events-none font-mono"
+      >
+        inH:{debugState.innerH} vvH:{debugState.vvH} vvT:{debugState.vvTop} hid:{debugState.hidden} | lock:{debugState.lock ? "Y" : "N"} inset:{debugState.inset} kbd:{debugState.kbdOpen ? "Y" : "N"}
+      </div>
+
       <div
         data-composer="postdetail"
         className="fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40"
