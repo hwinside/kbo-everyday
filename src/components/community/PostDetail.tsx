@@ -28,33 +28,25 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   const [comment, setComment] = useState("");
   const [likeCount, setLikeCount] = useState(0);
 
-  // Chat-layout keyboard handling: toggle body.kbd-open based on composer focus.
-  // CSS (globals.css) handles TabBar hide + container height swap. No visualViewport
-  // math here — we let iOS Safari's natural viewport shrink do the work, and only
-  // signal "keyboard is open" to the layout via a single class.
-  //
-  // Why focus/blur instead of visualViewport.resize?
-  // - resize fires late on iOS and has hysteresis around inline accessory bars.
-  // - focus/blur is instant and matches the user's intent exactly.
-  // - We still listen to resize as a safety net for cases where the user dismisses
-  //   the keyboard via the close button without blurring (rare but seen on iOS 17+).
+  // iOS Safari keyboard-aware composer: track visualViewport so the comment
+  // input sits flush on top of the keyboard instead of being pushed around by
+  // Safari's default fixed-element handling.
+  const [keyboardInset, setKeyboardInset] = useState(0);
   useEffect(() => {
-    if (typeof document === "undefined") return;
-    const open = () => document.body.classList.add("kbd-open");
-    const close = () => document.body.classList.remove("kbd-open");
-    // visualViewport fallback: if the layout viewport is clearly shrunken (>120px)
-    // and we think keyboard is closed, open it; if expanded and we think it's open,
-    // close it. Guards against focus/blur races on inline accessory bars.
-    const vv = typeof window !== "undefined" ? window.visualViewport : null;
-    const sync = () => {
-      if (!vv) return;
+    if (typeof window === "undefined" || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    const update = () => {
+      // Keyboard height = hidden portion of the layout viewport.
       const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-      if (hidden > 120) open(); else close();
+      // Treat tiny deltas as "closed" to avoid flicker from browser chrome.
+      setKeyboardInset(hidden > 40 ? hidden : 0);
     };
-    vv?.addEventListener("resize", sync);
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
     return () => {
-      vv?.removeEventListener("resize", sync);
-      close(); // ensure class is cleared on unmount
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
     };
   }, []);
 
@@ -194,14 +186,21 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
     return `${Math.floor(hr / 24)}일 전`;
   };
 
-  // Chat-style layout: container matches viewport exactly (100svh honours iOS keyboard),
-  // inner scroll area holds post+comments, composer stays flush at the viewport bottom.
-  // This pattern avoids all visualViewport/fixed math and is the de-facto mobile chat UI.
-  // The TabBar is hidden via body.kbd-open when the composer is focused (see useEffect above).
+  // When keyboard is open, hug the keyboard and ignore the TabBar offset.
+  // When closed, sit above the TabBar (≈ 4rem + safe-area).
+  const composerBottom = keyboardInset > 0
+    ? `${keyboardInset}px`
+    : "calc(4rem + env(safe-area-inset-bottom, 0px))";
+  // Reserve enough scroll padding so the content isn't stuck under the composer.
+  // Composer ≈ 64px. Add TabBar (64px) only when keyboard closed.
+  const pagePaddingBottom = keyboardInset > 0
+    ? `${keyboardInset + 72}px`
+    : "calc(4rem + 72px + env(safe-area-inset-bottom, 0px))";
+
   return (
-    <div className="postdetail-chat-container flex flex-col bg-bg-primary">
-      {/* Header (flex-none, stays at top) */}
-      <div className="flex-none border-b border-border bg-bg-primary" style={{ borderColor: post.team_id ? getTeamBorderColorById(post.team_id) : undefined }}>
+    <div className="min-h-screen bg-bg-primary" style={{ paddingBottom: pagePaddingBottom }}>
+      {/* Header */}
+      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ borderColor: post.team_id ? getTeamBorderColorById(post.team_id) : undefined }}>
         <div className="flex items-center gap-3 px-4 py-3">
           <button onClick={() => router.back()}>
             <ChevronLeft size={24} className="text-text-secondary" />
@@ -215,9 +214,6 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           </button>
         </div>
       </div>
-
-      {/* Scrollable body: post + comments. Container-level scroll so composer stays flush bottom. */}
-      <div className="flex-1 overflow-y-auto overscroll-contain">
 
       {/* Post */}
       <div className="px-5 py-4">
@@ -430,16 +426,8 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         </div>
       </div>
 
-      </div> {/* end scrollable body */}
-
-      {/*
-        Comment Input — flex-none at container bottom. Because the outer
-        container is h-[100svh] (small viewport height, honours iOS keyboard),
-        the composer naturally sits flush above the keyboard when it opens,
-        and flush above the global TabBar (hidden via body.kbd-open) when closed.
-        No visualViewport math, no sticky/fixed positioning needed.
-      */}
-      <div className="flex-none bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3" style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))" }}>
+      {/* Comment Input — sits above TabBar when idle, hugs keyboard when focused (iOS Safari). */}
+      <div className="fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40" style={{ bottom: composerBottom, transition: "bottom 120ms ease-out" }}>
         {(() => {
           const teamColor = post.team_id ? getTeamById(post.team_id)?.colorPrimary : undefined;
           return (
@@ -452,8 +440,6 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                 disabled={!user}
                 className="flex-1 bg-bg-secondary rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none border"
                 style={{ borderColor: teamColor ? `${teamColor}80` : 'rgba(255,255,255,0.15)' }}
-                onFocus={() => document.body.classList.add("kbd-open")}
-                onBlur={() => document.body.classList.remove("kbd-open")}
                 onKeyDown={e => e.key === "Enter" && handleComment()}
               />
               <button onClick={handleComment} disabled={!comment.trim() || !user} className="w-9 h-9 rounded-full flex items-center justify-center text-white disabled:opacity-50 transition-opacity" style={{ backgroundColor: post.team_id ? (() => { const t = getTeamById(post.team_id); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}>
