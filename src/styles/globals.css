@@ -262,6 +262,35 @@ body {
   padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
 }
 
+/*
+ * ===== Keyboard-open mode =====
+ * Toggled by composer pages when the input gains focus. Hides the global
+ * TabBar and drops the main's bottom padding so the in-container composer
+ * sits flush against the viewport bottom — iOS Safari then docks it just
+ * above the keyboard via its natural viewport shrink. No JS-based
+ * positioning, no fixed overlay.
+ */
+body.kbd-open [data-global-tabbar] {
+  display: none;
+}
+body.kbd-open main.pb-tab-bar {
+  padding-bottom: 0;
+}
+
+/*
+ * PostDetail chat-style container.
+ * Default: shrink by global TabBar height + safe-area so the composer sits
+ * exactly above the TabBar (which is fixed bottom:0 with backdrop).
+ * On keyboard open: TabBar is hidden, so the container reclaims full svh and
+ * the composer naturally docks above the keyboard.
+ */
+.postdetail-chat-container {
+  height: calc(100svh - 4rem - env(safe-area-inset-bottom, 0px));
+}
+body.kbd-open .postdetail-chat-container {
+  height: 100svh;
+}
+
 /* Safe area for notch/dynamic island */
 .pt-safe {
   padding-top: env(safe-area-inset-top, 0px);

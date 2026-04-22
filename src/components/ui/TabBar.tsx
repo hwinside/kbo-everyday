@@ -37,7 +37,7 @@ export default function TabBar() {
   }
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 rounded-none border-t border-border bg-[rgba(248,248,250,0.85)] dark:bg-[rgba(10,10,11,0.85)] backdrop-blur-xl">
+    <nav data-global-tabbar className="fixed bottom-0 left-0 right-0 z-50 rounded-none border-t border-border bg-[rgba(248,248,250,0.85)] dark:bg-[rgba(10,10,11,0.85)] backdrop-blur-xl">
       <div className="mx-auto flex max-w-lg items-center justify-around pb-[env(safe-area-inset-bottom,0px)]">
         {tabs.map((tab) => {
           const active = isActive(tab.href);
