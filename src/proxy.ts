@@ -13,8 +13,13 @@ export async function proxy(request: NextRequest) {
   }
 
   // Force canonical domain: *.vercel.app → keubo.fan (prevents PWA breakage)
+  // BUT only in production. Preview deployments must stay on their vercel.app
+  // host so QA (e.g. Vercel SSO login → redirect back to preview) works.
+  // VERCEL_ENV is "production" | "preview" | "development" at build time.
   const host = request.headers.get("host") || "";
+  const isProduction = process.env.VERCEL_ENV === "production";
   if (
+    isProduction &&
     host !== CANONICAL_HOST &&
     host !== `www.${CANONICAL_HOST}` &&
     !host.startsWith("localhost") &&
