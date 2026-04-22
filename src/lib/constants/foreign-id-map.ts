@@ -38,3 +38,8 @@ export const FOREIGN_NUMERIC_TO_ALPHA: Record<string, string> = {
   "53901": "AQ005",  // 다케다 쇼타
   "52502": "FP005",  // 맷 매닝
 };
+
+/** 영문 kboId → 숫자 kboId 역매핑 (KBO 공식 사이트 스크래핑용) */
+export const FOREIGN_ALPHA_TO_NUMERIC: Record<string, string> = Object.fromEntries(
+  Object.entries(FOREIGN_NUMERIC_TO_ALPHA).map(([num, alpha]) => [alpha, num])
+);

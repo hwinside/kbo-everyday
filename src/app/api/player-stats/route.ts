@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { FOREIGN_ALPHA_TO_NUMERIC } from "@/lib/constants/foreign-id-map";
 
 const KBO_BASE = "https://www.koreabaseball.com";
 
@@ -87,9 +88,12 @@ type PlayerDetailStats = PitcherDetailStats | BatterDetailStats;
 const cache: Record<string, { data: PlayerDetailStats; ts: number }> = {};
 
 export async function GET(req: NextRequest) {
-  const id = req.nextUrl.searchParams.get("id");
+  const rawId = req.nextUrl.searchParams.get("id");
   const pos = req.nextUrl.searchParams.get("pos") || "타자";
-  if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
+  if (!rawId) return NextResponse.json({ error: "id required" }, { status: 400 });
+
+  // 영문 ID(AQ002 등)는 KBO 사이트가 인식 못함 → 숫자 ID로 변환
+  const id = FOREIGN_ALPHA_TO_NUMERIC[rawId] || rawId;
 
   const cacheKey = `player-${id}-${pos}`;
   const cached = cache[cacheKey];

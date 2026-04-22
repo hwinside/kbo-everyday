@@ -442,7 +442,7 @@ export default function PlayerBoardPage() {
             </div>
           ) : (
             <div className="glass-card p-4 mb-4 text-center text-text-tertiary text-sm">
-              2025 시즌 데이터를 찾을 수 없습니다
+              {statSeason} 시즌 데이터를 찾을 수 없습니다
             </div>
           )}
 
