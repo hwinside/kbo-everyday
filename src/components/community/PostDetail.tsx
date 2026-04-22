@@ -55,6 +55,11 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         close();
       }
     };
+    // CRITICAL: always reset on mount. SPA navigation may leave stale kbd-open
+    // from a previous page (e.g. community list → PostDetail transitions where
+    // the unmount cleanup of the previous instance is racy).
+    close();
+    setKeyboardInset(0);
     update();
     vv.addEventListener("resize", update);
     vv.addEventListener("scroll", update);
@@ -70,11 +75,21 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
       open();
       [50, 150, 300, 600, 1000].forEach((ms) => setTimeout(update, ms));
     };
+    const onFocusOut = (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
+      // When composer loses focus, keyboard will dismiss. Force reset so the
+      // TabBar reappears and container reclaims original height.
+      setTimeout(update, 50);
+      setTimeout(update, 300);
+    };
     document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
     return () => {
       vv.removeEventListener("resize", update);
       vv.removeEventListener("scroll", update);
       document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
       close();
     };
   }, []);

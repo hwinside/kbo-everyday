@@ -95,6 +95,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         close();
       }
     };
+    // Reset on mount so stale kbd-open from previous pages doesn't leak in.
+    close();
+    setKeyboardInset(0);
     update();
     vv.addEventListener("resize", update);
     vv.addEventListener("scroll", update);
@@ -104,11 +107,19 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       open();
       [50, 150, 300, 600, 1000].forEach((ms) => setTimeout(update, ms));
     };
+    const onFocusOut = (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
+      setTimeout(update, 50);
+      setTimeout(update, 300);
+    };
     document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
     return () => {
       vv.removeEventListener("resize", update);
       vv.removeEventListener("scroll", update);
       document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
       close();
     };
   }, []);
