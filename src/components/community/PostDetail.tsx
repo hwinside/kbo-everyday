@@ -58,9 +58,23 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
     update();
     vv.addEventListener("resize", update);
     vv.addEventListener("scroll", update);
+    // iOS Safari: first focus often fires before vv.resize reports keyboard.
+    // The "first tap shows nothing, second tap works" symptom is caused by this.
+    // We poll update() at multiple offsets after every focusin to catch the
+    // keyboard animation regardless of vv event timing.
+    const onFocusIn = (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
+      // Optimistic: assume keyboard will open. Mark open immediately so the
+      // TabBar hides before first paint, even if vv hasn't fired yet.
+      open();
+      [50, 150, 300, 600, 1000].forEach((ms) => setTimeout(update, ms));
+    };
+    document.addEventListener("focusin", onFocusIn);
     return () => {
       vv.removeEventListener("resize", update);
       vv.removeEventListener("scroll", update);
+      document.removeEventListener("focusin", onFocusIn);
       close();
     };
   }, []);
