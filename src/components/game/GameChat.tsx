@@ -75,6 +75,55 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     }
   }, [messages.length]);
 
+  // iOS composer positioning (same pattern as PostDetail):
+  // - Track visualViewport to place composer above iOS accessory bar.
+  // - Toggle body.kbd-open on focusin to hide TabBar via CSS.
+  // - Poll vv read at multiple offsets to cover iOS first-focus race.
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    const open = () => document.body.classList.add("kbd-open");
+    const close = () => document.body.classList.remove("kbd-open");
+    const update = () => {
+      const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      if (hidden > 40) {
+        setKeyboardInset(hidden);
+        open();
+      } else {
+        setKeyboardInset(0);
+        close();
+      }
+    };
+    // Reset on mount so stale kbd-open from previous pages doesn't leak in.
+    close();
+    setKeyboardInset(0);
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    const onFocusIn = (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
+      open();
+      [50, 150, 300, 600, 1000].forEach((ms) => setTimeout(update, ms));
+    };
+    const onFocusOut = (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
+      setTimeout(update, 50);
+      setTimeout(update, 300);
+    };
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
+      close();
+    };
+  }, []);
+
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
 
@@ -214,10 +263,17 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         )}
       </div>
 
-      {/* Fixed Input — above bottom tab bar */}
+      {/* Fixed Input — docks above iOS keyboard/accessory bar when focused, above TabBar when idle */}
       <div
-        className="fixed bottom-[calc(52px+env(safe-area-inset-bottom,0px))] left-0 right-0 z-[98] border-t border-border"
-        style={{ background: "var(--chat-input-bg, rgba(10,10,15,0.95))", backdropFilter: "blur(12px)" }}
+        className="fixed left-0 right-0 z-[98] border-t border-border"
+        style={{
+          background: "var(--chat-input-bg, rgba(10,10,15,0.95))",
+          backdropFilter: "blur(12px)",
+          bottom: keyboardInset > 0
+            ? `${keyboardInset}px`
+            : `calc(52px + env(safe-area-inset-bottom, 0px))`,
+          transition: "bottom 80ms ease-out",
+        }}
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
           <input
@@ -227,6 +283,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
             placeholder={canWrite ? (room === "all" ? "메시지 입력..." : `${roomLabels[room]}에 메시지...`) : writeBlockedReason}
             disabled={!canWrite}
+            autoComplete="off"
+            name="chat-message"
             maxLength={200}
             className={clsx(
               "flex-1 h-10 px-4 rounded-full text-sm",
