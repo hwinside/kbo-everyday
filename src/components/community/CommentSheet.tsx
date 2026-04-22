@@ -485,10 +485,15 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onFocus={() => {
-                      // When keyboard opens, scroll latest comment into view above input
-                      requestAnimationFrame(() => {
+                      // When keyboard opens, force-scroll to the latest comment so
+                      // the composer never hides already-posted comments.
+                      // Multiple passes cover iOS keyboard animation timing
+                      // (vv.resize may fire 100-500ms after focusin).
+                      const scrollToBottom = () => {
                         if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
-                      });
+                      };
+                      requestAnimationFrame(scrollToBottom);
+                      [120, 300, 600].forEach((ms) => setTimeout(scrollToBottom, ms));
                     }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.nativeEvent.isComposing) {
