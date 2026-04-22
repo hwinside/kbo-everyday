@@ -8,6 +8,15 @@ import type { RosterPlayer } from "@/types/api";
 
 const KBO_BASE = "https://www.koreabaseball.com";
 
+// 외국인 선수 이름 매칭: KBO는 성만 표시("웰스"), 로스터는 풀네임("라클란 웰스")
+// exact → name+team suffix → name-only suffix 순서로 fallback
+function findRosterPlayer(name: string, team: string, roster: RosterPlayer[]): RosterPlayer | undefined {
+  return roster.find((p) => p.name === name && p.team === team)
+    || roster.find((p) => p.name === name)
+    || roster.find((p) => p.name.endsWith(name) && p.team === team)
+    || roster.find((p) => p.name.endsWith(name));
+}
+
 interface PlayerStat {
   rank: number;
   name: string;
@@ -91,12 +100,7 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
     const name = (c[1] || "").trim();
     const team = (c[2] || "").trim();
     const lookupKey = `${name}::${team}`;
-    // 동명이인 대응: name + team으로 매칭 (name만 쓰면 첫 번째 동명이인이 잡힘)
-    const exactMatch = roster.find((p) => p.name === name && p.team === team);
-    const found = exactMatch || roster.find((p) => p.name === name);
-    if (!exactMatch && found) {
-      console.warn(`[stats] roster name-only fallback: ${name} (team=${team}, matched=${found.team}/${found.kboId})`);
-    }
+    const found = findRosterPlayer(name, team, roster);
     const b2 = basic2Map.get(lookupKey);
     const runner = runnerMap.get(lookupKey);
     return {
@@ -137,12 +141,7 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
 function parsePitcherRow(c: string[], roster: RosterPlayer[]): PlayerStat {
   const name = c[1] || "";
   const team = c[2] || "";
-  // 동명이인 대응: name + team으로 매칭
-  const exactMatch = roster.find((p) => p.name === name && p.team === team);
-  const found = exactMatch || roster.find((p) => p.name === name);
-  if (!exactMatch && found) {
-    console.warn(`[stats] roster name-only fallback (pitcher): ${name} (team=${team}, matched=${found.team}/${found.kboId})`);
-  }
+  const found = findRosterPlayer(name, team, roster);
   return {
     rank: 0,
     name,
