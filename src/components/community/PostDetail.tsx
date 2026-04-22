@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, MoreHorizontal, Check } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
@@ -33,10 +33,34 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   // 2) Track visualViewport to place composer precisely above the iOS accessory
   //    bar (⌃⌄✓). vv.height bottom = top of accessory bar, so setting composer
   //    `bottom: hiddenPx` snaps it flush.
+  // 3) On keyboard open, scroll the anchor (last comment or post end) flush to
+  //    the composer top so the user sees context while typing.
   //
-  // Why both? focus/blur handles the class toggle instantly (no hysteresis), and
-  // vv.resize gives us the pixel-accurate inset needed to float above accessory bar.
+  // focusLockRef: while composer is focused, block update() from calling close().
+  // iOS fires the 50ms timer before the keyboard animation starts, which would
+  // otherwise reset TabBar visibility mid-focus.
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const focusLockRef = useRef(false);
+  const scrolledForFocusRef = useRef(false);
+  const postBodyEndRef = useRef<HTMLDivElement | null>(null);
+  const commentsListEndRef = useRef<HTMLDivElement | null>(null);
+  const commentsCountRef = useRef(0);
+  commentsCountRef.current = comments.length;
+
+  // Scroll anchor into view so it sits just above the composer.
+  // Called once per focus session when the keyboard is fully up.
+  const scrollAnchorIntoView = () => {
+    const target = commentsCountRef.current > 0
+      ? commentsListEndRef.current
+      : postBodyEndRef.current;
+    if (target) {
+      // block:"end" aligns target's bottom edge with scroll container's bottom
+      // (which is padded by composerHeight + keyboardInset), so the anchor
+      // ends up just above the composer.
+      target.scrollIntoView({ block: "end", behavior: "auto" });
+    }
+  };
+
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
     const vv = window.visualViewport;
@@ -50,7 +74,16 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
       if (hidden > 40) {
         setKeyboardInset(hidden);
         open();
+        // First time keyboard is fully up for this focus session → scroll anchor.
+        if (focusLockRef.current && !scrolledForFocusRef.current) {
+          scrolledForFocusRef.current = true;
+          // Let composer `bottom: hidden` settle, then scroll.
+          requestAnimationFrame(() => scrollAnchorIntoView());
+        }
       } else {
+        // Block close() while focused — prevents premature TabBar reappear
+        // when the 50ms poll fires before iOS keyboard animation starts.
+        if (focusLockRef.current) return;
         setKeyboardInset(0);
         close();
       }
@@ -70,6 +103,11 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
     const onFocusIn = (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
+      // Only composer input should trigger keyboard layout. Post-edit inputs
+      // live in the scroll area and don't need the fixed composer treatment.
+      if (!t.closest("[data-composer]")) return;
+      focusLockRef.current = true;
+      scrolledForFocusRef.current = false;
       // Optimistic: assume keyboard will open. Mark open immediately so the
       // TabBar hides before first paint, even if vv hasn't fired yet.
       open();
@@ -78,6 +116,9 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
     const onFocusOut = (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
+      if (!t.closest("[data-composer]")) return;
+      focusLockRef.current = false;
+      scrolledForFocusRef.current = false;
       // When composer loses focus, keyboard will dismiss. Force reset so the
       // TabBar reappears and container reclaims original height.
       setTimeout(update, 50);
@@ -90,6 +131,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
       vv.removeEventListener("scroll", update);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
+      focusLockRef.current = false;
       close();
     };
   }, []);
@@ -373,6 +415,8 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
             <span className="text-sm text-text-secondary">{comments.length}</span>
           </div>
         </div>
+        {/* Scroll anchor: end of post body. Used when there are no comments. */}
+        <div ref={postBodyEndRef} aria-hidden="true" />
       </div>
 
       {/* Comments */}
@@ -470,6 +514,8 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
               );
             })
           )}
+          {/* Scroll anchor: end of comments list. Used when there is >=1 comment. */}
+          <div ref={commentsListEndRef} aria-hidden="true" />
         </div>
       </div>
 
@@ -483,6 +529,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         layout container is shorter than 100svh in idle state).
       */}
       <div
+        data-composer="postdetail"
         className="fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40"
         style={{
           bottom: keyboardInset > 0
