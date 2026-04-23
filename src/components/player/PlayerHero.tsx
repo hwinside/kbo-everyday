@@ -36,9 +36,18 @@ export type PlayerRanks = {
   hr?: number;      // 홈런 순위
   hits?: number;    // 안타 순위
   sb?: number;      // 도루 순위
+  avg?: number;     // 타율 순위
+  rbi?: number;     // 타점 순위
   so?: number;      // 탈삼진 순위
   saves?: number;   // 세이브 순위
   holds?: number;   // 홀드 순위
+  era?: number;     // 평균자책 순위
+  whip?: number;    // WHIP 순위
+  wins?: number;    // 승리 순위
+  ip?: number;      // 이닝 순위
+  fip?: number;     // FIP 순위
+  war?: number;     // WAR 순위
+  k9?: number;      // K/9 순위
 };
 
 export function buildHeroStats(

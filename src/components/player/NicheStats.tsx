@@ -227,6 +227,7 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
               <StatBox label="WHIP" value={typeof ps.WHIP === "number" ? ps.WHIP.toFixed(2) : ps.WHIP} desc="출루 허용" />
               <StatBox label="K/9" value={ps.K9.toFixed(1)} desc="9이닝 삼진" />
               <StatBox label="BB/9" value={ps.BB9.toFixed(1)} desc="9이닝 볼넷" />
+              <StatBox label="WAR" value={ps.WAR.toFixed(1)} desc="대체 선수 대비" />
               <StatBox label="HR/9" value={ps.HR9.toFixed(1)} desc="9이닝 피홈런" />
               <StatBox label="K%" value={`${ps.K_pct}%`} desc="삼진 비율" />
               <StatBox label="BB%" value={`${ps.BB_pct}%`} desc="볼넷 비율" />

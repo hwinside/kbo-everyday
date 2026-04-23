@@ -29,6 +29,7 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import CheerSong from "@/components/player/CheerSong";
 import PlayerProfile from "@/components/player/PlayerProfile";
 import PlayerHero, { buildHeroStats, hasHeroImage, type PlayerRanks } from "@/components/player/PlayerHero";
+import { calcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
 import PlayerRadar from "@/components/player/PlayerRadar";
 import PlayerNews from "@/components/player/PlayerNews";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
@@ -255,30 +256,74 @@ export default function PlayerBoardPage() {
     }
   }, [statSeason, player, kboId, playerName]);
 
-  // Hero 스탯 랜킹: 전체 타자/투수 리스트에서 해당 선수의 종목별 순위 추출
-  // 필요 조건: Hero 노출 대상 선수(5명)일 때만 fetch (기타 선수는 작은 바라 불필요)
+  // 전체 선수 랭킹: 해당 선수의 종목별 순위 추출 (모든 선수 대상)
   useEffect(() => {
     if (!player || !kboId) { setPlayerRanks({}); return; }
-    if (!hasHeroImage(kboId)) { setPlayerRanks({}); return; }
     const isPitcher = player.position === "투수";
     fetch(`/api/stats?season=2026&type=${isPitcher ? "pitcher" : "batter"}`)
       .then(r => r.json())
       .then(d => {
         const list = (d.stats || []) as Record<string, string | number>[];
-        // 각 종목별 내림차순 정렬 후 해당 선수 위치 찾기
         const numOf = (v: string | number | undefined) => {
           if (v == null) return Number.NEGATIVE_INFINITY;
           const n = typeof v === "number" ? v : Number(v);
           return Number.isFinite(n) ? n : Number.NEGATIVE_INFINITY;
         };
-        const rankOf = (key: string): number | undefined => {
-          const sorted = [...list].sort((a, b) => numOf(b[key]) - numOf(a[key]));
+        const parseIP = (ip: string | number): number => {
+          const s = String(ip).trim();
+          const match = s.match(/^(\d+)(?:\s+(\d+)\/(\d+))?$/);
+          if (!match) return parseFloat(s) || 0;
+          return (parseInt(match[1]) || 0) + (match[2] && match[3] ? parseInt(match[2]) / parseInt(match[3]) : 0);
+        };
+        // 규정이닝 12+ 필터 (rate stats용)
+        const qualified = list.filter(p => parseIP(p.ip || 0) >= 12);
+        // 오름차순 (낮을수록 좋은 지표)
+        const rankOfAsc = (key: string, pool = qualified): number | undefined => {
+          const sorted = [...pool].sort((a, b) => numOf(a[key]) - numOf(b[key]));
           const idx = sorted.findIndex(s => String(s.kboId || s.playerId) === kboId || s.name === player.name);
           return idx === -1 ? undefined : idx + 1;
         };
-        setPlayerRanks(isPitcher
-          ? { so: rankOf("so"), saves: rankOf("saves"), holds: rankOf("holds") }
-          : { hr: rankOf("hr"), hits: rankOf("hits"), sb: rankOf("sb") });
+        // 내림차순 (높을수록 좋은 지표)
+        const rankOfDesc = (key: string, pool = list): number | undefined => {
+          const sorted = [...pool].sort((a, b) => numOf(b[key]) - numOf(a[key]));
+          const idx = sorted.findIndex(s => String(s.kboId || s.playerId) === kboId || s.name === player.name);
+          return idx === -1 ? undefined : idx + 1;
+        };
+        if (isPitcher) {
+          // 세이버메트릭스 랭킹: 각 투수의 FIP/WAR/K9 계산 후 순위
+          const saberList = qualified.map(p => {
+            const saber = calcPitcherSaber({
+              era: p.era as string, ip: p.ip as string, so: Number(p.so) || 0,
+              bb: Number(p.bb) || 0, hr: Number(p.hr) || 0, hits: Number(p.h) || 0,
+              games: Number(p.games) || 0, wins: Number(p.wins) || 0,
+              losses: Number(p.losses) || 0, saves: Number(p.saves) || 0,
+              whip: p.whip as string,
+            });
+            return { id: String(p.kboId || p.playerId), name: p.name, ...saber };
+          });
+          const saberRankAsc = (key: keyof typeof saberList[0]): number | undefined => {
+            const sorted = [...saberList].sort((a, b) => (Number(a[key]) || 99) - (Number(b[key]) || 99));
+            const idx = sorted.findIndex(s => s.id === kboId || s.name === player.name);
+            return idx === -1 ? undefined : idx + 1;
+          };
+          const saberRankDesc = (key: keyof typeof saberList[0]): number | undefined => {
+            const sorted = [...saberList].sort((a, b) => (Number(b[key]) || -99) - (Number(a[key]) || -99));
+            const idx = sorted.findIndex(s => s.id === kboId || s.name === player.name);
+            return idx === -1 ? undefined : idx + 1;
+          };
+          setPlayerRanks({
+            era: rankOfAsc("era"), whip: rankOfAsc("whip"),
+            wins: rankOfDesc("wins", list), so: rankOfDesc("so", list),
+            saves: rankOfDesc("saves", list), holds: rankOfDesc("holds", list),
+            ip: rankOfDesc("ip", qualified),
+            fip: saberRankAsc("FIP"), war: saberRankDesc("WAR"), k9: saberRankDesc("K9"),
+          });
+        } else {
+          setPlayerRanks({
+            hr: rankOfDesc("hr"), hits: rankOfDesc("hits"), sb: rankOfDesc("sb"),
+            avg: rankOfAsc("avg", qualified), rbi: rankOfDesc("rbi"),
+          });
+        }
       })
       .catch(() => setPlayerRanks({}));
   }, [player, kboId]);
@@ -409,6 +454,51 @@ export default function PlayerBoardPage() {
             ))}
           </div>
 
+          {/* 리그 순위 배너 */}
+          {statSeason === 2026 && (() => {
+            const PITCHER_RANK_CATS = [
+              { key: "era", label: "평균자책", asc: true },
+              { key: "whip", label: "WHIP", asc: true },
+              { key: "wins", label: "승리" },
+              { key: "so", label: "탈삼진" },
+              { key: "saves", label: "세이브" },
+              { key: "holds", label: "홀드" },
+              { key: "ip", label: "이닝" },
+              { key: "fip", label: "FIP", asc: true },
+              { key: "war", label: "WAR" },
+              { key: "k9", label: "K/9" },
+            ];
+            const BATTER_RANK_CATS = [
+              { key: "avg", label: "타율" },
+              { key: "hr", label: "홈런" },
+              { key: "rbi", label: "타점" },
+              { key: "hits", label: "안타" },
+              { key: "sb", label: "도루" },
+            ];
+            const cats = player.position === "투수" ? PITCHER_RANK_CATS : BATTER_RANK_CATS;
+            const ranks = cats
+              .filter(c => playerRanks[c.key as keyof typeof playerRanks] != null && (playerRanks[c.key as keyof typeof playerRanks] ?? 99) <= 20)
+              .map(c => ({ ...c, rank: playerRanks[c.key as keyof typeof playerRanks]! }))
+              .sort((a, b) => a.rank - b.rank);
+            if (ranks.length === 0) return null;
+            return (
+              <div className="flex gap-2 overflow-x-auto pb-2 mb-3 no-scrollbar">
+                {ranks.map(r => (
+                  <span
+                    key={r.key}
+                    className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold ${
+                      r.rank <= 3
+                        ? "bg-accent/15 text-accent"
+                        : "bg-bg-tertiary text-text-secondary"
+                    }`}
+                  >
+                    {r.label} <span className="font-bold">{r.rank}위</span>
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
+
           {realStats ? (
             <div className="glass-card p-4 mb-4">
               <h3 className="text-sm font-bold text-text-primary mb-3">{statSeason} 시즌 기록</h3>
@@ -417,14 +507,19 @@ export default function PlayerBoardPage() {
                   <>
                     <StatItem label="ERA" value={realStats.era} color={teamColor} />
                     <StatItem label="승-패" value={`${realStats.wins}-${realStats.losses}`} color={teamColor} />
+                    <StatItem label="이닝" value={realStats.ip} color={teamColor} />
+                    <StatItem label="삼진" value={realStats.so} color={teamColor} />
+                    <StatItem label="WHIP" value={realStats.whip} color={teamColor} />
+                    <StatItem label="피안타" value={realStats.hits} color={teamColor} />
+                    <StatItem label="피홈런" value={realStats.hr} color={teamColor} />
+                    <StatItem label="볼넷" value={realStats.bb ?? 0} color={teamColor} />
+                    <StatItem label="자책" value={realStats.er ?? 0} color={teamColor} />
                     <StatItem label="세이브" value={realStats.saves} color={teamColor} />
                     <StatItem label="홀드" value={realStats.holds ?? 0} color={teamColor} />
-                    <StatItem label="이닝" value={realStats.ip} color={teamColor} />
                     <StatItem label="경기" value={realStats.games} color={teamColor} />
-                    <StatItem label="삼진" value={realStats.so} color={teamColor} />
-                    <StatItem label="볼넷" value={realStats.bb ?? 0} color={teamColor} />
-                    <StatItem label="WHIP" value={realStats.whip} color={teamColor} />
                     <StatItem label="승률" value={realStats.wpct ?? "-"} color={teamColor} />
+                    <StatItem label="완투" value={realStats.cg ?? 0} color={teamColor} />
+                    <StatItem label="완봉" value={realStats.sho ?? 0} color={teamColor} />
                   </>
                 ) : (
                   <>
