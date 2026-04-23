@@ -1,27 +1,23 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useParams } from "next/navigation";
-import { motion } from "framer-motion";
-import { ArrowLeft, Heart, MessageCircle, Share2, PenLine } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ArrowLeft, Share2, PenLine, X, Camera, FileText } from "lucide-react";
 import Link from "next/link";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
-import GlassCard from "@/components/ui/GlassCard";
-import PostList from "@/components/community/PostList";
-import type { Post as PostDTO } from "@/lib/types";
 import NicheStats from "@/components/player/NicheStats";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
 import { FOREIGN_NUMERIC_TO_ALPHA } from "@/lib/constants/foreign-id-map";
-import { usePosts, createPost, toggleLike } from "@/lib/supabase/usePosts";
-import type { Post } from "@/lib/supabase/usePosts";
-import { supabase } from "@/lib/supabase/client";
+import { createPost, toggleLike } from "@/lib/supabase/usePosts";
+import { useUnifiedPosts } from "@/lib/supabase/useUnifiedPosts";
 import WritePost from "@/components/community/WritePost";
 import WritePhotoPost from "@/components/community/WritePhotoPost";
-import PhotoFeed from "@/components/community/PhotoFeed";
+import UnifiedFeed from "@/components/community/UnifiedFeed";
 import { useBadgeCheck } from "@/lib/hooks/useBadgeCheck";
 import BadgeToast from "@/components/ui/BadgeToast";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -32,7 +28,6 @@ import PlayerHero, { buildHeroStats, hasHeroImage, type PlayerRanks } from "@/co
 import { calcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
 import PlayerRadar from "@/components/player/PlayerRadar";
 import PlayerNews from "@/components/player/PlayerNews";
-import { formatPlayerTag } from "@/lib/utils/player-tags";
 
 // kboId → name 역매핑 (roster 기반 — 전체 선수 커버)
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
@@ -104,100 +99,20 @@ export default function PlayerBoardPage() {
   const [player, setPlayer] = useState<PlayerData | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"stats" | "photo" | "latest" | "hot">("stats");
-  const { posts: livePosts, loading: postsLoading, reload } = usePosts("player", rawId);
-  // Adapt snake_case usePosts rows to the PostDTO shape expected by PostList/PostCard.
-  // Hot tab shares latest ordering for now — sort refinement is out of scope of this fix.
-  const listPosts: PostDTO[] = useMemo(() => livePosts.map((p) => ({
-    id: p.id,
-    boardType: (p.board_type as PostDTO["boardType"]) ?? "player",
-    boardId: p.board_id,
-    authorId: p.author_id,
-    title: p.title,
-    content: p.content,
-    imageUrls: (p.image_urls ?? []) as string[],
-    videoUrls: (p.video_urls ?? []) as string[],
-    likeCount: p.like_count,
-    commentCount: p.comment_count,
-    isReported: false,
-    createdAt: p.created_at,
-    author: {
-      nickname: p.nickname || "익명",
-      avatarUrl: null,
-      myTeamId: p.team_id ?? null,
-      level: 1,
-      title: "",
-      grade: p.grade,
-    },
-  })), [livePosts]);
+  const [activeTab, setActiveTab] = useState<"stats" | "feed">("stats");
+  // Unified posts (general + photo merged)
+  const { posts: unifiedPosts, loading: postsLoading, reload } = useUnifiedPosts("player", kboId);
   const [showWrite, setShowWrite] = useState(false);
   const [showPhotoWrite, setShowPhotoWrite] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+  const [fabExpanded, setFabExpanded] = useState(false);
   const [statSeason, setStatSeason] = useState<2025 | 2026>(2026);
-  const [photoPosts, setPhotoPosts] = useState<Post[]>([]);
-  const [photoLoading, setPhotoLoading] = useState(true);
   const [realStats, setRealStats] = useState<Record<string, string | number> | null>(null);
   const [playerRanks, setPlayerRanks] = useState<PlayerRanks>({});
   const { user } = useAuth();
   const { newBadges, checkBadges, clearBadges } = useBadgeCheck();
 
-  const loadPhotoPosts = useCallback(async () => {
-    if (!playerName) return;
-    setPhotoLoading(true);
-    const cols = "id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)";
-
-    // 1) 선수 게시판 직접 게시물 (사진 게시물만)
-    const boardQuery = supabase
-      .from("posts")
-      .select(cols)
-      .eq("board_type", "player")
-      .eq("board_id", kboId)
-      .eq("content_type", "photo")
-      .neq("is_hidden", true)
-      .order("created_at", { ascending: false })
-      .limit(50);
-
-    // 2) 다른 게시판에서 player_tags로 태그된 게시물 (cross-board, 사진 게시물만)
-    const tag = formatPlayerTag(kboId, playerName);
-    const tagQuery = supabase
-      .from("posts")
-      .select(cols)
-      .contains("player_tags", [tag])
-      .eq("content_type", "photo")
-      .neq("is_hidden", true)
-      .neq("board_type", "player") // 선수 게시판 중복 방지
-      .order("created_at", { ascending: false })
-      .limit(50);
-
-    const [boardResult, tagResult] = await Promise.all([boardQuery, tagQuery]);
-    const boardPosts = boardResult.data ?? [];
-    const tagPosts = tagResult.data ?? []; // player_tags 콜론 파싱 에러 시 빈 배열 fallback
-    // 중복 제거 후 합치기
-    const seen = new Set<number>();
-    const merged = [...boardPosts, ...tagPosts].filter((p) => {
-      if (seen.has(p.id)) return false;
-      seen.add(p.id);
-      return true;
-    });
-    // 시간순 정렬
-    merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-    setPhotoPosts(merged.map((p) => ({
-      ...p,
-      content_type: (p.content_type ?? "general") as "general" | "photo",
-      image_urls: (p.image_urls ?? []) as string[],
-      video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
-      nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
-      team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
-      grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
-      points: ((p.profiles as unknown as Record<string, unknown> | null)?.points as number) ?? 0,
-    })));
-    setPhotoLoading(false);
-  }, [kboId, playerName]);
-
-  useEffect(() => { loadPhotoPosts(); }, [loadPhotoPosts]);
-
-  const handlePhotoLike = async (postId: number) => {
+  const handleLike = async (postId: number) => {
     try { await toggleLike(postId); } catch { /* ignore */ }
   };
 
@@ -410,7 +325,7 @@ export default function PlayerBoardPage() {
       {/* Tabs (Hero/fallback 공통) */}
       <div className="border-b border-border">
         <div className="flex">
-          {((["stats", "photo", "latest", "hot"] as const)).map((tab) => (
+          {((["stats", "feed"] as const)).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -418,7 +333,7 @@ export default function PlayerBoardPage() {
                 activeTab === tab ? "text-text-primary" : "text-text-tertiary"
               }`}
             >
-              {tab === "stats" ? "⚾ 선수정보" : tab === "photo" ? "📸 사진" : tab === "latest" ? "📝 최신글" : "🔥 인기글"}
+              {tab === "stats" ? "⚾ 선수정보" : "💬 피드"}
               {activeTab === tab && (
                 <motion.div
                   layoutId="board-tab"
@@ -550,56 +465,56 @@ export default function PlayerBoardPage() {
         </div>
       )}
 
-      {/* 직찍 피드 */}
-      {activeTab === "photo" && (
+      {/* Unified feed */}
+      {activeTab === "feed" && (
         <div className="py-2">
-          <PhotoFeed
-            posts={photoPosts}
-            loading={photoLoading}
-            onLike={handlePhotoLike}
-            boardType="player"
+          <UnifiedFeed
+            posts={unifiedPosts}
+            loading={postsLoading}
+            onLike={handleLike}
+            boardContext={{ type: "player", teamId: player.teamId, playerName: player.name, kboId }}
           />
         </div>
       )}
 
-      {/* Posts — PostCard-based list so link previews (OG cards) render in the feed too,
-          matching /community/free and /community/all-posts behaviour. */}
-      {activeTab !== "stats" && activeTab !== "photo" && (
-        <div className="px-5 py-4">
-          {postsLoading ? null : (
-            <PostList posts={listPosts} />
-          )}
+      {/* FAB with write type selection */}
+      {activeTab === "feed" && (
+        <div className="fixed bottom-24 right-4 z-40 flex flex-col-reverse items-center gap-3">
+          <AnimatePresence>
+            {fabExpanded && (
+              <>
+                <button
+                  onClick={() => { setFabExpanded(false); user ? setShowWrite(true) : setShowLogin(true); }}
+                  className="flex h-12 w-12 items-center justify-center rounded-full bg-bg-tertiary text-text-primary shadow-lg transition-transform hover:scale-105 active:scale-95"
+                >
+                  <FileText size={20} />
+                </button>
+                <button
+                  onClick={() => { setFabExpanded(false); user ? setShowPhotoWrite(true) : setShowLogin(true); }}
+                  className="flex h-12 w-12 items-center justify-center rounded-full bg-bg-tertiary text-text-primary shadow-lg transition-transform hover:scale-105 active:scale-95"
+                >
+                  <Camera size={20} />
+                </button>
+              </>
+            )}
+          </AnimatePresence>
+          <button
+            onClick={() => { if (!user) { setShowLogin(true); return; } setFabExpanded(prev => !prev); }}
+            className="flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-transform hover:scale-105 active:scale-95"
+            style={{ backgroundColor: teamColor }}
+          >
+            {fabExpanded ? <X className="w-6 h-6 text-white" /> : <PenLine className="w-6 h-6 text-white" />}
+          </button>
         </div>
       )}
-
-      {/* FAB */}
-
-      {(activeTab === "latest" || activeTab === "hot") && (
-      <button
-        onClick={() => user ? setShowWrite(true) : setShowLogin(true)}
-        className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
-        style={{ backgroundColor: teamColor }}
-      >
-        <PenLine className="w-9 h-9 text-white" />
-      </button>
-      )}
-
-      {activeTab === "photo" && (
-      <button
-        onClick={() => user ? setShowPhotoWrite(true) : setShowLogin(true)}
-        className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
-        style={{ backgroundColor: teamColor }}
-      >
-        <PenLine className="w-9 h-9 text-white" />
-      </button>
-      )}
+      {fabExpanded && <div className="fixed inset-0 z-30" onClick={() => setFabExpanded(false)} />}
 
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
       <WritePost
         isOpen={showWrite}
         onClose={() => setShowWrite(false)}
         onSubmit={async (title, content, imageUrls) => {
-          await createPost({ boardType: "player", boardId: rawId, title, content, imageUrls });
+          await createPost({ boardType: "player", boardId: kboId, title, content, imageUrls });
           setShowWrite(false);
           if (user) checkBadges(user.id);
           reload();
@@ -613,7 +528,7 @@ export default function PlayerBoardPage() {
         boardType="player"
         boardId={kboId}
         defaultPlayerTag={player ? { kboId, name: player.name, teamId: player.teamId } : undefined}
-        onSuccess={() => loadPhotoPosts()}
+        onSuccess={() => reload()}
       />
     </div>
   );

@@ -1,60 +1,35 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useState } from "react";
+import { useParams } from "next/navigation";
 import Link from "next/link";
-import { motion, AnimatePresence } from "framer-motion";
-import { Pencil } from "lucide-react";
+import { AnimatePresence } from "framer-motion";
+import { Pencil, X, Camera, FileText } from "lucide-react";
 import { getTeamBySlug, getTeamBgColor } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
-import PostList from "@/components/community/PostList";
-import PhotoFeed from "@/components/community/PhotoFeed";
+import UnifiedFeed from "@/components/community/UnifiedFeed";
 import WritePost from "@/components/community/WritePost";
 import WritePhotoPost from "@/components/community/WritePhotoPost";
 import EventBanner from "@/components/home/EventBanner";
-import type { Post } from "@/lib/types";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
-import { usePosts, createPost } from "@/lib/supabase/usePosts";
-import { toggleLike } from "@/lib/supabase/usePosts";
-
-type ContentTab = "general" | "photo";
-type SortTab = "latest" | "hot";
+import { useUnifiedPosts } from "@/lib/supabase/useUnifiedPosts";
+import { createPost, toggleLike } from "@/lib/supabase/usePosts";
 
 export default function CommunityTeamBoardPage() {
   const params = useParams();
-  const router = useRouter();
-  const searchParams = useSearchParams();
   const teamSlug = params.teamId as string;
   const team = getTeamBySlug(teamSlug);
 
-  // URL-driven state
-  const initialTab = (searchParams.get("tab") as ContentTab) || "general";
-  const initialSort = (searchParams.get("sort") as SortTab) || "latest";
-  const [contentTab, setContentTab] = useState<ContentTab>(initialTab);
-  const [sortTab, setSortTab] = useState<SortTab>(initialSort);
   const [writeOpen, setWriteOpen] = useState(false);
   const [writePhotoOpen, setWritePhotoOpen] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+  const [fabExpanded, setFabExpanded] = useState(false);
 
   const { user } = useAuth();
 
-  // Update URL when tab/sort changes
-  const updateUrl = useCallback(
-    (tab: ContentTab, sort: SortTab) => {
-      const url = new URL(window.location.href);
-      url.searchParams.set("tab", tab);
-      url.searchParams.set("sort", sort);
-      window.history.replaceState(null, "", url.toString());
-    },
-    []
-  );
-
-  // ── General posts ──
-  const { posts: generalLivePosts, loading: generalLoading, reload: reloadGeneral } = usePosts("team", teamSlug, "general");
-
-  // ── Photo posts ──
-  const { posts: photoPosts, loading: photoLoading, reload: reloadPhoto } = usePosts("team", teamSlug, "photo");
+  // Unified posts (general + photo merged)
+  const { posts, loading, reload } = useUnifiedPosts("team", teamSlug);
 
   if (!team) {
     return (
@@ -64,67 +39,13 @@ export default function CommunityTeamBoardPage() {
     );
   }
 
-  const handleTabChange = (tab: ContentTab) => {
-    setContentTab(tab);
-    setSortTab("latest");
-    updateUrl(tab, "latest");
-    window.scrollTo(0, 0);
+  const handleLike = async (postId: number) => {
+    try { await toggleLike(postId); } catch { /* ignore */ }
   };
 
-  const handleSortChange = (sort: SortTab) => {
-    setSortTab(sort);
-    updateUrl(contentTab, sort);
-    window.scrollTo(0, 0);
-  };
-
-  const generalPosts: Post[] = generalLivePosts.map((p) => ({
-    id: p.id,
-    boardType: "team" as const,
-    boardId: teamSlug,
-    authorId: p.author_id,
-    title: p.title,
-    content: p.content,
-    imageUrls: p.image_urls || [],
-    likeCount: p.like_count,
-    commentCount: p.comment_count,
-    isReported: false,
-    createdAt: p.created_at,
-    author: {
-      nickname: p.nickname || "익명",
-      avatarUrl: null,
-      myTeamId: p.team_id || team.id,
-      level: 1,
-      title: "",
-      grade: p.grade,
-    },
-  }));
-
-  /* eslint-disable react-hooks/purity */
-  const sortedGeneralPosts = sortTab === "hot"
-    ? [...generalPosts]
-        .filter((p) => {
-          const d = new Date(p.createdAt);
-          return Date.now() - d.getTime() < 30 * 24 * 60 * 60 * 1000;
-        })
-        .sort((a, b) => b.likeCount - a.likeCount || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    : generalPosts;
-
-  const sortedPhotoPosts = sortTab === "hot"
-    ? [...photoPosts]
-        .filter((p) => {
-          const d = new Date(p.created_at);
-          return Date.now() - d.getTime() < 30 * 24 * 60 * 60 * 1000;
-        })
-        .sort((a, b) => b.like_count - a.like_count || new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    : photoPosts;
-  /* eslint-enable react-hooks/purity */
-
-  const handlePhotoLike = async (postId: number) => {
-    try {
-      await toggleLike(postId);
-    } catch {
-      // ignore if not logged in
-    }
+  const handleFabClick = () => {
+    if (!user) { setShowLogin(true); return; }
+    setFabExpanded(prev => !prev);
   };
 
   return (
@@ -150,114 +71,55 @@ export default function CommunityTeamBoardPage() {
         </div>
       </div>
 
-      {/* 이벤트 배너 (2026-04-20 — 얼리멤버 초대/글쓰기) */}
+      {/* 이벤트 배너 */}
       <div className="px-5">
         <EventBanner source="community" />
       </div>
 
-      {/* Controls */}
-      <div className="px-5 pb-2 space-y-3">
-        {/* Row 1: Tab toggle + Write CTA */}
-        <div className="flex items-center justify-between">
-          <div className="flex bg-bg-glass rounded-xl p-1">
-            {(["general", "photo"] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => handleTabChange(tab)}
-                className={`relative px-4 py-2 text-sm font-semibold rounded-lg transition-colors ${
-                  contentTab === tab
-                    ? "bg-text-primary text-bg-primary shadow-sm"
-                    : "text-text-tertiary hover:text-text-secondary"
-                }`}
-              >
-                {tab === "general" ? "일반" : "사진"}
-              </button>
-            ))}
-          </div>
-
-        </div>
-
-        {/* Row 2: Sort toggle */}
-        <div className="flex gap-2">
-          {(["latest", "hot"] as const).map((sort) => (
-            <button
-              key={sort}
-              onClick={() => handleSortChange(sort)}
-              className={`px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                sortTab === sort
-                  ? "bg-bg-tertiary text-text-primary"
-                  : "text-text-tertiary hover:text-text-secondary"
-              }`}
-            >
-              {sort === "latest" ? "최신" : "인기"}
-            </button>
-          ))}
-          {sortTab === "hot" && (
-            <span className="flex items-center text-xs text-text-tertiary ml-1">최근 30일</span>
-          )}
-        </div>
+      {/* Unified feed */}
+      <div className="py-3">
+        <UnifiedFeed
+          posts={posts}
+          loading={loading}
+          onLike={handleLike}
+          boardContext={{ type: "team", teamId: team.id }}
+        />
       </div>
 
-      {/* Content */}
-      <AnimatePresence mode="wait">
-        {contentTab === "general" ? (
-          <motion.div
-            key="general-board"
-            initial={{ opacity: 0, x: -12 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -12 }}
-            transition={{ duration: 0.15 }}
-            className="px-5 py-3"
-          >
-            {generalLoading ? (
-              <div className="space-y-3">
-                {[...Array(5)].map((_, i) => (
-                  <div key={i} className="glass-card p-5 animate-pulse">
-                    <div className="h-4 bg-bg-tertiary rounded w-24 mb-3" />
-                    <div className="h-5 bg-bg-tertiary rounded w-3/4 mb-2" />
-                    <div className="h-4 bg-bg-tertiary rounded w-full" />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <PostList posts={sortedGeneralPosts} />
-            )}
-          </motion.div>
-        ) : (
-          <motion.div
-            key="photo-board"
-            initial={{ opacity: 0, x: 12 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 12 }}
-            transition={{ duration: 0.15 }}
-            className="py-3"
-          >
-            <PhotoFeed
-              posts={sortedPhotoPosts}
-              loading={photoLoading}
-              onLike={handlePhotoLike}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* FAB with write type selection */}
+      <div className="fixed bottom-24 right-5 z-40 flex flex-col-reverse items-center gap-3">
+        <AnimatePresence>
+          {fabExpanded && (
+            <>
+              {/* Write text post */}
+              <button
+                onClick={() => { setFabExpanded(false); setWriteOpen(true); }}
+                className="flex h-12 w-12 items-center justify-center rounded-full bg-bg-tertiary text-text-primary shadow-lg transition-transform hover:scale-105 active:scale-95"
+              >
+                <FileText size={20} />
+              </button>
+              {/* Write photo post */}
+              <button
+                onClick={() => { setFabExpanded(false); setWritePhotoOpen(true); }}
+                className="flex h-12 w-12 items-center justify-center rounded-full bg-bg-tertiary text-text-primary shadow-lg transition-transform hover:scale-105 active:scale-95"
+              >
+                <Camera size={20} />
+              </button>
+            </>
+          )}
+        </AnimatePresence>
+        <button
+          onClick={handleFabClick}
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
+        >
+          {fabExpanded ? <X size={24} /> : <Pencil size={24} />}
+        </button>
+      </div>
 
-      {/* FAB */}
-      <button
-        onClick={() => {
-          if (!user) {
-            setShowLogin(true);
-            return;
-          }
-          if (contentTab === "photo") {
-            setWritePhotoOpen(true);
-          } else {
-            setWriteOpen(true);
-          }
-        }}
-        className="fixed bottom-24 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
-      >
-        <Pencil size={24} />
-      </button>
+      {/* Backdrop when FAB expanded */}
+      {fabExpanded && (
+        <div className="fixed inset-0 z-30" onClick={() => setFabExpanded(false)} />
+      )}
 
       {/* Write post modal (general) */}
       <WritePost
@@ -273,7 +135,7 @@ export default function CommunityTeamBoardPage() {
             imageUrls,
             contentType: "general",
           });
-          reloadGeneral();
+          reload();
           setWriteOpen(false);
         }}
       />
@@ -285,7 +147,7 @@ export default function CommunityTeamBoardPage() {
         teamName={team.name}
         boardType="team"
         boardId={teamSlug}
-        onSuccess={() => reloadPhoto()}
+        onSuccess={() => reload()}
       />
 
       {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
