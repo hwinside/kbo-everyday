@@ -224,6 +224,7 @@ export default function SetupPage() {
         {
           meta: true,
           gads: true,
+          userEmail: user?.email,
           onGadsComplete: () => {
             window.location.href = "/welcome";
           },

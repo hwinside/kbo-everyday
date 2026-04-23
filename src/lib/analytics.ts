@@ -29,6 +29,12 @@ interface TrackOptions {
   /** false면 GA4 기본 발화 스킵 (Ads-only / Meta-only 분리용, 기본 true) */
   ga4?: boolean;
   /**
+   * Google Ads 향상된 전환(Enhanced Conversions)용 유저 이메일.
+   * 제공 시 SHA-256 해싱 후 gtag('set', 'user_data') 호출하여
+   * 전환 매칭률 향상. gads: true일 때만 사용됨.
+   */
+  userEmail?: string;
+  /**
    * Google Ads 전환 발화 후 호출되는 콜백. gtag `event_callback` 경로로 연결되어
    * beacon 전송 완료/타임아웃 후 실행됨. redirect 직전 호출에 사용 (navigation race 방지).
    * gads가 true가 아니거나 gtag가 없으면 즉시 동기 호출됨.
@@ -43,6 +49,12 @@ const GADS_CONVERSION_MAP: Record<string, string> = {
   // 회원가입 완료 (닉네임+팀 설정까지)
   ["onboarding_complete"]: "AW-18082281693/-AI9CJa8l5ocEN3xpq5D",
 };
+
+async function sha256Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input.trim().toLowerCase());
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
 
 export function trackEvent(event: string, properties?: Record<string, unknown>, options?: TrackOptions): void {
   if (typeof window === "undefined") return;
@@ -92,6 +104,14 @@ export function trackEvent(event: string, properties?: Record<string, unknown>, 
   };
 
   if (options?.gads && typeof window !== "undefined" && (window as unknown as GtagWindow).gtag) {
+    // 향상된 전환: 유저 이메일이 있으면 SHA-256 해싱 후 user_data 설정
+    if (options.userEmail) {
+      sha256Hex(options.userEmail).then(hashed => {
+        (window as unknown as GtagWindow).gtag!("set", "user_data", {
+          sha256_email_address: hashed,
+        });
+      }).catch(() => { /* hash 실패 시 skip — 기본 전환은 계속 진행 */ });
+    }
     const sendTo = GADS_CONVERSION_MAP[event];
     if (sendTo) {
       const convKey = `gads_sent_${event}`;

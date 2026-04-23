@@ -126,6 +126,7 @@ export default function ProfileSetupModal({ isOpen }: Props) {
         {
           meta: true,
           gads: true,
+          userEmail: user?.email,
           onGadsComplete: async () => {
             await refreshProfile();
             router.push("/welcome");
