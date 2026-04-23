@@ -333,7 +333,7 @@ export default function PlayerBoardPage() {
                 activeTab === tab ? "text-text-primary" : "text-text-tertiary"
               }`}
             >
-              {tab === "stats" ? "⚾ 선수정보" : "💬 피드"}
+              {tab === "stats" ? "프로필" : "게시판"}
               {activeTab === tab && (
                 <motion.div
                   layoutId="board-tab"

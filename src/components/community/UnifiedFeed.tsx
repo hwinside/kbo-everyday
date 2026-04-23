@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -16,6 +16,7 @@ import type { Post } from "@/lib/supabase/usePosts";
 import { deletePost } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import type { CommunitySourceLabel } from "@/lib/utils/community-board";
+import { supabase } from "@/lib/supabase/client";
 import CommentSheet from "./CommentSheet";
 import { timeAgo, PhotoCarousel, HeartOverlay, CaptionBlock } from "./PhotoFeedParts";
 import { hasHeroImage } from "@/components/player/PlayerHero";
@@ -384,6 +385,64 @@ function ActionBar({ post, isLiked, commentDelta, onLike, onOpenComments }: Acti
   );
 }
 
+/* ── Inline Comment Preview ── */
+
+interface InlineCommentPreviewProps {
+  postId: number;
+  commentCount: number;
+  commentDelta: number;
+  onOpenComments: () => void;
+}
+
+interface PreviewComment {
+  id: number;
+  nickname: string;
+  content: string;
+}
+
+function InlineCommentPreview({ postId, commentCount, commentDelta, onOpenComments }: InlineCommentPreviewProps) {
+  const [comments, setComments] = useState<PreviewComment[]>([]);
+  const totalCount = commentCount + commentDelta;
+
+  useEffect(() => {
+    if (totalCount <= 0) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("comments")
+        .select("id, content, profiles(nickname)")
+        .eq("post_id", postId)
+        .order("created_at", { ascending: false })
+        .limit(2);
+      if (cancelled || !data) return;
+      setComments(data.map((c: Record<string, unknown>) => ({
+        id: c.id as number,
+        content: c.content as string,
+        nickname: ((c.profiles as Record<string, unknown> | null)?.nickname as string) || "익명",
+      })).reverse());
+    })();
+    return () => { cancelled = true; };
+  }, [postId, totalCount]);
+
+  if (totalCount <= 0 || comments.length === 0) return null;
+
+  return (
+    <div className="px-4 pb-2">
+      {comments.map((c) => (
+        <div key={c.id} className="text-base mb-0.5">
+          <span className="font-semibold text-text-primary mr-1.5">{c.nickname}</span>
+          <span className="text-text-secondary line-clamp-1">{c.content}</span>
+        </div>
+      ))}
+      {totalCount > 2 && (
+        <button onClick={onOpenComments} className="text-sm text-text-tertiary mt-0.5">
+          다른 댓글 {totalCount - 2}개 보기
+        </button>
+      )}
+    </div>
+  );
+}
+
 /* ── Player tags + Hashtags (shared by PhotoCard and LongTextCard) ── */
 
 function PostTags({ post }: { post: Post }) {
@@ -533,6 +592,7 @@ function ShortTextCard({
         </div>
       </div>
       <ActionBar post={post} isLiked={isLiked} commentDelta={commentDelta} onLike={onLike} onOpenComments={onOpenComments} />
+      <InlineCommentPreview postId={post.id} commentCount={post.comment_count} commentDelta={commentDelta} onOpenComments={onOpenComments} />
     </div>
   );
 }
@@ -611,6 +671,7 @@ function LongTextCard({
         </div>
       )}
       <ActionBar post={post} isLiked={isLiked} commentDelta={commentDelta} onLike={onLike} onOpenComments={onOpenComments} />
+      <InlineCommentPreview postId={post.id} commentCount={post.comment_count} commentDelta={commentDelta} onOpenComments={onOpenComments} />
       <PostTags post={post} />
     </div>
   );
@@ -670,6 +731,7 @@ function PhotoCardBlock({
         />
       )}
       <PostTags post={post} />
+      <InlineCommentPreview postId={post.id} commentCount={post.comment_count} commentDelta={commentDelta} onOpenComments={onOpenComments} />
     </div>
   );
 }
