@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { motion, AnimatePresence } from "framer-motion";
 import { Send, X, MoreHorizontal, Check } from "lucide-react";
 import { GRADES } from "@/lib/constants/grades";
 import { getAvatarPath } from "@/lib/constants/avatars";
@@ -56,6 +55,8 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const sheetRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const dragStartY = useRef(0);
+  const isDragging = useRef(false);
+  const openedAtRef = useRef(0);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   // iOS Safari: `position:fixed; bottom:0` is anchored to the *layout* viewport
   // and the browser also tries to scroll focused inputs into view on its own,
@@ -65,6 +66,27 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const [vvBottom, setVvBottom] = useState(0);
   const { user, profile } = useAuth();
   const shouldRender = isOpen && postId !== null;
+
+  // Always render the portal — no mount/unmount cycle.
+  // Use visibility:hidden after close animation ends to prevent iOS Safari
+  // "peeking" (translateY(100%) doesn't fully hide on dynamic viewport).
+  const [fullyHidden, setFullyHidden] = useState(true);
+  useLayoutEffect(() => {
+    if (shouldRender) {
+      setFullyHidden(false);
+    }
+    // When closing, fullyHidden is set via onTransitionEnd callback below
+  }, [shouldRender]);
+
+  // Track open time for ghost click guard — synchronous (NOT useEffect)
+  // useEffect runs AFTER render, so ghost clicks arriving between render and
+  // effect would bypass the 400ms guard. Setting the timestamp during render
+  // ensures it's always in place before any click handler can fire.
+  const prevShouldRender = useRef(false);
+  if (shouldRender && !prevShouldRender.current) {
+    openedAtRef.current = Date.now();
+  }
+  prevShouldRender.current = shouldRender;
 
   // Fetch comments directly (lightweight, no post/like fetch)
   useEffect(() => {
@@ -280,6 +302,14 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     };
   }, [menuOpenId]);
 
+  // Callback to mark sheet as fully hidden after close transition ends
+  const handleTransitionEnd = useCallback((e: React.TransitionEvent) => {
+    // Only react to the sheet's own transform transition, not children
+    if (e.propertyName === "transform" && !shouldRender) {
+      setFullyHidden(true);
+    }
+  }, [shouldRender]);
+
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
@@ -287,47 +317,67 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
 
   return (<>
     {createPortal(
-    <AnimatePresence>
-      {shouldRender && (
-        <>
-          {/* Backdrop */}
-          <motion.div
-            className="fixed inset-0 bg-black/60"
-            style={{ zIndex: 9998 }}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            onClick={onClose}
-          />
+    <>
+      {/* CSS keyframe definitions — no Framer Motion, pure browser compositor */}
+      <style>{`
+        @keyframes _csBackdropIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes _csSheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+      `}</style>
 
-          {/* Sheet — pinned to the visual viewport (defeats iOS focus-into-view jumps). */}
-          <motion.div
-            ref={sheetRef}
-            className="fixed inset-x-0 flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
-            style={{
-              zIndex: 9999,
-              // Top edge of the sheet inside the visual viewport (~8% from the top so you still see backdrop).
-              top: viewportHeight
-                ? `${vvTop + Math.max(24, viewportHeight * 0.08)}px`
-                : "8vh",
-              bottom: vvBottom,
-              transition: "bottom 120ms ease-out, top 120ms ease-out",
-            }}
-            initial={{ y: "100%" }}
-            animate={{ y: 0 }}
-            exit={{ y: "100%" }}
-            transition={{ type: "spring", damping: 28, stiffness: 300 }}
-          >
-            {/* Drag handle — drag down to dismiss */}
-            <div
-              className="flex justify-center pt-3 pb-2 cursor-grab"
-              onTouchStart={(e) => { dragStartY.current = e.touches[0].clientY; }}
-              onTouchEnd={(e) => {
-                const delta = e.changedTouches[0].clientY - dragStartY.current;
-                if (delta > 80) onClose();
-              }}
-            >
+      {/* Backdrop — always in DOM, visibility-controlled.
+          400ms ghost click guard for iOS. */}
+      <div
+        className="fixed inset-0 bg-black/60"
+        style={{
+          zIndex: 9998,
+          pointerEvents: shouldRender ? "auto" : "none",
+          visibility: fullyHidden ? "hidden" : "visible",
+          opacity: shouldRender ? 1 : 0,
+          animation: shouldRender ? "_csBackdropIn 0.2s ease-out" : undefined,
+          transition: shouldRender ? undefined : "opacity 0.2s ease-out",
+        }}
+        onClick={() => { if (Date.now() - openedAtRef.current > 400) onClose(); }}
+      />
+
+      {/* Sheet — always in DOM, visibility-controlled.
+          CSS keyframe for enter, CSS transition for exit.
+          No mount/unmount = no portal timing race on iOS Safari. */}
+      <div
+        ref={sheetRef}
+        className="fixed inset-x-0 flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
+        style={{
+          zIndex: 9999,
+          pointerEvents: shouldRender ? "auto" : "none",
+          visibility: fullyHidden ? "hidden" : "visible",
+          top: viewportHeight
+            ? `${vvTop + Math.max(24, viewportHeight * 0.08)}px`
+            : "8vh",
+          bottom: vvBottom,
+          transform: shouldRender ? "translateY(0)" : "translateY(100%)",
+          animation: shouldRender ? "_csSheetUp 0.3s cubic-bezier(0.32,0.72,0,1)" : undefined,
+          transition: shouldRender
+            ? "bottom 120ms ease-out, top 120ms ease-out"
+            : "transform 0.3s cubic-bezier(0.32,0.72,0,1), bottom 120ms ease-out, top 120ms ease-out",
+        }}
+        onTransitionEnd={handleTransitionEnd}
+        onTouchStart={(e) => {
+          const listAtTop = !listRef.current || listRef.current.scrollTop <= 0;
+          if (listAtTop) {
+            dragStartY.current = e.touches[0].clientY;
+            isDragging.current = true;
+          } else {
+            isDragging.current = false;
+          }
+        }}
+        onTouchEnd={(e) => {
+          if (!isDragging.current) return;
+          isDragging.current = false;
+          const delta = e.changedTouches[0].clientY - dragStartY.current;
+          if (delta > 80) onClose();
+        }}
+      >
+            {/* Drag handle */}
+            <div className="flex justify-center pt-3 pb-2 cursor-grab">
               <div className="w-10 h-1 rounded-full bg-text-tertiary/40" />
             </div>
 
@@ -507,7 +557,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                   />
                 ) : (
                   <button
-                    onClick={() => setShowLogin(true)}
+                    onClick={() => { onClose(); setShowLogin(true); }}
                     className="flex-1 bg-bg-tertiary rounded-full px-4 py-2.5 text-sm text-text-tertiary text-left"
                   >
                     로그인하고 댓글 달기
@@ -523,10 +573,8 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                 </button>
               </div>
             </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>,
+          </div>
+    </>,
     document.body
   )}
   {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}

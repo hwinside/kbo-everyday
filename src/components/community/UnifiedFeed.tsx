@@ -245,20 +245,18 @@ export default function UnifiedFeed({ posts, loading, onLike, boardContext, sour
         })}
       </motion.div>
 
-      {commentPostId !== null && (
-        <CommentSheet
-          isOpen={true}
-          onClose={() => { setCommentPostId(null); setCommentTeamId(null); }}
-          postId={commentPostId}
-          teamId={commentTeamId}
-          onCommentAdded={(postId) => {
-            setCommentDeltas((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }));
-          }}
-          onCommentDeleted={(postId) => {
-            setCommentDeltas((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) - 1 }));
-          }}
-        />
-      )}
+      <CommentSheet
+        isOpen={commentPostId !== null}
+        onClose={() => { setCommentPostId(null); setCommentTeamId(null); }}
+        postId={commentPostId}
+        teamId={commentTeamId}
+        onCommentAdded={(postId) => {
+          setCommentDeltas((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }));
+        }}
+        onCommentDeleted={(postId) => {
+          setCommentDeltas((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) - 1 }));
+        }}
+      />
     </div>
   );
 }
@@ -364,10 +362,11 @@ interface ActionBarProps {
 
 function ActionBar({ post, isLiked, commentDelta, onLike, onOpenComments }: ActionBarProps) {
   return (
-    <div className="flex items-center gap-4 px-4 py-2.5">
+    <div className="flex items-center gap-4 px-4 py-1">
       <button
-        onClick={(e) => { e.stopPropagation(); onLike(); }}
-        className="flex items-center gap-1 text-base transition-colors"
+        onClick={onLike}
+        className="flex items-center gap-1.5 text-base transition-colors min-h-[44px] px-1"
+        style={{ touchAction: "manipulation" }}
       >
         <span className="text-xl leading-none">{isLiked ? "❤️" : "♡"}</span>
         <span className={isLiked ? "text-red-500 font-medium" : "text-text-secondary"}>
@@ -376,7 +375,8 @@ function ActionBar({ post, isLiked, commentDelta, onLike, onOpenComments }: Acti
       </button>
       <button
         onClick={onOpenComments}
-        className="flex items-center gap-1 text-base text-text-secondary"
+        className="flex items-center gap-1.5 text-base text-text-secondary min-h-[44px] px-1"
+        style={{ touchAction: "manipulation" }}
       >
         <MessageCircle size={20} />
         <span>{post.comment_count + commentDelta}</span>
@@ -424,7 +424,12 @@ function InlineCommentPreview({ postId, commentCount, commentDelta, onOpenCommen
     return () => { cancelled = true; };
   }, [postId, totalCount]);
 
-  if (totalCount <= 0 || comments.length === 0) return null;
+  if (totalCount <= 0) return null;
+
+  // Reserve space while loading to prevent layout shift
+  if (comments.length === 0) {
+    return <div className="px-4 pb-2" style={{ minHeight: 28 }} />;
+  }
 
   return (
     <div className="px-4 pb-2">
