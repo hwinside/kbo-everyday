@@ -70,12 +70,19 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   // Always render the portal — no mount/unmount cycle.
   // Use visibility:hidden after close animation ends to prevent iOS Safari
   // "peeking" (translateY(100%) doesn't fully hide on dynamic viewport).
+  // Also prevents invisible overlay from blocking button taps (root cause of
+  // intermittent open failure on iOS Safari).
   const [fullyHidden, setFullyHidden] = useState(true);
   useLayoutEffect(() => {
     if (shouldRender) {
       setFullyHidden(false);
+    } else {
+      // Fallback timer in case onTransitionEnd doesn't fire reliably
+      // (e.g., iOS Safari compositor skips, or no actual transition occurs).
+      // onTransitionEnd may also set this earlier — both are idempotent.
+      const timer = setTimeout(() => setFullyHidden(true), 400);
+      return () => clearTimeout(timer);
     }
-    // When closing, fullyHidden is set via onTransitionEnd callback below
   }, [shouldRender]);
 
   // Track open time for ghost click guard — synchronous (NOT useEffect)
