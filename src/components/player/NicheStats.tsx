@@ -194,23 +194,43 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!playerId) { setRealSaber(null); return; }
     setLoading(true);
-    // 2025/2026 모두 KBO 개별 선수 상세 크롤링 (모든 선수 커버)
-    // KBO 상세 페이지는 현재 시즌(2026) 데이터 반환
+
+    const computeSaber = (stats: Record<string, unknown>) => {
+      return isPitcher
+        ? calcPitcherSaber({ ...stats, so: (stats.so as number) ?? 0 } as Parameters<typeof calcPitcherSaber>[0])
+        : calcBatterSaber({ ...stats, so: (stats.so as number) ?? 0 } as Parameters<typeof calcBatterSaber>[0]);
+    };
+
+    // 1차: KBO 개별 선수 상세 크롤링
     fetch(`/api/player-stats?id=${playerId}&pos=${encodeURIComponent(position)}`)
       .then(r => r.json())
       .then(d => {
         if (d.stats) {
-          const saber = isPitcher
-            ? calcPitcherSaber({ ...d.stats, so: d.stats.so ?? 0 })
-            : calcBatterSaber({ ...d.stats, so: d.stats.so ?? 0 });
-          setRealSaber(saber);
-        } else {
-          setRealSaber(null);
+          setRealSaber(computeSaber(d.stats));
+          setLoading(false);
+          return;
         }
-        setLoading(false);
+        // 2차 fallback: /api/stats (순위 페이지 크롤링) — 개별 상세가 빈 경우 대비
+        return fetch(`/api/stats?type=${isPitcher ? "pitcher" : "batter"}&season=${season}`)
+          .then(r2 => r2.json())
+          .then(d2 => {
+            const list = (d2.stats || []) as Record<string, unknown>[];
+            const found = list.find(s => String(s.kboId || s.playerId) === playerId)
+              || (playerName && list.find(s => s.name === playerName));
+            if (found) {
+              // /api/stats 투수는 h(피안타) 키 사용 — calcPitcherSaber는 hits 기대
+              if (isPitcher && found.h != null && found.hits == null) {
+                (found as Record<string, unknown>).hits = found.h;
+              }
+              setRealSaber(computeSaber(found));
+            } else {
+              setRealSaber(null);
+            }
+            setLoading(false);
+          });
       })
       .catch(() => setLoading(false));
-  }, [season, playerId, isPitcher, position]);
+  }, [season, playerId, isPitcher, position, playerName]);
 
   {
     if (loading) return <div className="text-center py-8 text-text-tertiary text-sm">계산 중...</div>;

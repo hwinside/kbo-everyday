@@ -76,6 +76,8 @@ export function buildHeroStats(
     if (sb != null && top10(ranks.sb)) out.push({ label: "도루", value: String(sb) });
   } else {
     out.push({ label: "ERA", value: fmt(era, 2) });
+    const whip = toNum(stats.whip);
+    if (whip != null && top10(ranks.whip)) out.push({ label: "WHIP", value: fmt(whip, 2) });
     const w = wins ?? 0;
     const l = losses ?? 0;
     if (w + l >= 5) out.push({ label: "승/패", value: `${w}-${l}` });
