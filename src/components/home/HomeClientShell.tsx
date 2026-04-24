@@ -181,7 +181,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       className="mx-auto max-w-lg px-5"
     >
       {/* Header */}
-      <m.header variants={item} className="flex items-center justify-between py-3 border-b mb-2 -mx-5 px-5" style={{ borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)' }}>
+      <m.header variants={item} className="flex items-center justify-between py-3 border-b mb-2" style={{ borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)' }}>
         <div className="flex flex-col">
           <img src="/logo-mark-light.png" alt="크보팬" style={{height: "52px", objectFit: "contain"}} className="-ml-0.5 dark:hidden" />
           <img src="/logo-mark.png" alt="크보팬" style={{height: "52px", objectFit: "contain"}} className="-ml-0.5 hidden dark:block" />
