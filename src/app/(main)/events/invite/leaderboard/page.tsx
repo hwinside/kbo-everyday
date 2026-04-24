@@ -89,7 +89,7 @@ export default function LeaderboardPage() {
     <div className="min-h-screen bg-[#0A0A0B] text-white pb-24">
       {/* Header */}
       <div className="sticky top-0 z-10 bg-[#0A0A0B]/90 backdrop-blur border-b border-white/10">
-        <div className="max-w-screen-sm mx-auto px-4 py-3 flex items-center gap-3">
+        <div className="max-w-screen-sm mx-auto px-5 py-3 flex items-center gap-3">
           <button
             onClick={() => router.back()}
             className="p-1 -ml-1"
@@ -101,7 +101,7 @@ export default function LeaderboardPage() {
         </div>
       </div>
 
-      <div className="max-w-screen-sm mx-auto px-4 pt-4">
+      <div className="max-w-screen-sm mx-auto px-5 pt-4">
         {/* Track Tabs — 2026-04-20 하린아빠 지시: 글쓰기가 좌측(기본) */}
         <div className="grid grid-cols-2 gap-2 mb-4">
           <TrackTab

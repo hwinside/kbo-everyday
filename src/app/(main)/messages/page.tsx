@@ -46,7 +46,7 @@ export default function MessagesPage() {
   if (!user) {
     return (
       <div className="min-h-screen bg-bg-primary pb-24">
-        <div className="px-4 pt-safe pb-3 flex items-center gap-3">
+        <div className="px-5 pt-safe pb-3 flex items-center gap-3">
           <button onClick={() => router.back()} className="p-1">
             <ArrowLeft size={24} className="text-text-primary" />
           </button>
@@ -66,7 +66,7 @@ export default function MessagesPage() {
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
-      <div className="px-4 pt-safe pb-3 flex items-center gap-3">
+      <div className="px-5 pt-safe pb-3 flex items-center gap-3">
         <button onClick={() => router.back()} className="p-1">
           <ArrowLeft size={24} className="text-text-primary" />
         </button>
@@ -85,7 +85,7 @@ export default function MessagesPage() {
           <p className="text-xs text-text-tertiary mt-1">게시글이나 양도 글에서 쪽지를 보내보세요!</p>
         </div>
       ) : (
-        <div className="px-4 space-y-2">
+        <div className="px-5 space-y-2">
           {conversations.map((conv) => (
             <GlassCard
               key={conv.id}
