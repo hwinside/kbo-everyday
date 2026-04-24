@@ -66,6 +66,7 @@ export type FeedbackStatus =
 export interface FeedbackItem {
   id: string;
   userId: string;
+  userNickname: string | null;
   type: "bug" | "data" | "feature" | "content" | "other";
   title: string;
   body: string | null;

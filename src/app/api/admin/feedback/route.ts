@@ -27,7 +27,22 @@ export async function GET(req: NextRequest) {
 
   if (error) return supabaseErrorResponse(error);
 
-  return NextResponse.json({ data });
+  // Fetch user nicknames
+  const userIds = [...new Set((data ?? []).map((d: { user_id: string }) => d.user_id))];
+  const { data: profiles } = userIds.length > 0
+    ? await supabase.from("profiles").select("id, nickname").in("id", userIds)
+    : { data: [] };
+
+  const nicknameMap = new Map(
+    (profiles ?? []).map((p: { id: string; nickname: string }) => [p.id, p.nickname])
+  );
+
+  const enriched = (data ?? []).map((d: { user_id: string; [key: string]: unknown }) => ({
+    ...d,
+    user_nickname: nicknameMap.get(d.user_id) ?? null,
+  }));
+
+  return NextResponse.json({ data: enriched });
 }
 
 export async function PATCH(req: NextRequest) {

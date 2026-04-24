@@ -71,6 +71,7 @@ function StatusIcon({ status }: { status: FeedbackStatus }) {
 interface FeedbackRaw {
   id: string;
   user_id: string;
+  user_nickname: string | null;
   type: string;
   title: string;
   body: string | null;
@@ -101,6 +102,7 @@ function mapFeedback(raw: FeedbackRaw): FeedbackItem {
   return {
     id: raw.id,
     userId: raw.user_id,
+    userNickname: raw.user_nickname,
     type: raw.type as FeedbackItem["type"],
     title: raw.title,
     body: raw.body,
@@ -379,7 +381,10 @@ export default function AdminFeedbackPage() {
                         </span>
                       </div>
                       <p className="font-medium text-sm truncate">{item.title}</p>
-                      <p className="text-[10px] text-[#636366] font-mono mt-0.5">{item.userId.slice(0, 8)}</p>
+                      <p className="text-[10px] text-[#636366] mt-0.5">
+                        {item.userNickname && <span className="text-[#AEAEB2] mr-1">{item.userNickname}</span>}
+                        <span className="font-mono">{item.userId.slice(0, 8)}</span>
+                      </p>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <StatusIcon status={item.status} />
@@ -392,7 +397,10 @@ export default function AdminFeedbackPage() {
                   <div className="px-4 pb-4 space-y-3 text-sm">
                     <div className="pt-3 border-t border-white/8 space-y-2">
                       {item.body && <p className="text-[#8E8E93]">{item.body}</p>}
-                      <p className="text-xs text-[#636366] font-mono">유저: {item.userId}</p>
+                      <p className="text-xs text-[#636366]">
+                        유저: {item.userNickname && <span className="text-[#AEAEB2]">{item.userNickname} </span>}
+                        <span className="font-mono">{item.userId}</span>
+                      </p>
                       {item.pageUrl && (
                         <p className="text-xs text-[#636366]">페이지: {item.pageUrl}</p>
                       )}
