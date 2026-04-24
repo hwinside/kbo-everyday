@@ -61,7 +61,7 @@ export interface FeedbackItem {
   body: string | null;
   pageUrl: string | null;
   deviceInfo: string | null;
-  status: "received" | "reviewing" | "done" | "rejected";
+  status: "pending" | "received" | "reviewing" | "done" | "rejected";
   adminNote: string | null;
   createdAt: string;
 }
