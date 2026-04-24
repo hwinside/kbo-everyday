@@ -131,7 +131,7 @@ export default function PWAInstallBanner() {
       {/* iOS 가이드 모달 */}
       {showIOSGuide && (
         <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-end justify-center" onClick={() => setShowIOSGuide(false)}>
-          <div className="w-full max-w-lg bg-bg-secondary rounded-t-3xl p-6 pb-safe" onClick={e => e.stopPropagation()}>
+          <div className="w-full max-w-lg bg-bg-secondary rounded-t-3xl p-5 pb-safe" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-bold text-text-primary mb-4">홈 화면에 추가하기</h3>
             <div className="space-y-4">
               <div className="flex items-center gap-3">

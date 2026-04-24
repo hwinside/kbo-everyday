@@ -72,7 +72,7 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="fixed bottom-0 left-0 right-0 z-[91] mx-auto max-w-lg rounded-t-3xl bg-bg-secondary p-6 pb-safe"
+              className="fixed bottom-0 left-0 right-0 z-[91] mx-auto max-w-lg rounded-t-3xl bg-bg-secondary p-5 pb-safe"
             >
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-lg font-bold text-text-primary">로그인</h2>
