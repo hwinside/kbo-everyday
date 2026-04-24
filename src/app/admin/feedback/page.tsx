@@ -33,6 +33,7 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
+  pending: "대기",
   received: "접수",
   reviewing: "검토중",
   done: "완료",
@@ -41,6 +42,8 @@ const STATUS_LABELS: Record<string, string> = {
 
 function StatusIcon({ status }: { status: string }) {
   switch (status) {
+    case "pending":
+      return <Inbox className="w-4 h-4 text-[#A78BFA]" />;
     case "received":
       return <Inbox className="w-4 h-4 text-[#6366F1]" />;
     case "reviewing":
@@ -163,6 +166,7 @@ export default function AdminFeedbackPage() {
 
   const statusCounts = useMemo(
     () => ({
+      pending: items.filter((i) => i.status === "pending").length,
       received: items.filter((i) => i.status === "received").length,
       reviewing: items.filter((i) => i.status === "reviewing").length,
       done: items.filter((i) => i.status === "done").length,
@@ -355,6 +359,7 @@ export default function AdminFeedbackPage() {
                         onChange={(e) => handleStatusChange(item.id, e.target.value)}
                         className="appearance-none bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs outline-none focus:border-[#6366F1]"
                       >
+                        <option value="pending">대기</option>
                         <option value="received">접수</option>
                         <option value="reviewing">검토중</option>
                         <option value="done">완료</option>
