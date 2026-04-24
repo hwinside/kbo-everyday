@@ -110,7 +110,7 @@ export default function DMChatPage() {
   return (
     <div className="flex flex-col h-screen bg-bg-primary">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 pt-safe pb-3 border-b border-border bg-bg-secondary">
+      <div className="flex items-center gap-3 px-5 pt-safe pb-3 border-b border-border bg-bg-secondary">
         <button onClick={() => router.back()} className="p-1">
           <ArrowLeft size={24} className="text-text-primary" />
         </button>
@@ -216,11 +216,11 @@ export default function DMChatPage() {
 
       {/* Input */}
       {isBlocked ? (
-        <div className="px-4 py-3 border-t border-border bg-bg-secondary pb-safe text-center text-sm text-text-tertiary">
+        <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe text-center text-sm text-text-tertiary">
           차단된 사용자에게 쪽지를 보낼 수 없습니다.
         </div>
       ) : (
-        <div className="px-4 py-3 border-t border-border bg-bg-secondary pb-safe">
+        <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe">
           <div className="flex items-center gap-2">
             <input
               type="text"
