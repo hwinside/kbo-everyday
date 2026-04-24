@@ -75,7 +75,7 @@ export default function EventInvitePage() {
 
   return (
     <div className="min-h-screen text-gray-900 dark:text-white">
-      <div className="max-w-screen-sm mx-auto px-4 py-4 flex items-center gap-2">
+      <div className="max-w-screen-sm mx-auto px-5 py-4 flex items-center gap-2">
         <button
           onClick={() => router.back()}
           className="p-2 -ml-2 rounded-lg hover:bg-gray-900/5 dark:bg-white/5"
@@ -86,7 +86,7 @@ export default function EventInvitePage() {
         <h1 className="font-bold">얼리멤버 이벤트</h1>
       </div>
 
-      <div className="max-w-screen-sm mx-auto px-4 pt-2 pb-24">
+      <div className="max-w-screen-sm mx-auto px-5 pt-2 pb-24">
         {/* Hero */}
         <div className="rounded-2xl p-5 bg-gradient-to-br from-yellow-400/15 via-orange-400/10 to-red-400/10 border border-yellow-400/20">
           <div className="flex items-center gap-1.5 text-xs text-yellow-400 font-semibold mb-2">

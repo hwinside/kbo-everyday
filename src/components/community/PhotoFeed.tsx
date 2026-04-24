@@ -320,7 +320,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
 
             <div className="overflow-hidden">
               {/* Author header — 일반게시판(PostCard) 기준 통일 */}
-              <div className="flex items-center gap-3 px-4 py-3">
+              <div className="flex items-center gap-3 px-5 py-3">
                 {boardType === "player" && playerLabels?.[post.id] ? (
                   <TeamBadge teamId={playerLabels[post.id].teamId} playerName={playerLabels[post.id].playerName} />
                 ) : (
@@ -365,7 +365,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
               </div>
 
               {sourceLabels?.[post.id] && (
-                <div className="px-4 pb-2">
+                <div className="px-5 pb-2">
                   {sourceLabels[post.id].teamId ? (
                     <TeamBadge
                       teamId={sourceLabels[post.id].teamId!}
@@ -395,7 +395,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
               )}
 
               {/* Action bar */}
-              <div className="flex items-center gap-4 px-4 py-2.5">
+              <div className="flex items-center gap-4 px-5 py-2.5">
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -428,7 +428,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
 
               {/* Player tags — clickable, links to player page */}
               {post.player_tags && Array.isArray(post.player_tags) && post.player_tags.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 px-4 pb-1">
+                <div className="flex flex-wrap gap-1.5 px-5 pb-1">
                   {(post.player_tags as string[]).map((tag: string) => {
                     const { kboId, displayName } = parsePlayerTag(tag);
 
@@ -466,7 +466,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
 
               {/* Hashtags */}
               {post.hashtags && Array.isArray(post.hashtags) && post.hashtags.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 px-4 pb-1">
+                <div className="flex flex-wrap gap-1.5 px-5 pb-1">
                   {(post.hashtags as string[]).map((tag: string) => (
                     <span key={tag} className="text-xs text-accent font-medium">
                       {tag}
@@ -513,7 +513,7 @@ function CaptionBlock({ nickname, content, onPress }: { nickname: string; conten
   }, [content]);
 
   return (
-    <div className="px-4 pb-1">
+    <div className="px-5 pb-1">
       <div
         ref={textRef}
         role="button"

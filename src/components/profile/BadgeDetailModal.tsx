@@ -23,7 +23,7 @@ export default function BadgeDetailModal({ selectedBadge, earnedBadgeIds, onClos
         >
           <div className="absolute inset-0 bg-black/60" />
           <motion.div
-            className="relative bg-bg-secondary rounded-2xl border border-border p-6 text-center max-w-[280px] w-full"
+            className="relative bg-bg-secondary rounded-2xl border border-border p-5 text-center max-w-[280px] w-full"
             initial={{ scale: 0.8, y: 20 }}
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.8, y: 20 }}

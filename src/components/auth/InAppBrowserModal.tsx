@@ -97,7 +97,7 @@ export default function InAppBrowserModal({
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: "100%", opacity: 0.8 }}
             transition={{ type: "spring", damping: 26, stiffness: 320 }}
-            className="fixed bottom-0 left-0 right-0 z-[101] mx-auto max-w-lg rounded-t-3xl bg-bg-secondary p-6 pb-safe"
+            className="fixed bottom-0 left-0 right-0 z-[101] mx-auto max-w-lg rounded-t-3xl bg-bg-secondary p-5 pb-safe"
           >
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-lg font-bold text-text-primary">

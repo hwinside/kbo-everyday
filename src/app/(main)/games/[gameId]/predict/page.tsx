@@ -31,7 +31,7 @@ export default function GamePredictPage() {
     <div className="min-h-screen bg-bg-primary pb-24">
       {/* Header */}
       <div
-        className="relative px-4 pt-safe pb-4"
+        className="relative px-5 pt-safe pb-4"
         style={{
           backgroundImage: `linear-gradient(135deg, ${away.colorPrimary}15, transparent, ${home.colorPrimary}15)`,
         }}
@@ -79,7 +79,7 @@ export default function GamePredictPage() {
       </div>
 
       {/* Vote Result */}
-      <div className="px-4 mt-6">
+      <div className="px-5 mt-6">
         <GlassCard className="p-5">
           <div className="flex justify-between items-center mb-3">
             <span className="text-sm font-bold text-text-primary">투표 현황</span>
@@ -128,7 +128,7 @@ export default function GamePredictPage() {
       </div>
 
       {/* AI 분석 */}
-      <div className="px-4 mt-4">
+      <div className="px-5 mt-4">
         <button
           onClick={() => setAiOpen(true)}
           className="w-full py-3 rounded-xl bg-accent/20 text-accent text-base font-semibold flex items-center justify-center gap-2 hover:bg-accent/30 transition-colors"
@@ -140,7 +140,7 @@ export default function GamePredictPage() {
       <AIAnalysis isOpen={aiOpen} onClose={() => setAiOpen(false)} awayTeamId={pred.awayTeamId} homeTeamId={pred.homeTeamId} gameId={gameId} />
 
       {/* 경기 상세 링크 */}
-      <div className="px-4 mt-4">
+      <div className="px-5 mt-4">
         <Link href={`/games/${gameId}`}>
           <GlassCard pressable className="p-4 text-center">
             <span className="text-sm text-text-secondary">📊 경기 상세 보기 →</span>

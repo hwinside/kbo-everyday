@@ -155,7 +155,7 @@ export default function ProfileSetupModal({ isOpen }: Props) {
         >
           {/* Step 1: Nickname */}
           {step === 1 && (
-            <div className="p-6">
+            <div className="p-5">
               <h2 className="text-xl font-bold text-text-primary mb-2">환영합니다! 🎉</h2>
               <p className="text-sm text-text-secondary mb-6">크보팬에서 사용할 닉네임을 정해주세요</p>
               
@@ -182,7 +182,7 @@ export default function ProfileSetupModal({ isOpen }: Props) {
 
           {/* Step 2: Team Selection */}
           {step === 2 && (
-            <div className="p-6">
+            <div className="p-5">
               <h2 className="text-xl font-bold text-text-primary mb-2">응원 구단 선택 ⚾</h2>
               <p className="text-sm text-text-secondary mb-4">어떤 팀을 응원하시나요?</p>
 
@@ -227,7 +227,7 @@ export default function ProfileSetupModal({ isOpen }: Props) {
 
           {/* Step 3: Invite Code (optional) */}
           {step === 3 && (
-            <div className="p-6">
+            <div className="p-5">
               <h2 className="text-xl font-bold text-text-primary mb-2">초대코드가 있나요? 🎟️</h2>
               <p className="text-sm text-text-secondary mb-6">친구에게 받은 초대코드가 있다면 입력해주세요 (선택)</p>
 
@@ -267,7 +267,7 @@ export default function ProfileSetupModal({ isOpen }: Props) {
 
           {/* Step 4: Done */}
           {step === 4 && selectedTeamData && (
-            <div className="p-6 text-center">
+            <div className="p-5 text-center">
               <div className="w-20 h-20 rounded-full bg-white p-2 flex items-center justify-center mx-auto mb-4">
                 <Image src={selectedTeamData.logoPath} alt="" width={56} height={56} unoptimized className="object-contain" />
               </div>

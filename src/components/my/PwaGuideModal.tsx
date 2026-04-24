@@ -15,7 +15,7 @@ export default function PwaGuideModal({ isOpen, onClose }: PwaGuideModalProps) {
       <motion.div
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="w-full max-w-sm rounded-2xl bg-bg-secondary p-6"
+        className="w-full max-w-sm rounded-2xl bg-bg-secondary p-5"
         onClick={e => e.stopPropagation()}
       >
         <div className="text-center">

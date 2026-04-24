@@ -17,14 +17,14 @@ export default function DailyPredictPage() {
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
-      <div className="px-4 pt-safe pb-3 flex items-center gap-3">
+      <div className="px-5 pt-safe pb-3 flex items-center gap-3">
         <button onClick={() => router.back()} className="p-1">
           <ArrowLeft size={24} className="text-text-primary" />
         </button>
         <h1 className="text-lg font-bold text-text-primary">오늘의 승부예측</h1>
       </div>
 
-      <div className="px-4 space-y-4">
+      <div className="px-5 space-y-4">
         {MOCK_PREDICTIONS.map((pred) => {
           const away = getTeamById(pred.awayTeamId)!;
           const home = getTeamById(pred.homeTeamId)!;
