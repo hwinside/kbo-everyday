@@ -437,7 +437,7 @@ export default function AdminFeedbackPage() {
                     {/* DM to User */}
                     <div className="pt-3 border-t border-white/8 space-y-2">
                       <span className="text-xs text-[#8E8E93] flex items-center gap-1">
-                        <Send className="w-3 h-3" /> 유저에게 쪽지 (크보팬운영진)
+                        <Send className="w-3 h-3" /> 유저에게 쪽지 (크보팬 운영팀)
                       </span>
                       {dmSent.has(item.userId) ? (
                         <p className="text-xs text-[#30D158]">전송 완료</p>
