@@ -11,8 +11,8 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import { Inbox, Eye, CheckCircle, XCircle, ChevronDown, Loader2, Clock, Copy } from "lucide-react";
-import type { FeedbackItem } from "@/lib/admin/types";
+import { Inbox, Eye, CheckCircle, XCircle, ChevronDown, Loader2, Clock, Copy, Send } from "lucide-react";
+import type { FeedbackItem, FeedbackStatus } from "@/lib/admin/types";
 
 /* ── Labels & Colors ── */
 
@@ -32,34 +32,33 @@ const TYPE_COLORS: Record<string, string> = {
   other: "#8E8E93",
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  pending: "대기",
+const STATUS_LABELS: Record<FeedbackStatus, string> = {
+  pending: "접수",
   received: "접수",
   reviewing: "검토중",
-  in_progress: "진행중",
-  resolved: "해결",
+  in_progress: "처리중",
+  resolved: "완료",
   done: "완료",
   rejected: "반려",
   duplicate: "중복",
 };
 
-function StatusIcon({ status }: { status: string }) {
+function StatusIcon({ status }: { status: FeedbackStatus }) {
   switch (status) {
     case "pending":
-      return <Inbox className="w-4 h-4 text-[#A78BFA]" />;
     case "received":
       return <Inbox className="w-4 h-4 text-[#6366F1]" />;
     case "reviewing":
       return <Eye className="w-4 h-4 text-[#FFD60A]" />;
     case "in_progress":
-      return <Clock className="w-4 h-4 text-[#FF9F0A]" />;
+      return <Clock className="w-4 h-4 text-[#60A5FA]" />;
     case "resolved":
     case "done":
       return <CheckCircle className="w-4 h-4 text-[#30D158]" />;
     case "rejected":
       return <XCircle className="w-4 h-4 text-[#FF453A]" />;
     case "duplicate":
-      return <Copy className="w-4 h-4 text-[#636366]" />;
+      return <Copy className="w-4 h-4 text-[#8E8E93]" />;
     default:
       return null;
   }
@@ -82,6 +81,22 @@ interface FeedbackRaw {
   created_at: string;
 }
 
+function normalizeStatus(status: string): FeedbackStatus {
+  switch (status) {
+    case "pending":
+    case "received":
+    case "reviewing":
+    case "in_progress":
+    case "resolved":
+    case "done":
+    case "rejected":
+    case "duplicate":
+      return status;
+    default:
+      return "pending";
+  }
+}
+
 function mapFeedback(raw: FeedbackRaw): FeedbackItem {
   return {
     id: raw.id,
@@ -91,7 +106,7 @@ function mapFeedback(raw: FeedbackRaw): FeedbackItem {
     body: raw.body,
     pageUrl: raw.page_url,
     deviceInfo: raw.device_info,
-    status: raw.status as FeedbackItem["status"],
+    status: normalizeStatus(raw.status),
     adminNote: raw.admin_note,
     createdAt: raw.created_at,
   };
@@ -134,6 +149,9 @@ export default function AdminFeedbackPage() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [noteValues, setNoteValues] = useState<Record<string, string>>({});
+  const [dmValues, setDmValues] = useState<Record<string, string>>({});
+  const [dmSending, setDmSending] = useState<string | null>(null);
+  const [dmSent, setDmSent] = useState<Set<string>>(new Set());
 
   const getPin = useCallback(() => {
     if (typeof window !== "undefined") {
@@ -174,12 +192,10 @@ export default function AdminFeedbackPage() {
 
   const statusCounts = useMemo(
     () => ({
-      pending: items.filter((i) => i.status === "pending").length,
-      received: items.filter((i) => i.status === "received").length,
+      pending: items.filter((i) => i.status === "pending" || i.status === "received").length,
       reviewing: items.filter((i) => i.status === "reviewing").length,
       in_progress: items.filter((i) => i.status === "in_progress").length,
-      resolved: items.filter((i) => i.status === "resolved").length,
-      done: items.filter((i) => i.status === "done").length,
+      resolved: items.filter((i) => i.status === "resolved" || i.status === "done").length,
       rejected: items.filter((i) => i.status === "rejected").length,
       duplicate: items.filter((i) => i.status === "duplicate").length,
     }),
@@ -195,7 +211,7 @@ export default function AdminFeedbackPage() {
 
   /* ── Handlers ── */
 
-  async function handleStatusChange(id: string, status: string) {
+  async function handleStatusChange(id: string, status: FeedbackStatus) {
     const res = await fetch("/api/admin/feedback", {
       method: "PATCH",
       headers: {
@@ -206,7 +222,7 @@ export default function AdminFeedbackPage() {
     });
     if (res.ok) {
       setItems((prev) =>
-        prev.map((it) => (it.id === id ? { ...it, status: status as FeedbackItem["status"] } : it)),
+        prev.map((it) => (it.id === id ? { ...it, status } : it)),
       );
     }
   }
@@ -224,6 +240,27 @@ export default function AdminFeedbackPage() {
       setItems((prev) =>
         prev.map((it) => (it.id === id ? { ...it, adminNote } : it)),
       );
+    }
+  }
+
+  async function handleSendDM(userId: string, content: string) {
+    if (!content.trim()) return;
+    setDmSending(userId);
+    try {
+      const res = await fetch("/api/admin/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-pin": getPin(),
+        },
+        body: JSON.stringify({ action: "send_to_user", userId, content: content.trim() }),
+      });
+      if (res.ok) {
+        setDmSent((prev) => new Set(prev).add(userId));
+        setDmValues((prev) => ({ ...prev, [userId]: "" }));
+      }
+    } finally {
+      setDmSending(null);
     }
   }
 
@@ -265,7 +302,7 @@ export default function AdminFeedbackPage() {
 
       {/* Status Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {(Object.entries(statusCounts) as [string, number][]).map(([status, count]) => (
+        {(Object.entries(statusCounts) as [FeedbackStatus, number][]).map(([status, count]) => (
           <div key={status} className="glass-card p-5 text-center">
             <div className="flex items-center justify-center gap-2 mb-2">
               <StatusIcon status={status} />
@@ -342,6 +379,7 @@ export default function AdminFeedbackPage() {
                         </span>
                       </div>
                       <p className="font-medium text-sm truncate">{item.title}</p>
+                      <p className="text-[10px] text-[#636366] font-mono mt-0.5">{item.userId.slice(0, 8)}</p>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <StatusIcon status={item.status} />
@@ -354,6 +392,7 @@ export default function AdminFeedbackPage() {
                   <div className="px-4 pb-4 space-y-3 text-sm">
                     <div className="pt-3 border-t border-white/8 space-y-2">
                       {item.body && <p className="text-[#8E8E93]">{item.body}</p>}
+                      <p className="text-xs text-[#636366] font-mono">유저: {item.userId}</p>
                       {item.pageUrl && (
                         <p className="text-xs text-[#636366]">페이지: {item.pageUrl}</p>
                       )}
@@ -367,7 +406,7 @@ export default function AdminFeedbackPage() {
                       <span className="text-xs text-[#8E8E93]">상태:</span>
                       <select
                         value={item.status}
-                        onChange={(e) => handleStatusChange(item.id, e.target.value)}
+                        onChange={(e) => handleStatusChange(item.id, e.target.value as FeedbackStatus)}
                         className="appearance-none bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs outline-none focus:border-[#6366F1]"
                       >
                         {Object.entries(STATUS_LABELS).map(([k, v]) => (
@@ -393,6 +432,40 @@ export default function AdminFeedbackPage() {
                       >
                         저장
                       </button>
+                    </div>
+
+                    {/* DM to User */}
+                    <div className="pt-3 border-t border-white/8 space-y-2">
+                      <span className="text-xs text-[#8E8E93] flex items-center gap-1">
+                        <Send className="w-3 h-3" /> 유저에게 쪽지 (크보팬운영진)
+                      </span>
+                      {dmSent.has(item.userId) ? (
+                        <p className="text-xs text-[#30D158]">전송 완료</p>
+                      ) : (
+                        <>
+                          <textarea
+                            value={dmValues[item.userId] ?? ""}
+                            onChange={(e) =>
+                              setDmValues((prev) => ({ ...prev, [item.userId]: e.target.value }))
+                            }
+                            placeholder="쪽지 내용을 입력하세요..."
+                            rows={2}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none focus:border-[#6366F1] resize-none placeholder:text-[#636366]"
+                          />
+                          <button
+                            onClick={() => handleSendDM(item.userId, dmValues[item.userId] ?? "")}
+                            disabled={dmSending === item.userId || !(dmValues[item.userId]?.trim())}
+                            className="px-3 py-1 rounded-lg bg-[#30D158] hover:bg-[#30D158]/80 disabled:opacity-40 text-xs font-medium transition-colors flex items-center gap-1"
+                          >
+                            {dmSending === item.userId ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Send className="w-3 h-3" />
+                            )}
+                            보내기
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 )}

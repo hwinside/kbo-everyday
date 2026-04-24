@@ -182,6 +182,62 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const admin = getSupabaseAdmin();
 
+  // 개별 유저에게 쪽지 발송
+  if (body.action === "send_to_user") {
+    const { userId, content } = body as { userId?: string; content?: string };
+    if (!userId || !content?.trim()) {
+      return NextResponse.json({ error: "missing_params" }, { status: 400 });
+    }
+
+    // 기존 conversation 찾기
+    const [u1, u2] = [systemUserId, userId].sort();
+    const { data: existingConv } = await admin
+      .from("dm_conversations")
+      .select("id")
+      .eq("user1_id", u1)
+      .eq("user2_id", u2)
+      .maybeSingle();
+
+    let conversationId: string;
+
+    if (existingConv) {
+      conversationId = existingConv.id;
+    } else {
+      const { data: newConv, error: convError } = await admin
+        .from("dm_conversations")
+        .insert({ user1_id: u1, user2_id: u2 })
+        .select("id")
+        .single();
+
+      if (convError || !newConv) {
+        return NextResponse.json({ error: "conv_create_failed" }, { status: 500 });
+      }
+      conversationId = newConv.id;
+    }
+
+    const { error: msgError } = await admin
+      .from("dm_messages")
+      .insert({
+        conversation_id: conversationId,
+        sender_id: systemUserId,
+        content: content.trim(),
+      });
+
+    if (msgError) {
+      return NextResponse.json({ error: "send_failed" }, { status: 500 });
+    }
+
+    await admin
+      .from("dm_conversations")
+      .update({
+        last_message: content.trim().substring(0, 100),
+        last_message_at: new Date().toISOString(),
+      })
+      .eq("id", conversationId);
+
+    return NextResponse.json({ ok: true, conversationId });
+  }
+
   // 전체발송
   if (body.action === "broadcast") {
     const { content, teamIds } = body as { content?: string; teamIds?: number[] };
