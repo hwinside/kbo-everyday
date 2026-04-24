@@ -417,7 +417,9 @@ export default function GameDetailPage() {
                         ? "경기 진행 중입니다. 기록은 경기 종료 후 업데이트됩니다."
                         : d.isFinal
                         ? "경기 상세 데이터 준비 중입니다."
-                        : `${game.time}시 경기가 시작된 후 확인하실 수 있습니다.`}
+                        : (gameDetail?.meta?.startTime || liveGame?.time || game.time)
+                        ? `${gameDetail?.meta?.startTime || liveGame?.time || game.time} 경기 시작 후 확인하실 수 있습니다.`
+                        : "경기가 시작된 후 확인하실 수 있습니다."}
                     </span>
                   </div>
                   {d.isFinal && (
