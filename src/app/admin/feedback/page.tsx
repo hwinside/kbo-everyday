@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import { Inbox, Eye, CheckCircle, XCircle, ChevronDown, Loader2 } from "lucide-react";
+import { Inbox, Eye, CheckCircle, XCircle, ChevronDown, Loader2, Clock, Copy } from "lucide-react";
 import type { FeedbackItem } from "@/lib/admin/types";
 
 /* ── Labels & Colors ── */
@@ -36,8 +36,11 @@ const STATUS_LABELS: Record<string, string> = {
   pending: "대기",
   received: "접수",
   reviewing: "검토중",
+  in_progress: "진행중",
+  resolved: "해결",
   done: "완료",
   rejected: "반려",
+  duplicate: "중복",
 };
 
 function StatusIcon({ status }: { status: string }) {
@@ -48,10 +51,15 @@ function StatusIcon({ status }: { status: string }) {
       return <Inbox className="w-4 h-4 text-[#6366F1]" />;
     case "reviewing":
       return <Eye className="w-4 h-4 text-[#FFD60A]" />;
+    case "in_progress":
+      return <Clock className="w-4 h-4 text-[#FF9F0A]" />;
+    case "resolved":
     case "done":
       return <CheckCircle className="w-4 h-4 text-[#30D158]" />;
     case "rejected":
       return <XCircle className="w-4 h-4 text-[#FF453A]" />;
+    case "duplicate":
+      return <Copy className="w-4 h-4 text-[#636366]" />;
     default:
       return null;
   }
@@ -62,7 +70,7 @@ function StatusIcon({ status }: { status: string }) {
 /* ── Raw DB row shape ── */
 
 interface FeedbackRaw {
-  id: number;
+  id: string;
   user_id: string;
   type: string;
   title: string;
@@ -124,8 +132,8 @@ export default function AdminFeedbackPage() {
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<string>("all");
-  const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [noteValues, setNoteValues] = useState<Record<number, string>>({});
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [noteValues, setNoteValues] = useState<Record<string, string>>({});
 
   const getPin = useCallback(() => {
     if (typeof window !== "undefined") {
@@ -169,8 +177,11 @@ export default function AdminFeedbackPage() {
       pending: items.filter((i) => i.status === "pending").length,
       received: items.filter((i) => i.status === "received").length,
       reviewing: items.filter((i) => i.status === "reviewing").length,
+      in_progress: items.filter((i) => i.status === "in_progress").length,
+      resolved: items.filter((i) => i.status === "resolved").length,
       done: items.filter((i) => i.status === "done").length,
       rejected: items.filter((i) => i.status === "rejected").length,
+      duplicate: items.filter((i) => i.status === "duplicate").length,
     }),
     [items],
   );
@@ -184,7 +195,7 @@ export default function AdminFeedbackPage() {
 
   /* ── Handlers ── */
 
-  async function handleStatusChange(id: number, status: string) {
+  async function handleStatusChange(id: string, status: string) {
     const res = await fetch("/api/admin/feedback", {
       method: "PATCH",
       headers: {
@@ -200,7 +211,7 @@ export default function AdminFeedbackPage() {
     }
   }
 
-  async function handleSaveNote(id: number, adminNote: string) {
+  async function handleSaveNote(id: string, adminNote: string) {
     const res = await fetch("/api/admin/feedback", {
       method: "PATCH",
       headers: {
@@ -359,11 +370,9 @@ export default function AdminFeedbackPage() {
                         onChange={(e) => handleStatusChange(item.id, e.target.value)}
                         className="appearance-none bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs outline-none focus:border-[#6366F1]"
                       >
-                        <option value="pending">대기</option>
-                        <option value="received">접수</option>
-                        <option value="reviewing">검토중</option>
-                        <option value="done">완료</option>
-                        <option value="rejected">반려</option>
+                        {Object.entries(STATUS_LABELS).map(([k, v]) => (
+                          <option key={k} value={k}>{v}</option>
+                        ))}
                       </select>
                     </div>
 

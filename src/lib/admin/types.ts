@@ -53,15 +53,25 @@ export interface JobLog {
   errorMessage: string | null;
 }
 
+export type FeedbackStatus =
+  | "pending"
+  | "reviewing"
+  | "in_progress"
+  | "resolved"
+  | "rejected"
+  | "duplicate"
+  | "received"
+  | "done";
+
 export interface FeedbackItem {
-  id: number;
+  id: string;
   userId: string;
   type: "bug" | "data" | "feature" | "content" | "other";
   title: string;
   body: string | null;
   pageUrl: string | null;
   deviceInfo: string | null;
-  status: "pending" | "received" | "reviewing" | "done" | "rejected";
+  status: FeedbackStatus;
   adminNote: string | null;
   createdAt: string;
 }
