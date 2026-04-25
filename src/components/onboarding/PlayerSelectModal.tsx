@@ -3,7 +3,7 @@
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Check, Star, Search } from "lucide-react";
 import Image from "next/image";
@@ -104,6 +104,8 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
   };
 
   const handleComplete = () => {
+    closingRef.current = true;
+    history.back();
     const favs: FavoritePlayer[] = allPlayers
       .filter(p => selected.has(p.id))
       .map(p => ({
@@ -115,6 +117,22 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
       }));
     onComplete(favs);
   };
+
+  // 브라우저 뒤로가기 시 about:blank 방지: history 엔트리 push + popstate로 모달 닫기
+  const closingRef = useRef(false);
+  useEffect(() => {
+    if (!isOpen) return;
+    closingRef.current = false;
+    history.pushState({ playerSelectModal: true }, "");
+    const handlePopState = () => {
+      if (closingRef.current) return;
+      onSkip();
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [isOpen, onSkip]);
 
   if (!isOpen || !team) return null;
 
@@ -211,7 +229,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
             style={{ backgroundColor: team.colorLight }}>
             {selected.size}명 선택 완료
           </button>
-          <button onClick={onSkip} className="w-full py-2 text-sm text-text-tertiary">나중에 할게요</button>
+          <button onClick={() => { closingRef.current = true; history.back(); onSkip(); }} className="w-full py-2 text-sm text-text-tertiary">나중에 할게요</button>
         </motion.div>
       </div>
     </motion.div>
