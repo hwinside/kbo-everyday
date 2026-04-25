@@ -205,21 +205,23 @@ export default function ProfilePage() {
       {/* 관심 선수 */}
       {profile.favorite_players && profile.favorite_players.length > 0 && (
         <div className="mb-4">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-sm font-medium text-text-secondary">관심 선수</span>
-          </div>
-          <div className="flex gap-3 overflow-x-auto">
+          <p className="text-sm font-medium text-text-secondary mb-2">관심 선수</p>
+          <div className="flex justify-between">
             {profile.favorite_players.map((p) => (
-              <div key={p.playerId} className="flex flex-col items-center gap-1 flex-shrink-0">
+              <button
+                key={p.playerId}
+                onClick={() => router.push(`/community/players/${p.playerId}`)}
+                className="flex flex-col items-center gap-1 flex-1 min-w-0"
+              >
                 <PlayerAvatar
                   name={p.name}
                   teamId={p.teamId}
                   photoUrl={getPlayerPhotoUrl(p.name, p.playerId)}
                   number={0}
-                  size={44}
+                  size={48}
                 />
-                <span className="text-[11px] text-text-secondary">{p.name}</span>
-              </div>
+                <span className="text-[11px] text-text-secondary truncate w-full text-center">{p.name}</span>
+              </button>
             ))}
           </div>
         </div>
