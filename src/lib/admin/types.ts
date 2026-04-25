@@ -90,4 +90,41 @@ export interface PerfMetric {
   createdAt: string;
 }
 
-export type AdminTab = "overview" | "users" | "content" | "jobs" | "feedback" | "system";
+export type AdminTab = "overview" | "users" | "retention" | "content" | "jobs" | "feedback" | "system";
+
+export interface RetentionMetric {
+  date: string;
+  metricType: "cohort" | "funnel" | "gameday";
+  cohortKey: string;
+  metricKey: string;
+  total: number;
+  value: number;
+  rate: number;
+}
+
+/** 코호트 히트맵 행: 한 주차의 D1/D7/D14/D30 잔존율 */
+export interface CohortHeatmapRow {
+  cohortKey: string;
+  cohortSize: number;
+  d1: number;
+  d7: number;
+  d14: number;
+  d30: number;
+}
+
+/** Activation 퍼널 단계 */
+export interface FunnelStep {
+  step: string;
+  label: string;
+  count: number;
+  rate: number;
+}
+
+/** 게임데이 리텐션 행 */
+export interface GamedayRetention {
+  cohortKey: string;
+  cohortSize: number;
+  gd1: number;
+  gd2: number;
+  gd3: number;
+}
