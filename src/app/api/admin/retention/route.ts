@@ -18,19 +18,31 @@ export async function GET(req: NextRequest) {
 
   const type = req.nextUrl.searchParams.get("type") || "all";
 
-  // 가장 최근 집계일
-  const { data: latestRow } = await supabase
+  // 가장 최근 완전 집계일 (cohort+funnel+gameday 3종 모두 있는 날짜만 인정)
+  const { data: dateRows } = await supabase
     .from("retention_metrics")
-    .select("date")
+    .select("date, metric_type")
     .order("date", { ascending: false })
-    .limit(1)
-    .single();
+    .limit(200);
 
-  if (!latestRow) {
-    return NextResponse.json({ cohort: [], funnel: [], gameday: [], date: null });
+  let latestDate: string | null = null;
+  if (dateRows?.length) {
+    const dateTypes = new Map<string, Set<string>>();
+    for (const r of dateRows) {
+      if (!dateTypes.has(r.date)) dateTypes.set(r.date, new Set());
+      dateTypes.get(r.date)!.add(r.metric_type);
+    }
+    for (const [date, types] of dateTypes) {
+      if (types.has("cohort") && types.has("funnel") && types.has("gameday")) {
+        latestDate = date;
+        break;
+      }
+    }
   }
 
-  const latestDate = latestRow.date;
+  if (!latestDate) {
+    return NextResponse.json({ cohort: [], funnel: [], gameday: [], date: null });
+  }
 
   // Cohort heatmap
   let cohort: CohortHeatmapRow[] = [];

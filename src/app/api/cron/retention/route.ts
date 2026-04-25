@@ -46,16 +46,13 @@ export async function GET(req: NextRequest) {
 
     const allRows = [...cohortRows, ...funnelRows, ...gamedayRows];
 
-    // 3) 오늘자 기존 데이터 삭제 후 insert
+    // 3) Upsert — ON CONFLICT 로 기존 행 덮어쓰기 (중간 실패 시 기존 데이터 보존)
     if (allRows.length > 0) {
-      await supabase
-        .from("retention_metrics")
-        .delete()
-        .eq("date", targetDate);
-
       const { error } = await supabase
         .from("retention_metrics")
-        .insert(allRows);
+        .upsert(allRows, {
+          onConflict: "date,metric_type,cohort_key,metric_key",
+        });
 
       if (error) throw error;
     }

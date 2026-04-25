@@ -22,3 +22,7 @@ create index if not exists idx_retention_metrics_cohort
   on retention_metrics (metric_type, cohort_key, date desc);
 
 alter table retention_metrics enable row level security;
+
+-- service_role bypasses RLS, but explicit policy ensures no silent lockout
+-- if accessed via anon key by mistake. Write = service_role only (RLS bypass).
+comment on table retention_metrics is 'Accessed exclusively via supabaseAdmin (service_role). RLS enabled as defense-in-depth; no anon/authenticated policy intentional.';
