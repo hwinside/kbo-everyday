@@ -241,12 +241,12 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         </div>
       )}
 
+      <EventBanner source="home" />
+
       {/* My Team Hero */}
       {myTeam && myTeamGame && (
         <MyTeamHero myTeam={myTeam} myTeamGame={myTeamGame} />
       )}
-
-      <EventBanner source="home" />
 
       <div className="mb-3">
         <FavoritePlayersSection favPlayers={favPlayers} />
