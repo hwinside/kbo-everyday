@@ -12,7 +12,6 @@ import { TEAMS } from "@/lib/constants/teams";
 
 const AVATAR_SIZE = 400; // 크롭 결과 px
 const AVATAR_QUALITY = 0.85;
-const BUCKET = "photos";
 
 interface Props {
   isOpen: boolean;
@@ -155,29 +154,33 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
 
     try {
       const blob = await getCroppedBlob(cropImage, croppedArea);
-      const path = `avatars/${user.id}.jpg`;
 
-      const { error: uploadError } = await supabase.storage
-        .from(BUCKET)
-        .upload(path, blob, {
-          cacheControl: "0",
-          upsert: true,
-          contentType: "image/jpeg",
-        });
+      // 세션 토큰 가져오기
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
 
-      if (uploadError) {
-        console.error("아바타 업로드 실패:", uploadError);
+      const formData = new FormData();
+      formData.append("file", new File([blob], "avatar.jpg", { type: "image/jpeg" }));
+
+      const res = await fetch("/api/avatar/upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        body: formData,
+      });
+
+      if (!res.ok) {
+        console.error("아바타 업로드 실패:", await res.text());
         setUploading(false);
         return;
       }
 
-      const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
-      // cache-bust: append timestamp
-      const publicUrl = `${data.publicUrl}?t=${Date.now()}`;
-
-      setCustomAvatarUrl(publicUrl);
+      const { url } = await res.json();
+      setCustomAvatarUrl(`${url}?t=${Date.now()}`);
       setSelected("custom");
       setCropImage(null);
+
+      // API에서 profiles도 업데이트했으므로 새로고침
+      await refreshProfile();
     } finally {
       setUploading(false);
     }
@@ -192,16 +195,14 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
     if (!user || saving) return;
     setSaving(true);
 
-    let avatarUrl: string | null;
-    if (selected === "custom" && customAvatarUrl) {
-      // Strip cache-bust param, save with custom: prefix
-      avatarUrl = `custom:${customAvatarUrl.split("?")[0]}`;
-    } else if (selected && selected !== "custom") {
-      avatarUrl = `preset:${selected}`;
-    } else {
-      avatarUrl = null;
+    // custom 아바타는 crop 단계에서 이미 저장됨
+    if (selected === "custom") {
+      setSaving(false);
+      onClose();
+      return;
     }
 
+    const avatarUrl = selected ? `preset:${selected}` : null;
     const { error } = await supabase
       .from("profiles")
       .update({ avatar_url: avatarUrl })
