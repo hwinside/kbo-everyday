@@ -48,10 +48,11 @@ function useBodyScrollLock(isOpen: boolean) {
 /** canvas에서 크롭 영역을 잘라 Blob 반환 */
 async function getCroppedBlob(imageSrc: string, crop: Area): Promise<Blob> {
   const image = new Image();
-  image.crossOrigin = "anonymous";
+  // blob: URL에는 crossOrigin 설정하면 iOS Safari에서 로드 실패
+  if (imageSrc.startsWith("http")) image.crossOrigin = "anonymous";
   await new Promise<void>((resolve, reject) => {
     image.onload = () => resolve();
-    image.onerror = reject;
+    image.onerror = () => reject(new Error("Image load failed"));
     image.src = imageSrc;
   });
 
@@ -155,9 +156,11 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
     try {
       const blob = await getCroppedBlob(cropImage, croppedArea);
 
-      // 세션 토큰 가져오기
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      if (!session) {
+        alert("로그인이 필요합니다");
+        return;
+      }
 
       const formData = new FormData();
       formData.append("file", new File([blob], "avatar.jpg", { type: "image/jpeg" }));
@@ -169,8 +172,9 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
       });
 
       if (!res.ok) {
-        console.error("아바타 업로드 실패:", await res.text());
-        setUploading(false);
+        const errText = await res.text();
+        console.error("아바타 업로드 실패:", errText);
+        alert("업로드에 실패했어요. 다시 시도해주세요.");
         return;
       }
 
@@ -179,8 +183,10 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
       setSelected("custom");
       setCropImage(null);
 
-      // API에서 profiles도 업데이트했으므로 새로고침
       await refreshProfile();
+    } catch (err) {
+      console.error("아바타 업로드 에러:", err);
+      alert("업로드 중 오류가 발생했어요.");
     } finally {
       setUploading(false);
     }
