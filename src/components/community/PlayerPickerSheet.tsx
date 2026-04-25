@@ -176,40 +176,46 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
               {/* Search results */}
               {activeQuery.trim() && (
                 <div>
-                  {/* Also show matching favorites */}
-                  {favPlayers
-                    .filter((p) => matchHangul(p.name, activeQuery.trim()))
-                    .map((player) => {
-                      const ri = rosterMap.get(player.playerId);
-                      return (
-                        <PlayerRow
-                          key={player.playerId}
-                          playerId={player.playerId}
-                          name={player.name}
-                          teamId={player.teamId}
-                          position={ri?.position}
-                          backNo={ri?.backNo}
-                          onSelect={handleSelect}
-                          highlight
-                        />
-                      );
-                    })}
-                  {filtered.length === 0 && favPlayers.filter((p) => matchHangul(p.name, activeQuery.trim())).length === 0 && (
-                    <p className="text-sm text-text-tertiary text-center py-8">검색 결과가 없습니다</p>
+                  {search && !isComposing && debouncedSearch !== search ? (
+                    <p className="text-sm text-text-tertiary text-center py-8">검색중...</p>
+                  ) : (
+                    <>
+                      {/* Also show matching favorites */}
+                      {favPlayers
+                        .filter((p) => matchHangul(p.name, activeQuery.trim()))
+                        .map((player) => {
+                          const ri = rosterMap.get(player.playerId);
+                          return (
+                            <PlayerRow
+                              key={player.playerId}
+                              playerId={player.playerId}
+                              name={player.name}
+                              teamId={player.teamId}
+                              position={ri?.position}
+                              backNo={ri?.backNo}
+                              onSelect={handleSelect}
+                              highlight
+                            />
+                          );
+                        })}
+                      {filtered.length === 0 && favPlayers.filter((p) => matchHangul(p.name, activeQuery.trim())).length === 0 && (
+                        <p className="text-sm text-text-tertiary text-center py-8">검색 결과가 없습니다</p>
+                      )}
+                      <div className="space-y-1.5">
+                        {filtered.map((player) => (
+                          <PlayerRow
+                            key={player.playerId}
+                            playerId={player.playerId}
+                            name={player.name}
+                            teamId={player.teamId}
+                            position={player.position}
+                            backNo={player.backNo}
+                            onSelect={handleSelect}
+                          />
+                        ))}
+                      </div>
+                    </>
                   )}
-                  <div className="space-y-1.5">
-                    {filtered.map((player) => (
-                      <PlayerRow
-                        key={player.playerId}
-                        playerId={player.playerId}
-                        name={player.name}
-                        teamId={player.teamId}
-                        position={player.position}
-                        backNo={player.backNo}
-                        onSelect={handleSelect}
-                      />
-                    ))}
-                  </div>
                 </div>
               )}
 
