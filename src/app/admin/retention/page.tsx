@@ -200,7 +200,7 @@ export default function RetentionPage() {
               />
               <Tooltip
                 {...chartTooltipStyle}
-                formatter={(value: number) => [`${(value * 100).toFixed(1)}%`, "전환율"]}
+                formatter={(value) => [`${(Number(value) * 100).toFixed(1)}%`, "전환율"]}
               />
               <Bar dataKey="rate" radius={[0, 4, 4, 0]}>
                 {data.funnel.map((_, i) => (
@@ -238,8 +238,8 @@ export default function RetentionPage() {
               />
               <Tooltip
                 {...chartTooltipStyle}
-                formatter={(value: number, name: string) => [
-                  `${(value * 100).toFixed(1)}%`,
+                formatter={(value, name) => [
+                  `${(Number(value) * 100).toFixed(1)}%`,
                   name === "gd1" ? "1st 경기일" : name === "gd2" ? "2nd 경기일" : "3rd 경기일",
                 ]}
               />

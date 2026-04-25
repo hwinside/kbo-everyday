@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
       const entry = grouped.get(row.cohort_key)!;
       const key = row.metric_key.toLowerCase() as "d1" | "d7" | "d14" | "d30";
       if (key in entry) {
-        (entry as Record<string, number>)[key] = row.rate;
+        (entry as unknown as Record<string, number>)[key] = row.rate;
         entry.cohortSize = Math.max(entry.cohortSize, row.total);
       }
     }
@@ -108,7 +108,7 @@ export async function GET(req: NextRequest) {
       const entry = grouped.get(row.cohort_key)!;
       const key = row.metric_key as "gd1" | "gd2" | "gd3";
       if (key in entry) {
-        (entry as Record<string, number>)[key] = row.rate;
+        (entry as unknown as Record<string, number>)[key] = row.rate;
         entry.cohortSize = Math.max(entry.cohortSize, row.total);
       }
     }
