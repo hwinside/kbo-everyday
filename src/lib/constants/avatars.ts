@@ -21,9 +21,9 @@ export const PRESET_AVATARS: PresetAvatar[] = [
 ];
 
 /**
- * avatar_url 값에서 프리셋 아바타 경로를 반환.
+ * avatar_url 값에서 아바타 이미지 경로를 반환.
  * "preset:baseball" → "/avatars/baseball.svg"
- * 외부 URL은 프라이버시 정책상 사용하지 않음.
+ * "custom:https://...supabase.../avatars/xxx.jpg" → URL 부분만 반환
  */
 export function getAvatarPath(avatarUrl: string | null): string | null {
   if (!avatarUrl) return null;
@@ -32,7 +32,15 @@ export function getAvatarPath(avatarUrl: string | null): string | null {
     const preset = PRESET_AVATARS.find((a) => a.key === key);
     return preset?.path ?? null;
   }
+  if (avatarUrl.startsWith("custom:")) {
+    return avatarUrl.slice("custom:".length);
+  }
   return null;
+}
+
+/** 커스텀 업로드 아바타인지 확인 */
+export function isCustomAvatar(avatarUrl: string | null): boolean {
+  return !!avatarUrl && avatarUrl.startsWith("custom:");
 }
 
 export function getPresetKey(avatarUrl: string | null): string | null {
