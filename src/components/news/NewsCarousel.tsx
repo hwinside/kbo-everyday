@@ -122,7 +122,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                     </div>
                   )}
                   <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#1a1a1d] to-transparent" />
-                  <div className="absolute inset-x-0 bottom-0 px-4 pb-4">
+                  <div className="absolute inset-x-0 bottom-0 px-4 pb-10">
                     {item.label && (
                       <span className="inline-block px-2 py-0.5 mb-1 rounded-full bg-accent/80 text-xs font-semibold text-white">
                         {item.label}
@@ -142,41 +142,41 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
         </div>
       </div>
 
-      {/* 좌우 버튼 */}
-      {len > 1 && (
-        <>
+      {/* 하단 컨트롤: 좌버튼 + 인디케이터 + 우버튼 */}
+      <div className="absolute bottom-2 inset-x-0 z-10 flex items-center justify-center gap-3 px-3">
+        {len > 1 && (
           <button
             type="button"
             onClick={() => goTo(current - 1)}
-            className="absolute left-2 top-1/3 z-10 -translate-y-1/2 flex h-8 w-8 items-center justify-center rounded-full bg-white/25 text-white backdrop-blur-sm transition-opacity hover:bg-white/40"
+            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-white/25 text-white backdrop-blur-sm transition-opacity hover:bg-white/40"
             aria-label="이전 뉴스"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
           </button>
+        )}
+        <div className="flex gap-1.5">
+          {slides.map((_, i) => (
+            <button
+              type="button"
+              key={i}
+              onClick={() => goTo(i)}
+              aria-label={`뉴스 ${i + 1}번으로 이동`}
+              className={`h-1.5 rounded-full transition-all duration-300 ${
+                i === current ? "w-5 bg-accent" : "w-1.5 bg-text-tertiary/40"
+              }`}
+            />
+          ))}
+        </div>
+        {len > 1 && (
           <button
             type="button"
             onClick={() => goTo(current + 1)}
-            className="absolute right-2 top-1/3 z-10 -translate-y-1/2 flex h-8 w-8 items-center justify-center rounded-full bg-white/25 text-white backdrop-blur-sm transition-opacity hover:bg-white/40"
+            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-white/25 text-white backdrop-blur-sm transition-opacity hover:bg-white/40"
             aria-label="다음 뉴스"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6"/></svg>
           </button>
-        </>
-      )}
-
-      {/* 인디케이터 */}
-      <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5">
-        {slides.map((_, i) => (
-          <button
-            type="button"
-            key={i}
-            onClick={() => goTo(i)}
-            aria-label={`뉴스 ${i + 1}번으로 이동`}
-            className={`h-1.5 rounded-full transition-all duration-300 ${
-              i === current ? "w-5 bg-accent" : "w-1.5 bg-text-tertiary/40"
-            }`}
-          />
-        ))}
+        )}
       </div>
     </div>
   );
