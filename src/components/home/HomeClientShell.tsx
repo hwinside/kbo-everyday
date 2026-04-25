@@ -230,6 +230,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         </m.div>
       )}
 
+      <EventBanner source="home" />
+
       {/* News Carousel */}
       {realNews.length > 0 && (
         <div className="mb-3">
@@ -240,8 +242,6 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           </div>
         </div>
       )}
-
-      <EventBanner source="home" />
 
       {/* My Team Hero */}
       {myTeam && myTeamGame && (
