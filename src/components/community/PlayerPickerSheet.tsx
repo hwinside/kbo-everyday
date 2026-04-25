@@ -142,7 +142,7 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
                   value={search}
                   onChange={(e) => handleSearchChange(e.target.value)}
                   onCompositionStart={() => setIsComposing(true)}
-                  onCompositionEnd={(e) => { setIsComposing(false); handleSearchChange((e.target as HTMLInputElement).value); }}
+                  onCompositionEnd={(e) => { setIsComposing(false); const v = (e.target as HTMLInputElement).value; setSearch(v); setDebouncedSearch(v); if (debounceRef.current) clearTimeout(debounceRef.current); }}
                   className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
                 />
               </div>

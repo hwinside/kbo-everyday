@@ -160,7 +160,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
             value={search}
             onChange={e => handleSearchChange(e.target.value)}
             onCompositionStart={() => setIsComposing(true)}
-            onCompositionEnd={e => { setIsComposing(false); handleSearchChange((e.target as HTMLInputElement).value); }}
+            onCompositionEnd={e => { setIsComposing(false); const v = (e.target as HTMLInputElement).value; setSearch(v); setDebouncedSearch(v); if (debounceRef.current) clearTimeout(debounceRef.current); }}
             placeholder="선수 검색 (초성 가능)"
             className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
           />
