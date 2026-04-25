@@ -20,7 +20,7 @@ export default function PostCard({ post, onPress, playerLabel, sourceLabel }: Po
 
   return (
     <motion.button
-      onClick={onPress}
+      onTap={onPress}
       className="w-full text-left glass-card p-5 transition-colors hover:bg-bg-glass"
       whileTap={{ scale: 0.98 }}
       transition={{ type: "spring", stiffness: 400, damping: 25 }}
