@@ -19,6 +19,8 @@ import BadgeDetailModal from "@/components/profile/BadgeDetailModal";
 import BadgesTab from "@/components/profile/BadgesTab";
 import DMButton from "@/components/ui/DMButton";
 import LevelBadge from "@/components/ui/LevelBadge";
+import PlayerAvatar from "@/components/ui/PlayerAvatar";
+import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 
 interface UserProfile {
   id: string;
@@ -36,6 +38,7 @@ interface UserProfile {
   total_comments: number;
   total_likes_received: number;
   joined_at: string;
+  favorite_players?: { playerId: string; name: string; teamId: number; number: number }[];
 }
 
 interface UserBadge {
@@ -198,6 +201,29 @@ export default function ProfilePage() {
           </div>
         </GlassCard>
       </div>
+
+      {/* 관심 선수 */}
+      {profile.favorite_players && profile.favorite_players.length > 0 && (
+        <div className="mb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-sm font-medium text-text-secondary">관심 선수</span>
+          </div>
+          <div className="flex gap-3 overflow-x-auto">
+            {profile.favorite_players.map((p) => (
+              <div key={p.playerId} className="flex flex-col items-center gap-1 flex-shrink-0">
+                <PlayerAvatar
+                  name={p.name}
+                  teamId={p.teamId}
+                  photoUrl={getPlayerPhotoUrl(p.name, p.playerId)}
+                  number={0}
+                  size={44}
+                />
+                <span className="text-[11px] text-text-secondary">{p.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Tabs — UnderlineTabs */}
       <div className="flex gap-4 mb-4 border-b border-border">
