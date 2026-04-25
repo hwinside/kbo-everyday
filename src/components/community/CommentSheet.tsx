@@ -4,7 +4,6 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, X, MoreHorizontal, Check } from "lucide-react";
-import { GRADES } from "@/lib/constants/grades";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { createComment, updateComment, deleteComment } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -35,10 +34,6 @@ function timeAgo(dateStr: string): string {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}일 전`;
   return new Date(dateStr).toLocaleDateString("ko-KR");
-}
-
-function getGradeInfo(gradeId?: string) {
-  return GRADES.find((g) => g.id === gradeId) ?? GRADES[0];
 }
 
 export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommentAdded, onCommentDeleted }: CommentSheetProps) {
@@ -362,8 +357,8 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                 </div>
               ) : (
                 comments.map((comment) => {
-                  const grade = getGradeInfo(comment.grade);
                   const avatarPath = getAvatarPath((comment as Comment & { avatar_url?: string }).avatar_url ?? null);
+                  const commentTeam = comment.team_id ? getTeamById(comment.team_id) : undefined;
                   const isMine = !!user && comment.author_id === user.id;
                   const isEditing = editingId === comment.id;
                   const isEdited = !!comment.updated_at;
@@ -375,10 +370,10 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                         </div>
                       ) : (
                         <div
-                          className="w-8 h-8 rounded-full flex items-center justify-center text-sm flex-shrink-0"
-                          style={{ backgroundColor: grade.bgColor }}
+                          className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
+                          style={{ backgroundColor: commentTeam ? getTeamBgColor(commentTeam) : '#6B7280' }}
                         >
-                          {grade.emoji}
+                          {(comment.nickname || "익")[0]}
                         </div>
                       )}
                       <div className="flex-1 min-w-0">
@@ -386,12 +381,14 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                           <span className="text-sm font-semibold text-text-primary">
                             {comment.nickname || "익명"}
                           </span>
-                          <span
-                            className="text-[10px] font-bold px-1.5 py-0.5 rounded-md"
-                            style={{ color: grade.color, backgroundColor: grade.bgColor }}
-                          >
-                            {grade.name}
-                          </span>
+                          {commentTeam && (
+                            <span
+                              className="text-[10px] font-bold px-1.5 py-0.5 rounded-md text-white"
+                              style={{ backgroundColor: getTeamBgColor(commentTeam) }}
+                            >
+                              {commentTeam.shortName}
+                            </span>
+                          )}
                           <span className="text-[11px] text-text-tertiary ml-auto flex-shrink-0">
                             {timeAgo(comment.created_at)}{isEdited ? " · 수정됨" : ""}
                           </span>

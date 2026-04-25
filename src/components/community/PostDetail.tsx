@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, MoreHorizontal, Check } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
-import { GRADES } from "@/lib/constants/grades";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { usePostDetail, createComment, toggleLike, updatePost, deletePost, updateComment, deleteComment } from "@/lib/supabase/usePosts";
 import ReportSheet from "@/components/community/ReportSheet";
@@ -429,8 +428,8 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
             <p className="text-sm text-text-tertiary text-center py-6">첫 댓글을 남겨보세요 💬</p>
           ) : (
             comments.map(c => {
-              const grade = GRADES.find((g) => g.id === c.grade) ?? GRADES[0];
               const avatarPath = getAvatarPath(c.avatar_url ?? null);
+              const cmtTeam = c.team_id ? getTeamById(c.team_id) : undefined;
               const isCmtMine = !!user && c.author_id === user.id;
               const isCmtEditing = cmtEditingId === c.id;
               const isCmtEdited = !!c.updated_at;
@@ -442,22 +441,24 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                     </div>
                   ) : (
                     <div
-                      className="w-8 h-8 rounded-full flex items-center justify-center text-sm flex-shrink-0 cursor-pointer"
-                      style={{ backgroundColor: grade.bgColor }}
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0 cursor-pointer"
+                      style={{ backgroundColor: cmtTeam ? getTeamBgColor(cmtTeam) : '#6B7280' }}
                       onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}
                     >
-                      {grade.emoji}
+                      {(c.nickname || "익")[0]}
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span className="text-sm font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>{c.nickname || "익명"}</span>
-                      <span
-                        className="text-[10px] font-bold px-1.5 py-0.5 rounded-md"
-                        style={{ color: grade.color, backgroundColor: grade.bgColor }}
-                      >
-                        {grade.name}
-                      </span>
+                      {cmtTeam && (
+                        <span
+                          className="text-[10px] font-bold px-1.5 py-0.5 rounded-md text-white"
+                          style={{ backgroundColor: getTeamBgColor(cmtTeam) }}
+                        >
+                          {cmtTeam.shortName}
+                        </span>
+                      )}
                       <span className="text-xs text-text-tertiary ml-auto flex-shrink-0">
                         {timeAgo(c.created_at)}{isCmtEdited ? " · 수정됨" : ""}
                       </span>

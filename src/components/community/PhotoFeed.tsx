@@ -5,12 +5,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Play, MoreHorizontal } from "lucide-react";
-import { GRADES } from "@/lib/constants/grades";
 import { getTeamById } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import { parsePlayerTag } from "@/lib/utils/player-tags";
 import TeamBadge from "@/components/ui/TeamBadge";
-import LevelBadge from "@/components/ui/LevelBadge";
 import type { Post } from "@/lib/supabase/usePosts";
 import { deletePost } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -53,9 +51,6 @@ function timeAgo(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("ko-KR");
 }
 
-function getGradeInfo(gradeId?: string) {
-  return GRADES.find((g) => g.id === gradeId) ?? GRADES[0];
-}
 
 interface MediaSlide {
   url: string;
@@ -307,7 +302,6 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   return (
     <div>
       {posts.map((post, index) => {
-        const grade = getGradeInfo(post.grade);
         const isLiked = likedPosts.has(post.id);
         const isMine = !!user && post.author_id === user.id;
 
@@ -329,7 +323,6 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 <span className="text-base font-medium text-text-primary truncate">
                   {post.nickname || "익명"}
                 </span>
-                <LevelBadge points={post.points ?? 0} />
                 {post.grade === "staff" && (
                   <span className="ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full">
                     운영팀

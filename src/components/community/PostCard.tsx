@@ -3,7 +3,6 @@
 import { motion } from "framer-motion";
 import { Heart, MessageCircle, Play } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
-import LevelBadge from "@/components/ui/LevelBadge";
 import LinkPreview from "@/components/community/LinkPreview";
 import type { Post } from "@/lib/types";
 import type { CommunitySourceLabel } from "@/lib/utils/community-board";
@@ -39,7 +38,6 @@ export default function PostCard({ post, onPress, playerLabel, sourceLabel }: Po
         {post.author?.grade === 'staff' && (
           <span className='ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
         )}
-        {post.author && <LevelBadge level={post.author.level} />}
         <span className="ml-auto text-base text-text-tertiary whitespace-nowrap shrink-0">{timeAgo}</span>
       </div>
 
