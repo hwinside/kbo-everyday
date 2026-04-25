@@ -109,21 +109,24 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
 
   // 브라우저 뒤로가기 시 about:blank 방지: history 엔트리 push + popstate로 모달 닫기
   const closingRef = useRef(false);
+  const didPopRef = useRef(false);
   const onSkipRef = useRef(onSkip);
   useEffect(() => { onSkipRef.current = onSkip; }, [onSkip]);
 
   useEffect(() => {
     if (!isOpen) return;
     closingRef.current = false;
+    didPopRef.current = false;
     history.pushState({ playerSelectModal: true }, "");
     const handlePopState = () => {
       if (closingRef.current) return;
+      didPopRef.current = true;
       onSkipRef.current();
     };
     window.addEventListener("popstate", handlePopState);
     return () => {
       window.removeEventListener("popstate", handlePopState);
-      if (!closingRef.current) history.back();
+      if (!closingRef.current && !didPopRef.current) history.back();
     };
   }, [isOpen]);
 
