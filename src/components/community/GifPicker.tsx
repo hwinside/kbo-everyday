@@ -66,8 +66,17 @@ export default function GifPicker({ onSelect, onClose }: GifPickerProps) {
 
   return (
     <div className="flex flex-col h-full">
+      {/* Header: drag handle + close */}
+      <div className="flex items-center justify-between px-3 pt-2 pb-1">
+        <div className="w-8" />
+        <div className="w-10 h-1 rounded-full bg-text-tertiary/40" />
+        <button onClick={onClose} className="w-8 h-8 flex items-center justify-center text-text-tertiary hover:text-text-primary">
+          <X size={18} />
+        </button>
+      </div>
+
       {/* Search bar */}
-      <div className="flex-none px-3 py-2">
+      <div className="flex-none px-3 pb-2">
         <div className="flex items-center gap-2 bg-bg-tertiary rounded-lg px-3 py-2">
           <Search size={16} className="text-text-tertiary flex-shrink-0" />
           <input
