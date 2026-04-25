@@ -28,6 +28,7 @@
     "puppeteer-core": "^24.37.5",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-easy-crop": "^5.5.7",
     "recharts": "^3.7.0",
     "tailwind-merge": "^3.5.0",
     "web-push": "^3.6.7"
