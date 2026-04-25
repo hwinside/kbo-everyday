@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, X, MoreHorizontal, Check, Heart, CornerDownRight } from "lucide-react";
+import { Send, X, MoreHorizontal, Check, Heart, CornerDownRight, ImagePlay } from "lucide-react";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { createComment, updateComment, deleteComment, toggleCommentLike } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -11,6 +11,7 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import { supabase } from "@/lib/supabase/client";
 import type { Comment } from "@/lib/supabase/usePosts";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
+import GifPicker, { isGifComment } from "@/components/community/GifPicker";
 
 interface CommentSheetProps {
   isOpen: boolean;
@@ -69,6 +70,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const [editInput, setEditInput] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
   const [replyTo, setReplyTo] = useState<{ id: number; nickname: string } | null>(null);
+  const [showGifPicker, setShowGifPicker] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -145,6 +147,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     if (!shouldRender) {
       setInput("");
       setReplyTo(null);
+      setShowGifPicker(false);
     }
   }, [shouldRender]);
 
@@ -252,6 +255,41 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       setSubmitting(false);
     }
   }, [input, postId, submitting, user, onCommentAdded, profile, refetchComments, replyTo]);
+
+  const handleGifSelect = useCallback(async (gifUrl: string) => {
+    if (!postId || submitting) return;
+    if (!user) { setShowLogin(true); return; }
+    setShowGifPicker(false);
+    setSubmitting(true);
+    try {
+      const result = await createComment(postId, gifUrl, replyTo?.id);
+      setComments((prev) => [
+        ...prev,
+        {
+          id: result.id,
+          post_id: postId,
+          author_id: user.id,
+          content: gifUrl,
+          created_at: new Date().toISOString(),
+          parent_id: replyTo?.id ?? null,
+          like_count: 0,
+          liked_by_me: false,
+          nickname: profile?.nickname ?? user?.user_metadata?.name ?? "나",
+          team_id: profile?.team_id,
+          grade: profile?.grade,
+          avatar_url: profile?.avatar_url ?? undefined,
+        },
+      ]);
+      setReplyTo(null);
+      if (postId) onCommentAdded?.(postId);
+      refetchComments(postId);
+    } catch (err) {
+      console.error("[CommentSheet] GIF comment failed:", err);
+      alert("GIF 전송에 실패했어요");
+    } finally {
+      setSubmitting(false);
+    }
+  }, [postId, submitting, user, onCommentAdded, profile, refetchComments, replyTo]);
 
   const startEdit = useCallback((comment: Comment) => {
     setMenuOpenId(null);
@@ -462,9 +500,18 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             </div>
           ) : (
             <>
-              <p className="readable-body mt-0.5 break-words">
-                {comment.content}
-              </p>
+              {isGifComment(comment.content) ? (
+                <img
+                  src={comment.content.trim()}
+                  alt="GIF"
+                  className="mt-1 rounded-lg max-w-[200px] h-auto"
+                  loading="lazy"
+                />
+              ) : (
+                <p className="readable-body mt-0.5 break-words">
+                  {comment.content}
+                </p>
+              )}
               <div className="flex items-center gap-3 mt-1">
                 <button
                   onClick={() => handleLike(comment.id)}
@@ -589,32 +636,52 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
               </div>
             )}
 
+            {/* GIF Picker */}
+            {showGifPicker && (
+              <div className="flex-none border-t border-border" style={{ height: "280px" }}>
+                <GifPicker
+                  onSelect={handleGifSelect}
+                  onClose={() => setShowGifPicker(false)}
+                />
+              </div>
+            )}
+
             {/* Input area */}
             <div className="flex-none border-t border-border px-4 py-3" style={{ paddingBottom: vvBottom > 0 ? "0.75rem" : "calc(0.75rem + env(safe-area-inset-bottom))" }}>
               <div className="flex items-center gap-2">
                 {user ? (
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onFocus={() => {
-                      const scrollToBottom = () => {
-                        if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
-                      };
-                      requestAnimationFrame(scrollToBottom);
-                      [120, 300, 600].forEach((ms) => setTimeout(scrollToBottom, ms));
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-                        e.preventDefault();
-                        handleSubmit();
-                      }
-                    }}
-                    placeholder={replyTo ? `${replyTo.nickname}에게 답글...` : "댓글을 입력하세요"}
-                    className="flex-1 bg-bg-tertiary rounded-full px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary outline-none border"
-                    style={{ borderColor: teamId ? `${getTeamById(teamId)?.colorPrimary}80` : 'rgba(255,255,255,0.15)' }}
-                  />
+                  <>
+                    <button
+                      onClick={() => setShowGifPicker((v) => !v)}
+                      className={`flex items-center justify-center w-9 h-9 rounded-full transition-colors ${showGifPicker ? "bg-accent/20 text-accent" : "text-text-tertiary hover:text-text-primary"}`}
+                      aria-label="GIF"
+                    >
+                      <ImagePlay size={20} />
+                    </button>
+                    <input
+                      ref={inputRef}
+                      type="text"
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onFocus={() => {
+                        setShowGifPicker(false);
+                        const scrollToBottom = () => {
+                          if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+                        };
+                        requestAnimationFrame(scrollToBottom);
+                        [120, 300, 600].forEach((ms) => setTimeout(scrollToBottom, ms));
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                          e.preventDefault();
+                          handleSubmit();
+                        }
+                      }}
+                      placeholder={replyTo ? `${replyTo.nickname}에게 답글...` : "댓글을 입력하세요"}
+                      className="flex-1 bg-bg-tertiary rounded-full px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary outline-none border"
+                      style={{ borderColor: teamId ? `${getTeamById(teamId)?.colorPrimary}80` : 'rgba(255,255,255,0.15)' }}
+                    />
+                  </>
                 ) : (
                   <button
                     onClick={() => setShowLogin(true)}

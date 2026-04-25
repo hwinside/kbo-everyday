@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, MoreHorizontal, Check, CornerDownRight, X } from "lucide-react";
+import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, MoreHorizontal, Check, CornerDownRight, X, ImagePlay } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { usePostDetail, createComment, toggleLike, toggleCommentLike, updatePost, deletePost, updateComment, deleteComment } from "@/lib/supabase/usePosts";
@@ -12,6 +12,7 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import DMButton from "@/components/ui/DMButton";
+import GifPicker, { isGifComment } from "@/components/community/GifPicker";
 
 interface PostDetailProps {
   postId: number;
@@ -27,6 +28,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   const [comment, setComment] = useState("");
   const [likeCount, setLikeCount] = useState(0);
   const [replyTo, setReplyTo] = useState<{ id: number; nickname: string } | null>(null);
+  const [showGifPicker, setShowGifPicker] = useState(false);
 
   // Chat-layout keyboard handling:
   // 1) Toggle body.kbd-open based on composer focus (TabBar hidden via CSS).
@@ -265,6 +267,32 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
     } catch (err) {
       console.error("[PostDetail] createComment failed:", err);
       alert("댓글 저장에 실패했어요");
+    }
+  }
+
+  async function handleGifSelect(gifUrl: string) {
+    if (!user) { alert("로그인이 필요합니다"); return; }
+    setShowGifPicker(false);
+    try {
+      const result = await createComment(post!.id, gifUrl, replyTo?.id);
+      setComments(prev => [...prev, {
+        id: result.id,
+        post_id: post!.id,
+        author_id: user.id,
+        content: gifUrl,
+        created_at: new Date().toISOString(),
+        parent_id: replyTo?.id ?? null,
+        like_count: 0,
+        liked_by_me: false,
+        nickname: profile?.nickname ?? user?.user_metadata?.name ?? "나",
+        team_id: profile?.team_id,
+        grade: profile?.grade,
+        avatar_url: profile?.avatar_url ?? undefined,
+      }]);
+      setReplyTo(null);
+    } catch (err) {
+      console.error("[PostDetail] GIF comment failed:", err);
+      alert("GIF 전송에 실패했어요");
     }
   }
 
@@ -561,7 +589,16 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                         </div>
                       ) : (
                         <>
-                          <p className="readable-body mt-0.5 break-words">{c.content}</p>
+                          {isGifComment(c.content) ? (
+                            <img
+                              src={c.content.trim()}
+                              alt="GIF"
+                              className="mt-1 rounded-lg max-w-[200px] h-auto"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <p className="readable-body mt-0.5 break-words">{c.content}</p>
+                          )}
                           <div className="flex items-center gap-3 mt-1">
                             <button
                               onClick={() => handleCommentLike(c.id)}
@@ -630,6 +667,24 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           </button>
         </div>
       )}
+      {/* GIF Picker */}
+      {showGifPicker && (
+        <div
+          className="fixed left-0 right-0 bg-bg-secondary border-t border-border z-40"
+          style={{
+            height: "280px",
+            bottom: keyboardInset > 0
+              ? `${keyboardInset + 60}px`
+              : `calc(4rem + env(safe-area-inset-bottom, 0px) + 3.75rem)`,
+            transition: "bottom 80ms ease-out",
+          }}
+        >
+          <GifPicker
+            onSelect={handleGifSelect}
+            onClose={() => setShowGifPicker(false)}
+          />
+        </div>
+      )}
       <div
         data-composer="postdetail"
         className="fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40"
@@ -647,6 +702,15 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           const teamColor = post.team_id ? getTeamById(post.team_id)?.colorPrimary : undefined;
           return (
             <>
+              {user && (
+                <button
+                  onClick={() => setShowGifPicker((v) => !v)}
+                  className={`flex items-center justify-center w-9 h-9 rounded-full transition-colors ${showGifPicker ? "bg-accent/20 text-accent" : "text-text-tertiary hover:text-text-primary"}`}
+                  aria-label="GIF"
+                >
+                  <ImagePlay size={20} />
+                </button>
+              )}
               <input
                 type="text"
                 value={comment}
@@ -655,7 +719,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                 disabled={!user}
                 className="flex-1 bg-bg-secondary rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none border"
                 style={{ borderColor: teamColor ? `${teamColor}80` : 'rgba(255,255,255,0.15)' }}
-                onFocus={() => document.body.classList.add("kbd-open")}
+                onFocus={() => { setShowGifPicker(false); document.body.classList.add("kbd-open"); }}
                 onBlur={() => document.body.classList.remove("kbd-open")}
                 onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); handleComment(); } }}
               />
