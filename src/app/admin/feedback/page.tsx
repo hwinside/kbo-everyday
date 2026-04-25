@@ -245,9 +245,9 @@ export default function AdminFeedbackPage() {
     }
   }
 
-  async function handleSendDM(userId: string, content: string) {
+  async function handleSendDM(feedbackId: string, userId: string, content: string) {
     if (!content.trim()) return;
-    setDmSending(userId);
+    setDmSending(feedbackId);
     try {
       const res = await fetch("/api/admin/messages", {
         method: "POST",
@@ -258,8 +258,8 @@ export default function AdminFeedbackPage() {
         body: JSON.stringify({ action: "send_to_user", userId, content: content.trim() }),
       });
       if (res.ok) {
-        setDmSent((prev) => new Set(prev).add(userId));
-        setDmValues((prev) => ({ ...prev, [userId]: "" }));
+        setDmSent((prev) => new Set(prev).add(feedbackId));
+        setDmValues((prev) => ({ ...prev, [feedbackId]: "" }));
       }
     } finally {
       setDmSending(null);
@@ -447,25 +447,25 @@ export default function AdminFeedbackPage() {
                       <span className="text-xs text-[#8E8E93] flex items-center gap-1">
                         <Send className="w-3 h-3" /> 유저에게 쪽지 (크보팬 운영팀)
                       </span>
-                      {dmSent.has(item.userId) ? (
+                      {dmSent.has(item.id) ? (
                         <p className="text-xs text-[#30D158]">전송 완료</p>
                       ) : (
                         <>
                           <textarea
-                            value={dmValues[item.userId] ?? ""}
+                            value={dmValues[item.id] ?? ""}
                             onChange={(e) =>
-                              setDmValues((prev) => ({ ...prev, [item.userId]: e.target.value }))
+                              setDmValues((prev) => ({ ...prev, [item.id]: e.target.value }))
                             }
                             placeholder="쪽지 내용을 입력하세요..."
                             rows={2}
                             className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs outline-none focus:border-[#6366F1] resize-none placeholder:text-[#636366]"
                           />
                           <button
-                            onClick={() => handleSendDM(item.userId, dmValues[item.userId] ?? "")}
-                            disabled={dmSending === item.userId || !(dmValues[item.userId]?.trim())}
+                            onClick={() => handleSendDM(item.id, item.userId, dmValues[item.id] ?? "")}
+                            disabled={dmSending === item.id || !(dmValues[item.id]?.trim())}
                             className="px-3 py-1 rounded-lg bg-[#30D158] hover:bg-[#30D158]/80 disabled:opacity-40 text-xs font-medium transition-colors flex items-center gap-1"
                           >
-                            {dmSending === item.userId ? (
+                            {dmSending === item.id ? (
                               <Loader2 className="w-3 h-3 animate-spin" />
                             ) : (
                               <Send className="w-3 h-3" />
