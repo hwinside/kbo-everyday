@@ -636,26 +636,26 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
               </div>
             )}
 
-            {/* GIF Picker */}
-            <AnimatePresence>
-              {showGifPicker && (
-                <motion.div
-                  className="flex-none border-t border-border overflow-hidden"
-                  initial={{ height: 0 }}
-                  animate={{ height: 280 }}
-                  exit={{ height: 0 }}
-                  transition={{ duration: 0.25, ease: "easeInOut" }}
-                >
-                  <GifPicker
-                    onSelect={handleGifSelect}
-                    onClose={() => setShowGifPicker(false)}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Input area */}
-            <div className="flex-none border-t border-border px-4 py-3" style={{ paddingBottom: vvBottom > 0 ? "0.75rem" : "calc(0.75rem + env(safe-area-inset-bottom))" }}>
+            {/* Input area + GIF Picker overlay */}
+            <div className="flex-none relative border-t border-border px-4 py-3" style={{ paddingBottom: vvBottom > 0 ? "0.75rem" : "calc(0.75rem + env(safe-area-inset-bottom))" }}>
+              {/* GIF Picker — pure overlay above input, no layout shift */}
+              <AnimatePresence>
+                {showGifPicker && (
+                  <motion.div
+                    className="absolute left-0 right-0 border-t border-border bg-bg-secondary z-10"
+                    style={{ height: 280, bottom: "100%" }}
+                    initial={{ y: "100%" }}
+                    animate={{ y: 0 }}
+                    exit={{ y: "100%" }}
+                    transition={{ type: "spring", damping: 28, stiffness: 300 }}
+                  >
+                    <GifPicker
+                      onSelect={handleGifSelect}
+                      onClose={() => setShowGifPicker(false)}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
               <div className="flex items-center gap-2">
                 {user ? (
                   <>

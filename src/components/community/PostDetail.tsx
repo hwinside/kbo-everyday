@@ -344,10 +344,9 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   // Reserve bottom padding on the scroll area = composer height (~64px) + inset,
   // so post/comments never hide beneath the composer.
   const composerHeight = 64; // approximate; matches py-3 + input height
-  const gifPickerHeight = showGifPicker ? 280 : 0;
   const scrollPaddingBottom = keyboardInset > 0
-    ? `${composerHeight + keyboardInset + gifPickerHeight}px`
-    : `calc(${composerHeight + gifPickerHeight}px + 4rem + env(safe-area-inset-bottom, 0px))`; // + TabBar when idle
+    ? `${composerHeight + keyboardInset}px`
+    : `calc(${composerHeight}px + 4rem + env(safe-area-inset-bottom, 0px))`; // + TabBar when idle
   return (
     <div className="postdetail-chat-container flex flex-col bg-bg-primary">
       {/* Header (flex-none, stays at top) */}
@@ -367,7 +366,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
       </div>
 
       {/* Scrollable body: post + comments. Bottom padding reserves composer height + kbd inset. */}
-      <div className="flex-1 overflow-y-auto overscroll-contain" style={{ paddingBottom: scrollPaddingBottom, transition: "padding-bottom 0.25s ease-in-out" }}>
+      <div className="flex-1 overflow-y-auto overscroll-contain" style={{ paddingBottom: scrollPaddingBottom }}>
 
       {/* Post */}
       <div className="px-5 py-4">
@@ -669,20 +668,21 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           </button>
         </div>
       )}
-      {/* GIF Picker */}
+      {/* GIF Picker — pure overlay, no layout shift */}
       <AnimatePresence>
         {showGifPicker && (
           <motion.div
-            className="fixed left-0 right-0 bg-bg-secondary border-t border-border z-40 overflow-hidden"
+            className="fixed left-0 right-0 bg-bg-secondary border-t border-border z-40"
             style={{
+              height: 280,
               bottom: keyboardInset > 0
                 ? `${keyboardInset + 60}px`
                 : `calc(4rem + env(safe-area-inset-bottom, 0px) + 3.75rem)`,
             }}
-            initial={{ height: 0 }}
-            animate={{ height: 280 }}
-            exit={{ height: 0 }}
-            transition={{ duration: 0.25, ease: "easeInOut" }}
+            initial={{ y: "100%" }}
+            animate={{ y: 0 }}
+            exit={{ y: "100%" }}
+            transition={{ type: "spring", damping: 28, stiffness: 300 }}
           >
             <GifPicker
               onSelect={handleGifSelect}
