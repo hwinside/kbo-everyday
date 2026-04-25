@@ -19,6 +19,11 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
   const slides = news.slice(0, 10);
   const len = slides.length;
 
+  // len 변경 시 current clamp
+  useEffect(() => {
+    setCurrent((prev) => (len === 0 ? 0 : Math.min(prev, len - 1)));
+  }, [len]);
+
   // --- autoplay ---
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -46,6 +51,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
   // --- navigation ---
   const goTo = useCallback(
     (idx: number) => {
+      if (len === 0) return;
       setCurrent(((idx % len) + len) % len);
       setIsUserPaused(true); // 유저 조작 → 자동재생 정지
     },
@@ -140,6 +146,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
       {len > 1 && (
         <>
           <button
+            type="button"
             onClick={() => goTo(current - 1)}
             className="absolute left-1.5 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-black/40 text-white/80 backdrop-blur-sm transition-opacity hover:bg-black/60"
             aria-label="이전 뉴스"
@@ -147,6 +154,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
           </button>
           <button
+            type="button"
             onClick={() => goTo(current + 1)}
             className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-black/40 text-white/80 backdrop-blur-sm transition-opacity hover:bg-black/60"
             aria-label="다음 뉴스"
@@ -160,6 +168,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
       <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5">
         {slides.map((_, i) => (
           <button
+            type="button"
             key={i}
             onClick={() => goTo(i)}
             aria-label={`뉴스 ${i + 1}번으로 이동`}
