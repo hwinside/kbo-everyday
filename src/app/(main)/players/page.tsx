@@ -12,6 +12,7 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import playersRosterStatic from "@/lib/constants/players-roster.json";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
+import { matchHangul } from "@/lib/utils/hangul-search";
 
 interface PlayerItem {
   name: string;
@@ -120,11 +121,11 @@ function PlayersPageContent() {
     }
 
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
+      const q = searchQuery.trim();
       result = result.filter(p =>
-        p.name.toLowerCase().includes(q) ||
-        p.team.toLowerCase().includes(q) ||
-        p.position.includes(q)
+        matchHangul(p.name, q) ||
+        matchHangul(p.team, q) ||
+        matchHangul(p.position, q)
       );
     }
 
@@ -192,7 +193,7 @@ function PlayersPageContent() {
           <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-text-tertiary" />
           <input
             type="text"
-            placeholder="선수 이름, 팀, 포지션 검색"
+            placeholder="선수 이름, 팀, 포지션 검색 (초성 가능)"
             value={searchQuery}
             onChange={(e) => {
               setSearchQuery(e.target.value);
