@@ -73,7 +73,22 @@ export default function ProfilePage() {
         .select("*")
         .eq("id", userId)
         .single();
-      if (p) setProfile(p as UserProfile);
+      if (p) {
+        // 실시간 카운트 조회 (캐시 컬럼이 0일 수 있으므로)
+        const [postsCount, commentsCount, likesCount] = await Promise.all([
+          supabase.from("posts").select("id", { count: "exact", head: true }).eq("author_id", userId),
+          supabase.from("comments").select("id", { count: "exact", head: true }).eq("author_id", userId),
+          supabase.from("posts").select("like_count", { count: "exact", head: false }).eq("author_id", userId),
+        ]);
+        // 받은 좋아요 = 내 글들의 like_count 합산
+        const totalLikes = likesCount.data?.reduce((sum: number, p: { like_count: number }) => sum + (p.like_count || 0), 0) ?? 0;
+        setProfile({
+          ...p,
+          total_posts: postsCount.count ?? p.total_posts ?? 0,
+          total_comments: commentsCount.count ?? p.total_comments ?? 0,
+          total_likes_received: totalLikes,
+        } as UserProfile);
+      }
 
       const { data: b } = await supabase
         .from("user_badges")
