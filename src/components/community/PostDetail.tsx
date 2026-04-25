@@ -344,9 +344,10 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   // Reserve bottom padding on the scroll area = composer height (~64px) + inset,
   // so post/comments never hide beneath the composer.
   const composerHeight = 64; // approximate; matches py-3 + input height
+  const gifPickerHeight = showGifPicker ? 280 : 0;
   const scrollPaddingBottom = keyboardInset > 0
-    ? `${composerHeight + keyboardInset}px`
-    : `calc(${composerHeight}px + 4rem + env(safe-area-inset-bottom, 0px))`; // + TabBar when idle
+    ? `${composerHeight + keyboardInset + gifPickerHeight}px`
+    : `calc(${composerHeight + gifPickerHeight}px + 4rem + env(safe-area-inset-bottom, 0px))`; // + TabBar when idle
   return (
     <div className="postdetail-chat-container flex flex-col bg-bg-primary">
       {/* Header (flex-none, stays at top) */}
@@ -366,7 +367,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
       </div>
 
       {/* Scrollable body: post + comments. Bottom padding reserves composer height + kbd inset. */}
-      <div className="flex-1 overflow-y-auto overscroll-contain" style={{ paddingBottom: scrollPaddingBottom }}>
+      <div className="flex-1 overflow-y-auto overscroll-contain" style={{ paddingBottom: scrollPaddingBottom, transition: "padding-bottom 0.25s ease-in-out" }}>
 
       {/* Post */}
       <div className="px-5 py-4">
