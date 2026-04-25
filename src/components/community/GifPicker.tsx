@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Search, X, Loader2 } from "lucide-react";
 
+const SWIPE_THRESHOLD = 60;
+
 const GIPHY_API_KEY = process.env.NEXT_PUBLIC_GIPHY_API_KEY!;
 const GIPHY_LIMIT = 24;
 
@@ -33,6 +35,7 @@ export default function GifPicker({ onSelect, onClose }: GifPickerProps) {
   const [loading, setLoading] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const dragStartY = useRef(0);
 
   const fetchGifs = useCallback(async (searchQuery: string) => {
     setLoading(true);
@@ -66,8 +69,15 @@ export default function GifPicker({ onSelect, onClose }: GifPickerProps) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header: drag handle + close */}
-      <div className="flex items-center justify-between px-3 pt-2 pb-1">
+      {/* Header: drag handle (swipe down to dismiss) + close */}
+      <div
+        className="flex items-center justify-between px-3 pt-2 pb-1 cursor-grab"
+        onTouchStart={(e) => { dragStartY.current = e.touches[0].clientY; }}
+        onTouchEnd={(e) => {
+          const delta = e.changedTouches[0].clientY - dragStartY.current;
+          if (delta > SWIPE_THRESHOLD) onClose();
+        }}
+      >
         <div className="w-8" />
         <div className="w-10 h-1 rounded-full bg-text-tertiary/40" />
         <button onClick={onClose} className="w-8 h-8 flex items-center justify-center text-text-tertiary hover:text-text-primary">
