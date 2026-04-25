@@ -14,11 +14,13 @@ import {
   Menu,
   X,
   Lock,
+  TrendingUp,
 } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/admin", label: "개요", icon: LayoutDashboard },
   { href: "/admin/users", label: "유저", icon: Users },
+  { href: "/admin/retention", label: "리텐션", icon: TrendingUp },
   { href: "/admin/content", label: "콘텐츠", icon: FileText },
   { href: "/admin/jobs", label: "크롤러/배치", icon: Bot },
   { href: "/admin/messages", label: "쪽지함", icon: Mail },
