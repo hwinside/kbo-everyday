@@ -147,7 +147,7 @@ export function usePostDetail(postId: number) {
       // 댓글
       const { data: c } = await supabase
         .from("comments")
-        .select("*, profiles(nickname, team_id, grade, avatar_url)")
+        .select("*, profiles!comments_author_id_fkey(nickname, team_id, grade, avatar_url)")
         .eq("post_id", postId)
         .order("created_at", { ascending: true });
 

@@ -89,7 +89,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     (async () => {
       const { data } = await supabase
         .from("comments")
-        .select("*, profiles(nickname, team_id, grade, avatar_url)")
+        .select("*, profiles!comments_author_id_fkey(nickname, team_id, grade, avatar_url)")
         .eq("post_id", postId)
         .order("created_at", { ascending: true });
 
@@ -190,7 +190,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const refetchComments = useCallback(async (pid: number) => {
     const { data } = await supabase
       .from("comments")
-      .select("*, profiles(nickname, team_id, grade, avatar_url)")
+      .select("*, profiles!comments_author_id_fkey(nickname, team_id, grade, avatar_url)")
       .eq("post_id", pid)
       .order("created_at", { ascending: true });
 
