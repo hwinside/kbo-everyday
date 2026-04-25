@@ -181,6 +181,12 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
                         number={0}
                         size={44}
                       />
+                      <div
+                        className="absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center"
+                        style={{ backgroundColor: team.colorLight }}
+                      >
+                        <X size={12} className="text-white" />
+                      </div>
                       <p className="text-[11px] font-medium text-text-primary mt-1 truncate w-full text-center">
                         {player.name}
                       </p>
