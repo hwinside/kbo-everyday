@@ -164,7 +164,6 @@ export default function ProfilePage() {
         <h1 className="mt-4 text-2xl font-bold tracking-tight text-text-primary">{profile.nickname}</h1>
         <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
           {team && <TeamBadge teamId={team.id} size="sm" />}
-          <LevelBadge points={profile.points} showTitle />
           {profile.is_founder && (
             <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400">FOUNDER</span>
           )}
