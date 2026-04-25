@@ -54,10 +54,9 @@ export default function GifPicker({ onSelect, onClose }: GifPickerProps) {
     }
   }, []);
 
-  // Load trending on mount
+  // Load trending on mount (no auto-focus — triggers iOS keyboard/viewport shift)
   useEffect(() => {
     fetchGifs("");
-    setTimeout(() => inputRef.current?.focus(), 100);
   }, [fetchGifs]);
 
   // Debounced search
