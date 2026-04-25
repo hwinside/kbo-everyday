@@ -5,7 +5,7 @@ import LoginSheet from "@/components/auth/LoginSheet";
 
 import { useState, useMemo, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Check, Star, Search } from "lucide-react";
+import { Check, Search, X, Plus } from "lucide-react";
 import Image from "next/image";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
@@ -70,6 +70,10 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
     return result;
   }, []);
 
+  // 선택 순서 보존: Set은 insertion order를 유지하므로 Set 순회로 배열 생성
+  const selectedPlayersArr = [...selected]
+    .map(id => allPlayers.find(p => p.id === id))
+    .filter((p): p is PlayerInfo => !!p);
   const myTeamPlayers = allPlayers.filter(p => p.teamId === teamId);
   const otherPlayers = allPlayers.filter(p => p.teamId !== teamId);
   const [visibleCount, setVisibleCount] = useState(30);
@@ -155,12 +159,46 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
           </div>
             {!user && <p className="text-xs text-accent mt-1">로그인하면 5명까지 선택 가능!</p>}
           <p className="text-sm text-text-tertiary">최대 {maxPlayers}명 · 선택한 선수 중심으로 피드가 구성됩니다</p>
-          <div className="flex justify-center gap-1 mt-3">
-            {Array.from({length: maxPlayers}, (_, i) => i).map(i => (
-              <Star key={i} size={20} fill={i < selected.size ? team.colorLight : "none"}
-                className={i < selected.size ? "" : "text-text-tertiary"}
-                style={i < selected.size ? { color: team.colorLight } : {}} />
-            ))}
+
+          {/* 선택된 선수 슬롯 */}
+          <div className="flex justify-center gap-2.5 mt-3">
+            {Array.from({ length: maxPlayers }, (_, i) => {
+              const player = selectedPlayersArr[i];
+              return (
+                <div key={i} className="flex flex-col items-center w-14">
+                  {player ? (
+                    <button
+                      onClick={() => toggle(player)}
+                      className="relative group"
+                    >
+                      <PlayerAvatar
+                        name={player.name}
+                        teamId={player.teamId}
+                        photoUrl={getPlayerPhotoUrl(player.name, player.id)}
+                        number={0}
+                        size={44}
+                      />
+                      <div
+                        className="absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center"
+                        style={{ backgroundColor: team.colorLight }}
+                      >
+                        <X size={12} className="text-white" />
+                      </div>
+                      <p className="text-[11px] font-medium text-text-primary mt-1 truncate w-full text-center">
+                        {player.name}
+                      </p>
+                    </button>
+                  ) : (
+                    <div className="flex flex-col items-center">
+                      <div className="w-11 h-11 rounded-full border-2 border-dashed border-text-tertiary/30 flex items-center justify-center">
+                        <Plus size={16} className="text-text-tertiary/40" />
+                      </div>
+                      <p className="text-[11px] text-text-tertiary/40 mt-1">&nbsp;</p>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </motion.div>
 
