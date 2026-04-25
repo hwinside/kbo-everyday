@@ -36,10 +36,14 @@ export interface Comment {
   content: string;
   created_at: string;
   updated_at?: string | null;
+  parent_id?: number | null;
+  like_count?: number;
+  liked_by_me?: boolean;
   nickname?: string;
   team_id?: number;
   grade?: string;
   avatar_url?: string;
+  replies?: Comment[];
 }
 
 /** 게시글 목록 */
@@ -147,6 +151,17 @@ export function usePostDetail(postId: number) {
         .eq("post_id", postId)
         .order("created_at", { ascending: true });
 
+      // 내가 좋아요한 댓글 ID 목록
+      let myCommentLikeIds: Set<number> = new Set();
+      if (user && c?.length) {
+        const { data: cls } = await supabase
+          .from("comment_likes")
+          .select("comment_id")
+          .eq("user_id", user.id)
+          .in("comment_id", c.map((cm) => cm.id));
+        if (cls) myCommentLikeIds = new Set(cls.map((cl: { comment_id: number }) => cl.comment_id));
+      }
+
       if (c) {
         setComments(c.map((cm) => ({
           ...cm,
@@ -154,6 +169,7 @@ export function usePostDetail(postId: number) {
           team_id: (cm.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
           grade: (cm.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
           avatar_url: (cm.profiles as unknown as Record<string, unknown> | null)?.avatar_url as string | undefined,
+          liked_by_me: myCommentLikeIds.has(cm.id),
         })));
       }
 
@@ -352,8 +368,8 @@ export async function deleteComment(commentId: number) {
   if (error) throw error;
 }
 
-/** 댓글 작성 */
-export async function createComment(postId: number, content: string) {
+/** 댓글 작성 (대댓글: parentId 지정) */
+export async function createComment(postId: number, content: string, parentId?: number | null) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
 
@@ -361,6 +377,7 @@ export async function createComment(postId: number, content: string) {
     post_id: postId,
     author_id: user.id,
     content,
+    ...(parentId ? { parent_id: parentId } : {}),
   });
 
   if (error) throw error;
@@ -374,6 +391,29 @@ export async function createComment(postId: number, content: string) {
       ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
     },
   }).catch(() => {});
+}
+
+/** 댓글 좋아요 토글 */
+export async function toggleCommentLike(commentId: number): Promise<boolean> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("로그인 필요");
+
+  const { data: existing } = await supabase
+    .from("comment_likes")
+    .select("comment_id")
+    .eq("comment_id", commentId)
+    .eq("user_id", user.id)
+    .single();
+
+  if (existing) {
+    await supabase.from("comment_likes").delete()
+      .eq("comment_id", commentId)
+      .eq("user_id", user.id);
+    return false;
+  } else {
+    await supabase.from("comment_likes").insert({ comment_id: commentId, user_id: user.id });
+    return true;
+  }
 }
 
 /** 좋아요 토글 */

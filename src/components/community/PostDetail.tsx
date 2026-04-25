@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, MoreHorizontal, Check } from "lucide-react";
+import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, MoreHorizontal, Check, CornerDownRight, X } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getAvatarPath } from "@/lib/constants/avatars";
-import { usePostDetail, createComment, toggleLike, updatePost, deletePost, updateComment, deleteComment } from "@/lib/supabase/usePosts";
+import { usePostDetail, createComment, toggleLike, toggleCommentLike, updatePost, deletePost, updateComment, deleteComment } from "@/lib/supabase/usePosts";
 import ReportSheet from "@/components/community/ReportSheet";
 import LinkPreview from "@/components/community/LinkPreview";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -26,6 +26,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   const { post, comments, loading, liked, setLiked, setComments } = usePostDetail(postId);
   const [comment, setComment] = useState("");
   const [likeCount, setLikeCount] = useState(0);
+  const [replyTo, setReplyTo] = useState<{ id: number; nickname: string } | null>(null);
 
   // Chat-layout keyboard handling:
   // 1) Toggle body.kbd-open based on composer focus (TabBar hidden via CSS).
@@ -244,7 +245,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
     if (!user) { alert("로그인이 필요합니다"); return; }
     if (!comment.trim()) return;
     try {
-      await createComment(post!.id, comment.trim());
+      await createComment(post!.id, comment.trim(), replyTo?.id);
       setComment("");
       setComments(prev => [...prev, {
         id: Date.now(),
@@ -252,12 +253,44 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         author_id: user.id,
         content: comment.trim(),
         created_at: new Date().toISOString(),
+        parent_id: replyTo?.id ?? null,
+        like_count: 0,
+        liked_by_me: false,
         nickname: profile?.nickname ?? user?.user_metadata?.name ?? "나",
         team_id: profile?.team_id,
         grade: profile?.grade,
         avatar_url: profile?.avatar_url ?? undefined,
       }]);
+      setReplyTo(null);
     } catch {}
+  }
+
+  async function handleCommentLike(commentId: number) {
+    if (!user) { alert("로그인이 필요합니다"); return; }
+    // optimistic
+    setComments(prev =>
+      prev.map(c =>
+        c.id === commentId
+          ? { ...c, liked_by_me: !c.liked_by_me, like_count: (c.like_count ?? 0) + (c.liked_by_me ? -1 : 1) }
+          : c
+      )
+    );
+    try {
+      await toggleCommentLike(commentId);
+    } catch {
+      // revert
+      setComments(prev =>
+        prev.map(c =>
+          c.id === commentId
+            ? { ...c, liked_by_me: !c.liked_by_me, like_count: (c.like_count ?? 0) + (c.liked_by_me ? -1 : 1) }
+            : c
+        )
+      );
+    }
+  }
+
+  function handleReply(c: { id: number; parent_id?: number | null; nickname?: string }) {
+    setReplyTo({ id: c.parent_id ? c.parent_id : c.id, nickname: c.nickname || "익명" });
   }
 
   const timeAgo = (date: string) => {
@@ -427,93 +460,141 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           {comments.length === 0 ? (
             <p className="text-sm text-text-tertiary text-center py-6">첫 댓글을 남겨보세요 💬</p>
           ) : (
-            comments.map(c => {
-              const avatarPath = getAvatarPath(c.avatar_url ?? null);
-              const cmtTeam = c.team_id ? getTeamById(c.team_id) : undefined;
-              const isCmtMine = !!user && c.author_id === user.id;
-              const isCmtEditing = cmtEditingId === c.id;
-              const isCmtEdited = !!c.updated_at;
-              return (
-                <div key={c.id} className="flex gap-2.5">
-                  {avatarPath ? (
-                    <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-bg-tertiary cursor-pointer" onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>
-                      <img src={avatarPath} alt="" className="w-full h-full" />
-                    </div>
-                  ) : (
-                    <div
-                      className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0 cursor-pointer"
-                      style={{ backgroundColor: cmtTeam ? getTeamBgColor(cmtTeam) : '#6B7280' }}
-                      onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}
-                    >
-                      {(c.nickname || "익")[0]}
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>{c.nickname || "익명"}</span>
-                      {cmtTeam && (
-                        <span
-                          className="text-[10px] font-bold px-1.5 py-0.5 rounded-md text-white"
-                          style={{ backgroundColor: getTeamBgColor(cmtTeam) }}
-                        >
-                          {cmtTeam.shortName}
-                        </span>
-                      )}
-                      <span className="text-xs text-text-tertiary ml-auto flex-shrink-0">
-                        {timeAgo(c.created_at)}{isCmtEdited ? " · 수정됨" : ""}
-                      </span>
-                      {isCmtMine && !isCmtEditing && (
-                        <div className="relative flex-shrink-0">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setCmtMenuOpenId(prev => prev === c.id ? null : c.id); }}
-                            className="p-1 text-text-tertiary hover:text-text-primary"
-                            aria-label="댓글 메뉴"
-                          >
-                            <MoreHorizontal size={14} />
-                          </button>
-                          {cmtMenuOpenId === c.id && (
-                            <>
-                              <div className="fixed inset-0 z-10" onClick={() => setCmtMenuOpenId(null)} />
-                              <div className="absolute right-0 top-6 z-20 min-w-[96px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
-                                <button onClick={() => startCmtEdit(c)} className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">수정</button>
-                                <button onClick={() => handleDeleteComment(c.id)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    {isCmtEditing ? (
-                      <div className="mt-1 flex items-center gap-1.5">
-                        <input
-                          autoFocus
-                          type="text"
-                          value={cmtEditInput}
-                          onChange={e => setCmtEditInput(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); saveCmtEdit(); }
-                            else if (e.key === "Escape") { e.preventDefault(); setCmtEditingId(null); }
-                          }}
-                          className="flex-1 bg-bg-tertiary rounded-lg px-3 py-1.5 text-sm text-text-primary outline-none border border-border"
-                        />
-                        <button
-                          onClick={saveCmtEdit}
-                          disabled={!cmtEditInput.trim() || cmtSaving}
-                          className="flex items-center justify-center w-7 h-7 rounded-full text-white disabled:opacity-50"
-                          style={{ backgroundColor: post.team_id ? (() => { const t = getTeamById(post.team_id); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}
-                          aria-label="저장"
-                        >
-                          <Check size={14} />
-                        </button>
-                        <button onClick={() => setCmtEditingId(null)} className="text-[11px] text-text-tertiary px-1">취소</button>
+            (() => {
+              // Build comment tree (2-depth)
+              const roots: (typeof comments[0] & { replies: typeof comments })[] = [];
+              const childMap = new Map<number, typeof comments>();
+              for (const c of comments) {
+                if (!c.parent_id) {
+                  roots.push({ ...c, replies: [] });
+                } else {
+                  const arr = childMap.get(c.parent_id) || [];
+                  arr.push(c);
+                  childMap.set(c.parent_id, arr);
+                }
+              }
+              for (const root of roots) root.replies = childMap.get(root.id) || [];
+
+              const renderCmt = (c: typeof comments[0], isReply = false) => {
+                const avatarPath = getAvatarPath(c.avatar_url ?? null);
+                const cmtTeam = c.team_id ? getTeamById(c.team_id) : undefined;
+                const isCmtMine = !!user && c.author_id === user.id;
+                const isCmtEditing = cmtEditingId === c.id;
+                const isCmtEdited = !!c.updated_at;
+                const cmtLikeCount = c.like_count ?? 0;
+                return (
+                  <div key={c.id} className={`flex gap-2 ${isReply ? "pl-10" : ""}`}>
+                    {avatarPath ? (
+                      <div className={`${isReply ? "w-6 h-6" : "w-8 h-8"} rounded-full overflow-hidden flex-shrink-0 bg-bg-tertiary cursor-pointer`} onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>
+                        <img src={avatarPath} alt="" className="w-full h-full" />
                       </div>
                     ) : (
-                      <p className="readable-body mt-0.5 break-words">{c.content}</p>
+                      <div
+                        className={`${isReply ? "w-6 h-6 text-[10px]" : "w-8 h-8 text-xs"} rounded-full flex items-center justify-center font-bold text-white flex-shrink-0 cursor-pointer`}
+                        style={{ backgroundColor: cmtTeam ? getTeamBgColor(cmtTeam) : '#6B7280' }}
+                        onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}
+                      >
+                        {(c.nickname || "익")[0]}
+                      </div>
                     )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`${isReply ? "text-xs" : "text-sm"} font-semibold text-text-primary cursor-pointer hover:text-accent`} onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>{c.nickname || "익명"}</span>
+                        {cmtTeam && (
+                          <span
+                            className="text-[10px] font-bold px-1.5 py-0.5 rounded-md text-white"
+                            style={{ backgroundColor: getTeamBgColor(cmtTeam) }}
+                          >
+                            {cmtTeam.shortName}
+                          </span>
+                        )}
+                        <span className="text-xs text-text-tertiary ml-auto flex-shrink-0">
+                          {timeAgo(c.created_at)}{isCmtEdited ? " · 수정됨" : ""}
+                        </span>
+                        {isCmtMine && !isCmtEditing && (
+                          <div className="relative flex-shrink-0">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setCmtMenuOpenId(prev => prev === c.id ? null : c.id); }}
+                              className="p-1 text-text-tertiary hover:text-text-primary"
+                              aria-label="댓글 메뉴"
+                            >
+                              <MoreHorizontal size={14} />
+                            </button>
+                            {cmtMenuOpenId === c.id && (
+                              <>
+                                <div className="fixed inset-0 z-10" onClick={() => setCmtMenuOpenId(null)} />
+                                <div className="absolute right-0 top-6 z-20 min-w-[96px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
+                                  <button onClick={() => startCmtEdit(c)} className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">수정</button>
+                                  <button onClick={() => handleDeleteComment(c.id)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      {isCmtEditing ? (
+                        <div className="mt-1 flex items-center gap-1.5">
+                          <input
+                            autoFocus
+                            type="text"
+                            value={cmtEditInput}
+                            onChange={e => setCmtEditInput(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); saveCmtEdit(); }
+                              else if (e.key === "Escape") { e.preventDefault(); setCmtEditingId(null); }
+                            }}
+                            className="flex-1 bg-bg-tertiary rounded-lg px-3 py-1.5 text-sm text-text-primary outline-none border border-border"
+                          />
+                          <button
+                            onClick={saveCmtEdit}
+                            disabled={!cmtEditInput.trim() || cmtSaving}
+                            className="flex items-center justify-center w-7 h-7 rounded-full text-white disabled:opacity-50"
+                            style={{ backgroundColor: post.team_id ? (() => { const t = getTeamById(post.team_id); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}
+                            aria-label="저장"
+                          >
+                            <Check size={14} />
+                          </button>
+                          <button onClick={() => setCmtEditingId(null)} className="text-[11px] text-text-tertiary px-1">취소</button>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="readable-body mt-0.5 break-words">{c.content}</p>
+                          <div className="flex items-center gap-3 mt-1">
+                            <button
+                              onClick={() => handleCommentLike(c.id)}
+                              className="flex items-center gap-1 text-text-tertiary hover:text-[#FF453A] transition-colors"
+                            >
+                              <Heart size={12} className={c.liked_by_me ? "fill-[#FF453A] text-[#FF453A]" : ""} />
+                              {cmtLikeCount > 0 && <span className="text-[11px]">{cmtLikeCount}</span>}
+                            </button>
+                            {!isReply && (
+                              <button
+                                onClick={() => handleReply(c)}
+                                className="flex items-center gap-1 text-text-tertiary hover:text-text-primary transition-colors"
+                              >
+                                <CornerDownRight size={12} />
+                                <span className="text-[11px]">답글</span>
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
+                );
+              };
+
+              return roots.map(root => (
+                <div key={root.id}>
+                  {renderCmt(root)}
+                  {root.replies.length > 0 && (
+                    <div className="mt-3 space-y-3">
+                      {root.replies.map(reply => renderCmt(reply, true))}
+                    </div>
+                  )}
                 </div>
-              );
-            })
+              ));
+            })()
           )}
           {/* Scroll anchor: end of comments list. Used when there is >=1 comment. */}
           <div ref={commentsListEndRef} aria-hidden="true" />
@@ -529,6 +610,23 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         z-index (composer z-40 stays under TabBar z-50 visually because the
         layout container is shorter than 100svh in idle state).
       */}
+      {/* Reply indicator */}
+      {replyTo && (
+        <div className="fixed left-0 right-0 bg-bg-tertiary/80 border-t border-border px-4 py-2 flex items-center gap-2 z-40"
+          style={{
+            bottom: keyboardInset > 0
+              ? `${keyboardInset + 60}px`
+              : `calc(4rem + env(safe-area-inset-bottom, 0px) + 3.75rem)`,
+            transition: "bottom 80ms ease-out",
+          }}
+        >
+          <CornerDownRight size={12} className="text-text-tertiary" />
+          <span className="text-xs text-text-secondary">{replyTo.nickname}에게 답글</span>
+          <button onClick={() => setReplyTo(null)} className="ml-auto text-text-tertiary hover:text-text-primary">
+            <X size={14} />
+          </button>
+        </div>
+      )}
       <div
         data-composer="postdetail"
         className="fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40"
@@ -550,7 +648,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                 type="text"
                 value={comment}
                 onChange={e => setComment(e.target.value)}
-                placeholder={user ? "댓글을 입력하세요" : "로그인 후 댓글 작성 가능"}
+                placeholder={user ? (replyTo ? `${replyTo.nickname}에게 답글...` : "댓글을 입력하세요") : "로그인 후 댓글 작성 가능"}
                 disabled={!user}
                 className="flex-1 bg-bg-secondary rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none border"
                 style={{ borderColor: teamColor ? `${teamColor}80` : 'rgba(255,255,255,0.15)' }}
