@@ -637,14 +637,22 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             )}
 
             {/* GIF Picker */}
-            {showGifPicker && (
-              <div className="flex-none border-t border-border" style={{ height: "280px" }}>
-                <GifPicker
-                  onSelect={handleGifSelect}
-                  onClose={() => setShowGifPicker(false)}
-                />
-              </div>
-            )}
+            <AnimatePresence>
+              {showGifPicker && (
+                <motion.div
+                  className="flex-none border-t border-border overflow-hidden"
+                  initial={{ height: 0 }}
+                  animate={{ height: 280 }}
+                  exit={{ height: 0 }}
+                  transition={{ duration: 0.25, ease: "easeInOut" }}
+                >
+                  <GifPicker
+                    onSelect={handleGifSelect}
+                    onClose={() => setShowGifPicker(false)}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Input area */}
             <div className="flex-none border-t border-border px-4 py-3" style={{ paddingBottom: vvBottom > 0 ? "0.75rem" : "calc(0.75rem + env(safe-area-inset-bottom))" }}>

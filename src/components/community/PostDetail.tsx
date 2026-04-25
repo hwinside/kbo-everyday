@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, MoreHorizontal, Check, CornerDownRight, X, ImagePlay } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getAvatarPath } from "@/lib/constants/avatars";
@@ -668,23 +669,27 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         </div>
       )}
       {/* GIF Picker */}
-      {showGifPicker && (
-        <div
-          className="fixed left-0 right-0 bg-bg-secondary border-t border-border z-40"
-          style={{
-            height: "280px",
-            bottom: keyboardInset > 0
-              ? `${keyboardInset + 60}px`
-              : `calc(4rem + env(safe-area-inset-bottom, 0px) + 3.75rem)`,
-            transition: "bottom 80ms ease-out",
-          }}
-        >
-          <GifPicker
-            onSelect={handleGifSelect}
-            onClose={() => setShowGifPicker(false)}
-          />
-        </div>
-      )}
+      <AnimatePresence>
+        {showGifPicker && (
+          <motion.div
+            className="fixed left-0 right-0 bg-bg-secondary border-t border-border z-40 overflow-hidden"
+            style={{
+              bottom: keyboardInset > 0
+                ? `${keyboardInset + 60}px`
+                : `calc(4rem + env(safe-area-inset-bottom, 0px) + 3.75rem)`,
+            }}
+            initial={{ height: 0 }}
+            animate={{ height: 280 }}
+            exit={{ height: 0 }}
+            transition={{ duration: 0.25, ease: "easeInOut" }}
+          >
+            <GifPicker
+              onSelect={handleGifSelect}
+              onClose={() => setShowGifPicker(false)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
       <div
         data-composer="postdetail"
         className="fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40"
