@@ -3,7 +3,7 @@
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Check, Star, Search } from "lucide-react";
 import Image from "next/image";
@@ -13,6 +13,7 @@ import { getTeamById, TEAMS } from "@/lib/constants/teams";
 import TeamBadge from "@/components/ui/TeamBadge";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 import playersRoster from "@/lib/constants/players-roster.json";
+import { matchHangul } from "@/lib/utils/hangul-search";
 
 interface PlayerInfo {
   id: string;
@@ -41,8 +42,17 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
   const [showLogin, setShowLogin] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [isComposing, setIsComposing] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showAll, setShowAll] = useState(false);
   const team = getTeamById(teamId);
+
+  const handleSearchChange = useCallback((value: string) => {
+    setSearch(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedSearch(value), 150);
+  }, []);
 
   const allPlayers = useMemo<PlayerInfo[]>(() => {
     const roster = playersRoster as { kboId: string; name: string; team: string; teamId: number; position: string; backNo: string }[];
@@ -72,8 +82,9 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
   const myTeamPlayers = allPlayers.filter(p => p.teamId === teamId);
   const otherPlayers = allPlayers.filter(p => p.teamId !== teamId);
   const [visibleCount, setVisibleCount] = useState(30);
-  const allDisplayPlayers = search
-    ? allPlayers.filter(p => p.name.includes(search))
+  const activeQuery = isComposing ? search : debouncedSearch;
+  const allDisplayPlayers = activeQuery
+    ? allPlayers.filter(p => matchHangul(p.name, activeQuery))
     : showAll ? [...allPlayers].sort((a, b) => a.name.localeCompare(b.name, 'ko')) : myTeamPlayers;
   const displayPlayers = allDisplayPlayers.slice(0, visibleCount);
 
@@ -147,14 +158,16 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
           <input
             type="text"
             value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="선수 검색..."
+            onChange={e => handleSearchChange(e.target.value)}
+            onCompositionStart={() => setIsComposing(true)}
+            onCompositionEnd={e => { setIsComposing(false); handleSearchChange((e.target as HTMLInputElement).value); }}
+            placeholder="선수 검색 (초성 가능)"
             className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
           />
         </div>
 
         {/* 탭 */}
-        {!search && (
+        {!activeQuery && (
           <div className="flex gap-2 mb-3">
             <button onClick={() => { setShowAll(false); setVisibleCount(30); }}
               className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${!showAll ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"}`}>
@@ -171,7 +184,9 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }
           ref={scrollContainerRef}
           onScroll={handleScroll}
           className="space-y-2 max-h-[45vh] overflow-y-auto overscroll-contain">
-          {displayPlayers.length === 0 ? (
+          {search && !isComposing && debouncedSearch !== search ? (
+            <div className="text-center py-8 text-text-tertiary text-sm">검색중...</div>
+          ) : displayPlayers.length === 0 ? (
             <div className="text-center py-8 text-text-tertiary text-sm">검색 결과가 없습니다</div>
           ) : displayPlayers.map((player) => {
             const isSelected = selected.has(player.id);

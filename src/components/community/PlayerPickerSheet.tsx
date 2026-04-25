@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search } from "lucide-react";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
@@ -8,6 +8,7 @@ import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getTeamById, TEAMS } from "@/lib/constants/teams";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
+import { matchHangul } from "@/lib/utils/hangul-search";
 
 interface PlayerPickerSheetProps {
   open: boolean;
@@ -20,6 +21,15 @@ interface PlayerPickerSheetProps {
 
 export default function PlayerPickerSheet({ open, onClose, players: favPlayers, onSelect, userTeamId }: PlayerPickerSheetProps) {
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [isComposing, setIsComposing] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSearchChange = useCallback((value: string) => {
+    setSearch(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedSearch(value), 150);
+  }, []);
 
   const favIds = useMemo(() => new Set(favPlayers.map((p) => p.playerId)), [favPlayers]);
 
@@ -49,39 +59,43 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
     });
   }, []);
 
+  const activeQuery = isComposing ? search : debouncedSearch;
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return [];
-    const q = search.trim().toLowerCase();
+    if (!activeQuery.trim()) return [];
+    const q = activeQuery.trim();
     return allPlayers
-      .filter((p) => !favIds.has(p.playerId)) // exclude favorites (shown separately)
+      .filter((p) => !favIds.has(p.playerId))
       .filter((p) => {
         const team = getTeamById(p.teamId);
         return (
-          p.name.toLowerCase().includes(q) ||
-          (team?.shortName?.toLowerCase().includes(q)) ||
-          (team?.name?.toLowerCase().includes(q)) ||
+          matchHangul(p.name, q) ||
+          (team?.shortName && matchHangul(team.shortName, q)) ||
+          (team?.name && matchHangul(team.name, q)) ||
           p.backNo.includes(q)
         );
       })
       .slice(0, 30);
-  }, [search, allPlayers, favIds]);
+  }, [activeQuery, allPlayers, favIds]);
 
   // When no search: show user's team players (excluding favorites)
   const myTeamPlayers = useMemo(() => {
-    if (search.trim()) return [];
+    if (activeQuery.trim()) return [];
     if (!userTeamId) return [];
     return allPlayers
       .filter((p) => p.teamId === userTeamId && !favIds.has(p.playerId))
       .slice(0, 30);
-  }, [allPlayers, userTeamId, favIds, search]);
+  }, [allPlayers, userTeamId, favIds, activeQuery]);
 
   function handleSelect(playerId: string) {
     setSearch("");
+    setDebouncedSearch("");
     onSelect(playerId);
   }
 
   function handleClose() {
     setSearch("");
+    setDebouncedSearch("");
     onClose();
   }
 
@@ -124,9 +138,11 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
                 <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
                 <input
                   type="text"
-                  placeholder="선수 이름 또는 팀명으로 검색"
+                  placeholder="선수 검색 (초성 가능)"
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  onCompositionStart={() => setIsComposing(true)}
+                  onCompositionEnd={(e) => { setIsComposing(false); handleSearchChange((e.target as HTMLInputElement).value); }}
                   className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
                 />
               </div>
@@ -134,7 +150,7 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
 
             <div className="px-5 pb-24 overflow-y-auto flex-1">
               {/* Favorites section */}
-              {favPlayers.length > 0 && !search.trim() && (
+              {favPlayers.length > 0 && !activeQuery.trim() && (
                 <div className="mb-4">
                   <p className="text-xs font-medium text-text-tertiary mb-2 px-1">⭐ 내 최애선수</p>
                   <div className="space-y-1.5">
@@ -158,11 +174,11 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
               )}
 
               {/* Search results */}
-              {search.trim() && (
+              {activeQuery.trim() && (
                 <div>
                   {/* Also show matching favorites */}
                   {favPlayers
-                    .filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()))
+                    .filter((p) => matchHangul(p.name, activeQuery.trim()))
                     .map((player) => {
                       const ri = rosterMap.get(player.playerId);
                       return (
@@ -178,7 +194,7 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
                         />
                       );
                     })}
-                  {filtered.length === 0 && favPlayers.filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase())).length === 0 && (
+                  {filtered.length === 0 && favPlayers.filter((p) => matchHangul(p.name, activeQuery.trim())).length === 0 && (
                     <p className="text-sm text-text-tertiary text-center py-8">검색 결과가 없습니다</p>
                   )}
                   <div className="space-y-1.5">
@@ -198,7 +214,7 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
               )}
 
               {/* My team section (no search) */}
-              {!search.trim() && myTeamPlayers.length > 0 && (
+              {!activeQuery.trim() && myTeamPlayers.length > 0 && (
                 <div className="mb-4">
                   <p className="text-xs font-medium text-text-tertiary mb-2 px-1">
                     {getTeamById(userTeamId!)?.shortName ?? "내 팀"} 선수
@@ -220,9 +236,9 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
               )}
 
               {/* Prompt to search */}
-              {!search.trim() && (
+              {!activeQuery.trim() && (
                 <p className="text-xs text-text-tertiary text-center py-4">
-                  다른 선수는 이름으로 검색해보세요 🔍
+                  다른 선수는 이름이나 초성으로 검색해보세요 🔍
                 </p>
               )}
             </div>
