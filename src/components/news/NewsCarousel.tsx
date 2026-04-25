@@ -148,7 +148,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
           <button
             type="button"
             onClick={() => goTo(current - 1)}
-            className="absolute left-2 top-1/2 z-10 -translate-y-1/2 flex h-8 w-8 items-center justify-center rounded-full bg-white/25 text-white backdrop-blur-sm transition-opacity hover:bg-white/40"
+            className="absolute left-2 top-1/3 z-10 -translate-y-1/2 flex h-8 w-8 items-center justify-center rounded-full bg-white/25 text-white backdrop-blur-sm transition-opacity hover:bg-white/40"
             aria-label="이전 뉴스"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
@@ -156,7 +156,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
           <button
             type="button"
             onClick={() => goTo(current + 1)}
-            className="absolute right-2 top-1/2 z-10 -translate-y-1/2 flex h-8 w-8 items-center justify-center rounded-full bg-white/25 text-white backdrop-blur-sm transition-opacity hover:bg-white/40"
+            className="absolute right-2 top-1/3 z-10 -translate-y-1/2 flex h-8 w-8 items-center justify-center rounded-full bg-white/25 text-white backdrop-blur-sm transition-opacity hover:bg-white/40"
             aria-label="다음 뉴스"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6"/></svg>
