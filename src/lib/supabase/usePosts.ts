@@ -373,24 +373,27 @@ export async function createComment(postId: number, content: string, parentId?: 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
 
-  const { error } = await supabase.from("comments").insert({
+  const { data, error } = await supabase.from("comments").insert({
     post_id: postId,
     author_id: user.id,
     content,
     ...(parentId ? { parent_id: parentId } : {}),
-  });
+  }).select("id").single();
 
   if (error) throw error;
 
   // 초대 활성화 체크 (fire-and-forget)
   const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
   fetch("/api/invite/activate", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
   }).catch(() => {});
+
+  return data!;
 }
 
 /** 댓글 좋아요 토글 */

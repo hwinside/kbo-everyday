@@ -222,12 +222,12 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     if (!input.trim() || !postId || submitting) return;
     setSubmitting(true);
     try {
-      await createComment(postId, input.trim(), replyTo?.id);
-      // optimistic update
+      const result = await createComment(postId, input.trim(), replyTo?.id);
+      // optimistic update with real DB id
       setComments((prev) => [
         ...prev,
         {
-          id: Date.now(),
+          id: result.id,
           post_id: postId,
           author_id: user?.id ?? "",
           content: input.trim(),
@@ -245,8 +245,9 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       setReplyTo(null);
       if (postId) onCommentAdded?.(postId);
       refetchComments(postId);
-    } catch {
-      // silently fail
+    } catch (err) {
+      console.error("[CommentSheet] createComment failed:", err);
+      alert("댓글 저장에 실패했어요");
     } finally {
       setSubmitting(false);
     }

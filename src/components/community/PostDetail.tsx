@@ -245,10 +245,10 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
     if (!user) { alert("로그인이 필요합니다"); return; }
     if (!comment.trim()) return;
     try {
-      await createComment(post!.id, comment.trim(), replyTo?.id);
+      const result = await createComment(post!.id, comment.trim(), replyTo?.id);
       setComment("");
       setComments(prev => [...prev, {
-        id: Date.now(),
+        id: result.id,
         post_id: post!.id,
         author_id: user.id,
         content: comment.trim(),
@@ -262,7 +262,10 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         avatar_url: profile?.avatar_url ?? undefined,
       }]);
       setReplyTo(null);
-    } catch {}
+    } catch (err) {
+      console.error("[PostDetail] createComment failed:", err);
+      alert("댓글 저장에 실패했어요");
+    }
   }
 
   async function handleCommentLike(commentId: number) {
@@ -654,7 +657,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                 style={{ borderColor: teamColor ? `${teamColor}80` : 'rgba(255,255,255,0.15)' }}
                 onFocus={() => document.body.classList.add("kbd-open")}
                 onBlur={() => document.body.classList.remove("kbd-open")}
-                onKeyDown={e => e.key === "Enter" && handleComment()}
+                onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); handleComment(); } }}
               />
               <button onClick={handleComment} disabled={!comment.trim() || !user} className="w-9 h-9 rounded-full flex items-center justify-center text-white disabled:opacity-50 transition-opacity" style={{ backgroundColor: post.team_id ? (() => { const t = getTeamById(post.team_id); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}>
                 <Send size={16} />
