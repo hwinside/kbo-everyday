@@ -6,7 +6,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { nickname, team_id, invite_code } = body;
+    const { nickname, team_id, invite_code, favorite_players } = body;
 
     if (!nickname || !team_id) {
       return NextResponse.json({ error: "닉네임과 팀을 선택해주세요" }, { status: 400 });
@@ -67,12 +67,33 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "이미 사용 중인 닉네임입니다" }, { status: 409 });
     }
 
-    // 3. 프로필 생성
+    // 3. 최애선수 검증 (localStorage에서 전달된 값, 최대 5명)
+    const validatedPlayers = Array.isArray(favorite_players)
+      ? favorite_players
+          .filter(
+            (p: Record<string, unknown>) =>
+              typeof p.playerId === "string" &&
+              typeof p.name === "string" &&
+              typeof p.teamId === "number" &&
+              typeof p.position === "string" &&
+              typeof p.number === "number"
+          )
+          .slice(0, 5)
+          .map((p: Record<string, unknown>) => ({
+            playerId: String(p.playerId),
+            name: String(p.name),
+            teamId: Number(p.teamId),
+            position: String(p.position),
+            number: Number(p.number),
+          }))
+      : [];
+
+    // 4. 프로필 생성
     const { error: insertError } = await admin.from("profiles").insert({
       id: userId,
       nickname: trimmedNickname,
       team_id,
-      favorite_players: [],
+      favorite_players: validatedPlayers,
       invited_by: null,
       is_founder: false,
       invite_count: 5,
@@ -92,7 +113,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "프로필 생성 실패" }, { status: 500 });
     }
 
-    // 3. 초대코드 처리 (선택)
+    // 5. 초대코드 처리 (선택)
     if (invite_code) {
       const normalizedCode = invite_code.trim().toUpperCase();
       const { data: invite } = await admin

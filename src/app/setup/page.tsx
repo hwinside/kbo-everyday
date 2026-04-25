@@ -7,6 +7,7 @@ import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { trackEvent, OnboardingEvents } from "@/lib/analytics";
+import { getFavoritePlayers } from "@/lib/store/favorites";
 
 export default function SetupPage() {
   const { user } = useAuth();
@@ -194,6 +195,7 @@ export default function SetupPage() {
           nickname: nickname.trim(),
           team_id: selectedTeam,
           invite_code: effectiveInviteCode,
+          favorite_players: getFavoritePlayers(),
         }),
       });
 
