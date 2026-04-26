@@ -66,8 +66,14 @@ export async function GET(req: NextRequest) {
           const isShort = isShortCandidate({ title: e.title });
           // Precision 매칭: 공식 채널만 channelTeam 전달 (team_affinity 있는 커뮤니티는 허용 안 함)
           const playerIds = matchPlayers(e.title, playerAliases, isOfficial ? channelTeam : null);
-          // 커뮤니티 채널: 제목에서 팀 감지 (감지 실패 시 ETC)
-          const teamId = channelTeam ?? detectTeamFromTitle(e.title);
+          // team_id: 채널 팀 > 매칭된 선수의 소속팀 > 제목 감지 > ETC
+          // 선수 소속팀 우선 → 대전 영상에서 상대팀으로 잘못 잡히는 것 방지
+          let teamId = channelTeam;
+          if (!teamId && playerIds.length > 0) {
+            const firstPlayer = playerAliases.find((p) => p.kbo_id === playerIds[0]);
+            teamId = firstPlayer?.team ?? null;
+          }
+          if (!teamId) teamId = detectTeamFromTitle(e.title);
 
           let sourceType: VideoUpsertRow["source_type"];
           if (isOfficial) {
