@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Plus, XCircle, Loader2, ChevronLeft, Pencil, SkipForward, Play } from "lucide-react";
 import Image from "next/image";
 import imageCompression from "browser-image-compression";
-import { createPost, uploadImages, uploadVideos } from "@/lib/supabase/usePosts";
+import { createPost, uploadImages, uploadVideos, computeImageHashes } from "@/lib/supabase/usePosts";
 import MemeEditor from "@/components/editor/MemeEditor";
 import GamePicker, { type PickedGame } from "./GamePicker";
 import PlayerTagger from "./PlayerTagger";
@@ -196,6 +196,7 @@ export default function WritePhotoPost({
 
       let imageUrls: string[] = [];
       let videoUrls: string[] = [];
+      let imageHashes: string[] = [];
 
       if (imageItems.length > 0) {
         // GIF는 압축하면 애니메이션이 깨지므로 원본 업로드
@@ -213,6 +214,7 @@ export default function WritePhotoPost({
         );
         const allImageFiles = [...compressed, ...gifItems.map((g) => g.file)];
         imageUrls = await uploadImages(allImageFiles);
+        imageHashes = await computeImageHashes(allImageFiles);
       }
 
       if (videoItems.length > 0) {
@@ -226,6 +228,7 @@ export default function WritePhotoPost({
         content: caption.trim(),
         imageUrls,
         videoUrls,
+        imageHashes,
         contentType: "photo",
         gameId: selectedGame?.id,
         playerTags: selectedPlayers.map((p) => formatPlayerTag(p.kboId, p.name)),
@@ -237,7 +240,9 @@ export default function WritePhotoPost({
       onSuccess?.();
     } catch (e: unknown) {
       const msg = (e as Error).message || JSON.stringify(e);
-      if (msg.includes("exceeded") || msg.includes("maximum")) {
+      if (msg.includes("이미 올린 사진")) {
+        setToast("이미 올린 사진이에요. 다른 사진을 선택해 주세요.");
+      } else if (msg.includes("exceeded") || msg.includes("maximum")) {
         setToast("파일 크기가 제한을 초과했어요. 20MB 이하만 업로드 가능합니다.");
       } else {
         setToast("업로드 실패: " + msg);

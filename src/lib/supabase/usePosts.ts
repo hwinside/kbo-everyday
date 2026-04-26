@@ -200,6 +200,7 @@ export async function createPost(params: {
   content: string;
   imageUrls?: string[];
   videoUrls?: string[];
+  imageHashes?: string[];
   contentType?: "general" | "photo";
   gameId?: string;
   playerTags?: string[];
@@ -217,6 +218,7 @@ export async function createPost(params: {
     content: params.content,
     image_urls: params.imageUrls ?? [],
     video_urls: params.videoUrls ?? [],
+    image_hashes: params.imageHashes ?? [],
   };
 
   if (params.gameId) row.game_id = params.gameId;
@@ -288,9 +290,33 @@ export async function deletePost(postId: number) {
 }
 
 /** 이미지 업로드 (Supabase Storage) */
+async function computeFileHash(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+  return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export async function uploadImages(files: File[]): Promise<string[]> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
+
+  // 중복 이미지 검사: 같은 유저가 최근 올린 동일 해시 차단
+  const hashes: string[] = [];
+  for (const file of files) {
+    const hash = await computeFileHash(file);
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: existing } = await supabase
+      .from("posts")
+      .select("id")
+      .eq("author_id", user.id)
+      .contains("image_hashes", [hash])
+      .gte("created_at", since)
+      .limit(1);
+    if (existing && existing.length > 0) {
+      throw new Error("이미 올린 사진이에요");
+    }
+    hashes.push(hash);
+  }
 
   const urls: string[] = [];
   for (const file of files) {
@@ -310,6 +336,11 @@ export async function uploadImages(files: File[]): Promise<string[]> {
     urls.push(urlData.publicUrl);
   }
   return urls;
+}
+
+/** 업로드된 이미지들의 해시 계산 (createPost에서 사용) */
+export async function computeImageHashes(files: File[]): Promise<string[]> {
+  return Promise.all(files.map(computeFileHash));
 }
 
 /** 동영상 업로드 (Supabase Storage — videos 버킷) */
