@@ -5,8 +5,12 @@ const CRON_SECRET = process.env.CRON_SECRET || "";
 
 const JOB_PATHS: Record<string, string> = {
   "youtube-highlights": "/api/cron/highlights",
-  "roster-update": "/api/cron/roster",
+  "videos": "/api/cron/videos",
+  "videos-shorts": "/api/cron/videos-shorts",
   "stats-update": "/api/cron/stats",
+  "daily-analysis": "/api/cron/daily-analysis",
+  "retention": "/api/cron/retention",
+  "daily-fallback-report": "/api/cron/daily-fallback-report",
   "photos-check": "/api/cron/photos",
 };
 

@@ -24,8 +24,12 @@ interface JobLogRow {
 
 const JOB_INFOS = [
   { name: "youtube-highlights", label: "유튜브 하이라이트", schedule: "매 4시간", description: "구단별 유튜브 하이라이트 영상 수집" },
-  { name: "roster-update", label: "로스터 업데이트", schedule: "매일 06:00", description: "KBO 기록 페이지에서 선수 목록 수집" },
+  { name: "videos", label: "영상 수집 (RSS)", schedule: "매 6시간", description: "10팀 공식채널 RSS 롱폼+숏츠 수집" },
+  { name: "videos-shorts", label: "선수 숏츠", schedule: "매 6시간", description: "선수별 YouTube 숏츠 검색 수집" },
   { name: "stats-update", label: "선수 스탯 업데이트", schedule: "매일 06:00", description: "KBO 타자/투수 스탯 크롤링 → Supabase 저장" },
+  { name: "daily-analysis", label: "일일 경기 분석", schedule: "매일 05:00", description: "Gemini 기반 순위/타이틀 변동 분석 리포트" },
+  { name: "retention", label: "리텐션 집계", schedule: "매일 09:30", description: "코호트/활성화/경기일 리텐션 메트릭 집계" },
+  { name: "daily-fallback-report", label: "API 장애 리포트", schedule: "매일 09:00", description: "전일 API 장애 집계 → 텔레그램 전송" },
   { name: "photos-check", label: "선수 사진 모니터링", schedule: "매주 일 06:00", description: "KBO CDN 선수 사진 존재 여부 확인" },
 ];
 

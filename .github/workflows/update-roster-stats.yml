@@ -87,7 +87,7 @@ jobs:
 
           git push origin "$BRANCH"
 
-          gh pr create \
+          PR_URL=$(gh pr create \
             --title "📊 Roster/Stats 자동 업데이트 $(date +%Y-%m-%d)" \
             --body "## 자동 업데이트 (GitHub Actions)
 
@@ -97,9 +97,11 @@ jobs:
           | 타자 스탯 | ${{ steps.changes.outputs.batter_count }}명 |
           | 투수 스탯 | ${{ steps.changes.outputs.pitcher_count }}명 |
 
-          매일 새벽 5시(KST) 자동 크롤링 결과입니다.
-          변경사항 확인 후 머지해주세요." \
+          매일 새벽 5시(KST) 자동 크롤링 결과입니다." \
             --base main \
-            --head "$BRANCH"
+            --head "$BRANCH")
+
+          # CI 통과 시 자동 머지
+          gh pr merge "$PR_URL" --auto --squash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
