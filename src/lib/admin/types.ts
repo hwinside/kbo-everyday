@@ -102,11 +102,16 @@ export interface RetentionMetric {
   rate: number;
 }
 
-/** 코호트 히트맵 행: 한 주차의 D1/D7/D14/D30 잔존율 */
+/** 코호트 히트맵 행: 한 주차의 D1~D7/D14/D30 잔존율 */
 export interface CohortHeatmapRow {
   cohortKey: string;
   cohortSize: number;
   d1: number;
+  d2: number;
+  d3: number;
+  d4: number;
+  d5: number;
+  d6: number;
   d7: number;
   d14: number;
   d30: number;
@@ -127,4 +132,10 @@ export interface GamedayRetention {
   gd1: number;
   gd2: number;
   gd3: number;
+}
+
+/** 재방문 횟수 분포 */
+export interface VisitDistBucket {
+  bucket: string;   // "1", "2", ..., "9", "10+"
+  count: number;
 }

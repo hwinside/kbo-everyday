@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { isAdminRequest } from "@/lib/admin/pin";
-import type { CohortHeatmapRow, FunnelStep, GamedayRetention } from "@/lib/admin/types";
+import type { CohortHeatmapRow, FunnelStep, GamedayRetention, VisitDistBucket } from "@/lib/admin/types";
 
 const FUNNEL_LABELS: Record<string, string> = {
   signup: "가입",
@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (!latestDate) {
-    return NextResponse.json({ cohort: [], funnel: [], gameday: [], date: null });
+    return NextResponse.json({ cohort: [], funnel: [], gameday: [], visitDist: [], date: null });
   }
 
   // Cohort heatmap
@@ -60,12 +60,12 @@ export async function GET(req: NextRequest) {
         grouped.set(row.cohort_key, {
           cohortKey: row.cohort_key,
           cohortSize: row.total,
-          d1: 0, d7: 0, d14: 0, d30: 0,
+          d1: 0, d2: 0, d3: 0, d4: 0, d5: 0, d6: 0, d7: 0, d14: 0, d30: 0,
         });
       }
       const entry = grouped.get(row.cohort_key)!;
-      const key = row.metric_key.toLowerCase() as "d1" | "d7" | "d14" | "d30";
-      if (key in entry) {
+      const key = row.metric_key.toLowerCase() as keyof CohortHeatmapRow;
+      if (key in entry && key !== "cohortKey" && key !== "cohortSize") {
         (entry as unknown as Record<string, number>)[key] = row.rate;
         entry.cohortSize = Math.max(entry.cohortSize, row.total);
       }
@@ -127,5 +127,26 @@ export async function GET(req: NextRequest) {
     gameday = Array.from(grouped.values());
   }
 
-  return NextResponse.json({ cohort, funnel, gameday, date: latestDate });
+  // Visit frequency distribution
+  let visitDist: VisitDistBucket[] = [];
+  if (type === "all" || type === "visit_dist") {
+    const { data } = await supabase
+      .from("retention_metrics")
+      .select("*")
+      .eq("date", latestDate)
+      .eq("metric_type", "visit_dist")
+      .eq("cohort_key", "all")
+      .order("metric_key", { ascending: true });
+
+    const bucketOrder = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10+"];
+    const bucketMap = new Map<string, number>();
+    for (const row of data ?? []) {
+      bucketMap.set(row.metric_key, row.value);
+    }
+    visitDist = bucketOrder
+      .filter((b) => bucketMap.has(b))
+      .map((b) => ({ bucket: b, count: bucketMap.get(b)! }));
+  }
+
+  return NextResponse.json({ cohort, funnel, gameday, visitDist, date: latestDate });
 }

@@ -13,7 +13,7 @@ import {
   Line,
   Cell,
 } from "recharts";
-import type { CohortHeatmapRow, FunnelStep, GamedayRetention } from "@/lib/admin/types";
+import type { CohortHeatmapRow, FunnelStep, GamedayRetention, VisitDistBucket } from "@/lib/admin/types";
 
 function getPin(): string {
   if (typeof window === "undefined") return "";
@@ -59,6 +59,7 @@ interface RetentionData {
   cohort: CohortHeatmapRow[];
   funnel: FunnelStep[];
   gameday: GamedayRetention[];
+  visitDist: VisitDistBucket[];
   date: string | null;
 }
 
@@ -137,10 +138,9 @@ export default function RetentionPage() {
                 <tr className="text-gray-400 text-xs">
                   <th className="text-left py-2 pr-4">코호트</th>
                   <th className="text-right py-2 px-3">인원</th>
-                  <th className="text-center py-2 px-3">D1</th>
-                  <th className="text-center py-2 px-3">D7</th>
-                  <th className="text-center py-2 px-3">D14</th>
-                  <th className="text-center py-2 px-3">D30</th>
+                  {(["d1","d2","d3","d4","d5","d6","d7","d14","d30"] as const).map((k) => (
+                    <th key={k} className="text-center py-2 px-2">{k.toUpperCase()}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -152,10 +152,10 @@ export default function RetentionPage() {
                     <td className="py-2 px-3 text-right tabular-nums text-gray-400">
                       {row.cohortSize}
                     </td>
-                    {(["d1", "d7", "d14", "d30"] as const).map((key) => (
+                    {(["d1","d2","d3","d4","d5","d6","d7","d14","d30"] as const).map((key) => (
                       <td
                         key={key}
-                        className="py-2 px-3 text-center tabular-nums font-medium"
+                        className="py-2 px-2 text-center tabular-nums font-medium text-xs"
                         style={{
                           color: rateColor(row[key]),
                           background: rateBg(row[key]),
@@ -247,6 +247,32 @@ export default function RetentionPage() {
               <Line type="monotone" dataKey="gd2" stroke="#6366F1" strokeWidth={2} name="gd2" dot={{ r: 3 }} />
               <Line type="monotone" dataKey="gd3" stroke="#A855F7" strokeWidth={2} name="gd3" dot={{ r: 3 }} />
             </LineChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      <div className="glass-card p-5">
+        <h2 className="text-sm font-semibold mb-4">재방문 횟수별 유저 분포 (최근 30일)</h2>
+        {data.visitDist.length === 0 ? (
+          <p className="text-gray-500 text-sm">데이터 없음 — 다음 크론 실행 후 표시됩니다</p>
+        ) : (
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={data.visitDist} margin={{ left: 10, right: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+              <XAxis
+                dataKey="bucket"
+                stroke="#8E8E93"
+                fontSize={12}
+                label={{ value: "방문 횟수", position: "insideBottom", offset: -5, fill: "#8E8E93", fontSize: 11 }}
+              />
+              <YAxis stroke="#8E8E93" fontSize={11} />
+              <Tooltip
+                {...chartTooltipStyle}
+                formatter={(value) => [`${Number(value).toLocaleString()}명`, "유저 수"]}
+                labelFormatter={(label) => `${label}회 방문`}
+              />
+              <Bar dataKey="count" fill="#6366F1" radius={[4, 4, 0, 0]} />
+            </BarChart>
           </ResponsiveContainer>
         )}
       </div>

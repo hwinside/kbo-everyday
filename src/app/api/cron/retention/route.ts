@@ -7,6 +7,7 @@ import {
   computeCohortRetention,
   computeActivationFunnel,
   computeGamedayRetention,
+  computeVisitDistribution,
 } from "@/lib/retention/compute";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
@@ -38,13 +39,14 @@ export async function GET(req: NextRequest) {
     }
 
     // 2) 3축 집계
-    const [cohortRows, funnelRows, gamedayRows] = await Promise.all([
+    const [cohortRows, funnelRows, gamedayRows, visitDistRows] = await Promise.all([
       computeCohortRetention(supabase, targetDate),
       computeActivationFunnel(supabase, targetDate),
       computeGamedayRetention(supabase, targetDate, gameDates),
+      computeVisitDistribution(supabase, targetDate),
     ]);
 
-    const allRows = [...cohortRows, ...funnelRows, ...gamedayRows];
+    const allRows = [...cohortRows, ...funnelRows, ...gamedayRows, ...visitDistRows];
 
     // 3) Upsert — ON CONFLICT 로 기존 행 덮어쓰기 (중간 실패 시 기존 데이터 보존)
     if (allRows.length > 0) {
@@ -57,7 +59,7 @@ export async function GET(req: NextRequest) {
       if (error) throw error;
     }
 
-    const summary = `cohort:${cohortRows.length} funnel:${funnelRows.length} gameday:${gamedayRows.length} gameDates:${gameDates.length}`;
+    const summary = `cohort:${cohortRows.length} funnel:${funnelRows.length} gameday:${gamedayRows.length} visitDist:${visitDistRows.length} gameDates:${gameDates.length}`;
     await finishJob(logId, "success", summary);
 
     return NextResponse.json({ ok: true, date: targetDate, summary });

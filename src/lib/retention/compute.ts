@@ -82,7 +82,7 @@ export async function computeCohortRetention(
   const visitDays = await collectActivityDays(supabase, sixtyDaysAgo);
 
   // 3) 코호트별 D-N 잔존율 계산
-  const dayOffsets = [1, 7, 14, 30];
+  const dayOffsets = [1, 2, 3, 4, 5, 6, 7, 14, 30];
   const cohorts = new Map<string, { users: { id: string; signupDate: string }[] }>();
 
   for (const p of profiles) {
@@ -186,6 +186,50 @@ export async function computeActivationFunnel(
     value: s.value,
     rate: Math.round((s.value / totalSignups) * 10000) / 10000,
   }));
+}
+
+/**
+ * 재방문 횟수별 유저 분포: 최근 30일 내 활동일 수 기준으로 유저를 버킷팅.
+ * 1회, 2회, ..., 9회, 10회 이상.
+ */
+export async function computeVisitDistribution(
+  supabase: SupabaseClient,
+  targetDate: string,
+): Promise<MetricRow[]> {
+  const thirtyDaysAgo = new Date(
+    new Date(targetDate + "T00:00:00+09:00").getTime() - 30 * 86400000,
+  ).toISOString();
+
+  const visitDays = await collectActivityDays(supabase, thirtyDaysAgo);
+
+  // 활동이 1회 이상인 유저만 카운트
+  const buckets = new Map<string, number>();
+  for (let i = 1; i <= 9; i++) buckets.set(String(i), 0);
+  buckets.set("10+", 0);
+
+  for (const [, days] of visitDays) {
+    const count = days.size;
+    if (count <= 0) continue;
+    const key = count >= 10 ? "10+" : String(count);
+    buckets.set(key, (buckets.get(key) ?? 0) + 1);
+  }
+
+  const total = Array.from(buckets.values()).reduce((a, b) => a + b, 0);
+  if (total === 0) return [];
+
+  const rows: MetricRow[] = [];
+  for (const [bucket, count] of buckets) {
+    rows.push({
+      date: targetDate,
+      metric_type: "visit_dist",
+      cohort_key: "all",
+      metric_key: bucket,
+      total,
+      value: count,
+      rate: Math.round((count / total) * 10000) / 10000,
+    });
+  }
+  return rows;
 }
 
 /**
