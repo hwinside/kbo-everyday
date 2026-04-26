@@ -7,7 +7,7 @@
  *   - 선수 자동 태깅 (player-tagger)
  *   - 병렬 fetch (concurrency 제어)
  *
- * 스케줄: vercel.json crons (기존 6시간 → 향후 30분으로 단축 예정)
+ * 스케줄: vercel.json crons - 매 2시간 (15 every-2h)
  */
 
 import { NextRequest, NextResponse } from "next/server";
