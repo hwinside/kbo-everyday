@@ -13,6 +13,17 @@ function postLink(boardType: unknown, boardId: unknown, postId: unknown): string
   return `/community/teams/${boardId}/posts/${postId}`;
 }
 
+function topAuthors(items: { nickname: string }[], limit = 5) {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    counts.set(item.nickname, (counts.get(item.nickname) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([nickname, count]) => ({ nickname, count }));
+}
+
 function getTodayKSTRange() {
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -56,7 +67,7 @@ export async function GET(req: NextRequest) {
       link: postLink(p.board_type, p.board_id, p.id),
     }));
 
-    return NextResponse.json({ items });
+    return NextResponse.json({ items, topAuthors: topAuthors(items) });
   }
 
   if (type === "comments") {
@@ -101,7 +112,7 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({ items });
+    return NextResponse.json({ items, topAuthors: topAuthors(items) });
   }
 
   if (type === "photos") {
@@ -126,7 +137,7 @@ export async function GET(req: NextRequest) {
       imageUrls: (p.image_urls as string[]) ?? [],
     }));
 
-    return NextResponse.json({ items });
+    return NextResponse.json({ items, topAuthors: topAuthors(items) });
   }
 
   if (type === "chats") {
@@ -155,8 +166,8 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({ items });
+    return NextResponse.json({ items, topAuthors: topAuthors(items) });
   }
 
-  return NextResponse.json({ items: [] });
+  return NextResponse.json({ items: [], topAuthors: [] });
 }

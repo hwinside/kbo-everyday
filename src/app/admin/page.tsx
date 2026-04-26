@@ -167,11 +167,12 @@ function DetailModal({
   onClose: () => void;
 }) {
   const [items, setItems] = useState<DetailItem[]>([]);
+  const [authors, setAuthors] = useState<{ nickname: string; count: number }[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    apiFetch<{ items: DetailItem[] }>(`/api/admin/today-detail?type=${type}`)
-      .then((d) => setItems(d.items))
+    apiFetch<{ items: DetailItem[]; topAuthors?: { nickname: string; count: number }[] }>(`/api/admin/today-detail?type=${type}`)
+      .then((d) => { setItems(d.items); setAuthors(d.topAuthors ?? []); })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [type]);
@@ -199,6 +200,21 @@ function DetailModal({
           ) : items.length === 0 ? (
             <p className="text-center text-[#636366] py-10">데이터 없음</p>
           ) : (
+            <>
+            {authors.length > 0 && (
+              <div className="mb-4 p-3 rounded-xl bg-white/5">
+                <p className="text-xs text-[#8E8E93] mb-2">오늘 작성자 TOP 5</p>
+                <div className="flex flex-wrap gap-2">
+                  {authors.map((a, i) => (
+                    <span key={a.nickname} className="text-sm">
+                      <span className="text-[#8E8E93]">{i + 1}.</span>{" "}
+                      <span className="font-medium">{a.nickname}</span>{" "}
+                      <span className="text-[#636366]">({a.count}건)</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-white/8">
@@ -250,6 +266,7 @@ function DetailModal({
                 ))}
               </tbody>
             </table>
+            </>
           )}
         </div>
       </div>
