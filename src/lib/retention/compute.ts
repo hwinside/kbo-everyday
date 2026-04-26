@@ -27,8 +27,8 @@ function isoWeek(dateStr: string): string {
 const MIN_COHORT = "2026-W16";
 
 /**
- * 유저별 활동일 수집: posts, comments, likes, chat_messages에서 활동일 추출.
- * admin_page_views가 비어있으므로 실제 활동 데이터를 방문 기준으로 사용.
+ * 유저별 활동일 수집: posts, comments, likes, chat_messages, admin_page_views에서 활동일 추출.
+ * broad revisit: 페이지 방문도 활동으로 포함.
  */
 async function collectActivityDays(
   supabase: SupabaseClient,
@@ -43,17 +43,19 @@ async function collectActivityDays(
     visitDays.get(userId)!.add(day);
   }
 
-  const [posts, comments, likes, chats] = await Promise.all([
+  const [posts, comments, likes, chats, pageViews] = await Promise.all([
     supabase.from("posts").select("author_id, created_at").gte("created_at", since),
     supabase.from("comments").select("author_id, created_at").gte("created_at", since),
     supabase.from("likes").select("user_id, created_at").gte("created_at", since),
     supabase.from("chat_messages").select("user_id, created_at").gte("created_at", since),
+    supabase.from("admin_page_views").select("user_id, created_at").gte("created_at", since).not("user_id", "is", null),
   ]);
 
   for (const r of posts.data ?? []) addVisit(r.author_id, r.created_at);
   for (const r of comments.data ?? []) addVisit(r.author_id, r.created_at);
   for (const r of likes.data ?? []) addVisit(r.user_id, r.created_at);
   for (const r of chats.data ?? []) addVisit(r.user_id, r.created_at);
+  for (const r of pageViews.data ?? []) addVisit(r.user_id, r.created_at);
 
   return visitDays;
 }
