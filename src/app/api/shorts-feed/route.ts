@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
   // When team is specified AND player_ids are present, include community/ETC videos
   // that match the user's favorite players — this is the core feature:
   // "선수 관련 숏츠는 공식이 아니어도 다 보여준다"
-  const selectCols = "video_id, title, thumbnail, channel, channel_id, published_at, source_type, player_id, player_ids, noise_flags";
+  const selectCols = "video_id, title, thumbnail, channel, channel_id, published_at, source_type, player_id, player_ids, noise_flags, team_id";
   const fetchLimit = limit * 3;
 
   let data: any[] | null = null;
@@ -102,17 +102,27 @@ export async function GET(req: NextRequest) {
     sourceType: v.source_type,
     playerId: v.player_id,
     playerIds: v.player_ids ?? [],
+    teamId: v.team_id ?? null,
   }));
 
-  // Sort: favorite player matches first, then recency
+  // Sort: player matches partitioned to front, then recency within each group
   const playerIdSet = new Set(playerIds);
   if (playerIdSet.size > 0) {
-    items.sort((a, b) => {
-      const aMatch = a.playerIds.some((id: string) => playerIdSet.has(id)) ? 1 : 0;
-      const bMatch = b.playerIds.some((id: string) => playerIdSet.has(id)) ? 1 : 0;
-      if (aMatch !== bMatch) return bMatch - aMatch;
-      return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
-    });
+    const playerMatched: typeof items = [];
+    const rest: typeof items = [];
+    for (const item of items) {
+      if (item.playerIds.some((id: string) => playerIdSet.has(id))) {
+        playerMatched.push(item);
+      } else {
+        rest.push(item);
+      }
+    }
+    const byRecency = (a: typeof items[0], b: typeof items[0]) =>
+      new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
+    playerMatched.sort(byRecency);
+    rest.sort(byRecency);
+    items.length = 0;
+    items.push(...playerMatched, ...rest);
   }
 
   // Diversity: max 3 from same channel in a row

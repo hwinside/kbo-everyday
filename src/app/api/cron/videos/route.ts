@@ -21,6 +21,7 @@ import {
 } from "@/lib/video/noise-flags";
 import { upsertVideos, type VideoUpsertRow } from "@/lib/video/videos-repo";
 import { loadPlayerAliases, matchPlayers } from "@/lib/video/player-tagger";
+import { detectTeamFromTitle } from "@/lib/video/team-detector";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const CONCURRENCY = 10;
@@ -58,12 +59,15 @@ export async function GET(req: NextRequest) {
       batch.map(async (ch) => {
         const entries = await fetchChannelRss(ch.channel_id);
         const isOfficial = OFFICIAL_CHANNEL_IDS.has(ch.channel_id);
-        const teamId = ch.team_affinity?.[0] ?? "ETC";
+        const channelTeam = ch.team_affinity?.[0] ?? null;
 
         const rows: VideoUpsertRow[] = entries.map((e) => {
           const noiseFlags = extractNoiseFlags(e.title, e.channel);
           const isShort = isShortCandidate({ title: e.title });
-          const playerIds = matchPlayers(e.title, playerAliases);
+          // Precision 매칭: 공식 채널은 channelTeam 전달, 커뮤니티는 null
+          const playerIds = matchPlayers(e.title, playerAliases, channelTeam);
+          // 커뮤니티 채널: 제목에서 팀 감지 (감지 실패 시 ETC)
+          const teamId = channelTeam ?? detectTeamFromTitle(e.title);
 
           let sourceType: VideoUpsertRow["source_type"];
           if (isOfficial) {

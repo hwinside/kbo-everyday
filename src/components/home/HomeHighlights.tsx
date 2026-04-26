@@ -3,7 +3,16 @@
 import { useEffect, useState } from "react";
 import { Play } from "lucide-react";
 import { getFavoritePlayers } from "@/lib/store/favorites";
+import { TEAMS } from "@/lib/constants/teams";
 import ReelViewer from "@/components/home/ReelViewer";
+
+/** team shortName lookup by various keys */
+const TEAM_LABEL: Record<string, string> = {};
+for (const t of TEAMS) {
+  TEAM_LABEL[String(t.id)] = t.shortName;
+  TEAM_LABEL[t.shortName] = t.shortName;
+  TEAM_LABEL[t.slug] = t.shortName;
+}
 
 interface VideoItem {
   id: string;
@@ -11,7 +20,10 @@ interface VideoItem {
   thumbnail: string;
   channel: string;
   publishedAt: string;
-  label?: string;
+  playerIds: string[];
+  teamId: string | null;
+  isPlayerMatch: boolean;
+  label: string;
 }
 
 interface HomeHighlightsProps {
@@ -28,6 +40,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
     if (!team) { setLoading(false); return; }
 
     const favPlayers = getFavoritePlayers().slice(0, 5);
+    const favPlayerMap = new Map(favPlayers.map(p => [p.playerId, p.name]));
     const playerIdsParam = favPlayers.length > 0
       ? `&player_ids=${encodeURIComponent(favPlayers.map(p => p.playerId).join(","))}`
       : "";
@@ -35,14 +48,26 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
     fetch(`/api/shorts-feed?team=${encodeURIComponent(team)}${playerIdsParam}`)
       .then(r => r.json())
       .then((data) => {
-        const items: VideoItem[] = (data.items || []).map((v: any) => ({
-          id: v.id,
-          title: v.title,
-          thumbnail: v.thumbnail,
-          channel: v.channel,
-          publishedAt: v.publishedAt,
-          label: v.sourceType?.startsWith("official") ? team : v.channel,
-        }));
+        const items: VideoItem[] = (data.items || []).map((v: any) => {
+          // Label: 선수명 > 팀명 > 없음 (채널명 NO)
+          const matchedPlayer = (v.playerIds ?? []).find((id: string) => favPlayerMap.has(id));
+          const teamLabel = v.teamId ? (TEAM_LABEL[v.teamId] ?? null) : null;
+          const label = matchedPlayer
+            ? favPlayerMap.get(matchedPlayer)!
+            : teamLabel ?? "";
+
+          return {
+            id: v.id,
+            title: v.title,
+            thumbnail: v.thumbnail,
+            channel: v.channel,
+            publishedAt: v.publishedAt,
+            playerIds: v.playerIds ?? [],
+            teamId: v.teamId ?? null,
+            isPlayerMatch: !!matchedPlayer,
+            label,
+          };
+        });
         setVideos(items.slice(0, 30));
         setLoading(false);
       }).catch(() => setLoading(false));
@@ -69,7 +94,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
               </div>
               {v.label && (
                 <span className={`absolute top-2 left-2 px-1.5 py-0.5 rounded-full text-xs font-semibold text-white ${
-                  v.label === "공식" ? "bg-blue-500/80" : "bg-accent/80"
+                  v.isPlayerMatch ? "bg-rose-500/80" : "bg-blue-500/80"
                 }`}>
                   {v.label}
                 </span>
