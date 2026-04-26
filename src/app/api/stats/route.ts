@@ -126,6 +126,7 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
       cs: runner?.cs || 0,
       kboId: found?.kboId || "",
       playerId: found?.kboId || "",
+      qualifiedRate: 1, // HRA_RT 페이지 = KBO 규정타석 충족 선수만 반환
     };
   });
 }

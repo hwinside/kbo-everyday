@@ -25,6 +25,7 @@ export interface RealBatterStat {
   ops?: string;
   obp?: string;
   slg?: string;
+  qualifiedRate?: number; // 1 = KBO 규정타석 충족 (HRA_RT 페이지 기준)
   [key: string]: string | number | undefined;
 }
 
