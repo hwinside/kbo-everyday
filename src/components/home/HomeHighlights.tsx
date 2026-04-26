@@ -51,12 +51,12 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
       .then(r => r.json())
       .then((data) => {
         const items: VideoItem[] = (data.items || []).map((v: any) => {
-          // Label priority: 선수명 > 팀명 > 채널명 (never null)
+          // Label priority: 선수명 > 팀명 (채널명 표시 안 함)
           const matchedPlayer = (v.playerIds ?? []).find((id: string) => favPlayerMap.has(id));
           const teamLabel = v.teamId ? (TEAM_LABEL[v.teamId] ?? null) : null;
           const label = matchedPlayer
             ? favPlayerMap.get(matchedPlayer)!
-            : teamLabel ?? v.channel ?? "숏츠";
+            : teamLabel ?? "";
 
           return {
             id: v.id,
