@@ -24,18 +24,63 @@ export async function GET(req: NextRequest) {
   );
 
   // Fetch shorts candidates, over-fetch for post-filtering
-  let query = supabaseAdmin
-    .from("videos")
-    .select("video_id, title, thumbnail, channel, channel_id, published_at, source_type, player_id, player_ids, noise_flags")
-    .eq("is_short_candidate", true)
-    .order("published_at", { ascending: false })
-    .limit(limit * 3);
+  // When team is specified AND player_ids are present, include community/ETC videos
+  // that match the user's favorite players — this is the core feature:
+  // "선수 관련 숏츠는 공식이 아니어도 다 보여준다"
+  const selectCols = "video_id, title, thumbnail, channel, channel_id, published_at, source_type, player_id, player_ids, noise_flags";
+  const fetchLimit = limit * 3;
 
-  if (team !== "_ALL") {
-    query = query.eq("team_id", team);
+  let data: any[] | null = null;
+  let error: any = null;
+
+  if (team !== "_ALL" && playerIds.length > 0) {
+    // Two queries: team-scoped + player-matched from any team (including ETC)
+    const [teamResult, playerResult] = await Promise.all([
+      supabaseAdmin
+        .from("videos")
+        .select(selectCols)
+        .eq("is_short_candidate", true)
+        .eq("team_id", team)
+        .order("published_at", { ascending: false })
+        .limit(fetchLimit),
+      supabaseAdmin
+        .from("videos")
+        .select(selectCols)
+        .eq("is_short_candidate", true)
+        .overlaps("player_ids", playerIds)
+        .order("published_at", { ascending: false })
+        .limit(fetchLimit),
+    ]);
+
+    error = teamResult.error || playerResult.error;
+    if (!error) {
+      // Merge and deduplicate
+      const seen = new Set<string>();
+      const merged: any[] = [];
+      for (const v of [...(teamResult.data ?? []), ...(playerResult.data ?? [])]) {
+        if (!seen.has(v.video_id)) {
+          seen.add(v.video_id);
+          merged.push(v);
+        }
+      }
+      data = merged;
+    }
+  } else {
+    const query = supabaseAdmin
+      .from("videos")
+      .select(selectCols)
+      .eq("is_short_candidate", true)
+      .order("published_at", { ascending: false })
+      .limit(fetchLimit);
+
+    if (team !== "_ALL") {
+      query.eq("team_id", team);
+    }
+
+    const result = await query;
+    data = result.data;
+    error = result.error;
   }
-
-  const { data, error } = await query;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
