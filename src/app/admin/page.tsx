@@ -206,10 +206,12 @@ function DetailModal({
                   <tr key={item.id} className="border-b border-white/5">
                     <td className="py-2.5 text-[#8E8E93] whitespace-nowrap">{formatTime(item.time)}</td>
                     <td className="py-2.5 font-medium truncate max-w-[80px]">{item.nickname}</td>
-                    <td className="py-2.5 truncate max-w-[300px]">
-                      {item.title && item.title !== "(제목 없음)" && item.title !== "(직찍)"
-                        ? <><span className="font-medium">{item.title}</span> <span className="text-[#8E8E93]">{item.content}</span></>
-                        : item.content}
+                    <td className="py-2.5 max-w-[300px]">
+                      <div className="whitespace-pre-wrap break-words text-sm">
+                        {item.title && item.title !== "(제목 없음)" && item.title !== "(직찍)"
+                          ? <><span className="font-medium">{item.title}</span> <span className="text-[#8E8E93]">{item.content}</span></>
+                          : item.content}
+                      </div>
                     </td>
                     <td className="py-2.5 text-right">
                       {item.link && (

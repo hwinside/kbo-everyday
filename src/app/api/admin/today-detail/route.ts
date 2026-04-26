@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
       time: p.created_at,
       nickname: (p.profiles as { nickname?: string } | null)?.nickname ?? "익명",
       title: p.title || "(제목 없음)",
-      content: typeof p.content === "string" ? p.content.slice(0, 80) : "",
+      content: typeof p.content === "string" ? p.content : "",
       link: `/community/${p.board_type === "player" ? "player" : "team"}/${p.board_id}/${p.id}`,
     }));
 
@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
         time: c.created_at,
         nickname: (c.profiles as { nickname?: string } | null)?.nickname ?? "익명",
         title: "",
-        content: typeof c.content === "string" ? c.content.slice(0, 80) : "",
+        content: typeof c.content === "string" ? c.content : "",
         link: `/community/${post?.board_type === "player" ? "player" : "team"}/${post?.board_id}/${c.post_id}`,
       };
     });
@@ -96,7 +96,7 @@ export async function GET(req: NextRequest) {
       time: p.created_at,
       nickname: (p.profiles as { nickname?: string } | null)?.nickname ?? "익명",
       title: p.title || "(직찍)",
-      content: typeof p.content === "string" ? p.content.slice(0, 80) : "",
+      content: typeof p.content === "string" ? p.content : "",
       link: `/community/${p.board_type === "player" ? "player" : "team"}/${p.board_id}/${p.id}`,
     }));
 
@@ -124,7 +124,7 @@ export async function GET(req: NextRequest) {
         time: m.created_at,
         nickname: (m.profiles as { nickname?: string } | null)?.nickname ?? "익명",
         title: "",
-        content: typeof m.content === "string" ? m.content.slice(0, 80) : "",
+        content: typeof m.content === "string" ? m.content : "",
         link: gameId ? `/game/${gameId}` : "",
       };
     });
