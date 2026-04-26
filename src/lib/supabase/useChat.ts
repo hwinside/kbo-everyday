@@ -109,7 +109,7 @@ export function useChat(roomId: string) {
   // 메시지 전송 (주 경로: insert 결과 즉시 local append)
   const sendMessage = useCallback(
     async (content: string) => {
-      if (!user || !content.trim()) return false;
+      if (!user || !content.trim() || content.trim().length > 120) return false;
 
       const { data, error } = await supabase
         .from("chat_messages")

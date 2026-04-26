@@ -276,23 +276,34 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         }}
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            placeholder={canWrite ? (room === "all" ? "메시지 입력..." : `${roomLabels[room]}에 메시지...`) : writeBlockedReason}
-            disabled={!canWrite}
-            autoComplete="off"
-            name="chat-message"
-            maxLength={200}
-            className={clsx(
-              "flex-1 h-10 px-4 rounded-full text-sm",
-              "bg-bg-tertiary text-text-primary placeholder:text-text-tertiary",
-              "border border-border focus:border-accent/50 focus:outline-none transition-colors",
-              !canWrite && "opacity-50"
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSend()}
+              placeholder={canWrite ? (room === "all" ? "메시지 입력..." : `${roomLabels[room]}에 메시지...`) : writeBlockedReason}
+              disabled={!canWrite}
+              autoComplete="off"
+              name="chat-message"
+              maxLength={120}
+              className={clsx(
+                "w-full h-10 px-4 rounded-full text-sm",
+                "bg-bg-tertiary text-text-primary placeholder:text-text-tertiary",
+                "border focus:outline-none transition-colors",
+                !canWrite && "opacity-50",
+                input.length >= 120 ? "border-red-500/60" : "border-border focus:border-accent/50"
+              )}
+            />
+            {input.length >= 100 && (
+              <span className={clsx(
+                "absolute right-3 top-1/2 -translate-y-1/2 text-[10px] pointer-events-none",
+                input.length >= 120 ? "text-red-400" : "text-text-tertiary"
+              )}>
+                {input.length}/120
+              </span>
             )}
-          />
+          </div>
           <motion.button
             whileTap={{ scale: 0.9 }}
             onClick={handleSend}
