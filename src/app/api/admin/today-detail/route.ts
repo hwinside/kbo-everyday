@@ -54,9 +54,10 @@ export async function GET(req: NextRequest) {
   }
 
   if (type === "comments") {
+    // 댓글 + 작성자 닉네임 + 원글 정보 조회
     const { data, error } = await supabase
       .from("comments")
-      .select("id, content, post_id, created_at, author_id, profiles(nickname), posts(board_type, board_id)")
+      .select("id, content, post_id, created_at, author_id")
       .gte("created_at", start)
       .lte("created_at", end)
       .order("created_at", { ascending: false })
@@ -64,15 +65,33 @@ export async function GET(req: NextRequest) {
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    const items = (data ?? []).map((c: Record<string, unknown>) => {
-      const post = c.posts as { board_type?: string; board_id?: string } | null;
+    // 별도로 프로필과 원글 정보 조회
+    const authorIds = [...new Set((data ?? []).map((c: { author_id: string }) => c.author_id))];
+    const postIds = [...new Set((data ?? []).map((c: { post_id: number }) => c.post_id))];
+
+    const [profilesRes, postsRes] = await Promise.all([
+      authorIds.length > 0
+        ? supabase.from("profiles").select("id, nickname").in("id", authorIds)
+        : { data: [] },
+      postIds.length > 0
+        ? supabase.from("posts").select("id, board_type, board_id").in("id", postIds)
+        : { data: [] },
+    ]);
+
+    const profileMap = new Map((profilesRes.data ?? []).map((p: { id: string; nickname: string }) => [p.id, p.nickname]));
+    const postMap = new Map((postsRes.data ?? []).map((p: { id: number; board_type: string; board_id: string }) => [p.id, p]));
+
+    const items = (data ?? []).map((c: { id: number; content: string; post_id: number; created_at: string; author_id: string }) => {
+      const post = postMap.get(c.post_id);
       return {
         id: c.id,
         time: c.created_at,
-        nickname: (c.profiles as { nickname?: string } | null)?.nickname ?? "익명",
+        nickname: profileMap.get(c.author_id) ?? "익명",
         title: "",
-        content: typeof c.content === "string" ? c.content : "",
-        link: `/community/${post?.board_type === "player" ? "player" : "team"}/${post?.board_id}/${c.post_id}`,
+        content: c.content ?? "",
+        link: post
+          ? `/community/${post.board_type === "player" ? "player" : "team"}/${post.board_id}/${c.post_id}`
+          : "",
       };
     });
 

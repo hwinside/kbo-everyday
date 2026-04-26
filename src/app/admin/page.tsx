@@ -217,7 +217,7 @@ function DetailModal({
                         <div className="flex gap-1 mt-1">
                           {item.imageUrls.slice(0, 3).map((url, i) => (
                             <a key={i} href={url} target="_blank" rel="noopener noreferrer">
-                              <img src={url} alt="" className="w-12 h-12 rounded object-cover" />
+                              <img src={url} alt="" className="w-24 h-24 rounded object-cover" />
                             </a>
                           ))}
                           {item.imageUrls.length > 3 && (
