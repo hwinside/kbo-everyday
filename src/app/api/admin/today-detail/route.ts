@@ -7,6 +7,12 @@ import { isAdminRequest } from "@/lib/admin/pin";
  * 오늘 KST 기준 상세 목록 반환
  */
 
+function postLink(boardType: unknown, boardId: unknown, postId: unknown): string {
+  if (boardType === "free") return `/community/free/${postId}`;
+  if (boardType === "player") return `/community/players/${boardId}/posts/${postId}`;
+  return `/community/teams/${boardId}/posts/${postId}`;
+}
+
 function getTodayKSTRange() {
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -47,7 +53,7 @@ export async function GET(req: NextRequest) {
       nickname: (p.profiles as { nickname?: string } | null)?.nickname ?? "익명",
       title: p.title || "(제목 없음)",
       content: typeof p.content === "string" ? p.content : "",
-      link: `/community/${p.board_type === "player" ? "players" : "teams"}/${p.board_id}/posts/${p.id}`,
+      link: postLink(p.board_type, p.board_id, p.id),
     }));
 
     return NextResponse.json({ items });
@@ -90,7 +96,7 @@ export async function GET(req: NextRequest) {
         title: "",
         content: c.content ?? "",
         link: post
-          ? `/community/${post.board_type === "player" ? "players" : "teams"}/${post.board_id}/posts/${c.post_id}`
+          ? postLink(post.board_type, post.board_id, c.post_id)
           : "",
       };
     });
@@ -116,7 +122,7 @@ export async function GET(req: NextRequest) {
       nickname: (p.profiles as { nickname?: string } | null)?.nickname ?? "익명",
       title: p.title || "(사진)",
       content: typeof p.content === "string" ? p.content : "",
-      link: `/community/${p.board_type === "player" ? "players" : "teams"}/${p.board_id}/posts/${p.id}`,
+      link: postLink(p.board_type, p.board_id, p.id),
       imageUrls: (p.image_urls as string[]) ?? [],
     }));
 
