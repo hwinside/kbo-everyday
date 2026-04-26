@@ -18,7 +18,6 @@ import InviteTab from "@/components/profile/InviteTab";
 import BadgeDetailModal from "@/components/profile/BadgeDetailModal";
 import BadgesTab from "@/components/profile/BadgesTab";
 import DMButton from "@/components/ui/DMButton";
-import LevelBadge from "@/components/ui/LevelBadge";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 
@@ -99,6 +98,30 @@ export default function ProfilePage() {
         .eq("user_id", userId)
         .order("earned_at", { ascending: false });
       if (b) setBadges(b);
+
+      // 본인 프로필이면 배지 체크 트리거 (새 배지 자동 부여)
+      if (user?.id === userId) {
+        fetch("/api/badges", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId }),
+        })
+          .then(res => res.json())
+          .then(data => {
+            if (data.newBadges?.length > 0) {
+              // 새 배지가 부여되면 배지 목록 새로고침
+              supabase
+                .from("user_badges")
+                .select("badge_id, earned_at")
+                .eq("user_id", userId)
+                .order("earned_at", { ascending: false })
+                .then(({ data: refreshed }) => {
+                  if (refreshed) setBadges(refreshed);
+                });
+            }
+          })
+          .catch(() => {});
+      }
 
       if (p?.show_posts) {
         const { data: posts } = await supabase

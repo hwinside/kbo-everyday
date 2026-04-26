@@ -90,7 +90,7 @@ export const BADGES = ALL_BADGES.filter(b => ACTIVE_BADGE_IDS.has(b.id));
 export const BADGE_MAP = Object.fromEntries(ALL_BADGES.map(b => [b.id, b]));
 
 export const RARITY_COLORS: Record<string, string> = {
-  common: "#9CA3AF",
+  common: "#C8BFA9",
   rare: "#3B82F6",
   epic: "#8B5CF6",
   legendary: "#F59E0B",
