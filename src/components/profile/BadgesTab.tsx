@@ -60,7 +60,7 @@ export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: Bad
                     whileTap={{ scale: 0.95 }}
                     onClick={() => onSelectBadge(badge)}
                     className={`text-center p-2 rounded-xl transition-all cursor-pointer relative ${
-                      earned ? "" : "opacity-30"
+                      earned ? "" : "opacity-60"
                     }`}
                     style={earned ? {
                       background: RARITY_GLOW[badge.rarity],
@@ -83,7 +83,7 @@ export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: Bad
                       className="block"
                       style={{
                         fontSize: earned ? "2rem" : "1.5rem",
-                        filter: earned ? "none" : "opacity(0.35)",
+                        filter: earned ? "none" : "opacity(0.5)",
                         transition: "all 0.2s",
                       }}
                     >
@@ -93,7 +93,7 @@ export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: Bad
                       className="mt-1 font-bold"
                       style={{
                         fontSize: "10px",
-                        color: earned ? RARITY_COLORS[badge.rarity] : "rgba(150,150,150,0.4)",
+                        color: earned ? RARITY_COLORS[badge.rarity] : "rgba(180,180,180,0.7)",
                         textShadow: earned ? `0 0 6px ${RARITY_COLORS[badge.rarity]}40` : "none",
                       }}
                     >

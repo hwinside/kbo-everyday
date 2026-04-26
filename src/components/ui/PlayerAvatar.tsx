@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useState, useCallback } from "react";
 import { TEAMS } from "@/lib/constants/teams";
-import { getPlayerLocalUrl } from "@/lib/constants/player-photos";
+import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 
 interface PlayerAvatarProps {
   name: string;
@@ -36,7 +36,7 @@ export default function PlayerAvatar({
   const handleError = useCallback(() => {
     if (!triedFallback) {
       // CDN 실패 → 로컬 fallback
-      const localUrl = getPlayerLocalUrl(name, kboId);
+      const localUrl = getPlayerPhotoUrl(name, kboId);
       if (localUrl && localUrl !== imgSrc) {
         setImgSrc(localUrl);
         setTriedFallback(true);
