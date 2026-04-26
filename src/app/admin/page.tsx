@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { toKSTDateString } from "@/lib/utils/date-kst";
 import {
   LineChart,
   Line,
@@ -29,6 +30,7 @@ import {
 } from "lucide-react";
 import type { FeedbackItem } from "@/lib/admin/types";
 import { getTeamById } from "@/lib/constants/teams";
+import { toKSTDateString } from "@/lib/utils/date-kst";
 
 /* ── helpers ─────────────────────────────────────────── */
 
@@ -287,7 +289,7 @@ export default function AdminOverviewPage() {
       apiFetch<UsersResponse>("/api/admin/users"),
       apiFetch<ContentResponse>("/api/admin/content?days=1"),
       apiFetch<StatsResponse>("/api/admin/stats?days=30"),
-      apiFetch<FeedbackResponse>("/api/admin/feedback?status=pending"),
+      apiFetch<FeedbackResponse>("/api/admin/feedback"),
       apiFetch<JobsResponse>("/api/admin/jobs?status=error&today=1"),
       fetchGA4<DauResponse>("dau"),
       fetchGA4<PagesResponse>("pages"),
@@ -317,13 +319,20 @@ export default function AdminOverviewPage() {
 
   const todayContent = data?.content?.dailyPosts ?? [];
   const todayEntry = todayContent.find((d) => d.date === todayKSTStr);
-  const todayPosts = todayEntry?.posts ?? 0;
+  const todayPostsAll = todayEntry?.posts ?? 0;
+  const todayPhotos_ = todayEntry?.photos ?? 0;
+  const todayPosts = todayPostsAll - todayPhotos_; // 일반글만
   const todayComments = todayEntry?.comments ?? 0;
-  const todayPhotos = todayEntry?.photos ?? 0;
+  const todayPhotos = todayPhotos_;
   const todayChats = todayEntry?.chats ?? 0;
   const todayLikes = todayEntry?.likes ?? 0;
 
-  const pendingFeedback = data?.feedback?.data?.length ?? 0;
+  const todayFeedback = (data?.feedback?.data ?? []).filter(
+    (fb: { created_at?: string; createdAt?: string }) => {
+      const ts = fb.created_at ?? fb.createdAt ?? "";
+      return toKSTDateString(ts) === todayKSTStr;
+    },
+  ).length;
 
   // 크롤러 실패: API에서 오늘 KST 기준 에러만 반환
   const crawlerErrors = data?.jobs?.data?.length ?? 0;
@@ -361,12 +370,12 @@ export default function AdminOverviewPage() {
   /* ── KPI definitions ── */
   const kpis: KpiDef[] = [
     { label: "오늘 가입자", value: todaySignups, icon: <Users className="w-4 h-4 text-[#6366F1]" /> },
-    { label: "오늘 게시글", value: todayPosts, icon: <FileText className="w-4 h-4 text-[#30D158]" />, detailType: "posts" },
+    { label: "오늘 일반글", value: todayPosts, icon: <FileText className="w-4 h-4 text-[#30D158]" />, detailType: "posts" },
     { label: "오늘 댓글", value: todayComments, icon: <MessageSquare className="w-4 h-4 text-[#FFD60A]" />, detailType: "comments" },
     { label: "오늘 사진", value: todayPhotos, icon: <Camera className="w-4 h-4 text-[#FF9F0A]" />, detailType: "photos" },
     { label: "오늘 채팅(크관)", value: todayChats, icon: <MessagesSquare className="w-4 h-4 text-[#32D4EB]" />, detailType: "chats" },
     { label: "오늘 좋아요", value: todayLikes, icon: <Heart className="w-4 h-4 text-[#FF375F]" /> },
-    { label: "미처리 피드백", value: pendingFeedback, icon: <AlertTriangle className="w-4 h-4 text-[#FF453A]" /> },
+    { label: "오늘 건의", value: todayFeedback, icon: <AlertTriangle className="w-4 h-4 text-[#FF453A]" /> },
     { label: "크롤러 실패", value: crawlerErrors, icon: <Bot className="w-4 h-4 text-[#FF453A]" /> },
   ];
 
