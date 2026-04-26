@@ -3,16 +3,7 @@
 import { useEffect, useState } from "react";
 import { Play } from "lucide-react";
 import { getFavoritePlayers } from "@/lib/store/favorites";
-import { TEAMS } from "@/lib/constants/teams";
 import ReelViewer from "@/components/home/ReelViewer";
-
-/** team shortName lookup by team_id string (e.g. "LG" → "LG", "1" → "LG") */
-const TEAM_LABEL: Record<string, string> = {};
-for (const t of TEAMS) {
-  TEAM_LABEL[String(t.id)] = t.shortName;
-  TEAM_LABEL[t.shortName] = t.shortName;
-  TEAM_LABEL[t.slug] = t.shortName;
-}
 
 interface VideoItem {
   id: string;
@@ -22,9 +13,8 @@ interface VideoItem {
   publishedAt: string;
   playerIds: string[];
   sourceType: string;
-  teamId: string | null;
   isPlayerMatch: boolean;
-  label: string;
+  label?: string;
 }
 
 interface HomeHighlightsProps {
@@ -51,12 +41,11 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
       .then(r => r.json())
       .then((data) => {
         const items: VideoItem[] = (data.items || []).map((v: any) => {
-          // Label priority: 선수명 > 팀명 > 채널명 (never null)
+          // Label priority: matched fav player name > team name (official) > null
           const matchedPlayer = (v.playerIds ?? []).find((id: string) => favPlayerMap.has(id));
-          const teamLabel = v.teamId ? (TEAM_LABEL[v.teamId] ?? null) : null;
           const label = matchedPlayer
             ? favPlayerMap.get(matchedPlayer)!
-            : teamLabel ?? v.channel ?? "숏츠";
+            : v.sourceType?.startsWith("official") ? team : null;
 
           return {
             id: v.id,
@@ -66,7 +55,6 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
             publishedAt: v.publishedAt,
             playerIds: v.playerIds ?? [],
             sourceType: v.sourceType ?? "",
-            teamId: v.teamId ?? null,
             isPlayerMatch: !!matchedPlayer,
             label,
           };
