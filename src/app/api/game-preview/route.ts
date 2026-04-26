@@ -81,6 +81,38 @@ async function getStarterStats(name: string, teamId: number): Promise<string | n
       return `${data.name}: ERA ${data.era}, ${data.wins}승${data.losses}패, ${data.ip}이닝, ${data.so}삼진, ${data.games}경기${data.whip ? `, WHIP ${data.whip}` : ""}`;
     }
   } catch { /* Supabase 실패 시 graceful fallback */ }
+  // 3차: 최근 box score 순회로 시즌 스탯 직접 계산 (누락 0 보장)
+  try {
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    let games = 0, totalIP = 0, totalER = 0, totalK = 0, wins = 0, losses = 0;
+    for (let offset = 1; offset <= 60 && games < 10; offset++) {
+      const d = shiftDate(today, -offset);
+      const dayGames = await fetchGames(d).catch(() => [] as KboGame[]);
+      for (const g of dayGames) {
+        if (g.status !== "final") continue;
+        const isAway = g.awayTeamId === teamId;
+        const isHome = g.homeTeamId === teamId;
+        if (!isAway && !isHome) continue;
+        const starter = isAway ? g.awayStarterName : g.homeStarterName;
+        if (starter !== name) continue;
+        const bs = await fetchBoxScore(g.gameId).catch(() => null);
+        if (!bs) continue;
+        const pitchers = isAway ? bs.awayPitchers : bs.homePitchers;
+        const sp = pitchers[0];
+        if (!sp || sp.name !== name) continue;
+        games++;
+        totalIP += parseIP(sp.inningsPitched);
+        totalER += sp.earnedRuns;
+        totalK += sp.strikeouts;
+        if (sp.decision === "승") wins++;
+        else if (sp.decision === "패") losses++;
+      }
+    }
+    if (games > 0) {
+      const era = totalIP > 0 ? ((totalER / totalIP) * 9).toFixed(2) : "0.00";
+      return `${name}: ERA ${era}, ${wins}승${losses}패, ${totalIP.toFixed(1)}이닝, ${totalK}삼진, ${games}경기 (최근 box score 기준)`;
+    }
+  } catch { /* box score 순회 실패 시 graceful fallback */ }
   return null;
 }
 
