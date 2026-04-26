@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
       nickname: (p.profiles as { nickname?: string } | null)?.nickname ?? "익명",
       title: p.title || "(제목 없음)",
       content: typeof p.content === "string" ? p.content : "",
-      link: `/community/${p.board_type === "player" ? "player" : "team"}/${p.board_id}/${p.id}`,
+      link: `/community/${p.board_type === "player" ? "players" : "teams"}/${p.board_id}/posts/${p.id}`,
     }));
 
     return NextResponse.json({ items });
@@ -90,7 +90,7 @@ export async function GET(req: NextRequest) {
         title: "",
         content: c.content ?? "",
         link: post
-          ? `/community/${post.board_type === "player" ? "player" : "team"}/${post.board_id}/${c.post_id}`
+          ? `/community/${post.board_type === "player" ? "players" : "teams"}/${post.board_id}/posts/${c.post_id}`
           : "",
       };
     });
@@ -116,7 +116,7 @@ export async function GET(req: NextRequest) {
       nickname: (p.profiles as { nickname?: string } | null)?.nickname ?? "익명",
       title: p.title || "(사진)",
       content: typeof p.content === "string" ? p.content : "",
-      link: `/community/${p.board_type === "player" ? "player" : "team"}/${p.board_id}/${p.id}`,
+      link: `/community/${p.board_type === "player" ? "players" : "teams"}/${p.board_id}/posts/${p.id}`,
       imageUrls: (p.image_urls as string[]) ?? [],
     }));
 

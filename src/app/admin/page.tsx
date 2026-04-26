@@ -211,7 +211,9 @@ function DetailModal({
                       <div className="whitespace-pre-wrap break-words text-sm">
                         {item.title && item.title !== "(제목 없음)" && item.title !== "(사진)"
                           ? <><span className="font-medium">{item.title}</span> <span className="text-[#8E8E93]">{item.content}</span></>
-                          : item.content}
+                          : /^https?:\/\/.*\.(gif|jpg|jpeg|png|webp)/i.test(item.content)
+                            ? <a href={item.content} target="_blank" rel="noopener noreferrer"><img src={item.content} alt="" className="w-24 h-24 rounded object-cover" /></a>
+                            : item.content}
                       </div>
                       {item.imageUrls && item.imageUrls.length > 0 && (
                         <div className="flex gap-1 mt-1">
