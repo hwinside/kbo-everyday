@@ -83,7 +83,7 @@ export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: Bad
                       className="block"
                       style={{
                         fontSize: earned ? "2rem" : "1.5rem",
-                        filter: earned ? "none" : "grayscale(1) opacity(0.4)",
+                        filter: earned ? "none" : "opacity(0.35)",
                         transition: "all 0.2s",
                       }}
                     >
