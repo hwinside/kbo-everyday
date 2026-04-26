@@ -49,12 +49,15 @@ function parseGameMeta(gameId: string): { dateStr: string; awayTeamId: number; h
 
 // ===== Context helpers (server-side) =====
 
-async function fetchSeriesContext(gameId: string, awayTeamId: number, homeTeamId: number): Promise<string | null> {
+async function fetchSeriesContext(gameId: string, awayTeamId: number, homeTeamId: number): Promise<{ text: string; status: string } | null> {
   const snap = await computeSeriesSnapshot(gameId, awayTeamId, homeTeamId);
   if (!snap) return null;
   const awayShort = getTeamShortName(awayTeamId);
   const homeShort = getTeamShortName(homeTeamId);
-  return serializeSeriesSnapshot(snap, awayTeamId, awayShort, homeTeamId, homeShort);
+  return {
+    text: serializeSeriesSnapshot(snap, awayTeamId, awayShort, homeTeamId, homeShort),
+    status: snap.seriesStatus,
+  };
 }
 
 async function fetchStandingsContext(awayTeamId: number, homeTeamId: number): Promise<string | null> {
@@ -245,7 +248,7 @@ ${contextSection}
 ## 출력 형식 (JSON 객체 하나만 출력. 마크다운/설명 텍스트 절대 금지.)
 {
   "winner": "${winnerTeam || '무승부'}",
-  "headline": "신문 1면 헤드라인. 핵심 이벤트+점수+팀명. 임팩트 있게. 매번 다른 구조로. 반드시 ${result}을 정확히 반영. (예: '오스틴 끝내기 2점포! LG, 9회 대역전극', '원태인 7이닝 1실점 역투, 삼성 투수전 제압')",
+  "headline": "신문 1면 헤드라인. 핵심 이벤트+점수+팀명. 임팩트 있게. 매번 다른 구조로. 반드시 ${result}을 정확히 반영. ★ 시리즈 상태가 completed인 경우: '발판 마련/위닝시리즈/추격의 발판/리드 굳힘/스윕 직전' 같은 진행형 시리즈 표현을 헤드라인에 절대 넣지 마라. 이 경기가 시리즈 마지막 경기면 확정된 결과(승리/패배)만 반영. (예: '오스틴 끝내기 2점포! LG, 9회 대역전극', '원태인 7이닝 1실점 역투, 삼성 투수전 제압')",
   "gameFlow": {
     "early": "초반(1~3회) 경기 흐름. 선발 투수 상태, 선취점 상황. 이닝별 점수 참고. 2~3문장.",
     "mid": "중반(4~6회) 경기 흐름. 전환점, 추가 득점, 투수 교체 등. 2~3문장.",
@@ -377,7 +380,9 @@ export async function POST(req: NextRequest) {
 
   // Gemini 호출 + 승패 검증 (실패 시 1회 재시도)
   const sanitized = sanitizePlayerNames(body);
-  const prompt = buildPrompt(sanitized, seriesCtx, standingsCtx);
+  const seriesText = seriesCtx?.text ?? null;
+  const seriesStatus = seriesCtx?.status ?? null;
+  const prompt = buildPrompt(sanitized, seriesText, standingsCtx);
   const MAX_ATTEMPTS = 2;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -482,6 +487,18 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: "Generated summary winner mismatch after retries, discarded" }, { status: 422 });
         }
         continue;
+      }
+
+      // 시리즈 완료 상태에서 진행형 표현이 headline에 포함되면 정정
+      if (seriesStatus && seriesStatus !== "in_progress" && summary.headline) {
+        const progressiveKws = ["발판", "위닝시리즈", "스윕 직전", "리드 굳힘", "추격의"];
+        const headlineHasProgressive = progressiveKws.some(kw => summary.headline.includes(kw));
+        if (headlineHasProgressive) {
+          // headline에서 진행형 시리즈 표현을 포함한 부분 제거 (... 뒤쪽)
+          const cleaned = summary.headline.replace(/[.…]{2,3}[^.…]*(?:발판|위닝시리즈|스윕 직전|리드 굳힘|추격의)[^.…]*/g, "").trim();
+          console.warn(`Series headline fix (attempt ${attempt}): "${summary.headline}" → "${cleaned}"`);
+          summary.headline = cleaned || summary.headline;
+        }
       }
 
       // winner 필드는 내부 검증용이므로 클라이언트에 보내기 전 제거
