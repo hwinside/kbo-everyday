@@ -231,14 +231,14 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     const trimmed = input.trim();
     const now = Date.now();
 
-    // 기본 3초 쿨다운
-    const COOLDOWN_MS = 3000;
+    // 10초 쿨다운
+    const COOLDOWN_MS = 10_000;
     if (now - lastSentRef.current < COOLDOWN_MS) return;
 
-    // 슬라이딩 윈도우: 60초 내 10건 초과 시 30초 뮤트
+    // 슬라이딩 윈도우: 60초 내 3건 초과 시 1분 뮤트
     const WINDOW_MS = 60_000;
-    const MAX_IN_WINDOW = 10;
-    const MUTE_MS = 30_000;
+    const MAX_IN_WINDOW = 3;
+    const MUTE_MS = 60_000;
     sentTimestampsRef.current = sentTimestampsRef.current.filter((t) => now - t < WINDOW_MS);
     if (sentTimestampsRef.current.length >= MAX_IN_WINDOW) {
       setCooldown(true);
@@ -300,13 +300,13 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     if (!user) { setShowLogin(true); return; }
 
     const now = Date.now();
-    const COOLDOWN_MS = 3000;
+    const COOLDOWN_MS = 10_000;
     if (now - lastSentRef.current < COOLDOWN_MS) return;
 
-    // 슬라이딩 윈도우
+    // 슬라이딩 윈도우: 60초 내 3건 초과 시 1분 뮤트
     const WINDOW_MS = 60_000;
-    const MAX_IN_WINDOW = 10;
-    const MUTE_MS = 30_000;
+    const MAX_IN_WINDOW = 3;
+    const MUTE_MS = 60_000;
     sentTimestampsRef.current = sentTimestampsRef.current.filter((t) => now - t < WINDOW_MS);
     if (sentTimestampsRef.current.length >= MAX_IN_WINDOW) {
       setCooldown(true);
@@ -315,8 +315,18 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       return;
     }
 
+    // GIF는 이미지가 달라도 동일 댓글로 간주
+    const GIF_MARKER = "[GIF]";
+    if (recentContentsRef.current.includes(GIF_MARKER)) {
+      setCooldown(true);
+      setCooldownReason("GIF는 연속으로 보낼 수 없어요");
+      setTimeout(() => { setCooldown(false); setCooldownReason(""); }, COOLDOWN_MS);
+      return;
+    }
+
     lastSentRef.current = now;
     sentTimestampsRef.current.push(now);
+    recentContentsRef.current = [...recentContentsRef.current.slice(-4), GIF_MARKER];
     setCooldown(true);
     setCooldownReason("");
     setTimeout(() => setCooldown(false), COOLDOWN_MS);
