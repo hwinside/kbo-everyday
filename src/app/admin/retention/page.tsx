@@ -66,6 +66,19 @@ function isDayNotYet(cohortDate: string, dKey: string, targetDate: string): bool
   return dayStr > targetDate;
 }
 
+/** ISO week string (e.g. "2026-W16") → 해당 주 월요일 YYYY-MM-DD */
+function weekToMonday(weekStr: string): string {
+  const [y, w] = weekStr.split("-W").map(Number);
+  const jan4 = new Date(Date.UTC(y, 0, 4));
+  const dayOfWeek = jan4.getUTCDay() || 7;
+  const monday = new Date(jan4.getTime() + ((w - 1) * 7 - (dayOfWeek - 1)) * 86400000);
+  return monday.toISOString().slice(0, 10);
+}
+
+function isWeekNotYet(weekStr: string, dKey: string, targetDate: string): boolean {
+  return isDayNotYet(weekToMonday(weekStr), dKey, targetDate);
+}
+
 interface RetentionData {
   cohort: CohortHeatmapRow[];
   dailyCohort: CohortHeatmapRow[];
@@ -164,18 +177,21 @@ export default function RetentionPage() {
                     <td className="py-2 px-3 text-right tabular-nums text-gray-400">
                       {row.cohortSize}
                     </td>
-                    {(["d1","d2","d3","d4","d5","d6","d7","d14","d30"] as const).map((key) => (
-                      <td
-                        key={key}
-                        className="py-2 px-2 text-center tabular-nums font-medium text-xs"
-                        style={{
-                          color: rateColor(row[key]),
-                          background: rateBg(row[key]),
-                        }}
-                      >
-                        {row[key] > 0 ? `${(row[key] * 100).toFixed(1)}%` : "—"}
-                      </td>
-                    ))}
+                    {(["d1","d2","d3","d4","d5","d6","d7","d14","d30"] as const).map((key) => {
+                      const notYet = isWeekNotYet(row.cohortKey, key, data.date!);
+                      return (
+                        <td
+                          key={key}
+                          className="py-2 px-2 text-center tabular-nums font-medium text-xs"
+                          style={notYet
+                            ? { color: "#3A3A3C", background: "rgba(255,255,255,0.03)" }
+                            : { color: rateColor(row[key]), background: rateBg(row[key]) }
+                          }
+                        >
+                          {notYet ? "" : row[key] > 0 ? `${(row[key] * 100).toFixed(1)}%` : "—"}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
