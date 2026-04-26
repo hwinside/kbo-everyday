@@ -165,30 +165,37 @@ async function fetchPitcherStats(): Promise<PlayerStat[]> {
   const sortKeys = ["ERA_RT", "SV_CN", "HOLD_CN", "W_CN", "KK_CN"];
   const roster = playersRoster as RosterPlayer[];
   const merged = new Map<string, PlayerStat>(); // key: name+team
+  const qualifiedKeys = new Set<string>(); // ERA_RT 페이지에 나오는 규정이닝 충족 선수
 
   const results = await Promise.all(
     sortKeys.map(async (sort) => {
       const url = `${KBO_BASE}/Record/Player/PitcherBasic/Basic1.aspx?sort=${sort}`;
       const html = await fetchHtml(url);
-      return parseTable(html);
+      return { sort, rows: parseTable(html) };
     })
   );
 
-  for (const rows of results) {
+  for (const { sort, rows } of results) {
     for (const c of rows) {
       const name = c[1] || "";
       const team = c[2] || "";
       const key = `${name}::${team}`;
+      if (sort === "ERA_RT") {
+        qualifiedKeys.add(key);
+      }
       if (!merged.has(key)) {
         merged.set(key, parsePitcherRow(c, roster));
       }
     }
   }
 
-  // ERA 기준 정렬 후 순위 부여
+  // ERA 기준 정렬 후 순위 부여 + 규정이닝 플래그
   const stats = [...merged.values()]
     .sort((a, b) => Number(a.era || 99) - Number(b.era || 99));
-  stats.forEach((p, i) => { p.rank = i + 1; });
+  stats.forEach((p, i) => {
+    p.rank = i + 1;
+    p.qualifiedRate = qualifiedKeys.has(`${p.name}::${p.team}`) ? 1 : 0;
+  });
   return stats;
 }
 

@@ -40,6 +40,7 @@ export interface RealPitcherStat {
   saves?: string;
   holds?: string;
   whip?: string;
+  qualifiedRate?: number; // 1 = KBO 규정이닝 충족 (ERA_RT 페이지 기준)
   [key: string]: string | number | undefined;
 }
 
