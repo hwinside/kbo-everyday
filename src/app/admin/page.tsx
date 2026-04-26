@@ -119,11 +119,15 @@ interface KpiDef {
   label: string;
   value: number | string;
   icon: React.ReactNode;
+  detailType?: string;
 }
 
-function KpiCard({ label, value, icon }: KpiDef) {
+function KpiCard({ label, value, icon, onClick }: KpiDef & { onClick?: () => void }) {
   return (
-    <div className="glass-card p-5">
+    <div
+      className={`glass-card p-5 ${onClick ? "cursor-pointer hover:ring-1 hover:ring-white/10 transition-all" : ""}`}
+      onClick={onClick}
+    >
       <div className="flex items-center gap-2 mb-2">
         {icon}
         <p className="text-sm text-[#8E8E93]">{label}</p>
@@ -131,6 +135,101 @@ function KpiCard({ label, value, icon }: KpiDef) {
       <p className="text-xl sm:text-2xl md:text-3xl font-bold tabular-nums tracking-tight whitespace-nowrap">
         {typeof value === "number" ? value.toLocaleString() : value}
       </p>
+    </div>
+  );
+}
+
+/* ── Detail Modal ─────────────────────────────────────── */
+
+interface DetailItem {
+  id: number;
+  time: string;
+  nickname: string;
+  title: string;
+  content: string;
+  link: string;
+}
+
+function DetailModal({
+  title,
+  type,
+  onClose,
+}: {
+  title: string;
+  type: string;
+  onClose: () => void;
+}) {
+  const [items, setItems] = useState<DetailItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    apiFetch<{ items: DetailItem[] }>(`/api/admin/today-detail?type=${type}`)
+      .then((d) => setItems(d.items))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [type]);
+
+  const formatTime = (t: string) => {
+    const d = new Date(t);
+    return d.toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit" });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+      <div
+        className="bg-[#1C1C1F] rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col mx-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
+          <h3 className="text-lg font-semibold">{title}</h3>
+          <button onClick={onClose} className="text-[#8E8E93] hover:text-white text-xl">✕</button>
+        </div>
+        <div className="overflow-y-auto flex-1 p-5">
+          {loading ? (
+            <div className="flex justify-center py-10">
+              <Loader2 className="w-6 h-6 animate-spin text-[#636366]" />
+            </div>
+          ) : items.length === 0 ? (
+            <p className="text-center text-[#636366] py-10">데이터 없음</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-white/8">
+                  <th className="text-left py-2 text-[#8E8E93] font-medium w-16">시간</th>
+                  <th className="text-left py-2 text-[#8E8E93] font-medium w-20">작성자</th>
+                  <th className="text-left py-2 text-[#8E8E93] font-medium">내용</th>
+                  <th className="text-right py-2 text-[#8E8E93] font-medium w-12">링크</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => (
+                  <tr key={item.id} className="border-b border-white/5">
+                    <td className="py-2.5 text-[#8E8E93] whitespace-nowrap">{formatTime(item.time)}</td>
+                    <td className="py-2.5 font-medium truncate max-w-[80px]">{item.nickname}</td>
+                    <td className="py-2.5 truncate max-w-[300px]">
+                      {item.title && item.title !== "(제목 없음)" && item.title !== "(직찍)"
+                        ? <><span className="font-medium">{item.title}</span> <span className="text-[#8E8E93]">{item.content}</span></>
+                        : item.content}
+                    </td>
+                    <td className="py-2.5 text-right">
+                      {item.link && (
+                        <a
+                          href={item.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[#6366F1] hover:underline text-xs"
+                        >
+                          보기
+                        </a>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -158,6 +257,7 @@ function formatGaDate(d: string) {
 export default function AdminOverviewPage() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<OverviewData | null>(null);
+  const [detailModal, setDetailModal] = useState<{ title: string; type: string } | null>(null);
 
   useEffect(() => {
     const fetchGA4 = async <T,>(type: string): Promise<T | null> => {
@@ -246,10 +346,10 @@ export default function AdminOverviewPage() {
   /* ── KPI definitions ── */
   const kpis: KpiDef[] = [
     { label: "오늘 가입자", value: todaySignups, icon: <Users className="w-4 h-4 text-[#6366F1]" /> },
-    { label: "오늘 게시글", value: todayPosts, icon: <FileText className="w-4 h-4 text-[#30D158]" /> },
-    { label: "오늘 댓글", value: todayComments, icon: <MessageSquare className="w-4 h-4 text-[#FFD60A]" /> },
-    { label: "오늘 직찍", value: todayPhotos, icon: <Camera className="w-4 h-4 text-[#FF9F0A]" /> },
-    { label: "오늘 채팅(크관)", value: todayChats, icon: <MessagesSquare className="w-4 h-4 text-[#32D4EB]" /> },
+    { label: "오늘 게시글", value: todayPosts, icon: <FileText className="w-4 h-4 text-[#30D158]" />, detailType: "posts" },
+    { label: "오늘 댓글", value: todayComments, icon: <MessageSquare className="w-4 h-4 text-[#FFD60A]" />, detailType: "comments" },
+    { label: "오늘 직찍", value: todayPhotos, icon: <Camera className="w-4 h-4 text-[#FF9F0A]" />, detailType: "photos" },
+    { label: "오늘 채팅(크관)", value: todayChats, icon: <MessagesSquare className="w-4 h-4 text-[#32D4EB]" />, detailType: "chats" },
     { label: "오늘 좋아요", value: todayLikes, icon: <Heart className="w-4 h-4 text-[#FF375F]" /> },
     { label: "미처리 피드백", value: pendingFeedback, icon: <AlertTriangle className="w-4 h-4 text-[#FF453A]" /> },
     { label: "크롤러 실패", value: crawlerErrors, icon: <Bot className="w-4 h-4 text-[#FF453A]" /> },
@@ -271,7 +371,11 @@ export default function AdminOverviewPage() {
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {kpis.map((k) => (
-          <KpiCard key={k.label} {...k} />
+          <KpiCard
+            key={k.label}
+            {...k}
+            onClick={k.detailType ? () => setDetailModal({ title: k.label, type: k.detailType! }) : undefined}
+          />
         ))}
       </div>
 
@@ -435,6 +539,15 @@ export default function AdminOverviewPage() {
           )}
         </div>
       </div>
+
+      {/* Detail Modal */}
+      {detailModal && (
+        <DetailModal
+          title={detailModal.title}
+          type={detailModal.type}
+          onClose={() => setDetailModal(null)}
+        />
+      )}
     </div>
   );
 }
