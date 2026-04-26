@@ -130,7 +130,7 @@ export function useChat(roomId: string) {
       sentTimestampsRef.current = sentTimestampsRef.current.filter((t) => now - t < WINDOW_MS);
       if (sentTimestampsRef.current.length >= MAX_IN_WINDOW) {
         setCooldown(true);
-        setCooldownReason("도배 방지: 잠시 후 다시 입력하세요");
+        setCooldownReason("잠시 후 다시 입력해 주세요");
         setTimeout(() => { setCooldown(false); setCooldownReason(""); }, MUTE_MS);
         return false;
       }
@@ -138,7 +138,7 @@ export function useChat(roomId: string) {
       // 동일 메시지 차단: 최근 5건 내 같은 내용
       if (recentContentsRef.current.includes(trimmed)) {
         setCooldown(true);
-        setCooldownReason("같은 메시지를 반복할 수 없어요");
+        setCooldownReason("같은 메시지는 반복해서 보낼 수 없어요");
         setTimeout(() => { setCooldown(false); setCooldownReason(""); }, COOLDOWN_MS);
         return false;
       }
