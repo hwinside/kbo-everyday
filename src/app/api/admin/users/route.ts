@@ -59,7 +59,8 @@ export async function GET(req: NextRequest) {
     .from("profiles")
     .select("created_at")
     .gte("created_at", thirtyDaysAgo)
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true })
+    .limit(10000);
 
   let dailySignups: { date: string; count: number }[] = [];
   if (!signupError && signupRows) {
