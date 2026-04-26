@@ -212,7 +212,7 @@ export default function AdminContentPage() {
 
   const photoData = dailyPosts.map((s) => ({
     date: s.date.slice(5),
-    직찍: s.photos,
+    사진: s.photos,
   }));
 
   const teamActivityData = teamActivity
@@ -251,7 +251,7 @@ export default function AdminContentPage() {
 
       {/* Photo upload trend */}
       <div className="glass-card p-5">
-        <h2 className="text-lg font-semibold mb-4">직찍 업로드 추이</h2>
+        <h2 className="text-lg font-semibold mb-4">사진 업로드 추이</h2>
         {dailyPosts.length === 0 ? (
           <div className="flex items-center justify-center h-[240px] text-[#8E8E93]">
             <p>아직 데이터 없음</p>
@@ -263,7 +263,7 @@ export default function AdminContentPage() {
               <XAxis dataKey="date" stroke="#636366" fontSize={12} />
               <YAxis stroke="#636366" fontSize={12} />
               <Tooltip {...tooltipStyle} />
-              <Line type="monotone" dataKey="직찍" stroke="#FFD60A" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="사진" stroke="#FFD60A" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         )}
