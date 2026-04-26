@@ -177,7 +177,7 @@ export default function AdminContentPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiFetch("/api/admin/content?days=30")
+    apiFetch("/api/admin/content?days=10")
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
