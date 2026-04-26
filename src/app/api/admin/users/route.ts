@@ -53,26 +53,30 @@ export async function GET(req: NextRequest) {
 
   if (recentError) return supabaseErrorResponse(recentError);
 
-  // Daily signup counts (last 30 days) — from profiles.created_at
+  // Daily signup counts (last 30 days) — paginated fetch to bypass 1000-row default
   const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
-  const { data: signupRows, error: signupError } = await supabase
-    .from("profiles")
-    .select("created_at")
-    .gte("created_at", thirtyDaysAgo)
-    .order("created_at", { ascending: true })
-    .limit(10000);
-
-  let dailySignups: { date: string; count: number }[] = [];
-  if (!signupError && signupRows) {
-    const dayMap = new Map<string, number>();
-    for (const row of signupRows) {
-      const d = toKSTDateString(row.created_at);
-      dayMap.set(d, (dayMap.get(d) ?? 0) + 1);
-    }
-    dailySignups = Array.from(dayMap.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, count]) => ({ date, count }));
+  const allSignupRows: { created_at: string }[] = [];
+  const batchSize = 1000;
+  for (let from = 0; ; from += batchSize) {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("created_at")
+      .gte("created_at", thirtyDaysAgo)
+      .order("created_at", { ascending: true })
+      .range(from, from + batchSize - 1);
+    if (error || !data || data.length === 0) break;
+    allSignupRows.push(...data);
+    if (data.length < batchSize) break;
   }
+
+  const dayMap = new Map<string, number>();
+  for (const row of allSignupRows) {
+    const d = toKSTDateString(row.created_at);
+    dayMap.set(d, (dayMap.get(d) ?? 0) + 1);
+  }
+  const dailySignups = Array.from(dayMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, count]) => ({ date, count }));
 
   return NextResponse.json({
     totalUsers,
