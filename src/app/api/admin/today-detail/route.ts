@@ -151,7 +151,7 @@ export async function GET(req: NextRequest) {
         nickname: (m.profiles as { nickname?: string } | null)?.nickname ?? "익명",
         title: "",
         content: typeof m.content === "string" ? m.content : "",
-        link: gameId ? `/game/${gameId}` : "",
+        link: gameId ? `/games/${gameId}` : "",
       };
     });
 
