@@ -725,10 +725,10 @@ ${req.awayStarter ? `원정 선발: ${req.awayStarter}` : "원정 선발: 미정
 ${req.homeStarter ? `홈 선발: ${req.homeStarter}` : "홈 선발: 미정"}
 
 ## ${awayShort} 선발투수 상세
-${awayStarterInfo || "스탯 미확인"}${awayStarterVsOpp ? `\n상대팀 등판 기록: ${awayStarterVsOpp.summary}` : ""}
+${awayStarterInfo || `${req.awayStarter}: 2026 시즌 세부 스탯 미등록 (선발 확정)`}${awayStarterVsOpp ? `\n상대팀 등판 기록: ${awayStarterVsOpp.summary}` : ""}
 
 ## ${homeShort} 선발투수 상세
-${homeStarterInfo || "스탯 미확인"}${homeStarterVsOpp ? `\n상대팀 등판 기록: ${homeStarterVsOpp.summary}` : ""}
+${homeStarterInfo || `${req.homeStarter}: 2026 시즌 세부 스탯 미등록 (선발 확정)`}${homeStarterVsOpp ? `\n상대팀 등판 기록: ${homeStarterVsOpp.summary}` : ""}
 ${todayLineupSection}${lineupDiffSection}${!(awayLineup && awayLineup.batters.length > 0) ? `
 ## ${awayShort} 주요 타자 (2026 시즌 기록)
 ${awayBatters.join("\n")}` : ""}${!(homeLineup && homeLineup.batters.length > 0) ? `
