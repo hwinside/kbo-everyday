@@ -1274,10 +1274,10 @@
   {
     "name": "김창평",
     "kboId": "69825",
-    "team": "SSG",
     "teamId": 4,
     "position": "외야수",
-    "backNo": "64"
+    "backNo": "64",
+    "team": "SSG"
   },
   {
     "name": "김창훈",
@@ -1366,6 +1366,14 @@
     "teamId": 2,
     "position": "투수",
     "backNo": "95"
+  },
+  {
+    "name": "김한홀",
+    "kboId": "56595",
+    "teamId": 7,
+    "position": "야수",
+    "backNo": "95",
+    "team": "롯데"
   },
   {
     "name": "김헌곤",
@@ -1928,6 +1936,14 @@
     "backNo": "26"
   },
   {
+    "name": "박병호",
+    "kboId": "75125",
+    "teamId": 10,
+    "position": "야수",
+    "backNo": "52",
+    "team": "키움"
+  },
+  {
     "name": "박상언",
     "kboId": "66707",
     "team": "한화",
@@ -2278,6 +2294,14 @@
     "position": "투수",
     "backNo": "58",
     "team": "롯데"
+  },
+  {
+    "name": "박준현",
+    "kboId": "56318",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "18",
+    "team": "키움"
   },
   {
     "name": "박지성",
@@ -4594,10 +4618,10 @@
   {
     "name": "임종성",
     "kboId": "54236",
-    "team": "두산",
     "teamId": 2,
     "position": "내야수",
-    "backNo": "3"
+    "backNo": "3",
+    "team": "두산"
   },
   {
     "name": "임종찬",
