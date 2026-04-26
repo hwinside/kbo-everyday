@@ -60,6 +60,12 @@ interface ContentResponse {
     photos: number;
     chats: number;
     likes: number;
+    postUserCount?: number;
+    generalPostUserCount?: number;
+    commentUserCount?: number;
+    photoUserCount?: number;
+    chatUserCount?: number;
+    likeUserCount?: number;
   }[];
 }
 
@@ -327,6 +333,15 @@ export default function AdminOverviewPage() {
   const todayChats = todayEntry?.chats ?? 0;
   const todayLikes = todayEntry?.likes ?? 0;
 
+  const generalPostUserCount = todayEntry?.generalPostUserCount ?? 0;
+  const commentUserCount = todayEntry?.commentUserCount ?? 0;
+  const photoUserCount = todayEntry?.photoUserCount ?? 0;
+  const chatUserCount = todayEntry?.chatUserCount ?? 0;
+  const likeUserCount = todayEntry?.likeUserCount ?? 0;
+
+  const withUsers = (count: number, users: number) =>
+    users > 0 ? `${count} (${users}명)` : `${count}`;
+
   const todayFeedback = (data?.feedback?.data ?? []).filter(
     (fb: { created_at?: string; createdAt?: string }) => {
       const ts = fb.created_at ?? fb.createdAt ?? "";
@@ -370,11 +385,11 @@ export default function AdminOverviewPage() {
   /* ── KPI definitions ── */
   const kpis: KpiDef[] = [
     { label: "오늘 가입자", value: todaySignups, icon: <Users className="w-4 h-4 text-[#6366F1]" /> },
-    { label: "오늘 일반글", value: todayPosts, icon: <FileText className="w-4 h-4 text-[#30D158]" />, detailType: "posts" },
-    { label: "오늘 댓글", value: todayComments, icon: <MessageSquare className="w-4 h-4 text-[#FFD60A]" />, detailType: "comments" },
-    { label: "오늘 사진", value: todayPhotos, icon: <Camera className="w-4 h-4 text-[#FF9F0A]" />, detailType: "photos" },
-    { label: "오늘 채팅(크관)", value: todayChats, icon: <MessagesSquare className="w-4 h-4 text-[#32D4EB]" />, detailType: "chats" },
-    { label: "오늘 좋아요", value: todayLikes, icon: <Heart className="w-4 h-4 text-[#FF375F]" /> },
+    { label: "오늘 일반글", value: withUsers(todayPosts, generalPostUserCount), icon: <FileText className="w-4 h-4 text-[#30D158]" />, detailType: "posts" },
+    { label: "오늘 댓글", value: withUsers(todayComments, commentUserCount), icon: <MessageSquare className="w-4 h-4 text-[#FFD60A]" />, detailType: "comments" },
+    { label: "오늘 사진", value: withUsers(todayPhotos, photoUserCount), icon: <Camera className="w-4 h-4 text-[#FF9F0A]" />, detailType: "photos" },
+    { label: "오늘 채팅(크관)", value: withUsers(todayChats, chatUserCount), icon: <MessagesSquare className="w-4 h-4 text-[#32D4EB]" />, detailType: "chats" },
+    { label: "오늘 좋아요", value: withUsers(todayLikes, likeUserCount), icon: <Heart className="w-4 h-4 text-[#FF375F]" /> },
     { label: "오늘 건의", value: todayFeedback, icon: <AlertTriangle className="w-4 h-4 text-[#FF453A]" /> },
     { label: "크롤러 실패", value: crawlerErrors, icon: <Bot className="w-4 h-4 text-[#FF453A]" /> },
   ];

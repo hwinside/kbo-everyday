@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
   // Posts
   const { data: posts, error: postsError } = await supabase
     .from("posts")
-    .select("created_at, content_type, board_id")
+    .select("created_at, content_type, board_id, author_id")
     .gte("created_at", since);
 
   if (postsError) return supabaseErrorResponse(postsError);
@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
   // Comments
   const { data: comments, error: commentsError } = await supabase
     .from("comments")
-    .select("created_at")
+    .select("created_at, author_id")
     .gte("created_at", since);
 
   if (commentsError) return supabaseErrorResponse(commentsError);
@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
   // 크관(경기 중계) 채팅: room_id LIKE 'game:%'
   const { data: chats, error: chatsError } = await supabase
     .from("chat_messages")
-    .select("created_at")
+    .select("created_at, user_id")
     .like("room_id", "game:%")
     .gte("created_at", since);
 
@@ -46,24 +46,36 @@ export async function GET(req: NextRequest) {
   // 게시글 좋아요
   const { data: likes, error: likesError } = await supabase
     .from("likes")
-    .select("created_at")
+    .select("created_at, user_id")
     .gte("created_at", since);
 
   if (likesError) return supabaseErrorResponse(likesError);
 
-  // Daily aggregation
-  const dailyMap = new Map<
-    string,
-    { posts: number; comments: number; photos: number; chats: number; likes: number }
-  >();
+  // Daily aggregation (counts + unique users)
+  interface DailyEntry {
+    posts: number; comments: number; photos: number; chats: number; likes: number;
+    postUsers: Set<string>; generalPostUsers: Set<string>; commentUsers: Set<string>;
+    photoUsers: Set<string>; chatUsers: Set<string>; likeUsers: Set<string>;
+  }
+  const dailyMap = new Map<string, DailyEntry>();
 
-  const makeEntry = () => ({ posts: 0, comments: 0, photos: 0, chats: 0, likes: 0 });
+  const makeEntry = (): DailyEntry => ({
+    posts: 0, comments: 0, photos: 0, chats: 0, likes: 0,
+    postUsers: new Set(), generalPostUsers: new Set(), commentUsers: new Set(),
+    photoUsers: new Set(), chatUsers: new Set(), likeUsers: new Set(),
+  });
 
   for (const post of posts ?? []) {
     const date = toKSTDateString(post.created_at);
     const entry = dailyMap.get(date) ?? makeEntry();
     entry.posts += 1;
-    if (post.content_type === "photo") entry.photos += 1;
+    if (post.author_id) entry.postUsers.add(post.author_id);
+    if (post.content_type === "photo") {
+      entry.photos += 1;
+      if (post.author_id) entry.photoUsers.add(post.author_id);
+    } else {
+      if (post.author_id) entry.generalPostUsers.add(post.author_id);
+    }
     dailyMap.set(date, entry);
   }
 
@@ -71,6 +83,7 @@ export async function GET(req: NextRequest) {
     const date = toKSTDateString(comment.created_at);
     const entry = dailyMap.get(date) ?? makeEntry();
     entry.comments += 1;
+    if (comment.author_id) entry.commentUsers.add(comment.author_id);
     dailyMap.set(date, entry);
   }
 
@@ -78,6 +91,7 @@ export async function GET(req: NextRequest) {
     const date = toKSTDateString(chat.created_at);
     const entry = dailyMap.get(date) ?? makeEntry();
     entry.chats += 1;
+    if (chat.user_id) entry.chatUsers.add(chat.user_id);
     dailyMap.set(date, entry);
   }
 
@@ -85,11 +99,18 @@ export async function GET(req: NextRequest) {
     const date = toKSTDateString(like.created_at);
     const entry = dailyMap.get(date) ?? makeEntry();
     entry.likes += 1;
+    if (like.user_id) entry.likeUsers.add(like.user_id);
     dailyMap.set(date, entry);
   }
 
   const dailyPosts = Array.from(dailyMap.entries())
-    .map(([date, counts]) => ({ date, ...counts }))
+    .map(([date, e]) => ({
+      date,
+      posts: e.posts, comments: e.comments, photos: e.photos, chats: e.chats, likes: e.likes,
+      postUserCount: e.postUsers.size, generalPostUserCount: e.generalPostUsers.size,
+      commentUserCount: e.commentUsers.size, photoUserCount: e.photoUsers.size,
+      chatUserCount: e.chatUsers.size, likeUserCount: e.likeUsers.size,
+    }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
   // Popular posts top 10
