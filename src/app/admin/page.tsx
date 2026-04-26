@@ -148,6 +148,7 @@ interface DetailItem {
   title: string;
   content: string;
   link: string;
+  imageUrls?: string[];
 }
 
 function DetailModal({
@@ -208,10 +209,22 @@ function DetailModal({
                     <td className="py-2.5 font-medium truncate max-w-[80px]">{item.nickname}</td>
                     <td className="py-2.5 max-w-[300px]">
                       <div className="whitespace-pre-wrap break-words text-sm">
-                        {item.title && item.title !== "(제목 없음)" && item.title !== "(직찍)"
+                        {item.title && item.title !== "(제목 없음)" && item.title !== "(사진)"
                           ? <><span className="font-medium">{item.title}</span> <span className="text-[#8E8E93]">{item.content}</span></>
                           : item.content}
                       </div>
+                      {item.imageUrls && item.imageUrls.length > 0 && (
+                        <div className="flex gap-1 mt-1">
+                          {item.imageUrls.slice(0, 3).map((url, i) => (
+                            <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                              <img src={url} alt="" className="w-12 h-12 rounded object-cover" />
+                            </a>
+                          ))}
+                          {item.imageUrls.length > 3 && (
+                            <span className="text-xs text-[#8E8E93] self-end">+{item.imageUrls.length - 3}</span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="py-2.5 text-right">
                       {item.link && (
@@ -274,7 +287,7 @@ export default function AdminOverviewPage() {
       apiFetch<UsersResponse>("/api/admin/users"),
       apiFetch<ContentResponse>("/api/admin/content?days=1"),
       apiFetch<StatsResponse>("/api/admin/stats?days=30"),
-      apiFetch<FeedbackResponse>("/api/admin/feedback?status=received"),
+      apiFetch<FeedbackResponse>("/api/admin/feedback?status=pending"),
       apiFetch<JobsResponse>("/api/admin/jobs?status=error&today=1"),
       fetchGA4<DauResponse>("dau"),
       fetchGA4<PagesResponse>("pages"),

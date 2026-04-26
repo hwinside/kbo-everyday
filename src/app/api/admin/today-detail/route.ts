@@ -32,8 +32,7 @@ export async function GET(req: NextRequest) {
   if (type === "posts") {
     const { data, error } = await supabase
       .from("posts")
-      .select("id, title, content, content_type, board_type, board_id, created_at, author_id, profiles(nickname)")
-      .eq("content_type", "general")
+      .select("id, title, content, content_type, board_type, board_id, created_at, image_urls, author_id, profiles(nickname)")
       .gte("created_at", start)
       .lte("created_at", end)
       .order("created_at", { ascending: false })
@@ -56,7 +55,7 @@ export async function GET(req: NextRequest) {
   if (type === "comments") {
     const { data, error } = await supabase
       .from("comments")
-      .select("id, content, post_id, created_at, user_id, profiles(nickname), posts(board_type, board_id)")
+      .select("id, content, post_id, created_at, author_id, profiles(nickname), posts(board_type, board_id)")
       .gte("created_at", start)
       .lte("created_at", end)
       .order("created_at", { ascending: false })
@@ -82,7 +81,7 @@ export async function GET(req: NextRequest) {
   if (type === "photos") {
     const { data, error } = await supabase
       .from("posts")
-      .select("id, title, content, board_type, board_id, created_at, author_id, profiles(nickname)")
+      .select("id, title, content, board_type, board_id, created_at, image_urls, author_id, profiles(nickname)")
       .eq("content_type", "photo")
       .gte("created_at", start)
       .lte("created_at", end)
@@ -95,9 +94,10 @@ export async function GET(req: NextRequest) {
       id: p.id,
       time: p.created_at,
       nickname: (p.profiles as { nickname?: string } | null)?.nickname ?? "익명",
-      title: p.title || "(직찍)",
+      title: p.title || "(사진)",
       content: typeof p.content === "string" ? p.content : "",
       link: `/community/${p.board_type === "player" ? "player" : "team"}/${p.board_id}/${p.id}`,
+      imageUrls: (p.image_urls as string[]) ?? [],
     }));
 
     return NextResponse.json({ items });
@@ -115,9 +115,9 @@ export async function GET(req: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     const items = (data ?? []).map((m: Record<string, unknown>) => {
-      // room_id format: "game_{gameId}_all" or "game_{gameId}_home" etc
+      // room_id format: "game:{gameId}" or "game:{gameId}:{home|away}"
       const roomId = String(m.room_id ?? "");
-      const gameIdMatch = roomId.match(/^game_(.+?)_(all|home|away)$/);
+      const gameIdMatch = roomId.match(/^game:(.+?)(?::(home|away))?$/);
       const gameId = gameIdMatch ? gameIdMatch[1] : "";
       return {
         id: m.id,
