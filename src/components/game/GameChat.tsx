@@ -62,7 +62,7 @@ function getRoomId(gameId: string, room: ChatRoom): string {
 export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatProps) {
   const [room, setRoom] = useState<ChatRoom>("all");
   const roomId = getRoomId(gameId, room);
-  const { messages, loading, sendMessage, cooldown, isLoggedIn } = useChat(roomId);
+  const { messages, loading, sendMessage, cooldown, cooldownReason, isLoggedIn } = useChat(roomId);
   const { homePct } = useMoodGauge(gameId, homeTeamId, awayTeamId);
   const { user, profile, loading: authLoading } = useAuth();
   const [input, setInput] = useState("");
@@ -282,7 +282,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSend()}
-              placeholder={cooldown ? "잠시 후 다시 입력하세요..." : canWrite ? (room === "all" ? "메시지 입력..." : `${roomLabels[room]}에 메시지...`) : writeBlockedReason}
+              placeholder={cooldown ? (cooldownReason || "잠시 후 다시 입력하세요...") : canWrite ? (room === "all" ? "메시지 입력..." : `${roomLabels[room]}에 메시지...`) : writeBlockedReason}
               disabled={!canWrite}
               autoComplete="off"
               name="chat-message"

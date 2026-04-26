@@ -21,7 +21,10 @@ export function useChat(roomId: string) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [cooldown, setCooldown] = useState(false);
+  const [cooldownReason, setCooldownReason] = useState<string>("");
   const lastSentRef = useRef(0);
+  const sentTimestampsRef = useRef<number[]>([]);
+  const recentContentsRef = useRef<string[]>([]);
 
   // 최근 메시지 로드
   useEffect(() => {
@@ -114,10 +117,37 @@ export function useChat(roomId: string) {
       if (!user || !content.trim() || content.trim().length > 120) return false;
 
       const now = Date.now();
+      const trimmed = content.trim();
       const COOLDOWN_MS = 3000;
+
+      // 기본 3초 쿨다운
       if (now - lastSentRef.current < COOLDOWN_MS) return false;
+
+      // 슬라이딩 윈도우: 60초 내 10건 초과 시 30초 뮤트
+      const WINDOW_MS = 60_000;
+      const MAX_IN_WINDOW = 10;
+      const MUTE_MS = 30_000;
+      sentTimestampsRef.current = sentTimestampsRef.current.filter((t) => now - t < WINDOW_MS);
+      if (sentTimestampsRef.current.length >= MAX_IN_WINDOW) {
+        setCooldown(true);
+        setCooldownReason("도배 방지: 잠시 후 다시 입력하세요");
+        setTimeout(() => { setCooldown(false); setCooldownReason(""); }, MUTE_MS);
+        return false;
+      }
+
+      // 동일 메시지 차단: 최근 5건 내 같은 내용
+      if (recentContentsRef.current.includes(trimmed)) {
+        setCooldown(true);
+        setCooldownReason("같은 메시지를 반복할 수 없어요");
+        setTimeout(() => { setCooldown(false); setCooldownReason(""); }, COOLDOWN_MS);
+        return false;
+      }
+
       lastSentRef.current = now;
+      sentTimestampsRef.current.push(now);
+      recentContentsRef.current = [...recentContentsRef.current.slice(-4), trimmed];
       setCooldown(true);
+      setCooldownReason("");
       setTimeout(() => setCooldown(false), COOLDOWN_MS);
 
       const { data, error } = await supabase
@@ -158,5 +188,5 @@ export function useChat(roomId: string) {
     [user, profile, roomId]
   );
 
-  return { messages, loading, sendMessage, cooldown, isLoggedIn: !!user };
+  return { messages, loading, sendMessage, cooldown, cooldownReason, isLoggedIn: !!user };
 }
