@@ -55,6 +55,17 @@ function rateBg(rate: number): string {
 
 const FUNNEL_COLORS = ["#6366F1", "#8B5CF6", "#A855F7", "#D946EF", "#EC4899"];
 
+const D_OFFSETS: Record<string, number> = {
+  d1: 1, d2: 2, d3: 3, d4: 4, d5: 5, d6: 6, d7: 7, d14: 14, d30: 30,
+};
+
+function isDayNotYet(cohortDate: string, dKey: string, targetDate: string): boolean {
+  const offset = D_OFFSETS[dKey] ?? 0;
+  const cohortMs = new Date(cohortDate + "T00:00:00+09:00").getTime();
+  const dayStr = new Date(cohortMs + offset * 86400000).toISOString().slice(0, 10);
+  return dayStr > targetDate;
+}
+
 interface RetentionData {
   cohort: CohortHeatmapRow[];
   dailyCohort: CohortHeatmapRow[];
@@ -198,18 +209,21 @@ export default function RetentionPage() {
                     <td className="py-2 px-3 text-right tabular-nums text-gray-400">
                       {row.cohortSize}
                     </td>
-                    {(["d1","d2","d3","d4","d5","d6","d7","d14","d30"] as const).map((key) => (
-                      <td
-                        key={key}
-                        className="py-2 px-2 text-center tabular-nums font-medium text-xs"
-                        style={{
-                          color: rateColor(row[key]),
-                          background: rateBg(row[key]),
-                        }}
-                      >
-                        {row[key] > 0 ? `${(row[key] * 100).toFixed(1)}%` : "—"}
-                      </td>
-                    ))}
+                    {(["d1","d2","d3","d4","d5","d6","d7","d14","d30"] as const).map((key) => {
+                      const notYet = isDayNotYet(row.cohortKey, key, data.date!);
+                      return (
+                        <td
+                          key={key}
+                          className="py-2 px-2 text-center tabular-nums font-medium text-xs"
+                          style={notYet
+                            ? { color: "#3A3A3C", background: "rgba(255,255,255,0.03)" }
+                            : { color: rateColor(row[key]), background: rateBg(row[key]) }
+                          }
+                        >
+                          {notYet ? "" : row[key] > 0 ? `${(row[key] * 100).toFixed(1)}%` : "—"}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
