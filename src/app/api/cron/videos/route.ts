@@ -64,8 +64,8 @@ export async function GET(req: NextRequest) {
         const rows: VideoUpsertRow[] = entries.map((e) => {
           const noiseFlags = extractNoiseFlags(e.title, e.channel);
           const isShort = isShortCandidate({ title: e.title });
-          // Precision 매칭: 공식 채널은 channelTeam 전달, 커뮤니티는 null
-          const playerIds = matchPlayers(e.title, playerAliases, channelTeam);
+          // Precision 매칭: 공식 채널만 channelTeam 전달 (team_affinity 있는 커뮤니티는 허용 안 함)
+          const playerIds = matchPlayers(e.title, playerAliases, isOfficial ? channelTeam : null);
           // 커뮤니티 채널: 제목에서 팀 감지 (감지 실패 시 ETC)
           const teamId = channelTeam ?? detectTeamFromTitle(e.title);
 

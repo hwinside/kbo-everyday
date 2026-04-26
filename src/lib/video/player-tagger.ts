@@ -67,13 +67,8 @@ export function matchPlayers(
 
     // Precision 규칙: 팀 컨텍스트 있어야 매칭
     if (channelTeam) {
-      // 공식 채널: 채널 팀과 선수 팀이 일치하면 OK
+      // 공식 채널: 채널 팀 소속 선수만 매칭 (cross-team bleed 방지)
       if (p.team === channelTeam) {
-        matched.push(p.kbo_id);
-      }
-      // 공식 채널이지만 다른 팀 선수명이 제목에 있을 수도 (예: "LG vs 두산 문보경")
-      // → 제목에 해당 선수 팀명도 있으면 매칭
-      else if (titleTeams.includes(p.team)) {
         matched.push(p.kbo_id);
       }
     } else {
