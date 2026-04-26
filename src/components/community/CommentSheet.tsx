@@ -71,6 +71,11 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const [savingEdit, setSavingEdit] = useState(false);
   const [replyTo, setReplyTo] = useState<{ id: number; nickname: string } | null>(null);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  const [cooldown, setCooldown] = useState(false);
+  const [cooldownReason, setCooldownReason] = useState("");
+  const lastSentRef = useRef(0);
+  const sentTimestampsRef = useRef<number[]>([]);
+  const recentContentsRef = useRef<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -222,10 +227,44 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   }, [user]);
 
   const handleSubmit = useCallback(async () => {
-    if (!input.trim() || !postId || submitting) return;
+    if (!input.trim() || !postId || submitting || cooldown) return;
+    const trimmed = input.trim();
+    const now = Date.now();
+
+    // 기본 3초 쿨다운
+    const COOLDOWN_MS = 3000;
+    if (now - lastSentRef.current < COOLDOWN_MS) return;
+
+    // 슬라이딩 윈도우: 60초 내 10건 초과 시 30초 뮤트
+    const WINDOW_MS = 60_000;
+    const MAX_IN_WINDOW = 10;
+    const MUTE_MS = 30_000;
+    sentTimestampsRef.current = sentTimestampsRef.current.filter((t) => now - t < WINDOW_MS);
+    if (sentTimestampsRef.current.length >= MAX_IN_WINDOW) {
+      setCooldown(true);
+      setCooldownReason("잠시 후 다시 입력해 주세요");
+      setTimeout(() => { setCooldown(false); setCooldownReason(""); }, MUTE_MS);
+      return;
+    }
+
+    // 동일 댓글 차단: 최근 5건 내 같은 내용
+    if (recentContentsRef.current.includes(trimmed)) {
+      setCooldown(true);
+      setCooldownReason("같은 댓글은 반복해서 달 수 없어요");
+      setTimeout(() => { setCooldown(false); setCooldownReason(""); }, COOLDOWN_MS);
+      return;
+    }
+
+    lastSentRef.current = now;
+    sentTimestampsRef.current.push(now);
+    recentContentsRef.current = [...recentContentsRef.current.slice(-4), trimmed];
+    setCooldown(true);
+    setCooldownReason("");
+    setTimeout(() => setCooldown(false), COOLDOWN_MS);
+
     setSubmitting(true);
     try {
-      const result = await createComment(postId, input.trim(), replyTo?.id);
+      const result = await createComment(postId, trimmed, replyTo?.id);
       // optimistic update with real DB id
       setComments((prev) => [
         ...prev,
@@ -233,7 +272,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
           id: result.id,
           post_id: postId,
           author_id: user?.id ?? "",
-          content: input.trim(),
+          content: trimmed,
           created_at: new Date().toISOString(),
           parent_id: replyTo?.id ?? null,
           like_count: 0,
@@ -254,11 +293,34 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     } finally {
       setSubmitting(false);
     }
-  }, [input, postId, submitting, user, onCommentAdded, profile, refetchComments, replyTo]);
+  }, [input, postId, submitting, cooldown, user, onCommentAdded, profile, refetchComments, replyTo]);
 
   const handleGifSelect = useCallback(async (gifUrl: string) => {
-    if (!postId || submitting) return;
+    if (!postId || submitting || cooldown) return;
     if (!user) { setShowLogin(true); return; }
+
+    const now = Date.now();
+    const COOLDOWN_MS = 3000;
+    if (now - lastSentRef.current < COOLDOWN_MS) return;
+
+    // 슬라이딩 윈도우
+    const WINDOW_MS = 60_000;
+    const MAX_IN_WINDOW = 10;
+    const MUTE_MS = 30_000;
+    sentTimestampsRef.current = sentTimestampsRef.current.filter((t) => now - t < WINDOW_MS);
+    if (sentTimestampsRef.current.length >= MAX_IN_WINDOW) {
+      setCooldown(true);
+      setCooldownReason("잠시 후 다시 입력해 주세요");
+      setTimeout(() => { setCooldown(false); setCooldownReason(""); }, MUTE_MS);
+      return;
+    }
+
+    lastSentRef.current = now;
+    sentTimestampsRef.current.push(now);
+    setCooldown(true);
+    setCooldownReason("");
+    setTimeout(() => setCooldown(false), COOLDOWN_MS);
+
     setShowGifPicker(false);
     setSubmitting(true);
     try {
@@ -685,7 +747,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                           handleSubmit();
                         }
                       }}
-                      placeholder={replyTo ? `${replyTo.nickname}에게 답글...` : "댓글을 입력하세요"}
+                      placeholder={cooldown ? (cooldownReason || "잠시 후 다시 입력하세요...") : replyTo ? `${replyTo.nickname}에게 답글...` : "댓글을 입력하세요"}
                       className="flex-1 bg-bg-tertiary rounded-full px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary outline-none border"
                       style={{ borderColor: teamId ? `${getTeamById(teamId)?.colorPrimary}80` : 'rgba(255,255,255,0.15)' }}
                     />
@@ -700,7 +762,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                 )}
                 <button
                   onClick={handleSubmit}
-                  disabled={!input.trim() || submitting || !user}
+                  disabled={!input.trim() || submitting || cooldown || !user}
                   className="flex items-center justify-center w-9 h-9 rounded-full text-white disabled:opacity-50 transition-opacity"
                   style={{ backgroundColor: teamId ? (() => { const t = getTeamById(teamId); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}
                 >
