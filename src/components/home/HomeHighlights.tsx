@@ -23,6 +23,7 @@ interface VideoItem {
   playerIds: string[];
   teamId: string | null;
   isPlayerMatch: boolean;
+  hasPlayerTag: boolean;
   label: string;
 }
 
@@ -49,12 +50,14 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
       .then(r => r.json())
       .then((data) => {
         const items: VideoItem[] = (data.items || []).map((v: any) => {
-          // Label: 선수명 > 팀명 > 없음 (채널명 NO)
+          // Label: 최애선수명 > 태깅된 선수명 > 팀명 > 없음
           const matchedPlayer = (v.playerIds ?? []).find((id: string) => favPlayerMap.has(id));
           const teamLabel = v.teamId ? (TEAM_LABEL[v.teamId] ?? null) : null;
           const label = matchedPlayer
             ? favPlayerMap.get(matchedPlayer)!
-            : teamLabel ?? "";
+            : v.playerName ?? teamLabel ?? "";
+          const isPlayerMatch = !!matchedPlayer;
+          const hasPlayerTag = !matchedPlayer && !!v.playerName;
 
           return {
             id: v.id,
@@ -64,7 +67,8 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
             publishedAt: v.publishedAt,
             playerIds: v.playerIds ?? [],
             teamId: v.teamId ?? null,
-            isPlayerMatch: !!matchedPlayer,
+            isPlayerMatch,
+            hasPlayerTag,
             label,
           };
         });
@@ -94,7 +98,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
               </div>
               {v.label && (
                 <span className={`absolute top-2 left-2 px-1.5 py-0.5 rounded-full text-xs font-semibold text-white ${
-                  v.isPlayerMatch ? "bg-rose-500/80" : "bg-blue-500/80"
+                  v.isPlayerMatch ? "bg-rose-500/80" : v.hasPlayerTag ? "bg-amber-500/80" : "bg-blue-500/80"
                 }`}>
                   {v.label}
                 </span>

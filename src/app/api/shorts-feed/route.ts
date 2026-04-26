@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { DEFAULT_EXCLUDE_FLAGS, extractNoiseFlags } from "@/lib/video/noise-flags";
+import { loadPlayerAliases } from "@/lib/video/player-tagger";
 
 export async function GET(req: NextRequest) {
   const team = req.nextUrl.searchParams.get("team") || "_ALL";
@@ -100,6 +101,21 @@ export async function GET(req: NextRequest) {
     return !runtimeFlags.some((f) => excludeSet.has(f as string));
   });
 
+  // Build player_id → name map for tagged videos
+  const taggedPlayerIds = new Set<string>();
+  for (const v of filtered) {
+    if (v.player_id) taggedPlayerIds.add(v.player_id);
+  }
+  let playerNameMap = new Map<string, string>();
+  if (taggedPlayerIds.size > 0) {
+    const aliases = await loadPlayerAliases(supabaseAdmin);
+    for (const a of aliases) {
+      if (taggedPlayerIds.has(a.kbo_id)) {
+        playerNameMap.set(a.kbo_id, a.name);
+      }
+    }
+  }
+
   const items = filtered.map((v) => ({
     id: v.video_id,
     title: v.title,
@@ -110,6 +126,7 @@ export async function GET(req: NextRequest) {
     playerId: v.player_id,
     playerIds: v.player_ids ?? [],
     teamId: v.team_id ?? null,
+    playerName: v.player_id ? (playerNameMap.get(v.player_id) ?? null) : null,
   }));
 
   // Sort: player-matched items interleaved by player (round-robin), then team videos

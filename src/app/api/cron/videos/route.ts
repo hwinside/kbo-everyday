@@ -64,8 +64,8 @@ export async function GET(req: NextRequest) {
         const rows: VideoUpsertRow[] = entries.map((e) => {
           const noiseFlags = extractNoiseFlags(e.title, e.channel);
           const isShort = isShortCandidate({ title: e.title });
-          // Precision 매칭: 공식 채널만 channelTeam 전달 (team_affinity 있는 커뮤니티는 허용 안 함)
-          const playerIds = matchPlayers(e.title, playerAliases, isOfficial ? channelTeam : null);
+          // Precision 매칭: 공식 채널은 channelTeam, T1은 선수명 only 허용, T2+는 팀명+선수명 필수
+          const playerIds = matchPlayers(e.title, playerAliases, isOfficial ? channelTeam : null, isOfficial ? null : ch.tier);
           // team_id: 채널 팀 > 매칭된 선수의 소속팀 > 제목 감지 > ETC
           // 선수 소속팀 우선 → 대전 영상에서 상대팀으로 잘못 잡히는 것 방지
           let teamId = channelTeam;

@@ -74,10 +74,15 @@ export function matchPlayers(
       if (p.team === channelTeam) {
         matched.push(p.kbo_id);
       }
-    } else {
-      // 커뮤니티 채널 (T1~T3): 선수명만으로 매칭 허용
+    } else if (channelTier === 1) {
+      // T1 채널 (방송사/공식급): 선수명만으로 매칭 허용
       // 제목에 팀명 있으면 해당 팀 선수만, 없으면 전체 허용
       if (titleTeams.length === 0 || titleTeams.includes(p.team)) {
+        matched.push(p.kbo_id);
+      }
+    } else {
+      // T2+ 커뮤니티 채널: 제목에 팀명 + 선수명 동시 확인만 매칭
+      if (titleTeams.includes(p.team)) {
         matched.push(p.kbo_id);
       }
     }
