@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { Play } from "lucide-react";
 import { getFavoritePlayers } from "@/lib/store/favorites";
-import { TEAMS } from "@/lib/constants/teams";
 import ReelViewer from "@/components/home/ReelViewer";
 
 interface VideoItem {
@@ -29,37 +28,22 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
     if (!team) { setLoading(false); return; }
 
     const favPlayers = getFavoritePlayers().slice(0, 5);
-    const favNames = favPlayers.map(p => p.name);
-    const teamObj = TEAMS.find(t => t.shortName === team);
-
-    // 선수 이름을 API에 전달 → 서버에서 선수별 개별 검색
-    const playersParam = favNames.length > 0
-      ? `&players=${encodeURIComponent(favNames.join(","))}`
+    const playerIdsParam = favPlayers.length > 0
+      ? `&player_ids=${encodeURIComponent(favPlayers.map(p => p.playerId).join(","))}`
       : "";
 
-    // 하이라이트(팀+선수)만 사용 — 공식채널 영상은 HomeOfficialVideos에서 별도 노출
-    fetch(`/api/highlights?team=${encodeURIComponent(team)}${playersParam}`)
+    fetch(`/api/shorts-feed?team=${encodeURIComponent(team)}${playerIdsParam}`)
       .then(r => r.json())
-      .then((highlightData) => {
-        const seen = new Set<string>();
-
-        // 하이라이트 영상: 선수별 vs 팀 분리
-        const playerItems: VideoItem[] = [];
-        const teamItems: VideoItem[] = [];
-        for (const v of (highlightData.items || [])) {
-          if (seen.has(v.id)) continue;
-          seen.add(v.id);
-          // 서버에서 label이 팀명이 아닌 = 선수 이름
-          const isPlayer = v.label && v.label !== team && !TEAMS.some((t: typeof TEAMS[number]) => t.shortName === v.label);
-          if (isPlayer) playerItems.push(v);
-          else teamItems.push(v);
-        }
-
-        // 선수 영상 우선 → 팀 순
-        const merged = [...playerItems, ...teamItems]
-          .slice(0, 30);
-
-        setVideos(merged);
+      .then((data) => {
+        const items: VideoItem[] = (data.items || []).map((v: any) => ({
+          id: v.id,
+          title: v.title,
+          thumbnail: v.thumbnail,
+          channel: v.channel,
+          publishedAt: v.publishedAt,
+          label: v.sourceType?.startsWith("official") ? team : v.channel,
+        }));
+        setVideos(items.slice(0, 30));
         setLoading(false);
       }).catch(() => setLoading(false));
   }, [team]);
