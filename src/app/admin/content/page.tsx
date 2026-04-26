@@ -13,7 +13,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import { Loader2, FileText } from "lucide-react";
+import { Loader2, FileText, Trash2 } from "lucide-react";
 import { TEAMS } from "@/lib/constants/teams";
 import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import ROSTER from "@/lib/constants/players-roster.json";
@@ -93,6 +93,82 @@ function postLabel(p: PopularPost): string {
   const prefix = isTeam ? "🏟️ " : "";
   const dt = p.created_at?.slice(0, 16).replace("T", " ").replace(/-/g, ".") ?? "";
   return `${prefix}${name} · ${dt}`;
+}
+
+function DedupPhotosSection() {
+  const [checking, setChecking] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [result, setResult] = useState<{ duplicateGroups: number; postsToDelete: number } | null>(null);
+  const [deleteResult, setDeleteResult] = useState<{ deleted: number } | null>(null);
+
+  const pin = getPin();
+  const headers: Record<string, string> = pin ? { "x-admin-pin": pin } : {};
+
+  async function handleCheck() {
+    setChecking(true);
+    setResult(null);
+    setDeleteResult(null);
+    try {
+      const res = await fetch("/api/admin/dedup-photos", { headers });
+      if (!res.ok) throw new Error(`${res.status}`);
+      setResult(await res.json());
+    } catch { setResult(null); }
+    finally { setChecking(false); }
+  }
+
+  async function handleDelete() {
+    if (!confirm("중복 사진 게시물을 삭제합니다. 계속할까요?")) return;
+    setDeleting(true);
+    try {
+      const res = await fetch("/api/admin/dedup-photos", { method: "POST", headers });
+      if (!res.ok) throw new Error(`${res.status}`);
+      setDeleteResult(await res.json());
+      setResult(null);
+    } catch { /* noop */ }
+    finally { setDeleting(false); }
+  }
+
+  return (
+    <div className="glass-card p-5">
+      <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+        <Trash2 className="w-5 h-5" />
+        사진 중복 게시물 정리
+      </h2>
+      <p className="text-sm text-[#8E8E93] mb-4">
+        24시간 내 같은 유저가 같은 이미지를 중복 업로드한 게시물을 찾아 삭제합니다. 가장 먼저 올린 글만 유지됩니다.
+      </p>
+      <div className="flex gap-3">
+        <button
+          onClick={handleCheck}
+          disabled={checking}
+          className="px-4 py-2 rounded-lg bg-[#6366F1] text-white text-sm font-medium disabled:opacity-50"
+        >
+          {checking ? "조회 중..." : "중복 조회"}
+        </button>
+        {result && result.postsToDelete > 0 && (
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            className="px-4 py-2 rounded-lg bg-red-500 text-white text-sm font-medium disabled:opacity-50"
+          >
+            {deleting ? "삭제 중..." : `${result.postsToDelete}건 삭제`}
+          </button>
+        )}
+      </div>
+      {result && (
+        <p className="mt-3 text-sm">
+          {result.postsToDelete === 0
+            ? "중복 게시물 없음"
+            : `${result.duplicateGroups}개 그룹, ${result.postsToDelete}건 삭제 대상`}
+        </p>
+      )}
+      {deleteResult && (
+        <p className="mt-3 text-sm text-green-400">
+          {deleteResult.deleted}건 삭제 완료
+        </p>
+      )}
+    </div>
+  );
 }
 
 export default function AdminContentPage() {
@@ -250,6 +326,9 @@ export default function AdminContentPage() {
           </table>
         )}
       </div>
+
+      {/* Dedup Photos */}
+      <DedupPhotosSection />
     </div>
   );
 }
