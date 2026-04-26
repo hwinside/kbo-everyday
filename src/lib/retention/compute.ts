@@ -23,9 +23,44 @@ function isoWeek(dateStr: string): string {
   return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
 }
 
+/** W16 이전 코호트는 집계 제외 (본격 오픈 이전) */
+const MIN_COHORT = "2026-W16";
+
 /**
- * 코호트 리텐션 집계: 가입 주차별 D1/D7/D14/D30 재방문율.
- * 방문 기준: admin_page_views에 해당 user_id 레코드 존재.
+ * 유저별 활동일 수집: posts, comments, likes, chat_messages에서 활동일 추출.
+ * admin_page_views가 비어있으므로 실제 활동 데이터를 방문 기준으로 사용.
+ */
+async function collectActivityDays(
+  supabase: SupabaseClient,
+  since: string,
+): Promise<Map<string, Set<string>>> {
+  const visitDays = new Map<string, Set<string>>();
+
+  function addVisit(userId: string | null | undefined, createdAt: string) {
+    if (!userId) return;
+    const day = toKSTDateString(createdAt);
+    if (!visitDays.has(userId)) visitDays.set(userId, new Set());
+    visitDays.get(userId)!.add(day);
+  }
+
+  const [posts, comments, likes, chats] = await Promise.all([
+    supabase.from("posts").select("author_id, created_at").gte("created_at", since),
+    supabase.from("comments").select("author_id, created_at").gte("created_at", since),
+    supabase.from("likes").select("user_id, created_at").gte("created_at", since),
+    supabase.from("chat_messages").select("user_id, created_at").gte("created_at", since),
+  ]);
+
+  for (const r of posts.data ?? []) addVisit(r.author_id, r.created_at);
+  for (const r of comments.data ?? []) addVisit(r.author_id, r.created_at);
+  for (const r of likes.data ?? []) addVisit(r.user_id, r.created_at);
+  for (const r of chats.data ?? []) addVisit(r.user_id, r.created_at);
+
+  return visitDays;
+}
+
+/**
+ * 코호트 리텐션 집계: 가입 주차별 D1/D7/D14/D30 재활동율.
+ * 활동 기준: posts/comments/likes/chat_messages에 해당 유저 레코드 존재.
  */
 export async function computeCohortRetention(
   supabase: SupabaseClient,
@@ -43,21 +78,8 @@ export async function computeCohortRetention(
 
   if (!profiles?.length) return [];
 
-  // 2) 같은 기간 page_views (user_id not null)
-  const { data: views } = await supabase
-    .from("admin_page_views")
-    .select("user_id, created_at")
-    .not("user_id", "is", null)
-    .gte("created_at", sixtyDaysAgo);
-
-  // user별 방문일 Set
-  const visitDays = new Map<string, Set<string>>();
-  for (const v of views ?? []) {
-    if (!v.user_id) continue;
-    const day = toKSTDateString(v.created_at);
-    if (!visitDays.has(v.user_id)) visitDays.set(v.user_id, new Set());
-    visitDays.get(v.user_id)!.add(day);
-  }
+  // 2) 같은 기간 활동 데이터 수집
+  const visitDays = await collectActivityDays(supabase, sixtyDaysAgo);
 
   // 3) 코호트별 D-N 잔존율 계산
   const dayOffsets = [1, 7, 14, 30];
@@ -72,6 +94,9 @@ export async function computeCohortRetention(
 
   const rows: MetricRow[] = [];
   for (const [cohortKey, { users }] of cohorts) {
+    // W16 이전 코호트는 스킵
+    if (cohortKey < MIN_COHORT) continue;
+
     for (const dN of dayOffsets) {
       let returned = 0;
       let eligible = 0;
@@ -101,7 +126,7 @@ export async function computeCohortRetention(
 }
 
 /**
- * Activation Funnel 집계: 가입→팀선택→첫예측→첫댓글→첫채팅.
+ * Activation Funnel 집계: 가입→팀선택→첫글쓰기→첫댓글→첫채팅.
  * 전체 가입자 중 각 단계 도달 비율.
  */
 export async function computeActivationFunnel(
@@ -123,12 +148,12 @@ export async function computeActivationFunnel(
     .lte("created_at", targetDate + "T23:59:59+09:00")
     .not("team_id", "is", null);
 
-  // 첫 예측 (prediction_votes에 레코드 있는 유저 수)
-  const { data: predUsers } = await supabase
-    .from("prediction_votes")
-    .select("user_id")
+  // 첫 글쓰기
+  const { data: postUsers } = await supabase
+    .from("posts")
+    .select("author_id")
     .lte("created_at", targetDate + "T23:59:59+09:00");
-  const uniquePredUsers = new Set(predUsers?.map((r) => r.user_id)).size;
+  const uniquePostUsers = new Set(postUsers?.map((r) => r.author_id)).size;
 
   // 첫 댓글
   const { data: commentUsers } = await supabase
@@ -147,7 +172,7 @@ export async function computeActivationFunnel(
   const steps = [
     { key: "signup", value: totalSignups },
     { key: "team_select", value: teamSelected ?? 0 },
-    { key: "first_prediction", value: uniquePredUsers },
+    { key: "first_post", value: uniquePostUsers },
     { key: "first_comment", value: uniqueCommentUsers },
     { key: "first_chat", value: uniqueChatUsers },
   ];
@@ -186,22 +211,10 @@ export async function computeGamedayRetention(
 
   if (!profiles?.length) return [];
 
-  // page_views
-  const { data: views } = await supabase
-    .from("admin_page_views")
-    .select("user_id, created_at")
-    .not("user_id", "is", null)
-    .gte("created_at", sixtyDaysAgo);
+  // 활동 데이터 수집
+  const visitDays = await collectActivityDays(supabase, sixtyDaysAgo);
 
-  const visitDays = new Map<string, Set<string>>();
-  for (const v of views ?? []) {
-    if (!v.user_id) continue;
-    const day = toKSTDateString(v.created_at);
-    if (!visitDays.has(v.user_id)) visitDays.set(v.user_id, new Set());
-    visitDays.get(v.user_id)!.add(day);
-  }
-
-  // 유저별: 가입일 이후 경기일 목록 (시간순), 그 중 방문한 경기일 체크
+  // 유저별: 가입일 이후 경기일 목록 (시간순), 그 중 활동한 경기일 체크
   const cohorts = new Map<string, { users: { id: string; signupDate: string }[] }>();
 
   for (const p of profiles) {
@@ -215,6 +228,9 @@ export async function computeGamedayRetention(
   const rows: MetricRow[] = [];
 
   for (const [cohortKey, { users }] of cohorts) {
+    // W16 이전 코호트는 스킵
+    if (cohortKey < MIN_COHORT) continue;
+
     for (let gi = 0; gi < 3; gi++) {
       let eligible = 0;
       let returned = 0;

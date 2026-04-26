@@ -6,7 +6,7 @@ import type { CohortHeatmapRow, FunnelStep, GamedayRetention } from "@/lib/admin
 const FUNNEL_LABELS: Record<string, string> = {
   signup: "가입",
   team_select: "팀 선택",
-  first_prediction: "첫 예측",
+  first_post: "첫 글쓰기",
   first_comment: "첫 댓글",
   first_chat: "첫 채팅",
 };
@@ -83,7 +83,7 @@ export async function GET(req: NextRequest) {
       .eq("metric_type", "funnel")
       .eq("cohort_key", "all");
 
-    const stepOrder = ["signup", "team_select", "first_prediction", "first_comment", "first_chat"];
+    const stepOrder = ["signup", "team_select", "first_post", "first_comment", "first_chat"];
     const stepMap = new Map<string, { count: number; rate: number }>();
     for (const row of data ?? []) {
       stepMap.set(row.metric_key, { count: row.value, rate: row.rate });
