@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
   );
 
   // Time window: only shorts from last 7 days
-  const sinceDate = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  const sinceDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   // Fetch shorts candidates, over-fetch for post-filtering
   const selectCols = "video_id, title, thumbnail, channel, channel_id, published_at, source_type, player_id, player_ids, noise_flags, team_id";
