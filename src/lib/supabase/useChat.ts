@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 
@@ -20,6 +20,8 @@ export function useChat(roomId: string) {
   const { user, profile } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [cooldown, setCooldown] = useState(false);
+  const lastSentRef = useRef(0);
 
   // 최근 메시지 로드
   useEffect(() => {
@@ -111,6 +113,13 @@ export function useChat(roomId: string) {
     async (content: string) => {
       if (!user || !content.trim() || content.trim().length > 120) return false;
 
+      const now = Date.now();
+      const COOLDOWN_MS = 3000;
+      if (now - lastSentRef.current < COOLDOWN_MS) return false;
+      lastSentRef.current = now;
+      setCooldown(true);
+      setTimeout(() => setCooldown(false), COOLDOWN_MS);
+
       const { data, error } = await supabase
         .from("chat_messages")
         .insert({
@@ -149,5 +158,5 @@ export function useChat(roomId: string) {
     [user, profile, roomId]
   );
 
-  return { messages, loading, sendMessage, isLoggedIn: !!user };
+  return { messages, loading, sendMessage, cooldown, isLoggedIn: !!user };
 }
