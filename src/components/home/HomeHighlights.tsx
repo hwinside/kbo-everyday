@@ -11,6 +11,9 @@ interface VideoItem {
   thumbnail: string;
   channel: string;
   publishedAt: string;
+  playerIds: string[];
+  sourceType: string;
+  isPlayerMatch: boolean;
   label?: string;
 }
 
@@ -28,6 +31,8 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
     if (!team) { setLoading(false); return; }
 
     const favPlayers = getFavoritePlayers().slice(0, 5);
+    // playerId → name lookup for label display
+    const favPlayerMap = new Map(favPlayers.map(p => [p.playerId, p.name]));
     const playerIdsParam = favPlayers.length > 0
       ? `&player_ids=${encodeURIComponent(favPlayers.map(p => p.playerId).join(","))}`
       : "";
@@ -35,14 +40,25 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
     fetch(`/api/shorts-feed?team=${encodeURIComponent(team)}${playerIdsParam}`)
       .then(r => r.json())
       .then((data) => {
-        const items: VideoItem[] = (data.items || []).map((v: any) => ({
-          id: v.id,
-          title: v.title,
-          thumbnail: v.thumbnail,
-          channel: v.channel,
-          publishedAt: v.publishedAt,
-          label: v.sourceType?.startsWith("official") ? team : v.channel,
-        }));
+        const items: VideoItem[] = (data.items || []).map((v: any) => {
+          // Label priority: matched fav player name > team name (official) > null
+          const matchedPlayer = (v.playerIds ?? []).find((id: string) => favPlayerMap.has(id));
+          const label = matchedPlayer
+            ? favPlayerMap.get(matchedPlayer)!
+            : v.sourceType?.startsWith("official") ? team : null;
+
+          return {
+            id: v.id,
+            title: v.title,
+            thumbnail: v.thumbnail,
+            channel: v.channel,
+            publishedAt: v.publishedAt,
+            playerIds: v.playerIds ?? [],
+            sourceType: v.sourceType ?? "",
+            isPlayerMatch: !!matchedPlayer,
+            label,
+          };
+        });
         setVideos(items.slice(0, 30));
         setLoading(false);
       }).catch(() => setLoading(false));
@@ -69,7 +85,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
               </div>
               {v.label && (
                 <span className={`absolute top-2 left-2 px-1.5 py-0.5 rounded-full text-xs font-semibold text-white ${
-                  v.label === "공식" ? "bg-blue-500/80" : "bg-accent/80"
+                  v.isPlayerMatch ? "bg-rose-500/80" : "bg-blue-500/80"
                 }`}>
                   {v.label}
                 </span>
