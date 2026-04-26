@@ -2,6 +2,47 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { isAdminRequest } from "@/lib/admin/pin";
 
+const DEDUP_MESSAGE = "중복 사진 게시물로 확인되어 삭제되었어요. 자세한 문의는 크보팬 운영팀에 남겨 주세요.";
+
+async function sendSystemDM(userId: string) {
+  const systemUserId = process.env.SYSTEM_USER_ID;
+  if (!systemUserId) return;
+
+  const [u1, u2] = [systemUserId, userId].sort();
+
+  // 기존 conversation 찾거나 생성
+  const { data: existing } = await supabase
+    .from("dm_conversations")
+    .select("id")
+    .eq("user1_id", u1)
+    .eq("user2_id", u2)
+    .maybeSingle();
+
+  let conversationId: string;
+  if (existing) {
+    conversationId = existing.id;
+  } else {
+    const { data: newConv } = await supabase
+      .from("dm_conversations")
+      .insert({ user1_id: u1, user2_id: u2 })
+      .select("id")
+      .single();
+    if (!newConv) return;
+    conversationId = newConv.id;
+  }
+
+  await supabase.from("dm_messages").insert({
+    conversation_id: conversationId,
+    sender_id: systemUserId,
+    content: DEDUP_MESSAGE,
+  });
+
+  await supabase.from("dm_conversations").update({
+    last_message: DEDUP_MESSAGE.substring(0, 100),
+    last_message_at: new Date().toISOString(),
+  }).eq("id", conversationId);
+}
+
 /**
  * GET  — 24시간 내 같은 유저가 같은 이미지 해시로 올린 중복 게시물 조회 (dry-run)
  * POST — 중복 게시물 삭제 (가장 먼저 올린 글만 유지)
@@ -94,9 +135,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  // 작성자별 쪽지 발송 (중복 제거)
+  const authorIds = [...new Set(duplicates.map((g) => g.author_id))];
+  const dmResults = await Promise.allSettled(
+    authorIds.map((authorId) => sendSystemDM(authorId))
+  );
+  const dmSent = dmResults.filter((r) => r.status === "fulfilled").length;
+
   return NextResponse.json({
     deleted: idsToDelete.length,
     groups: duplicates.length,
     deletedIds: idsToDelete,
+    dmSent,
   });
 }

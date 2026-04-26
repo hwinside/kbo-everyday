@@ -99,7 +99,7 @@ function DedupPhotosSection() {
   const [checking, setChecking] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [result, setResult] = useState<{ duplicateGroups: number; postsToDelete: number } | null>(null);
-  const [deleteResult, setDeleteResult] = useState<{ deleted: number } | null>(null);
+  const [deleteResult, setDeleteResult] = useState<{ deleted: number; dmSent?: number } | null>(null);
 
   const pin = getPin();
   const headers: Record<string, string> = pin ? { "x-admin-pin": pin } : {};
@@ -164,7 +164,7 @@ function DedupPhotosSection() {
       )}
       {deleteResult && (
         <p className="mt-3 text-sm text-green-400">
-          {deleteResult.deleted}건 삭제 완료
+          {deleteResult.deleted}건 삭제 완료{deleteResult.dmSent ? `, ${deleteResult.dmSent}명에게 쪽지 발송` : ""}
         </p>
       )}
     </div>
