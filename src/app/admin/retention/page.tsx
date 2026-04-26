@@ -57,6 +57,7 @@ const FUNNEL_COLORS = ["#6366F1", "#8B5CF6", "#A855F7", "#D946EF", "#EC4899"];
 
 interface RetentionData {
   cohort: CohortHeatmapRow[];
+  dailyCohort: CohortHeatmapRow[];
   funnel: FunnelStep[];
   gameday: GamedayRetention[];
   visitDist: VisitDistBucket[];
@@ -148,6 +149,51 @@ export default function RetentionPage() {
                   <tr key={row.cohortKey} className="border-t border-white/5">
                     <td className="py-2 pr-4 text-gray-300 font-mono text-xs">
                       {row.cohortKey}
+                    </td>
+                    <td className="py-2 px-3 text-right tabular-nums text-gray-400">
+                      {row.cohortSize}
+                    </td>
+                    {(["d1","d2","d3","d4","d5","d6","d7","d14","d30"] as const).map((key) => (
+                      <td
+                        key={key}
+                        className="py-2 px-2 text-center tabular-nums font-medium text-xs"
+                        style={{
+                          color: rateColor(row[key]),
+                          background: rateBg(row[key]),
+                        }}
+                      >
+                        {row[key] > 0 ? `${(row[key] * 100).toFixed(1)}%` : "—"}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="glass-card p-5">
+        <h2 className="text-sm font-semibold mb-4">일별 코호트 리텐션 (4/16~)</h2>
+        {data.dailyCohort.length === 0 ? (
+          <p className="text-gray-500 text-sm">데이터 없음</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-gray-400 text-xs">
+                  <th className="text-left py-2 pr-4">가입일</th>
+                  <th className="text-right py-2 px-3">인원</th>
+                  {(["d1","d2","d3","d4","d5","d6","d7","d14","d30"] as const).map((k) => (
+                    <th key={k} className="text-center py-2 px-2">{k.toUpperCase()}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {data.dailyCohort.map((row) => (
+                  <tr key={row.cohortKey} className="border-t border-white/5">
+                    <td className="py-2 pr-4 text-gray-300 font-mono text-xs">
+                      {row.cohortKey.slice(5)}
                     </td>
                     <td className="py-2 px-3 text-right tabular-nums text-gray-400">
                       {row.cohortSize}

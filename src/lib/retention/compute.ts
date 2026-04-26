@@ -25,6 +25,8 @@ function isoWeek(dateStr: string): string {
 
 /** W16 이전 코호트는 집계 제외 (본격 오픈 이전) */
 const MIN_COHORT = "2026-W16";
+/** 일별 코호트 시작일 */
+const MIN_DAILY_COHORT = "2026-04-16";
 
 /**
  * 유저별 활동일 수집: posts, comments, likes, chat_messages, admin_page_views에서 활동일 추출.
@@ -116,6 +118,66 @@ export async function computeCohortRetention(
           date: targetDate,
           metric_type: "cohort",
           cohort_key: cohortKey,
+          metric_key: `D${dN}`,
+          total: eligible,
+          value: returned,
+          rate: Math.round((returned / eligible) * 10000) / 10000,
+        });
+      }
+    }
+  }
+  return rows;
+}
+
+/**
+ * 일별 코호트 리텐션 집계: 가입일별 D1~D7/D14/D30 재활동율.
+ * 주간 코호트와 병렬로 운영, metric_type="daily_cohort".
+ */
+export async function computeDailyCohortRetention(
+  supabase: SupabaseClient,
+  targetDate: string,
+): Promise<MetricRow[]> {
+  const sixtyDaysAgo = new Date(
+    new Date(targetDate + "T00:00:00+09:00").getTime() - 60 * 86400000,
+  ).toISOString();
+
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id, created_at")
+    .gte("created_at", sixtyDaysAgo);
+
+  if (!profiles?.length) return [];
+
+  const visitDays = await collectActivityDays(supabase, sixtyDaysAgo);
+
+  const dayOffsets = [1, 2, 3, 4, 5, 6, 7, 14, 30];
+  const cohorts = new Map<string, { id: string; signupDate: string }[]>();
+
+  for (const p of profiles) {
+    const signupDate = toKSTDateString(p.created_at);
+    if (signupDate < MIN_DAILY_COHORT) continue;
+    if (!cohorts.has(signupDate)) cohorts.set(signupDate, []);
+    cohorts.get(signupDate)!.push({ id: p.id, signupDate });
+  }
+
+  const rows: MetricRow[] = [];
+  for (const [cohortDate, users] of cohorts) {
+    for (const dN of dayOffsets) {
+      let returned = 0;
+      let eligible = 0;
+      for (const u of users) {
+        const targetDay = new Date(
+          new Date(u.signupDate + "T00:00:00+09:00").getTime() + dN * 86400000,
+        ).toISOString().slice(0, 10);
+        if (targetDay > targetDate) continue;
+        eligible++;
+        if (visitDays.get(u.id)?.has(targetDay)) returned++;
+      }
+      if (eligible > 0) {
+        rows.push({
+          date: targetDate,
+          metric_type: "daily_cohort",
+          cohort_key: cohortDate,
           metric_key: `D${dN}`,
           total: eligible,
           value: returned,

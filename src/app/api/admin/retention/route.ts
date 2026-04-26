@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (!latestDate) {
-    return NextResponse.json({ cohort: [], funnel: [], gameday: [], visitDist: [], date: null });
+    return NextResponse.json({ cohort: [], dailyCohort: [], funnel: [], gameday: [], visitDist: [], date: null });
   }
 
   // Cohort heatmap
@@ -71,6 +71,35 @@ export async function GET(req: NextRequest) {
       }
     }
     cohort = Array.from(grouped.values());
+  }
+
+  // Daily cohort heatmap (가입일별)
+  let dailyCohort: CohortHeatmapRow[] = [];
+  if (type === "all" || type === "daily_cohort") {
+    const { data } = await supabase
+      .from("retention_metrics")
+      .select("*")
+      .eq("date", latestDate)
+      .eq("metric_type", "daily_cohort")
+      .order("cohort_key", { ascending: true });
+
+    const grouped = new Map<string, CohortHeatmapRow>();
+    for (const row of data ?? []) {
+      if (!grouped.has(row.cohort_key)) {
+        grouped.set(row.cohort_key, {
+          cohortKey: row.cohort_key,
+          cohortSize: row.total,
+          d1: 0, d2: 0, d3: 0, d4: 0, d5: 0, d6: 0, d7: 0, d14: 0, d30: 0,
+        });
+      }
+      const entry = grouped.get(row.cohort_key)!;
+      const key = row.metric_key.toLowerCase() as keyof CohortHeatmapRow;
+      if (key in entry && key !== "cohortKey" && key !== "cohortSize") {
+        (entry as unknown as Record<string, number>)[key] = row.rate;
+        entry.cohortSize = Math.max(entry.cohortSize, row.total);
+      }
+    }
+    dailyCohort = Array.from(grouped.values());
   }
 
   // Activation funnel
@@ -148,5 +177,5 @@ export async function GET(req: NextRequest) {
       .map((b) => ({ bucket: b, count: bucketMap.get(b)! }));
   }
 
-  return NextResponse.json({ cohort, funnel, gameday, visitDist, date: latestDate });
+  return NextResponse.json({ cohort, dailyCohort, funnel, gameday, visitDist, date: latestDate });
 }

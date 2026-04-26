@@ -5,6 +5,7 @@ import { getKSTToday } from "@/lib/utils/date-kst";
 import { fetchGames } from "@/lib/crawler/kbo-api";
 import {
   computeCohortRetention,
+  computeDailyCohortRetention,
   computeActivationFunnel,
   computeGamedayRetention,
   computeVisitDistribution,
@@ -39,14 +40,15 @@ export async function GET(req: NextRequest) {
     }
 
     // 2) 3축 집계
-    const [cohortRows, funnelRows, gamedayRows, visitDistRows] = await Promise.all([
+    const [cohortRows, dailyCohortRows, funnelRows, gamedayRows, visitDistRows] = await Promise.all([
       computeCohortRetention(supabase, targetDate),
+      computeDailyCohortRetention(supabase, targetDate),
       computeActivationFunnel(supabase, targetDate),
       computeGamedayRetention(supabase, targetDate, gameDates),
       computeVisitDistribution(supabase, targetDate),
     ]);
 
-    const allRows = [...cohortRows, ...funnelRows, ...gamedayRows, ...visitDistRows];
+    const allRows = [...cohortRows, ...dailyCohortRows, ...funnelRows, ...gamedayRows, ...visitDistRows];
 
     // 3) Upsert — ON CONFLICT 로 기존 행 덮어쓰기 (중간 실패 시 기존 데이터 보존)
     if (allRows.length > 0) {
@@ -59,7 +61,7 @@ export async function GET(req: NextRequest) {
       if (error) throw error;
     }
 
-    const summary = `cohort:${cohortRows.length} funnel:${funnelRows.length} gameday:${gamedayRows.length} visitDist:${visitDistRows.length} gameDates:${gameDates.length}`;
+    const summary = `cohort:${cohortRows.length} dailyCohort:${dailyCohortRows.length} funnel:${funnelRows.length} gameday:${gamedayRows.length} visitDist:${visitDistRows.length} gameDates:${gameDates.length}`;
     await finishJob(logId, "success", summary);
 
     return NextResponse.json({ ok: true, date: targetDate, summary });
