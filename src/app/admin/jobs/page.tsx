@@ -31,6 +31,7 @@ const JOB_INFOS = [
   { name: "retention", label: "리텐션 집계", schedule: "매일 09:30", description: "코호트/활성화/경기일 리텐션 메트릭 집계" },
   { name: "daily-fallback-report", label: "API 장애 리포트", schedule: "매일 09:00", description: "전일 API 장애 집계 → 텔레그램 전송" },
   { name: "photos-check", label: "선수 사진 모니터링", schedule: "매주 일 06:00", description: "KBO CDN 선수 사진 존재 여부 확인" },
+  { name: "roster-update", label: "로스터 업데이트", schedule: "매일 05:00", description: "GitHub Actions 크롤링 → 자동 PR+머지" },
 ];
 
 function JobStatusBadge({ status }: { status: string }) {
