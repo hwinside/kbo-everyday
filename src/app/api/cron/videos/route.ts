@@ -48,6 +48,7 @@ export async function GET(req: NextRequest) {
 
   const results: Record<string, number> = {};
   const errors: Record<string, string> = {};
+  const channelLatest = new Map<string, string>(); // channel_id → latest published_at
   let totalUpserted = 0;
 
   // Process in batches for concurrency control
@@ -88,34 +89,42 @@ export async function GET(req: NextRequest) {
           };
         });
 
-        return { channelName: ch.channel_name, rows };
+        return { channelId: ch.channel_id, channelName: ch.channel_name, rows };
       }),
     );
 
-    for (const result of settled) {
+    for (let j = 0; j < settled.length; j++) {
+      const result = settled[j];
       if (result.status === "rejected") {
+        const ch = batch[j];
         const msg = result.reason instanceof Error ? result.reason.message : String(result.reason);
-        errors[`batch_${i}`] = msg;
+        errors[`${ch.channel_name}(${ch.channel_id})`] = msg;
         continue;
       }
-      const { channelName, rows } = result.value;
+      const { channelId, channelName, rows } = result.value;
       const { upserted, error } = await upsertVideos(supabaseAdmin, rows);
       if (error) {
         errors[channelName] = error;
       } else {
         results[channelName] = upserted;
         totalUpserted += upserted;
+        // Track latest published_at per channel for last_video_at
+        if (rows.length > 0) {
+          const latest = rows.reduce((a, b) =>
+            a.published_at > b.published_at ? a : b
+          ).published_at;
+          channelLatest.set(channelId, latest);
+        }
       }
     }
   }
 
-  // Update last_video_at for channels that returned results
-  const channelNames = Object.keys(results);
-  if (channelNames.length > 0) {
+  // Update last_video_at per channel with actual latest published_at
+  for (const [chId, latestAt] of channelLatest) {
     await supabaseAdmin
       .from("channel_pool")
-      .update({ last_video_at: new Date().toISOString() })
-      .in("channel_name", channelNames);
+      .update({ last_video_at: latestAt })
+      .eq("channel_id", chId);
   }
 
   const errorCount = Object.keys(errors).length;
