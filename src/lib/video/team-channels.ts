@@ -25,3 +25,22 @@ export function isOfficialChannel(channelId: string | null | undefined): boolean
   if (!channelId) return false;
   return OFFICIAL_CHANNEL_IDS.has(channelId);
 }
+
+export interface PoolChannel {
+  channel_id: string;
+  channel_name: string;
+  tier: number;
+  team_affinity: string[] | null;
+}
+
+/** Load active channels from channel_pool */
+export async function getActiveChannels(
+  supabase: { from: (t: string) => any },
+): Promise<PoolChannel[]> {
+  const { data } = await supabase
+    .from("channel_pool")
+    .select("channel_id, channel_name, tier, team_affinity")
+    .eq("is_active", true)
+    .order("tier", { ascending: true });
+  return data ?? [];
+}

@@ -10,12 +10,15 @@ export type VideoSourceType =
   | "official_long"
   | "official_short"
   | "player"
-  | "team_search";
+  | "team_search"
+  | "community_short"
+  | "community_long";
 
 export interface VideoUpsertRow {
   video_id: string;
   team_id: string;
   player_id?: string | null;
+  player_ids?: string[];
   title: string;
   channel?: string | null;
   channel_id?: string | null;
@@ -41,6 +44,7 @@ export async function upsertVideos(
     video_id: r.video_id,
     team_id: r.team_id,
     player_id: r.player_id ?? null,
+    player_ids: r.player_ids ?? [],
     title: r.title,
     channel: r.channel ?? null,
     channel_id: r.channel_id ?? null,
