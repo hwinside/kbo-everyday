@@ -87,7 +87,7 @@ jobs:
 
           git push origin "$BRANCH"
 
-          gh pr create \
+          PR_URL=$(gh pr create \
             --title "📊 Roster/Stats 자동 업데이트 $(date +%Y-%m-%d)" \
             --body "## 자동 업데이트 (GitHub Actions)
 
@@ -100,6 +100,8 @@ jobs:
           매일 새벽 5시(KST) 자동 크롤링 결과입니다.
           변경사항 확인 후 머지해주세요." \
             --base main \
-            --head "$BRANCH"
+            --head "$BRANCH")
+
+          gh pr merge --auto --squash "$PR_URL"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
