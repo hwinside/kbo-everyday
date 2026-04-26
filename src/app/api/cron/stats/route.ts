@@ -107,7 +107,7 @@ function parsePitcherRow(c: string[], roster: RosterPlayer[]): PlayerStat {
 }
 
 async function fetchPitcherStats(roster: RosterPlayer[]): Promise<PlayerStat[]> {
-  const sortKeys = ["ERA_RT", "SV_CN", "HOLD_CN", "W_CN", "KK_CN"];
+  const sortKeys = ["ERA_RT", "SV_CN", "HOLD_CN", "W_CN", "KK_CN", "GAME_CN", "INN2_CN", "HIT_CN", "BB_CN", "R_CN"];
   const merged = new Map<string, PlayerStat>();
 
   const results = await Promise.all(

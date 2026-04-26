@@ -60,13 +60,28 @@ function getTeamPitchers(teamId: number) {
     .map(p => `${p.name} (ERA ${p.era}, ${p.wins}승${p.losses}패, ${p.saves}세이브, ${p.so}삼진, ${p.ip}이닝, ${p.games}경기)`);
 }
 
-/** 선발투수 상세 스탯 */
-function getStarterStats(name: string, teamId: number): string | null {
+/** 선발투수 상세 스탯 (static JSON → Supabase fallback) */
+async function getStarterStats(name: string, teamId: number): Promise<string | null> {
   const teamName = getTeamShortName(teamId);
+  // 1차: static JSON (빠름)
   const pitcher = (pitcherStats as Array<{ name: string; team: string; era: string; wins: number; losses: number; ip: string; so: number; games: number; whip?: string }>)
     .find(p => p.name === name && p.team === teamName);
-  if (!pitcher) return null;
-  return `${pitcher.name}: ERA ${pitcher.era}, ${pitcher.wins}승${pitcher.losses}패, ${pitcher.ip}이닝, ${pitcher.so}삼진, ${pitcher.games}경기${pitcher.whip ? `, WHIP ${pitcher.whip}` : ""}`;
+  if (pitcher) {
+    return `${pitcher.name}: ERA ${pitcher.era}, ${pitcher.wins}승${pitcher.losses}패, ${pitcher.ip}이닝, ${pitcher.so}삼진, ${pitcher.games}경기${pitcher.whip ? `, WHIP ${pitcher.whip}` : ""}`;
+  }
+  // 2차: Supabase player_stats_pitcher (런타임, cron이 수집한 데이터)
+  try {
+    const { data } = await supabase
+      .from("player_stats_pitcher")
+      .select("name, era, wins, losses, ip, so, games, whip")
+      .eq("name", name)
+      .eq("team", teamName)
+      .single();
+    if (data) {
+      return `${data.name}: ERA ${data.era}, ${data.wins}승${data.losses}패, ${data.ip}이닝, ${data.so}삼진, ${data.games}경기${data.whip ? `, WHIP ${data.whip}` : ""}`;
+    }
+  } catch { /* Supabase 실패 시 graceful fallback */ }
+  return null;
 }
 
 // ===== Runtime data helpers =====
@@ -618,8 +633,10 @@ async function buildPreviewPrompt(req: PreviewRequest): Promise<string> {
   const awayPitchers = getTeamPitchers(req.awayTeamId);
   const homePitchers = getTeamPitchers(req.homeTeamId);
 
-  const awayStarterInfo = req.awayStarter ? getStarterStats(req.awayStarter, req.awayTeamId) : null;
-  const homeStarterInfo = req.homeStarter ? getStarterStats(req.homeStarter, req.homeTeamId) : null;
+  const [awayStarterInfo, homeStarterInfo] = await Promise.all([
+    req.awayStarter ? getStarterStats(req.awayStarter, req.awayTeamId) : null,
+    req.homeStarter ? getStarterStats(req.homeStarter, req.homeTeamId) : null,
+  ]);
 
   // 런타임 데이터 병렬 조회 (모두 try-catch로 감싸서 실패해도 기존 동작 유지)
   const [seriesCtx, standingsCtx, awayHotPlayers, homeHotPlayers,
