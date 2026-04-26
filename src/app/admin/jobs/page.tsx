@@ -24,7 +24,7 @@ interface JobLogRow {
 
 const JOB_INFOS = [
   { name: "youtube-highlights", label: "유튜브 하이라이트", schedule: "매 4시간", description: "구단별 유튜브 하이라이트 영상 수집" },
-  { name: "roster-update", label: "로스터 업데이트", schedule: "매일 06:00", description: "KBO 기록 페이지에서 선수 목록 수집" },
+  { name: "roster-sync", label: "로스터 즉시 동기화", schedule: "매일 05:00 + 수동", description: "GitHub Actions로 roster/stats/photos 갱신 후 자동 머지" },
   { name: "stats-update", label: "선수 스탯 업데이트", schedule: "매일 06:00", description: "KBO 타자/투수 스탯 크롤링 → Supabase 저장" },
   { name: "photos-check", label: "선수 사진 모니터링", schedule: "매주 일 06:00", description: "KBO CDN 선수 사진 존재 여부 확인" },
 ];
@@ -151,7 +151,7 @@ export default function AdminJobsPage() {
       const json = await res.json();
       const label = JOB_INFOS.find((j) => j.name === jobName)?.label ?? jobName;
       if (json.ok) {
-        setRunResult({ job: jobName, ok: true, message: `${label} 실행 성공` });
+        setRunResult({ job: jobName, ok: true, message: json.message || `${label} 실행 성공` });
         // Refresh logs
         const logsRes = await fetch("/api/admin/jobs", { headers: { "x-admin-pin": pin } });
         if (logsRes.ok) {
