@@ -9,7 +9,8 @@ export type NoiseFlag =
   | "vlog"                  // vlog/일상
   | "ceremony"              // 시구/시타/행사
   | "preview"               // 예고편/프리뷰
-  | "interview";            // 인터뷰
+  | "interview"             // 인터뷰
+  | "game";                 // 모바일/콘솔 게임 영상
 
 const PATTERNS: Array<{ flag: NoiseFlag; regex: RegExp }> = [
   { flag: "highlight_compilation", regex: /(하이라이트\s*모음|H\/L|HL\s*모음|경기\s*풀\s*영상|풀\s*하이라이트|경기요약)/i },
@@ -18,6 +19,7 @@ const PATTERNS: Array<{ flag: NoiseFlag; regex: RegExp }> = [
   { flag: "ceremony", regex: /(시구|시타|응원단|치어리더|팬사인|행사)/i },
   { flag: "preview", regex: /(예고|프리뷰|티저|preview|teaser)/i },
   { flag: "interview", regex: /(인터뷰|interview|기자회견)/i },
+  { flag: "game", regex: /(컴투스|컴프야|프로야구H|모바일게임|게임플레이|게임화면|프로스피릿)/i },
 ];
 
 /** 제목/채널명 기반 noise_flags 추출 */
@@ -50,6 +52,7 @@ export const DEFAULT_EXCLUDE_FLAGS: ReadonlySet<NoiseFlag> = new Set([
   "vlog",
   "ceremony",
   "preview",
+  "game",
 ]);
 
 export function isExcludedByNoise(

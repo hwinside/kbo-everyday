@@ -10,7 +10,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { DEFAULT_EXCLUDE_FLAGS } from "@/lib/video/noise-flags";
+import { DEFAULT_EXCLUDE_FLAGS, extractNoiseFlags } from "@/lib/video/noise-flags";
 
 export async function GET(req: NextRequest) {
   const team = req.nextUrl.searchParams.get("team") || "_ALL";
@@ -23,10 +23,10 @@ export async function GET(req: NextRequest) {
     50,
   );
 
+  // Time window: only shorts from last 7 days
+  const sinceDate = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+
   // Fetch shorts candidates, over-fetch for post-filtering
-  // When team is specified AND player_ids are present, include community/ETC videos
-  // that match the user's favorite players — this is the core feature:
-  // "선수 관련 숏츠는 공식이 아니어도 다 보여준다"
   const selectCols = "video_id, title, thumbnail, channel, channel_id, published_at, source_type, player_id, player_ids, noise_flags, team_id";
   const fetchLimit = limit * 3;
 
@@ -41,6 +41,7 @@ export async function GET(req: NextRequest) {
         .select(selectCols)
         .eq("is_short_candidate", true)
         .eq("team_id", team)
+        .gte("published_at", sinceDate)
         .order("published_at", { ascending: false })
         .limit(fetchLimit),
       supabaseAdmin
@@ -48,6 +49,7 @@ export async function GET(req: NextRequest) {
         .select(selectCols)
         .eq("is_short_candidate", true)
         .overlaps("player_ids", playerIds)
+        .gte("published_at", sinceDate)
         .order("published_at", { ascending: false })
         .limit(fetchLimit),
     ]);
@@ -70,6 +72,7 @@ export async function GET(req: NextRequest) {
       .from("videos")
       .select(selectCols)
       .eq("is_short_candidate", true)
+      .gte("published_at", sinceDate)
       .order("published_at", { ascending: false })
       .limit(fetchLimit);
 
@@ -86,11 +89,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Filter out noisy content in application code
+  // Filter out noisy content — DB flags + runtime title recheck
+  // Runtime recheck catches videos ingested before new noise patterns were added
   const excludeSet = DEFAULT_EXCLUDE_FLAGS as ReadonlySet<string>;
   const filtered = (data ?? []).filter((v) => {
     const flags: string[] = Array.isArray(v.noise_flags) ? v.noise_flags : [];
-    return !flags.some((f) => excludeSet.has(f));
+    if (flags.some((f) => excludeSet.has(f))) return false;
+    // Runtime title recheck for patterns added after ingestion
+    const runtimeFlags = extractNoiseFlags(v.title, v.channel);
+    return !runtimeFlags.some((f) => excludeSet.has(f as string));
   });
 
   const items = filtered.map((v) => ({
@@ -105,24 +112,58 @@ export async function GET(req: NextRequest) {
     teamId: v.team_id ?? null,
   }));
 
-  // Sort: player matches partitioned to front, then recency within each group
+  // Sort: player-matched items interleaved by player (round-robin), then team videos
   const playerIdSet = new Set(playerIds);
   if (playerIdSet.size > 0) {
-    const playerMatched: typeof items = [];
+    // Group by matched player (first match wins)
+    const byPlayer = new Map<string, typeof items>();
     const rest: typeof items = [];
     for (const item of items) {
-      if (item.playerIds.some((id: string) => playerIdSet.has(id))) {
-        playerMatched.push(item);
+      const matchedId = item.playerIds.find((id: string) => playerIdSet.has(id));
+      if (matchedId) {
+        const bucket = byPlayer.get(matchedId);
+        if (bucket) bucket.push(item);
+        else byPlayer.set(matchedId, [item]);
       } else {
         rest.push(item);
       }
     }
+
+    // Sort each player bucket by recency
     const byRecency = (a: typeof items[0], b: typeof items[0]) =>
       new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
-    playerMatched.sort(byRecency);
+    for (const bucket of byPlayer.values()) bucket.sort(byRecency);
     rest.sort(byRecency);
+
+    // Recency-weighted round-robin: always pick the player whose next video is most recent
+    // This ensures today's videos come before yesterday's while still interleaving players
+    const interleaved: typeof items = [];
+    const buckets = Array.from(byPlayer.values());
+    const indices = new Array(buckets.length).fill(0);
+    let lastPickedBucket = -1;
+
+    while (interleaved.length < items.length) {
+      let bestBucket = -1;
+      let bestTime = -Infinity;
+
+      for (let b = 0; b < buckets.length; b++) {
+        if (indices[b] >= buckets[b].length) continue;
+        // Skip same bucket twice in a row (diversity guarantee)
+        if (b === lastPickedBucket && buckets.length > 1) {
+          const othersAvailable = buckets.some((_, i) => i !== b && indices[i] < buckets[i].length);
+          if (othersAvailable) continue;
+        }
+        const t = new Date(buckets[b][indices[b]].publishedAt).getTime();
+        if (t > bestTime) { bestTime = t; bestBucket = b; }
+      }
+
+      if (bestBucket === -1) break;
+      interleaved.push(buckets[bestBucket][indices[bestBucket]++]);
+      lastPickedBucket = bestBucket;
+    }
+
     items.length = 0;
-    items.push(...playerMatched, ...rest);
+    items.push(...interleaved, ...rest);
   }
 
   // Diversity: max 3 from same channel in a row
