@@ -56,15 +56,30 @@ interface DuplicateGroup {
   delete: number[];
 }
 
+/** image_urls에서 직접 fetch해서 SHA-256 해시 계산 (fallback) */
+async function computeHashFromUrl(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const buffer = await res.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+    return Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  } catch {
+    return null;
+  }
+}
+
 async function findDuplicates(): Promise<DuplicateGroup[]> {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
+  // image_hashes 유무와 관계없이 모든 사진 게시물 조회
   const { data: posts, error } = await supabase
     .from("posts")
-    .select("id, author_id, image_hashes, created_at")
+    .select("id, author_id, image_hashes, image_urls, created_at")
     .eq("content_type", "photo")
     .gte("created_at", since)
-    .not("image_hashes", "eq", "[]")
     .order("created_at", { ascending: true });
 
   if (error || !posts) return [];
@@ -73,7 +88,24 @@ async function findDuplicates(): Promise<DuplicateGroup[]> {
   const map = new Map<string, { id: number; created_at: string }[]>();
 
   for (const post of posts) {
-    const hashes = (post.image_hashes as string[]) || [];
+    let hashes = (post.image_hashes as string[]) || [];
+
+    // fallback: image_hashes가 비어있으면 image_urls에서 직접 해시 계산
+    if (hashes.length === 0 && Array.isArray(post.image_urls) && post.image_urls.length > 0) {
+      const computed = await Promise.all(
+        (post.image_urls as string[]).map((url) => computeHashFromUrl(url))
+      );
+      hashes = computed.filter((h): h is string => h !== null);
+
+      // 계산한 해시를 DB에 백필
+      if (hashes.length > 0) {
+        await supabase
+          .from("posts")
+          .update({ image_hashes: hashes })
+          .eq("id", post.id);
+      }
+    }
+
     for (const hash of hashes) {
       const key = `${post.author_id}:${hash}`;
       const list = map.get(key) || [];
