@@ -32,7 +32,8 @@ export async function GET(req: NextRequest) {
   if (type === "posts") {
     const { data, error } = await supabase
       .from("posts")
-      .select("id, title, content, content_type, board_type, board_id, created_at, image_urls, author_id, profiles(nickname)")
+      .select("id, title, content, content_type, board_type, board_id, created_at, author_id, profiles(nickname)")
+      .neq("content_type", "photo")
       .gte("created_at", start)
       .lte("created_at", end)
       .order("created_at", { ascending: false })

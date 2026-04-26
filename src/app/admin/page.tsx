@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { toKSTDateString } from "@/lib/utils/date-kst";
 import {
   LineChart,
   Line,
@@ -30,7 +29,6 @@ import {
 } from "lucide-react";
 import type { FeedbackItem } from "@/lib/admin/types";
 import { getTeamById } from "@/lib/constants/teams";
-import { toKSTDateString } from "@/lib/utils/date-kst";
 
 /* ── helpers ─────────────────────────────────────────── */
 
@@ -330,7 +328,7 @@ export default function AdminOverviewPage() {
   const todayFeedback = (data?.feedback?.data ?? []).filter(
     (fb: { created_at?: string; createdAt?: string }) => {
       const ts = fb.created_at ?? fb.createdAt ?? "";
-      return toKSTDateString(ts) === todayKSTStr;
+      return new Date(ts).toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" }) === todayKSTStr;
     },
   ).length;
 
@@ -529,7 +527,7 @@ export default function AdminOverviewPage() {
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate">{fb.title}</p>
                     <p className="text-xs text-[#8E8E93]">
-                      {new Date(fb.createdAt).toLocaleDateString("ko-KR")}
+                      {new Date((fb as any).created_at ?? fb.createdAt).toLocaleDateString("ko-KR")}
                     </p>
                   </div>
                 </li>
