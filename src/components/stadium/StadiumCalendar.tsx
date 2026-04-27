@@ -334,7 +334,7 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                       {game.status === "scheduled" ? "예정" : game.status === "final" ? "종료" : game.status === "cancelled" ? "취소" : "진행중"}
                     </span>
                     {game.status === "scheduled" && (() => {
-                      if (isDoubleHeader(filteredGames, game)) {
+                      if (isDoubleHeader(games, game)) {
                         return <span className="text-xs ml-2 text-yellow-400">변경 경기 · 예매 일정 별도 확인</span>;
                       }
                       const openDate = getTicketOpenDate(game.date, game.homeTeamId);
@@ -378,7 +378,7 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
             .map((game) => {
               const awayTeam = getTeamById(game.awayTeamId);
 
-              const isDH = isDoubleHeader(filteredGames, game);
+              const isDH = isDoubleHeader(games, game);
               const openDate = isDH ? null : getTicketOpenDate(game.date, game.homeTeamId);
               const now = new Date();
               const isOpen = openDate ? now >= openDate : false;
