@@ -36,16 +36,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "하루 최대 10건까지 보낼 수 있어요" }, { status: 429 });
   }
 
-  const { error } = await supabase.from("feedback").insert({
+  const { data: inserted, error } = await supabase.from("feedback").insert({
     user_id: verified.user.id,
     type,
     title: title.trim(),
     body: body || null,
     page_url: pageUrl || null,
     device_info: deviceInfo || null,
-  });
+  }).select("id").single();
 
   if (error) return supabaseErrorResponse(error);
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, feedbackId: inserted.id });
 }
