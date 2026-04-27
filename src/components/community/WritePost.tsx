@@ -167,11 +167,11 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit, seatTip
                       onChange={(e) => setZone(e.target.value)}
                       className="w-full appearance-none rounded-xl bg-bg-tertiary px-5 py-4 pr-10 text-base text-text-primary outline-none"
                     >
-                      <option value="" disabled>구역 선택 *</option>
+                      <option value="" disabled>대략 위치 선택 *</option>
                       {zones?.map((z) => (
                         <option key={z} value={z}>{z}</option>
                       ))}
-                      <option value="__custom__">직접 입력</option>
+                      <option value="__custom__">기타 (직접 입력)</option>
                     </select>
                     <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-text-tertiary pointer-events-none" />
                   </div>
