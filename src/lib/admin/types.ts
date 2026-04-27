@@ -74,6 +74,19 @@ export interface FeedbackItem {
   deviceInfo: string | null;
   status: FeedbackStatus;
   adminNote: string | null;
+  attachment?: FeedbackAttachment | null;
+  createdAt: string;
+}
+
+export interface FeedbackAttachment {
+  id: string;
+  feedbackId: string;
+  fileType: "video" | "image";
+  mimeType: string;
+  storagePath: string;
+  fileSize: number;
+  durationSec: number | null;
+  signedUrl?: string;
   createdAt: string;
 }
 
