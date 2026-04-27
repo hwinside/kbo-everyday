@@ -104,50 +104,55 @@ export function trackEvent(event: string, properties?: Record<string, unknown>, 
   };
 
   if (options?.gads && typeof window !== "undefined" && (window as unknown as GtagWindow).gtag) {
-    // 향상된 전환: 유저 이메일이 있으면 SHA-256 해싱 후 user_data 설정
-    if (options.userEmail) {
-      sha256Hex(options.userEmail).then(hashed => {
-        (window as unknown as GtagWindow).gtag!("set", "user_data", {
-          sha256_email_address: hashed,
-        });
-      }).catch(() => { /* hash 실패 시 skip — 기본 전환은 계속 진행 */ });
-    }
-    const sendTo = GADS_CONVERSION_MAP[event];
-    if (sendTo) {
-      const convKey = `gads_sent_${event}`;
-      try {
-        if (!sessionStorage.getItem(convKey)) {
-          sessionStorage.setItem(convKey, "1");
-          const conversionParams: Record<string, unknown> = {
-            send_to: sendTo,
-            value: 1.0,
-            currency: "KRW",
-          };
-          // OAuth 이후 세션에서 자동태깅 gclid가 유실된 케이스를 위한 수동 전달 (2026-04-19)
-          // sessionStorage에 랜딩 시점 gclid가 남아있으면 conversion 매칭에 사용
-          const storedGclid = getStoredGclid();
-          if (storedGclid) {
-            conversionParams.gclid = storedGclid;
-          }
-          if (options?.onGadsComplete) {
-            conversionParams.event_callback = fireCallbackOnce;
-            // 안전장치: beacon이 지연되거나 차단되어도 지정 시간 후 강제 진행
-            const timeoutMs = options.gadsCallbackTimeout ?? 2000;
-            window.setTimeout(fireCallbackOnce, timeoutMs);
-          }
-          (window as unknown as GtagWindow).gtag!("event", "conversion", conversionParams);
-        } else if (options?.onGadsComplete) {
-          // 이미 세션 내 발화됨 — 콜백만 즉시 실행
-          fireCallbackOnce();
-        }
-      } catch {
-        // sessionStorage 접근 실패 — 정책상 skip + 콜백만 실행
-        if (options?.onGadsComplete) fireCallbackOnce();
+    // async IIFE: user_data 세팅 완료 후 conversion 발화 순서 보장
+    // 기존: sha256Hex().then() fire-and-forget → conversion이 user_data 없이 먼저 발화 (race condition)
+    void (async () => {
+      // 향상된 전환: 유저 이메일이 있으면 SHA-256 해싱 후 user_data 설정
+      if (options.userEmail) {
+        try {
+          const hashed = await sha256Hex(options.userEmail);
+          (window as unknown as GtagWindow).gtag!("set", "user_data", {
+            sha256_email_address: hashed,
+          });
+        } catch { /* hash 실패 시 skip — 기본 전환은 계속 진행 */ }
       }
-    } else if (options?.onGadsComplete) {
-      // 매핑 없는 이벤트 — 콜백만 실행
-      fireCallbackOnce();
-    }
+      const sendTo = GADS_CONVERSION_MAP[event];
+      if (sendTo) {
+        const convKey = `gads_sent_${event}`;
+        try {
+          if (!sessionStorage.getItem(convKey)) {
+            sessionStorage.setItem(convKey, "1");
+            const conversionParams: Record<string, unknown> = {
+              send_to: sendTo,
+              value: 1.0,
+              currency: "KRW",
+            };
+            // OAuth 이후 세션에서 자동태깅 gclid가 유실된 케이스를 위한 수동 전달 (2026-04-19)
+            // sessionStorage에 랜딩 시점 gclid가 남아있으면 conversion 매칭에 사용
+            const storedGclid = getStoredGclid();
+            if (storedGclid) {
+              conversionParams.gclid = storedGclid;
+            }
+            if (options?.onGadsComplete) {
+              conversionParams.event_callback = fireCallbackOnce;
+              // 안전장치: beacon이 지연되거나 차단되어도 지정 시간 후 강제 진행
+              const timeoutMs = options.gadsCallbackTimeout ?? 2000;
+              window.setTimeout(fireCallbackOnce, timeoutMs);
+            }
+            (window as unknown as GtagWindow).gtag!("event", "conversion", conversionParams);
+          } else if (options?.onGadsComplete) {
+            // 이미 세션 내 발화됨 — 콜백만 즉시 실행
+            fireCallbackOnce();
+          }
+        } catch {
+          // sessionStorage 접근 실패 — 정책상 skip + 콜백만 실행
+          if (options?.onGadsComplete) fireCallbackOnce();
+        }
+      } else if (options?.onGadsComplete) {
+        // 매핑 없는 이벤트 — 콜백만 실행
+        fireCallbackOnce();
+      }
+    })();
   } else if (options?.onGadsComplete) {
     // gads 옵션 없거나 gtag 미로드 — 콜백만 즉시 실행
     fireCallbackOnce();
