@@ -32,6 +32,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "30초 이하만 가능합니다" }, { status: 400 });
   }
 
+  // Verify storagePath prefix matches user/feedback ownership
+  // Prevents registering arbitrary files to get admin signed URL access
+  const verified_id = verified.user.id;
+  const expectedPrefix = `${verified_id}/${feedbackId}/`;
+  if (!storagePath.startsWith(expectedPrefix)) {
+    return NextResponse.json({ error: "잘못된 파일 경로입니다" }, { status: 400 });
+  }
+
   // Verify feedback belongs to user and type allows video
   const { data: feedback, error: fbError } = await supabase
     .from("feedback")
