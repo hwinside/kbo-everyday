@@ -9,7 +9,11 @@ export interface Stadium {
   transit: { subway: string; bus: string };
   ticketing: { provider: string; url: string; priceRange: string };
   foodBrands: string[];
+  zones: string[]; // 좌석팁용 구역 목록 (드롭다운 선택지)
 }
+
+/** 구역 직접입력 옵션 라벨 */
+export const ZONE_CUSTOM_LABEL = "직접 입력";
 
 export const STADIUMS: Stadium[] = [
   {
@@ -23,6 +27,7 @@ export const STADIUMS: Stadium[] = [
     transit: { subway: "2호선/9호선 종합운동장역 5·6번 출구 도보 5분", bus: "301, 333, 341, 345, 350, 360" },
     ticketing: { provider: "LG: 티켓링크 / 두산: 인터파크", url: "https://www.ticketlink.co.kr", priceRange: "9,000원(외야)~90,000원(프리미엄) (2026 시즌 기준)" },
     foodBrands: ["통밥", "BHC", "BBQ", "프랭크버거", "이가네떡볶이", "XOXO 핫도그"],
+    zones: ["1루 내야", "3루 내야", "1루 외야", "3루 외야", "중앙 지정석", "테이블석", "프리미엄석", "휠체어석"],
   },
   {
     id: "suwon",
@@ -35,6 +40,7 @@ export const STADIUMS: Stadium[] = [
     transit: { subway: "수인분당선 수원시청역 2번 출구 도보 10분", bus: "2007, 621, 7770, 310, 991" },
     ticketing: { provider: "티켓링크", url: "https://www.ticketlink.co.kr", priceRange: "10,000원(외야)~70,000원(포수뒤테이블) (2026 시즌 기준)" },
     foodBrands: ["진미통닭", "보영만두", "BHC", "파파존스", "롯데리아", "이대로통삼겹"],
+    zones: ["1루 내야", "3루 내야", "1루 외야", "3루 외야", "중앙 지정석", "테이블석", "스카이박스", "잔디석"],
   },
   {
     id: "incheon",
@@ -47,6 +53,7 @@ export const STADIUMS: Stadium[] = [
     transit: { subway: "인천1호선 문학경기장역 2번 출구 도보 5분", bus: "부평역·주안역에서 다수 노선" },
     ticketing: { provider: "SSG닷컴", url: "https://www.ssg.com", priceRange: "11,000원(SKY뷰)~37,000원(홈런커플존) (2026 시즌 기준)" },
     foodBrands: ["스타벅스", "BHC", "노브랜드버거", "이마트24", "노랑통닭", "컴포즈커피", "허갈닭강정"],
+    zones: ["1루 내야", "3루 내야", "1루 외야", "3루 외야", "중앙 지정석", "SKY뷰", "홈런커플존", "파티플로어"],
   },
   {
     id: "changwon",
@@ -59,6 +66,7 @@ export const STADIUMS: Stadium[] = [
     transit: { subway: "없음 (시내버스 이용)", bus: "100, 105, 108, 160, 720번. 마산역(KTX) 이용 가능" },
     ticketing: { provider: "NC 다이노스 앱", url: "https://www.ncdinos.com", priceRange: "다이내믹 프라이싱 (AI 가격 책정, 2026 시즌)" },
     foodBrands: ["스타벅스 리저브", "반올림피자", "맘스터치", "BHC", "죠스떡볶이", "투다리"],
+    zones: ["1루 내야", "3루 내야", "1루 외야", "3루 외야", "중앙 지정석", "테이블석", "잔디석", "파크뷰"],
   },
   {
     id: "gwangju",
@@ -71,6 +79,7 @@ export const STADIUMS: Stadium[] = [
     transit: { subway: "광주1호선 문화전당역 하차 후 버스 환승", bus: "매월16, 송암47, 상무64번" },
     ticketing: { provider: "티켓링크", url: "https://www.ticketlink.co.kr", priceRange: "10,000원(외야)~85,000원(스카이박스) (2026 시즌 기준)" },
     foodBrands: ["이마트24", "파파존스", "INC COFFEE", "광주원샷", "스트릿츄러스"],
+    zones: ["1루 내야", "3루 내야", "1루 외야", "3루 외야", "중앙 지정석", "스카이박스", "잔디석", "테이블석"],
   },
   {
     id: "sajik",
@@ -83,6 +92,7 @@ export const STADIUMS: Stadium[] = [
     transit: { subway: "부산3호선 사직역·종합운동장역", bus: "10, 44, 50, 57, 80, 111, 131번" },
     ticketing: { provider: "롯데 자이언츠 앱", url: "https://www.giantsclub.com", priceRange: "컬러 프라이스 (상대팀·날짜별 변동, 2026 시즌)" },
     foodBrands: ["가온밀면", "심바다", "송헌집", "보영만두", "계란빵클럽", "포도베이커스"],
+    zones: ["1루 내야", "3루 내야", "1루 외야", "3루 외야", "중앙 지정석", "응원석", "테이블석", "프리미엄석"],
   },
   {
     id: "daegu",
@@ -95,6 +105,7 @@ export const STADIUMS: Stadium[] = [
     transit: { subway: "대구2호선 수성알파시티역 직결", bus: "급행1, 급행2, 401번" },
     ticketing: { provider: "티켓링크", url: "https://www.ticketlink.co.kr", priceRange: "외야석~65,000원(VIP블루) (2026 시즌 기준)" },
     foodBrands: ["CU", "버터우드", "지코바", "요야정", "정여사손만두", "노랑통닭", "할리스"],
+    zones: ["1루 내야", "3루 내야", "1루 외야", "3루 외야", "중앙 지정석", "블루존", "테이블석", "잔디석"],
   },
   {
     id: "daejeon",
@@ -107,6 +118,7 @@ export const STADIUMS: Stadium[] = [
     transit: { subway: "대전1호선 중구청역·중앙로역 도보 20분", bus: "2, 33, 52, 119, 513, 604번" },
     ticketing: { provider: "티켓링크", url: "https://www.ticketlink.co.kr", priceRange: "5단계 구간요금제, 최대 82,000원(포수후면) (2026 시즌)" },
     foodBrands: ["아라마크(MLB식)", "새마을식당", "역전우동", "한신포차", "빽다방", "BBQ", "GS25"],
+    zones: ["1루 내야", "3루 내야", "1루 외야", "3루 외야", "중앙 지정석", "포수후면", "테이블석", "응원석"],
   },
   {
     id: "gocheok",
@@ -119,5 +131,6 @@ export const STADIUMS: Stadium[] = [
     transit: { subway: "1호선 구일역 2번 출구 도보 10분", bus: "160, 600, 6513, 6611" },
     ticketing: { provider: "놀티켓", url: "https://ticket.interpark.com", priceRange: "계절별 요금제 적용 (2026 시즌)" },
     foodBrands: ["맘스터치", "BBQ", "BHC", "멕시카나", "쉬림프셰프", "편밀밀", "올떡볶이"],
+    zones: ["1루 내야", "3루 내야", "1루 외야", "3루 외야", "중앙 지정석", "테이블석", "프리미엄석", "익사이팅석"],
   },
 ];

@@ -3,7 +3,8 @@
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import WritePost from "@/components/community/WritePost";
-import { createPost, usePosts } from "@/lib/supabase/usePosts";
+import { createPost, usePosts, uploadImages, computeImageHashes } from "@/lib/supabase/usePosts";
+import type { SeatInfo } from "@/components/community/WritePost";
 import { getTeamBorderColor } from "@/lib/utils/team-border-color";
 
 import { useMemo, useState } from "react";
@@ -293,7 +294,40 @@ export default function StadiumDetailPage() {
                         {new Date(post.created_at).toLocaleDateString("ko-KR")}
                       </span>
                     </div>
+                    {/* 좌석 구역 태그 */}
+                    {post.seat_info && (
+                      <div className="flex flex-wrap gap-1.5 mb-2">
+                        <span className="inline-block px-2 py-0.5 rounded-full bg-accent/15 text-accent text-xs font-medium">
+                          {post.seat_info.zone}
+                        </span>
+                        {post.seat_info.block && (
+                          <span className="inline-block px-2 py-0.5 rounded-full bg-bg-tertiary text-text-secondary text-xs">
+                            {post.seat_info.block}블록
+                          </span>
+                        )}
+                        {post.seat_info.row && (
+                          <span className="inline-block px-2 py-0.5 rounded-full bg-bg-tertiary text-text-secondary text-xs">
+                            {post.seat_info.row}열
+                          </span>
+                        )}
+                        {post.seat_info.seat && (
+                          <span className="inline-block px-2 py-0.5 rounded-full bg-bg-tertiary text-text-secondary text-xs">
+                            {post.seat_info.seat}번
+                          </span>
+                        )}
+                      </div>
+                    )}
                     <p className="text-sm text-text-secondary whitespace-pre-wrap">{post.content}</p>
+                    {/* 이미지 썸네일 */}
+                    {post.image_urls && post.image_urls.length > 0 && (
+                      <div className="flex gap-2 mt-3 overflow-x-auto">
+                        {post.image_urls.map((url, i) => (
+                          <div key={i} className="relative flex-shrink-0 w-24 h-24 rounded-lg overflow-hidden">
+                            <Image src={url} alt="" fill className="object-cover" unoptimized />
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <p className="text-xs text-text-tertiary mt-3">{post.nickname || "익명"}</p>
                   </GlassCard>
                 ))}
@@ -351,7 +385,9 @@ export default function StadiumDetailPage() {
         isOpen={showWrite}
         onClose={() => setShowWrite(false)}
         teamName={`${stadium.name} ${active === "seats" ? "좌석팁" : "후기"}`}
-        onSubmit={async (title, content, imageUrls) => {
+        seatTipMode={active === "seats"}
+        zones={stadium.zones}
+        onSubmit={async (title, content, imageUrls, seatInfo) => {
           await createPost({
             boardType: "stadium",
             boardId: active === "seats" ? seatBoardId : reviewBoardId,
@@ -359,6 +395,7 @@ export default function StadiumDetailPage() {
             content,
             imageUrls,
             contentType: "general",
+            ...(seatInfo ? { seatInfo } : {}),
           });
 
           if (active === "seats") {

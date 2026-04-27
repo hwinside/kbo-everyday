@@ -22,6 +22,7 @@ export interface Post {
   game_id?: string | null;
   player_tags?: string[];
   hashtags?: string[];
+  seat_info?: { zone: string; block?: string; row?: string; seat?: string } | null;
   // joined
   nickname?: string;
   team_id?: number;
@@ -205,6 +206,7 @@ export async function createPost(params: {
   gameId?: string;
   playerTags?: string[];
   hashtags?: string[];
+  seatInfo?: { zone: string; block?: string; row?: string; seat?: string };
 }) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
@@ -224,6 +226,7 @@ export async function createPost(params: {
   if (params.gameId) row.game_id = params.gameId;
   if (params.playerTags?.length) row.player_tags = params.playerTags;
   if (params.hashtags?.length) row.hashtags = params.hashtags;
+  if (params.seatInfo) row.seat_info = params.seatInfo;
 
   const { data, error } = await supabase
     .from("posts")
