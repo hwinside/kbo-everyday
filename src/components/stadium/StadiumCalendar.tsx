@@ -135,6 +135,22 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
         </div>
       </GlassCard>
 
+      {/* 멀티팀 구장 범례 */}
+      {stadium.teamIds.length > 1 && (
+        <div className="flex items-center gap-4 px-2">
+          {stadium.teamIds.map((teamId) => {
+            const team = getTeamById(teamId);
+            if (!team) return null;
+            return (
+              <div key={teamId} className="flex items-center gap-1.5">
+                <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: `${team.colorPrimary}40` }} />
+                <span className="text-xs text-text-secondary">{team.shortName} 홈</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* 월 네비게이션 */}
       <div className="flex items-center justify-between px-2">
         <button onClick={prevMonth} className="p-2 text-text-secondary">
@@ -176,16 +192,25 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
             const isToday = dateStr === todayStr;
             const isSelected = dateStr === selectedDate;
             const dayOfWeek = (firstDay + day - 1) % 7;
+            // 멀티팀 구장: 홈팀 컬러로 배경 구분
+            const homeTeam = hasGame && dayGames ? getTeamById(dayGames[0].homeTeamId) : null;
+            const hasMultipleTeams = stadium.teamIds.length > 1;
+            const cellBg = hasGame && hasMultipleTeams && homeTeam
+              ? `${homeTeam.colorPrimary}25`
+              : undefined;
 
             return (
               <button
                 key={dateStr}
                 onClick={() => hasGame ? setSelectedDate(isSelected ? null : dateStr) : undefined}
+                style={cellBg && !isSelected ? { backgroundColor: cellBg } : undefined}
                 className={`relative aspect-square rounded-lg flex flex-col items-center justify-center gap-0.5 transition-colors ${
                   isSelected
                     ? "bg-accent/20 ring-1 ring-accent"
-                    : hasGame
+                    : hasGame && !hasMultipleTeams
                     ? "bg-bg-tertiary hover:bg-bg-tertiary/80"
+                    : hasGame
+                    ? "hover:opacity-80"
                     : ""
                 } ${!hasGame ? "opacity-40" : ""}`}
               >
