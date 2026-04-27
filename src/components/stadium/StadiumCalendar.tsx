@@ -117,9 +117,9 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
 
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
 
-  // 날짜별 경기 맵
+  // 날짜별 경기 맵 (달력 그리드용: 전체 경기)
   const gamesByDate = new Map<string, StadiumGame[]>();
-  for (const game of filteredGames) {
+  for (const game of games) {
     const existing = gamesByDate.get(game.date) || [];
     existing.push(game);
     gamesByDate.set(game.date, existing);
@@ -146,7 +146,10 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
   }
 
   // 선택된 날짜의 경기들
-  const selectedGames = selectedDate ? gamesByDate.get(selectedDate) || [] : [];
+  const selectedGamesAll = selectedDate ? gamesByDate.get(selectedDate) || [] : [];
+  const selectedGames = myTeamId
+    ? selectedGamesAll.filter((g) => g.homeTeamId === myTeamId || g.awayTeamId === myTeamId)
+    : selectedGamesAll;
 
   // 홈팀의 예매 오픈 정보
   const primaryTeamId = stadium.teamIds[0];
