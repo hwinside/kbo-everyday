@@ -7,6 +7,15 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { useEffect } from "react";
 
+// Google Ads 전환 ID/라벨 (analytics.ts GADS_CONVERSION_MAP과 동일)
+const GADS_CONVERSION_SEND_TO = "AW-18082281693/-AI9CJa8l5ocEN3xpq5D";
+
+async function sha256Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input.trim().toLowerCase());
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 export default function WelcomePage() {
   const { user, profile, loading } = useAuth();
   const router = useRouter();
@@ -18,10 +27,39 @@ export default function WelcomePage() {
     }
   }, [loading, user, profile, router]);
 
-  // 회원가입 완료 이벤트(ONBOARDING_COMPLETE)는 /setup POST 성공 직후에서만 발화.
-  // 2026-04-18 이전에는 이 페이지에서도 보조 발화했으나, 재방문/여러 기기 로그인 시
-  // GA4 `onboarding_complete` = 가짜 전환으로 누적됨 → Smart Bidding 학습 오염 유발.
-  // /setup 단일 경로를 사실상 유일 진실분으로 정리 (Supabase profiles 증가분과 1:1 일치).
+  // Google Ads conversion: /welcome 페이지 도달 시 직접 gtag 호출 (2026-04-27)
+  // 조건: 1) /setup에서 세팅한 signup 플래그 존재 2) sessionStorage dedupe
+  // 이 방식은 AuthContext hydrate에 의존하지 않아 race condition 없음
+  useEffect(() => {
+    const gtag = (window as unknown as { gtag?: (...args: unknown[]) => void }).gtag;
+    if (!gtag) return;
+
+    try {
+      // 가드 1: /setup에서 가입 직후 리다이렉트된 세션인지 확인
+      if (!sessionStorage.getItem("kbo-signup-just-completed")) return;
+      // 가드 2: 이미 이 세션에서 발화했으면 skip
+      if (sessionStorage.getItem("gads_sent_onboarding_complete")) return;
+
+      // 플래그 정리 + dedupe 세팅
+      sessionStorage.removeItem("kbo-signup-just-completed");
+      sessionStorage.setItem("gads_sent_onboarding_complete", "1");
+
+      // Enhanced Conversions: user_data 세팅 후 conversion 발화
+      (async () => {
+        if (user?.email) {
+          try {
+            const hashed = await sha256Hex(user.email);
+            gtag("set", "user_data", { sha256_email_address: hashed });
+          } catch { /* hash 실패 시 skip — 기본 전환은 계속 진행 */ }
+        }
+        gtag("event", "conversion", {
+          send_to: GADS_CONVERSION_SEND_TO,
+          value: 1.0,
+          currency: "KRW",
+        });
+      })();
+    } catch { /* sessionStorage 접근 실패 — skip */ }
+  }, [user]);
 
   if (loading || !profile?.team_id) {
     return (

@@ -111,29 +111,19 @@ export default function ProfileSetupModal({ isOpen }: Props) {
       // Meta Pixel: Subscribe(팀선택)
       trackEvent(OnboardingEvents.TEAM_SELECTED, { team_id: selectedTeam }, { meta: true });
 
-      // 회원가입 완료 — Google Ads 전환 + Meta Pixel 동시 발화 후 router.push
-      // event_callback으로 beacon 전송 확정 후 이동 (navigation race 방지)
-      //
-      // ⚠️ loading=true 고정 유지 (finally에서 setLoading(false) 하지 않음)
-      // 이유: event_callback 대기 중 버튼 재클릭/중복 submit 방지
-      //
-      // ⚠️ 2026-04-18: ONBOARDING_COMPLETE는 profiles.insert 성공 직후에만 발화되어야
-      // DB 가입수와 1:1 일치. 이 경로는 insertError throw 시 이미 catch로 빠지므로
-      // 이 라인에 도달 = 실제 가입 완료. source 구분자 추가로 /setup 경로와 교차검증 가능.
+      // 회원가입 완료 — GA4 + Meta Pixel 발화
+      // Google Ads conversion은 /welcome 페이지에서 직접 gtag 호출로 단순화 (2026-04-27)
       trackEvent(
         OnboardingEvents.ONBOARDING_COMPLETE,
         { nickname: nickname.trim(), team_id: selectedTeam, source: "profile_setup_modal" },
-        {
-          meta: true,
-          gads: true,
-          userEmail: user?.email,
-          onGadsComplete: async () => {
-            await refreshProfile();
-            router.push("/welcome");
-          },
-        }
+        { meta: true }
       );
-      return; // loading 고정 좌략
+
+      // /welcome에서 Google Ads conversion 발화할 수 있도록 플래그 세팅
+      try { sessionStorage.setItem("kbo-signup-just-completed", "1"); } catch { /* ignore */ }
+      await refreshProfile();
+      router.push("/welcome");
+      return; // loading 고정 유지
     } catch (e: unknown) {
       setError((e as Error).message || "프로필 생성에 실패했습니다");
       setLoading(false); // 에러 시에만 재활성화
