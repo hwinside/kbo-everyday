@@ -190,7 +190,7 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                 } ${!hasGame ? "opacity-40" : ""}`}
               >
                 <span
-                  className={`text-xs ${
+                  className={`text-[10px] leading-none ${
                     isToday
                       ? "text-accent font-bold"
                       : dayOfWeek === 0
@@ -211,8 +211,8 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                           key={g.gameId}
                           src={awayTeam.logoPath}
                           alt={awayTeam.shortName}
-                          width={16}
-                          height={16}
+                          width={24}
+                          height={24}
                           unoptimized
                           className="object-contain"
                         />
