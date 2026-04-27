@@ -117,6 +117,11 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
 
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
 
+  // 마이팀을 먼저 보여주는 팀 ID 목록 (멀티팀 구장용)
+  const sortedTeamIds = myTeamId && stadium.teamIds.includes(myTeamId)
+    ? [myTeamId, ...stadium.teamIds.filter((id) => id !== myTeamId)]
+    : stadium.teamIds;
+
   // 날짜별 경기 맵 (달력 그리드용: 전체 경기)
   const gamesByDate = new Map<string, StadiumGame[]>();
   for (const game of games) {
@@ -151,15 +156,12 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
     ? selectedGamesAll.filter((g) => g.homeTeamId === myTeamId || g.awayTeamId === myTeamId)
     : selectedGamesAll;
 
-  // 홈팀의 예매 오픈 정보
-  const primaryTeamId = stadium.teamIds[0];
-
   return (
     <div className="space-y-4">
       {/* 예매 오픈 안내 */}
       <GlassCard className="p-4">
         <div className="space-y-2">
-          {stadium.teamIds.map((teamId) => {
+          {sortedTeamIds.map((teamId) => {
             const team = getTeamById(teamId);
             return (
               <div key={teamId} className="flex items-center justify-between text-sm">
@@ -173,7 +175,7 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
               </div>
             );
           })}
-          {stadium.teamIds.map((tid) => {
+          {sortedTeamIds.map((tid) => {
             const rule = TICKET_OPEN_RULES[tid];
             if (!rule) return null;
             const team = getTeamById(tid);
@@ -196,7 +198,7 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
       {/* 멀티팀 구장 범례 */}
       {stadium.teamIds.length > 1 && (
         <div className="flex items-center gap-4 px-2">
-          {stadium.teamIds.map((teamId) => {
+          {sortedTeamIds.map((teamId) => {
             const team = getTeamById(teamId);
             if (!team) return null;
             return (
