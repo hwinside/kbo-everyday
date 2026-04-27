@@ -11,12 +11,13 @@ import { useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { ChevronLeft, MapPin, Ticket, UtensilsCrossed, Armchair, MessageCircle, PenLine, Car, TrainFront, Bus } from "lucide-react";
+import { ChevronLeft, MapPin, Ticket, UtensilsCrossed, Armchair, MessageCircle, PenLine, Car, TrainFront, Bus, CalendarDays } from "lucide-react";
+import StadiumCalendar from "@/components/stadium/StadiumCalendar";
 import GlassCard from "@/components/ui/GlassCard";
 import { STADIUMS } from "@/lib/constants/stadiums";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 
-type Section = "info" | "food" | "seats" | "reviews";
+type Section = "info" | "food" | "seats" | "reviews" | "tickets";
 
 function SectionChip({
   active,
@@ -162,6 +163,12 @@ export default function StadiumDetailPage() {
             onClick={() => setActive("seats")}
             label="좌석팁"
             icon={<Armchair size={14} />}
+          />
+          <SectionChip
+            active={active === "tickets"}
+            onClick={() => setActive("tickets")}
+            label="예매"
+            icon={<CalendarDays size={14} />}
           />
           <SectionChip
             active={active === "reviews"}
@@ -333,6 +340,13 @@ export default function StadiumDetailPage() {
                 ))}
               </div>
             )}
+          </section>
+        )}
+
+        {active === "tickets" && (
+          <section>
+            <h2 className="text-base font-bold text-text-primary mb-3">🎫 예매</h2>
+            <StadiumCalendar stadium={stadium} />
           </section>
         )}
 
