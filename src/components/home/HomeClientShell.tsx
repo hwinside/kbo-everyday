@@ -29,6 +29,7 @@ import { lazy, Suspense } from "react";
 const NewsCarousel = lazy(() => import("@/components/news/NewsCarousel"));
 const HomeHighlights = lazy(() => import("@/components/home/HomeHighlights"));
 const HomeOfficialVideos = lazy(() => import("@/components/home/HomeOfficialVideos"));
+const WhatsNewCard = lazy(() => import("@/components/home/WhatsNewCard"));
 
 const container = {
   hidden: {},
@@ -242,6 +243,11 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           </div>
         </div>
       )}
+
+      {/* What's New Card */}
+      <Suspense fallback={null}>
+        <WhatsNewCard />
+      </Suspense>
 
       {/* My Team Hero */}
       {myTeam && myTeamGame && (
