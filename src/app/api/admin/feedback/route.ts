@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
 
   let query = supabase
     .from("feedback")
-    .select("*")
+    .select("*, feedback_attachments(*)")
     .order("created_at", { ascending: false });
 
   if (type) query = query.eq("type", type);
@@ -37,10 +37,37 @@ export async function GET(req: NextRequest) {
     (profiles ?? []).map((p: { id: string; nickname: string }) => [p.id, p.nickname])
   );
 
-  const enriched = (data ?? []).map((d: { user_id: string; [key: string]: unknown }) => ({
-    ...d,
-    user_nickname: nicknameMap.get(d.user_id) ?? null,
-  }));
+  // Generate signed URLs for attachments
+  const enriched = await Promise.all(
+    (data ?? []).map(async (d: { user_id: string; feedback_attachments?: Array<{ storage_path: string; id: string; file_type: string; mime_type: string; file_size: number; duration_sec: number | null; created_at: string }>; [key: string]: unknown }) => {
+      let attachment = null;
+      const attachments = d.feedback_attachments;
+
+      if (attachments && attachments.length > 0) {
+        const att = attachments[0];
+        const { data: signedData } = await supabase.storage
+          .from("feedback-videos")
+          .createSignedUrl(att.storage_path, 3600); // 1 hour TTL
+
+        attachment = {
+          id: att.id,
+          file_type: att.file_type,
+          mime_type: att.mime_type,
+          file_size: att.file_size,
+          duration_sec: att.duration_sec,
+          signed_url: signedData?.signedUrl ?? null,
+          created_at: att.created_at,
+        };
+      }
+
+      const { feedback_attachments: _, ...rest } = d;
+      return {
+        ...rest,
+        user_nickname: nicknameMap.get(d.user_id) ?? null,
+        attachment,
+      };
+    })
+  );
 
   return NextResponse.json({ data: enriched });
 }
