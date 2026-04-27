@@ -1,8 +1,16 @@
 /**
  * YouTube Data API shared helpers
+ * Multi-key fallback: YOUTUBE_API_KEY → _2 → _3 (rotate on 403)
  */
 
-const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
+/** Collect all available API keys (skip empty) */
+function getApiKeys(): string[] {
+  return [
+    process.env.YOUTUBE_API_KEY,
+    process.env.YOUTUBE_API_KEY_2,
+    process.env.YOUTUBE_API_KEY_3,
+  ].filter((k): k is string => !!k);
+}
 
 /** Parse ISO 8601 duration (PT1H2M3S) → seconds */
 export function parseIsoDuration(iso: string): number {
@@ -18,34 +26,49 @@ export function parseIsoDuration(iso: string): number {
 /**
  * Batch-fetch video durations via YouTube Data API.
  * `videos.list` costs 1 quota unit per call, max 50 IDs per call.
- * Stops on quota error (403) to avoid burning remaining budget.
+ * On 403 (quota exceeded), rotates to the next API key.
+ * Stops only when all keys are exhausted.
  */
 export async function fetchVideoDurations(
   videoIds: string[],
 ): Promise<Map<string, number>> {
   const result = new Map<string, number>();
-  if (!YOUTUBE_API_KEY || videoIds.length === 0) return result;
+  const keys = getApiKeys();
+  if (keys.length === 0 || videoIds.length === 0) return result;
+
+  let keyIdx = 0;
 
   for (let i = 0; i < videoIds.length; i += 50) {
     const batch = videoIds.slice(i, i + 50);
-    try {
-      const res = await fetch(
-        `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${batch.join(",")}&key=${YOUTUBE_API_KEY}`,
-      );
-      if (!res.ok) {
-        if (res.status === 403) break; // quota exceeded — stop
-        continue;
-      }
-      const data = await res.json();
-      for (const item of data.items || []) {
-        const dur = parseIsoDuration(
-          item.contentDetails?.duration || "",
+    let fetched = false;
+
+    while (!fetched && keyIdx < keys.length) {
+      try {
+        const res = await fetch(
+          `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${batch.join(",")}&key=${keys[keyIdx]}`,
         );
-        result.set(item.id, dur);
+        if (res.status === 403) {
+          keyIdx++; // rotate to next key
+          continue;
+        }
+        if (!res.ok) {
+          fetched = true; // skip this batch, move on
+          break;
+        }
+        const data = await res.json();
+        for (const item of data.items || []) {
+          const dur = parseIsoDuration(
+            item.contentDetails?.duration || "",
+          );
+          result.set(item.id, dur);
+        }
+        fetched = true;
+      } catch {
+        fetched = true; // network error — skip batch
       }
-    } catch {
-      // Network error — continue with next batch
     }
+
+    if (keyIdx >= keys.length) break; // all keys exhausted
   }
   return result;
 }
