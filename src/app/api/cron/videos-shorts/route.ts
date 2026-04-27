@@ -37,7 +37,8 @@ const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
 const FEATURE_PLAYER_SEARCH = process.env.FEATURE_PLAYER_SEARCH !== "false";
 const PLAYER_TOP_N = parseInt(process.env.VIDEOS_PLAYER_TOP_N || "20", 10);
 const YT_QUOTA_DAILY_LIMIT = parseInt(process.env.YT_QUOTA_DAILY_LIMIT || "10000", 10);
-const YT_QUOTA_DEGRADE_RATIO = 0.8;
+// 0.8 → 0.5: RSS cron duration backfill에 quota 여유 확보
+const YT_QUOTA_DEGRADE_RATIO = 0.5;
 const SEARCH_COST = 100;
 const SEARCH_MAX_RESULTS = 15;
 
