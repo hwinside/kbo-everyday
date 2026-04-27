@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { ArrowLeft, Sparkles, ChevronRight } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 
@@ -31,6 +31,7 @@ function formatDate(iso: string): string {
 
 export default function WhatsNewPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const [items, setItems] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -83,7 +84,7 @@ export default function WhatsNewPage() {
                 className="text-sm text-text-secondary whitespace-pre-line leading-relaxed"
                 dangerouslySetInnerHTML={{ __html: escapeHtml(item.body).replace(/\n/g, "<br />") }}
               />
-              {item.cta_label && item.cta_path && (
+              {item.cta_label && item.cta_path && item.cta_path !== pathname && (
                 <button
                   onClick={() => router.push(item.cta_path!)}
                   className="mt-4 flex items-center gap-1 rounded-lg bg-white/10 px-4 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-white/15"
