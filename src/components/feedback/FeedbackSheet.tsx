@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Send } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -23,6 +23,13 @@ const TYPES: { value: FeedbackType; label: string }[] = [
 
 export default function FeedbackSheet({ isOpen, onClose, defaultType }: FeedbackSheetProps) {
   const { user } = useAuth();
+
+  useEffect(() => {
+    if (!isOpen) return;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, [isOpen]);
+
   const [type, setType] = useState<FeedbackType>(defaultType ?? "bug");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -161,7 +168,7 @@ export default function FeedbackSheet({ isOpen, onClose, defaultType }: Feedback
                   onChange={(e) => setBody(e.target.value)}
                   rows={4}
                   maxLength={2000}
-                  className="w-full rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-accent resize-none mb-4"
+                  className="w-full rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:ring-1 focus:ring-accent resize-none mb-4 [overscroll-behavior:contain]"
                 />
 
                 {error && <p className="text-red-400 text-xs mb-3">{error}</p>}
