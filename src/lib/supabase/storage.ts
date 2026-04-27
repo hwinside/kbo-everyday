@@ -69,3 +69,29 @@ export async function uploadImages(files: File[], folder: string = "posts"): Pro
   const results = await Promise.all(files.map(f => uploadImage(f, folder)));
   return results.filter(Boolean) as string[];
 }
+
+const FEEDBACK_VIDEO_BUCKET = "feedback-videos";
+
+/** 피드백 영상을 private 버킷에 업로드. storage_path를 반환 (signed URL용) */
+export async function uploadFeedbackVideo(
+  file: File,
+  userId: string,
+  feedbackId: string,
+): Promise<string | null> {
+  const ext = file.name.split(".").pop()?.toLowerCase() || "mp4";
+  const path = `${userId}/${feedbackId}/${Date.now()}.${ext}`;
+
+  const { error } = await supabase.storage
+    .from(FEEDBACK_VIDEO_BUCKET)
+    .upload(path, file, {
+      cacheControl: "31536000",
+      upsert: false,
+      contentType: file.type,
+    });
+
+  if (error) {
+    return null;
+  }
+
+  return path;
+}
