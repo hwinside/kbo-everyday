@@ -295,6 +295,7 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                   <div className="flex gap-0.5">
                     {dayGames.slice(0, 2).map((g) => {
                       const awayTeam = getTeamById(g.awayTeamId);
+                      const isMyGame = myTeamId ? (g.homeTeamId === myTeamId || g.awayTeamId === myTeamId) : false;
                       return awayTeam ? (
                         <Image
                           key={g.gameId}
@@ -303,7 +304,7 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                           width={24}
                           height={24}
                           unoptimized
-                          className="object-contain"
+                          className={`object-contain ${isMyGame ? "ring-2 ring-accent rounded-full" : "opacity-50"}`}
                         />
                       ) : null;
                     })}
@@ -393,7 +394,11 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
             .filter((g) => g.date >= todayStr)
             .slice(0, 5)
             .map((game) => {
-              const awayTeam = getTeamById(game.awayTeamId);
+              // 마이팀이 원정이면 상대 = homeTeam, 그 외 상대 = awayTeam
+              const isMyAway = myTeamId === game.awayTeamId;
+              const opponentId = isMyAway ? game.homeTeamId : game.awayTeamId;
+              const opponentName = isMyAway ? game.homeName : game.awayName;
+              const opponent = getTeamById(opponentId);
 
               const isDH = isDoubleHeader(games, game);
               const openDate = isDH ? null : getTicketOpenDate(game.date, game.homeTeamId);
@@ -404,10 +409,10 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                 <GlassCard key={game.gameId} className="p-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      {awayTeam && (
-                        <Image src={awayTeam.logoPath} alt="" width={20} height={20} unoptimized className="object-contain" />
+                      {opponent && (
+                        <Image src={opponent.logoPath} alt="" width={20} height={20} unoptimized className="object-contain" />
                       )}
-                      <span className="text-sm text-text-primary">vs {game.awayName}</span>
+                      <span className="text-sm text-text-primary">vs {opponentName}{isMyAway ? " (원정)" : ""}</span>
                       <span className="text-xs text-text-tertiary">
                         {parseInt(game.date.slice(4, 6))}/{parseInt(game.date.slice(6, 8))} {game.time}
                       </span>
