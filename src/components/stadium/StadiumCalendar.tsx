@@ -31,19 +31,21 @@ interface TicketOpenRule {
   hour: number;       // 오픈 시각 (24h)
   maxTickets: number;
   label: string;      // 표시용 텍스트
+  provider: string;   // 예매처 이름
+  url: string;        // 예매 링크
 }
 
 const TICKET_OPEN_RULES: Record<number, TicketOpenRule> = {
-  1:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)" },
-  2:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)" },
-  3:  { daysBefore: 7,  hour: 16, maxTickets: 8,  label: "경기 7일 전 오후 4시 (최대 8매)" },
-  4:  { daysBefore: 5,  hour: 11, maxTickets: 6,  label: "경기 5일 전 오전 11시 (최대 6매)" },
-  5:  { daysBefore: 6,  hour: 11, maxTickets: 10, label: "경기 6일 전 오전 11시 (최대 10매)" },
-  6:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)" },
-  7:  { daysBefore: 14, hour: 14, maxTickets: 8,  label: "경기 14일 전 오후 2시 (최대 8매)" },
-  8:  { daysBefore: 7,  hour: 11, maxTickets: 6,  label: "경기 7일 전 오전 11시 (최대 6매)" },
-  9:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)" },
-  10: { daysBefore: 7,  hour: 14, maxTickets: 4,  label: "경기 7일 전 오후 2시 (최대 4매)" },
+  1:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
+  2:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)", provider: "인터파크", url: "https://ticket.interpark.com" },
+  3:  { daysBefore: 7,  hour: 16, maxTickets: 8,  label: "경기 7일 전 오후 4시 (최대 8매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
+  4:  { daysBefore: 5,  hour: 11, maxTickets: 6,  label: "경기 5일 전 오전 11시 (최대 6매)", provider: "SSG닷컴", url: "https://www.ssg.com" },
+  5:  { daysBefore: 6,  hour: 11, maxTickets: 10, label: "경기 6일 전 오전 11시 (최대 10매)", provider: "NC 다이노스", url: "https://www.ncdinos.com" },
+  6:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
+  7:  { daysBefore: 14, hour: 14, maxTickets: 8,  label: "경기 14일 전 오후 2시 (최대 8매)", provider: "롯데 자이언츠", url: "https://www.giantsclub.com" },
+  8:  { daysBefore: 7,  hour: 11, maxTickets: 6,  label: "경기 7일 전 오전 11시 (최대 6매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
+  9:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
+  10: { daysBefore: 7,  hour: 14, maxTickets: 4,  label: "경기 7일 전 오후 2시 (최대 4매)", provider: "놀티켓", url: "https://ticket.interpark.com" },
 };
 
 /** 경기 날짜 + 구단 오픈 룰 → 예매 오픈 일시 계산 */
@@ -107,15 +109,13 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
     fetchMonthGames(monthKey);
   }, [monthKey, fetchMonthGames]);
 
-  // 마이팀 필터: 멀티팀 구장에서 유저 마이팀이 해당 구장 소속이면 마이팀 경기만 표시
+  // 마이팀 필터: 마이팀이 홈 또는 원정으로 참여하는 경기만 표시
   const myTeamId = profile?.team_id ?? null;
-  const isMultiTeam = stadium.teamIds.length > 1;
-  const myTeamInStadium = isMultiTeam && myTeamId && stadium.teamIds.includes(myTeamId);
-  const filteredGames = myTeamInStadium
-    ? games.filter((g) => g.homeTeamId === myTeamId)
+  const filteredGames = myTeamId
+    ? games.filter((g) => g.homeTeamId === myTeamId || g.awayTeamId === myTeamId)
     : games;
 
-  const myTeam = myTeamInStadium ? getTeamById(myTeamId) : null;
+  const myTeam = myTeamId ? getTeamById(myTeamId) : null;
 
   // 날짜별 경기 맵
   const gamesByDate = new Map<string, StadiumGame[]>();
@@ -170,15 +170,23 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
               </div>
             );
           })}
-          <a
-            href={stadium.ticketing.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 mt-2 text-accent text-sm font-medium"
-          >
-            <ExternalLink size={14} />
-            {stadium.ticketing.provider} 바로가기
-          </a>
+          {stadium.teamIds.map((tid) => {
+            const rule = TICKET_OPEN_RULES[tid];
+            if (!rule) return null;
+            const team = getTeamById(tid);
+            return (
+              <a
+                key={tid}
+                href={rule.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 mt-2 text-accent text-sm font-medium"
+              >
+                <ExternalLink size={14} />
+                {stadium.teamIds.length > 1 && team ? `${team.shortName} ` : ""}{rule.provider} 바로가기
+              </a>
+            );
+          })}
         </div>
       </GlassCard>
 
@@ -348,9 +356,9 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                       );
                     })()}
                   </div>
-                  {game.status === "scheduled" && (
+                  {game.status === "scheduled" && TICKET_OPEN_RULES[game.homeTeamId] && (
                     <a
-                      href={stadium.ticketing.url}
+                      href={TICKET_OPEN_RULES[game.homeTeamId].url}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-1 rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-white"
@@ -370,7 +378,7 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
       {!selectedDate && !loading && filteredGames.length > 0 && (
         <div className="space-y-2">
           <h4 className="text-sm font-semibold text-text-primary px-1">
-            {month + 1}월 {myTeam ? `${myTeam.shortName} ` : ""}홈경기 ({filteredGames.length}경기)
+            {month + 1}월 {myTeam ? `${myTeam.shortName} ` : ""}경기 ({filteredGames.length}경기)
           </h4>
           {filteredGames
             .filter((g) => g.date >= todayStr)
@@ -397,7 +405,7 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                     </div>
                     {game.status === "scheduled" && (
                       <a
-                        href={stadium.ticketing.url}
+                        href={TICKET_OPEN_RULES[game.homeTeamId]?.url || stadium.ticketing.url}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs text-accent font-medium"
