@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import { Inbox, Eye, CheckCircle, XCircle, ChevronDown, Loader2, Clock, Copy, Send } from "lucide-react";
+import { Inbox, Eye, CheckCircle, XCircle, ChevronDown, Loader2, Clock, Copy, Send, Video } from "lucide-react";
 import type { FeedbackItem, FeedbackStatus } from "@/lib/admin/types";
 
 /* ── Labels & Colors ── */
@@ -80,6 +80,14 @@ interface FeedbackRaw {
   status: string;
   admin_note: string | null;
   created_at: string;
+  attachment: {
+    id: string;
+    file_type: string;
+    mime_type: string;
+    file_size: number;
+    duration_sec: number | null;
+    signed_url: string | null;
+  } | null;
 }
 
 function normalizeStatus(status: string): FeedbackStatus {
@@ -111,6 +119,17 @@ function mapFeedback(raw: FeedbackRaw): FeedbackItem {
     status: normalizeStatus(raw.status),
     adminNote: raw.admin_note,
     createdAt: raw.created_at,
+    attachment: raw.attachment ? {
+      id: raw.attachment.id,
+      feedbackId: raw.id,
+      fileType: raw.attachment.file_type as "video" | "image",
+      mimeType: raw.attachment.mime_type,
+      storagePath: "",
+      fileSize: raw.attachment.file_size,
+      durationSec: raw.attachment.duration_sec,
+      signedUrl: raw.attachment.signed_url ?? undefined,
+      createdAt: raw.created_at,
+    } : null,
   };
 }
 
@@ -376,6 +395,9 @@ export default function AdminFeedbackPage() {
                           style={{ background: TYPE_COLORS[item.type] }}
                         />
                         <span className="text-xs text-[#8E8E93]">{TYPE_LABELS[item.type]}</span>
+                        {item.attachment && (
+                          <Video className="w-3 h-3 text-[#60A5FA]" />
+                        )}
                         <span className="text-xs text-[#636366]">
                           {new Date(item.createdAt).toLocaleDateString("ko-KR")}
                         </span>
@@ -397,6 +419,23 @@ export default function AdminFeedbackPage() {
                   <div className="px-4 pb-4 space-y-3 text-sm">
                     <div className="pt-3 border-t border-white/8 space-y-2">
                       {item.body && <p className="text-[#8E8E93]">{item.body}</p>}
+                      {item.attachment?.signedUrl && (
+                        <div className="rounded-xl overflow-hidden bg-black">
+                          <video
+                            src={item.attachment.signedUrl}
+                            controls
+                            playsInline
+                            className="w-full max-h-64"
+                          />
+                          <div className="flex items-center gap-3 px-3 py-1.5 text-[10px] text-[#8E8E93]">
+                            <span>{(item.attachment.fileSize / 1024 / 1024).toFixed(1)}MB</span>
+                            {item.attachment.durationSec && (
+                              <span>{Math.round(item.attachment.durationSec)}초</span>
+                            )}
+                            <span>{item.attachment.mimeType}</span>
+                          </div>
+                        </div>
+                      )}
                       <p className="text-xs text-[#636366]">
                         유저: {item.userNickname && <span className="text-[#AEAEB2]">{item.userNickname} </span>}
                         <span className="font-mono">{item.userId}</span>
