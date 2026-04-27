@@ -59,6 +59,11 @@ function getTicketOpenDate(gameDate: string, teamId: number): Date | null {
   return game;
 }
 
+/** 동일 팀·동일일 2경기 이상 = 더블헤더/변경 경기 추정 */
+function isDoubleHeader(games: StadiumGame[], game: StadiumGame): boolean {
+  return games.filter((g) => g.date === game.date && g.homeTeamId === game.homeTeamId).length >= 2;
+}
+
 /** 예매 오픈 일시 포맷 */
 function formatOpenDate(date: Date): string {
   const m = date.getMonth() + 1;
@@ -329,6 +334,9 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                       {game.status === "scheduled" ? "예정" : game.status === "final" ? "종료" : game.status === "cancelled" ? "취소" : "진행중"}
                     </span>
                     {game.status === "scheduled" && (() => {
+                      if (isDoubleHeader(filteredGames, game)) {
+                        return <span className="text-xs ml-2 text-yellow-400">변경 경기 · 예매 일정 별도 확인</span>;
+                      }
                       const openDate = getTicketOpenDate(game.date, game.homeTeamId);
                       if (!openDate) return null;
                       const now = new Date();
@@ -370,7 +378,8 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
             .map((game) => {
               const awayTeam = getTeamById(game.awayTeamId);
 
-              const openDate = getTicketOpenDate(game.date, game.homeTeamId);
+              const isDH = isDoubleHeader(filteredGames, game);
+              const openDate = isDH ? null : getTicketOpenDate(game.date, game.homeTeamId);
               const now = new Date();
               const isOpen = openDate ? now >= openDate : false;
 
@@ -397,11 +406,15 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                       </a>
                     )}
                   </div>
-                  {game.status === "scheduled" && openDate && (
+                  {game.status === "scheduled" && (
                     <div className="mt-1.5">
-                      <span className={`text-[11px] ${isOpen ? "text-green-400" : "text-text-tertiary"}`}>
-                        {isOpen ? "예매 오픈됨" : `예매 오픈: ${formatOpenDate(openDate)}`}
-                      </span>
+                      {isDH ? (
+                        <span className="text-[11px] text-yellow-400">변경 경기 · 예매 일정 별도 확인</span>
+                      ) : openDate ? (
+                        <span className={`text-[11px] ${isOpen ? "text-green-400" : "text-text-tertiary"}`}>
+                          {isOpen ? "예매 오픈됨" : `예매 오픈: ${formatOpenDate(openDate)}`}
+                        </span>
+                      ) : null}
                     </div>
                   )}
                 </GlassCard>
