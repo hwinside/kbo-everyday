@@ -5,6 +5,7 @@ import Image from "next/image";
 import { ChevronLeft, ChevronRight, ExternalLink, Loader2 } from "lucide-react";
 import { getTeamById } from "@/lib/constants/teams";
 import type { Stadium } from "@/lib/constants/stadiums";
+import { useAuth } from "@/lib/supabase/AuthContext";
 import GlassCard from "@/components/ui/GlassCard";
 
 interface StadiumGame {
@@ -43,6 +44,7 @@ function getMonthKey(date: Date): string {
 }
 
 export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
+  const { profile } = useAuth();
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [games, setGames] = useState<StadiumGame[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,9 +72,19 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
     fetchMonthGames(monthKey);
   }, [monthKey, fetchMonthGames]);
 
+  // 마이팀 필터: 멀티팀 구장에서 유저 마이팀이 해당 구장 소속이면 마이팀 경기만 표시
+  const myTeamId = profile?.team_id ?? null;
+  const isMultiTeam = stadium.teamIds.length > 1;
+  const myTeamInStadium = isMultiTeam && myTeamId && stadium.teamIds.includes(myTeamId);
+  const filteredGames = myTeamInStadium
+    ? games.filter((g) => g.homeTeamId === myTeamId)
+    : games;
+
+  const myTeam = myTeamInStadium ? getTeamById(myTeamId) : null;
+
   // 날짜별 경기 맵
   const gamesByDate = new Map<string, StadiumGame[]>();
-  for (const game of games) {
+  for (const game of filteredGames) {
     const existing = gamesByDate.get(game.date) || [];
     existing.push(game);
     gamesByDate.set(game.date, existing);
@@ -304,12 +316,12 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
       )}
 
       {/* 하단 홈경기 리스트 (선택 안 됐을 때) */}
-      {!selectedDate && !loading && games.length > 0 && (
+      {!selectedDate && !loading && filteredGames.length > 0 && (
         <div className="space-y-2">
           <h4 className="text-sm font-semibold text-text-primary px-1">
-            {month + 1}월 홈경기 ({games.length}경기)
+            {month + 1}월 {myTeam ? `${myTeam.shortName} ` : ""}홈경기 ({filteredGames.length}경기)
           </h4>
-          {games
+          {filteredGames
             .filter((g) => g.date >= todayStr)
             .slice(0, 5)
             .map((game) => {
@@ -344,7 +356,7 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
         </div>
       )}
 
-      {!loading && games.length === 0 && (
+      {!loading && filteredGames.length === 0 && (
         <div className="text-center py-8">
           <p className="text-sm text-text-tertiary">이번 달 홈경기가 없어요</p>
         </div>
