@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Image from "next/image";
 import { ChevronLeft, ChevronRight, ExternalLink, Loader2 } from "lucide-react";
 import { getTeamById } from "@/lib/constants/teams";
@@ -117,13 +117,16 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
 
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
 
-  // 마이팀이 구장 소속이면 마이팀 먼저, 아니면 랜덤 순서
+  // 마이팀이 구장 소속이면 마이팀 먼저, 아니면 랜덤 순서 (마운트 시 1회만 셔플)
+  const shuffledRef = useRef<number[] | null>(null);
   const sortedTeamIds = useMemo(() => {
     if (myTeamId && stadium.teamIds.includes(myTeamId)) {
       return [myTeamId, ...stadium.teamIds.filter((id) => id !== myTeamId)];
     }
-    // 마이팀이 구장 소속이 아니면 랜덤
-    return [...stadium.teamIds].sort(() => Math.random() - 0.5);
+    if (!shuffledRef.current) {
+      shuffledRef.current = [...stadium.teamIds].sort(() => Math.random() - 0.5);
+    }
+    return shuffledRef.current;
   }, [myTeamId, stadium.teamIds]);
 
   // 날짜별 경기 맵 (달력 그리드용: 전체 경기)
