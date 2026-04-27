@@ -25,19 +25,49 @@ interface StadiumCalendarProps {
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
-/** 구단별 예매 오픈 정보 */
-const TICKET_OPEN_INFO: Record<number, string> = {
-  1: "경기 7일 전 오전 11시 (최대 4매)",   // LG
-  2: "경기 7일 전 오전 11시 (최대 4매)",   // 두산
-  3: "경기 7일 전 오후 4시 (최대 8매)",    // KT
-  4: "경기 5일 전 오전 11시 (최대 6매)",   // SSG
-  5: "경기 6일 전 오전 11시 (최대 10매)",  // NC
-  6: "경기 7일 전 오전 11시 (최대 4매)",   // KIA
-  7: "경기 14일 전 오후 2시 (최대 8매)",   // 롯데
-  8: "경기 7일 전 오전 11시 (최대 6매)",   // 삼성
-  9: "경기 7일 전 오전 11시 (최대 4매)",   // 한화
-  10: "경기 7일 전 오후 2시 (최대 4매)",   // 키움
+/** 구단별 예매 오픈 정보 (구조화) */
+interface TicketOpenRule {
+  daysBefore: number; // 경기 며칠 전
+  hour: number;       // 오픈 시각 (24h)
+  maxTickets: number;
+  label: string;      // 표시용 텍스트
+}
+
+const TICKET_OPEN_RULES: Record<number, TicketOpenRule> = {
+  1:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)" },
+  2:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)" },
+  3:  { daysBefore: 7,  hour: 16, maxTickets: 8,  label: "경기 7일 전 오후 4시 (최대 8매)" },
+  4:  { daysBefore: 5,  hour: 11, maxTickets: 6,  label: "경기 5일 전 오전 11시 (최대 6매)" },
+  5:  { daysBefore: 6,  hour: 11, maxTickets: 10, label: "경기 6일 전 오전 11시 (최대 10매)" },
+  6:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)" },
+  7:  { daysBefore: 14, hour: 14, maxTickets: 8,  label: "경기 14일 전 오후 2시 (최대 8매)" },
+  8:  { daysBefore: 7,  hour: 11, maxTickets: 6,  label: "경기 7일 전 오전 11시 (최대 6매)" },
+  9:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)" },
+  10: { daysBefore: 7,  hour: 14, maxTickets: 4,  label: "경기 7일 전 오후 2시 (최대 4매)" },
 };
+
+/** 경기 날짜 + 구단 오픈 룰 → 예매 오픈 일시 계산 */
+function getTicketOpenDate(gameDate: string, teamId: number): Date | null {
+  const rule = TICKET_OPEN_RULES[teamId];
+  if (!rule) return null;
+  const y = parseInt(gameDate.slice(0, 4));
+  const m = parseInt(gameDate.slice(4, 6)) - 1;
+  const d = parseInt(gameDate.slice(6, 8));
+  const game = new Date(y, m, d);
+  game.setDate(game.getDate() - rule.daysBefore);
+  game.setHours(rule.hour, 0, 0, 0);
+  return game;
+}
+
+/** 예매 오픈 일시 포맷 */
+function formatOpenDate(date: Date): string {
+  const m = date.getMonth() + 1;
+  const d = date.getDate();
+  const h = date.getHours();
+  const ampm = h < 12 ? "오전" : "오후";
+  const hour12 = h <= 12 ? h : h - 12;
+  return `${m}/${d} ${ampm} ${hour12}시`;
+}
 
 function getMonthKey(date: Date): string {
   return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}`;
@@ -131,7 +161,7 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                   )}
                   <span className="text-text-primary font-medium">{team?.shortName} 예매 오픈</span>
                 </div>
-                <span className="text-text-secondary text-xs">{TICKET_OPEN_INFO[teamId] || ""}</span>
+                <span className="text-text-secondary text-xs">{TICKET_OPEN_RULES[teamId]?.label || ""}</span>
               </div>
             );
           })}
@@ -294,9 +324,22 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                   <span className="text-sm text-text-secondary">{game.time}</span>
                 </div>
                 <div className="flex items-center justify-between mt-3">
-                  <span className="text-xs text-text-tertiary">
-                    {game.status === "scheduled" ? "예정" : game.status === "final" ? "종료" : game.status === "cancelled" ? "취소" : "진행중"}
-                  </span>
+                  <div>
+                    <span className="text-xs text-text-tertiary">
+                      {game.status === "scheduled" ? "예정" : game.status === "final" ? "종료" : game.status === "cancelled" ? "취소" : "진행중"}
+                    </span>
+                    {game.status === "scheduled" && (() => {
+                      const openDate = getTicketOpenDate(game.date, game.homeTeamId);
+                      if (!openDate) return null;
+                      const now = new Date();
+                      const isOpen = now >= openDate;
+                      return (
+                        <span className={`text-xs ml-2 ${isOpen ? "text-green-400 font-medium" : "text-text-tertiary"}`}>
+                          {isOpen ? "예매 오픈됨" : `예매 오픈: ${formatOpenDate(openDate)}`}
+                        </span>
+                      );
+                    })()}
+                  </div>
                   {game.status === "scheduled" && (
                     <a
                       href={stadium.ticketing.url}
@@ -327,6 +370,10 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
             .map((game) => {
               const awayTeam = getTeamById(game.awayTeamId);
 
+              const openDate = getTicketOpenDate(game.date, game.homeTeamId);
+              const now = new Date();
+              const isOpen = openDate ? now >= openDate : false;
+
               return (
                 <GlassCard key={game.gameId} className="p-3">
                   <div className="flex items-center justify-between">
@@ -350,6 +397,13 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                       </a>
                     )}
                   </div>
+                  {game.status === "scheduled" && openDate && (
+                    <div className="mt-1.5">
+                      <span className={`text-[11px] ${isOpen ? "text-green-400" : "text-text-tertiary"}`}>
+                        {isOpen ? "예매 오픈됨" : `예매 오픈: ${formatOpenDate(openDate)}`}
+                      </span>
+                    </div>
+                  )}
                 </GlassCard>
               );
             })}
