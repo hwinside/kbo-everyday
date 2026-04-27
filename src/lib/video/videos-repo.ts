@@ -40,22 +40,31 @@ export async function upsertVideos(
 ): Promise<{ upserted: number; error?: string }> {
   if (rows.length === 0) return { upserted: 0 };
 
-  const payload = rows.map((r) => ({
-    video_id: r.video_id,
-    team_id: r.team_id,
-    player_id: r.player_id ?? null,
-    player_ids: r.player_ids ?? [],
-    title: r.title,
-    channel: r.channel ?? null,
-    channel_id: r.channel_id ?? null,
-    thumbnail: r.thumbnail ?? null,
-    published_at: r.published_at,
-    duration_seconds: r.duration_seconds ?? null,
-    source_type: r.source_type,
-    is_short_candidate: r.is_short_candidate,
-    noise_flags: r.noise_flags,
-    fetched_at: new Date().toISOString(),
-  }));
+  const now = new Date().toISOString();
+  const payload = rows.map((r) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row: Record<string, any> = {
+      video_id: r.video_id,
+      team_id: r.team_id,
+      player_id: r.player_id ?? null,
+      player_ids: r.player_ids ?? [],
+      title: r.title,
+      channel: r.channel ?? null,
+      channel_id: r.channel_id ?? null,
+      thumbnail: r.thumbnail ?? null,
+      published_at: r.published_at,
+      source_type: r.source_type,
+      is_short_candidate: r.is_short_candidate,
+      noise_flags: r.noise_flags,
+      fetched_at: now,
+    };
+    // Only include duration_seconds when known — prevents overwriting
+    // values already backfilled by the YouTube API duration step
+    if (r.duration_seconds != null) {
+      row.duration_seconds = r.duration_seconds;
+    }
+    return row;
+  });
 
   const { error } = await supabase
     .from("videos")

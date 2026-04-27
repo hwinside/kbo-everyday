@@ -22,8 +22,11 @@ import {
 import { upsertVideos, type VideoUpsertRow } from "@/lib/video/videos-repo";
 import { loadPlayerAliases, matchPlayers } from "@/lib/video/player-tagger";
 import { detectTeamFromTitle } from "@/lib/video/team-detector";
+import { fetchVideoDurations } from "@/lib/video/youtube-api";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
+const BACKFILL_LIMIT = 500; // max videos to backfill per run
+const BACKFILL_WINDOW_DAYS = 7;
 const CONCURRENCY = 10;
 
 export const maxDuration = 60;
@@ -92,7 +95,6 @@ export async function GET(req: NextRequest) {
             channel_id: e.channel_id,
             thumbnail: e.thumbnail,
             published_at: e.published_at,
-            duration_seconds: null,
             source_type: sourceType,
             is_short_candidate: isShort,
             noise_flags: noiseFlags,
@@ -137,10 +139,70 @@ export async function GET(req: NextRequest) {
       .eq("channel_id", chId);
   }
 
+  // ── Duration backfill: fetch from YouTube API for NULL-duration videos ──
+  let backfilled = 0;
+  let backfillApiCalls = 0;
+  try {
+    const cutoff = new Date(Date.now() - BACKFILL_WINDOW_DAYS * 86_400_000).toISOString();
+    const { data: nullRows } = await supabaseAdmin
+      .from("videos")
+      .select("video_id, source_type")
+      .is("duration_seconds", null)
+      .gte("published_at", cutoff)
+      .limit(BACKFILL_LIMIT);
+
+    if (nullRows && nullRows.length > 0) {
+      const ids = nullRows.map((r: { video_id: string }) => r.video_id);
+      backfillApiCalls = Math.ceil(ids.length / 50);
+      const durations = await fetchVideoDurations(ids);
+
+      // Build lookup for source_type
+      const sourceMap = new Map(
+        nullRows.map((r: { video_id: string; source_type: string }) => [r.video_id, r.source_type]),
+      );
+
+      // Batch updates (concurrency 20)
+      const updates: PromiseLike<unknown>[] = [];
+      for (const [videoId, duration] of durations) {
+        const isShort = duration > 0 && duration <= 70;
+        const existing = sourceMap.get(videoId) ?? "community_long";
+        let newSourceType = existing;
+        if (isShort) {
+          if (existing === "official_long") newSourceType = "official_short";
+          else if (existing === "community_long") newSourceType = "community_short";
+        } else {
+          if (existing === "official_short") newSourceType = "official_long";
+          else if (existing === "community_short") newSourceType = "community_long";
+        }
+
+        updates.push(
+          supabaseAdmin
+            .from("videos")
+            .update({
+              duration_seconds: duration,
+              is_short_candidate: isShort,
+              source_type: newSourceType,
+            })
+            .eq("video_id", videoId)
+            .then(),
+        );
+
+        // Flush in batches of 20
+        if (updates.length >= 20) {
+          await Promise.all(updates.splice(0));
+        }
+      }
+      if (updates.length > 0) await Promise.all(updates);
+      backfilled = durations.size;
+    }
+  } catch {
+    // Duration backfill is best-effort — don't fail the cron
+  }
+
   const errorCount = Object.keys(errors).length;
   const okCount = Object.keys(results).length;
   const status: "success" | "error" = errorCount === 0 ? "success" : "error";
-  const summary = `channels=${channels.length} upserted=${totalUpserted} ok=${okCount} err=${errorCount}`;
+  const summary = `channels=${channels.length} upserted=${totalUpserted} ok=${okCount} err=${errorCount} backfilled=${backfilled} apiCalls=${backfillApiCalls}`;
   const errorMessage = errorCount > 0 ? JSON.stringify(errors).slice(0, 900) : undefined;
 
   await finishJob(logId, status, summary, errorMessage);
@@ -150,6 +212,8 @@ export async function GET(req: NextRequest) {
     status,
     channelsTotal: channels.length,
     totalUpserted,
+    backfilled,
+    backfillApiCalls,
     results,
     errors: errorCount > 0 ? errors : undefined,
   });
