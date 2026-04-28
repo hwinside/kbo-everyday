@@ -3,14 +3,14 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { getFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
-import type { Post } from "@/lib/types";
-import type { Post as RawPost } from "@/lib/supabase/usePosts";
+import type { Post } from "@/lib/supabase/usePosts";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
 interface SupabaseProfileJoin {
   nickname?: string;
   team_id?: number;
   grade?: string;
+  points?: number;
 }
 
 interface SupabasePostRow {
@@ -26,7 +26,11 @@ interface SupabasePostRow {
   like_count: number;
   comment_count: number;
   created_at: string;
+  updated_at?: string | null;
   is_hidden: boolean;
+  game_id?: string | null;
+  player_tags?: string[];
+  hashtags?: string[];
   profiles?: SupabaseProfileJoin | SupabaseProfileJoin[] | null;
 }
 
@@ -35,14 +39,37 @@ export type SortTab = "latest" | "hot";
 // Filter mode: null = favorites all, "myTeam" = user's team all, string = specific player
 export type PlayerFilter = null | "myTeam" | string;
 
+function mapPost(row: SupabasePostRow): Post {
+  const prof = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+  return {
+    id: row.id,
+    author_id: row.author_id,
+    board_type: row.board_type,
+    board_id: row.board_id,
+    content_type: (row.content_type ?? "general") as "general" | "photo",
+    title: row.title,
+    content: row.content,
+    image_urls: row.image_urls ?? [],
+    video_urls: row.video_urls ?? [],
+    like_count: row.like_count,
+    comment_count: row.comment_count,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    game_id: row.game_id,
+    player_tags: row.player_tags,
+    hashtags: row.hashtags,
+    nickname: prof?.nickname || "익명",
+    team_id: prof?.team_id,
+    grade: prof?.grade,
+    points: prof?.points ?? 0,
+  };
+}
+
 export function usePlayerCommunity(userTeamId?: number) {
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
   const [favLoaded, setFavLoaded] = useState(false);
   const [posts, setPosts] = useState<Post[]>([]);
-  const [photoPosts, setPhotoPosts] = useState<RawPost[]>([]);
   const [loading, setLoading] = useState(false);
-  const [photoLoading, setPhotoLoading] = useState(false);
-  const [contentTab, setContentTab] = useState<ContentTab>("general");
   const [sortTab, setSortTab] = useState<SortTab>("latest");
   const [selectedPlayer, setSelectedPlayer] = useState<PlayerFilter>(null);
 
@@ -74,17 +101,22 @@ export function usePlayerCommunity(userTeamId?: number) {
     return favPlayerIds; // null = favorites all
   }, [selectedPlayer, favPlayerIds, myTeamPlayerIds]);
 
-  // Load general posts
+  // Load unified player posts (general + photo merged)
   const loadPosts = useCallback(async () => {
     const queryIds = getQueryIds();
-    if (queryIds.length === 0) return;
+    if (queryIds.length === 0) {
+      setPosts([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
 
     let query = supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, updated_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)")
       .eq("board_type", "player")
-      .eq("content_type", "general")
+      // no content_type filter — show text and photo posts in one feed
       .in("board_id", queryIds)
       .neq("is_hidden", true);
 
@@ -92,7 +124,8 @@ export function usePlayerCommunity(userTeamId?: number) {
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
       query = query
         .gte("created_at", sevenDaysAgo)
-        .order("like_count", { ascending: false });
+        .order("like_count", { ascending: false })
+        .order("created_at", { ascending: false });
     } else {
       query = query.order("created_at", { ascending: false });
     }
@@ -100,111 +133,14 @@ export function usePlayerCommunity(userTeamId?: number) {
     query = query.limit(50);
     const { data } = await query;
 
-    if (data) {
-      const rows = data as unknown as SupabasePostRow[];
-      setPosts(
-        rows.map((p) => {
-          const prof = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
-          return {
-            id: p.id,
-            boardType: "player" as const,
-            boardId: p.board_id,
-            authorId: p.author_id,
-            title: p.title,
-            content: p.content,
-            imageUrls: p.image_urls ?? [],
-            likeCount: p.like_count,
-            commentCount: p.comment_count,
-            isReported: false,
-            createdAt: p.created_at,
-            author: {
-              nickname: prof?.nickname || "익명",
-              avatarUrl: null,
-              myTeamId: prof?.team_id || 0,
-              level: 1,
-              title: "",
-              grade: prof?.grade,
-            },
-          };
-        })
-      );
-    }
+    setPosts(((data ?? []) as unknown as SupabasePostRow[]).map(mapPost));
     setLoading(false);
   }, [getQueryIds, sortTab]);
 
-  // Load photo posts
-  const loadPhotoPosts = useCallback(async () => {
-    const queryIds = getQueryIds();
-    if (queryIds.length === 0) return;
-    setPhotoLoading(true);
-
-    let query = supabase
-      .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
-      .eq("board_type", "player")
-      .eq("content_type", "photo")
-      .in("board_id", queryIds)
-      .neq("is_hidden", true);
-
-    if (sortTab === "hot") {
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      query = query
-        .gte("created_at", sevenDaysAgo)
-        .order("like_count", { ascending: false });
-    } else {
-      query = query.order("created_at", { ascending: false });
-    }
-
-    query = query.limit(50);
-    const { data } = await query;
-
-    if (data) {
-      const rows = data as unknown as SupabasePostRow[];
-      setPhotoPosts(
-        rows.map((p) => {
-          const prof = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
-          return {
-            id: p.id,
-            author_id: p.author_id,
-            board_type: p.board_type,
-            board_id: p.board_id,
-            content_type: (p.content_type ?? "photo") as "general" | "photo",
-            title: p.title,
-            content: p.content,
-            image_urls: p.image_urls ?? [],
-            video_urls: p.video_urls ?? [],
-            like_count: p.like_count,
-            comment_count: p.comment_count,
-            created_at: p.created_at,
-            nickname: prof?.nickname || "익명",
-            team_id: prof?.team_id,
-            grade: prof?.grade,
-          };
-        })
-      );
-    }
-    setPhotoLoading(false);
-  }, [getQueryIds, sortTab]);
-
   useEffect(() => {
-    const queryIds = getQueryIds();
-    if (queryIds.length > 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (contentTab === "general") loadPosts();
-      else loadPhotoPosts();
-    }
-  }, [loadPosts, loadPhotoPosts, getQueryIds, contentTab]);
-
-  // With the new query-level filtering, no additional client-side filter needed
-  const filteredPosts = posts;
-  const filteredPhotoPosts = photoPosts;
-
-  // Handle tab change
-  const handleTabChange = (tab: ContentTab) => {
-    setContentTab(tab);
-    setSortTab("latest");
-    window.scrollTo(0, 0);
-  };
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadPosts();
+  }, [loadPosts]);
 
   // Handle sort change
   const handleSortChange = (sort: SortTab) => {
@@ -218,16 +154,11 @@ export function usePlayerCommunity(userTeamId?: number) {
     favPlayerIds,
     favPlayerNames,
     loading,
-    photoLoading,
-    contentTab,
     sortTab,
     selectedPlayer,
     setSelectedPlayer,
-    filteredPosts,
-    filteredPhotoPosts,
-    handleTabChange,
+    posts,
     handleSortChange,
     loadPosts,
-    loadPhotoPosts,
   };
 }

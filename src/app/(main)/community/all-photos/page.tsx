@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import PhotoFeed from "@/components/community/PhotoFeed";
+import UnifiedFeed from "@/components/community/UnifiedFeed";
 import { supabase } from "@/lib/supabase/client";
 import { toggleLike, type Post } from "@/lib/supabase/usePosts";
 import { getCommunitySourceLabel } from "@/lib/utils/community-board";
@@ -12,6 +12,7 @@ export default function AllPhotosPage() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortTab, setSortTab] = useState<SortTab>("latest");
+  const [now] = useState(() => Date.now());
 
   useEffect(() => {
     let cancelled = false;
@@ -53,9 +54,9 @@ export default function AllPhotosPage() {
   const sortedPosts = useMemo(() => {
     if (sortTab === "latest") return posts;
     return [...posts]
-      .filter((p) => Date.now() - new Date(p.created_at).getTime() < 30 * 24 * 60 * 60 * 1000)
+      .filter((p) => now - new Date(p.created_at).getTime() < 30 * 24 * 60 * 60 * 1000)
       .sort((a, b) => b.like_count - a.like_count || new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  }, [posts, sortTab]);
+  }, [posts, sortTab, now]);
 
   const sourceLabels = useMemo(
     () => Object.fromEntries(sortedPosts.map((post) => [post.id, getCommunitySourceLabel(post.board_type, post.board_id)])),
@@ -93,7 +94,13 @@ export default function AllPhotosPage() {
         </div>
       </div>
 
-      <PhotoFeed posts={sortedPosts} loading={loading} onLike={handleLike} sourceLabels={sourceLabels} />
+      <UnifiedFeed
+        posts={sortedPosts}
+        loading={loading}
+        onLike={handleLike}
+        boardContext={{ type: "global" }}
+        sourceLabels={sourceLabels}
+      />
     </div>
   );
 }

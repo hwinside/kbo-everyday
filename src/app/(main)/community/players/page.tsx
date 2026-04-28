@@ -3,18 +3,19 @@
 import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Pencil } from "lucide-react";
+import { Camera, FileText, Pencil, X } from "lucide-react";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import WritePost from "@/components/community/WritePost";
 import WritePhotoPost from "@/components/community/WritePhotoPost";
 import LoginSheet from "@/components/auth/LoginSheet";
 import PlayerPickerSheet from "@/components/community/PlayerPickerSheet";
-import PlayerPostContent from "@/components/community/PlayerPostContent";
+import UnifiedFeed from "@/components/community/UnifiedFeed";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { createPost, toggleLike } from "@/lib/supabase/usePosts";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS, getTeamById } from "@/lib/constants/teams";
 import { usePlayerCommunity } from "@/hooks/usePlayerCommunity";
+import { getCommunitySourceLabel } from "@/lib/utils/community-board";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
 export default function CommunityPlayersPage() {
@@ -28,17 +29,12 @@ export default function CommunityPlayersPage() {
     favPlayerIds,
     favPlayerNames,
     loading,
-    photoLoading,
-    contentTab,
     sortTab,
     selectedPlayer,
     setSelectedPlayer,
-    filteredPosts,
-    filteredPhotoPosts,
-    handleTabChange,
+    posts,
     handleSortChange,
     loadPosts,
-    loadPhotoPosts,
   } = usePlayerCommunity(userTeamId);
 
   // favIds Set for quick lookup (비최애 판별)
@@ -48,17 +44,35 @@ export default function CommunityPlayersPage() {
   const [writePhotoOpen, setWritePhotoOpen] = useState(false);
   const [writePlayerTarget, setWritePlayerTarget] = useState<string | null>(null);
   const [playerPickerOpen, setPlayerPickerOpen] = useState(false);
+  const [pickerMode, setPickerMode] = useState<"general" | "photo">("general");
   const [showLogin, setShowLogin] = useState(false);
+  const [fabExpanded, setFabExpanded] = useState(false);
+
+  const sourceLabels = useMemo(
+    () => Object.fromEntries(posts.map((post) => [post.id, getCommunitySourceLabel(post.board_type, post.board_id)])),
+    [posts],
+  );
 
   const handleWrite = () => {
     if (!user) { setShowLogin(true); return; }
+    setPickerMode("general");
     // 선수가 이미 선택(필터)된 상태면 바로 글쓰기
-    if (selectedPlayer) {
+    if (selectedPlayer && selectedPlayer !== "myTeam") {
       setWritePlayerTarget(selectedPlayer);
-      if (contentTab === "photo") setWritePhotoOpen(true);
-      else setWriteOpen(true);
+      setWriteOpen(true);
     } else {
       // 최애선수 유무 관계없이 선수 선택 시트 열기 (최애선수 상단 + 전체 검색)
+      setPlayerPickerOpen(true);
+    }
+  };
+
+  const handlePhotoWrite = () => {
+    if (!user) { setShowLogin(true); return; }
+    setPickerMode("photo");
+    if (selectedPlayer && selectedPlayer !== "myTeam") {
+      setWritePlayerTarget(selectedPlayer);
+      setWritePhotoOpen(true);
+    } else {
       setPlayerPickerOpen(true);
     }
   };
@@ -124,7 +138,7 @@ export default function CommunityPlayersPage() {
           onSelect={(playerId) => {
             setWritePlayerTarget(playerId);
             setPlayerPickerOpen(false);
-            if (contentTab === "photo") setWritePhotoOpen(true);
+            if (pickerMode === "photo") setWritePhotoOpen(true);
             else setWriteOpen(true);
           }}
         />
@@ -179,25 +193,7 @@ export default function CommunityPlayersPage() {
   return (
     <div className="mx-auto max-w-lg">
       {/* Controls */}
-      <div className="px-5 pb-2 space-y-3">
-        <div className="flex items-center justify-between pt-3">
-          <div className="flex bg-bg-glass rounded-xl p-1">
-            {(["general", "photo"] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => handleTabChange(tab)}
-                className={`relative px-4 py-2 text-sm font-semibold rounded-lg transition-colors ${
-                  contentTab === tab
-                    ? "bg-text-primary text-bg-primary shadow-sm"
-                    : "text-text-tertiary hover:text-text-secondary"
-                }`}
-              >
-                {tab === "general" ? "일반" : "사진"}
-              </button>
-            ))}
-          </div>
-        </div>
-
+      <div className="px-5 pt-3 pb-2 space-y-3">
         {/* Player chip filters */}
         <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
           {/* 내 팀 선수 전체 */}
@@ -253,15 +249,15 @@ export default function CommunityPlayersPage() {
         </div>
       </div>
 
-      <PlayerPostContent
-        contentTab={contentTab}
-        loading={loading}
-        photoLoading={photoLoading}
-        filteredPosts={filteredPosts}
-        filteredPhotoPosts={filteredPhotoPosts}
-        favPlayers={favPlayers}
-        onPhotoLike={handlePhotoLike}
-      />
+      <div className="py-3">
+        <UnifiedFeed
+          posts={posts}
+          loading={loading}
+          onLike={handlePhotoLike}
+          boardContext={{ type: "global" }}
+          sourceLabels={sourceLabels}
+        />
+      </div>
 
       <PlayerPickerSheet
         open={playerPickerOpen}
@@ -271,17 +267,39 @@ export default function CommunityPlayersPage() {
         onSelect={(playerId) => {
           setWritePlayerTarget(playerId);
           setPlayerPickerOpen(false);
-          if (contentTab === "photo") setWritePhotoOpen(true);
+          if (pickerMode === "photo") setWritePhotoOpen(true);
           else setWriteOpen(true);
         }}
       />
 
-      <button
-        onClick={handleWrite}
-        className="fixed bottom-24 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
-      >
-        <Pencil size={24} />
-      </button>
+      <div className="fixed bottom-24 right-5 z-40 flex flex-col-reverse items-center gap-3">
+        {fabExpanded && (
+          <>
+            <button
+              onClick={() => { setFabExpanded(false); handleWrite(); }}
+              className="flex h-12 w-12 items-center justify-center rounded-full bg-bg-tertiary text-text-primary shadow-lg transition-transform hover:scale-105 active:scale-95"
+              aria-label="글쓰기"
+            >
+              <FileText size={20} />
+            </button>
+            <button
+              onClick={() => { setFabExpanded(false); handlePhotoWrite(); }}
+              className="flex h-12 w-12 items-center justify-center rounded-full bg-bg-tertiary text-text-primary shadow-lg transition-transform hover:scale-105 active:scale-95"
+              aria-label="사진 올리기"
+            >
+              <Camera size={20} />
+            </button>
+          </>
+        )}
+        <button
+          onClick={() => { if (!user) { setShowLogin(true); return; } setFabExpanded(prev => !prev); }}
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
+          aria-label="작성 메뉴"
+        >
+          {fabExpanded ? <X size={24} /> : <Pencil size={24} />}
+        </button>
+      </div>
+      {fabExpanded && <div className="fixed inset-0 z-30" onClick={() => setFabExpanded(false)} />}
 
       <WritePost
         isOpen={writeOpen}
@@ -330,7 +348,7 @@ export default function CommunityPlayersPage() {
           if (targetId && !favIds.has(targetId)) {
             router.push(`/community/players/${targetId}`);
           } else {
-            loadPhotoPosts();
+            loadPosts();
           }
         }}
       />
