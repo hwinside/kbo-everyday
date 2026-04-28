@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Send, X, MoreHorizontal, Check } from "lucide-react";
 import { GRADES } from "@/lib/constants/grades";
@@ -67,23 +67,11 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const { user, profile } = useAuth();
   const shouldRender = isOpen && postId !== null;
 
-  // Always render the portal — no mount/unmount cycle.
-  // Use visibility:hidden after close animation ends to prevent iOS Safari
-  // "peeking" (translateY(100%) doesn't fully hide on dynamic viewport).
-  // Also prevents invisible overlay from blocking button taps (root cause of
-  // intermittent open failure on iOS Safari).
-  const [fullyHidden, setFullyHidden] = useState(true);
-  useLayoutEffect(() => {
-    if (shouldRender) {
-      setFullyHidden(false);
-    } else {
-      // Fallback timer in case onTransitionEnd doesn't fire reliably
-      // (e.g., iOS Safari compositor skips, or no actual transition occurs).
-      // onTransitionEnd may also set this earlier — both are idempotent.
-      const timer = setTimeout(() => setFullyHidden(true), 400);
-      return () => clearTimeout(timer);
-    }
-  }, [shouldRender]);
+  // iOS-safe rule: do not animate or transform the comment panel.
+  // The previous bottom-sheet implementation repeatedly failed on real
+  // iPhone Safari (backdrop remained, sheet flashed/disappeared). This panel
+  // is intentionally boring: when open it is a fixed full-screen dialog;
+  // when closed it is display:none so it cannot block taps.
 
   // Track open time for ghost click guard — synchronous (NOT useEffect)
   // useEffect runs AFTER render, so ghost clicks arriving between render and
@@ -309,14 +297,6 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     };
   }, [menuOpenId]);
 
-  // Callback to mark sheet as fully hidden after close transition ends
-  const handleTransitionEnd = useCallback((e: React.TransitionEvent) => {
-    // Only react to the sheet's own transform transition, not children
-    if (e.propertyName === "transform" && !shouldRender) {
-      setFullyHidden(true);
-    }
-  }, [shouldRender]);
-
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
@@ -325,48 +305,33 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   return (<>
     {createPortal(
     <>
-      {/* CSS keyframe definitions — no Framer Motion, pure browser compositor */}
-      <style>{`
-        @keyframes _csBackdropIn { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes _csSheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
-      `}</style>
-
-      {/* Backdrop — always in DOM, visibility-controlled.
-          400ms ghost click guard for iOS. */}
+      {/* Backdrop — no animation/transition. 400ms ghost click guard for iOS. */}
       <div
         className="fixed inset-0 bg-black/60"
         style={{
           zIndex: 9998,
           pointerEvents: shouldRender ? "auto" : "none",
-          visibility: fullyHidden ? "hidden" : "visible",
-          opacity: shouldRender ? 1 : 0,
-          animation: shouldRender ? "_csBackdropIn 0.2s ease-out" : undefined,
-          transition: shouldRender ? undefined : "opacity 0.2s ease-out",
+          display: shouldRender ? "block" : "none",
+          opacity: 1,
         }}
         onClick={() => { if (Date.now() - openedAtRef.current > 400) onClose(); }}
       />
 
-      {/* Sheet — always in DOM, visibility-controlled.
-          CSS keyframe for enter, CSS transition for exit.
-          No mount/unmount = no portal timing race on iOS Safari. */}
+      {/* Panel — deliberately no transform/animation/transition.
+          It must appear deterministically on iOS Safari. */}
       <div
         ref={sheetRef}
-        className="fixed inset-x-0 flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
+        className="fixed inset-x-0 flex flex-col bg-bg-secondary overflow-hidden"
         style={{
           zIndex: 9999,
           pointerEvents: shouldRender ? "auto" : "none",
-          visibility: fullyHidden ? "hidden" : "visible",
-          top: viewportHeight
-            ? `${vvTop + Math.max(24, viewportHeight * 0.08)}px`
-            : "8vh",
-          bottom: vvBottom,
-          transform: shouldRender ? "translateY(0)" : "translateY(100%)",
-          animation: shouldRender ? "_csSheetUp 0.3s cubic-bezier(0.32,0.72,0,1)" : undefined,
-          transition: shouldRender
-            ? "bottom 120ms ease-out, top 120ms ease-out"
-            : "transform 0.3s cubic-bezier(0.32,0.72,0,1), bottom 120ms ease-out, top 120ms ease-out",
+          display: shouldRender ? "flex" : "none",
+          top: viewportHeight ? `${vvTop}px` : 0,
+          bottom: viewportHeight ? vvBottom : 0,
         }}
-        onTransitionEnd={handleTransitionEnd}
+        role="dialog"
+        aria-modal="true"
+        aria-label="댓글"
         onTouchStart={(e) => {
           const listAtTop = !listRef.current || listRef.current.scrollTop <= 0;
           if (listAtTop) {
