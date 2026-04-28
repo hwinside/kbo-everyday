@@ -169,7 +169,7 @@ function WriteTicketModal({ isOpen, onClose, venueId, teamIds, onSubmit }: Write
     >
       <div className="absolute inset-0 bg-black/60" />
       <motion.div
-        className="relative w-full max-w-lg bg-bg-secondary rounded-t-2xl border-t border-border p-5 max-h-[85vh] overflow-y-auto"
+        className="relative w-full max-w-lg bg-bg-secondary rounded-t-2xl border-t border-border p-5 pb-[calc(20px+env(safe-area-inset-bottom))] max-h-[85vh] overflow-y-auto"
         initial={{ y: "100%" }}
         animate={{ y: 0 }}
         exit={{ y: "100%" }}
@@ -371,12 +371,14 @@ export default function TicketTab({
         </div>
       )}
 
-      <button
-        onClick={handleFabClick}
-        className="fixed bottom-28 right-5 z-[51] w-14 h-14 rounded-full bg-accent text-white shadow-lg flex items-center justify-center text-2xl"
-      >
-        🎫
-      </button>
+      {!writeOpen && (
+        <button
+          onClick={handleFabClick}
+          className="fixed bottom-28 right-5 z-[51] w-14 h-14 rounded-full bg-accent text-white shadow-lg flex items-center justify-center text-2xl"
+        >
+          🎫
+        </button>
+      )}
 
       <AnimatePresence>
         {writeOpen && (
