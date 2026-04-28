@@ -1,32 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Ticket, AlertTriangle } from "lucide-react";
+import { Ticket, AlertTriangle, Loader2 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { getTeamById } from "@/lib/constants/teams";
 import TeamBadge from "@/components/ui/TeamBadge";
 import DMButton from "@/components/ui/DMButton";
-
-interface TicketData {
-  id: number;
-  team_id: number;
-  venue_id: string;
-  game_date: string;
-  opponent_team_id: number | null;
-  seat_area: string;
-  seat_detail: string | null;
-  quantity: number;
-  price: number;
-  original_price: number | null;
-  status: string;
-  contact_method: string;
-  contact_info: string | null;
-  description: string | null;
-  nickname: string;
-}
-
-const MOCK_TICKETS: TicketData[] = [];
+import LoginSheet from "@/components/auth/LoginSheet";
+import { useAuth } from "@/lib/supabase/AuthContext";
+import { useTickets, type TicketTransfer } from "@/lib/supabase/useTickets";
+import { STADIUMS } from "@/lib/constants/stadiums";
 
 function PriceBadge({ price, original }: { price: number; original: number | null }) {
   const isDiscount = original != null && price < original;
@@ -54,7 +38,7 @@ function TicketStatusBadge({ status }: { status: string }) {
   return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${c.color}`}>{c.label}</span>;
 }
 
-function TicketCard({ ticket }: { ticket: TicketData }) {
+function TicketCard({ ticket, currentUserId }: { ticket: TicketTransfer; currentUserId?: string }) {
   const [expanded, setExpanded] = useState(false);
   const opponent = ticket.opponent_team_id ? getTeamById(ticket.opponent_team_id) : null;
   const team = getTeamById(ticket.team_id);
@@ -97,19 +81,18 @@ function TicketCard({ ticket }: { ticket: TicketData }) {
                 <p className="text-sm text-text-secondary">{ticket.description}</p>
               )}
               <div className="flex items-center justify-between">
-                <span className="text-xs text-text-tertiary">{ticket.nickname} · {ticket.contact_method}</span>
-                <button
-                  onClick={(e) => { e.stopPropagation(); alert("웃돈 거래 신고가 접수되었습니다. 확인 후 조치하겠습니다."); }}
-                  className="text-xs text-red-400/70 hover:text-red-400"
-                >
-                  🚨 웃돈 신고
-                </button>
-                {ticket.contact_info && (
-                  <a href={ticket.contact_info} target="_blank" rel="noopener noreferrer"
-                    className="text-xs font-semibold text-accent" onClick={(e) => e.stopPropagation()}>
-                    연락하기 →
-                  </a>
-                )}
+                <span className="text-xs text-text-tertiary">{ticket.author_nickname ?? "익명"}</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); alert("웃돈 거래 신고가 접수되었습니다. 확인 후 조치하겠습니다."); }}
+                    className="text-xs text-red-400/70 hover:text-red-400"
+                  >
+                    🚨 웃돈 신고
+                  </button>
+                  {ticket.author_id && currentUserId !== ticket.author_id && (
+                    <DMButton targetUserId={ticket.author_id} label="쪽지" size="sm" />
+                  )}
+                </div>
               </div>
             </div>
           </motion.div>
@@ -119,20 +102,60 @@ function TicketCard({ ticket }: { ticket: TicketData }) {
   );
 }
 
-interface Props {
-  // venueId: stadium slug (e.g. jamsil). Use "all" for 전체 보기.
+interface WriteTicketModalProps {
+  isOpen: boolean;
+  onClose: () => void;
   venueId: string;
   teamIds: number[];
-  showPolicyBanner?: boolean;
-  showHeader?: boolean;
-  onOpenFilters?: () => void;
+  onSubmit: (ticket: Partial<TicketTransfer>) => Promise<{ error?: string }>;
 }
 
-function WriteTicketModal({ isOpen, onClose, venueId }: { isOpen: boolean; onClose: () => void; venueId: string }) {
+function WriteTicketModal({ isOpen, onClose, venueId, teamIds, onSubmit }: WriteTicketModalProps) {
+  const { user } = useAuth();
   const [agreed, setAgreed] = useState(false);
-  const [form, setForm] = useState({ gameDate: "", seatArea: "", quantity: 1, price: 0, description: "" });
+  const [submitting, setSubmitting] = useState(false);
+  const submitRef = useRef(false);
+  const [form, setForm] = useState({
+    gameDate: "",
+    seatArea: "",
+    seatDetail: "",
+    quantity: 1,
+    price: 0,
+    description: "",
+    teamId: teamIds.length === 1 ? teamIds[0] : 0,
+  });
 
   if (!isOpen) return null;
+
+  const handleSubmit = async () => {
+    if (submitRef.current) return;
+    if (!agreed || !form.gameDate || !form.seatArea || !form.price || !form.teamId) return;
+    submitRef.current = true;
+    setSubmitting(true);
+
+    const result = await onSubmit({
+      author_id: user!.id,
+      team_id: form.teamId,
+      venue_id: venueId === "all" ? "" : venueId,
+      game_date: form.gameDate,
+      seat_area: form.seatArea,
+      seat_detail: form.seatDetail || null,
+      quantity: form.quantity,
+      price: form.price,
+      description: form.description || null,
+      contact_method: "dm",
+      status: "open",
+    });
+
+    setSubmitting(false);
+    submitRef.current = false;
+
+    if (result.error) {
+      alert(`등록 실패: ${result.error}`);
+    } else {
+      onClose();
+    }
+  };
 
   return (
     <motion.div
@@ -153,6 +176,26 @@ function WriteTicketModal({ isOpen, onClose, venueId }: { isOpen: boolean; onClo
         <h3 className="text-lg font-bold text-text-primary mb-4">🎫 티켓 양도 등록</h3>
 
         <div className="space-y-3">
+          {teamIds.length > 1 && (
+            <div>
+              <label className="text-xs text-text-tertiary">팀</label>
+              <div className="flex gap-2 mt-1 overflow-x-auto">
+                {teamIds.map(id => {
+                  const t = getTeamById(id);
+                  if (!t) return null;
+                  return (
+                    <button key={id} onClick={() => setForm({ ...form, teamId: id })}
+                      className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                        form.teamId === id ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
+                      }`}>
+                      <TeamBadge teamId={id} size="xs" />
+                      {t.shortName}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <div>
             <label className="text-xs text-text-tertiary">경기 날짜</label>
             <input type="date" value={form.gameDate} onChange={e => setForm({...form, gameDate: e.target.value})}
@@ -193,16 +236,29 @@ function WriteTicketModal({ isOpen, onClose, venueId }: { isOpen: boolean; onClo
           </div>
         </label>
 
+        <p className="mt-3 text-[11px] text-text-tertiary">
+          연락 방식: 관심 있는 분이 쪽지로 연락합니다.
+        </p>
+
         <button
-          onClick={() => { if (!agreed) { alert("정가 양도 원칙에 동의해주세요."); return; } alert("양도 글이 등록되었습니다!"); onClose(); }}
-          disabled={!agreed || !form.gameDate || !form.seatArea || !form.price}
-          className="w-full mt-4 py-3 rounded-xl bg-accent text-white font-bold text-base disabled:opacity-30 transition-all"
+          onClick={handleSubmit}
+          disabled={submitting || !agreed || !form.gameDate || !form.seatArea || !form.price || !form.teamId}
+          className="w-full mt-4 py-3 rounded-xl bg-accent text-white font-bold text-base disabled:opacity-30 transition-all flex items-center justify-center gap-2"
         >
-          등록하기
+          {submitting && <Loader2 size={16} className="animate-spin" />}
+          {submitting ? "등록 중..." : "등록하기"}
         </button>
       </motion.div>
     </motion.div>
   );
+}
+
+interface Props {
+  venueId: string;
+  teamIds: number[];
+  showPolicyBanner?: boolean;
+  showHeader?: boolean;
+  onOpenFilters?: () => void;
 }
 
 export default function TicketTab({
@@ -212,14 +268,24 @@ export default function TicketTab({
   showHeader = false,
   onOpenFilters,
 }: Props) {
+  const { user } = useAuth();
   const [filter, setFilter] = useState<"all" | number>("all");
   const [writeOpen, setWriteOpen] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
 
-  const tickets = MOCK_TICKETS.filter((t) =>
-    (venueId === "all" || String(t.venue_id) === String(venueId)) &&
-    (filter === "all" || t.team_id === filter)
+  const { tickets, loading, createTicket } = useTickets(venueId === "all" ? undefined : venueId);
+
+  const filtered = tickets.filter(t =>
+    filter === "all" || t.team_id === filter
   );
 
+  const handleFabClick = () => {
+    if (!user) {
+      setShowLogin(true);
+      return;
+    }
+    setWriteOpen(true);
+  };
 
   return (
     <div className="space-y-3">
@@ -286,7 +352,12 @@ export default function TicketTab({
         </div>
       )}
 
-      {tickets.length === 0 ? (
+      {loading ? (
+        <div className="text-center py-12">
+          <Loader2 size={24} className="mx-auto mb-2 animate-spin text-text-tertiary" />
+          <p className="text-xs text-text-tertiary">불러오는 중...</p>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="text-center py-12 text-text-tertiary">
           <Ticket size={32} className="mx-auto mb-2 opacity-50" />
           <p className="text-sm">아직 양도 글이 없어요</p>
@@ -294,19 +365,30 @@ export default function TicketTab({
         </div>
       ) : (
         <div className="space-y-3">
-          {tickets.map(t => <TicketCard key={t.id} ticket={t} />)}
+          {filtered.map(t => <TicketCard key={t.id} ticket={t} currentUserId={user?.id} />)}
         </div>
       )}
+
       <button
-        onClick={() => setWriteOpen(true)}
+        onClick={handleFabClick}
         className="fixed bottom-28 right-5 z-[51] w-14 h-14 rounded-full bg-accent text-white shadow-lg flex items-center justify-center text-2xl"
       >
         🎫
       </button>
 
       <AnimatePresence>
-        {writeOpen && <WriteTicketModal isOpen={writeOpen} onClose={() => setWriteOpen(false)} venueId={venueId} />}
+        {writeOpen && (
+          <WriteTicketModal
+            isOpen={writeOpen}
+            onClose={() => setWriteOpen(false)}
+            venueId={venueId}
+            teamIds={teamIds}
+            onSubmit={createTicket}
+          />
+        )}
       </AnimatePresence>
+
+      <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
     </div>
   );
 }
