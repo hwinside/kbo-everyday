@@ -14,6 +14,8 @@ interface Announcement {
   published_at: string;
 }
 
+const SEEN_KEY = "whats-new-seen-id";
+
 export default function WhatsNewCard() {
   const router = useRouter();
   const [item, setItem] = useState<Announcement | null>(null);
@@ -22,10 +24,18 @@ export default function WhatsNewCard() {
     fetch("/api/whats-new")
       .then((r) => r.json())
       .then((data: Announcement[]) => {
-        if (data.length > 0) setItem(data[0]);
+        if (data.length === 0) return;
+        const latest = data[0];
+        const seenId = localStorage.getItem(SEEN_KEY);
+        if (seenId !== latest.id) setItem(latest);
       })
       .catch(() => {});
   }, []);
+
+  const handleClick = () => {
+    if (item) localStorage.setItem(SEEN_KEY, item.id);
+    router.push("/whats-new");
+  };
 
   if (!item) return null;
 
@@ -33,7 +43,7 @@ export default function WhatsNewCard() {
     <div className="mb-3">
       <GlassCard
         pressable
-        onClick={() => router.push("/whats-new")}
+        onClick={handleClick}
         className="relative overflow-hidden"
       >
         <div className="flex items-start justify-between gap-3">

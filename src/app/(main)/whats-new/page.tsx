@@ -38,7 +38,12 @@ export default function WhatsNewPage() {
   useEffect(() => {
     fetch("/api/whats-new")
       .then((r) => r.json())
-      .then((data) => setItems(data))
+      .then((data: Announcement[]) => {
+        setItems(data);
+        if (data.length > 0) {
+          localStorage.setItem("whats-new-seen-id", data[0].id);
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
