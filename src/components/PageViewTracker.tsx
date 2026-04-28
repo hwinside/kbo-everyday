@@ -11,9 +11,10 @@ export function PageViewTracker() {
   const prev = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!user?.id) return;
     if (pathname === prev.current) return;
     prev.current = pathname;
-    trackPageView(user?.id);
+    trackPageView(user.id);
   }, [pathname, user?.id]);
 
   return null;
