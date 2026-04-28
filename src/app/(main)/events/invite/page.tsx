@@ -168,7 +168,11 @@ export default function EventInvitePage() {
               </li>
               <li className="flex gap-2">
                 <span className="text-yellow-400 shrink-0">•</span>
-                <span>하루 총 상한 <span className="font-bold text-gray-900 dark:text-white">150점</span>, 활동별 상한 별도 적용</span>
+                <span>정보성 게시물 보너스: <span className="font-bold text-gray-900 dark:text-white">구장 좌석팁 +10점(일 20점), 티켓 양도 +30점(일 30점)</span></span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-yellow-400 shrink-0">•</span>
+                <span>하루 총 상한 <span className="font-bold text-gray-900 dark:text-white">200점</span>, 활동별 상한 별도 적용</span>
               </li>
               <li className="flex gap-2">
                 <span className="text-yellow-400 shrink-0">•</span>
@@ -369,10 +373,20 @@ export default function EventInvitePage() {
                 <td className="text-right py-2">5점</td>
                 <td className="text-right py-2 text-gray-900/60 dark:text-white/60">50점</td>
               </tr>
+              <tr>
+                <td className="py-2">구장 좌석팁 보너스</td>
+                <td className="text-right py-2">+10점</td>
+                <td className="text-right py-2 text-gray-900/60 dark:text-white/60">20점</td>
+              </tr>
+              <tr>
+                <td className="py-2">티켓 양도 보너스</td>
+                <td className="text-right py-2">+30점</td>
+                <td className="text-right py-2 text-gray-900/60 dark:text-white/60">30점</td>
+              </tr>
               <tr className="font-bold text-yellow-400">
                 <td className="py-2">하루 총 상한</td>
                 <td className="text-right py-2">—</td>
-                <td className="text-right py-2">150점</td>
+                <td className="text-right py-2">200점</td>
               </tr>
             </tbody>
           </table>
@@ -509,7 +523,7 @@ function TopPreview({
           <p className="text-[11px] text-gray-900/50 dark:text-white/50">
             {track === "invite"
               ? "친구가 팀 선택 + 글/댓글 1건 작성 시 인정"
-              : "채팅 1점 · 댓글 2점 · 글 3점 · 사진글 5점"}
+              : "채팅 1점 · 댓글 2점 · 글 3점 · 사진글 5점 · 좌석팁/티켓양도 보너스"}
           </p>
         </div>
       ) : (
