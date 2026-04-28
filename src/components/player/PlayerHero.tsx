@@ -4,11 +4,11 @@ import Image from "next/image";
 import { ChevronLeft } from "lucide-react";
 import type { ReactNode } from "react";
 
-// Hero 이미지 매핑: kboId → public/players-hero/{kboId}.webp 존재 여부
-// 소스: scripts/generate-hero-manifest.sh 가 public/players-hero/*.webp 스캔해서 생성.
-// 신규 cutout 추가 시 이 명령을 다시 돌리면 됩니다.
-import heroKboIdsList from "@/lib/constants/hero-kboids.json";
-const HERO_KBOIDS = new Set<string>(heroKboIdsList as string[]);
+// Hero 이미지: 검수 통과 선수만 노출 (default deny).
+// v2 cutout 품질 이슈로 allowlist 방식 전환 (2026-04-28).
+// 검수 통과 시 hero-approved-kboids.json 에 kboId 추가.
+import heroApprovedList from "@/lib/constants/hero-approved-kboids.json";
+const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
 
 export type HeroStat = { label: string; value: string };
 
@@ -90,7 +90,7 @@ export function buildHeroStats(
 
 export function hasHeroImage(kboId?: string | number | null): boolean {
   if (kboId == null) return false;
-  return HERO_KBOIDS.has(String(kboId));
+  return HERO_APPROVED.has(String(kboId));
 }
 
 interface PlayerHeroProps {
