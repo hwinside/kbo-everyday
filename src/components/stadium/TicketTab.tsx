@@ -161,7 +161,7 @@ function WriteTicketModal({ isOpen, onClose, venueId, teamIds, onSubmit }: Write
 
   return (
     <motion.div
-      className="fixed inset-0 z-50 flex items-end justify-center"
+      className="fixed inset-0 z-[60] flex items-end justify-center"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -169,87 +169,93 @@ function WriteTicketModal({ isOpen, onClose, venueId, teamIds, onSubmit }: Write
     >
       <div className="absolute inset-0 bg-black/60" />
       <motion.div
-        className="relative w-full max-w-lg bg-bg-secondary rounded-t-2xl border-t border-border p-5 pb-[calc(20px+env(safe-area-inset-bottom))] max-h-[85vh] overflow-y-auto"
+        className="relative w-full max-w-lg bg-bg-secondary rounded-t-2xl border-t border-border max-h-[85vh] flex flex-col"
         initial={{ y: "100%" }}
         animate={{ y: 0 }}
         exit={{ y: "100%" }}
         onClick={e => e.stopPropagation()}
       >
-        <h3 className="text-lg font-bold text-text-primary mb-4">🎫 티켓 양도 등록</h3>
+        {/* Scrollable form area */}
+        <div className="flex-1 overflow-y-auto p-5 pb-3">
+          <h3 className="text-lg font-bold text-text-primary mb-4">🎫 티켓 양도 등록</h3>
 
-        <div className="space-y-3">
-          {teamIds.length > 1 && (
-            <div>
-              <label className="text-xs text-text-tertiary">팀</label>
-              <div className="flex gap-2 mt-1 overflow-x-auto">
-                {teamIds.map(id => {
-                  const t = getTeamById(id);
-                  if (!t) return null;
-                  return (
-                    <button key={id} onClick={() => setForm({ ...form, teamId: id })}
-                      className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                        form.teamId === id ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
-                      }`}>
-                      <TeamBadge teamId={id} size="xs" />
-                      {t.shortName}
-                    </button>
-                  );
-                })}
+          <div className="space-y-3">
+            {teamIds.length > 1 && (
+              <div>
+                <label className="text-xs text-text-tertiary">팀</label>
+                <div className="flex gap-2 mt-1 overflow-x-auto">
+                  {teamIds.map(id => {
+                    const t = getTeamById(id);
+                    if (!t) return null;
+                    return (
+                      <button key={id} onClick={() => setForm({ ...form, teamId: id })}
+                        className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                          form.teamId === id ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
+                        }`}>
+                        <TeamBadge teamId={id} size="xs" />
+                        {t.shortName}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          )}
-          <div>
-            <label className="text-xs text-text-tertiary">경기 날짜</label>
-            <input type="date" value={form.gameDate} onChange={e => setForm({...form, gameDate: e.target.value})}
-              className="w-full mt-1 px-3 py-2 rounded-xl bg-bg-tertiary text-sm text-text-primary outline-none" />
-          </div>
-          <div>
-            <label className="text-xs text-text-tertiary">좌석 구역</label>
-            <input type="text" placeholder="예: 1루 응원석 블록 108" value={form.seatArea} onChange={e => setForm({...form, seatArea: e.target.value})}
-              className="w-full mt-1 px-3 py-2 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none" />
-          </div>
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <label className="text-xs text-text-tertiary">매수</label>
-              <input type="text" inputMode="numeric" value={form.quantity} onChange={e => setForm({...form, quantity: e.target.value.replace(/\D/g, "")})}
+            )}
+            <div>
+              <label className="text-xs text-text-tertiary">경기 날짜</label>
+              <input type="date" value={form.gameDate} onChange={e => setForm({...form, gameDate: e.target.value})}
                 className="w-full mt-1 px-3 py-2 rounded-xl bg-bg-tertiary text-sm text-text-primary outline-none" />
             </div>
-            <div className="flex-1">
-              <label className="text-xs text-text-tertiary">장당 가격 (원)</label>
-              <input type="text" inputMode="numeric" placeholder="예: 17000" value={form.price} onChange={e => setForm({...form, price: e.target.value.replace(/\D/g, "")})}
+            <div>
+              <label className="text-xs text-text-tertiary">좌석 구역</label>
+              <input type="text" placeholder="예: 1루 응원석 블록 108" value={form.seatArea} onChange={e => setForm({...form, seatArea: e.target.value})}
                 className="w-full mt-1 px-3 py-2 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none" />
             </div>
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <label className="text-xs text-text-tertiary">매수</label>
+                <input type="text" inputMode="numeric" value={form.quantity} onChange={e => setForm({...form, quantity: e.target.value.replace(/\D/g, "")})}
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-bg-tertiary text-sm text-text-primary outline-none" />
+              </div>
+              <div className="flex-1">
+                <label className="text-xs text-text-tertiary">장당 가격 (원)</label>
+                <input type="text" inputMode="numeric" placeholder="예: 17000" value={form.price} onChange={e => setForm({...form, price: e.target.value.replace(/\D/g, "")})}
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-text-tertiary">한마디</label>
+              <textarea placeholder="양도 관련 추가 정보를 적어주세요" value={form.description} onChange={e => setForm({...form, description: e.target.value})}
+                className="w-full mt-1 px-3 py-2 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none h-20 resize-none" />
+            </div>
           </div>
-          <div>
-            <label className="text-xs text-text-tertiary">한마디</label>
-            <textarea placeholder="양도 관련 추가 정보를 적어주세요" value={form.description} onChange={e => setForm({...form, description: e.target.value})}
-              className="w-full mt-1 px-3 py-2 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none h-20 resize-none" />
-          </div>
+
+          <label className="flex items-start gap-2 mt-4 p-3 rounded-xl bg-green-500/10 border border-green-500/20 cursor-pointer">
+            <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)}
+              className="mt-0.5 accent-green-500" />
+            <div>
+              <p className="text-xs font-bold text-green-300">정가 이하 양도 원칙에 동의합니다</p>
+              <p className="text-[10px] text-green-200/60 mt-0.5">
+                티켓 정가 이하로만 양도하며, 웃돈(정가 초과) 거래 시 이용이 제한될 수 있습니다.
+              </p>
+            </div>
+          </label>
+
+          <p className="mt-3 text-[11px] text-text-tertiary">
+            연락 방식: 관심 있는 분이 쪽지로 연락합니다.
+          </p>
         </div>
 
-        <label className="flex items-start gap-2 mt-4 p-3 rounded-xl bg-green-500/10 border border-green-500/20 cursor-pointer">
-          <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)}
-            className="mt-0.5 accent-green-500" />
-          <div>
-            <p className="text-xs font-bold text-green-300">정가 이하 양도 원칙에 동의합니다</p>
-            <p className="text-[10px] text-green-200/60 mt-0.5">
-              티켓 정가 이하로만 양도하며, 웃돈(정가 초과) 거래 시 이용이 제한될 수 있습니다.
-            </p>
-          </div>
-        </label>
-
-        <p className="mt-3 text-[11px] text-text-tertiary">
-          연락 방식: 관심 있는 분이 쪽지로 연락합니다.
-        </p>
-
-        <button
-          onClick={handleSubmit}
-          disabled={submitting || !agreed || !form.gameDate || !form.seatArea || !parseInt(form.price) || !form.teamId}
-          className="w-full mt-4 py-3 rounded-xl bg-accent text-white font-bold text-base disabled:opacity-30 transition-all flex items-center justify-center gap-2"
-        >
-          {submitting && <Loader2 size={16} className="animate-spin" />}
-          {submitting ? "등록 중..." : "등록하기"}
-        </button>
+        {/* Sticky submit button — always visible above tab bar */}
+        <div className="flex-shrink-0 px-5 pt-2 pb-[calc(16px+env(safe-area-inset-bottom))] border-t border-border bg-bg-secondary">
+          <button
+            onClick={handleSubmit}
+            disabled={submitting || !agreed || !form.gameDate || !form.seatArea || !parseInt(form.price) || !form.teamId}
+            className="w-full py-3 rounded-xl bg-accent text-white font-bold text-base disabled:opacity-30 transition-all flex items-center justify-center gap-2"
+          >
+            {submitting && <Loader2 size={16} className="animate-spin" />}
+            {submitting ? "등록 중..." : "등록하기"}
+          </button>
+        </div>
       </motion.div>
     </motion.div>
   );
