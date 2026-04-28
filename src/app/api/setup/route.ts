@@ -115,13 +115,18 @@ export async function POST(request: NextRequest) {
 
     // 5. 초대코드 처리 (선택)
     if (invite_code) {
-      const normalizedCode = invite_code.trim().toUpperCase();
-      const { data: invite } = await admin
+      const normalizedCode = invite_code.trim().toUpperCase().replace(/^KBO-/i, "KEUBO-");
+      const { data: invite, error: inviteFindError } = await admin
         .from("invitations")
-        .select("id, used_at")
+        .select("id, inviter_id, used_at")
         .eq("code", normalizedCode)
         .maybeSingle();
 
+      if (inviteFindError) {
+        console.error("[api/setup] invite find error:", inviteFindError);
+        await admin.from("profiles").delete().eq("id", userId);
+        return NextResponse.json({ error: "초대코드 확인 중 오류가 발생했습니다" }, { status: 500 });
+      }
       if (!invite) {
         // 초대코드 무효 — 프로필은 이미 생성됐으니 경고만
         return NextResponse.json({ ok: true, warning: "초대코드가 유효하지 않습니다" });
@@ -129,12 +134,43 @@ export async function POST(request: NextRequest) {
       if (invite.used_at) {
         return NextResponse.json({ ok: true, warning: "이미 사용된 초대코드입니다" });
       }
+      if (invite.inviter_id === userId) {
+        await admin.from("profiles").delete().eq("id", userId);
+        return NextResponse.json({ error: "본인의 초대코드는 사용할 수 없습니다" }, { status: 403 });
+      }
 
-      // 초대코드 사용 처리
-      await admin.from("invitations").update({
-        used_at: new Date().toISOString(),
-        used_by: userId,
+      const usedAt = new Date().toISOString();
+
+      // 초대코드 사용 처리 — /api/invite/use와 동일하게 invitee_id + invited_by를 연결해야 함
+      const { error: inviteUpdateError } = await admin.from("invitations").update({
+        invitee_id: userId,
+        used_at: usedAt,
       }).eq("id", invite.id);
+
+      if (inviteUpdateError) {
+        console.error("[api/setup] invite update error:", inviteUpdateError);
+        await admin.from("profiles").delete().eq("id", userId);
+        return NextResponse.json({ error: "초대코드 등록에 실패했습니다" }, { status: 500 });
+      }
+
+      const { error: profileInviteError } = await admin
+        .from("profiles")
+        .update({
+          invited_by: invite.inviter_id,
+          is_founder: true,
+        })
+        .eq("id", userId);
+
+      if (profileInviteError) {
+        console.error("[api/setup] profile invite update error:", profileInviteError);
+        await admin.from("invitations").update({ invitee_id: null, used_at: null }).eq("id", invite.id);
+        await admin.from("profiles").delete().eq("id", userId);
+        return NextResponse.json({ error: "초대코드 등록에 실패했습니다" }, { status: 500 });
+      }
+
+      await admin
+        .from("user_badges")
+        .upsert({ user_id: userId, badge_id: "founder" }, { onConflict: "user_id,badge_id" });
     }
 
     return NextResponse.json({ ok: true });
