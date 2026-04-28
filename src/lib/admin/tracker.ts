@@ -23,6 +23,11 @@ function getDevice(): string {
 }
 
 export async function trackPageView(userId?: string) {
+  if (!userId) return;
+
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return;
+
   const visitorId = getVisitorId();
   if (!visitorId) return;
 
@@ -33,14 +38,21 @@ export async function trackPageView(userId?: string) {
     user_agent: navigator.userAgent,
     device: getDevice(),
     user_id: userId || null,
+  }).then(({ error }) => {
+    if (error) console.warn("[tracker] page view insert failed:", error.message);
   });
 }
 
 export async function trackPerfMetric(metricName: string, value: number) {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return;
+
   await supabase.from("admin_perf_metrics").insert({
     path: window.location.pathname,
     metric_name: metricName,
     value,
+  }).then(({ error }) => {
+    if (error) console.warn("[tracker] perf metric insert failed:", error.message);
   });
 }
 

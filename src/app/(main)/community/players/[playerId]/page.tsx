@@ -159,10 +159,13 @@ export default function PlayerBoardPage() {
 
     // 2) 다른 게시판에서 player_tags로 태그된 게시물 (cross-board, 사진 게시물만)
     const tag = formatPlayerTag(kboId, playerName);
+    const escapedTag = tag.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     const tagQuery = supabase
       .from("posts")
       .select(cols)
-      .contains("player_tags", [tag])
+      // player_tags is a Postgres text[] column. Quote array values so tags like
+      // "69100:구본혁" are parsed as one element instead of failing at the colon.
+      .contains("player_tags", `{"${escapedTag}"}`)
       .eq("content_type", "photo")
       .neq("is_hidden", true)
       .neq("board_type", "player") // 선수 게시판 중복 방지
