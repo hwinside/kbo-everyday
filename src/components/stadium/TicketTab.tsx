@@ -119,8 +119,8 @@ function WriteTicketModal({ isOpen, onClose, venueId, teamIds, onSubmit }: Write
     gameDate: "",
     seatArea: "",
     seatDetail: "",
-    quantity: 1,
-    price: 0,
+    quantity: "1",
+    price: "",
     description: "",
     teamId: teamIds.length === 1 ? teamIds[0] : 0,
   });
@@ -129,7 +129,9 @@ function WriteTicketModal({ isOpen, onClose, venueId, teamIds, onSubmit }: Write
 
   const handleSubmit = async () => {
     if (submitRef.current) return;
-    if (!agreed || !form.gameDate || !form.seatArea || !form.price || !form.teamId) return;
+    const priceNum = parseInt(form.price) || 0;
+    const qtyNum = parseInt(form.quantity) || 1;
+    if (!agreed || !form.gameDate || !form.seatArea || !priceNum || !form.teamId) return;
     submitRef.current = true;
     setSubmitting(true);
 
@@ -140,8 +142,8 @@ function WriteTicketModal({ isOpen, onClose, venueId, teamIds, onSubmit }: Write
       game_date: form.gameDate,
       seat_area: form.seatArea,
       seat_detail: form.seatDetail || null,
-      quantity: form.quantity,
-      price: form.price,
+      quantity: qtyNum,
+      price: priceNum,
       description: form.description || null,
       contact_method: "dm",
       status: "open",
@@ -209,13 +211,13 @@ function WriteTicketModal({ isOpen, onClose, venueId, teamIds, onSubmit }: Write
           <div className="flex gap-3">
             <div className="flex-1">
               <label className="text-xs text-text-tertiary">매수</label>
-              <input type="number" min={1} max={10} value={form.quantity} onChange={e => setForm({...form, quantity: parseInt(e.target.value) || 1})}
+              <input type="text" inputMode="numeric" value={form.quantity} onChange={e => setForm({...form, quantity: e.target.value.replace(/\D/g, "")})}
                 className="w-full mt-1 px-3 py-2 rounded-xl bg-bg-tertiary text-sm text-text-primary outline-none" />
             </div>
             <div className="flex-1">
               <label className="text-xs text-text-tertiary">장당 가격 (원)</label>
-              <input type="number" min={0} step={1000} value={form.price} onChange={e => setForm({...form, price: parseInt(e.target.value) || 0})}
-                className="w-full mt-1 px-3 py-2 rounded-xl bg-bg-tertiary text-sm text-text-primary outline-none" />
+              <input type="text" inputMode="numeric" placeholder="예: 17000" value={form.price} onChange={e => setForm({...form, price: e.target.value.replace(/\D/g, "")})}
+                className="w-full mt-1 px-3 py-2 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none" />
             </div>
           </div>
           <div>
@@ -242,7 +244,7 @@ function WriteTicketModal({ isOpen, onClose, venueId, teamIds, onSubmit }: Write
 
         <button
           onClick={handleSubmit}
-          disabled={submitting || !agreed || !form.gameDate || !form.seatArea || !form.price || !form.teamId}
+          disabled={submitting || !agreed || !form.gameDate || !form.seatArea || !parseInt(form.price) || !form.teamId}
           className="w-full mt-4 py-3 rounded-xl bg-accent text-white font-bold text-base disabled:opacity-30 transition-all flex items-center justify-center gap-2"
         >
           {submitting && <Loader2 size={16} className="animate-spin" />}
