@@ -20,7 +20,7 @@ const PATTERNS: Array<{ flag: NoiseFlag; regex: RegExp }> = [
   { flag: "ceremony", regex: /(시구|시타|응원단|치어리더|팬사인|행사)/i },
   { flag: "preview", regex: /(예고|프리뷰|티저|preview|teaser)/i },
   { flag: "interview", regex: /(인터뷰|interview|기자회견)/i },
-  { flag: "other_sports", regex: /(농구|프로농구|kbl|basketball|nba|창원\s*lg\s*세이커스|lg\s*세이커스|세이커스|소노\s*스카이거너스|sk\s*나이츠|삼성\s*썬더스|db\s*프로미|kcc\s*이지스|현대모비스\s*피버스|한국가스공사\s*페가수스|정관장\s*레드부스터스)/i },
+  { flag: "other_sports", regex: /(농구|프로농구|kbl|basketball|nba|챔피언\s*결정전|창원\s*lg\s*세이커스|lg\s*세이커스|세이커스|고양\s*소노|소노\s*스카이거너스|sk\s*나이츠|서울\s*sk|삼성\s*썬더스|서울\s*삼성|db\s*프로미|원주\s*db|kcc\s*이지스|부산\s*kcc|현대모비스\s*피버스|울산\s*현대모비스|한국가스공사\s*페가수스|대구\s*한국가스공사|정관장\s*레드부스터스|안양\s*정관장)/i },
   { flag: "game", regex: /(컴투스|컴프야|프로야구H|모바일게임|게임플레이|게임화면|프로스피릿)/i },
 ];
 
