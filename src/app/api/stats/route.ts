@@ -53,8 +53,9 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
   // Basic2: 순위(0) 선수명(1) 팀명(2) AVG(3) BB(4) IBB(5) HBP(6) SO(7) GDP(8) SLG(9) OBP(10) OPS(11) MH(12) RISP(13) PH-BA(14)
   // Runner: 순위(0) 선수명(1) 팀명(2) G(3) SBA(4) SB(5) CS(6) SB%(7) OOB(8) PKO(9)
   const [basic1Html, basic2Html, runnerHtml] = await Promise.all([
-    fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=HRA_RT`),
-    fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic2.aspx?sort=BB_CN`),
+    // GAME_CN 정렬로 출장기록 있는 전체 타자 수집 (HRA_RT는 규정타석 충족자만)
+    fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=GAME_CN`),
+    fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic2.aspx?sort=GAME_CN`),
     fetchHtml(`${KBO_BASE}/Record/Player/Runner/Basic.aspx?sort=SB_CN`),
   ]);
   const rows = parseTable(basic1Html);

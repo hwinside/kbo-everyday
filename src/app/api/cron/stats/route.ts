@@ -46,7 +46,8 @@ function parseTable(html: string): string[][] {
 }
 
 function fetchBatterStats(roster: RosterPlayer[]): Promise<PlayerStat[]> {
-  return fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=HRA_RT`)
+  // GAME_CN 정렬로 출장기록 있는 전체 타자 수집 (HRA_RT는 규정타석 충족자만 반환)
+  return fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=GAME_CN`)
     .then((html) => parseTable(html))
     .then((rows) =>
       rows.map((c, i) => {

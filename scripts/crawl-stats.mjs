@@ -167,8 +167,9 @@ async function scrapeAllPages(page) {
 
 async function crawlBatterBasic1(page) {
   console.log("\n📊 타자 Basic1 크롤링...");
+  // GAME_CN 정렬로 출장기록 있는 전체 타자 수집 (HRA_RT는 규정타석 충족자만 반환)
   await page.goto(
-    `${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=HRA_RT`
+    `${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=GAME_CN`
   );
   await page.waitForLoadState("networkidle");
   await selectSeason(page);
@@ -202,8 +203,9 @@ async function crawlBatterBasic1(page) {
 
 async function crawlBatterBasic2(page) {
   console.log("\n📊 타자 Basic2 크롤링...");
+  // GAME_CN URL 파라미터로 전체 타자 포함 (Basic2 페이지에는 GAME_CN 정렬 링크가 없으므로 URL로 처리)
   await page.goto(
-    `${KBO_BASE}/Record/Player/HitterBasic/Basic2.aspx?sort=HRA_RT`
+    `${KBO_BASE}/Record/Player/HitterBasic/Basic2.aspx?sort=GAME_CN`
   );
   await page.waitForLoadState("networkidle");
   await selectSeason(page);
