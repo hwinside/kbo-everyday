@@ -30,6 +30,8 @@ export interface SeriesSnapshot {
   seriesRemaining: number;
   /** 시리즈 상태 */
   seriesStatus: SeriesStatus;
+  /** 이 경기가 시리즈에서 몇 번째인지 (1-based, 편성 기준) */
+  gamePosition: number;
   /**
    * 각 팀 승수 (teamId 키). 실제 성사된 경기만 집계.
    * 예: { "1": 1, "8": 1 } → LG 1승, 삼성 1승
@@ -189,6 +191,9 @@ export async function computeSeriesSnapshot(
     });
   }
 
+  // 이 경기가 시리즈 블록에서 몇 번째인지 (1-based)
+  const gamePosition = block.findIndex(g => g.gameId === gameId) + 1;
+
   return {
     seriesScheduled,
     seriesPlayed,
@@ -196,6 +201,7 @@ export async function computeSeriesSnapshot(
     seriesCanceledDates: seriesCanceled.map(g => toDisplayDate(g.date)),
     seriesRemaining,
     seriesStatus,
+    gamePosition,
     seriesRecord: record,
     results,
   };
@@ -226,6 +232,7 @@ export function serializeSeriesSnapshot(
 
   const lines: string[] = [];
   lines.push(`## 시리즈 스냅샷 (사실 — 이 값만 근거로 사용)`);
+  lines.push(`- 이 경기는 시리즈 ${snap.gamePosition}번째 경기이다 (편성 기준 ${snap.seriesScheduled}경기 중 ${snap.gamePosition}번째).`);
   lines.push(`- 편성: ${snap.seriesScheduled}경기 / 소화: ${snap.seriesPlayed}경기 / 취소: ${snap.seriesCanceledCount}경기 / 남은 경기: ${snap.seriesRemaining}경기`);
   if (snap.seriesCanceledDates.length > 0) {
     lines.push(`- 취소 날짜: ${snap.seriesCanceledDates.join(", ")} (우천 등)`);

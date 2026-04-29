@@ -6,7 +6,7 @@ import { computeSeriesSnapshot, serializeSeriesSnapshot } from "@/lib/series/sna
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 10; // v10: 시리즈 스냅샷 주입 — 취소/완료/진행 분기 + 우천 취소 무승부 마무리 표현
+const PROMPT_VERSION = 11; // v11: 시리즈 게임 순번 명시 (gamePosition) — "첫 경기" 환각 방지
 
 // ===== Types =====
 
