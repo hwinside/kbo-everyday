@@ -71,9 +71,9 @@ export function useTickets(venueId?: string) {
       .eq("id", id);
     if (error) return { error: error.message };
     setTickets(prev =>
-      status === "open"
-        ? prev.map(t => (t.id === id ? { ...t, status } : t))
-        : prev.filter(t => t.id !== id)
+      status === "sold" || status === "closed"
+        ? prev.filter(t => t.id !== id)
+        : prev.map(t => (t.id === id ? { ...t, status } : t))
     );
     return {};
   }, []);
