@@ -194,7 +194,7 @@ export function generateEvents(
     if (hrDiff > 0) {
       for (let i = 0; i < hrDiff; i++) {
         events.push(makeEvent(gameId, currentLive, "at_bat_homerun", {
-          batter: currentLive.currentBatter || undefined,
+          batter: prevLive.currentBatter || currentLive.currentBatter || undefined,
           pitcher: currentLive.currentPitcher || undefined,
         }));
       }
@@ -205,7 +205,7 @@ export function generateEvents(
     if (h3bDiff > 0) {
       for (let i = 0; i < h3bDiff; i++) {
         events.push(makeEvent(gameId, currentLive, "at_bat_triple", {
-          batter: currentLive.currentBatter || undefined,
+          batter: prevLive.currentBatter || currentLive.currentBatter || undefined,
           pitcher: currentLive.currentPitcher || undefined,
         }));
       }
@@ -216,7 +216,7 @@ export function generateEvents(
     if (h2bDiff > 0) {
       for (let i = 0; i < h2bDiff; i++) {
         events.push(makeEvent(gameId, currentLive, "at_bat_double", {
-          batter: currentLive.currentBatter || undefined,
+          batter: prevLive.currentBatter || currentLive.currentBatter || undefined,
           pitcher: currentLive.currentPitcher || undefined,
         }));
       }
@@ -227,7 +227,7 @@ export function generateEvents(
     if (hitDiff > 0) {
       for (let i = 0; i < hitDiff; i++) {
         events.push(makeEvent(gameId, currentLive, "at_bat_hit", {
-          batter: currentLive.currentBatter || undefined,
+          batter: prevLive.currentBatter || currentLive.currentBatter || undefined,
           pitcher: currentLive.currentPitcher || undefined,
         }));
       }
