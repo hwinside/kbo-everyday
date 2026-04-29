@@ -33,6 +33,7 @@ interface DailyPost {
   posts: number;
   comments: number;
   photos: number;
+  chats: number;
 }
 
 interface PopularPost {
@@ -210,6 +211,11 @@ export default function AdminContentPage() {
     댓글: s.comments,
   }));
 
+  const chatData = dailyPosts.map((s) => ({
+    date: s.date.slice(5),
+    채팅: s.chats,
+  }));
+
   const photoData = dailyPosts.map((s) => ({
     date: s.date.slice(5),
     사진: s.photos,
@@ -244,6 +250,26 @@ export default function AdminContentPage() {
               <Legend />
               <Bar dataKey="게시글" stackId="a" fill="#6366F1" radius={[0, 0, 0, 0]} />
               <Bar dataKey="댓글" stackId="a" fill="#30D158" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* Chat daily trend */}
+      <div className="glass-card p-5">
+        <h2 className="text-lg font-semibold mb-4">크관 채팅 일별 추이</h2>
+        {dailyPosts.length === 0 ? (
+          <div className="flex items-center justify-center h-[240px] text-[#8E8E93]">
+            <p>아직 데이터 없음</p>
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={chatData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+              <XAxis dataKey="date" stroke="#636366" fontSize={12} />
+              <YAxis stroke="#636366" fontSize={12} />
+              <Tooltip {...tooltipStyle} />
+              <Bar dataKey="채팅" fill="#FF9F0A" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         )}
