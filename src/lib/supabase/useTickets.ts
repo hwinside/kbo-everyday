@@ -35,7 +35,7 @@ export function useTickets(venueId?: string) {
       let query = supabase
         .from("ticket_transfers")
         .select("*, profiles!ticket_transfers_author_id_fkey(nickname)")
-        .in("status", ["open", "reserved"])
+        .in("status", ["open", "reserved", "sold"])
         .order("created_at", { ascending: false })
         .limit(50);
 
@@ -71,9 +71,7 @@ export function useTickets(venueId?: string) {
       .eq("id", id);
     if (error) return { error: error.message };
     setTickets(prev =>
-      status === "sold" || status === "closed"
-        ? prev.filter(t => t.id !== id)
-        : prev.map(t => (t.id === id ? { ...t, status } : t))
+      prev.map(t => (t.id === id ? { ...t, status } : t))
     );
     return {};
   }, []);
