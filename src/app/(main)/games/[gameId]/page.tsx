@@ -29,6 +29,7 @@ import LinescoreTable from "@/components/game/LinescoreTable";
 import FieldViewV2 from "@/components/game/FieldViewV2";
 import MatchupCard from "@/components/game/MatchupCard";
 import Diamond from "@/components/game/Diamond";
+import { ChevronUp, ChevronDown } from "lucide-react";
 import ScoreBoard from "@/components/game/ScoreBoard";
 import KgwanTab from "@/components/game/KgwanTab";
 import LineupTab from "@/components/game/LineupTab";
@@ -148,6 +149,7 @@ export default function GameDetailPage() {
   const params = useParams();
   const gameId = params.gameId as string;
   const [activeTab, setActiveTab] = useState<Tab>("kgwan");
+  const [isFieldCollapsed, setIsFieldCollapsed] = useState(false);
   const { game: liveGame, refetch: refetchLive } = useLiveGame(gameId, 10000);
   const { data: gameDetail, refetch: refetchDetail } = useGameDetail(gameId, 30000);
   const liveIsFinal = !!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0);
@@ -246,56 +248,73 @@ export default function GameDetailPage() {
         />
       )}
 
-      {(gameDetail?.linescore || gameRelay?.linescore || innings.length > 0) && (
-        <LinescoreTable
-          awayTeam={awayTeam}
-          homeTeam={homeTeam}
-          innings={innings}
-          awayScore={d.awayScore}
-          homeScore={d.homeScore}
-          currentInning={d.currentInning}
-          linescore={gameDetail?.linescore ?? gameRelay?.linescore}
-        />
+      {/* Collapsible field area — toggle only visible during live + 크관 tab */}
+      {d.isLive && activeTab === "kgwan" && (
+        <button
+          onClick={() => setIsFieldCollapsed((v) => !v)}
+          className="flex items-center justify-center gap-1 w-full py-1.5 text-xs text-text-tertiary active:bg-bg-tertiary transition-colors"
+        >
+          {isFieldCollapsed ? "중계화면 펼치기" : "중계화면 접기"}
+          {isFieldCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+        </button>
       )}
 
-      {d.isLive && d.defensiveSide ? (
-        <FieldViewV2
-          defenders={d.defensiveSide}
-          currentPitcher={d.currentPitcher}
-          currentBatter={d.currentBatter}
-          runner1b={d.currentRunner1b}
-          runner2b={d.currentRunner2b}
-          runner3b={d.currentRunner3b}
-          runner1bName={d.runner1bName}
-          runner2bName={d.runner2bName}
-          runner3bName={d.runner3bName}
-          onDeckBatters={d.onDeckBatters}
-          balls={d.currentBalls}
-          strikes={d.currentStrikes}
-          outs={d.currentOuts}
-        />
-      ) : d.isLive && !d.defensiveSide ? (
-        <div className="flex justify-center py-3">
-          <Diamond
+      <motion.div
+        animate={{ height: isFieldCollapsed && d.isLive && activeTab === "kgwan" ? 0 : "auto", opacity: isFieldCollapsed && d.isLive && activeTab === "kgwan" ? 0 : 1 }}
+        transition={{ duration: 0.25, ease: "easeInOut" }}
+        style={{ overflow: "hidden" }}
+      >
+        {(gameDetail?.linescore || gameRelay?.linescore || innings.length > 0) && (
+          <LinescoreTable
+            awayTeam={awayTeam}
+            homeTeam={homeTeam}
+            innings={innings}
+            awayScore={d.awayScore}
+            homeScore={d.homeScore}
+            currentInning={d.currentInning}
+            linescore={gameDetail?.linescore ?? gameRelay?.linescore}
+          />
+        )}
+
+        {d.isLive && d.defensiveSide ? (
+          <FieldViewV2
+            defenders={d.defensiveSide}
+            currentPitcher={d.currentPitcher}
+            currentBatter={d.currentBatter}
             runner1b={d.currentRunner1b}
             runner2b={d.currentRunner2b}
             runner3b={d.currentRunner3b}
-            teamColor={battingTeamColor}
+            runner1bName={d.runner1bName}
+            runner2bName={d.runner2bName}
+            runner3bName={d.runner3bName}
+            onDeckBatters={d.onDeckBatters}
+            balls={d.currentBalls}
+            strikes={d.currentStrikes}
+            outs={d.currentOuts}
           />
-        </div>
-      ) : null}
+        ) : d.isLive && !d.defensiveSide ? (
+          <div className="flex justify-center py-3">
+            <Diamond
+              runner1b={d.currentRunner1b}
+              runner2b={d.currentRunner2b}
+              runner3b={d.currentRunner3b}
+              teamColor={battingTeamColor}
+            />
+          </div>
+        ) : null}
 
-      {d.isLive && (
-        <MatchupCard
-          currentPitcher={d.currentPitcher}
-          currentBatter={d.currentBatter}
-          pitcherEra={d.pitcherEra}
-          batterAvg={d.batterAvg}
-          pitcherToday={d.pitcherToday}
-          batterToday={d.batterToday}
-          relayMatchup={gameRelay?.matchup}
-        />
-      )}
+        {d.isLive && (
+          <MatchupCard
+            currentPitcher={d.currentPitcher}
+            currentBatter={d.currentBatter}
+            pitcherEra={d.pitcherEra}
+            batterAvg={d.batterAvg}
+            pitcherToday={d.pitcherToday}
+            batterToday={d.batterToday}
+            relayMatchup={gameRelay?.matchup}
+          />
+        )}
+      </motion.div>
 
       {!d.isLive && innings.length === 0 && game.status === "final" && (
         <div className="px-5 pb-2">

@@ -223,8 +223,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       {/* Mood gauge */}
       <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
 
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-2 space-y-0.5">
+      {/* Messages — spacer pushes messages to bottom when few */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-2 flex flex-col">
+        <div className="flex-1" />
         {loading ? (
           <div className="text-center py-8 text-text-tertiary text-sm">로딩 중...</div>
         ) : messages.length === 0 ? (
@@ -233,6 +234,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
             <p className="text-xs mt-1">첫 번째 메시지를 보내보세요! 🔥</p>
           </div>
         ) : (
+          <div className="space-y-0.5">
           <AnimatePresence initial={false}>
             {messages.map((msg) => {
               const isMe = user?.id === msg.user_id;
@@ -260,6 +262,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
               );
             })}
           </AnimatePresence>
+          </div>
         )}
       </div>
 
