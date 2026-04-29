@@ -29,6 +29,23 @@ const MIN_COHORT = "2026-W16";
 const MIN_DAILY_COHORT = "2026-04-16";
 
 /**
+ * Paginated fetch to bypass Supabase 1000-row default limit.
+ * queryFn builds a fresh query each call so .range() doesn't accumulate.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchAllPages<T>(queryFn: () => any): Promise<T[]> {
+  const all: T[] = [];
+  const batchSize = 1000;
+  for (let from = 0; ; from += batchSize) {
+    const { data, error } = await queryFn().range(from, from + batchSize - 1);
+    if (error || !data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < batchSize) break;
+  }
+  return all;
+}
+
+/**
  * 유저별 활동일 수집: posts, comments, likes, chat_messages, admin_page_views에서 활동일 추출.
  * broad revisit: 페이지 방문도 활동으로 포함.
  */
@@ -45,19 +62,29 @@ async function collectActivityDays(
     visitDays.get(userId)!.add(day);
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const q = (table: string, cols: string, extra?: (q: any) => any) => () => {
+    let query = supabase.from(table).select(cols).gte("created_at", since).order("created_at", { ascending: true });
+    if (extra) query = extra(query);
+    return query;
+  };
+
   const [posts, comments, likes, chats, pageViews] = await Promise.all([
-    supabase.from("posts").select("author_id, created_at").gte("created_at", since),
-    supabase.from("comments").select("author_id, created_at").gte("created_at", since),
-    supabase.from("likes").select("user_id, created_at").gte("created_at", since),
-    supabase.from("chat_messages").select("user_id, created_at").gte("created_at", since),
-    supabase.from("admin_page_views").select("user_id, created_at").gte("created_at", since).not("user_id", "is", null),
+    fetchAllPages<{ author_id: string; created_at: string }>(q("posts", "author_id, created_at")),
+    fetchAllPages<{ author_id: string; created_at: string }>(q("comments", "author_id, created_at")),
+    fetchAllPages<{ user_id: string; created_at: string }>(q("likes", "user_id, created_at")),
+    fetchAllPages<{ user_id: string; created_at: string }>(q("chat_messages", "user_id, created_at")),
+    fetchAllPages<{ user_id: string; created_at: string }>(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      q("admin_page_views", "user_id, created_at", (qb: any) => qb.not("user_id", "is", null)),
+    ),
   ]);
 
-  for (const r of posts.data ?? []) addVisit(r.author_id, r.created_at);
-  for (const r of comments.data ?? []) addVisit(r.author_id, r.created_at);
-  for (const r of likes.data ?? []) addVisit(r.user_id, r.created_at);
-  for (const r of chats.data ?? []) addVisit(r.user_id, r.created_at);
-  for (const r of pageViews.data ?? []) addVisit(r.user_id, r.created_at);
+  for (const r of posts) addVisit(r.author_id, r.created_at);
+  for (const r of comments) addVisit(r.author_id, r.created_at);
+  for (const r of likes) addVisit(r.user_id, r.created_at);
+  for (const r of chats) addVisit(r.user_id, r.created_at);
+  for (const r of pageViews) addVisit(r.user_id, r.created_at);
 
   return visitDays;
 }
@@ -75,12 +102,11 @@ export async function computeCohortRetention(
     new Date(targetDate + "T00:00:00+09:00").getTime() - 60 * 86400000,
   ).toISOString();
 
-  const { data: profiles } = await supabase
-    .from("profiles")
-    .select("id, created_at")
-    .gte("created_at", sixtyDaysAgo);
+  const profiles = await fetchAllPages<{ id: string; created_at: string }>(
+    () => supabase.from("profiles").select("id, created_at").gte("created_at", sixtyDaysAgo).order("created_at", { ascending: true }),
+  );
 
-  if (!profiles?.length) return [];
+  if (!profiles.length) return [];
 
   // 2) 같은 기간 활동 데이터 수집
   const visitDays = await collectActivityDays(supabase, sixtyDaysAgo);
@@ -141,12 +167,11 @@ export async function computeDailyCohortRetention(
     new Date(targetDate + "T00:00:00+09:00").getTime() - 60 * 86400000,
   ).toISOString();
 
-  const { data: profiles } = await supabase
-    .from("profiles")
-    .select("id, created_at")
-    .gte("created_at", sixtyDaysAgo);
+  const profiles = await fetchAllPages<{ id: string; created_at: string }>(
+    () => supabase.from("profiles").select("id, created_at").gte("created_at", sixtyDaysAgo).order("created_at", { ascending: true }),
+  );
 
-  if (!profiles?.length) return [];
+  if (!profiles.length) return [];
 
   const visitDays = await collectActivityDays(supabase, sixtyDaysAgo);
 
@@ -312,12 +337,11 @@ export async function computeGamedayRetention(
     new Date(targetDate + "T00:00:00+09:00").getTime() - 60 * 86400000,
   ).toISOString();
 
-  const { data: profiles } = await supabase
-    .from("profiles")
-    .select("id, created_at")
-    .gte("created_at", sixtyDaysAgo);
+  const profiles = await fetchAllPages<{ id: string; created_at: string }>(
+    () => supabase.from("profiles").select("id, created_at").gte("created_at", sixtyDaysAgo).order("created_at", { ascending: true }),
+  );
 
-  if (!profiles?.length) return [];
+  if (!profiles.length) return [];
 
   // 활동 데이터 수집
   const visitDays = await collectActivityDays(supabase, sixtyDaysAgo);
