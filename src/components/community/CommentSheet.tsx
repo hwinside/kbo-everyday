@@ -68,10 +68,9 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const shouldRender = isOpen && postId !== null;
 
   // iOS-safe rule: do not animate or transform the comment panel.
-  // The previous bottom-sheet implementation repeatedly failed on real
-  // iPhone Safari (backdrop remained, sheet flashed/disappeared). This panel
-  // is intentionally boring: when open it is a fixed full-screen dialog;
-  // when closed it is display:none so it cannot block taps.
+  // Keep the panel as a deterministic fixed bottom panel: display toggles only,
+  // no transform/transition. Unlike the full-screen fallback, this preserves
+  // the original post context above the comments for better UX.
 
   // Track open time for ghost click guard — synchronous (NOT useEffect)
   // useEffect runs AFTER render, so ghost clicks arriving between render and
@@ -82,6 +81,15 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     openedAtRef.current = Date.now();
   }
   prevShouldRender.current = shouldRender;
+
+  // iOS Safari sometimes skips repaint on display:none → display:flex.
+  // Force a layout read when opening to guarantee the panel is painted.
+  useEffect(() => {
+    if (shouldRender && sheetRef.current) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+      sheetRef.current.offsetHeight;
+    }
+  }, [shouldRender]);
 
   // Fetch comments directly (lightweight, no post/like fetch)
   useEffect(() => {
@@ -321,12 +329,18 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
           It must appear deterministically on iOS Safari. */}
       <div
         ref={sheetRef}
-        className="fixed inset-x-0 flex flex-col bg-bg-secondary overflow-hidden"
+        className="fixed inset-x-0 flex flex-col bg-bg-secondary overflow-hidden rounded-t-[28px] border-t border-border shadow-[0_-20px_60px_rgba(0,0,0,0.45)]"
         style={{
           zIndex: 9999,
           pointerEvents: shouldRender ? "auto" : "none",
           display: shouldRender ? "flex" : "none",
-          top: viewportHeight ? `${vvTop}px` : 0,
+          // Avoid top/bottom visualViewport math for the closed/open race.
+          // A fixed, bounded height is far less flaky on real iPhone Safari and
+          // leaves the tapped post visible above the sheet.
+          height: viewportHeight
+            ? Math.min(Math.round(viewportHeight * 0.6), 520)
+            : "min(60dvh, 520px)",
+          maxHeight: "calc(100dvh - env(safe-area-inset-top) - 120px)",
           bottom: viewportHeight ? vvBottom : 0,
         }}
         role="dialog"
