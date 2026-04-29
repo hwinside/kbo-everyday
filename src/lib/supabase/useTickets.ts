@@ -35,7 +35,7 @@ export function useTickets(venueId?: string) {
       let query = supabase
         .from("ticket_transfers")
         .select("*, profiles!ticket_transfers_author_id_fkey(nickname)")
-        .eq("status", "open")
+        .in("status", ["open", "reserved"])
         .order("created_at", { ascending: false })
         .limit(50);
 
@@ -64,13 +64,19 @@ export function useTickets(venueId?: string) {
     return { data };
   }, []);
 
-  const closeTicket = useCallback(async (id: number) => {
-    await supabase
+  const updateTicketStatus = useCallback(async (id: number, status: string) => {
+    const { error } = await supabase
       .from("ticket_transfers")
-      .update({ status: "closed" })
+      .update({ status })
       .eq("id", id);
-    setTickets(prev => prev.filter(t => t.id !== id));
+    if (error) return { error: error.message };
+    setTickets(prev =>
+      status === "open"
+        ? prev.map(t => (t.id === id ? { ...t, status } : t))
+        : prev.filter(t => t.id !== id)
+    );
+    return {};
   }, []);
 
-  return { tickets, loading, createTicket, closeTicket };
+  return { tickets, loading, createTicket, updateTicketStatus };
 }

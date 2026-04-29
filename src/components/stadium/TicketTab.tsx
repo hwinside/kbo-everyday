@@ -38,7 +38,7 @@ function TicketStatusBadge({ status }: { status: string }) {
   return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${c.color}`}>{c.label}</span>;
 }
 
-function TicketCard({ ticket, currentUserId }: { ticket: TicketTransfer; currentUserId?: string }) {
+function TicketCard({ ticket, currentUserId, onStatusChange }: { ticket: TicketTransfer; currentUserId?: string; onStatusChange?: (id: number, status: string) => Promise<{ error?: string }> }) {
   const [expanded, setExpanded] = useState(false);
   const opponent = ticket.opponent_team_id ? getTeamById(ticket.opponent_team_id) : null;
   const team = getTeamById(ticket.team_id);
@@ -94,6 +94,26 @@ function TicketCard({ ticket, currentUserId }: { ticket: TicketTransfer; current
                   )}
                 </div>
               </div>
+              {currentUserId === ticket.author_id && onStatusChange && (
+                <div className="flex gap-2 mt-2 pt-2 border-t border-border/50">
+                  {ticket.status === "open" && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onStatusChange(ticket.id, "reserved"); }}
+                      className="flex-1 py-1.5 rounded-lg bg-yellow-500/15 text-yellow-400 text-xs font-semibold"
+                    >
+                      예약중으로 변경
+                    </button>
+                  )}
+                  {(ticket.status === "open" || ticket.status === "reserved") && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onStatusChange(ticket.id, "sold"); }}
+                      className="flex-1 py-1.5 rounded-lg bg-green-500/15 text-green-400 text-xs font-semibold"
+                    >
+                      양도 완료
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </motion.div>
         )}
@@ -281,7 +301,7 @@ export default function TicketTab({
   const [writeOpen, setWriteOpen] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
 
-  const { tickets, loading, createTicket } = useTickets(venueId === "all" ? undefined : venueId);
+  const { tickets, loading, createTicket, updateTicketStatus } = useTickets(venueId === "all" ? undefined : venueId);
 
   const filtered = tickets.filter(t =>
     filter === "all" || t.team_id === filter
@@ -373,7 +393,7 @@ export default function TicketTab({
         </div>
       ) : (
         <div className="space-y-3">
-          {filtered.map(t => <TicketCard key={t.id} ticket={t} currentUserId={user?.id} />)}
+          {filtered.map(t => <TicketCard key={t.id} ticket={t} currentUserId={user?.id} onStatusChange={updateTicketStatus} />)}
         </div>
       )}
 
