@@ -216,7 +216,12 @@ export default function GameDetailPage() {
   return (
     <PullToRefresh
       onRefresh={handleRefresh}
-      className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto pb-[104px] max-w-[640px] mx-auto w-full"
+      className={clsx(
+        "flex flex-col bg-bg-primary max-w-[640px] mx-auto w-full",
+        activeTab === "kgwan" && d.isLive
+          ? "h-[100dvh] overflow-hidden"
+          : "min-h-[100dvh] overflow-y-auto pb-[104px]"
+      )}
     >
       <GameDetailHeader
         status={d.derivedStatus}
@@ -354,7 +359,7 @@ export default function GameDetailPage() {
       </div>
 
       {/* Tab content */}
-      <div className="flex-1">
+      <div className="flex-1 min-h-0">
         <AnimatePresence mode="wait">
           {activeTab === "kgwan" && (
             <motion.div key="kgwan" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
