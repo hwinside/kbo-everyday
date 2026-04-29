@@ -67,6 +67,8 @@ function makeEvent(
 interface BatterAgg {
   totalHits: number;
   totalHR: number;
+  totalH2B: number;
+  totalH3B: number;
   totalBB: number;
   totalSO: number;
 }
@@ -76,15 +78,17 @@ function aggregateBatters(
     ? T extends { awayBatters: infer B } ? B : never
     : never,
 ): BatterAgg {
-  if (!batters) return { totalHits: 0, totalHR: 0, totalBB: 0, totalSO: 0 };
-  let totalHits = 0, totalHR = 0, totalBB = 0, totalSO = 0;
+  if (!batters) return { totalHits: 0, totalHR: 0, totalH2B: 0, totalH3B: 0, totalBB: 0, totalSO: 0 };
+  let totalHits = 0, totalHR = 0, totalH2B = 0, totalH3B = 0, totalBB = 0, totalSO = 0;
   for (const b of batters) {
     totalHits += b.hits;
     totalHR += b.hr;
+    totalH2B += b.h2b;
+    totalH3B += b.h3b;
     totalBB += b.bb;
     totalSO += b.so;
   }
-  return { totalHits, totalHR, totalBB, totalSO };
+  return { totalHits, totalHR, totalH2B, totalH3B, totalBB, totalSO };
 }
 
 function aggregatePitcherNames(
@@ -196,8 +200,30 @@ export function generateEvents(
       }
     }
 
-    // Hit increase (exclude HRs already counted)
-    const hitDiff = (currAgg.totalHits - prevAgg.totalHits) - hrDiff;
+    // 3B increase
+    const h3bDiff = currAgg.totalH3B - prevAgg.totalH3B;
+    if (h3bDiff > 0) {
+      for (let i = 0; i < h3bDiff; i++) {
+        events.push(makeEvent(gameId, currentLive, "at_bat_triple", {
+          batter: currentLive.currentBatter || undefined,
+          pitcher: currentLive.currentPitcher || undefined,
+        }));
+      }
+    }
+
+    // 2B increase
+    const h2bDiff = currAgg.totalH2B - prevAgg.totalH2B;
+    if (h2bDiff > 0) {
+      for (let i = 0; i < h2bDiff; i++) {
+        events.push(makeEvent(gameId, currentLive, "at_bat_double", {
+          batter: currentLive.currentBatter || undefined,
+          pitcher: currentLive.currentPitcher || undefined,
+        }));
+      }
+    }
+
+    // 1B increase (total hits minus HR/2B/3B)
+    const hitDiff = (currAgg.totalHits - prevAgg.totalHits) - hrDiff - h2bDiff - h3bDiff;
     if (hitDiff > 0) {
       for (let i = 0; i < hitDiff; i++) {
         events.push(makeEvent(gameId, currentLive, "at_bat_hit", {

@@ -3,7 +3,9 @@
 // Phase 1: skip pitch-level events, focus on at-bat results + game flow
 export type GameEventType =
   // 타석 결과
-  | "at_bat_hit"        // 안타
+  | "at_bat_hit"        // 안타 (1루타)
+  | "at_bat_double"     // 2루타
+  | "at_bat_triple"     // 3루타
   | "at_bat_homerun"    // 홈런
   | "at_bat_out"        // 아웃 (추론)
   | "at_bat_walk"       // 볼넷

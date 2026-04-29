@@ -48,9 +48,11 @@ function parseBoxScoreMinimal(data: unknown): GameDetailResponse["boxScore"] {
       const cells = r.row.map(c => safeStr(c.Text));
       const tail = cells.slice(cells.length - 5);
       const atBatResults = cells.slice(3, cells.length - 5).map(c => stripHtml(c)).filter(c => c && c !== "&nbsp;");
-      let hr = 0, bb = 0, so = 0;
+      let hr = 0, h2b = 0, h3b = 0, bb = 0, so = 0;
       for (const ab of atBatResults) {
         if (ab.includes("홈")) hr++;
+        else if (ab.includes("3루타") || ab.includes("삼루타")) h3b++;
+        else if (ab.includes("2루타") || ab.includes("이루타")) h2b++;
         if (ab === "4구") bb++;
         if (ab.includes("삼진")) so++;
       }
@@ -67,7 +69,7 @@ function parseBoxScoreMinimal(data: unknown): GameDetailResponse["boxScore"] {
         hits: safeInt(stripHtml(tail[1])),
         rbi: safeInt(stripHtml(tail[2])),
         runs: safeInt(stripHtml(tail[3])),
-        hr, bb, so, sb: 0,
+        hr, h2b, h3b, bb, so, sb: 0,
         avg: stripHtml(tail[4]) || ".000",
         isSubstitute,
       };

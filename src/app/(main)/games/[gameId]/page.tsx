@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx } from "clsx";
 import { getTeamById } from "@/lib/constants/teams";
 import { getMyTeamId } from "@/lib/store/myteam";
+import { useCelebration } from "@/lib/hooks/useCelebration";
+import CelebrationOverlay from "@/components/game/CelebrationOverlay";
 import {
   getGameById,
   getInningsForGame,
@@ -152,12 +154,27 @@ export default function GameDetailPage() {
   const liveIsFinal = !!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0);
   const { data: gameRelay } = useGameRelay(gameId, liveGame?.isLive ?? false, 30000, liveGame?.inning ?? 0, liveIsFinal);
 
+  // Compute game early (non-hook) so celebration hook can reference team IDs
+  const game = getGameById(gameId) ?? getPreseasonGameById(gameId) ?? parseKboGameId(gameId);
+
+  // Celebration overlay for homerun events
+  const myTeamIdForCelebration = getMyTeamId();
+  const { celebration, processEvents, dismiss } = useCelebration({
+    myTeamId: myTeamIdForCelebration,
+    homeTeamId: game?.homeTeamId ?? 0,
+    awayTeamId: game?.awayTeamId ?? 0,
+  });
+
+  useEffect(() => {
+    if (gameEvents.length > 0) {
+      processEvents(gameEvents);
+    }
+  }, [gameEvents, processEvents]);
+
   // useCallback must be called before any early returns (React hooks rules)
   const handleRefresh = useCallback(async () => {
     await Promise.all([refetchLive(), refetchDetail()]);
   }, [refetchLive, refetchDetail]);
-
-  const game = getGameById(gameId) ?? getPreseasonGameById(gameId) ?? parseKboGameId(gameId);
   if (!game) {
     return (
       <div className="flex items-center justify-center h-screen text-text-secondary">
@@ -436,6 +453,8 @@ export default function GameDetailPage() {
           )}
         </AnimatePresence>
       </div>
+      {/* Celebration overlay (homerun etc.) */}
+      <CelebrationOverlay event={celebration} onDone={dismiss} />
     </PullToRefresh>
   );
 }

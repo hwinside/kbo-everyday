@@ -1,0 +1,110 @@
+"use client";
+
+import { useState, useRef, useCallback } from "react";
+import type { GameEvent } from "@/types/game-events";
+import type { CelebrationEvent, CelebrationEventType } from "@/components/game/CelebrationOverlay";
+import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
+
+interface UseCelebrationOptions {
+  myTeamId: number | null;
+  homeTeamId: number;
+  awayTeamId: number;
+}
+
+/** Look up kboId from player name + teamId */
+function findKboId(name: string | undefined, teamId: number): string | undefined {
+  if (!name) return undefined;
+  const entry = (PLAYERS_ROSTER as { name: string; teamId: number; kboId: string }[])
+    .find((p) => p.name === name && p.teamId === teamId);
+  return entry?.kboId;
+}
+
+/** Map GameEventType → CelebrationEventType, null if not celebration-worthy */
+function toCelebrationType(eventType: string): CelebrationEventType | null {
+  switch (eventType) {
+    case "at_bat_homerun": return "homerun";
+    case "at_bat_triple": return "triple";
+    case "at_bat_double": return "double";
+    case "at_bat_hit": return "hit";
+    case "at_bat_walk": return "walk";
+    case "at_bat_strikeout": return "strikeout";
+    default: return null;
+  }
+}
+
+export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrationOptions) {
+  const [celebration, setCelebration] = useState<CelebrationEvent | null>(null);
+  const seenRef = useRef<Set<string>>(new Set());
+  const queueRef = useRef<CelebrationEvent[]>([]);
+  /** Track pitcher strikeout counts for "2K, 3K..." display */
+  const pitcherKRef = useRef<Map<string, number>>(new Map());
+
+  /** Process the next item in queue when current celebration ends */
+  const showNext = useCallback(() => {
+    setCelebration(null);
+    // Slight delay before showing next queued event
+    setTimeout(() => {
+      const next = queueRef.current.shift();
+      if (next) setCelebration(next);
+    }, 300);
+  }, []);
+
+  /** Call on each gameEvents update to detect new celebration-worthy events */
+  const processEvents = useCallback(
+    (events: GameEvent[]) => {
+      if (!myTeamId) return;
+
+      const newCelebrations: CelebrationEvent[] = [];
+
+      for (const ev of events) {
+        if (seenRef.current.has(ev.id)) continue;
+        seenRef.current.add(ev.id);
+
+        const celebType = toCelebrationType(ev.type);
+        if (!celebType) continue;
+
+        // Offense events: batting team must be my team
+        // Defense events (strikeout): pitching team must be my team
+        const battingTeamId = ev.isTop ? awayTeamId : homeTeamId;
+        const pitchingTeamId = ev.isTop ? homeTeamId : awayTeamId;
+
+        const isOffense = celebType !== "strikeout";
+        const relevantTeamId = isOffense ? battingTeamId : pitchingTeamId;
+        if (relevantTeamId !== myTeamId) continue;
+
+        // Build celebration event
+        const playerName = isOffense ? ev.detail.batter : ev.detail.pitcher;
+        const kboId = findKboId(playerName, relevantTeamId);
+
+        let strikeoutCount: number | undefined;
+        if (celebType === "strikeout" && ev.detail.pitcher) {
+          const prev = pitcherKRef.current.get(ev.detail.pitcher) ?? 0;
+          const next = prev + 1;
+          pitcherKRef.current.set(ev.detail.pitcher, next);
+          strikeoutCount = next;
+        }
+
+        newCelebrations.push({
+          id: ev.id,
+          type: celebType,
+          teamId: myTeamId,
+          playerName,
+          kboId,
+          strikeoutCount,
+        });
+      }
+
+      if (newCelebrations.length === 0) return;
+
+      // If nothing showing, start first immediately
+      if (!celebration && queueRef.current.length === 0) {
+        setCelebration(newCelebrations.shift()!);
+      }
+      // Queue the rest
+      queueRef.current.push(...newCelebrations);
+    },
+    [myTeamId, homeTeamId, awayTeamId, celebration],
+  );
+
+  return { celebration, processEvents, dismiss: showNext };
+}

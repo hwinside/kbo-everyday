@@ -56,6 +56,8 @@ export interface BatterRecord {
   runs: number;
   rbi: number;
   hr: number;
+  h2b: number;
+  h3b: number;
   bb: number;
   so: number;
   sb: number;
@@ -309,10 +311,12 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
       // Middle columns (3 to length-5) = at-bat results
       const atBatResults = cells.slice(3, cells.length - 5).map(c => stripHtml(c)).filter(c => c && c !== "&nbsp;");
 
-      // Count HR/BB/SO from at-bat results
-      let hr = 0, bb = 0, so = 0;
+      // Count HR/2B/3B/BB/SO from at-bat results
+      let hr = 0, h2b = 0, h3b = 0, bb = 0, so = 0;
       for (const ab of atBatResults) {
         if (ab.includes("홈")) hr++;
+        else if (ab.includes("3루타") || ab.includes("삼루타")) h3b++;
+        else if (ab.includes("2루타") || ab.includes("이루타")) h2b++;
         if (ab === "4구") bb++;
         // 사구(死球) = HBP, not BB — don't count as walk
         if (ab.includes("삼진")) so++;
@@ -334,6 +338,8 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
         rbi: safeInt(stripHtml(tail[2])),
         runs: safeInt(stripHtml(tail[3])),
         hr,
+        h2b,
+        h3b,
         bb,
         so,
         sb: sbLookup.get(stripHtml(cells[2] || "")) || 0,
@@ -437,6 +443,8 @@ async function fetchNaverRecord(kboGameId: string): Promise<{
         runs: Number(b.run) || 0,
         rbi: Number(b.rbi) || 0,
         hr: Number(b.hr) || 0,
+        h2b: Number(b.h2) || 0,
+        h3b: Number(b.h3) || 0,
         bb: Number(b.bb) || 0,
         so: Number(b.kk) || 0,
         sb: Number(b.sb) || 0,

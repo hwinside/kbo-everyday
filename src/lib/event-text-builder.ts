@@ -29,6 +29,16 @@ export function buildEventText(event: GameEvent): string {
         ? `🔵 ${detail.batter} 안타!`
         : "🔵 안타!";
 
+    case "at_bat_double":
+      return detail.batter
+        ? `🔵 ${detail.batter} 2루타!`
+        : "🔵 2루타!";
+
+    case "at_bat_triple":
+      return detail.batter
+        ? `🟣 ${detail.batter} 3루타!`
+        : "🟣 3루타!";
+
     case "at_bat_homerun":
       return detail.batter
         ? `⚡ ${detail.batter} 홈런!`
