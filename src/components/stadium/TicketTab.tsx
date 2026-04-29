@@ -303,9 +303,10 @@ export default function TicketTab({
 
   const { tickets, loading, createTicket, updateTicketStatus } = useTickets(venueId === "all" ? undefined : venueId);
 
-  const filtered = tickets.filter(t =>
-    filter === "all" || t.team_id === filter
-  );
+  const STATUS_ORDER: Record<string, number> = { open: 0, reserved: 1, sold: 2 };
+  const filtered = tickets
+    .filter(t => filter === "all" || t.team_id === filter)
+    .sort((a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9) || new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   const handleFabClick = () => {
     if (!user) {
