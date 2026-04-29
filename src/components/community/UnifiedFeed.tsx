@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { MessageCircle, MoreHorizontal } from "lucide-react";
 import { getTeamById, getTeamBySlug } from "@/lib/constants/teams";
@@ -17,7 +18,6 @@ import { deletePost } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import type { CommunitySourceLabel } from "@/lib/utils/community-board";
 import { supabase } from "@/lib/supabase/client";
-import CommentSheet from "./CommentSheet";
 import { timeAgo, PhotoCarousel, HeartOverlay, CaptionBlock } from "./PhotoFeedParts";
 import { hasHeroImage } from "@/components/player/PlayerHero";
 
@@ -77,6 +77,16 @@ function findPlayerByName(name: string): { kboId: string; teamId: number } | nul
   return null;
 }
 
+function getPostDetailHref(post: Post): string {
+  if (post.board_type === "player" && post.board_id) {
+    return `/community/players/${post.board_id}/posts/${post.id}`;
+  }
+  if (post.board_type === "team" && post.board_id) {
+    return `/community/teams/${post.board_id}/posts/${post.id}`;
+  }
+  return `/community/free/${post.id}`;
+}
+
 /* ── Stagger animation ── */
 
 const container = {
@@ -93,11 +103,10 @@ const item = {
 
 export default function UnifiedFeed({ posts, loading, onLike, boardContext, sourceLabels }: UnifiedFeedProps) {
   const { user } = useAuth();
+  const router = useRouter();
   const [likedPosts, setLikedPosts] = useState<Set<number>>(new Set());
   const [heartPostId, setHeartPostId] = useState<number | null>(null);
-  const [commentPostId, setCommentPostId] = useState<number | null>(null);
-  const [commentTeamId, setCommentTeamId] = useState<number | null>(null);
-  const [commentDeltas, setCommentDeltas] = useState<Record<number, number>>({});
+  const commentDeltas: Record<number, number> = {};
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
   const [deletedIds, setDeletedIds] = useState<Set<number>>(new Set());
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
@@ -133,9 +142,11 @@ export default function UnifiedFeed({ posts, loading, onLike, boardContext, sour
     setTimeout(() => setHeartPostId(null), 800);
   };
 
-  const openComments = (postId: number, teamId?: number | null) => {
-    setCommentPostId(postId);
-    setCommentTeamId(teamId ?? null);
+  const openComments = (post: Post) => {
+    // iOS Safari kept failing with modal/bottom-sheet rendering races.
+    // Use the existing post detail screen for comments: stable navigation,
+    // natural 원글+댓글 context, no overlay/backdrop failure mode.
+    router.push(getPostDetailHref(post));
   };
 
   if (loading) {
@@ -192,7 +203,7 @@ export default function UnifiedFeed({ posts, loading, onLike, boardContext, sour
                   onMenuToggle={(id) => setMenuOpenId(prev => prev === id ? null : id)}
                   onMenuClose={() => setMenuOpenId(null)}
                   onDelete={() => handleDelete(post.id)}
-                  onOpenComments={() => openComments(post.id, post.team_id)}
+                  onOpenComments={() => openComments(post)}
                 />
               </motion.div>
             );
@@ -213,7 +224,7 @@ export default function UnifiedFeed({ posts, loading, onLike, boardContext, sour
                   onMenuToggle={(id) => setMenuOpenId(prev => prev === id ? null : id)}
                   onMenuClose={() => setMenuOpenId(null)}
                   onDelete={() => handleDelete(post.id)}
-                  onOpenComments={() => openComments(post.id, post.team_id)}
+                  onOpenComments={() => openComments(post)}
                 />
               </motion.div>
             );
@@ -237,7 +248,7 @@ export default function UnifiedFeed({ posts, loading, onLike, boardContext, sour
                   onMenuToggle={(id) => setMenuOpenId(prev => prev === id ? null : id)}
                   onMenuClose={() => setMenuOpenId(null)}
                   onDelete={() => handleDelete(post.id)}
-                  onOpenComments={() => openComments(post.id, post.team_id)}
+                  onOpenComments={() => openComments(post)}
                 />
               </motion.div>
             );
@@ -245,18 +256,6 @@ export default function UnifiedFeed({ posts, loading, onLike, boardContext, sour
         })}
       </motion.div>
 
-      <CommentSheet
-        isOpen={commentPostId !== null}
-        onClose={() => { setCommentPostId(null); setCommentTeamId(null); }}
-        postId={commentPostId}
-        teamId={commentTeamId}
-        onCommentAdded={(postId) => {
-          setCommentDeltas((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }));
-        }}
-        onCommentDeleted={(postId) => {
-          setCommentDeltas((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) - 1 }));
-        }}
-      />
     </div>
   );
 }
