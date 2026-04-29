@@ -36,6 +36,16 @@ yarn-error.log*
 # vercel
 .vercel
 
+# Capacitor native projects (build artifacts, user-specific settings)
+ios/App/Pods/
+ios/App/App.xcworkspace/xcuserdata/
+ios/App/App.xcodeproj/xcuserdata/
+ios/App/App/public/
+android/.gradle/
+android/app/build/
+android/app/src/main/assets/public/
+android/local.properties
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

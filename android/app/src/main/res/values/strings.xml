@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">크보팬</string>
+    <string name="title_activity_main">크보팬</string>
+    <string name="package_name">fan.keubo.app</string>
+    <string name="custom_url_scheme">fan.keubo.app</string>
+</resources>
