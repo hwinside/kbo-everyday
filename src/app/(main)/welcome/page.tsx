@@ -32,6 +32,7 @@ export default function WelcomePage() {
   // loading 가드로 user?.email이 확실히 세팅된 후 발화 → Enhanced Conversions 데이터 보장
   useEffect(() => {
     if (loading) return; // AuthContext 로딩 완료 대기 — user_data 없이 발화 방지
+    if (!user) return; // 세션 유실 시 user_data 없이 conversion만 쏘는 것 방지
 
     const gtag = (window as unknown as { gtag?: (...args: unknown[]) => void }).gtag;
     if (!gtag) return;
