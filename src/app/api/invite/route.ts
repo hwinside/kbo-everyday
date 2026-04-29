@@ -124,11 +124,23 @@ export async function GET(req: NextRequest) {
     friends = data || [];
   }
 
+  // 최근 리필 이력 (7일 이내) — 프론트에서 토스트 표시용
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: lastRefill } = await supabase
+    .from("invite_refill_log")
+    .select("refilled_count, refilled_at")
+    .eq("user_id", userId)
+    .gte("refilled_at", sevenDaysAgo)
+    .order("refilled_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   return NextResponse.json({
     invitations: invitations || [],
     friends,
     totalInvited: usedInvites.length,
     activatedCount: activatedCount || 0,
     remainingCodes: profile?.invite_count ?? 0,
+    lastRefill: lastRefill ?? null,
   });
 }

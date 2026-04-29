@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { Gift, Share2, Check, UserPlus, Ticket, Trophy, ChevronRight } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
@@ -22,12 +22,18 @@ interface Friend {
   nickname: string;
 }
 
+interface RefillInfo {
+  refilled_count: number;
+  refilled_at: string;
+}
+
 interface InviteData {
   invitations: Invitation[];
   friends: Friend[];
   totalInvited: number;
   activatedCount: number;
   remainingCodes: number;
+  lastRefill: RefillInfo | null;
 }
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
@@ -48,6 +54,7 @@ export default function InviteSection() {
   const [registerLoading, setRegisterLoading] = useState(false);
   const [registerError, setRegisterError] = useState("");
   const [registerSuccess, setRegisterSuccess] = useState(false);
+  const [refillToast, setRefillToast] = useState<{ count: number } | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!user) return;
@@ -64,6 +71,19 @@ export default function InviteSection() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // 리필 토스트: 새 리필이 감지되면 표시
+  useEffect(() => {
+    if (!data?.lastRefill || !user) return;
+    const key = `invite_refill_seen_${user.id}`;
+    const seen = localStorage.getItem(key);
+    const refillAt = data.lastRefill.refilled_at;
+    if (seen === refillAt) return;
+    localStorage.setItem(key, refillAt);
+    setRefillToast({ count: data.lastRefill.refilled_count });
+    const timer = setTimeout(() => setRefillToast(null), 4000);
+    return () => clearTimeout(timer);
+  }, [data?.lastRefill]);
 
   if (!user || !profile) return null;
 
@@ -140,6 +160,27 @@ export default function InviteSection() {
       transition={{ delay: 0.09 }}
       className="mt-5"
     >
+      {/* 리필 토스트 */}
+      <AnimatePresence>
+        {refillToast && (
+          <motion.div
+            className="fixed top-20 left-1/2 z-[60] -translate-x-1/2"
+            initial={{ opacity: 0, y: -30, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.9 }}
+            transition={{ type: "spring", damping: 20 }}
+          >
+            <div className="bg-bg-secondary border border-accent/30 rounded-2xl px-5 py-4 shadow-2xl shadow-accent/10 min-w-[260px]">
+              <p className="text-sm font-bold text-center text-text-primary">
+                🎫 초대권 {refillToast.count}장이 추가 지급됐어요!
+              </p>
+              <p className="text-xs text-text-tertiary text-center mt-1">
+                더 많은 야구팬분들을 초대해보세요
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <GlassCard className="p-5 space-y-4">
         {/* Header */}
         <div className="flex items-center gap-3">
