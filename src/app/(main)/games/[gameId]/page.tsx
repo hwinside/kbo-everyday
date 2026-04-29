@@ -150,8 +150,10 @@ export default function GameDetailPage() {
   const [activeTab, setActiveTab] = useState<Tab>("kgwan");
   const { game: liveGame, refetch: refetchLive } = useLiveGame(gameId, 10000);
   const { data: gameDetail, refetch: refetchDetail } = useGameDetail(gameId, 30000);
-  const { events: gameEvents } = useGameEvents(gameId, liveGame?.isLive ?? false, 15000);
   const liveIsFinal = !!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0);
+  // Keep game-events polling through the live → final transition so game_end/victory can be emitted.
+  const shouldPollGameEvents = (liveGame?.isLive ?? false) || liveIsFinal;
+  const { events: gameEvents } = useGameEvents(gameId, shouldPollGameEvents, 15000);
   const { data: gameRelay } = useGameRelay(gameId, liveGame?.isLive ?? false, 30000, liveGame?.inning ?? 0, liveIsFinal);
 
   // Compute game early (non-hook) so celebration hook can reference team IDs
