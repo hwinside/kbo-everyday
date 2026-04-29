@@ -27,10 +27,12 @@ export default function WelcomePage() {
     }
   }, [loading, user, profile, router]);
 
-  // Google Ads conversion: /welcome 페이지 도달 시 직접 gtag 호출 (2026-04-27)
-  // 조건: 1) /setup에서 세팅한 signup 플래그 존재 2) sessionStorage dedupe
-  // 이 방식은 AuthContext hydrate에 의존하지 않아 race condition 없음
+  // Google Ads conversion: /welcome 도달 시 직접 gtag 호출 (2026-04-27, 2026-04-29 재적용)
+  // 조건: 1) AuthContext 로딩 완료 2) signup 플래그 존재 3) sessionStorage dedupe
+  // loading 가드로 user?.email이 확실히 세팅된 후 발화 → Enhanced Conversions 데이터 보장
   useEffect(() => {
+    if (loading) return; // AuthContext 로딩 완료 대기 — user_data 없이 발화 방지
+
     const gtag = (window as unknown as { gtag?: (...args: unknown[]) => void }).gtag;
     if (!gtag) return;
 
@@ -40,11 +42,11 @@ export default function WelcomePage() {
       // 가드 2: 이미 이 세션에서 발화했으면 skip
       if (sessionStorage.getItem("gads_sent_onboarding_complete")) return;
 
-      // 플래그 정리 + dedupe 세팅
+      // 플래그 정리 + dedupe 세팅 (conversion 발화 전에 세팅하여 중복 방지)
       sessionStorage.removeItem("kbo-signup-just-completed");
       sessionStorage.setItem("gads_sent_onboarding_complete", "1");
 
-      // Enhanced Conversions: user_data 세팅 후 conversion 발화
+      // Enhanced Conversions: user_data 세팅 완료 후 conversion 발화 (순서 보장)
       (async () => {
         if (user?.email) {
           try {
@@ -59,7 +61,7 @@ export default function WelcomePage() {
         });
       })();
     } catch { /* sessionStorage 접근 실패 — skip */ }
-  }, [user]);
+  }, [loading, user]);
 
   if (loading || !profile?.team_id) {
     return (

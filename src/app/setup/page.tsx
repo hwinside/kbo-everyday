@@ -216,6 +216,7 @@ export default function SetupPage() {
 
       // 회원가입 완료 — GA4 + Meta Pixel 발화
       // Google Ads conversion은 /welcome 페이지에서 직접 gtag 호출로 단순화 (2026-04-27)
+      // /setup에서 gads 발화 시 event_callback race + beacon 유실 이슈가 있었음
       trackEvent(
         OnboardingEvents.ONBOARDING_COMPLETE,
         { nickname: nickname.trim(), team_id: selectedTeam, source: "setup_page" },
