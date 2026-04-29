@@ -238,25 +238,22 @@ export async function computeActivationFunnel(
     .not("team_id", "is", null);
 
   // 첫 글쓰기
-  const { data: postUsers } = await supabase
-    .from("posts")
-    .select("author_id")
-    .lte("created_at", targetDate + "T23:59:59+09:00");
-  const uniquePostUsers = new Set(postUsers?.map((r) => r.author_id)).size;
+  const postUsers = await fetchAllPages<{ author_id: string }>(
+    () => supabase.from("posts").select("author_id").lte("created_at", targetDate + "T23:59:59+09:00").order("created_at", { ascending: true }),
+  );
+  const uniquePostUsers = new Set(postUsers.map((r) => r.author_id)).size;
 
   // 첫 댓글
-  const { data: commentUsers } = await supabase
-    .from("comments")
-    .select("author_id")
-    .lte("created_at", targetDate + "T23:59:59+09:00");
-  const uniqueCommentUsers = new Set(commentUsers?.map((r) => r.author_id)).size;
+  const commentUsers = await fetchAllPages<{ author_id: string }>(
+    () => supabase.from("comments").select("author_id").lte("created_at", targetDate + "T23:59:59+09:00").order("created_at", { ascending: true }),
+  );
+  const uniqueCommentUsers = new Set(commentUsers.map((r) => r.author_id)).size;
 
   // 첫 채팅
-  const { data: chatUsers } = await supabase
-    .from("chat_messages")
-    .select("user_id")
-    .lte("created_at", targetDate + "T23:59:59+09:00");
-  const uniqueChatUsers = new Set(chatUsers?.map((r) => r.user_id)).size;
+  const chatUsers = await fetchAllPages<{ user_id: string }>(
+    () => supabase.from("chat_messages").select("user_id").lte("created_at", targetDate + "T23:59:59+09:00").order("created_at", { ascending: true }),
+  );
+  const uniqueChatUsers = new Set(chatUsers.map((r) => r.user_id)).size;
 
   const steps = [
     { key: "signup", value: totalSignups },
