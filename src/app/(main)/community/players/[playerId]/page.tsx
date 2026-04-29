@@ -50,8 +50,6 @@ const LEGACY_MAP: Record<string, string> = {
   p1: "67430", p2: "77162", p3: "62404", p4: "69650", p5: "68571",
   p6: "64643", p7: "63905", p8: "61478", p9: "75003", p10: "67100",
   p11: "55500", p12: "68300", p13: "69200", p14: "67800", p15: "65400",
-  // 외국인 선수 숫자→영문 ID 매핑은 shared constant 사용
-  ...FOREIGN_NUMERIC_TO_ALPHA,
 };
 
 const TEAM_SHORT_MAP: Record<string, number> = {
@@ -95,8 +93,11 @@ function StatItem({ label, value }: { label: string; value: string | number; col
 export default function PlayerBoardPage() {
   const { playerId } = useParams();
   const rawId = playerId as string;
-  // 레거시 pN ID 처리
-  const kboId = LEGACY_MAP[rawId] || rawId;
+  // ID resolve: roster 직접 매치 우선 → 레거시 pN → 외국인 숫자→영문 변환 (roster 충돌 없을 때만)
+  const rosterDirect = PLAYERS_ROSTER.some((p) => p.kboId === rawId);
+  const kboId = rosterDirect
+    ? rawId
+    : LEGACY_MAP[rawId] || FOREIGN_NUMERIC_TO_ALPHA[rawId] || rawId;
   const playerName = ID_TO_NAME[kboId];
   // 동명이인 대응: roster에서 kboId로 직접 찾기
   const rosterPlayer = PLAYERS_ROSTER.find((p) => p.kboId === kboId);
