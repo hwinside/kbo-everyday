@@ -23,6 +23,7 @@ function findKboId(name: string | undefined, teamId: number): string | undefined
 function toCelebrationType(eventType: string): CelebrationEventType | null {
   switch (eventType) {
     case "at_bat_homerun": return "homerun";
+    case "game_end": return "victory";
     case "at_bat_triple": return "triple";
     case "at_bat_double": return "double";
     case "at_bat_hit": return "hit";
@@ -62,6 +63,21 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
 
         const celebType = toCelebrationType(ev.type);
         if (!celebType) continue;
+
+        // Victory event: only celebrate when my team wins
+        if (celebType === "victory") {
+          const awayWon = ev.snapshot.awayScore > ev.snapshot.homeScore;
+          const homeWon = ev.snapshot.homeScore > ev.snapshot.awayScore;
+          const winningTeamId = awayWon ? awayTeamId : homeWon ? homeTeamId : null;
+          if (winningTeamId !== myTeamId) continue;
+
+          newCelebrations.push({
+            id: ev.id,
+            type: celebType,
+            teamId: myTeamId,
+          });
+          continue;
+        }
 
         // Offense events: batting team must be my team
         // Defense events (strikeout): pitching team must be my team
