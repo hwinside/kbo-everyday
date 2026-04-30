@@ -127,20 +127,15 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const close = () => document.body.classList.remove("kbd-open");
     const update = () => {
       const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-
-      if (focusLockRef.current && stableKeyboardInsetRef.current > 0) {
-        // 입력 중에는 iOS Safari의 visualViewport 흔들림을 레이아웃에 반영하지 않는다.
-        // 손가락 스크롤 중 hidden 값이 바뀌면 fixed composer가 따라오거나 사라진다.
-        if (keyboardInset === 0) setKeyboardInset(stableKeyboardInsetRef.current);
-        open();
-        return;
-      }
-
       if (hidden > 40) {
+        // 포커스 중이고 이미 키보드 높이가 잡혔으면 변동을 무시한다 (스크롤 떨림 방지).
+        // 단, 아직 값이 없으면(0) 첫 감지를 통과시킨다.
+        if (focusLockRef.current && stableKeyboardInsetRef.current > 0) return;
         stableKeyboardInsetRef.current = hidden;
         setKeyboardInset(hidden);
         open();
       } else {
+        if (focusLockRef.current) return; // 포커스 중 일시적 0은 무시
         stableKeyboardInsetRef.current = 0;
         setKeyboardInset(0);
         close();
@@ -150,11 +145,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     close();
     setKeyboardInset(0);
     update();
-    const updateUnlessFocused = () => {
-      if (!focusLockRef.current) update();
-    };
     vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", updateUnlessFocused);
+    vv.addEventListener("scroll", update);
     const onFocusIn = (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
@@ -166,33 +158,16 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const onFocusOut = (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
-      setTimeout(() => {
-        const active = document.activeElement as HTMLElement | null;
-        const stillEditing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
-        const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-
-        // 스크롤 중 일시 focusout이면 잠금을 유지한다. 실제 키보드가 내려갔을 때만 해제.
-        if (stillEditing || hidden > 40) {
-          focusLockRef.current = true;
-          if (hidden > 40 && stableKeyboardInsetRef.current === 0) {
-            stableKeyboardInsetRef.current = hidden;
-            setKeyboardInset(hidden);
-          }
-          open();
-          return;
-        }
-
-        focusLockRef.current = false;
-        stableKeyboardInsetRef.current = 0;
-        update();
-      }, 80);
+      focusLockRef.current = false;
+      stableKeyboardInsetRef.current = 0;
+      setTimeout(update, 50);
       setTimeout(update, 300);
     };
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
     return () => {
       vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", updateUnlessFocused);
+      vv.removeEventListener("scroll", update);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
       focusLockRef.current = false;
