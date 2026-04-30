@@ -183,15 +183,28 @@ export default function GameDetailPage() {
   useEffect(() => {
     if (!liveGame || !shouldPollGameEvents) return;
 
+    const prevBS = clientEventStateRef.current?.boxScore;
+    const currBS = gameDetail?.boxScore ?? null;
+    // [DEBUG] temporary — trace client-side diff
+    console.log("[client-diff]", {
+      hasPrev: !!clientEventStateRef.current,
+      prevBS: !!prevBS,
+      currBS: !!currBS,
+      inning: liveGame.inning,
+      isTop: liveGame.isTop,
+      score: `${liveGame.awayScore}-${liveGame.homeScore}`,
+    });
+
     const { events: clientEvents, nextState } = generateEvents(
       gameId,
       clientEventStateRef.current,
       liveGame,
-      gameDetail?.boxScore ?? null,
+      currBS,
     );
     clientEventStateRef.current = nextState;
 
     if (clientEvents.length > 0) {
+      console.log("[client-diff] events:", clientEvents.map(e => `${e.type}(${e.detail?.batter || e.detail?.pitcher || ""})`));
       processEvents(clientEvents);
     }
   }, [gameId, liveGame, gameDetail?.boxScore, shouldPollGameEvents, processEvents]);
