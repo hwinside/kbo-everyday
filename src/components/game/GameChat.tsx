@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Users, Flame, ChevronDown } from "lucide-react";
 import { clsx } from "clsx";
@@ -68,20 +68,58 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const [input, setInput] = useState("");
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const didInitialAlignRef = useRef(false);
+  const focusLockRef = useRef(false);
+  const stableKeyboardInsetRef = useRef(0);
 
   const displayMessages = [...messages].reverse(); // 최신순: 최신 메시지가 리스트 상단
 
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = 0; // 최신이 상단이므로 상단 유지
+  // 최신 ~5개 메시지가 입력창 바로 위에 보이도록 window 스크롤을 맞춘다.
+  // 채팅 리스트 자체는 별도 스크롤이 없고, 페이지 전체 스크롤만 사용한다.
+  const alignLatestMessagesAboveComposer = useCallback(() => {
+    if (!scrollRef.current || !composerRef.current) return;
+    const msgs = scrollRef.current.querySelectorAll<HTMLElement>("[data-chat-msg]");
+    if (msgs.length === 0) return;
+
+    // 최신순 상단이므로 5번째 최신 메시지의 하단이 composer 바로 위에 오게 맞춘다.
+    const target = msgs[Math.min(4, msgs.length - 1)];
+    const targetBottom = target.getBoundingClientRect().bottom;
+    const composerTop = composerRef.current.getBoundingClientRect().top;
+    const diff = targetBottom - (composerTop - 8);
+
+    if (Math.abs(diff) > 4) {
+      window.scrollBy({ top: diff, behavior: "auto" });
     }
-  }, [messages.length]);
+  }, []);
+
+  const scheduleChatFocusAlign = useCallback(() => {
+    if (typeof window === "undefined") return;
+    // iOS visualViewport/keyboard animation 타이밍 편차 흡수.
+    [0, 50, 150, 300, 600, 1000].forEach((ms) => {
+      setTimeout(() => requestAnimationFrame(alignLatestMessagesAboveComposer), ms);
+    });
+  }, [alignLatestMessagesAboveComposer]);
+
+  // 최초 진입/방 변경 후에도 최신글 5개 + 입력창이 함께 보이도록 맞춘다.
+  useEffect(() => {
+    didInitialAlignRef.current = false;
+  }, [roomId]);
+
+  useEffect(() => {
+    if (loading || messages.length === 0 || didInitialAlignRef.current) return;
+    didInitialAlignRef.current = true;
+    scheduleChatFocusAlign();
+  }, [loading, messages.length, scheduleChatFocusAlign]);
 
   // iOS composer positioning (same pattern as PostDetail):
   // - Track visualViewport to place composer above iOS accessory bar.
   // - Toggle body.kbd-open on focusin to hide TabBar via CSS.
   // - Poll vv read at multiple offsets to cover iOS first-focus race.
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const composerBottom = keyboardInset > 0
+    ? `${keyboardInset}px`
+    : `calc(52px + env(safe-area-inset-bottom, 0px))`;
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
     const vv = window.visualViewport;
@@ -89,10 +127,21 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const close = () => document.body.classList.remove("kbd-open");
     const update = () => {
       const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+
+      if (focusLockRef.current && stableKeyboardInsetRef.current > 0) {
+        // 입력 중에는 iOS Safari의 visualViewport 흔들림을 레이아웃에 반영하지 않는다.
+        // 손가락 스크롤 중 hidden 값이 바뀌면 fixed composer가 따라오거나 사라진다.
+        if (keyboardInset === 0) setKeyboardInset(stableKeyboardInsetRef.current);
+        open();
+        return;
+      }
+
       if (hidden > 40) {
+        stableKeyboardInsetRef.current = hidden;
         setKeyboardInset(hidden);
         open();
       } else {
+        stableKeyboardInsetRef.current = 0;
         setKeyboardInset(0);
         close();
       }
@@ -101,30 +150,56 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     close();
     setKeyboardInset(0);
     update();
+    const updateUnlessFocused = () => {
+      if (!focusLockRef.current) update();
+    };
     vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
+    vv.addEventListener("scroll", updateUnlessFocused);
     const onFocusIn = (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
+      focusLockRef.current = true;
       open();
       [50, 150, 300, 600, 1000].forEach((ms) => setTimeout(update, ms));
+      scheduleChatFocusAlign();
     };
     const onFocusOut = (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
-      setTimeout(update, 50);
+      setTimeout(() => {
+        const active = document.activeElement as HTMLElement | null;
+        const stillEditing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+        const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+
+        // 스크롤 중 일시 focusout이면 잠금을 유지한다. 실제 키보드가 내려갔을 때만 해제.
+        if (stillEditing || hidden > 40) {
+          focusLockRef.current = true;
+          if (hidden > 40 && stableKeyboardInsetRef.current === 0) {
+            stableKeyboardInsetRef.current = hidden;
+            setKeyboardInset(hidden);
+          }
+          open();
+          return;
+        }
+
+        focusLockRef.current = false;
+        stableKeyboardInsetRef.current = 0;
+        update();
+      }, 80);
       setTimeout(update, 300);
     };
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
     return () => {
       vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
+      vv.removeEventListener("scroll", updateUnlessFocused);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
+      focusLockRef.current = false;
+      stableKeyboardInsetRef.current = 0;
       close();
     };
-  }, []);
+  }, [scheduleChatFocusAlign]);
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -241,6 +316,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
               return (
                 <motion.div
                   key={msg.id}
+                  data-chat-msg
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.15 }}
@@ -266,15 +342,26 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       </div>
 
       {/* Fixed Input — docks above iOS keyboard/accessory bar when focused, above TabBar when idle */}
+      {keyboardInset > 0 && (
+        <div
+          aria-hidden="true"
+          className="fixed left-0 right-0 z-[97] pointer-events-none"
+          style={{
+            top: `calc(100dvh - ${composerBottom})`,
+            bottom: 0,
+            background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
+          }}
+        />
+      )}
       <div
+        ref={composerRef}
+        data-composer="game-chat"
         className="fixed left-0 right-0 z-[98] border-t border-border"
         style={{
-          background: "var(--chat-input-bg, rgba(10,10,15,0.95))",
+          background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
           backdropFilter: "blur(12px)",
-          bottom: keyboardInset > 0
-            ? `${keyboardInset}px`
-            : `calc(52px + env(safe-area-inset-bottom, 0px))`,
-          transition: "bottom 80ms ease-out",
+          bottom: composerBottom,
+          transition: keyboardInset > 0 ? "none" : "bottom 80ms ease-out",
         }}
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
