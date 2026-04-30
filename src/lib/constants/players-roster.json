@@ -3217,19 +3217,19 @@
   },
   {
     "name": "양현종",
+    "kboId": "55370",
+    "teamId": 10,
+    "position": "내야수",
+    "backNo": "60",
+    "team": "키움"
+  },
+  {
+    "name": "양현종",
     "kboId": "77637",
     "teamId": 6,
     "position": "투수",
     "backNo": "54",
     "team": "KIA"
-  },
-  {
-    "name": "양현종",
-    "kboId": "55370",
-    "team": "키움",
-    "teamId": 10,
-    "position": "내야수",
-    "backNo": "60"
   },
   {
     "name": "어윤성",
@@ -3802,10 +3802,10 @@
   {
     "name": "윤준혁",
     "kboId": "50092",
-    "team": "NC",
     "teamId": 5,
     "position": "내야수",
-    "backNo": "31"
+    "backNo": "31",
+    "team": "NC"
   },
   {
     "name": "윤준호",
@@ -5394,10 +5394,10 @@
   {
     "name": "주현상",
     "kboId": "65707",
-    "team": "한화",
     "teamId": 9,
     "position": "투수",
-    "backNo": "66"
+    "backNo": "66",
+    "team": "한화"
   },
   {
     "name": "주효상",

@@ -3,7 +3,7 @@
  * 사진 소스: KBO 공식 이미지 서버
  * URL 패턴: /players/{kboPlayerId}.jpg (public/players/)
  * 자동 생성: scripts/update-player-photos.mjs
- * 마지막 업데이트: 2026-04-29
+ * 마지막 업데이트: 2026-04-30
  */
 
 // 선수명 → KBO playerId 매핑
@@ -394,7 +394,7 @@ export const PLAYER_PHOTO_MAP: Record<string, string> = {
   "양진혁": "52123",
   "양창섭": "68415",
   "양현": "61268",
-  "양현종": "55370",
+  "양현종": "77637",
   "어윤성": "56414",
   "어준서": "55392",
   "엄상백": "65056",
