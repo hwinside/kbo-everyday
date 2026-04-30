@@ -131,9 +131,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const update = () => {
       const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
       if (hidden > 40) {
-        // 포커스 중이고 이미 키보드 높이가 잡혔으면 변동을 무시한다 (스크롤 떨림 방지).
-        // 단, 아직 값이 없으면(0) 첫 감지를 통과시킨다.
-        if (focusLockRef.current && stableKeyboardInsetRef.current > 0) return;
+        // 포커스 중: 키보드 영역이 줄어드는 방향만 무시 (스크롤 떨림 방지).
+        // 커지는 방향(애니메이션 진행/accessory 추가)은 항상 반영.
+        if (focusLockRef.current && hidden < stableKeyboardInsetRef.current) return;
         stableKeyboardInsetRef.current = hidden;
         setKeyboardInset(hidden);
         open();
