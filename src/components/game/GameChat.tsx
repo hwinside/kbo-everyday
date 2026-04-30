@@ -168,7 +168,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col">
       {/* Room selector */}
       <div className="relative">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
@@ -226,7 +226,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
 
       {/* Messages — newest first, close to broadcast area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-2 space-y-0.5">
+      <div ref={scrollRef} className="px-4 py-2 space-y-0.5">
         {loading ? (
           <div className="text-center py-8 text-text-tertiary text-sm">로딩 중...</div>
         ) : messages.length === 0 ? (
