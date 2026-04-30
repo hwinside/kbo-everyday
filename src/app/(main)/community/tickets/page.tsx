@@ -39,7 +39,7 @@ export default function TicketBoardPage() {
           <div className="flex items-center gap-3">
             <Ticket size={20} className="text-accent flex-shrink-0" />
             <p className="text-sm text-text-secondary">
-              티켓을 양도하거나 구하는 게시판입니다. 직거래 시 주의하세요.
+              실제 보유한 티켓을 정가 이하로 양도하는 판매자만 글을 올릴 수 있습니다. 티켓을 구하시는 분은 등록된 양도 글에서 판매자에게 쪽지로 문의해주세요.
             </p>
           </div>
 
@@ -62,8 +62,8 @@ export default function TicketBoardPage() {
                 className="overflow-hidden"
               >
                 <p className="mt-2 text-xs text-text-tertiary leading-relaxed">
-                  크보팬은 정가 이하 양도만 허용합니다. 정가보다 비싼 웃돈 거래 적발 시
-                  이용이 제한될 수 있습니다.
+                  크보팬은 판매자의 정가 이하 양도만 허용합니다. 티켓 구함/대리구매 요청,
+                  정가보다 비싼 웃돈 거래 적발 시 이용이 제한될 수 있습니다.
                 </p>
               </motion.div>
             )}

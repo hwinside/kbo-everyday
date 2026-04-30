@@ -253,15 +253,15 @@ function WriteTicketModal({ isOpen, onClose, venueId, teamIds, onSubmit }: Write
             <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)}
               className="mt-0.5 accent-green-500" />
             <div>
-              <p className="text-xs font-bold text-green-300">정가 이하 양도 원칙에 동의합니다</p>
+              <p className="text-xs font-bold text-green-300">판매자 정가 이하 양도 원칙에 동의합니다</p>
               <p className="text-[10px] text-green-200/60 mt-0.5">
-                티켓 정가 이하로만 양도하며, 웃돈(정가 초과) 거래 시 이용이 제한될 수 있습니다.
+                실제 보유한 티켓만 정가 이하로 양도하며, 구함/대리구매 요청이나 웃돈 거래 시 이용이 제한될 수 있습니다.
               </p>
             </div>
           </label>
 
           <p className="mt-3 text-[11px] text-text-tertiary">
-            연락 방식: 관심 있는 분이 쪽지로 연락합니다.
+            판매자만 글을 등록할 수 있으며, 티켓을 구하시는 분은 등록된 양도 글에서 판매자에게 쪽지로 문의해주세요.
           </p>
         </div>
 
@@ -373,9 +373,9 @@ export default function TicketTab({
         <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-3 flex items-start gap-2">
           <Ticket size={16} className="text-green-400 mt-0.5 flex-shrink-0" />
           <div>
-            <p className="text-xs font-bold text-green-300">✅ 정가 이하 양도 원칙</p>
+            <p className="text-xs font-bold text-green-300">✅ 판매자 정가 이하 양도 원칙</p>
             <p className="text-xs text-green-200/70 mt-0.5">
-              크보팬은 정가 이하 양도만 허용합니다. 정가보다 비싼 웃돈 거래 적발 시 이용이 제한됩니다.
+              크보팬은 실제 보유 티켓의 정가 이하 양도만 허용합니다. 구함/대리구매 요청이나 웃돈 거래 적발 시 이용이 제한됩니다.
             </p>
           </div>
         </div>
