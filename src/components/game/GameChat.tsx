@@ -138,12 +138,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   // - Toggle body.kbd-open on focusin to hide TabBar via CSS.
   // - Poll vv read at multiple offsets to cover iOS first-focus race.
   const [keyboardInset, setKeyboardInset] = useState(0);
-  // iOS Safari의 입력 accessory bar(⌃⌄✓)는 visualViewport inset에
-  // 완전히 포함되지 않을 수 있어, 키보드 오픈 시 composer를 한 줄 더 올린다.
-  const iOSKeyboardAccessoryGap = 56;
-  const composerBottom = keyboardInset > 0
-    ? `${keyboardInset + iOSKeyboardAccessoryGap}px`
-    : `calc(52px + env(safe-area-inset-bottom, 0px))`;
+  const [keyboardViewport, setKeyboardViewport] = useState({ height: 0, offsetTop: 0 });
+  const composerBottom = `calc(52px + env(safe-area-inset-bottom, 0px))`;
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
     const vv = window.visualViewport;
@@ -186,9 +182,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       if (hidden > 40) {
         stableKeyboardInsetRef.current = hidden;
         setKeyboardInset(hidden);
+        setKeyboardViewport({ height: vv.height, offsetTop: vv.offsetTop });
         open();
         if (focusLockRef.current) {
-          // Body는 고정해 fixed composer 흔들림을 막고, 메시지 영역만 내부 스크롤로 둔다.
+          // Body는 배경 고정만 담당한다. 실제 스크롤은 fixed chat panel 내부 메시지 영역에서만 허용.
           requestAnimationFrame(() => {
             alignLatestMessagesAboveComposer();
             lockPageScroll();
@@ -199,6 +196,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         if (focusLockRef.current) return;
         stableKeyboardInsetRef.current = 0;
         setKeyboardInset(0);
+        setKeyboardViewport({ height: 0, offsetTop: 0 });
         close();
         unlockPageScroll();
       }
@@ -284,7 +282,16 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   };
 
   return (
-    <div className="flex flex-col">
+    <div
+      className={clsx(
+        "flex flex-col",
+        keyboardInset > 0 && "fixed left-0 right-0 z-[96] bg-bg-primary overflow-hidden"
+      )}
+      style={keyboardInset > 0 ? {
+        top: `${keyboardViewport.offsetTop}px`,
+        height: `${keyboardViewport.height || window.innerHeight - keyboardInset}px`,
+      } : undefined}
+    >
       {/* Room selector */}
       <div className="relative">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
@@ -346,9 +353,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         ref={scrollRef}
         className={clsx(
           "px-4 py-2 space-y-0.5",
-          keyboardInset > 0 && "overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]"
+          keyboardInset > 0 && "flex-1 min-h-0 overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]"
         )}
-        style={keyboardInset > 0 ? { maxHeight: `calc(100dvh - ${composerBottom} - 96px)` } : undefined}
       >
         {loading ? (
           <div className="text-center py-8 text-text-tertiary text-sm">로딩 중...</div>
@@ -389,26 +395,18 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         )}
       </div>
 
-      {/* Fixed Input — docks above iOS keyboard/accessory bar when focused, above TabBar when idle */}
-      {keyboardInset > 0 && (
-        <div
-          aria-hidden="true"
-          className="fixed left-0 right-0 z-[97] pointer-events-none"
-          style={{
-            top: `calc(100dvh - ${composerBottom})`,
-            bottom: 0,
-            background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
-          }}
-        />
-      )}
+      {/* Input — fixed above TabBar when idle; inside keyboard panel when focused */}
       <div
         ref={composerRef}
         data-composer="game-chat"
-        className="fixed left-0 right-0 z-[98] border-t border-border"
+        className={clsx(
+          "left-0 right-0 z-[98] border-t border-border",
+          keyboardInset > 0 ? "relative shrink-0" : "fixed"
+        )}
         style={{
           background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
           backdropFilter: "blur(12px)",
-          bottom: composerBottom,
+          bottom: keyboardInset > 0 ? undefined : composerBottom,
           transition: keyboardInset > 0 ? "none" : "bottom 80ms ease-out",
         }}
       >
