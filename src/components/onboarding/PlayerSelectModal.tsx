@@ -29,6 +29,7 @@ interface PlayerSelectModalProps {
   teamId: number;
   onComplete: (players: FavoritePlayer[]) => void;
   onSkip: () => void;
+  initialPlayers?: FavoritePlayer[];
 }
 
 // 팀 약칭 → teamId 매핑
@@ -36,11 +37,18 @@ const TEAM_SHORT_MAP: Record<string, number> = {
   LG: 1, "두산": 2, KT: 3, SSG: 4, NC: 5, KIA: 6, "롯데": 7, "삼성": 8, "한화": 9, "키움": 10,
 };
 
-export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip }: PlayerSelectModalProps) {
+export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip, initialPlayers = [] }: PlayerSelectModalProps) {
   const { user } = useAuth();
   const maxPlayers = user ? 5 : 2;
   const [showLogin, setShowLogin] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // 모달 열릴 때 기존 선택 복원 (빈 배열이면 초기화)
+  useEffect(() => {
+    if (isOpen) {
+      setSelected(new Set(initialPlayers.map(p => p.playerId)));
+    }
+  }, [isOpen, initialPlayers]);
   const [search, setSearch] = useState("");
   const [showAll, setShowAll] = useState(false);
   const team = getTeamById(teamId);

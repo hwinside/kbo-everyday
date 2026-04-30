@@ -275,6 +275,7 @@ export default function MyPage() {
         teamId={teamId ?? 1}
         onComplete={handlePlayerChange}
         onSkip={() => setShowPlayerSelect(false)}
+        initialPlayers={favPlayers}
       />
     </div>
   );
