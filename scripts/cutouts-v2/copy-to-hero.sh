@@ -73,3 +73,7 @@ if [ $block_count -gt 0 ]; then
   echo "⚠️  차단된 파일은 삼순이 검수 후 allowlist에 추가해야 복사 가능합니다."
 fi
 echo "=========================================="
+
+if [ $block_count -gt 0 ]; then
+  exit 1
+fi
