@@ -70,6 +70,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const didInitialAlignRef = useRef(false);
+  const focusLockRef = useRef(false);
+  const stableKeyboardInsetRef = useRef(0);
 
   const displayMessages = [...messages].reverse(); // 최신순: 최신 메시지가 리스트 상단
 
@@ -126,9 +128,24 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const update = () => {
       const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
       if (hidden > 40) {
+        // 포커스 중 미세한 jitter(±12px 이내)는 무시 — composer 떨림 방지
+        if (
+          focusLockRef.current &&
+          stableKeyboardInsetRef.current > 0 &&
+          Math.abs(hidden - stableKeyboardInsetRef.current) < 12
+        ) {
+          return;
+        }
+        stableKeyboardInsetRef.current = hidden;
         setKeyboardInset(hidden);
         open();
+      } else if (focusLockRef.current && stableKeyboardInsetRef.current > 0) {
+        // iOS Safari can report a transient 0-ish inset while scrolling with the
+        // keyboard open. Keep the composer pinned instead of letting it jump or
+        // disappear until the input actually blurs.
+        return;
       } else {
+        stableKeyboardInsetRef.current = 0;
         setKeyboardInset(0);
         close();
       }
@@ -137,11 +154,15 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     close();
     setKeyboardInset(0);
     update();
+    const updateUnlessFocused = () => {
+      if (!focusLockRef.current) update();
+    };
     vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
+    vv.addEventListener("scroll", updateUnlessFocused);
     const onFocusIn = (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
+      focusLockRef.current = true;
       open();
       [50, 150, 300, 600, 1000].forEach((ms) => setTimeout(update, ms));
       scheduleChatFocusAlign();
@@ -149,6 +170,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const onFocusOut = (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
+      focusLockRef.current = false;
       setTimeout(update, 50);
       setTimeout(update, 300);
     };
@@ -156,9 +178,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     document.addEventListener("focusout", onFocusOut);
     return () => {
       vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
+      vv.removeEventListener("scroll", updateUnlessFocused);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
+      focusLockRef.current = false;
+      stableKeyboardInsetRef.current = 0;
       close();
     };
   }, [scheduleChatFocusAlign]);
@@ -323,7 +347,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
           background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
           backdropFilter: "blur(12px)",
           bottom: composerBottom,
-          transition: "bottom 80ms ease-out",
+          transition: keyboardInset > 0 ? "none" : "bottom 80ms ease-out",
         }}
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
