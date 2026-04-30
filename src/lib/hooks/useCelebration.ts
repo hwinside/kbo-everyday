@@ -54,16 +54,25 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
   /** Call on each gameEvents update to detect new celebration-worthy events */
   const processEvents = useCallback(
     (events: GameEvent[]) => {
-      if (!myTeamId) return;
+      // [DEBUG] temporary — remove after verifying celebrations work
+      if (!myTeamId) {
+        console.warn("[celeb] myTeamId is null — skipping");
+        return;
+      }
 
       const newCelebrations: CelebrationEvent[] = [];
+      let newEventCount = 0;
 
       for (const ev of events) {
         if (seenRef.current.has(ev.id)) continue;
         seenRef.current.add(ev.id);
+        newEventCount++;
 
         const celebType = toCelebrationType(ev.type);
-        if (!celebType) continue;
+        if (!celebType) {
+          console.debug("[celeb] skip non-celeb event:", ev.type, ev.id);
+          continue;
+        }
 
         // Victory event: only celebrate when my team wins
         if (celebType === "victory") {
@@ -87,7 +96,10 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
 
         const isOffense = celebType !== "strikeout";
         const relevantTeamId = isOffense ? battingTeamId : pitchingTeamId;
-        if (relevantTeamId !== myTeamId) continue;
+        if (relevantTeamId !== myTeamId) {
+          console.debug("[celeb] team mismatch:", celebType, "relevant:", relevantTeamId, "mine:", myTeamId, "isTop:", ev.isTop);
+          continue;
+        }
 
         // Build celebration event
         const playerName = isOffense ? ev.detail.batter : ev.detail.pitcher;
@@ -111,6 +123,9 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
         });
       }
 
+      if (newEventCount > 0) {
+        console.log(`[celeb] processed ${newEventCount} new events → ${newCelebrations.length} celebrations (myTeam: ${myTeamId}, home: ${homeTeamId}, away: ${awayTeamId})`);
+      }
       if (newCelebrations.length === 0) return;
 
       // Log each celebration trigger
