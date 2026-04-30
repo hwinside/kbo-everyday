@@ -125,14 +125,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     scheduleChatFocusAlign();
   }, [loading, messages.length, scheduleChatFocusAlign]);
 
-  // 라이브 데이터 자동 갱신으로 경기/중계 영역 높이가 바뀌어도
-  // 비입력 상태에서는 최신 댓글 5개 + 입력창 앵커를 다시 맞춘다.
-  useEffect(() => {
-    if (loading || messages.length === 0 || focusLockRef.current) return;
-    const raf = requestAnimationFrame(alignLatestMessagesAboveComposer);
-    return () => cancelAnimationFrame(raf);
-  });
-
   // iOS composer positioning (same pattern as PostDetail):
   // - Track visualViewport to place composer above iOS accessory bar.
   // - Toggle body.kbd-open on focusin to hide TabBar via CSS.
