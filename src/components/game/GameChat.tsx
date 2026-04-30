@@ -172,6 +172,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const update = () => {
       const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
       if (hidden > 40) {
+        // 입력 포커스 없으면 무시 — iOS overscroll bounce로 hidden이 일시적으로 뛰는 것 방지
+        if (!focusLockRef.current) return;
         stableKeyboardInsetRef.current = hidden;
         setKeyboardInset(hidden);
         setKeyboardViewport({ height: vv.height, offsetTop: vv.offsetTop });
