@@ -117,8 +117,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   // - Toggle body.kbd-open on focusin to hide TabBar via CSS.
   // - Poll vv read at multiple offsets to cover iOS first-focus race.
   const [keyboardInset, setKeyboardInset] = useState(0);
+  // iOS Safari의 연락처 자동완성/입력 accessory bar는 visualViewport inset에
+  // 포함되지 않고 composer 위에 덮일 수 있어, 키보드 오픈 시 한 줄 더 올린다.
+  const iOSKeyboardAccessoryGap = 56;
   const composerBottom = keyboardInset > 0
-    ? `${keyboardInset}px`
+    ? `${keyboardInset + iOSKeyboardAccessoryGap}px`
     : `calc(52px + env(safe-area-inset-bottom, 0px))`;
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
@@ -348,8 +351,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
               onKeyDown={(e) => e.key === "Enter" && handleSend()}
               placeholder={cooldown ? (cooldownReason || "잠시 후 다시 입력하세요...") : canWrite ? (room === "all" ? "메시지 입력..." : `${roomLabels[room]}에 메시지...`) : writeBlockedReason}
               disabled={!canWrite}
-              autoComplete="off"
-              name="chat-message"
+              autoComplete="new-password"
+              autoCorrect="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              name="kbo-chat-body"
               maxLength={120}
               className={clsx(
                 "w-full h-10 px-4 rounded-full text-sm",
