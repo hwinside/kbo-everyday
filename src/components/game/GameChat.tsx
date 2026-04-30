@@ -127,23 +127,19 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const close = () => document.body.classList.remove("kbd-open");
     const update = () => {
       const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+
+      if (focusLockRef.current && stableKeyboardInsetRef.current > 0) {
+        // 입력 중에는 iOS Safari의 visualViewport 흔들림을 레이아웃에 반영하지 않는다.
+        // 손가락 스크롤 중 hidden 값이 바뀌면 fixed composer가 따라오거나 사라진다.
+        if (keyboardInset === 0) setKeyboardInset(stableKeyboardInsetRef.current);
+        open();
+        return;
+      }
+
       if (hidden > 40) {
-        // 포커스 중 미세한 jitter(±12px 이내)는 무시 — composer 떨림 방지
-        if (
-          focusLockRef.current &&
-          stableKeyboardInsetRef.current > 0 &&
-          Math.abs(hidden - stableKeyboardInsetRef.current) < 12
-        ) {
-          return;
-        }
         stableKeyboardInsetRef.current = hidden;
         setKeyboardInset(hidden);
         open();
-      } else if (focusLockRef.current && stableKeyboardInsetRef.current > 0) {
-        // iOS Safari can report a transient 0-ish inset while scrolling with the
-        // keyboard open. Keep the composer pinned instead of letting it jump or
-        // disappear until the input actually blurs.
-        return;
       } else {
         stableKeyboardInsetRef.current = 0;
         setKeyboardInset(0);
@@ -170,8 +166,26 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const onFocusOut = (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
-      focusLockRef.current = false;
-      setTimeout(update, 50);
+      setTimeout(() => {
+        const active = document.activeElement as HTMLElement | null;
+        const stillEditing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+        const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+
+        // 스크롤 중 일시 focusout이면 잠금을 유지한다. 실제 키보드가 내려갔을 때만 해제.
+        if (stillEditing || hidden > 40) {
+          focusLockRef.current = true;
+          if (hidden > 40 && stableKeyboardInsetRef.current === 0) {
+            stableKeyboardInsetRef.current = hidden;
+            setKeyboardInset(hidden);
+          }
+          open();
+          return;
+        }
+
+        focusLockRef.current = false;
+        stableKeyboardInsetRef.current = 0;
+        update();
+      }, 80);
       setTimeout(update, 300);
     };
     document.addEventListener("focusin", onFocusIn);
