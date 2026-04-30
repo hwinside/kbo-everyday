@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx } from "clsx";
@@ -20,6 +20,7 @@ import { getPreseasonGameById } from "@/lib/constants/preseason-schedule";
 import { useLiveGame } from "@/lib/hooks/useLiveGame";
 import { useGameDetail } from "@/lib/hooks/useGameDetail";
 import { useGameEvents } from "@/lib/hooks/useGameEvents";
+import { generateEvents, type PrevGameState } from "@/lib/event-generator";
 import type { LineupEntry } from "@/lib/hooks/useGameDetail";
 import { deriveGameState } from "@/lib/utils/game-derived";
 import GameDetailHeader from "@/components/game/GameDetailHeader";
@@ -157,6 +158,7 @@ export default function GameDetailPage() {
   const shouldPollGameEvents = (liveGame?.isLive ?? false) || liveIsFinal;
   const { events: gameEvents } = useGameEvents(gameId, shouldPollGameEvents, 15000);
   const { data: gameRelay } = useGameRelay(gameId, liveGame?.isLive ?? false, 30000, liveGame?.inning ?? 0, liveIsFinal);
+  const clientEventStateRef = useRef<PrevGameState | null>(null);
 
   // Compute game early (non-hook) so celebration hook can reference team IDs
   const game = getGameById(gameId) ?? getPreseasonGameById(gameId) ?? parseKboGameId(gameId);
@@ -174,6 +176,29 @@ export default function GameDetailPage() {
       processEvents(gameEvents);
     }
   }, [gameEvents, processEvents]);
+
+  // Serverless memory cannot be trusted to diff live game events consistently.
+  // Keep a per-device baseline as well so the actual user's device can trigger celebrations
+  // from live + box score changes while they are on the game page.
+  useEffect(() => {
+    if (!liveGame || !shouldPollGameEvents) return;
+
+    const { events: clientEvents, nextState } = generateEvents(
+      gameId,
+      clientEventStateRef.current,
+      liveGame,
+      gameDetail?.boxScore ?? null,
+    );
+    clientEventStateRef.current = nextState;
+
+    if (clientEvents.length > 0) {
+      processEvents(clientEvents);
+    }
+  }, [gameId, liveGame, gameDetail?.boxScore, shouldPollGameEvents, processEvents]);
+
+  useEffect(() => {
+    clientEventStateRef.current = null;
+  }, [gameId]);
 
   // useCallback must be called before any early returns (React hooks rules)
   const handleRefresh = useCallback(async () => {
