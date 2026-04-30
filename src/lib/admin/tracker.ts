@@ -53,19 +53,24 @@ export async function trackCelebration(
   const visitorId = getVisitorId();
   if (!visitorId) return;
 
-  const path = `/_celeb/${type}/${gameId}`;
-  const referrer = [teamId, playerName].filter(Boolean).join("|");
+  const body = JSON.stringify({ visitorId, type, gameId, teamId, playerName });
+  const url = "/api/telemetry/celebration-trigger";
 
-  await supabase.from("admin_page_views").insert({
-    visitor_id: visitorId,
-    path,
-    referrer,
-    user_agent: navigator.userAgent,
-    device: getDevice(),
-    user_id: null,
-  }).then(({ error }) => {
-    if (error) console.warn("[tracker] celebration log failed:", error.message);
-  });
+  try {
+    if (navigator.sendBeacon) {
+      const blob = new Blob([body], { type: "application/json" });
+      if (navigator.sendBeacon(url, blob)) return;
+    }
+
+    await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      keepalive: true,
+    });
+  } catch (error) {
+    console.warn("[tracker] celebration log failed:", error);
+  }
 }
 
 export async function trackPerfMetric(metricName: string, value: number) {
