@@ -72,12 +72,22 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const focusLockRef = useRef(false);
   const stableKeyboardInsetRef = useRef(0);
   const lastAlignedCountRef = useRef(0);
+  const bodyLockStateRef = useRef<{
+    scrollY: number;
+    position: string;
+    top: string;
+    left: string;
+    right: string;
+    width: string;
+    overflow: string;
+  } | null>(null);
 
   const displayMessages = [...messages].reverse(); // 최신순: 최신 메시지가 리스트 상단
 
   // 최신 ~5개 메시지가 입력창 바로 위에 보이도록 window 스크롤을 맞춘다.
   // 채팅 리스트 자체는 별도 스크롤이 없고, 페이지 전체 스크롤만 사용한다.
   const alignLatestMessagesAboveComposer = useCallback(() => {
+    if (bodyLockStateRef.current) return;
     if (!scrollRef.current || !composerRef.current) return;
     const msgs = scrollRef.current.querySelectorAll<HTMLElement>("[data-chat-msg]");
     if (msgs.length === 0) return;
@@ -139,20 +149,58 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const vv = window.visualViewport;
     const open = () => document.body.classList.add("kbd-open");
     const close = () => document.body.classList.remove("kbd-open");
+    const lockPageScroll = () => {
+      if (bodyLockStateRef.current) return;
+      const { style } = document.body;
+      bodyLockStateRef.current = {
+        scrollY: window.scrollY,
+        position: style.position,
+        top: style.top,
+        left: style.left,
+        right: style.right,
+        width: style.width,
+        overflow: style.overflow,
+      };
+      style.position = "fixed";
+      style.top = `-${bodyLockStateRef.current.scrollY}px`;
+      style.left = "0";
+      style.right = "0";
+      style.width = "100%";
+      style.overflow = "hidden";
+    };
+    const unlockPageScroll = () => {
+      const state = bodyLockStateRef.current;
+      if (!state) return;
+      const { style } = document.body;
+      style.position = state.position;
+      style.top = state.top;
+      style.left = state.left;
+      style.right = state.right;
+      style.width = state.width;
+      style.overflow = state.overflow;
+      bodyLockStateRef.current = null;
+      window.scrollTo(0, state.scrollY);
+    };
     const update = () => {
       const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
       if (hidden > 40) {
-        // 키보드가 열린 동안에도 사용자가 페이지/댓글을 스크롤할 수 있어야 한다.
-        // 따라서 hidden 값의 증감은 모두 반영해서 composer가 visual viewport 하단을 따라가게 한다.
         stableKeyboardInsetRef.current = hidden;
         setKeyboardInset(hidden);
         open();
+        if (focusLockRef.current) {
+          // Body는 고정해 fixed composer 흔들림을 막고, 메시지 영역만 내부 스크롤로 둔다.
+          requestAnimationFrame(() => {
+            alignLatestMessagesAboveComposer();
+            lockPageScroll();
+          });
+        }
       } else {
         // iOS 스크롤 중 일시적으로 0에 가까운 값이 튀는 경우만 무시한다.
         if (focusLockRef.current) return;
         stableKeyboardInsetRef.current = 0;
         setKeyboardInset(0);
         close();
+        unlockPageScroll();
       }
     };
     // Reset on mount so stale kbd-open from previous pages doesn't leak in.
@@ -175,7 +223,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       focusLockRef.current = false;
       stableKeyboardInsetRef.current = 0;
       setTimeout(update, 50);
-      setTimeout(update, 300);
+      setTimeout(() => {
+        update();
+        unlockPageScroll();
+      }, 300);
     };
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
@@ -186,9 +237,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       document.removeEventListener("focusout", onFocusOut);
       focusLockRef.current = false;
       stableKeyboardInsetRef.current = 0;
+      unlockPageScroll();
       close();
     };
-  }, [scheduleChatFocusAlign]);
+  }, [scheduleChatFocusAlign, alignLatestMessagesAboveComposer]);
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -290,7 +342,14 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
 
       {/* Messages — newest first, close to broadcast area */}
-      <div ref={scrollRef} className="px-4 py-2 space-y-0.5">
+      <div
+        ref={scrollRef}
+        className={clsx(
+          "px-4 py-2 space-y-0.5",
+          keyboardInset > 0 && "overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]"
+        )}
+        style={keyboardInset > 0 ? { maxHeight: `calc(100dvh - ${composerBottom} - 96px)` } : undefined}
+      >
         {loading ? (
           <div className="text-center py-8 text-text-tertiary text-sm">로딩 중...</div>
         ) : messages.length === 0 ? (
