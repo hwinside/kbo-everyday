@@ -69,9 +69,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
-  const didInitialAlignRef = useRef(false);
   const focusLockRef = useRef(false);
   const stableKeyboardInsetRef = useRef(0);
+  const lastAlignedCountRef = useRef(0);
 
   const displayMessages = [...messages].reverse(); // 최신순: 최신 메시지가 리스트 상단
 
@@ -101,24 +101,35 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     });
   }, [alignLatestMessagesAboveComposer]);
 
-  // 최초 진입/방 변경 후에도 최신글 5개 + 입력창이 함께 보이도록 맞춘다.
+  // 진입/방 변경/새 메시지 도착 시 최신글 5개 + 입력창이 함께 보이도록 맞춘다.
+  // 단, 키보드가 열려있으면(포커스 중) 스크롤을 건드리지 않는다.
   useEffect(() => {
-    didInitialAlignRef.current = false;
+    lastAlignedCountRef.current = 0;
   }, [roomId]);
 
   useEffect(() => {
-    if (loading || messages.length === 0 || didInitialAlignRef.current) return;
-    didInitialAlignRef.current = true;
+    if (loading || messages.length === 0) return;
+    if (messages.length === lastAlignedCountRef.current) return;
+    if (focusLockRef.current) return; // 키보드 열린 상태에서는 스크롤 안 건드림
+    lastAlignedCountRef.current = messages.length;
     scheduleChatFocusAlign();
   }, [loading, messages.length, scheduleChatFocusAlign]);
+
+  // 라이브 데이터 자동 갱신으로 경기/중계 영역 높이가 바뀌어도
+  // 비입력 상태에서는 최신 댓글 5개 + 입력창 앵커를 다시 맞춘다.
+  useEffect(() => {
+    if (loading || messages.length === 0 || focusLockRef.current) return;
+    const raf = requestAnimationFrame(alignLatestMessagesAboveComposer);
+    return () => cancelAnimationFrame(raf);
+  });
 
   // iOS composer positioning (same pattern as PostDetail):
   // - Track visualViewport to place composer above iOS accessory bar.
   // - Toggle body.kbd-open on focusin to hide TabBar via CSS.
   // - Poll vv read at multiple offsets to cover iOS first-focus race.
   const [keyboardInset, setKeyboardInset] = useState(0);
-  // iOS Safari의 연락처 자동완성/입력 accessory bar는 visualViewport inset에
-  // 포함되지 않고 composer 위에 덮일 수 있어, 키보드 오픈 시 한 줄 더 올린다.
+  // iOS Safari의 입력 accessory bar(⌃⌄✓)는 visualViewport inset에
+  // 완전히 포함되지 않을 수 있어, 키보드 오픈 시 composer를 한 줄 더 올린다.
   const iOSKeyboardAccessoryGap = 56;
   const composerBottom = keyboardInset > 0
     ? `${keyboardInset + iOSKeyboardAccessoryGap}px`
@@ -131,14 +142,14 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const update = () => {
       const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
       if (hidden > 40) {
-        // 포커스 중: 키보드 영역이 줄어드는 방향만 무시 (스크롤 떨림 방지).
-        // 커지는 방향(애니메이션 진행/accessory 추가)은 항상 반영.
-        if (focusLockRef.current && hidden < stableKeyboardInsetRef.current) return;
+        // 키보드가 열린 동안에도 사용자가 페이지/댓글을 스크롤할 수 있어야 한다.
+        // 따라서 hidden 값의 증감은 모두 반영해서 composer가 visual viewport 하단을 따라가게 한다.
         stableKeyboardInsetRef.current = hidden;
         setKeyboardInset(hidden);
         open();
       } else {
-        if (focusLockRef.current) return; // 포커스 중 일시적 0은 무시
+        // iOS 스크롤 중 일시적으로 0에 가까운 값이 튀는 경우만 무시한다.
+        if (focusLockRef.current) return;
         stableKeyboardInsetRef.current = 0;
         setKeyboardInset(0);
         close();
