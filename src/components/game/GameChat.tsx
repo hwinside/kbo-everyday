@@ -68,29 +68,56 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const [input, setInput] = useState("");
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const didInitialAlignRef = useRef(false);
 
   const displayMessages = [...messages].reverse(); // 최신순: 최신 메시지가 리스트 상단
 
-  // 키보드 올라올 때 최신 ~5개 메시지가 입력창 바로 위에 보이도록 스크롤
-  const scrollToLatestChat = useCallback((kbInset: number) => {
-    if (!scrollRef.current || kbInset <= 0) return;
-    const msgs = scrollRef.current.querySelectorAll("[data-chat-msg]");
+  // 최신 ~5개 메시지가 입력창 바로 위에 보이도록 window 스크롤을 맞춘다.
+  // 채팅 리스트 자체는 별도 스크롤이 없고, 페이지 전체 스크롤만 사용한다.
+  const alignLatestMessagesAboveComposer = useCallback(() => {
+    if (!scrollRef.current || !composerRef.current) return;
+    const msgs = scrollRef.current.querySelectorAll<HTMLElement>("[data-chat-msg]");
     if (msgs.length === 0) return;
-    const target = msgs[Math.min(4, msgs.length - 1)]; // 5번째 최신 메시지
-    const rect = target.getBoundingClientRect();
-    const composerH = 52;
-    const visibleBottom = window.innerHeight - kbInset - composerH;
-    const diff = rect.bottom - visibleBottom;
-    if (Math.abs(diff) > 8) {
+
+    // 최신순 상단이므로 5번째 최신 메시지의 하단이 composer 바로 위에 오게 맞춘다.
+    const target = msgs[Math.min(4, msgs.length - 1)];
+    const targetBottom = target.getBoundingClientRect().bottom;
+    const composerTop = composerRef.current.getBoundingClientRect().top;
+    const diff = targetBottom - (composerTop - 8);
+
+    if (Math.abs(diff) > 4) {
       window.scrollBy({ top: diff, behavior: "auto" });
     }
   }, []);
+
+  const scheduleChatFocusAlign = useCallback(() => {
+    if (typeof window === "undefined") return;
+    // iOS visualViewport/keyboard animation 타이밍 편차 흡수.
+    [0, 50, 150, 300, 600, 1000].forEach((ms) => {
+      setTimeout(() => requestAnimationFrame(alignLatestMessagesAboveComposer), ms);
+    });
+  }, [alignLatestMessagesAboveComposer]);
+
+  // 최초 진입/방 변경 후에도 최신글 5개 + 입력창이 함께 보이도록 맞춘다.
+  useEffect(() => {
+    didInitialAlignRef.current = false;
+  }, [roomId]);
+
+  useEffect(() => {
+    if (loading || messages.length === 0 || didInitialAlignRef.current) return;
+    didInitialAlignRef.current = true;
+    scheduleChatFocusAlign();
+  }, [loading, messages.length, scheduleChatFocusAlign]);
 
   // iOS composer positioning (same pattern as PostDetail):
   // - Track visualViewport to place composer above iOS accessory bar.
   // - Toggle body.kbd-open on focusin to hide TabBar via CSS.
   // - Poll vv read at multiple offsets to cover iOS first-focus race.
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const composerBottom = keyboardInset > 0
+    ? `${keyboardInset}px`
+    : `calc(52px + env(safe-area-inset-bottom, 0px))`;
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
     const vv = window.visualViewport;
@@ -116,12 +143,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       const t = e.target as HTMLElement | null;
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
       open();
-      [50, 150, 300, 600, 1000].forEach((ms) => setTimeout(() => {
-        update();
-        // 키보드 올라온 후 최신 메시지가 입력창 위에 보이도록 스크롤
-        const kbH = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-        if (kbH > 40) scrollToLatestChat(kbH);
-      }, ms));
+      [50, 150, 300, 600, 1000].forEach((ms) => setTimeout(update, ms));
+      scheduleChatFocusAlign();
     };
     const onFocusOut = (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
@@ -138,7 +161,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       document.removeEventListener("focusout", onFocusOut);
       close();
     };
-  }, [scrollToLatestChat]);
+  }, [scheduleChatFocusAlign]);
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -281,14 +304,25 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       </div>
 
       {/* Fixed Input — docks above iOS keyboard/accessory bar when focused, above TabBar when idle */}
+      {keyboardInset > 0 && (
+        <div
+          aria-hidden="true"
+          className="fixed left-0 right-0 z-[97] pointer-events-none"
+          style={{
+            top: `calc(100dvh - ${composerBottom})`,
+            bottom: 0,
+            background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
+          }}
+        />
+      )}
       <div
+        ref={composerRef}
+        data-composer="game-chat"
         className="fixed left-0 right-0 z-[98] border-t border-border"
         style={{
-          background: "var(--chat-input-bg, rgba(10,10,15,0.95))",
+          background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
           backdropFilter: "blur(12px)",
-          bottom: keyboardInset > 0
-            ? `${keyboardInset}px`
-            : `calc(52px + env(safe-area-inset-bottom, 0px))`,
+          bottom: composerBottom,
           transition: "bottom 80ms ease-out",
         }}
       >
