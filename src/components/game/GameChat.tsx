@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Users, Flame, ChevronDown } from "lucide-react";
 import { clsx } from "clsx";
@@ -71,11 +71,20 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
   const displayMessages = [...messages].reverse(); // 최신순: 최신 메시지가 리스트 상단
 
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = 0; // 최신이 상단이므로 상단 유지
+  // 키보드 올라올 때 최신 ~5개 메시지가 입력창 바로 위에 보이도록 스크롤
+  const scrollToLatestChat = useCallback((kbInset: number) => {
+    if (!scrollRef.current || kbInset <= 0) return;
+    const msgs = scrollRef.current.querySelectorAll("[data-chat-msg]");
+    if (msgs.length === 0) return;
+    const target = msgs[Math.min(4, msgs.length - 1)]; // 5번째 최신 메시지
+    const rect = target.getBoundingClientRect();
+    const composerH = 52;
+    const visibleBottom = window.innerHeight - kbInset - composerH;
+    const diff = rect.bottom - visibleBottom;
+    if (Math.abs(diff) > 8) {
+      window.scrollBy({ top: diff, behavior: "auto" });
     }
-  }, [messages.length]);
+  }, []);
 
   // iOS composer positioning (same pattern as PostDetail):
   // - Track visualViewport to place composer above iOS accessory bar.
@@ -107,7 +116,12 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       const t = e.target as HTMLElement | null;
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
       open();
-      [50, 150, 300, 600, 1000].forEach((ms) => setTimeout(update, ms));
+      [50, 150, 300, 600, 1000].forEach((ms) => setTimeout(() => {
+        update();
+        // 키보드 올라온 후 최신 메시지가 입력창 위에 보이도록 스크롤
+        const kbH = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        if (kbH > 40) scrollToLatestChat(kbH);
+      }, ms));
     };
     const onFocusOut = (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
@@ -124,7 +138,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       document.removeEventListener("focusout", onFocusOut);
       close();
     };
-  }, []);
+  }, [scrollToLatestChat]);
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -241,6 +255,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
               return (
                 <motion.div
                   key={msg.id}
+                  data-chat-msg
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.15 }}
