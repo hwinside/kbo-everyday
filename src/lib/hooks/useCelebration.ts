@@ -4,6 +4,7 @@ import { useState, useRef, useCallback } from "react";
 import type { GameEvent } from "@/types/game-events";
 import type { CelebrationEvent, CelebrationEventType } from "@/components/game/CelebrationOverlay";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
+import { trackCelebration } from "@/lib/admin/tracker";
 
 interface UseCelebrationOptions {
   myTeamId: number | null;
@@ -111,6 +112,12 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
       }
 
       if (newCelebrations.length === 0) return;
+
+      // Log each celebration trigger
+      const gameId = events[0]?.gameId;
+      for (const c of newCelebrations) {
+        trackCelebration(c.type, gameId || "", c.teamId, c.playerName);
+      }
 
       // If nothing showing, start first immediately
       if (!celebration && queueRef.current.length === 0) {

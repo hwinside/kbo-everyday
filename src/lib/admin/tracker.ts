@@ -43,6 +43,31 @@ export async function trackPageView(userId?: string) {
   });
 }
 
+/** Temporary: log celebration triggers for monitoring */
+export async function trackCelebration(
+  type: string,
+  gameId: string,
+  teamId: number,
+  playerName?: string,
+) {
+  const visitorId = getVisitorId();
+  if (!visitorId) return;
+
+  const path = `/_celeb/${type}/${gameId}`;
+  const referrer = [teamId, playerName].filter(Boolean).join("|");
+
+  await supabase.from("admin_page_views").insert({
+    visitor_id: visitorId,
+    path,
+    referrer,
+    user_agent: navigator.userAgent,
+    device: getDevice(),
+    user_id: null,
+  }).then(({ error }) => {
+    if (error) console.warn("[tracker] celebration log failed:", error.message);
+  });
+}
+
 export async function trackPerfMetric(metricName: string, value: number) {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return;
