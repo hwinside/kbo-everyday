@@ -83,7 +83,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const dragStartY = useRef(0);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const [vvTop, setVvTop] = useState(0);
-  const [vvBottom, setVvBottom] = useState(0);
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const { user, profile } = useAuth();
   const shouldRender = isOpen && postId !== null;
 
@@ -156,29 +156,51 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     }
   }, [shouldRender]);
 
-  // Track visualViewport for iOS keyboard-aware sheet height
+  // Track visualViewport for iOS keyboard-aware sheet height.
+  // Important: do not drive the sheet with `bottom: keyboardInset`.
+  // iOS Safari/WebView can leave a stale keyboard inset after focus/blur, which
+  // compresses the sheet and exposes the photo feed behind the comment UI.
+  // Instead, pin the sheet to the visual viewport with explicit top + height.
   useEffect(() => {
     if (!shouldRender) return;
+
     if (typeof window === "undefined" || !window.visualViewport) {
       setViewportHeight(window.innerHeight);
+      setVvTop(0);
+      setKeyboardInset(0);
       return;
     }
+
     const vv = window.visualViewport;
-    let layoutHeight = window.innerHeight;
+    let layoutHeight = Math.max(window.innerHeight, vv.height + Math.max(0, vv.offsetTop));
+    const timers: number[] = [];
+
     const update = () => {
-      if (vv.height + vv.offsetTop > layoutHeight) {
-        layoutHeight = vv.height + vv.offsetTop;
-      }
+      const offsetTop = Math.max(0, vv.offsetTop);
+      layoutHeight = Math.max(layoutHeight, window.innerHeight, vv.height + offsetTop);
+
       setViewportHeight(vv.height);
-      setVvTop(vv.offsetTop);
-      setVvBottom(Math.max(0, layoutHeight - vv.offsetTop - vv.height));
+      setVvTop(offsetTop);
+      setKeyboardInset(Math.max(0, layoutHeight - offsetTop - vv.height));
     };
-    update();
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
+
+    const scheduleUpdate = () => {
+      update();
+      [80, 180, 360].forEach((delay) => {
+        timers.push(window.setTimeout(update, delay));
+      });
+    };
+
+    scheduleUpdate();
+    vv.addEventListener("resize", scheduleUpdate);
+    vv.addEventListener("scroll", scheduleUpdate);
+    window.addEventListener("orientationchange", scheduleUpdate);
+
     return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
+      vv.removeEventListener("resize", scheduleUpdate);
+      vv.removeEventListener("scroll", scheduleUpdate);
+      window.removeEventListener("orientationchange", scheduleUpdate);
+      timers.forEach((timer) => window.clearTimeout(timer));
     };
   }, [shouldRender]);
 
@@ -631,11 +653,19 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             className="fixed inset-x-0 flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
             style={{
               zIndex: 9999,
-              top: viewportHeight
-                ? `${vvTop + Math.max(24, viewportHeight * 0.08)}px`
-                : "8vh",
-              bottom: vvBottom,
-              transition: "bottom 120ms ease-out, top 120ms ease-out",
+              ...(() => {
+                const topOffset = viewportHeight ? Math.max(24, viewportHeight * 0.08) : null;
+                return viewportHeight && topOffset !== null
+                  ? {
+                      top: `${vvTop + topOffset}px`,
+                      height: `${Math.max(320, viewportHeight - topOffset)}px`,
+                    }
+                  : {
+                      top: "8vh",
+                      height: "92dvh",
+                    };
+              })(),
+              transition: "height 120ms ease-out, top 120ms ease-out",
             }}
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
@@ -709,7 +739,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             )}
 
             {/* Input area + GIF Picker overlay */}
-            <div className="flex-none relative border-t border-border px-4 py-3" style={{ paddingBottom: vvBottom > 0 ? "0.75rem" : "calc(0.75rem + env(safe-area-inset-bottom))" }}>
+            <div className="flex-none relative border-t border-border px-4 py-3" style={{ paddingBottom: keyboardInset > 0 ? "0.75rem" : "calc(0.75rem + env(safe-area-inset-bottom))" }}>
               {/* GIF Picker — pure overlay above input, no layout shift */}
               <AnimatePresence>
                 {showGifPicker && (
