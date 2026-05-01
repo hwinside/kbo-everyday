@@ -80,7 +80,9 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const editInputRef = useRef<HTMLInputElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const dragStartX = useRef(0);
   const dragStartY = useRef(0);
+  const dragShouldClose = useRef(false);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const [vvTop, setVvTop] = useState(0);
   const [keyboardInset, setKeyboardInset] = useState(0);
@@ -479,6 +481,43 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     };
   }, [menuOpenId]);
 
+  const handleSheetTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length !== 1) return;
+    dragStartX.current = e.touches[0].clientX;
+    dragStartY.current = e.touches[0].clientY;
+    dragShouldClose.current = false;
+  }, []);
+
+  const handleSheetTouchMove = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length !== 1) return;
+
+    const target = e.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (target.closest("input, textarea")) return;
+
+    const deltaX = Math.abs(e.touches[0].clientX - dragStartX.current);
+    const deltaY = e.touches[0].clientY - dragStartY.current;
+    if (deltaY < 18 || deltaY < deltaX * 1.2) return;
+
+    const scrollEl = target.closest("[data-comment-scroll='true']") as HTMLElement | null;
+    if (scrollEl && scrollEl.scrollTop > 2) return;
+
+    dragShouldClose.current = true;
+    if (e.cancelable) e.preventDefault();
+  }, []);
+
+  const handleSheetTouchEnd = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+
+    const deltaX = Math.abs(touch.clientX - dragStartX.current);
+    const deltaY = touch.clientY - dragStartY.current;
+    const shouldClose = dragShouldClose.current && deltaY > 80 && deltaY > deltaX * 1.2;
+    dragShouldClose.current = false;
+
+    if (shouldClose) onClose();
+  }, [onClose]);
+
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
@@ -671,15 +710,13 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 28, stiffness: 300 }}
+            onTouchStart={handleSheetTouchStart}
+            onTouchMove={handleSheetTouchMove}
+            onTouchEnd={handleSheetTouchEnd}
           >
             {/* Drag handle */}
             <div
               className="flex justify-center pt-3 pb-2 cursor-grab"
-              onTouchStart={(e) => { dragStartY.current = e.touches[0].clientY; }}
-              onTouchEnd={(e) => {
-                const delta = e.changedTouches[0].clientY - dragStartY.current;
-                if (delta > 80) onClose();
-              }}
             >
               <div className="w-10 h-1 rounded-full bg-text-tertiary/40" />
             </div>
@@ -696,7 +733,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             </div>
 
             {/* Comment list */}
-            <div ref={listRef} className="flex-1 overflow-y-auto overscroll-contain px-4 py-3 space-y-4">
+            <div ref={listRef} data-comment-scroll="true" className="flex-1 overflow-y-auto overscroll-contain px-4 py-3 space-y-4">
               {loading ? (
                 <div className="space-y-4">
                   {[...Array(4)].map((_, i) => (
