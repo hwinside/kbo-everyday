@@ -8,7 +8,7 @@ import CountIndicator from "./CountIndicator";
 import type { GameState } from "@/lib/types";
 import type { GameLineup } from "@/lib/constants/games";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
-import playersRoster from "@/lib/constants/players-roster.json";
+import { resolveRosterPlayer } from "@/lib/utils/player-roster";
 
 interface LiveScoreboardProps {
   gameId: string;
@@ -25,7 +25,6 @@ interface LiveScoreboardProps {
 }
 
 export default function LiveScoreboard({
-  gameId,
   awayName,
   homeName,
   awayScore,
@@ -53,20 +52,19 @@ export default function LiveScoreboard({
   // Get pitcher stats from lineup
   const pitcherSide = isTop ? lineup?.home : lineup?.away;
 
-  // Find batter in BOTH lineups (mock data may not match inning direction)
-  const awayBatterData = lineup?.away.batters.find((b) => b.name === state.currentBatter);
-  const homeBatterData = lineup?.home.batters.find((b) => b.name === state.currentBatter);
-  const currentBatterData = awayBatterData || homeBatterData;
+  // Find batter on the attacking side first. Avoid name-only cross-team matches for 동명이인.
+  const batterSide = isTop ? lineup?.away : lineup?.home;
+  const currentBatterData = batterSide?.batters.find((b) => b.name === state.currentBatter);
 
   // Determine pitcher/batter team IDs for photos
   const pitcherTeamId = pitcherSide?.teamId;
-  const batterTeamId = awayBatterData ? lineup?.away.teamId : homeBatterData ? lineup?.home.teamId : undefined;
+  const batterTeamId = batterSide?.teamId;
 
   // Defensive team is the fielding team
   const defensiveSide = isTop ? lineup?.home : lineup?.away;
 
-  const pitcherRoster = state.currentPitcher ? (playersRoster as { name: string; kboId: string }[]).find(p => p.name === state.currentPitcher) : null;
-  const batterRoster = state.currentBatter ? (playersRoster as { name: string; kboId: string }[]).find(p => p.name === state.currentBatter) : null;
+  const pitcherRoster = state.currentPitcher ? resolveRosterPlayer({ name: state.currentPitcher, teamId: pitcherTeamId }) : null;
+  const batterRoster = state.currentBatter ? resolveRosterPlayer({ name: state.currentBatter, teamId: batterTeamId }) : null;
   const pitcherPhotoUrl = state.currentPitcher
     ? getPlayerPhotoUrl(state.currentPitcher, pitcherRoster?.kboId)
     : null;

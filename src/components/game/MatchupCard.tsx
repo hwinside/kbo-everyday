@@ -5,15 +5,12 @@ import Link from "next/link";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import batterStatsJson from "@/lib/constants/stats-2026-batters.json";
 import pitcherStatsJson from "@/lib/constants/stats-2026-pitchers.json";
-import playersRoster from "@/lib/constants/players-roster.json";
+import { resolveRosterPlayer } from "@/lib/utils/player-roster";
 import type { MatchupStats } from "@/app/api/game-relay/route";
 
-function getPlayerHref(name: string): string | null {
-  // 신규 통합 선수 라우트 사용 (755명 roster + KBO API 실시간)
-  // 레거시 `/teams/[slug]/players/[id]`는 LG 6명만 하드코딩되어 있어 대부분 선수 404 발생.
-  const player = (playersRoster as { name: string; kboId: string; teamId: number }[]).find(
-    (p) => p.name === name
-  );
+function getPlayerHref(name: string, teamId?: number): string | null {
+  // 신규 통합 선수 라우트 사용. 동명이인은 teamId/kboId 없이 name-only로 붙이지 않는다.
+  const player = resolveRosterPlayer({ name, teamId });
   if (!player) return null;
   return `/community/players/${player.kboId}`;
 }
@@ -43,20 +40,30 @@ interface MatchupCardProps {
   pitcherToday?: PitcherTodayStats | null;
   batterToday?: BatterTodayStats | null;
   relayMatchup?: MatchupStats;
+  currentPitcherTeamId?: number;
+  currentBatterTeamId?: number;
 }
 
-function lookupBatterAvg(name: string): string | null {
-  const found = (batterStatsJson as { name: string; avg: string }[]).find((b) => b.name === name);
+function lookupBatterAvg(name: string, teamId?: number): string | null {
+  const rosterPlayer = resolveRosterPlayer({ name, teamId });
+  if (!rosterPlayer) return null;
+  const found = (batterStatsJson as { avg: string; kboId?: string; playerId?: string }[]).find((b) =>
+    String(b.kboId) === rosterPlayer.kboId || String(b.playerId) === rosterPlayer.kboId,
+  );
   return found?.avg ?? null;
 }
 
-function lookupPitcherEra(name: string): string | null {
-  const found = (pitcherStatsJson as { name: string; era: string }[]).find((p) => p.name === name);
+function lookupPitcherEra(name: string, teamId?: number): string | null {
+  const rosterPlayer = resolveRosterPlayer({ name, teamId });
+  if (!rosterPlayer) return null;
+  const found = (pitcherStatsJson as { era: string; kboId?: string; playerId?: string }[]).find((p) =>
+    String(p.kboId) === rosterPlayer.kboId || String(p.playerId) === rosterPlayer.kboId,
+  );
   return found?.era ?? null;
 }
 
-function PlayerPhoto({ name, type }: { name: string; type: "pitcher" | "batter" }) {
-  const rosterPlayer = (playersRoster as { name: string; kboId: string }[]).find(p => p.name === name);
+function PlayerPhoto({ name, teamId }: { name: string; type: "pitcher" | "batter"; teamId?: number }) {
+  const rosterPlayer = resolveRosterPlayer({ name, teamId });
   const photoUrl = getPlayerPhotoUrl(name, rosterPlayer?.kboId);
   const borderColor = "#7ecb4a";
 
@@ -89,6 +96,8 @@ export default function MatchupCard({
   pitcherToday,
   batterToday,
   relayMatchup,
+  currentPitcherTeamId,
+  currentBatterTeamId,
 }: MatchupCardProps) {
   if (!currentPitcher && !currentBatter) return null;
 
@@ -117,8 +126,8 @@ export default function MatchupCard({
     avg: relayBatter.seasonAvg > 0 ? `.${Math.round(relayBatter.seasonAvg * 1000)}` : (batterToday?.avg ?? ".000"),
   } : batterToday;
 
-  const resolvedEra = pitcherEra ?? (relayPitcher && relayPitcher.seasonEra > 0 ? relayPitcher.seasonEra.toFixed(2) : null) ?? (currentPitcher ? lookupPitcherEra(currentPitcher) : null);
-  const resolvedAvg = batterAvg ?? (relayBatter && relayBatter.seasonAvg > 0 ? `.${Math.round(relayBatter.seasonAvg * 1000)}` : null) ?? (currentBatter ? lookupBatterAvg(currentBatter) : null);
+  const resolvedEra = pitcherEra ?? (relayPitcher && relayPitcher.seasonEra > 0 ? relayPitcher.seasonEra.toFixed(2) : null) ?? (currentPitcher ? lookupPitcherEra(currentPitcher, currentPitcherTeamId) : null);
+  const resolvedAvg = batterAvg ?? (relayBatter && relayBatter.seasonAvg > 0 ? `.${Math.round(relayBatter.seasonAvg * 1000)}` : null) ?? (currentBatter ? lookupBatterAvg(currentBatter, currentBatterTeamId) : null);
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3.5 py-2.5 mx-3 mb-2.5 bg-bg-tertiary rounded-[10px]">
@@ -126,11 +135,11 @@ export default function MatchupCard({
       <div className="min-w-0">
         {currentPitcher && (
           <div className="flex items-center gap-2.5 min-w-0">
-            <PlayerPhoto name={currentPitcher} type="pitcher" />
+            <PlayerPhoto name={currentPitcher} type="pitcher" teamId={currentPitcherTeamId} />
             <div className="min-h-[52px] min-w-0 flex flex-col justify-center">
               <div className="text-[11px] text-text-secondary font-semibold">투수</div>
               {(() => {
-                const href = getPlayerHref(currentPitcher);
+                const href = getPlayerHref(currentPitcher, currentPitcherTeamId);
                 return href ? (
                   <Link href={href} className="text-[15px] font-bold truncate hover:underline" style={{ color: "var(--matchup-name)" }}>{currentPitcher}</Link>
                 ) : (
@@ -177,7 +186,7 @@ export default function MatchupCard({
             <div className="text-right min-h-[52px] min-w-0 flex flex-col justify-center">
               <div className="text-[11px] text-text-secondary font-semibold">타자</div>
               {(() => {
-                const href = getPlayerHref(currentBatter);
+                const href = getPlayerHref(currentBatter, currentBatterTeamId);
                 return href ? (
                   <Link href={href} className="text-[15px] font-bold truncate hover:underline" style={{ color: "var(--matchup-name)" }}>{currentBatter}</Link>
                 ) : (
@@ -210,7 +219,7 @@ export default function MatchupCard({
                 )}
               </div>
             </div>
-            <PlayerPhoto name={currentBatter} type="batter" />
+            <PlayerPhoto name={currentBatter} type="batter" teamId={currentBatterTeamId} />
           </div>
         )}
       </div>

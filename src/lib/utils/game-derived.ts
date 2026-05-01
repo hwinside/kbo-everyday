@@ -6,15 +6,18 @@ interface GameBase {
   awayScore: number;
   homeScore: number;
   status: string;
+  awayTeamId?: number;
+  homeTeamId?: number;
 }
 
 // Convert LineupEntry[] to the shape FieldViewV2 expects
-function toDefenders(entries: LineupEntry[]) {
+function toDefenders(entries: LineupEntry[], teamId?: number) {
   return entries.map(e => ({
     order: e.order,
     name: e.name,
     position: e.position,
     avg: "",
+    teamId,
   }));
 }
 
@@ -59,9 +62,11 @@ export function deriveGameState(
 
   const isTop = currentInning.includes("초");
   const detailLineup = gameDetail?.lineup ?? null;
+  const defensiveTeamId = isTop ? game.homeTeamId : game.awayTeamId;
+  const battingTeamId = isTop ? game.awayTeamId : game.homeTeamId;
 
   const defensiveSide = detailLineup
-    ? (isTop ? toDefenders(detailLineup.home) : toDefenders(detailLineup.away))
+    ? (isTop ? toDefenders(detailLineup.home, game.homeTeamId) : toDefenders(detailLineup.away, game.awayTeamId))
     : null;
 
   // On-deck batters from lineup
@@ -118,6 +123,11 @@ export function deriveGameState(
     isTop,
     detailLineup,
     defensiveSide,
+    defensiveTeamId,
+    battingTeamId,
+    currentPitcherTeamId: defensiveTeamId,
+    currentBatterTeamId: battingTeamId,
+    runnerTeamId: battingTeamId,
     onDeckBatters,
     pitcherToday,
     batterToday,

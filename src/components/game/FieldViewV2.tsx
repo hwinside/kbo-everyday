@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import type { LineupPlayer } from "@/lib/constants/games";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
-import playersRoster from "@/lib/constants/players-roster.json";
+import { resolveRosterPlayer } from "@/lib/utils/player-roster";
 
 
 interface FieldViewV2Props {
@@ -17,6 +17,9 @@ interface FieldViewV2Props {
   runner1bName?: string | null;
   runner2bName?: string | null;
   runner3bName?: string | null;
+  currentPitcherTeamId?: number;
+  currentBatterTeamId?: number;
+  runnerTeamId?: number;
   onDeckBatters?: { order: number; name: string }[];
   batterBats?: "L" | "R" | "S" | null; // 좌타/우타/스위치
   balls?: number;
@@ -39,22 +42,24 @@ function PlayerMarker({
   label,
   posLabel,
   className,
+  teamId,
+  kboId,
 }: {
   name: string;
   type: MarkerType;
   label?: string;
   posLabel?: string; // 포지션명 (CF, 2B 등)
   className: string;
+  teamId?: number;
+  kboId?: string;
 }) {
   const borderColor = BORDER_COLORS[type];
   const isHighlight = type === "pitcher" || type === "runner" || type === "batter";
   const nameColor =
     type === "runner" ? "var(--field-runner-text)" : type === "batter" ? "var(--field-highlight-text)" : type === "pitcher" ? "var(--field-highlight-text)" : "var(--field-label-text)";
 
-  // Player link lookup
-  const rosterPlayer = (playersRoster as { name: string; kboId: string; teamId: number }[]).find(
-    (p) => p.name === name
-  );
+  // Player link/photo lookup must not fall back to name-only for 동명이인.
+  const rosterPlayer = resolveRosterPlayer({ name, kboId, teamId });
   const playerHref = rosterPlayer ? `/community/players/${rosterPlayer.kboId}` : null;
   const photoUrl = getPlayerPhotoUrl(name, rosterPlayer?.kboId);
 
@@ -142,6 +147,9 @@ export default function FieldViewV2({
   runner1bName,
   runner2bName,
   runner3bName,
+  currentPitcherTeamId,
+  currentBatterTeamId,
+  runnerTeamId,
   onDeckBatters,
   batterBats,
   balls = 0,
@@ -205,6 +213,8 @@ export default function FieldViewV2({
               label={pos}
               posLabel={pos}
               className={POS_CLASSES[pos]}
+              teamId={defender.teamId}
+              kboId={defender.kboId}
             />
           );
         })}
@@ -217,6 +227,7 @@ export default function FieldViewV2({
             label="P"
             posLabel="P"
             className={POS_CLASSES.P}
+            teamId={currentPitcherTeamId}
           />
         )}
 
@@ -227,6 +238,7 @@ export default function FieldViewV2({
             type="runner"
             label="R"
             className="bottom-[26%] right-[20%]"
+            teamId={runnerTeamId}
           />
         )}
         {runner2b && (
@@ -235,6 +247,7 @@ export default function FieldViewV2({
             type="runner"
             label="R"
             className="bottom-[58%] left-1/2 -translate-x-1/2"
+            teamId={runnerTeamId}
           />
         )}
         {runner3b && (
@@ -243,6 +256,7 @@ export default function FieldViewV2({
             type="runner"
             label="R"
             className="bottom-[26%] left-[20%]"
+            teamId={runnerTeamId}
           />
         )}
 
@@ -253,6 +267,7 @@ export default function FieldViewV2({
             type="batter"
             label="AB"
             className={batterClass}
+            teamId={currentBatterTeamId}
           />
         )}
 

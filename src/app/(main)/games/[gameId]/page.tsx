@@ -325,6 +325,9 @@ export default function GameDetailPage() {
             runner1bName={d.runner1bName}
             runner2bName={d.runner2bName}
             runner3bName={d.runner3bName}
+            currentPitcherTeamId={d.currentPitcherTeamId}
+            currentBatterTeamId={d.currentBatterTeamId}
+            runnerTeamId={d.runnerTeamId}
             onDeckBatters={d.onDeckBatters}
             balls={d.currentBalls}
             strikes={d.currentStrikes}
@@ -350,6 +353,8 @@ export default function GameDetailPage() {
             pitcherToday={d.pitcherToday}
             batterToday={d.batterToday}
             relayMatchup={gameRelay?.matchup}
+            currentPitcherTeamId={d.currentPitcherTeamId}
+            currentBatterTeamId={d.currentBatterTeamId}
           />
         )}
       </motion.div>
