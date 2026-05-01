@@ -130,7 +130,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   // - Toggle body.kbd-open on focusin to hide TabBar via CSS.
   // - Poll vv read at multiple offsets to cover iOS first-focus race.
   const [keyboardInset, setKeyboardInset] = useState(0);
-  // keyboardViewport 제거 — top/bottom 방식으로 전환하여 vv.offsetTop 변동 영향 제거
+  const [keyboardViewport, setKeyboardViewport] = useState({ height: 0, offsetTop: 0 });
   const composerBottom = `calc(52px + env(safe-area-inset-bottom, 0px))`;
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
@@ -176,6 +176,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         if (!focusLockRef.current) return;
         stableKeyboardInsetRef.current = hidden;
         setKeyboardInset(hidden);
+        setKeyboardViewport({ height: vv.height, offsetTop: vv.offsetTop });
         open();
         if (focusLockRef.current) {
           // Body는 배경 고정만 담당한다. 실제 스크롤은 fixed chat panel 내부 메시지 영역에서만 허용.
@@ -189,6 +190,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         if (focusLockRef.current) return;
         stableKeyboardInsetRef.current = 0;
         setKeyboardInset(0);
+        setKeyboardViewport({ height: 0, offsetTop: 0 });
         close();
         unlockPageScroll();
       }
@@ -280,8 +282,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         keyboardInset > 0 && "fixed left-0 right-0 z-[96] bg-bg-primary overflow-hidden"
       )}
       style={keyboardInset > 0 ? {
-        top: 0,
-        bottom: `${keyboardInset}px`,
+        top: `${keyboardViewport.offsetTop}px`,
+        height: `${keyboardViewport.height || window.innerHeight - keyboardInset}px`,
       } : undefined}
     >
       {/* Room selector */}
