@@ -1,5 +1,5 @@
 import { supabase } from "./client";
-import { isNative } from "@/lib/capacitor/platform";
+import { isIOS, isNative } from "@/lib/capacitor/platform";
 import { openOAuthInBrowser } from "@/lib/capacitor/auth";
 
 // Always use the canonical domain for OAuth callbacks.
@@ -7,13 +7,18 @@ import { openOAuthInBrowser } from "@/lib/capacitor/auth";
 // opens in SFSafariViewController which won't return to the PWA context.
 // Hardcoding ensures we always land on keubo.fan.
 const CALLBACK_URL = "https://keubo.fan/auth/callback";
+const NATIVE_IOS_CALLBACK_URL = `${CALLBACK_URL}?native=ios`;
+
+function getOAuthCallbackUrl() {
+  return isIOS ? NATIVE_IOS_CALLBACK_URL : CALLBACK_URL;
+}
 
 /** 구글 로그인 — 네이티브: Custom Tabs, 웹: 동일 탭 OAuth */
 export async function signInWithGoogle() {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
-      redirectTo: CALLBACK_URL,
+      redirectTo: getOAuthCallbackUrl(),
       skipBrowserRedirect: true,
       queryParams: {
         prompt: "select_account",
@@ -50,7 +55,7 @@ export async function signInWithApple() {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "apple",
     options: {
-      redirectTo: CALLBACK_URL,
+      redirectTo: getOAuthCallbackUrl(),
       skipBrowserRedirect: true,
     },
   });
@@ -69,7 +74,7 @@ export async function signInWithKakao() {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "kakao",
     options: {
-      redirectTo: CALLBACK_URL,
+      redirectTo: getOAuthCallbackUrl(),
       skipBrowserRedirect: true,
     },
   });

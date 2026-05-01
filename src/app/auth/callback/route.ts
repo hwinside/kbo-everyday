@@ -7,6 +7,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 // in the Vercel preview URL after OAuth.
 const CANONICAL_ORIGIN =
   process.env.NEXT_PUBLIC_SITE_URL || "https://keubo.fan";
+const IOS_NATIVE_CALLBACK_ORIGIN = "fan.keubo.app://auth/callback";
 
 function buildRedirectWithCookies(
   url: string,
@@ -29,6 +30,7 @@ function buildRedirectWithCookies(
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get("code");
+  const isNativeIOS = requestUrl.searchParams.get("native") === "ios";
 
   // 진단용 요청 메타 (PKCE 간헐 에러 원인 추적 목적 — 2026-04-18)
   // User-Agent / Referer / x-forwarded-* 기록해 모바일 vs 데스크톱, 출발 페이지 파악 가능하도록.
@@ -99,9 +101,12 @@ export async function GET(request: NextRequest) {
           ? `#access_token=${session.access_token}&refresh_token=${session.refresh_token}&type=recovery`
           : "";
 
-        const redirectUrl = needsSetup
+        const webRedirectUrl = needsSetup
           ? `${CANONICAL_ORIGIN}/setup${hashParams}`
           : `${CANONICAL_ORIGIN}${hashParams}`;
+        const redirectUrl = isNativeIOS && hashParams
+          ? `${IOS_NATIVE_CALLBACK_ORIGIN}?next=${encodeURIComponent(needsSetup ? "/setup" : "/")}${hashParams}`
+          : webRedirectUrl;
 
         console.log("[auth/callback]", {
           userId: data.user.id.slice(0, 8),
@@ -109,6 +114,7 @@ export async function GET(request: NextRequest) {
           hasProfile: !!profile,
           needsSetup,
           hasHash: !!hashParams,
+          isNativeIOS,
           cookieCount: pendingCookies.length,
           // 진단 메타 (모바일 vs 데스크톱 / apex vs www 통계 용, 1일짜리)
           ...diagnosticMeta,

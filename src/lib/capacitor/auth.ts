@@ -30,8 +30,10 @@ export function registerDeepLinkListener(): void {
   listenerRegistered = true;
 
   App.addListener("appUrlOpen", async ({ url }) => {
-    // keubo.fan URL에서 OAuth 토큰/코드 추출
-    if (!url.includes("keubo.fan")) return;
+    // keubo.fan Universal Link 또는 fan.keubo.app custom scheme에서 OAuth 토큰/코드 추출
+    const isKeuboUniversalLink = url.includes("keubo.fan");
+    const isKeuboCustomScheme = url.startsWith("fan.keubo.app://");
+    if (!isKeuboUniversalLink && !isKeuboCustomScheme) return;
 
     try {
       await Browser.close();
