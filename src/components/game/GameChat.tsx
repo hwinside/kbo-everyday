@@ -297,7 +297,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       )}
       style={keyboardInset > 0 ? {
         top: 0,
-        bottom: `${keyboardInset}px`,
+        height: `${window.innerHeight - keyboardInset}px`,
       } : undefined}
     >
       {/* Room selector */}
