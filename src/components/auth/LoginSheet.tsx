@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
-import { signInWithGoogle, signInWithKakao, signInWithNaver } from "@/lib/supabase/auth";
+import { signInWithApple, signInWithGoogle, signInWithKakao, signInWithNaver } from "@/lib/supabase/auth";
 import { detectInApp } from "@/lib/detect-inapp";
 import InAppBrowserModal from "./InAppBrowserModal";
 
@@ -14,7 +14,7 @@ interface LoginSheetProps {
   onClose: () => void;
 }
 
-type Provider = "naver" | "kakao" | "google";
+type Provider = "apple" | "naver" | "kakao" | "google";
 
 export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
   const [inAppModalOpen, setInAppModalOpen] = useState(false);
@@ -30,6 +30,7 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
   }, [isOpen]);
 
   const runProvider = useCallback((provider: Provider) => {
+    if (provider === "apple") return signInWithApple();
     if (provider === "naver") return signInWithNaver();
     if (provider === "kakao") return signInWithKakao();
     return signInWithGoogle();
@@ -120,6 +121,16 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
                     <path d="M10 3.96c1.47 0 2.78.5 3.82 1.5l2.86-2.87C14.96.99 12.7 0 10 0A9.99 9.99 0 001.07 5.53l3.35 2.58C5.2 5.72 7.4 3.96 10 3.96z" fill="#EA4335"/>
                   </svg>
                   Google로 시작하기
+                </button>
+
+                <button
+                  onClick={() => handleProviderClick("apple")}
+                  className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-medium text-sm transition-transform active:scale-[0.98] bg-black text-white dark:bg-white dark:text-black"
+                >
+                  <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M15.07 10.41c-.01-1.63.87-2.87 2.64-3.78-.98-1.42-2.47-2.2-4.43-2.36-1.86-.16-3.89 1.1-4.64 1.1-.79 0-2.52-1.04-3.83-1.04C2.52 4.37 0 6.67 0 10.6c0 1.16.21 2.36.63 3.6.56 1.63 2.58 5.63 4.7 5.56 1.1-.02 1.88-.79 3.52-.79 1.59 0 2.31.79 3.52.77 2.15-.04 3.95-3.65 4.49-5.29-2.87-1.37-2.79-4.01-2.79-4.04zM12.48 2.81C13.67 1.4 13.56 0.11 13.52 0c-1.13.07-2.44.78-3.19 1.67-.82.96-1.3 2.13-1.2 3.44 1.23.09 2.36-.54 3.35-2.3z"/>
+                  </svg>
+                  Apple로 시작하기
                 </button>
               </div>
 

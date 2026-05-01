@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "fan.keubo.app",
+      "sha256_cert_fingerprints": [
+        "72:38:AF:92:53:20:F4:82:F7:9E:6F:52:AF:DB:7C:C3:C2:F9:32:3E:5D:67:75:88:B0:2B:36:55:A6:E8:A9:60"
+      ]
+    }
+  }
+]
