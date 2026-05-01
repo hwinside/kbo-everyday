@@ -27,6 +27,7 @@ import NotificationCard from "@/components/my/NotificationCard";
 import MenuSection from "@/components/my/MenuSection";
 import ThemeToggleCard from "@/components/my/ThemeToggleCard";
 import PwaGuideModal from "@/components/my/PwaGuideModal";
+import DeleteAccountSheet from "@/components/my/DeleteAccountSheet";
 
 export default function MyPage() {
   const [nicknameStatus, setNicknameStatus] = useState<{
@@ -47,6 +48,7 @@ export default function MyPage() {
   const [showFeedback, setShowFeedback] = useState(false);
   const [showAvatarSelect, setShowAvatarSelect] = useState(false);
   const [showNicknameEdit, setShowNicknameEdit] = useState(false);
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
   const router = useRouter();
 
@@ -231,9 +233,14 @@ export default function MyPage() {
           <GlassCard className="flex flex-col items-center gap-3 py-6">
             <p className="text-sm text-green-400">✅ 로그인 완료</p>
             <p className="text-xs text-text-tertiary">{user.email}</p>
-            <button onClick={() => signOut()} className="rounded-full bg-bg-tertiary px-8 py-2.5 text-sm font-semibold text-text-secondary">
-              로그아웃
-            </button>
+            <div className="flex gap-3">
+              <button onClick={() => signOut()} className="rounded-full bg-bg-tertiary px-8 py-2.5 text-sm font-semibold text-text-secondary">
+                로그아웃
+              </button>
+              <button onClick={() => setShowDeleteAccount(true)} className="rounded-full px-6 py-2.5 text-sm font-semibold text-red-400 hover:text-red-300">
+                계정 삭제
+              </button>
+            </div>
           </GlassCard>
         </motion.div>
       )}
@@ -275,6 +282,10 @@ export default function MyPage() {
         teamId={teamId ?? 1}
         onComplete={handlePlayerChange}
         onSkip={() => setShowPlayerSelect(false)}
+      />
+      <DeleteAccountSheet
+        isOpen={showDeleteAccount}
+        onClose={() => setShowDeleteAccount(false)}
       />
     </div>
   );
