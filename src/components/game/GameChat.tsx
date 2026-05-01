@@ -130,6 +130,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   // - Toggle body.kbd-open on focusin to hide TabBar via CSS.
   // - Poll vv read at multiple offsets to cover iOS first-focus race.
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const [chatDebug, setChatDebug] = useState<string | null>(null);
   const keyboardFocusStartedAtRef = useRef(0);
   const lastGoodKeyboardInsetRef = useRef(0);
   const composerBottom = `calc(52px + env(safe-area-inset-bottom, 0px))`;
@@ -170,8 +171,24 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       bodyLockStateRef.current = null;
       window.scrollTo(0, state.scrollY);
     };
+    const alignAfterClose = () => {
+      [0, 50, 150, 300, 600].forEach((ms) => {
+        setTimeout(() => requestAnimationFrame(alignLatestMessagesAboveComposer), ms);
+      });
+    };
+    const forceCloseKeyboardPanel = () => {
+      focusLockRef.current = false;
+      keyboardFocusStartedAtRef.current = 0;
+      stableKeyboardInsetRef.current = 0;
+      setKeyboardInset(0);
+      close();
+      unlockPageScroll();
+      alignAfterClose();
+    };
+    const debugEnabled = new URLSearchParams(window.location.search).get("chatDebug") === "1";
     const update = () => {
-      const offsetTop = Math.max(0, vv.offsetTop);
+      const rawOffsetTop = vv.offsetTop;
+      const offsetTop = Math.max(0, rawOffsetTop);
       const hidden = Math.max(0, window.innerHeight - vv.height - offsetTop);
       if (hidden > 40) {
         // 입력 포커스 없으면 무시 — iOS overscroll bounce로 hidden이 일시적으로 뛰는 것 방지
@@ -194,6 +211,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
           lastGoodKeyboardInsetRef.current = nextInset;
         }
         setKeyboardInset(nextInset);
+        if (debugEnabled) {
+          setChatDebug(`open ih=${Math.round(window.innerHeight)} vh=${Math.round(vv.height)} ot=${Math.round(rawOffsetTop)} h=${Math.round(hidden)} bh=${Math.round(boundedHidden)} inset=${Math.round(nextInset)} fg=${focusedMs}`);
+        }
         open();
         if (focusLockRef.current) {
           // Body는 배경 고정만 담당한다. 실제 스크롤은 fixed chat panel 내부 메시지 영역에서만 허용.
@@ -203,12 +223,17 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
           });
         }
       } else {
-        // iOS 스크롤 중 일시적으로 0에 가까운 값이 튀는 경우만 무시한다.
+        if (debugEnabled) {
+          setChatDebug(`close? ih=${Math.round(window.innerHeight)} vh=${Math.round(vv.height)} ot=${Math.round(rawOffsetTop)} h=${Math.round(hidden)} inset=${Math.round(stableKeyboardInsetRef.current)} focus=${focusLockRef.current ? 1 : 0}`);
+        }
+        // 포커스 중 hidden=0 근처로 튀는 iOS transient는 닫힘으로 오판하지 않는다.
+        // 실제 닫힘은 focusout의 forceCloseKeyboardPanel()에서 처리한다.
         if (focusLockRef.current) return;
         stableKeyboardInsetRef.current = 0;
         setKeyboardInset(0);
         close();
         unlockPageScroll();
+        alignAfterClose();
       }
     };
     // Reset on mount so stale kbd-open from previous pages doesn't leak in.
@@ -235,11 +260,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       focusLockRef.current = false;
       keyboardFocusStartedAtRef.current = 0;
       stableKeyboardInsetRef.current = 0;
-      setTimeout(update, 50);
-      setTimeout(() => {
-        update();
-        unlockPageScroll();
-      }, 300);
+      setTimeout(forceCloseKeyboardPanel, 50);
+      setTimeout(forceCloseKeyboardPanel, 300);
+      setTimeout(forceCloseKeyboardPanel, 600);
     };
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
@@ -310,6 +333,12 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         paddingBottom: `${keyboardInset}px`,
       } : undefined}
     >
+      {chatDebug && (
+        <div className="fixed left-2 top-16 z-[9999] rounded bg-black/80 px-2 py-1 text-[10px] text-white pointer-events-none">
+          {chatDebug}
+        </div>
+      )}
+
       {/* Room selector */}
       <div className="relative">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
@@ -444,7 +473,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
               name="kbo-chat-body"
               maxLength={120}
               className={clsx(
-                "w-full h-10 px-4 rounded-full text-sm",
+                "w-full h-10 px-4 rounded-full text-base",
                 "bg-bg-tertiary text-text-primary placeholder:text-text-tertiary",
                 "border focus:outline-none transition-colors",
                 !canWrite && "opacity-50",
