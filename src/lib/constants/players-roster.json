@@ -304,6 +304,14 @@
     "backNo": "49"
   },
   {
+    "name": "권혁빈",
+    "kboId": "55371",
+    "teamId": 10,
+    "position": "야수",
+    "backNo": "00",
+    "team": "키움"
+  },
+  {
     "name": "권현규",
     "kboId": "56794",
     "team": "한화",
@@ -570,10 +578,10 @@
   {
     "name": "김명신",
     "kboId": "67246",
-    "team": "두산",
     "teamId": 2,
     "position": "투수",
-    "backNo": "46"
+    "backNo": "46",
+    "team": "두산"
   },
   {
     "name": "김무신",
@@ -1090,10 +1098,10 @@
   {
     "name": "김정민",
     "kboId": "53865",
-    "team": "SSG",
     "teamId": 4,
     "position": "외야수",
-    "backNo": "04"
+    "backNo": "04",
+    "team": "SSG"
   },
   {
     "name": "김정엽",
@@ -1286,6 +1294,14 @@
     "teamId": 7,
     "position": "투수",
     "backNo": "132"
+  },
+  {
+    "name": "김태경",
+    "kboId": "50992",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "60",
+    "team": "NC"
   },
   {
     "name": "김태군",
@@ -3217,19 +3233,19 @@
   },
   {
     "name": "양현종",
+    "kboId": "55370",
+    "teamId": 10,
+    "position": "내야수",
+    "backNo": "60",
+    "team": "키움"
+  },
+  {
+    "name": "양현종",
     "kboId": "77637",
     "teamId": 6,
     "position": "투수",
     "backNo": "54",
     "team": "KIA"
-  },
-  {
-    "name": "양현종",
-    "kboId": "55370",
-    "team": "키움",
-    "teamId": 10,
-    "position": "내야수",
-    "backNo": "60"
   },
   {
     "name": "어윤성",
@@ -3802,10 +3818,10 @@
   {
     "name": "윤준혁",
     "kboId": "50092",
-    "team": "NC",
     "teamId": 5,
     "position": "내야수",
-    "backNo": "31"
+    "backNo": "31",
+    "team": "NC"
   },
   {
     "name": "윤준호",
@@ -4960,6 +4976,14 @@
     "team": "키움"
   },
   {
+    "name": "전태현",
+    "kboId": "55397",
+    "teamId": 10,
+    "position": "야수",
+    "backNo": "97",
+    "team": "키움"
+  },
+  {
     "name": "정구범",
     "kboId": "50995",
     "team": "NC",
@@ -5394,10 +5418,10 @@
   {
     "name": "주현상",
     "kboId": "65707",
-    "team": "한화",
     "teamId": 9,
     "position": "투수",
-    "backNo": "66"
+    "backNo": "66",
+    "team": "한화"
   },
   {
     "name": "주효상",
@@ -5682,10 +5706,10 @@
   {
     "name": "최주형",
     "kboId": "56215",
-    "team": "두산",
     "teamId": 2,
     "position": "투수",
-    "backNo": "15"
+    "backNo": "15",
+    "team": "두산"
   },
   {
     "name": "최주환",
