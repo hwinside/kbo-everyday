@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-05-02 04:52 KST — 댓글 시트 아래 스와이프 닫기 추가
+
+- **환경:** prod/web (Vercel)
+- **Commit:** 825460b91e7a43aa17f83e9176c59f40fa6f282c
+- **변경사항:**
+  - 댓글 시트 전체에서 아래로 쓸어내리면 닫히도록 터치 제스처 추가
+  - 댓글 목록이 스크롤된 상태에서는 기존 스크롤을 우선하고, 최상단에서 아래 스와이프할 때만 닫힘
+  - 입력창 터치/입력 중 제스처 오작동 방지
+- **리스크/롤백:** 낮음. 댓글 시트 터치 핸들러만 추가, 문제 시 해당 커밋 revert
+- **확인 항목:**
+  - [x] `pnpm exec tsc --noEmit` 통과
+  - [x] `pnpm exec eslint src/components/community/CommentSheet.tsx` error 0 (기존 warning 3개)
+  - [x] `pnpm build` 통과
+  - [x] 로컬 모바일 viewport에서 touchstart/move/end 아래 스와이프 시 시트 닫힘 확인
+
+---
+
 ## 2026-05-02 04:40 KST — 사진게시판 댓글 시트 iOS viewport 안정화
 
 - **환경:** prod/web (Vercel)
