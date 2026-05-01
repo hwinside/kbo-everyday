@@ -30,20 +30,19 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
 
   return (
     <>
-      {/* 롱폼: 가로 썸네일 → 유튜브 이동 */}
+      {/* 롱폼: 세로 썸네일 → 유튜브 이동 */}
       {longVideos.length > 0 && (
         <section className="mb-6">
-          <h2 className="text-base font-bold text-text-primary mb-3">📺 공식 영상</h2>
-          <div className="flex gap-3 overflow-x-auto hide-scrollbar pb-2">
+          <div className="space-y-3">
             {longVideos.map((v) => (
               <a
                 key={v.id}
                 href={`https://www.youtube.com/watch?v=${v.id}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="shrink-0 group"
+                className="block group"
               >
-                <div className="relative w-[220px] rounded-xl overflow-hidden">
+                <div className="relative w-full rounded-xl overflow-hidden">
                   <img
                     src={v.thumbnail}
                     alt={v.title}
@@ -55,9 +54,7 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
                     </div>
                   </div>
                 </div>
-                <p className="mt-2 text-xs text-text-secondary line-clamp-2 w-[220px] leading-relaxed">
-                  {v.title}
-                </p>
+                {/* 타이틀 제거 — 썸네일만 표시 */}
               </a>
             ))}
           </div>
