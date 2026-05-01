@@ -93,11 +93,27 @@ export default function TeamMatchupsPage() {
         {data?.opponents.map((opp) => {
           const oppTeam = getTeamBySlug(opp.slug);
           const played = opp.wins + opp.losses;
-          const barPct = played > 0 ? opp.winPct * 100 : 50;
 
-          let barColor = teamColor;
-          if (opp.winPct >= 0.6) barColor = "#22c55e"; // green
-          else if (opp.winPct <= 0.4 && played > 0) barColor = "#737373"; // gray
+          // 전승이면 초록 100%, 전패면 빨강 100%, 비김이면 50%
+          let barPct: number;
+          let barColor: string;
+          if (played === 0) {
+            barPct = 0;
+            barColor = "#737373";
+          } else if (opp.winPct === 0) {
+            // 전패: 빨간 바 100%
+            barPct = 100;
+            barColor = "#ef4444";
+          } else if (opp.winPct >= 0.6) {
+            barPct = opp.winPct * 100;
+            barColor = "#22c55e";
+          } else if (opp.winPct <= 0.4) {
+            barPct = opp.winPct * 100;
+            barColor = "#ef4444";
+          } else {
+            barPct = opp.winPct * 100;
+            barColor = teamColor;
+          }
 
           return (
             <div
