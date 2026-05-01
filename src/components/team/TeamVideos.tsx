@@ -55,9 +55,7 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
                     </div>
                   </div>
                 </div>
-                <p className="mt-2 text-sm text-text-secondary line-clamp-2 leading-relaxed">
-                  {v.title}
-                </p>
+                {/* 타이틀 제거 — 썸네일만 표시 */}
               </a>
             ))}
           </div>

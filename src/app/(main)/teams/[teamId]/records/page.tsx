@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, ChevronDown } from "lucide-react";
 import { getTeamBySlug, getTeamBgColor } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
 
@@ -61,7 +61,7 @@ function StatBar({
   const pct = total > 0 ? ((total - rank + 1) / total) * 100 : 0;
   return (
     <div>
-      <button onClick={onClick} className="flex items-center gap-3 py-2 w-full text-left cursor-pointer">
+      <button onClick={onClick} className="flex items-center gap-3 py-2 w-full text-left cursor-pointer group">
         <span className="w-12 text-xs text-text-tertiary shrink-0">{label}</span>
         <div className="flex-1 h-2 rounded-full bg-bg-tertiary/50 overflow-hidden">
           <div
@@ -81,6 +81,7 @@ function StatBar({
         >
           {rank}위
         </span>
+        <ChevronDown size={14} className={`text-text-tertiary transition-transform shrink-0 ${expanded ? "rotate-180" : ""}`} />
       </button>
       {expanded && (
         <div className="mb-2 rounded-xl bg-bg-glass/60 overflow-hidden">

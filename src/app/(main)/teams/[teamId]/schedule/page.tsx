@@ -166,53 +166,44 @@ export default function TeamSchedulePage() {
 
               let bgClass = "";
               if (game?.result === "W") bgClass = "bg-green-500/15";
-              else if (game?.result === "L") bgClass = "bg-neutral-500/15";
+              else if (game?.result === "L") bgClass = "bg-red-500/10";
               else if (game?.status === "live") bgClass = "bg-red-500/15";
 
               return (
                 <div
                   key={day}
-                  className={`flex flex-col items-center justify-start rounded-lg p-0.5 aspect-square ${bgClass}`}
+                  className={`flex flex-col items-center justify-center rounded-lg aspect-square ${bgClass}`}
                   style={
                     game?.status === "scheduled"
                       ? { border: `1px solid ${teamColor}30` }
                       : undefined
                   }
                 >
-                  <span className="text-[10px] text-text-tertiary leading-tight">
+                  <span className="text-[10px] text-text-tertiary leading-none">
                     {day}
                   </span>
                   {opponentTeam && (
-                    <div className="mt-0.5">
-                      <TeamLogo team={opponentTeam} size={18} />
+                    <div className="my-0.5">
+                      <TeamLogo team={opponentTeam} size={26} />
                     </div>
                   )}
                   {game && (
-                    <span className="text-[9px] text-text-secondary leading-tight mt-0.5">
-                      {game.home ? "홈" : "@"}
-                    </span>
-                  )}
-                  {game?.result && (
-                    <span
-                      className={`text-[9px] font-bold leading-tight ${
-                        game.result === "W"
-                          ? "text-green-400"
-                          : game.result === "L"
-                          ? "text-neutral-400"
-                          : "text-text-secondary"
-                      }`}
-                    >
-                      {game.result}
-                    </span>
-                  )}
-                  {game?.status === "live" && (
-                    <span className="text-[9px] font-bold text-red-400 leading-tight">
-                      LIVE
-                    </span>
-                  )}
-                  {game?.status === "cancelled" && (
-                    <span className="text-[9px] text-text-tertiary leading-tight">
-                      취소
+                    <span className={`text-[9px] font-bold leading-none ${
+                      game.result === "W"
+                        ? "text-green-400"
+                        : game.result === "L"
+                        ? "text-red-400"
+                        : game.status === "live"
+                        ? "text-red-400"
+                        : "text-text-secondary"
+                    }`}>
+                      {game.result
+                        ? game.result
+                        : game.status === "live"
+                        ? "LIVE"
+                        : game.status === "cancelled"
+                        ? "취소"
+                        : game.home ? "홈" : "@"}
                     </span>
                   )}
                 </div>

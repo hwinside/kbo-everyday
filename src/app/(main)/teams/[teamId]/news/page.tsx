@@ -67,27 +67,29 @@ export default function TeamNewsPage() {
             관련 기사가 없습니다
           </div>
         ) : (
-          <div className="space-y-2">
-            {news.map((item, i) => (
-              <a key={i} href={item.link} target="_blank" rel="noopener noreferrer">
-                <GlassCard pressable className="p-3">
-                  <div className="flex items-start gap-3">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-text-primary line-clamp-2">
-                        {item.title}
-                      </p>
-                      <p className="text-xs text-text-tertiary mt-1 line-clamp-1">
-                        {item.description}
-                      </p>
-                      <p className="text-xs text-text-tertiary mt-1">
+          <div className="space-y-3">
+            {news.map((item, i) => {
+              const source = item.link.match(/\/\/(?:www\.)?([^/]+)/)?.[1]?.replace(/\.com$|\.co\.kr$|\.kr$/, "") ?? "";
+              return (
+                <a key={i} href={item.link} target="_blank" rel="noopener noreferrer">
+                  <GlassCard pressable className="p-4">
+                    <p className="text-sm font-bold text-text-primary line-clamp-2 leading-snug">
+                      {item.title.replace(/<[^>]+>/g, "")}
+                    </p>
+                    <p className="text-xs text-text-secondary mt-2 line-clamp-2 leading-relaxed">
+                      {item.description.replace(/<[^>]+>/g, "")}
+                    </p>
+                    <div className="flex items-center gap-2 mt-2">
+                      <span className="text-[11px] text-text-tertiary">{source}</span>
+                      <span className="text-[11px] text-text-tertiary">·</span>
+                      <span className="text-[11px] text-text-tertiary">
                         {new Date(item.pubDate).toLocaleDateString("ko-KR")}
-                      </p>
+                      </span>
                     </div>
-                    <ExternalLink size={16} className="text-text-tertiary shrink-0 mt-1" />
-                  </div>
-                </GlassCard>
-              </a>
-            ))}
+                  </GlassCard>
+                </a>
+              );
+            })}
           </div>
         )}
       </div>
