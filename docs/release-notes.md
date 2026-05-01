@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-05-02 04:40 KST — 사진게시판 댓글 시트 iOS viewport 안정화
+
+- **환경:** prod/web (Vercel)
+- **Commit:** da40e493803bb0208bf64142b34fcc6a21e3474e
+- **변경사항:**
+  - 사진게시판 댓글 시트가 iOS Safari/WebView 키보드 이벤트 후 아래 피드/미디어를 노출하며 축소되는 문제 수정
+  - `visualViewport`의 stale keyboard inset을 sheet `bottom`에 직접 적용하지 않도록 변경
+  - 댓글 시트를 visual viewport 기준 `top + height`로 고정하고, 입력영역 safe-area padding만 별도 처리
+- **리스크/롤백:** 낮음~중간. 댓글 시트 레이아웃 단일 컴포넌트 변경이며 문제 시 직전 커밋으로 롤백 가능
+- **확인 항목:**
+  - [x] `pnpm exec tsc --noEmit` 통과
+  - [x] `pnpm exec eslint src/components/community/CommentSheet.tsx` error 0 (기존 warning 3개)
+  - [x] `pnpm build` 통과
+  - [x] Vercel production Ready + `keubo.fan` alias 확인
+  - [x] production 모바일 viewport/keyboard-like shrink/restore에서 sheet bottom gap 0 확인
+
+---
+
 ## 2026-03-11 16:51 KST — 밈 에디터 2차 (식별자 통합 + 반전 + GIPHY)
 
 - **환경:** prod/web (Vercel)
