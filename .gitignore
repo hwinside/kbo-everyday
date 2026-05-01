@@ -53,3 +53,4 @@ tmp/
 scripts/cutouts-v2/logs/
 scripts/cutouts-v2/phase2-todo-backup-*.json
 scripts/cutouts-v2/phase2-todo-new-*.json
+.worktrees/
