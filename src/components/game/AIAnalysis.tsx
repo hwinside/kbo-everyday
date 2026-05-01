@@ -379,7 +379,7 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, ga
                               onClick={() => { onClose(); router.push(`/community/players/${p.playerId}`); }}
                               className="flex items-start gap-3 p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer transition-colors"
                             >
-                              <PlayerAvatar name={p.name} teamId={side.teamId} photoUrl={getPlayerPhotoUrl(p.name, (playersRoster as { name: string; kboId: string }[]).find(r => r.name === p.name)?.kboId)} size={48} />
+                              <PlayerAvatar name={p.name} teamId={side.teamId} photoUrl={getPlayerPhotoUrl(p.name, rosterByName.get(`${side.teamId}:${p.name}`)?.kboId)} size={48} />
                               <div className="flex-1 min-w-0">
                                 <span className="text-sm font-bold text-text-primary">{p.name}</span>
                                 <p className="readable-body mt-0.5">{p.reason}</p>
