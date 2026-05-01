@@ -1,0 +1,23 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appIDs": [
+          "HRSVQZ27F9.fan.keubo.app"
+        ],
+        "components": [
+          {
+            "/": "/*",
+            "comment": "Allow keubo.fan Universal Links for the 크보팬 iOS app."
+          }
+        ]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": [
+      "HRSVQZ27F9.fan.keubo.app"
+    ]
+  }
+}
