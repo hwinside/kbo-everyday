@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { ChevronLeft } from "lucide-react";
 import { getTeamBySlug, getTeamBgColor } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
 
@@ -24,6 +25,7 @@ interface MatchupsData {
 
 export default function TeamMatchupsPage() {
   const params = useParams();
+  const router = useRouter();
   const teamSlug = params.teamId as string;
   const team = getTeamBySlug(teamSlug);
   const [data, setData] = useState<MatchupsData | null>(null);
@@ -58,7 +60,10 @@ export default function TeamMatchupsPage() {
 
   return (
     <div className="mx-auto max-w-lg pb-24">
-      <header className="px-5 py-4">
+      <header className="flex items-center gap-2 px-5 py-4">
+        <button onClick={() => { if (window.history.length > 1) router.back(); else router.push(`/teams/${teamSlug}`); }} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
+          <ChevronLeft size={24} />
+        </button>
         <h1 className="text-lg font-bold text-text-primary">
           {team.shortName} 상대 전적
         </h1>
@@ -109,10 +114,15 @@ export default function TeamMatchupsPage() {
                   style={{ width: `${barPct}%`, backgroundColor: barColor }}
                 />
               </div>
-              <span className="text-sm font-bold text-text-primary tabular-nums w-20 text-right">
-                {opp.wins}-{opp.losses}
-                {opp.draws > 0 ? `-${opp.draws}` : ""}
-              </span>
+              <div className="text-right w-20">
+                <span className="text-sm font-bold text-text-primary tabular-nums">
+                  {opp.wins}-{opp.losses}
+                  {opp.draws > 0 ? `-${opp.draws}` : ""}
+                </span>
+                <span className="block text-xs text-text-tertiary tabular-nums">
+                  {played > 0 ? opp.winPct.toFixed(3) : "-"}
+                </span>
+              </div>
             </div>
           );
         })}

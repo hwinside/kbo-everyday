@@ -1,8 +1,15 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { ChevronLeft } from "lucide-react";
 import { getTeamBySlug, getTeamBgColor } from "@/lib/constants/teams";
+import TeamLogo from "@/components/ui/TeamLogo";
+
+interface RankedTeam {
+  slug: string;
+  value: string | number;
+}
 
 interface TeamBatting {
   teamId: number;
@@ -36,45 +43,81 @@ function StatBar({
   rank,
   total,
   teamColor,
+  expanded,
+  onClick,
+  allTeams,
+  mySlug,
 }: {
   label: string;
   value: string | number;
   rank: number;
   total: number;
   teamColor: string;
+  expanded: boolean;
+  onClick: () => void;
+  allTeams: RankedTeam[];
+  mySlug: string;
 }) {
   const pct = total > 0 ? ((total - rank + 1) / total) * 100 : 0;
   return (
-    <div className="flex items-center gap-3 py-2">
-      <span className="w-12 text-xs text-text-tertiary shrink-0">{label}</span>
-      <div className="flex-1 h-2 rounded-full bg-bg-tertiary/50 overflow-hidden">
-        <div
-          className="h-full rounded-full transition-all duration-500"
-          style={{ width: `${pct}%`, backgroundColor: teamColor }}
-        />
-      </div>
-      <span className="w-14 text-right text-sm font-bold text-text-primary tabular-nums">
-        {value}
-      </span>
-      <span
-        className="w-8 text-center text-xs font-bold rounded-full px-1.5 py-0.5"
-        style={{
-          backgroundColor: rank <= 3 ? `${teamColor}25` : "transparent",
-          color: rank <= 3 ? teamColor : "var(--text-tertiary)",
-        }}
-      >
-        {rank}위
-      </span>
+    <div>
+      <button onClick={onClick} className="flex items-center gap-3 py-2 w-full text-left cursor-pointer">
+        <span className="w-12 text-xs text-text-tertiary shrink-0">{label}</span>
+        <div className="flex-1 h-2 rounded-full bg-bg-tertiary/50 overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all duration-500"
+            style={{ width: `${pct}%`, backgroundColor: teamColor }}
+          />
+        </div>
+        <span className="w-14 text-right text-sm font-bold text-text-primary tabular-nums">
+          {value}
+        </span>
+        <span
+          className="w-8 text-center text-xs font-bold rounded-full px-1.5 py-0.5"
+          style={{
+            backgroundColor: rank <= 3 ? `${teamColor}25` : "transparent",
+            color: rank <= 3 ? teamColor : "var(--text-tertiary)",
+          }}
+        >
+          {rank}위
+        </span>
+      </button>
+      {expanded && (
+        <div className="mb-2 rounded-xl bg-bg-glass/60 overflow-hidden">
+          {allTeams.map((t, i) => {
+            const isMe = t.slug === mySlug;
+            const rowTeam = getTeamBySlug(t.slug);
+            return (
+              <div
+                key={t.slug}
+                className="flex items-center gap-3 px-3 py-1.5 text-sm"
+                style={isMe ? { backgroundColor: `${teamColor}20` } : undefined}
+              >
+                <span className="w-5 text-xs text-text-tertiary text-right tabular-nums">{i + 1}</span>
+                {rowTeam && <TeamLogo team={rowTeam} size={18} />}
+                <span className={`flex-1 text-sm ${isMe ? "font-bold text-text-primary" : "text-text-secondary"}`}>
+                  {rowTeam?.shortName || t.slug}
+                </span>
+                <span className={`tabular-nums text-sm ${isMe ? "font-bold text-text-primary" : "text-text-secondary"}`}>
+                  {t.value}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
 export default function TeamRecordsPage() {
   const params = useParams();
+  const router = useRouter();
   const teamSlug = params.teamId as string;
   const team = getTeamBySlug(teamSlug);
   const [data, setData] = useState<RecordsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [expandedStat, setExpandedStat] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/team-records?season=2026")
@@ -113,32 +156,43 @@ export default function TeamRecordsPage() {
   const myBatting = data.batting.find((b) => b.slug === teamSlug);
   const myPitching = data.pitching.find((p) => p.slug === teamSlug);
 
-  function getRank<T>(arr: T[], key: keyof T, slug: string, desc = true): number {
-    const sorted = [...arr].sort((a, b) => {
+  function getSorted<T extends { slug: string }>(arr: T[], key: keyof T, desc = true): T[] {
+    return [...arr].sort((a, b) => {
       const av = Number(a[key]);
       const bv = Number(b[key]);
       return desc ? bv - av : av - bv;
     });
-    return sorted.findIndex((item) => (item as Record<string, unknown>).slug === slug) + 1;
+  }
+
+  function getRank<T extends { slug: string }>(arr: T[], key: keyof T, slug: string, desc = true): number {
+    const sorted = getSorted(arr, key, desc);
+    return sorted.findIndex((item) => item.slug === slug) + 1;
+  }
+
+  function getAllTeams<T extends { slug: string }>(arr: T[], key: keyof T, desc = true): RankedTeam[] {
+    return getSorted(arr, key, desc).map((item) => ({
+      slug: item.slug,
+      value: item[key] as string | number,
+    }));
   }
 
   const battingStats = myBatting
     ? [
-        { label: "타율", value: myBatting.avg, rank: getRank(data.batting, "avg", teamSlug) },
-        { label: "OPS", value: myBatting.ops, rank: getRank(data.batting, "ops", teamSlug) },
-        { label: "홈런", value: myBatting.hr, rank: getRank(data.batting, "hr", teamSlug) },
-        { label: "득점", value: myBatting.runs, rank: getRank(data.batting, "runs", teamSlug) },
-        { label: "도루", value: myBatting.sb, rank: getRank(data.batting, "sb", teamSlug) },
+        { label: "타율", value: myBatting.avg, rank: getRank(data.batting, "avg", teamSlug), allTeams: getAllTeams(data.batting, "avg") },
+        { label: "OPS", value: myBatting.ops, rank: getRank(data.batting, "ops", teamSlug), allTeams: getAllTeams(data.batting, "ops") },
+        { label: "홈런", value: myBatting.hr, rank: getRank(data.batting, "hr", teamSlug), allTeams: getAllTeams(data.batting, "hr") },
+        { label: "득점", value: myBatting.runs, rank: getRank(data.batting, "runs", teamSlug), allTeams: getAllTeams(data.batting, "runs") },
+        { label: "도루", value: myBatting.sb, rank: getRank(data.batting, "sb", teamSlug), allTeams: getAllTeams(data.batting, "sb") },
       ]
     : [];
 
   const pitchingStats = myPitching
     ? [
-        { label: "ERA", value: myPitching.era, rank: getRank(data.pitching, "era", teamSlug, false) },
-        { label: "WHIP", value: myPitching.whip, rank: getRank(data.pitching, "whip", teamSlug, false) },
-        { label: "탈삼진", value: myPitching.so, rank: getRank(data.pitching, "so", teamSlug) },
-        { label: "세이브", value: myPitching.sv, rank: getRank(data.pitching, "sv", teamSlug) },
-        { label: "피홈런", value: myPitching.hra, rank: getRank(data.pitching, "hra", teamSlug, false) },
+        { label: "ERA", value: myPitching.era, rank: getRank(data.pitching, "era", teamSlug, false), allTeams: getAllTeams(data.pitching, "era", false) },
+        { label: "WHIP", value: myPitching.whip, rank: getRank(data.pitching, "whip", teamSlug, false), allTeams: getAllTeams(data.pitching, "whip", false) },
+        { label: "탈삼진", value: myPitching.so, rank: getRank(data.pitching, "so", teamSlug), allTeams: getAllTeams(data.pitching, "so") },
+        { label: "세이브", value: myPitching.sv, rank: getRank(data.pitching, "sv", teamSlug), allTeams: getAllTeams(data.pitching, "sv") },
+        { label: "피홈런", value: myPitching.hra, rank: getRank(data.pitching, "hra", teamSlug, false), allTeams: getAllTeams(data.pitching, "hra", false) },
       ]
     : [];
 
@@ -147,7 +201,10 @@ export default function TeamRecordsPage() {
 
   return (
     <div className="mx-auto max-w-lg pb-24">
-      <header className="px-5 py-4">
+      <header className="flex items-center gap-2 px-5 py-4">
+        <button onClick={() => { if (window.history.length > 1) router.back(); else router.push(`/teams/${teamSlug}`); }} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
+          <ChevronLeft size={24} />
+        </button>
         <h1 className="text-lg font-bold text-text-primary">
           {team.shortName} 기록
         </h1>
@@ -194,6 +251,10 @@ export default function TeamRecordsPage() {
             rank={stat.rank}
             total={10}
             teamColor={teamColor}
+            expanded={expandedStat === `batting-${stat.label}`}
+            onClick={() => setExpandedStat(expandedStat === `batting-${stat.label}` ? null : `batting-${stat.label}`)}
+            allTeams={stat.allTeams}
+            mySlug={teamSlug}
           />
         ))}
       </section>
@@ -209,6 +270,10 @@ export default function TeamRecordsPage() {
             rank={stat.rank}
             total={10}
             teamColor={teamColor}
+            expanded={expandedStat === `pitching-${stat.label}`}
+            onClick={() => setExpandedStat(expandedStat === `pitching-${stat.label}` ? null : `pitching-${stat.label}`)}
+            allTeams={stat.allTeams}
+            mySlug={teamSlug}
           />
         ))}
       </section>

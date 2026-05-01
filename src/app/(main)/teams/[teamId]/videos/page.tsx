@@ -1,11 +1,13 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { ChevronLeft } from "lucide-react";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import TeamVideos from "@/components/team/TeamVideos";
 
 export default function TeamVideosPage() {
   const params = useParams();
+  const router = useRouter();
   const teamSlug = params.teamId as string;
   const team = getTeamBySlug(teamSlug);
 
@@ -19,7 +21,10 @@ export default function TeamVideosPage() {
 
   return (
     <div className="mx-auto max-w-lg pb-24">
-      <header className="px-5 py-4">
+      <header className="flex items-center gap-2 px-5 py-4">
+        <button onClick={() => { if (window.history.length > 1) router.back(); else router.push(`/teams/${teamSlug}`); }} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
+          <ChevronLeft size={24} />
+        </button>
         <h1 className="text-lg font-bold text-text-primary">
           {team.shortName} 공식영상
         </h1>

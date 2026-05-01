@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { getTeamBySlug, getTeamBgColor } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
@@ -30,6 +30,7 @@ const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
 export default function TeamSchedulePage() {
   const params = useParams();
+  const router = useRouter();
   const teamSlug = params.teamId as string;
   const team = getTeamBySlug(teamSlug);
 
@@ -95,7 +96,10 @@ export default function TeamSchedulePage() {
 
   return (
     <div className="mx-auto max-w-lg pb-24">
-      <header className="px-5 py-4">
+      <header className="flex items-center gap-2 px-5 py-4">
+        <button onClick={() => { if (window.history.length > 1) router.back(); else router.push(`/teams/${teamSlug}`); }} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
+          <ChevronLeft size={24} />
+        </button>
         <h1 className="text-lg font-bold text-text-primary">
           {team.shortName} 스케줄
         </h1>

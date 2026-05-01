@@ -39,7 +39,7 @@ export default function NextGameBanner({ team }: NextGameBannerProps) {
           const match = (Array.isArray(games) ? games : []).find(
             (g: { awayTeamId: number; homeTeamId: number; status: string }) =>
               (g.awayTeamId === team.id || g.homeTeamId === team.id) &&
-              g.status !== "cancelled"
+              g.status !== "cancelled" && g.status !== "final"
           );
           if (match) {
             const isHome = match.homeTeamId === team.id;
