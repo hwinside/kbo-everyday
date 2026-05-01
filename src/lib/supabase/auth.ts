@@ -7,7 +7,7 @@ import { openOAuthInBrowser } from "@/lib/capacitor/auth";
 // opens in SFSafariViewController which won't return to the PWA context.
 // Hardcoding ensures we always land on keubo.fan.
 const CALLBACK_URL = "https://keubo.fan/auth/callback";
-const NATIVE_IOS_CALLBACK_URL = `${CALLBACK_URL}?native=ios`;
+const NATIVE_IOS_CALLBACK_URL = "fan.keubo.app://auth/callback";
 
 function getOAuthCallbackUrl() {
   return isIOS ? NATIVE_IOS_CALLBACK_URL : CALLBACK_URL;
