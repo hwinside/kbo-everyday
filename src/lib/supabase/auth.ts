@@ -35,6 +35,21 @@ export async function signInWithNaver() {
   return { data: null, error: null };
 }
 
+/** Apple 로그인 — iOS 앱스토어 심사 필수 (소셜 로그인 제공 시) */
+export async function signInWithApple() {
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: "apple",
+    options: {
+      redirectTo: CALLBACK_URL,
+      skipBrowserRedirect: true,
+    },
+  });
+  if (data?.url) {
+    window.location.assign(data.url);
+  }
+  return { data, error };
+}
+
 /** 카카오 로그인 — PWA 동일 탭에서 OAuth 진행 (Safari VC 방지) */
 export async function signInWithKakao() {
   const { data, error } = await supabase.auth.signInWithOAuth({
