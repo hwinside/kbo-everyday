@@ -28,6 +28,7 @@ export default function ProfileSetupModal({ isOpen }: Props) {
   const selectedTeamData = KBO_TEAMS.find(t => t.id === selectedTeam);
 
   async function handleNicknameNext() {
+    if (loading) return;
     const trimmed = nickname.trim();
     if (trimmed.length < 2 || trimmed.length > 12) {
       setError("닉네임은 2~12자로 입력해주세요");
@@ -37,18 +38,26 @@ export default function ProfileSetupModal({ isOpen }: Props) {
       setError("한글, 영문, 숫자만 사용 가능합니다");
       return;
     }
-    // 2026-04-19: case-insensitive 중복 체크 (ktwiz/Ktwiz 사례)
-    const { data } = await supabase
-      .from("profiles")
-      .select("id")
-      .ilike("nickname", trimmed)
-      .maybeSingle();
-    if (data) {
-      setError("이미 사용 중인 닉네임입니다");
-      return;
+
+    setLoading(true);
+    try {
+      // 2026-05-02: 네이티브 OAuth 직후 client DB query가 조용히 지연되면
+      // 버튼이 무반응처럼 보이므로 API 경로로 중복 확인 + 명시적 에러 처리.
+      const res = await fetch(`/api/check-nickname?nickname=${encodeURIComponent(trimmed)}`, {
+        cache: "no-store",
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json.available === false) {
+        setError(json.reason || "닉네임 확인 중 오류가 발생했습니다");
+        return;
+      }
+      setError("");
+      setStep(2);
+    } catch {
+      setError("닉네임 확인 중 오류가 발생했습니다");
+    } finally {
+      setLoading(false);
     }
-    setError("");
-    setStep(2);
   }
 
   async function handleComplete(opts?: { skipInvite?: boolean }) {
@@ -162,10 +171,10 @@ export default function ProfileSetupModal({ isOpen }: Props) {
 
               <button
                 onClick={handleNicknameNext}
-                disabled={nickname.trim().length < 2}
+                disabled={loading || nickname.trim().length < 2}
                 className="w-full mt-6 bg-accent text-white font-semibold py-3 rounded-xl disabled:opacity-40 transition-all"
               >
-                다음
+                {loading ? "확인 중..." : "다음"}
               </button>
             </div>
           )}

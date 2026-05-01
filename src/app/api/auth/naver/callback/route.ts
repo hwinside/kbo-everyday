@@ -10,6 +10,8 @@ function getOrigin(request: NextRequest) {
   return request.nextUrl.origin;
 }
 
+const IOS_NATIVE_CALLBACK_ORIGIN = "fan.keubo.app://auth/callback";
+
 /**
  * 네이버 OAuth 콜백 핸들러
  *
@@ -24,6 +26,7 @@ export async function GET(request: NextRequest) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const error = url.searchParams.get("error");
+  const isNativeIOS = url.searchParams.get("native") === "ios";
   const userAgent = request.headers.get("user-agent") || "";
   const referer = request.headers.get("referer") || "";
   // Structured diag log for mobile login triage (2026-04-21)
@@ -293,8 +296,12 @@ export async function GET(request: NextRequest) {
       : "";
 
     // state 쿠키 정리 + verifyOtp 쿠키를 response에 전달
-    const response = NextResponse.redirect(`${CANONICAL_ORIGIN}${redirectPath}${hashParams}`);
+    const redirectUrl = isNativeIOS && hashParams
+      ? `${IOS_NATIVE_CALLBACK_ORIGIN}?next=${encodeURIComponent(redirectPath || "/")}${hashParams}`
+      : `${CANONICAL_ORIGIN}${redirectPath}${hashParams}`;
+    const response = NextResponse.redirect(redirectUrl);
     response.cookies.delete("naver_oauth_state");
+    response.cookies.delete("naver_native_ios");
     // verifyOtp이 설정한 Supabase auth 쿠키를 redirect 응답에 복사
     // (path/sameSite/httpOnly 누락 방지 — Google/Kakao flow와 동일)
     for (const { name, value, options } of pendingCookies) {
@@ -313,6 +320,7 @@ export async function GET(request: NextRequest) {
       needsSetup: redirectPath === "/setup",
       cookieCount: pendingCookies.length,
       hasHash: !!hashParams,
+      isNativeIOS,
     });
 
     return response;

@@ -37,6 +37,7 @@ export async function GET(request: NextRequest) {
   // 주의: callback route의 `getOrigin()`도 동일하게 `request.nextUrl.origin` 우선 정책으로 변경함.
   //       로그인 후 redirect하는 홈 경로도 진입 호스트 그대로 유지 → www 유저는 www에서 로그인 유지.
   const CANONICAL_ORIGIN = request.nextUrl.origin;
+  const isNativeIOS = request.nextUrl.searchParams.get("native") === "ios";
 
   // state 파라미터: CSRF 방지
   const state = crypto.randomUUID();
@@ -45,15 +46,25 @@ export async function GET(request: NextRequest) {
   const naverAuthUrl = new URL("https://nid.naver.com/oauth2.0/authorize");
   naverAuthUrl.searchParams.set("response_type", "code");
   naverAuthUrl.searchParams.set("client_id", NAVER_CLIENT_ID);
-  naverAuthUrl.searchParams.set(
-    "redirect_uri",
-    `${CANONICAL_ORIGIN}/api/auth/naver/callback`
-  );
+  const redirectUri = isNativeIOS
+    ? `${CANONICAL_ORIGIN}/api/auth/naver/callback?native=ios`
+    : `${CANONICAL_ORIGIN}/api/auth/naver/callback`;
+  naverAuthUrl.searchParams.set("redirect_uri", redirectUri);
   naverAuthUrl.searchParams.set("state", state);
 
   const response = NextResponse.redirect(naverAuthUrl.toString());
 
   // state를 쿠키에 저장 (callback에서 검증)
+  if (isNativeIOS) {
+    response.cookies.set("naver_native_ios", "1", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV !== "development",
+      sameSite: "lax",
+      maxAge: 600,
+      path: "/",
+    });
+  }
+
   response.cookies.set("naver_oauth_state", state, {
     httpOnly: true,
     secure: process.env.NODE_ENV !== "development",

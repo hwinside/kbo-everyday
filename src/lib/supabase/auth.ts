@@ -42,8 +42,11 @@ export async function signInWithGoogle() {
  */
 export async function signInWithNaver() {
   // 서버 API route가 네이버 OAuth URL로 redirect
+  const naverStartUrl = isIOS
+    ? "https://keubo.fan/api/auth/naver?native=ios"
+    : "https://keubo.fan/api/auth/naver";
   if (isNative) {
-    await openOAuthInBrowser("https://keubo.fan/api/auth/naver");
+    await openOAuthInBrowser(naverStartUrl);
   } else {
     window.location.assign("/api/auth/naver");
   }
