@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
 import { signInWithApple, signInWithGoogle, signInWithKakao, signInWithNaver } from "@/lib/supabase/auth";
+import { useAuth } from "@/lib/supabase/AuthContext";
 import { detectInApp } from "@/lib/detect-inapp";
 import InAppBrowserModal from "./InAppBrowserModal";
 
@@ -17,6 +18,7 @@ interface LoginSheetProps {
 type Provider = "apple" | "naver" | "kakao" | "google";
 
 export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
+  const { user } = useAuth();
   const [inAppModalOpen, setInAppModalOpen] = useState(false);
   // Remember which provider the user clicked so "계속 시도" in the modal can
   // still fall through to the provider they originally chose.
@@ -28,6 +30,12 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
       pendingProviderRef.current = null;
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (isOpen && user) {
+      onClose();
+    }
+  }, [isOpen, onClose, user]);
 
   const runProvider = useCallback((provider: Provider) => {
     if (provider === "apple") return signInWithApple();
