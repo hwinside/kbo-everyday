@@ -91,7 +91,8 @@ async function fetchBattingRecords(): Promise<TeamBatting[]> {
   const opsMap = new Map<string, string>();
   for (const row of basic2) {
     const name = row[1]?.trim();
-    if (name) opsMap.set(name, row[11] ?? "0");
+    // Basic2 컬럼: 순위(0) 팀명(1) AVG(2) BB(3) IBB(4) HBP(5) SO(6) GDP(7) SLG(8) OBP(9) OPS(10)
+    if (name) opsMap.set(name, row[10] ?? "0");
   }
 
   const sbMap = new Map<string, number>();
