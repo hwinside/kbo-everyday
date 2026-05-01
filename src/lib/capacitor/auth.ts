@@ -30,7 +30,7 @@ export function registerDeepLinkListener(): void {
   listenerRegistered = true;
 
   App.addListener("appUrlOpen", async ({ url }) => {
-    // keubo.fan URL에서 hash fragment의 토큰 추출
+    // keubo.fan URL에서 OAuth 토큰/코드 추출
     if (!url.includes("keubo.fan")) return;
 
     try {
@@ -39,6 +39,19 @@ export function registerDeepLinkListener(): void {
       // Browser가 이미 닫혀있을 수 있음
     }
 
+    // Case 1: App Links가 /auth/callback?code=... 를 가로챈 경우
+    // 서버에 도달하기 전이므로 클라이언트에서 직접 code exchange
+    const urlObj = new URL(url);
+    const code = urlObj.searchParams.get("code");
+    if (code) {
+      const { error } = await supabase.auth.exchangeCodeForSession(code);
+      if (error) {
+        console.error("[capacitor/auth] exchangeCodeForSession failed:", error.message);
+      }
+      return;
+    }
+
+    // Case 2: 서버 콜백이 처리 후 keubo.fan#access_token=...&refresh_token=... 로 리다이렉트한 경우
     const hashIndex = url.indexOf("#");
     if (hashIndex === -1) return;
 
