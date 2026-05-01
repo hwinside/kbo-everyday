@@ -1,11 +1,14 @@
 "use client";
 
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { ChevronLeft } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamLogo from "@/components/ui/TeamLogo";
 import { TEAMS } from "@/lib/constants/teams";
+import { useAuth } from "@/lib/supabase/AuthContext";
+import { getTeamById } from "@/lib/constants/teams";
 
 const container = {
   hidden: {},
@@ -18,13 +21,24 @@ const item = {
 };
 
 export default function TeamsPage() {
+  const router = useRouter();
+  const { profile } = useAuth();
+
+  // Deep-link to my team's hub if set
+  useEffect(() => {
+    if (profile?.team_id) {
+      const myTeam = getTeamById(profile.team_id);
+      if (myTeam) {
+        router.replace(`/teams/${myTeam.slug}`);
+      }
+    }
+  }, [profile, router]);
+
   return (
     <div className="mx-auto max-w-lg px-5">
-      <header className="flex items-center gap-4 py-5">
-        <Link href="/" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
-          <ChevronLeft size={24} />
-        </Link>
-        <h1 className="text-xl font-bold text-text-primary">구단 게시판</h1>
+      <header className="py-5">
+        <h1 className="text-xl font-bold text-text-primary">구단 선택</h1>
+        <p className="text-sm text-text-tertiary mt-1">팀 허브로 이동합니다</p>
       </header>
 
       <motion.div
@@ -44,7 +58,6 @@ export default function TeamsPage() {
                 <span className="text-base font-semibold text-text-primary">
                   {team.name}
                 </span>
-                <span className="text-base text-text-tertiary">게시판</span>
               </GlassCard>
             </Link>
           </motion.div>

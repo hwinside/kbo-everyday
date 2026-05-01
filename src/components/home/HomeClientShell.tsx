@@ -28,7 +28,6 @@ import AIAnalysis from "@/components/game/AIAnalysis";
 import { lazy, Suspense } from "react";
 const NewsCarousel = lazy(() => import("@/components/news/NewsCarousel"));
 const HomeHighlights = lazy(() => import("@/components/home/HomeHighlights"));
-const HomeOfficialVideos = lazy(() => import("@/components/home/HomeOfficialVideos"));
 const WhatsNewCard = lazy(() => import("@/components/home/WhatsNewCard"));
 
 const container = {
@@ -259,9 +258,6 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
 
         <Suspense fallback={<SectionSkeleton height={250} />}>
           <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
-        </Suspense>
-        <Suspense fallback={<SectionSkeleton height={200} />}>
-          <HomeOfficialVideos team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
         </Suspense>
       </div>
 
