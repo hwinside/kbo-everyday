@@ -30,10 +30,9 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
 
   return (
     <>
-      {/* 롱폼: 가로 썸네일 → 유튜브 이동 */}
+      {/* 롱폼: 세로 썸네일 → 유튜브 이동 */}
       {longVideos.length > 0 && (
         <section className="mb-6">
-          <h2 className="text-base font-bold text-text-primary mb-3">📺 공식 영상</h2>
           <div className="space-y-3">
             {longVideos.map((v) => (
               <a

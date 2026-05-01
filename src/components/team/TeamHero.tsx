@@ -41,12 +41,17 @@ export default function TeamHero({ team, standings, stadiumName }: TeamHeroProps
               { label: "승률", value: standings.winRate },
               { label: "승차", value: standings.gb },
               { label: "연속", value: standings.streak },
-            ].map((item) => (
-              <div key={item.label} className="text-center">
-                <p className="text-xs text-text-tertiary mb-0.5">{item.label}</p>
-                <p className="text-base font-bold text-text-primary">{item.value}</p>
-              </div>
-            ))}
+            ].map((item) => {
+              let valueColor = "text-text-primary";
+              if (item.label === "연속" && item.value.includes("승")) valueColor = "text-green-400";
+              else if (item.label === "연속" && item.value.includes("패")) valueColor = "text-red-400";
+              return (
+                <div key={item.label} className="text-center">
+                  <p className="text-xs text-text-tertiary mb-0.5">{item.label}</p>
+                  <p className={`text-base font-bold ${valueColor}`}>{item.value}</p>
+                </div>
+              );
+            })}
           </motion.div>
         )}
       </div>

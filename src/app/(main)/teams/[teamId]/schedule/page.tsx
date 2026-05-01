@@ -184,7 +184,7 @@ export default function TeamSchedulePage() {
                   </span>
                   {opponentTeam && (
                     <div className="my-0.5">
-                      <TeamLogo team={opponentTeam} size={26} />
+                      <TeamLogo team={opponentTeam} size={32} />
                     </div>
                   )}
                   {game && (
