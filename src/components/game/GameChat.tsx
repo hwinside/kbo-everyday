@@ -171,7 +171,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       window.scrollTo(0, state.scrollY);
     };
     const update = () => {
-      const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      const offsetTop = Math.max(0, vv.offsetTop);
+      const hidden = Math.max(0, window.innerHeight - vv.height - offsetTop);
       if (hidden > 40) {
         // 입력 포커스 없으면 무시 — iOS overscroll bounce로 hidden이 일시적으로 뛰는 것 방지
         if (!focusLockRef.current) return;
