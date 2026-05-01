@@ -99,18 +99,15 @@ export default function TeamMatchupsPage() {
           if (played === 0) {
             barPct = 0;
             barColor = "#737373";
-          } else if (opp.winPct === 0) {
-            barPct = 100;
-            barColor = "#ef4444";
-          } else if (opp.winPct >= 0.6) {
+          } else if (opp.winPct > 0.5) {
             barPct = opp.winPct * 100;
             barColor = "#22c55e";
-          } else if (opp.winPct <= 0.4) {
-            barPct = opp.winPct * 100;
+          } else if (opp.winPct < 0.5) {
+            barPct = (1 - opp.winPct) * 100;
             barColor = "#ef4444";
           } else {
-            barPct = opp.winPct * 100;
-            barColor = teamColor;
+            barPct = 50;
+            barColor = "#737373";
           }
 
           return (
