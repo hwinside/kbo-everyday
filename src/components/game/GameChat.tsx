@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Users, Flame, ChevronDown } from "lucide-react";
 import { clsx } from "clsx";
@@ -249,9 +250,22 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
       focusLockRef.current = true;
       keyboardFocusStartedAtRef.current = Date.now();
-      stableKeyboardInsetRef.current = 0;
+      const provisionalInset = lastGoodKeyboardInsetRef.current;
+      if (provisionalInset > 40) {
+        stableKeyboardInsetRef.current = provisionalInset;
+        setKeyboardInset(provisionalInset);
+        if (debugEnabled) {
+          setChatDebug(`provisional inset=${Math.round(provisionalInset)}`);
+        }
+        requestAnimationFrame(() => {
+          alignLatestMessagesAboveComposer();
+          lockPageScroll();
+        });
+      } else {
+        stableKeyboardInsetRef.current = 0;
+      }
       open();
-      [50, 150, 300, 600, 900, 1200, 1500].forEach((ms) => setTimeout(update, ms));
+      [0, 50, 150, 300, 600, 900, 1200, 1500].forEach((ms) => setTimeout(update, ms));
       scheduleChatFocusAlign();
     };
     const onFocusOut = (e: FocusEvent) => {
@@ -321,7 +335,18 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     away: `${awayTeam.shortName} 팬방`,
   };
 
+  const debugOverlay = chatDebug && typeof document !== "undefined"
+    ? createPortal(
+        <div className="fixed left-2 right-2 top-2 z-[2147483647] rounded bg-black/90 px-2 py-1 text-[10px] leading-tight text-white pointer-events-none">
+          {chatDebug}
+        </div>,
+        document.body
+      )
+    : null;
+
   return (
+    <>
+    {debugOverlay}
     <div
       className={clsx(
         "flex flex-col",
@@ -333,12 +358,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         paddingBottom: `${keyboardInset}px`,
       } : undefined}
     >
-      {chatDebug && (
-        <div className="fixed left-2 top-16 z-[9999] rounded bg-black/80 px-2 py-1 text-[10px] text-white pointer-events-none">
-          {chatDebug}
-        </div>
-      )}
-
       {/* Room selector */}
       <div className="relative">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
@@ -503,5 +522,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         </div>
       </div>
     </div>
+    </>
   );
 }
