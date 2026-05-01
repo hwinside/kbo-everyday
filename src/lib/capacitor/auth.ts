@@ -1,0 +1,60 @@
+/**
+ * Capacitor OAuth 핸들러
+ *
+ * 네이티브 앱에서 OAuth 로그인 시:
+ * 1. Browser.open()으로 Custom Tabs / SFSafariViewController에서 OAuth 진행
+ * 2. 서버 콜백이 keubo.fan#access_token=...&refresh_token=... 로 리다이렉트
+ * 3. App Links / Universal Links가 앱으로 URL을 전달
+ * 4. appUrlOpen 이벤트에서 토큰 추출 → supabase.auth.setSession()
+ */
+import { App } from "@capacitor/app";
+import { Browser } from "@capacitor/browser";
+import { supabase } from "@/lib/supabase/client";
+import { isNative } from "./platform";
+
+let listenerRegistered = false;
+
+/**
+ * 네이티브 앱에서 OAuth URL을 Custom Tabs로 열기
+ */
+export async function openOAuthInBrowser(url: string): Promise<void> {
+  await Browser.open({ url, presentationStyle: "fullscreen" });
+}
+
+/**
+ * appUrlOpen 리스너 등록 (앱 시작 시 1회 호출)
+ * OAuth 콜백 URL을 가로채서 세션을 복원
+ */
+export function registerDeepLinkListener(): void {
+  if (!isNative || listenerRegistered) return;
+  listenerRegistered = true;
+
+  App.addListener("appUrlOpen", async ({ url }) => {
+    // keubo.fan URL에서 hash fragment의 토큰 추출
+    if (!url.includes("keubo.fan")) return;
+
+    try {
+      await Browser.close();
+    } catch {
+      // Browser가 이미 닫혀있을 수 있음
+    }
+
+    const hashIndex = url.indexOf("#");
+    if (hashIndex === -1) return;
+
+    const hash = url.substring(hashIndex + 1);
+    const params = new URLSearchParams(hash);
+    const accessToken = params.get("access_token");
+    const refreshToken = params.get("refresh_token");
+
+    if (accessToken && refreshToken) {
+      const { error } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      if (error) {
+        console.error("[capacitor/auth] setSession failed:", error.message);
+      }
+    }
+  });
+}

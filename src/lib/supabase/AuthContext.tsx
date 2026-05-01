@@ -5,6 +5,7 @@ import { supabase } from "./client";
 import { setMyTeamId } from "@/lib/store/myteam";
 import { setFavoritePlayers } from "@/lib/store/favorites";
 import { setOnboardingStatus } from "@/lib/store/onboarding";
+import { registerDeepLinkListener } from "@/lib/capacitor/auth";
 import type { User } from "@supabase/supabase-js";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 
@@ -170,6 +171,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     syncSession();
+
+    // Capacitor: OAuth 콜백 deep link 수신 → setSession() → onAuthStateChange 자동 트리거
+    registerDeepLinkListener();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {

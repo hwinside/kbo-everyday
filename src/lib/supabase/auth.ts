@@ -1,4 +1,6 @@
 import { supabase } from "./client";
+import { isNative } from "@/lib/capacitor/platform";
+import { openOAuthInBrowser } from "@/lib/capacitor/auth";
 
 // Always use the canonical domain for OAuth callbacks.
 // In iOS PWA, window.location.origin can be correct but the OAuth flow
@@ -6,7 +8,7 @@ import { supabase } from "./client";
 // Hardcoding ensures we always land on keubo.fan.
 const CALLBACK_URL = "https://keubo.fan/auth/callback";
 
-/** 구글 로그인 — PWA 동일 탭에서 OAuth 진행 (Safari VC 방지) */
+/** 구글 로그인 — 네이티브: Custom Tabs, 웹: 동일 탭 OAuth */
 export async function signInWithGoogle() {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
@@ -19,7 +21,11 @@ export async function signInWithGoogle() {
     },
   });
   if (data?.url) {
-    window.location.assign(data.url);
+    if (isNative) {
+      await openOAuthInBrowser(data.url);
+    } else {
+      window.location.assign(data.url);
+    }
   }
   return { data, error };
 }
@@ -31,7 +37,11 @@ export async function signInWithGoogle() {
  */
 export async function signInWithNaver() {
   // 서버 API route가 네이버 OAuth URL로 redirect
-  window.location.assign("/api/auth/naver");
+  if (isNative) {
+    await openOAuthInBrowser("https://keubo.fan/api/auth/naver");
+  } else {
+    window.location.assign("/api/auth/naver");
+  }
   return { data: null, error: null };
 }
 
@@ -45,12 +55,16 @@ export async function signInWithApple() {
     },
   });
   if (data?.url) {
-    window.location.assign(data.url);
+    if (isNative) {
+      await openOAuthInBrowser(data.url);
+    } else {
+      window.location.assign(data.url);
+    }
   }
   return { data, error };
 }
 
-/** 카카오 로그인 — PWA 동일 탭에서 OAuth 진행 (Safari VC 방지) */
+/** 카카오 로그인 — 네이티브: Custom Tabs, 웹: 동일 탭 OAuth */
 export async function signInWithKakao() {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "kakao",
@@ -60,7 +74,11 @@ export async function signInWithKakao() {
     },
   });
   if (data?.url) {
-    window.location.assign(data.url);
+    if (isNative) {
+      await openOAuthInBrowser(data.url);
+    } else {
+      window.location.assign(data.url);
+    }
   }
   return { data, error };
 }
