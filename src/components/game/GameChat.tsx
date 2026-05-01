@@ -130,8 +130,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   // - Toggle body.kbd-open on focusin to hide TabBar via CSS.
   // - Poll vv read at multiple offsets to cover iOS first-focus race.
   const [keyboardInset, setKeyboardInset] = useState(0);
-  const [panelHeight, setPanelHeight] = useState(0);
   const keyboardFocusStartedAtRef = useRef(0);
+  const lastGoodKeyboardInsetRef = useRef(0);
   const composerBottom = `calc(52px + env(safe-area-inset-bottom, 0px))`;
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
@@ -180,17 +180,20 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
           ? Date.now() - keyboardFocusStartedAtRef.current
           : 0;
         const previousInset = stableKeyboardInsetRef.current;
-        const nextInset = focusedMs > 900 && previousInset > 40 && hidden > previousInset + 12
+        const lastGoodInset = lastGoodKeyboardInsetRef.current;
+        const maxReasonableInset = Math.round(window.innerHeight * 0.46);
+        const sessionCeiling = lastGoodInset > 40
+          ? Math.min(maxReasonableInset, lastGoodInset + 96)
+          : maxReasonableInset;
+        const boundedHidden = Math.min(hidden, sessionCeiling);
+        const nextInset = focusedMs > 900 && previousInset > 40 && boundedHidden > previousInset + 12
           ? previousInset
-          : hidden;
+          : boundedHidden;
         stableKeyboardInsetRef.current = nextInset;
+        if (focusedMs > 600 && hidden <= sessionCeiling) {
+          lastGoodKeyboardInsetRef.current = nextInset;
+        }
         setKeyboardInset(nextInset);
-        // innerHeight와 nextInset을 동시에 캡처하여 렌더링 시 불일치 방지
-        const nextHeight = window.innerHeight - nextInset;
-        setPanelHeight((prev) =>
-          // 900ms 후에는 패널이 줄어드는 방향(gap 발생)만 차단
-          focusedMs > 900 && prev > 0 ? Math.max(prev, nextHeight) : nextHeight
-        );
         open();
         if (focusLockRef.current) {
           // Body는 배경 고정만 담당한다. 실제 스크롤은 fixed chat panel 내부 메시지 영역에서만 허용.
@@ -204,7 +207,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         if (focusLockRef.current) return;
         stableKeyboardInsetRef.current = 0;
         setKeyboardInset(0);
-        setPanelHeight(0);
         close();
         unlockPageScroll();
       }
@@ -304,7 +306,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       )}
       style={keyboardInset > 0 ? {
         top: 0,
-        height: `${panelHeight || window.innerHeight - keyboardInset}px`,
+        bottom: 0,
+        paddingBottom: `${keyboardInset}px`,
       } : undefined}
     >
       {/* Room selector */}
