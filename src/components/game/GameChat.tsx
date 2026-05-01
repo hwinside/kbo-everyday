@@ -130,6 +130,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   // - Toggle body.kbd-open on focusin to hide TabBar via CSS.
   // - Poll vv read at multiple offsets to cover iOS first-focus race.
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const keyboardFocusStartedAtRef = useRef(0);
   // keyboardViewport 제거 — top/bottom 방식으로 전환하여 vv.offsetTop 변동 영향 제거
   const composerBottom = `calc(52px + env(safe-area-inset-bottom, 0px))`;
   useEffect(() => {
@@ -174,8 +175,15 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       if (hidden > 40) {
         // 입력 포커스 없으면 무시 — iOS overscroll bounce로 hidden이 일시적으로 뛰는 것 방지
         if (!focusLockRef.current) return;
-        stableKeyboardInsetRef.current = hidden;
-        setKeyboardInset(hidden);
+        const focusedMs = keyboardFocusStartedAtRef.current
+          ? Date.now() - keyboardFocusStartedAtRef.current
+          : 0;
+        const previousInset = stableKeyboardInsetRef.current;
+        const nextInset = focusedMs > 900 && previousInset > 40 && hidden > previousInset + 12
+          ? previousInset
+          : hidden;
+        stableKeyboardInsetRef.current = nextInset;
+        setKeyboardInset(nextInset);
         open();
         if (focusLockRef.current) {
           // Body는 배경 고정만 담당한다. 실제 스크롤은 fixed chat panel 내부 메시지 영역에서만 허용.
@@ -195,22 +203,27 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     };
     // Reset on mount so stale kbd-open from previous pages doesn't leak in.
     close();
-    setKeyboardInset(0);
-    update();
+    const resetRaf = window.requestAnimationFrame(() => {
+      setKeyboardInset(0);
+      update();
+    });
     vv.addEventListener("resize", update);
     vv.addEventListener("scroll", update);
     const onFocusIn = (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
       focusLockRef.current = true;
+      keyboardFocusStartedAtRef.current = Date.now();
+      stableKeyboardInsetRef.current = 0;
       open();
-      [50, 150, 300, 600, 1000].forEach((ms) => setTimeout(update, ms));
+      [50, 150, 300, 600, 900, 1200, 1500].forEach((ms) => setTimeout(update, ms));
       scheduleChatFocusAlign();
     };
     const onFocusOut = (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
       focusLockRef.current = false;
+      keyboardFocusStartedAtRef.current = 0;
       stableKeyboardInsetRef.current = 0;
       setTimeout(update, 50);
       setTimeout(() => {
@@ -221,11 +234,13 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
     return () => {
+      window.cancelAnimationFrame(resetRaf);
       vv.removeEventListener("resize", update);
       vv.removeEventListener("scroll", update);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
       focusLockRef.current = false;
+      keyboardFocusStartedAtRef.current = 0;
       stableKeyboardInsetRef.current = 0;
       unlockPageScroll();
       close();
