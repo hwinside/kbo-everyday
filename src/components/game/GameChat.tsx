@@ -124,7 +124,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const [keyboardFrame, setKeyboardFrame] = useState<{ top: number; height: number } | null>(null);
   const [chatDebug, setChatDebug] = useState<string | null>(null);
   const keyboardFocusStartedAtRef = useRef(0);
+  const baseViewportHeightRef = useRef(0);
   const lastGoodKeyboardInsetRef = useRef(0);
+  const lastGoodKeyboardPanelHeightRef = useRef(0);
   const composerBottom = `calc(52px + env(safe-area-inset-bottom, 0px))`;
 
   const setKeyboardFrameIfChanged = useCallback((next: { top: number; height: number } | null) => {
@@ -142,48 +144,71 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const vv = window.visualViewport;
     const open = () => document.body.classList.add("kbd-open");
     const close = () => document.body.classList.remove("kbd-open");
-    const alignAfterClose = () => {
-      [0, 50, 150, 300, 600].forEach((ms) => {
-        setTimeout(() => requestAnimationFrame(alignLatestMessagesAboveComposer), ms);
-      });
-    };
     const forceCloseKeyboardPanel = () => {
       focusLockRef.current = false;
       keyboardFocusStartedAtRef.current = 0;
       setKeyboardFrameIfChanged(null);
       close();
-      alignAfterClose();
     };
     const debugEnabled = new URLSearchParams(window.location.search).get("chatDebug") === "1";
+    const updateBaseViewportHeight = () => {
+      baseViewportHeightRef.current = Math.max(
+        baseViewportHeightRef.current,
+        window.innerHeight,
+        vv.height
+      );
+    };
+    const getSafeKeyboardPanelHeight = (visualHeight: number) => {
+      const baseHeight = baseViewportHeightRef.current || Math.max(window.innerHeight, visualHeight);
+      const minPlausibleHeight = Math.round(baseHeight * 0.45);
+      const fallbackHeight = Math.round(baseHeight * 0.58);
+
+      // iOS Safari sometimes emits a transient tiny visualViewport.height while
+      // the contact autofill/accessory bar is animating. If we accept that sample,
+      // the whole chat panel collapses near the status bar. Keep the composer near
+      // the keyboard by ignoring implausibly small samples.
+      if (visualHeight < minPlausibleHeight) {
+        return lastGoodKeyboardPanelHeightRef.current > minPlausibleHeight
+          ? lastGoodKeyboardPanelHeightRef.current
+          : fallbackHeight;
+      }
+
+      const nextHeight = Math.min(visualHeight, baseHeight);
+      lastGoodKeyboardPanelHeightRef.current = nextHeight;
+      return nextHeight;
+    };
     const update = () => {
       const rawOffsetTop = vv.offsetTop;
       const visualTop = Math.max(0, rawOffsetTop);
       const visualHeight = Math.max(0, vv.height);
-      const hidden = Math.max(0, window.innerHeight - visualHeight - visualTop);
-      const keyboardVisible = hidden > 40 || visualHeight < window.innerHeight - 40;
+      const layoutHeight = baseViewportHeightRef.current || Math.max(window.innerHeight, visualHeight);
+      const hidden = Math.max(0, layoutHeight - visualHeight - visualTop);
+      const keyboardVisible = hidden > 40 || visualHeight < layoutHeight - 40;
 
       if (focusLockRef.current) {
         open();
         if (keyboardVisible) {
-          lastGoodKeyboardInsetRef.current = hidden;
-          setKeyboardFrameIfChanged({ top: visualTop, height: visualHeight });
+          const panelHeight = getSafeKeyboardPanelHeight(visualHeight);
+          lastGoodKeyboardInsetRef.current = Math.max(0, layoutHeight - panelHeight - visualTop);
+          setKeyboardFrameIfChanged({ top: visualTop, height: panelHeight });
         }
         if (debugEnabled) {
-          setChatDebug(`focus ih=${Math.round(window.innerHeight)} vh=${Math.round(visualHeight)} top=${Math.round(rawOffsetTop)} h=${Math.round(hidden)} frame=${keyboardVisible ? 1 : 0}`);
+          setChatDebug(`focus ih=${Math.round(window.innerHeight)} base=${Math.round(layoutHeight)} vh=${Math.round(visualHeight)} top=${Math.round(rawOffsetTop)} h=${Math.round(hidden)} frame=${keyboardVisible ? 1 : 0}`);
         }
         return;
       }
 
+      updateBaseViewportHeight();
       if (debugEnabled) {
-        setChatDebug(`close ih=${Math.round(window.innerHeight)} vh=${Math.round(visualHeight)} top=${Math.round(rawOffsetTop)} h=${Math.round(hidden)}`);
+        setChatDebug(`close ih=${Math.round(window.innerHeight)} base=${Math.round(baseViewportHeightRef.current)} vh=${Math.round(visualHeight)} top=${Math.round(rawOffsetTop)} h=${Math.round(hidden)}`);
       }
       setKeyboardFrameIfChanged(null);
       close();
-      alignAfterClose();
     };
 
     // Reset on mount so stale kbd-open from previous pages doesn't leak in.
     close();
+    updateBaseViewportHeight();
     const resetRaf = window.requestAnimationFrame(() => {
       setKeyboardFrameIfChanged(null);
       update();
@@ -193,6 +218,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const onFocusIn = (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
+      updateBaseViewportHeight();
       focusLockRef.current = true;
       keyboardFocusStartedAtRef.current = Date.now();
       open();
@@ -204,7 +230,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       if (provisionalInset > 40) {
         setKeyboardFrameIfChanged({
           top: Math.max(0, vv.offsetTop),
-          height: Math.max(240, window.innerHeight - provisionalInset),
+          height: Math.max(
+            Math.round((baseViewportHeightRef.current || window.innerHeight) * 0.58),
+            (baseViewportHeightRef.current || window.innerHeight) - provisionalInset
+          ),
         });
       }
 
@@ -232,7 +261,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       setKeyboardFrameIfChanged(null);
       close();
     };
-  }, [setKeyboardFrameIfChanged, alignLatestMessagesAboveComposer]);
+  }, [setKeyboardFrameIfChanged]);
 
   const keyboardPanelActive = keyboardFrame != null;
   const renderedMessages = keyboardPanelActive ? displayMessages.slice(0, 5) : displayMessages;
@@ -360,8 +389,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       <div
         ref={scrollRef}
         className={clsx(
-          "px-4 py-2 space-y-0.5",
-          keyboardPanelActive && "flex flex-1 min-h-0 flex-col justify-end overflow-hidden"
+          "px-4 py-2",
+          keyboardPanelActive ? "flex flex-1 min-h-0 flex-col overflow-hidden" : "space-y-0.5"
         )}
       >
         {loading ? (
@@ -372,34 +401,36 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
             <p className="text-xs mt-1">첫 번째 메시지를 보내보세요! 🔥</p>
           </div>
         ) : (
-          <AnimatePresence initial={false}>
-            {renderedMessages.map((msg) => {
-              const isMe = user?.id === msg.user_id;
-              return (
-                <motion.div
-                  key={msg.id}
-                  data-chat-msg
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.15 }}
-                  className="flex items-start gap-2 py-0.5 group"
-                >
-                  {msg.team_id && <TeamBadge teamId={msg.team_id} size="xs" className="shrink-0" />}
-                  <div className="min-w-0 flex-1">
-                    <span className="inline">
-                      <span className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")} onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}>
-                        {msg.nickname || "익명"}
+          <div className={clsx("space-y-0.5", keyboardPanelActive && "mt-auto")}> 
+            <AnimatePresence initial={false}>
+              {renderedMessages.map((msg) => {
+                const isMe = user?.id === msg.user_id;
+                return (
+                  <motion.div
+                    key={msg.id}
+                    data-chat-msg
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="flex items-start gap-2 py-0.5 group"
+                  >
+                    {msg.team_id && <TeamBadge teamId={msg.team_id} size="xs" className="shrink-0" />}
+                    <div className="min-w-0 flex-1">
+                      <span className="inline">
+                        <span className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")} onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}>
+                          {msg.nickname || "익명"}
+                        </span>
+                        <span className="text-sm text-text-primary">{msg.content}</span>
                       </span>
-                      <span className="text-sm text-text-primary">{msg.content}</span>
+                    </div>
+                    <span className="text-[10px] text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {formatTime(msg.created_at)}
                     </span>
-                  </div>
-                  <span className="text-[10px] text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {formatTime(msg.created_at)}
-                  </span>
-                </motion.div>
-              );
-            })}
-          </AnimatePresence>
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
+          </div>
         )}
       </div>
 
