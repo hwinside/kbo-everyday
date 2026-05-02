@@ -54,7 +54,9 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const editInputRef = useRef<HTMLInputElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const dragStartX = useRef(0);
   const dragStartY = useRef(0);
+  const dragShouldClose = useRef(false);
   const isDragging = useRef(false);
   const openedAtRef = useRef(0);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
@@ -63,7 +65,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   // which produces visible jumps. To defeat both behaviours we pin the sheet
   // to the *visual* viewport by computing top/bottom offsets explicitly.
   const [vvTop, setVvTop] = useState(0);
-  const [vvBottom, setVvBottom] = useState(0);
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const { user, profile } = useAuth();
   const shouldRender = isOpen && postId !== null;
 
@@ -148,31 +150,46 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     }
   }, [shouldRender]);
 
-  // Track visualViewport for iOS keyboard-aware sheet height
+  // Track visualViewport for iOS keyboard-aware sheet height.
+  // Do not drive the sheet with `bottom: keyboardInset`: iOS Safari/WebView can
+  // keep a stale inset after focus/blur and compress the panel. Instead, pin the
+  // partial-height sheet inside the visual viewport with explicit top + height.
   useEffect(() => {
     if (!shouldRender) return;
     if (typeof window === "undefined" || !window.visualViewport) {
       setViewportHeight(window.innerHeight);
+      setVvTop(0);
+      setKeyboardInset(0);
       return;
     }
     const vv = window.visualViewport;
-    // Track the visual viewport box so the sheet can sit exactly inside it.
-    let layoutHeight = window.innerHeight;
+    let layoutHeight = Math.max(window.innerHeight, vv.height + Math.max(0, vv.offsetTop));
+    const timers: number[] = [];
+
     const update = () => {
-      if (vv.height + vv.offsetTop > layoutHeight) {
-        layoutHeight = vv.height + vv.offsetTop;
-      }
+      const offsetTop = Math.max(0, vv.offsetTop);
+      layoutHeight = Math.max(layoutHeight, window.innerHeight, vv.height + offsetTop);
       setViewportHeight(vv.height);
-      setVvTop(vv.offsetTop);
-      // space below the visual viewport inside the layout viewport (= keyboard + accessory bar)
-      setVvBottom(Math.max(0, layoutHeight - vv.offsetTop - vv.height));
+      setVvTop(offsetTop);
+      setKeyboardInset(Math.max(0, layoutHeight - offsetTop - vv.height));
     };
-    update();
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
+
+    const scheduleUpdate = () => {
+      update();
+      [80, 180, 360].forEach((delay) => {
+        timers.push(window.setTimeout(update, delay));
+      });
+    };
+
+    scheduleUpdate();
+    vv.addEventListener("resize", scheduleUpdate);
+    vv.addEventListener("scroll", scheduleUpdate);
+    window.addEventListener("orientationchange", scheduleUpdate);
     return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
+      vv.removeEventListener("resize", scheduleUpdate);
+      vv.removeEventListener("scroll", scheduleUpdate);
+      window.removeEventListener("orientationchange", scheduleUpdate);
+      timers.forEach((timer) => window.clearTimeout(timer));
     };
   }, [shouldRender]);
 
@@ -334,32 +351,52 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
           zIndex: 9999,
           pointerEvents: shouldRender ? "auto" : "none",
           display: shouldRender ? "flex" : "none",
-          // Avoid top/bottom visualViewport math for the closed/open race.
-          // A fixed, bounded height is far less flaky on real iPhone Safari and
-          // leaves the tapped post visible above the sheet.
-          height: viewportHeight
-            ? Math.min(Math.round(viewportHeight * 0.6), 520)
-            : "min(60dvh, 520px)",
-          maxHeight: "calc(100dvh - env(safe-area-inset-top) - 120px)",
-          bottom: viewportHeight ? vvBottom : 0,
+          ...(() => {
+            if (!viewportHeight) {
+              return {
+                height: "min(60dvh, 520px)",
+                maxHeight: "calc(100dvh - env(safe-area-inset-top) - 120px)",
+                bottom: 0,
+              };
+            }
+            const height = Math.min(Math.round(viewportHeight * 0.6), 520);
+            return {
+              top: `${vvTop + viewportHeight - height}px`,
+              height,
+              maxHeight: Math.max(320, viewportHeight - 24),
+            };
+          })(),
         }}
         role="dialog"
         aria-modal="true"
         aria-label="댓글"
         onTouchStart={(e) => {
-          const listAtTop = !listRef.current || listRef.current.scrollTop <= 0;
-          if (listAtTop) {
-            dragStartY.current = e.touches[0].clientY;
-            isDragging.current = true;
-          } else {
-            isDragging.current = false;
-          }
+          if (e.touches.length !== 1) return;
+          const listAtTop = !listRef.current || listRef.current.scrollTop <= 2;
+          dragStartX.current = e.touches[0].clientX;
+          dragStartY.current = e.touches[0].clientY;
+          dragShouldClose.current = false;
+          isDragging.current = listAtTop;
+        }}
+        onTouchMove={(e) => {
+          if (!isDragging.current || e.touches.length !== 1) return;
+          const target = e.target;
+          if (target instanceof HTMLElement && target.closest("input, textarea")) return;
+          const deltaX = Math.abs(e.touches[0].clientX - dragStartX.current);
+          const deltaY = e.touches[0].clientY - dragStartY.current;
+          if (deltaY < 18 || deltaY < deltaX * 1.2) return;
+          dragShouldClose.current = true;
+          if (e.cancelable) e.preventDefault();
         }}
         onTouchEnd={(e) => {
           if (!isDragging.current) return;
           isDragging.current = false;
-          const delta = e.changedTouches[0].clientY - dragStartY.current;
-          if (delta > 80) onClose();
+          const touch = e.changedTouches[0];
+          if (!touch) return;
+          const deltaX = Math.abs(touch.clientX - dragStartX.current);
+          const deltaY = touch.clientY - dragStartY.current;
+          if (dragShouldClose.current && deltaY > 80 && deltaY > deltaX * 1.2) onClose();
+          dragShouldClose.current = false;
         }}
       >
             {/* Drag handle */}
@@ -512,7 +549,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             </div>
 
             {/* Input area — flex-none so list (flex-1) absorbs keyboard resize. */}
-            <div className="flex-none border-t border-border px-4 py-3" style={{ paddingBottom: vvBottom > 0 ? "0.75rem" : "calc(0.75rem + env(safe-area-inset-bottom))" }}>
+            <div className="flex-none border-t border-border px-4 py-3" style={{ paddingBottom: keyboardInset > 0 ? "0.75rem" : "calc(0.75rem + env(safe-area-inset-bottom))" }}>
               <div className="flex items-center gap-2">
                 {user ? (
                   <input
