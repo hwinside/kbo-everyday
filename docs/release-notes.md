@@ -4,6 +4,25 @@
 
 ---
 
+---
+
+## 2026-05-02 20:16 KST — 크관 채팅 iOS 키보드 포커스 안정화 V2
+
+- **환경:** prod/web (Vercel)
+- **Commit:** 65701d9a2170631d6b9be90c59c499272020594a
+- **변경사항:**
+  - 크관 채팅 입력 포커스 시 iOS Safari에서 댓글/입력창 위치가 매번 달라지는 문제 수정
+  - `keyboardInset` 역산 대신 `visualViewport`의 `{top, height}`를 직접 fixed panel 크기로 사용
+  - 키보드 열림 상태에서는 최신 댓글 5개만 입력창 바로 위에 bottom-align하고, 방 선택/분위기 게이지는 숨김
+  - body scroll lock 제거로 focus/blur/viewport 이벤트 순서 경쟁 완화
+- **리스크/롤백:** 중간. iOS 키보드 포커스 레이아웃 한정 변경이며 문제 시 `65701d9a` revert
+- **확인 항목:**
+  - [x] `pnpm exec tsc --noEmit` 통과
+  - [x] `pnpm exec eslint src/components/game/GameChat.tsx` error 0
+  - [x] `pnpm build` 통과
+  - [x] Vercel production Ready + `keubo.fan` alias 확인
+  - [ ] iOS Safari 실기기에서 키보드 오픈 시 최신댓글 5개 → 입력창 → 키보드 순서 최종 확인
+
 ## 2026-05-02 04:52 KST — 댓글 시트 아래 스와이프 닫기 추가
 
 - **환경:** prod/web (Vercel)
