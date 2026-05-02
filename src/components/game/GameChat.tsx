@@ -294,6 +294,12 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const keyboardPanelActive = keyboardFrame != null;
   const renderedMessages = keyboardPanelActive ? displayMessages.slice(0, 5) : displayMessages;
 
+  const preventKeyboardPanelTouchMove = useCallback((e: { target: EventTarget | null; preventDefault: () => void }) => {
+    const target = e.target instanceof HTMLElement ? e.target : null;
+    if (target?.closest('[data-composer="game-chat"]')) return;
+    e.preventDefault();
+  }, []);
+
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
 
@@ -366,6 +372,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         "flex flex-col",
         keyboardPanelActive && "fixed left-0 right-0 z-[96] bg-bg-primary overflow-hidden overscroll-none"
       )}
+      onTouchMoveCapture={keyboardPanelActive ? preventKeyboardPanelTouchMove : undefined}
       style={keyboardPanelActive ? {
         top: `${keyboardFrame.top}px`,
         height: `${keyboardFrame.height}px`,
@@ -443,35 +450,57 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
             <p className="text-xs mt-1">첫 번째 메시지를 보내보세요! 🔥</p>
           </div>
         ) : (
-          <div className={clsx("space-y-0.5", keyboardPanelActive && "mt-auto")}> 
-            <AnimatePresence initial={false}>
-              {renderedMessages.map((msg) => {
+          <div className={clsx("space-y-0.5", keyboardPanelActive && "mt-auto select-none")}> 
+            {keyboardPanelActive ? (
+              renderedMessages.map((msg) => {
                 const isMe = user?.id === msg.user_id;
                 return (
-                  <motion.div
-                    key={msg.id}
-                    data-chat-msg
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.15 }}
-                    className="flex items-start gap-2 py-0.5 group"
-                  >
+                  <div key={msg.id} data-chat-msg className="flex items-start gap-2 py-0.5 group">
                     {msg.team_id && <TeamBadge teamId={msg.team_id} size="xs" className="shrink-0" />}
                     <div className="min-w-0 flex-1">
                       <span className="inline">
-                        <span className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")} onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}>
+                        <span className={clsx("text-xs font-semibold mr-1", isMe ? "text-accent" : "text-text-tertiary")}>
                           {msg.nickname || "익명"}
                         </span>
                         <span className="text-sm text-text-primary">{msg.content}</span>
                       </span>
                     </div>
-                    <span className="text-[10px] text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <span className="text-[10px] text-text-tertiary shrink-0 mt-0.5 opacity-0">
                       {formatTime(msg.created_at)}
                     </span>
-                  </motion.div>
+                  </div>
                 );
-              })}
-            </AnimatePresence>
+              })
+            ) : (
+              <AnimatePresence initial={false}>
+                {renderedMessages.map((msg) => {
+                  const isMe = user?.id === msg.user_id;
+                  return (
+                    <motion.div
+                      key={msg.id}
+                      data-chat-msg
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.15 }}
+                      className="flex items-start gap-2 py-0.5 group"
+                    >
+                      {msg.team_id && <TeamBadge teamId={msg.team_id} size="xs" className="shrink-0" />}
+                      <div className="min-w-0 flex-1">
+                        <span className="inline">
+                          <span className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")} onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}>
+                            {msg.nickname || "익명"}
+                          </span>
+                          <span className="text-sm text-text-primary">{msg.content}</span>
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {formatTime(msg.created_at)}
+                      </span>
+                    </motion.div>
+                  );
+                })}
+              </AnimatePresence>
+            )}
           </div>
         )}
       </div>
