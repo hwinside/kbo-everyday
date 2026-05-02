@@ -6,6 +6,25 @@
 
 ---
 
+## 2026-05-02 20:38 KST — 크관 채팅 iOS 키보드 포커스 V2 후속 보정
+
+- **환경:** prod/web (Vercel)
+- **Commit:** a2ad2e07f0c27461af7c257f8513fd25a41b6e89
+- **변경사항:**
+  - iOS Safari에서 자동완성/연락처 바 애니메이션 중 tiny `visualViewport.height` 샘플이 들어와 입력창이 상단으로 밀리는 문제 방어
+  - 키보드 오픈 상태에서 최신 댓글 5개를 inner wrapper `mt-auto`로 입력창 바로 위에 고정
+  - 키보드 닫힘 후 예약 auto-align을 제거해 닫힌 상태의 사용자 스크롤이 다시 채팅 입력창으로 끌려 내려가지 않도록 수정
+- **리스크/롤백:** 중간. 크관 채팅 iOS 포커스 레이아웃 한정 변경이며 문제 시 `a2ad2e07` revert
+- **확인 항목:**
+  - [x] `pnpm exec tsc --noEmit` 통과
+  - [x] `pnpm exec eslint src/components/game/GameChat.tsx` error 0
+  - [x] `pnpm build` 통과
+  - [x] Vercel production Ready + `keubo.fan` alias 확인
+  - [x] prod fake tiny viewport QA: 메시지 5개, 마지막 댓글↔입력창 gap 8px, blur 후 upward scrollY 1664→788 확인
+  - [ ] iOS Safari 실기기 최종 확인
+
+---
+
 ## 2026-05-02 20:16 KST — 크관 채팅 iOS 키보드 포커스 안정화 V2
 
 - **환경:** prod/web (Vercel)
