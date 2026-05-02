@@ -127,6 +127,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const baseViewportHeightRef = useRef(0);
   const lastGoodKeyboardInsetRef = useRef(0);
   const lastGoodKeyboardPanelHeightRef = useRef(0);
+  const lockedKeyboardPanelHeightRef = useRef(0);
   const scrollLockStateRef = useRef<{ htmlOverflow: string; bodyOverflow: string; htmlOverscroll: string; bodyOverscroll: string } | null>(null);
   const composerBottom = "52px";
 
@@ -170,6 +171,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const forceCloseKeyboardPanel = () => {
       focusLockRef.current = false;
       keyboardFocusStartedAtRef.current = 0;
+      lockedKeyboardPanelHeightRef.current = 0;
       setKeyboardFrameIfChanged(null);
       close();
       unlockViewportScroll();
@@ -213,9 +215,14 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         open();
         lockViewportScroll();
         if (keyboardVisible) {
-          const panelHeight = getSafeKeyboardPanelHeight(visualHeight);
+          // Freeze the keyboard panel height for the whole focus session. iOS can
+          // keep emitting tiny visualViewport deltas while the user drags near
+          // the keyboard/accessory bar; accepting those samples causes visible
+          // text jitter even if the message preview itself is static.
+          const panelHeight = lockedKeyboardPanelHeightRef.current || getSafeKeyboardPanelHeight(visualHeight);
           lastGoodKeyboardInsetRef.current = Math.max(0, layoutHeight - panelHeight - visualTop);
-          setKeyboardFrameIfChanged({ top: visualTop, height: panelHeight });
+          lockedKeyboardPanelHeightRef.current = panelHeight;
+          setKeyboardFrameIfChanged({ top: 0, height: panelHeight });
         }
         if (debugEnabled) {
           setChatDebug(`focus ih=${Math.round(window.innerHeight)} base=${Math.round(layoutHeight)} vh=${Math.round(visualHeight)} top=${Math.round(rawOffsetTop)} h=${Math.round(hidden)} frame=${keyboardVisible ? 1 : 0}`);
@@ -247,22 +254,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       updateBaseViewportHeight();
       focusLockRef.current = true;
       keyboardFocusStartedAtRef.current = Date.now();
+      lockedKeyboardPanelHeightRef.current = 0;
       open();
       lockViewportScroll();
-
-      // If we have a previous good keyboard height, enter the fixed panel immediately
-      // to avoid the first-focus frame jumping with the page composer. The next
-      // visualViewport sample replaces this with the exact visible viewport.
-      const provisionalInset = lastGoodKeyboardInsetRef.current;
-      if (provisionalInset > 40) {
-        setKeyboardFrameIfChanged({
-          top: Math.max(0, vv.offsetTop),
-          height: Math.max(
-            Math.round((baseViewportHeightRef.current || window.innerHeight) * 0.58),
-            (baseViewportHeightRef.current || window.innerHeight) - provisionalInset
-          ),
-        });
-      }
 
       [0, 50, 150, 300, 600, 900, 1200, 1500].forEach((ms) => setTimeout(update, ms));
     };
@@ -271,6 +265,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
       focusLockRef.current = false;
       keyboardFocusStartedAtRef.current = 0;
+      lockedKeyboardPanelHeightRef.current = 0;
       setTimeout(forceCloseKeyboardPanel, 50);
       setTimeout(forceCloseKeyboardPanel, 300);
       setTimeout(forceCloseKeyboardPanel, 600);
@@ -285,6 +280,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       document.removeEventListener("focusout", onFocusOut);
       focusLockRef.current = false;
       keyboardFocusStartedAtRef.current = 0;
+      lockedKeyboardPanelHeightRef.current = 0;
       setKeyboardFrameIfChanged(null);
       close();
       unlockViewportScroll();
