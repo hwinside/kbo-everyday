@@ -6,6 +6,27 @@
 
 ---
 
+## 2026-05-02 21:31 KST — 크관 채팅 iOS 키보드 하단 gap 방어 + BrowserStack QA 스크립트
+
+- **환경:** prod/web (Vercel)
+- **Commit:** 49953d7783fe0ab14300128f7f3895a177c4d198
+- **변경사항:**
+  - iOS Safari 키보드 오픈 상태에서 스크롤 시 입력창 아래로 뒤쪽 페이지/빈틈이 비쳐 보이는 현상 방어
+  - keyboard panel 아래 영역에 opaque blocker를 추가해 composer 아래~layout viewport bottom을 덮음
+  - keyboard panel/message 영역에 overscroll 방어 클래스 추가
+  - BrowserStack iPhone Safari QA 스크립트 `pnpm qa:ios-safari-keyboard` 추가
+- **리스크/롤백:** 중간. 크관 채팅 iOS 키보드 포커스/스크롤 레이아웃 한정 변경이며 문제 시 `49953d77` revert
+- **확인 항목:**
+  - [x] `pnpm exec tsc --noEmit` 통과
+  - [x] `pnpm exec eslint src/components/game/GameChat.tsx` error 0
+  - [x] `pnpm build` 통과
+  - [x] local fake keyboard QA: 최신댓글 5개, 마지막 댓글↔입력창 gap 8px, blocker top=composer bottom 확인
+  - [x] Vercel production Ready + `keubo.fan` alias 확인
+  - [~] BrowserStack Automate iPhone Safari 접속/스크린샷/DOM metrics 수집 성공, 단 소프트 키보드 visualViewport 변화가 없어 최종 시각 QA는 inconclusive
+  - [ ] iOS Safari/BrowserStack Live에서 실제 키보드 시각 QA 최종 확인
+
+---
+
 ## 2026-05-02 20:38 KST — 크관 채팅 iOS 키보드 포커스 V2 후속 보정
 
 - **환경:** prod/web (Vercel)
