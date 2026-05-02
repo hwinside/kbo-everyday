@@ -319,10 +319,20 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   return (
     <>
     {debugOverlay}
+    {keyboardPanelActive && (
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed left-0 right-0 bottom-0 z-[95]"
+        style={{
+          top: `${keyboardFrame.top + keyboardFrame.height}px`,
+          background: "var(--chat-input-bg, rgba(10,10,15,1))",
+        }}
+      />
+    )}
     <div
       className={clsx(
         "flex flex-col",
-        keyboardPanelActive && "fixed left-0 right-0 z-[96] bg-bg-primary overflow-hidden"
+        keyboardPanelActive && "fixed left-0 right-0 z-[96] bg-bg-primary overflow-hidden overscroll-none"
       )}
       style={keyboardPanelActive ? {
         top: `${keyboardFrame.top}px`,
@@ -390,7 +400,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         ref={scrollRef}
         className={clsx(
           "px-4 py-2",
-          keyboardPanelActive ? "flex flex-1 min-h-0 flex-col overflow-hidden" : "space-y-0.5"
+          keyboardPanelActive ? "flex flex-1 min-h-0 flex-col overflow-hidden overscroll-none" : "space-y-0.5"
         )}
       >
         {loading ? (

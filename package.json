@@ -8,7 +8,8 @@
     "start": "next start",
     "qa:ui:comment-crud": "node scripts/qa/ui-smoke-comment-crud.mjs",
     "lint": "eslint",
-    "validate:roster": "node scripts/validate-roster.mjs"
+    "validate:roster": "node scripts/validate-roster.mjs",
+    "qa:ios-safari-keyboard": "node scripts/qa/browserstack-ios-safari-keyboard.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.1",
