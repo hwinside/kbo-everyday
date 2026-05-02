@@ -137,7 +137,7 @@ for ((i=START; i<END; i++)); do
 
   # 3. face detect → v5 crop → 752x944
   # 가드레일 v2 (2026-04-23): raw PNG 기반 face detect + 3단계 fallback + 최소 face 크기 검증
-  CROP_RESULT=$(python3 - "$TMP_HERO" "$HERO_PNG" "$RAW_PNG" << 'PYEOF'
+  CROP_RESULT=$(/usr/bin/python3 - "$TMP_HERO" "$HERO_PNG" "$RAW_PNG" << 'PYEOF'
 import sys, cv2, numpy as np
 from PIL import Image
 
@@ -296,3 +296,8 @@ CREDITS=$(curl -sS -H "X-Api-Key: $REMOVE_BG_API_KEY" https://api.remove.bg/v1.0
 echo "remove.bg 잔여: $CREDITS" | tee -a "$LOG"
 
 echo "$LOG"
+
+# FAIL이 있으면 non-zero exit (launchd/caller에 실패 전파)
+if [ "$FAIL" -gt 0 ]; then
+  exit 1
+fi
