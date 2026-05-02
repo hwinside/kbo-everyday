@@ -27,7 +27,7 @@ const JOB_INFOS = [
   { name: "videos-rss", label: "영상 수집 (RSS)", schedule: "매 2시간", description: "channel_pool 전체 RSS 수집 (공식+커뮤니티 채널, 선수 태깅)" },
   { name: "videos-player-shorts", label: "선수 숏츠", schedule: "매 6시간", description: "선수별 YouTube 숏츠 검색 수집" },
   { name: "stats-update", label: "선수 스탯 업데이트", schedule: "매일 06:00", description: "KBO 타자/투수 스탯 크롤링 → Supabase 저장" },
-  { name: "daily-analysis", label: "일일 경기 분석", schedule: "매일 05:00", description: "Gemini 기반 순위/타이틀 변동 분석 리포트" },
+  { name: "daily-analysis", label: "일일 경기 분석", schedule: "매일 01:00", description: "Gemini 기반 순위/타이틀 변동 분석 리포트" },
   { name: "retention", label: "리텐션 집계", schedule: "매일 09:30", description: "코호트/활성화/경기일 리텐션 메트릭 집계" },
   { name: "daily-fallback-report", label: "API 장애 리포트", schedule: "매일 09:00", description: "전일 API 장애 집계 → 텔레그램 전송" },
   { name: "photos-check", label: "선수 사진 모니터링", schedule: "매주 일 06:00", description: "KBO CDN 선수 사진 존재 여부 확인" },

@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
   }
 
   // 2차 fallback: 요청된 날짜에 분석이 없으면 같은 시즌의 가장 최근 생성분 반환
-  // (자정~05:00 cron 전 간스, 경기 없는 날 등에서 빈 화면 방지)
+  // (자정~01:00 cron 전 간극, 경기 없는 날 등에서 빈 화면 방지)
   // 시즌 경계 필터: 요청 년도에 해당하는 데이터만 (다음 시즌 전에 작년 분석이 떠오는 것 방지)
   if (!data || data.length === 0) {
     const year = isoDate.slice(0, 4);
