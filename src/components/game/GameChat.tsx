@@ -71,24 +71,13 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const focusLockRef = useRef(false);
-  const stableKeyboardInsetRef = useRef(0);
   const lastAlignedCountRef = useRef(0);
-  const bodyLockStateRef = useRef<{
-    scrollY: number;
-    position: string;
-    top: string;
-    left: string;
-    right: string;
-    width: string;
-    overflow: string;
-  } | null>(null);
 
   const displayMessages = [...messages].reverse(); // 최신순: 최신 메시지가 리스트 상단
 
   // 최신 ~5개 메시지가 입력창 바로 위에 보이도록 window 스크롤을 맞춘다.
   // 채팅 리스트 자체는 별도 스크롤이 없고, 페이지 전체 스크롤만 사용한다.
   const alignLatestMessagesAboveComposer = useCallback(() => {
-    if (bodyLockStateRef.current) return;
     if (!scrollRef.current || !composerRef.current) return;
     const msgs = scrollRef.current.querySelectorAll<HTMLElement>("[data-chat-msg]");
     if (msgs.length === 0) return;
@@ -126,52 +115,33 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     scheduleChatFocusAlign();
   }, [loading, messages.length, scheduleChatFocusAlign]);
 
-  // iOS composer positioning (same pattern as PostDetail):
-  // - Track visualViewport to place composer above iOS accessory bar.
-  // - Toggle body.kbd-open on focusin to hide TabBar via CSS.
-  // - Poll vv read at multiple offsets to cover iOS first-focus race.
-  const [keyboardInset, setKeyboardInset] = useState(0);
+  // iOS composer positioning:
+  // - Focus mode is rendered as a fixed panel sized to visualViewport itself.
+  // - Composer stays at the bottom of that panel; we do not derive its position
+  //   from keyboard inset/padding, because iOS Safari can report transient inset
+  //   samples during focus that place the input at inconsistent heights.
+  // - When the keyboard closes, the normal page scroll alignment is restored.
+  const [keyboardFrame, setKeyboardFrame] = useState<{ top: number; height: number } | null>(null);
   const [chatDebug, setChatDebug] = useState<string | null>(null);
   const keyboardFocusStartedAtRef = useRef(0);
   const lastGoodKeyboardInsetRef = useRef(0);
   const composerBottom = `calc(52px + env(safe-area-inset-bottom, 0px))`;
+
+  const setKeyboardFrameIfChanged = useCallback((next: { top: number; height: number } | null) => {
+    setKeyboardFrame((prev) => {
+      if (!prev && !next) return prev;
+      if (prev && next && Math.abs(prev.top - next.top) < 1 && Math.abs(prev.height - next.height) < 1) {
+        return prev;
+      }
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
     const vv = window.visualViewport;
     const open = () => document.body.classList.add("kbd-open");
     const close = () => document.body.classList.remove("kbd-open");
-    const lockPageScroll = () => {
-      if (bodyLockStateRef.current) return;
-      const { style } = document.body;
-      bodyLockStateRef.current = {
-        scrollY: window.scrollY,
-        position: style.position,
-        top: style.top,
-        left: style.left,
-        right: style.right,
-        width: style.width,
-        overflow: style.overflow,
-      };
-      style.position = "fixed";
-      style.top = `-${bodyLockStateRef.current.scrollY}px`;
-      style.left = "0";
-      style.right = "0";
-      style.width = "100%";
-      style.overflow = "hidden";
-    };
-    const unlockPageScroll = () => {
-      const state = bodyLockStateRef.current;
-      if (!state) return;
-      const { style } = document.body;
-      style.position = state.position;
-      style.top = state.top;
-      style.left = state.left;
-      style.right = state.right;
-      style.width = state.width;
-      style.overflow = state.overflow;
-      bodyLockStateRef.current = null;
-      window.scrollTo(0, state.scrollY);
-    };
     const alignAfterClose = () => {
       [0, 50, 150, 300, 600].forEach((ms) => {
         setTimeout(() => requestAnimationFrame(alignLatestMessagesAboveComposer), ms);
@@ -180,67 +150,42 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const forceCloseKeyboardPanel = () => {
       focusLockRef.current = false;
       keyboardFocusStartedAtRef.current = 0;
-      stableKeyboardInsetRef.current = 0;
-      setKeyboardInset(0);
+      setKeyboardFrameIfChanged(null);
       close();
-      unlockPageScroll();
       alignAfterClose();
     };
     const debugEnabled = new URLSearchParams(window.location.search).get("chatDebug") === "1";
     const update = () => {
       const rawOffsetTop = vv.offsetTop;
-      const offsetTop = Math.max(0, rawOffsetTop);
-      const hidden = Math.max(0, window.innerHeight - vv.height - offsetTop);
-      if (hidden > 40) {
-        // 입력 포커스 없으면 무시 — iOS overscroll bounce로 hidden이 일시적으로 뛰는 것 방지
-        if (!focusLockRef.current) return;
-        const focusedMs = keyboardFocusStartedAtRef.current
-          ? Date.now() - keyboardFocusStartedAtRef.current
-          : 0;
-        const previousInset = stableKeyboardInsetRef.current;
-        const lastGoodInset = lastGoodKeyboardInsetRef.current;
-        const maxReasonableInset = Math.round(window.innerHeight * 0.46);
-        const sessionCeiling = lastGoodInset > 40
-          ? Math.min(maxReasonableInset, lastGoodInset + 96)
-          : maxReasonableInset;
-        const boundedHidden = Math.min(hidden, sessionCeiling);
-        const nextInset = focusedMs > 900 && previousInset > 40 && boundedHidden > previousInset + 12
-          ? previousInset
-          : boundedHidden;
-        stableKeyboardInsetRef.current = nextInset;
-        if (focusedMs > 600 && hidden <= sessionCeiling) {
-          lastGoodKeyboardInsetRef.current = nextInset;
-        }
-        setKeyboardInset(nextInset);
-        if (debugEnabled) {
-          setChatDebug(`open ih=${Math.round(window.innerHeight)} vh=${Math.round(vv.height)} ot=${Math.round(rawOffsetTop)} h=${Math.round(hidden)} bh=${Math.round(boundedHidden)} inset=${Math.round(nextInset)} fg=${focusedMs}`);
-        }
+      const visualTop = Math.max(0, rawOffsetTop);
+      const visualHeight = Math.max(0, vv.height);
+      const hidden = Math.max(0, window.innerHeight - visualHeight - visualTop);
+      const keyboardVisible = hidden > 40 || visualHeight < window.innerHeight - 40;
+
+      if (focusLockRef.current) {
         open();
-        if (focusLockRef.current) {
-          // Body는 배경 고정만 담당한다. 실제 스크롤은 fixed chat panel 내부 메시지 영역에서만 허용.
-          requestAnimationFrame(() => {
-            alignLatestMessagesAboveComposer();
-            lockPageScroll();
-          });
+        if (keyboardVisible) {
+          lastGoodKeyboardInsetRef.current = hidden;
+          setKeyboardFrameIfChanged({ top: visualTop, height: visualHeight });
         }
-      } else {
         if (debugEnabled) {
-          setChatDebug(`close? ih=${Math.round(window.innerHeight)} vh=${Math.round(vv.height)} ot=${Math.round(rawOffsetTop)} h=${Math.round(hidden)} inset=${Math.round(stableKeyboardInsetRef.current)} focus=${focusLockRef.current ? 1 : 0}`);
+          setChatDebug(`focus ih=${Math.round(window.innerHeight)} vh=${Math.round(visualHeight)} top=${Math.round(rawOffsetTop)} h=${Math.round(hidden)} frame=${keyboardVisible ? 1 : 0}`);
         }
-        // 포커스 중 hidden=0 근처로 튀는 iOS transient는 닫힘으로 오판하지 않는다.
-        // 실제 닫힘은 focusout의 forceCloseKeyboardPanel()에서 처리한다.
-        if (focusLockRef.current) return;
-        stableKeyboardInsetRef.current = 0;
-        setKeyboardInset(0);
-        close();
-        unlockPageScroll();
-        alignAfterClose();
+        return;
       }
+
+      if (debugEnabled) {
+        setChatDebug(`close ih=${Math.round(window.innerHeight)} vh=${Math.round(visualHeight)} top=${Math.round(rawOffsetTop)} h=${Math.round(hidden)}`);
+      }
+      setKeyboardFrameIfChanged(null);
+      close();
+      alignAfterClose();
     };
+
     // Reset on mount so stale kbd-open from previous pages doesn't leak in.
     close();
     const resetRaf = window.requestAnimationFrame(() => {
-      setKeyboardInset(0);
+      setKeyboardFrameIfChanged(null);
       update();
     });
     vv.addEventListener("resize", update);
@@ -250,30 +195,26 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
       focusLockRef.current = true;
       keyboardFocusStartedAtRef.current = Date.now();
+      open();
+
+      // If we have a previous good keyboard height, enter the fixed panel immediately
+      // to avoid the first-focus frame jumping with the page composer. The next
+      // visualViewport sample replaces this with the exact visible viewport.
       const provisionalInset = lastGoodKeyboardInsetRef.current;
       if (provisionalInset > 40) {
-        stableKeyboardInsetRef.current = provisionalInset;
-        setKeyboardInset(provisionalInset);
-        if (debugEnabled) {
-          setChatDebug(`provisional inset=${Math.round(provisionalInset)}`);
-        }
-        requestAnimationFrame(() => {
-          alignLatestMessagesAboveComposer();
-          lockPageScroll();
+        setKeyboardFrameIfChanged({
+          top: Math.max(0, vv.offsetTop),
+          height: Math.max(240, window.innerHeight - provisionalInset),
         });
-      } else {
-        stableKeyboardInsetRef.current = 0;
       }
-      open();
+
       [0, 50, 150, 300, 600, 900, 1200, 1500].forEach((ms) => setTimeout(update, ms));
-      scheduleChatFocusAlign();
     };
     const onFocusOut = (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
       focusLockRef.current = false;
       keyboardFocusStartedAtRef.current = 0;
-      stableKeyboardInsetRef.current = 0;
       setTimeout(forceCloseKeyboardPanel, 50);
       setTimeout(forceCloseKeyboardPanel, 300);
       setTimeout(forceCloseKeyboardPanel, 600);
@@ -288,11 +229,13 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       document.removeEventListener("focusout", onFocusOut);
       focusLockRef.current = false;
       keyboardFocusStartedAtRef.current = 0;
-      stableKeyboardInsetRef.current = 0;
-      unlockPageScroll();
+      setKeyboardFrameIfChanged(null);
       close();
     };
-  }, [scheduleChatFocusAlign, alignLatestMessagesAboveComposer]);
+  }, [setKeyboardFrameIfChanged, alignLatestMessagesAboveComposer]);
+
+  const keyboardPanelActive = keyboardFrame != null;
+  const renderedMessages = keyboardPanelActive ? displayMessages.slice(0, 5) : displayMessages;
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -350,16 +293,15 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     <div
       className={clsx(
         "flex flex-col",
-        keyboardInset > 0 && "fixed left-0 right-0 z-[96] bg-bg-primary overflow-hidden"
+        keyboardPanelActive && "fixed left-0 right-0 z-[96] bg-bg-primary overflow-hidden"
       )}
-      style={keyboardInset > 0 ? {
-        top: 0,
-        bottom: 0,
-        paddingBottom: `${keyboardInset}px`,
+      style={keyboardPanelActive ? {
+        top: `${keyboardFrame.top}px`,
+        height: `${keyboardFrame.height}px`,
       } : undefined}
     >
       {/* Room selector */}
-      <div className="relative">
+      {!keyboardPanelActive && <div className="relative">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
           <button onClick={() => setShowRoomPicker(!showRoomPicker)} className="flex items-center gap-2">
             <Users className="w-4 h-4 text-text-tertiary" />
@@ -409,17 +351,17 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
             </motion.div>
           )}
         </AnimatePresence>
-      </div>
+      </div>}
 
       {/* Mood gauge */}
-      <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
+      {!keyboardPanelActive && <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />}
 
-      {/* Messages — newest first, close to broadcast area */}
+      {/* Messages — newest first, bottom-aligned above composer while keyboard is open */}
       <div
         ref={scrollRef}
         className={clsx(
           "px-4 py-2 space-y-0.5",
-          keyboardInset > 0 && "flex-1 min-h-0 overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]"
+          keyboardPanelActive && "flex flex-1 min-h-0 flex-col justify-end overflow-hidden"
         )}
       >
         {loading ? (
@@ -431,7 +373,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
           </div>
         ) : (
           <AnimatePresence initial={false}>
-            {displayMessages.map((msg) => {
+            {renderedMessages.map((msg) => {
               const isMe = user?.id === msg.user_id;
               return (
                 <motion.div
@@ -467,13 +409,13 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         data-composer="game-chat"
         className={clsx(
           "left-0 right-0 z-[98] border-t border-border",
-          keyboardInset > 0 ? "relative shrink-0" : "fixed"
+          keyboardPanelActive ? "relative shrink-0" : "fixed"
         )}
         style={{
           background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
           backdropFilter: "blur(12px)",
-          bottom: keyboardInset > 0 ? undefined : composerBottom,
-          transition: keyboardInset > 0 ? "none" : "bottom 80ms ease-out",
+          bottom: keyboardPanelActive ? undefined : composerBottom,
+          transition: keyboardPanelActive ? "none" : "bottom 80ms ease-out",
         }}
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
