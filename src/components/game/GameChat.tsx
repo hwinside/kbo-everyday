@@ -128,7 +128,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const lastGoodKeyboardInsetRef = useRef(0);
   const lastGoodKeyboardPanelHeightRef = useRef(0);
   const scrollLockStateRef = useRef<{ htmlOverflow: string; bodyOverflow: string; htmlOverscroll: string; bodyOverscroll: string } | null>(null);
-  const composerBottom = `calc(52px + env(safe-area-inset-bottom, 0px))`;
+  const composerBottom = "52px";
 
   const setKeyboardFrameIfChanged = useCallback((next: { top: number; height: number } | null) => {
     setKeyboardFrame((prev) => {
@@ -370,11 +370,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     <div
       className={clsx(
         "flex flex-col",
-        keyboardPanelActive && "fixed left-0 right-0 z-[96] bg-bg-primary overflow-hidden overscroll-none"
+        keyboardPanelActive && "fixed left-0 right-0 bottom-0 z-[96] bg-bg-primary overflow-hidden overscroll-none"
       )}
       onTouchMoveCapture={keyboardPanelActive ? preventKeyboardPanelTouchMove : undefined}
       style={keyboardPanelActive ? {
-        top: `${keyboardFrame.top}px`,
         height: `${keyboardFrame.height}px`,
       } : undefined}
     >
