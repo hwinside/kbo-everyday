@@ -127,6 +127,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const baseViewportHeightRef = useRef(0);
   const lastGoodKeyboardInsetRef = useRef(0);
   const lastGoodKeyboardPanelHeightRef = useRef(0);
+  const scrollLockStateRef = useRef<{ htmlOverflow: string; bodyOverflow: string; htmlOverscroll: string; bodyOverscroll: string } | null>(null);
   const composerBottom = `calc(52px + env(safe-area-inset-bottom, 0px))`;
 
   const setKeyboardFrameIfChanged = useCallback((next: { top: number; height: number } | null) => {
@@ -144,11 +145,34 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const vv = window.visualViewport;
     const open = () => document.body.classList.add("kbd-open");
     const close = () => document.body.classList.remove("kbd-open");
+    const lockViewportScroll = () => {
+      if (scrollLockStateRef.current) return;
+      scrollLockStateRef.current = {
+        htmlOverflow: document.documentElement.style.overflow,
+        bodyOverflow: document.body.style.overflow,
+        htmlOverscroll: document.documentElement.style.overscrollBehavior,
+        bodyOverscroll: document.body.style.overscrollBehavior,
+      };
+      document.documentElement.style.overflow = "hidden";
+      document.body.style.overflow = "hidden";
+      document.documentElement.style.overscrollBehavior = "none";
+      document.body.style.overscrollBehavior = "none";
+    };
+    const unlockViewportScroll = () => {
+      const state = scrollLockStateRef.current;
+      if (!state) return;
+      document.documentElement.style.overflow = state.htmlOverflow;
+      document.body.style.overflow = state.bodyOverflow;
+      document.documentElement.style.overscrollBehavior = state.htmlOverscroll;
+      document.body.style.overscrollBehavior = state.bodyOverscroll;
+      scrollLockStateRef.current = null;
+    };
     const forceCloseKeyboardPanel = () => {
       focusLockRef.current = false;
       keyboardFocusStartedAtRef.current = 0;
       setKeyboardFrameIfChanged(null);
       close();
+      unlockViewportScroll();
     };
     const debugEnabled = new URLSearchParams(window.location.search).get("chatDebug") === "1";
     const updateBaseViewportHeight = () => {
@@ -187,6 +211,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
       if (focusLockRef.current) {
         open();
+        lockViewportScroll();
         if (keyboardVisible) {
           const panelHeight = getSafeKeyboardPanelHeight(visualHeight);
           lastGoodKeyboardInsetRef.current = Math.max(0, layoutHeight - panelHeight - visualTop);
@@ -204,6 +229,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       }
       setKeyboardFrameIfChanged(null);
       close();
+      unlockViewportScroll();
     };
 
     // Reset on mount so stale kbd-open from previous pages doesn't leak in.
@@ -222,6 +248,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       focusLockRef.current = true;
       keyboardFocusStartedAtRef.current = Date.now();
       open();
+      lockViewportScroll();
 
       // If we have a previous good keyboard height, enter the fixed panel immediately
       // to avoid the first-focus frame jumping with the page composer. The next
@@ -260,6 +287,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       keyboardFocusStartedAtRef.current = 0;
       setKeyboardFrameIfChanged(null);
       close();
+      unlockViewportScroll();
     };
   }, [setKeyboardFrameIfChanged]);
 
@@ -270,8 +298,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const awayTeam = getTeamById(awayTeamId)!;
 
   // 팬방 글쓰기 권한 체크: 전체는 누구나, 팬방은 해당 팀 팬만
+  const qaKeyboardInputEnabled = typeof window !== "undefined"
+    && new URLSearchParams(window.location.search).get("chatQaKeyboard") === "1";
   const myTeamId = profile?.team_id != null ? Number(profile.team_id) : undefined;
   const canWrite = (() => {
+    if (qaKeyboardInputEnabled) return true;
     if (!isLoggedIn) return false;
     if (authLoading) return false;  // 프로필 로딩 중엔 입력 차단 (오판 방지)
     if (room === "all") return true;
@@ -291,6 +322,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   })();
 
   async function handleSend() {
+    if (qaKeyboardInputEnabled) return;
     if (!input.trim() || !canWrite) return;
     const ok = await sendMessage(input.trim());
     if (ok) setInput("");

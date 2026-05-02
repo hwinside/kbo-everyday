@@ -26,7 +26,7 @@ if (!username || !accessKey) {
 
 const hub = 'https://hub-cloud.browserstack.com/wd/hub';
 const auth = `Basic ${Buffer.from(`${username}:${accessKey}`).toString('base64')}`;
-const qaUrl = process.env.QA_URL || 'https://keubo.fan/games/20260502NCLG0?chatDebug=1';
+const qaUrl = process.env.QA_URL || 'https://keubo.fan/games/20260502NCLG0?chatDebug=1&chatQaKeyboard=1';
 
 async function wd(method, route, body, sessionId) {
   const res = await fetch(`${hub}${sessionId ? `/session/${sessionId}` : ''}${route}`, {
@@ -70,24 +70,12 @@ async function main() {
     await wd('POST', '/url', { url: qaUrl }, sessionId);
     await new Promise((r) => setTimeout(r, 5000));
 
-    // The input may be disabled for logged-out users; remove the disabled flag
-    // only in this remote QA session so Safari can open the real keyboard.
-    await wd('POST', '/execute/sync', {
-      script: `
-        const input = document.querySelector('[data-composer="game-chat"] input');
-        if (input) input.removeAttribute('disabled');
-        return !!input;
-      `,
-      args: [],
-    }, sessionId);
-
     const found = await wd('POST', '/element', {
       using: 'css selector',
       value: '[data-composer="game-chat"] input',
     }, sessionId);
     const elementId = found['element-6066-11e4-a52e-4f735466cecf'] || found.ELEMENT;
     await wd('POST', `/element/${elementId}/click`, {}, sessionId);
-    await wd('POST', `/element/${elementId}/value`, { text: 'qa', value: ['q', 'a'] }, sessionId);
     await new Promise((r) => setTimeout(r, 2500));
 
     // Try a real touch scroll while keyboard is open. This exposes the translucent
