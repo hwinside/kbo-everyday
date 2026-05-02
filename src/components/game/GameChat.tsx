@@ -378,7 +378,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       } : undefined}
     >
       {/* Room selector */}
-      {!keyboardPanelActive && <div className="relative">
+      <div className="relative">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
           <button onClick={() => setShowRoomPicker(!showRoomPicker)} className="flex items-center gap-2">
             <Users className="w-4 h-4 text-text-tertiary" />
@@ -428,10 +428,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
             </motion.div>
           )}
         </AnimatePresence>
-      </div>}
+      </div>
 
       {/* Mood gauge */}
-      {!keyboardPanelActive && <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />}
+      <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
 
       {/* Messages — newest first, bottom-aligned above composer while keyboard is open */}
       <div
@@ -449,7 +449,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
             <p className="text-xs mt-1">첫 번째 메시지를 보내보세요! 🔥</p>
           </div>
         ) : (
-          <div className={clsx("space-y-0.5", keyboardPanelActive && "mt-auto select-none")}> 
+          <div className={clsx("space-y-0.5", keyboardPanelActive && "select-none")}> 
             {keyboardPanelActive ? (
               renderedMessages.map((msg) => {
                 const isMe = user?.id === msg.user_id;

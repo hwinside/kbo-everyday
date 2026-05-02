@@ -83,6 +83,23 @@ async function drag(sessionId, x, y1, y2) {
   ]);
 }
 
+function center(el) {
+  return { x: Math.round(el.x + el.width / 2), y: Math.round(el.y + el.height / 2) };
+}
+
+function findComposerTapPoint(source) {
+  const elements = parseElements(source);
+  const input = elements.find((el) =>
+    el.visible === 'true'
+    && (el.kind === 'TextField' || el.kind === 'StaticText')
+    && /메시지 입력/.test(el.label || el.name || el.value || '')
+  );
+  if (input) return center(input);
+
+  // Fallback for the rounded composer container in iPhone 15 portrait.
+  return { x: 160, y: 780 };
+}
+
 function parseElements(source) {
   const elements = [];
   const tagRe = /<XCUIElementType(StaticText|TextField|Button|Keyboard)\b[^>]*>/g;
@@ -159,9 +176,12 @@ async function main() {
     // Wait for the QA URL to load in the Capacitor WKWebView.
     await sleep(Number(process.env.QA_INITIAL_WAIT_MS || 20000));
 
-    // Input coordinate for iPhone 15 portrait QA page. Keep this coordinate-based
-    // on purpose: it exercises the actual native tap path that opens the keyboard.
-    await tap(sessionId, 160, 735);
+    // Resolve the composer from the native accessibility tree. This still uses
+    // a native touch tap, but avoids stale hard-coded y coordinates when composer
+    // bottom spacing changes.
+    const initialSource = String(await wd('GET', '/source', null, sessionId));
+    const tapPoint = findComposerTapPoint(initialSource);
+    await tap(sessionId, tapPoint.x, tapPoint.y);
     await sleep(3500);
 
     const beforeSource = String(await wd('GET', '/source', null, sessionId));
@@ -197,6 +217,7 @@ async function main() {
       afterPath,
       browserstackSessionUrl: automation.public_url || automation.browser_url || null,
       videoUrl: automation.video_url || null,
+      tapPoint,
       keyboardVisible,
       trackedTexts: deltas,
       maxDeltaY,
