@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import type { GameEvent } from "@/types/game-events";
 import type { CelebrationEvent, CelebrationEventType } from "@/components/game/CelebrationOverlay";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
@@ -39,20 +39,29 @@ function toCelebrationType(eventType: string): CelebrationEventType | null {
 
 export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrationOptions) {
   const [celebration, setCelebration] = useState<CelebrationEvent | null>(null);
+  const celebrationRef = useRef<CelebrationEvent | null>(null);
   const seenRef = useRef<Set<string>>(new Set());
   const queueRef = useRef<CelebrationEvent[]>([]);
   /** Track pitcher strikeout counts for "2K, 3K..." display */
   const pitcherKRef = useRef<Map<string, number>>(new Map());
 
+  // Keep ref in sync so processEvents can read it without being a dependency
+  useEffect(() => { celebrationRef.current = celebration; }, [celebration]);
+
+  const setCelebrationSafe = useCallback((val: CelebrationEvent | null) => {
+    setCelebration(val);
+    celebrationRef.current = val;
+  }, []);
+
   /** Process the next item in queue when current celebration ends */
   const showNext = useCallback(() => {
-    setCelebration(null);
+    setCelebrationSafe(null);
     // Slight delay before showing next queued event
     setTimeout(() => {
       const next = queueRef.current.shift();
-      if (next) setCelebration(next);
+      if (next) setCelebrationSafe(next);
     }, 300);
-  }, []);
+  }, [setCelebrationSafe]);
 
   /** Call on each gameEvents update to detect new celebration-worthy events */
   const processEvents = useCallback(
@@ -128,13 +137,13 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
       }
 
       // If nothing showing, start first immediately
-      if (!celebration && queueRef.current.length === 0) {
-        setCelebration(newCelebrations.shift()!);
+      if (!celebrationRef.current && queueRef.current.length === 0) {
+        setCelebrationSafe(newCelebrations.shift()!);
       }
       // Queue the rest
       queueRef.current.push(...newCelebrations);
     },
-    [myTeamId, homeTeamId, awayTeamId, celebration],
+    [myTeamId, homeTeamId, awayTeamId, setCelebrationSafe],
   );
 
   return { celebration, processEvents, dismiss: showNext };
