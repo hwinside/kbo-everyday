@@ -174,8 +174,17 @@ export default function GameDetailPage() {
   // Client-side diff for celebration triggers.
   // Server events (gameEvents) are only used for text relay (KgwanTab), not celebrations,
   // because server event IDs are unstable across Vercel cold starts and cause replay on re-entry.
+  const skipNextDiffRef = useRef(false);
+
   useEffect(() => {
     if (!liveGame || !shouldPollGameEvents) return;
+
+    // After returning from background, skip one diff cycle to re-establish baseline
+    if (skipNextDiffRef.current) {
+      skipNextDiffRef.current = false;
+      clientEventStateRef.current = { live: liveGame, boxScore: gameDetail?.boxScore ?? null, seq: 0 };
+      return;
+    }
 
     const { events: clientEvents, nextState } = generateEvents(
       gameId,
@@ -190,9 +199,21 @@ export default function GameDetailPage() {
     }
   }, [gameId, liveGame, gameDetail?.boxScore, shouldPollGameEvents, processEvents]);
 
+  // Reset baseline on gameId change
   useEffect(() => {
     clientEventStateRef.current = null;
   }, [gameId]);
+
+  // Reset baseline when app returns from background to prevent stale diff
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        skipNextDiffRef.current = true;
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
 
   // useCallback must be called before any early returns (React hooks rules)
   const handleRefresh = useCallback(async () => {
