@@ -123,7 +123,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const [keyboardBottom, setKeyboardBottom] = useState<number | null>(null);
   const [chatDebug, setChatDebug] = useState<string | null>(null);
   const baseViewportHeightRef = useRef(0);
-  const lockedKeyboardBottomRef = useRef<number | null>(null);
   const [tabBarHeight, setTabBarHeight] = useState<number | null>(null);
   // Idle composer sits directly above the global TabBar. Measure the actual
   // rendered TabBar height because iOS safe-area handling differs by browser/PWA
@@ -176,7 +175,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
     const closeKeyboardMode = () => {
       focusLockRef.current = false;
-      lockedKeyboardBottomRef.current = null;
       document.body.classList.remove("kbd-open");
       setKeyboardBottomIfChanged(null);
     };
@@ -191,13 +189,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
       if (focusLockRef.current) {
         document.body.classList.add("kbd-open");
-        if (keyboardVisible && lockedKeyboardBottomRef.current == null) {
-          lockedKeyboardBottomRef.current = keyboardInset;
-        }
-        const stableKeyboardBottom = lockedKeyboardBottomRef.current ?? 0;
-        setKeyboardBottomIfChanged(stableKeyboardBottom);
+        setKeyboardBottomIfChanged(keyboardVisible ? keyboardInset : 0);
         if (debugEnabled) {
-          setChatDebug(`focus ih=${Math.round(window.innerHeight)} base=${Math.round(layoutHeight)} vh=${Math.round(visualHeight)} top=${Math.round(rawOffsetTop)} inset=${Math.round(keyboardInset)} locked=${Math.round(stableKeyboardBottom)} frame=${keyboardVisible ? 1 : 0}`);
+          setChatDebug(`focus ih=${Math.round(window.innerHeight)} base=${Math.round(layoutHeight)} vh=${Math.round(visualHeight)} top=${Math.round(rawOffsetTop)} inset=${Math.round(keyboardInset)} frame=${keyboardVisible ? 1 : 0}`);
         }
         return;
       }
@@ -221,9 +215,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
       updateBaseViewportHeight();
       focusLockRef.current = true;
-      lockedKeyboardBottomRef.current = null;
       document.body.classList.add("kbd-open");
-      // Provisional bottom until visualViewport reports the first real keyboard inset.
+      // Provisional bottom until visualViewport reports the real keyboard inset.
       setKeyboardBottomIfChanged(0);
       scheduleChatFocusAlign();
 
