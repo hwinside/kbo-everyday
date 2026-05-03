@@ -441,6 +441,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
   const [llmError, setLlmError] = useState<"timeout" | "network" | "parse" | null>(null);
   const [retryNonce, setRetryNonce] = useState(0); // manual retry trigger
   const regeneratingRef = useRef(false); // de-dupe: prevent duplicate background POST
+  const cachePollStartedAtRef = useRef<number | null>(null); // transient generation failures can still finish into cache
 
   // BoxScore가 실질적 데이터를 갖고 있는지 확인 (빈 배열이면 무의미)
   const hasRealBoxScore = boxScore &&
@@ -596,6 +597,51 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
       controller.abort();
     };
   }, [hasRealBoxScore, boxScore, gameId, llmSummary, awayTeam, homeTeam, linescore, retryNonce]);
+
+  // 최초 생성이 30초를 넘기거나 일시 실패해도 서버 쪽 생성이 뒤늦게 캐시에 저장될 수 있다.
+  // 이 경우 사용자에게 에러 카드로 고정하지 않고 잠시 캐시를 자동 확인한다.
+  useEffect(() => {
+    if (!llmError || llmSummary || !hasRealBoxScore) {
+      cachePollStartedAtRef.current = null;
+      return;
+    }
+
+    if (cachePollStartedAtRef.current == null) {
+      cachePollStartedAtRef.current = Date.now();
+    }
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const startedAt = cachePollStartedAtRef.current;
+    const MAX_POLL_MS = 120_000;
+
+    const pollCache = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(`/api/game-summary?gameId=${gameId}`);
+        const data = await res.json();
+        if (cancelled) return;
+        if (data.summary) {
+          setLlmSummary(data.summary);
+          setLlmError(null);
+          cachePollStartedAtRef.current = null;
+          return;
+        }
+      } catch {
+        // ignore transient poll failures; manual retry button remains available
+      }
+
+      if (!cancelled && Date.now() - startedAt < MAX_POLL_MS) {
+        timer = setTimeout(pollCache, 5_000);
+      }
+    };
+
+    timer = setTimeout(pollCache, 3_000);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [llmError, llmSummary, hasRealBoxScore, gameId]);
 
 
   // LLM 요약만 사용 (fallback/숏버전 폐기)
@@ -770,10 +816,10 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
                 <div className="text-2xl">⚠️</div>
                 <div>
                   <p className="text-sm font-medium text-text-primary">
-                    {llmError === "timeout" ? "분석이 오래 걸리고 있어요" : "분석을 불러오지 못했어요"}
+                    {llmError === "timeout" ? "분석이 조금 지연되고 있어요" : "분석을 다시 확인하고 있어요"}
                   </p>
                   <p className="text-xs text-text-tertiary mt-1">
-                    {llmError === "timeout" ? "잠시 후 다시 시도해 주세요" : "네트워크 확인 후 다시 시도해 주세요"}
+                    완료되면 자동으로 표시됩니다. 급하면 다시 시도해 주세요
                   </p>
                 </div>
                 <button
