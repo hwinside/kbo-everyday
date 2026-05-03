@@ -171,40 +171,21 @@ export default function GameDetailPage() {
     awayTeamId: game?.awayTeamId ?? 0,
   });
 
-  useEffect(() => {
-    if (gameEvents.length > 0) {
-      processEvents(gameEvents);
-    }
-  }, [gameEvents, processEvents]);
-
-  // Serverless memory cannot be trusted to diff live game events consistently.
-  // Keep a per-device baseline as well so the actual user's device can trigger celebrations
-  // from live + box score changes while they are on the game page.
+  // Client-side diff for celebration triggers.
+  // Server events (gameEvents) are only used for text relay (KgwanTab), not celebrations,
+  // because server event IDs are unstable across Vercel cold starts and cause replay on re-entry.
   useEffect(() => {
     if (!liveGame || !shouldPollGameEvents) return;
-
-    const prevBS = clientEventStateRef.current?.boxScore;
-    const currBS = gameDetail?.boxScore ?? null;
-    // [DEBUG] temporary — trace client-side diff
-    console.log("[client-diff]", {
-      hasPrev: !!clientEventStateRef.current,
-      prevBS: !!prevBS,
-      currBS: !!currBS,
-      inning: liveGame.inning,
-      isTop: liveGame.isTop,
-      score: `${liveGame.awayScore}-${liveGame.homeScore}`,
-    });
 
     const { events: clientEvents, nextState } = generateEvents(
       gameId,
       clientEventStateRef.current,
       liveGame,
-      currBS,
+      gameDetail?.boxScore ?? null,
     );
     clientEventStateRef.current = nextState;
 
     if (clientEvents.length > 0) {
-      console.log("[client-diff] events:", clientEvents.map(e => `${e.type}(${e.detail?.batter || e.detail?.pitcher || ""})`));
       processEvents(clientEvents);
     }
   }, [gameId, liveGame, gameDetail?.boxScore, shouldPollGameEvents, processEvents]);

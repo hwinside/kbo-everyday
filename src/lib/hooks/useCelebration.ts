@@ -12,6 +12,9 @@ interface UseCelebrationOptions {
   awayTeamId: number;
 }
 
+/** Only process events generated within the last 60 seconds to prevent replay on re-entry */
+const FRESHNESS_THRESHOLD_MS = 60_000;
+
 /** Look up kboId from player name + teamId */
 function findKboId(name: string | undefined, teamId: number): string | undefined {
   if (!name) return undefined;
@@ -54,25 +57,21 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
   /** Call on each gameEvents update to detect new celebration-worthy events */
   const processEvents = useCallback(
     (events: GameEvent[]) => {
-      // [DEBUG] temporary — remove after verifying celebrations work
-      if (!myTeamId) {
-        console.warn("[celeb] myTeamId is null — skipping");
-        return;
-      }
+      if (!myTeamId) return;
 
+      const now = Date.now();
       const newCelebrations: CelebrationEvent[] = [];
-      let newEventCount = 0;
 
       for (const ev of events) {
         if (seenRef.current.has(ev.id)) continue;
         seenRef.current.add(ev.id);
-        newEventCount++;
+
+        // Skip stale events (e.g. accumulated server events replayed on re-entry)
+        const eventAge = now - new Date(ev.timestamp).getTime();
+        if (eventAge > FRESHNESS_THRESHOLD_MS) continue;
 
         const celebType = toCelebrationType(ev.type);
-        if (!celebType) {
-          console.debug("[celeb] skip non-celeb event:", ev.type, ev.id);
-          continue;
-        }
+        if (!celebType) continue;
 
         // Victory event: only celebrate when my team wins
         if (celebType === "victory") {
@@ -96,10 +95,7 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
 
         const isOffense = celebType !== "strikeout";
         const relevantTeamId = isOffense ? battingTeamId : pitchingTeamId;
-        if (relevantTeamId !== myTeamId) {
-          console.debug("[celeb] team mismatch:", celebType, "relevant:", relevantTeamId, "mine:", myTeamId, "isTop:", ev.isTop);
-          continue;
-        }
+        if (relevantTeamId !== myTeamId) continue;
 
         // Build celebration event
         const playerName = isOffense ? ev.detail.batter : ev.detail.pitcher;
@@ -123,9 +119,6 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
         });
       }
 
-      if (newEventCount > 0) {
-        console.log(`[celeb] processed ${newEventCount} new events → ${newCelebrations.length} celebrations (myTeam: ${myTeamId}, home: ${homeTeamId}, away: ${awayTeamId})`);
-      }
       if (newCelebrations.length === 0) return;
 
       // Log each celebration trigger
