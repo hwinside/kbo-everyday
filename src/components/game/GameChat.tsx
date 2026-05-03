@@ -315,7 +315,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   }, [setKeyboardFrameIfChanged]);
 
   const keyboardPanelActive = keyboardFrame != null;
-  const renderedMessages = keyboardPanelActive ? displayMessages.slice(0, 5) : displayMessages;
+  // Keyboard mode is a frozen, non-scrollable viewport. Render all loaded latest
+  // messages and let the overflow-hidden message area reveal as many as fit,
+  // instead of hard-capping to 5 and leaving unused blank space above composer.
+  const renderedMessages = displayMessages;
 
   const preventKeyboardPanelTouchMove = useCallback((e: { target: EventTarget | null; preventDefault: () => void }) => {
     const target = e.target instanceof HTMLElement ? e.target : null;
@@ -472,7 +475,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
             <p className="text-xs mt-1">첫 번째 메시지를 보내보세요! 🔥</p>
           </div>
         ) : (
-          <div className={clsx("space-y-0.5", keyboardPanelActive && "select-none")}> 
+          <div className={clsx("space-y-0.5", keyboardPanelActive && "mt-auto select-none")}>
             {keyboardPanelActive ? (
               renderedMessages.map((msg) => {
                 const isMe = user?.id === msg.user_id;
