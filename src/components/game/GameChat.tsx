@@ -249,7 +249,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
           const panelHeight = lockedKeyboardPanelHeightRef.current || getSafeKeyboardPanelHeight(visualHeight);
           lastGoodKeyboardInsetRef.current = Math.max(0, layoutHeight - panelHeight - visualTop);
           lockedKeyboardPanelHeightRef.current = panelHeight;
-          setKeyboardFrameIfChanged({ top: 0, height: panelHeight });
+          setKeyboardFrameIfChanged({ top: visualTop, height: panelHeight });
         }
         if (debugEnabled) {
           setChatDebug(`focus ih=${Math.round(window.innerHeight)} base=${Math.round(layoutHeight)} vh=${Math.round(visualHeight)} top=${Math.round(rawOffsetTop)} h=${Math.round(hidden)} frame=${keyboardVisible ? 1 : 0}`);
@@ -287,10 +287,12 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
       // Enter keyboard panel mode immediately so the composer is never left
       // behind the software keyboard while iOS Safari is still dispatching its
-      // delayed visualViewport resize samples. Do not lock this provisional
-      // height; the first real keyboard-visible viewport sample below will set
-      // lockedKeyboardPanelHeightRef to the actual keyboard-adjusted height.
-      setKeyboardFrameIfChanged({ top: 0, height: getSafeKeyboardPanelHeight(vv.height) });
+      // delayed visualViewport resize samples. Use an approximate keyboard-open
+      // viewport height for this provisional frame instead of the full pre-keyboard
+      // vv.height; the first real keyboard-visible sample below will replace it
+      // and lock the actual keyboard-adjusted height.
+      const baseHeight = baseViewportHeightRef.current || Math.max(window.innerHeight, vv.height);
+      setKeyboardFrameIfChanged({ top: 0, height: Math.round(baseHeight * 0.58) });
 
       [0, 50, 150, 300, 600, 900, 1200, 1500].forEach((ms) => setTimeout(update, ms));
     };
@@ -403,10 +405,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     <div
       className={clsx(
         "flex flex-col",
-        keyboardPanelActive && "fixed left-0 right-0 bottom-0 z-[96] bg-bg-primary overflow-hidden overscroll-none"
+        keyboardPanelActive && "fixed left-0 right-0 z-[96] bg-bg-primary overflow-hidden overscroll-none"
       )}
       onTouchMoveCapture={keyboardPanelActive ? preventKeyboardPanelTouchMove : undefined}
       style={keyboardPanelActive ? {
+        top: `${keyboardFrame.top}px`,
         height: `${keyboardFrame.height}px`,
       } : undefined}
     >
