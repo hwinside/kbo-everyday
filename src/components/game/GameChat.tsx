@@ -129,7 +129,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const lastGoodKeyboardPanelHeightRef = useRef(0);
   const lockedKeyboardPanelHeightRef = useRef(0);
   const scrollLockStateRef = useRef<{ htmlOverflow: string; bodyOverflow: string; htmlOverscroll: string; bodyOverscroll: string } | null>(null);
-  const composerBottom = "52px";
+  // Idle composer sits above the global TabBar. TabBar height is its content
+  // area (~52px) plus iOS safe-area padding, so include the safe-area here too.
+  const composerBottom = "calc(52px + env(safe-area-inset-bottom, 0px))";
 
   const setKeyboardFrameIfChanged = useCallback((next: { top: number; height: number } | null) => {
     setKeyboardFrame((prev) => {
