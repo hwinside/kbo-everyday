@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Users, Flame, ChevronDown } from "lucide-react";
 import { clsx } from "clsx";
@@ -71,7 +70,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const focusLockRef = useRef(false);
+  const keyboardCloseRealignRef = useRef(false);
   const lastAlignedCountRef = useRef(0);
+  const [keyboardFocused, setKeyboardFocused] = useState(false);
+  const [tabBarHeight, setTabBarHeight] = useState<number | null>(null);
 
   const displayMessages = [...messages].reverse(); // 최신순: 최신 메시지가 리스트 상단
 
@@ -95,11 +97,21 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
   const scheduleChatFocusAlign = useCallback(() => {
     if (typeof window === "undefined") return;
-    // iOS visualViewport/keyboard animation 타이밍 편차 흡수.
     [0, 50, 150, 300, 600, 1000].forEach((ms) => {
       setTimeout(() => requestAnimationFrame(alignLatestMessagesAboveComposer), ms);
     });
   }, [alignLatestMessagesAboveComposer]);
+
+  const scheduleKeyboardComposerIntoView = useCallback(() => {
+    if (typeof window === "undefined") return;
+    [0, 50, 150, 300, 600, 1000].forEach((ms) => {
+      setTimeout(() => {
+        requestAnimationFrame(() => {
+          composerRef.current?.scrollIntoView({ block: "end", behavior: "auto" });
+        });
+      }, ms);
+    });
+  }, []);
 
   // 진입/방 변경/새 메시지 도착 시 최신글 5개 + 입력창이 함께 보이도록 맞춘다.
   // 단, 키보드가 열려있으면(포커스 중) 스크롤을 건드리지 않는다.
@@ -110,23 +122,25 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   useEffect(() => {
     if (loading || messages.length === 0) return;
     if (messages.length === lastAlignedCountRef.current) return;
-    if (focusLockRef.current) return; // 키보드 열린 상태에서는 스크롤 안 건드림
     lastAlignedCountRef.current = messages.length;
+    if (focusLockRef.current) {
+      scheduleKeyboardComposerIntoView();
+      return;
+    }
     scheduleChatFocusAlign();
-  }, [loading, messages.length, scheduleChatFocusAlign]);
+  }, [loading, messages.length, scheduleChatFocusAlign, scheduleKeyboardComposerIntoView]);
 
-  // iOS composer positioning:
-  // - Composer stays fixed above the software keyboard while focused, and
-  //   above the global TabBar while idle.
-  // - Everything else remains in native document scroll so the whole game/chat
-  //   page moves as one surface.
-  const [keyboardBottom, setKeyboardBottom] = useState<number | null>(null);
-  const [chatDebug, setChatDebug] = useState<string | null>(null);
-  const baseViewportHeightRef = useRef(0);
-  const [tabBarHeight, setTabBarHeight] = useState<number | null>(null);
-  // Idle composer sits directly above the global TabBar. Measure the actual
-  // rendered TabBar height because iOS safe-area handling differs by browser/PWA
-  // mode and hard-coded offsets either overlap the tabs or leave a visible gap.
+  useEffect(() => {
+    if (keyboardFocused || !keyboardCloseRealignRef.current || loading || messages.length === 0) return;
+    keyboardCloseRealignRef.current = false;
+    lastAlignedCountRef.current = 0;
+    scheduleChatFocusAlign();
+  }, [keyboardFocused, loading, messages.length, scheduleChatFocusAlign]);
+
+  // Keyboard mode with viewport `interactive-widget=resizes-content`:
+  // - Browser shrinks the layout viewport when the software keyboard opens.
+  // - While focused, composer enters native document flow and iOS scrolls it
+  //   above the keyboard; while idle, it sits above the measured global TabBar.
   const composerBottom = tabBarHeight != null ? `${tabBarHeight}px` : "calc(52px + env(safe-area-inset-bottom, 0px))";
 
   useEffect(() => {
@@ -143,109 +157,58 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const ro = new ResizeObserver(measure);
     ro.observe(tabBar);
     window.addEventListener("resize", measure);
-    window.visualViewport?.addEventListener("resize", measure);
 
     return () => {
       ro.disconnect();
       window.removeEventListener("resize", measure);
-      window.visualViewport?.removeEventListener("resize", measure);
     };
-  }, []);
-
-  const setKeyboardBottomIfChanged = useCallback((next: number | null) => {
-    setKeyboardBottom((prev) => {
-      if (prev == null && next == null) return prev;
-      if (prev != null && next != null && Math.abs(prev - next) < 1) return prev;
-      return next;
-    });
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !window.visualViewport) return;
-    const vv = window.visualViewport;
-    const debugEnabled = new URLSearchParams(window.location.search).get("chatDebug") === "1";
+    if (typeof window === "undefined") return;
 
-    const updateBaseViewportHeight = () => {
-      baseViewportHeightRef.current = Math.max(
-        baseViewportHeightRef.current,
-        window.innerHeight,
-        vv.height
-      );
+    const isGameChatComposerTarget = (target: EventTarget | null) => {
+      const t = target as HTMLElement | null;
+      if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return false;
+      return Boolean(t.closest('[data-composer="game-chat"]'));
     };
 
-    const closeKeyboardMode = () => {
+    const closeKeyboardMode = (force = false) => {
+      if (!force && isGameChatComposerTarget(document.activeElement)) return;
       focusLockRef.current = false;
+      keyboardCloseRealignRef.current = true;
       document.body.classList.remove("kbd-open");
-      setKeyboardBottomIfChanged(null);
+      setKeyboardFocused(false);
     };
-
-    const update = () => {
-      const rawOffsetTop = vv.offsetTop;
-      const visualTop = Math.max(0, rawOffsetTop);
-      const visualHeight = Math.max(0, vv.height);
-      const layoutHeight = baseViewportHeightRef.current || Math.max(window.innerHeight, visualHeight);
-      const keyboardInset = Math.max(0, layoutHeight - visualHeight - visualTop);
-      const keyboardVisible = keyboardInset > 40 || visualHeight < layoutHeight - 40;
-
-      if (focusLockRef.current) {
-        document.body.classList.add("kbd-open");
-        setKeyboardBottomIfChanged(keyboardVisible ? keyboardInset : 0);
-        if (debugEnabled) {
-          setChatDebug(`focus ih=${Math.round(window.innerHeight)} base=${Math.round(layoutHeight)} vh=${Math.round(visualHeight)} top=${Math.round(rawOffsetTop)} inset=${Math.round(keyboardInset)} frame=${keyboardVisible ? 1 : 0}`);
-        }
-        return;
-      }
-
-      updateBaseViewportHeight();
-      closeKeyboardMode();
-      if (debugEnabled) {
-        setChatDebug(`close ih=${Math.round(window.innerHeight)} base=${Math.round(baseViewportHeightRef.current)} vh=${Math.round(visualHeight)} top=${Math.round(rawOffsetTop)} inset=${Math.round(keyboardInset)}`);
-      }
-    };
-
-    // Reset on mount so stale kbd-open from previous pages doesn't leak in.
-    closeKeyboardMode();
-    updateBaseViewportHeight();
-    const resetRaf = window.requestAnimationFrame(update);
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
 
     const onFocusIn = (e: FocusEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
-      updateBaseViewportHeight();
+      if (!isGameChatComposerTarget(e.target)) return;
       focusLockRef.current = true;
+      keyboardCloseRealignRef.current = false;
       document.body.classList.add("kbd-open");
-      // Provisional bottom until visualViewport reports the real keyboard inset.
-      setKeyboardBottomIfChanged(0);
-      scheduleChatFocusAlign();
+      setKeyboardFocused(true);
+      scheduleKeyboardComposerIntoView();
 
-      [0, 50, 150, 300, 600, 900, 1200, 1500].forEach((ms) => setTimeout(() => {
-        update();
-        scheduleChatFocusAlign();
-      }, ms));
+      [0, 50, 150, 300, 600, 900, 1200].forEach((ms) => {
+        setTimeout(scheduleKeyboardComposerIntoView, ms);
+      });
     };
 
     const onFocusOut = (e: FocusEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
-      [50, 300, 600].forEach((ms) => setTimeout(closeKeyboardMode, ms));
+      if (!isGameChatComposerTarget(e.target)) return;
+      [50, 300].forEach((ms) => setTimeout(closeKeyboardMode, ms));
     };
 
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
     return () => {
-      window.cancelAnimationFrame(resetRaf);
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
-      closeKeyboardMode();
+      closeKeyboardMode(true);
     };
-  }, [scheduleChatFocusAlign, setKeyboardBottomIfChanged]);
+  }, [scheduleKeyboardComposerIntoView]);
 
-  const activeComposerBottom = keyboardBottom != null ? `${keyboardBottom}px` : composerBottom;
-  const renderedMessages = displayMessages;
+  const renderedMessages = keyboardFocused ? messages : displayMessages;
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -292,18 +255,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     away: `${awayTeam.shortName} 팬방`,
   };
 
-  const debugOverlay = chatDebug && typeof document !== "undefined"
-    ? createPortal(
-        <div className="fixed left-2 right-2 top-2 z-[2147483647] rounded bg-black/90 px-2 py-1 text-[10px] leading-tight text-white pointer-events-none">
-          {chatDebug}
-        </div>,
-        document.body
-      )
-    : null;
-
   return (
     <>
-    {debugOverlay}
     <div className="flex flex-col">
       {/* Room selector */}
       <div className="relative">
@@ -404,29 +357,17 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         )}
       </div>
 
-      {/* Opaque cover below the composer — hides page content that would
-          otherwise bleed through between the composer and the keyboard. */}
-      {keyboardBottom != null && keyboardBottom > 0 && (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none fixed left-0 right-0 bottom-0 z-[97]"
-          style={{
-            height: `${keyboardBottom}px`,
-            background: "var(--chat-input-bg, rgba(10,10,15,1))",
-          }}
-        />
-      )}
-
-      {/* Input — fixed above TabBar when idle; fixed above keyboard when focused */}
+      {/* Input — fixed above TabBar when idle; native document flow while focused so iOS scrolls it above the keyboard */}
       <div
         ref={composerRef}
         data-composer="game-chat"
-        className="fixed left-0 right-0 z-[98] border-t border-border"
+        className="left-0 right-0 z-[98] border-t border-border"
         style={{
+          position: keyboardFocused ? "relative" : "fixed",
           background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
           backdropFilter: "blur(12px)",
-          bottom: activeComposerBottom,
-          transition: keyboardBottom != null ? "none" : "bottom 80ms ease-out",
+          bottom: keyboardFocused ? undefined : composerBottom,
+          transition: keyboardFocused ? "none" : "bottom 80ms ease-out",
         }}
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
