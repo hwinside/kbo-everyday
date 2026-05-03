@@ -129,9 +129,34 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const lastGoodKeyboardPanelHeightRef = useRef(0);
   const lockedKeyboardPanelHeightRef = useRef(0);
   const scrollLockStateRef = useRef<{ htmlOverflow: string; bodyOverflow: string; htmlOverscroll: string; bodyOverscroll: string } | null>(null);
-  // Idle composer sits above the global TabBar. TabBar height is its content
-  // area (~52px) plus iOS safe-area padding, so include the safe-area here too.
-  const composerBottom = "calc(52px + env(safe-area-inset-bottom, 0px))";
+  const [tabBarHeight, setTabBarHeight] = useState<number | null>(null);
+  // Idle composer sits directly above the global TabBar. Measure the actual
+  // rendered TabBar height because iOS safe-area handling differs by browser/PWA
+  // mode and hard-coded offsets either overlap the tabs or leave a visible gap.
+  const composerBottom = tabBarHeight != null ? `${tabBarHeight}px` : "calc(52px + env(safe-area-inset-bottom, 0px))";
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const tabBar = document.querySelector<HTMLElement>("[data-global-tabbar]");
+    if (!tabBar) return;
+
+    const measure = () => {
+      const height = tabBar.getBoundingClientRect().height;
+      if (height > 0) setTabBarHeight(Math.round(height));
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(tabBar);
+    window.addEventListener("resize", measure);
+    window.visualViewport?.addEventListener("resize", measure);
+
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+      window.visualViewport?.removeEventListener("resize", measure);
+    };
+  }, []);
 
   const setKeyboardFrameIfChanged = useCallback((next: { top: number; height: number } | null) => {
     setKeyboardFrame((prev) => {
