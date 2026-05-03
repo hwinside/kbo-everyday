@@ -285,6 +285,13 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       open();
       lockViewportScroll();
 
+      // Enter keyboard panel mode immediately so the composer is never left
+      // behind the software keyboard while iOS Safari is still dispatching its
+      // delayed visualViewport resize samples. Do not lock this provisional
+      // height; the first real keyboard-visible viewport sample below will set
+      // lockedKeyboardPanelHeightRef to the actual keyboard-adjusted height.
+      setKeyboardFrameIfChanged({ top: 0, height: getSafeKeyboardPanelHeight(vv.height) });
+
       [0, 50, 150, 300, 600, 900, 1200, 1500].forEach((ms) => setTimeout(update, ms));
     };
     const onFocusOut = (e: FocusEvent) => {
