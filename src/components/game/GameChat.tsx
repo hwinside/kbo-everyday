@@ -404,6 +404,19 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         )}
       </div>
 
+      {/* Opaque cover below the composer — hides page content that would
+          otherwise bleed through between the composer and the keyboard. */}
+      {keyboardBottom != null && keyboardBottom > 0 && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed left-0 right-0 bottom-0 z-[97]"
+          style={{
+            height: `${keyboardBottom}px`,
+            background: "var(--chat-input-bg, rgba(10,10,15,1))",
+          }}
+        />
+      )}
+
       {/* Input — fixed above TabBar when idle; fixed above keyboard when focused */}
       <div
         ref={composerRef}
@@ -425,11 +438,13 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
               onKeyDown={(e) => e.key === "Enter" && handleSend()}
               placeholder={cooldown ? (cooldownReason || "잠시 후 다시 입력하세요...") : canWrite ? (room === "all" ? "메시지 입력..." : `${roomLabels[room]}에 메시지...`) : writeBlockedReason}
               disabled={!canWrite}
-              autoComplete="new-password"
+              autoComplete="off"
               autoCorrect="off"
               autoCapitalize="none"
               spellCheck={false}
-              name="kbo-chat-body"
+              enterKeyHint="send"
+              inputMode="text"
+              name="chat-message"
               maxLength={120}
               className={clsx(
                 "w-full h-10 px-4 rounded-full text-base",
