@@ -208,7 +208,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     };
   }, [scheduleKeyboardComposerIntoView]);
 
-  const renderedMessages = keyboardFocused ? messages : displayMessages;
+  const renderedMessages = displayMessages;
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -373,7 +373,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
           <div className="relative flex-1">
             <input
-              type="text"
+              type="search"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSend()}
