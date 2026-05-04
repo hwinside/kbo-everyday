@@ -356,11 +356,19 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
           <div className="relative flex-1">
-            <input
-              type="search"
+            <textarea
+              rows={1}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSend()}
+              onChange={(e) => {
+                const v = e.target.value.replace(/\n/g, "");
+                if (v.length <= 120) setInput(v);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
               placeholder={cooldown ? (cooldownReason || "잠시 후 다시 입력하세요...") : canWrite ? (room === "all" ? "메시지 입력..." : `${roomLabels[room]}에 메시지...`) : writeBlockedReason}
               disabled={!canWrite}
               autoComplete="off"
@@ -372,9 +380,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
               name="chat-message"
               maxLength={120}
               className={clsx(
-                "w-full h-10 px-4 rounded-full text-base",
+                "w-full h-10 px-4 rounded-full text-base resize-none overflow-hidden",
                 "bg-bg-tertiary text-text-primary placeholder:text-text-tertiary",
                 "border focus:outline-none transition-colors",
+                "leading-10",
                 !canWrite && "opacity-50",
                 input.length >= 120 ? "border-red-500/60" : "border-border focus:border-accent/50"
               )}
