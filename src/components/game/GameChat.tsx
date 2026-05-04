@@ -102,19 +102,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     });
   }, [alignLatestMessagesAboveComposer]);
 
-  const scheduleKeyboardComposerIntoView = useCallback(() => {
-    if (typeof window === "undefined") return;
-    [0, 50, 150, 300, 600, 1000].forEach((ms) => {
-      setTimeout(() => {
-        requestAnimationFrame(() => {
-          composerRef.current?.scrollIntoView({ block: "end", behavior: "auto" });
-        });
-      }, ms);
-    });
-  }, []);
-
   // 진입/방 변경/새 메시지 도착 시 최신글 5개 + 입력창이 함께 보이도록 맞춘다.
-  // 단, 키보드가 열려있으면(포커스 중) 스크롤을 건드리지 않는다.
   useEffect(() => {
     lastAlignedCountRef.current = 0;
   }, [roomId]);
@@ -123,12 +111,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     if (loading || messages.length === 0) return;
     if (messages.length === lastAlignedCountRef.current) return;
     lastAlignedCountRef.current = messages.length;
-    if (focusLockRef.current) {
-      scheduleKeyboardComposerIntoView();
-      return;
-    }
     scheduleChatFocusAlign();
-  }, [loading, messages.length, scheduleChatFocusAlign, scheduleKeyboardComposerIntoView]);
+  }, [loading, messages.length, scheduleChatFocusAlign]);
 
   useEffect(() => {
     if (keyboardFocused || !keyboardCloseRealignRef.current || loading || messages.length === 0) return;
@@ -187,10 +171,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       keyboardCloseRealignRef.current = false;
       document.body.classList.add("kbd-open");
       setKeyboardFocused(true);
-      scheduleKeyboardComposerIntoView();
+      scheduleChatFocusAlign();
 
       [0, 50, 150, 300, 600, 900, 1200].forEach((ms) => {
-        setTimeout(scheduleKeyboardComposerIntoView, ms);
+        setTimeout(scheduleChatFocusAlign, ms);
       });
     };
 
@@ -206,7 +190,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       document.removeEventListener("focusout", onFocusOut);
       closeKeyboardMode(true);
     };
-  }, [scheduleKeyboardComposerIntoView]);
+  }, [scheduleChatFocusAlign]);
 
   const renderedMessages = displayMessages;
 
