@@ -341,16 +341,17 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         )}
       </div>
 
-      {/* Input — fixed above TabBar when idle; native document flow while focused so iOS scrolls it above the keyboard */}
+      {/* Input — always fixed: above TabBar when idle, above keyboard when focused
+           (interactive-widget=resizes-content shrinks the layout viewport so
+            position:fixed bottom:0 naturally sits above the keyboard) */}
       <div
         ref={composerRef}
         data-composer="game-chat"
-        className="left-0 right-0 z-[98] border-t border-border"
+        className="fixed left-0 right-0 z-[98] border-t border-border"
         style={{
-          position: keyboardFocused ? "relative" : "fixed",
           background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
           backdropFilter: "blur(12px)",
-          bottom: keyboardFocused ? undefined : composerBottom,
+          bottom: keyboardFocused ? "0px" : composerBottom,
           transition: keyboardFocused ? "none" : "bottom 80ms ease-out",
         }}
       >
