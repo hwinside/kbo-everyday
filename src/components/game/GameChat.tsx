@@ -76,17 +76,17 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const [keyboardBottom, setKeyboardBottom] = useState<number | null>(null);
   const [tabBarHeight, setTabBarHeight] = useState<number | null>(null);
 
-  const displayMessages = [...messages].reverse(); // 최신순: 최신 메시지가 리스트 상단
+  // 시간순: 오래된→최신. 최신글이 리스트 하단 = 입력창 바로 위.
+  const displayMessages = messages;
 
-  // 최신 ~5개 메시지가 입력창 바로 위에 보이도록 window 스크롤을 맞춘다.
-  // 채팅 리스트 자체는 별도 스크롤이 없고, 페이지 전체 스크롤만 사용한다.
+  // 최신 메시지(DOM 하단)가 입력창 바로 위에 보이도록 window 스크롤을 맞춘다.
+  // 채팅 리스트는 시간순(오래된→최신)이므로 마지막 노드가 최신글.
   const alignLatestMessagesAboveComposer = useCallback(() => {
     if (!scrollRef.current || !composerRef.current) return;
     const msgs = scrollRef.current.querySelectorAll<HTMLElement>("[data-chat-msg]");
     if (msgs.length === 0) return;
 
-    // 최신순 상단이므로 5번째 최신 메시지의 하단이 composer 바로 위에 오게 맞춘다.
-    const target = msgs[Math.min(4, msgs.length - 1)];
+    const target = msgs[msgs.length - 1]; // 최신 메시지 = DOM 마지막
     const targetBottom = target.getBoundingClientRect().bottom;
     const composerTop = composerRef.current.getBoundingClientRect().top;
     const diff = targetBottom - (composerTop - 8);
@@ -330,8 +330,12 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       {/* Mood gauge */}
       <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
 
-      {/* Messages — newest first */}
-      <div ref={scrollRef} className="px-4 py-2 space-y-0.5">
+      {/* Messages — 시간순(오래된→최신), 최신글이 입력창 바로 위 */}
+      <div
+        ref={scrollRef}
+        className="px-4 py-2 space-y-0.5"
+        style={{ paddingBottom: `${56 + (keyboardBottom ?? tabBarHeight ?? 56)}px` }}
+      >
         {loading ? (
           <div className="text-center py-8 text-text-tertiary text-sm">로딩 중...</div>
         ) : messages.length === 0 ? (
