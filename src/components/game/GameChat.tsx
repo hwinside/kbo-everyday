@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Users, Flame, ChevronDown } from "lucide-react";
 import { clsx } from "clsx";
@@ -75,7 +75,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const lockedKeyboardBottomRef = useRef(0);
   const [keyboardBottom, setKeyboardBottom] = useState<number | null>(null);
   const [tabBarHeight, setTabBarHeight] = useState<number | null>(null);
-  const [messagesMaxHeight, setMessagesMaxHeight] = useState<number | null>(null);
 
   // 최신순: 최신 메시지가 리스트 상단. 크관은 중계↔최신댓글 왕복 부담을
   // 줄이기 위해 최신글이 위에 오는 레이아웃을 사용한다.
@@ -88,12 +87,19 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const msgs = scrollRef.current.querySelectorAll<HTMLElement>("[data-chat-msg]");
     if (msgs.length === 0) return;
 
-    // Latest-first layout: msgs[0] is the newest. With internal scroll on
-    // the messages container, we want the container's scrollTop = 0 so the
-    // most recent messages are visible at the top. The container is sized
-    // (maxHeight) to fit ~5 latest messages above the composer in the
-    // typical message-density case.
-    scrollRef.current.scrollTop = 0;
+    const target = msgs[Math.min(4, msgs.length - 1)]; // 최신 5개 중 마지막
+    const targetBottom = target.getBoundingClientRect().bottom;
+    const composerTop = composerRef.current.getBoundingClientRect().top;
+    const diff = targetBottom - (composerTop - 8);
+
+    // Latest-first layout: msgs[0] is the newest and sits at the top of the
+    // page. Only scroll DOWN (positive diff) to push older content out of
+    // view. Never scroll UP — the page-top is already the most recent
+    // content; scrolling further up would push the composer above the
+    // viewport (the regression seen on iOS Safari with keyboard open).
+    if (diff > 4) {
+      window.scrollBy({ top: diff, behavior: "auto" });
+    }
   }, []);
 
   const scheduleChatFocusAlign = useCallback(() => {
@@ -147,33 +153,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       window.removeEventListener("resize", measure);
     };
   }, []);
-
-  // Messages 컨테이너 높이 = composer top − messages top.
-  // composer는 fixed positioned + bottom: keyboardBottom 이라 keyboardBottom이
-  // 자동 반영된다 (이중 차감 금지). 헤더(스코어보드/탭/무드게이지) 영역의 동적
-  // 높이도 messagesTop 측정으로 자동 반영된다.
-  const recomputeMessagesMaxHeight = useCallback(() => {
-    if (!scrollRef.current || !composerRef.current) return;
-    const messagesTop = scrollRef.current.getBoundingClientRect().top;
-    const composerTop = composerRef.current.getBoundingClientRect().top;
-    const next = Math.max(0, Math.round(composerTop - messagesTop));
-    setMessagesMaxHeight((prev) => (prev != null && Math.abs(prev - next) < 1 ? prev : next));
-  }, []);
-
-  useLayoutEffect(() => {
-    recomputeMessagesMaxHeight();
-  }, [recomputeMessagesMaxHeight, keyboardBottom, tabBarHeight, messages.length, room]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onResize = () => recomputeMessagesMaxHeight();
-    window.addEventListener("resize", onResize);
-    window.visualViewport?.addEventListener("resize", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      window.visualViewport?.removeEventListener("resize", onResize);
-    };
-  }, [recomputeMessagesMaxHeight]);
 
   const setKeyboardBottomIfChanged = useCallback((next: number | null) => {
     setKeyboardBottom((prev) => {
@@ -357,16 +336,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       {/* Mood gauge */}
       <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
 
-      {/* Messages — 최신순(최신→오래된), 최신글이 리스트 상단.
-          INTERNAL SCROLL: maxHeight = composerTop − messagesTop (실측).
-          window scroll을 차단해 composer가 키보드에 붙은 상태로 유지된다. */}
+      {/* Messages — 최신순(최신→오래된), 최신글이 리스트 상단 */}
       <div
         ref={scrollRef}
-        className="px-4 py-2 space-y-0.5 overflow-y-auto overscroll-contain"
-        style={{
-          maxHeight: messagesMaxHeight != null ? `${messagesMaxHeight}px` : undefined,
-          paddingBottom: `8px`,
-        }}
+        className="px-4 py-2 space-y-0.5"
+        style={{ paddingBottom: `${56 + (keyboardBottom ?? tabBarHeight ?? 56)}px` }}
       >
         {loading ? (
           <div className="text-center py-8 text-text-tertiary text-sm">로딩 중...</div>
