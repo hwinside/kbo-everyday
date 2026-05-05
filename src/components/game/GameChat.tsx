@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Users, Flame, ChevronDown } from "lucide-react";
 import { clsx } from "clsx";
@@ -69,7 +69,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
-  const savedScrollYRef = useRef(0);
+  const prevKeyboardFocusedRef = useRef(false);
+  const lastAlignedCountRef = useRef(0);
   const [keyboardFocused, setKeyboardFocused] = useState(false);
   const [tabBarHeight, setTabBarHeight] = useState<number | null>(null);
 
@@ -77,8 +78,55 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   // 줄이기 위해 최신글이 위에 오는 레이아웃을 사용한다.
   const displayMessages = [...messages].reverse();
 
-  // composer는 idle일 때 TabBar 위에 fixed로 떠있고, focus 시엔 GameChat
-  // 풀스크린 컨테이너의 page-flow footer로 동작한다 (fixed 해제).
+  // 최신 5개 메시지 묶음이 입력창 바로 위에 보이도록 window 스크롤을 맞춘다.
+  // 최신순 상단이므로 5번째 최신 메시지(DOM idx 4)의 하단이 composer 바로 위.
+  const alignLatestMessagesAboveComposer = useCallback(() => {
+    if (!scrollRef.current || !composerRef.current) return;
+    const msgs = scrollRef.current.querySelectorAll<HTMLElement>("[data-chat-msg]");
+    if (msgs.length === 0) return;
+
+    const target = msgs[Math.min(4, msgs.length - 1)];
+    // scrollTo 절대 위치 방식: scrollBy 누적 drift 완전 제거.
+    // 고정 composer의 viewport top은 scrollY 무관 (fixed positioning).
+    const targetDocBottom = target.getBoundingClientRect().bottom + window.scrollY;
+    const composerVpTop = composerRef.current.getBoundingClientRect().top;
+    const desired = targetDocBottom - composerVpTop + 8;
+    // 위로 스크롤하지 않음 — page-top이 최신 콘텐츠.
+    if (desired <= window.scrollY + 4) return;
+    window.scrollTo({ top: desired, behavior: "auto" });
+  }, []);
+
+  const scheduleChatFocusAlign = useCallback(() => {
+    if (typeof window === "undefined") return;
+    // scrollTo가 idempotent이므로 3회면 충분. 키보드 애니메이션 ~400ms 커버.
+    requestAnimationFrame(alignLatestMessagesAboveComposer);
+    setTimeout(() => requestAnimationFrame(alignLatestMessagesAboveComposer), 200);
+    setTimeout(() => requestAnimationFrame(alignLatestMessagesAboveComposer), 500);
+  }, [alignLatestMessagesAboveComposer]);
+
+  // 진입/방 변경/새 메시지 도착 시 최신글 5개 + 입력창이 함께 보이도록 맞춘다.
+  useEffect(() => {
+    lastAlignedCountRef.current = 0;
+  }, [roomId]);
+
+  useEffect(() => {
+    if (loading || messages.length === 0) return;
+    if (messages.length === lastAlignedCountRef.current) return;
+    lastAlignedCountRef.current = messages.length;
+    scheduleChatFocusAlign();
+  }, [loading, messages.length, scheduleChatFocusAlign]);
+
+  // 키보드 포커스 전환 시 align (idle→focus: 5개→전체, focus→idle: 전체→5개)
+  useEffect(() => {
+    if (prevKeyboardFocusedRef.current === keyboardFocused) return;
+    prevKeyboardFocusedRef.current = keyboardFocused;
+    if (loading || messages.length === 0) return;
+    scheduleChatFocusAlign();
+  }, [keyboardFocused, loading, messages.length, scheduleChatFocusAlign]);
+
+  // composer는 idle일 때 TabBar 위, focus일 때 viewport bottom(=keyboard 위).
+  // viewport meta `interactiveWidget: "resizes-content"` 가 layout viewport를
+  // 키보드만큼 줄여주므로 focus 시 `bottom: 0`이 자연스럽게 키보드 위에 붙는다.
   const composerBottom = tabBarHeight != null ? `${tabBarHeight}px` : "calc(52px + env(safe-area-inset-bottom, 0px))";
 
   useEffect(() => {
@@ -113,11 +161,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
     const onFocusIn = (e: FocusEvent) => {
       if (!isGameChatComposerTarget(e.target)) return;
-      // re-render 전에 scrollY 저장 — useEffect 단계에선 이미 page-flow shrink로
-      // scrollY auto-trim이 일어난 뒤면 원값 손실. focusin이 유일한 안전 지점.
-      savedScrollYRef.current = window.scrollY;
       document.body.classList.add("kbd-open");
       setKeyboardFocused(true);
+      // align은 useEffect에서 re-render 후 실행 (message slice 전환 반영)
     };
 
     const onFocusOut = (e: FocusEvent) => {
@@ -141,34 +187,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     };
   }, []);
 
-  // 풀스크린 진입 시 messages 컨테이너 최상단(=최신)으로 스크롤. column 자연
-  // 순서이므로 scrollTop=0 이 곧 최신 메시지 위치이며 누적 drift가 없다.
-  useEffect(() => {
-    if (!keyboardFocused) return;
-    if (loading || messages.length === 0) return;
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = 0;
-  }, [keyboardFocused, loading, messages.length, roomId]);
-
-  // blur 후 page scrollY 복원. focus 진입 시 focusin handler에서 저장된 값을
-  // fullscreen 해제 다음 frame에 window.scrollTo로 복원한다. fullscreen container가
-  // page-flow에서 빠져 page scroll height가 줄어들면서 발생하는 scrollY auto-trim
-  // 회귀 (blur 후 score area 맨 위로 점프하는 현상)를 차단한다.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (keyboardFocused) return;
-    if (savedScrollYRef.current <= 0) return;
-    const y = savedScrollYRef.current;
-    requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y)));
-  }, [keyboardFocused]);
-
-  // idle 모드: page-flow에 최신 5개만 렌더하여 "중계화면 + 최신 5개 + 입력창"이
-  // 자연 layout으로 동시에 보이게 한다. focus 모드에서는 전체 메시지를 internal
-  // scroll로 노출. window.scrollBy 트릭을 완전히 제거하여 drift가 발생하지 않는다.
-  const renderedMessages = keyboardFocused
-    ? displayMessages
-    : displayMessages.slice(0, 5);
+  // idle: 최신 5개만 표시하여 score 영역 자연 노출
+  // focus: 전체 메시지 (자유 스크롤)
+  const renderedMessages = keyboardFocused ? displayMessages : displayMessages.slice(0, 5);
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -217,13 +238,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
   return (
     <>
-    <div
-      className={clsx(
-        keyboardFocused
-          ? "fixed inset-0 z-[100] flex flex-col bg-bg-primary"
-          : "flex flex-col",
-      )}
-    >
+    <div className="flex flex-col">
       {/* Room selector */}
       <div className="relative">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
@@ -280,18 +295,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       {/* Mood gauge */}
       <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
 
-      {/* Messages — 최신순(최신→오래된), 최신글이 리스트 상단.
-          focus 모드에서는 GameChat 풀스크린 컨테이너 내부에서 flex-grow + 자체
-          overflow scroll. idle 모드에서는 page flow 그대로. */}
+      {/* Messages — 최신순(최신→오래된), 최신글이 리스트 상단 */}
       <div
         ref={scrollRef}
-        className={clsx(
-          "px-4 py-2 space-y-0.5",
-          keyboardFocused && "flex-1 min-h-0 overflow-y-auto overscroll-contain",
-        )}
-        style={{
-          paddingBottom: keyboardFocused ? "8px" : `${56 + (tabBarHeight ?? 56)}px`,
-        }}
+        className="px-4 py-2 space-y-0.5"
+        style={{ paddingBottom: `${56 + (keyboardFocused ? 0 : (tabBarHeight ?? 56))}px` }}
       >
         {loading ? (
           <div className="text-center py-8 text-text-tertiary text-sm">로딩 중...</div>
@@ -334,24 +342,18 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         )}
       </div>
 
-      {/* Composer — focus 시엔 풀스크린 컨테이너의 page-flow footer (shrink-0).
-          idle 시엔 화면 하단 TabBar 위에 fixed로 표시. interactiveWidget=
-          resizes-content 가 layout viewport를 키보드만큼 줄여주므로 focus 모드
-          풀스크린 자체가 키보드 위 영역을 차지하고 composer는 그 footer가 된다. */}
+      {/* Input — always fixed: above TabBar when idle, above keyboard when focused.
+          interactiveWidget=resizes-content가 layout viewport를 키보드만큼 줄여
+          주므로 focus 시 `bottom: 0`이 키보드 위에 자연스럽게 붙는다. */}
       <div
         ref={composerRef}
         data-composer="game-chat"
-        className={clsx(
-          "border-t border-border",
-          keyboardFocused
-            ? "shrink-0"
-            : "fixed left-0 right-0 z-[98]",
-        )}
+        className="fixed left-0 right-0 z-[98] border-t border-border"
         style={{
           background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
           backdropFilter: "blur(12px)",
-          bottom: keyboardFocused ? undefined : composerBottom,
-          transition: keyboardFocused ? undefined : "bottom 80ms ease-out",
+          bottom: keyboardFocused ? "0px" : composerBottom,
+          transition: "bottom 80ms ease-out",
         }}
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
