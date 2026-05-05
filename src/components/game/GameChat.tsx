@@ -123,10 +123,12 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     scheduleChatFocusAlign();
   }, [loading, messages.length, scheduleChatFocusAlign]);
 
-  // 키보드 포커스 전환 시 align (idle→focus: 5개→전체, focus→idle: 전체→5개)
+  // focus→idle 전환 시에만 align (baseline 패턴 복원).
+  // idle→focus 시에는 브라우저 native scroll-into-view에 맡김.
   useEffect(() => {
     if (prevKeyboardFocusedRef.current === keyboardFocused) return;
     prevKeyboardFocusedRef.current = keyboardFocused;
+    if (keyboardFocused) return; // focus 전환 시 브라우저에 맡김
     if (loading || messages.length === 0) return;
     scheduleChatFocusAlign();
   }, [keyboardFocused, loading, messages.length, scheduleChatFocusAlign]);
@@ -196,7 +198,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       document.body.classList.add("kbd-open");
       setKeyboardFocused(true);
       scheduleKeyboardLiftSync();
-      // align은 useEffect에서 re-render 후 실행 (message slice 전환 반영)
+      // scrollBy align은 제거: 키보드 애니메이션 중 페이지를 잘못 밀어냄.
+      // 브라우저 native scroll-into-view + CSS keyboardLift가 배치 담당.
     };
 
     const onFocusOut = (e: FocusEvent) => {
@@ -227,13 +230,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   }, []);
 
 
-  // keyboardLift may settle after focus as iOS Safari finishes visualViewport
-  // pan/resize. Re-align after the lift changes so repeated keyboard toggles
-  // do not leave a phantom gap or overlap around the composer.
-  useEffect(() => {
-    if (!keyboardFocused || loading || messages.length === 0) return;
-    scheduleChatFocusAlign();
-  }, [keyboardLift, keyboardFocused, loading, messages.length, scheduleChatFocusAlign]);
+  // keyboardLift 변경 시 scrollBy align 제거 (iOS 26.4 회귀 원인).
+  // 키보드 애니메이션 중 scheduleChatFocusAlign의 scrollBy가 페이지를
+  // AI분석 섹션까지 밀어올려 메시지/입력창이 키보드에 가려짐.
+  // 브라우저 native scroll-into-view + CSS keyboardLift가 배치 담당.
 
   // idle: 최신 5개만 표시하여 score 영역 자연 노출
   // focus: 전체 메시지 (자유 스크롤)
@@ -245,6 +245,18 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   // 팬방 글쓰기 권한 체크: 전체는 누구나, 팬방은 해당 팀 팬만
   const qaKeyboardInputEnabled = typeof window !== "undefined"
     && new URLSearchParams(window.location.search).get("chatQaKeyboard") === "1";
+  const qaAutoFocus = typeof window !== "undefined"
+    && new URLSearchParams(window.location.search).get("chatQaAutoFocus") === "1";
+
+  // QA auto-focus: 페이지 로드 후 textarea 자동 포커스 (시뮬레이터 자동화용)
+  useEffect(() => {
+    if (!qaAutoFocus) return;
+    const timer = setTimeout(() => {
+      const ta = composerRef.current?.querySelector("textarea");
+      if (ta) ta.focus();
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [qaAutoFocus]);
   const myTeamId = profile?.team_id != null ? Number(profile.team_id) : undefined;
   const canWrite = (() => {
     if (qaKeyboardInputEnabled) return true;
