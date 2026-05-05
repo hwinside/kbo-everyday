@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Users, Flame, ChevronDown } from "lucide-react";
 import { clsx } from "clsx";
@@ -75,6 +75,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const lockedKeyboardBottomRef = useRef(0);
   const [keyboardBottom, setKeyboardBottom] = useState<number | null>(null);
   const [tabBarHeight, setTabBarHeight] = useState<number | null>(null);
+  const [messagesMaxHeight, setMessagesMaxHeight] = useState<number | null>(null);
 
   // 최신순: 최신 메시지가 리스트 상단. 크관은 중계↔최신댓글 왕복 부담을
   // 줄이기 위해 최신글이 위에 오는 레이아웃을 사용한다.
@@ -146,6 +147,33 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       window.removeEventListener("resize", measure);
     };
   }, []);
+
+  // Messages 컨테이너 높이 = composer top − messages top.
+  // composer는 fixed positioned + bottom: keyboardBottom 이라 keyboardBottom이
+  // 자동 반영된다 (이중 차감 금지). 헤더(스코어보드/탭/무드게이지) 영역의 동적
+  // 높이도 messagesTop 측정으로 자동 반영된다.
+  const recomputeMessagesMaxHeight = useCallback(() => {
+    if (!scrollRef.current || !composerRef.current) return;
+    const messagesTop = scrollRef.current.getBoundingClientRect().top;
+    const composerTop = composerRef.current.getBoundingClientRect().top;
+    const next = Math.max(0, Math.round(composerTop - messagesTop));
+    setMessagesMaxHeight((prev) => (prev != null && Math.abs(prev - next) < 1 ? prev : next));
+  }, []);
+
+  useLayoutEffect(() => {
+    recomputeMessagesMaxHeight();
+  }, [recomputeMessagesMaxHeight, keyboardBottom, tabBarHeight, messages.length, room]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onResize = () => recomputeMessagesMaxHeight();
+    window.addEventListener("resize", onResize);
+    window.visualViewport?.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.visualViewport?.removeEventListener("resize", onResize);
+    };
+  }, [recomputeMessagesMaxHeight]);
 
   const setKeyboardBottomIfChanged = useCallback((next: number | null) => {
     setKeyboardBottom((prev) => {
@@ -330,16 +358,13 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
 
       {/* Messages — 최신순(최신→오래된), 최신글이 리스트 상단.
-          INTERNAL SCROLL: maxHeight + overflow-y:auto. This blocks the window
-          scroll path that detached the composer from the keyboard on iOS
-          Safari. The composer (position:fixed bottom:keyboardBottom) stays
-          glued to the keyboard regardless of how the user scrolls within
-          this container, because window scroll does not occur. */}
+          INTERNAL SCROLL: maxHeight = composerTop − messagesTop (실측).
+          window scroll을 차단해 composer가 키보드에 붙은 상태로 유지된다. */}
       <div
         ref={scrollRef}
         className="px-4 py-2 space-y-0.5 overflow-y-auto overscroll-contain"
         style={{
-          maxHeight: `calc(100dvh - 200px - ${keyboardBottom ?? tabBarHeight ?? 56}px)`,
+          maxHeight: messagesMaxHeight != null ? `${messagesMaxHeight}px` : undefined,
           paddingBottom: `8px`,
         }}
       >
