@@ -71,23 +71,22 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const composerRef = useRef<HTMLDivElement>(null);
   const focusLockRef = useRef(false);
   const keyboardCloseRealignRef = useRef(false);
-  const keyboardFocusAlignedRef = useRef(false);
   const lastAlignedCountRef = useRef(0);
   const lockedKeyboardBottomRef = useRef(0);
   const [keyboardBottom, setKeyboardBottom] = useState<number | null>(null);
   const [tabBarHeight, setTabBarHeight] = useState<number | null>(null);
 
-  // 최신순: 최신 메시지가 리스트 상단. 크관 기본 노출은 최신 5개를 기준으로 한다.
-  const displayMessages = [...messages].reverse();
+  // 시간순: 오래된→최신. 최신글이 리스트 하단 = 입력창 바로 위.
+  const displayMessages = messages;
 
-  // 최신 5개 묶음이 입력창 바로 위에 보이도록 window 스크롤을 맞춘다.
-  // 최신순 상단이므로 5번째 최신 메시지를 기준으로 한다.
+  // 최신 메시지(DOM 하단)가 입력창 바로 위에 보이도록 window 스크롤을 맞춘다.
+  // 채팅 리스트는 시간순(오래된→최신)이므로 마지막 노드가 최신글.
   const alignLatestMessagesAboveComposer = useCallback(() => {
     if (!scrollRef.current || !composerRef.current) return;
     const msgs = scrollRef.current.querySelectorAll<HTMLElement>("[data-chat-msg]");
     if (msgs.length === 0) return;
 
-    const target = msgs[Math.min(4, msgs.length - 1)];
+    const target = msgs[msgs.length - 1]; // 최신 메시지 = DOM 마지막
     const targetBottom = target.getBoundingClientRect().bottom;
     const composerTop = composerRef.current.getBoundingClientRect().top;
     const diff = targetBottom - (composerTop - 8);
@@ -113,7 +112,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     if (loading || messages.length === 0) return;
     if (messages.length === lastAlignedCountRef.current) return;
     lastAlignedCountRef.current = messages.length;
-    if (focusLockRef.current) return;
     scheduleChatFocusAlign();
   }, [loading, messages.length, scheduleChatFocusAlign]);
 
@@ -172,29 +170,22 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       if (!force && isGameChatComposerTarget(document.activeElement)) return;
       focusLockRef.current = false;
       lockedKeyboardBottomRef.current = 0;
-      keyboardFocusAlignedRef.current = false;
       keyboardCloseRealignRef.current = true;
       document.body.classList.remove("kbd-open");
       setKeyboardBottomIfChanged(null);
     };
 
-    // Compute keyboard inset from visualViewport resize. Do not reposition on
-    // visualViewport scroll: iOS emits scroll while auto-focusing inputs, and
-    // following it makes the composer visibly jump.
+    // Compute keyboard inset from visualViewport (resize events only).
     const updateKeyboardInset = () => {
       if (!vv || !focusLockRef.current) return;
       const inset = Math.max(0, window.innerHeight - vv.height - Math.max(0, vv.offsetTop));
       if (inset > 40) {
+        // Max-lock: only increase, never decrease while focused.
+        // This prevents scroll-induced viewport bouncing from shrinking the inset.
         if (inset > lockedKeyboardBottomRef.current) {
           lockedKeyboardBottomRef.current = inset;
         }
         setKeyboardBottomIfChanged(lockedKeyboardBottomRef.current);
-        if (!keyboardFocusAlignedRef.current) {
-          keyboardFocusAlignedRef.current = true;
-          [50, 150].forEach((ms) => {
-            setTimeout(() => requestAnimationFrame(alignLatestMessagesAboveComposer), ms);
-          });
-        }
       }
     };
 
@@ -202,16 +193,17 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       if (!isGameChatComposerTarget(e.target)) return;
       focusLockRef.current = true;
       lockedKeyboardBottomRef.current = 0;
-      keyboardFocusAlignedRef.current = false;
       keyboardCloseRealignRef.current = false;
       document.body.classList.add("kbd-open");
       setKeyboardBottomIfChanged(0);
+      scheduleChatFocusAlign();
 
       // Poll for keyboard animation to complete and lock the inset.
-      // Do not call window.scrollBy while focusing; that was the source of the
-      // visible back-and-forth focus jump in iOS Safari.
       [0, 50, 150, 300, 600, 900, 1200].forEach((ms) => {
-        setTimeout(updateKeyboardInset, ms);
+        setTimeout(() => {
+          updateKeyboardInset();
+          scheduleChatFocusAlign();
+        }, ms);
       });
     };
 
@@ -220,21 +212,19 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       [50, 300].forEach((ms) => setTimeout(closeKeyboardMode, ms));
     };
 
+    // Only listen to resize (not scroll) to avoid jitter from URL bar changes.
     vv?.addEventListener("resize", updateKeyboardInset);
-    window.addEventListener("resize", updateKeyboardInset);
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
     return () => {
       vv?.removeEventListener("resize", updateKeyboardInset);
-      window.removeEventListener("resize", updateKeyboardInset);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
       closeKeyboardMode(true);
     };
-  }, [alignLatestMessagesAboveComposer, setKeyboardBottomIfChanged]);
+  }, [scheduleChatFocusAlign, setKeyboardBottomIfChanged]);
 
-  const latestMessages = displayMessages.slice(0, 5);
-  const olderMessages = displayMessages.slice(5);
+  const renderedMessages = displayMessages;
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -340,7 +330,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       {/* Mood gauge */}
       <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
 
-      {/* Messages — 최신순, 최신글 5개가 입력창 바로 위 */}
+      {/* Messages — 시간순(오래된→최신), 최신글이 입력창 바로 위 */}
       <div
         ref={scrollRef}
         className="px-4 py-2 space-y-0.5"
@@ -356,7 +346,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         ) : (
           <div className="space-y-0.5">
             <AnimatePresence initial={false}>
-                {latestMessages.map((msg) => {
+                {renderedMessages.map((msg) => {
                   const isMe = user?.id === msg.user_id;
                   return (
                     <motion.div
@@ -404,14 +394,12 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       <div
         ref={composerRef}
         data-composer="game-chat"
-        className="left-0 right-0 z-[98] border-t border-border"
+        className="fixed left-0 right-0 z-[98] border-t border-border"
         style={{
-          position: keyboardBottom != null ? "fixed" : "relative",
           background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
           backdropFilter: "blur(12px)",
-          bottom: keyboardBottom != null ? `${keyboardBottom}px` : undefined,
-          marginBottom: keyboardBottom == null ? composerBottom : undefined,
-          transition: keyboardBottom != null ? "none" : "margin-bottom 80ms ease-out",
+          bottom: keyboardBottom != null ? `${keyboardBottom}px` : composerBottom,
+          transition: keyboardBottom != null ? "none" : "bottom 80ms ease-out",
         }}
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
@@ -470,44 +458,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
           </motion.button>
         </div>
       </div>
-
-      {olderMessages.length > 0 && (
-        <div
-          className="px-4 py-2 space-y-0.5"
-          style={{ paddingBottom: `${56 + (keyboardBottom ?? tabBarHeight ?? 56)}px` }}
-        >
-          <div className="space-y-0.5">
-            <AnimatePresence initial={false}>
-              {olderMessages.map((msg) => {
-                const isMe = user?.id === msg.user_id;
-                return (
-                  <motion.div
-                    key={msg.id}
-                    data-chat-msg
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.15 }}
-                    className="flex items-start gap-2 py-0.5 group"
-                  >
-                    {msg.team_id && <TeamBadge teamId={msg.team_id} size="xs" className="shrink-0" />}
-                    <div className="min-w-0 flex-1">
-                      <span className="inline">
-                        <span className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")} onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}>
-                          {msg.nickname || "익명"}
-                        </span>
-                        <span className="text-sm text-text-primary">{msg.content}</span>
-                      </span>
-                    </div>
-                    <span className="text-[10px] text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {formatTime(msg.created_at)}
-                    </span>
-                  </motion.div>
-                );
-              })}
-            </AnimatePresence>
-          </div>
-        </div>
-      )}
     </div>
     </>
   );
