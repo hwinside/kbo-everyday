@@ -233,7 +233,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     };
   }, [alignLatestMessagesAboveComposer, setKeyboardBottomIfChanged]);
 
-  const renderedMessages = displayMessages.slice(0, 5);
+  const latestMessages = displayMessages.slice(0, 5);
+  const olderMessages = displayMessages.slice(5);
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -355,7 +356,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         ) : (
           <div className="space-y-0.5">
             <AnimatePresence initial={false}>
-                {renderedMessages.map((msg) => {
+                {latestMessages.map((msg) => {
                   const isMe = user?.id === msg.user_id;
                   return (
                     <motion.div
@@ -469,6 +470,44 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
           </motion.button>
         </div>
       </div>
+
+      {olderMessages.length > 0 && (
+        <div
+          className="px-4 py-2 space-y-0.5"
+          style={{ paddingBottom: `${56 + (keyboardBottom ?? tabBarHeight ?? 56)}px` }}
+        >
+          <div className="space-y-0.5">
+            <AnimatePresence initial={false}>
+              {olderMessages.map((msg) => {
+                const isMe = user?.id === msg.user_id;
+                return (
+                  <motion.div
+                    key={msg.id}
+                    data-chat-msg
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="flex items-start gap-2 py-0.5 group"
+                  >
+                    {msg.team_id && <TeamBadge teamId={msg.team_id} size="xs" className="shrink-0" />}
+                    <div className="min-w-0 flex-1">
+                      <span className="inline">
+                        <span className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")} onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}>
+                          {msg.nickname || "익명"}
+                        </span>
+                        <span className="text-sm text-text-primary">{msg.content}</span>
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {formatTime(msg.created_at)}
+                    </span>
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
+          </div>
+        </div>
+      )}
     </div>
     </>
   );
