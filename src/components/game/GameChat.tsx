@@ -147,34 +147,12 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     el.scrollTop = 0;
   }, [keyboardFocused, loading, messages.length, roomId]);
 
-  // idle 모드 페이지 align: 최신 5번째 글 하단이 composer 위에 오도록 page를
-  // 한 번만 스크롤한다. focus 모드에서는 호출하지 않으며, messages.length
-  // 변동에 의존하지 않아 누적 drift가 발생하지 않는다. 음수 diff는 무시한다.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (keyboardFocused) return;
-    if (loading || messages.length === 0) return;
-    const align = () => {
-      if (!scrollRef.current || !composerRef.current) return;
-      const msgs = scrollRef.current.querySelectorAll<HTMLElement>("[data-chat-msg]");
-      if (msgs.length === 0) return;
-      const target = msgs[Math.min(4, msgs.length - 1)];
-      const targetBottom = target.getBoundingClientRect().bottom;
-      const composerTop = composerRef.current.getBoundingClientRect().top;
-      const diff = targetBottom - (composerTop - 8);
-      if (diff > 4) window.scrollBy({ top: diff, behavior: "auto" });
-    };
-    const t1 = setTimeout(align, 100);
-    const t2 = setTimeout(align, 400);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
-    // messages.length 의존성 의도적으로 제외 — 새 메시지 도착마다 재호출 X.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keyboardFocused, roomId, loading]);
-
-  const renderedMessages = displayMessages;
+  // idle 모드: page-flow에 최신 5개만 렌더하여 "중계화면 + 최신 5개 + 입력창"이
+  // 자연 layout으로 동시에 보이게 한다. focus 모드에서는 전체 메시지를 internal
+  // scroll로 노출. window.scrollBy 트릭을 완전히 제거하여 drift가 발생하지 않는다.
+  const renderedMessages = keyboardFocused
+    ? displayMessages
+    : displayMessages.slice(0, 5);
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
