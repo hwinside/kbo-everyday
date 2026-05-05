@@ -137,9 +137,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     };
   }, []);
 
-  // 풀스크린 진입 시 messages 컨테이너 최상단(=최신)으로 스크롤. roomId, focus
-  // 토글, 새 메시지 도착 시 자동 정렬한다. column 자연 순서이므로 scrollTop=0
-  // 이 곧 최신 메시지 위치이며 누적 drift가 발생하지 않는다.
+  // 풀스크린 진입 시 messages 컨테이너 최상단(=최신)으로 스크롤. column 자연
+  // 순서이므로 scrollTop=0 이 곧 최신 메시지 위치이며 누적 drift가 없다.
   useEffect(() => {
     if (!keyboardFocused) return;
     if (loading || messages.length === 0) return;
@@ -147,6 +146,33 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     if (!el) return;
     el.scrollTop = 0;
   }, [keyboardFocused, loading, messages.length, roomId]);
+
+  // idle 모드 페이지 align: 최신 5번째 글 하단이 composer 위에 오도록 page를
+  // 한 번만 스크롤한다. focus 모드에서는 호출하지 않으며, messages.length
+  // 변동에 의존하지 않아 누적 drift가 발생하지 않는다. 음수 diff는 무시한다.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (keyboardFocused) return;
+    if (loading || messages.length === 0) return;
+    const align = () => {
+      if (!scrollRef.current || !composerRef.current) return;
+      const msgs = scrollRef.current.querySelectorAll<HTMLElement>("[data-chat-msg]");
+      if (msgs.length === 0) return;
+      const target = msgs[Math.min(4, msgs.length - 1)];
+      const targetBottom = target.getBoundingClientRect().bottom;
+      const composerTop = composerRef.current.getBoundingClientRect().top;
+      const diff = targetBottom - (composerTop - 8);
+      if (diff > 4) window.scrollBy({ top: diff, behavior: "auto" });
+    };
+    const t1 = setTimeout(align, 100);
+    const t2 = setTimeout(align, 400);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+    // messages.length 의존성 의도적으로 제외 — 새 메시지 도착마다 재호출 X.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keyboardFocused, roomId, loading]);
 
   const renderedMessages = displayMessages;
 
