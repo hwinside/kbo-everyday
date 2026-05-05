@@ -87,19 +87,12 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const msgs = scrollRef.current.querySelectorAll<HTMLElement>("[data-chat-msg]");
     if (msgs.length === 0) return;
 
-    const target = msgs[Math.min(4, msgs.length - 1)]; // 최신 5개 중 마지막
-    const targetBottom = target.getBoundingClientRect().bottom;
-    const composerTop = composerRef.current.getBoundingClientRect().top;
-    const diff = targetBottom - (composerTop - 8);
-
-    // Latest-first layout: msgs[0] is the newest and sits at the top of the
-    // page. Only scroll DOWN (positive diff) to push older content out of
-    // view. Never scroll UP — the page-top is already the most recent
-    // content; scrolling further up would push the composer above the
-    // viewport (the regression seen on iOS Safari with keyboard open).
-    if (diff > 4) {
-      window.scrollBy({ top: diff, behavior: "auto" });
-    }
+    // Latest-first layout: msgs[0] is the newest. With internal scroll on
+    // the messages container, we want the container's scrollTop = 0 so the
+    // most recent messages are visible at the top. The container is sized
+    // (maxHeight) to fit ~5 latest messages above the composer in the
+    // typical message-density case.
+    scrollRef.current.scrollTop = 0;
   }, []);
 
   const scheduleChatFocusAlign = useCallback(() => {
@@ -336,11 +329,19 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       {/* Mood gauge */}
       <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
 
-      {/* Messages — 최신순(최신→오래된), 최신글이 리스트 상단 */}
+      {/* Messages — 최신순(최신→오래된), 최신글이 리스트 상단.
+          INTERNAL SCROLL: maxHeight + overflow-y:auto. This blocks the window
+          scroll path that detached the composer from the keyboard on iOS
+          Safari. The composer (position:fixed bottom:keyboardBottom) stays
+          glued to the keyboard regardless of how the user scrolls within
+          this container, because window scroll does not occur. */}
       <div
         ref={scrollRef}
-        className="px-4 py-2 space-y-0.5"
-        style={{ paddingBottom: `${56 + (keyboardBottom ?? tabBarHeight ?? 56)}px` }}
+        className="px-4 py-2 space-y-0.5 overflow-y-auto overscroll-contain"
+        style={{
+          maxHeight: `calc(100dvh - 200px - ${keyboardBottom ?? tabBarHeight ?? 56}px)`,
+          paddingBottom: `8px`,
+        }}
       >
         {loading ? (
           <div className="text-center py-8 text-text-tertiary text-sm">로딩 중...</div>
