@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Users, Flame, ChevronDown } from "lucide-react";
 import { clsx } from "clsx";
@@ -69,8 +69,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
-  const keyboardCloseRealignRef = useRef(false);
-  const lastAlignedCountRef = useRef(0);
   const [keyboardFocused, setKeyboardFocused] = useState(false);
   const [tabBarHeight, setTabBarHeight] = useState<number | null>(null);
 
@@ -78,57 +76,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   // 줄이기 위해 최신글이 위에 오는 레이아웃을 사용한다.
   const displayMessages = [...messages].reverse();
 
-  // 최신 5개 메시지 묶음이 입력창 바로 위에 보이도록 window 스크롤을 맞춘다.
-  // 최신순 상단이므로 5번째 최신 메시지(DOM idx 4)의 하단이 composer 바로 위.
-  const alignLatestMessagesAboveComposer = useCallback(() => {
-    if (!scrollRef.current || !composerRef.current) return;
-    const msgs = scrollRef.current.querySelectorAll<HTMLElement>("[data-chat-msg]");
-    if (msgs.length === 0) return;
-
-    const target = msgs[Math.min(4, msgs.length - 1)]; // 최신 5개 중 마지막
-    const targetBottom = target.getBoundingClientRect().bottom;
-    const composerTop = composerRef.current.getBoundingClientRect().top;
-    const diff = targetBottom - (composerTop - 8);
-
-    // Latest-first layout: msgs[0] is the newest and sits at the top of the
-    // page. Only scroll DOWN (positive diff) to push older content out of
-    // view. Never scroll UP — the page-top is already the most recent
-    // content; scrolling further up would push the composer above the
-    // viewport (the regression seen on iOS Safari with keyboard open).
-    if (diff > 4) {
-      window.scrollBy({ top: diff, behavior: "auto" });
-    }
-  }, []);
-
-  const scheduleChatFocusAlign = useCallback(() => {
-    if (typeof window === "undefined") return;
-    [0, 50, 150, 300, 600, 1000].forEach((ms) => {
-      setTimeout(() => requestAnimationFrame(alignLatestMessagesAboveComposer), ms);
-    });
-  }, [alignLatestMessagesAboveComposer]);
-
-  // 진입/방 변경/새 메시지 도착 시 최신글 5개 + 입력창이 함께 보이도록 맞춘다.
-  useEffect(() => {
-    lastAlignedCountRef.current = 0;
-  }, [roomId]);
-
-  useEffect(() => {
-    if (loading || messages.length === 0) return;
-    if (messages.length === lastAlignedCountRef.current) return;
-    lastAlignedCountRef.current = messages.length;
-    scheduleChatFocusAlign();
-  }, [loading, messages.length, scheduleChatFocusAlign]);
-
-  useEffect(() => {
-    if (keyboardFocused || !keyboardCloseRealignRef.current || loading || messages.length === 0) return;
-    keyboardCloseRealignRef.current = false;
-    lastAlignedCountRef.current = 0;
-    scheduleChatFocusAlign();
-  }, [keyboardFocused, loading, messages.length, scheduleChatFocusAlign]);
-
-  // composer는 idle일 때 TabBar 위, focus일 때 viewport bottom(=keyboard 위).
-  // viewport meta `interactiveWidget: "resizes-content"` 가 layout viewport를
-  // 키보드만큼 줄여주므로 focus 시 `bottom: 0`이 자연스럽게 키보드 위에 붙는다.
+  // composer는 idle일 때 TabBar 위에 fixed로 떠있고, focus 시엔 GameChat
+  // 풀스크린 컨테이너의 page-flow footer로 동작한다 (fixed 해제).
   const composerBottom = tabBarHeight != null ? `${tabBarHeight}px` : "calc(52px + env(safe-area-inset-bottom, 0px))";
 
   useEffect(() => {
@@ -163,10 +112,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
     const onFocusIn = (e: FocusEvent) => {
       if (!isGameChatComposerTarget(e.target)) return;
-      keyboardCloseRealignRef.current = false;
       document.body.classList.add("kbd-open");
       setKeyboardFocused(true);
-      scheduleChatFocusAlign();
     };
 
     const onFocusOut = (e: FocusEvent) => {
@@ -174,7 +121,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       // 짧은 지연: blur → 다시 focus(예: 한글 IME 토글) 케이스 흡수
       const settle = () => {
         if (isGameChatComposerTarget(document.activeElement)) return;
-        keyboardCloseRealignRef.current = true;
         document.body.classList.remove("kbd-open");
         setKeyboardFocused(false);
       };
@@ -189,7 +135,18 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       document.removeEventListener("focusout", onFocusOut);
       document.body.classList.remove("kbd-open");
     };
-  }, [scheduleChatFocusAlign]);
+  }, []);
+
+  // 풀스크린 진입 시 messages 컨테이너 최상단(=최신)으로 스크롤. roomId, focus
+  // 토글, 새 메시지 도착 시 자동 정렬한다. column 자연 순서이므로 scrollTop=0
+  // 이 곧 최신 메시지 위치이며 누적 drift가 발생하지 않는다.
+  useEffect(() => {
+    if (!keyboardFocused) return;
+    if (loading || messages.length === 0) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = 0;
+  }, [keyboardFocused, loading, messages.length, roomId]);
 
   const renderedMessages = displayMessages;
 
@@ -240,7 +197,13 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
   return (
     <>
-    <div className="flex flex-col">
+    <div
+      className={clsx(
+        keyboardFocused
+          ? "fixed inset-0 z-[100] flex flex-col bg-bg-primary"
+          : "flex flex-col",
+      )}
+    >
       {/* Room selector */}
       <div className="relative">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
@@ -297,11 +260,18 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       {/* Mood gauge */}
       <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
 
-      {/* Messages — 최신순(최신→오래된), 최신글이 리스트 상단 */}
+      {/* Messages — 최신순(최신→오래된), 최신글이 리스트 상단.
+          focus 모드에서는 GameChat 풀스크린 컨테이너 내부에서 flex-grow + 자체
+          overflow scroll. idle 모드에서는 page flow 그대로. */}
       <div
         ref={scrollRef}
-        className="px-4 py-2 space-y-0.5"
-        style={{ paddingBottom: `${56 + (keyboardFocused ? 0 : (tabBarHeight ?? 56))}px` }}
+        className={clsx(
+          "px-4 py-2 space-y-0.5",
+          keyboardFocused && "flex-1 min-h-0 overflow-y-auto overscroll-contain",
+        )}
+        style={{
+          paddingBottom: keyboardFocused ? "8px" : `${56 + (tabBarHeight ?? 56)}px`,
+        }}
       >
         {loading ? (
           <div className="text-center py-8 text-text-tertiary text-sm">로딩 중...</div>
@@ -344,18 +314,24 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         )}
       </div>
 
-      {/* Input — always fixed: above TabBar when idle, above keyboard when focused.
-          interactiveWidget=resizes-content가 layout viewport를 키보드만큼 줄여
-          주므로 focus 시 `bottom: 0`이 키보드 위에 자연스럽게 붙는다. */}
+      {/* Composer — focus 시엔 풀스크린 컨테이너의 page-flow footer (shrink-0).
+          idle 시엔 화면 하단 TabBar 위에 fixed로 표시. interactiveWidget=
+          resizes-content 가 layout viewport를 키보드만큼 줄여주므로 focus 모드
+          풀스크린 자체가 키보드 위 영역을 차지하고 composer는 그 footer가 된다. */}
       <div
         ref={composerRef}
         data-composer="game-chat"
-        className="fixed left-0 right-0 z-[98] border-t border-border"
+        className={clsx(
+          "border-t border-border",
+          keyboardFocused
+            ? "shrink-0"
+            : "fixed left-0 right-0 z-[98]",
+        )}
         style={{
           background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
           backdropFilter: "blur(12px)",
-          bottom: keyboardFocused ? "0px" : composerBottom,
-          transition: "bottom 80ms ease-out",
+          bottom: keyboardFocused ? undefined : composerBottom,
+          transition: keyboardFocused ? undefined : "bottom 80ms ease-out",
         }}
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
