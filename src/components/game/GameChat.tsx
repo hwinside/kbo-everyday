@@ -91,8 +91,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const targetDocBottom = target.getBoundingClientRect().bottom + window.scrollY;
     const composerVpTop = composerRef.current.getBoundingClientRect().top;
     const desired = targetDocBottom - composerVpTop + 8;
-    // 위로 스크롤하지 않음 — page-top이 최신 콘텐츠.
-    if (desired <= window.scrollY + 4) return;
+    if (desired < 0) return;
+    if (Math.abs(desired - window.scrollY) <= 4) return; // 이미 정렬됨
     window.scrollTo({ top: desired, behavior: "auto" });
   }, []);
 
