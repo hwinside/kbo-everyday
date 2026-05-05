@@ -113,6 +113,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
     const onFocusIn = (e: FocusEvent) => {
       if (!isGameChatComposerTarget(e.target)) return;
+      // re-render 전에 scrollY 저장 — useEffect 단계에선 이미 page-flow shrink로
+      // scrollY auto-trim이 일어난 뒤면 원값 손실. focusin이 유일한 안전 지점.
+      savedScrollYRef.current = window.scrollY;
       document.body.classList.add("kbd-open");
       setKeyboardFocused(true);
     };
@@ -148,19 +151,16 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     el.scrollTop = 0;
   }, [keyboardFocused, loading, messages.length, roomId]);
 
-  // focus 진입 시 page scrollY 저장, blur 후 복원. fullscreen container가
-  // page-flow에서 빠지면 page scroll height가 줄어들면서 scrollY auto-trim이
-  // 발생해 원래 위치가 잃혀진다. 복원하지 않으면 blur 후 score area 맨 위로 점프함.
+  // blur 후 page scrollY 복원. focus 진입 시 focusin handler에서 저장된 값을
+  // fullscreen 해제 다음 frame에 window.scrollTo로 복원한다. fullscreen container가
+  // page-flow에서 빠져 page scroll height가 줄어들면서 발생하는 scrollY auto-trim
+  // 회귀 (blur 후 score area 맨 위로 점프하는 현상)를 차단한다.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (keyboardFocused) {
-      savedScrollYRef.current = window.scrollY;
-    } else if (savedScrollYRef.current > 0) {
-      const y = savedScrollYRef.current;
-      const restore = () => window.scrollTo(0, y);
-      // fullscreen 해제 다음 frame에 복원 (page-flow expand 후)
-      requestAnimationFrame(() => requestAnimationFrame(restore));
-    }
+    if (keyboardFocused) return;
+    if (savedScrollYRef.current <= 0) return;
+    const y = savedScrollYRef.current;
+    requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y)));
   }, [keyboardFocused]);
 
   // idle 모드: page-flow에 최신 5개만 렌더하여 "중계화면 + 최신 5개 + 입력창"이
