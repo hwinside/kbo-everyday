@@ -69,6 +69,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
+  const savedScrollYRef = useRef(0);
   const [keyboardFocused, setKeyboardFocused] = useState(false);
   const [tabBarHeight, setTabBarHeight] = useState<number | null>(null);
 
@@ -146,6 +147,21 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     if (!el) return;
     el.scrollTop = 0;
   }, [keyboardFocused, loading, messages.length, roomId]);
+
+  // focus 진입 시 page scrollY 저장, blur 후 복원. fullscreen container가
+  // page-flow에서 빠지면 page scroll height가 줄어들면서 scrollY auto-trim이
+  // 발생해 원래 위치가 잃혀진다. 복원하지 않으면 blur 후 score area 맨 위로 점프함.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (keyboardFocused) {
+      savedScrollYRef.current = window.scrollY;
+    } else if (savedScrollYRef.current > 0) {
+      const y = savedScrollYRef.current;
+      const restore = () => window.scrollTo(0, y);
+      // fullscreen 해제 다음 frame에 복원 (page-flow expand 후)
+      requestAnimationFrame(() => requestAnimationFrame(restore));
+    }
+  }, [keyboardFocused]);
 
   // idle 모드: page-flow에 최신 5개만 렌더하여 "중계화면 + 최신 5개 + 입력창"이
   // 자연 layout으로 동시에 보이게 한다. focus 모드에서는 전체 메시지를 internal
