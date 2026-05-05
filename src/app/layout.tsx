@@ -56,6 +56,11 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   viewportFit: "cover",
+  // iOS 16.4+ / Chrome 108+: shrink layout viewport when soft keyboard opens
+  // so position:fixed bottom:0 elements stay glued to the keyboard without
+  // any visualViewport JS tracking. Re-validating after May-04 negative
+  // result; pairs with the GameChat composer simplification.
+  interactiveWidget: "resizes-content",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#F2F2F7" },
     { media: "(prefers-color-scheme: dark)", color: "#0A0A0B" },
