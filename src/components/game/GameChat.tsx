@@ -74,6 +74,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const lastAlignedCountRef = useRef(0);
   const lockedKeyboardBottomRef = useRef(0);
   const [keyboardBottom, setKeyboardBottom] = useState<number | null>(null);
+  // Layout-coord Y of the visual viewport bottom while the keyboard is open.
+  // Used to anchor the composer to the visual viewport (not the layout viewport)
+  // so it stays glued to the keyboard during native page scroll on iOS Safari.
+  const [keyboardVisualBottom, setKeyboardVisualBottom] = useState<number | null>(null);
   const [tabBarHeight, setTabBarHeight] = useState<number | null>(null);
 
   // 시간순: 오래된→최신. 최신글이 리스트 하단 = 입력창 바로 위.
@@ -156,6 +160,14 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     });
   }, []);
 
+  const setKeyboardVisualBottomIfChanged = useCallback((next: number | null) => {
+    setKeyboardVisualBottom((prev) => {
+      if (prev == null && next == null) return prev;
+      if (prev != null && next != null && Math.abs(prev - next) < 1) return prev;
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const vv = window.visualViewport;
@@ -173,19 +185,28 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       keyboardCloseRealignRef.current = true;
       document.body.classList.remove("kbd-open");
       setKeyboardBottomIfChanged(null);
+      setKeyboardVisualBottomIfChanged(null);
     };
 
-    // Compute keyboard inset from visualViewport (resize events only).
+    // Compute keyboard inset (max-lock) AND track visual viewport bottom in
+    // layout coordinates. The bottom inset gives us how high to lift the
+    // composer; the visual bottom keeps the composer attached to the keyboard
+    // when the user scrolls the page (which shifts visualViewport.offsetTop on
+    // iOS Safari without re-firing resize).
     const updateKeyboardInset = () => {
       if (!vv || !focusLockRef.current) return;
-      const inset = Math.max(0, window.innerHeight - vv.height - Math.max(0, vv.offsetTop));
+      const visualBottom = Math.max(0, vv.offsetTop) + vv.height;
+      const inset = Math.max(0, window.innerHeight - visualBottom);
       if (inset > 40) {
-        // Max-lock: only increase, never decrease while focused.
-        // This prevents scroll-induced viewport bouncing from shrinking the inset.
+        // Max-lock the inset: only increase while focused. This stabilizes the
+        // backdrop height against URL-bar driven viewport bounces.
         if (inset > lockedKeyboardBottomRef.current) {
           lockedKeyboardBottomRef.current = inset;
         }
         setKeyboardBottomIfChanged(lockedKeyboardBottomRef.current);
+        // Visual bottom is allowed to track every change so the composer stays
+        // glued to the keyboard during native page scroll.
+        setKeyboardVisualBottomIfChanged(Math.round(visualBottom));
       }
     };
 
@@ -212,17 +233,24 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       [50, 300].forEach((ms) => setTimeout(closeKeyboardMode, ms));
     };
 
-    // Only listen to resize (not scroll) to avoid jitter from URL bar changes.
+    // Listen to BOTH resize and scroll. resize fires when the keyboard opens/
+    // closes (vv.height changes); scroll fires when the user pans the page
+    // while the keyboard is open (vv.offsetTop changes). The keyboardBottom
+    // inset is max-locked inside updateKeyboardInset, so scroll cannot shrink
+    // the backdrop. keyboardVisualBottom is allowed to track scroll so the
+    // composer follows the keyboard.
     vv?.addEventListener("resize", updateKeyboardInset);
+    vv?.addEventListener("scroll", updateKeyboardInset);
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
     return () => {
       vv?.removeEventListener("resize", updateKeyboardInset);
+      vv?.removeEventListener("scroll", updateKeyboardInset);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
       closeKeyboardMode(true);
     };
-  }, [scheduleChatFocusAlign, setKeyboardBottomIfChanged]);
+  }, [scheduleChatFocusAlign, setKeyboardBottomIfChanged, setKeyboardVisualBottomIfChanged]);
 
   const renderedMessages = displayMessages;
 
@@ -390,7 +418,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         />
       )}
 
-      {/* Input — always fixed: above TabBar when idle, above keyboard when focused */}
+      {/* Input — always fixed.
+          Idle: anchored to bottom (above TabBar).
+          Keyboard open: anchored via top + translateY(-100%) to the visual
+          viewport bottom, so the composer follows the keyboard during native
+          page scroll on iOS Safari (where layout-coord `bottom` does not). */}
       <div
         ref={composerRef}
         data-composer="game-chat"
@@ -398,7 +430,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         style={{
           background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
           backdropFilter: "blur(12px)",
-          bottom: keyboardBottom != null ? `${keyboardBottom}px` : composerBottom,
+          top: keyboardVisualBottom != null ? `${keyboardVisualBottom}px` : undefined,
+          bottom: keyboardVisualBottom != null
+            ? undefined
+            : (keyboardBottom != null ? `${keyboardBottom}px` : composerBottom),
+          transform: keyboardVisualBottom != null ? "translateY(-100%)" : undefined,
           transition: keyboardBottom != null ? "none" : "bottom 80ms ease-out",
         }}
       >
