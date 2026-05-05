@@ -56,6 +56,13 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   viewportFit: "cover",
+  // iOS 16.4+ / Chrome 108+: shrink layout viewport when soft keyboard opens.
+  // Pairs with the visualViewport JS tracking in GameChat.tsx as a layered
+  // strategy: if the meta works (browser shrinks layout), bottom:keyboardBottom
+  // resolves to 0 and the composer docks above the keyboard via natural
+  // layout flow. If the meta is no-op (older browsers), the JS keyboardBottom
+  // max-lock continues to handle positioning. Zero downside.
+  interactiveWidget: "resizes-content",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#F2F2F7" },
     { media: "(prefers-color-scheme: dark)", color: "#0A0A0B" },
