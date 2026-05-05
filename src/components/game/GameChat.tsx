@@ -72,9 +72,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const prevKeyboardFocusedRef = useRef(false);
   const lastAlignedCountRef = useRef(0);
   const [keyboardFocused, setKeyboardFocused] = useState(false);
+  // ref mirror of keyboardFocused for sync access from non-React-state code
+  // (alignLatestMessagesAboveComposer / messages effect closure).
+  const keyboardFocusedRef = useRef(false);
   const [tabBarHeight, setTabBarHeight] = useState<number | null>(null);
-  const [keyboardLift, setKeyboardLift] = useState(0);
-  const keyboardLiftRef = useRef(0);
 
   // 최신순: 최신 메시지가 리스트 상단. 크관은 중계↔최신댓글 왕복 부담을
   // 줄이기 위해 최신글이 위에 오는 레이아웃을 사용한다.
@@ -83,6 +84,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   // 최신 5개 메시지 묶음이 입력창 바로 위에 보이도록 window 스크롤을 맞춘다.
   // 최신순 상단이므로 5번째 최신 메시지(DOM idx 4)의 하단이 composer 바로 위.
   const alignLatestMessagesAboveComposer = useCallback(() => {
+    // CSO 삼순이 NO-GO #1 (2026-05-06): focus 중에는 window.scrollTo 절대 차단.
+    // messages.length effect 등 모든 진입점에 대한 defense-in-depth 가드.
+    if (keyboardFocusedRef.current) return;
     if (!scrollRef.current || !composerRef.current) return;
     const msgs = scrollRef.current.querySelectorAll<HTMLElement>("[data-chat-msg]");
     if (msgs.length === 0) return;
@@ -90,13 +94,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const target = msgs[Math.min(4, msgs.length - 1)];
     // scrollTo 절대 위치 방식: scrollBy 누적 drift 완전 제거.
     // 고정 composer의 viewport top은 scrollY 무관 (fixed positioning).
-    // composer는 focus 시 transform: translateY(keyboardLift)로 위로 이동.
-    // align의 desired가 *focus 상태 vs idle 상태에서 동일한 layout 기준*으로
-    // 계산되도록 keyboardLift를 빼서 transform-untransformed top을 사용한다.
-    // 이걸 안 하면 focus/blur 사이클마다 desired 차이만큼 page scrollY가
-    // 누적되어 페이지가 점점 아래로 밀려난다 (실기기 confirmed bug).
+    // keyboardLift transform 제거 후 composer top은 그대로 사용.
     const targetDocBottom = target.getBoundingClientRect().bottom + window.scrollY;
-    const composerVpTop = composerRef.current.getBoundingClientRect().top - keyboardLiftRef.current;
+    const composerVpTop = composerRef.current.getBoundingClientRect().top;
     const desired = targetDocBottom - composerVpTop + 8;
     if (desired < 0) return;
     if (Math.abs(desired - window.scrollY) <= 4) return; // 이미 정렬됨
@@ -120,6 +120,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     if (loading || messages.length === 0) return;
     if (messages.length === lastAlignedCountRef.current) return;
     lastAlignedCountRef.current = messages.length;
+    // CSO 삼순이 NO-GO #1 (2026-05-06): focus 중 새 메시지/late load가 들어와도
+    // window.scrollTo 호출하지 않는다. focus 해제 시 prevKeyboardFocusedRef
+    // effect에서 재정렬됨.
+    if (keyboardFocusedRef.current) return;
     scheduleChatFocusAlign();
   }, [loading, messages.length, scheduleChatFocusAlign]);
 
@@ -161,7 +165,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const vv = window.visualViewport;
 
     const isGameChatComposerTarget = (target: EventTarget | null) => {
       const t = target as HTMLElement | null;
@@ -169,37 +172,19 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       return Boolean(t.closest('[data-composer="game-chat"]'));
     };
 
-    const syncKeyboardLift = () => {
-      requestAnimationFrame(() => {
-        const composer = composerRef.current;
-        if (!composer || !isGameChatComposerTarget(document.activeElement)) return;
-        const viewportBottom = vv?.height ?? window.innerHeight;
-        // iOS Safari exposes a native keyboard accessory/QuickType area above
-        // the key rows. Aim the composer at that native keyboard edge while
-        // calculating from the untransformed fixed bottom:0 baseline to avoid
-        // oscillation across visualViewport pan/resize modes.
-        const accessoryOffset = 125;
-        const baselineBottom = composer.getBoundingClientRect().bottom - keyboardLiftRef.current;
-        const rawNext = Math.round(viewportBottom + accessoryOffset - baselineBottom);
-        const maxLift = Math.round(window.innerHeight * 0.7);
-        const next = Math.max(-maxLift, Math.min(90, rawNext));
-        if (Math.abs(next - keyboardLiftRef.current) <= 1) return;
-        keyboardLiftRef.current = next;
-        setKeyboardLift(next);
-      });
-    };
-
-    const scheduleKeyboardLiftSync = () => {
-      [0, 50, 150, 300, 600, 1000, 1500, 2000, 2500].forEach((ms) => setTimeout(syncKeyboardLift, ms));
-    };
+    // CSO 삼순이 NO-GO #2 (2026-05-06): visualViewport 이벤트 기반 timed lift
+    // 루프 (9개 setTimeout × accessoryOffset=125 × clamp max 90)를 완전 제거.
+    // viewport meta interactiveWidget="resizes-content" 가 layout viewport를
+    // 키보드만큼 줄여주므로 composer는 fixed bottom: 0 만으로 키보드 위에 붙는다.
+    // QuickType/IME accessory 차이는 매직 오프셋이 아니라 OS가 처리할 영역이며,
+    // 매직값은 기기/iOS 버전 간 회귀를 만들기 때문에 두지 않는다.
 
     const onFocusIn = (e: FocusEvent) => {
       if (!isGameChatComposerTarget(e.target)) return;
       document.body.classList.add("kbd-open");
+      keyboardFocusedRef.current = true;
       setKeyboardFocused(true);
-      scheduleKeyboardLiftSync();
-      // scrollBy align은 제거: 키보드 애니메이션 중 페이지를 잘못 밀어냄.
-      // 브라우저 native scroll-into-view + CSS keyboardLift가 배치 담당.
+      // align/scrollBy 호출 없음: native scroll-into-view + bottom:0 가 배치 담당.
     };
 
     const onFocusOut = (e: FocusEvent) => {
@@ -208,32 +193,21 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       const settle = () => {
         if (isGameChatComposerTarget(document.activeElement)) return;
         document.body.classList.remove("kbd-open");
+        keyboardFocusedRef.current = false;
         setKeyboardFocused(false);
-        keyboardLiftRef.current = 0;
-        setKeyboardLift(0);
       };
       setTimeout(settle, 50);
       setTimeout(settle, 300);
     };
 
-    vv?.addEventListener("resize", scheduleKeyboardLiftSync);
-    vv?.addEventListener("scroll", scheduleKeyboardLiftSync);
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
     return () => {
-      vv?.removeEventListener("resize", scheduleKeyboardLiftSync);
-      vv?.removeEventListener("scroll", scheduleKeyboardLiftSync);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
       document.body.classList.remove("kbd-open");
     };
   }, []);
-
-
-  // keyboardLift 변경 시 scrollBy align 제거 (iOS 26.4 회귀 원인).
-  // 키보드 애니메이션 중 scheduleChatFocusAlign의 scrollBy가 페이지를
-  // AI분석 섹션까지 밀어올려 메시지/입력창이 키보드에 가려짐.
-  // 브라우저 native scroll-into-view + CSS keyboardLift가 배치 담당.
 
   // idle: 최신 5개만 표시하여 score 영역 자연 노출
   // focus: 전체 메시지 (자유 스크롤)
@@ -359,7 +333,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       <div
         ref={scrollRef}
         className="px-4 py-2 space-y-0.5"
-        style={{ paddingBottom: `${56 + (keyboardFocused ? Math.max(0, -keyboardLift) : (tabBarHeight ?? 56))}px` }}
+        style={{ paddingBottom: `${56 + (keyboardFocused ? 0 : (tabBarHeight ?? 56))}px` }}
       >
         {loading ? (
           <div className="text-center py-8 text-text-tertiary text-sm">로딩 중...</div>
@@ -413,7 +387,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
           background: keyboardFocused ? "rgba(10,10,15,1)" : "var(--chat-input-bg, rgba(10,10,15,0.98))",
           backdropFilter: keyboardFocused ? undefined : "blur(12px)",
           bottom: keyboardFocused ? "0px" : composerBottom,
-          transform: keyboardFocused ? `translateY(${keyboardLift}px)` : "translateY(0px)",
           transition: keyboardFocused ? "none" : "bottom 80ms ease-out",
         }}
       >
