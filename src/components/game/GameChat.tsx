@@ -92,7 +92,12 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const composerTop = composerRef.current.getBoundingClientRect().top;
     const diff = targetBottom - (composerTop - 8);
 
-    if (Math.abs(diff) > 4) {
+    // Latest-first layout: msgs[0] is the newest and sits at the top of the
+    // page. Only scroll DOWN (positive diff) to push older content out of
+    // view. Never scroll UP — the page-top is already the most recent
+    // content; scrolling further up would push the composer above the
+    // viewport (the regression seen on iOS Safari with keyboard open).
+    if (diff > 4) {
       window.scrollBy({ top: diff, behavior: "auto" });
     }
   }, []);
