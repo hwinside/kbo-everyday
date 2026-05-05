@@ -69,10 +69,12 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
-  const keyboardCloseRealignRef = useRef(false);
+  const prevKeyboardFocusedRef = useRef(false);
   const lastAlignedCountRef = useRef(0);
   const [keyboardFocused, setKeyboardFocused] = useState(false);
   const [tabBarHeight, setTabBarHeight] = useState<number | null>(null);
+  const [keyboardLift, setKeyboardLift] = useState(0);
+  const keyboardLiftRef = useRef(0);
 
   // 최신순: 최신 메시지가 리스트 상단. 크관은 중계↔최신댓글 왕복 부담을
   // 줄이기 위해 최신글이 위에 오는 레이아웃을 사용한다.
@@ -85,26 +87,28 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const msgs = scrollRef.current.querySelectorAll<HTMLElement>("[data-chat-msg]");
     if (msgs.length === 0) return;
 
-    const target = msgs[Math.min(4, msgs.length - 1)]; // 최신 5개 중 마지막
-    const targetBottom = target.getBoundingClientRect().bottom;
-    const composerTop = composerRef.current.getBoundingClientRect().top;
-    const diff = targetBottom - (composerTop - 8);
-
-    // Latest-first layout: msgs[0] is the newest and sits at the top of the
-    // page. Only scroll DOWN (positive diff) to push older content out of
-    // view. Never scroll UP — the page-top is already the most recent
-    // content; scrolling further up would push the composer above the
-    // viewport (the regression seen on iOS Safari with keyboard open).
-    if (diff > 4) {
-      window.scrollBy({ top: diff, behavior: "auto" });
-    }
+    const target = msgs[Math.min(4, msgs.length - 1)];
+    // scrollTo 절대 위치 방식: scrollBy 누적 drift 완전 제거.
+    // 고정 composer의 viewport top은 scrollY 무관 (fixed positioning).
+    // composer는 focus 시 transform: translateY(keyboardLift)로 위로 이동.
+    // align의 desired가 *focus 상태 vs idle 상태에서 동일한 layout 기준*으로
+    // 계산되도록 keyboardLift를 빼서 transform-untransformed top을 사용한다.
+    // 이걸 안 하면 focus/blur 사이클마다 desired 차이만큼 page scrollY가
+    // 누적되어 페이지가 점점 아래로 밀려난다 (실기기 confirmed bug).
+    const targetDocBottom = target.getBoundingClientRect().bottom + window.scrollY;
+    const composerVpTop = composerRef.current.getBoundingClientRect().top - keyboardLiftRef.current;
+    const desired = targetDocBottom - composerVpTop + 8;
+    if (desired < 0) return;
+    if (Math.abs(desired - window.scrollY) <= 4) return; // 이미 정렬됨
+    window.scrollTo({ top: desired, behavior: "auto" });
   }, []);
 
   const scheduleChatFocusAlign = useCallback(() => {
     if (typeof window === "undefined") return;
-    [0, 50, 150, 300, 600, 1000].forEach((ms) => {
-      setTimeout(() => requestAnimationFrame(alignLatestMessagesAboveComposer), ms);
-    });
+    // scrollTo가 idempotent이므로 3회면 충분. 키보드 애니메이션 ~400ms 커버.
+    requestAnimationFrame(alignLatestMessagesAboveComposer);
+    setTimeout(() => requestAnimationFrame(alignLatestMessagesAboveComposer), 200);
+    setTimeout(() => requestAnimationFrame(alignLatestMessagesAboveComposer), 500);
   }, [alignLatestMessagesAboveComposer]);
 
   // 진입/방 변경/새 메시지 도착 시 최신글 5개 + 입력창이 함께 보이도록 맞춘다.
@@ -119,10 +123,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     scheduleChatFocusAlign();
   }, [loading, messages.length, scheduleChatFocusAlign]);
 
+  // 키보드 포커스 전환 시 align (idle→focus: 5개→전체, focus→idle: 전체→5개)
   useEffect(() => {
-    if (keyboardFocused || !keyboardCloseRealignRef.current || loading || messages.length === 0) return;
-    keyboardCloseRealignRef.current = false;
-    lastAlignedCountRef.current = 0;
+    if (prevKeyboardFocusedRef.current === keyboardFocused) return;
+    prevKeyboardFocusedRef.current = keyboardFocused;
+    if (loading || messages.length === 0) return;
     scheduleChatFocusAlign();
   }, [keyboardFocused, loading, messages.length, scheduleChatFocusAlign]);
 
@@ -154,6 +159,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const vv = window.visualViewport;
 
     const isGameChatComposerTarget = (target: EventTarget | null) => {
       const t = target as HTMLElement | null;
@@ -161,12 +167,36 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       return Boolean(t.closest('[data-composer="game-chat"]'));
     };
 
+    const syncKeyboardLift = () => {
+      requestAnimationFrame(() => {
+        const composer = composerRef.current;
+        if (!composer || !isGameChatComposerTarget(document.activeElement)) return;
+        const viewportBottom = vv?.height ?? window.innerHeight;
+        // iOS Safari exposes a native keyboard accessory/QuickType area above
+        // the key rows. Aim the composer at that native keyboard edge while
+        // calculating from the untransformed fixed bottom:0 baseline to avoid
+        // oscillation across visualViewport pan/resize modes.
+        const accessoryOffset = 125;
+        const baselineBottom = composer.getBoundingClientRect().bottom - keyboardLiftRef.current;
+        const rawNext = Math.round(viewportBottom + accessoryOffset - baselineBottom);
+        const maxLift = Math.round(window.innerHeight * 0.7);
+        const next = Math.max(-maxLift, Math.min(90, rawNext));
+        if (Math.abs(next - keyboardLiftRef.current) <= 1) return;
+        keyboardLiftRef.current = next;
+        setKeyboardLift(next);
+      });
+    };
+
+    const scheduleKeyboardLiftSync = () => {
+      [0, 50, 150, 300, 600, 1000, 1500, 2000, 2500].forEach((ms) => setTimeout(syncKeyboardLift, ms));
+    };
+
     const onFocusIn = (e: FocusEvent) => {
       if (!isGameChatComposerTarget(e.target)) return;
-      keyboardCloseRealignRef.current = false;
       document.body.classList.add("kbd-open");
       setKeyboardFocused(true);
-      scheduleChatFocusAlign();
+      scheduleKeyboardLiftSync();
+      // align은 useEffect에서 re-render 후 실행 (message slice 전환 반영)
     };
 
     const onFocusOut = (e: FocusEvent) => {
@@ -174,24 +204,40 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       // 짧은 지연: blur → 다시 focus(예: 한글 IME 토글) 케이스 흡수
       const settle = () => {
         if (isGameChatComposerTarget(document.activeElement)) return;
-        keyboardCloseRealignRef.current = true;
         document.body.classList.remove("kbd-open");
         setKeyboardFocused(false);
+        keyboardLiftRef.current = 0;
+        setKeyboardLift(0);
       };
       setTimeout(settle, 50);
       setTimeout(settle, 300);
     };
 
+    vv?.addEventListener("resize", scheduleKeyboardLiftSync);
+    vv?.addEventListener("scroll", scheduleKeyboardLiftSync);
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
     return () => {
+      vv?.removeEventListener("resize", scheduleKeyboardLiftSync);
+      vv?.removeEventListener("scroll", scheduleKeyboardLiftSync);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
       document.body.classList.remove("kbd-open");
     };
-  }, [scheduleChatFocusAlign]);
+  }, []);
 
-  const renderedMessages = displayMessages;
+
+  // keyboardLift may settle after focus as iOS Safari finishes visualViewport
+  // pan/resize. Re-align after the lift changes so repeated keyboard toggles
+  // do not leave a phantom gap or overlap around the composer.
+  useEffect(() => {
+    if (!keyboardFocused || loading || messages.length === 0) return;
+    scheduleChatFocusAlign();
+  }, [keyboardLift, keyboardFocused, loading, messages.length, scheduleChatFocusAlign]);
+
+  // idle: 최신 5개만 표시하여 score 영역 자연 노출
+  // focus: 전체 메시지 (자유 스크롤)
+  const renderedMessages = keyboardFocused ? displayMessages : displayMessages.slice(0, 5);
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -301,7 +347,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       <div
         ref={scrollRef}
         className="px-4 py-2 space-y-0.5"
-        style={{ paddingBottom: `${56 + (keyboardFocused ? 0 : (tabBarHeight ?? 56))}px` }}
+        style={{ paddingBottom: `${56 + (keyboardFocused ? Math.max(0, -keyboardLift) : (tabBarHeight ?? 56))}px` }}
       >
         {loading ? (
           <div className="text-center py-8 text-text-tertiary text-sm">로딩 중...</div>
@@ -352,10 +398,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         data-composer="game-chat"
         className="fixed left-0 right-0 z-[98] border-t border-border"
         style={{
-          background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
-          backdropFilter: "blur(12px)",
+          background: keyboardFocused ? "rgba(10,10,15,1)" : "var(--chat-input-bg, rgba(10,10,15,0.98))",
+          backdropFilter: keyboardFocused ? undefined : "blur(12px)",
           bottom: keyboardFocused ? "0px" : composerBottom,
-          transition: "bottom 80ms ease-out",
+          transform: keyboardFocused ? `translateY(${keyboardLift}px)` : "translateY(0px)",
+          transition: keyboardFocused ? "none" : "bottom 80ms ease-out",
         }}
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
