@@ -74,6 +74,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const lastAlignedCountRef = useRef(0);
   const lockedKeyboardBottomRef = useRef(0);
   const [keyboardBottom, setKeyboardBottom] = useState<number | null>(null);
+  const [keyboardVisualBottom, setKeyboardVisualBottom] = useState<number | null>(null);
   const [tabBarHeight, setTabBarHeight] = useState<number | null>(null);
 
   // 시간순: 오래된→최신. 최신글이 리스트 하단 = 입력창 바로 위.
@@ -156,6 +157,14 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     });
   }, []);
 
+  const setKeyboardVisualBottomIfChanged = useCallback((next: number | null) => {
+    setKeyboardVisualBottom((prev) => {
+      if (prev == null && next == null) return prev;
+      if (prev != null && next != null && Math.abs(prev - next) < 1) return prev;
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const vv = window.visualViewport;
@@ -173,19 +182,31 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       keyboardCloseRealignRef.current = true;
       document.body.classList.remove("kbd-open");
       setKeyboardBottomIfChanged(null);
+      setKeyboardVisualBottomIfChanged(null);
     };
 
-    // Compute keyboard inset from visualViewport (resize events only).
-    const updateKeyboardInset = () => {
-      if (!vv || !focusLockRef.current) return;
-      const inset = Math.max(0, window.innerHeight - vv.height - Math.max(0, vv.offsetTop));
+    // Compute the visual viewport bottom, not only the keyboard inset.
+    // On iOS Safari a fixed bottom inset can drift when the page scrolls while
+    // the keyboard is open. Anchoring the composer to visualViewport bottom
+    // keeps it directly above the native keyboard/QuickType stack.
+    const updateKeyboardFrame = () => {
+      if (!focusLockRef.current) return;
+      const visualTop = vv ? Math.max(0, vv.offsetTop) : 0;
+      const visualHeight = vv ? vv.height : window.innerHeight;
+      const visualBottom = Math.max(0, visualTop + visualHeight);
+      const inset = Math.max(0, window.innerHeight - visualBottom);
+
+      setKeyboardVisualBottomIfChanged(Math.round(visualBottom));
+
       if (inset > 40) {
-        // Max-lock: only increase, never decrease while focused.
-        // This prevents scroll-induced viewport bouncing from shrinking the inset.
+        // Max-lock only the padding/cover inset so scroll-induced viewport
+        // bounce cannot shrink the available scroll room.
         if (inset > lockedKeyboardBottomRef.current) {
           lockedKeyboardBottomRef.current = inset;
         }
         setKeyboardBottomIfChanged(lockedKeyboardBottomRef.current);
+      } else {
+        setKeyboardBottomIfChanged(0);
       }
     };
 
@@ -196,12 +217,13 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       keyboardCloseRealignRef.current = false;
       document.body.classList.add("kbd-open");
       setKeyboardBottomIfChanged(0);
+      updateKeyboardFrame();
       scheduleChatFocusAlign();
 
       // Poll for keyboard animation to complete and lock the inset.
       [0, 50, 150, 300, 600, 900, 1200].forEach((ms) => {
         setTimeout(() => {
-          updateKeyboardInset();
+          updateKeyboardFrame();
           scheduleChatFocusAlign();
         }, ms);
       });
@@ -212,17 +234,20 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       [50, 300].forEach((ms) => setTimeout(closeKeyboardMode, ms));
     };
 
-    // Only listen to resize (not scroll) to avoid jitter from URL bar changes.
-    vv?.addEventListener("resize", updateKeyboardInset);
+    vv?.addEventListener("resize", updateKeyboardFrame);
+    vv?.addEventListener("scroll", updateKeyboardFrame);
+    window.addEventListener("resize", updateKeyboardFrame);
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
     return () => {
-      vv?.removeEventListener("resize", updateKeyboardInset);
+      vv?.removeEventListener("resize", updateKeyboardFrame);
+      vv?.removeEventListener("scroll", updateKeyboardFrame);
+      window.removeEventListener("resize", updateKeyboardFrame);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
       closeKeyboardMode(true);
     };
-  }, [scheduleChatFocusAlign, setKeyboardBottomIfChanged]);
+  }, [scheduleChatFocusAlign, setKeyboardBottomIfChanged, setKeyboardVisualBottomIfChanged]);
 
   const renderedMessages = displayMessages;
 
@@ -398,8 +423,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         style={{
           background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
           backdropFilter: "blur(12px)",
-          bottom: keyboardBottom != null ? `${keyboardBottom}px` : composerBottom,
-          transition: keyboardBottom != null ? "none" : "bottom 80ms ease-out",
+          top: keyboardVisualBottom != null ? `${keyboardVisualBottom}px` : undefined,
+          bottom: keyboardVisualBottom != null ? undefined : composerBottom,
+          transform: keyboardVisualBottom != null ? "translateY(-100%)" : undefined,
+          transition: keyboardVisualBottom != null ? "none" : "bottom 80ms ease-out",
         }}
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
