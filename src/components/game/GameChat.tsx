@@ -83,10 +83,12 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
   // 최신 5개 메시지 묶음이 입력창 바로 위에 보이도록 window 스크롤을 맞춘다.
   // 최신순 상단이므로 5번째 최신 메시지(DOM idx 4)의 하단이 composer 바로 위.
-  const alignLatestMessagesAboveComposer = useCallback(() => {
+  const alignLatestMessagesAboveComposer = useCallback((opts?: { bypassFocusGuard?: boolean }) => {
     // CSO 삼순이 NO-GO #1 (2026-05-06): focus 중에는 window.scrollTo 절대 차단.
     // messages.length effect 등 모든 진입점에 대한 defense-in-depth 가드.
-    if (keyboardFocusedRef.current) return;
+    // 예외: focus 진입 직후 5→50 slice 확장 후 1회 정렬은 bypassFocusGuard로 통과
+    // (Webkit DOM QA visible=0/8 회귀 / iOS 26.4 시뮬 메시지 가려짐 회귀 해소).
+    if (!opts?.bypassFocusGuard && keyboardFocusedRef.current) return;
     if (!scrollRef.current || !composerRef.current) return;
     const msgs = scrollRef.current.querySelectorAll<HTMLElement>("[data-chat-msg]");
     if (msgs.length === 0) return;
@@ -106,9 +108,21 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const scheduleChatFocusAlign = useCallback(() => {
     if (typeof window === "undefined") return;
     // scrollTo가 idempotent이므로 3회면 충분. 키보드 애니메이션 ~400ms 커버.
-    requestAnimationFrame(alignLatestMessagesAboveComposer);
-    setTimeout(() => requestAnimationFrame(alignLatestMessagesAboveComposer), 200);
-    setTimeout(() => requestAnimationFrame(alignLatestMessagesAboveComposer), 500);
+    requestAnimationFrame(() => alignLatestMessagesAboveComposer());
+    setTimeout(() => requestAnimationFrame(() => alignLatestMessagesAboveComposer()), 200);
+    setTimeout(() => requestAnimationFrame(() => alignLatestMessagesAboveComposer()), 500);
+  }, [alignLatestMessagesAboveComposer]);
+
+  // idle→focus 진입 시 1회 정렬: 5→50 slice 확장 직후, 키보드 raise 동안
+  // 최신 5개 메시지가 composer 위에 보이도록 scrollTo 절대 정렬.
+  // bypassFocusGuard=true 로 keyboardFocusedRef 가드를 우회 (focus-entry 한정).
+  // 100/350/700ms 3회는 키보드 애니메이션 + visualViewport resize 타이밍 커버.
+  const scheduleChatFocusEntryAlign = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const align = () => alignLatestMessagesAboveComposer({ bypassFocusGuard: true });
+    setTimeout(() => requestAnimationFrame(align), 100);
+    setTimeout(() => requestAnimationFrame(align), 350);
+    setTimeout(() => requestAnimationFrame(align), 700);
   }, [alignLatestMessagesAboveComposer]);
 
   // 진입/방 변경/새 메시지 도착 시 최신글 5개 + 입력창이 함께 보이도록 맞춘다.
@@ -127,15 +141,19 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     scheduleChatFocusAlign();
   }, [loading, messages.length, scheduleChatFocusAlign]);
 
-  // focus→idle 전환 시에만 align (baseline 패턴 복원).
-  // idle→focus 시에는 브라우저 native scroll-into-view에 맡김.
+  // 키보드 포커스 전환 시 정렬:
+  //  - idle→focus: 5→50 slice 확장 직후 1회 align (focus-entry, focusedRef 우회)
+  //  - focus→idle: 5-slice 위치 복원 align (기존 동작)
   useEffect(() => {
     if (prevKeyboardFocusedRef.current === keyboardFocused) return;
     prevKeyboardFocusedRef.current = keyboardFocused;
-    if (keyboardFocused) return; // focus 전환 시 브라우저에 맡김
     if (loading || messages.length === 0) return;
-    scheduleChatFocusAlign();
-  }, [keyboardFocused, loading, messages.length, scheduleChatFocusAlign]);
+    if (keyboardFocused) {
+      scheduleChatFocusEntryAlign();
+    } else {
+      scheduleChatFocusAlign();
+    }
+  }, [keyboardFocused, loading, messages.length, scheduleChatFocusAlign, scheduleChatFocusEntryAlign]);
 
   // composer는 idle일 때 TabBar 위, focus일 때 viewport bottom(=keyboard 위).
   // viewport meta `interactiveWidget: "resizes-content"` 가 layout viewport를
