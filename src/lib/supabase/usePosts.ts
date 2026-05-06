@@ -59,7 +59,7 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
       setLoading(true);
       const { data } = await supabase
         .from("posts")
-        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)")
+        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, updated_at, is_hidden, game_id, player_tags, hashtags, seat_info, profiles(nickname, team_id, grade, points)")
         .eq("board_type", boardType)
         .eq("board_id", boardId)
         .eq("content_type", contentType)
@@ -91,7 +91,7 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
     setLoading(true);
     const { data } = await supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, updated_at, is_hidden, game_id, player_tags, hashtags, seat_info, profiles(nickname, team_id, grade, points)")
       .eq("board_type", boardType)
       .eq("board_id", boardId)
       .eq("content_type", contentType)
@@ -249,10 +249,13 @@ export async function createPost(params: {
   return data;
 }
 
-/** 게시글 수정 (본인만)
- *  v1: title/content만 수정. 이미지/태그 재편집은 v2.
- */
-export async function updatePost(postId: number, params: { title?: string; content?: string }) {
+/** 게시글 수정 (본인만) */
+export async function updatePost(postId: number, params: {
+  title?: string;
+  content?: string;
+  imageUrls?: string[];
+  seatInfo?: { zone: string; block?: string; row?: string; seat?: string } | null;
+}) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
 
@@ -264,6 +267,12 @@ export async function updatePost(postId: number, params: { title?: string; conte
   }
   if (typeof params.content === "string") {
     patch.content = params.content; // trim은 UI에서 처리 (사진게시법은 빈 content 허용)
+  }
+  if (Array.isArray(params.imageUrls)) {
+    patch.image_urls = params.imageUrls;
+  }
+  if (params.seatInfo !== undefined) {
+    patch.seat_info = params.seatInfo;
   }
 
   const { error } = await supabase
