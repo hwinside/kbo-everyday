@@ -11,6 +11,7 @@ interface NewsItem {
   description: string;
   link: string;
   pubDate: string;
+  thumbnailUrl?: string | null;
 }
 
 export default function TeamNewsPage() {
@@ -72,19 +73,37 @@ export default function TeamNewsPage() {
               const source = item.link.match(/\/\/(?:www\.)?([^/]+)/)?.[1]?.replace(/\.com$|\.co\.kr$|\.kr$/, "") ?? "";
               return (
                 <a key={i} href={item.link} target="_blank" rel="noopener noreferrer">
-                  <GlassCard pressable className="p-4">
-                    <p className="text-sm font-bold text-text-primary line-clamp-2 leading-snug">
-                      {item.title.replace(/<[^>]+>/g, "")}
-                    </p>
-                    <p className="text-xs text-text-secondary mt-2 line-clamp-2 leading-relaxed">
-                      {item.description.replace(/<[^>]+>/g, "")}
-                    </p>
-                    <div className="flex items-center gap-2 mt-2">
-                      <span className="text-[11px] text-text-tertiary">{source}</span>
-                      <span className="text-[11px] text-text-tertiary">·</span>
-                      <span className="text-[11px] text-text-tertiary">
-                        {new Date(item.pubDate).toLocaleDateString("ko-KR")}
-                      </span>
+                  <GlassCard pressable className="overflow-hidden p-0">
+                    {item.thumbnailUrl && (
+                      <div className="relative aspect-[16/9] w-full overflow-hidden bg-bg-tertiary">
+                        {/* eslint-disable-next-line @next/next/no-img-element -- article OG images come from arbitrary news domains */}
+                        <img
+                          src={item.thumbnailUrl}
+                          alt=""
+                          loading="lazy"
+                          referrerPolicy="no-referrer"
+                          className="h-full w-full object-cover"
+                          onError={(e) => {
+                            e.currentTarget.closest("div")?.classList.add("hidden");
+                          }}
+                        />
+                      </div>
+                    )}
+                    <div className="p-4">
+                      <p className="text-sm font-bold text-text-primary line-clamp-2 leading-snug">
+                        {item.title.replace(/<[^>]+>/g, "")}
+                      </p>
+                      <p className="text-xs text-text-secondary mt-2 line-clamp-2 leading-relaxed">
+                        {item.description.replace(/<[^>]+>/g, "")}
+                      </p>
+                      <div className="flex items-center gap-2 mt-2">
+                        <span className="text-[11px] text-text-tertiary">{source}</span>
+                        <span className="text-[11px] text-text-tertiary">·</span>
+                        <span className="text-[11px] text-text-tertiary">
+                          {new Date(item.pubDate).toLocaleDateString("ko-KR")}
+                        </span>
+                        <ExternalLink size={13} className="ml-auto text-text-tertiary" />
+                      </div>
                     </div>
                   </GlassCard>
                 </a>
