@@ -407,6 +407,8 @@ export default function GameDetailPage() {
                 gameId={gameId}
                 homeTeamId={game.homeTeamId}
                 awayTeamId={game.awayTeamId}
+                gameDate={game.date}
+                gameStartTime={gameDetail?.meta?.startTime || liveGame?.time || game.time}
                 status={d.derivedStatus}
                 gameEvents={gameEvents}
                 plays={plays}

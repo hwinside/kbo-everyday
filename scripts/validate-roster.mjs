@@ -20,7 +20,7 @@ const ROSTER_PATH = path.resolve(__dirname, "../src/lib/constants/players-roster
 // ============================================================================
 // 기대값 (스펙 §3.1)
 // ============================================================================
-const EXPECTED_COUNT = 769;
+const EXPECTED_COUNT = 816;
 const MIN_PER_TEAM = 30;
 const BACKNO_REGEX = /^(\d{1,3}|-|\?)$/; // 숫자 1~3자리 | "-" | "?"
 const KNOWN_TEAMS = new Set([

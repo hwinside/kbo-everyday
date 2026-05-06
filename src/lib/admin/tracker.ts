@@ -43,17 +43,24 @@ export async function trackPageView(userId?: string) {
   });
 }
 
-/** Temporary: log celebration triggers for monitoring */
+/** Temporary: log celebration triggers for monitoring. inning + eventId are
+ * recorded so we can trace mis-attribution (e.g. wrong batter) back to the
+ * exact event that triggered the celebration. */
 export async function trackCelebration(
   type: string,
   gameId: string,
   teamId: number,
   playerName?: string,
+  eventId?: string,
+  inning?: number,
+  isTop?: boolean,
 ) {
   const visitorId = getVisitorId();
   if (!visitorId) return;
 
-  const body = JSON.stringify({ visitorId, type, gameId, teamId, playerName });
+  const body = JSON.stringify({
+    visitorId, type, gameId, teamId, playerName, eventId, inning, isTop,
+  });
   const url = "/api/telemetry/celebration-trigger";
 
   try {

@@ -11,7 +11,7 @@ import playersRoster from "@/lib/constants/players-roster.json";
 
 export const dynamic = "force-dynamic"; // no-cache
 
-const EXPECTED_ROSTER_COUNT = 769;
+const EXPECTED_ROSTER_COUNT = 816;
 const MIN_PER_TEAM = 30;
 const KNOWN_TEAMS = [
   "KIA", "두산", "롯데", "삼성", "SSG", "NC", "한화", "키움", "LG", "KT",

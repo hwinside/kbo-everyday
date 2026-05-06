@@ -1496,6 +1496,14 @@
     "team": "KIA"
   },
   {
+    "name": "나승엽",
+    "kboId": "51551",
+    "team": "롯데",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "51"
+  },
+  {
     "name": "네이선 와일스",
     "team": "키움",
     "teamId": 10,
@@ -3022,6 +3030,14 @@
     "position": "내야수",
     "backNo": "6",
     "team": "삼성"
+  },
+  {
+    "name": "아데를린",
+    "kboId": "56613",
+    "team": "KIA",
+    "teamId": 6,
+    "position": "내야수",
+    "backNo": "24"
   },
   {
     "name": "안민겸",

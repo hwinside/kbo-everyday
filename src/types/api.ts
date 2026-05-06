@@ -59,6 +59,7 @@ export interface NewsItem {
   description: string;
   link: string;
   pubDate: string;
+  thumbnailUrl?: string | null;
 }
 
 /** KBO game-live raw game object from KBO GetKboGameList API */
