@@ -15,6 +15,35 @@ const CACHE_TTL = 60 * 60 * 1000;
 const THUMBNAIL_FETCH_LIMIT = 12;
 const THUMBNAIL_CONCURRENCY = 4;
 const THUMBNAIL_TIMEOUT_MS = 2500;
+const THUMBNAIL_CACHE_MAX = 500;
+const THUMBNAIL_SUCCESS_TTL = 24 * 60 * 60 * 1000;
+const THUMBNAIL_FAILURE_TTL = 10 * 60 * 1000;
+
+// 기사 URL 단위 og:image 캐시. 성공은 24h, 실패는 10분만 보관해서
+// 일시적 장애가 1h 뉴스 응답 캐시에 굳지 않도록 분리.
+const thumbnailCache = new Map<string, { url: string | null; ts: number }>();
+
+function getCachedThumbnail(articleUrl: string): string | null | undefined {
+  const entry = thumbnailCache.get(articleUrl);
+  if (!entry) return undefined;
+  const ttl = entry.url ? THUMBNAIL_SUCCESS_TTL : THUMBNAIL_FAILURE_TTL;
+  if (Date.now() - entry.ts > ttl) {
+    thumbnailCache.delete(articleUrl);
+    return undefined;
+  }
+  // LRU touch
+  thumbnailCache.delete(articleUrl);
+  thumbnailCache.set(articleUrl, entry);
+  return entry.url;
+}
+
+function setCachedThumbnail(articleUrl: string, url: string | null): void {
+  if (thumbnailCache.size >= THUMBNAIL_CACHE_MAX) {
+    const oldest = thumbnailCache.keys().next().value;
+    if (oldest) thumbnailCache.delete(oldest);
+  }
+  thumbnailCache.set(articleUrl, { url, ts: Date.now() });
+}
 
 function cleanHtml(str: string): string {
   return str
@@ -139,7 +168,13 @@ async function attachThumbnails(items: NewsItem[]): Promise<NewsItem[]> {
   const thumbnails = await mapWithConcurrency(
     targetItems,
     THUMBNAIL_CONCURRENCY,
-    (item) => fetchThumbnailUrl(item.link),
+    async (item) => {
+      const cached = getCachedThumbnail(item.link);
+      if (cached !== undefined) return cached;
+      const url = await fetchThumbnailUrl(item.link);
+      setCachedThumbnail(item.link, url);
+      return url;
+    },
   );
 
   return items.map((item, index) => ({
