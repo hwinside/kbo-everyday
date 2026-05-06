@@ -10,6 +10,7 @@ interface NewsItem {
   description: string;
   link: string;
   pubDate: string;
+  thumbnailUrl?: string | null;
 }
 
 interface PlayerNewsProps {
@@ -23,10 +24,13 @@ export default function PlayerNews({ playerName, teamId }: PlayerNewsProps) {
 
   useEffect(() => {
     const teamObj = teamId ? TEAMS.find(t => t.id === teamId) : null;
-    const teamName = teamObj ? `${teamObj.shortName} ${teamObj.name}` : "";
-    const searchQuery = teamName ? `${teamName} ${playerName}` : `KBO ${playerName}`;
-    
-    fetch(`/api/news?q=${encodeURIComponent(searchQuery)}`)
+    const params = new URLSearchParams({
+      player: playerName,
+      includeThumbnail: "1",
+    });
+    if (teamObj) params.set("team", teamObj.shortName);
+
+    fetch(`/api/news?${params.toString()}`)
       .then(r => r.json())
       .then(d => {
         // 중복 제거 (link 기준)
@@ -40,7 +44,7 @@ export default function PlayerNews({ playerName, teamId }: PlayerNewsProps) {
         setNews(unique.slice(0, 5));
         setLoading(false);
       })
-      .catch(e => {
+      .catch(() => {
         setLoading(false);
       });
   }, [playerName, teamId]);
@@ -65,20 +69,37 @@ export default function PlayerNews({ playerName, teamId }: PlayerNewsProps) {
         <div className="space-y-2">
           {news.map((item, i) => (
             <a key={i} href={item.link} target="_blank" rel="noopener noreferrer">
-              <GlassCard pressable className="p-3">
-                <div className="flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
+              <GlassCard pressable className="overflow-hidden p-0">
+                <div className="flex gap-3">
+                  {item.thumbnailUrl && (
+                    <div className="h-24 w-28 shrink-0 overflow-hidden bg-bg-tertiary">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- article OG images come from arbitrary news domains */}
+                      <img
+                        src={item.thumbnailUrl}
+                        alt=""
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                        className="h-full w-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.closest("div")?.classList.add("hidden");
+                        }}
+                      />
+                    </div>
+                  )}
+                  <div className={`min-w-0 flex-1 p-3 ${item.thumbnailUrl ? "pl-0" : ""}`}>
                     <p className="text-sm font-medium text-text-primary line-clamp-2">
                       {item.title}
                     </p>
                     <p className="text-xs text-text-tertiary mt-1 line-clamp-1">
                       {item.description}
                     </p>
-                    <p className="text-xs text-text-tertiary mt-1">
-                      {new Date(item.pubDate).toLocaleDateString("ko-KR")}
-                    </p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <p className="text-xs text-text-tertiary">
+                        {new Date(item.pubDate).toLocaleDateString("ko-KR")}
+                      </p>
+                      <ExternalLink size={14} className="text-text-tertiary" />
+                    </div>
                   </div>
-                  <ExternalLink size={16} className="text-text-tertiary shrink-0 mt-1" />
                 </div>
               </GlassCard>
             </a>

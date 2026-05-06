@@ -58,6 +58,26 @@ function cleanHtml(str: string): string {
     .replace(/&apos;/g, "'");
 }
 
+function normalizeForMatch(str: string): string {
+  return str.toLowerCase().replace(/\s+/g, "");
+}
+
+function buildTeamTokens(team: string | null, teamSearch: Record<string, string>): string[] {
+  if (!team) return [];
+  const fullName = teamSearch[team] || team;
+  return Array.from(new Set([team, ...fullName.split(/\s+/)].filter(Boolean)));
+}
+
+function isPlayerRelevantNews(item: NewsItem, playerName: string, teamTokens: string[]): boolean {
+  const normalizedTitle = normalizeForMatch(item.title);
+  const normalizedBody = normalizeForMatch(`${item.title} ${item.description}`);
+  const normalizedPlayer = normalizeForMatch(playerName);
+  if (!normalizedTitle.includes(normalizedPlayer)) return false;
+  if (teamTokens.length === 0) return true;
+
+  return teamTokens.some((token) => normalizedBody.includes(normalizeForMatch(token)));
+}
+
 function isSafeHttpUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -205,7 +225,7 @@ export async function GET(req: NextRequest) {
 
   let searchQuery = "KBO 프로야구";
   if (player) {
-    searchQuery = `KBO ${player}`;
+    searchQuery = team ? `${team} ${player}` : `KBO ${player}`;
   } else if (team) {
     searchQuery = `프로야구 ${TEAM_SEARCH[team] || team}`;
   } else if (q) {
@@ -213,10 +233,10 @@ export async function GET(req: NextRequest) {
   }
 
   // 썸네일 부착은 팀 뉴스탭(team) 또는 명시적 includeThumbnail=1에만 적용.
-  // PlayerNews 같은 q= 호출은 thumbnailUrl을 안 읽으므로 og fetch 비용을 회피.
+  // 선수 뉴스는 player+team으로 호출해 제목 선수명 + 본문/제목 팀명 relevance 필터 후 썸네일을 붙인다.
   const wantThumbnails = Boolean(team) || includeThumbnail;
 
-  const cacheKey = searchQuery;
+  const cacheKey = player ? `player:${team || ""}:${searchQuery}` : searchQuery;
   const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     const items = wantThumbnails ? await attachThumbnails(cached.data.items) : cached.data.items;
@@ -250,17 +270,22 @@ export async function GET(req: NextRequest) {
 
     // 중복 기사 제거 (link 기준)
     const seen = new Set<string>();
-    const unique = items.filter((item: NewsItem) => {
+    let unique = items.filter((item: NewsItem) => {
       if (seen.has(item.link)) return false;
       seen.add(item.link);
       return true;
     });
 
+    if (player) {
+      const teamTokens = buildTeamTokens(team, TEAM_SEARCH);
+      unique = unique.filter((item) => isPlayerRelevantNews(item, player, teamTokens));
+    }
+
     // 캐시는 _썸네일 없는 raw items_만 저장.
-    cache.set(cacheKey, { data: { items: unique, _q: cacheKey }, ts: Date.now() });
+    cache.set(cacheKey, { data: { items: unique, _q: searchQuery }, ts: Date.now() });
 
     const itemsOut = wantThumbnails ? await attachThumbnails(unique) : unique;
-    return NextResponse.json({ items: itemsOut, _q: cacheKey });
+    return NextResponse.json({ items: itemsOut, _q: searchQuery });
   } catch (e: unknown) {
     console.error('[API/news] Fetch error:', (e as Error).message);
     return NextResponse.json({ items: [], error: (e as Error).message, _q: searchQuery });
