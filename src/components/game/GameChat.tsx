@@ -71,6 +71,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const composerRef = useRef<HTMLDivElement>(null);
   const prevKeyboardFocusedRef = useRef(false);
   const lastAlignedCountRef = useRef(0);
+  // 삼순이 NO-GO (2026-05-06): focus-entry align 타이머 추적용.
+  // rapid focus→blur→focus 시 stale 타이머가 새 focus 위에 누적 fire하면
+  // scrollTo가 다중 호출되어 jump 발생할 수 있음 → blur 시 cancel 필요.
+  const focusAlignTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [keyboardFocused, setKeyboardFocused] = useState(false);
   // ref mirror of keyboardFocused for sync access from non-React-state code
   // (alignLatestMessagesAboveComposer / messages effect closure).
@@ -108,6 +112,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const scheduleChatFocusAlign = useCallback(() => {
     if (typeof window === "undefined") return;
     // scrollTo가 idempotent이므로 3회면 충분. 키보드 애니메이션 ~400ms 커버.
+    // (rAF 사용 OK: 이 함수는 focus→idle / messages.length 경로에서만 호출되며
+    //  키보드가 dismiss된 상태에선 iOS Safari가 rAF 콜백을 정상 실행함.
+    //  키보드 raise 중 rAF suspend 이슈는 아래 scheduleChatFocusEntryAlign 참고.)
     requestAnimationFrame(() => alignLatestMessagesAboveComposer());
     setTimeout(() => requestAnimationFrame(() => alignLatestMessagesAboveComposer()), 200);
     setTimeout(() => requestAnimationFrame(() => alignLatestMessagesAboveComposer()), 500);
@@ -122,11 +129,23 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   //    scrollTo는 idempotent하므로 동기 호출로 충분.
   const scheduleChatFocusEntryAlign = useCallback(() => {
     if (typeof window === "undefined") return;
+    // 삼순이 NO-GO (2026-05-06): rapid focus→blur→focus 시 stale 타이머가
+    // 새 focus 위에 누적되어 scrollTo가 다중 호출되는 문제 방지.
+    // 새 batch 시작 전 기존 pending 타이머 모두 cancel.
+    focusAlignTimersRef.current.forEach(clearTimeout);
     const align = () => alignLatestMessagesAboveComposer({ bypassFocusGuard: true });
-    setTimeout(align, 100);
-    setTimeout(align, 350);
-    setTimeout(align, 700);
+    focusAlignTimersRef.current = [
+      setTimeout(align, 100),
+      setTimeout(align, 350),
+      setTimeout(align, 700),
+    ];
   }, [alignLatestMessagesAboveComposer]);
+
+  // focus 종료 시 pending focus-entry 타이머 cancel.
+  const cancelFocusEntryAligns = useCallback(() => {
+    focusAlignTimersRef.current.forEach(clearTimeout);
+    focusAlignTimersRef.current = [];
+  }, []);
 
   // 진입/방 변경/새 메시지 도착 시 최신글 5개 + 입력창이 함께 보이도록 맞춘다.
   useEffect(() => {
@@ -216,6 +235,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         document.body.classList.remove("kbd-open");
         keyboardFocusedRef.current = false;
         setKeyboardFocused(false);
+        // 삼순이 NO-GO (2026-05-06): blur 확정 시 pending focus-entry align 타이머
+        // 모두 cancel — rapid focus→blur→focus stale 타이머 누적 jump 방지.
+        cancelFocusEntryAligns();
       };
       setTimeout(settle, 50);
       setTimeout(settle, 300);
@@ -228,7 +250,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       document.removeEventListener("focusout", onFocusOut);
       document.body.classList.remove("kbd-open");
     };
-  }, []);
+  }, [cancelFocusEntryAligns]);
 
   // idle: 최신 5개만 표시하여 score 영역 자연 노출
   // focus: 전체 메시지 (자유 스크롤)

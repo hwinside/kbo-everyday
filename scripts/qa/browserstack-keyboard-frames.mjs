@@ -169,7 +169,17 @@ function evaluate(frames, scrollToCalls, scrollIntoViewCalls) {
     : 0;
   const noScrollRunaway = scrollRange <= 8;
   const focusScrollToCalls = scrollToCalls.filter((c) => c.kbdOpen);
-  const noScrollToInFocus = focusScrollToCalls.length === 0;
+  // 2026-05-06 design update (after rAF-suspend root cause + 삼순이 review):
+  // focus-entry one-shot align (3 setTimeouts at 100/350/700ms) re-aligns the
+  // viewport so latest 5 messages sit above composer after the 5→50 slice
+  // expand. These calls land within the first ~800ms of focus and are
+  // idempotent. Only post-800ms scrollTo counts as "runaway in focus".
+  const FOCUS_ENTRY_ALIGN_WINDOW_MS = 800;
+  const focusEntryWindowEnd = focusFrames.length
+    ? focusFrames[0].t + FOCUS_ENTRY_ALIGN_WINDOW_MS
+    : FOCUS_ENTRY_ALIGN_WINDOW_MS;
+  const focusRunawayScrollToCalls = focusScrollToCalls.filter((c) => c.t > focusEntryWindowEnd);
+  const noScrollToInFocus = focusRunawayScrollToCalls.length === 0;
 
   const checks = {
     composerInVp,
@@ -190,8 +200,10 @@ function evaluate(frames, scrollToCalls, scrollIntoViewCalls) {
         ? Math.max(...focusComposerGap) : null,
       scrollRange,
       focusScrollToCallCount: focusScrollToCalls.length,
+      focusRunawayScrollToCallCount: focusRunawayScrollToCalls.length,
       totalScrollToCallCount: scrollToCalls.length,
       scrollIntoViewCallCount: scrollIntoViewCalls.length,
+      focusEntryWindowEnd,
     },
   };
 }
