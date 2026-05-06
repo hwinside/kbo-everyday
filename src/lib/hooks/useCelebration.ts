@@ -12,8 +12,13 @@ interface UseCelebrationOptions {
   awayTeamId: number;
 }
 
-/** Only process events generated within the last 60 seconds to prevent replay on re-entry */
-const FRESHNESS_THRESHOLD_MS = 60_000;
+/**
+ * Only process events generated within this window. Prevents replay of
+ * accumulated server events on page re-entry, but must be wide enough to
+ * tolerate BoxScore polling lag (typically 7–15s, occasionally up to a minute
+ * when scoring plays land between scrapes).
+ */
+const FRESHNESS_THRESHOLD_MS = 120_000;
 
 /** Look up kboId from player name + teamId */
 function findKboId(name: string | undefined, teamId: number): string | undefined {
@@ -130,10 +135,20 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
 
       if (newCelebrations.length === 0) return;
 
-      // Log each celebration trigger
+      // Log each celebration trigger with inning/eventId for mis-attribution traceability
+      const eventById = new Map(events.map(e => [e.id, e]));
       const gameId = events[0]?.gameId;
       for (const c of newCelebrations) {
-        trackCelebration(c.type, gameId || "", c.teamId, c.playerName);
+        const ev = c.id ? eventById.get(c.id) : undefined;
+        trackCelebration(
+          c.type,
+          gameId || "",
+          c.teamId,
+          c.playerName,
+          c.id,
+          ev?.inning,
+          ev?.isTop,
+        );
       }
 
       // If nothing showing, start first immediately

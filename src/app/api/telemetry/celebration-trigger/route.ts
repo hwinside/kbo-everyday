@@ -13,6 +13,9 @@ interface CelebrationTriggerPayload {
   gameId?: string;
   teamId?: number;
   playerName?: string;
+  eventId?: string;
+  inning?: number;
+  isTop?: boolean;
 }
 
 export async function POST(req: NextRequest) {
@@ -30,7 +33,17 @@ export async function POST(req: NextRequest) {
     ? payload.visitorId
     : `anonymous-${crypto.randomUUID()}`;
   const userAgent = req.headers.get("user-agent") ?? "unknown";
-  const referrer = [payload.teamId, payload.playerName].filter(Boolean).join("|") || null;
+  // Pipe-encoded so we can grep `admin_page_views.referrer` for mis-attribution
+  // patterns: teamId|playerName|inning(T|B)|eventId
+  const inningStr = typeof payload.inning === "number"
+    ? `${payload.inning}${payload.isTop ? "T" : "B"}`
+    : "";
+  const referrer = [
+    payload.teamId,
+    payload.playerName,
+    inningStr,
+    payload.eventId,
+  ].filter(Boolean).join("|") || null;
 
   const { error } = await supabase.from("admin_page_views").insert({
     visitor_id: visitorId,

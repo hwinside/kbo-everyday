@@ -7,7 +7,7 @@
 
 import type { GameEvent, GameEventType, EventDetail, GameSnapshot } from "@/types/game-events";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
-import type { GameDetailResponse } from "@/app/api/game-detail/route";
+import type { BatterRecord, GameDetailResponse } from "@/app/api/game-detail/route";
 import { buildEventText } from "@/lib/event-text-builder";
 
 export interface PrevGameState {
@@ -63,32 +63,45 @@ function makeEvent(
   return event;
 }
 
-/** Aggregate batter stats from BoxScore for diff comparison */
-interface BatterAgg {
-  totalHits: number;
-  totalHR: number;
-  totalH2B: number;
-  totalH3B: number;
-  totalBB: number;
-  totalSO: number;
+/**
+ * Per-batter stat diff (curr - prev). Lets us attribute events to the SPECIFIC
+ * batter whose box-score line changed, instead of guessing from currentBatter
+ * — which lags BoxScore on the wire and used to mis-attribute the previous
+ * batter's walk to the next batter who'd just stepped in.
+ */
+interface BatterStatDiff {
+  hits: number;
+  hr: number;
+  h2b: number;
+  h3b: number;
+  bb: number;
+  so: number;
 }
 
-function aggregateBatters(
-  batters: GameDetailResponse["boxScore"] extends infer T
-    ? T extends { awayBatters: infer B } ? B : never
-    : never,
-): BatterAgg {
-  if (!batters) return { totalHits: 0, totalHR: 0, totalH2B: 0, totalH3B: 0, totalBB: 0, totalSO: 0 };
-  let totalHits = 0, totalHR = 0, totalH2B = 0, totalH3B = 0, totalBB = 0, totalSO = 0;
-  for (const b of batters) {
-    totalHits += b.hits;
-    totalHR += b.hr;
-    totalH2B += b.h2b;
-    totalH3B += b.h3b;
-    totalBB += b.bb;
-    totalSO += b.so;
+/** Diff prev vs curr batter rows by name; only batters with any change appear. */
+function diffBatters(
+  prev: readonly BatterRecord[] | undefined,
+  curr: readonly BatterRecord[] | undefined,
+): Map<string, BatterStatDiff> {
+  const result = new Map<string, BatterStatDiff>();
+  if (!curr) return result;
+  const prevMap = new Map<string, BatterRecord>();
+  for (const b of prev ?? []) prevMap.set(b.name, b);
+  for (const c of curr) {
+    const p = prevMap.get(c.name);
+    const diff: BatterStatDiff = {
+      hits: c.hits - (p?.hits ?? 0),
+      hr: c.hr - (p?.hr ?? 0),
+      h2b: c.h2b - (p?.h2b ?? 0),
+      h3b: c.h3b - (p?.h3b ?? 0),
+      bb: c.bb - (p?.bb ?? 0),
+      so: c.so - (p?.so ?? 0),
+    };
+    if (diff.hits || diff.hr || diff.h2b || diff.h3b || diff.bb || diff.so) {
+      result.set(c.name, diff);
+    }
   }
-  return { totalHits, totalHR, totalH2B, totalH3B, totalBB, totalSO };
+  return result;
 }
 
 function aggregatePitcherNames(
@@ -177,6 +190,8 @@ export function generateEvents(
   }
 
   // --- BoxScore diffs (batting stats) ---
+  // Per-batter diff: attribute events to the actual batter whose stat line moved,
+  // not to currentBatter (which lags BoxScore and caused mis-attribution).
   if (currentBoxScore && prev.boxScore) {
     // Determine which side is batting based on isTop
     const prevBatters = currentLive.isTop
@@ -186,71 +201,41 @@ export function generateEvents(
       ? currentBoxScore.awayBatters
       : currentBoxScore.homeBatters;
 
-    const prevAgg = aggregateBatters(prevBatters);
-    const currAgg = aggregateBatters(currBatters);
+    const pitcherName = currentLive.currentPitcher || undefined;
+    const batterDiffs = diffBatters(prevBatters, currBatters);
 
-    // Home run increase
-    const hrDiff = currAgg.totalHR - prevAgg.totalHR;
-    if (hrDiff > 0) {
-      for (let i = 0; i < hrDiff; i++) {
+    for (const [batterName, diff] of batterDiffs) {
+      // Order matters within a single batter: HR/3B/2B counted explicitly,
+      // remaining hits => 1B (at_bat_hit).
+      for (let i = 0; i < diff.hr; i++) {
         events.push(makeEvent(gameId, currentLive, "at_bat_homerun", {
-          batter: prevLive.currentBatter || currentLive.currentBatter || undefined,
-          pitcher: currentLive.currentPitcher || undefined,
+          batter: batterName, pitcher: pitcherName,
         }));
       }
-    }
-
-    // 3B increase
-    const h3bDiff = currAgg.totalH3B - prevAgg.totalH3B;
-    if (h3bDiff > 0) {
-      for (let i = 0; i < h3bDiff; i++) {
+      for (let i = 0; i < diff.h3b; i++) {
         events.push(makeEvent(gameId, currentLive, "at_bat_triple", {
-          batter: prevLive.currentBatter || currentLive.currentBatter || undefined,
-          pitcher: currentLive.currentPitcher || undefined,
+          batter: batterName, pitcher: pitcherName,
         }));
       }
-    }
-
-    // 2B increase
-    const h2bDiff = currAgg.totalH2B - prevAgg.totalH2B;
-    if (h2bDiff > 0) {
-      for (let i = 0; i < h2bDiff; i++) {
+      for (let i = 0; i < diff.h2b; i++) {
         events.push(makeEvent(gameId, currentLive, "at_bat_double", {
-          batter: prevLive.currentBatter || currentLive.currentBatter || undefined,
-          pitcher: currentLive.currentPitcher || undefined,
+          batter: batterName, pitcher: pitcherName,
         }));
       }
-    }
-
-    // 1B increase (total hits minus HR/2B/3B)
-    const hitDiff = (currAgg.totalHits - prevAgg.totalHits) - hrDiff - h2bDiff - h3bDiff;
-    if (hitDiff > 0) {
-      for (let i = 0; i < hitDiff; i++) {
+      const single = diff.hits - diff.hr - diff.h2b - diff.h3b;
+      for (let i = 0; i < single; i++) {
         events.push(makeEvent(gameId, currentLive, "at_bat_hit", {
-          batter: prevLive.currentBatter || currentLive.currentBatter || undefined,
-          pitcher: currentLive.currentPitcher || undefined,
+          batter: batterName, pitcher: pitcherName,
         }));
       }
-    }
-
-    // Strikeout increase
-    const soDiff = currAgg.totalSO - prevAgg.totalSO;
-    if (soDiff > 0) {
-      for (let i = 0; i < soDiff; i++) {
-        events.push(makeEvent(gameId, currentLive, "at_bat_strikeout", {
-          batter: prevLive.currentBatter || undefined,
-          pitcher: currentLive.currentPitcher || undefined,
-        }));
-      }
-    }
-
-    // Walk increase
-    const bbDiff = currAgg.totalBB - prevAgg.totalBB;
-    if (bbDiff > 0) {
-      for (let i = 0; i < bbDiff; i++) {
+      for (let i = 0; i < diff.bb; i++) {
         events.push(makeEvent(gameId, currentLive, "at_bat_walk", {
-          batter: prevLive.currentBatter || undefined,
-          pitcher: currentLive.currentPitcher || undefined,
+          batter: batterName, pitcher: pitcherName,
+        }));
+      }
+      for (let i = 0; i < diff.so; i++) {
+        events.push(makeEvent(gameId, currentLive, "at_bat_strikeout", {
+          batter: batterName, pitcher: pitcherName,
         }));
       }
     }
