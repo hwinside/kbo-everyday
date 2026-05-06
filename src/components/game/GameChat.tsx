@@ -117,12 +117,15 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   // 최신 5개 메시지가 composer 위에 보이도록 scrollTo 절대 정렬.
   // bypassFocusGuard=true 로 keyboardFocusedRef 가드를 우회 (focus-entry 한정).
   // 100/350/700ms 3회는 키보드 애니메이션 + visualViewport resize 타이밍 커버.
+  // ⚠️ requestAnimationFrame은 사용 금지: iOS Safari는 키보드 raise 애니메이션
+  //    중 rAF 콜백을 suspend하여 호출되지 않는다 (실측 확인 2026-05-06).
+  //    scrollTo는 idempotent하므로 동기 호출로 충분.
   const scheduleChatFocusEntryAlign = useCallback(() => {
     if (typeof window === "undefined") return;
     const align = () => alignLatestMessagesAboveComposer({ bypassFocusGuard: true });
-    setTimeout(() => requestAnimationFrame(align), 100);
-    setTimeout(() => requestAnimationFrame(align), 350);
-    setTimeout(() => requestAnimationFrame(align), 700);
+    setTimeout(align, 100);
+    setTimeout(align, 350);
+    setTimeout(align, 700);
   }, [alignLatestMessagesAboveComposer]);
 
   // 진입/방 변경/새 메시지 도착 시 최신글 5개 + 입력창이 함께 보이도록 맞춘다.
