@@ -15,7 +15,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
 
 const MATRIX = [
@@ -44,6 +44,10 @@ function runOnce(env) {
       catch { /* ignore */ }
       resolve({ exitCode: code, report });
     });
+    proc.on('error', (err) => {
+      console.error('spawn error:', err.message);
+      resolve({ exitCode: -1, report: null });
+    });
   });
 }
 
@@ -56,6 +60,10 @@ for (const cfg of MATRIX) {
   const t0 = Date.now();
   const { exitCode, report } = await runOnce(env);
   const dt = Date.now() - t0;
+  // Snapshot per-device report so a later device run does not overwrite this one.
+  const slug = `${cfg.deviceName.replace(/\s+/g, '')}-iOS${cfg.osVersion}`;
+  const perDevicePath = path.resolve(`e2e/screenshots/keyboard-frames-report-${gameId}-${slug}.json`);
+  try { copyFileSync(reportPath, perDevicePath); } catch { /* ignore */ }
   const checks = report?.checks ?? null;
   const pass = report?.pass ?? false;
   results.push({ ...cfg, exitCode, pass, checks, durationMs: dt });

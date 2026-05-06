@@ -173,11 +173,12 @@ function evaluate(frames, scrollToCalls, scrollIntoViewCalls) {
   // focus-entry one-shot align (3 setTimeouts at 100/350/700ms) re-aligns the
   // viewport so latest 5 messages sit above composer after the 5→50 slice
   // expand. The 700ms timer fires after keyboard rise animation; on slower
-  // BS devices (iPhone 14 / iOS 18) the actual scrollTo lands at ~1100ms.
-  // Window=1500ms covers the slowest observed device + 400ms slack.
+  // BS devices (iPhone 15 / iOS 18) the actual scrollTo can land >1500ms
+  // post first-frame due to slower keyboard animation. Window=2500ms covers
+  // all observed devices (iPhone 14/15 × iOS 17/18) with comfortable slack.
   // Window starts from focusFrames[0].t (first frame seen with kbdOpen),
   // which is the closest proxy we have to "focus event time".
-  const FOCUS_ENTRY_ALIGN_WINDOW_MS = 1500;
+  const FOCUS_ENTRY_ALIGN_WINDOW_MS = 2500;
   const focusEntryWindowEnd = focusFrames.length
     ? focusFrames[0].t + FOCUS_ENTRY_ALIGN_WINDOW_MS
     : FOCUS_ENTRY_ALIGN_WINDOW_MS;
