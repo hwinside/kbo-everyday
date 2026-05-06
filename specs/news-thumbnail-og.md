@@ -14,7 +14,7 @@
 ## 1차 구현 (이미 들어감, `39fc65ce`)
 
 **`src/app/api/news/route.ts`**
-- `attachThumbnails()` 추가: 응답 상위 12건 og:image 추출 → 머지
+- `attachThumbnails()` 추가: 응답 상위 N건 og:image 추출 → 머지 (N = `THUMBNAIL_FETCH_LIMIT`)
 - `extractMetaImage()`: og:image / twitter:image / twitter:image:src / image / image_src 5단계 fallback
 - `fetchThumbnailUrl()`: SSRF 가드(localhost/사설망 차단), 2.5s timeout, 300KB body cap, text/html만 허용
 - `mapWithConcurrency()`: 동시성 4, 인덱스 보존
@@ -64,6 +64,14 @@ B3 QA 결과 기반: 자주 실패하는 언론사 도메인 식별 → 별도 �
 - 게이트: `team` 파라미터가 있거나 명시적 `includeThumbnail=1`인 경우에만 `attachThumbnails` 호출.
 - SSRF 가드 추가: IPv6 ULA `fc00::/7` (`^f[cd][0-9a-f]{2}:`), 링크로컬 `fe80::/10` (`^fe[89ab][0-9a-f]:`).
 - WHATWG `URL.hostname`은 IPv6를 `[::1]`처럼 대괄호 포함해서 반환하므로 매칭 전에 strip 처리.
+
+### B7. 응답 카드 전수 커버 (P0, 하린아빠 실기 회귀 2026-05-06)
+**문제**: `THUMBNAIL_FETCH_LIMIT = 12`였으나 Naver 응답은 `display=20`이라 13~20번째 카드는 `thumbnailUrl` 없이 텍스트만. 스크롤 후 갑자기 빈 카드 → UX 일관성 깨짐.
+**또 한 가지 — QA 갭**: `scripts/qa/news-thumbnail.mjs`도 `FETCH_LIMIT=12` 기본값이라 자기충족적 측정. 13~20 미커버.
+**수정**:
+- `THUMBNAIL_FETCH_LIMIT = 20` (Naver display와 동일)
+- QA 스크립트 `FETCH_LIMIT` 기본값도 20
+- _trade-off_: 첫 캐시 미스 응답 시간 ↑ (12 → 20개 og fetch). concurrency=4 유지. 캐시 차면 정상화.
 
 ## NOT-DOING (스코프 외)
 

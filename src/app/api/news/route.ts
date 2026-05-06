@@ -14,7 +14,7 @@ interface NewsResult {
 
 const cache = new Map<string, { data: NewsResult; ts: number }>();
 const CACHE_TTL = 60 * 60 * 1000;
-const THUMBNAIL_FETCH_LIMIT = 12;
+const THUMBNAIL_FETCH_LIMIT = 20; // Naver display=20과 일치 — 모든 응답 카드에 og fetch 시도해서 스크롤 후 빈 카드 방지
 const THUMBNAIL_CONCURRENCY = 4;
 const THUMBNAIL_TIMEOUT_MS = 2500;
 const THUMBNAIL_CACHE_MAX = 500;

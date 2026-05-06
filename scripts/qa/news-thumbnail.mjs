@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
 
 const BASE = process.env.QA_BASE_URL || "http://localhost:3000";
 const MIN_FILL_RATE = Number(process.env.MIN_FILL_RATE || "0.6");
-const FETCH_LIMIT = Number(process.env.FETCH_LIMIT || "12");
+const FETCH_LIMIT = Number(process.env.FETCH_LIMIT || "20");
 
 const TEAMS = ["LG", "두산", "KT", "SSG", "NC", "KIA", "롯데", "삼성", "한화", "키움"];
 
