@@ -14,7 +14,9 @@ interface NewsResult {
 
 const cache = new Map<string, { data: NewsResult; ts: number }>();
 const CACHE_TTL = 60 * 60 * 1000;
-const THUMBNAIL_FETCH_LIMIT = 20; // Naver display=20과 일치 — 모든 응답 카드에 og fetch 시도해서 스크롤 후 빈 카드 방지
+const NEWS_DISPLAY_LIMIT = 20;
+const PLAYER_NEWS_DISPLAY_LIMIT = 100;
+const THUMBNAIL_FETCH_LIMIT = NEWS_DISPLAY_LIMIT; // Naver display=20과 일치 — 모든 응답 카드에 og fetch 시도해서 스크롤 후 빈 카드 방지
 const THUMBNAIL_CONCURRENCY = 4;
 const THUMBNAIL_TIMEOUT_MS = 2500;
 const THUMBNAIL_CACHE_MAX = 500;
@@ -76,6 +78,26 @@ function isPlayerRelevantNews(item: NewsItem, playerName: string, teamTokens: st
   if (teamTokens.length === 0) return true;
 
   return teamTokens.some((token) => normalizedBody.includes(normalizeForMatch(token)));
+}
+
+async function fetchNaverNews(searchQuery: string, start = 1, display = NEWS_DISPLAY_LIMIT): Promise<NewsItem[]> {
+  const res = await fetch(
+    `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(searchQuery)}&display=${display}&start=${start}&sort=date`,
+    {
+      headers: {
+        "X-Naver-Client-Id": NAVER_CLIENT_ID,
+        "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+      },
+    }
+  );
+
+  const data = await res.json();
+  return (data.items || []).map((item: NaverNewsRawItem) => ({
+    title: cleanHtml(item.title),
+    description: cleanHtml(item.description),
+    link: item.originallink || item.link,
+    pubDate: item.pubDate,
+  }));
 }
 
 function isSafeHttpUrl(url: string): boolean {
@@ -249,42 +271,35 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const res = await fetch(
-      `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(searchQuery)}&display=20&sort=date`,
-      {
-        headers: {
-          "X-Naver-Client-Id": NAVER_CLIENT_ID,
-          "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
-        },
-      }
-    );
-
-    const data = await res.json();
-
-    const items: NewsItem[] = (data.items || []).map((item: NaverNewsRawItem) => ({
-      title: cleanHtml(item.title),
-      description: cleanHtml(item.description),
-      link: item.originallink || item.link,
-      pubDate: item.pubDate,
-    }));
-
-    // 중복 기사 제거 (link 기준)
     const seen = new Set<string>();
-    let unique = items.filter((item: NewsItem) => {
-      if (seen.has(item.link)) return false;
-      seen.add(item.link);
-      return true;
-    });
+    let unique: NewsItem[] = [];
 
     if (player) {
       const teamTokens = buildTeamTokens(team, TEAM_SEARCH);
-      unique = unique.filter((item) => isPlayerRelevantNews(item, player, teamTokens));
+      const items = await fetchNaverNews(searchQuery, 1, PLAYER_NEWS_DISPLAY_LIMIT);
+      unique = items.filter((item: NewsItem) => {
+        if (seen.has(item.link)) return false;
+        seen.add(item.link);
+        return isPlayerRelevantNews(item, player, teamTokens);
+      }).slice(0, THUMBNAIL_FETCH_LIMIT);
+    } else {
+      const items = await fetchNaverNews(searchQuery, 1, NEWS_DISPLAY_LIMIT);
+      unique = items.filter((item: NewsItem) => {
+        if (seen.has(item.link)) return false;
+        seen.add(item.link);
+        return true;
+      });
     }
 
     // 캐시는 _썸네일 없는 raw items_만 저장.
     cache.set(cacheKey, { data: { items: unique, _q: searchQuery }, ts: Date.now() });
 
-    const itemsOut = wantThumbnails ? await attachThumbnails(unique) : unique;
+    let itemsOut = wantThumbnails ? await attachThumbnails(unique) : unique;
+    if (player) {
+      const withThumbnail = itemsOut.filter((item) => item.thumbnailUrl);
+      const withoutThumbnail = itemsOut.filter((item) => !item.thumbnailUrl);
+      itemsOut = [...withThumbnail, ...withoutThumbnail].slice(0, 5);
+    }
     return NextResponse.json({ items: itemsOut, _q: searchQuery });
   } catch (e: unknown) {
     console.error('[API/news] Fetch error:', (e as Error).message);
