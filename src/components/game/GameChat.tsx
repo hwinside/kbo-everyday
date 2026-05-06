@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Users, Flame, ChevronDown } from "lucide-react";
 import { clsx } from "clsx";
@@ -67,119 +67,57 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const { user, profile, loading: authLoading } = useAuth();
   const [input, setInput] = useState("");
   const [showRoomPicker, setShowRoomPicker] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
-  const keyboardCloseRealignRef = useRef(false);
-  const lastAlignedCountRef = useRef(0);
-  const [keyboardFocused, setKeyboardFocused] = useState(false);
-  const [tabBarHeight, setTabBarHeight] = useState<number | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // 최신순: 최신 메시지가 리스트 상단. 크관은 중계↔최신댓글 왕복 부담을
   // 줄이기 위해 최신글이 위에 오는 레이아웃을 사용한다.
   const displayMessages = [...messages].reverse();
 
-  // 최신 5개 메시지 묶음이 입력창 바로 위에 보이도록 window 스크롤을 맞춘다.
-  // 최신순 상단이므로 5번째 최신 메시지(DOM idx 4)의 하단이 composer 바로 위.
-  const alignLatestMessagesAboveComposer = useCallback(() => {
-    if (!scrollRef.current || !composerRef.current) return;
-    const msgs = scrollRef.current.querySelectorAll<HTMLElement>("[data-chat-msg]");
-    if (msgs.length === 0) return;
-
-    const target = msgs[Math.min(4, msgs.length - 1)]; // 최신 5개 중 마지막
-    const targetBottom = target.getBoundingClientRect().bottom;
-    const composerTop = composerRef.current.getBoundingClientRect().top;
-    const diff = targetBottom - (composerTop - 8);
-
-    // Latest-first layout: msgs[0] is the newest and sits at the top of the
-    // page. Only scroll DOWN (positive diff) to push older content out of
-    // view. Never scroll UP — the page-top is already the most recent
-    // content; scrolling further up would push the composer above the
-    // viewport (the regression seen on iOS Safari with keyboard open).
-    if (diff > 4) {
-      window.scrollBy({ top: diff, behavior: "auto" });
-    }
-  }, []);
-
-  const scheduleChatFocusAlign = useCallback(() => {
-    if (typeof window === "undefined") return;
-    [0, 50, 150, 300, 600, 1000].forEach((ms) => {
-      setTimeout(() => requestAnimationFrame(alignLatestMessagesAboveComposer), ms);
-    });
-  }, [alignLatestMessagesAboveComposer]);
-
-  // 진입/방 변경/새 메시지 도착 시 최신글 5개 + 입력창이 함께 보이도록 맞춘다.
-  useEffect(() => {
-    lastAlignedCountRef.current = 0;
-  }, [roomId]);
-
-  useEffect(() => {
-    if (loading || messages.length === 0) return;
-    if (messages.length === lastAlignedCountRef.current) return;
-    lastAlignedCountRef.current = messages.length;
-    scheduleChatFocusAlign();
-  }, [loading, messages.length, scheduleChatFocusAlign]);
-
-  useEffect(() => {
-    if (keyboardFocused || !keyboardCloseRealignRef.current || loading || messages.length === 0) return;
-    keyboardCloseRealignRef.current = false;
-    lastAlignedCountRef.current = 0;
-    scheduleChatFocusAlign();
-  }, [keyboardFocused, loading, messages.length, scheduleChatFocusAlign]);
-
-  // composer는 idle일 때 TabBar 위, focus일 때 viewport bottom(=keyboard 위).
-  // viewport meta `interactiveWidget: "resizes-content"` 가 layout viewport를
-  // 키보드만큼 줄여주므로 focus 시 `bottom: 0`이 자연스럽게 키보드 위에 붙는다.
-  const composerBottom = tabBarHeight != null ? `${tabBarHeight}px` : "calc(52px + env(safe-area-inset-bottom, 0px))";
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const tabBar = document.querySelector<HTMLElement>("[data-global-tabbar]");
-    if (!tabBar) return;
-
-    const measure = () => {
-      const height = tabBar.getBoundingClientRect().height;
-      if (height > 0) setTabBarHeight(Math.round(height));
-    };
-
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(tabBar);
-    window.addEventListener("resize", measure);
-
-    return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", measure);
-    };
-  }, []);
-
+  /*
+   * V3: inline composer (TOP) 모델
+   * ----------------------------------------------------------------
+   * - composer는 fixed가 아니라 messages 리스트 *앞*(MoodGauge 직후)에
+   *   inline 배치한다. reverse(최신순) 리스트의 최신글이 composer 바로
+   *   아래로 슬롯되어 "최신글=상단" 제약을 만족.
+   * - focus 시 textarea를 scrollIntoView({block:"start"}) 단발 — iOS
+   *   native가 키보드 + 액세서리 바(^V✓)와 함께 자동 정렬하도록 위임.
+   *   visualViewport listener / window.scrollBy / 다중 setTimeout align
+   *   루프는 전부 제거(V2 회귀 방지).
+   * - body.kbd-open 토글로 TabBar 숨김. iOS interactive-widget=
+   *   resizes-content가 layout viewport를 키보드만큼 줄여준다.
+   * - 풀스크린 focus 효과(=focus 시 채팅 풀화면)는 V4로 분리한다.
+   */
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const isGameChatComposerTarget = (target: EventTarget | null) => {
+    const isComposerTarget = (target: EventTarget | null) => {
       const t = target as HTMLElement | null;
       if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return false;
       return Boolean(t.closest('[data-composer="game-chat"]'));
     };
 
     const onFocusIn = (e: FocusEvent) => {
-      if (!isGameChatComposerTarget(e.target)) return;
-      keyboardCloseRealignRef.current = false;
+      if (!isComposerTarget(e.target)) return;
       document.body.classList.add("kbd-open");
-      setKeyboardFocused(true);
-      scheduleChatFocusAlign();
+      // composer-top 모델: focused textarea를 viewport *상단*으로 정렬.
+      // 페이지 상단(Room selector / MoodGauge)이 화면 밖으로 밀리고
+      // composer + 최신글 묶음만 보이게 된다. iOS form-assistant는
+      // 액세서리 바를 focused input 위로 자동 push.
+      requestAnimationFrame(() => {
+        textareaRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
+      });
     };
 
     const onFocusOut = (e: FocusEvent) => {
-      if (!isGameChatComposerTarget(e.target)) return;
-      // 짧은 지연: blur → 다시 focus(예: 한글 IME 토글) 케이스 흡수
+      if (!isComposerTarget(e.target)) return;
+      // settle: 한글 IME 토글 등 짧은 blur→refocus 흡수
       const settle = () => {
-        if (isGameChatComposerTarget(document.activeElement)) return;
-        keyboardCloseRealignRef.current = true;
-        document.body.classList.remove("kbd-open");
-        setKeyboardFocused(false);
+        if (!isComposerTarget(document.activeElement)) {
+          document.body.classList.remove("kbd-open");
+        }
       };
-      setTimeout(settle, 50);
-      setTimeout(settle, 300);
+      setTimeout(settle, 100);
     };
 
     document.addEventListener("focusin", onFocusIn);
@@ -189,7 +127,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       document.removeEventListener("focusout", onFocusOut);
       document.body.classList.remove("kbd-open");
     };
-  }, [scheduleChatFocusAlign]);
+  }, []);
 
   const renderedMessages = displayMessages;
 
@@ -239,7 +177,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   };
 
   return (
-    <>
     <div className="flex flex-col">
       {/* Room selector */}
       <div className="relative">
@@ -297,70 +234,23 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       {/* Mood gauge */}
       <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
 
-      {/* Messages — 최신순(최신→오래된), 최신글이 리스트 상단 */}
-      <div
-        ref={scrollRef}
-        className="px-4 py-2 space-y-0.5"
-        style={{ paddingBottom: `${56 + (keyboardFocused ? 0 : (tabBarHeight ?? 56))}px` }}
-      >
-        {loading ? (
-          <div className="text-center py-8 text-text-tertiary text-sm">로딩 중...</div>
-        ) : messages.length === 0 ? (
-          <div className="text-center py-8 text-text-tertiary">
-            <p className="text-sm">아직 채팅이 없어요</p>
-            <p className="text-xs mt-1">첫 번째 메시지를 보내보세요! 🔥</p>
-          </div>
-        ) : (
-          <div className="space-y-0.5">
-            <AnimatePresence initial={false}>
-                {renderedMessages.map((msg) => {
-                  const isMe = user?.id === msg.user_id;
-                  return (
-                    <motion.div
-                      key={msg.id}
-                      data-chat-msg
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.15 }}
-                      className="flex items-start gap-2 py-0.5 group"
-                    >
-                      {msg.team_id && <TeamBadge teamId={msg.team_id} size="xs" className="shrink-0" />}
-                      <div className="min-w-0 flex-1">
-                        <span className="inline">
-                          <span className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")} onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}>
-                            {msg.nickname || "익명"}
-                          </span>
-                          <span className="text-sm text-text-primary">{msg.content}</span>
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {formatTime(msg.created_at)}
-                      </span>
-                    </motion.div>
-                  );
-                })}
-            </AnimatePresence>
-          </div>
-        )}
-      </div>
-
-      {/* Input — always fixed: above TabBar when idle, above keyboard when focused.
-          interactiveWidget=resizes-content가 layout viewport를 키보드만큼 줄여
-          주므로 focus 시 `bottom: 0`이 키보드 위에 자연스럽게 붙는다. */}
+      {/* Input — INLINE composer (TOP, V3).
+          composer는 messages 리스트 *앞*(MoodGauge 직후)에 위치. reverse
+          리스트의 최신글이 composer 바로 아래로 슬롯되어 "최신글=상단"
+          제약을 만족한다. fixed 폐기 + focus 시 textarea.scrollIntoView
+          ({block:"start"}) 단발만. iOS interactive-widget=resizes-content가
+          layout viewport를 키보드만큼 줄여주고, 액세서리 바(^V✓)는 native
+          form-assistant가 focused input 위로 자동 push. */}
       <div
         ref={composerRef}
         data-composer="game-chat"
-        className="fixed left-0 right-0 z-[98] border-t border-border"
-        style={{
-          background: "var(--chat-input-bg, rgba(10,10,15,0.98))",
-          backdropFilter: "blur(12px)",
-          bottom: keyboardFocused ? "0px" : composerBottom,
-          transition: "bottom 80ms ease-out",
-        }}
+        className="border-b border-border bg-bg-secondary/95"
+        style={{ backdropFilter: "blur(12px)" }}
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
           <div className="relative flex-1">
             <textarea
+              ref={textareaRef}
               rows={1}
               value={input}
               onChange={(e) => {
@@ -414,7 +304,50 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
           </motion.button>
         </div>
       </div>
+
+      {/* Messages — 최신순(최신→오래된), 최신글이 리스트 상단 */}
+      <div className="px-4 py-2 space-y-0.5">
+        {loading ? (
+          <div className="text-center py-8 text-text-tertiary text-sm">로딩 중...</div>
+        ) : messages.length === 0 ? (
+          <div className="text-center py-8 text-text-tertiary">
+            <p className="text-sm">아직 채팅이 없어요</p>
+            <p className="text-xs mt-1">첫 번째 메시지를 보내보세요! 🔥</p>
+          </div>
+        ) : (
+          <div className="space-y-0.5">
+            <AnimatePresence initial={false}>
+                {renderedMessages.map((msg) => {
+                  const isMe = user?.id === msg.user_id;
+                  return (
+                    <motion.div
+                      key={msg.id}
+                      data-chat-msg
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.15 }}
+                      className="flex items-start gap-2 py-0.5 group"
+                    >
+                      {msg.team_id && <TeamBadge teamId={msg.team_id} size="xs" className="shrink-0" />}
+                      <div className="min-w-0 flex-1">
+                        <span className="inline">
+                          <span className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")} onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}>
+                            {msg.nickname || "익명"}
+                          </span>
+                          <span className="text-sm text-text-primary">{msg.content}</span>
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {formatTime(msg.created_at)}
+                      </span>
+                    </motion.div>
+                  );
+                })}
+            </AnimatePresence>
+          </div>
+        )}
+      </div>
+
     </div>
-    </>
   );
 }
