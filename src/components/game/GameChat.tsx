@@ -75,15 +75,17 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const displayMessages = [...messages].reverse();
 
   /*
-   * V3: inline composer 모델
+   * V3: inline composer (TOP) 모델
    * ----------------------------------------------------------------
-   * - composer는 fixed가 아니라 컨테이너 마지막 자식으로 inline 배치.
-   * - focus 시 textarea를 단발 scrollIntoView 해 iOS native가 키보드 +
-   *   액세서리 바(^V✓)와 함께 자동 정렬하도록 위임한다. visualViewport
-   *   listener / window.scrollBy / 다중 setTimeout align 루프는 모두 제거.
+   * - composer는 fixed가 아니라 messages 리스트 *앞*(MoodGauge 직후)에
+   *   inline 배치한다. reverse(최신순) 리스트의 최신글이 composer 바로
+   *   아래로 슬롯되어 "최신글=상단" 제약을 만족.
+   * - focus 시 textarea를 scrollIntoView({block:"start"}) 단발 — iOS
+   *   native가 키보드 + 액세서리 바(^V✓)와 함께 자동 정렬하도록 위임.
+   *   visualViewport listener / window.scrollBy / 다중 setTimeout align
+   *   루프는 전부 제거(V2 회귀 방지).
    * - body.kbd-open 토글로 TabBar 숨김. iOS interactive-widget=
-   *   resizes-content가 layout viewport를 키보드만큼 줄여주므로 inline
-   *   composer가 자연스럽게 키보드 위에 위치한다.
+   *   resizes-content가 layout viewport를 키보드만큼 줄여준다.
    * - 풀스크린 focus 효과(=focus 시 채팅 풀화면)는 V4로 분리한다.
    */
   useEffect(() => {
@@ -98,10 +100,12 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const onFocusIn = (e: FocusEvent) => {
       if (!isComposerTarget(e.target)) return;
       document.body.classList.add("kbd-open");
-      // 단발 scrollIntoView. iOS가 focused input을 키보드/액세서리 위로
-      // 자동 push하는 native 경로를 타게 한다. 자체 scroll 보정 없음.
+      // composer-top 모델: focused textarea를 viewport *상단*으로 정렬.
+      // 페이지 상단(Room selector / MoodGauge)이 화면 밖으로 밀리고
+      // composer + 최신글 묶음만 보이게 된다. iOS form-assistant는
+      // 액세서리 바를 focused input 위로 자동 push.
       requestAnimationFrame(() => {
-        textareaRef.current?.scrollIntoView({ block: "end", behavior: "auto" });
+        textareaRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
       });
     };
 
@@ -230,59 +234,17 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       {/* Mood gauge */}
       <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
 
-      {/* Messages — 최신순(최신→오래된), 최신글이 리스트 상단 */}
-      <div className="px-4 py-2 space-y-0.5">
-        {loading ? (
-          <div className="text-center py-8 text-text-tertiary text-sm">로딩 중...</div>
-        ) : messages.length === 0 ? (
-          <div className="text-center py-8 text-text-tertiary">
-            <p className="text-sm">아직 채팅이 없어요</p>
-            <p className="text-xs mt-1">첫 번째 메시지를 보내보세요! 🔥</p>
-          </div>
-        ) : (
-          <div className="space-y-0.5">
-            <AnimatePresence initial={false}>
-                {renderedMessages.map((msg) => {
-                  const isMe = user?.id === msg.user_id;
-                  return (
-                    <motion.div
-                      key={msg.id}
-                      data-chat-msg
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.15 }}
-                      className="flex items-start gap-2 py-0.5 group"
-                    >
-                      {msg.team_id && <TeamBadge teamId={msg.team_id} size="xs" className="shrink-0" />}
-                      <div className="min-w-0 flex-1">
-                        <span className="inline">
-                          <span className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")} onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}>
-                            {msg.nickname || "익명"}
-                          </span>
-                          <span className="text-sm text-text-primary">{msg.content}</span>
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {formatTime(msg.created_at)}
-                      </span>
-                    </motion.div>
-                  );
-                })}
-            </AnimatePresence>
-          </div>
-        )}
-      </div>
-
-      {/* Input — INLINE composer (V3).
-          fixed 폐기. iOS interactive-widget=resizes-content + native form
-          auto-scroll에 맡긴다. focus 시 textarea.scrollIntoView 단발만.
-          idle에선 GameChat 마지막 자식으로 자연스러운 page flow에 위치하며,
-          focus 시 body.kbd-open 토글로 TabBar 숨김 → composer가 키보드 위에
-          docking된다. 액세서리 바는 iOS native가 focused input 위로 push. */}
+      {/* Input — INLINE composer (TOP, V3).
+          composer는 messages 리스트 *앞*(MoodGauge 직후)에 위치. reverse
+          리스트의 최신글이 composer 바로 아래로 슬롯되어 "최신글=상단"
+          제약을 만족한다. fixed 폐기 + focus 시 textarea.scrollIntoView
+          ({block:"start"}) 단발만. iOS interactive-widget=resizes-content가
+          layout viewport를 키보드만큼 줄여주고, 액세서리 바(^V✓)는 native
+          form-assistant가 focused input 위로 자동 push. */}
       <div
         ref={composerRef}
         data-composer="game-chat"
-        className="border-t border-border bg-bg-secondary/95"
+        className="border-b border-border bg-bg-secondary/95"
         style={{ backdropFilter: "blur(12px)" }}
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
@@ -342,6 +304,50 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
           </motion.button>
         </div>
       </div>
+
+      {/* Messages — 최신순(최신→오래된), 최신글이 리스트 상단 */}
+      <div className="px-4 py-2 space-y-0.5">
+        {loading ? (
+          <div className="text-center py-8 text-text-tertiary text-sm">로딩 중...</div>
+        ) : messages.length === 0 ? (
+          <div className="text-center py-8 text-text-tertiary">
+            <p className="text-sm">아직 채팅이 없어요</p>
+            <p className="text-xs mt-1">첫 번째 메시지를 보내보세요! 🔥</p>
+          </div>
+        ) : (
+          <div className="space-y-0.5">
+            <AnimatePresence initial={false}>
+                {renderedMessages.map((msg) => {
+                  const isMe = user?.id === msg.user_id;
+                  return (
+                    <motion.div
+                      key={msg.id}
+                      data-chat-msg
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.15 }}
+                      className="flex items-start gap-2 py-0.5 group"
+                    >
+                      {msg.team_id && <TeamBadge teamId={msg.team_id} size="xs" className="shrink-0" />}
+                      <div className="min-w-0 flex-1">
+                        <span className="inline">
+                          <span className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")} onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}>
+                            {msg.nickname || "익명"}
+                          </span>
+                          <span className="text-sm text-text-primary">{msg.content}</span>
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {formatTime(msg.created_at)}
+                      </span>
+                    </motion.div>
+                  );
+                })}
+            </AnimatePresence>
+          </div>
+        )}
+      </div>
+
     </div>
   );
 }
