@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Image as ImageIcon, XCircle, ChevronDown } from "lucide-react";
 import Image from "next/image";
 import imageCompression from "browser-image-compression";
-import { uploadImages } from "@/lib/supabase/usePosts";
+import { uploadImages, computeImageHashes } from "@/lib/supabase/usePosts";
 
 export interface SeatInfo {
   zone: string;
@@ -19,11 +19,6 @@ interface WritePostProps {
   onClose: () => void;
   teamName?: string;
   onSubmit?: (title: string, content: string, imageUrls: string[], seatInfo?: SeatInfo) => Promise<void>;
-  initialTitle?: string;
-  initialContent?: string;
-  initialImageUrls?: string[];
-  initialSeatInfo?: SeatInfo | null;
-  submitText?: string;
   /** 좌석팁 모드: 구역/좌석 입력 + 이미지 첨부 활성화 */
   seatTipMode?: boolean;
   /** 구장별 구역 목록 (드롭다운 선택지) */
@@ -31,39 +26,21 @@ interface WritePostProps {
 }
 
 const MAX_IMAGES = 3;
-const EMPTY_IMAGE_URLS: string[] = [];
 
-export default function WritePost({
-  isOpen,
-  onClose,
-  teamName,
-  onSubmit,
-  seatTipMode,
-  zones,
-  initialTitle = "",
-  initialContent = "",
-  initialImageUrls = EMPTY_IMAGE_URLS,
-  initialSeatInfo = null,
-  submitText = "등록",
-}: WritePostProps) {
-  const initialZone = initialSeatInfo?.zone ?? "";
-  const initialZoneIsCustom = !!initialZone && !!zones?.length && !zones.includes(initialZone);
-
-  const [title, setTitle] = useState(initialTitle);
-  const [content, setContent] = useState(initialContent);
-  const [images, setImages] = useState<{preview: string; file?: File; existingUrl?: string}[]>(() =>
-    initialImageUrls.map((url) => ({ preview: url, existingUrl: url }))
-  );
+export default function WritePost({ isOpen, onClose, teamName, onSubmit, seatTipMode, zones }: WritePostProps) {
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  const [images, setImages] = useState<{preview: string; file: File}[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 좌석팁 구조화 필드
-  const [zone, setZone] = useState(initialZoneIsCustom ? "__custom__" : initialZone);
-  const [customZone, setCustomZone] = useState(initialZoneIsCustom ? initialZone : "");
-  const [block, setBlock] = useState(initialSeatInfo?.block ?? "");
-  const [row, setRow] = useState(initialSeatInfo?.row ?? "");
-  const [seat, setSeat] = useState(initialSeatInfo?.seat ?? "");
+  const [zone, setZone] = useState("");
+  const [customZone, setCustomZone] = useState("");
+  const [block, setBlock] = useState("");
+  const [row, setRow] = useState("");
+  const [seat, setSeat] = useState("");
 
   const isCustomZone = zone === "__custom__";
   const effectiveZone = isCustomZone ? customZone.trim() : zone;
@@ -93,7 +70,7 @@ export default function WritePost({
 
   function removeImage(index: number) {
     setImages((prev) => {
-      if (prev[index].file) URL.revokeObjectURL(prev[index].preview);
+      URL.revokeObjectURL(prev[index].preview);
       return prev.filter((_, i) => i !== index);
     });
   }
@@ -128,10 +105,8 @@ export default function WritePost({
       // 이미지 업로드
       let imageUrls: string[] = [];
       if (seatTipMode && images.length > 0) {
-        const existingUrls = images.flatMap((img) => img.existingUrl ? [img.existingUrl] : []);
-        const files = images.flatMap((img) => img.file ? [img.file] : []);
-        const uploadedUrls = files.length > 0 ? await uploadImages(files) : [];
-        imageUrls = [...existingUrls, ...uploadedUrls];
+        const files = images.map((img) => img.file);
+        imageUrls = await uploadImages(files);
       }
 
       if (onSubmit) await onSubmit(title.trim(), content.trim(), imageUrls, seatInfo);
@@ -179,7 +154,7 @@ export default function WritePost({
                 disabled={!canSubmit || submitting}
                 className="rounded-full bg-accent px-4 py-1.5 text-base font-semibold text-white disabled:opacity-40 transition-opacity"
               >
-                {submitting ? "저장 중..." : submitText}
+                {submitting ? "등록 중..." : "등록"}
               </button>
             </div>
             <div className="px-5 pb-8 space-y-4 flex-1 flex flex-col">
