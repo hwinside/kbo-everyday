@@ -35,6 +35,10 @@
 - 성공 TTL: 24h, 실패 TTL: 10분 (실패 폭주 방지)
 - 캐시 사이즈 가드: 500개 LRU eviction (`/api/og-meta` 패턴 차용)
 
+**B1 후속 보강 (삼순이 코드리뷰 P0, 2026-05-06)**: URL 단위 캐시만으로는 부족. 1시간 응답 캐시가 `thumbnailUrl` 포함된 최종 응답을 통째로 저장하면, og 일시 실패가 응답 캐시에 굳어 실패 TTL 10분이 무력화됨.
+- 응답 캐시는 _썸네일 없는 raw items_만 저장
+- 캐시 hit/miss 양쪽에서 매 요청마다 `attachThumbnails(items)`를 다시 태움 → URL 단위 TTL이 항상 적용
+
 ### B2. 실패 시 UI fallback 명시 (P0)
 **현재**: 썸네일 없으면 텍스트만 보임 (16:9 영역 자체 비노출).
 
@@ -54,6 +58,12 @@
 
 ### B5. og 추출 실패 도메인 분석 (P1)
 B3 QA 결과 기반: 자주 실패하는 언론사 도메인 식별 → 별도 추출 로직 필요한지 판단 (예: 네이버 뉴스 본문, 다음 뉴스 등). 별도 PR 후보.
+
+### B6. 썸네일 부착 게이트 + IPv6 SSRF (P1, 삼순이 코드리뷰 2026-05-06)
+- `/api/news`는 `PlayerNews`(`q=`)에서도 호출됨. 팀 뉴스탭(`team=`) 외에서는 og fetch 비용을 피하기 위해 썸네일 부착 안 함.
+- 게이트: `team` 파라미터가 있거나 명시적 `includeThumbnail=1`인 경우에만 `attachThumbnails` 호출.
+- SSRF 가드 추가: IPv6 ULA `fc00::/7` (`^f[cd][0-9a-f]{2}:`), 링크로컬 `fe80::/10` (`^fe[89ab][0-9a-f]:`).
+- WHATWG `URL.hostname`은 IPv6를 `[::1]`처럼 대괄호 포함해서 반환하므로 매칭 전에 strip 처리.
 
 ## NOT-DOING (스코프 외)
 

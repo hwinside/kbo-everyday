@@ -4,7 +4,9 @@ import type { NaverNewsRawItem, NewsItem } from "@/types/api";
 const NAVER_CLIENT_ID = process.env.NAVER_CLIENT_ID || "";
 const NAVER_CLIENT_SECRET = process.env.NAVER_CLIENT_SECRET || "";
 
-// 1시간 캐시 (player별, team별 독립 캐시)
+// 1시간 캐시는 _썸네일 없는 raw items_만 저장한다. 썸네일은 요청마다
+// attachThumbnails로 다시 합치되 URL 단위 thumbnailCache TTL이 적용되게 해서
+// og 일시 실패가 1h 응답 캐시에 굳지 않도록 분리.
 interface NewsResult {
   items: NewsItem[];
   _q: string;
@@ -60,9 +62,13 @@ function isSafeHttpUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     if (!["http:", "https:"].includes(parsed.protocol)) return false;
-    const host = parsed.hostname.toLowerCase();
+    let host = parsed.hostname.toLowerCase();
+    // WHATWG URL.hostname returns IPv6 with brackets; strip for matching.
+    if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
     if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" || host === "::1") return false;
     if (/^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)) return false;
+    if (/^f[cd][0-9a-f]{2}:/.test(host)) return false; // IPv6 ULA fc00::/7
+    if (/^fe[89ab][0-9a-f]:/.test(host)) return false; // IPv6 link-local fe80::/10
     return true;
   } catch {
     return false;
@@ -187,6 +193,7 @@ export async function GET(req: NextRequest) {
   const team = req.nextUrl.searchParams.get("team");
   const player = req.nextUrl.searchParams.get("player");
   const q = req.nextUrl.searchParams.get("q");
+  const includeThumbnail = req.nextUrl.searchParams.get("includeThumbnail") === "1";
 
   // shortName → 검색에 유리한 풀네임 매핑
   const TEAM_SEARCH: Record<string, string> = {
@@ -205,17 +212,22 @@ export async function GET(req: NextRequest) {
     searchQuery = q;
   }
 
+  // 썸네일 부착은 팀 뉴스탭(team) 또는 명시적 includeThumbnail=1에만 적용.
+  // PlayerNews 같은 q= 호출은 thumbnailUrl을 안 읽으므로 og fetch 비용을 회피.
+  const wantThumbnails = Boolean(team) || includeThumbnail;
+
   const cacheKey = searchQuery;
   const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
-    return NextResponse.json(cached.data);
+    const items = wantThumbnails ? await attachThumbnails(cached.data.items) : cached.data.items;
+    return NextResponse.json({ items, _q: cached.data._q });
   }
 
   if (!NAVER_CLIENT_ID) {
     console.error('[API/news] Missing NAVER_CLIENT_ID');
     return NextResponse.json({ items: [], error: "Naver API not configured", _q: searchQuery });
   }
-  
+
   try {
     const res = await fetch(
       `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(searchQuery)}&display=20&sort=date`,
@@ -244,10 +256,11 @@ export async function GET(req: NextRequest) {
       return true;
     });
 
-    const itemsWithThumbnails = await attachThumbnails(unique);
-    const result = { items: itemsWithThumbnails, _q: cacheKey };
-    cache.set(cacheKey, { data: result, ts: Date.now() });
-    return NextResponse.json(result);
+    // 캐시는 _썸네일 없는 raw items_만 저장.
+    cache.set(cacheKey, { data: { items: unique, _q: cacheKey }, ts: Date.now() });
+
+    const itemsOut = wantThumbnails ? await attachThumbnails(unique) : unique;
+    return NextResponse.json({ items: itemsOut, _q: cacheKey });
   } catch (e: unknown) {
     console.error('[API/news] Fetch error:', (e as Error).message);
     return NextResponse.json({ items: [], error: (e as Error).message, _q: searchQuery });
