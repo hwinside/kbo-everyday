@@ -17,6 +17,8 @@ interface KgwanTabProps {
   gameId: string;
   homeTeamId: number;
   awayTeamId: number;
+  gameDate?: string | null;
+  gameStartTime?: string | null;
   status: "scheduled" | "live" | "final" | "cancelled";
   gameEvents: GameEvent[];
   plays: GamePlay[];
@@ -37,6 +39,26 @@ interface PreviewData {
   homeWinPct: number;
   prediction: string;
   keyMatchup: string;
+}
+
+const GAME_CHAT_OPEN_LEAD_MS = 2 * 60 * 60 * 1000;
+
+function getGameStartAtKst(gameId: string, gameDate?: string | null, gameStartTime?: string | null): Date | null {
+  const datePart = gameDate?.match(/^\d{4}-\d{2}-\d{2}$/)?.[0]
+    ?? gameId.match(/^(\d{4})(\d{2})(\d{2})/)?.slice(1, 4).join("-");
+  const timeMatch = gameStartTime?.match(/(\d{1,2}):(\d{2})/);
+  if (!datePart || !timeMatch) return null;
+
+  const [, hour, minute] = timeMatch;
+  return new Date(`${datePart}T${hour.padStart(2, "0")}:${minute}:00+09:00`);
+}
+
+function formatKstTime(date: Date): string {
+  return date.toLocaleTimeString("ko-KR", {
+    timeZone: "Asia/Seoul",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
@@ -188,15 +210,27 @@ function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
 }
 
 /* ===== Scheduled: AI Preview ===== */
-function ScheduledView({ gameId, awayTeamId, homeTeamId, starterNames, lineupConfirmed }: {
+function ScheduledView({ gameId, awayTeamId, homeTeamId, gameDate, gameStartTime, starterNames, lineupConfirmed }: {
   gameId: string;
   awayTeamId: number;
   homeTeamId: number;
+  gameDate?: string | null;
+  gameStartTime?: string | null;
   starterNames?: { away: string; home: string };
   lineupConfirmed?: boolean;
 }) {
   const awayTeam = getTeamById(awayTeamId)!;
   const homeTeam = getTeamById(homeTeamId)!;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const gameStartAt = useMemo(() => getGameStartAtKst(gameId, gameDate, gameStartTime), [gameId, gameDate, gameStartTime]);
+  const chatOpensAt = gameStartAt ? new Date(gameStartAt.getTime() - GAME_CHAT_OPEN_LEAD_MS) : null;
+  const isChatOpen = chatOpensAt ? nowMs >= chatOpensAt.getTime() : false;
+
+  useEffect(() => {
+    if (isChatOpen) return;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [isChatOpen]);
 
   return (
     <div className="px-4 py-4 space-y-4">
@@ -224,6 +258,20 @@ function ScheduledView({ gameId, awayTeamId, homeTeamId, starterNames, lineupCon
 
       {/* AI 경기 예측 */}
       <AIPreviewCard gameId={gameId} awayTeamId={awayTeamId} homeTeamId={homeTeamId} starterNames={starterNames} />
+
+      {/* Pre-game chat opens 2 hours before first pitch */}
+      {isChatOpen ? (
+        <GameChat gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
+      ) : (
+        <div className="glass-card p-4 text-center space-y-1.5">
+          <p className="text-sm font-semibold text-text-primary">크관 채팅은 경기 시작 2시간 전부터 열려요</p>
+          {chatOpensAt ? (
+            <p className="text-xs text-text-tertiary">오픈 예정: {formatKstTime(chatOpensAt)}</p>
+          ) : (
+            <p className="text-xs text-text-tertiary">경기 시간이 확정되면 오픈 시간이 표시됩니다</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -869,6 +917,8 @@ export default function KgwanTab({
   gameId,
   homeTeamId,
   awayTeamId,
+  gameDate,
+  gameStartTime,
   status,
   gameEvents,
   teamColor: _teamColor,
@@ -880,7 +930,7 @@ export default function KgwanTab({
   gameRelay,
 }: KgwanTabProps) {
   if (status === "scheduled") {
-    return <ScheduledView gameId={gameId} awayTeamId={awayTeamId} homeTeamId={homeTeamId} starterNames={starterNames} lineupConfirmed={lineupConfirmed} />;
+    return <ScheduledView gameId={gameId} awayTeamId={awayTeamId} homeTeamId={homeTeamId} gameDate={gameDate} gameStartTime={gameStartTime} starterNames={starterNames} lineupConfirmed={lineupConfirmed} />;
   }
 
   if (status === "live") {
