@@ -193,50 +193,58 @@ export function generateEvents(
   // Per-batter diff: attribute events to the actual batter whose stat line moved,
   // not to currentBatter (which lags BoxScore and caused mis-attribution).
   if (currentBoxScore && prev.boxScore) {
-    // Determine which side is batting based on isTop
-    const prevBatters = currentLive.isTop
-      ? prev.boxScore.awayBatters
-      : prev.boxScore.homeBatters;
-    const currBatters = currentLive.isTop
-      ? currentBoxScore.awayBatters
-      : currentBoxScore.homeBatters;
+    // When inning crossed between polls, a lag-delivered BoxScore update may
+    // belong to the *previous* half-inning's batting side. We process both
+    // halves so the lag event still lands on the correct batter with the
+    // right inning/isTop attribution. Otherwise (steady inning) just the
+    // current batting side.
+    const sidesToProcess: Array<{ live: LiveGameData; isTop: boolean }> = [
+      { live: currentLive, isTop: currentLive.isTop },
+    ];
+    if (prevInningKey !== currInningKey && prevLive.isTop !== currentLive.isTop) {
+      sidesToProcess.unshift({ live: prevLive, isTop: prevLive.isTop });
+    }
 
-    const pitcherName = currentLive.currentPitcher || undefined;
-    const batterDiffs = diffBatters(prevBatters, currBatters);
+    for (const { live, isTop } of sidesToProcess) {
+      const prevBatters = isTop ? prev.boxScore.awayBatters : prev.boxScore.homeBatters;
+      const currBatters = isTop ? currentBoxScore.awayBatters : currentBoxScore.homeBatters;
+      const pitcherName = live.currentPitcher || undefined;
+      const batterDiffs = diffBatters(prevBatters, currBatters);
 
-    for (const [batterName, diff] of batterDiffs) {
-      // Order matters within a single batter: HR/3B/2B counted explicitly,
-      // remaining hits => 1B (at_bat_hit).
-      for (let i = 0; i < diff.hr; i++) {
-        events.push(makeEvent(gameId, currentLive, "at_bat_homerun", {
-          batter: batterName, pitcher: pitcherName,
-        }));
-      }
-      for (let i = 0; i < diff.h3b; i++) {
-        events.push(makeEvent(gameId, currentLive, "at_bat_triple", {
-          batter: batterName, pitcher: pitcherName,
-        }));
-      }
-      for (let i = 0; i < diff.h2b; i++) {
-        events.push(makeEvent(gameId, currentLive, "at_bat_double", {
-          batter: batterName, pitcher: pitcherName,
-        }));
-      }
-      const single = diff.hits - diff.hr - diff.h2b - diff.h3b;
-      for (let i = 0; i < single; i++) {
-        events.push(makeEvent(gameId, currentLive, "at_bat_hit", {
-          batter: batterName, pitcher: pitcherName,
-        }));
-      }
-      for (let i = 0; i < diff.bb; i++) {
-        events.push(makeEvent(gameId, currentLive, "at_bat_walk", {
-          batter: batterName, pitcher: pitcherName,
-        }));
-      }
-      for (let i = 0; i < diff.so; i++) {
-        events.push(makeEvent(gameId, currentLive, "at_bat_strikeout", {
-          batter: batterName, pitcher: pitcherName,
-        }));
+      for (const [batterName, diff] of batterDiffs) {
+        // Order matters within a single batter: HR/3B/2B counted explicitly,
+        // remaining hits => 1B (at_bat_hit).
+        for (let i = 0; i < diff.hr; i++) {
+          events.push(makeEvent(gameId, live, "at_bat_homerun", {
+            batter: batterName, pitcher: pitcherName,
+          }));
+        }
+        for (let i = 0; i < diff.h3b; i++) {
+          events.push(makeEvent(gameId, live, "at_bat_triple", {
+            batter: batterName, pitcher: pitcherName,
+          }));
+        }
+        for (let i = 0; i < diff.h2b; i++) {
+          events.push(makeEvent(gameId, live, "at_bat_double", {
+            batter: batterName, pitcher: pitcherName,
+          }));
+        }
+        const single = diff.hits - diff.hr - diff.h2b - diff.h3b;
+        for (let i = 0; i < single; i++) {
+          events.push(makeEvent(gameId, live, "at_bat_hit", {
+            batter: batterName, pitcher: pitcherName,
+          }));
+        }
+        for (let i = 0; i < diff.bb; i++) {
+          events.push(makeEvent(gameId, live, "at_bat_walk", {
+            batter: batterName, pitcher: pitcherName,
+          }));
+        }
+        for (let i = 0; i < diff.so; i++) {
+          events.push(makeEvent(gameId, live, "at_bat_strikeout", {
+            batter: batterName, pitcher: pitcherName,
+          }));
+        }
       }
     }
 
