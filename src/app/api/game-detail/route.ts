@@ -417,7 +417,7 @@ const POS_SHORT_TO_FULL: Record<string, string> = {
   "유": "SS", "좌": "LF", "중": "CF", "우": "RF", "지": "DH",
 };
 
-async function fetchNaverRecord(kboGameId: string): Promise<{
+export async function fetchNaverRecord(kboGameId: string): Promise<{
   boxScore: GameDetailResponse["boxScore"];
   linescore: GameDetailResponse["linescore"];
 } | null> {

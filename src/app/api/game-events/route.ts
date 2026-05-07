@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
-import type { GameDetailResponse } from "@/app/api/game-detail/route";
+import { fetchNaverRecord, type GameDetailResponse } from "@/app/api/game-detail/route";
 import type { GameSnapshot } from "@/types/game-events";
 import { generateEvents, type PrevGameState } from "@/lib/event-generator";
 import type { GameEvent } from "@/types/game-events";
@@ -183,7 +183,24 @@ export async function GET(req: NextRequest) {
       homeStarterName: rawGame.B_PIT_P_NM?.trim() || null,
     };
 
-    const currentBoxScore = parseBoxScoreMinimal(boxScoreRes);
+    let currentBoxScore = parseBoxScoreMinimal(boxScoreRes);
+
+    // KBO GetBoxScore returns empty tables intermittently — same fallback as
+    // game-detail/route.ts. Without this the parsed batter list is empty,
+    // diffBatters() returns nothing, and at_bat_strikeout events are never
+    // emitted (clients see only at_bat_out fallbacks → no K celebration).
+    const hasRealBoxScore = currentBoxScore &&
+      (currentBoxScore.awayBatters.some(b => b.atBats > 0) ||
+        currentBoxScore.homeBatters.some(b => b.atBats > 0));
+    if (!hasRealBoxScore) {
+      const naver = await fetchNaverRecord(gameId);
+      if (naver?.boxScore) {
+        const naverHasData = naver.boxScore.awayBatters.some(b => b.atBats > 0)
+          || naver.boxScore.homeBatters.some(b => b.atBats > 0);
+        if (naverHasData) currentBoxScore = naver.boxScore;
+      }
+    }
+
     const prevState = prevStateCache.get(gameId) || null;
 
     const { events: newEvents, nextState } = generateEvents(
