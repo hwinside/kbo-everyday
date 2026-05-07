@@ -417,7 +417,10 @@ const POS_SHORT_TO_FULL: Record<string, string> = {
   "유": "SS", "좌": "LF", "중": "CF", "우": "RF", "지": "DH",
 };
 
-export async function fetchNaverRecord(kboGameId: string): Promise<{
+export async function fetchNaverRecord(
+  kboGameId: string,
+  opts?: { noCache?: boolean },
+): Promise<{
   boxScore: GameDetailResponse["boxScore"];
   linescore: GameDetailResponse["linescore"];
 } | null> {
@@ -425,7 +428,7 @@ export async function fetchNaverRecord(kboGameId: string): Promise<{
     const nId = naverGameId(kboGameId);
     const res = await fetch(`${NAVER_API}/${nId}/record`, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
-      next: { revalidate: 30 },
+      ...(opts?.noCache ? { cache: "no-store" as const } : { next: { revalidate: 30 } }),
     });
     if (!res.ok) return null;
     const json = await res.json();

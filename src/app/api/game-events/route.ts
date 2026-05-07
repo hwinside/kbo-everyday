@@ -189,11 +189,16 @@ export async function GET(req: NextRequest) {
     // game-detail/route.ts. Without this the parsed batter list is empty,
     // diffBatters() returns nothing, and at_bat_strikeout events are never
     // emitted (clients see only at_bat_out fallbacks → no K celebration).
+    // noCache: this route polls every ~5–10s; the default 30s revalidate
+    // would freeze prev/curr at the same Naver snapshot for several poll
+    // cycles and delay K celebration by up to 30s.
+    // linescore from naver is intentionally skipped — game-events does
+    // not surface linescore (currentLive carries the score directly).
     const hasRealBoxScore = currentBoxScore &&
       (currentBoxScore.awayBatters.some(b => b.atBats > 0) ||
         currentBoxScore.homeBatters.some(b => b.atBats > 0));
     if (!hasRealBoxScore) {
-      const naver = await fetchNaverRecord(gameId);
+      const naver = await fetchNaverRecord(gameId, { noCache: true });
       if (naver?.boxScore) {
         const naverHasData = naver.boxScore.awayBatters.some(b => b.atBats > 0)
           || naver.boxScore.homeBatters.some(b => b.atBats > 0);
