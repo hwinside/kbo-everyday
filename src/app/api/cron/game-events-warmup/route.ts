@@ -23,7 +23,7 @@ function getKSTDateStr(): string {
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
-  if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
+  if (!CRON_SECRET || authHeader !== `Bearer ${CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -45,7 +45,11 @@ export async function GET(req: NextRequest) {
     .map(g => g.G_ID as string);
 
   // Self-fetch to traverse the same generateEvents path the client takes.
-  const baseUrl = req.nextUrl.origin;
+  // Vercel cron invokes via internal loadbalancer, so req.nextUrl.origin
+  // can resolve to localhost / internal IP. Prefer VERCEL_URL when set.
+  const baseUrl =
+    process.env.NEXT_PUBLIC_APP_URL ??
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : req.nextUrl.origin);
   const results = await Promise.allSettled(
     liveGameIds.map(gameId =>
       fetch(`${baseUrl}/api/game-events?gameId=${gameId}`, {
