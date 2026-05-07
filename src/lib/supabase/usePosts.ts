@@ -252,7 +252,15 @@ export async function createPost(params: {
 /** 게시글 수정 (본인만)
  *  v1: title/content만 수정. 이미지/태그 재편집은 v2.
  */
-export async function updatePost(postId: number, params: { title?: string; content?: string }) {
+export async function updatePost(
+  postId: number,
+  params: {
+    title?: string;
+    content?: string;
+    imageUrls?: string[];
+    seatInfo?: { zone: string; block?: string; row?: string; seat?: string } | null;
+  },
+) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
 
@@ -264,6 +272,12 @@ export async function updatePost(postId: number, params: { title?: string; conte
   }
   if (typeof params.content === "string") {
     patch.content = params.content; // trim은 UI에서 처리 (사진게시법은 빈 content 허용)
+  }
+  if (typeof params.imageUrls !== "undefined") {
+    patch.image_urls = params.imageUrls; // 빈 배열로 전달 시 이미지 전체 제거
+  }
+  if (typeof params.seatInfo !== "undefined") {
+    patch.seat_info = params.seatInfo; // null 허용 (좌석정보 해제)
   }
 
   const { error } = await supabase

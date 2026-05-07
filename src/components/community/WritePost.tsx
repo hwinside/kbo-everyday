@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Image as ImageIcon, XCircle, ChevronDown } from "lucide-react";
 import Image from "next/image";
@@ -21,16 +21,37 @@ interface WritePostProps {
   onSubmit?: (title: string, content: string, imageUrls: string[], seatInfo?: SeatInfo) => Promise<void>;
   /** 좌석팁 모드: 구역/좌석 입력 + 이미지 첨부 활성화 */
   seatTipMode?: boolean;
-  /** 구장별 구역 목록 (드롭다운 선택지) */
+  /** 구장별 구역 모드 (드롭다운 선택지) */
   zones?: string[];
+  /** 수정 모드 — 닫힌 후 다시 열릴 때 초기값으로 폼 리셋. 이미지 URL을 주면 기존 이미지 재사용. */
+  initialTitle?: string;
+  initialContent?: string;
+  initialImageUrls?: string[];
+  initialSeatInfo?: SeatInfo | null;
+  /** 제출 버튼 텍스트. 입력 시 메뉴 접두사도 그대로 사용 (“저장” → “저장 중...”). */
+  submitText?: string;
 }
 
 const MAX_IMAGES = 3;
 
-export default function WritePost({ isOpen, onClose, teamName, onSubmit, seatTipMode, zones }: WritePostProps) {
+type WriteImage = { preview: string; file?: File; existingUrl?: string };
+
+export default function WritePost({
+  isOpen,
+  onClose,
+  teamName,
+  onSubmit,
+  seatTipMode,
+  zones,
+  initialTitle,
+  initialContent,
+  initialImageUrls,
+  initialSeatInfo,
+  submitText,
+}: WritePostProps) {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
-  const [images, setImages] = useState<{preview: string; file: File}[]>([]);
+  const [images, setImages] = useState<WriteImage[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -41,6 +62,25 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit, seatTip
   const [block, setBlock] = useState("");
   const [row, setRow] = useState("");
   const [seat, setSeat] = useState("");
+
+  // 모달이 열리는 edge에서만 초기값으로 리셋. 열린 상태에서는 부모 리렌더로 initial*이 바뀌더라도 입력 날리지 않도록.
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (isOpen && !wasOpenRef.current) {
+      setTitle(initialTitle ?? "");
+      setContent(initialContent ?? "");
+      setImages((initialImageUrls ?? []).map((url) => ({ preview: url, existingUrl: url })));
+      const z = initialSeatInfo?.zone ?? "";
+      const isCustom = !!z && !!zones?.length && !zones.includes(z);
+      setZone(isCustom ? "__custom__" : z);
+      setCustomZone(isCustom ? z : "");
+      setBlock(initialSeatInfo?.block ?? "");
+      setRow(initialSeatInfo?.row ?? "");
+      setSeat(initialSeatInfo?.seat ?? "");
+    }
+    wasOpenRef.current = isOpen;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   const isCustomZone = zone === "__custom__";
   const effectiveZone = isCustomZone ? customZone.trim() : zone;
@@ -70,15 +110,22 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit, seatTip
 
   function removeImage(index: number) {
     setImages((prev) => {
-      URL.revokeObjectURL(prev[index].preview);
+      const target = prev[index];
+      // 새로 설정된 File이 있는 항목만 blob URL revoke. 기존 이미지는 외부 URL이므로 skip.
+      if (target.file) URL.revokeObjectURL(target.preview);
       return prev.filter((_, i) => i !== index);
     });
   }
 
   function reset() {
+    setImages((prev) => {
+      prev.forEach((img) => {
+        if (img.file) URL.revokeObjectURL(img.preview);
+      });
+      return [];
+    });
     setTitle("");
     setContent("");
-    setImages([]);
     setZone("");
     setCustomZone("");
     setBlock("");
@@ -102,11 +149,13 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit, seatTip
           }
         : undefined;
 
-      // 이미지 업로드
+      // 이미지 업로드 — 기존 URL + 새로 첨부된 파일 혼합 처리
       let imageUrls: string[] = [];
       if (seatTipMode && images.length > 0) {
-        const files = images.map((img) => img.file);
-        imageUrls = await uploadImages(files);
+        const existingUrls = images.flatMap((img) => (img.existingUrl ? [img.existingUrl] : []));
+        const filesToUpload = images.flatMap((img) => (img.file ? [img.file] : []));
+        const uploadedUrls = filesToUpload.length > 0 ? await uploadImages(filesToUpload) : [];
+        imageUrls = [...existingUrls, ...uploadedUrls];
       }
 
       if (onSubmit) await onSubmit(title.trim(), content.trim(), imageUrls, seatInfo);
@@ -154,7 +203,7 @@ export default function WritePost({ isOpen, onClose, teamName, onSubmit, seatTip
                 disabled={!canSubmit || submitting}
                 className="rounded-full bg-accent px-4 py-1.5 text-base font-semibold text-white disabled:opacity-40 transition-opacity"
               >
-                {submitting ? "등록 중..." : "등록"}
+                {submitting ? `${submitText ?? "등록"} 중...` : (submitText ?? "등록")}
               </button>
             </div>
             <div className="px-5 pb-8 space-y-4 flex-1 flex flex-col">

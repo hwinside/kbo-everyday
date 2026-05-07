@@ -68,7 +68,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const [input, setInput] = useState("");
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const composerRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // 최신순: 최신 메시지가 리스트 상단. 크관은 중계↔최신댓글 왕복 부담을
   // 줄이기 위해 최신글이 위에 오는 레이아웃을 사용한다.
@@ -80,7 +80,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
    * - composer는 fixed가 아니라 messages 리스트 *앞*(MoodGauge 직후)에
    *   inline 배치한다. reverse(최신순) 리스트의 최신글이 composer 바로
    *   아래로 슬롯되어 "최신글=상단" 제약을 만족.
-   * - focus 시 textarea를 scrollIntoView({block:"start"}) 단발 — iOS
+   * - focus 시 input을 scrollIntoView({block:"start"}) 단발 — iOS
    *   native가 키보드 + 액세서리 바(^V✓)와 함께 자동 정렬하도록 위임.
    *   visualViewport listener / window.scrollBy / 다중 setTimeout align
    *   루프는 전부 제거(V2 회귀 방지).
@@ -100,12 +100,12 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const onFocusIn = (e: FocusEvent) => {
       if (!isComposerTarget(e.target)) return;
       document.body.classList.add("kbd-open");
-      // composer-top 모델: focused textarea를 viewport *상단*으로 정렬.
+      // composer-top 모델: focused input을 viewport *상단*으로 정렬.
       // 페이지 상단(Room selector / MoodGauge)이 화면 밖으로 밀리고
       // composer + 최신글 묶음만 보이게 된다. iOS form-assistant는
       // 액세서리 바를 focused input 위로 자동 push.
       requestAnimationFrame(() => {
-        textareaRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
+        inputRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
       });
     };
 
@@ -237,7 +237,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       {/* Input — INLINE composer (TOP, V3).
           composer는 messages 리스트 *앞*(MoodGauge 직후)에 위치. reverse
           리스트의 최신글이 composer 바로 아래로 슬롯되어 "최신글=상단"
-          제약을 만족한다. fixed 폐기 + focus 시 textarea.scrollIntoView
+          제약을 만족한다. fixed 폐기 + focus 시 input.scrollIntoView
           ({block:"start"}) 단발만. iOS interactive-widget=resizes-content가
           layout viewport를 키보드만큼 줄여주고, 액세서리 바(^V✓)는 native
           form-assistant가 focused input 위로 자동 push. */}
@@ -249,9 +249,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       >
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
           <div className="relative flex-1">
-            <textarea
-              ref={textareaRef}
-              rows={1}
+            <input
+              ref={inputRef}
+              type="text"
               value={input}
               onChange={(e) => {
                 const v = e.target.value.replace(/\n/g, "");
@@ -274,10 +274,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
               name="chat-message"
               maxLength={120}
               className={clsx(
-                "w-full h-10 px-4 rounded-full text-base resize-none overflow-hidden",
+                "w-full h-10 px-4 rounded-full text-base",
                 "bg-bg-tertiary text-text-primary placeholder:text-text-tertiary",
                 "border focus:outline-none transition-colors",
-                "leading-10",
                 !canWrite && "opacity-50",
                 input.length >= 120 ? "border-red-500/60" : "border-border focus:border-accent/50"
               )}

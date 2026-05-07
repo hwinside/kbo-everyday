@@ -3,15 +3,16 @@
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import WritePost from "@/components/community/WritePost";
-import { createPost, usePosts, uploadImages, computeImageHashes } from "@/lib/supabase/usePosts";
+import { createPost, updatePost, usePosts, uploadImages, computeImageHashes } from "@/lib/supabase/usePosts";
+import type { Post } from "@/lib/supabase/usePosts";
 import type { SeatInfo } from "@/components/community/WritePost";
 import { getTeamBorderColor } from "@/lib/utils/team-border-color";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { ChevronLeft, MapPin, Ticket, UtensilsCrossed, Armchair, MessageCircle, PenLine, Car, TrainFront, Bus, CalendarDays } from "lucide-react";
+import { ChevronLeft, MapPin, Ticket, UtensilsCrossed, Armchair, MessageCircle, PenLine, Car, TrainFront, Bus, CalendarDays, X } from "lucide-react";
 import StadiumCalendar from "@/components/stadium/StadiumCalendar";
 import GlassCard from "@/components/ui/GlassCard";
 import { STADIUMS } from "@/lib/constants/stadiums";
@@ -63,11 +64,30 @@ export default function StadiumDetailPage() {
   const [showLogin, setShowLogin] = useState(false);
   const [showWrite, setShowWrite] = useState(false);
   const [active, setActive] = useState<Section>("info");
+  const [editingSeatPost, setEditingSeatPost] = useState<Post | null>(null);
+  const [expandedImageUrl, setExpandedImageUrl] = useState<string | null>(null);
 
   const stadium = useMemo(
     () => STADIUMS.find((s) => s.id === stadiumId),
     [stadiumId]
   );
+
+  // hooks must run on every render — keep above early return
+  const stadiumKey = typeof stadiumId === "string" ? stadiumId : "";
+  const seatBoardId = `stadium:${stadium?.id ?? stadiumKey}:seats`;
+  const reviewBoardId = `stadium:${stadium?.id ?? stadiumKey}:reviews`;
+  const { posts: seatPosts, reload: reloadSeatPosts } = usePosts("stadium", seatBoardId, "general");
+  const { posts: reviewPosts, reload: reloadReviewPosts } = usePosts("stadium", reviewBoardId, "general");
+
+  // 라이트박스: ESC 키로 닫기 (데스크탑 접근성)
+  useEffect(() => {
+    if (!expandedImageUrl) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpandedImageUrl(null);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [expandedImageUrl]);
 
   if (!stadium)
     return (
@@ -78,10 +98,6 @@ export default function StadiumDetailPage() {
 
   const teams = stadium.teamIds.map((id) => getTeamById(id)!).filter(Boolean);
   const primaryTeam = teams[0];
-  const seatBoardId = `stadium:${stadium.id}:seats`;
-  const reviewBoardId = `stadium:${stadium.id}:reviews`;
-  const { posts: seatPosts, reload: reloadSeatPosts } = usePosts("stadium", seatBoardId, "general");
-  const { posts: reviewPosts, reload: reloadReviewPosts } = usePosts("stadium", reviewBoardId, "general");
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
@@ -293,51 +309,75 @@ export default function StadiumDetailPage() {
               />
             ) : (
               <div className="space-y-3">
-                {seatPosts.map((post) => (
-                  <GlassCard key={post.id} className="p-4">
-                    <div className="flex items-center justify-between gap-3 mb-2">
-                      <p className="text-sm font-semibold text-text-primary">{post.title}</p>
-                      <span className="text-xs text-text-tertiary whitespace-nowrap">
-                        {new Date(post.created_at).toLocaleDateString("ko-KR")}
-                      </span>
-                    </div>
-                    {/* 좌석 구역 태그 */}
-                    {post.seat_info && (
-                      <div className="flex flex-wrap gap-1.5 mb-2">
-                        <span className="inline-block px-2 py-0.5 rounded-full bg-accent/15 text-accent text-xs font-medium">
-                          {post.seat_info.zone}
+                {seatPosts.map((post) => {
+                  const isAuthor = !!user && user.id === post.author_id;
+                  const isEdited = !!post.updated_at && post.updated_at !== post.created_at;
+                  return (
+                    <GlassCard key={post.id} className="p-4">
+                      <div className="flex items-center justify-between gap-3 mb-2">
+                        <p className="text-sm font-semibold text-text-primary">{post.title}</p>
+                        <span className="text-xs text-text-tertiary whitespace-nowrap">
+                          {new Date(post.created_at).toLocaleDateString("ko-KR")}{isEdited ? " · 수정됨" : ""}
                         </span>
-                        {post.seat_info.block && (
-                          <span className="inline-block px-2 py-0.5 rounded-full bg-bg-tertiary text-text-secondary text-xs">
-                            {post.seat_info.block}블록
+                      </div>
+                      {/* 좌석 구역 태그 */}
+                      {post.seat_info && (
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                          <span className="inline-block px-2 py-0.5 rounded-full bg-accent/15 text-accent text-xs font-medium">
+                            {post.seat_info.zone}
                           </span>
-                        )}
-                        {post.seat_info.row && (
-                          <span className="inline-block px-2 py-0.5 rounded-full bg-bg-tertiary text-text-secondary text-xs">
-                            {post.seat_info.row}열
-                          </span>
-                        )}
-                        {post.seat_info.seat && (
-                          <span className="inline-block px-2 py-0.5 rounded-full bg-bg-tertiary text-text-secondary text-xs">
-                            {post.seat_info.seat}번
-                          </span>
+                          {post.seat_info.block && (
+                            <span className="inline-block px-2 py-0.5 rounded-full bg-bg-tertiary text-text-secondary text-xs">
+                              {post.seat_info.block}블록
+                            </span>
+                          )}
+                          {post.seat_info.row && (
+                            <span className="inline-block px-2 py-0.5 rounded-full bg-bg-tertiary text-text-secondary text-xs">
+                              {post.seat_info.row}열
+                            </span>
+                          )}
+                          {post.seat_info.seat && (
+                            <span className="inline-block px-2 py-0.5 rounded-full bg-bg-tertiary text-text-secondary text-xs">
+                              {post.seat_info.seat}번
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      <p className="text-sm text-text-secondary whitespace-pre-wrap">{post.content}</p>
+                      {/* 이미지 썸네일 — 탭 시 라이트박스 */}
+                      {post.image_urls && post.image_urls.length > 0 && (
+                        <div className="flex gap-2 mt-3 overflow-x-auto">
+                          {post.image_urls.map((url, i) => (
+                            <button
+                              key={i}
+                              type="button"
+                              onClick={() => setExpandedImageUrl(url)}
+                              className="relative flex-shrink-0 w-24 h-24 rounded-lg overflow-hidden active:opacity-80"
+                              aria-label="좌석팁 이미지 크게 보기"
+                            >
+                              <Image src={url} alt="" fill className="object-cover" unoptimized />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between gap-3 mt-3">
+                        <p className="text-xs text-text-tertiary">{post.nickname || "익명"}</p>
+                        {isAuthor && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingSeatPost(post);
+                              setShowWrite(true);
+                            }}
+                            className="rounded-full bg-bg-tertiary px-3 py-1.5 text-xs font-semibold text-text-secondary active:bg-bg-secondary"
+                          >
+                            수정
+                          </button>
                         )}
                       </div>
-                    )}
-                    <p className="text-sm text-text-secondary whitespace-pre-wrap">{post.content}</p>
-                    {/* 이미지 썸네일 */}
-                    {post.image_urls && post.image_urls.length > 0 && (
-                      <div className="flex gap-2 mt-3 overflow-x-auto">
-                        {post.image_urls.map((url, i) => (
-                          <div key={i} className="relative flex-shrink-0 w-24 h-24 rounded-lg overflow-hidden">
-                            <Image src={url} alt="" fill className="object-cover" unoptimized />
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <p className="text-xs text-text-tertiary mt-3">{post.nickname || "익명"}</p>
-                  </GlassCard>
-                ))}
+                    </GlassCard>
+                  );
+                })}
               </div>
             )}
           </section>
@@ -387,6 +427,7 @@ export default function StadiumDetailPage() {
               setShowLogin(true);
               return;
             }
+            setEditingSeatPost(null); // 새 글쓰기 모드
             setShowWrite(true);
           }}
           className="fixed bottom-24 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
@@ -397,11 +438,32 @@ export default function StadiumDetailPage() {
 
       <WritePost
         isOpen={showWrite}
-        onClose={() => setShowWrite(false)}
+        onClose={() => {
+          setShowWrite(false);
+          setEditingSeatPost(null);
+        }}
         teamName={`${stadium.name} ${active === "seats" ? "좌석팁" : "후기"}`}
         seatTipMode={active === "seats"}
         zones={stadium.zones}
+        initialTitle={editingSeatPost?.title}
+        initialContent={editingSeatPost?.content}
+        initialImageUrls={editingSeatPost?.image_urls}
+        initialSeatInfo={editingSeatPost?.seat_info ?? null}
+        submitText={editingSeatPost ? "저장" : "등록"}
         onSubmit={async (title, content, imageUrls, seatInfo) => {
+          if (editingSeatPost) {
+            await updatePost(editingSeatPost.id, {
+              title,
+              content,
+              imageUrls,
+              seatInfo: seatInfo ?? null,
+            });
+            await reloadSeatPosts();
+            setShowWrite(false);
+            setEditingSeatPost(null);
+            return;
+          }
+
           await createPost({
             boardType: "stadium",
             boardId: active === "seats" ? seatBoardId : reviewBoardId,
@@ -420,6 +482,30 @@ export default function StadiumDetailPage() {
           setShowWrite(false);
         }}
       />
+
+      {/* 이미지 라이트박스 (좌석팁 전용) */}
+      {expandedImageUrl && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="좌석팁 이미지 크게 보기"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
+          onClick={() => setExpandedImageUrl(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setExpandedImageUrl(null)}
+            className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white"
+            aria-label="이미지 닫기"
+          >
+            <X size={22} />
+          </button>
+          <div className="relative h-full max-h-full w-full max-w-full" onClick={(e) => e.stopPropagation()}>
+            <Image src={expandedImageUrl} alt="" fill className="object-contain" unoptimized />
+          </div>
+        </div>
+      )}
+
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
     </div>
   );
