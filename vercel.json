@@ -20,6 +20,7 @@
     { "path": "/api/cron/daily-fallback-report", "schedule": "0 0 * * *" },
     { "path": "/api/cron/daily-analysis", "schedule": "0 16 * * *" },
     { "path": "/api/cron/retention", "schedule": "30 0 * * *" },
-    { "path": "/api/cron/prewarm-summaries", "schedule": "15 8,9,10,11,12,13,14 * * *" }
+    { "path": "/api/cron/prewarm-summaries", "schedule": "15 8,9,10,11,12,13,14 * * *" },
+    { "path": "/api/cron/game-events-warmup", "schedule": "* 5-14 * * *" }
   ]
 }
