@@ -124,6 +124,26 @@ export function generateEvents(
 ): { events: GameEvent[]; nextState: PrevGameState } {
   const events: GameEvent[] = [];
 
+  // [DEBUG strikeout-diff] entry trace — remove after diagnosis
+  const sumSO = (rows: readonly BatterRecord[] | undefined) =>
+    (rows ?? []).reduce((a, r) => a + (r.so || 0), 0);
+  console.log("[event-gen entry]", JSON.stringify({
+    gameId,
+    hasPrev: !!prev,
+    hasPrevBox: !!prev?.boxScore,
+    prevInning: prev ? `${prev.live.inning}${prev.live.isTop ? "T" : "B"}` : null,
+    prevOuts: prev?.live.outs,
+    currInning: `${currentLive.inning}${currentLive.isTop ? "T" : "B"}`,
+    currOuts: currentLive.outs,
+    isLive: currentLive.isLive,
+    prevAwaySO: sumSO(prev?.boxScore?.awayBatters),
+    currAwaySO: sumSO(currentBoxScore?.awayBatters),
+    prevHomeSO: sumSO(prev?.boxScore?.homeBatters),
+    currHomeSO: sumSO(currentBoxScore?.homeBatters),
+    currAwayBatterCount: currentBoxScore?.awayBatters?.length ?? 0,
+    currHomeBatterCount: currentBoxScore?.homeBatters?.length ?? 0,
+  }));
+
   // First poll — no prev state, emit game_start if live
   if (!prev) {
     if (currentLive.isLive) {
@@ -210,6 +230,17 @@ export function generateEvents(
       const currBatters = isTop ? currentBoxScore.awayBatters : currentBoxScore.homeBatters;
       const pitcherName = live.currentPitcher || undefined;
       const batterDiffs = diffBatters(prevBatters, currBatters);
+
+      // [DEBUG strikeout-diff] per-side trace — remove after diagnosis
+      console.log("[event-gen side]", JSON.stringify({
+        gameId,
+        side: isTop ? "away" : "home",
+        prevBatterRows: (prevBatters ?? []).map(b => `${b.name}:so${b.so}h${b.hits}bb${b.bb}`),
+        currBatterRows: (currBatters ?? []).map(b => `${b.name}:so${b.so}h${b.hits}bb${b.bb}`),
+        diffEntries: Array.from(batterDiffs.entries()).map(
+          ([n, d]) => `${n}:so${d.so}h${d.hits}bb${d.bb}hr${d.hr}h2${d.h2b}h3${d.h3b}`,
+        ),
+      }));
 
       for (const [batterName, diff] of batterDiffs) {
         // Order matters within a single batter: HR/3B/2B counted explicitly,
