@@ -68,7 +68,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const [input, setInput] = useState("");
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const composerRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // 최신순: 최신 메시지가 리스트 상단. 크관은 중계↔최신댓글 왕복 부담을
   // 줄이기 위해 최신글이 위에 오는 레이아웃을 사용한다.
@@ -80,7 +80,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
    * - composer는 fixed가 아니라 messages 리스트 *앞*(MoodGauge 직후)에
    *   inline 배치한다. reverse(최신순) 리스트의 최신글이 composer 바로
    *   아래로 슬롯되어 "최신글=상단" 제약을 만족.
-   * - focus 시 input을 scrollIntoView({block:"start"}) 단발 — iOS
+   * - focus 시 textarea를 scrollIntoView({block:"start"}) 단발 — iOS
    *   native가 키보드 + 액세서리 바(^V✓)와 함께 자동 정렬하도록 위임.
    *   visualViewport listener / window.scrollBy / 다중 setTimeout align
    *   루프는 전부 제거(V2 회귀 방지).
@@ -100,12 +100,12 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const onFocusIn = (e: FocusEvent) => {
       if (!isComposerTarget(e.target)) return;
       document.body.classList.add("kbd-open");
-      // composer-top 모델: focused input을 viewport *상단*으로 정렬.
+      // composer-top 모델: focused textarea를 viewport *상단*으로 정렬.
       // 페이지 상단(Room selector / MoodGauge)이 화면 밖으로 밀리고
       // composer + 최신글 묶음만 보이게 된다. iOS form-assistant는
       // 액세서리 바를 focused input 위로 자동 push.
       requestAnimationFrame(() => {
-        inputRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
+        textareaRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
       });
     };
 
@@ -237,25 +237,30 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       {/* Input — INLINE composer (TOP, V3).
           composer는 messages 리스트 *앞*(MoodGauge 직후)에 위치. reverse
           리스트의 최신글이 composer 바로 아래로 슬롯되어 "최신글=상단"
-          제약을 만족한다. fixed 폐기 + focus 시 input.scrollIntoView
+          제약을 만족한다. fixed 폐기 + focus 시 textarea.scrollIntoView
           ({block:"start"}) 단발만. iOS interactive-widget=resizes-content가
           layout viewport를 키보드만큼 줄여주고, 액세서리 바(^V✓)는 native
-          form-assistant가 focused input 위로 자동 push. */}
+          form-assistant가 focused input 위로 자동 push.
+          textarea는 auto-grow (Safari 17.4+ field-sizing:content + JS scrollHeight
+          fallback). max 4줄(~6rem) 후 내부 세로 스크롤. */}
       <div
         ref={composerRef}
         data-composer="game-chat"
         className="border-b border-border bg-bg-secondary/95"
         style={{ backdropFilter: "blur(12px)" }}
       >
-        <div className="max-w-[640px] mx-auto px-3 py-2 flex items-center gap-2">
+        <div className="max-w-[640px] mx-auto px-3 py-2 flex items-end gap-2">
           <div className="relative flex-1">
-            <input
-              ref={inputRef}
-              type="text"
+            <textarea
+              ref={textareaRef}
+              rows={1}
               value={input}
               onChange={(e) => {
                 const v = e.target.value.replace(/\n/g, "");
                 if (v.length <= 120) setInput(v);
+                const el = e.target;
+                el.style.height = "auto";
+                el.style.height = `${Math.min(el.scrollHeight, 96)}px`;
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
@@ -273,8 +278,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
               inputMode="text"
               name="chat-message"
               maxLength={120}
+              style={{ fieldSizing: "content" } as React.CSSProperties}
               className={clsx(
-                "w-full h-10 px-4 rounded-full text-base",
+                "w-full min-h-[40px] max-h-[6rem] px-4 py-2 rounded-2xl text-base leading-6",
+                "resize-none overflow-y-auto",
                 "bg-bg-tertiary text-text-primary placeholder:text-text-tertiary",
                 "border focus:outline-none transition-colors",
                 !canWrite && "opacity-50",
