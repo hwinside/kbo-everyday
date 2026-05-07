@@ -44,11 +44,16 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip, 
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   // 모달 열릴 때 기존 선택 복원 (빈 배열이면 초기화)
+  // initialPlayers를 dep에 직접 넣으면 default `[]` 또는 부모 리렌더가 ref를 흔들어
+  // toggle 직후 effect 재실행 → setSelected 초기화로 선택이 안 남는 회귀 발생.
+  // 따라서 ref로 캡처해 isOpen false→true 트랜지션 시점에만 한 번 적용.
+  const initialPlayersRef = useRef(initialPlayers);
+  useEffect(() => { initialPlayersRef.current = initialPlayers; });
   useEffect(() => {
     if (isOpen) {
-      setSelected(new Set(initialPlayers.map(p => p.playerId)));
+      setSelected(new Set(initialPlayersRef.current.map(p => p.playerId)));
     }
-  }, [isOpen, initialPlayers]);
+  }, [isOpen]);
   const [search, setSearch] = useState("");
   const [showAll, setShowAll] = useState(false);
   const team = getTeamById(teamId);
