@@ -4,18 +4,22 @@ import playersRoster from "@/lib/constants/players-roster.json";
 import batterStats from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 import { TEAMS } from "@/lib/constants/teams";
+import { INJURY_BLOCKLIST_KEYS } from "@/lib/constants/injury-blocklist";
 import { fetchStandings, fetchGames, fetchBoxScore, type TeamStanding, type BoxScoreResult, type KboGame } from "@/lib/crawler/kbo-api";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
-const PREVIEW_VERSION = 6; // v6: 실제 라인업 + 최근5경기 + 상대전적 + 투수등판기록
+const PREVIEW_VERSION = 7; // v7: 부상자 blocklist 차감 (Phase 0 hotfix)
 
-// Build a set of current roster players (teamShortName:playerName) for filtering
+// Build a set of current roster players (teamShortName:playerName) for filtering, 부상자 제외.
 const currentRosterSet = new Set<string>();
 for (const p of playersRoster) {
   const team = TEAMS.find(t => t.id === p.teamId);
-  if (team) currentRosterSet.add(`${team.shortName}:${p.name}`);
+  if (!team) continue;
+  const key = `${team.shortName}:${p.name}`;
+  if (INJURY_BLOCKLIST_KEYS.has(key)) continue;
+  currentRosterSet.add(key);
 }
 
 interface PreviewRequest {
