@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Play, MoreHorizontal } from "lucide-react";
+import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { getTeamById } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import { parsePlayerTag } from "@/lib/utils/player-tags";
@@ -105,6 +106,39 @@ function MediaElement({ url, isVideo, sizes }: { url: string; isVideo: boolean; 
   );
 }
 
+function ZoomableSlide({
+  slide,
+  onZoomChange,
+}: {
+  slide: MediaSlide;
+  onZoomChange: (zoomed: boolean) => void;
+}) {
+  if (slide.isVideo) {
+    return <MediaElement url={slide.url} isVideo={slide.isVideo} />;
+  }
+
+  return (
+    <TransformWrapper
+      initialScale={1}
+      minScale={1}
+      maxScale={4}
+      doubleClick={{ disabled: true }}
+      wheel={{ disabled: true }}
+      panning={{ velocityDisabled: true }}
+      onTransform={(_ref, state) => {
+        onZoomChange(state.scale > 1.01);
+      }}
+    >
+      <TransformComponent
+        wrapperClass="!w-full !h-auto"
+        contentClass="!w-full"
+      >
+        <MediaElement url={slide.url} isVideo={slide.isVideo} />
+      </TransformComponent>
+    </TransformWrapper>
+  );
+}
+
 function PhotoCarousel({
   slides,
   onDoubleTap,
@@ -119,20 +153,33 @@ function PhotoCarousel({
   const [translateX, setTranslateX] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
   const lastTapRef = useRef(0);
+  // 줌이 활성화된 슬라이드는 캐러셀 swipe를 막아야 핀치/팬 제스처와 충돌하지 않음
+  const [zoomedIdx, setZoomedIdx] = useState<number | null>(null);
+
+  const handleZoomChange = useCallback((idx: number, zoomed: boolean) => {
+    setZoomedIdx((prev) => {
+      if (zoomed) return idx;
+      if (prev === idx) return null;
+      return prev;
+    });
+  }, []);
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length >= 2 || zoomedIdx !== null) return;
     touchStartX.current = e.touches[0].clientX;
     touchDeltaX.current = 0;
     setIsSwiping(true);
-  }, []);
+  }, [zoomedIdx]);
 
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (!isSwiping || e.touches.length >= 2 || zoomedIdx !== null) return;
     const delta = e.touches[0].clientX - touchStartX.current;
     touchDeltaX.current = delta;
     setTranslateX(delta);
-  }, []);
+  }, [isSwiping, zoomedIdx]);
 
   const handleTouchEnd = useCallback(() => {
+    if (!isSwiping) return;
     setIsSwiping(false);
     const threshold = 50;
     if (touchDeltaX.current < -threshold && current < slides.length - 1) {
@@ -141,10 +188,11 @@ function PhotoCarousel({
       setCurrent((prev) => prev - 1);
     }
     setTranslateX(0);
-  }, [current, slides.length]);
+  }, [current, isSwiping, slides.length]);
 
-  // Double-tap detection for mobile
+  // Double-tap detection for mobile (줌 중일 땐 좋아요로 흘리지 않음)
   const handleTap = useCallback(() => {
+    if (zoomedIdx !== null) return;
     const now = Date.now();
     if (now - lastTapRef.current < 300) {
       onDoubleTap();
@@ -152,16 +200,24 @@ function PhotoCarousel({
     } else {
       lastTapRef.current = now;
     }
-  }, [onDoubleTap]);
+  }, [onDoubleTap, zoomedIdx]);
+
+  const handleDoubleClick = useCallback(() => {
+    if (zoomedIdx !== null) return;
+    onDoubleTap();
+  }, [onDoubleTap, zoomedIdx]);
 
   if (slides.length === 1) {
     return (
       <div
         className="relative w-full overflow-hidden bg-bg-tertiary"
-        onDoubleClick={onDoubleTap}
+        onDoubleClick={handleDoubleClick}
         onClick={handleTap}
       >
-        <MediaElement url={slides[0].url} isVideo={slides[0].isVideo} />
+        <ZoomableSlide
+          slide={slides[0]}
+          onZoomChange={(z) => handleZoomChange(0, z)}
+        />
       </div>
     );
   }
@@ -169,7 +225,7 @@ function PhotoCarousel({
   return (
     <div
       className="relative w-full overflow-hidden bg-bg-tertiary"
-      onDoubleClick={onDoubleTap}
+      onDoubleClick={handleDoubleClick}
       onClick={handleTap}
     >
       <div
@@ -185,7 +241,10 @@ function PhotoCarousel({
       >
         {slides.map((slide, i) => (
           <div key={i} className="w-full flex-shrink-0">
-            <MediaElement url={slide.url} isVideo={slide.isVideo} />
+            <ZoomableSlide
+              slide={slide}
+              onZoomChange={(z) => handleZoomChange(i, z)}
+            />
           </div>
         ))}
       </div>
