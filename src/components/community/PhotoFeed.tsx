@@ -130,14 +130,6 @@ function ZoomableSlide({
           ? "fixed inset-0 z-50 bg-black/95 flex items-center justify-center touch-none"
           : "relative w-full"
       }
-      onTouchEnd={(e) => {
-        if (e.touches.length === 0) {
-          wrapperRef.current?.resetTransform(0);
-        }
-      }}
-      onTouchCancel={() => {
-        wrapperRef.current?.resetTransform(0);
-      }}
     >
       <TransformWrapper
         ref={wrapperRef}
@@ -148,6 +140,12 @@ function ZoomableSlide({
         wheel={{ disabled: true }}
         // 줄이 안 된 상태(scale=1)에서는 판닝 비활성 — 단일 손가락 세로 스와이프가 페이지 스크롤로 이어지도록 native scroll에 양보
         panning={{ velocityDisabled: true, disabled: !isZooming }}
+        // 핀치/팬 종료(마지막 손가락 떼는 시점)에 즉시 인라인으로 원복.
+        // outer onTouchEnd로는 잡을 수 없음 — 라이브러리가 touchend에서 stopPropagation 호출.
+        onPinchStop={(ref) => ref.resetTransform(0)}
+        onPanningStop={(ref) => {
+          if (ref.state.scale > 1.01) ref.resetTransform(0);
+        }}
         onTransform={(_ref, state) => {
           onScale(state.scale);
           const zooming = state.scale > 1.01;
