@@ -97,9 +97,9 @@ function MediaElement({ url, isVideo, sizes }: { url: string; isVideo: boolean; 
       alt="photo"
       width={800}
       height={1000}
-      className="w-full object-cover pointer-events-none select-none"
+      className="w-full object-contain pointer-events-none select-none bg-black"
       draggable={false}
-      style={{ aspectRatio: "4/5", WebkitTouchCallout: "none" } as React.CSSProperties}
+      style={{ maxHeight: "80vh", WebkitTouchCallout: "none" } as React.CSSProperties}
       sizes={sizes ?? "(max-width: 768px) 100vw, 600px"}
     />
   );
