@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchGames } from "@/lib/crawler/kbo-api";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
+import { fetchNaverRelayBatterCounts } from "@/lib/naver-relay-counts";
 
 /** 숫자 kboId로 로스터 조회 — 외국인 숫자→영문 변환 포함 */
 function findPlayerByNumericId(numericId: string): { name: string } | undefined {
@@ -423,34 +424,45 @@ export async function fetchNaverRecord(kboGameId: string): Promise<{
 } | null> {
   try {
     const nId = naverGameId(kboGameId);
-    const res = await fetch(`${NAVER_API}/${nId}/record`, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
-      next: { revalidate: 30 },
-    });
+    // record API는 hit만 채우고 h2/h3는 항상 null, hr도 라이브 중 0으로 들어와서
+    // 2루타/3루타가 단타로 뭉개진다. relay textRelayData에서 결과 텍스트를
+    // 카운트해서 batter별 h2b/h3b/hr를 보강.
+    const [res, relayCounts] = await Promise.all([
+      fetch(`${NAVER_API}/${nId}/record`, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
+        next: { revalidate: 30 },
+      }),
+      fetchNaverRelayBatterCounts(nId).catch(() => new Map()),
+    ]);
     if (!res.ok) return null;
     const json = await res.json();
     const rd = json?.result?.recordData;
     if (!rd?.battersBoxscore || !rd?.pitchersBoxscore) return null;
 
     function toBatters(arr: Record<string, unknown>[]): BatterRecord[] {
-      return (arr || []).map((b) => ({
-        order: Number(b.batOrder) || 0,
-        position: POS_SHORT_TO_FULL[String(b.pos)] || String(b.pos || ""),
-        positionFull: positionFullName(String(b.pos || "")),
-        name: String(b.name || ""),
-        atBats: Number(b.ab) || 0,
-        hits: Number(b.hit) || 0,
-        runs: Number(b.run) || 0,
-        rbi: Number(b.rbi) || 0,
-        hr: Number(b.hr) || 0,
-        h2b: Number(b.h2) || 0,
-        h3b: Number(b.h3) || 0,
-        bb: Number(b.bb) || 0,
-        so: Number(b.kk) || 0,
-        sb: Number(b.sb) || 0,
-        avg: String(b.hra || ""),
-        isSubstitute: Number(b.batOrder) === 0,
-      }));
+      return (arr || []).map((b) => {
+        const name = String(b.name || "");
+        const relay = relayCounts.get(name);
+        return {
+          order: Number(b.batOrder) || 0,
+          position: POS_SHORT_TO_FULL[String(b.pos)] || String(b.pos || ""),
+          positionFull: positionFullName(String(b.pos || "")),
+          name,
+          atBats: Number(b.ab) || 0,
+          hits: Number(b.hit) || 0,
+          runs: Number(b.run) || 0,
+          rbi: Number(b.rbi) || 0,
+          // record가 정확하면 그대로, 비어있으면 relay 카운트로 보강.
+          hr: Math.max(Number(b.hr) || 0, relay?.hr ?? 0),
+          h2b: Math.max(Number(b.h2) || 0, relay?.h2b ?? 0),
+          h3b: Math.max(Number(b.h3) || 0, relay?.h3b ?? 0),
+          bb: Number(b.bb) || 0,
+          so: Number(b.kk) || 0,
+          sb: Number(b.sb) || 0,
+          avg: String(b.hra || ""),
+          isSubstitute: Number(b.batOrder) === 0,
+        };
+      });
     }
 
     function toPitchers(arr: Record<string, unknown>[]): PitcherRecord[] {
