@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { X, ChevronUp, ChevronDown, Volume2, VolumeX } from "lucide-react";
+import { X, ChevronUp, ChevronDown, Volume2, VolumeX, RotateCcw } from "lucide-react";
 import { Play } from "lucide-react";
 
 interface ReelVideo {
@@ -21,6 +21,7 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
   const [current, setCurrent] = useState(startIndex);
   const [muted, setMuted] = useState(true); // 뮤트로 시작
   const [started, setStarted] = useState(false);
+  const [ended, setEnded] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const touchStartY = useRef(0);
   const touchMoved = useRef(false);
@@ -36,17 +37,29 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
   }, []);
 
   const goNext = useCallback(() => {
-    if (current < videos.length - 1) setCurrent(c => c + 1);
+    if (current < videos.length - 1) {
+      setCurrent(c => c + 1);
+      setEnded(false);
+    }
   }, [current, videos.length]);
 
   const goPrev = useCallback(() => {
-    if (current > 0) setCurrent(c => c - 1);
+    if (current > 0) {
+      setCurrent(c => c - 1);
+      setEnded(false);
+    }
   }, [current]);
 
   const toggleMute = useCallback(() => {
     postCmd(muted ? "unMute" : "mute");
     setMuted(m => !m);
   }, [muted, postCmd]);
+
+  const replay = useCallback(() => {
+    postCmd("seekTo", [0, true]);
+    postCmd("playVideo");
+    setEnded(false);
+  }, [postCmd]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartY.current = e.touches[0].clientY;
@@ -88,6 +101,43 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
       setTimeout(() => postCmd("mute"), 300);
     }
   }, [video.id, started, muted, postCmd]);
+
+  // YT IFrame API: ENDED(0) 감지 → 커스텀 다시보기 버튼 노출
+  useEffect(() => {
+    if (!started) return;
+    const onMessage = (e: MessageEvent) => {
+      if (typeof e.origin !== "string" || !e.origin.includes("youtube.com")) return;
+      if (typeof e.data !== "string") return;
+      let payload: { event?: string; info?: number | { playerState?: number } };
+      try { payload = JSON.parse(e.data); } catch { return; }
+      // onStateChange: info = state code (0=ended, 1=playing, ...)
+      if (payload.event === "onStateChange") {
+        if (payload.info === 0) setEnded(true);
+        else if (payload.info === 1) setEnded(false);
+        return;
+      }
+      // infoDelivery: info.playerState = state code
+      if (payload.event === "infoDelivery" && typeof payload.info === "object" && payload.info) {
+        const ps = payload.info.playerState;
+        if (ps === 0) setEnded(true);
+        else if (ps === 1) setEnded(false);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    // 이벤트 수신 등록 (enablejsapi=1 + listening 메시지 필요)
+    const register = () => {
+      iframeRef.current?.contentWindow?.postMessage(
+        JSON.stringify({ event: "listening", id: "kbo-reel", channel: "widget" }),
+        "*"
+      );
+    };
+    register();
+    const t = setTimeout(register, 500);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      clearTimeout(t);
+    };
+  }, [started, video.id]);
 
   return (
     <div className="fixed inset-0 z-[100] bg-black">
@@ -136,6 +186,20 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
             onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
           />
+
+          {/* 다시보기 버튼 (영상 종료 시) */}
+          {ended && (
+            <div className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none">
+              <button
+                onClick={(e) => { e.stopPropagation(); replay(); }}
+                className="pointer-events-auto flex flex-col items-center gap-2 px-6 py-5 rounded-2xl bg-black/70 backdrop-blur-sm active:scale-95 transition-transform"
+                aria-label="다시보기"
+              >
+                <RotateCcw size={36} className="text-white" />
+                <span className="text-white text-sm font-medium">다시보기</span>
+              </button>
+            </div>
+          )}
 
           {/* Header */}
           <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-4 pt-[env(safe-area-inset-top)] py-3">
