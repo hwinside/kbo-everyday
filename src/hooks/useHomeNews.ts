@@ -23,7 +23,7 @@ export interface HomeNewsItem {
   type: "news";
 }
 
-const NEWS_CACHE_KEY = "kbo-home-news";
+const NEWS_CACHE_KEY = "kbo-home-news-v2";
 const NEWS_CACHE_TTL = 30 * 60 * 1000; // 30분
 
 function toHomeNewsItems(items: NewsItem[], myTeamId: number | null): HomeNewsItem[] {
