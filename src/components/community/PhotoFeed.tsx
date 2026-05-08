@@ -146,7 +146,8 @@ function ZoomableSlide({
         maxScale={4}
         doubleClick={{ disabled: true }}
         wheel={{ disabled: true }}
-        panning={{ velocityDisabled: true }}
+        // 줄이 안 된 상태(scale=1)에서는 판닝 비활성 — 단일 손가락 세로 스와이프가 페이지 스크롤로 이어지도록 native scroll에 양보
+        panning={{ velocityDisabled: true, disabled: !isZooming }}
         onTransform={(_ref, state) => {
           onScale(state.scale);
           const zooming = state.scale > 1.01;
@@ -185,7 +186,10 @@ function PhotoCarousel({
   const [current, setCurrent] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const touchStartX = useRef(0);
+  const touchStartY = useRef(0);
   const touchDeltaX = useRef(0);
+  // 수직/수평 적의도 판별 — 수직 스크롤을 캸러셌이 가로채지 않도록
+  const swipeAxisRef = useRef<"none" | "horizontal" | "vertical">("none");
   const [translateX, setTranslateX] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
   const lastTapRef = useRef(0);
@@ -228,18 +232,40 @@ function PhotoCarousel({
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     if (e.touches.length >= 2 || isZoomActive()) return;
     touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
     touchDeltaX.current = 0;
+    swipeAxisRef.current = "none";
     setIsSwiping(true);
   }, [isZoomActive]);
 
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
     if (!isSwiping || e.touches.length >= 2 || isZoomActive()) return;
-    const delta = e.touches[0].clientX - touchStartX.current;
-    touchDeltaX.current = delta;
-    setTranslateX(delta);
+    const deltaX = e.touches[0].clientX - touchStartX.current;
+    const deltaY = e.touches[0].clientY - touchStartY.current;
+
+    // 이동 의도 판별 전에는 캐러셀을 움직이지 않는다. 임계값보다 작으면 아직 대기.
+    if (swipeAxisRef.current === "none") {
+      const absX = Math.abs(deltaX);
+      const absY = Math.abs(deltaY);
+      if (absX < 8 && absY < 8) return;
+      // 세로가 크면 페이지 세로 스크롤 의도 → 캐러셀 swipe 캊 양보
+      if (absY > absX) {
+        swipeAxisRef.current = "vertical";
+        setIsSwiping(false);
+        setTranslateX(0);
+        return;
+      }
+      swipeAxisRef.current = "horizontal";
+    }
+
+    if (swipeAxisRef.current === "vertical") return;
+
+    touchDeltaX.current = deltaX;
+    setTranslateX(deltaX);
   }, [isSwiping, isZoomActive]);
 
   const handleTouchEnd = useCallback(() => {
+    swipeAxisRef.current = "none";
     if (!isSwiping) return;
     setIsSwiping(false);
     // swipe 시작 후 두 번째 손가락이 들어와 핀치로 전환됐다면 슬라이드 변경 무시
