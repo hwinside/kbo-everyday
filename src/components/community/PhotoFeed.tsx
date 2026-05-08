@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Play, MoreHorizontal } from "lucide-react";
-import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
+import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import { getTeamById } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import { parsePlayerTag } from "@/lib/utils/player-tags";
@@ -115,44 +115,73 @@ function ZoomableSlide({
   onZoomChange: (zoomed: boolean) => void;
   onScale: (scale: number) => void;
 }) {
-  // 줄이 없는 상태(scale=1)에서는 판닝을 비활성화해 단일 손가락 세로 스와이프가 페이지 스크롤로 이어지도록 native scroll에 양보
+  const wrapperRef = useRef<ReactZoomPanPinchRef>(null);
   const [isZooming, setIsZooming] = useState(false);
 
   if (slide.isVideo) {
     return <MediaElement url={slide.url} isVideo={slide.isVideo} />;
   }
 
+  // 줌 활성 시 wrapper를 viewport 풀스크린으로 띄우고, 손 다 떼면 즉시 원복
   return (
-    <TransformWrapper
-      initialScale={1}
-      minScale={1}
-      maxScale={4}
-      doubleClick={{ disabled: true }}
-      wheel={{ disabled: true }}
-      panning={{ velocityDisabled: true, disabled: !isZooming }}
-      onTransform={(_ref, state) => {
-        onScale(state.scale);
-        const zooming = state.scale > 1.01;
-        setIsZooming(zooming);
-        onZoomChange(zooming);
+    <div
+      className={
+        isZooming
+          ? "fixed inset-0 z-50 bg-black/95 flex items-center justify-center touch-none"
+          : "relative w-full"
+      }
+      onTouchEnd={(e) => {
+        if (e.touches.length === 0) {
+          wrapperRef.current?.resetTransform(0);
+        }
+      }}
+      onTouchCancel={() => {
+        wrapperRef.current?.resetTransform(0);
       }}
     >
-      <TransformComponent
-        wrapperClass="!w-full !h-auto"
-        contentClass="!w-full"
+      <TransformWrapper
+        ref={wrapperRef}
+        initialScale={1}
+        minScale={1}
+        maxScale={4}
+        doubleClick={{ disabled: true }}
+        wheel={{ disabled: true }}
+        // 줄이 안 된 상태(scale=1)에서는 판닝 비활성 — 단일 손가락 세로 스와이프가 페이지 스크롤로 이어지도록 native scroll에 양보
+        panning={{ velocityDisabled: true, disabled: !isZooming }}
+        onTransform={(_ref, state) => {
+          onScale(state.scale);
+          const zooming = state.scale > 1.01;
+          setIsZooming(zooming);
+          onZoomChange(zooming);
+        }}
       >
-        <MediaElement url={slide.url} isVideo={slide.isVideo} />
-      </TransformComponent>
-    </TransformWrapper>
+        <TransformComponent
+          wrapperClass={
+            isZooming
+              ? "!w-screen !h-screen !max-w-none !max-h-none"
+              : "!w-full !h-auto"
+          }
+          contentClass={
+            isZooming
+              ? "!w-full !h-full !flex !items-center !justify-center"
+              : "!w-full"
+          }
+        >
+          <MediaElement url={slide.url} isVideo={slide.isVideo} />
+        </TransformComponent>
+      </TransformWrapper>
+    </div>
   );
 }
 
 function PhotoCarousel({
   slides,
   onDoubleTap,
+  onZoomActiveChange,
 }: {
   slides: MediaSlide[];
   onDoubleTap: () => void;
+  onZoomActiveChange?: (active: boolean) => void;
 }) {
   const [current, setCurrent] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -168,6 +197,20 @@ function PhotoCarousel({
   const [zoomedIdx, setZoomedIdx] = useState<number | null>(null);
   // setState batch 윈도우 안에서 캐러셀이 swipe 시작하지 않도록 동기 ref로 scale 추적
   const currentScaleRef = useRef(1);
+
+  // zoomedIdx가 null로 전환된 직후 한 프레임 동안 캐러셀 transition을 잠가
+  // 풀스크린 → 인라인 복귀 시 슬라이드 swoosh 0.3s 애니메이션 방지
+  const [zoomCooldown, setZoomCooldown] = useState(false);
+
+  // 줌 활성 여부 부모로 전파 — 부모가 자기 overflow:hidden을 풀어 fixed overlay가 viewport까지 확장되도록
+  useEffect(() => {
+    onZoomActiveChange?.(zoomedIdx !== null);
+    if (zoomedIdx === null) {
+      setZoomCooldown(true);
+      const t = setTimeout(() => setZoomCooldown(false), 80);
+      return () => clearTimeout(t);
+    }
+  }, [zoomedIdx, onZoomActiveChange]);
 
   const handleZoomChange = useCallback((idx: number, zoomed: boolean) => {
     setZoomedIdx((prev) => {
@@ -256,10 +299,13 @@ function PhotoCarousel({
     onDoubleTap();
   }, [onDoubleTap, zoomedIdx]);
 
+  // 줌 활성 시 outer의 overflow-hidden은 fixed overlay를 클리핑하므로 풀어줌
+  const outerClass = `relative w-full bg-bg-tertiary ${zoomedIdx !== null ? "" : "overflow-hidden"}`;
+
   if (slides.length === 1) {
     return (
       <div
-        className="relative w-full overflow-hidden bg-bg-tertiary"
+        className={outerClass}
         onDoubleClick={handleDoubleClick}
         onClick={handleTap}
       >
@@ -274,7 +320,7 @@ function PhotoCarousel({
 
   return (
     <div
-      className="relative w-full overflow-hidden bg-bg-tertiary"
+      className={outerClass}
       onDoubleClick={handleDoubleClick}
       onClick={handleTap}
     >
@@ -282,8 +328,13 @@ function PhotoCarousel({
         ref={containerRef}
         className="flex"
         style={{
-          transform: `translateX(calc(-${current * 100}% + ${isSwiping ? translateX : 0}px))`,
-          transition: isSwiping ? "none" : "transform 0.3s ease-out",
+          // 줌 중에는 transform을 풀어 stacking context를 해제 → 자식의 fixed overlay가 viewport 기준으로 풀스크린 가능
+          transform:
+            zoomedIdx !== null
+              ? "none"
+              : `translateX(calc(-${current * 100}% + ${isSwiping ? translateX : 0}px))`,
+          // 줌 중/swipe 중/줌 release cooldown에서는 transition off — 인라인 복귀 시 슬라이드 swoosh 방지
+          transition: isSwiping || zoomedIdx !== null || zoomCooldown ? "none" : "transform 0.3s ease-out",
         }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
@@ -352,6 +403,8 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   // 게시글 메뉴 / 삭제 상태
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
   const [deletedIds, setDeletedIds] = useState<Set<number>>(new Set());
+  // 줌 활성 post id — post container의 overflow-hidden을 풀어 fixed overlay가 viewport까지 확장
+  const [zoomedPostId, setZoomedPostId] = useState<number | null>(null);
 
   const handleDelete = useCallback(async (postId: number) => {
     setMenuOpenId(null);
@@ -422,7 +475,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
             {/* Post separator */}
             {index > 0 && <div className="h-2 bg-white/[0.02]" />}
 
-            <div className="overflow-hidden">
+            <div className={zoomedPostId === post.id ? "" : "overflow-hidden"}>
               {/* Author header — 일반게시판(PostCard) 기준 통일 */}
               <div className="flex items-center gap-3 px-5 py-3">
                 {boardType === "player" && playerLabels?.[post.id] ? (
@@ -492,6 +545,9 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                       ...(post.video_urls ?? []).map((url) => ({ url, isVideo: true })),
                     ]}
                     onDoubleTap={() => handleDoubleTap(post.id)}
+                    onZoomActiveChange={(active) =>
+                      setZoomedPostId((prev) => (active ? post.id : prev === post.id ? null : prev))
+                    }
                   />
                   <HeartOverlay show={heartPostId === post.id} />
                 </div>
