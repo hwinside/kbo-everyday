@@ -176,9 +176,11 @@ function ZoomableSlide({
 function PhotoCarousel({
   slides,
   onDoubleTap,
+  onZoomActiveChange,
 }: {
   slides: MediaSlide[];
   onDoubleTap: () => void;
+  onZoomActiveChange?: (active: boolean) => void;
 }) {
   const [current, setCurrent] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -191,6 +193,20 @@ function PhotoCarousel({
   const [zoomedIdx, setZoomedIdx] = useState<number | null>(null);
   // setState batch 윈도우 안에서 캐러셀이 swipe 시작하지 않도록 동기 ref로 scale 추적
   const currentScaleRef = useRef(1);
+
+  // zoomedIdx가 null로 전환된 직후 한 프레임 동안 캐러셀 transition을 잠가
+  // 풀스크린 → 인라인 복귀 시 슬라이드 swoosh 0.3s 애니메이션 방지
+  const [zoomCooldown, setZoomCooldown] = useState(false);
+
+  // 줌 활성 여부 부모로 전파 — 부모가 자기 overflow:hidden을 풀어 fixed overlay가 viewport까지 확장되도록
+  useEffect(() => {
+    onZoomActiveChange?.(zoomedIdx !== null);
+    if (zoomedIdx === null) {
+      setZoomCooldown(true);
+      const t = setTimeout(() => setZoomCooldown(false), 80);
+      return () => clearTimeout(t);
+    }
+  }, [zoomedIdx, onZoomActiveChange]);
 
   const handleZoomChange = useCallback((idx: number, zoomed: boolean) => {
     setZoomedIdx((prev) => {
@@ -257,10 +273,13 @@ function PhotoCarousel({
     onDoubleTap();
   }, [onDoubleTap, zoomedIdx]);
 
+  // 줌 활성 시 outer의 overflow-hidden은 fixed overlay를 클리핑하므로 풀어줌
+  const outerClass = `relative w-full bg-bg-tertiary ${zoomedIdx !== null ? "" : "overflow-hidden"}`;
+
   if (slides.length === 1) {
     return (
       <div
-        className="relative w-full overflow-hidden bg-bg-tertiary"
+        className={outerClass}
         onDoubleClick={handleDoubleClick}
         onClick={handleTap}
       >
@@ -275,7 +294,7 @@ function PhotoCarousel({
 
   return (
     <div
-      className="relative w-full overflow-hidden bg-bg-tertiary"
+      className={outerClass}
       onDoubleClick={handleDoubleClick}
       onClick={handleTap}
     >
@@ -288,7 +307,8 @@ function PhotoCarousel({
             zoomedIdx !== null
               ? "none"
               : `translateX(calc(-${current * 100}% + ${isSwiping ? translateX : 0}px))`,
-          transition: isSwiping ? "none" : "transform 0.3s ease-out",
+          // 줌 중/swipe 중/줌 release cooldown에서는 transition off — 인라인 복귀 시 슬라이드 swoosh 방지
+          transition: isSwiping || zoomedIdx !== null || zoomCooldown ? "none" : "transform 0.3s ease-out",
         }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
@@ -357,6 +377,8 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   // 게시글 메뉴 / 삭제 상태
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
   const [deletedIds, setDeletedIds] = useState<Set<number>>(new Set());
+  // 줌 활성 post id — post container의 overflow-hidden을 풀어 fixed overlay가 viewport까지 확장
+  const [zoomedPostId, setZoomedPostId] = useState<number | null>(null);
 
   const handleDelete = useCallback(async (postId: number) => {
     setMenuOpenId(null);
@@ -427,7 +449,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
             {/* Post separator */}
             {index > 0 && <div className="h-2 bg-white/[0.02]" />}
 
-            <div className="overflow-hidden">
+            <div className={zoomedPostId === post.id ? "" : "overflow-hidden"}>
               {/* Author header — 일반게시판(PostCard) 기준 통일 */}
               <div className="flex items-center gap-3 px-5 py-3">
                 {boardType === "player" && playerLabels?.[post.id] ? (
@@ -497,6 +519,9 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                       ...(post.video_urls ?? []).map((url) => ({ url, isVideo: true })),
                     ]}
                     onDoubleTap={() => handleDoubleTap(post.id)}
+                    onZoomActiveChange={(active) =>
+                      setZoomedPostId((prev) => (active ? post.id : prev === post.id ? null : prev))
+                    }
                   />
                   <HeartOverlay show={heartPostId === post.id} />
                 </div>
