@@ -109,9 +109,11 @@ function MediaElement({ url, isVideo, sizes }: { url: string; isVideo: boolean; 
 function ZoomableSlide({
   slide,
   onZoomChange,
+  onScale,
 }: {
   slide: MediaSlide;
   onZoomChange: (zoomed: boolean) => void;
+  onScale: (scale: number) => void;
 }) {
   if (slide.isVideo) {
     return <MediaElement url={slide.url} isVideo={slide.isVideo} />;
@@ -126,6 +128,7 @@ function ZoomableSlide({
       wheel={{ disabled: true }}
       panning={{ velocityDisabled: true }}
       onTransform={(_ref, state) => {
+        onScale(state.scale);
         onZoomChange(state.scale > 1.01);
       }}
     >
@@ -155,6 +158,8 @@ function PhotoCarousel({
   const lastTapRef = useRef(0);
   // 줌이 활성화된 슬라이드는 캐러셀 swipe를 막아야 핀치/팬 제스처와 충돌하지 않음
   const [zoomedIdx, setZoomedIdx] = useState<number | null>(null);
+  // setState batch 윈도우 안에서 캐러셀이 swipe 시작하지 않도록 동기 ref로 scale 추적
+  const currentScaleRef = useRef(1);
 
   const handleZoomChange = useCallback((idx: number, zoomed: boolean) => {
     setZoomedIdx((prev) => {
@@ -164,23 +169,37 @@ function PhotoCarousel({
     });
   }, []);
 
+  const handleScale = useCallback((scale: number) => {
+    currentScaleRef.current = scale;
+  }, []);
+
+  const isZoomActive = useCallback(
+    () => zoomedIdx !== null || currentScaleRef.current > 1.01,
+    [zoomedIdx],
+  );
+
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    if (e.touches.length >= 2 || zoomedIdx !== null) return;
+    if (e.touches.length >= 2 || isZoomActive()) return;
     touchStartX.current = e.touches[0].clientX;
     touchDeltaX.current = 0;
     setIsSwiping(true);
-  }, [zoomedIdx]);
+  }, [isZoomActive]);
 
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
-    if (!isSwiping || e.touches.length >= 2 || zoomedIdx !== null) return;
+    if (!isSwiping || e.touches.length >= 2 || isZoomActive()) return;
     const delta = e.touches[0].clientX - touchStartX.current;
     touchDeltaX.current = delta;
     setTranslateX(delta);
-  }, [isSwiping, zoomedIdx]);
+  }, [isSwiping, isZoomActive]);
 
   const handleTouchEnd = useCallback(() => {
     if (!isSwiping) return;
     setIsSwiping(false);
+    // swipe 시작 후 두 번째 손가락이 들어와 핀치로 전환됐다면 슬라이드 변경 무시
+    if (isZoomActive()) {
+      setTranslateX(0);
+      return;
+    }
     const threshold = 50;
     if (touchDeltaX.current < -threshold && current < slides.length - 1) {
       setCurrent((prev) => prev + 1);
@@ -188,7 +207,7 @@ function PhotoCarousel({
       setCurrent((prev) => prev - 1);
     }
     setTranslateX(0);
-  }, [current, isSwiping, slides.length]);
+  }, [current, isSwiping, isZoomActive, slides.length]);
 
   // Double-tap detection for mobile (줌 중일 땐 좋아요로 흘리지 않음)
   const handleTap = useCallback(() => {
@@ -217,6 +236,7 @@ function PhotoCarousel({
         <ZoomableSlide
           slide={slides[0]}
           onZoomChange={(z) => handleZoomChange(0, z)}
+          onScale={handleScale}
         />
       </div>
     );
@@ -244,6 +264,7 @@ function PhotoCarousel({
             <ZoomableSlide
               slide={slide}
               onZoomChange={(z) => handleZoomChange(i, z)}
+              onScale={handleScale}
             />
           </div>
         ))}
