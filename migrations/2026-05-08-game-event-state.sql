@@ -35,4 +35,75 @@ CREATE TABLE IF NOT EXISTS public.game_event_state (
 CREATE INDEX IF NOT EXISTS idx_game_event_state_updated_at
   ON public.game_event_state (updated_at);
 
+-- ========================================================================
+-- Row-level security — table holds operational event state. Only
+-- service_role (server-side /api/game-events) may read or write it;
+-- anon and authenticated roles must never touch it directly.
+--
+-- Postgres treats a missing policy as deny under RLS. service_role
+-- bypasses RLS by default in Supabase, so we enable RLS, intentionally
+-- add no anon/authenticated policies, and revoke direct table grants for
+-- defense in depth.
+-- ========================================================================
+ALTER TABLE public.game_event_state ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON public.game_event_state FROM anon, authenticated;
+
+COMMENT ON TABLE public.game_event_state IS
+  'Server-side shared game event state. Access restricted to service_role only — anon/authenticated must NOT read or write directly. All access goes through /api/game-events on the server.';
+
+-- ========================================================================
+-- Atomic upsert function — prevents read-modify-write race where two
+-- concurrent pollers both read the same event_history, both append their
+-- newEvents, and the later upsert clobbers the earlier one.
+--
+-- ON CONFLICT path dedupes by event.id (jsonb element ->> 'id') so a
+-- retry/re-emit of the same logical event (e.g. two pollers minting an
+-- identical id during a race, or a retry after partial failure)
+-- collapses to one entry. DISTINCT ON keeps the earliest-timestamp copy.
+-- prev_state remains last-write-wins (acceptable — it's derived from KBO
+-- source each poll and self-heals on next call).
+--
+-- Returns the final event_history so the caller can render it without a
+-- second SELECT race.
+-- ========================================================================
+CREATE OR REPLACE FUNCTION public.upsert_game_event_state(
+  p_game_id     text,
+  p_prev_state  jsonb,
+  p_new_events  jsonb
+) RETURNS jsonb
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  final_history jsonb;
+BEGIN
+  INSERT INTO public.game_event_state (game_id, prev_state, event_history, updated_at)
+  VALUES (p_game_id, p_prev_state, COALESCE(p_new_events, '[]'::jsonb), NOW())
+  ON CONFLICT (game_id) DO UPDATE
+    SET prev_state    = EXCLUDED.prev_state,
+        event_history = COALESCE(
+          (
+            SELECT jsonb_agg(elem ORDER BY (elem->>'timestamp'))
+            FROM (
+              SELECT DISTINCT ON (elem->>'id') elem
+              FROM jsonb_array_elements(
+                public.game_event_state.event_history
+                || COALESCE(EXCLUDED.event_history, '[]'::jsonb)
+              ) AS t(elem)
+              ORDER BY elem->>'id', (elem->>'timestamp')
+            ) AS deduped
+          ),
+          '[]'::jsonb
+        ),
+        updated_at    = NOW()
+  RETURNING event_history INTO final_history;
+
+  RETURN final_history;
+END;
+$$;
+
+-- Restrict RPC execution to service_role; same trust boundary as the table.
+REVOKE EXECUTE ON FUNCTION public.upsert_game_event_state(text, jsonb, jsonb)
+  FROM anon, authenticated, public;
+
 COMMIT;

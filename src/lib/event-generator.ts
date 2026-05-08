@@ -122,6 +122,15 @@ export function generateEvents(
   currentLive: LiveGameData,
   currentBoxScore: GameDetailResponse["boxScore"],
 ): { events: GameEvent[]; nextState: PrevGameState } {
+  // Hydrate the module-level seqCounter from the shared `prev.seq` so a
+  // freshly-spawned serverless instance picks up where the previous one
+  // left off. Without this, two instances both starting at 0 would mint
+  // overlapping eventIds (e.g. `8-1`, `8-3`) and the client `seenRef`
+  // dedupe would either skip real events or accept duplicates.
+  if (prev && typeof prev.seq === "number") {
+    seqCounter = Math.max(seqCounter, prev.seq);
+  }
+
   const events: GameEvent[] = [];
 
   // [DEBUG strikeout-diff] entry trace — remove after diagnosis
