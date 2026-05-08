@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Play, MoreHorizontal } from "lucide-react";
-import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
+import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import { getTeamById } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import { parsePlayerTag } from "@/lib/utils/player-tags";
@@ -115,30 +115,61 @@ function ZoomableSlide({
   onZoomChange: (zoomed: boolean) => void;
   onScale: (scale: number) => void;
 }) {
+  const wrapperRef = useRef<ReactZoomPanPinchRef>(null);
+  const [isZooming, setIsZooming] = useState(false);
+
   if (slide.isVideo) {
     return <MediaElement url={slide.url} isVideo={slide.isVideo} />;
   }
 
+  // 줌 활성 시 wrapper를 viewport 풀스크린으로 띄우고, 손 다 떼면 즉시 원복
   return (
-    <TransformWrapper
-      initialScale={1}
-      minScale={1}
-      maxScale={4}
-      doubleClick={{ disabled: true }}
-      wheel={{ disabled: true }}
-      panning={{ velocityDisabled: true }}
-      onTransform={(_ref, state) => {
-        onScale(state.scale);
-        onZoomChange(state.scale > 1.01);
+    <div
+      className={
+        isZooming
+          ? "fixed inset-0 z-50 bg-black/95 flex items-center justify-center touch-none"
+          : "relative w-full"
+      }
+      onTouchEnd={(e) => {
+        if (e.touches.length === 0) {
+          wrapperRef.current?.resetTransform(0);
+        }
+      }}
+      onTouchCancel={() => {
+        wrapperRef.current?.resetTransform(0);
       }}
     >
-      <TransformComponent
-        wrapperClass="!w-full !h-auto"
-        contentClass="!w-full"
+      <TransformWrapper
+        ref={wrapperRef}
+        initialScale={1}
+        minScale={1}
+        maxScale={4}
+        doubleClick={{ disabled: true }}
+        wheel={{ disabled: true }}
+        panning={{ velocityDisabled: true }}
+        onTransform={(_ref, state) => {
+          onScale(state.scale);
+          const zooming = state.scale > 1.01;
+          setIsZooming(zooming);
+          onZoomChange(zooming);
+        }}
       >
-        <MediaElement url={slide.url} isVideo={slide.isVideo} />
-      </TransformComponent>
-    </TransformWrapper>
+        <TransformComponent
+          wrapperClass={
+            isZooming
+              ? "!w-screen !h-screen !max-w-none !max-h-none"
+              : "!w-full !h-auto"
+          }
+          contentClass={
+            isZooming
+              ? "!w-full !h-full !flex !items-center !justify-center"
+              : "!w-full"
+          }
+        >
+          <MediaElement url={slide.url} isVideo={slide.isVideo} />
+        </TransformComponent>
+      </TransformWrapper>
+    </div>
   );
 }
 
@@ -252,7 +283,11 @@ function PhotoCarousel({
         ref={containerRef}
         className="flex"
         style={{
-          transform: `translateX(calc(-${current * 100}% + ${isSwiping ? translateX : 0}px))`,
+          // 줌 중에는 transform을 풀어 stacking context를 해제 → 자식의 fixed overlay가 viewport 기준으로 풀스크린 가능
+          transform:
+            zoomedIdx !== null
+              ? "none"
+              : `translateX(calc(-${current * 100}% + ${isSwiping ? translateX : 0}px))`,
           transition: isSwiping ? "none" : "transform 0.3s ease-out",
         }}
         onTouchStart={handleTouchStart}
