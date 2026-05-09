@@ -108,10 +108,14 @@ function MediaElement({ url, isVideo, sizes }: { url: string; isVideo: boolean; 
 
 function ZoomableSlide({
   slide,
+  elevationGrace,
   onZoomChange,
   onScale,
 }: {
   slide: MediaSlide;
+  // zoom 종료 직후 dim overlay exit fade(0.24s) 동안 wrapper z-elevation을 유지하기 위한 grace 신호.
+  // 부모(PhotoCarousel)가 dim exit와 같은 길이로 켰다 끄는 별도 state(zoomCooldown 80ms와 분리).
+  elevationGrace: boolean;
   onZoomChange: (zoomed: boolean) => void;
   onScale: (scale: number) => void;
 }) {
@@ -149,8 +153,19 @@ function ZoomableSlide({
 
   // 자리 줌(인스타식): 사진을 viewport로 옮기지 않고 인라인 자리에서 그대로 확대.
   // dim overlay는 PhotoCarousel(transform 없는 부모) 레벨에 두어 viewport 기준으로 깔림.
+  // elevationGrace 동안 z-50 유지 — reset 끝에서 이미지 elevation이 dim(z-40) 아래로 떨어져
+  // 한 프레임 paint flicker(header/tab 재페인트)가 노출되는 회귀 방지. dim exit fade와 같은 길이.
+  // touch-none은 isZooming 일 때만 — reset 후 grace 동안은 사용자 터치를 막을 이유가 없음.
+  const elevated = isZooming || elevationGrace;
   return (
-    <div className={isZooming ? "relative w-full z-50 touch-none" : "relative w-full"}>
+    <div
+      className={
+        elevated
+          ? `relative w-full z-50${isZooming ? " touch-none" : ""}`
+          : "relative w-full"
+      }
+      style={elevated ? { willChange: "transform", transform: "translateZ(0)" } : undefined}
+    >
       <TransformWrapper
         ref={wrapperRef}
         initialScale={1}
@@ -214,14 +229,22 @@ function PhotoCarousel({
   const [zoomCooldown, setZoomCooldown] = useState(false);
   const cooldownTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 줌 활성 여부 부모로 전파 — 부모가 자기 overflow:hidden을 풀어 fixed overlay가 viewport까지 확장되도록
+  // dim overlay exit fade(0.24s) 동안 이미지 z-elevation을 유지 — grace 끝에 이미지가 z-default로
+  // 내려가도 dim이 이미 충분히 퇴장해 dark flash가 없도록 dim exit 길이와 맞춤.
+  const [elevationGrace, setElevationGrace] = useState(false);
+  const elevationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 줌 활성 여부 부모로 전파 — 부모가 자기 overflow:hidden을 풀어 fixed overlay가 viewport까지 확장되도록.
+  // zoomCooldown 동안에도 active로 보고해서 lib resetTransform animation이 정착하기 전에 overflow:hidden이 다시 박혀
+  // 부풀린 사진을 잠깐 잘라먹는 깜빡임을 방지.
   useEffect(() => {
-    onZoomActiveChange?.(zoomedIdx !== null);
-  }, [zoomedIdx, onZoomActiveChange]);
+    onZoomActiveChange?.(zoomedIdx !== null || zoomCooldown);
+  }, [zoomedIdx, zoomCooldown, onZoomActiveChange]);
 
   useEffect(() => {
     return () => {
       if (cooldownTimeoutRef.current) clearTimeout(cooldownTimeoutRef.current);
+      if (elevationTimeoutRef.current) clearTimeout(elevationTimeoutRef.current);
     };
   }, []);
 
@@ -235,6 +258,9 @@ function PhotoCarousel({
     if (cooldownTimeoutRef.current) clearTimeout(cooldownTimeoutRef.current);
     setZoomCooldown(true);
     cooldownTimeoutRef.current = setTimeout(() => setZoomCooldown(false), 80);
+    if (elevationTimeoutRef.current) clearTimeout(elevationTimeoutRef.current);
+    setElevationGrace(true);
+    elevationTimeoutRef.current = setTimeout(() => setElevationGrace(false), 250);
   }, []);
 
   const handleScale = useCallback((scale: number) => {
@@ -316,8 +342,9 @@ function PhotoCarousel({
     onDoubleTap();
   }, [onDoubleTap, zoomedIdx]);
 
-  // 줌 활성 시 outer의 overflow-hidden은 fixed overlay를 클리핑하므로 풀어줌
-  const outerClass = `relative w-full bg-bg-tertiary ${zoomedIdx !== null ? "" : "overflow-hidden"}`;
+  // 줌 활성 시 outer의 overflow-hidden은 fixed overlay를 클리핑하므로 풀어줌.
+  // zoomCooldown 동안에도 풀어둔 상태 유지 — lib resetTransform 마지막 frame까지 부풀린 사진이 잘리지 않게.
+  const outerClass = `relative w-full bg-bg-tertiary ${zoomedIdx !== null || zoomCooldown ? "" : "overflow-hidden"}`;
 
   // dim overlay는 outerClass div(transform 없는 부모) 자식으로 두어 fixed가 viewport 기준 동작.
   const dimOverlay = (
@@ -344,6 +371,7 @@ function PhotoCarousel({
         {dimOverlay}
         <ZoomableSlide
           slide={slides[0]}
+          elevationGrace={elevationGrace}
           onZoomChange={(z) => handleZoomChange(0, z)}
           onScale={handleScale}
         />
@@ -375,6 +403,7 @@ function PhotoCarousel({
           <div key={i} className="w-full flex-shrink-0">
             <ZoomableSlide
               slide={slide}
+              elevationGrace={elevationGrace}
               onZoomChange={(z) => handleZoomChange(i, z)}
               onScale={handleScale}
             />
