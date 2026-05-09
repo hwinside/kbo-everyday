@@ -31,6 +31,7 @@ type RosterPlayer = {
 };
 
 function getPlayerHref(name: string, teamId: number): string | null {
+  if (!name) return null;
   const roster = playersRoster as RosterPlayer[];
   const player =
     roster.find((entry) => entry.name === name && entry.teamId === teamId) ??
