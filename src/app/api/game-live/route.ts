@@ -1,6 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { KboRawGame } from "@/types/api";
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
+import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
+
+const __diagSeenPitchers = new Set<string>();
+
+function diagMissingPitcherPhoto(pitcherName: string | null, gameId: string) {
+  if (!pitcherName) return;
+  if (PLAYER_PHOTO_MAP[pitcherName]) return;
+  if (!/^[가-힣]+$/.test(pitcherName)) return;
+  if (__diagSeenPitchers.has(pitcherName)) return;
+  __diagSeenPitchers.add(pitcherName);
+  const codepoints = [...pitcherName].map(c => c.codePointAt(0)!.toString(16)).join(" ");
+  const utf8 = Buffer.from(pitcherName, "utf-8").toString("hex");
+  console.warn(
+    `[diag/missing-pitcher-photo] gameId=${gameId} name=${JSON.stringify(pitcherName)} ` +
+      `len=${pitcherName.length} codepoints=${codepoints} utf8=${utf8}`
+  );
+}
 
 export async function GET(req: NextRequest) {
   const date = req.nextUrl.searchParams.get("date") || new Date().toISOString().slice(0, 10).replace(/-/g, "");
@@ -21,6 +38,14 @@ export async function GET(req: NextRequest) {
         : g.GAME_STATE_SC === "3" ? "final"
         : g.GAME_STATE_SC === "2" ? "live"
         : "scheduled";
+      const resolvedPlayers = resolveCurrentPlayers({
+        tPlayerName: g.T_P_NM,
+        bPlayerName: g.B_P_NM,
+        gameTbSc: g.GAME_TB_SC,
+      });
+      if (status === "live") {
+        diagMissingPitcherPhoto(resolvedPlayers.currentPitcher, g.G_ID);
+      }
       return {
         gameId: g.G_ID,
         awayName: g.AWAY_NM,
@@ -41,11 +66,7 @@ export async function GET(req: NextRequest) {
         runner1bName: null,
         runner2bName: null,
         runner3bName: null,
-        ...resolveCurrentPlayers({
-          tPlayerName: g.T_P_NM,
-          bPlayerName: g.B_P_NM,
-          gameTbSc: g.GAME_TB_SC,
-        }),
+        ...resolvedPlayers,
         date: g.G_DT,
         stadium: g.S_NM,
         status,
