@@ -155,69 +155,42 @@ function ZoomableSlide({
     return <MediaElement url={slide.url} isVideo={slide.isVideo} />;
   }
 
-  // 줌 활성 시 wrapper를 viewport 풀스크린으로 띄우고, 손 다 떼면 즉시 원복.
-  // 검정 배경/투명 fade는 framer-motion overlay로 부드럽게.
+  // 자리 줌(인스타식): 사진을 viewport로 옮기지 않고 인라인 자리에서 그대로 확대.
+  // dim overlay는 PhotoCarousel(transform 없는 부모) 레벨에 두어 viewport 기준으로 깔림.
   return (
-    <>
-      <AnimatePresence>
-        {isZooming && (
-          <motion.div
-            className="fixed inset-0 z-40 bg-black pointer-events-none"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 0.15 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.24, ease: "easeOut" }}
-          />
-        )}
-      </AnimatePresence>
-      <div
-        className={
-          isZooming
-            ? "fixed inset-0 z-50 flex items-center justify-center touch-none"
-            : "relative w-full"
-        }
+    <div className={isZooming ? "relative w-full z-50 touch-none" : "relative w-full"}>
+      <TransformWrapper
+        key={resetKey}
+        ref={wrapperRef}
+        initialScale={1}
+        minScale={1}
+        maxScale={4}
+        doubleClick={{ disabled: true }}
+        wheel={{ disabled: true }}
+        // scale=1에서는 판닝 비활성 — 단일 손가락 세로 스와이프가 페이지 스크롤로 이어지도록 native scroll에 양보
+        panning={{ velocityDisabled: true, disabled: !isZooming }}
+        onPinchStop={handleReset}
+        onPanningStop={(ref) => {
+          if (ref.state.scale > 1.01) handleReset();
+        }}
+        onTransform={(_ref, state) => {
+          onScale(state.scale);
+          if (resetPending.current) return;
+          const zooming = state.scale > 1.01;
+          setIsZooming(zooming);
+          onZoomChange(zooming);
+        }}
       >
-        <TransformWrapper
-          key={resetKey}
-          ref={wrapperRef}
-          initialScale={1}
-          minScale={1}
-          maxScale={4}
-          doubleClick={{ disabled: true }}
-          wheel={{ disabled: true }}
-          // scale=1에서는 판닝 비활성 — 단일 손가락 세로 스와이프가 페이지 스크롤로 이어지도록 native scroll에 양보
-          panning={{ velocityDisabled: true, disabled: !isZooming }}
-          // 핀치/팬 종료(마지막 손가락 떼는 시점)에 부드러운 원복(280ms easeOut animation).
-          onPinchStop={handleReset}
-          onPanningStop={(ref) => {
-            if (ref.state.scale > 1.01) handleReset();
-          }}
-          onTransform={(_ref, state) => {
-            onScale(state.scale);
-            // reset animation 진행 중에는 isZooming 토글 X — 풀스크린 overlay가 animation 끝까지 끊김 없이 유지되어야 함
-            if (resetPending.current) return;
-            const zooming = state.scale > 1.01;
-            setIsZooming(zooming);
-            onZoomChange(zooming);
-          }}
+        <TransformComponent
+          wrapperClass="!w-full !h-auto"
+          // lib 내부 wrapper가 overflow:hidden을 박아 자리 줌 시 부풀린 사진을 잘라먹는 걸 풀어줌.
+          wrapperStyle={{ overflow: "visible" }}
+          contentClass="!w-full"
         >
-          <TransformComponent
-            wrapperClass={
-              isZooming
-                ? "!w-screen !h-screen !max-w-none !max-h-none"
-                : "!w-full !h-auto"
-            }
-            contentClass={
-              isZooming
-                ? "!w-full !h-full !flex !items-center !justify-center"
-                : "!w-full"
-            }
-          >
-            <MediaElement url={slide.url} isVideo={slide.isVideo} />
-          </TransformComponent>
-        </TransformWrapper>
-      </div>
-    </>
+          <MediaElement url={slide.url} isVideo={slide.isVideo} />
+        </TransformComponent>
+      </TransformWrapper>
+    </div>
   );
 }
 
@@ -355,6 +328,21 @@ function PhotoCarousel({
   // 줌 활성 시 outer의 overflow-hidden은 fixed overlay를 클리핑하므로 풀어줌
   const outerClass = `relative w-full bg-bg-tertiary ${zoomedIdx !== null ? "" : "overflow-hidden"}`;
 
+  // dim overlay는 outerClass div(transform 없는 부모) 자식으로 두어 fixed가 viewport 기준 동작.
+  const dimOverlay = (
+    <AnimatePresence>
+      {zoomedIdx !== null && (
+        <motion.div
+          className="fixed inset-0 z-40 bg-black pointer-events-none"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 0.15 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.24, ease: "easeOut" }}
+        />
+      )}
+    </AnimatePresence>
+  );
+
   if (slides.length === 1) {
     return (
       <div
@@ -362,6 +350,7 @@ function PhotoCarousel({
         onDoubleClick={handleDoubleClick}
         onClick={handleTap}
       >
+        {dimOverlay}
         <ZoomableSlide
           slide={slides[0]}
           onZoomChange={(z) => handleZoomChange(0, z)}
@@ -377,15 +366,13 @@ function PhotoCarousel({
       onDoubleClick={handleDoubleClick}
       onClick={handleTap}
     >
+      {dimOverlay}
       <div
         ref={containerRef}
         className="flex"
         style={{
-          // 줌 중에는 transform을 풀어 stacking context를 해제 → 자식의 fixed overlay가 viewport 기준으로 풀스크린 가능
-          transform:
-            zoomedIdx !== null
-              ? "none"
-              : `translateX(calc(-${current * 100}% + ${isSwiping ? translateX : 0}px))`,
+          // 줌 중이라도 carousel transform은 그대로 유지 — 자리 줌이라 줌하던 슬라이드가 자기 자리에서 부풀어야 함.
+          transform: `translateX(calc(-${current * 100}% + ${isSwiping ? translateX : 0}px))`,
           // 줌 중/swipe 중/줌 release cooldown에서는 transition off — 인라인 복귀 시 슬라이드 swoosh 방지
           transition: isSwiping || zoomedIdx !== null || zoomCooldown ? "none" : "transform 0.3s ease-out",
         }}
