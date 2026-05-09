@@ -6,6 +6,7 @@ import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import batterStatsJson from "@/lib/constants/stats-2026-batters.json";
 import pitcherStatsJson from "@/lib/constants/stats-2026-pitchers.json";
 import { resolveRosterPlayer } from "@/lib/utils/player-roster";
+import { FOREIGN_ALPHA_TO_NUMERIC } from "@/lib/constants/foreign-id-map";
 import type { MatchupStats } from "@/app/api/game-relay/route";
 
 function getPlayerHref(name: string, teamId?: number): string | null {
@@ -47,8 +48,10 @@ interface MatchupCardProps {
 function lookupBatterAvg(name: string, teamId?: number): string | null {
   const rosterPlayer = resolveRosterPlayer({ name, teamId });
   if (!rosterPlayer) return null;
+  const numericId = FOREIGN_ALPHA_TO_NUMERIC[rosterPlayer.kboId] || rosterPlayer.kboId;
   const found = (batterStatsJson as { avg: string; kboId?: string; playerId?: string }[]).find((b) =>
-    String(b.kboId) === rosterPlayer.kboId || String(b.playerId) === rosterPlayer.kboId,
+    String(b.kboId) === rosterPlayer.kboId || String(b.playerId) === rosterPlayer.kboId ||
+    String(b.kboId) === numericId || String(b.playerId) === numericId,
   );
   return found?.avg ?? null;
 }
@@ -56,8 +59,10 @@ function lookupBatterAvg(name: string, teamId?: number): string | null {
 function lookupPitcherEra(name: string, teamId?: number): string | null {
   const rosterPlayer = resolveRosterPlayer({ name, teamId });
   if (!rosterPlayer) return null;
+  const numericId = FOREIGN_ALPHA_TO_NUMERIC[rosterPlayer.kboId] || rosterPlayer.kboId;
   const found = (pitcherStatsJson as { era: string; kboId?: string; playerId?: string }[]).find((p) =>
-    String(p.kboId) === rosterPlayer.kboId || String(p.playerId) === rosterPlayer.kboId,
+    String(p.kboId) === rosterPlayer.kboId || String(p.playerId) === rosterPlayer.kboId ||
+    String(p.kboId) === numericId || String(p.playerId) === numericId,
   );
   return found?.era ?? null;
 }

@@ -1,4 +1,5 @@
 import playersRoster from "@/lib/constants/players-roster.json";
+import { FOREIGN_NUMERIC_TO_ALPHA } from "@/lib/constants/foreign-id-map";
 
 export interface RosterPlayer {
   name: string;
@@ -40,8 +41,15 @@ export function resolveRosterPlayer({
   if (!cleanName) return null;
 
   if (kboId) {
-    const byId = roster.find((p) => String(p.kboId) === String(kboId));
+    const normalizedId = String(kboId);
+    const byId = roster.find((p) => String(p.kboId) === normalizedId);
     if (byId) return byId;
+
+    const foreignCanonicalId = FOREIGN_NUMERIC_TO_ALPHA[normalizedId];
+    if (foreignCanonicalId) {
+      const byForeignAlias = roster.find((p) => String(p.kboId) === foreignCanonicalId);
+      if (byForeignAlias) return byForeignAlias;
+    }
   }
 
   if (teamId !== undefined && teamId !== null) {

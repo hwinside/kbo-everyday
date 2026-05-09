@@ -15,7 +15,7 @@ import NicheStats from "@/components/player/NicheStats";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
-import { FOREIGN_NUMERIC_TO_ALPHA } from "@/lib/constants/foreign-id-map";
+import { FOREIGN_NUMERIC_TO_ALPHA, FOREIGN_ALPHA_TO_NUMERIC } from "@/lib/constants/foreign-id-map";
 import { usePosts, createPost, toggleLike } from "@/lib/supabase/usePosts";
 import type { Post } from "@/lib/supabase/usePosts";
 import { supabase } from "@/lib/supabase/client";
@@ -98,6 +98,7 @@ export default function PlayerBoardPage() {
   const kboId = rosterDirect
     ? rawId
     : LEGACY_MAP[rawId] || FOREIGN_NUMERIC_TO_ALPHA[rawId] || rawId;
+  const numericKboId = FOREIGN_ALPHA_TO_NUMERIC[kboId] || kboId;
   const playerName = ID_TO_NAME[kboId];
   // 동명이인 대응: roster에서 kboId로 직접 찾기
   const rosterPlayer = PLAYERS_ROSTER.find((p) => p.kboId === kboId);
@@ -106,7 +107,7 @@ export default function PlayerBoardPage() {
   const [loading, setLoading] = useState(true);
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<"stats" | "photo" | "latest" | "hot">("stats");
-  const { posts: livePosts, loading: postsLoading, reload } = usePosts("player", rawId);
+  const { posts: livePosts, loading: postsLoading, reload } = usePosts("player", kboId);
   // Adapt snake_case usePosts rows to the PostDTO shape expected by PostList/PostCard.
   // Hot tab shares latest ordering for now — sort refinement is out of scope of this fix.
   const listPosts: PostDTO[] = useMemo(() => livePosts.map((p) => ({
@@ -198,7 +199,13 @@ export default function PlayerBoardPage() {
     setPhotoLoading(false);
   }, [kboId, playerName]);
 
-  useEffect(() => { loadPhotoPosts(); }, [loadPhotoPosts]);
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (!cancelled) void loadPhotoPosts();
+    });
+    return () => { cancelled = true; };
+  }, [loadPhotoPosts]);
 
   const handlePhotoLike = async (postId: number) => {
     try { await toggleLike(postId); } catch { /* ignore */ }
@@ -232,7 +239,7 @@ export default function PlayerBoardPage() {
       setPlayer({ name: playerName, teamId: 0, number: 0, position: "", team: "" });
       setLoading(false);
     });
-  }, [playerName]);
+  }, [playerName, kboId, rosterPlayer]);
 
   // 시즌별 스탯 로드
   // 2026: KBO 개별 선수 상세 페이지 크롤링 (현재 시즌, 모든 선수 커버)
@@ -252,16 +259,22 @@ export default function PlayerBoardPage() {
         .then(r => r.json())
         .then(d => {
           const stats = (d.stats || []) as Record<string, string | number>[];
-          const found = stats.find((s) => String(s.kboId || s.playerId) === kboId) || stats.find((s) => s.name === (playerName || player.name));
+          const found = stats.find((s) => {
+            const statId = String(s.kboId || s.playerId);
+            return statId === kboId || statId === numericKboId;
+          }) || stats.find((s) => s.name === (playerName || player.name));
           setRealStats(found || null);
         })
         .catch(() => { setRealStats(null); });
     }
-  }, [statSeason, player, kboId, playerName]);
+  }, [statSeason, player, kboId, numericKboId, playerName]);
 
   // 전체 선수 랭킹: 해당 선수의 종목별 순위 추출 (모든 선수 대상)
   useEffect(() => {
-    if (!player || !kboId) { setPlayerRanks({}); return; }
+    if (!player || !kboId) {
+      void Promise.resolve().then(() => setPlayerRanks({}));
+      return;
+    }
     const isPitcher = player.position === "투수";
     fetch(`/api/stats?season=2026&type=${isPitcher ? "pitcher" : "batter"}`)
       .then(r => r.json())
@@ -283,13 +296,19 @@ export default function PlayerBoardPage() {
         // 오름차순 (낮을수록 좋은 지표)
         const rankOfAsc = (key: string, pool = qualified): number | undefined => {
           const sorted = [...pool].sort((a, b) => numOf(a[key]) - numOf(b[key]));
-          const idx = sorted.findIndex(s => String(s.kboId || s.playerId) === kboId || s.name === player.name);
+          const idx = sorted.findIndex(s => {
+            const statId = String(s.kboId || s.playerId);
+            return statId === kboId || statId === numericKboId || s.name === player.name;
+          });
           return idx === -1 ? undefined : idx + 1;
         };
         // 내림차순 (높을수록 좋은 지표)
         const rankOfDesc = (key: string, pool = list): number | undefined => {
           const sorted = [...pool].sort((a, b) => numOf(b[key]) - numOf(a[key]));
-          const idx = sorted.findIndex(s => String(s.kboId || s.playerId) === kboId || s.name === player.name);
+          const idx = sorted.findIndex(s => {
+            const statId = String(s.kboId || s.playerId);
+            return statId === kboId || statId === numericKboId || s.name === player.name;
+          });
           return idx === -1 ? undefined : idx + 1;
         };
         if (isPitcher) {
@@ -306,12 +325,12 @@ export default function PlayerBoardPage() {
           });
           const saberRankAsc = (key: keyof typeof saberList[0]): number | undefined => {
             const sorted = [...saberList].sort((a, b) => (Number(a[key]) || 99) - (Number(b[key]) || 99));
-            const idx = sorted.findIndex(s => s.id === kboId || s.name === player.name);
+            const idx = sorted.findIndex(s => s.id === kboId || s.id === numericKboId || s.name === player.name);
             return idx === -1 ? undefined : idx + 1;
           };
           const saberRankDesc = (key: keyof typeof saberList[0]): number | undefined => {
             const sorted = [...saberList].sort((a, b) => (Number(b[key]) || -99) - (Number(a[key]) || -99));
-            const idx = sorted.findIndex(s => s.id === kboId || s.name === player.name);
+            const idx = sorted.findIndex(s => s.id === kboId || s.id === numericKboId || s.name === player.name);
             return idx === -1 ? undefined : idx + 1;
           };
           setPlayerRanks({
@@ -329,7 +348,7 @@ export default function PlayerBoardPage() {
         }
       })
       .catch(() => setPlayerRanks({}));
-  }, [player, kboId]);
+  }, [player, kboId, numericKboId]);
 
   if (loading) {
     return <div className="flex items-center justify-center h-screen text-text-secondary">로딩 중...</div>;
@@ -438,7 +457,7 @@ export default function PlayerBoardPage() {
       {/* Stats tab */}
       {activeTab === "stats" && (
         <div className="px-5 py-4">
-          <PlayerRadar playerId={rawId} position={player.position} teamColor={teamColor} />
+          <PlayerRadar playerId={kboId} position={player.position} teamColor={teamColor} />
           <PlayerProfile playerName={playerName || player.name} teamColor={teamColor} kboId={kboId} />
           <CheerSong playerName={playerName || player.name} teamColor={teamColor} />
 

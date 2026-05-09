@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import playersRoster from "@/lib/constants/players-roster.json";
+import { FOREIGN_NUMERIC_TO_ALPHA } from "@/lib/constants/foreign-id-map";
 
 export const revalidate = 300; // 5분 ISR 캐시
 
@@ -18,7 +19,7 @@ export const revalidate = 300; // 5분 ISR 캐시
 //   photoUrl (향후 확장 예정)
 // ============================================================================
 
-const EXPECTED_ROSTER_COUNT = 816; // specs §3.2: 이 값과 정확히 일치해야 정상
+const EXPECTED_ROSTER_COUNT = 791; // specs §3.2: 이 값과 정확히 일치해야 정상
 
 interface RosterPlayer {
   kboId: string;
@@ -29,8 +30,33 @@ interface RosterPlayer {
   backNo: string;
 }
 
+function dedupeForeignAliases(players: RosterPlayer[]): RosterPlayer[] {
+  const byId = new Map(players.map((p) => [p.kboId, p]));
+
+  for (const [numericId, alphaId] of Object.entries(FOREIGN_NUMERIC_TO_ALPHA)) {
+    const numeric = byId.get(numericId);
+    const alpha = byId.get(alphaId);
+    if (!numeric || !alpha) continue;
+
+    // Defense-in-depth: CI should block this state, but keep the public API clean
+    // if a bad roster ever reaches runtime. The alpha/FP/AQ id remains the UI
+    // canonical id; official KBO numeric fields are merged into it.
+    byId.set(alphaId, {
+      ...alpha,
+      team: numeric.team || alpha.team,
+      teamId: numeric.teamId || alpha.teamId,
+      position: numeric.position || alpha.position,
+      backNo: numeric.backNo && numeric.backNo !== "0" ? numeric.backNo : alpha.backNo,
+    });
+    byId.delete(numericId);
+    console.error(`[roster-ssot-monitor] removed duplicate foreign alias ${numericId}->${alphaId}`);
+  }
+
+  return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name, "ko"));
+}
+
 function staticFallback(): RosterPlayer[] {
-  return (playersRoster as Array<{
+  const staticPlayers = (playersRoster as Array<{
     kboId: string;
     name: string;
     team: string;
@@ -45,6 +71,8 @@ function staticFallback(): RosterPlayer[] {
     position: p.position,
     backNo: p.backNo ?? "",
   }));
+
+  return dedupeForeignAliases(staticPlayers);
 }
 
 export async function GET() {
