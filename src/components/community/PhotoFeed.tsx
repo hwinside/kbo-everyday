@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, Play, MoreHorizontal } from "lucide-react";
+import { MessageCircle, MoreHorizontal } from "lucide-react";
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import { getTeamById } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
@@ -123,15 +123,17 @@ function ZoomableSlide({
   // onPinchStop과 onPanningStop이 동일 release에서 둘 다 fire되어 handleReset이 중복 실행되는 것 차단.
   // 새 TransformWrapper가 mount되면(useEffect resetKey) flag clear → 다음 핀치 사이클에 다시 reset 가능.
   const resetPending = useRef(false);
+  const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 부드러운 reset: lib resetTransform animation으로 scale을 천천히 1로 → animation 끝에 풀스크린/state 정리.
   // animation 중에는 onTransform의 setIsZooming 갱신을 막아 풀스크린 overlay가 끊기지 않게 유지.
-  const RESET_ANIMATION_MS = 280;
+  const RESET_ANIMATION_MS = 240;
   const handleReset = useCallback(() => {
     if (resetPending.current) return;
     resetPending.current = true;
     wrapperRef.current?.resetTransform(RESET_ANIMATION_MS, "easeOut");
-    setTimeout(() => {
+    if (resetTimeoutRef.current) clearTimeout(resetTimeoutRef.current);
+    resetTimeoutRef.current = setTimeout(() => {
       setIsZooming(false);
       onZoomChange(false);
       onScale(1);
@@ -142,6 +144,12 @@ function ZoomableSlide({
   useEffect(() => {
     resetPending.current = false;
   }, [resetKey]);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimeoutRef.current) clearTimeout(resetTimeoutRef.current);
+    };
+  }, []);
 
   if (slide.isVideo) {
     return <MediaElement url={slide.url} isVideo={slide.isVideo} />;
@@ -156,9 +164,9 @@ function ZoomableSlide({
           <motion.div
             className="fixed inset-0 z-40 bg-black pointer-events-none"
             initial={{ opacity: 0 }}
-            animate={{ opacity: 0.65 }}
+            animate={{ opacity: 0.15 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.28, ease: "easeOut" }}
+            transition={{ duration: 0.24, ease: "easeOut" }}
           />
         )}
       </AnimatePresence>
@@ -240,27 +248,29 @@ function PhotoCarousel({
   // zoomedIdx가 null로 전환된 직후 한 프레임 동안 캐러셀 transition을 잠가
   // 풀스크린 → 인라인 복귀 시 슬라이드 swoosh 0.3s 애니메이션 방지
   const [zoomCooldown, setZoomCooldown] = useState(false);
-  // 진짜 "줌→인라인" 전환에만 cooldown arm — null→null 재실행 시 재무장 차단(첫 mount 등)
-  const prevZoomedIdxRef = useRef<number | null>(null);
+  const cooldownTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 줌 활성 여부 부모로 전파 — 부모가 자기 overflow:hidden을 풀어 fixed overlay가 viewport까지 확장되도록
   useEffect(() => {
     onZoomActiveChange?.(zoomedIdx !== null);
-    const wasZoomed = prevZoomedIdxRef.current !== null;
-    prevZoomedIdxRef.current = zoomedIdx;
-    if (wasZoomed && zoomedIdx === null) {
-      setZoomCooldown(true);
-      const t = setTimeout(() => setZoomCooldown(false), 80);
-      return () => clearTimeout(t);
-    }
   }, [zoomedIdx, onZoomActiveChange]);
 
+  useEffect(() => {
+    return () => {
+      if (cooldownTimeoutRef.current) clearTimeout(cooldownTimeoutRef.current);
+    };
+  }, []);
+
+  // cooldown은 effect가 아니라 zoom-out event 시점에 직접 arm — set-state-in-effect 회피.
   const handleZoomChange = useCallback((idx: number, zoomed: boolean) => {
-    setZoomedIdx((prev) => {
-      if (zoomed) return idx;
-      if (prev === idx) return null;
-      return prev;
-    });
+    if (zoomed) {
+      setZoomedIdx(idx);
+      return;
+    }
+    setZoomedIdx((prev) => (prev === idx ? null : prev));
+    if (cooldownTimeoutRef.current) clearTimeout(cooldownTimeoutRef.current);
+    setZoomCooldown(true);
+    cooldownTimeoutRef.current = setTimeout(() => setZoomCooldown(false), 80);
   }, []);
 
   const handleScale = useCallback((scale: number) => {
