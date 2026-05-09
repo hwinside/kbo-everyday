@@ -19,12 +19,6 @@ const TEAMS = [
   ["HH", "한화", 9], ["WO", "키움", 10], ["LG", "LG", 1], ["KT", "KT", 3],
 ];
 
-const TEAM_SHORT_MAP = {
-  "KIA": "KIA", "두산": "두산", "롯데": "롯데", "삼성": "삼성",
-  "SSG": "SSG", "NC": "NC", "한화": "한화", "키움": "키움",
-  "LG": "LG", "KT": "KT",
-};
-
 // Load existing roster for merging
 let existingRoster = [];
 try {
@@ -33,7 +27,37 @@ try {
 
 const existingMap = new Map();
 for (const p of existingRoster) {
-  if (p.kboId) existingMap.set(p.kboId, p);
+  if (p.kboId) existingMap.set(String(p.kboId), p);
+}
+
+const foreignMapSource = readFileSync(join(CONSTANTS_DIR, "foreign-id-map.ts"), "utf-8");
+const FOREIGN_NUMERIC_TO_ALPHA = Object.fromEntries(
+  [...foreignMapSource.matchAll(/"(\d+)":\s*"((?:FP|AQ)\d+)"/g)].map((m) => [m[1], m[2]])
+);
+
+function canonicalKboId(playerId) {
+  return FOREIGN_NUMERIC_TO_ALPHA[playerId] || playerId;
+}
+
+function existingFor(playerId) {
+  return existingMap.get(canonicalKboId(playerId)) || existingMap.get(playerId);
+}
+
+function upsertScrapedPlayer(allPlayers, { playerId, name, teamId, teamName, position }) {
+  const canonicalId = canonicalKboId(playerId);
+  const existing = existingFor(playerId);
+  const prev = allPlayers.get(canonicalId);
+
+  allPlayers.set(canonicalId, {
+    ...prev,
+    name: existing?.name || prev?.name || name,
+    kboId: canonicalId,
+    teamId,
+    team: teamName,
+    position: position || prev?.position || existing?.position || "야수",
+    backNo: existing?.backNo || prev?.backNo || "",
+    _numericId: /^\d+$/.test(playerId) ? playerId : prev?._numericId,
+  });
 }
 
 async function changeSelectAndWait(page, selector, value, waitMs = 8000) {
@@ -147,18 +171,15 @@ async function main() {
     const rows = await scrapeAllPages(page);
     for (const r of rows) {
       const name = r.texts[1] || "";
-      const team = r.texts[2] || "";
       const playerId = extractPlayerId(r.hrefs[1] || "");
       if (!name || !playerId) continue;
 
-      allPlayers.set(playerId, {
+      upsertScrapedPlayer(allPlayers, {
+        playerId,
         name,
-        kboId: playerId,
         teamId,
         teamName,
-        shortTeam: teamName,
-        position: existingMap.get(playerId)?.position || "야수",
-        backNo: existingMap.get(playerId)?.backNo || "",
+        position: existingFor(playerId)?.position || "야수",
       });
     }
     console.log(`    → ${rows.length}명`);
@@ -184,24 +205,16 @@ async function main() {
     const rows = await scrapeAllPages(page);
     for (const r of rows) {
       const name = r.texts[1] || "";
-      const team = r.texts[2] || "";
       const playerId = extractPlayerId(r.hrefs[1] || "");
       if (!name || !playerId) continue;
 
-      if (!allPlayers.has(playerId)) {
-        allPlayers.set(playerId, {
-          name,
-          kboId: playerId,
-          teamId,
-          teamName,
-          shortTeam: teamName,
-          position: "투수",
-          backNo: existingMap.get(playerId)?.backNo || "",
-        });
-      } else {
-        // Update position if pitcher
-        allPlayers.get(playerId).position = "투수";
-      }
+      upsertScrapedPlayer(allPlayers, {
+        playerId,
+        name,
+        teamId,
+        teamName,
+        position: "투수",
+      });
     }
     console.log(`    → ${rows.length}명`);
 
@@ -214,8 +227,9 @@ async function main() {
   // 이미 등번호가 있는 선수는 skip — 신규/공란만 방문해서 부하 최소화.
   const needsBackNo = [...allPlayers.values()].filter((p) => {
     if (p.backNo && String(p.backNo).trim() !== "") return false;
-    // KBO 숫자형 kboId만 상세 페이지가 존재 (FP*/AQ*/TR* 외국인 임시 코드 제외)
-    return /^\d+$/.test(p.kboId || "");
+    // KBO 숫자형 playerId만 상세 페이지가 존재. 외국인 canonical(FP/AQ)은
+    // 스탯 페이지에서 발견한 숫자 alias(_numericId)로 등번호를 보강한다.
+    return /^\d+$/.test(p._numericId || p.kboId || "");
   });
   if (needsBackNo.length > 0) {
     console.log(`\n🔢 등번호 보강: ${needsBackNo.length}명 개별 상세 페이지 방문`);
@@ -224,14 +238,15 @@ async function main() {
     for (let i = 0; i < needsBackNo.length; i++) {
       const p = needsBackNo[i];
       // 포지션에 따라 Pitcher/Hitter detail URL 선택 (둘 다 구조 동일, 실패 시 다른 쪽 재시도)
+      const detailPlayerId = p._numericId || p.kboId;
       const urls = p.position === "투수"
         ? [
-            `https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=${p.kboId}`,
-            `https://www.koreabaseball.com/Record/Player/HitterDetail/Basic.aspx?playerId=${p.kboId}`,
+            `https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=${detailPlayerId}`,
+            `https://www.koreabaseball.com/Record/Player/HitterDetail/Basic.aspx?playerId=${detailPlayerId}`,
           ]
         : [
-            `https://www.koreabaseball.com/Record/Player/HitterDetail/Basic.aspx?playerId=${p.kboId}`,
-            `https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=${p.kboId}`,
+            `https://www.koreabaseball.com/Record/Player/HitterDetail/Basic.aspx?playerId=${detailPlayerId}`,
+            `https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=${detailPlayerId}`,
           ];
       let backNo = "";
       for (const url of urls) {
@@ -259,16 +274,26 @@ async function main() {
 
   await browser.close();
 
-  // Merge with existing roster (keep existing players who have no 2026 stats yet)
-  // But only if they have kboId format (not FP/AQ/TR)
+  // Merge with existing roster (keep existing players who have no 2026 stats yet).
+  // If a numeric KBO id is an alias of an FP/AQ foreign canonical id, never
+  // re-add it as a separate roster row.
   for (const [kboId, existing] of existingMap) {
-    if (!allPlayers.has(kboId)) {
-      // Keep foreign players and players who might not have played yet
-      allPlayers.set(kboId, existing);
+    const canonicalId = canonicalKboId(kboId);
+    if (!allPlayers.has(canonicalId)) {
+      allPlayers.set(canonicalId, { ...existing, kboId: canonicalId });
     }
   }
 
-  const roster = [...allPlayers.values()].sort((a, b) => a.name.localeCompare(b.name, "ko"));
+  const roster = [...allPlayers.values()]
+    .map((p) => ({
+      name: p.name,
+      kboId: p.kboId,
+      teamId: p.teamId,
+      position: p.position,
+      backNo: p.backNo || "0",
+      team: p.team || p.teamName || p.shortTeam,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, "ko"));
 
   console.log(`\n✅ 총 ${roster.length}명 (기존 ${existingRoster.length}명)`);
 

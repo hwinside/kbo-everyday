@@ -16,11 +16,12 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROSTER_PATH = path.resolve(__dirname, "../src/lib/constants/players-roster.json");
+const FOREIGN_MAP_PATH = path.resolve(__dirname, "../src/lib/constants/foreign-id-map.ts");
 
 // ============================================================================
 // 기대값 (스펙 §3.1)
 // ============================================================================
-const EXPECTED_COUNT = 816;
+const EXPECTED_COUNT = 791;
 const MIN_PER_TEAM = 30;
 const BACKNO_REGEX = /^(\d{1,3}|-|\?)$/; // 숫자 1~3자리 | "-" | "?"
 const KNOWN_TEAMS = new Set([
@@ -35,6 +36,14 @@ function fail(msg) {
 }
 function warn(msg) {
   warnings.push(msg);
+}
+
+function loadForeignIdPairs() {
+  const source = fs.readFileSync(FOREIGN_MAP_PATH, "utf8");
+  return [...source.matchAll(/"(\d+)":\s*"((?:FP|AQ)\d+)"/g)].map((m) => ({
+    numeric: m[1],
+    alpha: m[2],
+  }));
 }
 
 // ============================================================================
@@ -123,6 +132,26 @@ roster.forEach((p, i) => {
     fail(`${loc}: backNo invalid format: ${JSON.stringify(p.backNo)} (expected digits or "-" or "?")`);
   }
 });
+
+// ============================================================================
+// Check 5.5: foreign numeric ID aliases must not be separate roster entries
+// ============================================================================
+for (const { numeric, alpha } of loadForeignIdPairs()) {
+  const hasNumeric = kboIdSeen.has(numeric);
+  const hasAlpha = kboIdSeen.has(alpha);
+
+  if (!hasAlpha) {
+    fail(`foreign alias ${numeric}->${alpha}: canonical alpha id is missing from roster`);
+    continue;
+  }
+
+  if (hasNumeric) {
+    fail(
+      `foreign alias ${numeric}->${alpha}: both numeric and canonical ids exist in roster. ` +
+        `Keep ${alpha} as UI canonical and preserve ${numeric} only as an alias.`,
+    );
+  }
+}
 
 // ============================================================================
 // Check 6: team counts ≥ MIN_PER_TEAM
