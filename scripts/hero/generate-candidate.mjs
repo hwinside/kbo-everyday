@@ -31,7 +31,7 @@
 //
 // exit code: 0 ok / 1 failure (failure_reason은 stdout JSON에 명시)
 
-import { existsSync, mkdirSync, writeFileSync, statSync, readFileSync, copyFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, statSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,12 +40,24 @@ import { homedir } from "node:os";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..", "..");
 
+// `--key=value` 와 `--key value` 둘 다 지원. boolean flag는 다음 토큰이 또 다른 --key거나 끝일 때.
 function parseArgs(argv) {
   const out = {};
-  for (const a of argv) {
-    if (a.startsWith("--")) {
-      const [k, v] = a.replace(/^--/, "").split("=");
-      out[k] = v ?? true;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith("--")) continue;
+    const eq = a.indexOf("=");
+    if (eq !== -1) {
+      out[a.slice(2, eq)] = a.slice(eq + 1);
+      continue;
+    }
+    const key = a.slice(2);
+    const next = argv[i + 1];
+    if (next !== undefined && !next.startsWith("--")) {
+      out[key] = next;
+      i++;
+    } else {
+      out[key] = true;
     }
   }
   return out;
