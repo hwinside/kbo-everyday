@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Play, MoreHorizontal } from "lucide-react";
-import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
+import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { getTeamById } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import { parsePlayerTag } from "@/lib/utils/player-tags";
@@ -115,60 +115,83 @@ function ZoomableSlide({
   onZoomChange: (zoomed: boolean) => void;
   onScale: (scale: number) => void;
 }) {
-  const wrapperRef = useRef<ReactZoomPanPinchRef>(null);
   const [isZooming, setIsZooming] = useState(false);
+  // TransformWrapper를 강제 remount해서 lib 내부 transform/panning state를 깨끗이 비움.
+  // resetTransform만으로는 panning.disabled toggle과 lib 내부 cleanup 사이에서 줌이 다시 살아나는 케이스가 발생.
+  const [resetKey, setResetKey] = useState(0);
+
+  const handleReset = useCallback(() => {
+    setIsZooming(false);
+    onZoomChange(false);
+    onScale(1);
+    setResetKey((k) => k + 1);
+  }, [onZoomChange, onScale]);
 
   if (slide.isVideo) {
     return <MediaElement url={slide.url} isVideo={slide.isVideo} />;
   }
 
-  // 줌 활성 시 wrapper를 viewport 풀스크린으로 띄우고, 손 다 떼면 즉시 원복
+  // 줌 활성 시 wrapper를 viewport 풀스크린으로 띄우고, 손 다 떼면 즉시 원복.
+  // 검정 배경/투명 fade는 framer-motion overlay로 부드럽게.
   return (
-    <div
-      className={
-        isZooming
-          ? "fixed inset-0 z-50 bg-black/95 flex items-center justify-center touch-none"
-          : "relative w-full"
-      }
-    >
-      <TransformWrapper
-        ref={wrapperRef}
-        initialScale={1}
-        minScale={1}
-        maxScale={4}
-        doubleClick={{ disabled: true }}
-        wheel={{ disabled: true }}
-        // 줄이 안 된 상태(scale=1)에서는 판닝 비활성 — 단일 손가락 세로 스와이프가 페이지 스크롤로 이어지도록 native scroll에 양보
-        panning={{ velocityDisabled: true, disabled: !isZooming }}
-        // 핀치/팬 종료(마지막 손가락 떼는 시점)에 즉시 인라인으로 원복.
-        // outer onTouchEnd로는 잡을 수 없음 — 라이브러리가 touchend에서 stopPropagation 호출.
-        onPinchStop={(ref) => ref.resetTransform(0)}
-        onPanningStop={(ref) => {
-          if (ref.state.scale > 1.01) ref.resetTransform(0);
-        }}
-        onTransform={(_ref, state) => {
-          onScale(state.scale);
-          const zooming = state.scale > 1.01;
-          setIsZooming(zooming);
-          onZoomChange(zooming);
-        }}
+    <>
+      <AnimatePresence>
+        {isZooming && (
+          <motion.div
+            className="fixed inset-0 z-40 bg-black pointer-events-none"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 0.95 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+          />
+        )}
+      </AnimatePresence>
+      <div
+        className={
+          isZooming
+            ? "fixed inset-0 z-50 flex items-center justify-center touch-none"
+            : "relative w-full"
+        }
       >
-        <TransformComponent
-          wrapperClass={
-            isZooming
-              ? "!w-screen !h-screen !max-w-none !max-h-none"
-              : "!w-full !h-auto"
-          }
-          contentClass={
-            isZooming
-              ? "!w-full !h-full !flex !items-center !justify-center"
-              : "!w-full"
-          }
+        <TransformWrapper
+          key={resetKey}
+          initialScale={1}
+          minScale={1}
+          maxScale={4}
+          doubleClick={{ disabled: true }}
+          wheel={{ disabled: true }}
+          // scale=1에서는 판닝 비활성 — 단일 손가락 세로 스와이프가 페이지 스크롤로 이어지도록 native scroll에 양보
+          panning={{ velocityDisabled: true, disabled: !isZooming }}
+          // 핀치/팬 종료(마지막 손가락 떼는 시점)에 즉시 원복.
+          // resetTransform 호출 + key 증가로 lib state 강제 reset (단순 resetTransform만으론 잔존 state로 줌이 되살아나는 회귀 발생).
+          onPinchStop={handleReset}
+          onPanningStop={(ref) => {
+            if (ref.state.scale > 1.01) handleReset();
+          }}
+          onTransform={(_ref, state) => {
+            onScale(state.scale);
+            const zooming = state.scale > 1.01;
+            setIsZooming(zooming);
+            onZoomChange(zooming);
+          }}
         >
-          <MediaElement url={slide.url} isVideo={slide.isVideo} />
-        </TransformComponent>
-      </TransformWrapper>
-    </div>
+          <TransformComponent
+            wrapperClass={
+              isZooming
+                ? "!w-screen !h-screen !max-w-none !max-h-none"
+                : "!w-full !h-auto"
+            }
+            contentClass={
+              isZooming
+                ? "!w-full !h-full !flex !items-center !justify-center"
+                : "!w-full"
+            }
+          >
+            <MediaElement url={slide.url} isVideo={slide.isVideo} />
+          </TransformComponent>
+        </TransformWrapper>
+      </div>
+    </>
   );
 }
 
