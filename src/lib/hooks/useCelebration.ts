@@ -20,6 +20,13 @@ interface UseCelebrationOptions {
  */
 const FRESHNESS_THRESHOLD_MS = 120_000;
 
+/**
+ * On first page entry / PWA resume, the server can return a shared event
+ * history that accumulated while this client was not watching. Those events
+ * are useful for the text relay, but must not all replay as celebrations.
+ */
+const RESUME_GRACE_MS = 1_000;
+
 /** Look up kboId from player name + teamId */
 function findKboId(name: string | undefined, teamId: number): string | undefined {
   if (!name) return undefined;
@@ -47,6 +54,8 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
   const celebrationRef = useRef<CelebrationEvent | null>(null);
   const seenRef = useRef<Set<string>>(new Set());
   const queueRef = useRef<CelebrationEvent[]>([]);
+  const hasPrimedSeenRef = useRef(false);
+  const suppressBeforeRef = useRef<number>(Number.POSITIVE_INFINITY);
   /** Track pitcher strikeout counts for "2K, 3K..." display */
   const pitcherKRef = useRef<Map<string, number>>(new Map());
 
@@ -68,6 +77,34 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
     }, 300);
   }, [setCelebrationSafe]);
 
+  useEffect(() => {
+    const markResumeBoundary = () => {
+      // Drop anything already queued/showing from the previous visible session.
+      queueRef.current = [];
+      setCelebrationSafe(null);
+      // Next poll may include the whole shared history. Treat events whose
+      // server timestamp predates this visible session as already seen.
+      suppressBeforeRef.current = Date.now() + RESUME_GRACE_MS;
+      hasPrimedSeenRef.current = false;
+      // K labels should reflect celebrations actually seen in this session,
+      // not hidden/background history.
+      pitcherKRef.current.clear();
+    };
+
+    if (document.visibilityState === "visible") {
+      markResumeBoundary();
+    }
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        markResumeBoundary();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [setCelebrationSafe]);
+
   /** Call on each gameEvents update to detect new celebration-worthy events */
   const processEvents = useCallback(
     (events: GameEvent[]) => {
@@ -76,12 +113,25 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
       const now = Date.now();
       const newCelebrations: CelebrationEvent[] = [];
 
+      // First poll after page entry/resume is baseline only. This prevents
+      // PWA re-entry from replaying every celebration missed while hidden.
+      if (!hasPrimedSeenRef.current) {
+        for (const ev of events) seenRef.current.add(ev.id);
+        hasPrimedSeenRef.current = true;
+        return;
+      }
+
       for (const ev of events) {
         if (seenRef.current.has(ev.id)) continue;
         seenRef.current.add(ev.id);
 
+        const eventTime = new Date(ev.timestamp).getTime();
+        if (!Number.isFinite(eventTime)) continue;
+
+        if (eventTime <= suppressBeforeRef.current) continue;
+
         // Skip stale events (e.g. accumulated server events replayed on re-entry)
-        const eventAge = now - new Date(ev.timestamp).getTime();
+        const eventAge = now - eventTime;
         if (eventAge > FRESHNESS_THRESHOLD_MS) continue;
 
         const celebType = toCelebrationType(ev.type);
