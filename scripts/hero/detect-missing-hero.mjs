@@ -13,7 +13,7 @@
 //   {
 //     generatedAt, totalRoster, approvedCount, webpCount, candidatesCount,
 //     reasons: { no_webp: N, generated_unapproved: M },
-//     candidates: [{ kboId, name, teamName, position, reason }]
+//     candidates: [{ kboId, name, team, teamId, position, reason }]
 //   }
 //
 // reason:
