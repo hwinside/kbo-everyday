@@ -6,10 +6,14 @@ import { generateEvents, type PrevGameState } from "@/lib/event-generator";
 import type { GameEvent } from "@/types/game-events";
 import type { KboRawGame } from "@/types/api";
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
-// In-memory cache per game
-const prevStateCache = new Map<string, PrevGameState>();
-const eventHistory = new Map<string, GameEvent[]>();
+// State is persisted in Supabase (table: game_event_state) so all Vercel
+// serverless instances share a single source of truth. Previous in-memory
+// Maps caused instance lottery — a client request landing on instance A
+// could see a different events history than the same request landing on
+// instance B, breaking K celebration counters (e.g. 6연속 K → "그냥 삼진"
+// or "2K" depending on which instance answered each poll).
 
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 const KBO_SCHEDULE = "https://www.koreabaseball.com/ws/Schedule.asmx";
@@ -139,7 +143,12 @@ export async function GET(req: NextRequest) {
     }).then(r => r.ok ? r.json() : null).catch(() => null);
 
     if (!rawGame) {
-      const existing = eventHistory.get(gameId) || [];
+      const { data: row } = await supabaseAdmin
+        .from("game_event_state")
+        .select("event_history")
+        .eq("game_id", gameId)
+        .maybeSingle();
+      const existing = ((row?.event_history as GameEvent[] | null) ?? []);
       const emptySnapshot: GameSnapshot = {
         awayScore: 0, homeScore: 0,
         balls: 0, strikes: 0, outs: 0,
@@ -201,7 +210,15 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const prevState = prevStateCache.get(gameId) || null;
+    // Read shared state from Supabase (single row per game)
+    const { data: stateRow } = await supabaseAdmin
+      .from("game_event_state")
+      .select("prev_state, event_history")
+      .eq("game_id", gameId)
+      .maybeSingle();
+
+    const prevState = (stateRow?.prev_state as PrevGameState | null) ?? null;
+    const existingHistory = ((stateRow?.event_history as GameEvent[] | null) ?? []);
 
     const { events: newEvents, nextState } = generateEvents(
       gameId,
@@ -210,13 +227,36 @@ export async function GET(req: NextRequest) {
       currentBoxScore,
     );
 
-    // Update cache
-    prevStateCache.set(gameId, nextState);
-
-    // Accumulate event history
-    const history = eventHistory.get(gameId) || [];
-    history.push(...newEvents);
-    eventHistory.set(gameId, history);
+    // Atomic append via SQL function — prevents read-modify-write race
+    // where two concurrent pollers both read the same existingHistory and
+    // each clobbers the other's newEvents. event_history grows
+    // monotonically; prev_state is last-write-wins (self-heals next poll).
+    let history: GameEvent[];
+    if (newEvents.length > 0) {
+      const { data: rpcHistory } = await supabaseAdmin.rpc(
+        "upsert_game_event_state",
+        {
+          p_game_id: gameId,
+          p_prev_state: nextState as unknown as Record<string, unknown>,
+          p_new_events: newEvents as unknown as Record<string, unknown>[],
+        },
+      );
+      history = (rpcHistory as GameEvent[] | null) ?? [...existingHistory, ...newEvents];
+    } else if (!stateRow) {
+      // First-ever poll for this game — seed an empty row so subsequent
+      // pollers see prev_state on the first contentful change.
+      await supabaseAdmin
+        .from("game_event_state")
+        .upsert({
+          game_id: gameId,
+          prev_state: nextState as unknown as Record<string, unknown>,
+          event_history: [] as unknown as Record<string, unknown>[],
+          updated_at: new Date().toISOString(),
+        });
+      history = existingHistory;
+    } else {
+      history = existingHistory;
+    }
 
     const currentState: GameSnapshot = {
       awayScore: currentLive.awayScore,
@@ -235,8 +275,22 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ events: history, currentState });
   } catch (e: unknown) {
+    // Best-effort fallback — if Supabase itself is down, the original error
+    // would have surfaced from the supabase client too, so wrap defensively
+    // and return an empty history rather than a 500.
+    let fallback: GameEvent[] = [];
+    try {
+      const { data: row } = await supabaseAdmin
+        .from("game_event_state")
+        .select("event_history")
+        .eq("game_id", gameId)
+        .maybeSingle();
+      fallback = (row?.event_history as GameEvent[] | null) ?? [];
+    } catch {
+      // swallow — fallback stays []
+    }
     return NextResponse.json(
-      { error: (e as Error).message, events: eventHistory.get(gameId) || [], currentState: null },
+      { error: (e as Error).message, events: fallback, currentState: null },
       { status: 200 },
     );
   }
