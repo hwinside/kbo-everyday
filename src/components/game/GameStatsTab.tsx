@@ -35,6 +35,8 @@ function getPlayerHref(name: string, teamId: number): string | null {
   const player =
     roster.find((entry) => entry.name === name && entry.teamId === teamId) ??
     roster.find((entry) => entry.name === name) ??
+    roster.find((entry) => entry.name.endsWith(name) && entry.teamId === teamId) ??
+    roster.find((entry) => entry.name.endsWith(name)) ??
     null;
 
   return player ? `/community/players/${player.kboId}` : null;
