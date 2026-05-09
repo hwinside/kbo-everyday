@@ -117,16 +117,12 @@ function ZoomableSlide({
 }) {
   const wrapperRef = useRef<ReactZoomPanPinchRef>(null);
   const [isZooming, setIsZooming] = useState(false);
-  // TransformWrapper를 강제 remount해서 lib 내부 transform/panning state를 깨끗이 비움.
-  // resetTransform만으로는 panning.disabled toggle과 lib 내부 cleanup 사이에서 줌이 다시 살아나는 케이스가 발생.
-  const [resetKey, setResetKey] = useState(0);
   // onPinchStop과 onPanningStop이 동일 release에서 둘 다 fire되어 handleReset이 중복 실행되는 것 차단.
-  // 새 TransformWrapper가 mount되면(useEffect resetKey) flag clear → 다음 핀치 사이클에 다시 reset 가능.
   const resetPending = useRef(false);
   const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 부드러운 reset: lib resetTransform animation으로 scale을 천천히 1로 → animation 끝에 풀스크린/state 정리.
-  // animation 중에는 onTransform의 setIsZooming 갱신을 막아 풀스크린 overlay가 끊기지 않게 유지.
+  // 부드러운 reset: lib resetTransform animation으로 scale을 천천히 1로 → animation 끝에 state 정리.
+  // animation 중에는 onTransform의 setIsZooming 갱신을 막아 dim overlay가 끊기지 않게 유지.
   const RESET_ANIMATION_MS = 240;
   const handleReset = useCallback(() => {
     if (resetPending.current) return;
@@ -137,13 +133,9 @@ function ZoomableSlide({
       setIsZooming(false);
       onZoomChange(false);
       onScale(1);
-      setResetKey((k) => k + 1);
+      resetPending.current = false;
     }, RESET_ANIMATION_MS);
   }, [onZoomChange, onScale]);
-
-  useEffect(() => {
-    resetPending.current = false;
-  }, [resetKey]);
 
   useEffect(() => {
     return () => {
@@ -160,7 +152,6 @@ function ZoomableSlide({
   return (
     <div className={isZooming ? "relative w-full z-50 touch-none" : "relative w-full"}>
       <TransformWrapper
-        key={resetKey}
         ref={wrapperRef}
         initialScale={1}
         minScale={1}
