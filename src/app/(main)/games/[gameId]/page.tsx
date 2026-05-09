@@ -182,7 +182,7 @@ export default function GameDetailPage() {
     // After returning from background, skip one diff cycle to re-establish baseline
     if (skipNextDiffRef.current) {
       skipNextDiffRef.current = false;
-      clientEventStateRef.current = { live: liveGame, boxScore: gameDetail?.boxScore ?? null, seq: 0 };
+      clientEventStateRef.current = { live: liveGame, boxScore: gameDetail?.boxScore ?? null };
       return;
     }
 
