@@ -119,13 +119,22 @@ function ZoomableSlide({
   // TransformWrapper를 강제 remount해서 lib 내부 transform/panning state를 깨끗이 비움.
   // resetTransform만으로는 panning.disabled toggle과 lib 내부 cleanup 사이에서 줌이 다시 살아나는 케이스가 발생.
   const [resetKey, setResetKey] = useState(0);
+  // onPinchStop과 onPanningStop이 동일 release에서 둘 다 fire되어 handleReset이 중복 실행되는 것 차단.
+  // 새 TransformWrapper가 mount되면(useEffect resetKey) flag clear → 다음 핀치 사이클에 다시 reset 가능.
+  const resetPending = useRef(false);
 
   const handleReset = useCallback(() => {
+    if (resetPending.current) return;
+    resetPending.current = true;
     setIsZooming(false);
     onZoomChange(false);
     onScale(1);
     setResetKey((k) => k + 1);
   }, [onZoomChange, onScale]);
+
+  useEffect(() => {
+    resetPending.current = false;
+  }, [resetKey]);
 
   if (slide.isVideo) {
     return <MediaElement url={slide.url} isVideo={slide.isVideo} />;
@@ -222,11 +231,15 @@ function PhotoCarousel({
   // zoomedIdx가 null로 전환된 직후 한 프레임 동안 캐러셀 transition을 잠가
   // 풀스크린 → 인라인 복귀 시 슬라이드 swoosh 0.3s 애니메이션 방지
   const [zoomCooldown, setZoomCooldown] = useState(false);
+  // 진짜 "줌→인라인" 전환에만 cooldown arm — null→null 재실행 시 재무장 차단(첫 mount 등)
+  const prevZoomedIdxRef = useRef<number | null>(null);
 
   // 줌 활성 여부 부모로 전파 — 부모가 자기 overflow:hidden을 풀어 fixed overlay가 viewport까지 확장되도록
   useEffect(() => {
     onZoomActiveChange?.(zoomedIdx !== null);
-    if (zoomedIdx === null) {
+    const wasZoomed = prevZoomedIdxRef.current !== null;
+    prevZoomedIdxRef.current = zoomedIdx;
+    if (wasZoomed && zoomedIdx === null) {
       setZoomCooldown(true);
       const t = setTimeout(() => setZoomCooldown(false), 80);
       return () => clearTimeout(t);
