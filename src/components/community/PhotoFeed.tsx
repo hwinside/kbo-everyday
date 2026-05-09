@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Play, MoreHorizontal } from "lucide-react";
-import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
+import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import { getTeamById } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import { parsePlayerTag } from "@/lib/utils/player-tags";
@@ -115,6 +115,7 @@ function ZoomableSlide({
   onZoomChange: (zoomed: boolean) => void;
   onScale: (scale: number) => void;
 }) {
+  const wrapperRef = useRef<ReactZoomPanPinchRef>(null);
   const [isZooming, setIsZooming] = useState(false);
   // TransformWrapper를 강제 remount해서 lib 내부 transform/panning state를 깨끗이 비움.
   // resetTransform만으로는 panning.disabled toggle과 lib 내부 cleanup 사이에서 줌이 다시 살아나는 케이스가 발생.
@@ -123,13 +124,19 @@ function ZoomableSlide({
   // 새 TransformWrapper가 mount되면(useEffect resetKey) flag clear → 다음 핀치 사이클에 다시 reset 가능.
   const resetPending = useRef(false);
 
+  // 부드러운 reset: lib resetTransform animation으로 scale을 천천히 1로 → animation 끝에 풀스크린/state 정리.
+  // animation 중에는 onTransform의 setIsZooming 갱신을 막아 풀스크린 overlay가 끊기지 않게 유지.
+  const RESET_ANIMATION_MS = 280;
   const handleReset = useCallback(() => {
     if (resetPending.current) return;
     resetPending.current = true;
-    setIsZooming(false);
-    onZoomChange(false);
-    onScale(1);
-    setResetKey((k) => k + 1);
+    wrapperRef.current?.resetTransform(RESET_ANIMATION_MS, "easeOut");
+    setTimeout(() => {
+      setIsZooming(false);
+      onZoomChange(false);
+      onScale(1);
+      setResetKey((k) => k + 1);
+    }, RESET_ANIMATION_MS);
   }, [onZoomChange, onScale]);
 
   useEffect(() => {
@@ -149,9 +156,9 @@ function ZoomableSlide({
           <motion.div
             className="fixed inset-0 z-40 bg-black pointer-events-none"
             initial={{ opacity: 0 }}
-            animate={{ opacity: 0.95 }}
+            animate={{ opacity: 0.65 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
+            transition={{ duration: 0.28, ease: "easeOut" }}
           />
         )}
       </AnimatePresence>
@@ -164,6 +171,7 @@ function ZoomableSlide({
       >
         <TransformWrapper
           key={resetKey}
+          ref={wrapperRef}
           initialScale={1}
           minScale={1}
           maxScale={4}
@@ -171,14 +179,15 @@ function ZoomableSlide({
           wheel={{ disabled: true }}
           // scale=1에서는 판닝 비활성 — 단일 손가락 세로 스와이프가 페이지 스크롤로 이어지도록 native scroll에 양보
           panning={{ velocityDisabled: true, disabled: !isZooming }}
-          // 핀치/팬 종료(마지막 손가락 떼는 시점)에 즉시 원복.
-          // resetTransform 호출 + key 증가로 lib state 강제 reset (단순 resetTransform만으론 잔존 state로 줌이 되살아나는 회귀 발생).
+          // 핀치/팬 종료(마지막 손가락 떼는 시점)에 부드러운 원복(280ms easeOut animation).
           onPinchStop={handleReset}
           onPanningStop={(ref) => {
             if (ref.state.scale > 1.01) handleReset();
           }}
           onTransform={(_ref, state) => {
             onScale(state.scale);
+            // reset animation 진행 중에는 isZooming 토글 X — 풀스크린 overlay가 animation 끝까지 끊김 없이 유지되어야 함
+            if (resetPending.current) return;
             const zooming = state.scale > 1.01;
             setIsZooming(zooming);
             onZoomChange(zooming);
