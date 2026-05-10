@@ -146,7 +146,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [loading, hasMore, loadMore, messages.length]);
+  }, [loading, hasMore, loadMore]);
 
   const renderedMessages = displayMessages;
 
