@@ -62,13 +62,14 @@ function getRoomId(gameId: string, room: ChatRoom): string {
 export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatProps) {
   const [room, setRoom] = useState<ChatRoom>("all");
   const roomId = getRoomId(gameId, room);
-  const { messages, loading, sendMessage, cooldown, cooldownReason, isLoggedIn } = useChat(roomId);
+  const { messages, loading, loadingMore, hasMore, loadMore, sendMessage, cooldown, cooldownReason, isLoggedIn } = useChat(roomId);
   const { homePct } = useMoodGauge(gameId, homeTeamId, awayTeamId);
   const { user, profile, loading: authLoading } = useAuth();
   const [input, setInput] = useState("");
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const composerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   // 최신순: 최신 메시지가 리스트 상단. 크관은 중계↔최신댓글 왕복 부담을
   // 줄이기 위해 최신글이 위에 오는 레이아웃을 사용한다.
@@ -128,6 +129,24 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       document.body.classList.remove("kbd-open");
     };
   }, []);
+
+  // 무한 스크롤: list 끝(가장 오래된 메시지 아래) sentinel이 viewport에
+  // 잡히면 이전 50개 추가 로드. 추가는 화면 *아래*로 자라므로 scroll
+  // anchor 보존이 필요 없다(현재 보고 있는 컨텐츠가 위쪽에 그대로 유지).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (loading || !hasMore) return;
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadMore();
+      },
+      { rootMargin: "200px 0px 200px 0px" }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [loading, hasMore, loadMore, messages.length]);
 
   const renderedMessages = displayMessages;
 
@@ -350,6 +369,13 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
                   );
                 })}
             </AnimatePresence>
+            {hasMore ? (
+              <div ref={sentinelRef} className="py-3 text-center text-[11px] text-text-tertiary">
+                {loadingMore ? "이전 메시지 불러오는 중..." : ""}
+              </div>
+            ) : (
+              <div className="py-3 text-center text-[11px] text-text-tertiary">처음 메시지입니다</div>
+            )}
           </div>
         )}
       </div>
