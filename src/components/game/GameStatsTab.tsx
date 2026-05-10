@@ -31,10 +31,13 @@ type RosterPlayer = {
 };
 
 function getPlayerHref(name: string, teamId: number): string | null {
+  if (!name) return null;
   const roster = playersRoster as RosterPlayer[];
   const player =
     roster.find((entry) => entry.name === name && entry.teamId === teamId) ??
     roster.find((entry) => entry.name === name) ??
+    roster.find((entry) => entry.name.endsWith(name) && entry.teamId === teamId) ??
+    roster.find((entry) => entry.name.endsWith(name)) ??
     null;
 
   return player ? `/community/players/${player.kboId}` : null;
