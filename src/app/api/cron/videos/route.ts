@@ -13,23 +13,89 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { startJob, finishJob } from "@/lib/admin/job-logger";
-import { OFFICIAL_CHANNEL_IDS, getActiveChannels } from "@/lib/video/team-channels";
-import { fetchChannelRss } from "@/lib/video/rss-parser";
+import {
+  OFFICIAL_CHANNEL_IDS,
+  getActiveChannels,
+  type PoolChannel,
+} from "@/lib/video/team-channels";
+import { fetchChannelRss, type RssVideoEntry } from "@/lib/video/rss-parser";
 import {
   extractNoiseFlags,
   isShortCandidate,
 } from "@/lib/video/noise-flags";
 import { upsertVideos, type VideoUpsertRow } from "@/lib/video/videos-repo";
-import { loadPlayerAliases, matchPlayers } from "@/lib/video/player-tagger";
+import {
+  loadPlayerAliases,
+  matchPlayers,
+  type PlayerAlias,
+} from "@/lib/video/player-tagger";
 import { detectTeamFromTitle } from "@/lib/video/team-detector";
-import { fetchVideoDurations } from "@/lib/video/youtube-api";
+import {
+  fetchChannelUploadsViaApi,
+  fetchVideoDurations,
+} from "@/lib/video/youtube-api";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const BACKFILL_LIMIT = 500; // max videos to backfill per run
 const BACKFILL_WINDOW_DAYS = 7;
 const CONCURRENCY = 10;
+// Cap fallback API calls per cron run. Worst-case spend = CAP * runs/day.
+// Default 100 = 1200 quota units/day (12% of default 10k quota).
+const FALLBACK_CAP = Number(process.env.YT_RSS_FALLBACK_PER_RUN ?? 100);
 
 export const maxDuration = 60;
+
+/**
+ * Normalize fetched entries (RSS or playlistItems) into upsert rows.
+ * Source-agnostic: both fetchers return the same `RssVideoEntry` shape.
+ */
+function entriesToRows(
+  entries: RssVideoEntry[],
+  ch: PoolChannel,
+  playerAliases: PlayerAlias[],
+): VideoUpsertRow[] {
+  const isOfficial = OFFICIAL_CHANNEL_IDS.has(ch.channel_id);
+  const channelTeam = ch.team_affinity?.[0] ?? null;
+
+  return entries.map((e) => {
+    const noiseFlags = extractNoiseFlags(e.title, e.channel);
+    const isShort = isShortCandidate({ title: e.title });
+    // Precision 매칭: 공식 채널은 channelTeam, T1은 선수명 only 허용, T2+는 팀명+선수명 필수
+    const playerIds = matchPlayers(
+      e.title,
+      playerAliases,
+      isOfficial ? channelTeam : null,
+      isOfficial ? null : ch.tier,
+    );
+    // team_id: 채널 팀 > 매칭된 선수의 소속팀 > 제목 감지 > ETC
+    // 선수 소속팀 우선 → 대전 영상에서 상대팀으로 잘못 잡히는 것 방지
+    let teamId = channelTeam;
+    if (!teamId && playerIds.length > 0) {
+      const firstPlayer = playerAliases.find((p) => p.kbo_id === playerIds[0]);
+      teamId = firstPlayer?.team ?? null;
+    }
+    if (!teamId) teamId = detectTeamFromTitle(e.title);
+
+    const sourceType: VideoUpsertRow["source_type"] = isOfficial
+      ? isShort ? "official_short" : "official_long"
+      : isShort ? "community_short" : "community_long";
+
+    return {
+      video_id: e.video_id,
+      team_id: teamId,
+      player_id: playerIds[0] ?? null,
+      player_ids: playerIds,
+      title: e.title,
+      channel: e.channel,
+      channel_id: e.channel_id,
+      thumbnail: e.thumbnail,
+      published_at: e.published_at,
+      source_type: sourceType,
+      is_short_candidate: isShort,
+      noise_flags: noiseFlags,
+    };
+  });
+}
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -53,81 +119,80 @@ export async function GET(req: NextRequest) {
   const results: Record<string, number> = {};
   const errors: Record<string, string> = {};
   const channelLatest = new Map<string, string>(); // channel_id → latest published_at
+  const rssFailedChannels: PoolChannel[] = []; // for fallback (preserves tier order)
   let totalUpserted = 0;
+
+  const errorKey = (ch: PoolChannel) => `${ch.channel_name}(${ch.channel_id})`;
 
   // Process in batches for concurrency control
   for (let i = 0; i < channels.length; i += CONCURRENCY) {
     const batch = channels.slice(i, i + CONCURRENCY);
     const settled = await Promise.allSettled(
-      batch.map(async (ch) => {
-        const entries = await fetchChannelRss(ch.channel_id);
-        const isOfficial = OFFICIAL_CHANNEL_IDS.has(ch.channel_id);
-        const channelTeam = ch.team_affinity?.[0] ?? null;
-
-        const rows: VideoUpsertRow[] = entries.map((e) => {
-          const noiseFlags = extractNoiseFlags(e.title, e.channel);
-          const isShort = isShortCandidate({ title: e.title });
-          // Precision 매칭: 공식 채널은 channelTeam, T1은 선수명 only 허용, T2+는 팀명+선수명 필수
-          const playerIds = matchPlayers(e.title, playerAliases, isOfficial ? channelTeam : null, isOfficial ? null : ch.tier);
-          // team_id: 채널 팀 > 매칭된 선수의 소속팀 > 제목 감지 > ETC
-          // 선수 소속팀 우선 → 대전 영상에서 상대팀으로 잘못 잡히는 것 방지
-          let teamId = channelTeam;
-          if (!teamId && playerIds.length > 0) {
-            const firstPlayer = playerAliases.find((p) => p.kbo_id === playerIds[0]);
-            teamId = firstPlayer?.team ?? null;
-          }
-          if (!teamId) teamId = detectTeamFromTitle(e.title);
-
-          let sourceType: VideoUpsertRow["source_type"];
-          if (isOfficial) {
-            sourceType = isShort ? "official_short" : "official_long";
-          } else {
-            sourceType = isShort ? "community_short" : "community_long";
-          }
-
-          return {
-            video_id: e.video_id,
-            team_id: teamId,
-            player_id: playerIds[0] ?? null,
-            player_ids: playerIds,
-            title: e.title,
-            channel: e.channel,
-            channel_id: e.channel_id,
-            thumbnail: e.thumbnail,
-            published_at: e.published_at,
-            source_type: sourceType,
-            is_short_candidate: isShort,
-            noise_flags: noiseFlags,
-          };
-        });
-
-        return { channelId: ch.channel_id, channelName: ch.channel_name, rows };
-      }),
+      batch.map(async (ch) => ({
+        ch,
+        rows: entriesToRows(await fetchChannelRss(ch.channel_id), ch, playerAliases),
+      })),
     );
 
     for (let j = 0; j < settled.length; j++) {
       const result = settled[j];
+      const ch = batch[j];
       if (result.status === "rejected") {
-        const ch = batch[j];
         const msg = result.reason instanceof Error ? result.reason.message : String(result.reason);
-        errors[`${ch.channel_name}(${ch.channel_id})`] = msg;
+        errors[errorKey(ch)] = msg;
+        rssFailedChannels.push(ch);
         continue;
       }
-      const { channelId, channelName, rows } = result.value;
+      const { rows } = result.value;
       const { upserted, error } = await upsertVideos(supabaseAdmin, rows);
       if (error) {
-        errors[channelName] = error;
+        errors[errorKey(ch)] = error;
+        // upsert failure is not an RSS-fetch failure → don't fallback
       } else {
-        results[channelName] = upserted;
+        results[ch.channel_name] = upserted;
         totalUpserted += upserted;
         // Track latest published_at per channel for last_video_at
         if (rows.length > 0) {
           const latest = rows.reduce((a, b) =>
             a.published_at > b.published_at ? a : b
           ).published_at;
-          channelLatest.set(channelId, latest);
+          channelLatest.set(ch.channel_id, latest);
         }
       }
+    }
+  }
+
+  // ── Fallback: playlistItems.list for RSS-failed channels (capped per run) ──
+  // YouTube blocks RSS from datacenter IPs (Vercel) intermittently. When that
+  // happens we re-fetch via Data API. Tier 1 (official) channels are processed
+  // first because getActiveChannels orders by tier asc.
+  let fallbackOk = 0;
+  let fallbackErr = 0;
+  let fallbackQuotaUsed = 0;
+  const fallbackTargets = rssFailedChannels.slice(0, FALLBACK_CAP);
+  for (const ch of fallbackTargets) {
+    fallbackQuotaUsed++;
+    const entries = await fetchChannelUploadsViaApi(ch.channel_id);
+    if (entries === null) {
+      fallbackErr++;
+      continue;
+    }
+    const rows = entriesToRows(entries, ch, playerAliases);
+    const { upserted, error } = await upsertVideos(supabaseAdmin, rows);
+    if (error) {
+      fallbackErr++;
+      errors[errorKey(ch)] = `[fallback] ${error}`;
+      continue;
+    }
+    delete errors[errorKey(ch)];
+    results[ch.channel_name] = upserted;
+    totalUpserted += upserted;
+    fallbackOk++;
+    if (rows.length > 0) {
+      const latest = rows.reduce((a, b) =>
+        a.published_at > b.published_at ? a : b,
+      ).published_at;
+      channelLatest.set(ch.channel_id, latest);
     }
   }
 
@@ -201,8 +266,16 @@ export async function GET(req: NextRequest) {
 
   const errorCount = Object.keys(errors).length;
   const okCount = Object.keys(results).length;
-  const status: "success" | "error" = errorCount === 0 ? "success" : "error";
-  const summary = `channels=${channels.length} upserted=${totalUpserted} ok=${okCount} err=${errorCount} backfilled=${backfilled} apiCalls=${backfillApiCalls}`;
+  // Partial-success is "warning", not "error". The anomaly detector
+  // (lib/admin/anomaly.ts) only triggers on consecutive "error" runs, so a
+  // handful of dead channels no longer false-alarms when the bulk succeeded.
+  const status: "success" | "warning" | "error" =
+    errorCount === 0 ? "success" : okCount > 0 ? "warning" : "error";
+  const summary =
+    `channels=${channels.length} upserted=${totalUpserted} ` +
+    `ok=${okCount} err=${errorCount} ` +
+    `fallback=${fallbackOk}/${fallbackQuotaUsed}(err=${fallbackErr}) ` +
+    `backfilled=${backfilled} apiCalls=${backfillApiCalls}`;
   const errorMessage = errorCount > 0 ? JSON.stringify(errors).slice(0, 900) : undefined;
 
   await finishJob(logId, status, summary, errorMessage);
@@ -214,6 +287,14 @@ export async function GET(req: NextRequest) {
     totalUpserted,
     backfilled,
     backfillApiCalls,
+    fallback: {
+      attempted: fallbackQuotaUsed,
+      recovered: fallbackOk,
+      failed: fallbackErr,
+      capped: rssFailedChannels.length > FALLBACK_CAP
+        ? rssFailedChannels.length - FALLBACK_CAP
+        : 0,
+    },
     results,
     errors: errorCount > 0 ? errors : undefined,
   });
