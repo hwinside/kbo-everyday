@@ -16,20 +16,46 @@ export interface ChatMessage {
   grade?: string;
 }
 
+const PAGE_SIZE = 50;
+
+type ChatRow = ChatMessage & { profiles?: { nickname?: string; team_id?: number; grade?: string } };
+
+function mapRow(r: ChatRow): ChatMessage {
+  return {
+    id: r.id,
+    room_id: r.room_id,
+    user_id: r.user_id,
+    content: r.content,
+    created_at: r.created_at,
+    nickname: r.profiles?.nickname,
+    team_id: r.profiles?.team_id,
+    grade: r.profiles?.grade,
+  };
+}
+
 export function useChat(roomId: string) {
   const { user, profile } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [cooldown, setCooldown] = useState(false);
   const [cooldownReason, setCooldownReason] = useState<string>("");
   const lastSentRef = useRef(0);
   const sentTimestampsRef = useRef<number[]>([]);
   const recentContentsRef = useRef<string[]>([]);
+  // 가장 오래된 메시지의 created_at — loadMore 커서. 방 전환 시 리셋.
+  const oldestCursorRef = useRef<string | null>(null);
+  // loadMore 동시 호출 가드 (IntersectionObserver가 다중 fire할 수 있음)
+  const loadingMoreRef = useRef(false);
 
   // 최근 메시지 로드
   useEffect(() => {
     if (!roomId) return;
     setLoading(true);  // 방 전환 시 로딩 리셋
+    setMessages([]);
+    setHasMore(true);
+    oldestCursorRef.current = null;
 
     async function load() {
       try {
@@ -38,24 +64,19 @@ export function useChat(roomId: string) {
           .select("*, profiles(nickname, team_id, grade)")
           .eq("room_id", roomId)
           .order("created_at", { ascending: false })
-          .limit(50);
+          .limit(PAGE_SIZE);
 
         if (error) {
           console.error("[useChat] load error:", error.message);
         }
 
         if (data) {
-          const mapped = data.reverse().map((m: ChatMessage & { profiles?: { nickname?: string; team_id?: number; grade?: string } }) => ({
-            id: m.id,
-            room_id: m.room_id,
-            user_id: m.user_id,
-            content: m.content,
-            created_at: m.created_at,
-            nickname: m.profiles?.nickname,
-            team_id: m.profiles?.team_id,
-            grade: m.profiles?.grade,
-          }));
+          const mapped = (data as ChatRow[]).reverse().map(mapRow);
           setMessages(mapped);
+          if (mapped.length > 0) {
+            oldestCursorRef.current = mapped[0].created_at;
+          }
+          if (data.length < PAGE_SIZE) setHasMore(false);
         }
       } catch (err) {
         console.error("[useChat] unexpected error:", err);
@@ -109,6 +130,50 @@ export function useChat(roomId: string) {
     return () => {
       supabase.removeChannel(channel);
     };
+  }, [roomId]);
+
+  // 이전(더 오래된) 메시지 페이지 로드. cursor=oldestCursorRef.current 미만의 50개.
+  const loadMore = useCallback(async () => {
+    if (!roomId) return;
+    if (loadingMoreRef.current) return;
+    if (!oldestCursorRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const cursor = oldestCursorRef.current;
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .select("*, profiles(nickname, team_id, grade)")
+        .eq("room_id", roomId)
+        .lt("created_at", cursor)
+        .order("created_at", { ascending: false })
+        .limit(PAGE_SIZE);
+
+      if (error) {
+        console.error("[useChat] loadMore error:", error.message);
+        return;
+      }
+
+      const rows = (data ?? []) as ChatRow[];
+      if (rows.length === 0) {
+        setHasMore(false);
+        return;
+      }
+
+      const mapped = [...rows].reverse().map(mapRow);
+      // 새 cursor = 새로 가져온 페이지의 가장 오래된 것
+      oldestCursorRef.current = mapped[0].created_at;
+      if (rows.length < PAGE_SIZE) setHasMore(false);
+
+      setMessages((prev) => {
+        const existing = new Set(prev.map((m) => m.id));
+        const fresh = mapped.filter((m) => !existing.has(m.id));
+        return [...fresh, ...prev];
+      });
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
   }, [roomId]);
 
   // 메시지 전송 (주 경로: insert 결과 즉시 local append)
@@ -165,7 +230,7 @@ export function useChat(roomId: string) {
         return false;
       }
 
-      const row = data as ChatMessage & { profiles?: { nickname?: string; team_id?: number; grade?: string } };
+      const row = data as ChatRow;
       const newMsg: ChatMessage = {
         id: row.id,
         room_id: row.room_id,
@@ -188,5 +253,5 @@ export function useChat(roomId: string) {
     [user, profile, roomId]
   );
 
-  return { messages, loading, sendMessage, cooldown, cooldownReason, isLoggedIn: !!user };
+  return { messages, loading, loadingMore, hasMore, loadMore, sendMessage, cooldown, cooldownReason, isLoggedIn: !!user };
 }
