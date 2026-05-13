@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import {
+  AlertTriangle,
   CheckCircle,
   XCircle,
   Loader2,
@@ -39,6 +40,13 @@ function JobStatusBadge({ status }: { status: string }) {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#30D158]/15 text-[#30D158]">
         <CheckCircle className="w-3 h-3" /> 성공
+      </span>
+    );
+  }
+  if (status === "warning") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#FF9F0A]/15 text-[#FF9F0A]">
+        <AlertTriangle className="w-3 h-3" /> 부분실패
       </span>
     );
   }
@@ -263,6 +271,7 @@ export default function AdminJobsPage() {
               >
                 <option value="all">전체 상태</option>
                 <option value="success">성공</option>
+                <option value="warning">부분실패</option>
                 <option value="error">에러</option>
                 <option value="running">실행중</option>
               </select>

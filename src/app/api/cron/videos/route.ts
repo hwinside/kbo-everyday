@@ -166,34 +166,48 @@ export async function GET(req: NextRequest) {
   // YouTube blocks RSS from datacenter IPs (Vercel) intermittently. When that
   // happens we re-fetch via Data API. Tier 1 (official) channels are processed
   // first because getActiveChannels orders by tier asc.
-  let fallbackOk = 0;
-  let fallbackErr = 0;
+  //
+  // Three fallback outcomes — distinct so operators can spot dead/silent channels:
+  //   recovered  : API returned rows that we upserted → erase original RSS error
+  //   noUploads  : API returned [] (200 empty or 404) → channel is alive in DB
+  //                but produces nothing right now. Keep RSS error annotated so
+  //                operators can decide whether to flip is_active=false later.
+  //   failed     : API call itself failed (network, all keys 403, upsert error)
+  //                → leave RSS error in place, soft-warn via counter.
+  let fallbackRecovered = 0;
+  let fallbackNoUploads = 0;
+  let fallbackFailed = 0;
   let fallbackQuotaUsed = 0;
   const fallbackTargets = rssFailedChannels.slice(0, FALLBACK_CAP);
   for (const ch of fallbackTargets) {
     fallbackQuotaUsed++;
     const entries = await fetchChannelUploadsViaApi(ch.channel_id);
     if (entries === null) {
-      fallbackErr++;
+      fallbackFailed++;
+      // keep original RSS error in errors[errorKey(ch)]
+      continue;
+    }
+    if (entries.length === 0) {
+      fallbackNoUploads++;
+      const prev = errors[errorKey(ch)] ?? "";
+      errors[errorKey(ch)] = `${prev} | [fallback: no uploads via API]`;
       continue;
     }
     const rows = entriesToRows(entries, ch, playerAliases);
     const { upserted, error } = await upsertVideos(supabaseAdmin, rows);
     if (error) {
-      fallbackErr++;
-      errors[errorKey(ch)] = `[fallback] ${error}`;
+      fallbackFailed++;
+      errors[errorKey(ch)] = `[fallback upsert] ${error}`;
       continue;
     }
     delete errors[errorKey(ch)];
     results[ch.channel_name] = upserted;
     totalUpserted += upserted;
-    fallbackOk++;
-    if (rows.length > 0) {
-      const latest = rows.reduce((a, b) =>
-        a.published_at > b.published_at ? a : b,
-      ).published_at;
-      channelLatest.set(ch.channel_id, latest);
-    }
+    fallbackRecovered++;
+    const latest = rows.reduce((a, b) =>
+      a.published_at > b.published_at ? a : b,
+    ).published_at;
+    channelLatest.set(ch.channel_id, latest);
   }
 
   // Update last_video_at per channel with actual latest published_at
@@ -274,7 +288,8 @@ export async function GET(req: NextRequest) {
   const summary =
     `channels=${channels.length} upserted=${totalUpserted} ` +
     `ok=${okCount} err=${errorCount} ` +
-    `fallback=${fallbackOk}/${fallbackQuotaUsed}(err=${fallbackErr}) ` +
+    `fallback=recovered:${fallbackRecovered}/no_uploads:${fallbackNoUploads}/failed:${fallbackFailed}` +
+    `(quota=${fallbackQuotaUsed}) ` +
     `backfilled=${backfilled} apiCalls=${backfillApiCalls}`;
   const errorMessage = errorCount > 0 ? JSON.stringify(errors).slice(0, 900) : undefined;
 
@@ -289,8 +304,9 @@ export async function GET(req: NextRequest) {
     backfillApiCalls,
     fallback: {
       attempted: fallbackQuotaUsed,
-      recovered: fallbackOk,
-      failed: fallbackErr,
+      recovered: fallbackRecovered,
+      noUploads: fallbackNoUploads,
+      failed: fallbackFailed,
       capped: rssFailedChannels.length > FALLBACK_CAP
         ? rssFailedChannels.length - FALLBACK_CAP
         : 0,
