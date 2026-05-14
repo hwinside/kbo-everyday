@@ -124,7 +124,7 @@ export default function PrivacyPage() {
       <section className="space-y-3">
         <h2 className="text-xl font-bold text-text-primary">7의2. YouTube API Services 사용 고지</h2>
         <p className="text-sm leading-7 text-text-secondary sm:text-base">
-          크보팬은 KBO 관련 영상 콘텐츠(하이라이트, 숏츠, 인터뷰 등)를 제공하기 위해 YouTube API Services를 사용합니다. 본 서비스를 이용함으로써 회원은 다음 조건에 동의하는 것으로 간주됩니다.
+          크보팬은 KBO 관련 영상 콘텐츠(하이라이트, 숏츠, 인터뷰 등)를 제공하기 위해 YouTube API Services를 사용합니다. YouTube API Services가 제공하는 영상 콘텐츠와 메타데이터에는 YouTube 이용약관 및 Google 개인정보 처리방침이 함께 적용됩니다.
         </p>
         <ul className="list-disc space-y-2 pl-5 text-sm leading-7 text-text-secondary sm:text-base">
           <li>
@@ -149,9 +149,9 @@ export default function PrivacyPage() {
               https://policies.google.com/privacy
             </a>
           </li>
-          <li>YouTube API Services를 통해 수신한 영상 메타데이터(영상 ID, 제목, 채널, 게시 시각, 썸네일 URL 등)는 서비스 운영에 필요한 범위에서 임시로 저장되며, YouTube Developer Policies가 정한 캐시 기한 내에서 주기적으로 갱신 또는 삭제됩니다.</li>
-          <li>회원은 본 서비스에서 사용된 YouTube API Services 데이터에 대한 접근·수정·삭제를 요청할 수 있으며, 요청은 아래 문의처(privacy@keubo.fan)로 접수할 수 있습니다.</li>
-          <li>회원은 Google 보안 설정 페이지(<a href="https://security.google.com/settings/security/permissions" target="_blank" rel="noopener noreferrer" className="text-accent underline">https://security.google.com/settings/security/permissions</a>)에서 본 서비스에 부여한 권한을 언제든 철회할 수 있습니다.</li>
+          <li>YouTube API Services를 통해 수신한 공개 영상 메타데이터(영상 ID, 제목, 채널, 게시 시각, 썸네일 URL 등)는 서비스 운영에 필요한 범위에서 임시로 저장되며, YouTube Developer Policies가 정한 캐시 기한 내에서 주기적으로 갱신 또는 삭제됩니다.</li>
+          <li>회원은 크보팬이 보유한 본인의 개인정보 및 서비스 이용정보에 대한 접근·정정·삭제를 요청할 수 있으며, 요청은 아래 문의처(privacy@keubo.fan)로 접수할 수 있습니다.</li>
+          <li>현재 크보팬의 YouTube API Services 기능은 회원의 YouTube 계정 권한 또는 YouTube Authorized Data를 요청하지 않습니다. Google OAuth 로그인 등으로 본 서비스에 부여한 접근 권한은 Google 보안 설정 페이지(<a href="https://security.google.com/settings/security/permissions" target="_blank" rel="noopener noreferrer" className="text-accent underline">https://security.google.com/settings/security/permissions</a>)에서 철회할 수 있습니다.</li>
         </ul>
       </section>
 
