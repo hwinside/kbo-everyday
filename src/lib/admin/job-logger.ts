@@ -16,7 +16,7 @@ export async function startJob(jobName: string): Promise<number | null> {
 
 export async function finishJob(
   logId: number | null,
-  status: "success" | "error",
+  status: "success" | "warning" | "error",
   resultSummary?: string,
   errorMessage?: string,
 ): Promise<void> {
