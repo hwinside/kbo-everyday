@@ -34,7 +34,7 @@ export default function GameDecisionPitchers({ pitchers }: GameDecisionPitchersP
               <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${style.bg} ${style.text}`}>
                 {style.label}
               </span>
-              <PlayerAvatar name={p.name} teamId={p.teamId} photoUrl={getPlayerPhotoUrl(p.name, resolveRosterPlayer({ name: p.name, teamId: p.teamId })?.kboId)} size={48} />
+              <PlayerAvatar name={p.name} teamId={p.teamId} photoUrl={getPlayerPhotoUrl(p.name, resolveRosterPlayer({ name: p.name, teamId: p.teamId })?.kboId, p.teamId)} size={48} />
               <span className="text-sm font-semibold text-text-primary">{p.name}</span>
               <span className="text-xs text-text-tertiary">{p.record} · ERA {p.era}</span>
             </div>
