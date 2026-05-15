@@ -21,70 +21,58 @@
  */
 import "./_env.mjs";
 
-const API_KEY =
-  process.env.YOUTUBE_API_KEY ||
-  process.env.YOUTUBE_API_KEY_2 ||
-  process.env.YOUTUBE_API_KEY_3;
+const API_KEY = process.env.YOUTUBE_API_KEY;
 
 if (!API_KEY) {
-  console.error("[qa] YOUTUBE_API_KEY (or _2/_3) 가 .env.local에 없음 — 검증 불가");
+  console.error("[qa] YOUTUBE_API_KEY 가 .env.local에 없음 — 검증 불가");
   process.exit(1);
 }
-
-const KEYS = [
-  process.env.YOUTUBE_API_KEY,
-  process.env.YOUTUBE_API_KEY_2,
-  process.env.YOUTUBE_API_KEY_3,
-].filter(Boolean);
 
 // Mirrors src/lib/video/youtube-api.ts → fetchChannelUploadsViaApi.
 // Kept inline so the QA script has no TS toolchain dependency.
 async function fetchChannelUploadsViaApi(channelId, maxResults = 5) {
-  if (KEYS.length === 0) return null;
+  if (!API_KEY) return null;
   if (!channelId.startsWith("UC")) return null;
   const playlistId = `UU${channelId.slice(2)}`;
   const limit = Math.min(Math.max(maxResults, 1), 50);
 
-  for (let keyIdx = 0; keyIdx < KEYS.length; keyIdx++) {
-    try {
-      const url =
-        `https://www.googleapis.com/youtube/v3/playlistItems` +
-        `?part=snippet,contentDetails&playlistId=${playlistId}` +
-        `&maxResults=${limit}&key=${KEYS[keyIdx]}`;
-      const res = await fetch(url);
-      if (res.status === 403) continue;
-      if (res.status === 404) return [];
-      if (!res.ok) return null;
-      const data = await res.json();
-      const items = data.items ?? [];
-      const out = [];
-      for (const it of items) {
-        const videoId = it.contentDetails?.videoId;
-        const publishedAt =
-          it.contentDetails?.videoPublishedAt ?? it.snippet?.publishedAt;
-        if (!videoId || !publishedAt) continue;
-        const t = it.snippet?.thumbnails;
-        const thumbnail =
-          t?.maxres?.url ??
-          t?.high?.url ??
-          t?.medium?.url ??
-          t?.default?.url ??
-          "";
-        out.push({
-          video_id: videoId,
-          title: it.snippet?.title ?? "",
-          thumbnail,
-          channel: it.snippet?.channelTitle ?? "",
-          channel_id: channelId,
-          published_at: publishedAt,
-        });
-      }
-      return out;
-    } catch {
-      return null;
+  try {
+    const url =
+      `https://www.googleapis.com/youtube/v3/playlistItems` +
+      `?part=snippet,contentDetails&playlistId=${playlistId}` +
+      `&maxResults=${limit}&key=${API_KEY}`;
+    const res = await fetch(url);
+    if (res.status === 403) return null;
+    if (res.status === 404) return [];
+    if (!res.ok) return null;
+    const data = await res.json();
+    const items = data.items ?? [];
+    const out = [];
+    for (const it of items) {
+      const videoId = it.contentDetails?.videoId;
+      const publishedAt =
+        it.contentDetails?.videoPublishedAt ?? it.snippet?.publishedAt;
+      if (!videoId || !publishedAt) continue;
+      const t = it.snippet?.thumbnails;
+      const thumbnail =
+        t?.maxres?.url ??
+        t?.high?.url ??
+        t?.medium?.url ??
+        t?.default?.url ??
+        "";
+      out.push({
+        video_id: videoId,
+        title: it.snippet?.title ?? "",
+        thumbnail,
+        channel: it.snippet?.channelTitle ?? "",
+        channel_id: channelId,
+        published_at: publishedAt,
+      });
     }
+    return out;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 function fmt(v) {
@@ -113,7 +101,7 @@ async function check(label, fn, predicate, evidenceFn) {
 }
 
 console.log("[qa] videos-rss fallback (playlistItems.list) 검증\n");
-console.log(`keys configured: ${KEYS.length}\n`);
+console.log("single API key configured: yes\n");
 
 // 1) 정상 채널
 await check(
