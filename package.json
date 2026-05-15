@@ -14,7 +14,8 @@
     "validate:roster": "node scripts/validate-roster.mjs",
     "qa:ios-safari-keyboard": "node scripts/qa/browserstack-ios-safari-keyboard.mjs",
     "qa:ios-app-keyboard": "node scripts/qa/browserstack-ios-app-keyboard.mjs",
-    "validate:player-identity": "node scripts/validate-player-identity.mjs"
+    "validate:player-identity": "node scripts/validate-player-identity.mjs",
+    "qa:native-ios-naver-smoke-preflight": "node scripts/qa/native-ios-naver-smoke-preflight.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.1",
