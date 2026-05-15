@@ -30,6 +30,12 @@ const byId = new Map(roster.map((p) => [String(p.kboId), p]));
 const errors = [];
 const warnings = [];
 
+// KBO official player page references this image URL, but the CDN object returns 404
+// as of 2026-05-15. Keep this explicit so real regressions still warn/fail.
+const KNOWN_OFFICIAL_PHOTO_UNAVAILABLE = new Set([
+  "64202", // 두산 정은재 — official page falls back to KBO no-Image.png
+]);
+
 function fail(msg) { errors.push(msg); }
 function warn(msg) { warnings.push(msg); }
 
@@ -118,6 +124,9 @@ for (const [kind, rows] of [["batter", batters], ["pitcher", pitchers]]) {
 // Roster entries are selectable/searchable; warn on photo gaps for official-photo-unavailable cases.
 for (const p of roster) {
   const numericId = foreignAlphaToNumeric[p.kboId] || p.kboId;
+  if (KNOWN_OFFICIAL_PHOTO_UNAVAILABLE.has(p.kboId) || KNOWN_OFFICIAL_PHOTO_UNAVAILABLE.has(numericId)) {
+    continue;
+  }
   if (!photoIds.has(p.kboId) && !photoIds.has(numericId)) {
     warn(`roster photo missing: ${p.team} ${p.name} (${p.kboId}/${numericId})`);
   }

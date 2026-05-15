@@ -142,7 +142,7 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, ga
           standingsImpact: preview.standingsImpact || null,
           hotPlayers: preview.hotPlayers || [],
         });
-      } catch (err) {
+      } catch {
         setError(true);
       } finally {
         setLoading(false);

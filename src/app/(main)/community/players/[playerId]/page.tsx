@@ -4,11 +4,10 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowLeft, Heart, MessageCircle, Share2, PenLine } from "lucide-react";
+import { ArrowLeft, Share2, PenLine } from "lucide-react";
 import Link from "next/link";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
-import GlassCard from "@/components/ui/GlassCard";
 import PostList from "@/components/community/PostList";
 import type { Post as PostDTO } from "@/lib/types";
 import NicheStats from "@/components/player/NicheStats";
@@ -22,7 +21,6 @@ import WritePost from "@/components/community/WritePost";
 import WritePhotoPost from "@/components/community/WritePhotoPost";
 import PhotoFeed from "@/components/community/PhotoFeed";
 import { useBadgeCheck } from "@/lib/hooks/useBadgeCheck";
-import BadgeToast from "@/components/ui/BadgeToast";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import CheerSong from "@/components/player/CheerSong";
@@ -119,7 +117,7 @@ export default function PlayerBoardPage() {
   const [realStats, setRealStats] = useState<Record<string, string | number> | null>(null);
   const [playerRanks, setPlayerRanks] = useState<PlayerRanks>({});
   const { user } = useAuth();
-  const { newBadges, checkBadges, clearBadges } = useBadgeCheck();
+  const { checkBadges } = useBadgeCheck();
 
   const loadPhotoPosts = useCallback(async () => {
     if (!playerName) return;

@@ -22,7 +22,6 @@ export default function PlayerAvatar({
   photoUrl,
   size = 48,
   showTeamBadge = true,
-  number,
 }: PlayerAvatarProps) {
   const team = TEAMS.find((t) => t.id === teamId);
   const teamColor = team?.colorPrimary ?? "#888";

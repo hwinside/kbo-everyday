@@ -157,7 +157,7 @@ function AiLineupAnalysisCard({
     }
 
     load();
-  }, [gameId, awayTeamId, homeTeamId, lineup]);
+  }, [gameId, awayTeamId, homeTeamId, lineup, isLineupConfirmed]);
 
   if (!loading && !analysis) return null;
 
