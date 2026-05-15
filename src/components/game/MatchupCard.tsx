@@ -6,7 +6,7 @@ import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import batterStatsJson from "@/lib/constants/stats-2026-batters.json";
 import pitcherStatsJson from "@/lib/constants/stats-2026-pitchers.json";
 import { resolveRosterPlayer } from "@/lib/utils/player-roster";
-import { FOREIGN_ALPHA_TO_NUMERIC } from "@/lib/constants/foreign-id-map";
+import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
 import type { MatchupStats } from "@/app/api/game-relay/route";
 
 function getPlayerHref(name: string, teamId?: number): string | null {
@@ -48,7 +48,7 @@ interface MatchupCardProps {
 function lookupBatterAvg(name: string, teamId?: number): string | null {
   const rosterPlayer = resolveRosterPlayer({ name, teamId });
   if (!rosterPlayer) return null;
-  const numericId = FOREIGN_ALPHA_TO_NUMERIC[rosterPlayer.kboId] || rosterPlayer.kboId;
+  const numericId = resolvePlayerIdentity(rosterPlayer.kboId)?.numericId ?? rosterPlayer.kboId;
   const found = (batterStatsJson as { avg: string; kboId?: string; playerId?: string }[]).find((b) =>
     String(b.kboId) === rosterPlayer.kboId || String(b.playerId) === rosterPlayer.kboId ||
     String(b.kboId) === numericId || String(b.playerId) === numericId,
@@ -59,7 +59,7 @@ function lookupBatterAvg(name: string, teamId?: number): string | null {
 function lookupPitcherEra(name: string, teamId?: number): string | null {
   const rosterPlayer = resolveRosterPlayer({ name, teamId });
   if (!rosterPlayer) return null;
-  const numericId = FOREIGN_ALPHA_TO_NUMERIC[rosterPlayer.kboId] || rosterPlayer.kboId;
+  const numericId = resolvePlayerIdentity(rosterPlayer.kboId)?.numericId ?? rosterPlayer.kboId;
   const found = (pitcherStatsJson as { era: string; kboId?: string; playerId?: string }[]).find((p) =>
     String(p.kboId) === rosterPlayer.kboId || String(p.playerId) === rosterPlayer.kboId ||
     String(p.kboId) === numericId || String(p.playerId) === numericId,
@@ -69,7 +69,7 @@ function lookupPitcherEra(name: string, teamId?: number): string | null {
 
 function PlayerPhoto({ name, teamId }: { name: string; type: "pitcher" | "batter"; teamId?: number }) {
   const rosterPlayer = resolveRosterPlayer({ name, teamId });
-  const photoUrl = getPlayerPhotoUrl(name, rosterPlayer?.kboId);
+  const photoUrl = getPlayerPhotoUrl(name, rosterPlayer?.kboId, teamId);
   const borderColor = "#7ecb4a";
 
   return (

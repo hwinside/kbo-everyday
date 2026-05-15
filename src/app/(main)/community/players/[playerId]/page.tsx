@@ -13,9 +13,8 @@ import PostList from "@/components/community/PostList";
 import type { Post as PostDTO } from "@/lib/types";
 import NicheStats from "@/components/player/NicheStats";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
+import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
-import { FOREIGN_NUMERIC_TO_ALPHA, FOREIGN_ALPHA_TO_NUMERIC } from "@/lib/constants/foreign-id-map";
 import { usePosts, createPost, toggleLike } from "@/lib/supabase/usePosts";
 import type { Post } from "@/lib/supabase/usePosts";
 import { supabase } from "@/lib/supabase/client";
@@ -33,29 +32,10 @@ import { calcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
 import PlayerRadar from "@/components/player/PlayerRadar";
 import PlayerNews from "@/components/player/PlayerNews";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
+import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
 
-// kboId → name 역매핑 (roster 기반 — 전체 선수 커버)
+// kboId → player 역매핑 (roster 기반 — 전체 선수 커버)
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
-const ID_TO_NAME: Record<string, string> = {};
-for (const p of PLAYERS_ROSTER) {
-  ID_TO_NAME[p.kboId] = p.name;
-}
-// photo map에서도 추가 (혹시 roster에 없는 경우)
-for (const [name, id] of Object.entries(PLAYER_PHOTO_MAP)) {
-  if (!ID_TO_NAME[id]) ID_TO_NAME[id] = name;
-}
-
-// 레거시 pN → kboId 매핑 (기존 링크 호환)
-const LEGACY_MAP: Record<string, string> = {
-  p1: "67430", p2: "77162", p3: "62404", p4: "69650", p5: "68571",
-  p6: "64643", p7: "63905", p8: "61478", p9: "75003", p10: "67100",
-  p11: "55500", p12: "68300", p13: "69200", p14: "67800", p15: "65400",
-};
-
-const TEAM_SHORT_MAP: Record<string, number> = {
-  LG: 1, OB: 2, KT: 3, SK: 4, NC: 5, HT: 6, LT: 7, SS: 8, HH: 9, WO: 10,
-  "두산": 2, SSG: 4, KIA: 6, "롯데": 7, "삼성": 8, "한화": 9, "키움": 10,
-};
 
 interface RawPlayerInfo {
   kboId: string;
@@ -93,14 +73,12 @@ function StatItem({ label, value }: { label: string; value: string | number; col
 export default function PlayerBoardPage() {
   const { playerId } = useParams();
   const rawId = playerId as string;
-  // ID resolve: roster 직접 매치 우선 → 레거시 pN → 외국인 숫자→영문 변환 (roster 충돌 없을 때만)
-  const rosterDirect = PLAYERS_ROSTER.some((p) => p.kboId === rawId);
-  const kboId = rosterDirect
-    ? rawId
-    : LEGACY_MAP[rawId] || FOREIGN_NUMERIC_TO_ALPHA[rawId] || rawId;
-  const numericKboId = FOREIGN_ALPHA_TO_NUMERIC[kboId] || kboId;
-  const playerName = ID_TO_NAME[kboId];
-  // 동명이인 대응: roster에서 kboId로 직접 찾기
+  // ID resolve: 레거시 pN, 외국인 숫자 ID, FP/AQ canonical ID를 단일 resolver로 정규화.
+  const resolvedPlayer = resolvePlayerIdentity(rawId);
+  const kboId = resolvedPlayer?.kboId ?? rawId;
+  const numericKboId = resolvedPlayer?.numericId ?? kboId;
+  const playerName = resolvedPlayer?.name;
+  // 동명이인 대응: roster에서 canonical kboId로 직접 찾기
   const rosterPlayer = PLAYERS_ROSTER.find((p) => p.kboId === kboId);
   
   const [player, setPlayer] = useState<PlayerData | null>(null);
@@ -399,7 +377,7 @@ export default function PlayerBoardPage() {
           style={{ background: `linear-gradient(135deg, ${teamColor}15, transparent)` }}
         >
           <div className="flex items-center gap-4 px-5 py-4">
-            <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name, kboId)} number={player.number} size={64} />
+            <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name, kboId, player.teamId)} number={player.number} size={64} />
             <div className="flex-1">
               <div className="flex items-center gap-3">
                 <h1 className="text-lg font-semibold text-text-primary">{player.name}</h1>
@@ -563,7 +541,7 @@ export default function PlayerBoardPage() {
             </div>
           )}
 
-          <NicheStats playerId={rawId} position={player.position} teamColor={teamColor} playerName={player.name} season={statSeason} />
+          <NicheStats playerId={numericKboId} position={player.position} teamColor={teamColor} playerName={player.name} season={statSeason} />
           
           {/* 관련 기사 */}
           <div className="px-5">

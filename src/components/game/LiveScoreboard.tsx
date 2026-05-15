@@ -66,10 +66,10 @@ export default function LiveScoreboard({
   const pitcherRoster = state.currentPitcher ? resolveRosterPlayer({ name: state.currentPitcher, teamId: pitcherTeamId }) : null;
   const batterRoster = state.currentBatter ? resolveRosterPlayer({ name: state.currentBatter, teamId: batterTeamId }) : null;
   const pitcherPhotoUrl = state.currentPitcher
-    ? getPlayerPhotoUrl(state.currentPitcher, pitcherRoster?.kboId)
+    ? getPlayerPhotoUrl(state.currentPitcher, pitcherRoster?.kboId, pitcherTeamId)
     : null;
   const batterPhotoUrl = state.currentBatter
-    ? getPlayerPhotoUrl(state.currentBatter, batterRoster?.kboId)
+    ? getPlayerPhotoUrl(state.currentBatter, batterRoster?.kboId, batterTeamId)
     : null;
 
   return (

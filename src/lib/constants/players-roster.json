@@ -1464,6 +1464,14 @@
     "team": "KIA"
   },
   {
+    "name": "김현종",
+    "kboId": "54166",
+    "teamId": 1,
+    "position": "외야수",
+    "backNo": "66",
+    "team": "LG"
+  },
+  {
     "name": "김형준",
     "kboId": "68912",
     "teamId": 5,
@@ -2758,6 +2766,14 @@
     "position": "외야수",
     "backNo": "8",
     "team": "두산"
+  },
+  {
+    "name": "손용준",
+    "kboId": "54156",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "15",
+    "team": "LG"
   },
   {
     "name": "손주영",

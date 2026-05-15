@@ -1,3 +1,5 @@
+import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
+
 /**
  * KBO playerId → 선수 사진 URL 매핑
  * 사진 소스: KBO 공식 이미지 서버
@@ -178,6 +180,7 @@ export const PLAYER_PHOTO_MAP: Record<string, string> = {
   "김헌곤": "61404",
   "김현도": "56509",
   "김현수": "56664",
+  "김현종": "54166",
   "김형준": "68912",
   "김호령": "65653",
   "김호범": "56512",
@@ -336,6 +339,7 @@ export const PLAYER_PHOTO_MAP: Record<string, string> = {
   "손민석": "53057",
   "손성빈": "51528",
   "손아섭": "77532",
+  "손용준": "54156",
   "손주영": "67143",
   "손주환": "54904",
   "손현기": "54363",
@@ -801,7 +805,7 @@ export const PLAYER_PHOTO_ID_SET = new Set([
   "53416", "53455", "53460", "53464", "53504", "53505", "53540", "53554", "53562", "53596",
   "53597", "53598", "53609", "53613", "53637", "53701", "53703", "53706", "53754", "53764",
   "53800", "53806", "53827", "53865", "53892", "53893", "53898", "53914", "53919", "53973",
-  "53988", "53989", "53995", "54014", "54063", "54097", "54148", "54214", "54219", "54236",
+  "53988", "53989", "53995", "54014", "54063", "54097", "54148", "54156", "54166", "54214", "54219", "54236",
   "54263", "54301", "54305", "54307", "54319", "54354", "54362", "54363", "54368", "54394",
   "54397", "54400", "54403", "54404", "54503", "54506", "54529", "54537", "54598", "54610",
   "54640", "54702", "54703", "54705", "54729", "54730", "54755", "54768", "54795", "54802",
@@ -865,20 +869,39 @@ export const PLAYER_PHOTO_ID_SET = new Set([
   "FP018", "FP019", "FP020", "TR001",
 ]);
 
-export function getPlayerPhotoUrl(name: string, kboId?: string): string | null {
-  // kboId가 제공되면 우선 사용 (동명이인 대응)
-  if (kboId && PLAYER_PHOTO_ID_SET.has(kboId)) {
-    return `/players/${kboId}.jpg`;
+export function getPlayerPhotoUrl(
+  name: string,
+  kboId?: string | null,
+  teamId?: number | string | null,
+): string | null {
+  const resolved = resolvePlayerIdentity({ name, kboId, teamId });
+
+  // Canonical resolver 우선: 외국인 숫자 ID(53827)·짧은이름(에레디아)을
+  // 로스터 canonical ID(FP008)로 수렴시킨 뒤 사진을 찾는다.
+  if (resolved?.kboId && PLAYER_PHOTO_ID_SET.has(resolved.kboId)) {
+    return `/players/${resolved.kboId}.jpg`;
   }
-  // kboId가 명시적으로 제공됐지만 사진이 없으면 → null (다른 동명이인 사진 방지)
+
+  // 외부 스탯/레거시 링크가 숫자 ID를 직접 들고 있고 해당 파일만 있는 경우 보수 fallback.
+  if (resolved?.numericId && PLAYER_PHOTO_ID_SET.has(resolved.numericId)) {
+    return `/players/${resolved.numericId}.jpg`;
+  }
+
+  // kboId가 명시적으로 들어왔는데 resolver/photo 모두 실패하면 다른 동명이인 사진을 붙이지 않는다.
   if (kboId) return null;
-  // name 기반 fallback (kboId가 없는 경우만 — 라이브 경기 등)
-  const mappedId = PLAYER_PHOTO_MAP[name];
-  if (!mappedId) return null;
+
+  // ID 없는 라이브 텍스트 등은 마지막으로 사진맵을 사용하되, 이름 alias를 resolver로 먼저 정규화한다.
+  const mappedId = PLAYER_PHOTO_MAP[resolved?.name ?? name];
+  if (!mappedId || !PLAYER_PHOTO_ID_SET.has(mappedId)) return null;
   return `/players/${mappedId}.jpg`;
 }
 
 export function getPlayerPhotoByKboId(kboId: string): string | null {
-  if (!PLAYER_PHOTO_ID_SET.has(kboId)) return null;
-  return `/players/${kboId}.jpg`;
+  const resolved = resolvePlayerIdentity(kboId);
+  const photoId = resolved?.kboId ?? kboId;
+  if (PLAYER_PHOTO_ID_SET.has(photoId)) return `/players/${photoId}.jpg`;
+  if (resolved?.numericId && PLAYER_PHOTO_ID_SET.has(resolved.numericId)) {
+    return `/players/${resolved.numericId}.jpg`;
+  }
+  return null;
 }

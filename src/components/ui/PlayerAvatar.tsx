@@ -30,22 +30,26 @@ export default function PlayerAvatar({
   const logoPath = team?.logoPath ?? "";
   const badgeSize = Math.max(12, Math.round(size * 0.4));
 
-  const [imgSrc, setImgSrc] = useState<string | null>(photoUrl ?? null);
-  const [triedFallback, setTriedFallback] = useState(false);
+  const localPhotoUrl = getPlayerPhotoUrl(name, kboId, teamId);
+  const primaryPhotoUrl = photoUrl ?? localPhotoUrl;
+  const [failedPrimarySrc, setFailedPrimarySrc] = useState<string | null>(null);
+  const [failedLocalSrc, setFailedLocalSrc] = useState<string | null>(null);
+  const imgSrc =
+    primaryPhotoUrl && failedPrimarySrc !== primaryPhotoUrl
+      ? primaryPhotoUrl
+      : localPhotoUrl && failedLocalSrc !== localPhotoUrl
+        ? localPhotoUrl
+        : null;
 
   const handleError = useCallback(() => {
-    if (!triedFallback) {
+    if (imgSrc && imgSrc === primaryPhotoUrl && localPhotoUrl && localPhotoUrl !== primaryPhotoUrl) {
       // CDN 실패 → 로컬 fallback
-      const localUrl = getPlayerPhotoUrl(name, kboId);
-      if (localUrl && localUrl !== imgSrc) {
-        setImgSrc(localUrl);
-        setTriedFallback(true);
-        return;
-      }
+      setFailedPrimarySrc(primaryPhotoUrl);
+      return;
     }
     // 로컬도 실패 → 이니셜 표시
-    setImgSrc(null);
-  }, [triedFallback, name, kboId, imgSrc]);
+    if (imgSrc) setFailedLocalSrc(imgSrc);
+  }, [imgSrc, primaryPhotoUrl, localPhotoUrl]);
 
   return (
     <div className="relative flex-shrink-0" style={{ width: size, height: size }}>

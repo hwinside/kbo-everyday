@@ -4,6 +4,7 @@ import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
+import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
 import { TEAMS } from "@/lib/constants/teams";
 import GlassCard from "@/components/ui/GlassCard";
 import { getMyTeamId } from "@/lib/store/myteam";
@@ -284,9 +285,16 @@ function RankingContent() {
                       backgroundColor: hexToRgba(teamColor, highlightLevel === 2 ? 0.18 : 0.12),
                     };
 
+            const playerHref = getCanonicalPlayerHref({
+              name: p.name,
+              kboId: p.kboId,
+              playerId: p.playerId,
+              teamId,
+            }) ?? `/community/players/${p.kboId || p.playerId || p.name}`;
+
             return (
               <div key={p.kboId || p.playerId || i} ref={isUrlHighlight ? highlightRef : undefined}>
-                <Link href={`/community/players/${p.kboId || p.playerId || p.name}`}>
+                <Link href={playerHref}>
                   <GlassCard
                     pressable
                     className={`p-3 flex items-center gap-3 ${
@@ -313,7 +321,7 @@ function RankingContent() {
                     <PlayerAvatar
                       name={p.name}
                       teamId={teamId}
-                      photoUrl={getPlayerPhotoUrl(p.name, p.kboId || p.playerId)}
+                      photoUrl={getPlayerPhotoUrl(p.name, p.kboId || p.playerId, teamId)}
                       size={44}
                     />
 

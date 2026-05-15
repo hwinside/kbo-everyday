@@ -61,7 +61,7 @@ function PlayerMarker({
   // Player link/photo lookup must not fall back to name-only for 동명이인.
   const rosterPlayer = resolveRosterPlayer({ name, kboId, teamId });
   const playerHref = rosterPlayer ? `/community/players/${rosterPlayer.kboId}` : null;
-  const photoUrl = getPlayerPhotoUrl(name, rosterPlayer?.kboId);
+  const photoUrl = getPlayerPhotoUrl(name, rosterPlayer?.kboId, teamId);
 
   const content = (
     <>

@@ -8,7 +8,7 @@ import { getTeamById } from "@/lib/constants/teams";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { useRouter } from "next/navigation";
-import playersRoster from "@/lib/constants/players-roster.json";
+import { getCanonicalPlayerHref, resolvePlayerIdentity } from "@/lib/utils/resolve-player";
 
 interface AIAnalysisProps {
   isOpen: boolean;
@@ -48,15 +48,8 @@ interface AnalysisData {
   hotPlayers: string[];
 }
 
-// Roster lookup for kboId by name+teamId
-const rosterByName = new Map<string, typeof playersRoster[0]>();
-for (const p of playersRoster) {
-  rosterByName.set(`${p.teamId}:${p.name}`, p);
-}
-
-function getKboId(teamId: number, name: string): string {
-  const player = rosterByName.get(`${teamId}:${name}`);
-  return player?.kboId ?? "0";
+function getKboId(teamId: number, name: string, playerId?: string): string {
+  return resolvePlayerIdentity({ name, playerId, teamId })?.kboId ?? "0";
 }
 
 export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, gameId, awayStarter, homeStarter }: AIAnalysisProps) {
@@ -114,16 +107,16 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, ga
 
         // API 응답을 UI 데이터로 변환
         const awayKeyPlayers: KeyPlayer[] = (preview.awayKeyPlayers || []).map(
-          (p: { name: string; reason: string }) => ({
+          (p: { name: string; reason: string; playerId?: string }) => ({
             name: p.name,
-            playerId: getKboId(awayTeamId, p.name),
+            playerId: getKboId(awayTeamId, p.name, p.playerId),
             reason: p.reason,
           })
         );
         const homeKeyPlayers: KeyPlayer[] = (preview.homeKeyPlayers || []).map(
-          (p: { name: string; reason: string }) => ({
+          (p: { name: string; reason: string; playerId?: string }) => ({
             name: p.name,
-            playerId: getKboId(homeTeamId, p.name),
+            playerId: getKboId(homeTeamId, p.name, p.playerId),
             reason: p.reason,
           })
         );
@@ -376,10 +369,13 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, ga
                           {side.players.map((p) => (
                             <div
                               key={p.playerId}
-                              onClick={() => { onClose(); router.push(`/community/players/${p.playerId}`); }}
+                              onClick={() => {
+                                const href = getCanonicalPlayerHref({ name: p.name, playerId: p.playerId, teamId: side.teamId });
+                                if (href) { onClose(); router.push(href); }
+                              }}
                               className="flex items-start gap-3 p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer transition-colors"
                             >
-                              <PlayerAvatar name={p.name} teamId={side.teamId} photoUrl={getPlayerPhotoUrl(p.name, rosterByName.get(`${side.teamId}:${p.name}`)?.kboId)} size={48} />
+                              <PlayerAvatar name={p.name} teamId={side.teamId} photoUrl={getPlayerPhotoUrl(p.name, p.playerId, side.teamId)} size={48} />
                               <div className="flex-1 min-w-0">
                                 <span className="text-sm font-bold text-text-primary">{p.name}</span>
                                 <p className="readable-body mt-0.5">{p.reason}</p>

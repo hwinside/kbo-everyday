@@ -6,11 +6,15 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "prebuild": "npm run qa:foreign-photo",
     "qa:ui:comment-crud": "node scripts/qa/ui-smoke-comment-crud.mjs",
+    "qa:resolve-player": "tsx scripts/qa/resolve-player-smoke.ts",
+    "qa:foreign-photo": "tsx scripts/qa/foreign-photo-coverage.ts",
     "lint": "eslint",
     "validate:roster": "node scripts/validate-roster.mjs",
     "qa:ios-safari-keyboard": "node scripts/qa/browserstack-ios-safari-keyboard.mjs",
-    "qa:ios-app-keyboard": "node scripts/qa/browserstack-ios-app-keyboard.mjs"
+    "qa:ios-app-keyboard": "node scripts/qa/browserstack-ios-app-keyboard.mjs",
+    "validate:player-identity": "node scripts/validate-player-identity.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.1",
@@ -54,6 +58,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",
+    "tsx": "^4.22.0",
     "typescript": "^5"
   }
 }

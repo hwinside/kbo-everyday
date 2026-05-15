@@ -54,6 +54,14 @@ jobs:
       - name: Update player photos
         run: node scripts/update-player-photos.mjs
 
+      - name: Validate roster SSOT
+        env:
+          ROSTER_SIZE_CHANGE_ACK: "1"
+        run: node scripts/validate-roster.mjs
+
+      - name: Validate player identity invariant
+        run: node scripts/validate-player-identity.mjs
+
       - name: Check for changes
         id: changes
         run: |

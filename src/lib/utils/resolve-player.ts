@@ -57,7 +57,20 @@ export interface ResolvedPlayer {
   backNo: string;
 }
 
-export type PlayerQuery = string | { name: string; team?: string };
+export type PlayerQuery =
+  | string
+  | {
+      /** 선수명. 외국인 선수는 짧은 등록명("에레디아") 또는 풀네임 모두 허용. */
+      name?: string | null;
+      /** 로스터 기준 canonical kboId 또는 KBO 공식 숫자 ID. */
+      kboId?: string | number | null;
+      /** 외부 API/스탯에서 들어오는 playerId. 외국인은 숫자 ID일 수 있다. */
+      playerId?: string | number | null;
+      /** 일부 UI 모델이 id라는 이름으로 들고 있는 선수 ID. */
+      id?: string | number | null;
+      team?: string | null;
+      teamId?: number | string | null;
+    };
 
 /**
  * `resolvePlayer` 추가 옵션.
@@ -90,7 +103,8 @@ function toResolved(p: RosterPlayer): ResolvedPlayer {
  * 허용 입력:
  *   - string: canonical kboId("AQ002"), 숫자 kboId("55348"), 레거시 pN("p1"),
  *             혹은 이름("웰스" / "라클란 웰스")
- *   - object: `{ name, team? }` — 이름 매칭 + team 우선 분리 (동명이인 대응)
+ *   - object: `{ name?, kboId?, playerId?, id?, team?, teamId? }`
+ *             — ID 우선 매칭 후 이름+팀으로 보강 (동명이인 대응)
  *
  * @example
  *   resolvePlayer("AQ002")              // 라클란 웰스 (LG)
@@ -140,15 +154,56 @@ function resolveInternal(
     return byName ? toResolved(byName) : null;
   }
 
-  // Object query: { name, team? }
-  const { name, team } = query;
-  if (!name) return null;
+  // Object query: ID/token 우선 → 이름+팀 → unique name/suffix 순서.
+  const { name, team, teamId } = query;
+  const rawId = query.kboId ?? query.playerId ?? query.id;
+  if (rawId !== undefined && rawId !== null && String(rawId).trim()) {
+    const byId = resolveInternal(String(rawId), roster);
+    if (byId) return byId;
+  }
 
-  const found =
-    (team && roster.find((p) => p.name === name && p.team === team)) ||
-    roster.find((p) => p.name === name) ||
-    (team && roster.find((p) => p.name.endsWith(name) && p.team === team)) ||
-    roster.find((p) => p.name.endsWith(name));
+  const cleanName = name?.trim();
+  if (!cleanName) return null;
 
-  return found ? toResolved(found) : null;
+  const cleanTeam = team?.trim();
+  const numericTeamId =
+    teamId !== undefined && teamId !== null && String(teamId).trim()
+      ? Number(teamId)
+      : null;
+
+  const byExactAndTeam = roster.find(
+    (p) =>
+      p.name === cleanName &&
+      ((numericTeamId !== null && Number(p.teamId) === numericTeamId) ||
+        (cleanTeam && p.team === cleanTeam)),
+  );
+  if (byExactAndTeam) return toResolved(byExactAndTeam);
+
+  const bySuffixAndTeam = roster.find(
+    (p) =>
+      p.name.endsWith(cleanName) &&
+      ((numericTeamId !== null && Number(p.teamId) === numericTeamId) ||
+        (cleanTeam && p.team === cleanTeam)),
+  );
+  if (bySuffixAndTeam) return toResolved(bySuffixAndTeam);
+
+  const exactMatches = roster.filter((p) => p.name === cleanName);
+  if (exactMatches.length === 1) return toResolved(exactMatches[0]);
+
+  const suffixMatches = roster.filter((p) => p.name.endsWith(cleanName));
+  if (suffixMatches.length === 1) return toResolved(suffixMatches[0]);
+
+  return null;
+}
+
+/** 명시적인 이름의 alias. 신규 코드에서는 이 이름을 우선 사용한다. */
+export const resolvePlayerIdentity = resolvePlayer;
+
+export function getCanonicalPlayerId(query: PlayerQuery): string | null {
+  return resolvePlayerIdentity(query)?.kboId ?? null;
+}
+
+export function getCanonicalPlayerHref(query: PlayerQuery): string | null {
+  const canonicalId = getCanonicalPlayerId(query);
+  return canonicalId ? `/community/players/${canonicalId}` : null;
 }
