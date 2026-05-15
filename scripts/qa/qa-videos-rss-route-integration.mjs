@@ -29,54 +29,47 @@
  */
 import "./_env.mjs";
 
-const KEYS = [
-  process.env.YOUTUBE_API_KEY,
-  process.env.YOUTUBE_API_KEY_2,
-  process.env.YOUTUBE_API_KEY_3,
-].filter(Boolean);
+const API_KEY = process.env.YOUTUBE_API_KEY;
 
-if (KEYS.length === 0) {
+if (!API_KEY) {
   console.error("[qa] no YOUTUBE_API_KEY in .env.local");
   process.exit(1);
 }
 
 // Mirrors src/lib/video/youtube-api.ts → fetchChannelUploadsViaApi
 async function fetchChannelUploadsViaApi(channelId, maxResults = 5) {
-  if (KEYS.length === 0) return null;
+  if (!API_KEY) return null;
   if (!channelId.startsWith("UC")) return null;
   const playlistId = `UU${channelId.slice(2)}`;
   const limit = Math.min(Math.max(maxResults, 1), 50);
-  for (let keyIdx = 0; keyIdx < KEYS.length; keyIdx++) {
-    try {
-      const url =
-        `https://www.googleapis.com/youtube/v3/playlistItems` +
-        `?part=snippet,contentDetails&playlistId=${playlistId}` +
-        `&maxResults=${limit}&key=${KEYS[keyIdx]}`;
-      const res = await fetch(url);
-      if (res.status === 403) continue;
-      if (res.status === 404) return [];
-      if (!res.ok) return null;
-      const data = await res.json();
-      const out = [];
-      for (const it of data.items ?? []) {
-        const videoId = it.contentDetails?.videoId;
-        const publishedAt =
-          it.contentDetails?.videoPublishedAt ?? it.snippet?.publishedAt;
-        if (!videoId || !publishedAt) continue;
-        out.push({
-          video_id: videoId,
-          title: it.snippet?.title ?? "",
-          channel: it.snippet?.channelTitle ?? "",
-          channel_id: channelId,
-          published_at: publishedAt,
-        });
-      }
-      return out;
-    } catch {
-      return null;
+  try {
+    const url =
+      `https://www.googleapis.com/youtube/v3/playlistItems` +
+      `?part=snippet,contentDetails&playlistId=${playlistId}` +
+      `&maxResults=${limit}&key=${API_KEY}`;
+    const res = await fetch(url);
+    if (res.status === 403) return null;
+    if (res.status === 404) return [];
+    if (!res.ok) return null;
+    const data = await res.json();
+    const out = [];
+    for (const it of data.items ?? []) {
+      const videoId = it.contentDetails?.videoId;
+      const publishedAt =
+        it.contentDetails?.videoPublishedAt ?? it.snippet?.publishedAt;
+      if (!videoId || !publishedAt) continue;
+      out.push({
+        video_id: videoId,
+        title: it.snippet?.title ?? "",
+        channel: it.snippet?.channelTitle ?? "",
+        channel_id: channelId,
+        published_at: publishedAt,
+      });
     }
+    return out;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 // ── Synthetic channel set ──
