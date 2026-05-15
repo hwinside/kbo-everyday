@@ -12,12 +12,13 @@ const LEGACY_MAP: Record<string, string> = {
   p11: "55500", p12: "68300", p13: "69200", p14: "67800", p15: "65400",
 };
 
-const ID_TO_NAME: Record<string, string> = {};
+type PlayerInfo = { name: string; team?: string };
+const ID_TO_INFO: Record<string, PlayerInfo> = {};
 for (const p of PLAYERS_ROSTER) {
-  ID_TO_NAME[p.kboId] = p.name;
+  ID_TO_INFO[p.kboId] = { name: p.name, team: (p as { team?: string }).team };
 }
 for (const [name, id] of Object.entries(PLAYER_PHOTO_MAP)) {
-  if (!ID_TO_NAME[id]) ID_TO_NAME[id] = name;
+  if (!ID_TO_INFO[id]) ID_TO_INFO[id] = { name };
 }
 
 export default function PlayerPostDetailPage() {
@@ -27,8 +28,12 @@ export default function PlayerPostDetailPage() {
   const kboId = rosterDirect
     ? rawId
     : LEGACY_MAP[rawId] || FOREIGN_NUMERIC_TO_ALPHA[rawId] || rawId;
-  const playerName = ID_TO_NAME[kboId];
-  const headerTitle = playerName ? `${playerName} 선수 게시판` : "선수 게시판";
+  const info = ID_TO_INFO[kboId];
+  const headerTitle = info
+    ? info.team
+      ? `${info.team} ${info.name} 선수 게시판`
+      : `${info.name} 선수 게시판`
+    : "선수 게시판";
 
   return <PostDetail postId={Number(postId)} headerTitle={headerTitle} />;
 }
