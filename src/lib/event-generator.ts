@@ -221,72 +221,81 @@ export function generateEvents(
       const sideKey = inningKey(live.inning, isTop);
 
       for (const [batterName, entry] of batterDiffs) {
-        const { prev: bPrev, curr: bCurr, diff } = entry;
+        const { prev: bPrev, curr: bCurr } = entry;
         const prevHr = bPrev?.hr ?? 0;
         const prevH3b = bPrev?.h3b ?? 0;
         const prevH2b = bPrev?.h2b ?? 0;
         const prevHits = bPrev?.hits ?? 0;
-        const rawPrevSingles = prevHits - prevHr - prevH3b - prevH2b;
-        // KBO BoxScore is occasionally lag-inconsistent across polls: an
-        // extra-base hit (2B/3B/HR) sometimes lands in the at-bat cells
-        // *before* the `hits` aggregate increments. The earlier poll then
-        // observes `hits=0, hr=1`, the later poll observes `hits=1, hr=1`,
-        // and our diff engine attributes the lag delta as a +1 single —
-        // mints a bogus `at_bat_hit-...-0` 세레머니 right after the real
-        // HR/2B/3B event (16 occurrences across 4 games on 2026-05-16).
-        // Drop curr-state-inconsistent rows entirely until a stable poll
-        // arrives, and clamp prevSingles to ≥0 so a residual lag never
-        // mints `-...-0` ids again even if upstream changes the shape.
-        const currSelfInconsistent =
-          bCurr.hits < bCurr.hr + bCurr.h2b + bCurr.h3b;
-        if (currSelfInconsistent) {
-          // Skip this batter's diffs this cycle; nextState still records
-          // currentBoxScore so the next poll's diff is taken against the
-          // (still-incomplete) snapshot. That keeps singles/walks/SO
-          // attribution honest once `hits` catches up.
-          continue;
-        }
-        const prevSingles = Math.max(0, rawPrevSingles);
         const prevBb = bPrev?.bb ?? 0;
         const prevSo = bPrev?.so ?? 0;
+
+        // KBO BoxScore is occasionally lag-inconsistent across polls: an
+        // extra-base hit (2B/3B/HR) lands in the per-at-bat cells *before*
+        // the `hits` aggregate increments. The earlier poll observes
+        // `hits=0, hr=1` (intermediate, inconsistent); the later poll
+        // observes `hits=1, hr=1` (stable). A naive `diff.hits - diff.xbh`
+        // 1B count then mints a bogus `at_bat_hit-...-0` 세레머니 right
+        // after the real HR/2B/3B event (16 occurrences across 4 games on
+        // 2026-05-16) — or, after a naive lag-skip guard, a bogus
+        // `at_bat_hit-...-1` on the *next* poll because nextState retains
+        // the inconsistent snapshot.
+        //
+        // Fix: drive singles off CUMULATIVE derived counts on both sides
+        // of the diff. `singlesAt(state) = max(0, hits - hr - h2b - h3b)`
+        // clamps the inconsistent intermediate state to 0; the lag delta
+        // is absorbed naturally without needing to skip or rewrite
+        // nextState. Extra-base / walk / strikeout stats are already
+        // monotonic-by-construction, so cumulative max(0, curr-prev) on
+        // them is just defense-in-depth against upstream stat corrections.
+        const prevSingles = Math.max(0, prevHits - prevHr - prevH3b - prevH2b);
+        const currSingles = Math.max(
+          0,
+          bCurr.hits - bCurr.hr - bCurr.h2b - bCurr.h3b,
+        );
+
+        const hrDelta = Math.max(0, bCurr.hr - prevHr);
+        const h3bDelta = Math.max(0, bCurr.h3b - prevH3b);
+        const h2bDelta = Math.max(0, bCurr.h2b - prevH2b);
+        const singleDelta = Math.max(0, currSingles - prevSingles);
+        const bbDelta = Math.max(0, bCurr.bb - prevBb);
+        const soDelta = Math.max(0, bCurr.so - prevSo);
 
         // Order matters within a single batter: HR/3B/2B counted explicitly,
         // remaining hits => 1B (at_bat_hit). dedupe key encodes the
         // 1-based cumulative occurrence index for this stat — same plate
         // appearance always lands on the same id regardless of polling
         // instance.
-        for (let i = 0; i < diff.hr; i++) {
+        for (let i = 0; i < hrDelta; i++) {
           const idx = prevHr + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_homerun", {
             batter: batterName, pitcher: pitcherName,
           }, `${sideKey}-${batterName}-${idx}`));
         }
-        for (let i = 0; i < diff.h3b; i++) {
+        for (let i = 0; i < h3bDelta; i++) {
           const idx = prevH3b + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_triple", {
             batter: batterName, pitcher: pitcherName,
           }, `${sideKey}-${batterName}-${idx}`));
         }
-        for (let i = 0; i < diff.h2b; i++) {
+        for (let i = 0; i < h2bDelta; i++) {
           const idx = prevH2b + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_double", {
             batter: batterName, pitcher: pitcherName,
           }, `${sideKey}-${batterName}-${idx}`));
         }
-        const single = Math.max(0, diff.hits - diff.hr - diff.h2b - diff.h3b);
-        for (let i = 0; i < single; i++) {
+        for (let i = 0; i < singleDelta; i++) {
           const idx = prevSingles + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_hit", {
             batter: batterName, pitcher: pitcherName,
           }, `${sideKey}-${batterName}-${idx}`));
         }
-        for (let i = 0; i < diff.bb; i++) {
+        for (let i = 0; i < bbDelta; i++) {
           const idx = prevBb + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_walk", {
             batter: batterName, pitcher: pitcherName,
           }, `${sideKey}-${batterName}-${idx}`));
         }
-        for (let i = 0; i < diff.so; i++) {
+        for (let i = 0; i < soDelta; i++) {
           const idx = prevSo + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_strikeout", {
             batter: batterName, pitcher: pitcherName,
