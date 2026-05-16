@@ -221,12 +221,32 @@ export function generateEvents(
       const sideKey = inningKey(live.inning, isTop);
 
       for (const [batterName, entry] of batterDiffs) {
-        const { prev: bPrev, diff } = entry;
+        const { prev: bPrev, curr: bCurr, diff } = entry;
         const prevHr = bPrev?.hr ?? 0;
         const prevH3b = bPrev?.h3b ?? 0;
         const prevH2b = bPrev?.h2b ?? 0;
         const prevHits = bPrev?.hits ?? 0;
-        const prevSingles = prevHits - prevHr - prevH3b - prevH2b;
+        const rawPrevSingles = prevHits - prevHr - prevH3b - prevH2b;
+        // KBO BoxScore is occasionally lag-inconsistent across polls: an
+        // extra-base hit (2B/3B/HR) sometimes lands in the at-bat cells
+        // *before* the `hits` aggregate increments. The earlier poll then
+        // observes `hits=0, hr=1`, the later poll observes `hits=1, hr=1`,
+        // and our diff engine attributes the lag delta as a +1 single —
+        // mints a bogus `at_bat_hit-...-0` 세레머니 right after the real
+        // HR/2B/3B event (16 occurrences across 4 games on 2026-05-16).
+        // Drop curr-state-inconsistent rows entirely until a stable poll
+        // arrives, and clamp prevSingles to ≥0 so a residual lag never
+        // mints `-...-0` ids again even if upstream changes the shape.
+        const currSelfInconsistent =
+          bCurr.hits < bCurr.hr + bCurr.h2b + bCurr.h3b;
+        if (currSelfInconsistent) {
+          // Skip this batter's diffs this cycle; nextState still records
+          // currentBoxScore so the next poll's diff is taken against the
+          // (still-incomplete) snapshot. That keeps singles/walks/SO
+          // attribution honest once `hits` catches up.
+          continue;
+        }
+        const prevSingles = Math.max(0, rawPrevSingles);
         const prevBb = bPrev?.bb ?? 0;
         const prevSo = bPrev?.so ?? 0;
 
@@ -253,7 +273,7 @@ export function generateEvents(
             batter: batterName, pitcher: pitcherName,
           }, `${sideKey}-${batterName}-${idx}`));
         }
-        const single = diff.hits - diff.hr - diff.h2b - diff.h3b;
+        const single = Math.max(0, diff.hits - diff.hr - diff.h2b - diff.h3b);
         for (let i = 0; i < single; i++) {
           const idx = prevSingles + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_hit", {
