@@ -48,23 +48,25 @@ begin
           last_sign_in_at = now()
       where provider = 'naver' and provider_id = p_provider_id;
   else
-    -- 신규 insert. id/identity_id는 gen_random_uuid() / provider_id
-    -- 다른 provider(kakao/google)가 자동 생성하는 row 구조와 동일하게 맞춤
+    -- 신규 insert. prod 스키마: auth.identities.id는 uuid NOT NULL, email 컬럼 존재.
+    -- 카카오/구글 row 검증 결과 id는 자동 생성 UUID이고 email은 identity_data와 동일.
     insert into auth.identities (
       id,
       user_id,
       identity_data,
       provider,
       provider_id,
+      email,
       last_sign_in_at,
       created_at,
       updated_at
     ) values (
-      p_provider_id,       -- kakao/google도 provider_id 문자열을 id 컬럼에 사용
+      gen_random_uuid(),                  -- 카카오/구글과 동일하게 자동 생성 UUID
       p_user_id,
       p_identity_data,
       'naver',
       p_provider_id,
+      p_identity_data->>'email',          -- 카카오/구글이 채우는 email 컬럼 동일하게 채움
       p_created_at,
       p_created_at,
       now()
