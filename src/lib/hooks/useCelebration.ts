@@ -21,6 +21,37 @@ interface UseCelebrationOptions {
 const FRESHNESS_THRESHOLD_MS = 120_000;
 
 /**
+ * Module-level dedupe for trackCelebration calls. Survives across component
+ * mount/unmount cycles and React StrictMode double-renders. Prevents the same
+ * event_id from triggering duplicate telemetry beacons within a 5s window.
+ */
+const trackedEvents = new Map<string, number>();
+const TRACK_DEDUPE_MS = 5_000;
+
+function shouldTrack(eventId: string): boolean {
+  const now = Date.now();
+  // Lazy cleanup: remove entries older than TRACK_DEDUPE_MS
+  if (trackedEvents.size > 200) {
+    for (const [k, t] of trackedEvents) {
+      if (now - t > TRACK_DEDUPE_MS) trackedEvents.delete(k);
+    }
+  }
+  if (trackedEvents.has(eventId) && now - trackedEvents.get(eventId)! < TRACK_DEDUPE_MS) {
+    return false;
+  }
+  trackedEvents.set(eventId, now);
+  return true;
+}
+
+/**
+ * Module-level dedupe for display enqueue. Separate from trackedEvents because
+ * telemetry and display fire in the same processEvents call — sharing a Map
+ * would block display on first fire. This Set survives remounts so the same
+ * event_id won't re-display after component unmount/remount or PWA resume.
+ */
+const displayedEventIds = new Set<string>();
+
+/**
  * On first page entry / PWA resume, the server can return a shared event
  * history that accumulated while this client was not watching. Those events
  * are useful for the text relay, but must not all replay as celebrations.
@@ -185,11 +216,14 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
 
       if (newCelebrations.length === 0) return;
 
-      // Log each celebration trigger with inning/eventId for mis-attribution traceability
+      // Log each celebration trigger with inning/eventId for mis-attribution traceability.
+      // Module-level shouldTrack() deduplicates across component re-mounts and
+      // React StrictMode double-renders within a 5s window.
       const eventById = new Map(events.map(e => [e.id, e]));
       const gameId = events[0]?.gameId;
       for (const c of newCelebrations) {
-        const ev = c.id ? eventById.get(c.id) : undefined;
+        if (!c.id || !shouldTrack(c.id)) continue;
+        const ev = eventById.get(c.id);
         trackCelebration(
           c.type,
           gameId || "",
@@ -201,12 +235,27 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
         );
       }
 
+      // Filter out any celebrations already queued, showing, or previously
+      // displayed. The module-level displayedEventIds survives across component
+      // remounts and PWA resume, closing the display double-fire gap that
+      // instance-level seenRef + queuedIds alone cannot cover.
+      const queuedIds = new Set(queueRef.current.map(c => c.id));
+      if (celebrationRef.current?.id) queuedIds.add(celebrationRef.current.id);
+      const fresh = newCelebrations.filter(c => {
+        if (!c.id) return true;
+        if (queuedIds.has(c.id)) return false;
+        if (displayedEventIds.has(c.id)) return false;
+        displayedEventIds.add(c.id);
+        return true;
+      });
+      if (fresh.length === 0) return;
+
       // If nothing showing, start first immediately
       if (!celebrationRef.current && queueRef.current.length === 0) {
-        setCelebrationSafe(newCelebrations.shift()!);
+        setCelebrationSafe(fresh.shift()!);
       }
       // Queue the rest
-      queueRef.current.push(...newCelebrations);
+      queueRef.current.push(...fresh);
     },
     [myTeamId, homeTeamId, awayTeamId, setCelebrationSafe],
   );
