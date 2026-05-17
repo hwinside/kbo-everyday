@@ -508,6 +508,58 @@ function ofType(events: GameEvent[], type: string): GameEvent[] {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Scenario 13: Post-game-end burst guard
+//   Game ended (isLive=false). Subsequent poll delivers a late BoxScore
+//   stat correction. No events should be emitted.
+// ---------------------------------------------------------------------------
+{
+  const endedLive = mkLive({ isLive: false, inning: 9, isTop: false });
+  const prev: PrevGameState = {
+    live: endedLive,
+    boxScore: mkBox([mkBatter({ name: "타자G", hits: 2, hr: 1 })]),
+  };
+  // Late stat correction: hits 2→3 after game ended
+  const lateBox = mkBox([mkBatter({ name: "타자G", hits: 3, hr: 1 })]);
+  const r = generateEvents(GAME_ID, prev, endedLive, lateBox);
+
+  assert(
+    "S13: post-game-end — ZERO at_bat_* events",
+    r.events.filter(e => e.type.startsWith("at_bat_")).length === 0,
+    eventIds(r.events),
+  );
+  assert(
+    "S13: post-game-end — ZERO total events",
+    r.events.length === 0,
+    eventIds(r.events),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 14: Game-end transition still emits game_end correctly
+// ---------------------------------------------------------------------------
+{
+  const livePrev = mkLive({ isLive: true, inning: 9, isTop: false, awayScore: 3, homeScore: 5 });
+  const endedCurr = mkLive({ isLive: false, inning: 9, isTop: false, awayScore: 3, homeScore: 5 });
+  const prev: PrevGameState = {
+    live: livePrev,
+    boxScore: mkBox([mkBatter({ name: "타자H", hits: 2 })]),
+  };
+  const box = mkBox([mkBatter({ name: "타자H", hits: 2 })]);
+  const r = generateEvents(GAME_ID, prev, endedCurr, box);
+
+  assert(
+    "S14: game-end transition — exactly ONE game_end event",
+    ofType(r.events, "game_end").length === 1,
+    eventIds(r.events),
+  );
+  assert(
+    "S14: game-end transition — no BoxScore-derived events",
+    r.events.filter(e => e.type.startsWith("at_bat_")).length === 0,
+    eventIds(r.events),
+  );
+}
+
 if (failed > 0) {
   console.log(`\n❌ ${failed} assertion(s) failed`);
   process.exit(1);
