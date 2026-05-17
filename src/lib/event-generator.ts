@@ -12,6 +12,14 @@
  * prev_state combination it let race-window concurrent polls each emit a
  * fresh id for the same logical event, accumulating hundreds of duplicate
  * `🔵 이주형 안타!` rows on KTWO0 8회말 (2026-05-09 incident).
+ *
+ * Extra-base hit counting uses MONOTONIC XBH clamping: effectiveXBH =
+ * max(prev, curr) for HR/H2B/H3B. If a source-switch (KBO/Naver) delivers
+ * a snapshot with stale XBH counts, the derived singles count (hits -
+ * effectiveXBH) absorbs the regression without inflating. Singles emission
+ * is also suppressed entirely when XBH regression is detected, to guard
+ * against a concurrent hits bump being the uncategorized XBH itself
+ * (6 false-positive at_bat_hit events across 3 games on 2026-05-17).
  */
 import type { GameEvent, GameEventType, EventDetail, GameSnapshot } from "@/types/game-events";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
@@ -247,16 +255,41 @@ export function generateEvents(
         // nextState. Extra-base / walk / strikeout stats are already
         // monotonic-by-construction, so cumulative max(0, curr-prev) on
         // them is just defense-in-depth against upstream stat corrections.
+        // Monotonic XBH: extra-base hit counts should never decrease
+        // between polls. If curr < prev, a source-switch (KBO↔Naver)
+        // delivered a snapshot with stale XBH counts. Using max(prev,
+        // curr) prevents regression from inflating the derived singles
+        // count — closes the at_bat_hit-...-1 false-positive class
+        // (6 occurrences across 3 games on 2026-05-17) that PR #88's
+        // self-consistency clamp couldn't reach.
+        const xbhRegressed =
+          bCurr.hr < prevHr || bCurr.h3b < prevH3b || bCurr.h2b < prevH2b;
+        if (xbhRegressed) {
+          console.warn(
+            `[event-gen] XBH regression for ${batterName} in ${gameId}: ` +
+            `prev(hr=${prevHr},h3b=${prevH3b},h2b=${prevH2b}) → ` +
+            `curr(hr=${bCurr.hr},h3b=${bCurr.h3b},h2b=${bCurr.h2b}) — skipping singles`,
+          );
+        }
+        const effectiveHr = Math.max(prevHr, bCurr.hr);
+        const effectiveH3b = Math.max(prevH3b, bCurr.h3b);
+        const effectiveH2b = Math.max(prevH2b, bCurr.h2b);
+
         const prevSingles = Math.max(0, prevHits - prevHr - prevH3b - prevH2b);
         const currSingles = Math.max(
           0,
-          bCurr.hits - bCurr.hr - bCurr.h2b - bCurr.h3b,
+          bCurr.hits - effectiveHr - effectiveH3b - effectiveH2b,
         );
 
         const hrDelta = Math.max(0, bCurr.hr - prevHr);
         const h3bDelta = Math.max(0, bCurr.h3b - prevH3b);
         const h2bDelta = Math.max(0, bCurr.h2b - prevH2b);
-        const singleDelta = Math.max(0, currSingles - prevSingles);
+        // Skip singles during XBH regression: even with monotonic
+        // effective counts, a concurrent hits bump could be the
+        // uncategorized XBH itself. Recovery: next stable poll.
+        const singleDelta = xbhRegressed
+          ? 0
+          : Math.max(0, currSingles - prevSingles);
         const bbDelta = Math.max(0, bCurr.bb - prevBb);
         const soDelta = Math.max(0, bCurr.so - prevSo);
 
