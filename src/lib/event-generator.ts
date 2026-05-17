@@ -192,6 +192,18 @@ export function generateEvents(
     }, currInningKey));
   }
 
+  // --- Post-game guard ---
+  // game_end early-return (above) only fires on the live→not-live transition.
+  // Subsequent polls where BOTH prev and curr are not-live would fall through
+  // to BoxScore diffs, emitting ghost events from late-arriving stat corrections.
+  // Guard: if the game is no longer live, skip all remaining event generation.
+  if (!currentLive.isLive) {
+    return {
+      events,
+      nextState: { live: currentLive, boxScore: currentBoxScore },
+    };
+  }
+
   // --- Pitcher change (via live data) ---
   if (
     prevLive.currentPitcher &&
