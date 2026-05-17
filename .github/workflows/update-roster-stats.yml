@@ -175,7 +175,7 @@ jobs:
             echo "## ⏱️ 자동 업데이트 timeout"
             echo ""
             echo "PR: $PR_URL"
-            echo "Vercel: 조석 이내 종료 안 됨 — 수동 검토 필요"
+            echo "Vercel: 15분 이내 종료 안 됨 — 수동 검토 필요"
           } >> "$GITHUB_STEP_SUMMARY"
           exit 1
         env:
