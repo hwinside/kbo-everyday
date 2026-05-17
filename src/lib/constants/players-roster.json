@@ -1256,6 +1256,14 @@
     "team": "한화"
   },
   {
+    "name": "김준원",
+    "kboId": "54910",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "15",
+    "team": "NC"
+  },
+  {
     "name": "김지석",
     "kboId": "56326",
     "teamId": 10,
@@ -1686,6 +1694,14 @@
     "position": "외야수",
     "backNo": "29",
     "team": "롯데"
+  },
+  {
+    "name": "로젠버그",
+    "kboId": "55322",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "30",
+    "team": "키움"
   },
   {
     "name": "류승민",
