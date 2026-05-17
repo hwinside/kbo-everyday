@@ -310,6 +310,204 @@ function ofType(events: GameEvent[], type: string): GameEvent[] {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Scenario 7: Source-switch XBH regression — the 2026-05-17 bug class
+//   prev: batter has 1 double (hits=2, h2b=1) from source A (KBO)
+//   curr: source B (Naver) has stale h2b=0 (regression), hits=2
+//   expected: ZERO at_bat_hit (regression-inflated singles suppressed)
+// ---------------------------------------------------------------------------
+{
+  const live = mkLive({ inning: 6, isTop: true, currentBatter: "이진영" });
+  const prev: PrevGameState = {
+    live,
+    boxScore: mkBox([mkBatter({ name: "이진영", hits: 2, h2b: 1 })]),
+  };
+  // Source switch: h2b regresses 1→0 while hits stays 2
+  const regressedBox = mkBox([mkBatter({ name: "이진영", hits: 2, h2b: 0 })]);
+  const r = generateEvents(GAME_ID, prev, live, regressedBox);
+
+  assert(
+    "S7: XBH regression (h2b 1→0) — ZERO at_bat_hit",
+    ofType(r.events, "at_bat_hit").length === 0,
+    eventIds(r.events),
+  );
+  assert(
+    "S7: XBH regression — ZERO at_bat_double (no re-emit)",
+    ofType(r.events, "at_bat_double").length === 0,
+    eventIds(r.events),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 8: Source-switch regression + new hit in same poll
+//   prev: hits=2, h2b=1 (source A)
+//   curr: hits=3, h2b=0 (source B, regression + new hit)
+//   expected: singles suppressed (regression guard), XBH delta=0
+//   The real single recovers on next stable poll.
+// ---------------------------------------------------------------------------
+{
+  const live = mkLive({ inning: 6, isTop: false, currentBatter: "힐리어드" });
+  const prev: PrevGameState = {
+    live,
+    boxScore: mkBox([mkBatter({ name: "힐리어드", hits: 2, h2b: 1, hr: 0 })]),
+  };
+  const regressedBox = mkBox([mkBatter({ name: "힐리어드", hits: 3, h2b: 0, hr: 0 })]);
+  const a = generateEvents(GAME_ID, prev, live, regressedBox);
+
+  assert(
+    "S8: regression + hits bump — ZERO at_bat_hit (safe skip)",
+    ofType(a.events, "at_bat_hit").length === 0,
+    eventIds(a.events),
+  );
+
+  // Recovery poll: source stabilises (h2b=1, hits=3)
+  const stableBox = mkBox([mkBatter({ name: "힐리어드", hits: 3, h2b: 1, hr: 0 })]);
+  const b = generateEvents(GAME_ID, a.nextState, live, stableBox);
+
+  // Known limitation: the single that happened during regression is
+  // permanently lost. nextState from the regression poll saved h2b=0,
+  // so prevSingles = max(0, 3-0) = 3 while currSingles = max(0, 3-1) = 2.
+  // singleDelta = max(0, 2-3) = 0. The double re-emits (h2bDelta=1)
+  // but dedupes harmlessly by event_id. Acceptable trade-off:
+  // missing one celebration during source-switch > false positive.
+  assert(
+    "S8: recovery poll — single NOT recovered (known limitation)",
+    ofType(b.events, "at_bat_hit").length === 0,
+    eventIds(b.events),
+  );
+  assert(
+    "S8: recovery poll — double re-emits (deduped by event_id)",
+    ofType(b.events, "at_bat_double").length === 1,
+    eventIds(b.events),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 9: Source-switch HR regression (HHKT 힐리어드 HR case)
+//   prev: hits=1, hr=1 (source A — HR correctly counted)
+//   curr: hits=1, hr=0 (source B — stale HR)
+//   expected: ZERO at_bat_hit (would have been false single idx=1)
+// ---------------------------------------------------------------------------
+{
+  const live = mkLive({ inning: 6, isTop: false, currentBatter: "힐리어드B" });
+  const prev: PrevGameState = {
+    live,
+    boxScore: mkBox([mkBatter({ name: "힐리어드B", hits: 1, hr: 1 })]),
+  };
+  const regressedBox = mkBox([mkBatter({ name: "힐리어드B", hits: 1, hr: 0 })]);
+  const r = generateEvents(GAME_ID, prev, live, regressedBox);
+
+  assert(
+    "S9: HR regression (hr 1→0) — ZERO at_bat_hit",
+    ofType(r.events, "at_bat_hit").length === 0,
+    eventIds(r.events),
+  );
+  assert(
+    "S9: HR regression — ZERO at_bat_homerun (no re-emit)",
+    ofType(r.events, "at_bat_homerun").length === 0,
+    eventIds(r.events),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 10: Multi-batter mixed regression — only the regressed batter
+//   is suppressed; other batters still emit normally.
+// ---------------------------------------------------------------------------
+{
+  const live = mkLive({ inning: 3, isTop: false, currentBatter: "김주원" });
+  const prev: PrevGameState = {
+    live,
+    boxScore: mkBox([
+      mkBatter({ name: "김주원", hits: 1, hr: 1 }),   // will regress
+      mkBatter({ name: "서건창", hits: 0, hr: 0 }),   // clean new single
+    ]),
+  };
+  const box = mkBox([
+    mkBatter({ name: "김주원", hits: 1, hr: 0 }),  // HR regression
+    mkBatter({ name: "서건창", hits: 1, hr: 0 }),  // clean +1 single
+  ]);
+  const r = generateEvents(GAME_ID, prev, live, box);
+
+  assert(
+    "S10: multi-batter — 김주원 (regressed) ZERO at_bat_hit",
+    r.events.filter(e => e.type === "at_bat_hit" && e.detail.batter === "김주원").length === 0,
+    eventIds(r.events),
+  );
+  assert(
+    "S10: multi-batter — 서건창 (clean) ONE at_bat_hit",
+    r.events.filter(e => e.type === "at_bat_hit" && e.detail.batter === "서건창").length === 1,
+    eventIds(r.events),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 11: 3B regression — same pattern as S7/S9 but for triples
+// ---------------------------------------------------------------------------
+{
+  const live = mkLive({ inning: 1, isTop: false, currentBatter: "카메론" });
+  const prev: PrevGameState = {
+    live,
+    boxScore: mkBox([mkBatter({ name: "카메론", hits: 1, h3b: 1 })]),
+  };
+  const regressedBox = mkBox([mkBatter({ name: "카메론", hits: 1, h3b: 0 })]);
+  const r = generateEvents(GAME_ID, prev, live, regressedBox);
+
+  assert(
+    "S11: 3B regression (h3b 1→0) — ZERO at_bat_hit",
+    ofType(r.events, "at_bat_hit").length === 0,
+    eventIds(r.events),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 12: Hits-first lag within same source (NOT source-switch)
+//   prev: hits=0, h2b=0
+//   curr: hits=1, h2b=0 (hit column updated, h2b hasn't yet)
+//   This case is NOT caught by XBH regression guard (no regression)
+//   but IS mitigated by the monotonic effective clamp if h2b eventually
+//   arrives. Document the behavior: single IS emitted (false positive),
+//   but the subsequent stable poll won't double-emit the double because
+//   delta is already absorbed by the previous nextState.
+// ---------------------------------------------------------------------------
+{
+  const live = mkLive({ inning: 6, isTop: false, currentBatter: "김성윤" });
+  const prev: PrevGameState = {
+    live,
+    boxScore: mkBox([mkBatter({ name: "김성윤", hits: 0, h2b: 0 })]),
+  };
+  // Hits-first lag: hit column landed, h2b hasn't yet (same source, no regression)
+  const lagBox = mkBox([mkBatter({ name: "김성윤", hits: 1, h2b: 0 })]);
+  const a = generateEvents(GAME_ID, prev, live, lagBox);
+
+  // Known limitation: false single IS emitted (no regression signal to detect).
+  // This is the residual risk class — same-source column-order lag.
+  // Documenting expected behavior so future fixes can target it.
+  const hitCount = ofType(a.events, "at_bat_hit").length;
+  assert(
+    "S12: hits-first lag — single emitted (known limitation, no regression signal)",
+    hitCount === 1,
+    { hitCount, events: eventIds(a.events) },
+  );
+
+  // Stable poll: h2b arrives
+  const stableBox = mkBox([mkBatter({ name: "김성윤", hits: 1, h2b: 1 })]);
+  const b = generateEvents(GAME_ID, a.nextState, live, stableBox);
+
+  // Double emits (h2bDelta=1). The false single from above persists as a
+  // separate event_id. Both are in event_history — this is the residual
+  // risk vs the regression class which was 6x more frequent.
+  assert(
+    "S12: stable poll — double emits on h2b catchup",
+    ofType(b.events, "at_bat_double").length === 1,
+    eventIds(b.events),
+  );
+  assert(
+    "S12: stable poll — ZERO additional singles",
+    ofType(b.events, "at_bat_hit").length === 0,
+    eventIds(b.events),
+  );
+}
+
 if (failed > 0) {
   console.log(`\n❌ ${failed} assertion(s) failed`);
   process.exit(1);
