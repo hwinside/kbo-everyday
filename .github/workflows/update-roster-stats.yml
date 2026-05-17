@@ -116,7 +116,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Wait for status checks and merge
+      - name: Wait for Vercel build and report
         if: steps.changes.outputs.changed == 'true'
         run: |
           PR_URL="${{ steps.pr.outputs.pr_url }}"
@@ -124,25 +124,45 @@ jobs:
             echo "No PR URL captured"; exit 0
           fi
 
-          # main 브랜치 보호 규칙이 없어서 `gh pr merge --auto`가 쓰러진다(2026-05-17 사고).
-          # 이 step은 status check 완료를 폴링하고 성공 시에만 squash merge를 수행한다.
-          # 실패·타임아웃이면 PR을 open 상태로 남겨 수동 검토를 유도한다.
+          # 운영 원칙 (2026-05-17 사고 이후): roster/stats/photos PR도 자동 머지하지 않는다.
+          # 이 step은 PR 생성 후 *Vercel 빌드 결과만 검증*하고 로그/summary에 남긴다.
+          # merge는 별도 승인 후 수동 트리거에서 처리한다.
+          #
+          # race 방지: `Vercel` context가 등록되고 SUCCESS인지 *명시 확인*한다.
+          # `Vercel Preview Comments`만 올라온 상태는 본 빌드 완료로 간주하지 않는다.
           MAX_WAIT_MIN=15
           SLEEP_SECONDS=20
           ELAPSED=0
 
           while [ $ELAPSED -lt $((MAX_WAIT_MIN * 60)) ]; do
-            STATE=$(gh pr view "$PR_URL" --json statusCheckRollup --jq '[.statusCheckRollup[] | (.state // .conclusion // .status)] | unique')
-            echo "checks: $STATE (elapsed ${ELAPSED}s)"
+            ROLLUP=$(gh pr view "$PR_URL" --json statusCheckRollup --jq '.statusCheckRollup')
+            HAS_VERCEL=$(echo "$ROLLUP" | jq '[.[] | select((.context // .name) == "Vercel")] | length > 0')
+            VERCEL_STATE=$(echo "$ROLLUP" | jq -r '[.[] | select((.context // .name) == "Vercel") | (.state // .conclusion // "PENDING")] | .[0] // "MISSING"')
+            HAS_FAIL=$(echo "$ROLLUP" | jq '[.[] | (.state // .conclusion // .status) | . == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "CANCELLED"] | any')
+            ALL_STATES=$(echo "$ROLLUP" | jq -c '[.[] | {ctx: (.context // .name), state: (.state // .conclusion // .status)}]')
+            echo "checks: $ALL_STATES (vercel=$VERCEL_STATE, elapsed=${ELAPSED}s)"
 
-            if echo "$STATE" | grep -qE '"FAILURE"|"ERROR"'; then
-              echo "❌ CI failed — PR을 open 상태로 남겨둘다. 수동 검토 필요: $PR_URL"
+            if [ "$HAS_FAIL" = "true" ]; then
+              echo "❌ CI failure 감지 — PR을 open으로 남겼으니 수동 검토 부탁합니다: $PR_URL"
+              {
+                echo "## ❌ 자동 업데이트 CI FAIL"
+                echo ""
+                echo "PR: $PR_URL"
+                echo "Vercel: $VERCEL_STATE"
+                echo "States: \`$ALL_STATES\`"
+              } >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
 
-            if echo "$STATE" | grep -qE '^\["SUCCESS"\]$'; then
-              echo "✅ All checks green — squash merging."
-              gh pr merge "$PR_URL" --squash --delete-branch
+            if [ "$HAS_VERCEL" = "true" ] && [ "$VERCEL_STATE" = "SUCCESS" ]; then
+              echo "✅ Vercel build SUCCESS — PR 수동 머지 대기 상태로 종료합니다: $PR_URL"
+              {
+                echo "## ✅ 자동 업데이트 준비 완료"
+                echo ""
+                echo "PR: $PR_URL"
+                echo "Vercel: SUCCESS — 수동 머지 가능"
+                echo "States: \`$ALL_STATES\`"
+              } >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
 
@@ -150,7 +170,13 @@ jobs:
             ELAPSED=$((ELAPSED + SLEEP_SECONDS))
           done
 
-          echo "⏱️  status check timeout (${MAX_WAIT_MIN} min) — PR open 상태 유지. 수동 검토: $PR_URL"
+          echo "⏱️  Vercel build timeout (${MAX_WAIT_MIN} min) — PR은 open 상태로 남긴다: $PR_URL"
+          {
+            echo "## ⏱️ 자동 업데이트 timeout"
+            echo ""
+            echo "PR: $PR_URL"
+            echo "Vercel: 조석 이내 종료 안 됨 — 수동 검토 필요"
+          } >> "$GITHUB_STEP_SUMMARY"
           exit 1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
