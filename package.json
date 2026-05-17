@@ -11,6 +11,7 @@
     "qa:ui:comment-crud": "node scripts/qa/ui-smoke-comment-crud.mjs",
     "qa:resolve-player": "tsx scripts/qa/resolve-player-smoke.ts",
     "qa:celebration-hit-overcount": "tsx scripts/qa/celebration-hit-overcount-smoke.ts",
+    "qa:celebration-client-dedupe": "tsx scripts/qa/celebration-client-dedupe-smoke.ts",
     "qa:foreign-photo": "tsx scripts/qa/foreign-photo-coverage.ts",
     "lint": "eslint",
     "validate:roster": "node scripts/validate-roster.mjs",
