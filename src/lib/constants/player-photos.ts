@@ -9,6 +9,7 @@ import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
  */
 
 // 선수명 → KBO playerId 매핑
+// === GENERATED:PHOTO_MAP:BEGIN === (scripts/update-player-photos.mjs)
 export const PLAYER_PHOTO_MAP: Record<string, string> = {
   "가나쿠보 유토": "AQ010",
   "강건": "53006",
@@ -779,8 +780,10 @@ export const PLAYER_PHOTO_MAP: Record<string, string> = {
   "황희천": "55258",
   "후라도": "53375",
 };
+// === GENERATED:PHOTO_MAP:END ===
 
 // kboId 기반 사진 존재 여부 빠른 검색용
+// === GENERATED:PHOTO_ID_SET:BEGIN === (scripts/update-player-photos.mjs)
 export const PLAYER_PHOTO_ID_SET = new Set([
   "50007", "50030", "50036", "50054", "50066", "50092", "50106", "50107", "50126", "50150",
   "50157", "50167", "50204", "50206", "50208", "50234", "50244", "50262", "50304", "50357",
@@ -868,6 +871,7 @@ export const PLAYER_PHOTO_ID_SET = new Set([
   "FP008", "FP009", "FP010", "FP011", "FP012", "FP013", "FP014", "FP015", "FP016", "FP017",
   "FP018", "FP019", "FP020", "TR001",
 ]);
+// === GENERATED:PHOTO_ID_SET:END ===
 
 export function getPlayerPhotoUrl(
   name: string,
