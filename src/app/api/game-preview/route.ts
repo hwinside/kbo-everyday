@@ -195,9 +195,11 @@ function shiftDate(dateStr: string, days: number): string {
 // ===== KBO Lineup API =====
 
 const KBO_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
+// 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청을 IE 에러 페이지로 막음.
 const KBO_HEADERS = {
   "Content-Type": "application/x-www-form-urlencoded",
   "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+  "Referer": "https://www.koreabaseball.com/Schedule/LineUp.aspx",
 };
 
 const POS_MAP: Record<string, string> = {

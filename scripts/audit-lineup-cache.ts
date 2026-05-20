@@ -20,7 +20,12 @@ if (!SUPABASE_KEY) { console.error("SUPABASE_SERVICE_ROLE_KEY 필요"); process.
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const KBO_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
-const HEADERS = { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "Mozilla/5.0" };
+// 2026-05-20: KBO Referer 검증 적용 → koreabaseball.com Referer 필수.
+const HEADERS = {
+  "Content-Type": "application/x-www-form-urlencoded",
+  "User-Agent": "Mozilla/5.0",
+  "Referer": "https://www.koreabaseball.com/Schedule/LineUp.aspx",
+};
 const POS_MAP: Record<string,string> = {
   "투수":"P","포수":"C","1루수":"1B","2루수":"2B","3루수":"3B","유격수":"SS",
   "좌익수":"LF","중견수":"CF","우익수":"RF","지명타자":"DH",

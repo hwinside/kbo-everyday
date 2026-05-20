@@ -29,11 +29,13 @@ export async function GET(req: NextRequest) {
 
   const date = getKSTDateStr();
 
+  // 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청을 IE 에러 페이지로 막음.
   const liveRes = await fetch(`${KBO_MAIN}/GetKboGameList`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+      "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
     },
     body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
     cache: "no-store",
