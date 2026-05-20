@@ -135,17 +135,6 @@ function parseKboGameId(gameId: string) {
   };
 }
 
-function CancelledTabCard() {
-  return (
-    <div className="px-5 py-6">
-      <div className="glass-card p-5 text-center space-y-3">
-        <p className="text-base font-bold text-text-primary">경기가 취소되었습니다</p>
-        <p className="text-sm text-text-tertiary">우천 등 경기 운영 사유로 취소된 경기입니다.</p>
-      </div>
-    </div>
-  );
-}
-
 export default function GameDetailPage() {
   const params = useParams();
   const gameId = params.gameId as string;
@@ -374,61 +363,61 @@ export default function GameDetailPage() {
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="flex border-b border-border mx-4">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={clsx(
-              "flex-1 py-2.5 text-sm font-medium transition-colors relative",
-              activeTab === tab.id ? "text-text-primary font-semibold" : "text-text-tertiary"
-            )}
-          >
-            {tab.label}
-            {activeTab === tab.id && (
-              <motion.div
-                layoutId="tab-indicator"
-                className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full"
-                style={{ backgroundColor: tabIndicatorTeam.colorLight }}
-                transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              />
-            )}
-          </button>
-        ))}
-      </div>
+      {d.derivedStatus !== "cancelled" && (
+        <>
+          {/* Tabs */}
+          <div className="flex border-b border-border mx-4">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={clsx(
+                  "flex-1 py-2.5 text-sm font-medium transition-colors relative",
+                  activeTab === tab.id ? "text-text-primary font-semibold" : "text-text-tertiary"
+                )}
+              >
+                {tab.label}
+                {activeTab === tab.id && (
+                  <motion.div
+                    layoutId="tab-indicator"
+                    className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full"
+                    style={{ backgroundColor: tabIndicatorTeam.colorLight }}
+                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                  />
+                )}
+              </button>
+            ))}
+          </div>
 
-      {/* Tab content */}
-      <div className="flex-1">
-        <AnimatePresence mode="wait">
-          {activeTab === "kgwan" && (
-            <motion.div key="kgwan" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-              <KgwanTab
-                gameId={gameId}
-                homeTeamId={game.homeTeamId}
-                awayTeamId={game.awayTeamId}
-                gameDate={game.date}
-                gameStartTime={gameDetail?.meta?.startTime || liveGame?.time || game.time}
-                status={d.derivedStatus}
-                gameEvents={gameEvents}
-                plays={plays}
-                teamColor={battingTeamColor}
-                boxScore={gameDetail?.boxScore ?? null}
-                linescore={gameDetail?.linescore ?? gameRelay?.linescore ?? null}
-                starterNames={{
-                  away: liveGame?.awayStarterName || (gameDetail?.boxScore?.awayPitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.awayPitchers[0].name) ? gameDetail.boxScore.awayPitchers[0].name : ""),
-                  home: liveGame?.homeStarterName || (gameDetail?.boxScore?.homePitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.homePitchers[0].name) ? gameDetail.boxScore.homePitchers[0].name : ""),
-                }}
-                lineupConfirmed={!!d.detailLineup && d.detailLineup.isToday === true}
-                gameRelay={gameRelay}
-              />
-            </motion.div>
-          )}
+          {/* Tab content */}
+          <div className="flex-1">
+            <AnimatePresence mode="wait">
+              {activeTab === "kgwan" && (
+                <motion.div key="kgwan" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
+                  <KgwanTab
+                    gameId={gameId}
+                    homeTeamId={game.homeTeamId}
+                    awayTeamId={game.awayTeamId}
+                    gameDate={game.date}
+                    gameStartTime={gameDetail?.meta?.startTime || liveGame?.time || game.time}
+                    status={d.derivedStatus}
+                    gameEvents={gameEvents}
+                    plays={plays}
+                    teamColor={battingTeamColor}
+                    boxScore={gameDetail?.boxScore ?? null}
+                    linescore={gameDetail?.linescore ?? gameRelay?.linescore ?? null}
+                    starterNames={{
+                      away: liveGame?.awayStarterName || (gameDetail?.boxScore?.awayPitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.awayPitchers[0].name) ? gameDetail.boxScore.awayPitchers[0].name : ""),
+                      home: liveGame?.homeStarterName || (gameDetail?.boxScore?.homePitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.homePitchers[0].name) ? gameDetail.boxScore.homePitchers[0].name : ""),
+                    }}
+                    lineupConfirmed={!!d.detailLineup && d.detailLineup.isToday === true}
+                    gameRelay={gameRelay}
+                  />
+                </motion.div>
+              )}
           {activeTab === "lineup" && (
             <motion.div key="lineup" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              {d.derivedStatus === "cancelled" ? (
-                <CancelledTabCard />
-              ) : (d.detailLineup && d.detailLineup.isToday === true) ? (
+              {(d.detailLineup && d.detailLineup.isToday === true) ? (
                 <LineupTab
                   gameId={gameId}
                   lineup={{
@@ -480,9 +469,7 @@ export default function GameDetailPage() {
           )}
           {activeTab === "stats" && (
             <motion.div key="stats" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              {d.derivedStatus === "cancelled" ? (
-                <CancelledTabCard />
-              ) : gameStats ? (
+              {gameStats ? (
                 <GameStatsTab stats={gameStats} awayTeam={awayTeam} homeTeam={homeTeam} relay={gameRelay} />
               ) : liveGame?.isLive && gameRelay && gameRelay.innings.length > 0 ? (
                 <LiveStatsTab
@@ -521,6 +508,8 @@ export default function GameDetailPage() {
           )}
         </AnimatePresence>
       </div>
+        </>
+      )}
       {/* Celebration overlay (homerun etc.) */}
       <CelebrationOverlay event={celebration} onDone={dismiss} />
     </PullToRefresh>
