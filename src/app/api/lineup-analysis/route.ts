@@ -10,9 +10,11 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemi
 const ANALYSIS_VERSION = 6;
 
 const KBO_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
+// 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청을 IE 에러 페이지로 막음.
 const HEADERS = {
   "Content-Type": "application/x-www-form-urlencoded",
   "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+  "Referer": "https://www.koreabaseball.com/Schedule/LineUp.aspx",
 };
 
 interface LineupPlayer {

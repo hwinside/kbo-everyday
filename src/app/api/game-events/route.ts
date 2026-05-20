@@ -17,9 +17,11 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 const KBO_SCHEDULE = "https://www.koreabaseball.com/ws/Schedule.asmx";
+// 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청에 IE 분기 HTML 에러 페이지 반환.
 const HEADERS = {
   "Content-Type": "application/x-www-form-urlencoded",
   "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+  "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
 };
 
 function safeInt(v: unknown): number {
