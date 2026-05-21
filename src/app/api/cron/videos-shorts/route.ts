@@ -114,23 +114,23 @@ async function getTopPlayers(n: number): Promise<TopPlayer[]> {
   // 타자 TOP (홈런/타율)
   const { data: batters } = await supabaseAdmin
     .from("player_stats_batter")
-    .select("player_name, team, home_run, avg")
-    .gte("home_run", 5)
-    .order("home_run", { ascending: false })
+    .select("name, team, hr, avg")
+    .gte("hr", 5)
+    .order("hr", { ascending: false })
     .limit(Math.ceil(n * 0.7));
 
   // 투수 TOP (탈삼진/승)
   const { data: pitchers } = await supabaseAdmin
     .from("player_stats_pitcher")
-    .select("player_name, team, strike_out, win")
-    .gte("strike_out", 10)
-    .order("strike_out", { ascending: false })
+    .select("name, team, so, wins")
+    .gte("so", 10)
+    .order("so", { ascending: false })
     .limit(Math.ceil(n * 0.3));
 
   // roster에서 kbo_id 매칭
   const names = new Set<string>();
   for (const r of [...(batters || []), ...(pitchers || [])]) {
-    if (r.player_name) names.add(`${r.team}::${r.player_name}`);
+    if (r.name) names.add(`${r.team}::${r.name}`);
   }
   if (names.size === 0) return [];
 
