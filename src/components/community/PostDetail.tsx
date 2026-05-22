@@ -14,6 +14,7 @@ import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import DMButton from "@/components/ui/DMButton";
 import GifPicker, { isGifComment } from "@/components/community/GifPicker";
+import LoginSheet from "@/components/auth/LoginSheet";
 
 interface PostDetailProps {
   postId: number;
@@ -30,6 +31,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   const [likeCount, setLikeCount] = useState(0);
   const [replyTo, setReplyTo] = useState<{ id: number; nickname: string } | null>(null);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
 
   // Chat-layout keyboard handling:
   // 1) Toggle body.kbd-open based on composer focus (TabBar hidden via CSS).
@@ -245,7 +247,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   }
 
   async function handleComment() {
-    if (!user) { alert("로그인이 필요합니다"); return; }
+    if (!user) { setShowLogin(true); return; }
     if (!comment.trim()) return;
     try {
       const result = await createComment(post!.id, comment.trim(), replyTo?.id);
@@ -272,7 +274,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   }
 
   async function handleGifSelect(gifUrl: string) {
-    if (!user) { alert("로그인이 필요합니다"); return; }
+    if (!user) { setShowLogin(true); return; }
     setShowGifPicker(false);
     try {
       const result = await createComment(post!.id, gifUrl, replyTo?.id);
@@ -717,18 +719,28 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                   <ImagePlay size={20} />
                 </button>
               )}
-              <input
-                type="text"
-                value={comment}
-                onChange={e => setComment(e.target.value)}
-                placeholder={user ? (replyTo ? `${replyTo.nickname}에게 답글...` : "댓글을 입력하세요") : "로그인 후 댓글 작성 가능"}
-                disabled={!user}
-                className="flex-1 bg-bg-secondary rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none border"
-                style={{ borderColor: teamColor ? `${teamColor}80` : 'rgba(255,255,255,0.15)' }}
-                onFocus={() => { setShowGifPicker(false); document.body.classList.add("kbd-open"); }}
-                onBlur={() => document.body.classList.remove("kbd-open")}
-                onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); handleComment(); } }}
-              />
+              {user ? (
+                <input
+                  type="text"
+                  value={comment}
+                  onChange={e => setComment(e.target.value)}
+                  placeholder={replyTo ? `${replyTo.nickname}에게 답글...` : "댓글을 입력하세요"}
+                  className="flex-1 bg-bg-secondary rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none border"
+                  style={{ borderColor: teamColor ? `${teamColor}80` : 'rgba(255,255,255,0.15)' }}
+                  onFocus={() => { setShowGifPicker(false); document.body.classList.add("kbd-open"); }}
+                  onBlur={() => document.body.classList.remove("kbd-open")}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); handleComment(); } }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowLogin(true)}
+                  className="flex-1 bg-bg-secondary rounded-xl px-4 py-2.5 text-left text-sm text-text-secondary border"
+                  style={{ borderColor: teamColor ? `${teamColor}80` : 'rgba(255,255,255,0.15)' }}
+                >
+                  로그인 후 댓글 작성 가능
+                </button>
+              )}
               <button onClick={handleComment} disabled={!comment.trim() || !user} className="w-9 h-9 rounded-full flex items-center justify-center text-white disabled:opacity-50 transition-opacity" style={{ backgroundColor: post.team_id ? (() => { const t = getTeamById(post.team_id); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}>
                 <Send size={16} />
               </button>
@@ -737,6 +749,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         })()}
       </div>
       <ReportSheet isOpen={showReport} onClose={() => setShowReport(false)} targetType={reportTarget.type} targetId={reportTarget.id} />
+      {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
     </div>
   );
 }
