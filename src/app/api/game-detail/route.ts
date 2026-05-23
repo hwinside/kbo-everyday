@@ -325,10 +325,14 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
         if (ab.includes("삼진")) so++;
       }
 
-      const order = safeInt(stripHtml(cells[0]));
+      const rawOrder = safeInt(stripHtml(cells[0]));
       const posRaw = stripHtml(cells[1] || "");
-      const isSubstitute = order === prevOrder || posRaw.startsWith("타") || posRaw.startsWith("주") || posRaw.startsWith("대");
-      prevOrder = order;
+      // KBO BoxScore는 대타/대주자 row의 타순 셀을 비우거나(rawOrder=0) 같은 번호로
+      // 반복하는 두 가지 형태를 모두 사용. 둘 다 substitute로 간주하고, 빈 셀이면
+      // 직전 row의 타순을 그대로 이어붙여 베이스 룩업이 가능하도록 한다.
+      const isSubstitute = rawOrder === 0 || rawOrder === prevOrder || posRaw.startsWith("타") || posRaw.startsWith("주") || posRaw.startsWith("대");
+      const order = isSubstitute && rawOrder === 0 && prevOrder > 0 ? prevOrder : rawOrder;
+      if (order > 0) prevOrder = order;
 
       // KBO header order: [타수, 안타, 타점, 득점, 타율]
       return {
