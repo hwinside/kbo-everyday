@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS gif_collector_queue (
   original_media_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
 
   -- 매칭 결과
-  matched_kbo_id INT,
+  matched_kbo_id TEXT REFERENCES players_roster(kbo_id) ON DELETE SET NULL,
   matched_board_type TEXT
     CHECK (matched_board_type IS NULL OR matched_board_type IN ('player', 'team')),
   matched_board_id TEXT,
