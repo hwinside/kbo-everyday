@@ -95,6 +95,16 @@ const cases: Case[] = [
     },
   },
   {
+    name: "cross-team conflict: #LG 태그 + 박병호(키움) → team 게시판 강등 0.4 (삼순이 PR #106 블로커)",
+    post: { tags: ["#LG"], title: "박병호 홈런 움짤", content: "" },
+    expect: {
+      matchedKboId: "75125",
+      matchedBoardType: "team",
+      matchedBoardId: "1",
+      matchConfidence: 0.4,
+    },
+  },
+  {
     name: "tag normalizeTag 직접 검증 ('#KIA타이거즈' → 'kia타이거즈')",
     post: { tags: [], title: "", content: "" },
     expect: {},

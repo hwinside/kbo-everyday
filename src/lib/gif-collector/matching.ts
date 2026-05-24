@@ -83,6 +83,23 @@ export function matchMlbparkPost(post: MlbparkPost): MatchResult {
   if (candidates.length === 1) {
     const p = candidates[0];
     const sameTeam = teamId !== null && Number(p.teamId) === teamId;
+
+    // Cross-team conflict: 태그 팀과 본문 선수 팀이 다름.
+    // 예) #LG 태그 + 본문에 "박병호" → 박병호는 키움 선수.
+    // PR4 자동게시 기준이 ≥0.8이라 0.85로 두면 자동게시 위험 → review queue로 강등.
+    if (teamId !== null && !sameTeam) {
+      reasons.push(
+        `cross_team_conflict player=${p.name}(${p.kboId}) post_team=${teamId} player_team=${p.teamId}`,
+      );
+      return {
+        matchedKboId: p.kboId,
+        matchedBoardType: "team",
+        matchedBoardId: String(teamId),
+        matchConfidence: 0.4,
+        reasons,
+      };
+    }
+
     const confidence = sameTeam ? 1.0 : 0.85;
     reasons.push(`player=${p.name}(${p.kboId}) sameTeam=${sameTeam}`);
     return {
