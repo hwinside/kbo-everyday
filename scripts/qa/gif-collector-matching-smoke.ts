@@ -105,6 +105,16 @@ const cases: Case[] = [
     },
   },
   {
+    name: "team_ambiguous: #LG #두산 태그 + 오스틴 → player 매칭 유지하되 0.7 강등 (삼순이 PR #106 추가 블로커)",
+    post: { tags: ["#LG", "#두산"], title: "오스틴 만루홈런", content: "오늘 활약" },
+    expect: {
+      matchedKboId: "53123",
+      matchedBoardType: "player",
+      matchedBoardId: "53123",
+      matchConfidence: 0.7,
+    },
+  },
+  {
     name: "tag normalizeTag 직접 검증 ('#KIA타이거즈' → 'kia타이거즈')",
     post: { tags: [], title: "", content: "" },
     expect: {},

@@ -100,6 +100,23 @@ export function matchMlbparkPost(post: MlbparkPost): MatchResult {
       };
     }
 
+    // team_ambiguous: 태그에 팀 2개 이상 → 신호 충돌 가능성.
+    // 예) #LG #두산 + "오스틴" → 오스틴은 LG 선수지만 본문이 어느 팀 활약인지 불명확.
+    // player 매칭은 유지하되 confidence 0.8 미만으로 강등해 review queue로 보냄.
+    if (ambiguous) {
+      const playerInTags = teamIds.includes(Number(p.teamId));
+      reasons.push(
+        `team_ambiguous(${teamIds.length}) player=${p.name}(${p.kboId}) player_in_tags=${playerInTags}`,
+      );
+      return {
+        matchedKboId: p.kboId,
+        matchedBoardType: "player",
+        matchedBoardId: p.kboId,
+        matchConfidence: 0.7,
+        reasons,
+      };
+    }
+
     const confidence = sameTeam ? 1.0 : 0.85;
     reasons.push(`player=${p.name}(${p.kboId}) sameTeam=${sameTeam}`);
     return {
