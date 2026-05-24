@@ -16,7 +16,41 @@ type Case = {
 
 const cases: Case[] = [
   {
-    name: "기본 형식: URL + 팀 선수 + 본문",
+    name: "키-값 형식 (한국어): 삼순이 PR #107 권고",
+    text: "팀: LG\n선수: 오스틴\n링크: https://mlbpark.donga.com/mp/12345\n본문: 시즌 첫 그랜드슬램.\n진짜 미쳤다.",
+    expect: {
+      ok: true,
+      value: {
+        url: "https://mlbpark.donga.com/mp/12345",
+        teamName: "LG",
+        playerName: "오스틴",
+        body: "시즌 첫 그랜드슬램.\n진짜 미쳤다.",
+      },
+    },
+  },
+  {
+    name: "키-값 본문 보존 (빈 줄 + 앞뒤 공백 포함)",
+    text: "팀: LG\n선수: 오스틴\n링크: https://example.com/gif\n본문: 첫 단락\n\n  들여쓰기 둘째 단락  ",
+    expect: {
+      ok: true,
+      value: { body: "첫 단락\n\n  들여쓰기 둘째 단락  " },
+    },
+  },
+  {
+    name: "키-값에 본문 누락 → body 빈 문자열",
+    text: "팀: LG\n선수: 오스틴\n링크: https://example.com",
+    expect: {
+      ok: true,
+      value: { teamName: "LG", playerName: "오스틴", body: "" },
+    },
+  },
+  {
+    name: "키-값 부분 누락 (선수 없음) → 친절 에러",
+    text: "팀: LG\n링크: https://example.com",
+    expect: { ok: false, errorIncludes: "선수" },
+  },
+  {
+    name: "멀티라인 fallback: URL + 팀 선수 + 본문",
     text: "https://mlbpark.donga.com/mp/12345\nLG 오스틴\n시즌 첫 그랜드슬램. 진짜 미쳤다",
     expect: {
       ok: true,
@@ -26,6 +60,14 @@ const cases: Case[] = [
         playerName: "오스틴",
         body: "시즌 첫 그랜드슬램. 진짜 미쳤다",
       },
+    },
+  },
+  {
+    name: "멀티라인 본문 보존 (빈 줄 + 들여쓰기)",
+    text: "https://example.com/gif\nLG 오스틴\n첫 단락\n\n  들여쓰기 둘째 단락  ",
+    expect: {
+      ok: true,
+      value: { body: "첫 단락\n\n  들여쓰기 둘째 단락  " },
     },
   },
   {

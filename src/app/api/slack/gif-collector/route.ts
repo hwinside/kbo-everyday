@@ -25,6 +25,10 @@ export const maxDuration = 30;
 const SIGNING_SECRET = process.env.SLACK_GIF_COLLECTOR_SIGNING_SECRET;
 const BOT_TOKEN = process.env.SLACK_GIF_COLLECTOR_BOT_TOKEN;
 const INBOX_CHANNEL_ID = process.env.GIF_COLLECTOR_INBOX_CHANNEL_ID;
+const AUTHORIZED_USER_IDS = (process.env.GIF_COLLECTOR_AUTHORIZED_USER_IDS ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter((s) => s.length > 0);
 
 function verifySignature(rawBody: string, timestamp: string, signature: string): boolean {
   if (!SIGNING_SECRET) return false;
@@ -175,12 +179,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   if (payload.type === "event_callback") {
+    // Fail-closed: 인박스 채널 id가 설정 안 되어 있으면 모든 메시지 거부.
+    if (!INBOX_CHANNEL_ID) {
+      console.error("[gif-collector] GIF_COLLECTOR_INBOX_CHANNEL_ID not set");
+      return NextResponse.json({ error: "inbox channel not configured" }, { status: 503 });
+    }
+
     const evt = (payload as SlackEventCallback).event;
     if (evt?.type !== "message") {
       return NextResponse.json({ ok: true });
     }
     // 다른 채널 메시지 무시
-    if (INBOX_CHANNEL_ID && evt.channel !== INBOX_CHANNEL_ID) {
+    if (evt.channel !== INBOX_CHANNEL_ID) {
       return NextResponse.json({ ok: true });
     }
     // edit/delete/bot_message 등 subtype 무시
@@ -193,6 +203,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
     // 스레드 답글 무시 (인박스는 top-level만)
     if (evt.thread_ts && evt.thread_ts !== evt.ts) {
+      return NextResponse.json({ ok: true });
+    }
+    // 운영자 whitelist: 설정돼 있으면 그 안의 user_id만 허용.
+    if (AUTHORIZED_USER_IDS.length > 0 && !AUTHORIZED_USER_IDS.includes(evt.user)) {
+      await reactAndReply(
+        evt.channel,
+        evt.ts,
+        "no_entry",
+        "이 채널은 운영자 전용입니다. 권한이 없는 계정이라 큐 등록을 건너뜁니다.",
+      );
       return NextResponse.json({ ok: true });
     }
 
