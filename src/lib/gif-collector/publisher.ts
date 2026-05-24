@@ -83,6 +83,8 @@ export interface PublishResult {
   ok: boolean;
   postId?: number;
   publicUrl?: string;
+  /** post는 만들어졌지만 queue update가 실패한 부분 성공 시그널. caller는 운영자에게 수동 정리 알림 권장. */
+  partial?: boolean;
   error?: string;
 }
 
@@ -134,12 +136,14 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     return rejectAndReturn(queueId, `media download failed (HTTP error or >${MAX_MEDIA_BYTES} bytes): ${og.url}`);
   }
 
-  const path = `${STORAGE_FOLDER}/${queueId}-${Date.now()}.${downloaded.ext}`;
+  // queueId만으로 deterministic — 재발행 시도 (status guard로 막혀 있긴 함) 시 같은 path,
+  // posts insert 실패에 따른 storage 정리도 정확히 한 객체만 지움.
+  const path = `${STORAGE_FOLDER}/${queueId}.${downloaded.ext}`;
   const { error: upErr } = await supabaseAdmin.storage
     .from(BUCKET)
     .upload(path, downloaded.buf, {
       cacheControl: "31536000",
-      upsert: false,
+      upsert: true,
       contentType: downloaded.contentType,
     });
   if (upErr) return { ok: false, error: `storage upload failed: ${upErr.message}` };
@@ -147,17 +151,19 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
   const { data: pub } = supabaseAdmin.storage.from(BUCKET).getPublicUrl(path);
   const publicUrl = pub.publicUrl;
 
-  const isVideo = og.type === "video";
+  // 모든 미디어를 content_type='photo' + image_urls로 게시한다 (movie/gif 구분 없음).
+  // 이유: 선수 사진탭/전체 사진탭이 content_type='photo'를 필터링하기 때문에
+  // 'video'로 두면 사진탭에 안 보임. 운영자가 던지는 자료 대부분 GIF/이미지라는 가정.
+  // mp4 같은 진짜 video는 image 태그로 렌더 불가 → 향후 GIF 변환 파이프라인 추가 시 보강.
   const postInsert: Record<string, unknown> = {
     author_id: BOT_USER_ID,
     board_type: row.matched_board_type,
     board_id: row.matched_board_id,
-    content_type: isVideo ? "video" : "photo",
+    content_type: "photo",
     title: row.source_title || `${row.matched_board_id} 움짤`,
     content: row.source_content ?? "",
+    image_urls: [publicUrl],
   };
-  if (isVideo) postInsert.video_urls = [publicUrl];
-  else postInsert.image_urls = [publicUrl];
 
   const { data: post, error: insErr } = await supabaseAdmin
     .from("posts")
@@ -165,6 +171,11 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     .select("id")
     .single<{ id: number }>();
   if (insErr || !post) {
+    // Storage orphan 정리: posts insert 실패 시 방금 업로드한 객체 제거.
+    const { error: rmErr } = await supabaseAdmin.storage.from(BUCKET).remove([path]);
+    if (rmErr) {
+      console.error(`[gif-collector] storage cleanup failed for ${path}:`, rmErr);
+    }
     return { ok: false, error: `posts insert failed: ${insErr?.message ?? "no row"}` };
   }
 
@@ -172,16 +183,18 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     .from("gif_collector_queue")
     .update({
       match_status: "auto_posted",
+      original_media_urls: [og.url],
       posted_post_id: post.id,
       posted_at: new Date().toISOString(),
     })
     .eq("id", queueId);
   if (updErr) {
-    // posts INSERT는 끝났지만 queue update 실패 — 운영자가 수동으로 정리.
+    // posts INSERT는 끝났지만 queue update 실패 — caller에 ok=false + partial 시그널.
     return {
-      ok: true,
+      ok: false,
       postId: post.id,
       publicUrl,
+      partial: true,
       error: `queue update failed (post created): ${updErr.message}`,
     };
   }

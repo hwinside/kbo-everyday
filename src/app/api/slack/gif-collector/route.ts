@@ -156,12 +156,23 @@ async function processMessage(evt: SlackMessageEvent): Promise<void> {
 
   // 발행 즉시 진행 (옵션 A, 2026-05-25 확정).
   const pub = await publishQueueItem(inserted.id);
-  if (!pub.ok) {
+  if (pub.ok) {
+    await reactAndReply(
+      evt.channel,
+      evt.ts,
+      "white_check_mark",
+      `게시 완료 — *${playerCanonicalName}* (kboId=${kboId}, teamId=${teamId}). posts.id=${pub.postId}`,
+    );
+    return;
+  }
+
+  // partial: post는 생성됐지만 queue update 실패. false success 방지.
+  if (pub.partial) {
     await reactAndReply(
       evt.channel,
       evt.ts,
       "warning",
-      `큐 등록은 됐는데 발행 실패: ${pub.error}\n*${playerCanonicalName}* (kboId=${kboId}). 큐 id=${inserted.id} — 운영자 수동 검토 필요.`,
+      `posts.id=${pub.postId}은 생성됐지만 큐 상태 동기화 실패. *${playerCanonicalName}* / 큐 id=${inserted.id}. 운영자가 gif_collector_queue.match_status를 직접 'auto_posted'로 정리해야 합니다.\n에러: ${pub.error}`,
     );
     return;
   }
@@ -169,8 +180,8 @@ async function processMessage(evt: SlackMessageEvent): Promise<void> {
   await reactAndReply(
     evt.channel,
     evt.ts,
-    "white_check_mark",
-    `게시 완료 — *${playerCanonicalName}* (kboId=${kboId}, teamId=${teamId}). posts.id=${pub.postId}`,
+    "x",
+    `발행 실패: ${pub.error}\n*${playerCanonicalName}* (kboId=${kboId}). 큐 id=${inserted.id} (status=rejected).`,
   );
 }
 
