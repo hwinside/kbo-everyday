@@ -18,6 +18,7 @@ import { createHmac, timingSafeEqual } from "crypto";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { parseInboxMessage } from "@/lib/gif-collector/slack-parser";
 import { resolveInboxFromInput } from "@/lib/gif-collector/inbox-resolver";
+import { publishQueueItem } from "@/lib/gif-collector/publisher";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -123,38 +124,64 @@ async function processMessage(evt: SlackMessageEvent): Promise<void> {
 
   const { teamId, kboId, playerCanonicalName } = resolved.value;
 
-  const { error } = await supabaseAdmin.from("gif_collector_queue").insert({
-    source_type: "slack_inbox",
-    external_post_id: evt.ts,
-    source_url: url,
-    source_author: evt.user ?? null,
-    source_title: body.split("\n")[0] || `${teamName} ${playerName}`,
-    source_content: body,
-    source_tags: [teamName],
-    original_media_urls: [],
-    matched_kbo_id: kboId,
-    matched_board_type: "player",
-    matched_board_id: kboId,
-    match_confidence: 1.0,
-    match_status: "pending",
-  });
+  const { data: inserted, error } = await supabaseAdmin
+    .from("gif_collector_queue")
+    .insert({
+      source_type: "slack_inbox",
+      external_post_id: evt.ts,
+      source_url: url,
+      source_author: evt.user ?? null,
+      source_title: (body.split("\n").find((l) => l.trim().length > 0) ?? "") || `${teamName} ${playerName}`,
+      source_content: body,
+      source_tags: [teamName],
+      original_media_urls: [],
+      matched_kbo_id: kboId,
+      matched_board_type: "player",
+      matched_board_id: kboId,
+      match_confidence: 1.0,
+      match_status: "pending",
+    })
+    .select("id")
+    .single<{ id: number }>();
 
-  if (error) {
-    // unique constraint (재전송) → 친절히
-    if (error.code === "23505") {
+  if (error || !inserted) {
+    if (error?.code === "23505") {
       await reactAndReply(evt.channel, evt.ts, "repeat", "이미 큐에 등록된 메시지예요.");
       return;
     }
     console.error("[gif-collector] queue insert failed:", error);
-    await reactAndReply(evt.channel, evt.ts, "x", `큐 저장 실패: ${error.message}`);
+    await reactAndReply(evt.channel, evt.ts, "x", `큐 저장 실패: ${error?.message ?? "no row"}`);
+    return;
+  }
+
+  // 발행 즉시 진행 (옵션 A, 2026-05-25 확정).
+  const pub = await publishQueueItem(inserted.id);
+  if (pub.ok) {
+    await reactAndReply(
+      evt.channel,
+      evt.ts,
+      "white_check_mark",
+      `게시 완료 — *${playerCanonicalName}* (kboId=${kboId}, teamId=${teamId}). posts.id=${pub.postId}`,
+    );
+    return;
+  }
+
+  // partial: post는 생성됐지만 queue update 실패. false success 방지.
+  if (pub.partial) {
+    await reactAndReply(
+      evt.channel,
+      evt.ts,
+      "warning",
+      `posts.id=${pub.postId}은 생성됐지만 큐 상태 동기화 실패. *${playerCanonicalName}* / 큐 id=${inserted.id}. 운영자가 gif_collector_queue.match_status를 직접 'auto_posted'로 정리해야 합니다.\n에러: ${pub.error}`,
+    );
     return;
   }
 
   await reactAndReply(
     evt.channel,
     evt.ts,
-    "white_check_mark",
-    `큐 등록 완료 — *${playerCanonicalName}* (kboId=${kboId}, teamId=${teamId}). PR4 발행 단계에서 미디어 추출 후 게시됩니다.`,
+    "x",
+    `발행 실패: ${pub.error}\n*${playerCanonicalName}* (kboId=${kboId}). 큐 id=${inserted.id} (status=rejected).`,
   );
 }
 

@@ -13,6 +13,7 @@
     "qa:gif-collector-matching": "tsx scripts/qa/gif-collector-matching-smoke.ts",
     "qa:gif-collector-slack-parser": "tsx scripts/qa/gif-collector-slack-parser-smoke.ts",
     "qa:gif-collector-inbox-resolver": "tsx scripts/qa/gif-collector-inbox-resolver-smoke.ts",
+    "qa:gif-collector-publisher": "tsx scripts/qa/gif-collector-publisher-smoke.ts",
     "qa:celebration-hit-overcount": "tsx scripts/qa/celebration-hit-overcount-smoke.ts",
     "qa:celebration-client-dedupe": "tsx scripts/qa/celebration-client-dedupe-smoke.ts",
     "qa:foreign-photo": "tsx scripts/qa/foreign-photo-coverage.ts",
