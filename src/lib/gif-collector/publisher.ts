@@ -151,10 +151,10 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
   const { data: pub } = supabaseAdmin.storage.from(BUCKET).getPublicUrl(path);
   const publicUrl = pub.publicUrl;
 
-  // 모든 미디어를 content_type='photo' + image_urls로 게시한다 (movie/gif 구분 없음).
-  // 이유: 선수 사진탭/전체 사진탭이 content_type='photo'를 필터링하기 때문에
-  // 'video'로 두면 사진탭에 안 보임. 운영자가 던지는 자료 대부분 GIF/이미지라는 가정.
-  // mp4 같은 진짜 video는 image 태그로 렌더 불가 → 향후 GIF 변환 파이프라인 추가 시 보강.
+  // content_type='photo' 고정 — 선수 사진탭/전체 사진탭이 'photo' 필터링하기 때문.
+  // 단, 미디어 array는 og.type에 맞춰 분기: og.type=video → video_urls (mp4 등은
+  // 비디오 컴포넌트로, image_urls에 넣으면 img 태그 렌더가 깨짐).
+  const isVideo = og.type === "video";
   const postInsert: Record<string, unknown> = {
     author_id: BOT_USER_ID,
     board_type: row.matched_board_type,
@@ -162,8 +162,9 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     content_type: "photo",
     title: row.source_title || `${row.matched_board_id} 움짤`,
     content: row.source_content ?? "",
-    image_urls: [publicUrl],
   };
+  if (isVideo) postInsert.video_urls = [publicUrl];
+  else postInsert.image_urls = [publicUrl];
 
   const { data: post, error: insErr } = await supabaseAdmin
     .from("posts")
