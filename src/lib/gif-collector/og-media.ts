@@ -8,16 +8,67 @@ export interface OgMedia {
   type: "video" | "image";
 }
 
-const OG_VIDEO_RE =
-  /<meta\s+(?:[^>]*?\s+)?property=["']og:video(?::secure_url|:url)?["']\s+content=["']([^"']+)["']/i;
-const OG_IMAGE_RE =
-  /<meta\s+(?:[^>]*?\s+)?property=["']og:image(?::secure_url|:url)?["']\s+content=["']([^"']+)["']/i;
+const META_RE = /<meta\b[^>]*>/gi;
+const VIDEO_SOURCE_RE = /<(?:video|source)\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi;
+const DIRECT_VIDEO_URL_RE = /https?:\/\/[^"'<> \t\r\n]+?\.(?:mp4|webm|m3u8)(?:\?[^"'<> \t\r\n]*)?/gi;
+
+function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function extractAttr(tag: string, attrName: string): string | null {
+  const re = new RegExp(`\\b${attrName}=["']([^"']+)["']`, "i");
+  const m = tag.match(re);
+  return m ? decodeHtmlEntities(m[1]) : null;
+}
+
+function findOgMeta(html: string, propertyPrefix: "og:video" | "og:image"): string | null {
+  const metas = html.match(META_RE) ?? [];
+  for (const tag of metas) {
+    const property = extractAttr(tag, "property");
+    if (!property) continue;
+    if (property === propertyPrefix || property === `${propertyPrefix}:secure_url` || property === `${propertyPrefix}:url`) {
+      const content = extractAttr(tag, "content");
+      if (content) return content;
+    }
+  }
+  return null;
+}
+
+function isGenericMlbparkImage(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (!u.hostname.endsWith("donga.com")) return false;
+    const path = u.pathname.toLowerCase();
+    return (
+      path.includes("/challenge/mlbpark/images/share_icon") ||
+      path.includes("/challenge/mlbpark/images/img_logo") ||
+      path.includes("/challenge/mlbpark/images/btn_") ||
+      path.includes("/mlbpark/img/btn_")
+    );
+  } catch {
+    return false;
+  }
+}
 
 export function extractOgMedia(html: string): OgMedia | null {
-  const v = html.match(OG_VIDEO_RE);
-  if (v) return { url: v[1], type: "video" };
-  const i = html.match(OG_IMAGE_RE);
-  if (i) return { url: i[1], type: "image" };
+  const ogVideo = findOgMeta(html, "og:video");
+  if (ogVideo) return { url: ogVideo, type: "video" };
+
+  for (const m of html.matchAll(VIDEO_SOURCE_RE)) {
+    return { url: decodeHtmlEntities(m[1]), type: "video" };
+  }
+
+  const directVideo = html.match(DIRECT_VIDEO_URL_RE)?.[0];
+  if (directVideo) return { url: decodeHtmlEntities(directVideo), type: "video" };
+
+  const ogImage = findOgMeta(html, "og:image");
+  if (ogImage && !isGenericMlbparkImage(ogImage)) return { url: ogImage, type: "image" };
   return null;
 }
 

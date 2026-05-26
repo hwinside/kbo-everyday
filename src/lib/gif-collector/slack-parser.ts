@@ -34,11 +34,20 @@ const URL_RE = /https?:\/\/\S+/;
 const SLACK_LINK_RE = /<(https?:\/\/[^|>]+)(?:\|[^>]*)?>/;
 const KV_RE = /^\s*(팀|선수|링크|본문|team|player|link|url|body)\s*:\s*(.*)$/i;
 
+function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
 function extractFirstUrl(s: string): string | null {
   const slack = s.match(SLACK_LINK_RE);
-  if (slack) return slack[1];
+  if (slack) return decodeHtmlEntities(slack[1]);
   const plain = s.match(URL_RE);
-  return plain ? plain[0] : null;
+  return plain ? decodeHtmlEntities(plain[0]) : null;
 }
 
 function normalizeKvKey(raw: string): "team" | "player" | "url" | "body" | null {
