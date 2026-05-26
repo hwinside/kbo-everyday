@@ -59,20 +59,19 @@ const displayedEventIds = new Set<string>();
 const RESUME_GRACE_MS = 1_000;
 
 /**
- * Initial-fetch baseline window. Both source paths (KBO BoxScore-diff at 10–30s
- * cadence; Naver relay at 5s cadence) take a few seconds to land their first
- * response, and the relay generator emits *all historical plays* in that first
- * response (one fetch returns the full game history). Without a window-based
- * baseline, whichever source arrives second would replay every accumulated
- * celebration the moment the page opens.
+ * Source-aware baseline contract. Each generator (`kbo_diff`, `relay`) emits a
+ * *full history batch* on its first successful response, with `timestamp =
+ * now` because neither source carries true play-occurrence timestamps. We
+ * treat the FIRST batch from each source as baseline-only (seed into seenRef,
+ * never fire), then process subsequent batches normally. This is independent
+ * of wall-clock — if relay's first response lands 30s after page entry, that
+ * first batch still seeds baseline rather than flooding historical
+ * celebrations. Previous design relied on an 8s wall-clock window which let
+ * any source whose first response arrived after 8s replay the entire history.
  *
- * Single-batch `hasPrimedSeenRef` baseline (the previous design) seeds only
- * the source that fired first; the second source's first batch then floods.
- * Time-based baseline covers both arrival orderings — trade-off is that
- * celebrations that *actually fire* within this 8s window are missed
- * (replaying the whole game's history is far worse).
+ * Per-source tracking via primedSourcesRef. Reset on PWA resume so the next
+ * source-first batches re-baseline.
  */
-const INITIAL_BASELINE_MS = 8_000;
 
 /** Look up kboId from player name + teamId */
 function findKboId(name: string | undefined, teamId: number): string | undefined {
@@ -101,9 +100,10 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
   const celebrationRef = useRef<CelebrationEvent | null>(null);
   const seenRef = useRef<Set<string>>(new Set());
   const queueRef = useRef<CelebrationEvent[]>([]);
-  /** Baseline window: all events seen before this timestamp are registered
-   *  but not fired. Set on first processEvents() call and on PWA resume. */
-  const baselineUntilRef = useRef<number | null>(null);
+  /** Source-aware baseline: each unique `ev.source` value's FIRST batch seeds
+   *  seenRef silently, subsequent batches are processed for celebration.
+   *  Cleared on PWA resume so the next first-batch from each source rebaselines. */
+  const primedSourcesRef = useRef<Set<string>>(new Set());
   const suppressBeforeRef = useRef<number>(Number.POSITIVE_INFINITY);
   /** Track pitcher strikeout counts for "2K, 3K..." display */
   const pitcherKRef = useRef<Map<string, number>>(new Map());
@@ -134,10 +134,10 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
       // Next poll may include the whole shared history. Treat events whose
       // server timestamp predates this visible session as already seen.
       suppressBeforeRef.current = Date.now() + RESUME_GRACE_MS;
-      // Re-arm baseline window: relay's first post-resume fetch will deliver
-      // the entire game history again. 8s seeds those into seenRef as
-      // baseline so only post-resume celebrations fire.
-      baselineUntilRef.current = Date.now() + INITIAL_BASELINE_MS;
+      // Clear per-source baseline state — both `kbo_diff` and `relay` will
+      // re-deliver their full history on the first post-resume fetch, and
+      // those first batches must seed seenRef silently rather than fire.
+      primedSourcesRef.current.clear();
       // K labels should reflect celebrations actually seen in this session,
       // not hidden/background history.
       pitcherKRef.current.clear();
@@ -165,17 +165,32 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
       const now = Date.now();
       const newCelebrations: CelebrationEvent[] = [];
 
-      // Time-based baseline window: 8s after first call (and after PWA resume)
-      // seed every observed event into seenRef without firing. This covers the
-      // case where the two source paths (KBO BoxScore-diff and Naver relay)
-      // land their first batch at different times — without the window, the
-      // later-arriving source would replay the entire game history.
-      if (baselineUntilRef.current === null) {
-        baselineUntilRef.current = now + INITIAL_BASELINE_MS;
+      // Per-source baseline: the first batch from each unique ev.source seeds
+      // seenRef silently. Subsequent batches process new ids normally.
+      // Events lacking a source field (legacy/unknown) are bucketed under
+      // "_unknown" so they also get a one-shot baseline rather than firing
+      // on first observation.
+      const sourcesInBatch = new Set<string>();
+      for (const ev of events) {
+        sourcesInBatch.add(ev.source ?? "_unknown");
       }
-      if (now < baselineUntilRef.current) {
-        for (const ev of events) seenRef.current.add(ev.id);
-        return;
+      const sourcesToBaseline: string[] = [];
+      for (const src of sourcesInBatch) {
+        if (!primedSourcesRef.current.has(src)) {
+          sourcesToBaseline.push(src);
+          primedSourcesRef.current.add(src);
+        }
+      }
+      if (sourcesToBaseline.length > 0) {
+        for (const ev of events) {
+          if (sourcesToBaseline.includes(ev.source ?? "_unknown")) {
+            seenRef.current.add(ev.id);
+          }
+        }
+        // Continue to process the OTHER sources' events in this batch (mixed
+        // batches: an already-primed source's events still process for
+        // celebration). The seenRef seeding above already filters out the
+        // baseline source's events from the loop below via seenRef.has(ev.id).
       }
 
       for (const ev of events) {

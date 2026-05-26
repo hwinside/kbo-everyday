@@ -346,6 +346,351 @@ function assert(label: string, cond: boolean, detail?: unknown) {
   );
 }
 
+// =====================================================================
+// Reflect 삼순 NO-GO review (2026-05-26) and self code-review (high effort)
+// =====================================================================
+
+// ----- T9: source-aware baseline — first batch per source seeds, second batch fires -----
+// Mirrors the production processEvents per-source baseline logic in
+// useCelebration.ts. The previous 8s wall-clock baseline would let relay's
+// first batch (which always arrives with timestamp=now and full game history)
+// flood as fresh celebrations if it landed after the 8s window.
+{
+  const primedSources = new Set<string>();
+  const seen = new Set<string>();
+
+  function simulateProcess(events: { id: string; source?: string }[]): string[] {
+    const fired: string[] = [];
+    const sourcesInBatch = new Set<string>();
+    for (const ev of events) sourcesInBatch.add(ev.source ?? "_unknown");
+    const sourcesToBaseline: string[] = [];
+    for (const src of sourcesInBatch) {
+      if (!primedSources.has(src)) {
+        sourcesToBaseline.push(src);
+        primedSources.add(src);
+      }
+    }
+    if (sourcesToBaseline.length > 0) {
+      for (const ev of events) {
+        if (sourcesToBaseline.includes(ev.source ?? "_unknown")) seen.add(ev.id);
+      }
+    }
+    for (const ev of events) {
+      if (seen.has(ev.id)) continue;
+      seen.add(ev.id);
+      fired.push(ev.id);
+    }
+    return fired;
+  }
+
+  // First relay batch — full history (3 events). Should fire 0.
+  const firstBatchFired = simulateProcess([
+    { id: "g-at_bat_homerun-2-T-a-1", source: "relay" },
+    { id: "g-at_bat_hit-3-B-b-1", source: "relay" },
+    { id: "g-at_bat_walk-4-T-c-1", source: "relay" },
+  ]);
+  assert(
+    "T9: first relay full-history batch fires 0 celebrations (baseline seed only)",
+    firstBatchFired.length === 0,
+    { fired: firstBatchFired },
+  );
+
+  // Second relay batch — same 3 historical + 1 new. Only new should fire.
+  const secondBatchFired = simulateProcess([
+    { id: "g-at_bat_homerun-2-T-a-1", source: "relay" },
+    { id: "g-at_bat_hit-3-B-b-1", source: "relay" },
+    { id: "g-at_bat_walk-4-T-c-1", source: "relay" },
+    { id: "g-at_bat_homerun-5-T-d-1", source: "relay" },
+  ]);
+  assert(
+    "T9: second relay batch fires only the NEW id",
+    secondBatchFired.length === 1 && secondBatchFired[0] === "g-at_bat_homerun-5-T-d-1",
+    { fired: secondBatchFired },
+  );
+
+  // First KBO-diff batch arrives later — baseline-seeded independently.
+  const firstKboBatchFired = simulateProcess([
+    { id: "g-at_bat_hit-3-B-b-1", source: "kbo_diff" },  // same id as relay's, already in seen
+    { id: "g-at_bat_double-6-B-e-1", source: "kbo_diff" },  // new for kbo_diff
+  ]);
+  assert(
+    "T9: first kbo_diff batch ALSO baseline-seeded silently (the new id is seeded, not fired)",
+    firstKboBatchFired.length === 0,
+    { fired: firstKboBatchFired },
+  );
+
+  // Second kbo_diff batch with a different new id should fire.
+  const secondKboBatchFired = simulateProcess([
+    { id: "g-at_bat_homerun-7-T-f-1", source: "kbo_diff" },
+  ]);
+  assert(
+    "T9: second kbo_diff batch fires the new id",
+    secondKboBatchFired.length === 1 && secondKboBatchFired[0] === "g-at_bat_homerun-7-T-f-1",
+    { fired: secondKboBatchFired },
+  );
+}
+
+// ----- T10: resume (markResumeBoundary) re-arms per-source baseline -----
+{
+  const primedSources = new Set<string>();
+  const seen = new Set<string>();
+
+  function simulateProcess(events: { id: string; source?: string }[]): string[] {
+    const fired: string[] = [];
+    const sourcesInBatch = new Set<string>();
+    for (const ev of events) sourcesInBatch.add(ev.source ?? "_unknown");
+    const sourcesToBaseline: string[] = [];
+    for (const src of sourcesInBatch) {
+      if (!primedSources.has(src)) {
+        sourcesToBaseline.push(src);
+        primedSources.add(src);
+      }
+    }
+    if (sourcesToBaseline.length > 0) {
+      for (const ev of events) {
+        if (sourcesToBaseline.includes(ev.source ?? "_unknown")) seen.add(ev.id);
+      }
+    }
+    for (const ev of events) {
+      if (seen.has(ev.id)) continue;
+      seen.add(ev.id);
+      fired.push(ev.id);
+    }
+    return fired;
+  }
+
+  function markResumeBoundary() {
+    primedSources.clear();
+    // seenRef and pitcherKRef also clear in production, but for this baseline
+    // test the seenRef is intentionally NOT cleared — we want to verify that
+    // a re-armed baseline still suppresses re-delivered events even if seen
+    // already has them. The actual production code clears seenRef in the
+    // visibility-change handler INSIDE useCelebration? No — seenRef is NOT
+    // cleared on resume (only queue/celebration are cleared). So re-delivered
+    // events fail at seenRef-has check anyway. The baseline re-arm protects
+    // NEW ids in the post-resume first batch that weren't seen before.
+  }
+
+  // Prime: first relay batch baselines 3 historical events.
+  simulateProcess([
+    { id: "g-hr-1", source: "relay" },
+    { id: "g-hit-1", source: "relay" },
+    { id: "g-walk-1", source: "relay" },
+  ]);
+  // Verify primed.
+  const beforeResume = simulateProcess([{ id: "g-hr-99", source: "relay" }]);
+  assert(
+    "T10: post-prime new id fires (sanity)",
+    beforeResume.length === 1,
+  );
+
+  // Resume: re-arm baseline.
+  markResumeBoundary();
+
+  // First post-resume relay batch — full history including new background plays.
+  // The 3 historical (g-hr-1 / g-hit-1 / g-walk-1) are already in seen — filtered.
+  // The new id "g-hr-bg-1" (occurred while backgrounded) MUST be baseline-seeded,
+  // not fired.
+  const postResumeFired = simulateProcess([
+    { id: "g-hr-1", source: "relay" },
+    { id: "g-hit-1", source: "relay" },
+    { id: "g-walk-1", source: "relay" },
+    { id: "g-hr-bg-1", source: "relay" },
+  ]);
+  assert(
+    "T10: post-resume first relay batch fires 0 (including the new-while-backgrounded id, which is baseline-seeded)",
+    postResumeFired.length === 0,
+    { fired: postResumeFired },
+  );
+
+  // Second post-resume batch with a truly fresh play should fire.
+  const postResumeSecondFired = simulateProcess([
+    { id: "g-hr-bg-1", source: "relay" },  // already seen
+    { id: "g-hr-live-1", source: "relay" },  // brand new post-resume
+  ]);
+  assert(
+    "T10: second post-resume batch fires the truly-new id",
+    postResumeSecondFired.length === 1 && postResumeSecondFired[0] === "g-hr-live-1",
+    { fired: postResumeSecondFired },
+  );
+}
+
+// ----- T11: same batter, same type, DIFFERENT inning → same id from both sources -----
+// cumIdx must be GAME-WIDE (matching BoxScore's prevHr+1 semantics) for
+// cross-source dedupe to work across multi-hit games.
+{
+  const live = mkLive({ inning: 6, isTop: false, currentBatter: "한동희" });
+  // BoxScore: 2nd HR for 한동희 (prevHr=1, curr inning 6)
+  const prevLive = mkLive({ inning: 6, isTop: false, currentBatter: "한동희" });
+  const prevBox = mkBox([mkBatter({ name: "한동희", atBats: 3, hits: 1, hr: 1 })]);
+  const currBox = mkBox([mkBatter({ name: "한동희", atBats: 4, hits: 2, hr: 2 })]);
+
+  const { events: kboEvents } = generateEvents(
+    GAME_ID,
+    { live: prevLive, boxScore: prevBox },
+    live,
+    currBox,
+  );
+  // Relay: full history with both HRs across innings
+  const relayEvents = generateRelayEvents(
+    GAME_ID,
+    [
+      mkInning("bottom", 2, [mkPlay({ batterName: "한동희", result: "솔로 홈런", type: "homerun" })]),
+      mkInning("bottom", 6, [mkPlay({ batterName: "한동희", result: "투런 홈런", type: "homerun" })]),
+    ],
+    live,
+  );
+
+  const kboHr2 = kboEvents.find(e => e.type === "at_bat_homerun");
+  const relayHr2 = relayEvents.find(
+    e => e.type === "at_bat_homerun" && e.inning === 6,
+  );
+  assert(
+    "T11: 같은 batter 2nd HR (different inning) → KBO와 relay 동일 id (game-wide cumIdx)",
+    !!kboHr2 && !!relayHr2 && kboHr2.id === relayHr2.id,
+    { kbo: kboHr2?.id, relay: relayHr2?.id },
+  );
+  // Also verify the relay's inning-2 HR has idx=1 (first HR for batter)
+  const relayHr1 = relayEvents.find(
+    e => e.type === "at_bat_homerun" && e.inning === 2,
+  );
+  assert(
+    "T11: relay 1st HR (inning 2) idx=1, 2nd HR (inning 6) idx=2",
+    !!relayHr1 && relayHr1.id.endsWith("-1") && !!relayHr2 && relayHr2.id.endsWith("-2"),
+    { idx1: relayHr1?.id, idx2: relayHr2?.id },
+  );
+}
+
+// ----- T12 / T13: Local mirror of game-relay/route.ts internals -----
+// Production helpers cannot be imported here because @/app/api/game-relay/route
+// pulls in @/lib/supabase/admin which requires runtime env. These mini-mirrors
+// MUST stay in sync with route.ts:120 (classifyResult) and route.ts:227
+// (parseInningRelays). If you change either production helper, update these
+// counterparts and add the relevant assertion below.
+
+type MirrorPlayType = "homerun" | "hit" | "walk" | "strikeout" | "out" | "hbp" | "sacrifice" | "error" | "other";
+
+function classifyResultMirror(text: string): MirrorPlayType {
+  if (text.includes("홈런")) return "homerun";
+  if (text.includes("삼진")) return "strikeout";
+  if (text.includes("볼넷")) return "walk";
+  if (text.includes("몸에 맞는 볼")) return "hbp";
+  if (text.includes("아웃")) {
+    if (text.includes("희생")) return "sacrifice";
+    return "out";
+  }
+  if (text.includes("희생")) return "sacrifice";
+  if (text.includes("실책")) return "error";
+  if (text.includes("1루타") || text.includes("2루타") || text.includes("3루타")) return "hit";
+  return "other";
+}
+
+interface MirrorNaverTextOption { seqno: number; text: string; type: number; }
+interface MirrorNaverTextRelay { title: string; titleStyle: string; textOptions?: MirrorNaverTextOption[]; }
+interface MirrorPlayEvent { batterName: string; result: string; type: MirrorPlayType; extras?: string[]; }
+interface MirrorInningRelay { inning: number; half: "top" | "bottom"; teamName: string; plays: MirrorPlayEvent[]; }
+
+function parseInningRelaysMirror(textRelays: MirrorNaverTextRelay[]): MirrorInningRelay[] {
+  const chronological = [...textRelays].reverse();
+  const innings: MirrorInningRelay[] = [];
+  let current: MirrorInningRelay | null = null;
+
+  for (const relay of chronological) {
+    if (relay.titleStyle === "0") {
+      const match = relay.title.match(/(\d+)회(초|말)\s*(.+?)\s*공격/);
+      if (match) {
+        current = {
+          inning: parseInt(match[1]),
+          half: match[2] === "초" ? "top" : "bottom",
+          teamName: match[3],
+          plays: [],
+        };
+        innings.push(current);
+      }
+      continue;
+    }
+    if (!current || !relay.textOptions) continue;
+
+    const batterMatch = relay.title.match(/\d+번타자\s+(.+)/);
+    if (!batterMatch) continue;  // production: skip 비표준 title
+    const batterName = batterMatch[1];
+
+    for (const opt of relay.textOptions) {
+      if (opt.type === 13 || opt.type === 23) {
+        const parts = opt.text.split(" : ");
+        const resultText = parts.length > 1 ? parts.slice(1).join(" : ") : opt.text;
+        current.plays.push({
+          batterName,
+          result: resultText,
+          type: classifyResultMirror(resultText),
+        });
+      }
+    }
+  }
+  return innings;
+}
+
+// ----- T12: classifyResult — "2루타성 잡혀 아웃" must NOT be hit -----
+{
+  assert(
+    "T12: '2루타성 타구가 잡혀 아웃' → 'out' (not 'hit')",
+    classifyResultMirror("유격수 정면 직선타로 잘 맞은 타구지만 2루타성 잡혀 아웃") === "out",
+  );
+  assert(
+    "T12: '1루타성 잡혀 아웃' → 'out'",
+    classifyResultMirror("1루타성 짧은 타구 잡혀 아웃") === "out",
+  );
+  assert(
+    "T12: '삼진 아웃' → 'strikeout' (strikeout 우선 매칭)",
+    classifyResultMirror("헛스윙 삼진 아웃") === "strikeout",
+  );
+  assert(
+    "T12: '솔로 홈런' → 'homerun'",
+    classifyResultMirror("우측 담장 넘어가는 솔로 홈런") === "homerun",
+  );
+  assert(
+    "T12: '우전 1루타' (아웃 없음) → 'hit'",
+    classifyResultMirror("우전 1루타") === "hit",
+  );
+  assert(
+    "T12: '희생플라이 아웃' → 'sacrifice'",
+    classifyResultMirror("우익수 희생플라이 아웃") === "sacrifice",
+  );
+  assert(
+    "T12: '볼넷' → 'walk'",
+    classifyResultMirror("스트레이트 볼넷") === "walk",
+  );
+}
+
+// ----- T13: parseInningRelays — batter title 비표준 → play emit X -----
+{
+  // textRelays come in reverse order (newest-first) as Naver returns them.
+  // Chronologically: inning header → 비표준 title 항목 (skip) → 정상 title 항목 (emit)
+  const textRelays: MirrorNaverTextRelay[] = [
+    {
+      title: "3번타자 홍창기",
+      titleStyle: "8",
+      textOptions: [{ seqno: 2, text: "홍창기 : 우전 1루타", type: 13 }],
+    },
+    {
+      title: "대주자 박해민",
+      titleStyle: "8",
+      textOptions: [{ seqno: 1, text: "박해민 : 도루 성공", type: 13 }],
+    },
+    { title: "5회초 LG 공격", titleStyle: "0" },
+  ];
+
+  const innings = parseInningRelaysMirror(textRelays);
+
+  assert(
+    "T13: 비표준 title '대주자 박해민' textOption은 emit되지 않음",
+    innings.length === 1
+      && innings[0].plays.length === 1
+      && innings[0].plays[0].batterName === "홍창기",
+    { plays: innings[0]?.plays },
+  );
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed`);
   process.exit(1);

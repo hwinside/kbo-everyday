@@ -90,7 +90,11 @@ export function generateRelayEvents(
   if (!innings || innings.length === 0) return [];
 
   const events: GameEvent[] = [];
-  /** (sideKey, batterNorm, type) → cum count */
+  /** (batterNorm, type) → GAME-WIDE cum count. Must match event-generator.ts
+   *  which derives idx from `prev{Hr|H3b|H2b|Singles|Bb|So}` — those are the
+   *  batter's cumulative game-wide stats, NOT per-inning. A per-inning cumKey
+   *  would mint idx=1 for the batter's 2nd HR in a different inning while
+   *  BoxScore-diff mints idx=2, breaking cross-source dedupe. */
   const cumIdx = new Map<string, number>();
 
   for (const inning of innings) {
@@ -104,10 +108,12 @@ export function generateRelayEvents(
       const batterNorm = normalizeBatterName(play.batterName);
       if (!batterNorm) continue;
 
-      const cumKey = `${sideKey}-${batterNorm}-${evType}`;
+      const cumKey = `${batterNorm}-${evType}`;
       const idx = (cumIdx.get(cumKey) ?? 0) + 1;
       cumIdx.set(cumKey, idx);
 
+      // id itself encodes sideKey (matching event-generator.ts dedupe-key
+      // pattern). Only the cumIdx accumulator is game-wide.
       const id = `${gameId}-${evType}-${sideKey}-${batterNorm}-${idx}`;
 
       const snapshot = liveSnapshot

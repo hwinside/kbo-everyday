@@ -118,15 +118,24 @@ function toNaverGameId(kboGameId: string): string {
 }
 
 function classifyResult(text: string): PlayEvent["type"] {
+  // Order matters: 확정 결과 키워드 먼저 매칭하고, 모호한 hit 분류는 *마지막*에
+  // 떨어뜨려야 한다. 네이버 상대 결과 텍스트는 "2루타성 타구가 잡혀 아웃" 처럼
+  // hit 키워드와 "아웃"이 동시에 들어가는 case가 있어, hit을 먼저 매칭하면
+  // false-positive at_bat_double 세레머니가 발화한다.
   if (text.includes("홈런")) return "homerun";
-  if (text.includes("1루타") || text.includes("2루타") || text.includes("3루타"))
-    return "hit";
-  if (text.includes("볼넷")) return "walk";
   if (text.includes("삼진")) return "strikeout";
+  if (text.includes("볼넷")) return "walk";
   if (text.includes("몸에 맞는 볼")) return "hbp";
+  // 아웃 키워드가 있으면 hit이 아님 ("N루타성 ... 잡혀 아웃" 차단)
+  if (text.includes("아웃")) {
+    if (text.includes("희생")) return "sacrifice";
+    return "out";
+  }
   if (text.includes("희생")) return "sacrifice";
   if (text.includes("실책")) return "error";
-  if (text.includes("아웃")) return "out";
+  // 아웃 없는 N루타만 진짜 hit
+  if (text.includes("1루타") || text.includes("2루타") || text.includes("3루타"))
+    return "hit";
   return "other";
 }
 
@@ -251,8 +260,13 @@ function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
     if (!current || !relay.textOptions) continue;
 
     // Extract batter name from title: "3번타자 홍창기"
+    // 비표준 title (예: "대주자 홍창기", "투수 교체") 시 batter 식별 불가 →
+    // 이 textRelay 항목 전체 skip. 과거엔 fallback으로 relay.title 통째로 박았으나
+    // 그 경우 batterNorm = "대주자홍창기" 같은 garbage 키가 만들어져 KBO BoxScore
+    // 경로와 cross-source dedupe가 깨지고 같은 plate appearance가 두 번 발화한다.
     const batterMatch = relay.title.match(/\d+번타자\s+(.+)/);
-    const batterName = batterMatch ? batterMatch[1] : relay.title;
+    if (!batterMatch) continue;
+    const batterName = batterMatch[1];
 
     for (const opt of relay.textOptions) {
       if (opt.type === 13 || opt.type === 23) {
