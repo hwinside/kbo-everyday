@@ -58,6 +58,22 @@ const displayedEventIds = new Set<string>();
  */
 const RESUME_GRACE_MS = 1_000;
 
+/**
+ * Initial-fetch baseline window. Both source paths (KBO BoxScore-diff at 10–30s
+ * cadence; Naver relay at 5s cadence) take a few seconds to land their first
+ * response, and the relay generator emits *all historical plays* in that first
+ * response (one fetch returns the full game history). Without a window-based
+ * baseline, whichever source arrives second would replay every accumulated
+ * celebration the moment the page opens.
+ *
+ * Single-batch `hasPrimedSeenRef` baseline (the previous design) seeds only
+ * the source that fired first; the second source's first batch then floods.
+ * Time-based baseline covers both arrival orderings — trade-off is that
+ * celebrations that *actually fire* within this 8s window are missed
+ * (replaying the whole game's history is far worse).
+ */
+const INITIAL_BASELINE_MS = 8_000;
+
 /** Look up kboId from player name + teamId */
 function findKboId(name: string | undefined, teamId: number): string | undefined {
   if (!name) return undefined;
@@ -85,7 +101,9 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
   const celebrationRef = useRef<CelebrationEvent | null>(null);
   const seenRef = useRef<Set<string>>(new Set());
   const queueRef = useRef<CelebrationEvent[]>([]);
-  const hasPrimedSeenRef = useRef(false);
+  /** Baseline window: all events seen before this timestamp are registered
+   *  but not fired. Set on first processEvents() call and on PWA resume. */
+  const baselineUntilRef = useRef<number | null>(null);
   const suppressBeforeRef = useRef<number>(Number.POSITIVE_INFINITY);
   /** Track pitcher strikeout counts for "2K, 3K..." display */
   const pitcherKRef = useRef<Map<string, number>>(new Map());
@@ -116,7 +134,10 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
       // Next poll may include the whole shared history. Treat events whose
       // server timestamp predates this visible session as already seen.
       suppressBeforeRef.current = Date.now() + RESUME_GRACE_MS;
-      hasPrimedSeenRef.current = false;
+      // Re-arm baseline window: relay's first post-resume fetch will deliver
+      // the entire game history again. 8s seeds those into seenRef as
+      // baseline so only post-resume celebrations fire.
+      baselineUntilRef.current = Date.now() + INITIAL_BASELINE_MS;
       // K labels should reflect celebrations actually seen in this session,
       // not hidden/background history.
       pitcherKRef.current.clear();
@@ -144,11 +165,16 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
       const now = Date.now();
       const newCelebrations: CelebrationEvent[] = [];
 
-      // First poll after page entry/resume is baseline only. This prevents
-      // PWA re-entry from replaying every celebration missed while hidden.
-      if (!hasPrimedSeenRef.current) {
+      // Time-based baseline window: 8s after first call (and after PWA resume)
+      // seed every observed event into seenRef without firing. This covers the
+      // case where the two source paths (KBO BoxScore-diff and Naver relay)
+      // land their first batch at different times — without the window, the
+      // later-arriving source would replay the entire game history.
+      if (baselineUntilRef.current === null) {
+        baselineUntilRef.current = now + INITIAL_BASELINE_MS;
+      }
+      if (now < baselineUntilRef.current) {
         for (const ev of events) seenRef.current.add(ev.id);
-        hasPrimedSeenRef.current = true;
         return;
       }
 
@@ -224,6 +250,7 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
       for (const c of newCelebrations) {
         if (!c.id || !shouldTrack(c.id)) continue;
         const ev = eventById.get(c.id);
+        const evTimeMs = ev ? new Date(ev.timestamp).getTime() : undefined;
         trackCelebration(
           c.type,
           gameId || "",
@@ -232,6 +259,8 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
           c.id,
           ev?.inning,
           ev?.isTop,
+          ev?.source,
+          Number.isFinite(evTimeMs) ? evTimeMs : undefined,
         );
       }
 

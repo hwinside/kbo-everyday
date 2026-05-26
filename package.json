@@ -16,6 +16,7 @@
     "qa:gif-collector-publisher": "tsx scripts/qa/gif-collector-publisher-smoke.ts",
     "qa:celebration-hit-overcount": "tsx scripts/qa/celebration-hit-overcount-smoke.ts",
     "qa:celebration-client-dedupe": "tsx scripts/qa/celebration-client-dedupe-smoke.ts",
+    "qa:celebration-relay-source": "tsx scripts/qa/celebration-relay-source-smoke.ts",
     "qa:foreign-photo": "tsx scripts/qa/foreign-photo-coverage.ts",
     "lint": "eslint",
     "validate:roster": "node scripts/validate-roster.mjs",

@@ -21,6 +21,7 @@ import { useLiveGame } from "@/lib/hooks/useLiveGame";
 import { useGameDetail } from "@/lib/hooks/useGameDetail";
 import { useGameEvents } from "@/lib/hooks/useGameEvents";
 import { generateEvents, type PrevGameState } from "@/lib/event-generator";
+import { generateRelayEvents } from "@/lib/relay-event-generator";
 import type { LineupEntry } from "@/lib/hooks/useGameDetail";
 import { deriveGameState } from "@/lib/utils/game-derived";
 import GameDetailHeader from "@/components/game/GameDetailHeader";
@@ -146,7 +147,12 @@ export default function GameDetailPage() {
   // Keep game-events polling through the live → final transition so game_end/victory can be emitted.
   const shouldPollGameEvents = (liveGame?.isLive ?? false) || liveIsFinal;
   const { events: gameEvents } = useGameEvents(gameId, shouldPollGameEvents, 15000);
-  const { data: gameRelay } = useGameRelay(gameId, liveGame?.isLive ?? false, 30000, liveGame?.inning ?? 0, liveIsFinal);
+  // Relay polls 5s while live (celebration trigger source), 30s otherwise
+  // (display-only). The 5s cadence keeps the relay-bridged celebration path
+  // within ~6s of the actual KBO play; the route caches Naver responses for
+  // 4s in-memory so KBO upstream load stays bounded across concurrent viewers.
+  const relayPollInterval = liveGame?.isLive ? 5000 : 30000;
+  const { data: gameRelay } = useGameRelay(gameId, liveGame?.isLive ?? false, relayPollInterval, liveGame?.inning ?? 0, liveIsFinal);
   const clientEventStateRef = useRef<PrevGameState | null>(null);
 
   // Compute game early (non-hook) so celebration hook can reference team IDs
@@ -165,6 +171,13 @@ export default function GameDetailPage() {
   // because server event IDs are unstable across Vercel cold starts and cause replay on re-entry.
   const skipNextDiffRef = useRef(false);
 
+  // Merge KBO BoxScore-diff events with Naver-relay events in a SINGLE
+  // processEvents batch. Splitting into two useEffects would baseline-seed
+  // only the first source that fires; the second source's first response
+  // would then replay every historical play as a fresh celebration. The
+  // module-level displayedEventIds set inside useCelebration dedupes
+  // identical ids across sources, so whichever source observes a play first
+  // wins — the relay path typically arrives 10–20s before BoxScore.
   useEffect(() => {
     if (!liveGame || !shouldPollGameEvents) return;
 
@@ -183,10 +196,15 @@ export default function GameDetailPage() {
     );
     clientEventStateRef.current = nextState;
 
-    if (clientEvents.length > 0) {
-      processEvents(clientEvents);
+    const relayEvents = generateRelayEvents(gameId, gameRelay?.innings, liveGame);
+
+    const merged = relayEvents.length > 0 || clientEvents.length > 0
+      ? [...relayEvents, ...clientEvents]
+      : [];
+    if (merged.length > 0) {
+      processEvents(merged);
     }
-  }, [gameId, liveGame, gameDetail?.boxScore, shouldPollGameEvents, processEvents]);
+  }, [gameId, liveGame, gameDetail?.boxScore, gameRelay?.innings, shouldPollGameEvents, processEvents]);
 
   // Reset baseline on gameId change
   useEffect(() => {

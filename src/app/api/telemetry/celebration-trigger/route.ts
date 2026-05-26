@@ -16,6 +16,12 @@ interface CelebrationTriggerPayload {
   eventId?: string;
   inning?: number;
   isTop?: boolean;
+  /** Telemetry-only: which generator produced the GameEvent. */
+  source?: string;
+  /** Telemetry-only: GameEvent.timestamp (ms) at fire time. Used to compute
+   *  server→client gap P50/P90 in admin panel. */
+  eventTimeMs?: number;
+  firedAtMs?: number;
 }
 
 export async function POST(req: NextRequest) {
@@ -34,15 +40,27 @@ export async function POST(req: NextRequest) {
     : `anonymous-${crypto.randomUUID()}`;
   const userAgent = req.headers.get("user-agent") ?? "unknown";
   // Pipe-encoded so we can grep `admin_page_views.referrer` for mis-attribution
-  // patterns: teamId|playerName|inning(T|B)|eventId
+  // patterns: teamId|playerName|inning(T|B)|eventId|source|gapMs
+  // `gapMs` = firedAtMs - eventTimeMs (client-side gap from GameEvent timestamp
+  // to celebration fire). Negative or absent values are dropped.
   const inningStr = typeof payload.inning === "number"
     ? `${payload.inning}${payload.isTop ? "T" : "B"}`
     : "";
+  const sourceStr = typeof payload.source === "string" && payload.source.trim()
+    ? payload.source
+    : "";
+  let gapStr = "";
+  if (typeof payload.firedAtMs === "number" && typeof payload.eventTimeMs === "number") {
+    const gap = payload.firedAtMs - payload.eventTimeMs;
+    if (Number.isFinite(gap) && gap >= 0) gapStr = String(gap);
+  }
   const referrer = [
     payload.teamId,
     payload.playerName,
     inningStr,
     payload.eventId,
+    sourceStr,
+    gapStr,
   ].filter(Boolean).join("|") || null;
 
   const { error } = await supabase.from("admin_page_views").insert({

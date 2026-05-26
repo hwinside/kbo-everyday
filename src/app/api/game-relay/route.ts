@@ -623,6 +623,41 @@ function extractPlayerStatsFromRecord(data: NaverRecordResponse | null): RelayPl
 const NAVER_API_BASE =
   "https://api-gw.sports.naver.com/schedule/games";
 
+/**
+ * In-memory response cache (module-level, persists for the lambda warm period
+ * ~5–15min). The relay-bridged celebration path on the client polls at 5s
+ * cadence; without caching, N concurrent viewers of the same game would mean
+ * N upstream Naver fetches every 5s. With a 4s TTL keyed by (naverGameId,
+ * inningHint), warm-lambda viewers share a single upstream call per ~4s
+ * window. Cold-start spawns a fresh instance with empty cache → up to one
+ * Naver call per cold lambda, which is bounded by Vercel concurrency.
+ *
+ * Only successful responses are cached; HTTP/network errors fall through so
+ * the next poll retries fresh.
+ */
+const responseCache = new Map<string, { data: GameRelayResponse; expiresAt: number }>();
+const CACHE_TTL_MS = 4_000;
+
+function getCachedResponse(key: string): GameRelayResponse | null {
+  const entry = responseCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    responseCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCachedResponse(key: string, data: GameRelayResponse): void {
+  if (responseCache.size > 100) {
+    const now = Date.now();
+    for (const [k, v] of responseCache) {
+      if (v.expiresAt < now) responseCache.delete(k);
+    }
+  }
+  responseCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+}
+
 export async function GET(req: NextRequest) {
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) {
@@ -636,6 +671,13 @@ export async function GET(req: NextRequest) {
   const inningHint = parseInt(req.nextUrl.searchParams.get("inning") || "0") || 0;
 
   const naverGameId = toNaverGameId(gameId);
+
+  // Cache hit short-circuits Naver upstream entirely.
+  const cacheKey = `${naverGameId}-${inningHint}`;
+  const cached = getCachedResponse(cacheKey);
+  if (cached) {
+    return NextResponse.json(cached);
+  }
 
   try {
     // First, fetch inning 1 to get the current inning number
@@ -773,6 +815,7 @@ export async function GET(req: NextRequest) {
       linescore,
     };
 
+    setCachedResponse(cacheKey, response);
     return NextResponse.json(response);
   } catch (e) {
     const error = e as Error;

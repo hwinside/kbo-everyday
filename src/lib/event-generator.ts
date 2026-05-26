@@ -25,6 +25,7 @@ import type { GameEvent, GameEventType, EventDetail, GameSnapshot } from "@/type
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
 import type { BatterRecord, GameDetailResponse } from "@/app/api/game-detail/route";
 import { buildEventText } from "@/lib/event-text-builder";
+import { normalizeBatterName } from "@/lib/relay-event-generator";
 
 export interface PrevGameState {
   live: LiveGameData;
@@ -66,6 +67,7 @@ function makeEvent(
     detail,
     text: "", // filled below
     snapshot,
+    source: "kbo_diff",
   };
   event.text = buildEventText(event);
   return event;
@@ -241,6 +243,12 @@ export function generateEvents(
       const sideKey = inningKey(live.inning, isTop);
 
       for (const [batterName, entry] of batterDiffs) {
+        // dedupe-key encoding uses the whitespace-normalized name so the relay
+        // path (relay-event-generator.ts) mints an identical id for the same
+        // plate appearance, even when KBO BoxScore and Naver relay disagree on
+        // whitespace (외국인 선수: "엘리엇 어슨" / "엘리엇어슨"). Displayed text
+        // continues to use the raw KBO name (passed via detail.batter below).
+        const batterNorm = normalizeBatterName(batterName);
         const { prev: bPrev, curr: bCurr } = entry;
         const prevHr = bPrev?.hr ?? 0;
         const prevH3b = bPrev?.h3b ?? 0;
@@ -314,37 +322,37 @@ export function generateEvents(
           const idx = prevHr + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_homerun", {
             batter: batterName, pitcher: pitcherName,
-          }, `${sideKey}-${batterName}-${idx}`));
+          }, `${sideKey}-${batterNorm}-${idx}`));
         }
         for (let i = 0; i < h3bDelta; i++) {
           const idx = prevH3b + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_triple", {
             batter: batterName, pitcher: pitcherName,
-          }, `${sideKey}-${batterName}-${idx}`));
+          }, `${sideKey}-${batterNorm}-${idx}`));
         }
         for (let i = 0; i < h2bDelta; i++) {
           const idx = prevH2b + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_double", {
             batter: batterName, pitcher: pitcherName,
-          }, `${sideKey}-${batterName}-${idx}`));
+          }, `${sideKey}-${batterNorm}-${idx}`));
         }
         for (let i = 0; i < singleDelta; i++) {
           const idx = prevSingles + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_hit", {
             batter: batterName, pitcher: pitcherName,
-          }, `${sideKey}-${batterName}-${idx}`));
+          }, `${sideKey}-${batterNorm}-${idx}`));
         }
         for (let i = 0; i < bbDelta; i++) {
           const idx = prevBb + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_walk", {
             batter: batterName, pitcher: pitcherName,
-          }, `${sideKey}-${batterName}-${idx}`));
+          }, `${sideKey}-${batterNorm}-${idx}`));
         }
         for (let i = 0; i < soDelta; i++) {
           const idx = prevSo + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_strikeout", {
             batter: batterName, pitcher: pitcherName,
-          }, `${sideKey}-${batterName}-${idx}`));
+          }, `${sideKey}-${batterNorm}-${idx}`));
         }
       }
     }
