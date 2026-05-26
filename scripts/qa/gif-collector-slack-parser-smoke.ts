@@ -79,6 +79,18 @@ const cases: Case[] = [
     },
   },
   {
+    name: "슬랙 HTML entity URL 정규화 (&amp; → &)",
+    text: "<https://mlbpark.donga.com/mp/b.php?m=search&amp;p=1&amp;b=kbotown&amp;id=202605250115533923|MLBPARK>\n한화 강백호\n사회생활 갑",
+    expect: {
+      ok: true,
+      value: {
+        url: "https://mlbpark.donga.com/mp/b.php?m=search&p=1&b=kbotown&id=202605250115533923",
+        teamName: "한화",
+        playerName: "강백호",
+      },
+    },
+  },
+  {
     name: "슬랙 라벨 링크 (<url|label>)",
     text: "<https://x.com/post/999|X post>\n두산 양석환\n역전 적시타",
     expect: {

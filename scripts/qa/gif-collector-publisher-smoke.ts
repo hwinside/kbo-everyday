@@ -46,6 +46,24 @@ function check(name: string, ok: boolean, detail?: string): void {
   check("og 메타 없으면 null", r === null);
 }
 {
+  const html = `<html><head>
+    <meta property="og:image" content="https://image.donga.com/challenge/mlbpark/images/share_icon.png" />
+  </head><body>
+    <source src="https://simg.donga.com/ugc/MLBPARK/Board/17/79/70/65/1779706555516.mp4" type="video/mp4">
+  </body></html>`;
+  const r = extractOgMedia(html);
+  check(
+    "MLBPARK 본문 mp4가 공용 og:image보다 우선",
+    r?.type === "video" && r?.url === "https://simg.donga.com/ugc/MLBPARK/Board/17/79/70/65/1779706555516.mp4",
+    `got ${JSON.stringify(r)}`,
+  );
+}
+{
+  const html = `<meta property="og:image" content="https://image.donga.com/challenge/mlbpark/images/share_icon.png" />`;
+  const r = extractOgMedia(html);
+  check("MLBPARK 공용 share_icon만 있으면 null", r === null, `got ${JSON.stringify(r)}`);
+}
+{
   const html = `<meta property="og:video:secure_url" content="https://cdn.example.com/a.mp4">`;
   const r = extractOgMedia(html);
   check(
@@ -59,9 +77,9 @@ function check(name: string, ok: boolean, detail?: string): void {
   const html = `<meta content="https://cdn.example.com/x.gif" property="og:image">`;
   const r = extractOgMedia(html);
   check(
-    "속성 순서 뒤바뀐 og:image는 정규식 한계 — null 허용",
-    r === null,
-    "현재 패턴은 property=...content=... 순서만 인식 (운영 데이터 보고 보강)",
+    "속성 순서 뒤바뀐 og:image 인식",
+    r?.type === "image" && r?.url === "https://cdn.example.com/x.gif",
+    `got ${JSON.stringify(r)}`,
   );
 }
 
