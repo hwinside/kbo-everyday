@@ -20,6 +20,10 @@
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { extractOgMedia, inferMediaExt, type OgMedia } from "./og-media";
+import playersRoster from "@/lib/constants/players-roster.json";
+import type { RosterPlayer } from "@/types/api";
+
+const ROSTER = playersRoster as RosterPlayer[];
 
 const BUCKET = "photos";
 const STORAGE_FOLDER = "gif-collector";
@@ -155,6 +159,13 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
   // 단, 미디어 array는 og.type에 맞춰 분기: og.type=video → video_urls (mp4 등은
   // 비디오 컴포넌트로, image_urls에 넣으면 img 태그 렌더가 깨짐).
   const isVideo = og.type === "video";
+  // 작성자 팀 스냅샷: 매칭된 선수의 team_id를 기록.
+  // 봇 profile.team_id가 다른 매칭 글로 추후 바뀌더라도 이 글의 작성자 팀 배지는 유지.
+  const matchedPlayer = row.matched_kbo_id
+    ? ROSTER.find((p) => p.kboId === row.matched_kbo_id)
+    : undefined;
+  const authorTeamIdSnapshot = matchedPlayer ? Number(matchedPlayer.teamId) : null;
+
   const postInsert: Record<string, unknown> = {
     author_id: BOT_USER_ID,
     board_type: row.matched_board_type,
@@ -162,6 +173,7 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     content_type: "photo",
     title: row.source_title || `${row.matched_board_id} 움짤`,
     content: row.source_content ?? "",
+    author_team_id_snapshot: authorTeamIdSnapshot,
   };
   if (isVideo) postInsert.video_urls = [publicUrl];
   else postInsert.image_urls = [publicUrl];

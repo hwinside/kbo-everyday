@@ -122,7 +122,7 @@ export default function PlayerBoardPage() {
   const loadPhotoPosts = useCallback(async () => {
     if (!playerName) return;
     setPhotoLoading(true);
-    const cols = "id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)";
+    const cols = "id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, author_team_id_snapshot, profiles(nickname, team_id, grade, points)";
 
     // 1) 선수 게시판 직접 게시물 (사진 게시물만)
     const boardQuery = supabase
@@ -162,16 +162,20 @@ export default function PlayerBoardPage() {
     // 시간순 정렬
     merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-    setPhotoPosts(merged.map((p) => ({
-      ...p,
-      content_type: (p.content_type ?? "general") as "general" | "photo",
-      image_urls: (p.image_urls ?? []) as string[],
-      video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
-      nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
-      team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
-      grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
-      points: ((p.profiles as unknown as Record<string, unknown> | null)?.points as number) ?? 0,
-    })));
+    setPhotoPosts(merged.map((p) => {
+      const prof = p.profiles as unknown as Record<string, unknown> | null;
+      const snap = (p as Record<string, unknown>).author_team_id_snapshot as number | null | undefined;
+      return {
+        ...p,
+        content_type: (p.content_type ?? "general") as "general" | "photo",
+        image_urls: (p.image_urls ?? []) as string[],
+        video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
+        nickname: prof?.nickname as string | undefined,
+        team_id: (snap ?? (prof?.team_id as number | undefined)) as number | undefined,
+        grade: prof?.grade as string | undefined,
+        points: (prof?.points as number) ?? 0,
+      };
+    }));
     setPhotoLoading(false);
   }, [kboId, playerName]);
 
