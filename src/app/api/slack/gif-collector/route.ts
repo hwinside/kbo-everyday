@@ -146,7 +146,8 @@ async function processMessage(evt: SlackMessageEvent): Promise<void> {
 
   if (error || !inserted) {
     if (error?.code === "23505") {
-      await reactAndReply(evt.channel, evt.ts, "repeat", "이미 큐에 등록된 메시지예요.");
+      // Slack retries the same event.ts after slow webhook handling. The first
+      // attempt already registered/published it, so keep retries invisible.
       return;
     }
     console.error("[gif-collector] queue insert failed:", error);
