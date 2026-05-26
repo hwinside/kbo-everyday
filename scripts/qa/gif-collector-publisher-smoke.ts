@@ -4,7 +4,7 @@
  * Usage: npx tsx scripts/qa/gif-collector-publisher-smoke.ts
  */
 
-import { extractOgMedia, inferMediaExt } from "@/lib/gif-collector/og-media";
+import { extractMediaList, extractOgMedia, inferMediaExt } from "@/lib/gif-collector/og-media";
 
 let pass = 0;
 let fail = 0;
@@ -81,6 +81,67 @@ function check(name: string, ok: boolean, detail?: string): void {
     r?.type === "image" && r?.url === "https://cdn.example.com/x.gif",
     `got ${JSON.stringify(r)}`,
   );
+}
+
+// extractMediaList (multi)
+{
+  const html = `<html><body>
+    <source src="https://cdn.example.com/v1.mp4" type="video/mp4">
+    <video src="https://cdn.example.com/v2.mp4"></video>
+    <a href="https://cdn.example.com/v3.mp4">v3</a>
+  </body></html>`;
+  const r = extractMediaList(html, 3);
+  check(
+    "video/source + 직접 mp4 URL 3개 모두 수집",
+    r.length === 3 && r.every((m) => m.type === "video") && r.map((m) => m.url).join(",") === "https://cdn.example.com/v1.mp4,https://cdn.example.com/v2.mp4,https://cdn.example.com/v3.mp4",
+    `got ${JSON.stringify(r)}`,
+  );
+}
+{
+  const html = `<html><body>
+    <source src="https://cdn.example.com/dup.mp4">
+    <video src="https://cdn.example.com/dup.mp4"></video>
+    <a href="https://cdn.example.com/dup.mp4">d</a>
+  </body></html>`;
+  const r = extractMediaList(html, 3);
+  check("동일 URL은 dedupe", r.length === 1 && r[0].url === "https://cdn.example.com/dup.mp4", `got ${JSON.stringify(r)}`);
+}
+{
+  const html = `<html><body>
+    <source src="https://cdn.example.com/a.mp4">
+    <source src="https://cdn.example.com/b.mp4">
+    <source src="https://cdn.example.com/c.mp4">
+    <source src="https://cdn.example.com/d.mp4">
+  </body></html>`;
+  const r = extractMediaList(html, 3);
+  check("max=3 cap 정확히 3개까지만", r.length === 3 && r[2].url === "https://cdn.example.com/c.mp4", `got ${JSON.stringify(r)}`);
+}
+{
+  const html = `<html><head>
+    <meta property="og:image" content="https://cdn.example.com/thumb.gif">
+  </head><body>
+    <source src="https://cdn.example.com/v.mp4">
+  </body></html>`;
+  const r = extractMediaList(html, 3);
+  check(
+    "비디오 있으면 이미지 무시 (혼합 X)",
+    r.length === 1 && r[0].type === "video",
+    `got ${JSON.stringify(r)}`,
+  );
+}
+{
+  const html = `<meta property="og:image" content="https://cdn.example.com/only.gif">`;
+  const r = extractMediaList(html, 3);
+  check("비디오 0건이면 og:image fallback (단일)", r.length === 1 && r[0].type === "image", `got ${JSON.stringify(r)}`);
+}
+{
+  const r = extractMediaList(`<html></html>`, 3);
+  check("미디어 없으면 빈 배열", r.length === 0);
+}
+{
+  const html = `<source src="https://cdn.example.com/a.mp4">`;
+  const r = extractMediaList(html, 0);
+  check("max=0이면 빈 배열", r.length === 0);
 }
 
 // inferMediaExt

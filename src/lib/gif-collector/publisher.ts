@@ -1,15 +1,15 @@
 /**
- * 움짤콜렉터 발행 워커 (PR4/4).
+ * 움짤콜렉터 발행 워커.
  *
- * 단일 큐 행을 받아 미디어를 추출/다운로드/Storage 업로드 후 posts 행으로 발행한다.
- * Webhook이 큐 INSERT 직후 즉시 호출하는 동기 흐름 (옵션 A, 2026-05-25 확정).
+ * 단일 큐 행을 받아 *최대 N개*의 미디어를 추출/다운로드/Storage 업로드 후 posts 행으로 발행한다.
+ * Webhook이 큐 INSERT 직후 즉시 호출하는 동기 흐름.
  *
  * 흐름:
  *   1. queue row 조회 (status='pending')
- *   2. source_url에서 og:video / og:image 추출 (정규식)
- *   3. 미디어 다운로드 (UA + Referer 정직, 30MB 캡, 15초 timeout)
- *   4. Supabase Storage('photos/gif-collector/') 업로드
- *   5. posts INSERT (author_id = 봇 user_id, board_type/board_id = matched_*)
+ *   2. source_url 에서 미디어 목록 추출 (최대 MAX_MEDIA_ITEMS개)
+ *   3. 각 미디어 다운로드 (UA + Referer, 30MB 캡, 15초 timeout) — best-effort
+ *   4. Supabase Storage('photos/gif-collector/{queueId}-N.ext') 업로드 — best-effort
+ *   5. 최소 한 건이라도 업로드 성공해야 posts INSERT (video_urls / image_urls 배열)
  *   6. queue UPDATE (status='auto_posted', posted_post_id, posted_at)
  *
  * 실패 시: status='rejected' + reviewed_at. error 메시지는 caller가 슬랙으로 전달.
@@ -19,7 +19,7 @@
  */
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { extractOgMedia, inferMediaExt, type OgMedia } from "./og-media";
+import { extractMediaList, inferMediaExt, type OgMedia } from "./og-media";
 import playersRoster from "@/lib/constants/players-roster.json";
 import type { RosterPlayer } from "@/types/api";
 
@@ -29,6 +29,7 @@ const BUCKET = "photos";
 const STORAGE_FOLDER = "gif-collector";
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_MEDIA_BYTES = 30 * 1024 * 1024;
+const MAX_MEDIA_ITEMS = 3;
 const FETCH_USER_AGENT = "Mozilla/5.0 (compatible; KeubofanGifCollector/1.0; +https://keubo.fan)";
 
 async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
@@ -41,18 +42,21 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Re
   }
 }
 
-async function fetchOgMedia(sourceUrl: string): Promise<OgMedia | null> {
+async function fetchMediaList(sourceUrl: string): Promise<OgMedia[]> {
   const html = await fetchPageHtml(sourceUrl);
-  if (!html) return null;
+  if (!html) return [];
 
-  const media = extractOgMedia(html);
-  if (media?.type === "video") return media;
+  const media = extractMediaList(html, MAX_MEDIA_ITEMS);
+  if (media.some((m) => m.type === "video")) return media;
 
+  // SPA(Threads 등) — embed 페이지에서 한 번 더 시도
   const threadsEmbedUrl = getThreadsEmbedUrl(sourceUrl);
   if (threadsEmbedUrl) {
     const embedHtml = await fetchPageHtml(threadsEmbedUrl);
-    const embedMedia = embedHtml ? extractOgMedia(embedHtml) : null;
-    if (embedMedia?.type === "video") return embedMedia;
+    if (embedHtml) {
+      const embedMedia = extractMediaList(embedHtml, MAX_MEDIA_ITEMS);
+      if (embedMedia.some((m) => m.type === "video")) return embedMedia;
+    }
   }
 
   return media;
@@ -116,9 +120,18 @@ interface QueueRow {
 export interface PublishResult {
   ok: boolean;
   postId?: number;
+  /** 첫 업로드 URL (단일 미디어 시절과의 호환). */
   publicUrl?: string;
-  /** post는 만들어졌지만 queue update가 실패한 부분 성공 시그널. caller는 운영자에게 수동 정리 알림 권장. */
+  /** 업로드 성공한 모든 미디어 URL. */
+  publicUrls?: string[];
+  /** post는 만들어졌지만 queue update가 실패한 부분 성공 시그널. */
   partial?: boolean;
+  /** 추출되어 다운로드 시도된 미디어 개수. */
+  attempted?: number;
+  /** 업로드까지 성공한 미디어 개수. attempted > succeeded면 partial best-effort. */
+  succeeded?: number;
+  /** 항목별 실패 사유 (다운로드/업로드 실패). best-effort 시 부분실패 안내용. */
+  mediaErrors?: string[];
   error?: string;
 }
 
@@ -143,13 +156,13 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     return { ok: false, error: `queue row ${queueId} missing board target` };
   }
 
-  let og: OgMedia | null;
+  let mediaList: OgMedia[];
   try {
-    og = await fetchOgMedia(row.source_url);
+    mediaList = await fetchMediaList(row.source_url);
   } catch (e) {
     return rejectAndReturn(queueId, `og fetch error: ${(e as Error).message}`);
   }
-  if (!og) {
+  if (mediaList.length === 0) {
     return rejectAndReturn(queueId, "media not found (og:video / og:image 모두 없음)");
   }
 
@@ -160,41 +173,64 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     refererOrigin = "";
   }
 
-  let downloaded: Awaited<ReturnType<typeof downloadMedia>>;
-  try {
-    downloaded = await downloadMedia(og.url, refererOrigin);
-  } catch (e) {
-    return rejectAndReturn(queueId, `media download error: ${(e as Error).message}`);
+  // best-effort 다운로드 — 항목별 실패는 mediaErrors에 누적, 0건 성공 시 전체 reject.
+  const downloaded: Array<{
+    og: OgMedia;
+    data: NonNullable<Awaited<ReturnType<typeof downloadMedia>>>;
+  }> = [];
+  const mediaErrors: string[] = [];
+  for (let i = 0; i < mediaList.length; i++) {
+    const og = mediaList[i];
+    let data: Awaited<ReturnType<typeof downloadMedia>>;
+    try {
+      data = await downloadMedia(og.url, refererOrigin);
+    } catch (e) {
+      mediaErrors.push(`#${i + 1} download error: ${(e as Error).message}`);
+      continue;
+    }
+    if (!data) {
+      mediaErrors.push(`#${i + 1} download failed (HTTP or >${MAX_MEDIA_BYTES} bytes): ${og.url}`);
+      continue;
+    }
+    downloaded.push({ og, data });
   }
-  if (!downloaded) {
-    return rejectAndReturn(queueId, `media download failed (HTTP error or >${MAX_MEDIA_BYTES} bytes): ${og.url}`);
+  if (downloaded.length === 0) {
+    return rejectAndReturn(queueId, `all media downloads failed: ${mediaErrors.join("; ")}`);
   }
 
-  // queueId만으로 deterministic — 재발행 시도 (status guard로 막혀 있긴 함) 시 같은 path,
-  // posts insert 실패에 따른 storage 정리도 정확히 한 객체만 지움.
-  const path = `${STORAGE_FOLDER}/${queueId}.${downloaded.ext}`;
-  const { error: upErr } = await supabaseAdmin.storage
-    .from(BUCKET)
-    .upload(path, downloaded.buf, {
+  // best-effort 업로드 — 실패는 mediaErrors에 누적. 0건 성공 시 reject.
+  // 경로는 queueId-N.ext 로 결정적 — 동일 queueId 재시도(status guard로 막혀 있긴 함) 시 upsert.
+  const uploaded: Array<{ og: OgMedia; publicUrl: string; path: string }> = [];
+  for (let i = 0; i < downloaded.length; i++) {
+    const { og, data } = downloaded[i];
+    const path = `${STORAGE_FOLDER}/${queueId}-${i + 1}.${data.ext}`;
+    const { error: upErr } = await supabaseAdmin.storage.from(BUCKET).upload(path, data.buf, {
       cacheControl: "31536000",
       upsert: true,
-      contentType: downloaded.contentType,
+      contentType: data.contentType,
     });
-  if (upErr) return { ok: false, error: `storage upload failed: ${upErr.message}` };
+    if (upErr) {
+      mediaErrors.push(`#${i + 1} upload failed: ${upErr.message}`);
+      continue;
+    }
+    const { data: pub } = supabaseAdmin.storage.from(BUCKET).getPublicUrl(path);
+    uploaded.push({ og, publicUrl: pub.publicUrl, path });
+  }
+  if (uploaded.length === 0) {
+    return rejectAndReturn(queueId, `all media uploads failed: ${mediaErrors.join("; ")}`);
+  }
 
-  const { data: pub } = supabaseAdmin.storage.from(BUCKET).getPublicUrl(path);
-  const publicUrl = pub.publicUrl;
-
-  // content_type='photo' 고정 — 선수 사진탭/전체 사진탭이 'photo' 필터링하기 때문.
-  // 단, 미디어 array는 og.type에 맞춰 분기: og.type=video → video_urls (mp4 등은
-  // 비디오 컴포넌트로, image_urls에 넣으면 img 태그 렌더가 깨짐).
-  const isVideo = og.type === "video";
   // 작성자 팀 스냅샷: 매칭된 선수의 team_id를 기록.
   // 봇 profile.team_id가 다른 매칭 글로 추후 바뀌더라도 이 글의 작성자 팀 배지는 유지.
   const matchedPlayer = row.matched_kbo_id
     ? ROSTER.find((p) => p.kboId === row.matched_kbo_id)
     : undefined;
   const authorTeamIdSnapshot = matchedPlayer ? Number(matchedPlayer.teamId) : null;
+
+  // content_type='photo' 고정 — 선수 사진탭/전체 사진탭이 'photo' 필터링하기 때문.
+  // 미디어는 og.type에 따라 video_urls / image_urls 두 배열로 분기 (둘 다 비어있지 않다면 모두 채움).
+  const videoUrls = uploaded.filter((u) => u.og.type === "video").map((u) => u.publicUrl);
+  const imageUrls = uploaded.filter((u) => u.og.type === "image").map((u) => u.publicUrl);
 
   const postInsert: Record<string, unknown> = {
     author_id: BOT_USER_ID,
@@ -205,8 +241,8 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     content: row.source_content ?? "",
     author_team_id_snapshot: authorTeamIdSnapshot,
   };
-  if (isVideo) postInsert.video_urls = [publicUrl];
-  else postInsert.image_urls = [publicUrl];
+  if (videoUrls.length > 0) postInsert.video_urls = videoUrls;
+  if (imageUrls.length > 0) postInsert.image_urls = imageUrls;
 
   const { data: post, error: insErr } = await supabaseAdmin
     .from("posts")
@@ -214,10 +250,11 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     .select("id")
     .single<{ id: number }>();
   if (insErr || !post) {
-    // Storage orphan 정리: posts insert 실패 시 방금 업로드한 객체 제거.
-    const { error: rmErr } = await supabaseAdmin.storage.from(BUCKET).remove([path]);
+    // Storage orphan 정리: 업로드된 모든 객체 제거.
+    const paths = uploaded.map((u) => u.path);
+    const { error: rmErr } = await supabaseAdmin.storage.from(BUCKET).remove(paths);
     if (rmErr) {
-      console.error(`[gif-collector] storage cleanup failed for ${path}:`, rmErr);
+      console.error(`[gif-collector] storage cleanup failed for ${paths.join(",")}:`, rmErr);
     }
     return { ok: false, error: `posts insert failed: ${insErr?.message ?? "no row"}` };
   }
@@ -226,23 +263,34 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     .from("gif_collector_queue")
     .update({
       match_status: "auto_posted",
-      original_media_urls: [og.url],
+      original_media_urls: mediaList.map((m) => m.url),
       posted_post_id: post.id,
       posted_at: new Date().toISOString(),
     })
     .eq("id", queueId);
   if (updErr) {
-    // posts INSERT는 끝났지만 queue update 실패 — caller에 ok=false + partial 시그널.
     return {
       ok: false,
       postId: post.id,
-      publicUrl,
+      publicUrl: uploaded[0].publicUrl,
+      publicUrls: uploaded.map((u) => u.publicUrl),
       partial: true,
+      attempted: mediaList.length,
+      succeeded: uploaded.length,
+      mediaErrors: mediaErrors.length > 0 ? mediaErrors : undefined,
       error: `queue update failed (post created): ${updErr.message}`,
     };
   }
 
-  return { ok: true, postId: post.id, publicUrl };
+  return {
+    ok: true,
+    postId: post.id,
+    publicUrl: uploaded[0].publicUrl,
+    publicUrls: uploaded.map((u) => u.publicUrl),
+    attempted: mediaList.length,
+    succeeded: uploaded.length,
+    mediaErrors: mediaErrors.length > 0 ? mediaErrors : undefined,
+  };
 }
 
 async function rejectAndReturn(queueId: number, error: string): Promise<PublishResult> {
