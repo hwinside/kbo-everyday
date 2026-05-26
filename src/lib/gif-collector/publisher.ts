@@ -59,7 +59,7 @@ async function fetchOgMedia(sourceUrl: string): Promise<OgMedia | null> {
 }
 
 async function fetchPageHtml(url: string): Promise<string | null> {
-  const res = await fetchWithTimeout(sourceUrl, {
+  const res = await fetchWithTimeout(url, {
     headers: {
       "User-Agent": FETCH_USER_AGENT,
     },
