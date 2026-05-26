@@ -161,6 +161,7 @@ export default function GameDetailPage() {
   // Celebration overlay for homerun events
   const myTeamIdForCelebration = getMyTeamId();
   const { celebration, processEvents, dismiss } = useCelebration({
+    gameId,
     myTeamId: myTeamIdForCelebration,
     homeTeamId: game?.homeTeamId ?? 0,
     awayTeamId: game?.awayTeamId ?? 0,

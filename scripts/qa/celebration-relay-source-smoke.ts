@@ -691,6 +691,94 @@ function parseInningRelaysMirror(textRelays: MirrorNaverTextRelay[]): MirrorInni
   );
 }
 
+// ----- T14: gameId-change reset — SPA navigation between game pages -----
+// Production: useCelebration's [gameId] useEffect clears
+// seenRef/queue/primedSourcesRef/pitcherKRef/suppressBeforeRef on gameId
+// change. Without the reset, the relay source remains primed from the
+// previous game and the new game's first full-history batch fires instead
+// of seeding baseline.
+{
+  const primedSources = new Set<string>();
+  const seen = new Set<string>();
+
+  function simulateProcess(events: { id: string; source?: string }[]): string[] {
+    const fired: string[] = [];
+    const sourcesInBatch = new Set<string>();
+    for (const ev of events) sourcesInBatch.add(ev.source ?? "_unknown");
+    const sourcesToBaseline: string[] = [];
+    for (const src of sourcesInBatch) {
+      if (!primedSources.has(src)) {
+        sourcesToBaseline.push(src);
+        primedSources.add(src);
+      }
+    }
+    if (sourcesToBaseline.length > 0) {
+      for (const ev of events) {
+        if (sourcesToBaseline.includes(ev.source ?? "_unknown")) seen.add(ev.id);
+      }
+    }
+    for (const ev of events) {
+      if (seen.has(ev.id)) continue;
+      seen.add(ev.id);
+      fired.push(ev.id);
+    }
+    return fired;
+  }
+
+  function simulateGameIdChange() {
+    seen.clear();
+    primedSources.clear();
+    // queueRef / pitcherKRef / suppressBeforeRef도 production에선 clear되지만
+    // baseline 정합성 검증엔 seen + primedSources만 영향.
+  }
+
+  // Game A: baseline first relay batch (3 events), then a new event fires.
+  simulateProcess([
+    { id: "gameA-at_bat_homerun-2-T-a-1", source: "relay" },
+    { id: "gameA-at_bat_hit-3-B-b-1", source: "relay" },
+    { id: "gameA-at_bat_walk-4-T-c-1", source: "relay" },
+  ]);
+  const gameANewFired = simulateProcess([
+    { id: "gameA-at_bat_homerun-2-T-a-1", source: "relay" },
+    { id: "gameA-at_bat_homerun-5-T-d-1", source: "relay" },  // new
+  ]);
+  assert(
+    "T14: game A baseline+new — exactly 1 fire (sanity)",
+    gameANewFired.length === 1 && gameANewFired[0] === "gameA-at_bat_homerun-5-T-d-1",
+  );
+
+  // SPA navigation: same component instance, gameId changes A → B.
+  simulateGameIdChange();
+
+  // Game B's first relay full-history batch — must be baseline-seeded (0 fires)
+  // because primedSources just cleared. Without the gameId-change reset, the
+  // `relay` source would still be primed from game A, and these 3 historical
+  // game B events would all fire as fresh celebrations.
+  const gameBFirstFired = simulateProcess([
+    { id: "gameB-at_bat_homerun-1-T-x-1", source: "relay" },
+    { id: "gameB-at_bat_hit-2-B-y-1", source: "relay" },
+    { id: "gameB-at_bat_walk-3-T-z-1", source: "relay" },
+  ]);
+  assert(
+    "T14: SPA navigation A→B — game B first relay full-history batch 0 fires (baseline re-armed)",
+    gameBFirstFired.length === 0,
+    { fired: gameBFirstFired },
+  );
+
+  // Game B's second batch fires only truly-new ids.
+  const gameBSecondFired = simulateProcess([
+    { id: "gameB-at_bat_homerun-1-T-x-1", source: "relay" },
+    { id: "gameB-at_bat_hit-2-B-y-1", source: "relay" },
+    { id: "gameB-at_bat_walk-3-T-z-1", source: "relay" },
+    { id: "gameB-at_bat_double-4-T-w-1", source: "relay" },  // new
+  ]);
+  assert(
+    "T14: game B second batch fires only the new id",
+    gameBSecondFired.length === 1 && gameBSecondFired[0] === "gameB-at_bat_double-4-T-w-1",
+    { fired: gameBSecondFired },
+  );
+}
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed`);
   process.exit(1);

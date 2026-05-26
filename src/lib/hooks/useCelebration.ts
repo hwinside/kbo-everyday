@@ -7,6 +7,14 @@ import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import { trackCelebration } from "@/lib/admin/tracker";
 
 interface UseCelebrationOptions {
+  /** Current game id — when this changes the hook rebaselines all per-session
+   *  state (seen ids, source-prime flags, K counts) so a new game's relay
+   *  full-history batch doesn't replay celebrations from the previous game's
+   *  primed `relay`/`kbo_diff` sources. The Next.js dynamic route
+   *  `/games/[gameId]/page.tsx` keeps the same component instance across
+   *  param changes; without this reset, SPA navigation between games leaks
+   *  primed-source state forward. */
+  gameId: string;
   myTeamId: number | null;
   homeTeamId: number;
   awayTeamId: number;
@@ -95,7 +103,7 @@ function toCelebrationType(eventType: string): CelebrationEventType | null {
   }
 }
 
-export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrationOptions) {
+export function useCelebration({ gameId, myTeamId, homeTeamId, awayTeamId }: UseCelebrationOptions) {
   const [celebration, setCelebration] = useState<CelebrationEvent | null>(null);
   const celebrationRef = useRef<CelebrationEvent | null>(null);
   const seenRef = useRef<Set<string>>(new Set());
@@ -115,6 +123,29 @@ export function useCelebration({ myTeamId, homeTeamId, awayTeamId }: UseCelebrat
     setCelebration(val);
     celebrationRef.current = val;
   }, []);
+
+  // gameId-change reset. On initial mount this also runs but every ref is
+  // already empty so the clear()s are no-ops. On subsequent gameId changes
+  // (SPA navigation between game pages while the component instance is
+  // reused) this rebaselines everything, so the new game's first relay
+  // full-history batch is seeded into seenRef rather than fired as celebrations.
+  //
+  // setCelebration in effect is intentional here: if the previous game's
+  // celebration overlay is still on screen at the moment of navigation, the
+  // user is now looking at game B's data and the stale overlay must hide.
+  // Ref-only reset would leave the old overlay rendered until the next
+  // independent state update. This is a one-shot reset on a discrete external
+  // signal (route param change), not a continuous derived-state computation.
+  useEffect(() => {
+    seenRef.current.clear();
+    queueRef.current = [];
+    primedSourcesRef.current.clear();
+    pitcherKRef.current.clear();
+    suppressBeforeRef.current = Number.POSITIVE_INFINITY;
+    celebrationRef.current = null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCelebration(null);
+  }, [gameId]);
 
   /** Process the next item in queue when current celebration ends */
   const showNext = useCallback(() => {
