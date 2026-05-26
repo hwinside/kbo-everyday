@@ -12,6 +12,10 @@ export default function AllPostsPage() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortTab, setSortTab] = useState<SortTab>("latest");
+  // hot 필터의 "최근 30일" 기준 시각 — useMemo 안에서 Date.now() 직접 호출은
+  // react-hooks/purity 룰 위반이라 useState lazy init으로 mount 시 한 번만 잡아둔다.
+  // (30일 정밀도라 페이지 오래 열어둬도 무관.)
+  const [nowMs] = useState(() => Date.now());
 
   useEffect(() => {
     let cancelled = false;
@@ -20,7 +24,7 @@ export default function AllPostsPage() {
       setLoading(true);
       const { data } = await supabase
         .from("posts")
-        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade, points)")
+        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, author_team_id_snapshot, profiles(nickname, team_id, grade, points)")
         .in("board_type", ["team", "player", "free"])
         .eq("content_type", "general")
         .neq("is_hidden", true)
@@ -48,7 +52,7 @@ export default function AllPostsPage() {
           author: {
             nickname: (profile?.nickname as string) || "익명",
             avatarUrl: null,
-            myTeamId: (profile?.team_id as number | null) ?? null,
+            myTeamId: ((p as Record<string, unknown>).author_team_id_snapshot as number | null | undefined) ?? (profile?.team_id as number | null) ?? null,
             level: 1,
             title: "",
             grade: profile?.grade as string | undefined,
@@ -65,9 +69,9 @@ export default function AllPostsPage() {
   const sortedPosts = useMemo(() => {
     if (sortTab === "latest") return posts;
     return [...posts]
-      .filter((p) => Date.now() - new Date(p.createdAt).getTime() < 30 * 24 * 60 * 60 * 1000)
+      .filter((p) => nowMs - new Date(p.createdAt).getTime() < 30 * 24 * 60 * 60 * 1000)
       .sort((a, b) => b.likeCount - a.likeCount || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [posts, sortTab]);
+  }, [posts, sortTab, nowMs]);
 
   const sourceLabels = useMemo(
     () => Object.fromEntries(sortedPosts.map((post) => [post.id, getCommunitySourceLabel(post.boardType, post.boardId)])),
