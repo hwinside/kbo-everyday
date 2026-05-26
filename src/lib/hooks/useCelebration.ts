@@ -141,7 +141,13 @@ export function useCelebration({ gameId, myTeamId, homeTeamId, awayTeamId }: Use
     queueRef.current = [];
     primedSourcesRef.current.clear();
     pitcherKRef.current.clear();
-    suppressBeforeRef.current = Number.POSITIVE_INFINITY;
+    // suppressBefore MUST be a finite value matching the resume-boundary
+    // semantics. Setting it to Infinity (the initial ref value) here would
+    // make `eventTime <= suppressBeforeRef.current` true for every subsequent
+    // event, silently blocking every celebration on the new game until the
+    // next visibilitychange→visible fires markResumeBoundary. gameId change
+    // is itself a session boundary, so reuse the same RESUME_GRACE_MS window.
+    suppressBeforeRef.current = Date.now() + RESUME_GRACE_MS;
     celebrationRef.current = null;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setCelebration(null);

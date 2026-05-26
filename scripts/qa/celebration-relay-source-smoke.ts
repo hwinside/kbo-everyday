@@ -693,15 +693,33 @@ function parseInningRelaysMirror(textRelays: MirrorNaverTextRelay[]): MirrorInni
 
 // ----- T14: gameId-change reset — SPA navigation between game pages -----
 // Production: useCelebration's [gameId] useEffect clears
-// seenRef/queue/primedSourcesRef/pitcherKRef/suppressBeforeRef on gameId
-// change. Without the reset, the relay source remains primed from the
-// previous game and the new game's first full-history batch fires instead
-// of seeding baseline.
+// seenRef/queue/primedSourcesRef/pitcherKRef + sets suppressBeforeRef to a
+// finite value matching markResumeBoundary semantics. THREE guards must
+// reset coherently for the new game to behave like a fresh session:
+//   1. seenRef + primedSourcesRef: prevent old game's primed-source state
+//      leaking forward (first batch from each source must seed baseline).
+//   2. suppressBeforeRef: must be FINITE (Date.now() + RESUME_GRACE_MS).
+//      Setting it to Infinity (the initial ref value) silently blocks every
+//      subsequent celebration via `eventTime <= suppressBeforeRef.current`
+//      — caught by 삼순 review 3차 (NO-GO #3, 2026-05-26).
+// Mini-mirror models ALL of seenRef + primedSourcesRef + suppressBefore +
+// FRESHNESS_THRESHOLD_MS so future suppress-guard bugs are not missed
+// in self-review.
 {
+  const FRESHNESS_THRESHOLD_MS = 120_000;
+  const RESUME_GRACE_MS = 1_000;
+
   const primedSources = new Set<string>();
   const seen = new Set<string>();
+  let suppressBefore = Number.POSITIVE_INFINITY;
 
-  function simulateProcess(events: { id: string; source?: string }[]): string[] {
+  /** Mirrors useCelebration.ts processEvents — must include ALL gating
+   *  guards (source-baseline, seenRef, suppressBefore, freshness) so a
+   *  miss in any one guard breaks an assertion below. */
+  function simulateProcess(
+    events: { id: string; source?: string; timestamp: number }[],
+    nowMs: number,
+  ): string[] {
     const fired: string[] = [];
     const sourcesInBatch = new Set<string>();
     for (const ev of events) sourcesInBatch.add(ev.source ?? "_unknown");
@@ -720,63 +738,130 @@ function parseInningRelaysMirror(textRelays: MirrorNaverTextRelay[]): MirrorInni
     for (const ev of events) {
       if (seen.has(ev.id)) continue;
       seen.add(ev.id);
+      if (ev.timestamp <= suppressBefore) continue;
+      if (nowMs - ev.timestamp > FRESHNESS_THRESHOLD_MS) continue;
       fired.push(ev.id);
     }
     return fired;
   }
 
-  function simulateGameIdChange() {
-    seen.clear();
+  // Production: useEffect runs markResumeBoundary on mount (visibility=visible).
+  function markResume(nowMs: number) {
     primedSources.clear();
-    // queueRef / pitcherKRef / suppressBeforeRef도 production에선 clear되지만
-    // baseline 정합성 검증엔 seen + primedSources만 영향.
+    suppressBefore = nowMs + RESUME_GRACE_MS;
   }
 
-  // Game A: baseline first relay batch (3 events), then a new event fires.
-  simulateProcess([
-    { id: "gameA-at_bat_homerun-2-T-a-1", source: "relay" },
-    { id: "gameA-at_bat_hit-3-B-b-1", source: "relay" },
-    { id: "gameA-at_bat_walk-4-T-c-1", source: "relay" },
-  ]);
-  const gameANewFired = simulateProcess([
-    { id: "gameA-at_bat_homerun-2-T-a-1", source: "relay" },
-    { id: "gameA-at_bat_homerun-5-T-d-1", source: "relay" },  // new
-  ]);
-  assert(
-    "T14: game A baseline+new — exactly 1 fire (sanity)",
-    gameANewFired.length === 1 && gameANewFired[0] === "gameA-at_bat_homerun-5-T-d-1",
+  /** Production: useCelebration's [gameId] reset effect. MUST set
+   *  suppressBefore to a FINITE value, not the initial Infinity. */
+  function simulateGameIdChangeFix(nowMs: number) {
+    seen.clear();
+    primedSources.clear();
+    suppressBefore = nowMs + RESUME_GRACE_MS;
+  }
+
+  /** Mirrors the BUG pre-fix: suppressBefore = Infinity blocks every event. */
+  function simulateGameIdChangeBuggy() {
+    seen.clear();
+    primedSources.clear();
+    suppressBefore = Number.POSITIVE_INFINITY;
+  }
+
+  const t0 = 1_000_000_000;  // arbitrary baseline ms
+
+  // Initial mount: markResumeBoundary fires → suppressBefore becomes finite.
+  markResume(t0);
+
+  // Game A first relay batch (3 historical events at t0+100).
+  simulateProcess(
+    [
+      { id: "gameA-at_bat_homerun-2-T-a-1", source: "relay", timestamp: t0 + 100 },
+      { id: "gameA-at_bat_hit-3-B-b-1", source: "relay", timestamp: t0 + 100 },
+      { id: "gameA-at_bat_walk-4-T-c-1", source: "relay", timestamp: t0 + 100 },
+    ],
+    t0 + 100,
   );
 
-  // SPA navigation: same component instance, gameId changes A → B.
-  simulateGameIdChange();
-
-  // Game B's first relay full-history batch — must be baseline-seeded (0 fires)
-  // because primedSources just cleared. Without the gameId-change reset, the
-  // `relay` source would still be primed from game A, and these 3 historical
-  // game B events would all fire as fresh celebrations.
-  const gameBFirstFired = simulateProcess([
-    { id: "gameB-at_bat_homerun-1-T-x-1", source: "relay" },
-    { id: "gameB-at_bat_hit-2-B-y-1", source: "relay" },
-    { id: "gameB-at_bat_walk-3-T-z-1", source: "relay" },
-  ]);
+  // Game A new event at t0+5000 (4s past RESUME_GRACE).
+  const gameANewFired = simulateProcess(
+    [
+      { id: "gameA-at_bat_homerun-2-T-a-1", source: "relay", timestamp: t0 + 100 },
+      { id: "gameA-at_bat_homerun-5-T-d-1", source: "relay", timestamp: t0 + 5000 },  // new
+    ],
+    t0 + 5000,
+  );
   assert(
-    "T14: SPA navigation A→B — game B first relay full-history batch 0 fires (baseline re-armed)",
+    "T14a: game A baseline+new — exactly 1 fire (sanity, suppressBefore + freshness modeled)",
+    gameANewFired.length === 1 && gameANewFired[0] === "gameA-at_bat_homerun-5-T-d-1",
+    { fired: gameANewFired },
+  );
+
+  // SPA navigation: gameId changes A → B. Use the FIX (finite suppressBefore).
+  simulateGameIdChangeFix(t0 + 10_000);
+
+  // Game B first relay full-history batch at t0+10_100 — all baseline-seeded.
+  const gameBFirstFired = simulateProcess(
+    [
+      { id: "gameB-at_bat_homerun-1-T-x-1", source: "relay", timestamp: t0 + 10_100 },
+      { id: "gameB-at_bat_hit-2-B-y-1", source: "relay", timestamp: t0 + 10_100 },
+      { id: "gameB-at_bat_walk-3-T-z-1", source: "relay", timestamp: t0 + 10_100 },
+    ],
+    t0 + 10_100,
+  );
+  assert(
+    "T14b: SPA navigation A→B — game B first relay full-history batch 0 fires (baseline re-armed)",
     gameBFirstFired.length === 0,
     { fired: gameBFirstFired },
   );
 
-  // Game B's second batch fires only truly-new ids.
-  const gameBSecondFired = simulateProcess([
-    { id: "gameB-at_bat_homerun-1-T-x-1", source: "relay" },
-    { id: "gameB-at_bat_hit-2-B-y-1", source: "relay" },
-    { id: "gameB-at_bat_walk-3-T-z-1", source: "relay" },
-    { id: "gameB-at_bat_double-4-T-w-1", source: "relay" },  // new
-  ]);
+  // Game B second batch with a NEW id at t0+15_000 (well past RESUME_GRACE)
+  // MUST actually fire. With the buggy Infinity suppressBefore, every new
+  // celebration on the new game would be blocked silently.
+  const gameBSecondFired = simulateProcess(
+    [
+      { id: "gameB-at_bat_homerun-1-T-x-1", source: "relay", timestamp: t0 + 10_100 },
+      { id: "gameB-at_bat_hit-2-B-y-1", source: "relay", timestamp: t0 + 10_100 },
+      { id: "gameB-at_bat_walk-3-T-z-1", source: "relay", timestamp: t0 + 10_100 },
+      { id: "gameB-at_bat_double-4-T-w-1", source: "relay", timestamp: t0 + 15_000 },  // new
+    ],
+    t0 + 15_000,
+  );
   assert(
-    "T14: game B second batch fires only the new id",
+    "T14c: game B second batch with NEW id actually FIRES (suppressBefore is finite, freshness OK)",
     gameBSecondFired.length === 1 && gameBSecondFired[0] === "gameB-at_bat_double-4-T-w-1",
     { fired: gameBSecondFired },
   );
+
+  // Negative regression: prove the buggy Infinity reset would have blocked
+  // every new game B celebration silently.
+  {
+    const bug_primedSources = primedSources;
+    const bug_seen = seen;
+    void bug_primedSources;
+    void bug_seen;
+    simulateGameIdChangeBuggy();  // resets seen + primedSources, sets suppressBefore = Infinity
+
+    // First batch baseline-seeded as normal.
+    simulateProcess(
+      [
+        { id: "gameC-at_bat_homerun-1-T-x-1", source: "relay", timestamp: t0 + 20_100 },
+      ],
+      t0 + 20_100,
+    );
+
+    // Second batch with truly-new id at t0+25_000 — buggy version would block.
+    const buggyGameCFired = simulateProcess(
+      [
+        { id: "gameC-at_bat_homerun-1-T-x-1", source: "relay", timestamp: t0 + 20_100 },
+        { id: "gameC-at_bat_double-2-T-y-1", source: "relay", timestamp: t0 + 25_000 },  // new
+      ],
+      t0 + 25_000,
+    );
+    assert(
+      "T14d: BUG REGRESSION — buggy Infinity suppressBefore reset blocks every new celebration (proves the fix matters)",
+      buggyGameCFired.length === 0,
+      { fired: buggyGameCFired },
+    );
+  }
 }
 
 if (failed > 0) {
