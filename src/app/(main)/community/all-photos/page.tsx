@@ -12,6 +12,10 @@ export default function AllPhotosPage() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortTab, setSortTab] = useState<SortTab>("latest");
+  // hot 필터의 "최근 30일" 기준 시각 — useMemo 안에서 Date.now() 직접 호출은
+  // react-hooks/purity 룰 위반이라 useState lazy init으로 mount 시 한 번만 잡아둔다.
+  // (30일 정밀도라 페이지 오래 열어둬도 무관.)
+  const [nowMs] = useState(() => Date.now());
 
   useEffect(() => {
     let cancelled = false;
@@ -54,9 +58,9 @@ export default function AllPhotosPage() {
   const sortedPosts = useMemo(() => {
     if (sortTab === "latest") return posts;
     return [...posts]
-      .filter((p) => Date.now() - new Date(p.created_at).getTime() < 30 * 24 * 60 * 60 * 1000)
+      .filter((p) => nowMs - new Date(p.created_at).getTime() < 30 * 24 * 60 * 60 * 1000)
       .sort((a, b) => b.like_count - a.like_count || new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  }, [posts, sortTab]);
+  }, [posts, sortTab, nowMs]);
 
   const sourceLabels = useMemo(
     () => Object.fromEntries(sortedPosts.map((post) => [post.id, getCommunitySourceLabel(post.board_type, post.board_id)])),
