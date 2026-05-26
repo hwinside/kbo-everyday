@@ -3,7 +3,7 @@
 - **등록일**: 2026-05-26
 - **상태**: 스펙 초안 (Phase 1 항목 확정 전, 삼순이 리뷰 대기)
 - **출처**: 하린아빠 — "문자중계와 채팅 사이에 박스 하나, 해당 타석 관련 흥미 스탯을 최대한, 단 오류 가능성은 철저히 배제" (#product 스레드 `1779791186.377619`)
-- **PR 시리즈**: PR1 데이터 어댑터(가드 포함) → PR2 UI 박스(평시 줄1·줄2) → PR3 마일스톤 트리거 라인 → PR4 재집계(만루/RISP, 좌우 OPS 등 Phase 2 진입 시)
+- **PR 시리즈**: PR1 데이터 어댑터(가드 포함) → PR2 UI 박스(살림 5라인 컨텍스트 통과만 mount) → PR3 트리거 라인(노히터 진행 등) → PR4 재집계(최근 10경기, H2H 등 Phase 2 진입 시)
 
 > 🔒 **머지 게이트 (오류 배제 원칙)**
 > 1. `kboId` 단독키. name 매핑 실패 → 그 행만 숨김(박스 전체 X)
@@ -95,9 +95,9 @@
 
 ### 5-2. Cross-source 검증
 
-- 오늘 매치업 누적(PA·AB·H·HR·BB·K·RBI)은 A(relay)와 B(record) 둘 다 응답한 경우에만 표시. *둘 중 하나라도 결측이면 숨김*.
-- 두 값이 다르면 더 새로 fetch된 값 우선 + 차이 ≥ 2 시 모니터링 로그 (`api-fallback-tracker`).
-- 시즌 값(OPS·ERA 등)은 C가 primary. A의 `seasonAvg`/`seasonEra` 보조. |diff| > 0.005 시 숨김 + 로그.
+- v1 살림 5라인은 *KBO 단일 출처* (Basic + Situation) — 동일 항목 다출처 비교 대상 없음
+- 대신 *KBO 응답 자체*의 ASP.NET 에러 HTML detect 가드 모든 fetch에 적용 (`looksLikeAspNetError`)
+- 노히터 판정은 *수비 팀 전체 pitcher rows H 합산*으로 처리 (현재 투수 개인 row만 보면 구원투수 false positive). 팀 합산 H = 0일 때만 노히터 라인 발화
 
 ### 5-3. Staleness
 
@@ -119,7 +119,8 @@
 - *boxscore가 확정 갱신된 직후*에만 트리거 (홈런/3루타 등 이벤트 type이 확정으로 push 된 이후).
 - 진행 중 추정 ("이번 타석 홈런이면 30HR 도달") 노출 금지 — 사실 확정 후에만 표시.
 - 사이클링/노히터처럼 "임박" 자체가 핵심인 항목은 *조건 만족 직후*에 표시 (예: 2루타·3루타·홈런 완료 후 1루타만 남으면 표시).
-- **노히터·퍼펙트 게임은 7회(7회초/말 시작) 이후에만 노출** — 경기 초반 H=0, BB=0은 흔하므로 노출하면 *진폭 잃음* + 야구 관습상 초반 언급은 부자연스러움. 7회 직전까지는 조건 만족해도 라인 미노출.
+- **노히터는 7회 이후 + *팀 합산 H=0* 시만 노출** — 경기 초반은 흔하고 진폭 잃음 + 야구 관습. *현재 투수 개인 H가 아니라 수비 팀 전체 pitcher rows의 H 합산*을 봐야 구원투수 false positive 방지
+- **퍼펙트 게임은 v1 비포함** — KBO BoxScore에 HBP/실책출루 명시 컬럼이 없어 BF cross-check 단일 신호로는 회귀 위험 잔존 (말 공격 BF 계산 오산 등). 보수적으로 v1에서는 *노히터까지만*. 직접 HBP/실책 데이터 확보 후 v2 검토
 
 ### 5-6. 컨텍스트 게이트 (값 자체는 있지만 *상황에 맞을 때만* 노출)
 
@@ -136,9 +137,12 @@
 - 컴포넌트 트리:
   ```
   <ContextStatsBox>
-    ├ <HighlightLine />      // 트리거시만 mount
-    ├ <TodayMatchupLine />   // A/B cross-check 실패 → null
-    └ <SeasonStatsLine />    // C 결측 → null
+    ├ <NoHitterLine />     // 7회 이후 + 팀 합산 H=0
+    ├ <VsHandLine />       // 매치업 상대 손잡이 행만
+    ├ <BasesLoadedLine />  // 만루 상황
+    ├ <RispLine />         // 2/3루 점유 (Situation 합산)
+    ├ <TwoOutsLine />      // outs=2
+    └ <PhBaLine />         // 대타 첫 타석
   </ContextStatsBox>
   ```
 - 모든 라인이 null이면 `<ContextStatsBox>` 자체가 `return null`. 빈 박스/skeleton 노출 금지.

@@ -51,7 +51,6 @@ export function parseHitterBasic(
     name,
     hr: safeInt(t0[9]),
     rbi: safeInt(t0[11]),
-    risp: t1[11] || undefined,
     phBA: t1[12] || undefined,
   };
 }

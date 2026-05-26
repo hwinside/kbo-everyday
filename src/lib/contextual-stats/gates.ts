@@ -8,6 +8,7 @@
  * Spec references: §5-4 (sample thresholds), §5-6 (context gates).
  */
 
+import { aggregateRisp } from "./situation-parser";
 import type {
   BasesLoadedLine,
   BasicSeasonStats,
@@ -109,28 +110,26 @@ export function selectBasesLoaded(
 }
 
 /**
- * RISP uses the Basic.aspx RISP column (season-aggregated). Sample size is
- * not directly available there, so we surface it as text only and rely on
- * the RISP-bases situation rows when a stricter threshold matters.
+ * RISP derived from Situation Table 0 — aggregates AB/H across all RISP
+ * rows (2루·3루·1,2루·1,3루·2,3루·만루) so the §5-4 sample-size gate has a
+ * real AB to threshold against.
  *
- * If the upstream parser lacked an AB count, we still display when the AVG
- * string parses as a real number — the Basic page only publishes RISP for
- * batters with non-trivial samples, so this is a soft floor.
+ * Why not the Basic.aspx RISP column: that column only ships a 3-digit AVG
+ * string with no AB, so noise like "1/2 → .500" leaks through (삼순이
+ * NO-GO #1).
  */
 export function selectRisp(
-  basic: BasicSeasonStats | null,
+  batterSituation: SituationTables | null,
   ctx: GameContext,
 ): LineResult<RispLine> | null {
-  if (!basic || !basic.risp) return null;
+  if (!batterSituation) return null;
   if (!isRisp(ctx)) return null;
-  // Strip leading "." or "0." then ensure it's a 3-digit avg-like string
-  const avg = basic.risp.trim();
-  if (!/^\.?\d{1,3}$|^0?\.\d{1,3}$/.test(avg) && !/^\d+\/\d+$/.test(avg)) {
-    return null;
-  }
+  const agg = aggregateRisp(batterSituation.bases);
+  if (!agg) return null;
+  if (agg.AB < SAMPLE_THRESHOLDS.risp) return null;
   return {
-    value: { AVG: avg, AB: 0 },
-    reason: "batter season RISP, runner on 2B/3B",
+    value: { AVG: agg.AVG, AB: agg.AB },
+    reason: `batter Situation-aggregated RISP, AB=${agg.AB}`,
   };
 }
 
@@ -166,39 +165,25 @@ export function selectPhBA(
 // ===== Highlights (trigger-only) =====
 
 /**
- * No-hitter / perfect game progress. Only shown from the *7th inning onward*
- * (spec §5-5) — earlier innings would lose impact and violate baseball
- * convention.
+ * No-hitter progress. Only shown from the *7th inning onward* (spec §5-5) —
+ * earlier innings would lose impact and violate baseball convention.
  *
- * Perfect-game check (삼순이 22:44 리뷰):
- *   The KBO pitcher box row exposes IP, BF, AB, H, BB, K, R, ER but *no
- *   explicit HBP or reached-on-error column*. Reading only H and BB would
- *   silently surface "퍼펙트" while a hit-by-pitch or fielding error
- *   actually put a runner on. Anchor instead on BattersFaced:
+ * Critical: `hits` MUST be the *defending team's total H across all pitchers
+ * that have appeared today*, not the current pitcher's individual row.
+ * Otherwise a relief pitcher with 0 IP would short-circuit to "no-hitter"
+ * even after the starter gave up several hits (삼순이 NO-GO #2).
  *
- *     perfect ⇔ H == 0 AND BB == 0 AND BF == completed_innings * 3 + outs
- *
- *   When a runner has reached on HBP/error, BF will exceed that expected
- *   total. completed_innings derives from KBO's `GAME_INN_NO` + half:
- *   `inning - 1` when the pitcher is currently on the mound mid-top, or
- *   `inning` when mid-bottom. `outs` is the current-inning out count.
- *
- *   No-hitter (the looser case where HBP / BB / errors are allowed) still
- *   gates only on H == 0.
+ * Perfect game is intentionally *not* surfaced in v1 — KBO BoxScore has no
+ * explicit HBP / reached-on-error column for pitchers, and the indirect
+ * BF cross-check we attempted had a half-inning calculation bug (삼순이
+ * NO-GO #3). v2 will revisit once we have direct HBP/error signals.
  */
 export function selectNoHitter(
-  pitcherStats: { hits: number; walks: number; battersFaced: number } | null,
+  defendingTeamHits: number | null,
   ctx: GameContext,
-): { perfect: boolean; inning: number } | null {
-  if (!pitcherStats) return null;
+): { inning: number } | null {
+  if (defendingTeamHits === null) return null;
   if (!isSeventhInningOrLater(ctx)) return null;
-  if (pitcherStats.hits > 0) return null;
-
-  const completedInnings = ctx.isTop ? ctx.inning - 1 : ctx.inning;
-  const expectedBfForPerfect = completedInnings * 3 + ctx.outs;
-  const perfect =
-    pitcherStats.walks === 0 &&
-    pitcherStats.battersFaced === expectedBfForPerfect;
-
-  return { perfect, inning: ctx.inning };
+  if (defendingTeamHits > 0) return null;
+  return { inning: ctx.inning };
 }

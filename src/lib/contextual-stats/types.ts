@@ -107,7 +107,6 @@ export interface CycleHighlight {
 }
 
 export interface NoHitterHighlight {
-  perfect: boolean;
   inning: number;
 }
 

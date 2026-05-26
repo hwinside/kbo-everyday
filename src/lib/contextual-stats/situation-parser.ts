@@ -123,6 +123,40 @@ export function parseSituation(html: string, role: Role): SituationTables {
 }
 
 /**
+ * Aggregate RISP (Runners In Scoring Position) AB/H/AVG from Situation
+ * Table 0 rows. Replaces Basic.aspx's RISP column which only provides an AVG
+ * string with no sample size — making the §5-4 sample-size gate impossible.
+ *
+ * RISP is defined as "runner on 2B or 3B" for the plate appearance. The
+ * Table 0 rows that satisfy this:
+ *   2루 · 3루 · 1,2루 · 1,3루 · 2,3루 · 만루
+ *
+ * (Excludes 주자없음 and 1루-only, which are non-RISP.)
+ *
+ * Returns null if no qualifying rows were parsed at all (player has no
+ * tracked PAs in any RISP state).
+ */
+const RISP_ROW_LABELS = new Set(["2루", "3루", "1,2루", "1,3루", "2,3루", "만루"]);
+
+export function aggregateRisp(
+  bases: SplitRow[],
+): { AB: number; H: number; AVG: string } | null {
+  let AB = 0;
+  let H = 0;
+  let any = false;
+  for (const row of bases) {
+    if (!RISP_ROW_LABELS.has(row.label)) continue;
+    any = true;
+    AB += row.AB;
+    H += row.H;
+  }
+  if (!any || AB === 0) return null;
+  // KBO formats AVG as "0.XXX" (4-char width). Match that.
+  const avg = (H / AB).toFixed(3);
+  return { AB, H, AVG: avg };
+}
+
+/**
  * Detect KBO's ASP.NET error HTML that sometimes ships in place of the real
  * page (e.g. when Referer header is missing post-2026-05-20). Used by the
  * route to fail-closed instead of parsing garbage as zeros.

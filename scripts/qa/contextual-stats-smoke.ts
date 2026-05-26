@@ -196,27 +196,61 @@ function mkRow(over: Partial<SplitRow> = {}): SplitRow {
   assert("T12: bases loaded AB≥5 → row returned", res?.value.row.AVG === "0.500", res);
 }
 
-// ===== T13-T15: RISP =====
+// ===== T13-T15: RISP (Situation-aggregated, sample-size gate) =====
 {
-  const basic: BasicSeasonStats = { kboId: "1", name: "X", risp: undefined };
+  // Empty bases table → null
+  const sit: SituationTables = { bases: [], byHand: [], byOuts: [] };
   assert(
-    "T13: no risp → null",
-    selectRisp(basic, mkCtx({ bases: { first: false, second: true, third: false } })) === null,
+    "T13: no Situation data → null",
+    selectRisp(sit, mkCtx({ bases: { first: false, second: true, third: false } })) === null,
   );
 }
 {
-  const basic: BasicSeasonStats = { kboId: "1", name: "X", risp: "0.345" };
+  // AB합 = 5 + 4 + 1 + 2 = 12, H합 = 2 + 1 + 0 + 1 = 4 → 0.333, AB≥10 admit
+  const sit: SituationTables = {
+    bases: [
+      mkRow({ label: "주자없음", AB: 50, H: 15 }), // 비-RISP, 합산 제외
+      mkRow({ label: "1루", AB: 20, H: 6 }),       // 비-RISP, 합산 제외
+      mkRow({ label: "2루", AB: 5, H: 2 }),
+      mkRow({ label: "3루", AB: 4, H: 1 }),
+      mkRow({ label: "1,2루", AB: 1, H: 0 }),
+      mkRow({ label: "만루", AB: 2, H: 1 }),
+    ],
+    byHand: [],
+    byOuts: [],
+  };
+  const res = selectRisp(sit, mkCtx({ bases: { first: false, second: true, third: false } }));
   assert(
-    "T14: RISP context met, valid avg → admit",
-    selectRisp(basic, mkCtx({ bases: { first: false, second: true, third: false } }))
-      ?.value.AVG === "0.345",
+    "T14: RISP aggregate AB=12 (≥10), H=4 → AVG=0.333 admit",
+    res?.value.AVG === "0.333" && res?.value.AB === 12,
+    res,
   );
 }
 {
-  const basic: BasicSeasonStats = { kboId: "1", name: "X", risp: "0.345" };
+  // AB합 = 3 (< threshold 10) → suppress
+  const sit: SituationTables = {
+    bases: [
+      mkRow({ label: "2루", AB: 1, H: 0 }),
+      mkRow({ label: "3루", AB: 2, H: 1 }),
+    ],
+    byHand: [],
+    byOuts: [],
+  };
   assert(
-    "T15: no runner on 2B/3B → null even with risp value",
-    selectRisp(basic, mkCtx({ bases: { first: true, second: false, third: false } })) === null,
+    "T15a: RISP aggregate AB<10 → null (표본 가드)",
+    selectRisp(sit, mkCtx({ bases: { first: false, second: true, third: false } })) === null,
+  );
+}
+{
+  // Bases include qualifying rows but context (no runner 2B/3B) is wrong
+  const sit: SituationTables = {
+    bases: [mkRow({ label: "2,3루", AB: 30, H: 10 })],
+    byHand: [],
+    byOuts: [],
+  };
+  assert(
+    "T15b: no runner on 2B/3B → null even with sufficient sample",
+    selectRisp(sit, mkCtx({ bases: { first: true, second: false, third: false } })) === null,
   );
 }
 
@@ -296,66 +330,35 @@ function mkRow(over: Partial<SplitRow> = {}): SplitRow {
   );
 }
 
-// ===== T23-T24: no-hitter / perfect (with BF cross-check) =====
+// ===== T23-T24: no-hitter (team-aggregated H, 7회 게이트, perfect v1 제외) =====
 {
-  const pitcher = { hits: 0, walks: 0, battersFaced: 9 };
   assert(
     "T23: inning<7 → null (관습 게이트)",
-    selectNoHitter(pitcher, mkCtx({ inning: 5 })) === null,
+    selectNoHitter(0, mkCtx({ inning: 5 })) === null,
   );
 }
 {
-  // 7회말 시작 시점 = 7회 완료, 0아웃, BF=21
-  const pitcher = { hits: 0, walks: 0, battersFaced: 21 };
-  const res = selectNoHitter(pitcher, mkCtx({ inning: 7, isTop: false, outs: 0 }));
-  assert("T24a: 7회 완료 H=0 BB=0 BF=21 → perfect", res?.perfect === true && res?.inning === 7, res);
+  // 팀 합산 H = 0 + 7회 → admit
+  const res = selectNoHitter(0, mkCtx({ inning: 7, isTop: false, outs: 0 }));
+  assert("T24a: 7회 팀합산 H=0 → 노히터 진행", res?.inning === 7, res);
 }
 {
-  const pitcher = { hits: 0, walks: 1, battersFaced: 22 };
-  const res = selectNoHitter(pitcher, mkCtx({ inning: 7, isTop: false, outs: 0 }));
+  // 현재 투수 row만 H=0이라도 팀 합산이 양수면 차단 (구원투수 false positive 방지)
   assert(
-    "T24b: 7회 H=0 BB>0 → no-hitter but not perfect",
-    res?.perfect === false && res?.inning === 7,
-    res,
+    "T24b: 팀 합산 H>0 → null (구원투수 본인 H=0이어도 팀 안타 있음)",
+    selectNoHitter(3, mkCtx({ inning: 8 })) === null,
   );
 }
 {
-  const pitcher = { hits: 1, walks: 0, battersFaced: 22 };
   assert(
-    "T24c: hits>0 → null (노히터 자체 깨짐)",
-    selectNoHitter(pitcher, mkCtx({ inning: 7 })) === null,
+    "T24c: null 입력 → null (boxscore 미파싱/에러)",
+    selectNoHitter(null, mkCtx({ inning: 9 })) === null,
   );
 }
 {
-  // HBP 1건 출루 시: BB=0이지만 BF=22 (21 expected). perfect=false
-  const pitcher = { hits: 0, walks: 0, battersFaced: 22 };
-  const res = selectNoHitter(pitcher, mkCtx({ inning: 7, isTop: false, outs: 0 }));
-  assert(
-    "T24d: H=0 BB=0이지만 BF>expected (HBP 출루 가정) → perfect=false (노히터만)",
-    res?.perfect === false,
-    res,
-  );
-}
-{
-  // 실책 출루 시도 동일 — BF 1 초과
-  const pitcher = { hits: 0, walks: 0, battersFaced: 25 };
-  const res = selectNoHitter(pitcher, mkCtx({ inning: 8, isTop: false, outs: 0 }));
-  // expected = 8 * 3 + 0 = 24, actual = 25 → perfect=false
-  assert(
-    "T24e: H=0 BB=0 BF=25 vs expected=24 (실책 출루 가정) → perfect=false",
-    res?.perfect === false,
-    res,
-  );
-}
-{
-  // 7회초 진행 중, 2아웃까지 모두 잡힌 상태. completed=6, outs=2 → BF=20
-  const pitcher = { hits: 0, walks: 0, battersFaced: 20 };
-  const res = selectNoHitter(pitcher, mkCtx({ inning: 7, isTop: true, outs: 2 }));
-  assert(
-    "T24f: 7회초 2아웃 진행중 BF=20 (completed=6, outs=2) → perfect",
-    res?.perfect === true,
-    res,
-  );
+  // 9회말 H=0 → 완성된 노히터
+  const res = selectNoHitter(0, mkCtx({ inning: 9, isTop: false, outs: 3 }));
+  assert("T24d: 9회 팀합산 H=0 → 노히터 진행 (perfect는 v1 비포함)", res?.inning === 9, res);
 }
 
 // ===== T25-T26: Basic parsers =====
@@ -369,8 +372,8 @@ function mkRow(over: Partial<SplitRow> = {}): SplitRow {
 `;
   const res = parseHitterBasic(html, "78513", "테스트");
   assert(
-    "T25: hitter Basic → risp=0.171, phBA=0.667, hr=2",
-    res?.risp === "0.171" && res?.phBA === "0.667" && res?.hr === 2,
+    "T25: hitter Basic → phBA=0.667, hr=2 (risp v1 비사용, Situation 합산으로 대체)",
+    res?.phBA === "0.667" && res?.hr === 2,
     res,
   );
 }

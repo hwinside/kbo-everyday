@@ -161,7 +161,16 @@ async function fetchLiveGame(gameId: string): Promise<LiveGameSnapshot | null> {
 interface BoxSnapshot {
   /** Is current batter a pinch hitter? Detected via boxscore position prefix "타". */
   batterIsPinch: boolean;
-  pitcherToday: { hits: number; walks: number; battersFaced: number } | null;
+  /**
+   * Sum of hits across *all pitchers that have appeared for the defending
+   * team today*. Used by the no-hitter gate. Null when the box hasn't been
+   * parsed (e.g., game not yet started or KBO error response).
+   *
+   * Why team-aggregated rather than the current pitcher's row: 삼순이 NO-GO
+   * #2 — a relief pitcher with 0 IP would short-circuit to no-hitter on the
+   * individual row even after the starter gave up multiple hits.
+   */
+  defendingTeamHits: number | null;
 }
 
 async function fetchBoxSnapshot(
@@ -177,12 +186,12 @@ async function fetchBoxSnapshot(
     body: `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${gameId}`,
     cache: "no-store",
   });
-  if (!res.ok) return { batterIsPinch: false, pitcherToday: null };
+  if (!res.ok) return { batterIsPinch: false, defendingTeamHits: null };
   let parsed: { tables?: Array<{ rows?: Array<{ row: Array<{ Text: string }> }> }> };
   try {
     parsed = JSON.parse(await res.text());
   } catch {
-    return { batterIsPinch: false, pitcherToday: null };
+    return { batterIsPinch: false, defendingTeamHits: null };
   }
   const tables = parsed.tables ?? [];
 
@@ -215,29 +224,36 @@ async function fetchBoxSnapshot(
 
   // Tables 3/4 = away/home pitchers. Each row layout (from game-events/route):
   //   [name, _, decision, _, _, _, IP, BF, NP, AB, H, HR, BB, K, R, ER, ERA]
-  let pitcherToday: BoxSnapshot["pitcherToday"] = null;
+  //
+  // For the no-hitter gate we want the *defending team's* total hits across
+  // ALL pitchers in their respective table. Defending team is identified by
+  // locating which of tables[3]/tables[4] contains the current pitcher.
+  const safeInt = (s: string) => {
+    const n = parseInt(s, 10);
+    return Number.isNaN(n) ? 0 : n;
+  };
+
+  let defendingTeamHits: number | null = null;
   const pitcherNameNorm = pitcherName ? normalizeBatterName(pitcherName) : "";
   if (pitcherNameNorm) {
     for (const t of [tables[3], tables[4]]) {
       if (!t?.rows) continue;
+      const tableHasCurrentPitcher = t.rows.some(r => {
+        const cells = r.row.map(c => safeStr(c.Text));
+        return normalizeBatterName(stripHtml(cells[0] ?? "")) === pitcherNameNorm;
+      });
+      if (!tableHasCurrentPitcher) continue;
+      let sumH = 0;
       for (const r of t.rows) {
         const cells = r.row.map(c => safeStr(c.Text));
-        const name = normalizeBatterName(stripHtml(cells[0] ?? ""));
-        if (name !== pitcherNameNorm) continue;
-        const safeInt = (s: string) => {
-          const n = parseInt(s, 10);
-          return Number.isNaN(n) ? 0 : n;
-        };
-        pitcherToday = {
-          battersFaced: safeInt(stripHtml(cells[7] ?? "")),
-          hits: safeInt(stripHtml(cells[10] ?? "")),
-          walks: safeInt(stripHtml(cells[12] ?? "")),
-        };
+        sumH += safeInt(stripHtml(cells[10] ?? ""));
       }
+      defendingTeamHits = sumH;
+      break;
     }
   }
 
-  return { batterIsPinch, pitcherToday };
+  return { batterIsPinch, defendingTeamHits };
 }
 
 // ===== Route handler =====
@@ -364,16 +380,16 @@ export async function GET(req: NextRequest) {
   const lines: ContextualLines = {
     vsHand: selectVsHand(pitcherProfile?.situation ?? null, batterHandedness),
     basesLoaded: selectBasesLoaded(batterProfile?.situation ?? null, ctx),
-    risp: selectRisp(batterProfile?.basic ?? null, ctx),
+    risp: selectRisp(batterProfile?.situation ?? null, ctx),
     twoOuts: selectTwoOuts(batterProfile?.situation ?? null, ctx, "batter"),
     phBA: selectPhBA(batterProfile?.basic ?? null, ctx),
   };
 
-  const noHitter = selectNoHitter(boxSnapshot.pitcherToday, ctx);
+  const noHitter = selectNoHitter(boxSnapshot.defendingTeamHits, ctx);
   const highlights: ContextualHighlights = {
     cycle: null, // PR3 trigger-line work
     noHitter: noHitter
-      ? { value: noHitter, reason: `inning=${ctx.inning}, H=0${noHitter.perfect ? ", BB=0" : ""}` }
+      ? { value: noHitter, reason: `inning=${ctx.inning}, defending-team H=0` }
       : null,
     milestone: null, // PR3 trigger-line work
     hrLeader: null, // PR3 trigger-line work
