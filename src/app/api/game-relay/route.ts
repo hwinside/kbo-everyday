@@ -118,15 +118,24 @@ function toNaverGameId(kboGameId: string): string {
 }
 
 function classifyResult(text: string): PlayEvent["type"] {
+  // Order matters: 확정 결과 키워드 먼저 매칭하고, 모호한 hit 분류는 *마지막*에
+  // 떨어뜨려야 한다. 네이버 상대 결과 텍스트는 "2루타성 타구가 잡혀 아웃" 처럼
+  // hit 키워드와 "아웃"이 동시에 들어가는 case가 있어, hit을 먼저 매칭하면
+  // false-positive at_bat_double 세레머니가 발화한다.
   if (text.includes("홈런")) return "homerun";
-  if (text.includes("1루타") || text.includes("2루타") || text.includes("3루타"))
-    return "hit";
-  if (text.includes("볼넷")) return "walk";
   if (text.includes("삼진")) return "strikeout";
+  if (text.includes("볼넷")) return "walk";
   if (text.includes("몸에 맞는 볼")) return "hbp";
+  // 아웃 키워드가 있으면 hit이 아님 ("N루타성 ... 잡혀 아웃" 차단)
+  if (text.includes("아웃")) {
+    if (text.includes("희생")) return "sacrifice";
+    return "out";
+  }
   if (text.includes("희생")) return "sacrifice";
   if (text.includes("실책")) return "error";
-  if (text.includes("아웃")) return "out";
+  // 아웃 없는 N루타만 진짜 hit
+  if (text.includes("1루타") || text.includes("2루타") || text.includes("3루타"))
+    return "hit";
   return "other";
 }
 
@@ -251,8 +260,13 @@ function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
     if (!current || !relay.textOptions) continue;
 
     // Extract batter name from title: "3번타자 홍창기"
+    // 비표준 title (예: "대주자 홍창기", "투수 교체") 시 batter 식별 불가 →
+    // 이 textRelay 항목 전체 skip. 과거엔 fallback으로 relay.title 통째로 박았으나
+    // 그 경우 batterNorm = "대주자홍창기" 같은 garbage 키가 만들어져 KBO BoxScore
+    // 경로와 cross-source dedupe가 깨지고 같은 plate appearance가 두 번 발화한다.
     const batterMatch = relay.title.match(/\d+번타자\s+(.+)/);
-    const batterName = batterMatch ? batterMatch[1] : relay.title;
+    if (!batterMatch) continue;
+    const batterName = batterMatch[1];
 
     for (const opt of relay.textOptions) {
       if (opt.type === 13 || opt.type === 23) {
@@ -623,6 +637,41 @@ function extractPlayerStatsFromRecord(data: NaverRecordResponse | null): RelayPl
 const NAVER_API_BASE =
   "https://api-gw.sports.naver.com/schedule/games";
 
+/**
+ * In-memory response cache (module-level, persists for the lambda warm period
+ * ~5–15min). The relay-bridged celebration path on the client polls at 5s
+ * cadence; without caching, N concurrent viewers of the same game would mean
+ * N upstream Naver fetches every 5s. With a 4s TTL keyed by (naverGameId,
+ * inningHint), warm-lambda viewers share a single upstream call per ~4s
+ * window. Cold-start spawns a fresh instance with empty cache → up to one
+ * Naver call per cold lambda, which is bounded by Vercel concurrency.
+ *
+ * Only successful responses are cached; HTTP/network errors fall through so
+ * the next poll retries fresh.
+ */
+const responseCache = new Map<string, { data: GameRelayResponse; expiresAt: number }>();
+const CACHE_TTL_MS = 4_000;
+
+function getCachedResponse(key: string): GameRelayResponse | null {
+  const entry = responseCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    responseCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCachedResponse(key: string, data: GameRelayResponse): void {
+  if (responseCache.size > 100) {
+    const now = Date.now();
+    for (const [k, v] of responseCache) {
+      if (v.expiresAt < now) responseCache.delete(k);
+    }
+  }
+  responseCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+}
+
 export async function GET(req: NextRequest) {
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) {
@@ -636,6 +685,13 @@ export async function GET(req: NextRequest) {
   const inningHint = parseInt(req.nextUrl.searchParams.get("inning") || "0") || 0;
 
   const naverGameId = toNaverGameId(gameId);
+
+  // Cache hit short-circuits Naver upstream entirely.
+  const cacheKey = `${naverGameId}-${inningHint}`;
+  const cached = getCachedResponse(cacheKey);
+  if (cached) {
+    return NextResponse.json(cached);
+  }
 
   try {
     // First, fetch inning 1 to get the current inning number
@@ -773,6 +829,7 @@ export async function GET(req: NextRequest) {
       linescore,
     };
 
+    setCachedResponse(cacheKey, response);
     return NextResponse.json(response);
   } catch (e) {
     const error = e as Error;

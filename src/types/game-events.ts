@@ -49,6 +49,13 @@ export interface GameSnapshot {
   batter: string;
 }
 
+/** Trigger source for celebration latency telemetry / cross-source dedupe debugging.
+ *  `kbo_diff` = legacy path (liveGame + BoxScore client diff in event-generator.ts)
+ *  `relay`    = Naver 문자중계 path (relay-event-generator.ts), typically 10–20s faster
+ *  Same logical play mints the same id from either source; `source` only records
+ *  which path observed it first. */
+export type GameEventSource = "kbo_diff" | "relay";
+
 export interface GameEvent {
   /** 고유 ID (gameId-inning-sequence) */
   id: string;
@@ -61,6 +68,8 @@ export interface GameEvent {
   /** 문자중계 텍스트 (한글 + emoji) */
   text: string;
   snapshot: GameSnapshot;
+  /** Telemetry-only: which generator emitted this. Omitted = legacy/unknown. */
+  source?: GameEventSource;
 }
 
 export interface GameEventStream {
