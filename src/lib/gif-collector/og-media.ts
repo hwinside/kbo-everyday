@@ -56,20 +56,59 @@ function isGenericMlbparkImage(url: string): boolean {
   }
 }
 
-export function extractOgMedia(html: string): OgMedia | null {
-  const ogVideo = findOgMeta(html, "og:video");
-  if (ogVideo) return { url: ogVideo, type: "video" };
+/**
+ * HTML에서 미디어를 *등장 순서대로* 최대 `max`개 추출.
+ *
+ * 우선순위 (같은 우선순위 안에선 등장 순서):
+ *   1. og:video meta (페이지에 여러 개 있을 수 있음 — 모두 수집)
+ *   2. <video>/<source src=...> 본문 임베드
+ *   3. 직접 mp4/webm/m3u8 URL (앵커, 본문 등)
+ *   4. (위 비디오가 한 건도 없을 때만) og:image fallback — 단일
+ *
+ * URL dedupe. 비디오가 1건이라도 있으면 이미지는 무시 (영상+썸네일 혼재 시 영상만 의도).
+ */
+export function extractMediaList(html: string, max: number): OgMedia[] {
+  if (max <= 0) return [];
+  const results: OgMedia[] = [];
+  const seen = new Set<string>();
+  const add = (rawUrl: string | null | undefined, type: "video" | "image"): boolean => {
+    if (results.length >= max) return false;
+    if (!rawUrl) return true;
+    const url = decodeHtmlEntities(rawUrl);
+    if (seen.has(url)) return true;
+    seen.add(url);
+    results.push({ url, type });
+    return results.length < max;
+  };
 
-  for (const m of html.matchAll(VIDEO_SOURCE_RE)) {
-    return { url: decodeHtmlEntities(m[1]), type: "video" };
+  const metas = html.match(META_RE) ?? [];
+  for (const tag of metas) {
+    const prop = extractAttr(tag, "property");
+    if (!prop) continue;
+    if (prop === "og:video" || prop === "og:video:secure_url" || prop === "og:video:url") {
+      const content = extractAttr(tag, "content");
+      if (!add(content, "video")) return results;
+    }
   }
 
-  const directVideo = html.match(DIRECT_VIDEO_URL_RE)?.[0];
-  if (directVideo) return { url: decodeHtmlEntities(directVideo), type: "video" };
+  for (const m of html.matchAll(VIDEO_SOURCE_RE)) {
+    if (!add(m[1], "video")) return results;
+  }
 
-  const ogImage = findOgMeta(html, "og:image");
-  if (ogImage && !isGenericMlbparkImage(ogImage)) return { url: ogImage, type: "image" };
-  return null;
+  for (const m of html.matchAll(DIRECT_VIDEO_URL_RE)) {
+    if (!add(m[0], "video")) return results;
+  }
+
+  if (results.length === 0) {
+    const ogImage = findOgMeta(html, "og:image");
+    if (ogImage && !isGenericMlbparkImage(ogImage)) add(ogImage, "image");
+  }
+
+  return results;
+}
+
+export function extractOgMedia(html: string): OgMedia | null {
+  return extractMediaList(html, 1)[0] ?? null;
 }
 
 export function inferMediaExt(contentType: string, url: string): string {

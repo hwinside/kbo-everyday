@@ -157,12 +157,22 @@ async function processMessage(evt: SlackMessageEvent): Promise<void> {
 
   // 발행 즉시 진행 (옵션 A, 2026-05-25 확정).
   const pub = await publishQueueItem(inserted.id);
+  // best-effort 부분실패 안내: attempted > succeeded면 "N개 중 M개 발행" 추가.
+  const partialMediaNote =
+    pub.attempted && pub.succeeded && pub.attempted > pub.succeeded
+      ? ` (${pub.attempted}개 중 ${pub.succeeded}개 발행)`
+      : "";
+  const mediaErrorsNote =
+    pub.mediaErrors && pub.mediaErrors.length > 0
+      ? `\n부분실패: ${pub.mediaErrors.join("; ")}`
+      : "";
+
   if (pub.ok) {
     await reactAndReply(
       evt.channel,
       evt.ts,
-      "white_check_mark",
-      `게시 완료 — *${playerCanonicalName}* (kboId=${kboId}, teamId=${teamId}). posts.id=${pub.postId}`,
+      partialMediaNote ? "warning" : "white_check_mark",
+      `게시 완료 — *${playerCanonicalName}* (kboId=${kboId}, teamId=${teamId})${partialMediaNote}. posts.id=${pub.postId}${mediaErrorsNote}`,
     );
     return;
   }
@@ -173,7 +183,7 @@ async function processMessage(evt: SlackMessageEvent): Promise<void> {
       evt.channel,
       evt.ts,
       "warning",
-      `posts.id=${pub.postId}은 생성됐지만 큐 상태 동기화 실패. *${playerCanonicalName}* / 큐 id=${inserted.id}. 운영자가 gif_collector_queue.match_status를 직접 'auto_posted'로 정리해야 합니다.\n에러: ${pub.error}`,
+      `posts.id=${pub.postId}은 생성됐지만 큐 상태 동기화 실패. *${playerCanonicalName}*${partialMediaNote} / 큐 id=${inserted.id}. 운영자가 gif_collector_queue.match_status를 직접 'auto_posted'로 정리해야 합니다.\n에러: ${pub.error}${mediaErrorsNote}`,
     );
     return;
   }
