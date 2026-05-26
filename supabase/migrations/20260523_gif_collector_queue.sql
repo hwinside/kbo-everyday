@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS gif_collector_queue (
   original_media_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
 
   -- 매칭 결과
+  -- 주의: matched_kbo_id의 FK 제약은 20260526_drop_gif_collector_kbo_id_fkey.sql에서 제거됨.
+  -- 이유: prod players_roster 테이블 deprecated, SSOT는 src/lib/constants/players-roster.json.
   matched_kbo_id TEXT REFERENCES players_roster(kbo_id) ON DELETE SET NULL,
   matched_board_type TEXT
     CHECK (matched_board_type IS NULL OR matched_board_type IN ('player', 'team')),
