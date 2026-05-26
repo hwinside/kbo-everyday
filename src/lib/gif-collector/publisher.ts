@@ -29,6 +29,7 @@ const BUCKET = "photos";
 const STORAGE_FOLDER = "gif-collector";
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_MEDIA_BYTES = 30 * 1024 * 1024;
+const FETCH_USER_AGENT = "Mozilla/5.0 (compatible; KeubofanGifCollector/1.0; +https://keubo.fan)";
 
 async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
   const controller = new AbortController();
@@ -41,14 +42,43 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Re
 }
 
 async function fetchOgMedia(sourceUrl: string): Promise<OgMedia | null> {
+  const html = await fetchPageHtml(sourceUrl);
+  if (!html) return null;
+
+  const media = extractOgMedia(html);
+  if (media?.type === "video") return media;
+
+  const threadsEmbedUrl = getThreadsEmbedUrl(sourceUrl);
+  if (threadsEmbedUrl) {
+    const embedHtml = await fetchPageHtml(threadsEmbedUrl);
+    const embedMedia = embedHtml ? extractOgMedia(embedHtml) : null;
+    if (embedMedia?.type === "video") return embedMedia;
+  }
+
+  return media;
+}
+
+async function fetchPageHtml(url: string): Promise<string | null> {
   const res = await fetchWithTimeout(sourceUrl, {
     headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; KeubofanGifCollector/1.0; +https://keubo.fan)",
+      "User-Agent": FETCH_USER_AGENT,
     },
   });
   if (!res.ok) return null;
-  const html = await res.text();
-  return extractOgMedia(html);
+  return res.text();
+}
+
+function getThreadsEmbedUrl(sourceUrl: string): string | null {
+  try {
+    const u = new URL(sourceUrl);
+    const host = u.hostname.toLowerCase();
+    if (!host.endsWith("threads.com") && !host.endsWith("threads.net")) return null;
+    const pathname = u.pathname.replace(/\/+$/, "");
+    if (!/^\/@[^/]+\/post\/[^/]+$/i.test(pathname)) return null;
+    return `${u.origin}${pathname}/embed`;
+  } catch {
+    return null;
+  }
 }
 
 async function downloadMedia(
@@ -57,7 +87,7 @@ async function downloadMedia(
 ): Promise<{ buf: Buffer; contentType: string; ext: string } | null> {
   const res = await fetchWithTimeout(mediaUrl, {
     headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; KeubofanGifCollector/1.0; +https://keubo.fan)",
+      "User-Agent": FETCH_USER_AGENT,
       Referer: refererOrigin,
     },
   });
