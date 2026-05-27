@@ -4,7 +4,10 @@
  * Usage: npx tsx scripts/qa/gif-collector-inbox-resolver-smoke.ts
  */
 
-import { resolveInboxFromInput } from "@/lib/gif-collector/inbox-resolver";
+import {
+  resolveInboxFromInput,
+  resolveInboxTeamOnly,
+} from "@/lib/gif-collector/inbox-resolver";
 
 type Case = {
   name: string;
@@ -12,6 +15,14 @@ type Case = {
   player: string;
   expect:
     | { ok: true; kboId: string; teamId: number }
+    | { ok: false; errorIncludes?: string };
+};
+
+type TeamOnlyCase = {
+  name: string;
+  team: string;
+  expect:
+    | { ok: true; teamId: number; teamSlug: string; teamShortName: string }
     | { ok: false; errorIncludes?: string };
 };
 
@@ -98,6 +109,74 @@ for (const c of cases) {
       continue;
     }
     console.log(`✓ ${c.name}`);
+    pass++;
+  }
+}
+
+// ---- resolveInboxTeamOnly ----
+const teamOnlyCases: TeamOnlyCase[] = [
+  {
+    name: "한화 → teamId=9 / slug=hanwha",
+    team: "한화",
+    expect: { ok: true, teamId: 9, teamSlug: "hanwha", teamShortName: "한화" },
+  },
+  {
+    name: "이글스 (별칭) → 한화 매핑",
+    team: "이글스",
+    expect: { ok: true, teamId: 9, teamSlug: "hanwha", teamShortName: "한화" },
+  },
+  {
+    name: "LG → teamId=1 / slug=lg",
+    team: "LG",
+    expect: { ok: true, teamId: 1, teamSlug: "lg", teamShortName: "LG" },
+  },
+  {
+    name: "키움히어로즈 (붙여쓰기 별칭) → kiwoom",
+    team: "키움히어로즈",
+    expect: { ok: true, teamId: 10, teamSlug: "kiwoom", teamShortName: "키움" },
+  },
+  {
+    name: "알 수 없는 팀 → 에러",
+    team: "XYZ",
+    expect: { ok: false, errorIncludes: "팀명" },
+  },
+];
+
+for (const c of teamOnlyCases) {
+  const r = resolveInboxTeamOnly(c.team);
+  if (c.expect.ok) {
+    if (!r.ok) {
+      console.log(`✗ [team-only] ${c.name} — expected ok, got error: ${r.error}`);
+      fail++;
+      continue;
+    }
+    if (
+      r.value.teamId !== c.expect.teamId ||
+      r.value.teamSlug !== c.expect.teamSlug ||
+      r.value.teamShortName !== c.expect.teamShortName
+    ) {
+      console.log(
+        `✗ [team-only] ${c.name} — expected ${JSON.stringify(c.expect)}, got ${JSON.stringify(r.value)}`,
+      );
+      fail++;
+      continue;
+    }
+    console.log(`✓ [team-only] ${c.name}`);
+    pass++;
+  } else {
+    if (r.ok) {
+      console.log(`✗ [team-only] ${c.name} — expected error, got ok`);
+      fail++;
+      continue;
+    }
+    if (c.expect.errorIncludes && !r.error.includes(c.expect.errorIncludes)) {
+      console.log(
+        `✗ [team-only] ${c.name} — error '${r.error}' lacks '${c.expect.errorIncludes}'`,
+      );
+      fail++;
+      continue;
+    }
+    console.log(`✓ [team-only] ${c.name}`);
     pass++;
   }
 }
