@@ -52,7 +52,9 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
 
   if (!enabled || !data || data.empty) return null;
 
-  const { lines, highlights } = data;
+  const { lines, highlights, context } = data;
+  const batterName = context.batterName;
+  const pitcherName = context.pitcherName;
   const hasNoHitter = !!highlights.noHitter;
   const hasVsHand = !!lines.vsHand;
   const hasBasesLoaded = !!lines.basesLoaded;
@@ -78,7 +80,7 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
           {hasBasesLoaded && (
             <LineRow key="basesLoaded">
               <Badge>만루</Badge>
-              <LabelText>만루 타율</LabelText>
+              <LabelText>{labelWithName(batterName, "만루 타율")}</LabelText>
               <SplitValue row={lines.basesLoaded!.value.row} />
             </LineRow>
           )}
@@ -86,11 +88,11 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
           {hasRisp && (
             <LineRow key="risp">
               <Badge>RISP</Badge>
-              <LabelText>득점권 타율</LabelText>
+              <LabelText>{labelWithName(batterName, "득점권 타율")}</LabelText>
               <ValueText>
                 {lines.risp!.value.AVG}
                 <small className="ml-1 text-text-tertiary font-normal text-[11px]">
-                  AB {lines.risp!.value.AB}
+                  {lines.risp!.value.AB}타수
                 </small>
               </ValueText>
             </LineRow>
@@ -99,7 +101,7 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
           {hasTwoOuts && (
             <LineRow key="twoOuts">
               <Badge>2OUT</Badge>
-              <LabelText>2아웃 타율</LabelText>
+              <LabelText>{labelWithName(batterName, "2아웃 타율")}</LabelText>
               <SplitValue row={lines.twoOuts!.value.row} />
             </LineRow>
           )}
@@ -107,7 +109,7 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
           {hasPhBA && (
             <LineRow key="phBA">
               <Badge>PH-BA</Badge>
-              <LabelText>대타 타율</LabelText>
+              <LabelText>{labelWithName(batterName, "대타 타율")}</LabelText>
               <ValueText>{lines.phBA!.value.AVG}</ValueText>
             </LineRow>
           )}
@@ -116,7 +118,10 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
             <LineRow key="vsHand">
               <Badge>{lines.vsHand!.value.opponentSide === "left" ? "vs L" : "vs R"}</Badge>
               <LabelText>
-                {lines.vsHand!.value.opponentSide === "left" ? "좌타" : "우타"} 피안타율
+                {labelWithName(
+                  pitcherName,
+                  `${lines.vsHand!.value.opponentSide === "left" ? "좌타" : "우타"} 피안타율`,
+                )}
               </LabelText>
               <SplitValue row={lines.vsHand!.value.row} />
             </LineRow>
@@ -125,6 +130,10 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
       </div>
     </div>
   );
+}
+
+function labelWithName(name: string | null | undefined, label: string): string {
+  return name ? `${name} ${label}` : label;
 }
 
 function LineRow({

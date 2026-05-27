@@ -140,6 +140,8 @@ export interface GameContext {
   bases: { first: boolean; second: boolean; third: boolean };
   batterKboId: string | null;
   pitcherKboId: string | null;
+  batterName: string | null;
+  pitcherName: string | null;
   batterIsPinch: boolean;
 }
 
