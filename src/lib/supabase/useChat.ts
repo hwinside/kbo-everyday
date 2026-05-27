@@ -154,25 +154,33 @@ export function useChat(roomId: string) {
       );
     };
 
-    // 누락된 신규 메시지 채우기. 마지막으로 본 created_at 이후 INSERT 100건까지.
-    // 채널이 dead였던 동안 들어온 메시지 + 재구독 직전 race 메시지 모두 흡수.
+    // 누락된 신규 메시지 채우기.
+    // - cursor 있음(정상): 마지막으로 본 created_at 이후 INSERT 100건까지 (asc).
+    // - cursor 없음(fallback): 빈/조용한 방에서 초기 load 후 한 건도 없던 상태.
+    //   realtime이 dead였던 동안 들어온 첫 메시지를 못 받을 수 있어 최신
+    //   PAGE_SIZE건을 강제 fetch (desc → asc 변환). 어느 경로든 id dedupe로 중복 흡수.
     const backfill = async () => {
       const cursor = latestCreatedAtRef.current;
-      if (!cursor) return;
-      const { data, error } = await supabase
+      let query = supabase
         .from("chat_messages")
         .select("*, profiles!user_id(nickname, team_id, grade)")
-        .eq("room_id", roomId)
-        .gt("created_at", cursor)
-        .order("created_at", { ascending: true })
-        .limit(100);
+        .eq("room_id", roomId);
+      if (cursor) {
+        query = query.gt("created_at", cursor).order("created_at", { ascending: true }).limit(100);
+      } else {
+        query = query.order("created_at", { ascending: false }).limit(PAGE_SIZE);
+      }
+      const { data, error } = await query;
       if (cancelled) return;
       if (error) {
         console.error("[useChat] backfill error:", error.message);
         return;
       }
       if (!data || data.length === 0) return;
-      const fresh = (data as ChatRow[]).map(mapRow);
+      // cursor 없는 경로는 desc로 받았으므로 asc로 뒤집어 통일.
+      const rows = cursor ? (data as ChatRow[]) : (data as ChatRow[]).slice().reverse();
+      const fresh = rows.map(mapRow);
+      const reachedEnd = !cursor && data.length < PAGE_SIZE;
       setMessages((prev) => {
         const existing = new Set(prev.map((m) => m.id));
         const added = fresh.filter((m) => !existing.has(m.id));
@@ -181,8 +189,13 @@ export function useChat(roomId: string) {
         if (lastAt && (!latestCreatedAtRef.current || lastAt > latestCreatedAtRef.current)) {
           latestCreatedAtRef.current = lastAt;
         }
+        const firstAt = added[0].created_at;
+        if (firstAt && (!oldestCursorRef.current || firstAt < oldestCursorRef.current)) {
+          oldestCursorRef.current = firstAt;
+        }
         return [...prev, ...added];
       });
+      if (reachedEnd) setHasMore(false);
     };
 
     const subscribe = () => {
