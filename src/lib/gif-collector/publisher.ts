@@ -22,6 +22,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { extractMediaList, inferMediaExt, type OgMedia } from "./og-media";
 import playersRoster from "@/lib/constants/players-roster.json";
 import type { RosterPlayer } from "@/types/api";
+import { getTeamBySlug } from "@/lib/constants/teams";
 
 const ROSTER = playersRoster as RosterPlayer[];
 
@@ -222,10 +223,15 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
 
   // 작성자 팀 스냅샷: 매칭된 선수의 team_id를 기록.
   // 봇 profile.team_id가 다른 매칭 글로 추후 바뀌더라도 이 글의 작성자 팀 배지는 유지.
-  const matchedPlayer = row.matched_kbo_id
-    ? ROSTER.find((p) => p.kboId === row.matched_kbo_id)
-    : undefined;
-  const authorTeamIdSnapshot = matchedPlayer ? Number(matchedPlayer.teamId) : null;
+  // team-only 경로 (matched_kbo_id=null + board_type='team')는 slug → team.id 변환.
+  let authorTeamIdSnapshot: number | null = null;
+  if (row.matched_kbo_id) {
+    const matchedPlayer = ROSTER.find((p) => p.kboId === row.matched_kbo_id);
+    authorTeamIdSnapshot = matchedPlayer ? Number(matchedPlayer.teamId) : null;
+  } else if (row.matched_board_type === "team") {
+    const team = getTeamBySlug(row.matched_board_id);
+    authorTeamIdSnapshot = team?.id ?? null;
+  }
 
   // content_type='photo' 고정 — 선수 사진탭/전체 사진탭이 'photo' 필터링하기 때문.
   // 미디어는 og.type에 따라 video_urls / image_urls 두 배열로 분기 (둘 다 비어있지 않다면 모두 채움).

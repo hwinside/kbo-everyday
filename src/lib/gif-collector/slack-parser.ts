@@ -5,15 +5,17 @@
  *
  *   1) 키-값 형식 (삼순이 권고, 명시적):
  *      팀: LG
- *      선수: 오스틴
+ *      선수: 오스틴            (선택 — 생략 시 팀 사진 게시판으로 라우팅)
  *      링크: https://...
  *      본문: 시즌 첫 그랜드슬램.
  *      진짜 미쳤다.
  *
  *   2) 멀티라인 형식 (운영자 합의, 빠른 입력):
  *      <URL>
- *      팀 선수
+ *      팀 [선수]                (둘째 토큰 생략 시 팀 사진 게시판으로 라우팅)
  *      본문 (선택, 1줄 이상 자유)
+ *
+ * playerName이 빈 문자열이면 caller가 "팀 사진 게시판" 라우팅으로 분기한다.
  *
  * 본문은 *원본 그대로 보존* — 빈 줄과 앞뒤 공백을 죽이지 않는다 (게시판 콘텐츠가
  * 그대로 노출됨).
@@ -88,10 +90,9 @@ function tryKvParse(text: string): ParseResult | null {
   // 키-값 신호가 전혀 없으면 멀티라인 모드로 fallback
   if (!meta.team && !meta.player && !meta.url && bodyStartIdx === -1) return null;
 
-  // 일부만 있으면 무엇이 빠졌는지 알려준다
+  // 선수는 선택 — 빠지면 팀 사진 게시판 경로로 라우팅됨.
   const missing: string[] = [];
   if (!meta.team) missing.push("팀");
-  if (!meta.player) missing.push("선수");
   if (!meta.url) missing.push("링크");
   if (missing.length > 0) {
     return { ok: false, error: `키-값 형식 누락: ${missing.join(", ")}` };
@@ -102,7 +103,7 @@ function tryKvParse(text: string): ParseResult | null {
     value: {
       url: meta.url!,
       teamName: meta.team!,
-      playerName: meta.player!,
+      playerName: meta.player ?? "",
       body: meta.body ?? "",
     },
   };
@@ -127,7 +128,7 @@ function tryMultilineParse(text: string): ParseResult {
     return {
       ok: false,
       error:
-        "최소 2줄 필요. 형식: 1줄 URL, 2줄 '팀 선수', 3줄부터 본문(선택). 또는 키-값(`팀:`, `선수:`, `링크:`, `본문:`).",
+        "최소 2줄 필요. 형식: 1줄 URL, 2줄 '팀 [선수]', 3줄부터 본문(선택). 또는 키-값(`팀:`, `선수:` (선택), `링크:`, `본문:`).",
     };
   }
 
@@ -135,12 +136,8 @@ function tryMultilineParse(text: string): ParseResult {
   if (!url) return { ok: false, error: "첫 의미 있는 줄에서 URL 인식 실패." };
 
   const metaTokens = lines[metaLineIdx].trim().split(/\s+/);
-  if (metaTokens.length < 2) {
-    return {
-      ok: false,
-      error: "둘째 의미 있는 줄 형식: '팀 선수' (공백 구분). 예: 'LG 오스틴'",
-    };
-  }
+  // 1토큰 = 팀명만 → 팀 사진 게시판 경로 (playerName="")
+  // 2토큰+ = 팀 + 선수 → 선수 사진 게시판 경로
   const [teamName, ...playerParts] = metaTokens;
   const playerName = playerParts.join(" ");
 

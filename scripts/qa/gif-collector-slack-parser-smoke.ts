@@ -45,9 +45,22 @@ const cases: Case[] = [
     },
   },
   {
-    name: "키-값 부분 누락 (선수 없음) → 친절 에러",
-    text: "팀: LG\n링크: https://example.com",
-    expect: { ok: false, errorIncludes: "선수" },
+    name: "키-값 팀-only (선수 없음) → playerName='' 허용",
+    text: "팀: 한화\n링크: https://example.com/gif\n본문: 한화 팀 사진 모음",
+    expect: {
+      ok: true,
+      value: {
+        url: "https://example.com/gif",
+        teamName: "한화",
+        playerName: "",
+        body: "한화 팀 사진 모음",
+      },
+    },
+  },
+  {
+    name: "키-값 부분 누락 (팀 없음) → 친절 에러",
+    text: "선수: 오스틴\n링크: https://example.com",
+    expect: { ok: false, errorIncludes: "팀" },
   },
   {
     name: "멀티라인 fallback: URL + 팀 선수 + 본문",
@@ -133,9 +146,25 @@ const cases: Case[] = [
     expect: { ok: false, errorIncludes: "URL 인식 실패" },
   },
   {
-    name: "둘째 줄 토큰 1개 (팀만, 선수 없음) → 에러",
+    name: "멀티라인 팀-only (둘째 줄 1단어) → playerName='' 허용",
+    text: "https://example.com/gif\n한화\n한화 팀 사진 모음",
+    expect: {
+      ok: true,
+      value: {
+        url: "https://example.com/gif",
+        teamName: "한화",
+        playerName: "",
+        body: "한화 팀 사진 모음",
+      },
+    },
+  },
+  {
+    name: "멀티라인 팀-only 본문 없음 (2줄, OK)",
     text: "https://example.com/gif\nLG",
-    expect: { ok: false, errorIncludes: "팀 선수" },
+    expect: {
+      ok: true,
+      value: { url: "https://example.com/gif", teamName: "LG", playerName: "", body: "" },
+    },
   },
 ];
 

@@ -17,7 +17,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { parseInboxMessage } from "@/lib/gif-collector/slack-parser";
-import { resolveInboxFromInput } from "@/lib/gif-collector/inbox-resolver";
+import {
+  resolveInboxFromInput,
+  resolveInboxTeamOnly,
+} from "@/lib/gif-collector/inbox-resolver";
 import { publishQueueItem } from "@/lib/gif-collector/publisher";
 
 export const runtime = "nodejs";
@@ -116,13 +119,42 @@ async function processMessage(evt: SlackMessageEvent): Promise<void> {
   }
 
   const { url, teamName, playerName, body } = parsed.value;
-  const resolved = resolveInboxFromInput(teamName, playerName);
-  if (!resolved.ok) {
-    await reactAndReply(evt.channel, evt.ts, "x", resolved.error);
-    return;
-  }
 
-  const { teamId, kboId, playerCanonicalName } = resolved.value;
+  // playerName === ""  → 팀 사진 게시판 (board_type='team', board_id=teamSlug)
+  // playerName 존재    → 선수 사진 게시판 (board_type='player', board_id=kboId)
+  let matchedKboId: string | null;
+  let matchedBoardType: "player" | "team";
+  let matchedBoardId: string;
+  let displayName: string; // 슬랙 reply에 표시될 라벨 (선수 canonical or 팀 short name)
+  let titleFallback: string;
+  let teamIdForLog: number;
+  if (playerName === "") {
+    const resolvedTeam = resolveInboxTeamOnly(teamName);
+    if (!resolvedTeam.ok) {
+      await reactAndReply(evt.channel, evt.ts, "x", resolvedTeam.error);
+      return;
+    }
+    const v = resolvedTeam.value;
+    matchedKboId = null;
+    matchedBoardType = "team";
+    matchedBoardId = v.teamSlug;
+    displayName = `${v.teamShortName} 팀 사진 게시판`;
+    titleFallback = `${v.teamShortName} 사진`;
+    teamIdForLog = v.teamId;
+  } else {
+    const resolved = resolveInboxFromInput(teamName, playerName);
+    if (!resolved.ok) {
+      await reactAndReply(evt.channel, evt.ts, "x", resolved.error);
+      return;
+    }
+    const v = resolved.value;
+    matchedKboId = v.kboId;
+    matchedBoardType = "player";
+    matchedBoardId = v.kboId;
+    displayName = v.playerCanonicalName;
+    titleFallback = `${teamName} ${playerName}`;
+    teamIdForLog = v.teamId;
+  }
 
   const { data: inserted, error } = await supabaseAdmin
     .from("gif_collector_queue")
@@ -131,13 +163,13 @@ async function processMessage(evt: SlackMessageEvent): Promise<void> {
       external_post_id: evt.ts,
       source_url: url,
       source_author: evt.user ?? null,
-      source_title: (body.split("\n").find((l) => l.trim().length > 0) ?? "") || `${teamName} ${playerName}`,
+      source_title: (body.split("\n").find((l) => l.trim().length > 0) ?? "") || titleFallback,
       source_content: body,
       source_tags: [teamName],
       original_media_urls: [],
-      matched_kbo_id: kboId,
-      matched_board_type: "player",
-      matched_board_id: kboId,
+      matched_kbo_id: matchedKboId,
+      matched_board_type: matchedBoardType,
+      matched_board_id: matchedBoardId,
       match_confidence: 1.0,
       match_status: "pending",
     })
@@ -167,12 +199,17 @@ async function processMessage(evt: SlackMessageEvent): Promise<void> {
       ? `\n부분실패: ${pub.mediaErrors.join("; ")}`
       : "";
 
+  const matchLabel =
+    matchedBoardType === "player"
+      ? `kboId=${matchedKboId}, teamId=${teamIdForLog}`
+      : `board=team:${matchedBoardId}, teamId=${teamIdForLog}`;
+
   if (pub.ok) {
     await reactAndReply(
       evt.channel,
       evt.ts,
       partialMediaNote ? "warning" : "white_check_mark",
-      `게시 완료 — *${playerCanonicalName}* (kboId=${kboId}, teamId=${teamId})${partialMediaNote}. posts.id=${pub.postId}${mediaErrorsNote}`,
+      `게시 완료 — *${displayName}* (${matchLabel})${partialMediaNote}. posts.id=${pub.postId}${mediaErrorsNote}`,
     );
     return;
   }
@@ -183,7 +220,7 @@ async function processMessage(evt: SlackMessageEvent): Promise<void> {
       evt.channel,
       evt.ts,
       "warning",
-      `posts.id=${pub.postId}은 생성됐지만 큐 상태 동기화 실패. *${playerCanonicalName}*${partialMediaNote} / 큐 id=${inserted.id}. 운영자가 gif_collector_queue.match_status를 직접 'auto_posted'로 정리해야 합니다.\n에러: ${pub.error}${mediaErrorsNote}`,
+      `posts.id=${pub.postId}은 생성됐지만 큐 상태 동기화 실패. *${displayName}*${partialMediaNote} / 큐 id=${inserted.id}. 운영자가 gif_collector_queue.match_status를 직접 'auto_posted'로 정리해야 합니다.\n에러: ${pub.error}${mediaErrorsNote}`,
     );
     return;
   }
@@ -192,7 +229,7 @@ async function processMessage(evt: SlackMessageEvent): Promise<void> {
     evt.channel,
     evt.ts,
     "x",
-    `발행 실패: ${pub.error}\n*${playerCanonicalName}* (kboId=${kboId}). 큐 id=${inserted.id} (status=rejected).`,
+    `발행 실패: ${pub.error}\n*${displayName}* (${matchLabel}). 큐 id=${inserted.id} (status=rejected).`,
   );
 }
 

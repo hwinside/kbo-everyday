@@ -3,10 +3,14 @@
  *
  * team: team-tag-map.ALIAS_MAP으로 별칭 정규화 → team_id.
  * player: resolvePlayer({ name, teamId })로 검증 — 외국인 alpha/numeric 변환 자동.
+ *
+ * 팀명만 입력된 경우(playerInput="")는 resolveInboxTeamOnly로 분기 — 팀 사진
+ * 게시판 게시 경로용 {teamId, teamSlug, teamShortName} 반환.
  */
 
 import { ALIAS_MAP, normalizeTag } from "./team-tag-map";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
+import { getTeamById } from "@/lib/constants/teams";
 
 export interface ResolvedInbox {
   teamId: number;
@@ -16,6 +20,16 @@ export interface ResolvedInbox {
 
 export type ResolveInboxResult =
   | { ok: true; value: ResolvedInbox }
+  | { ok: false; error: string };
+
+export interface ResolvedInboxTeamOnly {
+  teamId: number;
+  teamSlug: string;
+  teamShortName: string;
+}
+
+export type ResolveInboxTeamOnlyResult =
+  | { ok: true; value: ResolvedInboxTeamOnly }
   | { ok: false; error: string };
 
 const TEAM_ALIASES =
@@ -48,5 +62,27 @@ export function resolveInboxFromInput(
       kboId: resolved.kboId,
       playerCanonicalName: resolved.name,
     },
+  };
+}
+
+export function resolveInboxTeamOnly(teamInput: string): ResolveInboxTeamOnlyResult {
+  const teamId = ALIAS_MAP[normalizeTag(teamInput)];
+  if (!teamId) {
+    return {
+      ok: false,
+      error: `팀명 '${teamInput}' 인식 실패. 지원 별칭: ${TEAM_ALIASES}`,
+    };
+  }
+  const team = getTeamById(teamId);
+  if (!team) {
+    // ALIAS_MAP과 TEAMS가 어긋난 경우 — 운영자 알림용 fail-closed.
+    return {
+      ok: false,
+      error: `팀 id=${teamId} ('${teamInput}')의 slug 매핑이 TEAMS 상수에 없습니다.`,
+    };
+  }
+  return {
+    ok: true,
+    value: { teamId, teamSlug: team.slug, teamShortName: team.shortName },
   };
 }
