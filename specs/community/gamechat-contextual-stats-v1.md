@@ -3,13 +3,13 @@
 - **등록일**: 2026-05-26
 - **상태**: 스펙 초안 (Phase 1 항목 확정 전, 삼순이 리뷰 대기)
 - **출처**: 하린아빠 — "문자중계와 채팅 사이에 박스 하나, 해당 타석 관련 흥미 스탯을 최대한, 단 오류 가능성은 철저히 배제" (#product 스레드 `1779791186.377619`)
-- **PR 시리즈**: PR1 데이터 어댑터(가드 포함) → PR2 UI 박스(살림 5라인 컨텍스트 통과만 mount) → PR3 트리거 라인(노히터 진행 등) → PR4 재집계(최근 10경기, H2H 등 Phase 2 진입 시)
+- **PR 시리즈**: PR1 데이터 어댑터(가드 포함) → PR2 UI 박스(평시 5라인 + 트리거 7종 + C-T/C-R 파서) → PR3 시즌 마일스톤·사이클링 잔여 트리거 + 동시 발동 우선순위 회귀 → PR4 재집계(최근 10경기, H2H 등 Phase 2 진입 시)
 
 > 🔒 **머지 게이트 (오류 배제 원칙)**
 > 1. `kboId` 단독키. name 매핑 실패 → 그 행만 숨김(박스 전체 X)
 > 2. 응답 stale > 60s → "갱신중" 표시. 옛 값 노출 금지
 > 3. 재집계 표본 N < 임계 → 항목 숨김 ("1/2 .500" 노이즈 차단)
-> 4. 마일스톤 = boxscore 확정 시점에만 트리거. 진행 중 추정값 금지
+> 4. 마일스톤 = boxscore 확정 시점에만 트리거. 진행 중 추정값 금지. *예외*: 통산/시즌 *누적값이 확정*되어 있고 *+1 결과가 명확한 경우*에 한해 가정형 예측 문구 허용 (예: `이번 안타 시 통산 2500안타`). 누적값 stale > 1h거나 +1 결과 정의 모호 시 금지
 > 5. 시즌 값 KBO HTML vs 네이버 record cross-check, |diff| > 0.005 시 숨김 + 모니터링 로그
 > 6. 데이터 출처 API down → 박스 전체 숨김 (skeleton 노출 X)
 > 7. fail-closed: 한 항목 검증 실패 = 그 항목만 숨김, 박스는 살아남음
@@ -42,8 +42,11 @@
 | B | 네이버 `schedule/games/{id}/record` | 박스스코어 단위 | pitcher/batter 박스스코어 (이름·playerId 포함, IP/H/R/ER/BB/K/HR 정확) |
 | C | KBO `HitterDetail/PitcherDetail/Basic.aspx` HTML | 1시간 캐시 | 시즌 풀 스탯 (OPS/OBP/SLG/RISP/PH-BA/WHIP/QS 등). `/api/player-stats` 기 구축 |
 | C-S | KBO `HitterDetail/PitcherDetail/Situation.aspx` HTML | 1시간 캐시 | *Split 스탯* — 주자상황별/카운트별/이닝별/타순별/좌우별/아웃카운트별. 신규 어댑터 필요 |
+| C-T | KBO `HitterDetail/PitcherDetail/Total.aspx` HTML | 1시간 캐시 | *통산 누적* 풀스탯 (H/HR/RBI/R/SB/2B/3B / W/K/SV/HLD/IP 등). 통산 마일스톤용. PR2 코드 단계에 신규 파서 추가 |
+| C-R | KBO 시즌 랭킹 (도루 부문) | 1시간 캐시 | 도루 1위 카운트. 도루 임박 트리거의 *1위 탈환 게이트*용. stale > 1h fail-closed |
 | D | KBO `GetKboGameList` | ~15s 폴링 | 실시간 BSO 카운트, 주자 점유, 현재 투수/타자 |
 | E | Supabase `game_event_state.event_history` | 폴링 누적 | 타석/주자/이닝 단위 누적 이벤트 (5/9 cumulative semantic key 적용 이후 신뢰) |
+| F | 네이버 record `batter[]/pitcher[]` runner sub flag | 박스스코어 단위 | 대주자(pinch runner) 교체 이벤트 식별. 도루 임박 트리거의 *대주자 케이스*용 (kboId 기반) |
 
 > 외부 API는 전부 비공식 — `Referer: koreabaseball.com` 필수, User-Agent 명시 (5/20 referer drift 사고 [[postmortem-2026-05-20-kbo-api-referer-drift]]).
 
@@ -60,8 +63,14 @@
 | *2아웃 AVG* | C-S Table 5 *2아웃 행만* | 현재 *2아웃*일 때만 노출 (§5-6). 0/1아웃 행은 평시 미사용 |
 | 이번 경기 타석 시퀀스 (1타석 1루타, 2타석 삼진…) | A | inning relay에서 batterName 매칭 |
 | 사이클링 임박 (3루타/홈런만 남음 등) | A | 시퀀스에서 1B/2B/3B/HR 체크 |
-| 노히트/퍼펙트 진행 | B | 투수 박스 H=0, BB=0 추적. *7회 이후에만 노출* (§5-5) |
+| 노히트 진행 | B | 수비 팀 합산 H=0 추적. *7회 이후에만 노출* (§5-5) |
 | 시즌 마일스톤 임박 (100타점 · 30HR · 100K · 200K 등) | C | 잔여 N 표시, 확정 시점에만 |
+| *전타석 안타 진행* | B | `AB ≥ 2 AND H == AB` → 다음 타석 진입 시 mount, 아웃 시 unmount. 표기 `🔥 전타석 안타 기록중! · 오늘 N타수 N안타` (§5-5) |
+| *전타석 출루 진행* | B | `PA ≥ 2 AND (H+BB+HBP) == PA` → 자동 연속 가드. 전타석 안타 발동 시 suppress. 표기 `🔥 전타석 출루 기록중! · 오늘 N/N (H n · BB n)` (§5-5) |
+| *개인 다타점* | B | 오늘 `RBI ≥ 3` 달성 후 다음 타석부터 mount, 경기 종료까지 유지. 표기 `💥 오늘 N타점 진행!` (§5-5) |
+| *연속 무사사구 K* | A | 투수 등판 후 연속 K ≥ 5 (사이 H/BB/HBP/inplay out 0), K 외 결과 발생 시 unmount. 표기 `🔥 N연속 탈삼진!` (§5-5) |
+| *도루 임박* (라운드 + 1위 탈환) | C(SB) + C-R + F | *출루 직후*만 mount (자력 + 대주자, kboId 매핑). 라운드(9→10·19→20·29→30·39→40) OR 1위 탈환 (현재 N+1 == 리그 1위 N) 게이트. 1위 탈환 우선. 표기 `🦶 시즌 N도루 임박!` / `🦶 도루 1위 탈환 가시권!` (§5-5) |
+| *통산 마일스톤 임박* | C-T + B | 통산 누적 + 오늘 실시간 합산. 임계: H/K/RBI/R/SB/IP=100단위 직전, HR/W/SV/HLD/2B/3B=50단위 직전. *예측형*(타자 안타/홈런/타점·투수 K)은 타석 진입 시 mount, *결과형*(도루)은 출루 직후. 표기 `🎯 이번 안타 시 통산 N달성!` (§5-5) |
 
 ### 4-2. 🟡 재집계 가능 (Phase 2)
 
@@ -114,13 +123,30 @@
   - 최근 10경기 hot/cold: 실제 출장 10경기 채워진 경우만
   - 임박 마일스톤: 잔여 ≤ 5 (안 채워지면 라인 자체 미노출)
 
-### 5-5. 마일스톤 트리거 시점
+### 5-5. 마일스톤·트리거 시점
 
+#### 결과 확정형 (boxscore 확정 후)
 - *boxscore가 확정 갱신된 직후*에만 트리거 (홈런/3루타 등 이벤트 type이 확정으로 push 된 이후).
 - 진행 중 추정 ("이번 타석 홈런이면 30HR 도달") 노출 금지 — 사실 확정 후에만 표시.
 - 사이클링/노히터처럼 "임박" 자체가 핵심인 항목은 *조건 만족 직후*에 표시 (예: 2루타·3루타·홈런 완료 후 1루타만 남으면 표시).
 - **노히터는 7회 이후 + *팀 합산 H=0* 시만 노출** — 경기 초반은 흔하고 진폭 잃음 + 야구 관습. *현재 투수 개인 H가 아니라 수비 팀 전체 pitcher rows의 H 합산*을 봐야 구원투수 false positive 방지
 - **퍼펙트 게임은 v1 비포함** — KBO BoxScore에 HBP/실책출루 명시 컬럼이 없어 BF cross-check 단일 신호로는 회귀 위험 잔존 (말 공격 BF 계산 오산 등). 보수적으로 v1에서는 *노히터까지만*. 직접 HBP/실책 데이터 확보 후 v2 검토
+
+#### 진행 상태형 (게임 라이브 이벤트 직후)
+- **전타석 안타**: 매 타석 결과 push 후 `AB ≥ 2 AND H == AB` 재계산. 다음 타석 진입 시 mount. 아웃(K/inplay out/병살/희생타) 발생 즉시 unmount.
+- **전타석 출루**: 동일 패턴, `PA ≥ 2 AND (H+BB+HBP) == PA`. 수식 자체가 모든 PA에서 출루를 요구하므로 *중간 아웃 1번이라도 발생 시 자동 무효* (별도 연속 가드 불요). 전타석 안타 발동 시 suppress (강한 서사가 약한 서사 흡수).
+- **개인 다타점**: 오늘 RBI ≥ 3 갱신 시 mount. 경기 종료까지 유지. 추가 RBI 갱신 시 숫자 swap.
+- **연속 무사사구 K**: 매 K 후 trailing run 누적. 5K 이상이면 mount. K 외 결과(H/BB/HBP/inplay out) 발생 시 unmount + run 리셋.
+- **도루 임박**: 트리거 시점은 *주자가 베이스에 진입한 순간*만. (a) 자력 출루(H/BB/HBP) push 시 또는 (b) BoxScore runner sub event(대주자 교체) push 시 — kboId 기반 매핑. 시즌 SB(C) + 도루 랭킹(C-R) 조회 → 라운드 OR 1위 탈환 게이트 평가. 게이트 통과 시만 mount. 도루 성공/실패/주자 진루 종료/이닝 종료 시 unmount.
+- **통산 마일스톤 임박**:
+  - C-T(Total.aspx) 통산 + 오늘 실시간(B) 합산 → 라운드 임계 직전(잔여 ≤ 1)이면 트리거 후보.
+  - *예측형* (타자 안타/홈런/타점 · 투수 K): 해당 결과 직전 타석 진입 시 mount. "이번 N 시 통산 X 달성" 표기. 결과(안타/아웃/이닝 종료) 발생 즉시 unmount.
+  - *결과형* (도루): 도루 트리거와 동일하게 출루 직후 mount.
+  - 결과형 즉시 결정 가능한 경우(투수 K 누적 등) 매 이벤트 후 갱신.
+
+#### 데이터 staleness
+- 트리거 라인의 라이브 카운트(전타석/연속K/RBI)는 staleness 적용 X — 박스 단위 60s 가드에 종속.
+- 통산 마일스톤은 Total.aspx 1h 캐시 + 도루 1위 카운트도 1h 캐시. stale > 1h → 트리거 자체 fail-closed.
 
 ### 5-6. 컨텍스트 게이트 (값 자체는 있지만 *상황에 맞을 때만* 노출)
 
@@ -134,17 +160,26 @@
 
 ### 5-7. fail-closed
 
-- 컴포넌트 트리:
+- 컴포넌트 트리 (트리거 라인 → 평시 라인 순):
   ```
   <ContextStatsBox>
-    ├ <NoHitterLine />     // 7회 이후 + 팀 합산 H=0
-    ├ <VsHandLine />       // 매치업 상대 손잡이 행만
-    ├ <BasesLoadedLine />  // 만루 상황
-    ├ <RispLine />         // 2/3루 점유 (Situation 합산)
-    ├ <TwoOutsLine />      // outs=2
-    └ <PhBaLine />         // 대타 첫 타석
+    ├ <NoHitterLine />                  // 7회 이후 + 팀 합산 H=0
+    ├ <AllAtBatsHitLine />              // AB≥2 AND H==AB
+    ├ <AllAtBatsOnBaseLine />           // PA≥2 AND H+BB+HBP==PA (안타 라인 발동 시 suppress)
+    ├ <StolenBaseImminentLine />        // 출루 직후 + 라운드 OR 1위 탈환
+    ├ <MultiRBILine />                  // 오늘 RBI≥3
+    ├ <ConsecutiveKLine />              // 연속 K≥5
+    ├ <CareerMilestoneLine />           // 통산 + 오늘 합산이 라운드 직전
+    ├ <SeasonMilestoneLine />           // 시즌 마일스톤 임박
+    ├ <CycleHitImminentLine />          // 사이클링 임박
+    ├ <VsHandLine />                    // 매치업 상대 손잡이 행만
+    ├ <BasesLoadedLine />               // 만루 상황
+    ├ <RispLine />                      // 2/3루 점유
+    ├ <TwoOutsLine />                   // outs=2
+    └ <PhBaLine />                      // 대타 첫 타석
   </ContextStatsBox>
   ```
+- 트리거 라인은 동시 발동 시 위에서 아래로 최대 3줄 노출 (스크롤 X). 트리거 라인 노출 후 잔여 슬롯에 평시 라인 채움.
 - 모든 라인이 null이면 `<ContextStatsBox>` 자체가 `return null`. 빈 박스/skeleton 노출 금지.
 - 출처 API 자체 down(`/api/game-relay` 500 등) = 박스 전체 unmount.
 
@@ -153,8 +188,8 @@
 | PR | 범위 | 게이트 |
 | --- | --- | --- |
 | **PR1** | `/api/contextual-stats?gameId=` 어댑터 — A/B/C/*C-S* 병렬 fetch + §5 가드 적용 + cross-check + split row 매칭 로직 (v1 사용: Table 0 만루행 · Table 4 좌우행 · Table 5 2아웃행 · Basic의 RISP/PH-BA) | unit: 매핑 실패·stale·cross-mismatch·split row 미매칭 각각 null 반환 검증 |
-| **PR2** | `<ContextStatsBox>` UI — 살림 5라인(좌/우·만루·RISP·2아웃·PH-BA) 컨텍스트 게이트 통과한 것만 mount. fail-closed: 0건이면 박스 전체 unmount | Playwright: 박스 mount/unmount 시나리오 (정상·결측·stale·컨텍스트 미일치 0건). 실기기 확인은 자동화 외 |
-| **PR3** | `<HighlightLine>` — 사이클링·노히터·마일스톤 임박 트리거 | 시뮬 트리거 픽스처. 진행 중 추정 노출되지 않는지 회귀 테스트 |
+| **PR2** | `<ContextStatsBox>` UI — 평시 5라인(좌/우·만루·RISP·2아웃·PH-BA) 컨텍스트 게이트 통과한 것만 mount + 트리거 라인 7종(노히터·전타석안타·전타석출루·도루임박·다타점·연속K·통산마일스톤). C-T(Total.aspx)·C-R(도루랭킹) 신규 파서 추가. fail-closed: 0건이면 박스 전체 unmount | Playwright: 박스 mount/unmount 시나리오 (정상·결측·stale·컨텍스트 미일치 0건). 트리거 픽스처(각 7종). 실기기 확인은 자동화 외 |
+| **PR3** | 시즌 마일스톤·사이클링 잔여 트리거 + 트리거 동시 발동 우선순위 회귀 테스트 | 시뮬 트리거 픽스처. 진행 중 추정 노출되지 않는지 회귀 테스트 |
 | **PR4** | 재집계(만루/RISP·좌우 OPS·최근 10경기) — Phase 2 진입 시 분리 스펙 | view/cron 추가, 표본 N 가드 적용 |
 
 > 각 PR은 *독립 push 승인* 필요 ([[feedback_push_every_change]] 룰). 머지 게이트는 자동화 테스트 통과로만 ([[feedback_no_repeated_qa_requests]]).
@@ -173,8 +208,9 @@
 
 ## 9. 비포함 (out of scope, v1)
 
-- 통산 매치업 (수년치) — Phase 3
+- 통산 *매치업* (수년치 H2H) — Phase 3 (통산 *마일스톤*은 v1 포함, C-T 신규 파서로)
 - WPA / 득점기여도 — 별도 모델 학습 필요
 - 카운트별 / 구종별 — 출처 미공개
 - 작년 동일 시점 페이스 — 일자별 시즌 스냅샷 ingest 신규 cron 후 도입
 - 채팅방 별 개인화 (응원팀 기준 강조 등) — UI 확정 후 별 PR
+- 퍼펙트 게임 — HBP/실책 출루 명시 컬럼 미확보, 노히터까지만 (§5-5)
