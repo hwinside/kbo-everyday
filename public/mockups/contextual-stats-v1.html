@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>크관 상황별 맞춤 스탯 박스 — v1 시안</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0A0A0B;
+    --surface-1: #111114;
+    --surface-2: #15151A;
+    --text-1: rgba(255,255,255,0.92);
+    --text-2: rgba(255,255,255,0.72);
+    --text-3: rgba(255,255,255,0.52);
+    --accent: #FF453A;
+    --accent-strong: #E63B31;
+    --accent-weak-bg: rgba(255,69,58,0.14);
+    --accent-weak-border: rgba(255,69,58,0.30);
+    --border: rgba(255,255,255,0.08);
+    --border-strong: rgba(255,255,255,0.12);
+    --warn-bg: rgba(255,184,0,0.12);
+    --warn-border: rgba(255,184,0,0.36);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text-1);
+    font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "SF Pro", sans-serif;
+    font-feature-settings: "tnum" 1; -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1200px; margin: 0 auto; padding: 40px 24px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .subtitle { color: var(--text-3); font-size: 13px; margin: 0 0 32px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 24px; }
+
+  .frame {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 20px; padding: 16px; min-height: 320px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .frame .scenario-label { font-size: 12px; color: var(--text-3); }
+  .frame .scenario-title { font-size: 15px; font-weight: 600; color: var(--text-1); }
+  .frame .scenario-ctx {
+    font-size: 11px; color: var(--text-2);
+    background: rgba(255,255,255,0.04); border-radius: 8px;
+    padding: 8px 10px; font-family: ui-monospace, "SF Mono", monospace;
+    white-space: pre-line;
+  }
+
+  /* faux 문자중계 영역 */
+  .relay {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px;
+    color: var(--text-2); font-size: 13px; line-height: 1.5;
+  }
+
+  /* the actual context-stats box */
+  .ctx-box {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 14px; padding: 4px;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .ctx-box.empty { display: none; }
+
+  .line {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 10px;
+    font-size: 13px; line-height: 1.3;
+  }
+  .line .label {
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--text-2); font-weight: 500; font-size: 12px;
+    flex: 0 0 auto;
+  }
+  .line .badge {
+    display: inline-flex; padding: 2px 6px; border-radius: 6px;
+    background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+    font-size: 10px; color: var(--text-3); font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .line .value {
+    flex: 1; text-align: right;
+    color: var(--text-1); font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .line .value .small {
+    color: var(--text-3); font-weight: 400; font-size: 11px; margin-left: 4px;
+  }
+
+  .line.no-hitter {
+    background: var(--accent-weak-bg);
+    border: 1px solid var(--accent-weak-border);
+  }
+  .line.no-hitter .label { color: var(--accent); font-weight: 700; }
+
+  /* faux 채팅 입력창 */
+  .composer {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 999px; padding: 10px 16px;
+    color: var(--text-3); font-size: 13px;
+  }
+
+  .note {
+    margin-top: 32px; padding: 16px 18px;
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 12px; color: var(--text-2); font-size: 12px;
+    line-height: 1.6;
+  }
+  .note b { color: var(--text-1); }
+  .note ul { margin: 6px 0 0; padding-left: 18px; }
+  .note li { margin-bottom: 4px; }
+
+  .hint {
+    color: var(--text-3); font-size: 11px;
+    padding: 0 2px;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>크관 상황별 맞춤 스탯 박스 — v1 시안</h1>
+  <p class="subtitle">specs/community/gamechat-contextual-stats-v1.md · 컨텍스트 게이트 통과한 라인만 mount · fail-closed</p>
+
+  <div class="grid">
+
+    <!-- ① 평시: 모든 게이트 미일치 → 박스 전체 미노출 -->
+    <div class="frame">
+      <div class="scenario-label">시나리오 ① — 평시 (게이트 미일치)</div>
+      <div class="scenario-title">박스 전체 미노출</div>
+      <div class="scenario-ctx">2회말 0아웃 · 주자 없음
+배터: 김도영 (우타) · 1번 타석
+투수: 곽빈 (우투)
+컨텍스트: vsHand 매칭 없음 (이미 우타자), bases·RISP·2아웃·PH-BA·NoHitter 미충족</div>
+      <div class="relay">📡 2회말 1구... 곽빈 직구 152km/h, 헛스윙 스트라이크.</div>
+      <div class="ctx-box empty"></div>
+      <div class="hint">↑ ctx-box DOM 자체 unmount (skeleton 없음)</div>
+      <div class="composer">메시지 입력…</div>
+    </div>
+
+    <!-- ② vsHand만 매칭 -->
+    <div class="frame">
+      <div class="scenario-label">시나리오 ② — vs 손잡이 매칭만</div>
+      <div class="scenario-title">1줄 노출</div>
+      <div class="scenario-ctx">3회초 1아웃 · 주자 없음
+배터: 홍창기 (좌타) · 시즌 vs 우투 97타석 .284
+투수: 원태인 (우투, 좌타자 상대 .219)</div>
+      <div class="relay">📡 홍창기, 1번 타자 다시 등판. 카운트 1-1.</div>
+      <div class="ctx-box">
+        <div class="line">
+          <span class="label"><span class="badge">vs L</span> 원태인 좌타 피안타율</span>
+          <span class="value">.219 <span class="small">73타수 16안타</span></span>
+        </div>
+      </div>
+      <div class="composer">메시지 입력…</div>
+    </div>
+
+    <!-- ③ 만루 + 2아웃 + vsHand -->
+    <div class="frame">
+      <div class="scenario-label">시나리오 ③ — 클러치 (만루 · 2아웃)</div>
+      <div class="scenario-title">3줄 노출</div>
+      <div class="scenario-ctx">5회말 2아웃 · 만루
+배터: 최정 (우타) · 만루 9타석 / 시즌 vs 우투 178타석
+투수: 후라도 (우투)</div>
+      <div class="relay">📡 만루 2아웃, 최정 등판. 관중석 기립.</div>
+      <div class="ctx-box">
+        <div class="line">
+          <span class="label"><span class="badge">만루</span> 최정 시즌 만루 타율</span>
+          <span class="value">.444 <span class="small">9타수 4안타 (1HR)</span></span>
+        </div>
+        <div class="line">
+          <span class="label"><span class="badge">2OUT</span> 최정 2아웃 타율</span>
+          <span class="value">.281 <span class="small">57타수 16안타</span></span>
+        </div>
+        <div class="line">
+          <span class="label"><span class="badge">vs R</span> 후라도 우타 피안타율</span>
+          <span class="value">.286 <span class="small">108타수 22안타</span></span>
+        </div>
+      </div>
+      <div class="composer">메시지 입력…</div>
+    </div>
+
+    <!-- ④ RISP + vsHand -->
+    <div class="frame">
+      <div class="scenario-label">시나리오 ④ — RISP (2루 점유 · 1아웃)</div>
+      <div class="scenario-title">2줄 노출</div>
+      <div class="scenario-ctx">4회초 1아웃 · 2루 주자
+배터: 김혜성 (좌타) · 시즌 RISP 합산 AB 42
+투수: 박세웅 (우투)</div>
+      <div class="relay">📡 2루 주자 1아웃, 김혜성 등판. 박세웅 와인드업.</div>
+      <div class="ctx-box">
+        <div class="line">
+          <span class="label"><span class="badge">RISP</span> 김혜성 득점권 타율</span>
+          <span class="value">.333 <span class="small">42타수 14안타</span></span>
+        </div>
+        <div class="line">
+          <span class="label"><span class="badge">vs L</span> 박세웅 좌타 피안타율</span>
+          <span class="value">.241 <span class="small">87타수 21안타</span></span>
+        </div>
+      </div>
+      <div class="composer">메시지 입력…</div>
+    </div>
+
+    <!-- ⑤ 대타 PH-BA + vsHand -->
+    <div class="frame">
+      <div class="scenario-label">시나리오 ⑤ — 대타 첫 타석</div>
+      <div class="scenario-title">2줄 노출</div>
+      <div class="scenario-ctx">7회말 0아웃 · 주자 없음
+배터: 강민호 (우타, 대타 출장)
+투수: 네일 (우투)</div>
+      <div class="relay">📡 7회말 두산 대타 카드 — 강민호 등판.</div>
+      <div class="ctx-box">
+        <div class="line">
+          <span class="label"><span class="badge">PH-BA</span> 강민호 대타 타율</span>
+          <span class="value">.667 <span class="small">시즌 6대타 4안타</span></span>
+        </div>
+        <div class="line">
+          <span class="label"><span class="badge">vs R</span> 네일 우타 피안타율</span>
+          <span class="value">.243 <span class="small">115타수 28안타</span></span>
+        </div>
+      </div>
+      <div class="composer">메시지 입력…</div>
+    </div>
+
+    <!-- ⑥ 7회 노히트 진행 -->
+    <div class="frame">
+      <div class="scenario-label">시나리오 ⑥ — 노히트 진행 (7회 이후)</div>
+      <div class="scenario-title">트리거 라인 highlight</div>
+      <div class="scenario-ctx">8회초 0아웃 · 주자 없음
+수비 팀 합산 H = 0 (모든 투수 무피안타)
+배터: 노시환 (좌타) · 투수: 문동주 (우투)</div>
+      <div class="relay">📡 8회초 시작. 노시환 등판. 한화 무피안타 행진 8회까지…</div>
+      <div class="ctx-box">
+        <div class="line no-hitter">
+          <span class="label">🔥 노히트 진행 (8회)</span>
+          <span class="value">수비 팀 H=0</span>
+        </div>
+        <div class="line">
+          <span class="label"><span class="badge">vs L</span> 문동주 좌타 피안타율</span>
+          <span class="value">.198 <span class="small">61타수 12안타</span></span>
+        </div>
+      </div>
+      <div class="composer">메시지 입력…</div>
+    </div>
+
+  </div>
+
+  <div class="note">
+    <b>v1 살림 6 라인 우선순위 (위→아래)</b>
+    <ul>
+      <li><b>NoHitter</b> — 7회 이후 + 수비 팀 합산 H=0 (highlight)</li>
+      <li><b>VsHand</b> — 매치업 상대 손잡이 행만 (AB ≥ 30)</li>
+      <li><b>BasesLoaded</b> — 만루 상황 (Situation Table 0, AB ≥ 5)</li>
+      <li><b>RISP</b> — 2/3루 점유 (Situation 합산, AB ≥ 10)</li>
+      <li><b>TwoOuts</b> — outs=2 (Situation Table 5, AB ≥ 20)</li>
+      <li><b>PhBA</b> — 대타 첫 타석 (Basic.PH-BA)</li>
+    </ul>
+    <b>가드</b>: 게이트 미일치 / 표본 부족 / stale &gt; 60s / KBO 응답 ASP.NET 에러 → 행 단위 숨김. 모든 라인 null이면 `&lt;ContextStatsBox&gt;` 자체 unmount (시나리오 ①).
+    <br><br><b>UX 메모</b>: 상태 변화 시(주자·아웃·카운트) 라인 즉시 swap. 깜빡임 방지는 PR2 구현 단계에서 `framer-motion` AnimatePresence + 50ms 디바운스 권장.
+  </div>
+</div>
+</body>
+</html>
