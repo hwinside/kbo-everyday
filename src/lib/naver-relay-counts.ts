@@ -40,26 +40,35 @@ export function tallyHitsFromRelays(
 ): Map<string, BatterRelayCount> {
   const counts = new Map<string, BatterRelayCount>();
 
+  // Batter는 *opt.text* parts[0]에서 직접 추출 (SSOT). 과거엔 relay.title의
+  // `/번타자\s+(.+)/`만 매칭하고 비표준 title(대타/대주자/대수비)은 title 전체를
+  // batter key로 잘못 저장 → game-detail의 record API batter name lookup이
+  // miss → 라이브 중 h2b/h3b/hr가 단타로 뭉개졌다 (2026-05-27 문정빈 3루타 P0).
+  // 또 `titleStyle !== "8"` skip이 같은 변종 row(대타는 보통 style="2")를 전부
+  // 차단. opt.type=13/23 자체가 "타석 결과" 마커라서 opt.text "X : 결과" 포맷이
+  // SSOT — title을 거치지 않아도 batter 안전 식별 가능. " : " 분리자 없으면
+  // 정상 result line 아니므로 skip. parseInningRelays(game-relay/route.ts)와
+  // 동일 패턴.
   for (const relay of textRelays) {
-    if (relay.titleStyle !== "8" || !relay.textOptions) continue;
-
-    // "3번타자 홍창기" → "홍창기" (대타 포함 시 "대타 김OOO" 형태도 있음)
-    const m = relay.title.match(/번타자\s+(.+)$/);
-    const batterName = (m ? m[1] : relay.title).trim();
-    if (!batterName) continue;
+    if (!relay.textOptions) continue;
 
     for (const opt of relay.textOptions) {
       // type 13 = 일반 타석 결과, type 23 = 희생플라이/볼넷/아웃 등.
       // 23에는 2루타/3루타/홈런이 안 들어오지만 안전하게 같이 처리.
       if (opt.type !== 13 && opt.type !== 23) continue;
       const text = opt.text || "";
+      const parts = text.split(" : ");
+      if (parts.length < 2) continue;
+      const batterName = parts[0].trim();
+      if (!batterName) continue;
+      const resultText = parts.slice(1).join(" : ");
       let h2b = 0;
       let h3b = 0;
       let hr = 0;
       // 우선순위: 홈런 > 3루타 > 2루타. "1루타"는 단타라 카운트 안 함.
-      if (text.includes("홈런")) hr = 1;
-      else if (text.includes("3루타") || text.includes("삼루타")) h3b = 1;
-      else if (text.includes("2루타") || text.includes("이루타")) h2b = 1;
+      if (resultText.includes("홈런")) hr = 1;
+      else if (resultText.includes("3루타") || resultText.includes("삼루타")) h3b = 1;
+      else if (resultText.includes("2루타") || resultText.includes("이루타")) h2b = 1;
       if (!h2b && !h3b && !hr) continue;
       const cur = counts.get(batterName) ?? { h2b: 0, h3b: 0, hr: 0 };
       counts.set(batterName, {
