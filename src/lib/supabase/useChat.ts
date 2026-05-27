@@ -10,6 +10,8 @@ export interface ChatMessage {
   user_id: string;
   content: string;
   created_at: string;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
   // joined from profiles
   nickname?: string;
   team_id?: number;
@@ -17,6 +19,7 @@ export interface ChatMessage {
 }
 
 const PAGE_SIZE = 50;
+const DELETED_PLACEHOLDER = "삭제된 메시지입니다";
 
 type ChatRow = ChatMessage & { profiles?: { nickname?: string; team_id?: number; grade?: string } };
 
@@ -27,6 +30,8 @@ function mapRow(r: ChatRow): ChatMessage {
     user_id: r.user_id,
     content: r.content,
     created_at: r.created_at,
+    deleted_at: r.deleted_at ?? null,
+    deleted_by: r.deleted_by ?? null,
     nickname: r.profiles?.nickname,
     team_id: r.profiles?.team_id,
     grade: r.profiles?.grade,
@@ -123,6 +128,30 @@ export function useChat(roomId: string) {
             if (prev.some((m) => m.id === newMsg.id)) return prev;
             return [...prev, newMsg];
           });
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "chat_messages",
+          filter: `room_id=eq.${roomId}`,
+        },
+        (payload) => {
+          const updated = payload.new as ChatMessage;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === updated.id
+                ? {
+                    ...m,
+                    content: updated.content,
+                    deleted_at: updated.deleted_at ?? null,
+                    deleted_by: updated.deleted_by ?? null,
+                  }
+                : m
+            )
+          );
         }
       )
       .subscribe();
@@ -253,5 +282,34 @@ export function useChat(roomId: string) {
     [user, profile, roomId]
   );
 
-  return { messages, loading, loadingMore, hasMore, loadMore, sendMessage, cooldown, cooldownReason, isLoggedIn: !!user };
+  // 본인 메시지 삭제 — SECURITY DEFINER RPC 경유 (스펙 §3, GO 게이트 4건).
+  // 클라이언트가 chat_messages를 직접 .update() 하는 경로는 금지.
+  const deleteMyMessage = useCallback(
+    async (messageId: number) => {
+      if (!user) return false;
+      const { error } = await supabase.rpc("delete_own_chat_message", { p_message_id: messageId });
+      if (error) {
+        console.error("[useChat] delete error:", error.message);
+        return false;
+      }
+      // optimistic: Realtime UPDATE도 곧 도착하지만, 본인 디바이스 즉시 갱신.
+      // DB가 content를 동일 placeholder로 덮어쓰므로 깜빡임 없음.
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId
+            ? {
+                ...m,
+                content: DELETED_PLACEHOLDER,
+                deleted_at: new Date().toISOString(),
+                deleted_by: user.id,
+              }
+            : m
+        )
+      );
+      return true;
+    },
+    [user]
+  );
+
+  return { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, cooldown, cooldownReason, isLoggedIn: !!user };
 }
