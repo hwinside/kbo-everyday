@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 
@@ -51,6 +52,8 @@ export function useChat(roomId: string) {
   const recentContentsRef = useRef<string[]>([]);
   // 가장 오래된 메시지의 created_at — loadMore 커서. 방 전환 시 리셋.
   const oldestCursorRef = useRef<string | null>(null);
+  // 가장 최신 메시지의 created_at — visibility 복귀/재구독 시 gap backfill 커서.
+  const latestCreatedAtRef = useRef<string | null>(null);
   // loadMore 동시 호출 가드 (IntersectionObserver가 다중 fire할 수 있음)
   const loadingMoreRef = useRef(false);
 
@@ -61,6 +64,7 @@ export function useChat(roomId: string) {
     setMessages([]);
     setHasMore(true);
     oldestCursorRef.current = null;
+    latestCreatedAtRef.current = null;
 
     async function load() {
       try {
@@ -80,6 +84,7 @@ export function useChat(roomId: string) {
           setMessages(mapped);
           if (mapped.length > 0) {
             oldestCursorRef.current = mapped[0].created_at;
+            latestCreatedAtRef.current = mapped[mapped.length - 1].created_at;
           }
           if (data.length < PAGE_SIZE) setHasMore(false);
         }
@@ -93,71 +98,171 @@ export function useChat(roomId: string) {
     load();
   }, [roomId]);
 
-  // Realtime 구독 (보조 경로: 다른 유저 메시지 수신용)
+  // Realtime 구독 (보조 경로: 다른 유저 메시지 수신용).
+  // PWA/iOS Safari가 백그라운드 진입했다가 복귀하면 WebSocket이 dead 상태로
+  // 남는 경우가 있어 새 INSERT가 영영 안 들어옴 → 사용자는 "나갔다 들어와야
+  // 보임"으로 인지. status 콜백으로 dead 채널 감지 + visibility/online 복귀
+  // 시 채널 재구독 + 누락 메시지 backfill 둘 다 수행.
   useEffect(() => {
     if (!roomId) return;
 
-    const channel = supabase
-      .channel(`chat:${roomId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "chat_messages",
-          filter: `room_id=eq.${roomId}`,
-        },
-        async (payload) => {
-          const msg = payload.new as ChatMessage;
-          // 프로필 조회
-          const { data: prof } = await supabase
-            .from("profiles")
-            .select("nickname, team_id, grade")
-            .eq("id", msg.user_id)
-            .single();
+    let channel: RealtimeChannel | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
 
-          const newMsg: ChatMessage = {
-            ...msg,
-            nickname: prof?.nickname ?? "익명",
-            team_id: prof?.team_id,
-            grade: prof?.grade,
-          };
+    const handleInsert = async (payload: { new: ChatMessage }) => {
+      const msg = payload.new;
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("nickname, team_id, grade")
+        .eq("id", msg.user_id)
+        .single();
+      if (cancelled) return;
 
-          // id dedupe: 본인 optimistic append와 중복 방지
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === newMsg.id)) return prev;
-            return [...prev, newMsg];
-          });
+      const newMsg: ChatMessage = {
+        ...msg,
+        nickname: prof?.nickname ?? "익명",
+        team_id: prof?.team_id,
+        grade: prof?.grade,
+      };
+
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === newMsg.id)) return prev;
+        if (newMsg.created_at) {
+          const cur = latestCreatedAtRef.current;
+          if (!cur || newMsg.created_at > cur) {
+            latestCreatedAtRef.current = newMsg.created_at;
+          }
         }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "chat_messages",
-          filter: `room_id=eq.${roomId}`,
-        },
-        (payload) => {
-          const updated = payload.new as ChatMessage;
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === updated.id
-                ? {
-                    ...m,
-                    content: updated.content,
-                    deleted_at: updated.deleted_at ?? null,
-                    deleted_by: updated.deleted_by ?? null,
-                  }
-                : m
-            )
-          );
+        return [...prev, newMsg];
+      });
+    };
+
+    const handleUpdate = (payload: { new: ChatMessage }) => {
+      const updated = payload.new;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === updated.id
+            ? {
+                ...m,
+                content: updated.content,
+                deleted_at: updated.deleted_at ?? null,
+                deleted_by: updated.deleted_by ?? null,
+              }
+            : m
+        )
+      );
+    };
+
+    // 누락된 신규 메시지 채우기. 마지막으로 본 created_at 이후 INSERT 100건까지.
+    // 채널이 dead였던 동안 들어온 메시지 + 재구독 직전 race 메시지 모두 흡수.
+    const backfill = async () => {
+      const cursor = latestCreatedAtRef.current;
+      if (!cursor) return;
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .select("*, profiles!user_id(nickname, team_id, grade)")
+        .eq("room_id", roomId)
+        .gt("created_at", cursor)
+        .order("created_at", { ascending: true })
+        .limit(100);
+      if (cancelled) return;
+      if (error) {
+        console.error("[useChat] backfill error:", error.message);
+        return;
+      }
+      if (!data || data.length === 0) return;
+      const fresh = (data as ChatRow[]).map(mapRow);
+      setMessages((prev) => {
+        const existing = new Set(prev.map((m) => m.id));
+        const added = fresh.filter((m) => !existing.has(m.id));
+        if (added.length === 0) return prev;
+        const lastAt = added[added.length - 1].created_at;
+        if (lastAt && (!latestCreatedAtRef.current || lastAt > latestCreatedAtRef.current)) {
+          latestCreatedAtRef.current = lastAt;
         }
-      )
-      .subscribe();
+        return [...prev, ...added];
+      });
+    };
+
+    const subscribe = () => {
+      if (cancelled) return;
+      channel = supabase
+        .channel(`chat:${roomId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "chat_messages",
+            filter: `room_id=eq.${roomId}`,
+          },
+          handleInsert
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "chat_messages",
+            filter: `room_id=eq.${roomId}`,
+          },
+          handleUpdate
+        )
+        .subscribe((status) => {
+          if (cancelled) return;
+          if (status === "SUBSCRIBED") {
+            // 재구독 직후 누락 흡수 (백그라운드 동안 들어온 메시지)
+            void backfill();
+          } else if (
+            status === "CHANNEL_ERROR" ||
+            status === "TIMED_OUT" ||
+            status === "CLOSED"
+          ) {
+            scheduleReconnect(1000);
+          }
+        });
+    };
+
+    const scheduleReconnect = (delay: number) => {
+      if (cancelled || reconnectTimer) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (cancelled) return;
+        if (channel) {
+          supabase.removeChannel(channel);
+          channel = null;
+        }
+        subscribe();
+      }, delay);
+    };
+
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      // 보이는 즉시 gap 메우기. 채널이 살아있으면 backfill만으로 충분히 빠름.
+      void backfill();
+      // 채널이 dead일 수도 있으므로 즉시 재구독 (subscribe 콜백이 SUBSCRIBED
+      // 재진입 시 backfill을 한 번 더 호출하지만, prev.some(id) dedupe로 무해).
+      scheduleReconnect(0);
+    };
+
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", onVisible);
+
+    subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", onVisible);
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      if (channel) {
+        supabase.removeChannel(channel);
+        channel = null;
+      }
     };
   }, [roomId]);
 
@@ -274,6 +379,12 @@ export function useChat(roomId: string) {
       // Realtime 이벤트와 dedupe: id 기준
       setMessages((prev) => {
         if (prev.some((m) => m.id === newMsg.id)) return prev;
+        if (newMsg.created_at) {
+          const cur = latestCreatedAtRef.current;
+          if (!cur || newMsg.created_at > cur) {
+            latestCreatedAtRef.current = newMsg.created_at;
+          }
+        }
         return [...prev, newMsg];
       });
 
