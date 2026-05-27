@@ -3,7 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
-import type { ContextualStatsResponse, SplitRow } from "@/lib/contextual-stats/types";
+import type {
+  ContextualStatsResponse,
+  PairedSplitLine,
+  RispPair,
+  Side,
+  SplitRow,
+  VsHandPair,
+} from "@/lib/contextual-stats/types";
 import { formatPlayerDisplayName } from "@/lib/utils/player-name";
 
 const POLL_INTERVAL_MS = 10_000;
@@ -82,9 +89,7 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
 
   if (!enabled || !data || data.empty) return null;
 
-  const { lines, highlights, context } = data;
-  const batterName = context.batterName;
-  const pitcherName = context.pitcherName;
+  const { lines, highlights } = data;
   const hasNoHitter = !!highlights.noHitter;
   const hasVsHand = !!lines.vsHand;
   const hasBasesLoaded = !!lines.basesLoaded;
@@ -108,53 +113,44 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
           )}
 
           {hasBasesLoaded && (
-            <LineRow key="basesLoaded">
-              <Badge>만루</Badge>
-              <LabelText>{labelWithName(batterName, "만루 타율")}</LabelText>
-              <SplitValue row={lines.basesLoaded!.value.row} />
-            </LineRow>
+            <PairLineRow
+              key="basesLoaded"
+              badge="만루"
+              pair={lines.basesLoaded!.value}
+              batterLabel="만루 타율"
+              pitcherLabel="만루 피안타율"
+            />
           )}
 
           {hasRisp && (
-            <LineRow key="risp">
-              <Badge>RISP</Badge>
-              <LabelText>{labelWithName(batterName, "득점권 타율")}</LabelText>
-              <ValueText>
-                {lines.risp!.value.AVG}
-                <small className="ml-1 text-text-tertiary font-normal text-[11px]">
-                  {lines.risp!.value.AB}타수
-                </small>
-              </ValueText>
-            </LineRow>
+            <RispPairLineRow key="risp" badge="RISP" pair={lines.risp!.value} />
           )}
 
           {hasTwoOuts && (
-            <LineRow key="twoOuts">
-              <Badge>2OUT</Badge>
-              <LabelText>{labelWithName(batterName, "2아웃 타율")}</LabelText>
-              <SplitValue row={lines.twoOuts!.value.row} />
-            </LineRow>
+            <PairLineRow
+              key="twoOuts"
+              badge="2OUT"
+              pair={lines.twoOuts!.value}
+              batterLabel="2아웃 타율"
+              pitcherLabel="2아웃 피안타율"
+            />
           )}
 
           {hasPhBA && (
             <LineRow key="phBA">
               <Badge>PH-BA</Badge>
-              <LabelText>{labelWithName(batterName, "대타 타율")}</LabelText>
-              <ValueText>{lines.phBA!.value.AVG}</ValueText>
+              <PairColumn>
+                <SideRow
+                  name={data.context.batterName ?? ""}
+                  label="대타 타율"
+                  valueNode={lines.phBA!.value.AVG}
+                />
+              </PairColumn>
             </LineRow>
           )}
 
           {hasVsHand && (
-            <LineRow key="vsHand">
-              <Badge>{lines.vsHand!.value.opponentSide === "left" ? "vs L" : "vs R"}</Badge>
-              <LabelText>
-                {labelWithName(
-                  pitcherName,
-                  `${lines.vsHand!.value.opponentSide === "left" ? "좌타" : "우타"} 피안타율`,
-                )}
-              </LabelText>
-              <SplitValue row={lines.vsHand!.value.row} />
-            </LineRow>
+            <VsHandLineRow key="vsHand" pair={lines.vsHand!.value} />
           )}
         </AnimatePresence>
       </div>
@@ -162,15 +158,141 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
   );
 }
 
-function labelWithName(name: string | null | undefined, label: string): React.ReactNode {
-  const displayName = formatPlayerDisplayName(name);
-  if (!displayName) return label;
+// ===== Pair line components =====
+
+function PairLineRow({
+  badge,
+  pair,
+  batterLabel,
+  pitcherLabel,
+}: {
+  badge: string;
+  pair: PairedSplitLine;
+  batterLabel: string;
+  pitcherLabel: string;
+}) {
   return (
-    <>
-      <span className="text-text-primary font-bold">{displayName}</span> {label}
-    </>
+    <LineRow>
+      <Badge>{badge}</Badge>
+      <PairColumn>
+        {pair.batter && (
+          <SideRow
+            name={pair.batter.name}
+            label={batterLabel}
+            valueNode={<SplitValueInline row={pair.batter.row} />}
+          />
+        )}
+        {pair.pitcher && (
+          <SideRow
+            name={pair.pitcher.name}
+            label={pitcherLabel}
+            valueNode={<SplitValueInline row={pair.pitcher.row} />}
+          />
+        )}
+      </PairColumn>
+    </LineRow>
   );
 }
+
+function RispPairLineRow({ badge, pair }: { badge: string; pair: RispPair }) {
+  return (
+    <LineRow>
+      <Badge>{badge}</Badge>
+      <PairColumn>
+        {pair.batter && (
+          <SideRow
+            name={pair.batter.name}
+            label="득점권 타율"
+            valueNode={
+              <>
+                {pair.batter.AVG}
+                <small className="ml-1 text-text-tertiary font-normal text-[11px]">
+                  {pair.batter.AB}타수
+                </small>
+              </>
+            }
+          />
+        )}
+        {pair.pitcher && (
+          <SideRow
+            name={pair.pitcher.name}
+            label="RISP 피안타율"
+            valueNode={
+              <>
+                {pair.pitcher.AVG}
+                <small className="ml-1 text-text-tertiary font-normal text-[11px]">
+                  {pair.pitcher.AB}타수
+                </small>
+              </>
+            }
+          />
+        )}
+      </PairColumn>
+    </LineRow>
+  );
+}
+
+function VsHandLineRow({ pair }: { pair: VsHandPair }) {
+  return (
+    <LineRow>
+      <Badge>HAND</Badge>
+      <PairColumn>
+        {pair.batter && (
+          <SideRow
+            name={pair.batter.name}
+            label={`vs ${sideLabel(pair.batter.opponentSide)}투수 타율`}
+            valueNode={<SplitValueInline row={pair.batter.row} />}
+          />
+        )}
+        {pair.pitcher && (
+          <SideRow
+            name={pair.pitcher.name}
+            label={`${sideLabel(pair.pitcher.opponentSide)}타 피안타율`}
+            valueNode={<SplitValueInline row={pair.pitcher.row} />}
+          />
+        )}
+      </PairColumn>
+    </LineRow>
+  );
+}
+
+function sideLabel(side: Side): "좌" | "우" {
+  return side === "left" ? "좌" : "우";
+}
+
+function PairColumn({ children }: { children: React.ReactNode }) {
+  return <div className="flex flex-col gap-0.5 flex-1 min-w-0">{children}</div>;
+}
+
+function SideRow({
+  name,
+  label,
+  valueNode,
+}: {
+  name: string;
+  label: string;
+  valueNode: React.ReactNode;
+}) {
+  const displayName = formatPlayerDisplayName(name);
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-text-secondary text-[12px] font-medium flex-1 min-w-0 truncate">
+        {displayName ? (
+          <>
+            <span className="text-text-primary font-bold">{displayName}</span> {label}
+          </>
+        ) : (
+          label
+        )}
+      </span>
+      <span className="ml-auto text-text-primary font-semibold tabular-nums whitespace-nowrap text-[13px]">
+        {valueNode}
+      </span>
+    </div>
+  );
+}
+
+// ===== Shared primitives =====
 
 function LineRow({
   children,
@@ -198,29 +320,19 @@ function LineRow({
 
 function Badge({ children }: { children: React.ReactNode }) {
   return (
-    <span className="inline-flex px-1.5 py-0.5 rounded-md bg-white/5 border border-border text-[10px] text-text-tertiary font-semibold tracking-wider">
+    <span className="inline-flex shrink-0 self-start mt-0.5 px-1.5 py-0.5 rounded-md bg-white/5 border border-border text-[10px] text-text-tertiary font-semibold tracking-wider">
       {children}
     </span>
   );
 }
 
-function LabelText({ children }: { children: React.ReactNode }) {
-  return <span className="text-text-secondary text-[12px] font-medium">{children}</span>;
-}
-
-function ValueText({ children }: { children: React.ReactNode }) {
+function SplitValueInline({ row }: { row: SplitRow }) {
   return (
-    <span className="ml-auto text-text-primary font-semibold tabular-nums">{children}</span>
-  );
-}
-
-function SplitValue({ row }: { row: SplitRow }) {
-  return (
-    <ValueText>
+    <>
       {row.AVG}
       <small className="ml-1 text-text-tertiary font-normal text-[11px]">
         {row.AB}타수 {row.H}안타{row.HR > 0 ? ` (${row.HR}HR)` : ""}
       </small>
-    </ValueText>
+    </>
   );
 }

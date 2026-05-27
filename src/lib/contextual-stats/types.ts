@@ -16,8 +16,10 @@ export type ThrowSide = Side;
 export interface PlayerHandedness {
   kboId: string;
   name: string;
-  bat: BatSide;
-  throws: ThrowSide;
+  /** 타자만 의미. 투수 페이지("투수(좌투)")는 bat 정보 없음 → null */
+  bat: BatSide | null;
+  /** 투수 측은 필수, 타자 측은 통상 채워짐 */
+  throws: ThrowSide | null;
 }
 
 export interface SplitRow {
@@ -65,27 +67,48 @@ export interface LineResult<T> {
   reason: string;
 }
 
-export interface VsHandLine {
-  /** 현재 매치업 상대 손잡이 행 */
+/**
+ * 페어 라인의 한쪽(타자 또는 투수) 정보. 양쪽 모두 옵셔널이라 한쪽이
+ * 게이트 실패해도 다른 쪽이 통과하면 라인은 살아남음 (single-side fallback,
+ * 스펙 §5-6 페어 결측 처리).
+ */
+export interface SplitSideInfo {
+  kboId: string;
+  name: string;
   row: SplitRow;
-  /** 비교 컨텍스트: 누구의 어느 손잡이 split인가 */
-  player: "batter" | "pitcher";
+}
+
+export interface PairedSplitLine {
+  batter: SplitSideInfo | null;
+  pitcher: SplitSideInfo | null;
+}
+
+/**
+ * vsHand 양쪽 모두 *상대편* 손잡이 행. opponentSide는 그 쪽이 본
+ * "vs ?" 손잡이 (타자 측 → 상대 투수 throws / 투수 측 → 상대 타자 bat).
+ */
+export interface VsHandSideInfo extends SplitSideInfo {
   opponentSide: Side;
 }
 
-export interface BasesLoadedLine {
-  row: SplitRow;
-  player: "batter" | "pitcher";
+export interface VsHandPair {
+  batter: VsHandSideInfo | null;
+  pitcher: VsHandSideInfo | null;
 }
 
-export interface RispLine {
+/**
+ * RISP는 Situation Table 0의 RISP 행들을 집계한 AVG/AB라 row 구조가 없음.
+ */
+export interface RispSideInfo {
+  kboId: string;
+  name: string;
   AVG: string;
   AB: number;
 }
 
-export interface TwoOutsLine {
-  row: SplitRow;
-  player: "batter" | "pitcher";
+export interface RispPair {
+  batter: RispSideInfo | null;
+  pitcher: RispSideInfo | null;
 }
 
 export interface PhBaLine {
@@ -94,10 +117,11 @@ export interface PhBaLine {
 }
 
 export interface ContextualLines {
-  vsHand: LineResult<VsHandLine> | null;
-  basesLoaded: LineResult<BasesLoadedLine> | null;
-  risp: LineResult<RispLine> | null;
-  twoOuts: LineResult<TwoOutsLine> | null;
+  vsHand: LineResult<VsHandPair> | null;
+  basesLoaded: LineResult<PairedSplitLine> | null;
+  risp: LineResult<RispPair> | null;
+  twoOuts: LineResult<PairedSplitLine> | null;
+  /** PH-BA는 KBO에 투수 측 동치(대타 상대 피안타율) 컬럼이 없어 batter-only. */
   phBA: LineResult<PhBaLine> | null;
 }
 

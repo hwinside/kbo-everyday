@@ -35,12 +35,12 @@ import {
   parsePitcherBasic,
 } from "@/lib/contextual-stats/basic-parser";
 import {
-  selectBasesLoaded,
+  selectBasesLoadedPair,
   selectNoHitter,
   selectPhBA,
-  selectRisp,
-  selectTwoOuts,
-  selectVsHand,
+  selectRispPair,
+  selectTwoOutsPair,
+  selectVsHandPair,
 } from "@/lib/contextual-stats/gates";
 import type {
   BasicSeasonStats,
@@ -89,6 +89,9 @@ function mkRow(over: Partial<SplitRow> = {}): SplitRow {
     ...over,
   };
 }
+
+const batterRef = { kboId: "78513", name: "테스트 타자" };
+const pitcherRef = { kboId: "69446", name: "테스트 투수" };
 
 // ===== T1-T4: handedness =====
 {
@@ -169,7 +172,13 @@ function mkRow(over: Partial<SplitRow> = {}): SplitRow {
   };
   assert(
     "T10: bases NOT loaded → null",
-    selectBasesLoaded(sit, mkCtx({ bases: { first: false, second: true, third: true } })) === null,
+    selectBasesLoadedPair(
+      sit,
+      null,
+      mkCtx({ bases: { first: false, second: true, third: true } }),
+      batterRef,
+      null,
+    ) === null,
   );
 }
 {
@@ -180,7 +189,13 @@ function mkRow(over: Partial<SplitRow> = {}): SplitRow {
   };
   assert(
     "T11: bases loaded but AB<5 → null",
-    selectBasesLoaded(sit, mkCtx({ bases: { first: true, second: true, third: true } })) === null,
+    selectBasesLoadedPair(
+      sit,
+      null,
+      mkCtx({ bases: { first: true, second: true, third: true } }),
+      batterRef,
+      null,
+    ) === null,
   );
 }
 {
@@ -189,11 +204,14 @@ function mkRow(over: Partial<SplitRow> = {}): SplitRow {
     byHand: [],
     byOuts: [],
   };
-  const res = selectBasesLoaded(
+  const res = selectBasesLoadedPair(
     sit,
+    null,
     mkCtx({ bases: { first: true, second: true, third: true } }),
+    batterRef,
+    null,
   );
-  assert("T12: bases loaded AB≥5 → row returned", res?.value.row.AVG === "0.500", res);
+  assert("T12: bases loaded AB≥5 → row returned", res?.value.batter?.row.AVG === "0.500", res);
 }
 
 // ===== T13-T15: RISP (Situation-aggregated, sample-size gate) =====
@@ -202,7 +220,13 @@ function mkRow(over: Partial<SplitRow> = {}): SplitRow {
   const sit: SituationTables = { bases: [], byHand: [], byOuts: [] };
   assert(
     "T13: no Situation data → null",
-    selectRisp(sit, mkCtx({ bases: { first: false, second: true, third: false } })) === null,
+    selectRispPair(
+      sit,
+      null,
+      mkCtx({ bases: { first: false, second: true, third: false } }),
+      batterRef,
+      null,
+    ) === null,
   );
 }
 {
@@ -219,10 +243,16 @@ function mkRow(over: Partial<SplitRow> = {}): SplitRow {
     byHand: [],
     byOuts: [],
   };
-  const res = selectRisp(sit, mkCtx({ bases: { first: false, second: true, third: false } }));
+  const res = selectRispPair(
+    sit,
+    null,
+    mkCtx({ bases: { first: false, second: true, third: false } }),
+    batterRef,
+    null,
+  );
   assert(
     "T14: RISP aggregate AB=12 (≥10), H=4 → AVG=0.333 admit",
-    res?.value.AVG === "0.333" && res?.value.AB === 12,
+    res?.value.batter?.AVG === "0.333" && res?.value.batter?.AB === 12,
     res,
   );
 }
@@ -238,7 +268,13 @@ function mkRow(over: Partial<SplitRow> = {}): SplitRow {
   };
   assert(
     "T15a: RISP aggregate AB<10 → null (표본 가드)",
-    selectRisp(sit, mkCtx({ bases: { first: false, second: true, third: false } })) === null,
+    selectRispPair(
+      sit,
+      null,
+      mkCtx({ bases: { first: false, second: true, third: false } }),
+      batterRef,
+      null,
+    ) === null,
   );
 }
 {
@@ -250,7 +286,13 @@ function mkRow(over: Partial<SplitRow> = {}): SplitRow {
   };
   assert(
     "T15b: no runner on 2B/3B → null even with sufficient sample",
-    selectRisp(sit, mkCtx({ bases: { first: true, second: false, third: false } })) === null,
+    selectRispPair(
+      sit,
+      null,
+      mkCtx({ bases: { first: true, second: false, third: false } }),
+      batterRef,
+      null,
+    ) === null,
   );
 }
 
@@ -261,7 +303,10 @@ function mkRow(over: Partial<SplitRow> = {}): SplitRow {
     byHand: [],
     byOuts: [mkRow({ label: "2아웃", AB: 30 })],
   };
-  assert("T16: outs != 2 → null", selectTwoOuts(sit, mkCtx({ outs: 1 }), "batter") === null);
+  assert(
+    "T16: outs != 2 → null",
+    selectTwoOutsPair(sit, null, mkCtx({ outs: 1 }), batterRef, null) === null,
+  );
 }
 {
   const sit: SituationTables = {
@@ -269,8 +314,8 @@ function mkRow(over: Partial<SplitRow> = {}): SplitRow {
     byHand: [],
     byOuts: [mkRow({ label: "2아웃", AB: 30, AVG: "0.220" })],
   };
-  const res = selectTwoOuts(sit, mkCtx({ outs: 2 }), "batter");
-  assert("T17: outs=2 AB≥20 → admit", res?.value.row.AVG === "0.220", res);
+  const res = selectTwoOutsPair(sit, null, mkCtx({ outs: 2 }), batterRef, null);
+  assert("T17: outs=2 AB≥20 → admit", res?.value.batter?.row.AVG === "0.220", res);
 }
 
 // ===== T18-T19: PH-BA =====
@@ -298,7 +343,10 @@ function mkRow(over: Partial<SplitRow> = {}): SplitRow {
     byOuts: [],
   };
   const switchH: PlayerHandedness = { kboId: "1", name: "X", bat: "switch", throws: "right" };
-  assert("T20: switch hitter → null (v1 conservative)", selectVsHand(pitcherSit, switchH) === null);
+  assert(
+    "T20: switch hitter → null (v1 conservative)",
+    selectVsHandPair(null, pitcherSit, switchH, null, null, pitcherRef) === null,
+  );
 }
 {
   const pitcherSit: SituationTables = {
@@ -310,10 +358,10 @@ function mkRow(over: Partial<SplitRow> = {}): SplitRow {
     byOuts: [],
   };
   const rightH: PlayerHandedness = { kboId: "1", name: "X", bat: "right", throws: "right" };
-  const res = selectVsHand(pitcherSit, rightH);
+  const res = selectVsHandPair(null, pitcherSit, rightH, null, null, pitcherRef);
   assert(
     "T21: right batter → 우타자 row, AB≥30 admit",
-    res?.value.row.AVG === "0.286" && res?.value.opponentSide === "right",
+    res?.value.pitcher?.row.AVG === "0.286" && res?.value.pitcher?.opponentSide === "right",
     res,
   );
 }
@@ -326,7 +374,7 @@ function mkRow(over: Partial<SplitRow> = {}): SplitRow {
   const leftH: PlayerHandedness = { kboId: "1", name: "X", bat: "left", throws: "right" };
   assert(
     "T22: matching row but AB<30 → null",
-    selectVsHand(pitcherSit, leftH) === null,
+    selectVsHandPair(null, pitcherSit, leftH, null, null, pitcherRef) === null,
   );
 }
 
