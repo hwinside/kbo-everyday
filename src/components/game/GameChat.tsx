@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Users, Flame, ChevronDown } from "lucide-react";
+import { Send, Users, Flame, ChevronDown, Trash2 } from "lucide-react";
 import { clsx } from "clsx";
 import Image from "next/image";
 import TeamBadge from "@/components/ui/TeamBadge";
@@ -62,7 +62,7 @@ function getRoomId(gameId: string, room: ChatRoom): string {
 export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatProps) {
   const [room, setRoom] = useState<ChatRoom>("all");
   const roomId = getRoomId(gameId, room);
-  const { messages, loading, loadingMore, hasMore, loadMore, sendMessage, cooldown, cooldownReason, isLoggedIn } = useChat(roomId);
+  const { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, cooldown, cooldownReason, isLoggedIn } = useChat(roomId);
   const { homePct } = useMoodGauge(gameId, homeTeamId, awayTeamId);
   const { user, profile, loading: authLoading } = useAuth();
   const [input, setInput] = useState("");
@@ -182,6 +182,13 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     if (!input.trim() || !canWrite) return;
     const ok = await sendMessage(input.trim());
     if (ok) setInput("");
+  }
+
+  async function handleDelete(messageId: number) {
+    if (typeof window === "undefined") return;
+    const ok = window.confirm("이 메시지를 삭제하시겠어요?\n삭제된 메시지는 복구할 수 없습니다.");
+    if (!ok) return;
+    await deleteMyMessage(messageId);
   }
 
   function formatTime(dateStr: string) {
@@ -344,6 +351,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
             <AnimatePresence initial={false}>
                 {renderedMessages.map((msg) => {
                   const isMe = user?.id === msg.user_id;
+                  const isDeleted = msg.deleted_at != null;
                   return (
                     <motion.div
                       key={msg.id}
@@ -359,12 +367,26 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
                           <span className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")} onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}>
                             {msg.nickname || "익명"}
                           </span>
-                          <span className="text-sm text-text-primary">{msg.content}</span>
+                          <span className={clsx("text-sm", isDeleted ? "text-text-tertiary italic" : "text-text-primary")}>
+                            {msg.content}
+                          </span>
                         </span>
                       </div>
-                      <span className="text-[10px] text-text-tertiary shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {formatTime(msg.created_at)}
-                      </span>
+                      <div className="flex items-center gap-1 shrink-0 mt-0.5">
+                        <span className="text-[10px] text-text-tertiary opacity-0 group-hover:opacity-100 transition-opacity">
+                          {formatTime(msg.created_at)}
+                        </span>
+                        {isMe && !isDeleted && (
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(msg.id)}
+                            aria-label="메시지 삭제"
+                            className="text-text-tertiary hover:text-red-400 opacity-50 hover:opacity-100 transition-colors p-1 -m-1"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        )}
+                      </div>
                     </motion.div>
                   );
                 })}
