@@ -7,6 +7,7 @@ import { clsx } from "clsx";
 import Image from "next/image";
 import { getTeamById } from "@/lib/constants/teams";
 import GameChat from "@/components/game/GameChat";
+import ContextualStatsBox from "@/components/game/ContextualStatsBox";
 import { useRouter } from "next/navigation";
 import type { GameEvent } from "@/types/game-events";
 import type { GamePlay } from "@/lib/types";
@@ -453,6 +454,9 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
           </div>
         </div>
       ) : null}
+
+      {/* Contextual stats box — 문자중계와 채팅 사이 상황별 맞춤 스탯 */}
+      <ContextualStatsBox gameId={gameId} enabled />
 
       {/* Chat */}
       <GameChat gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
