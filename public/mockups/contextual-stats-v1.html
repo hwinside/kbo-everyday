@@ -410,7 +410,7 @@
   </div>
 
   <div class="note">
-    <b>v1 평시 라인 6종 (컨텍스트 게이트 통과 시에만 mount, 위→아래 우선)</b>
+    <b>v1 평시 라인 5종 (컨텍스트 게이트 통과 시에만 mount, 위→아래 우선)</b>
     <ul>
       <li><b>VsHand</b> — 매치업 상대 손잡이 행 (Situation Table 4, AB ≥ 30)</li>
       <li><b>BasesLoaded</b> — 만루 상황 (Situation Table 0, AB ≥ 5)</li>
@@ -418,9 +418,9 @@
       <li><b>TwoOuts</b> — outs=2 (Situation Table 5, AB ≥ 20)</li>
       <li><b>PhBA</b> — 대타 첫 타석 (Basic.PH-BA)</li>
     </ul>
-    <b>v1 트리거 라인 7종 (이벤트성 highlight, 위계 상)</b>
+    <b>v1 트리거 라인 7종 (이벤트성 highlight, 위계 상). 퍼펙트는 v1 비포함 (§9)</b>
     <ul>
-      <li><b>NoHitter / Perfect</b> — 7회 이후 + 수비 팀 합산 H=0 (no-hitter style)</li>
+      <li><b>NoHitter</b> — 7회 이후 + 수비 팀 합산 H=0 (no-hitter style)</li>
       <li><b>AllAtBatsHit</b> — `AB ≥ 2 AND H == AB`, 아웃 시 unmount (`🔥 전타석 안타 기록중!`)</li>
       <li><b>AllAtBatsOnBase</b> — `PA ≥ 2 AND (H+BB+HBP) == PA`, 전타석 안타 발동 시 suppress (`🔥 전타석 출루 기록중!`)</li>
       <li><b>StolenBaseImminent</b> — 출루 직후 mount (자력+대주자), 라운드(9→10·19→20·29→30·39→40) OR 1위 탈환 게이트 (`🦶`)</li>
