@@ -101,13 +101,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const onFocusIn = (e: FocusEvent) => {
       if (!isComposerTarget(e.target)) return;
       document.body.classList.add("kbd-open");
-      // composer-top 모델: focused textarea를 viewport *상단*으로 정렬.
-      // 페이지 상단(Room selector / MoodGauge)이 화면 밖으로 밀리고
-      // composer + 최신글 묶음만 보이게 된다. iOS form-assistant는
-      // 액세서리 바를 focused input 위로 자동 push.
-      requestAnimationFrame(() => {
-        textareaRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
-      });
+      // 강제 scrollIntoView 점프 제거 (2026-05-27 #cs 회귀):
+      // V3는 focus 시 textarea를 viewport 상단으로 강제 정렬했으나, iOS
+      // form-assistant 자동 정렬과 충돌해 사용자가 보던 영역이 어색하게
+      // 튀어오르는 회귀 발생. interactive-widget=resizes-content + form-
+      // assistant native 동작에 위치 정렬을 전적으로 위임한다.
     };
 
     const onFocusOut = (e: FocusEvent) => {
