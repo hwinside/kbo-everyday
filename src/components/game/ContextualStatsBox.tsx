@@ -90,7 +90,7 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
               <ValueText>
                 {lines.risp!.value.AVG}
                 <small className="ml-1 text-text-tertiary font-normal text-[11px]">
-                  AB {lines.risp!.value.AB}
+                  {lines.risp!.value.AB}타수
                 </small>
               </ValueText>
             </LineRow>
