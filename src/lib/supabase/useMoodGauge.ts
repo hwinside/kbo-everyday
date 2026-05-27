@@ -74,7 +74,7 @@ export function useMoodGauge(
 
     const { data } = await supabase
       .from("chat_messages")
-      .select("user_id, profiles(team_id)")
+      .select("user_id, profiles!user_id(team_id)")
       .in("room_id", roomIds)
       .gte("created_at", tenMinAgo);
 
