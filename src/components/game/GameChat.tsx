@@ -352,6 +352,25 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
                 {renderedMessages.map((msg) => {
                   const isMe = user?.id === msg.user_id;
                   const isDeleted = msg.deleted_at != null;
+                  if (isDeleted) {
+                    return (
+                      <motion.div
+                        key={msg.id}
+                        data-chat-msg
+                        data-deleted="true"
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.15 }}
+                        className="flex items-start py-0.5"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <span className="text-sm text-text-tertiary italic">
+                            {msg.content || "삭제된 메시지입니다"}
+                          </span>
+                        </div>
+                      </motion.div>
+                    );
+                  }
                   return (
                     <motion.div
                       key={msg.id}
@@ -367,7 +386,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
                           <span className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")} onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}>
                             {msg.nickname || "익명"}
                           </span>
-                          <span className={clsx("text-sm", isDeleted ? "text-text-tertiary italic" : "text-text-primary")}>
+                          <span className="text-sm text-text-primary">
                             {msg.content}
                           </span>
                         </span>
@@ -376,7 +395,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
                         <span className="text-[10px] text-text-tertiary opacity-0 group-hover:opacity-100 transition-opacity">
                           {formatTime(msg.created_at)}
                         </span>
-                        {isMe && !isDeleted && (
+                        {isMe && (
                           <button
                             type="button"
                             onClick={() => handleDelete(msg.id)}
