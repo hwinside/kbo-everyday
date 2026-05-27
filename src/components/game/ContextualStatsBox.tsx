@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
 import type { ContextualStatsResponse, SplitRow } from "@/lib/contextual-stats/types";
 
 const POLL_INTERVAL_MS = 10_000;
+
+const isKeyboardOpen = () =>
+  typeof document !== "undefined" && document.body.classList.contains("kbd-open");
 
 type Props = {
   gameId: string;
@@ -15,6 +18,7 @@ type Props = {
 
 export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
   const [data, setData] = useState<ContextualStatsResponse | null>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!enabled) return;
@@ -27,18 +31,21 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
           cache: "no-store",
         });
         if (!res.ok) {
-          if (!cancelled) setData(null);
+          if (!cancelled && !isKeyboardOpen()) setData(null);
           return;
         }
         const json = (await res.json()) as ContextualStatsResponse;
-        if (!cancelled) setData(json);
+        // GameChat composer focus(=body.kbd-open) 동안엔 라인 add/remove로 인한
+        // 박스 높이 변화가 composer 위쪽 layout을 흔들어 V3 scrollIntoView 앵커가
+        // 깨진다. 키보드 내려갈 때까지 데이터 갱신을 보류한다. (PR #126 회귀 핫픽스)
+        if (!cancelled && !isKeyboardOpen()) setData(json);
       } catch {
-        if (!cancelled) setData(null);
+        if (!cancelled && !isKeyboardOpen()) setData(null);
       }
     };
 
     const loop = async () => {
-      await fetchOnce();
+      if (!isKeyboardOpen()) await fetchOnce();
       if (cancelled) return;
       timer = setTimeout(loop, POLL_INTERVAL_MS);
     };
@@ -49,6 +56,28 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
       if (timer) clearTimeout(timer);
     };
   }, [gameId, enabled]);
+
+  // 폴링은 skip해도 framer-motion 진행 중인 height: auto↔0 transition은
+  // 박스 외곽 높이를 미세하게 흔들 수 있다. body.kbd-open 동안엔 박스 outer
+  // 사이즈를 스냅샷으로 락하고 overflow:hidden으로 in-flight transition을
+  // 흡수해 composer 위 layout을 완전히 동결한다.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const apply = () => {
+      const el = boxRef.current;
+      if (!el) return;
+      if (document.body.classList.contains("kbd-open")) {
+        el.style.height = `${el.offsetHeight}px`;
+        el.style.overflow = "hidden";
+      } else {
+        el.style.height = "";
+        el.style.overflow = "";
+      }
+    };
+    const obs = new MutationObserver(apply);
+    obs.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+    return () => obs.disconnect();
+  }, []);
 
   if (!enabled || !data || data.empty) return null;
 
@@ -67,7 +96,7 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
   if (!anyLine) return null;
 
   return (
-    <div className="border-b border-border bg-bg-secondary px-3 py-2">
+    <div ref={boxRef} data-contextual-stats-box className="border-b border-border bg-bg-secondary px-3 py-2">
       <div className="max-w-[640px] mx-auto rounded-xl bg-bg-tertiary border border-border p-1 flex flex-col gap-0.5">
         <AnimatePresence initial={false}>
           {hasNoHitter && (
