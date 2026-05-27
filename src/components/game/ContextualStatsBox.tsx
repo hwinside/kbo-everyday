@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
 import type { ContextualStatsResponse, SplitRow } from "@/lib/contextual-stats/types";
+import { formatPlayerDisplayName } from "@/lib/utils/player-name";
 
 const POLL_INTERVAL_MS = 10_000;
 
@@ -162,10 +163,11 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
 }
 
 function labelWithName(name: string | null | undefined, label: string): React.ReactNode {
-  if (!name) return label;
+  const displayName = formatPlayerDisplayName(name);
+  if (!displayName) return label;
   return (
     <>
-      <span className="text-text-primary font-bold">{name}</span> {label}
+      <span className="text-text-primary font-bold">{displayName}</span> {label}
     </>
   );
 }
