@@ -99,11 +99,14 @@ CREATE TABLE chat_messages (
   room_id TEXT NOT NULL, -- "game:{gameId}:{home|away|all}" or "team:{teamId}"
   user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
   content TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
+  created_at TIMESTAMPTZ DEFAULT now(),
+  deleted_at TIMESTAMPTZ DEFAULT NULL,
+  deleted_by UUID REFERENCES profiles(id) ON DELETE SET NULL
 );
 ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Anyone can read" ON chat_messages FOR SELECT USING (true);
 CREATE POLICY "Auth users send" ON chat_messages FOR INSERT WITH CHECK (auth.uid() = user_id);
+-- Soft delete는 delete_own_chat_message RPC 경유. broad UPDATE policy 추가 X.
 
 -- 인덱스
 CREATE INDEX idx_posts_board ON posts(board_type, board_id, created_at DESC);
