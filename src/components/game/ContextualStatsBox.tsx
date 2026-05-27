@@ -132,8 +132,13 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
   );
 }
 
-function labelWithName(name: string | null | undefined, label: string): string {
-  return name ? `${name} ${label}` : label;
+function labelWithName(name: string | null | undefined, label: string): React.ReactNode {
+  if (!name) return label;
+  return (
+    <>
+      <span className="text-text-primary font-bold">{name}</span> {label}
+    </>
+  );
 }
 
 function LineRow({
