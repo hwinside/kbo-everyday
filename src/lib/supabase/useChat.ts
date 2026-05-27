@@ -66,7 +66,7 @@ export function useChat(roomId: string) {
       try {
         const { data, error } = await supabase
           .from("chat_messages")
-          .select("*, profiles(nickname, team_id, grade)")
+          .select("*, profiles!user_id(nickname, team_id, grade)")
           .eq("room_id", roomId)
           .order("created_at", { ascending: false })
           .limit(PAGE_SIZE);
@@ -172,7 +172,7 @@ export function useChat(roomId: string) {
       const cursor = oldestCursorRef.current;
       const { data, error } = await supabase
         .from("chat_messages")
-        .select("*, profiles(nickname, team_id, grade)")
+        .select("*, profiles!user_id(nickname, team_id, grade)")
         .eq("room_id", roomId)
         .lt("created_at", cursor)
         .order("created_at", { ascending: false })
@@ -251,7 +251,7 @@ export function useChat(roomId: string) {
           user_id: user.id,
           content: content.trim(),
         })
-        .select("*, profiles(nickname, team_id, grade)")
+        .select("*, profiles!user_id(nickname, team_id, grade)")
         .single();
 
       if (error || !data) {

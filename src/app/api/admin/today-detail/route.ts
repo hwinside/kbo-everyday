@@ -143,7 +143,7 @@ export async function GET(req: NextRequest) {
   if (type === "chats") {
     const { data, error } = await supabase
       .from("chat_messages")
-      .select("id, content, room_id, created_at, user_id, profiles(nickname)")
+      .select("id, content, room_id, created_at, user_id, profiles!user_id(nickname)")
       .gte("created_at", start)
       .lte("created_at", end)
       .order("created_at", { ascending: false })
