@@ -2048,6 +2048,14 @@
     "team": "키움"
   },
   {
+    "name": "박성재",
+    "kboId": "51298",
+    "teamId": 2,
+    "position": "야수",
+    "backNo": "5",
+    "team": "두산"
+  },
+  {
     "name": "박성한",
     "kboId": "67893",
     "teamId": 4,
@@ -4104,6 +4112,14 @@
     "team": "SSG"
   },
   {
+    "name": "이승헌",
+    "kboId": "68529",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "46",
+    "team": "롯데"
+  },
+  {
     "name": "이승현",
     "kboId": "60146",
     "teamId": 8,
@@ -4245,6 +4261,14 @@
     "teamId": 8,
     "position": "야수",
     "backNo": "7",
+    "team": "삼성"
+  },
+  {
+    "name": "이재희",
+    "kboId": "51460",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "17",
     "team": "삼성"
   },
   {
@@ -5550,6 +5574,14 @@
     "position": "투수",
     "backNo": "28",
     "team": "두산"
+  },
+  {
+    "name": "최용준",
+    "kboId": "50650",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "67",
+    "team": "SSG"
   },
   {
     "name": "최우석",
