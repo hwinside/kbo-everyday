@@ -302,6 +302,8 @@ export async function GET(req: NextRequest) {
         bases: { first: false, second: false, third: false },
         batterKboId: null,
         pitcherKboId: null,
+        batterName: null,
+        pitcherName: null,
         batterIsPinch: false,
       }),
     );
@@ -337,6 +339,8 @@ export async function GET(req: NextRequest) {
         },
         batterKboId: null,
         pitcherKboId: null,
+        batterName: null,
+        pitcherName: null,
         batterIsPinch: false,
       }),
     );
@@ -362,6 +366,8 @@ export async function GET(req: NextRequest) {
     },
     batterKboId: batter?.kboId ?? null,
     pitcherKboId: pitcher?.kboId ?? null,
+    batterName: batter?.name ?? null,
+    pitcherName: pitcher?.name ?? null,
     batterIsPinch: boxSnapshot.batterIsPinch,
   };
 
