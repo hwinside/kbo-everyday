@@ -581,7 +581,13 @@ function classifyResultMirror(text: string): MirrorPlayType {
   }
   if (text.includes("희생")) return "sacrifice";
   if (text.includes("실책")) return "error";
-  if (text.includes("1루타") || text.includes("2루타") || text.includes("3루타")) return "hit";
+  if (
+    text.includes("1루타") ||
+    text.includes("2루타") ||
+    text.includes("3루타") ||
+    text.includes("내야안타") ||
+    text.includes("안타")
+  ) return "hit";
   return "other";
 }
 
@@ -611,14 +617,15 @@ function parseInningRelaysMirror(textRelays: MirrorNaverTextRelay[]): MirrorInni
     }
     if (!current || !relay.textOptions) continue;
 
-    const batterMatch = relay.title.match(/\d+번타자\s+(.+)/);
-    if (!batterMatch) continue;  // production: skip 비표준 title
-    const batterName = batterMatch[1];
-
     for (const opt of relay.textOptions) {
       if (opt.type === 13 || opt.type === 23) {
+        // production: batter from opt.text parts[0], not title regex
+        // (대타/대주자 등 비표준 title 변종 흡수)
         const parts = opt.text.split(" : ");
-        const resultText = parts.length > 1 ? parts.slice(1).join(" : ") : opt.text;
+        if (parts.length < 2) continue;
+        const batterName = parts[0].trim();
+        if (!batterName) continue;
+        const resultText = parts.slice(1).join(" : ");
         current.plays.push({
           batterName,
           result: resultText,
@@ -662,10 +669,11 @@ function parseInningRelaysMirror(textRelays: MirrorNaverTextRelay[]): MirrorInni
   );
 }
 
-// ----- T13: parseInningRelays — batter title 비표준 → play emit X -----
+// ----- T13: parseInningRelays — type=13/23 없는 announcement은 play emit X -----
 {
+  // 투수 교체/포지션 교체 등 순수 announcement은 title이 비표준이고
+  // textOptions에 type=13/23 (at-bat result)이 없다 → play 미생성.
   // textRelays come in reverse order (newest-first) as Naver returns them.
-  // Chronologically: inning header → 비표준 title 항목 (skip) → 정상 title 항목 (emit)
   const textRelays: MirrorNaverTextRelay[] = [
     {
       title: "3번타자 홍창기",
@@ -673,9 +681,9 @@ function parseInningRelaysMirror(textRelays: MirrorNaverTextRelay[]): MirrorInni
       textOptions: [{ seqno: 2, text: "홍창기 : 우전 1루타", type: 13 }],
     },
     {
-      title: "대주자 박해민",
-      titleStyle: "8",
-      textOptions: [{ seqno: 1, text: "박해민 : 도루 성공", type: 13 }],
+      title: "투수 교체",
+      titleStyle: "2",
+      textOptions: [{ seqno: 1, text: "투수 교체: 김유영 → 박명근", type: 2 }],
     },
     { title: "5회초 LG 공격", titleStyle: "0" },
   ];
@@ -683,7 +691,7 @@ function parseInningRelaysMirror(textRelays: MirrorNaverTextRelay[]): MirrorInni
   const innings = parseInningRelaysMirror(textRelays);
 
   assert(
-    "T13: 비표준 title '대주자 박해민' textOption은 emit되지 않음",
+    "T13: type=13/23 없는 '투수 교체' announcement은 play 미생성",
     innings.length === 1
       && innings[0].plays.length === 1
       && innings[0].plays[0].batterName === "홍창기",
@@ -862,6 +870,122 @@ function parseInningRelaysMirror(textRelays: MirrorNaverTextRelay[]): MirrorInni
       { fired: buggyGameCFired },
     );
   }
+}
+
+// ----- T15: 대타 (pinch hitter) 3루타 — batter from opt.text, not title -----
+// 2026-05-27 prod P0: 7회초 LG 대타 "문정빈" 3루타가 안타로 잘못 발화.
+// 원인: title "대타 문정빈"이 `/\d+번타자\s+(.+)/` 정규식에 안 잡혀
+// 전체 relay 항목 skip → BoxScore-diff fallback이 stale boxscore로 single 분류.
+// fix: opt.text "X : 결과" parts[0]에서 batter 추출 → title 무관하게 emit.
+{
+  const textRelays: MirrorNaverTextRelay[] = [
+    {
+      title: "대타 문정빈",
+      titleStyle: "2",  // 대타 announcement style
+      textOptions: [
+        { seqno: 4, text: "1구 볼", type: 1 },
+        { seqno: 5, text: "문정빈 : 우익수 오른쪽 뒤 3루타", type: 23 },
+        { seqno: 6, text: "1루주자 오스틴 : 홈인", type: 24 },
+      ],
+    },
+    { title: "7회초 LG 공격", titleStyle: "0" },
+  ];
+
+  const innings = parseInningRelaysMirror(textRelays);
+  const triple = innings[0]?.plays[0];
+
+  assert(
+    "T15: '대타 문정빈' title이어도 opt.text parts[0]='문정빈' 정상 추출",
+    !!triple && triple.batterName === "문정빈",
+    { play: triple },
+  );
+  assert(
+    "T15: result '우익수 오른쪽 뒤 3루타' → classifyResult 'hit'",
+    triple?.type === "hit",
+    { type: triple?.type, result: triple?.result },
+  );
+
+  // Chain into generateRelayEvents to confirm at_bat_triple emission
+  const live = mkLive({ inning: 7, isTop: true, currentBatter: "문정빈" });
+  const events = generateRelayEvents(
+    GAME_ID,
+    [{ inning: 7, half: "top", teamName: "LG", plays: [{
+      batterName: triple!.batterName,
+      result: triple!.result,
+      type: "hit",
+    }] }],
+    live,
+  );
+
+  assert(
+    "T15: 대타 3루타 → at_bat_triple 이벤트 1건 (단순 at_bat_hit 아님)",
+    events.length === 1 && events[0].type === "at_bat_triple",
+    { events: events.map(e => ({ id: e.id, type: e.type })) },
+  );
+}
+
+// ----- T16: 내야안타 (infield hit) — classifyResult must include this -----
+// Production observed: 7회초 LG 구본혁 "유격수 왼쪽 내야안타"가 'other'로
+// 떨어져 세레머니 미발화. classifyResult가 "1루타/2루타/3루타"만 hit으로
+// 매칭하던 게 원인. fix: "내야안타", "안타" substring도 hit으로 인정 +
+// classifyHit이 N루타 없으면 single fallback (BoxScore-diff와 동일 동작).
+{
+  assert(
+    "T16: '유격수 왼쪽 내야안타' → 'hit' (not 'other')",
+    classifyResultMirror("유격수 왼쪽 내야안타") === "hit",
+  );
+  assert(
+    "T16: 'N루타 없는 안타' → 'hit' (defensive — Naver 텍스트 variance 흡수)",
+    classifyResultMirror("좌익수 앞 안타") === "hit",
+  );
+
+  // Chain into generateRelayEvents to confirm at_bat_hit (single) emission
+  const live = mkLive({ inning: 7, isTop: true, currentBatter: "구본혁" });
+  const events = generateRelayEvents(
+    GAME_ID,
+    [{ inning: 7, half: "top", teamName: "LG", plays: [{
+      batterName: "구본혁",
+      result: "유격수 왼쪽 내야안타",
+      type: "hit",
+    }] }],
+    live,
+  );
+  assert(
+    "T16: 내야안타 → at_bat_hit (N루타 substring 없으므로 single fallback)",
+    events.length === 1 && events[0].type === "at_bat_hit",
+    { events: events.map(e => ({ id: e.id, type: e.type })) },
+  );
+}
+
+// ----- T17: 대주자 substitution — type=14/24 only, no at-bat play emitted -----
+// 대주자 X 들어와 도루 성공 같은 base running event는 type=14/24로 들어와
+// 직전 play의 extras에 attach. 별도 play로 emit 안 됨 (at-bat 아님).
+{
+  const textRelays: MirrorNaverTextRelay[] = [
+    {
+      title: "3번타자 홍창기",
+      titleStyle: "8",
+      textOptions: [{ seqno: 1, text: "홍창기 : 좌익수 앞 1루타", type: 13 }],
+    },
+    {
+      title: "대주자 박해민",
+      titleStyle: "2",
+      textOptions: [{ seqno: 2, text: "대주자 박해민", type: 2 }],
+      // 도루는 다음 batter 등판 후 type=14/24로 들어옴, 이 item엔 없음
+    },
+    { title: "1회초 LG 공격", titleStyle: "0" },
+  ];
+
+  const innings = parseInningRelaysMirror(textRelays);
+
+  assert(
+    "T17: 대주자 announcement (type=13/23 없음) → 별도 play emit 안 됨, 홍창기 1루타만 1건",
+    innings.length === 1
+      && innings[0].plays.length === 1
+      && innings[0].plays[0].batterName === "홍창기"
+      && innings[0].plays[0].type === "hit",
+    { plays: innings[0]?.plays },
+  );
 }
 
 if (failed > 0) {

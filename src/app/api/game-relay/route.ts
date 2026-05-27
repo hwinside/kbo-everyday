@@ -133,8 +133,16 @@ function classifyResult(text: string): PlayEvent["type"] {
   }
   if (text.includes("희생")) return "sacrifice";
   if (text.includes("실책")) return "error";
-  // 아웃 없는 N루타만 진짜 hit
-  if (text.includes("1루타") || text.includes("2루타") || text.includes("3루타"))
+  // 아웃 없는 hit 결과: N루타, 내야안타, 평범한 안타 모두 hit으로.
+  // classifyHit이 N루타 substring 없으면 single로 안전 fallback (BoxScore-diff
+  // 경로와 동일 — 거기서도 h2b/h3b/hr delta 없으면 단타 처리).
+  if (
+    text.includes("1루타") ||
+    text.includes("2루타") ||
+    text.includes("3루타") ||
+    text.includes("내야안타") ||
+    text.includes("안타")
+  )
     return "hit";
   return "other";
 }
@@ -259,21 +267,25 @@ function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
     // Batter at-bat (titleStyle "8" or others with textOptions)
     if (!current || !relay.textOptions) continue;
 
-    // Extract batter name from title: "3번타자 홍창기"
-    // 비표준 title (예: "대주자 홍창기", "투수 교체") 시 batter 식별 불가 →
-    // 이 textRelay 항목 전체 skip. 과거엔 fallback으로 relay.title 통째로 박았으나
-    // 그 경우 batterNorm = "대주자홍창기" 같은 garbage 키가 만들어져 KBO BoxScore
-    // 경로와 cross-source dedupe가 깨지고 같은 plate appearance가 두 번 발화한다.
-    const batterMatch = relay.title.match(/\d+번타자\s+(.+)/);
-    if (!batterMatch) continue;
-    const batterName = batterMatch[1];
+    // Batter 식별은 *opt.text* parts[0]에서 직접 추출. 과거엔 `relay.title`의
+    // `/\d+번타자\s+(.+)/` 정규식만 신뢰했으나, 대타("대타 문정빈")/대주자
+    // ("대주자 홍창기") 등 비표준 title 변종에서 매칭 실패 → relay 항목 통째
+    // skip → cross-source dedupe 깨지면서 BoxScore-diff fallback이 stale
+    // boxscore에서 hit subtype을 잘못 분류(예: 3루타 → 안타) 발화하는 회귀가
+    // 났었다 (2026-05-27 문정빈 3루타 P0). type=13/23 자체가 "타석 결과" 마커
+    // 라서 opt.text "X : 결과" 포맷이 SSOT — title을 거치지 않아도 batter를
+    // 안전하게 식별할 수 있다. " : " 분리자 없으면 정상 result line이 아니므로
+    // skip.
 
     for (const opt of relay.textOptions) {
       if (opt.type === 13 || opt.type === 23) {
         // At-bat result: "홍창기 : 우익수 앞 1루타"
         // type 13 = 일반 타석 결과, type 23 = 희생플라이/아웃/볼넷 등
         const parts = opt.text.split(" : ");
-        const resultText = parts.length > 1 ? parts.slice(1).join(" : ") : opt.text;
+        if (parts.length < 2) continue;
+        const batterName = parts[0].trim();
+        if (!batterName) continue;
+        const resultText = parts.slice(1).join(" : ");
 
         const play: PlayEvent = {
           batterName,
