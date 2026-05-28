@@ -53,11 +53,11 @@
 
 | 항목 | 출처 | 비고 |
 | --- | --- | --- |
-| 시즌 RISP (타자) | C | 주자 2/3루 점유 시에만 노출 (§5-6). 비-RISP 상황에선 노이즈 |
-| 시즌 PH-BA (타자) | C | 현재 타자 *대타*일 때만 노출 (§5-6). 정규 타자에겐 무의미 |
-| *좌/우 상대 split* (타자 vs 좌·우투수 / 투수 vs 좌·우타자) | C-S Table 4 | 현재 매치업 손잡이에 *반대편 행만* 노출 (§5-6) |
-| *만루 타율* (타자) / *만루 피안타율* (투수) | C-S Table 0 | 만루 상황일 때만 노출 (§5-6). RISP 게이트 강화판 |
-| *2아웃 AVG* | C-S Table 5 *2아웃 행만* | 현재 *2아웃*일 때만 노출 (§5-6). 0/1아웃 행은 평시 미사용 |
+| 시즌 RISP (타자) | C-S Table 0 | 주자 2/3루 점유 시에만 노출 (§5-6). *batter-only*. 투수 RISP는 실제 AB denominator 미확보로 v1 숨김 |
+| 시즌 PH-BA (타자) | C | 현재 타자 *대타*일 때만 노출 (§5-6). 투수 측 동치(KBO에 대타 상대 피안타율 컬럼) 부재 — *batter-only* |
+| *좌/우 상대 split* (타자 vs 좌·우투수 / 투수 vs 좌·우타자) | C-S Table 4 | 현재 매치업 손잡이에 *반대편 행만* 노출 (§5-6). *batter·pitcher 페어* — 우타자×좌투수 매치업이면 투수 "vs 우타자" + 타자 "vs 좌투수" 동시 |
+| *만루 타율* (타자) / *만루 피안타율* (투수) | C-S Table 0 | 만루 상황일 때만 노출 (§5-6). *batter·pitcher 페어*. RISP 게이트 강화판 |
+| *2아웃 AVG* (타자) / *2아웃 피안타율* (투수) | C-S Table 5 *2아웃 행만* | 현재 *2아웃*일 때만 노출 (§5-6). *batter·pitcher 페어*. 0/1아웃 행은 평시 미사용 |
 | 이번 경기 타석 시퀀스 (1타석 1루타, 2타석 삼진…) | A | inning relay에서 batterName 매칭 |
 | 사이클링 임박 (3루타/홈런만 남음 등) | A | 시퀀스에서 1B/2B/3B/HR 체크 |
 | 노히트/퍼펙트 진행 | B | 투수 박스 H=0, BB=0 추적. *7회 이후에만 노출* (§5-5) |
@@ -85,6 +85,11 @@
 > - KBO `Situation.aspx`에서 풀 split 풀세트 발견 — 좌/우·만루·아웃카운트별 🟢 승격, 자체 pitch outcome 재집계 불요
 > - *카운트별·이닝별·타순별*은 의미 약함 / UX 과부하 사유로 v1 미사용 (Phase 2 이후에도 명시 요청 시에만 검토)
 > - *아웃카운트별*은 *2아웃 행만* 사용 (0/1아웃 행은 데이터는 있지만 노출 X — clutch 컨텍스트가 핵심)
+>
+> 5/27 갱신 (페어 노출 확장):
+> - PR #118/#126 머지 후 운영 관찰 — 평시 라인 5개가 *전부 batter-only*라 *투수 컨텍스트 누락* + 박스 비노출 빈도 추정 ~50%
+> - vsHand·만루·2아웃 3개를 *batter·pitcher 페어*로 변환. RISP·PH-BA는 denominator/컬럼 미확보 사유로 batter-only 유지
+> - 매칭 기회가 늘어 박스 비노출 빈도 자연 감소 예상
 
 ## 5. 오류 가드 (구현 의무)
 
@@ -108,7 +113,7 @@
 
 - 모든 split 행은 표본 N < 임계 시 *그 행 숨김*. 임계값(`AB` 또는 `BF`):
   - 만루: ≥ 5타석 (만루 자체가 희소 — 너무 높이면 시즌 내내 미노출 가능)
-  - 득점권(2/3루): ≥ 10타석
+  - 득점권(2/3루): 타자 ≥ 10타석. 투수 RISP는 실제 AB denominator 미확보로 v1 숨김
   - 좌/우 상대 split: ≥ 30타석
   - 2아웃: ≥ 20타석
   - 최근 10경기 hot/cold: 실제 출장 10경기 채워진 경우만
@@ -126,9 +131,15 @@
 
 - **RISP 타율** = 주자 2루 또는 3루 점유 시에만 노출. KBO `GetKboGameList`의 `B2_BAT_ORDER_NO > 0 || B3_BAT_ORDER_NO > 0` 체크. 주자 없음/1루 단독은 컨텍스트 미스 → 미노출.
 - **PH-BA(대타 시 타율)** = 현재 타자가 *대타*로 들어왔을 때만 노출. KBO boxscore position 코드 `posRaw.startsWith("타")` 또는 `isSubstitute=true && 첫 타석` 체크. 정규 타자에게 노출하면 무의미.
-- **좌/우 split (반대편 매칭)** = 현재 타석의 *상대 손잡이* 행만 노출. 우타자 타석 → 투수의 "vs 우타자" 행만. 좌타자 타석 → 투수의 "vs 좌타자" 행만. 동일 손잡이 행 노출 금지 (관전 의미 없음). 손잡이 정보는 `players-roster.json`의 `batSide`/`throws`(혹은 boxscore 표기 "우투우타") 기반. 매핑 실패 시 행 숨김.
-- **만루 split** = 만루 상황(`B1>0 && B2>0 && B3>0`)일 때만 노출. RISP 게이트의 강화판.
-- **2아웃 split** = *아웃카운트가 2일 때만* 노출 (Table 5의 "2아웃" 행). 0/1아웃은 미사용 — clutch 컨텍스트만 가치 있음.
+- **좌/우 split (반대편 매칭, 페어)** = 현재 타석의 *상대 손잡이* 행을 *양쪽* 노출.
+  - 우타자 × 좌투수 매치업 → 투수의 "vs 우타자" 행 + 타자의 "vs 좌투수" 행 동시
+  - 좌타자 × 우투수 매치업 → 투수의 "vs 좌타자" 행 + 타자의 "vs 우투수" 행 동시
+  - 동일 손잡이 행 노출 금지 (관전 의미 없음).
+  - 손잡이 정보는 KBO `Basic.aspx` 프로필 "포지션:(우투우타)" 파싱 (handedness-parser). 매핑 실패 시 *그 쪽 행만* 숨김 — 한쪽이라도 매핑되면 라인 살아남음.
+- **만루 split (페어)** = 만루 상황(`B1>0 && B2>0 && B3>0`)일 때만 노출. *타자 만루 타율* + *투수 만루 피안타율* 동시. RISP 게이트의 강화판.
+- **RISP split (batter-only)** = 2/3루 점유 시 *타자 RISP 타율*만 노출 (Table 0의 RISP 행 집계, situation-parser `aggregateRisp`). 투수 Situation Table 0에는 실제 AB가 없어 H+BB+SO proxy로 AVG 재계산 금지. 실제 denominator 확보 전까지 투수 RISP 피안타율은 숨김.
+- **2아웃 split (페어)** = *아웃카운트가 2일 때만* 노출 (Table 5의 "2아웃" 행). *타자 2아웃 타율* + *투수 2아웃 피안타율* 동시. 0/1아웃은 미사용 — clutch 컨텍스트만 가치 있음.
+- **페어 한쪽 결측 처리**: 한쪽(예: 신인 투수 표본 30 미만)이 게이트 실패해도 *다른 한쪽이 통과하면* 라인은 살아남음 (single-side fallback). 둘 다 실패 시 라인 숨김.
 - 컨텍스트 게이트 실패 = 그 라인만 숨김 (박스는 살아남음, fail-closed §5-7 적용).
 - *상태 변화 시 즉시 swap*: 주자·카운트·아웃이 바뀌면 해당 라인 *즉시 갱신* (라이브성 보장).
 
@@ -138,11 +149,11 @@
   ```
   <ContextStatsBox>
     ├ <NoHitterLine />     // 7회 이후 + 팀 합산 H=0
-    ├ <VsHandLine />       // 매치업 상대 손잡이 행만
-    ├ <BasesLoadedLine />  // 만루 상황
-    ├ <RispLine />         // 2/3루 점유 (Situation 합산)
-    ├ <TwoOutsLine />      // outs=2
-    └ <PhBaLine />         // 대타 첫 타석
+    ├ <VsHandLine />       // 매치업 상대 손잡이 행 (batter+pitcher pair)
+    ├ <BasesLoadedLine />  // 만루 상황 (batter+pitcher pair)
+    ├ <RispLine />         // 2/3루 점유 — Situation 집계 (batter+pitcher pair)
+    ├ <TwoOutsLine />      // outs=2 (batter+pitcher pair)
+    └ <PhBaLine />         // 대타 첫 타석 (batter-only)
   </ContextStatsBox>
   ```
 - 모든 라인이 null이면 `<ContextStatsBox>` 자체가 `return null`. 빈 박스/skeleton 노출 금지.
@@ -152,7 +163,7 @@
 
 | PR | 범위 | 게이트 |
 | --- | --- | --- |
-| **PR1** | `/api/contextual-stats?gameId=` 어댑터 — A/B/C/*C-S* 병렬 fetch + §5 가드 적용 + cross-check + split row 매칭 로직 (v1 사용: Table 0 만루행 · Table 4 좌우행 · Table 5 2아웃행 · Basic의 RISP/PH-BA) | unit: 매핑 실패·stale·cross-mismatch·split row 미매칭 각각 null 반환 검증 |
+| **PR1** | `/api/contextual-stats?gameId=` 어댑터 — A/B/C/*C-S* 병렬 fetch + §5 가드 적용 + cross-check + split row 매칭 로직 (v1 사용: Table 0 만루행/RISP 집계 · Table 4 좌우행 · Table 5 2아웃행 · Basic의 PH-BA) | unit: 매핑 실패·stale·cross-mismatch·split row 미매칭 각각 null 반환 검증 |
 | **PR2** | `<ContextStatsBox>` UI — 살림 5라인(좌/우·만루·RISP·2아웃·PH-BA) 컨텍스트 게이트 통과한 것만 mount. fail-closed: 0건이면 박스 전체 unmount | Playwright: 박스 mount/unmount 시나리오 (정상·결측·stale·컨텍스트 미일치 0건). 실기기 확인은 자동화 외 |
 | **PR3** | `<HighlightLine>` — 사이클링·노히터·마일스톤 임박 트리거 | 시뮬 트리거 픽스처. 진행 중 추정 노출되지 않는지 회귀 테스트 |
 | **PR4** | 재집계(만루/RISP·좌우 OPS·최근 10경기) — Phase 2 진입 시 분리 스펙 | view/cron 추가, 표본 N 가드 적용 |

@@ -29,12 +29,12 @@ import {
   looksLikeAspNetError,
 } from "@/lib/contextual-stats/situation-parser";
 import {
-  selectBasesLoaded,
+  selectBasesLoadedPair,
   selectNoHitter,
   selectPhBA,
-  selectRisp,
-  selectTwoOuts,
-  selectVsHand,
+  selectRispPair,
+  selectTwoOutsPair,
+  selectVsHandPair,
 } from "@/lib/contextual-stats/gates";
 import type {
   BasicSeasonStats,
@@ -373,8 +373,9 @@ export async function GET(req: NextRequest) {
 
   // ===== Apply gates =====
 
+  // Batter 측은 bat이 vsHand 매칭에 필수, throws는 무관(미사용).
   const batterHandedness: PlayerHandedness | null =
-    batter && batterProfile?.handedness.bat && batterProfile.handedness.throws
+    batter && batterProfile?.handedness.bat
       ? {
           kboId: batter.kboId,
           name: batter.name,
@@ -383,11 +384,35 @@ export async function GET(req: NextRequest) {
         }
       : null;
 
+  // Pitcher 측 페이지("투수(좌투)")는 bat 정보 없음. throws만 있어도 batter의
+  // "vs 좌/우투수" 행 매칭에 충분 → throws 단독으로 PlayerHandedness 생성.
+  const pitcherHandedness: PlayerHandedness | null =
+    pitcher && pitcherProfile?.handedness.throws
+      ? {
+          kboId: pitcher.kboId,
+          name: pitcher.name,
+          bat: pitcherProfile.handedness.bat,
+          throws: pitcherProfile.handedness.throws,
+        }
+      : null;
+
+  const batterRef = batter ? { kboId: batter.kboId, name: batter.name } : null;
+  const pitcherRef = pitcher ? { kboId: pitcher.kboId, name: pitcher.name } : null;
+  const batterSit = batterProfile?.situation ?? null;
+  const pitcherSit = pitcherProfile?.situation ?? null;
+
   const lines: ContextualLines = {
-    vsHand: selectVsHand(pitcherProfile?.situation ?? null, batterHandedness),
-    basesLoaded: selectBasesLoaded(batterProfile?.situation ?? null, ctx),
-    risp: selectRisp(batterProfile?.situation ?? null, ctx),
-    twoOuts: selectTwoOuts(batterProfile?.situation ?? null, ctx, "batter"),
+    vsHand: selectVsHandPair(
+      batterSit,
+      pitcherSit,
+      batterHandedness,
+      pitcherHandedness,
+      batterRef,
+      pitcherRef,
+    ),
+    basesLoaded: selectBasesLoadedPair(batterSit, pitcherSit, ctx, batterRef, pitcherRef),
+    risp: selectRispPair(batterSit, pitcherSit, ctx, batterRef, pitcherRef),
+    twoOuts: selectTwoOutsPair(batterSit, pitcherSit, ctx, batterRef, pitcherRef),
     phBA: selectPhBA(batterProfile?.basic ?? null, ctx),
   };
 
