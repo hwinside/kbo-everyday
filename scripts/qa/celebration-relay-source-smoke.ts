@@ -637,6 +637,10 @@ function parseInningRelaysMirror(textRelays: MirrorNaverTextRelay[]): MirrorInni
   return innings;
 }
 
+function combineRelayInningsNewestFirstMirror(inningRelays: MirrorNaverTextRelay[][]): MirrorNaverTextRelay[] {
+  return [...inningRelays].reverse().flat();
+}
+
 // ----- T12: classifyResult — "2루타성 잡혀 아웃" must NOT be hit -----
 {
   assert(
@@ -985,6 +989,50 @@ function parseInningRelaysMirror(textRelays: MirrorNaverTextRelay[]): MirrorInni
       && innings[0].plays[0].batterName === "홍창기"
       && innings[0].plays[0].type === "hit",
     { plays: innings[0]?.plays },
+  );
+}
+
+// ----- T18: full-history multi-inning order — repeat batter cumIdx stable -----
+// /api/game-relay fetches innings 1→current, but each inning payload is
+// newest-first. If those bundles are flattened as-is, parseInningRelays()
+// reverses the full game into current→1회 order. Then the same batter's 5회
+// 2루타 gets idx=1 and his older 1회 2루타 gets idx=2, so a later poll can
+// replay the old 1회 event as a fresh relay id.
+{
+  const inning1NewestFirst: MirrorNaverTextRelay[] = [
+    {
+      title: "2번타자 박지훈",
+      titleStyle: "8",
+      textOptions: [{ seqno: 2, text: "박지훈 : 좌익수 왼쪽 2루타", type: 13 }],
+    },
+    { title: "1회말 KT 공격", titleStyle: "0" },
+  ];
+  const inning5NewestFirst: MirrorNaverTextRelay[] = [
+    {
+      title: "2번타자 박지훈",
+      titleStyle: "8",
+      textOptions: [{ seqno: 2, text: "박지훈 : 우익수 오른쪽 2루타", type: 13 }],
+    },
+    { title: "5회말 KT 공격", titleStyle: "0" },
+  ];
+
+  const innings = parseInningRelaysMirror(
+    combineRelayInningsNewestFirstMirror([inning1NewestFirst, inning5NewestFirst]),
+  );
+  const live = mkLive({ inning: 5, isTop: false, currentBatter: "박지훈" });
+  const events = generateRelayEvents(GAME_ID, innings, live);
+  const ids = events.map(e => e.id);
+
+  assert(
+    "T18: full-history parse order remains 1회→5회 after route combine",
+    innings.map(i => `${i.inning}-${i.half}`).join(",") === "1-bottom,5-bottom",
+    { innings: innings.map(i => ({ inning: i.inning, half: i.half })) },
+  );
+  assert(
+    "T18: same batter repeat double keeps chronological cumIdx (1회 idx=1, 5회 idx=2)",
+    ids[0]?.endsWith("-1-B-박지훈-1") === true
+      && ids[1]?.endsWith("-5-B-박지훈-2") === true,
+    { ids },
   );
 }
 

@@ -664,6 +664,13 @@ const NAVER_API_BASE =
 const responseCache = new Map<string, { data: GameRelayResponse; expiresAt: number }>();
 const CACHE_TTL_MS = 4_000;
 
+function combineRelayInningsNewestFirst(inningRelays: NaverTextRelay[][]): NaverTextRelay[] {
+  // Each Naver inning payload is newest-first. parseInningRelays reverses the
+  // full array once, so concatenate inning bundles newest inning first; the
+  // parser then sees 1회 → current inning in chronological order.
+  return [...inningRelays].reverse().flat();
+}
+
 function getCachedResponse(key: string): GameRelayResponse | null {
   const entry = responseCache.get(key);
   if (!entry) return null;
@@ -786,8 +793,11 @@ export async function GET(req: NextRequest) {
 
     const allTextRelays = allTextRelaysResult;
 
-    // Combine all text relays and parse
-    const combined = allTextRelays.flat();
+    // Combine all text relays with global newest-first ordering. Keeping
+    // inning bundles in ascending order would make parseInningRelays reverse
+    // the whole game into current→1회 order, flipping relay cumIdx for repeat
+    // batter events and breaking cross-source dedupe.
+    const combined = combineRelayInningsNewestFirst(allTextRelays);
     const innings = parseInningRelays(combined);
 
     // Extract current matchup stats from the latest batter entry
