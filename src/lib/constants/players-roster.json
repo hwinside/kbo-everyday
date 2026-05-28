@@ -2048,6 +2048,14 @@
     "team": "키움"
   },
   {
+    "name": "박성재",
+    "kboId": "51298",
+    "teamId": 2,
+    "position": "야수",
+    "backNo": "5",
+    "team": "두산"
+  },
+  {
     "name": "박성한",
     "kboId": "67893",
     "teamId": 4,
@@ -2121,19 +2129,19 @@
   },
   {
     "name": "박시원",
-    "kboId": "50996",
-    "teamId": 5,
-    "position": "외야수",
-    "backNo": "53",
-    "team": "NC"
-  },
-  {
-    "name": "박시원",
     "kboId": "55121",
     "teamId": 1,
     "position": "투수",
     "backNo": "58",
     "team": "LG"
+  },
+  {
+    "name": "박시원",
+    "kboId": "50996",
+    "teamId": 5,
+    "position": "외야수",
+    "backNo": "53",
+    "team": "NC"
   },
   {
     "name": "박시후",
@@ -3265,19 +3273,19 @@
   },
   {
     "name": "양현종",
-    "kboId": "55370",
-    "teamId": 10,
-    "position": "내야수",
-    "backNo": "60",
-    "team": "키움"
-  },
-  {
-    "name": "양현종",
     "kboId": "77637",
     "teamId": 6,
     "position": "투수",
     "backNo": "54",
     "team": "KIA"
+  },
+  {
+    "name": "양현종",
+    "kboId": "55370",
+    "teamId": 10,
+    "position": "내야수",
+    "backNo": "60",
+    "team": "키움"
   },
   {
     "name": "어윤성",
@@ -4104,6 +4112,14 @@
     "team": "SSG"
   },
   {
+    "name": "이승헌",
+    "kboId": "68529",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "46",
+    "team": "롯데"
+  },
+  {
     "name": "이승현",
     "kboId": "60146",
     "teamId": 8,
@@ -4248,6 +4264,14 @@
     "team": "삼성"
   },
   {
+    "name": "이재희",
+    "kboId": "51460",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "17",
+    "team": "삼성"
+  },
+  {
     "name": "이정민",
     "kboId": "56513",
     "teamId": 7,
@@ -4321,18 +4345,18 @@
   },
   {
     "name": "이주형",
-    "kboId": "50167",
-    "teamId": 10,
-    "position": "외야수",
-    "backNo": "2",
-    "team": "키움"
-  },
-  {
-    "name": "이주형",
     "kboId": "51302",
     "teamId": 10,
     "position": "내야수",
     "backNo": "58",
+    "team": "키움"
+  },
+  {
+    "name": "이주형",
+    "kboId": "50167",
+    "teamId": 10,
+    "position": "외야수",
+    "backNo": "2",
     "team": "키움"
   },
   {
@@ -5550,6 +5574,14 @@
     "position": "투수",
     "backNo": "28",
     "team": "두산"
+  },
+  {
+    "name": "최용준",
+    "kboId": "50650",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "67",
+    "team": "SSG"
   },
   {
     "name": "최우석",
