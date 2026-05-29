@@ -6,7 +6,8 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, MoreHorizontal } from "lucide-react";
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, getTeamBySlug, getTeamBgColor, type TeamData } from "@/lib/constants/teams";
+import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import { parsePlayerTag } from "@/lib/utils/player-tags";
 import TeamBadge from "@/components/ui/TeamBadge";
@@ -50,6 +51,18 @@ function timeAgo(dateStr: string): string {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}일 전`;
   return new Date(dateStr).toLocaleDateString("ko-KR");
+}
+
+/** 제목 필드 제거(spec §4·§11) → 기존 글의 title+content를 하나의 본문으로 합쳐 렌더. */
+function mergedBody(post: Post): string {
+  const t = (post.title ?? "").trim();
+  const c = (post.content ?? "").trim();
+  return t && c ? `${t}\n${c}` : t || c;
+}
+
+/** 배경 텍스트 카드(B) 조건: 합산 본문 ≤ 80자 & 링크 0 (미디어 0은 호출부에서 보장). */
+function isShortText(body: string): boolean {
+  return body.length <= 80 && !/https?:\/\//i.test(body);
 }
 
 
@@ -516,8 +529,8 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   if (posts.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-text-tertiary">
-        <p className="text-base">아직 사진이 없어요.</p>
-        <p className="mt-1 text-sm">첫 번째 사진을 올려보세요!</p>
+        <p className="text-base">아직 게시물이 없어요.</p>
+        <p className="mt-1 text-sm">첫 게시물을 남겨보세요!</p>
       </div>
     );
   }
@@ -527,6 +540,8 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
       {posts.map((post, index) => {
         const isLiked = likedPosts.has(post.id);
         const isMine = !!user && post.author_id === user.id;
+        const hasMedia = post.image_urls.length > 0 || (post.video_urls?.length ?? 0) > 0;
+        const body = mergedBody(post);
 
         if (deletedIds.has(post.id)) return null;
 
@@ -596,8 +611,9 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 </div>
               )}
 
-              {/* Photo/video carousel — full bleed, no padding, no rounded corners */}
-              {(post.image_urls.length > 0 || (post.video_urls && post.video_urls.length > 0)) && (
+              {/* 본문 슬롯 — 미디어(카드 A) / 짧은 글(카드 B) / 긴 글(카드 C) 분기 */}
+              {hasMedia ? (
+                /* 사진/영상 캐러셀 — full bleed, no padding, no rounded corners */
                 <div className="relative">
                   <PhotoCarousel
                     slides={[
@@ -611,7 +627,11 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   />
                   <HeartOverlay show={heartPostId === post.id} />
                 </div>
-              )}
+              ) : body && isShortText(body) ? (
+                <BrandedTextCard post={post} body={body} />
+              ) : body ? (
+                <LongTextCard body={body} />
+              ) : null}
 
               {/* Action bar */}
               <div className="flex items-center gap-4 px-5 py-2.5">
@@ -636,11 +656,11 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 </button>
               </div>
 
-              {/* Caption */}
-              {post.content && (
+              {/* Caption — 미디어 카드에만 (텍스트 카드는 본문이 카드 자체) */}
+              {hasMedia && body && (
                 <CaptionBlock
                   nickname={post.nickname || "익명"}
-                  content={post.content}
+                  content={body}
                   onPress={() => { setCommentPostId(post.id); setCommentTeamId(post.team_id ?? null); }}
                 />
               )}
@@ -710,6 +730,76 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
             setCommentDeltas((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) - 1 }));
           }}
         />
+      )}
+    </div>
+  );
+}
+
+/** 카드 B — 페북식 배경 텍스트 카드. 보드 컨텍스트로 배경 결정(팀 로고/선수 사진/응원팀 컬러). */
+function BrandedTextCard({ post, body }: { post: Post; body: string }) {
+  const photoUrl = post.board_type === "player" ? getPlayerPhotoByKboId(post.board_id) : null;
+
+  let team: TeamData | undefined;
+  if (post.board_type === "team") {
+    team = getTeamBySlug(post.board_id);
+  } else if (post.board_type === "player") {
+    const entry = findPlayerByKboId(post.board_id);
+    team = entry ? getTeamById(entry.teamId) : undefined;
+  } else {
+    // 자유게시판 → 작성자 응원팀 컬러(없으면 중립)
+    team = post.team_id ? getTeamById(post.team_id) : undefined;
+  }
+
+  const gradient = team
+    ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 35%, #1a1a1d) 0%, #1a1a1d 100%)`
+    : "linear-gradient(135deg, #2a2a3d 0%, #1a1a1d 100%)";
+
+  return (
+    <div
+      className="relative flex min-h-[200px] w-full items-center justify-center overflow-hidden px-8 py-10"
+      style={{ background: gradient }}
+    >
+      {photoUrl ? (
+        <>
+          <Image src={photoUrl} alt="" fill unoptimized className="object-cover object-top opacity-30" sizes="(max-width: 768px) 100vw, 600px" />
+          <div className="absolute inset-0 bg-black/45" />
+        </>
+      ) : team ? (
+        <div className="absolute right-4 top-4 opacity-20">
+          <Image src={team.logoPath} alt="" width={88} height={88} unoptimized className="object-contain" />
+        </div>
+      ) : null}
+      <p className="relative z-10 whitespace-pre-line break-keep text-center text-xl font-bold leading-snug text-white line-clamp-5">
+        {body}
+      </p>
+    </div>
+  );
+}
+
+/** 카드 C — 긴 텍스트. 3줄 클램프 + '더 보기' 인라인 펼침(상세 이동 없음). */
+function LongTextCard({ body }: { body: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [clamped, setClamped] = useState(false);
+  const ref = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    requestAnimationFrame(() => setClamped(el.scrollHeight > el.clientHeight + 2));
+  }, [body]);
+
+  return (
+    <div className="px-5 pt-1 pb-2">
+      <p
+        ref={ref}
+        className={`whitespace-pre-line break-words text-base leading-relaxed text-text-primary ${expanded ? "" : "line-clamp-3"}`}
+      >
+        {body}
+      </p>
+      {clamped && !expanded && (
+        <button onClick={() => setExpanded(true)} className="mt-0.5 text-base text-text-tertiary">
+          더 보기
+        </button>
       )}
     </div>
   );
