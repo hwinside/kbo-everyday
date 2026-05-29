@@ -16,6 +16,7 @@ import { deletePost } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import type { CommunitySourceLabel } from "@/lib/utils/community-board";
 import CommentSheet from "./CommentSheet";
+import LinkPreview from "./LinkPreview";
 
 function findPlayerByName(name: string): { kboId: string; teamId: number } | null {
   for (const p of PLAYERS_ROSTER) {
@@ -66,9 +67,26 @@ function mergedBody(post: Post): string {
   return t && c ? `${t}\n${c}` : t || c;
 }
 
-/** 배경 텍스트 카드(B) 조건: 합산 본문 ≤ 80자 & 링크 0 (미디어 0은 호출부에서 보장). */
+// 본문 내 링크 매칭(PostCard와 동일 패턴). test용은 non-global, strip용은 global.
+const URL_REGEX = /(?:https?:\/\/|www\.)[^\s<>"')\]]+/;
+const URL_REGEX_G = /(?:https?:\/\/|www\.)[^\s<>"')\]]+/g;
+
+/** URL을 제거한 본문 — 짧은글 판정/표시에 사용(OG 카드가 링크를 대신 노출). */
+function stripUrls(text: string): string {
+  return text.replace(URL_REGEX_G, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function hasLink(text: string): boolean {
+  return URL_REGEX.test(text);
+}
+
+/**
+ * 배경 텍스트 카드(B) 조건: 첨부 0(호출부 보장) + URL 제거 본문 ≤ 80자.
+ * 링크/OG만 달랑 있는 OG-only 글(하린아빠 확정 예외)도 LongTextCard로 빠지지 않고
+ * 배경카드 유지 → BrandedTextCard 내부에서 카드 위에 OG 프리뷰 노출 + 본문 URL strip.
+ */
 function isShortText(body: string): boolean {
-  return body.length <= 80 && !/https?:\/\//i.test(body);
+  return stripUrls(body).length <= 80;
 }
 
 
@@ -766,6 +784,10 @@ function BrandedTextCard({ post, body }: { post: Post; body: string }) {
     ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 35%, #1a1a1d) 0%, #1a1a1d 100%)`
     : "linear-gradient(135deg, #2a2a3d 0%, #1a1a1d 100%)";
 
+  // OG-only 예외: URL은 본문에서 strip하고 OG 프리뷰를 카드 위에 노출(하린아빠 확정).
+  const displayBody = stripUrls(body);
+  const linked = hasLink(body);
+
   return (
     <div
       className="relative flex min-h-[200px] w-full items-center justify-center overflow-hidden px-8 py-10"
@@ -781,9 +803,18 @@ function BrandedTextCard({ post, body }: { post: Post; body: string }) {
           <Image src={team.logoPath} alt="" width={88} height={88} unoptimized className="object-contain" />
         </div>
       ) : null}
-      <p className="relative z-10 whitespace-pre-line break-keep text-center text-xl font-bold leading-snug text-white line-clamp-5">
-        {body}
-      </p>
+      <div className="relative z-10 flex w-full flex-col items-center gap-3">
+        {displayBody && (
+          <p className="whitespace-pre-line break-keep text-center text-xl font-bold leading-snug text-white line-clamp-5">
+            {displayBody}
+          </p>
+        )}
+        {linked && (
+          <div className="w-full max-w-sm">
+            <LinkPreview text={body} maxPreviews={1} stopPropagation />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
