@@ -86,6 +86,9 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const [vvTop, setVvTop] = useState(0);
   const [keyboardInset, setKeyboardInset] = useState(0);
+  // 인스타 2단계: (b) 아이콘 클릭 → 부분 높이 오픈, (c) 입력창 포커스 → 화면 상단까지 확장.
+  // 확장은 sticky (한 번 입력 시작하면 닫을 때까지 유지) — 인스타 동일.
+  const [expanded, setExpanded] = useState(false);
   const { user, profile } = useAuth();
   const shouldRender = isOpen && postId !== null;
 
@@ -149,14 +152,21 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     }
   }, [shouldRender]);
 
-  // Reset input + replyTo when sheet closes
+  // Reset input + replyTo + 확장 상태 when sheet closes
   useEffect(() => {
     if (!shouldRender) {
       setInput("");
       setReplyTo(null);
       setShowGifPicker(false);
+      setExpanded(false);
     }
   }, [shouldRender]);
+
+  // 키보드가 떠 있으면(=입력 중) 무조건 확장 상태 유지.
+  // 포커스 onFocus만으로는 키보드 settle 전 시트가 짧게 보일 수 있어 키보드 inset도 트리거로.
+  useEffect(() => {
+    if (keyboardInset > 0 && !expanded) setExpanded(true);
+  }, [keyboardInset, expanded]);
 
   // Track visualViewport for iOS keyboard-aware sheet height.
   // Important: do not drive the sheet with `bottom: keyboardInset`.
@@ -693,18 +703,20 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             style={{
               zIndex: 9999,
               ...(() => {
-                const topOffset = viewportHeight ? Math.max(24, viewportHeight * 0.08) : null;
+                // (b) 오픈 시 부분 높이(~62%), (c) 입력창 포커스 후 화면 상단까지 확장(~94%).
+                const ratio = expanded ? 0.06 : 0.38;
+                const topOffset = viewportHeight ? Math.max(24, viewportHeight * ratio) : null;
                 return viewportHeight && topOffset !== null
                   ? {
                       top: `${vvTop + topOffset}px`,
                       height: `${Math.max(320, viewportHeight - topOffset)}px`,
                     }
                   : {
-                      top: "8vh",
-                      height: "92dvh",
+                      top: expanded ? "6vh" : "38vh",
+                      height: expanded ? "94dvh" : "62dvh",
                     };
               })(),
-              transition: "height 120ms ease-out, top 120ms ease-out",
+              transition: "height 160ms ease-out, top 160ms ease-out",
             }}
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
@@ -799,7 +811,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                 {user ? (
                   <>
                     <button
-                      onClick={() => setShowGifPicker((v) => !v)}
+                      onClick={() => { setExpanded(true); setShowGifPicker((v) => !v); }}
                       className={`flex items-center justify-center w-9 h-9 rounded-full transition-colors ${showGifPicker ? "bg-accent/20 text-accent" : "text-text-tertiary hover:text-text-primary"}`}
                       aria-label="GIF"
                     >
@@ -812,6 +824,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                       onChange={(e) => setInput(e.target.value)}
                       onFocus={() => {
                         setShowGifPicker(false);
+                        setExpanded(true);
                         const scrollToBottom = () => {
                           if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
                         };
