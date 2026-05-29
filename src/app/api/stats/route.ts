@@ -52,23 +52,45 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
   // Basic1: 순위(0) 선수명(1) 팀명(2) AVG(3) G(4) PA(5) AB(6) R(7) H(8) 2B(9) 3B(10) HR(11) TB(12) RBI(13) SAC(14) SF(15)
   // Basic2: 순위(0) 선수명(1) 팀명(2) AVG(3) BB(4) IBB(5) HBP(6) SO(7) GDP(8) SLG(9) OBP(10) OPS(11) MH(12) RISP(13) PH-BA(14)
   // Runner: 순위(0) 선수명(1) 팀명(2) G(3) SBA(4) SB(5) CS(6) SB%(7) OOB(8) PKO(9)
-  const [basic1Html, basic2Html, runnerHtml, qualifiedHtml] = await Promise.all([
-    // GAME_CN 정렬로 출장기록 있는 전체 타자 수집 (HRA_RT는 규정타석 충족자만)
-    fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=GAME_CN`),
-    fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic2.aspx?sort=GAME_CN`),
-    fetchHtml(`${KBO_BASE}/Record/Player/Runner/Basic.aspx?sort=SB_CN`),
-    // HRA_RT 페이지로 규정타석 충족 선수 목록 확보
-    fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=HRA_RT`),
-  ]);
-  const rows = parseTable(basic1Html);
-  const basic2Rows = parseTable(basic2Html);
-  const runnerRows = parseTable(runnerHtml);
+  // KBO 레코드는 페이지당 30행 + 포스트백 페이지네이션 → 단일 정렬로는 31위↓ 누락.
+  // 카테고리별 정렬을 union해 각 부문 리더가 빠지지 않게 수집 (투수와 동일 패턴).
+  // 비율스탯(*_RT) 리더보드는 KBO가 규정타석 충족자만 노출 → 규정타석 셋 산출에도 사용.
+  const rateSorts = ["HRA_RT", "OPS_RT", "OBP_RT", "SLG_RT"];
+  const basic1Sorts = ["GAME_CN", "HR_CN", "RBI_CN", "HIT_CN", "SB_CN", ...rateSorts];
+  // Basic2 누적스탯(BB/SO/HBP/GDP)도 union으로 수집. basic1과 동일 정렬 셋을 공유해야
+  // basic1 union으로 들어온 모든 선수(도루·안타 정렬 포함)의 b2 데이터가 미스 없이 채워짐.
+  // 추가로 BB/KK/HP/GD 정렬을 넣어 각 누적 부문 리더(예: 김재환 BB, 송찬의 HBP)까지 커버.
+  const basic2Sorts = [...basic1Sorts, "BB_CN", "KK_CN", "HP_CN", "GD_CN"];
   const roster = playersRoster as RosterPlayer[];
 
-  // 규정타석 충족 선수 셋
+  const [basic1Htmls, basic2Htmls, runnerHtml] = await Promise.all([
+    Promise.all(basic1Sorts.map((s) => fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=${s}`))),
+    Promise.all(basic2Sorts.map((s) => fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic2.aspx?sort=${s}`))),
+    fetchHtml(`${KBO_BASE}/Record/Player/Runner/Basic.aspx?sort=SB_CN`),
+  ]);
+
+  // Basic1 union: name::team 최초 우선으로 병합 (각 정렬 상위 30 합집합)
+  const mergedRows = new Map<string, string[]>();
+  for (const html of basic1Htmls) {
+    for (const c of parseTable(html)) {
+      const key = `${(c[1] || "").trim()}::${(c[2] || "").trim()}`;
+      if (key !== "::" && !mergedRows.has(key)) mergedRows.set(key, c);
+    }
+  }
+  const rows = [...mergedRows.values()];
+
+  // Basic2 union (OBP/OPS/SLG 등)
+  const basic2Rows = basic2Htmls.flatMap((html) => parseTable(html));
+  const runnerRows = parseTable(runnerHtml);
+
+  // 규정타석 충족 선수 셋 — 비율스탯 리더보드(규정타석만 노출) union
+  // (단일 HRA_RT는 타율 31위↓ 규정타석 선수를 놓쳐 OPS/OBP/SLG 랭킹 누락 유발)
   const qualifiedKeys = new Set<string>();
-  for (const c of parseTable(qualifiedHtml)) {
-    qualifiedKeys.add(`${(c[1] || "").trim()}::${(c[2] || "").trim()}`);
+  for (const sort of rateSorts) {
+    const idx = basic1Sorts.indexOf(sort);
+    for (const c of parseTable(basic1Htmls[idx])) {
+      qualifiedKeys.add(`${(c[1] || "").trim()}::${(c[2] || "").trim()}`);
+    }
   }
 
   // Basic2 lookup: name+team → { bb, ibb, hbp, so, gdp, slg, obp, ops }
