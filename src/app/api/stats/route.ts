@@ -57,7 +57,10 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
   // 비율스탯(*_RT) 리더보드는 KBO가 규정타석 충족자만 노출 → 규정타석 셋 산출에도 사용.
   const rateSorts = ["HRA_RT", "OPS_RT", "OBP_RT", "SLG_RT"];
   const basic1Sorts = ["GAME_CN", "HR_CN", "RBI_CN", "HIT_CN", "SB_CN", ...rateSorts];
-  const basic2Sorts = ["GAME_CN", ...rateSorts];
+  // Basic2 누적스탯(BB/SO/HBP/GDP)도 union으로 수집. basic1과 동일 정렬 셋을 공유해야
+  // basic1 union으로 들어온 모든 선수(도루·안타 정렬 포함)의 b2 데이터가 미스 없이 채워짐.
+  // 추가로 BB/KK/HP/GD 정렬을 넣어 각 누적 부문 리더(예: 김재환 BB, 송찬의 HBP)까지 커버.
+  const basic2Sorts = [...basic1Sorts, "BB_CN", "KK_CN", "HP_CN", "GD_CN"];
   const roster = playersRoster as RosterPlayer[];
 
   const [basic1Htmls, basic2Htmls, runnerHtml] = await Promise.all([
