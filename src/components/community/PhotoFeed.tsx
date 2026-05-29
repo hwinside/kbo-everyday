@@ -17,6 +17,8 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import type { CommunitySourceLabel } from "@/lib/utils/community-board";
 import CommentSheet from "./CommentSheet";
 import LinkPreview from "./LinkPreview";
+import { isGifComment } from "@/components/community/GifPicker";
+import type { CommentPreview } from "@/lib/supabase/useUnifiedFeed";
 
 function findPlayerByName(name: string): { kboId: string; teamId: number } | null {
   for (const p of PLAYERS_ROSTER) {
@@ -46,6 +48,10 @@ interface PhotoFeedProps {
    * 미주입 시 기존 동작(내부 Set, like_count + isLiked) 유지.
    */
   likedIds?: Set<number>;
+  /** 카드 인라인 댓글 프리뷰(postId → 최신 top-level 댓글 최대 2개). 미주입 시 프리뷰 미표시. */
+  commentPreviews?: Record<number, CommentPreview[]>;
+  /** 시트에서 댓글 추가/삭제 후 해당 글 프리뷰 재조회 요청(부모 소유). */
+  onRefreshComments?: (postId: number) => void;
 }
 
 function timeAgo(dateStr: string): string {
@@ -489,7 +495,7 @@ function HeartOverlay({ show }: { show: boolean }) {
   );
 }
 
-export default function PhotoFeed({ posts, loading, onLike, boardType = "team", playerLabels, sourceLabels, likedIds }: PhotoFeedProps) {
+export default function PhotoFeed({ posts, loading, onLike, boardType = "team", playerLabels, sourceLabels, likedIds, commentPreviews, onRefreshComments }: PhotoFeedProps) {
   const { user } = useAuth();
   const controlledLikes = likedIds !== undefined;
   const [likedPosts, setLikedPosts] = useState<Set<number>>(new Set());
@@ -514,6 +520,11 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
       alert("게시글 삭제에 실패했어요");
     }
   }, []);
+
+  const openComments = (post: Post) => {
+    setCommentPostId(post.id);
+    setCommentTeamId(post.team_id ?? null);
+  };
 
   const handleLike = (postId: number) => {
     // controlled 모드에선 부모가 상태를 소유 → 내부 Set 건드리지 않고 onLike에 위임.
@@ -678,7 +689,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   </span>
                 </button>
                 <button
-                  onClick={() => { setCommentPostId(post.id); setCommentTeamId(post.team_id ?? null); }}
+                  onClick={() => openComments(post)}
                   className="flex items-center gap-1 text-base text-text-secondary"
                 >
                   <MessageCircle size={20} />
@@ -691,9 +702,16 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 <CaptionBlock
                   nickname={post.nickname || "익명"}
                   content={body}
-                  onPress={() => { setCommentPostId(post.id); setCommentTeamId(post.team_id ?? null); }}
+                  onPress={() => openComments(post)}
                 />
               )}
+
+              {/* 댓글 프리뷰(최대 2개) + '댓글 N개 모두 보기' → CommentSheet 전체 열기 */}
+              <CommentPreviewBlock
+                previews={commentPreviews?.[post.id] ?? []}
+                total={post.comment_count + (commentDeltas[post.id] ?? 0)}
+                onOpen={() => openComments(post)}
+              />
 
               {/* Player tags — clickable, links to player page */}
               {post.player_tags && Array.isArray(post.player_tags) && post.player_tags.length > 0 && (
@@ -755,9 +773,11 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
           teamId={commentTeamId}
           onCommentAdded={(postId) => {
             setCommentDeltas((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }));
+            onRefreshComments?.(postId);
           }}
           onCommentDeleted={(postId) => {
             setCommentDeltas((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) - 1 }));
+            onRefreshComments?.(postId);
           }}
         />
       )}
@@ -842,6 +862,35 @@ function LongTextCard({ body }: { body: string }) {
       {clamped && !expanded && (
         <button onClick={() => setExpanded(true)} className="mt-0.5 text-base text-text-tertiary">
           더 보기
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** 카드 인라인 댓글 프리뷰 — 최신 댓글 최대 2개 + '댓글 N개 모두 보기'(전체는 CommentSheet). */
+function CommentPreviewBlock({
+  previews,
+  total,
+  onOpen,
+}: {
+  previews: CommentPreview[];
+  total: number;
+  onOpen: () => void;
+}) {
+  if (total <= 0 && previews.length === 0) return null;
+
+  return (
+    <div className="px-5 pb-1 pt-0.5 space-y-0.5">
+      {previews.map((c) => (
+        <button key={c.id} onClick={onOpen} className="block w-full truncate text-left text-sm leading-snug">
+          <span className="mr-1.5 font-semibold text-text-primary">{c.nickname}</span>
+          <span className="text-text-secondary">{isGifComment(c.content) ? "GIF" : c.content}</span>
+        </button>
+      ))}
+      {total > previews.length && (
+        <button onClick={onOpen} className="text-sm text-text-tertiary">
+          {previews.length > 0 ? `댓글 ${total}개 모두 보기` : `댓글 ${total}개 보기`}
         </button>
       )}
     </div>

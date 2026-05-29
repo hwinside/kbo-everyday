@@ -8,7 +8,7 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { getCommunitySourceLabel, type CommunitySourceLabel } from "@/lib/utils/community-board";
 
 export default function AllPostsPage() {
-  const { posts, likedIds, loading, loadingMore, hasMore, loadMore, setPostLiked } = useUnifiedFeed({ kind: "all" });
+  const { posts, likedIds, commentPreviews, loading, loadingMore, hasMore, loadMore, setPostLiked, refreshCommentPreview } = useUnifiedFeed({ kind: "all" });
   const { user } = useAuth();
 
   // 좋아요: optimistic 토글 → 서버 반영 → 실패/불일치 시 롤백·reconcile. 비로그인은 no-op.
@@ -51,7 +51,7 @@ export default function AllPostsPage() {
         <p className="text-sm text-text-tertiary">팀, 선수, 자유게시판 글을 한 번에 봅니다.</p>
       </div>
 
-      <PhotoFeed posts={posts} loading={loading} onLike={handleLike} likedIds={likedIds} sourceLabels={sourceLabels} />
+      <PhotoFeed posts={posts} loading={loading} onLike={handleLike} likedIds={likedIds} commentPreviews={commentPreviews} onRefreshComments={refreshCommentPreview} sourceLabels={sourceLabels} />
 
       {hasMore && (
         <div ref={sentinelRef} className="flex justify-center py-6 text-sm text-text-tertiary">
