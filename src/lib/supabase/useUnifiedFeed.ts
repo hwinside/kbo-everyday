@@ -85,6 +85,8 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
       else if (board.kind === "player") query = query.eq("board_type", "player").eq("board_id", board.kboId);
       else query = query.in("board_type", ["team", "player", "free"]);
       if (cursor !== null) query = query.lt("id", cursor);
+      // keyset = id desc 단일 컬럼. id가 BIGSERIAL(삽입=created_at 순 단조증가)이라
+      // (created_at,id) 복합 keyset과 동일 순서이면서 tie-break 불필요 → 더 단순·견고. (의도적 선택)
       const { data } = await query.order("id", { ascending: false }).limit(pageSize);
       const rows = (data ?? []).map((r) => mapRow(r as Record<string, unknown>));
       return rows;

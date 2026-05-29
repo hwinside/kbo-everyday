@@ -39,6 +39,12 @@ interface PhotoFeedProps {
   /** 선수 게시판: post별 playerLabel 맵 (postId → {teamId, playerName}) */
   playerLabels?: Record<number, { teamId: number; playerName: string }>;
   sourceLabels?: Record<number, CommunitySourceLabel>;
+  /**
+   * controlled 좋아요 모드: 부모가 좋아요 상태를 소유(배치 프리페치 + optimistic + 롤백)할 때 주입.
+   * 주입되면 PhotoFeed 내부 Set 대신 이 Set으로 하트를 그리고, like_count는 부모가 이미 보정한 값을 그대로 표시.
+   * 미주입 시 기존 동작(내부 Set, like_count + isLiked) 유지.
+   */
+  likedIds?: Set<number>;
 }
 
 function timeAgo(dateStr: string): string {
@@ -465,8 +471,9 @@ function HeartOverlay({ show }: { show: boolean }) {
   );
 }
 
-export default function PhotoFeed({ posts, loading, onLike, boardType = "team", playerLabels, sourceLabels }: PhotoFeedProps) {
+export default function PhotoFeed({ posts, loading, onLike, boardType = "team", playerLabels, sourceLabels, likedIds }: PhotoFeedProps) {
   const { user } = useAuth();
+  const controlledLikes = likedIds !== undefined;
   const [likedPosts, setLikedPosts] = useState<Set<number>>(new Set());
   const [heartPostId, setHeartPostId] = useState<number | null>(null);
   const [commentPostId, setCommentPostId] = useState<number | null>(null);
@@ -491,18 +498,22 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   }, []);
 
   const handleLike = (postId: number) => {
-    setLikedPosts((prev) => {
-      const next = new Set(prev);
-      if (next.has(postId)) next.delete(postId);
-      else next.add(postId);
-      return next;
-    });
+    // controlled 모드에선 부모가 상태를 소유 → 내부 Set 건드리지 않고 onLike에 위임.
+    if (!controlledLikes) {
+      setLikedPosts((prev) => {
+        const next = new Set(prev);
+        if (next.has(postId)) next.delete(postId);
+        else next.add(postId);
+        return next;
+      });
+    }
     onLike(postId);
   };
 
   // Double-tap: always adds like (never removes), Instagram-style
   const handleDoubleTap = (postId: number) => {
-    if (!likedPosts.has(postId)) {
+    const alreadyLiked = controlledLikes ? likedIds!.has(postId) : likedPosts.has(postId);
+    if (!alreadyLiked) {
       handleLike(postId);
     }
     // Show heart animation
@@ -538,7 +549,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   return (
     <div>
       {posts.map((post, index) => {
-        const isLiked = likedPosts.has(post.id);
+        const isLiked = controlledLikes ? likedIds!.has(post.id) : likedPosts.has(post.id);
         const isMine = !!user && post.author_id === user.id;
         const hasMedia = post.image_urls.length > 0 || (post.video_urls?.length ?? 0) > 0;
         const body = mergedBody(post);
@@ -644,7 +655,8 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 >
                   <span className="text-xl leading-none">{isLiked ? "\u2764\uFE0F" : "\u2661"}</span>
                   <span className={isLiked ? "text-red-500 font-medium" : "text-text-secondary"}>
-                    {post.like_count + (isLiked ? 1 : 0)}
+                    {/* controlled 모드: 부모가 like_count를 이미 optimistic 보정 → 그대로 표시. uncontrolled: 내부 하트 기준 +1 */}
+                    {post.like_count + (controlledLikes ? 0 : isLiked ? 1 : 0)}
                   </span>
                 </button>
                 <button
