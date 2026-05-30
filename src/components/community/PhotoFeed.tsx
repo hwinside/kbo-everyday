@@ -95,22 +95,85 @@ interface MediaSlide {
   isVideo: boolean;
 }
 
+// 화면에 동영상이 2개 이상 떠 있을 때 가운데로 가장 많이 보이는 1개만 재생.
+// iOS Safari가 동시 muted-autoplay를 막아 "재생 안 됨"으로 보이던 문제도 함께 해소.
+const videoRegistry = new Set<HTMLVideoElement>();
+const videoRatio = new Map<HTMLVideoElement, number>();
+let videoObserver: IntersectionObserver | null = null;
+let videoRecomputeScheduled = false;
+const VIDEO_MIN_VISIBLE = 0.5; // 절반 이상 보일 때만 재생 대상
+
+function recomputeVideoFocus() {
+  let best: HTMLVideoElement | null = null;
+  let bestRatio = 0;
+  videoRegistry.forEach((el) => {
+    const r = videoRatio.get(el) ?? 0;
+    if (r > bestRatio) {
+      bestRatio = r;
+      best = el;
+    }
+  });
+  videoRegistry.forEach((el) => {
+    if (el === best && bestRatio >= VIDEO_MIN_VISIBLE) {
+      el.play().catch(() => {});
+    } else if (!el.paused) {
+      el.pause();
+    }
+  });
+}
+
+function ensureVideoObserver(): IntersectionObserver {
+  if (videoObserver) return videoObserver;
+  videoObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((e) => videoRatio.set(e.target as HTMLVideoElement, e.intersectionRatio));
+      if (!videoRecomputeScheduled) {
+        videoRecomputeScheduled = true;
+        requestAnimationFrame(() => {
+          videoRecomputeScheduled = false;
+          recomputeVideoFocus();
+        });
+      }
+    },
+    { threshold: [0, 0.25, 0.5, 0.75, 1] },
+  );
+  return videoObserver;
+}
+
+function FeedVideo({ url }: { url: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = ensureVideoObserver();
+    videoRegistry.add(el);
+    observer.observe(el);
+    return () => {
+      observer.unobserve(el);
+      videoRegistry.delete(el);
+      videoRatio.delete(el);
+      recomputeVideoFocus();
+    };
+  }, []);
+  return (
+    <video
+      ref={ref}
+      src={url}
+      muted
+      loop
+      playsInline
+      preload="metadata"
+      className="w-full object-contain pointer-events-none select-none bg-black"
+      style={{ maxHeight: "80vh", WebkitTouchCallout: "none" } as React.CSSProperties}
+    />
+  );
+}
+
 function MediaElement({ url, isVideo, sizes }: { url: string; isVideo: boolean; sizes?: string }) {
   const isGif = !isVideo && url.toLowerCase().endsWith(".gif");
 
   if (isVideo) {
-    return (
-      <video
-        src={url}
-        autoPlay
-        muted
-        loop
-        playsInline
-        preload="metadata"
-        className="w-full object-contain pointer-events-none select-none bg-black"
-        style={{ maxHeight: "80vh", WebkitTouchCallout: "none" } as React.CSSProperties}
-      />
-    );
+    return <FeedVideo url={url} />;
   }
 
   if (isGif) {
