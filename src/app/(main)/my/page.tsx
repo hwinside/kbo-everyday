@@ -198,10 +198,12 @@ export default function MyPage() {
         <FavoritePlayersCard favPlayers={favPlayers} onEdit={() => setShowPlayerSelect(true)} />
       </motion.div>
 
-      {/* 알림 설정 */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.13 }} className="mt-3">
-        <NotificationCard permission={permission} subscription={subscription} subscribe={subscribe} unsubscribe={unsubscribe} onShowPwaGuide={() => setShowPwaGuide(true)} />
-      </motion.div>
+      {/* 알림 설정 — 실제 알림 트리거(경기시작·득점) 구현+QA 완료 전까지 숨김. NEXT_PUBLIC_ENABLE_PUSH=true 로 노출 */}
+      {process.env.NEXT_PUBLIC_ENABLE_PUSH === "true" && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.13 }} className="mt-3">
+          <NotificationCard permission={permission} subscription={subscription} subscribe={subscribe} unsubscribe={unsubscribe} onShowPwaGuide={() => setShowPwaGuide(true)} />
+        </motion.div>
+      )}
 
       {/* 테마 설정 */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.14 }} className="mt-3">
