@@ -11,15 +11,6 @@ export type FeedBoard =
   | { kind: "team"; teamId: string }
   | { kind: "player"; kboId: string };
 
-/** 카드 인라인 댓글 프리뷰 1건(최신 top-level 댓글). 전체 보기는 CommentSheet가 담당. */
-export interface CommentPreview {
-  id: number;
-  nickname: string;
-  content: string;
-}
-
-const PREVIEW_PER_POST = 2;
-
 const SELECT =
   "id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, author_team_id_snapshot, profiles(nickname, team_id, grade, points)";
 
@@ -59,7 +50,6 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
   const { user } = useAuth();
   const [posts, setPosts] = useState<Post[]>([]);
   const [likedIds, setLikedIds] = useState<Set<number>>(new Set());
-  const [commentPreviews, setCommentPreviews] = useState<Record<number, CommentPreview[]>>({});
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -88,34 +78,6 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
     [user],
   );
 
-  // 보이는 글들의 최신 top-level 댓글 최대 2개를 배치 조회 → 카드 인라인 프리뷰.
-  // 요청한 모든 id에 대해 빈 배열로 초기화 후 채워서, 댓글 0건이 된 글도 정확히 갱신되게 함.
-  const fetchPreviewsFor = useCallback(async (ids: number[]) => {
-    if (ids.length === 0) return;
-    const { data } = await supabase
-      .from("comments")
-      .select("id, post_id, content, created_at, profiles!comments_author_id_fkey(nickname)")
-      .in("post_id", ids)
-      .is("parent_id", null)
-      .order("created_at", { ascending: false });
-
-    const grouped: Record<number, CommentPreview[]> = {};
-    for (const id of ids) grouped[id] = [];
-    for (const row of (data ?? []) as Array<{
-      id: number;
-      post_id: number;
-      content: string;
-      profiles?: { nickname?: string } | null;
-    }>) {
-      const arr = grouped[row.post_id];
-      if (!arr || arr.length >= PREVIEW_PER_POST) continue;
-      arr.push({ id: row.id, nickname: row.profiles?.nickname ?? "익명", content: row.content });
-    }
-    // 최신순으로 담았으니 표시는 오래된 것이 위로 오도록 뒤집음(인스타: 최신 댓글이 아래).
-    for (const id of ids) grouped[id].reverse();
-    setCommentPreviews((prev) => ({ ...prev, ...grouped }));
-  }, []);
-
   const loadPage = useCallback(
     async (cursor: number | null): Promise<Post[]> => {
       let query = supabase.from("posts").select(SELECT).neq("is_hidden", true);
@@ -140,7 +102,6 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
     setLoading(true);
     setPosts([]);
     setLikedIds(new Set());
-    setCommentPreviews({});
     cursorRef.current = null;
     setHasMore(true);
 
@@ -151,9 +112,7 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
       cursorRef.current = rows.length ? rows[rows.length - 1].id : null;
       setHasMore(rows.length === pageSize);
       setLoading(false);
-      const ids = rows.map((r) => r.id);
-      fetchLikedFor(ids);
-      fetchPreviewsFor(ids);
+      fetchLikedFor(rows.map((r) => r.id));
     })();
 
     return () => {
@@ -174,14 +133,12 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
       });
       if (rows.length) cursorRef.current = rows[rows.length - 1].id;
       setHasMore(rows.length === pageSize);
-      const ids = rows.map((r) => r.id);
-      fetchLikedFor(ids);
-      fetchPreviewsFor(ids);
+      fetchLikedFor(rows.map((r) => r.id));
     } finally {
       setLoadingMore(false);
       fetchingRef.current = false;
     }
-  }, [hasMore, loading, loadPage, pageSize, fetchLikedFor, fetchPreviewsFor]);
+  }, [hasMore, loading, loadPage, pageSize, fetchLikedFor]);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -191,20 +148,9 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
     cursorRef.current = rows.length ? rows[rows.length - 1].id : null;
     setHasMore(rows.length === pageSize);
     setLikedIds(new Set());
-    setCommentPreviews({});
     setLoading(false);
-    const ids = rows.map((r) => r.id);
-    fetchLikedFor(ids);
-    fetchPreviewsFor(ids);
-  }, [loadPage, pageSize, fetchLikedFor, fetchPreviewsFor]);
-
-  /** 단일 글 댓글 프리뷰 재조회 — 시트에서 댓글 추가/삭제 후 카드 프리뷰 동기화용. */
-  const refreshCommentPreview = useCallback(
-    (postId: number) => {
-      fetchPreviewsFor([postId]);
-    },
-    [fetchPreviewsFor],
-  );
+    fetchLikedFor(rows.map((r) => r.id));
+  }, [loadPage, pageSize, fetchLikedFor]);
 
   /** 좋아요 optimistic 토글 — likedIds Set + 해당 post like_count 즉시 반영. */
   const setPostLiked = useCallback((postId: number, liked: boolean) => {
@@ -226,13 +172,11 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
   return {
     posts,
     likedIds,
-    commentPreviews,
     loading,
     loadingMore,
     hasMore,
     loadMore,
     reload,
     setPostLiked,
-    refreshCommentPreview,
   };
 }
