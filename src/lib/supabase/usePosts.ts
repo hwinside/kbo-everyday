@@ -412,16 +412,21 @@ export async function updateComment(commentId: number, content: string) {
   if (error) throw error;
 }
 
-/** 댓글 삭제 (본인만) */
-export async function deleteComment(commentId: number) {
+/** 댓글 삭제 (본인 또는 운영자) */
+export async function deleteComment(commentId: number, options?: { canDeleteAny?: boolean }) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
 
-  const { error } = await supabase
+  let query = supabase
     .from("comments")
     .delete()
-    .eq("id", commentId)
-    .eq("author_id", user.id);
+    .eq("id", commentId);
+
+  if (!options?.canDeleteAny) {
+    query = query.eq("author_id", user.id);
+  }
+
+  const { error } = await query;
 
   if (error) throw error;
 }
