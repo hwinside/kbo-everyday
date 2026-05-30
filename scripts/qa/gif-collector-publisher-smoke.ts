@@ -144,6 +144,33 @@ function check(name: string, ok: boolean, detail?: string): void {
   check("max=0이면 빈 배열", r.length === 0);
 }
 
+// Threads /embed 추출 회귀 가드 — 실데이터(threads.com /embed) 구조 기반.
+// embed 페이지의 <video> 태그엔 src가 없고, cdninstagram mp4가 HTML 엔티티 인코딩된
+// 서명 URL로 본문에 들어있다. Meta가 embed 포맷 바꾸면 이 케이스가 먼저 깨진다.
+{
+  const html = `<html><body>
+    <video controls="1" loop="1" class=""></video>
+    <script>{"playable_url":"https://scontent-icn2-1.cdninstagram.com/o1/v/t16/f2/m84/AQMbdRn.mp4?_nc_cat=106&amp;_nc_ohc=rqhAm0&amp;oh=00_Af7suA&amp;oe=6A1CC356"}</script>
+  </body></html>`;
+  const r = extractMediaList(html, 3);
+  check(
+    "Threads embed: src 없는 video 태그 + 엔티티 인코딩 cdninstagram mp4 → 단일 video 추출",
+    r.length === 1 &&
+      r[0].type === "video" &&
+      r[0].url === "https://scontent-icn2-1.cdninstagram.com/o1/v/t16/f2/m84/AQMbdRn.mp4?_nc_cat=106&_nc_ohc=rqhAm0&oh=00_Af7suA&oe=6A1CC356",
+    `got ${JSON.stringify(r)}`,
+  );
+}
+{
+  const html = `<a href="https://scontent.cdninstagram.com/v/x.mp4?ccb=17-1&amp;oh=00_SIG&amp;oe=6A1CC356">v</a>`;
+  const r = extractMediaList(html, 1);
+  check(
+    "Threads 서명 mp4의 &amp; 쿼리 구분자가 & 로 디코딩 (서명 파라미터 보존)",
+    r.length === 1 && !r[0].url.includes("&amp;") && r[0].url.endsWith("&oe=6A1CC356"),
+    `got ${JSON.stringify(r)}`,
+  );
+}
+
 // inferMediaExt
 check("content-type image/gif → gif", inferMediaExt("image/gif", "https://x.com/a") === "gif");
 check("content-type video/mp4 → mp4", inferMediaExt("video/mp4", "https://x.com/a") === "mp4");
