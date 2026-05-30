@@ -552,7 +552,7 @@ export default function PlayerBoardPage() {
         isOpen={showWrite}
         onClose={() => setShowWrite(false)}
         onSubmit={async (title, content, imageUrls) => {
-          await createPost({ boardType: "player", boardId: rawId, title, content, imageUrls });
+          await createPost({ boardType: "player", boardId: kboId, title, content, imageUrls });
           setShowWrite(false);
           if (user) checkBadges(user.id);
           loadFeed();
