@@ -685,15 +685,16 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     <AnimatePresence>
       {shouldRender && (
         <>
-          {/* Backdrop */}
+          {/* Backdrop — 뒤 피드 스크롤 전파 차단(터치/오버스크롤) */}
           <motion.div
             className="fixed inset-0 bg-black/60"
-            style={{ zIndex: 9998 }}
+            style={{ zIndex: 9998, touchAction: "none", overscrollBehavior: "none" }}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
             onClick={onClose}
+            onTouchMove={(e) => { if (e.cancelable) e.preventDefault(); }}
           />
 
           {/* Sheet */}
@@ -703,17 +704,18 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             style={{
               zIndex: 9999,
               ...(() => {
-                // (b) 오픈 시 부분 높이(~62%), (c) 입력창 포커스 후 화면 상단까지 확장(~94%).
-                const ratio = expanded ? 0.06 : 0.38;
-                const topOffset = viewportHeight ? Math.max(24, viewportHeight * ratio) : null;
+                // (b) 오픈 시 부분 높이(화면 절반, 뒤 피드 보임), (c) 입력창 포커스 후 화면 최상단까지 확장.
+                const ratio = expanded ? 0.0 : 0.5;
+                const minTop = expanded ? 12 : 24;
+                const topOffset = viewportHeight ? Math.max(minTop, viewportHeight * ratio) : null;
                 return viewportHeight && topOffset !== null
                   ? {
                       top: `${vvTop + topOffset}px`,
                       height: `${Math.max(320, viewportHeight - topOffset)}px`,
                     }
                   : {
-                      top: expanded ? "6vh" : "38vh",
-                      height: expanded ? "94dvh" : "62dvh",
+                      top: expanded ? "1.5vh" : "50vh",
+                      height: expanded ? "98dvh" : "50dvh",
                     };
               })(),
               transition: "height 160ms ease-out, top 160ms ease-out",
