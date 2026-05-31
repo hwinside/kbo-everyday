@@ -22,6 +22,7 @@ export const LEADERBOARD_INTERNAL_USER_IDS: readonly string[] = [
   'ee5c25d8-bcab-4bb1-aa11-f64041d5e322', // seq 7 · QA테스터 (qa@keubo.fan)
   '9cba194d-686d-4d17-b5ac-185b34bc2dc6', // seq 8 · 윤연률 (yoonyeonryul@gmail.com)
   'a8b26be1-ea79-45d1-a6a4-9c5a13c91768', // seq 62 · 김현우 (nbpnaver.backup@gmail.com)
+  '75ee70e1-d5d1-4cbe-a2f7-a937e717437c', // 움짤콜렉터 (봇, is_bot) · 2026-06-01 하린아빠 제외 확정
 ] as const
 
 /** Set lookup 헬퍼 (O(1) 체크용) */
