@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Link from "next/link";
-import { Trophy, Gift, ChevronRight } from "lucide-react";
+import { Trophy, Gift } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { supabase } from "@/lib/supabase/client";
@@ -111,17 +110,9 @@ export default function EventResultCard() {
       {hasPrize && (
         <p className="flex items-start gap-1.5 text-[11px] text-text-secondary leading-snug">
           <Gift size={13} className="mt-0.5 shrink-0 text-text-tertiary" />
-          상품은 운영자가 쪽지로 개별 안내드립니다. 쪽지를 확인해 주세요.
+          상품 및 뱃지는 운영자가 쪽지로 개별 안내드립니다. 쪽지를 확인해 주세요.
         </p>
       )}
-
-      <Link
-        href="/events/invite/leaderboard"
-        className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-yellow-400/10 to-orange-400/10 border border-yellow-400/20"
-      >
-        <span className="text-xs font-medium">최종 리더보드 전체 보기</span>
-        <ChevronRight size={15} className="text-text-tertiary" />
-      </Link>
     </GlassCard>
   );
 }
