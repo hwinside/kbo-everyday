@@ -116,7 +116,9 @@ export default function CommunityTeamBoardPage() {
         isOpen={writeOpen}
         onClose={() => setWriteOpen(false)}
         teamName={team.name}
-        onSubmit={async (title, content, imageUrls) => {
+        enableTags
+        defaultTeamSlugs={[teamSlug]}
+        onSubmit={async (title, content, imageUrls, _seatInfo, tags) => {
           await createPost({
             boardType: "team",
             boardId: teamSlug,
@@ -126,7 +128,9 @@ export default function CommunityTeamBoardPage() {
             contentType: "general",
             // V3 태그 모델: 팀 게시판 글은 해당 팀 태그를 자동 부여해야
             // team_tags 기준 팀 피드(ad1987be)에 노출됨. 누락 시 자기 팀 탭에서 사라짐.
-            teamTags: [teamSlug],
+            // 피커로 추가/변경한 태그가 있으면 그걸 우선(기본값=해당 팀).
+            teamTags: tags?.teamTags?.length ? tags.teamTags : [teamSlug],
+            playerTags: tags?.playerTags,
           });
           reload();
           setWriteOpen(false);

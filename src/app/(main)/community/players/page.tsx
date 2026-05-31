@@ -30,6 +30,19 @@ function playerTagsForBoard(kboId: string): { playerTags?: string[]; teamTags?: 
   };
 }
 
+// V3 태그 피커 기본값 — 현재 선수 대상이 있으면 그 선수/소속팀을 프리셀렉트.
+function defaultPlayerTagFor(kboId: string | null): { kboId: string; name: string; teamId: number } | undefined {
+  if (!kboId) return undefined;
+  const r = PLAYERS_ROSTER.find((p) => p.kboId === kboId);
+  return r ? { kboId: r.kboId, name: r.name, teamId: r.teamId } : undefined;
+}
+function defaultTeamSlugsFor(kboId: string | null): string[] | undefined {
+  if (!kboId) return undefined;
+  const r = PLAYERS_ROSTER.find((p) => p.kboId === kboId);
+  const slug = r ? TEAMS.find((t) => t.id === r.teamId)?.slug : undefined;
+  return slug ? [slug] : undefined;
+}
+
 export default function CommunityPlayersPage() {
   const router = useRouter();
   const { user, profile } = useAuth();
@@ -151,9 +164,17 @@ export default function CommunityPlayersPage() {
             const label = team ? `${team.shortName} ${r!.name} 선수` : writePlayerTarget + " 선수";
             return label + " 게시판";
           })() : "선수 게시판"}
-          onSubmit={async (title, content, imageUrls) => {
+          enableTags
+          defaultTeamSlugs={defaultTeamSlugsFor(writePlayerTarget)}
+          defaultPlayerTag={defaultPlayerTagFor(writePlayerTarget)}
+          onSubmit={async (title, content, imageUrls, _seatInfo, tags) => {
             const targetId = writePlayerTarget || "";
-            await createPost({ boardType: "player", boardId: targetId, title, content, imageUrls, contentType: "general", ...playerTagsForBoard(targetId) });
+            const fallback = playerTagsForBoard(targetId);
+            await createPost({
+              boardType: "player", boardId: targetId, title, content, imageUrls, contentType: "general",
+              playerTags: tags?.playerTags?.length ? tags.playerTags : fallback.playerTags,
+              teamTags: tags?.teamTags?.length ? tags.teamTags : fallback.teamTags,
+            });
             setWriteOpen(false);
             setWritePlayerTarget(null);
             if (targetId) router.push(`/community/players/${targetId}`);

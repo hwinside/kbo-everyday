@@ -40,6 +40,8 @@ interface WritePostProps {
   enableTags?: boolean;
   /** 태그 피커 초기 팀태그(보통 최애팀 슬러그). enableTags일 때만 사용. */
   defaultTeamSlugs?: string[];
+  /** 태그 피커 초기 선수태그(현재 선수 페이지·최애선수). enableTags일 때만 사용. */
+  defaultPlayerTag?: PlayerTag;
   /** 구장별 구역 모드 (드롭다운 선택지) */
   zones?: string[];
   /** 수정 모드 — 닫힌 후 다시 열릴 때 초기값으로 폼 리셋. 이미지 URL을 주면 기존 이미지 재사용. */
@@ -69,6 +71,7 @@ export default function WritePost({
   submitText,
   enableTags,
   defaultTeamSlugs,
+  defaultPlayerTag,
 }: WritePostProps) {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -103,7 +106,7 @@ export default function WritePost({
       setRow(initialSeatInfo?.row ?? "");
       setSeat(initialSeatInfo?.seat ?? "");
       setTeamSlugs(defaultTeamSlugs ?? []);
-      setTaggedPlayers([]);
+      setTaggedPlayers(defaultPlayerTag ? [defaultPlayerTag] : []);
     }
     wasOpenRef.current = isOpen;
     // eslint-disable-next-line react-hooks/exhaustive-deps

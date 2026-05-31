@@ -551,17 +551,32 @@ export default function PlayerBoardPage() {
       <WritePost
         isOpen={showWrite}
         onClose={() => setShowWrite(false)}
-        onSubmit={async (title, content, imageUrls) => {
+        enableTags
+        defaultTeamSlugs={(() => {
+          const s = TEAMS.find((t) => t.id === player.teamId)?.slug;
+          return s ? [s] : [];
+        })()}
+        defaultPlayerTag={{ kboId, name: player.name, teamId: player.teamId }}
+        onSubmit={async (title, content, imageUrls, _seatInfo, tags) => {
           // V3 태그 모델: 선수 글은 player_tags(선수 페이지·cross-board) + team_tags(팀 탭) 둘 다 부여.
+          // 피커 기본값=현재 선수+소속팀. 사용자가 추가/변경하면 그 값 우선.
           const teamSlug = TEAMS.find((t) => t.id === player.teamId)?.slug;
+          const playerTags = tags?.playerTags?.length
+            ? tags.playerTags
+            : [formatPlayerTag(kboId, player.name)];
+          const teamTags = tags?.teamTags?.length
+            ? tags.teamTags
+            : teamSlug
+              ? [teamSlug]
+              : [];
           await createPost({
             boardType: "player",
             boardId: kboId,
             title,
             content,
             imageUrls,
-            playerTags: [formatPlayerTag(kboId, player.name)],
-            ...(teamSlug ? { teamTags: [teamSlug] } : {}),
+            playerTags,
+            ...(teamTags.length ? { teamTags } : {}),
           });
           setShowWrite(false);
           if (user) checkBadges(user.id);
