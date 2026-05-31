@@ -680,6 +680,10 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
         const isMine = !!user && post.author_id === user.id;
         const hasMedia = post.image_urls.length > 0 || (post.video_urls?.length ?? 0) > 0;
         const body = mergedBody(post);
+        // 태그 기반(V3): 팀/전체 피드에서 선수 태그가 달린 글은 배경 틴트로 "선수 글"임을 구분.
+        // 선수 페이지(boardType==="player")에선 전부 선수 글이라 틴트 불필요.
+        const isPlayerPost =
+          boardType !== "player" && Array.isArray(post.player_tags) && post.player_tags.length > 0;
 
         if (deletedIds.has(post.id)) return null;
 
@@ -688,7 +692,11 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
             {/* Post separator */}
             {index > 0 && <div className="h-2 bg-white/[0.02]" />}
 
-            <div className={zoomedPostId === post.id ? "" : "overflow-hidden"}>
+            <div
+              className={`${zoomedPostId === post.id ? "" : "overflow-hidden"}${
+                isPlayerPost ? " bg-accent/[0.06] border-l-2 border-accent/40" : ""
+              }`}
+            >
               {/* Author header — 일반게시판(PostCard) 기준 통일 */}
               <div className="flex items-center gap-3 px-5 py-3">
                 {boardType === "player" && playerLabels?.[post.id] ? (
