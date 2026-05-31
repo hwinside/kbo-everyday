@@ -176,6 +176,12 @@ export default function CommunityPlayersPage() {
             if (!r) return undefined;
             return { kboId: r.kboId, name: r.name, teamId: r.teamId };
           })()}
+          defaultTeamSlugs={(() => {
+            if (!writePlayerTarget) return undefined;
+            const r = PLAYERS_ROSTER.find((p) => p.kboId === writePlayerTarget);
+            const slug = r ? TEAMS.find((t) => t.id === r.teamId)?.slug : undefined;
+            return slug ? [slug] : undefined;
+          })()}
           onSuccess={() => {
             const targetId = writePlayerTarget;
             setWritePhotoOpen(false);
@@ -334,6 +340,12 @@ export default function CommunityPlayersPage() {
           const r = PLAYERS_ROSTER.find((p) => p.kboId === writePlayerTarget);
           if (!r) return undefined;
           return { kboId: r.kboId, name: r.name, teamId: r.teamId };
+        })()}
+        defaultTeamSlugs={(() => {
+          if (!writePlayerTarget) return undefined;
+          const r = PLAYERS_ROSTER.find((p) => p.kboId === writePlayerTarget);
+          const slug = r ? TEAMS.find((t) => t.id === r.teamId)?.slug : undefined;
+          return slug ? [slug] : undefined;
         })()}
         onSuccess={() => {
           const targetId = writePlayerTarget;
