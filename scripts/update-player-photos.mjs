@@ -47,6 +47,7 @@ const MANUAL_PHOTO_URL_BY_KBO_ID = {
   AQ009: 'https://menu.mt.co.kr/cdn-cgi/image/w=1200,h=929,fit=cover,bg=whilte,f=auto,quality=high,sharpen=2,g=face/mobile/osen/data/2026/03/12/202603121615779085_1.jpg', // 다무라 이치로
   AQ010: 'http://file.osen.co.kr/article_thumb/2026/03/28/202603281810775678_69c79aeabb08c_300x.jpg', // 가나쿠보 유토
   FP005: 'http://file.osen.co.kr/article_thumb/2026/02/20/202602201057771560_6997bf8d5db9d_300x.jpg', // 맷 매닝
+  FP021: 'https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2026/56305.jpg', // 케스턴 히우라 (KBO 공식 헤드샷, numericId 56305)
 };
 
 // Rate limit helper
