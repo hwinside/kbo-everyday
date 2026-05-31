@@ -21,7 +21,6 @@ import MyTeamHero from "@/components/home/MyTeamHero";
 import FavoritePlayersSection from "@/components/home/FavoritePlayersSection";
 import TodayGamesSection from "@/components/home/TodayGamesSection";
 import LiveGameBanner from "@/components/home/LiveGameBanner";
-import EventBanner from "@/components/home/EventBanner";
 import AIAnalysis from "@/components/game/AIAnalysis";
 
 // Lazy load heavy sections
@@ -229,8 +228,6 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           </button>
         </m.div>
       )}
-
-      <EventBanner source="home" />
 
       {/* News Carousel */}
       {realNews.length > 0 && (
