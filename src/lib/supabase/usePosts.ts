@@ -279,9 +279,8 @@ export async function updatePost(
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (typeof params.title === "string") {
-    const t = params.title.trim();
-    if (!t) throw new Error("제목 필수");
-    patch.title = t;
+    // 제목 필드 제거(⑥) → 빈 제목 허용(제목을 본문으로 흡수하며 비우는 케이스).
+    patch.title = params.title.trim();
   }
   if (typeof params.content === "string") {
     patch.content = params.content; // trim은 UI에서 처리 (사진게시법은 빈 content 허용)
