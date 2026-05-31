@@ -16,6 +16,8 @@ import { createPost, toggleLike } from "@/lib/supabase/usePosts";
 import type { Post } from "@/lib/supabase/usePosts";
 import { supabase } from "@/lib/supabase/client";
 import WritePost from "@/components/community/WritePost";
+import WritePhotoPost from "@/components/community/WritePhotoPost";
+import WriteEntrySheet from "@/components/community/WriteEntrySheet";
 import PhotoFeed from "@/components/community/PhotoFeed";
 import { useBadgeCheck } from "@/lib/hooks/useBadgeCheck";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -80,7 +82,9 @@ export default function PlayerBoardPage() {
   const [loading, setLoading] = useState(true);
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<"stats" | "board">("stats");
+  const [showEntry, setShowEntry] = useState(false);
   const [showWrite, setShowWrite] = useState(false);
+  const [showPhoto, setShowPhoto] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [statSeason, setStatSeason] = useState<2025 | 2026>(2026);
   // 통합 피드: 글·사진 한 스트림 (선수 게시판 직접글 + 다른 게시판에서 이 선수 태그된 글).
@@ -539,13 +543,21 @@ export default function PlayerBoardPage() {
       {/* FAB — 게시판 탭에서만 노출 (글·사진 첨부 통합, 밈 에디터/태그는 S5 통합 컴포저로 이관 예정) */}
       {activeTab === "board" && (
       <button
-        onClick={() => user ? setShowWrite(true) : setShowLogin(true)}
+        onClick={() => user ? setShowEntry(true) : setShowLogin(true)}
         className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
         style={{ backgroundColor: teamColor }}
       >
         <PenLine className="w-9 h-9 text-white" />
       </button>
       )}
+
+      {/* ⑦ 글쓰기 진입: 사진글/일반글 타입 선택 먼저 */}
+      <WriteEntrySheet
+        isOpen={showEntry}
+        onClose={() => setShowEntry(false)}
+        onChoosePhoto={() => { setShowEntry(false); setShowPhoto(true); }}
+        onChooseText={() => { setShowEntry(false); setShowWrite(true); }}
+      />
 
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
       <WritePost
@@ -583,6 +595,20 @@ export default function PlayerBoardPage() {
           loadFeed();
         }}
         teamName={player.name}
+      />
+
+      <WritePhotoPost
+        isOpen={showPhoto}
+        onClose={() => setShowPhoto(false)}
+        teamName={player.name}
+        boardType="player"
+        boardId={kboId}
+        defaultPlayerTag={{ kboId, name: player.name, teamId: player.teamId }}
+        defaultTeamSlugs={(() => {
+          const s = TEAMS.find((t) => t.id === player.teamId)?.slug;
+          return s ? [s] : undefined;
+        })()}
+        onSuccess={() => { setShowPhoto(false); if (user) checkBadges(user.id); loadFeed(); }}
       />
     </div>
   );

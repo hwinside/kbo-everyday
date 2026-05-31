@@ -8,6 +8,8 @@ import { getTeamBySlug, getTeamBgColor } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
 import PhotoFeed from "@/components/community/PhotoFeed";
 import WritePost from "@/components/community/WritePost";
+import WritePhotoPost from "@/components/community/WritePhotoPost";
+import WriteEntrySheet from "@/components/community/WriteEntrySheet";
 import EventBanner from "@/components/home/EventBanner";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
@@ -19,7 +21,9 @@ export default function CommunityTeamBoardPage() {
   const teamSlug = params.teamId as string;
   const team = getTeamBySlug(teamSlug);
 
+  const [showEntry, setShowEntry] = useState(false);
   const [writeOpen, setWriteOpen] = useState(false);
+  const [showPhoto, setShowPhoto] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const { user } = useAuth();
 
@@ -105,11 +109,19 @@ export default function CommunityTeamBoardPage() {
 
       {/* FAB */}
       <button
-        onClick={() => (user ? setWriteOpen(true) : setShowLogin(true))}
+        onClick={() => (user ? setShowEntry(true) : setShowLogin(true))}
         className="fixed bottom-24 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
       >
         <Pencil size={24} />
       </button>
+
+      {/* ⑦ 글쓰기 진입: 사진글/일반글 타입 선택 먼저 */}
+      <WriteEntrySheet
+        isOpen={showEntry}
+        onClose={() => setShowEntry(false)}
+        onChoosePhoto={() => { setShowEntry(false); setShowPhoto(true); }}
+        onChooseText={() => { setShowEntry(false); setWriteOpen(true); }}
+      />
 
       {/* Write post modal (글·사진 첨부 통합 — 밈 에디터/태그는 S5 통합 컴포저로 이관 예정) */}
       <WritePost
@@ -135,6 +147,16 @@ export default function CommunityTeamBoardPage() {
           reload();
           setWriteOpen(false);
         }}
+      />
+
+      <WritePhotoPost
+        isOpen={showPhoto}
+        onClose={() => setShowPhoto(false)}
+        teamName={team.name}
+        boardType="team"
+        boardId={teamSlug}
+        defaultTeamSlugs={[teamSlug]}
+        onSuccess={() => { setShowPhoto(false); reload(); }}
       />
 
       {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
