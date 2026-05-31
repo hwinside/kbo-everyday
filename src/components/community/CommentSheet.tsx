@@ -37,6 +37,10 @@ function timeAgo(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("ko-KR");
 }
 
+// 실제 iOS 키보드는 ~260-340px, 브라우저 크롬(주소창+툴바)이 만드는 phantom inset은 보통 <130px.
+// 이 임계값 이상일 때만 "키보드 떴다"로 판단해 (c)확장을 트리거한다.
+const KEYBOARD_INSET_THRESHOLD = 150;
+
 /** flat 댓글 배열 → 트리 구조 (2depth 제한) */
 function buildCommentTree(comments: Comment[]): Comment[] {
   const roots: Comment[] = [];
@@ -164,8 +168,11 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
 
   // 키보드가 떠 있으면(=입력 중) 무조건 확장 상태 유지.
   // 포커스 onFocus만으로는 키보드 settle 전 시트가 짧게 보일 수 있어 키보드 inset도 트리거로.
+  // ⚠️ iOS Safari/인앱브라우저는 주소창·툴바 때문에 키보드가 없어도 innerHeight > visualViewport.height
+  // 라서 keyboardInset이 phantom 양수(보통 <130px)가 된다. 이걸 키보드로 오인하면 (b)부분높이 없이
+  // 열자마자 (c)최상단 확장으로 고정돼 "높이 변화 없음"으로 보인다. 실제 키보드(>=150px)일 때만 트리거.
   useEffect(() => {
-    if (keyboardInset > 0 && !expanded) setExpanded(true);
+    if (keyboardInset >= KEYBOARD_INSET_THRESHOLD && !expanded) setExpanded(true);
   }, [keyboardInset, expanded]);
 
   // Track visualViewport for iOS keyboard-aware sheet height.
