@@ -39,14 +39,24 @@ interface WritingRow {
  * SSOT: PDF "크보팬 얼리멤버 커뮤니티 활성화 이벤트.pdf"
  * (2026-04-20 #marketing 스레드 1776644364.098599에서 하린아빠 공유)
  */
+// 이벤트 종료(KST 6/1 00:00) 후엔 라이브 리더보드 대신 결과공지로 보냄
+const EVENT_END_MS = new Date("2026-06-01T00:00:00+09:00").getTime();
+const RESULT_PATH = "/whats-new";
+
 export default function EventInvitePage() {
   const router = useRouter();
   const { user } = useAuth();
+  const eventEnded = Date.now() >= EVENT_END_MS;
   const [topInvite, setTopInvite] = useState<InviteRow[]>([]);
   const [topWriting, setTopWriting] = useState<WritingRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (eventEnded) router.replace(RESULT_PATH);
+  }, [eventEnded, router]);
+
+  useEffect(() => {
+    if (eventEnded) return;
     let cancelled = false;
     async function load() {
       try {
@@ -71,7 +81,11 @@ export default function EventInvitePage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [eventEnded]);
+
+  if (eventEnded) {
+    return <div className="min-h-screen" aria-hidden />;
+  }
 
   return (
     <div className="min-h-screen text-gray-900 dark:text-white">
