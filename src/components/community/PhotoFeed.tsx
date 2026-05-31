@@ -7,9 +7,15 @@ import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, MoreHorizontal, Volume2, VolumeX } from "lucide-react";
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import { getTeamById, getTeamBySlug, getTeamBgColor, type TeamData } from "@/lib/constants/teams";
-import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
+import heroApprovedList from "@/lib/constants/hero-approved-kboids.json";
 import { parsePlayerTag } from "@/lib/utils/player-tags";
+
+// Hero cutout: 검수 통과(allowlist) 선수만 노출. public/players-hero/{kboId}.webp
+const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
+function getPlayerHeroPath(kboId: string | null | undefined): string | null {
+  return kboId && HERO_APPROVED.has(kboId) ? `/players-hero/${kboId}.webp` : null;
+}
 import TeamBadge from "@/components/ui/TeamBadge";
 import type { Post } from "@/lib/supabase/usePosts";
 import { deletePost } from "@/lib/supabase/usePosts";
@@ -521,37 +527,39 @@ function PhotoCarousel({
   }
 
   return (
-    <div
-      className={outerClass}
-      onDoubleClick={handleDoubleClick}
-      onClick={handleTap}
-    >
-      {dimOverlay}
+    <div className="relative w-full">
       <div
-        ref={containerRef}
-        className="flex"
-        style={{
-          // 줌 중이라도 carousel transform은 그대로 유지 — 자리 줌이라 줌하던 슬라이드가 자기 자리에서 부풀어야 함.
-          transform: `translateX(calc(-${current * 100}% + ${isSwiping ? translateX : 0}px))`,
-          // 줌 중/swipe 중/줌 release cooldown에서는 transition off — 인라인 복귀 시 슬라이드 swoosh 방지
-          transition: isSwiping || zoomedIdx !== null || zoomCooldown ? "none" : "transform 0.3s ease-out",
-        }}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
+        className={outerClass}
+        onDoubleClick={handleDoubleClick}
+        onClick={handleTap}
       >
-        {slides.map((slide, i) => (
-          <div key={i} className="w-full flex-shrink-0">
-            <ZoomableSlide
-              slide={slide}
-              elevationGrace={elevationGrace}
-              onZoomChange={(z) => handleZoomChange(i, z)}
-              onScale={handleScale}
-            />
-          </div>
-        ))}
+        {dimOverlay}
+        <div
+          ref={containerRef}
+          className="flex"
+          style={{
+            // 줌 중이라도 carousel transform은 그대로 유지 — 자리 줌이라 줌하던 슬라이드가 자기 자리에서 부풀어야 함.
+            transform: `translateX(calc(-${current * 100}% + ${isSwiping ? translateX : 0}px))`,
+            // 줌 중/swipe 중/줌 release cooldown에서는 transition off — 인라인 복귀 시 슬라이드 swoosh 방지
+            transition: isSwiping || zoomedIdx !== null || zoomCooldown ? "none" : "transform 0.3s ease-out",
+          }}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
+          {slides.map((slide, i) => (
+            <div key={i} className="w-full flex-shrink-0">
+              <ZoomableSlide
+                slide={slide}
+                elevationGrace={elevationGrace}
+                onZoomChange={(z) => handleZoomChange(i, z)}
+                onScale={handleScale}
+              />
+            </div>
+          ))}
+        </div>
       </div>
-      {/* Dot indicators — 인스타처럼 콘텐츠 위 오버레이가 아니라 영상/사진 아래에 배치(여러 개임을 명확히 인지) */}
+      {/* Dot indicators — 콘텐츠 아래(인스타처럼) + 별도 배경색 없이 카드 기본 배경 위에 */}
       <div className="flex justify-center gap-1.5 py-2.5">
         {slides.map((_, i) => (
           <div
@@ -883,20 +891,43 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   );
 }
 
-/** 카드 B — 페북식 배경 텍스트 카드. 보드 컨텍스트로 배경 결정(팀 로고/선수 사진/응원팀 컬러). */
-function BrandedTextCard({ post, body }: { post: Post; body: string }) {
-  const photoUrl = post.board_type === "player" ? getPlayerPhotoByKboId(post.board_id) : null;
-
-  let team: TeamData | undefined;
-  if (post.board_type === "team") {
-    team = getTeamBySlug(post.board_id);
-  } else if (post.board_type === "player") {
-    const entry = findPlayerByKboId(post.board_id);
-    team = entry ? getTeamById(entry.teamId) : undefined;
-  } else {
-    // 자유게시판 → 작성자 응원팀 컬러(없으면 중립)
-    team = post.team_id ? getTeamById(post.team_id) : undefined;
+/**
+ * 카드 배경 컨텍스트(V3 태그 기반) — 팀컬러 + 선수 Hero 결정.
+ * - 선수 1명 태그 → 그 선수 팀컬러 BG + 그 선수 Hero(우하단)
+ * - 선수 2명↑ 태그 → 모두 같은 팀이면 팀컬러 BG(단일 Hero 없음), 다른 팀 섞이면 기본 BG
+ * - 선수 태그 없음 → (레거시 board_type / 자유글 작성자팀)으로 폴백
+ */
+function deriveBrandContext(post: Post): { team?: TeamData; heroKboId?: string } {
+  const playerTags = Array.isArray(post.player_tags) ? (post.player_tags as string[]) : [];
+  if (playerTags.length > 0) {
+    const parsed = playerTags.map((t) => {
+      const { kboId, displayName } = parsePlayerTag(t);
+      if (kboId) return { kboId, teamId: findPlayerByKboId(kboId)?.teamId };
+      const p = findPlayerByName(displayName);
+      return { kboId: p?.kboId, teamId: p?.teamId };
+    });
+    if (playerTags.length === 1) {
+      const only = parsed[0];
+      return { team: only.teamId ? getTeamById(only.teamId) : undefined, heroKboId: only.kboId ?? undefined };
+    }
+    const teamIds = new Set(parsed.map((p) => p.teamId).filter((x): x is number => !!x));
+    if (teamIds.size === 1) return { team: getTeamById([...teamIds][0]) };
+    return {}; // 다른 팀 혼합 → 기본 BG
   }
+  // 레거시 board 기반(player_tags 없는 기존 글)
+  if (post.board_type === "team") return { team: getTeamBySlug(post.board_id) };
+  if (post.board_type === "player") {
+    const entry = findPlayerByKboId(post.board_id);
+    return { team: entry ? getTeamById(entry.teamId) : undefined, heroKboId: post.board_id };
+  }
+  // 자유게시판 → 작성자 응원팀 컬러(없으면 중립)
+  return { team: post.team_id ? getTeamById(post.team_id) : undefined };
+}
+
+/** 카드 B — 페북식 배경 텍스트 카드. 태그 기반으로 팀컬러 + 선수 Hero(우하단) 결정. */
+function BrandedTextCard({ post, body }: { post: Post; body: string }) {
+  const { team, heroKboId } = deriveBrandContext(post);
+  const heroPath = getPlayerHeroPath(heroKboId);
 
   const gradient = team
     ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 35%, #1a1a1d) 0%, #1a1a1d 100%)`
@@ -911,11 +942,16 @@ function BrandedTextCard({ post, body }: { post: Post; body: string }) {
       className="relative flex min-h-[200px] w-full items-center justify-center overflow-hidden px-8 py-10"
       style={{ background: gradient }}
     >
-      {photoUrl ? (
-        <>
-          <Image src={photoUrl} alt="" fill unoptimized className="object-cover object-top opacity-30" sizes="(max-width: 768px) 100vw, 600px" />
-          <div className="absolute inset-0 bg-black/45" />
-        </>
+      {heroPath ? (
+        // 선수 1명 태그 → 팀컬러 BG 위에 선수 Hero 우하단(팀글의 로고 자리 대신 인물 컷아웃)
+        <Image
+          src={heroPath}
+          alt=""
+          width={200}
+          height={240}
+          unoptimized
+          className="pointer-events-none absolute bottom-0 right-0 h-[88%] w-auto object-contain object-bottom opacity-90"
+        />
       ) : team ? (
         <div className="absolute right-4 top-4 opacity-20">
           <Image src={team.logoPath} alt="" width={88} height={88} unoptimized className="object-contain" />
