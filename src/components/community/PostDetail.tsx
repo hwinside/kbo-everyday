@@ -436,10 +436,8 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
             </div>
           </div>
         ) : (
-          <>
-            <h1 className="text-lg font-bold text-text-primary mb-3">{postPatch.title ?? post.title}</h1>
-            <p className="readable-body whitespace-pre-line">{stripUrls(postPatch.content ?? post.content)}</p>
-          </>
+          // 제목 필드 제거(⑥) → 기존 글의 title은 본문 앞에 합쳐 렌더(피드 mergedBody와 동일 형식, 데이터 보존).
+          <p className="readable-body whitespace-pre-line">{stripUrls(mergeTitleBody(postPatch.title ?? post.title, postPatch.content ?? post.content))}</p>
         )}
 
         {/* Link previews (수정된 content 반영) */}
@@ -752,6 +750,13 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
       {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
     </div>
   );
+}
+
+/** 기존 글 title을 본문 앞에 합침(피드 mergedBody와 동일). 신규 글은 title="" → content만. */
+function mergeTitleBody(title: string | null | undefined, content: string | null | undefined): string {
+  const t = (title ?? "").trim();
+  const c = (content ?? "").trim();
+  return t && c ? `${t}\n${c}` : t || c;
 }
 
 /** Strip URLs from text (OG cards handle link display). Trims leftover blank lines. */
