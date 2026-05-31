@@ -43,10 +43,19 @@ const KEYBOARD_INSET_THRESHOLD = 150;
 
 /** flat 댓글 배열 → 트리 구조 (2depth 제한) */
 function buildCommentTree(comments: Comment[]): Comment[] {
+  // 방어적 dedup: 같은 id가 두 번 들어오면(낙관적 append ↔ 재조회 레이스 등) 댓글이 2번 보일 수 있다.
+  // 트리 빌더는 dup id에 멱등이어야 한다 — 중복 없으면 no-op.
+  const seenIds = new Set<number>();
+  const unique = comments.filter((c) => {
+    if (seenIds.has(c.id)) return false;
+    seenIds.add(c.id);
+    return true;
+  });
+
   const roots: Comment[] = [];
   const childMap = new Map<number, Comment[]>();
 
-  for (const c of comments) {
+  for (const c of unique) {
     if (!c.parent_id) {
       roots.push({ ...c, replies: [] });
     } else {
