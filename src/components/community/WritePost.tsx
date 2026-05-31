@@ -6,6 +6,9 @@ import { X, Image as ImageIcon, XCircle, ChevronDown } from "lucide-react";
 import Image from "next/image";
 import imageCompression from "browser-image-compression";
 import { uploadImages, computeImageHashes } from "@/lib/supabase/usePosts";
+import TeamTagger from "./TeamTagger";
+import PlayerTagger from "./PlayerTagger";
+import { formatPlayerTag } from "@/lib/utils/player-tags";
 
 export interface SeatInfo {
   zone: string;
@@ -14,13 +17,29 @@ export interface SeatInfo {
   seat?: string;
 }
 
+/** V3 태그 모델: 팀태그 0 + 선수태그 0 = 자유글. */
+export interface PostTags {
+  teamTags: string[];
+  playerTags: string[];
+}
+
+interface PlayerTag {
+  kboId: string;
+  name: string;
+  teamId: number;
+}
+
 interface WritePostProps {
   isOpen: boolean;
   onClose: () => void;
   teamName?: string;
-  onSubmit?: (title: string, content: string, imageUrls: string[], seatInfo?: SeatInfo) => Promise<void>;
+  onSubmit?: (title: string, content: string, imageUrls: string[], seatInfo?: SeatInfo, tags?: PostTags) => Promise<void>;
   /** 좌석팁 모드: 구역/좌석 입력 + 이미지 첨부 활성화 */
   seatTipMode?: boolean;
+  /** V3 태그 피커(팀·선수 복수태그) 노출. 켜면 onSubmit 5번째 인자로 tags 전달. */
+  enableTags?: boolean;
+  /** 태그 피커 초기 팀태그(보통 최애팀 슬러그). enableTags일 때만 사용. */
+  defaultTeamSlugs?: string[];
   /** 구장별 구역 모드 (드롭다운 선택지) */
   zones?: string[];
   /** 수정 모드 — 닫힌 후 다시 열릴 때 초기값으로 폼 리셋. 이미지 URL을 주면 기존 이미지 재사용. */
@@ -48,6 +67,8 @@ export default function WritePost({
   initialImageUrls,
   initialSeatInfo,
   submitText,
+  enableTags,
+  defaultTeamSlugs,
 }: WritePostProps) {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -55,6 +76,10 @@ export default function WritePost({
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // V3 태그(팀·선수 복수). enableTags일 때만 사용.
+  const [teamSlugs, setTeamSlugs] = useState<string[]>([]);
+  const [taggedPlayers, setTaggedPlayers] = useState<PlayerTag[]>([]);
 
   // 좌석팁 구조화 필드
   const [zone, setZone] = useState("");
@@ -77,6 +102,8 @@ export default function WritePost({
       setBlock(initialSeatInfo?.block ?? "");
       setRow(initialSeatInfo?.row ?? "");
       setSeat(initialSeatInfo?.seat ?? "");
+      setTeamSlugs(defaultTeamSlugs ?? []);
+      setTaggedPlayers([]);
     }
     wasOpenRef.current = isOpen;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -131,6 +158,8 @@ export default function WritePost({
     setBlock("");
     setRow("");
     setSeat("");
+    setTeamSlugs([]);
+    setTaggedPlayers([]);
   }
 
   async function handleSubmit() {
@@ -158,7 +187,14 @@ export default function WritePost({
         imageUrls = [...existingUrls, ...uploadedUrls];
       }
 
-      if (onSubmit) await onSubmit(title.trim(), content.trim(), imageUrls, seatInfo);
+      const tags: PostTags | undefined = enableTags
+        ? {
+            teamTags: teamSlugs,
+            playerTags: taggedPlayers.map((p) => formatPlayerTag(p.kboId, p.name)),
+          }
+        : undefined;
+
+      if (onSubmit) await onSubmit(title.trim(), content.trim(), imageUrls, seatInfo, tags);
     } catch (e: unknown) {
       alert("등록 실패: " + ((e as Error).message || JSON.stringify(e)));
       submittingRef.current = false;
@@ -277,6 +313,31 @@ export default function WritePost({
                 onChange={(e) => setContent(e.target.value)}
                 className="w-full flex-1 min-h-[200px] resize-none rounded-xl bg-bg-tertiary px-5 py-4 text-base text-text-primary placeholder:text-text-tertiary outline-none"
               />
+
+              {/* V3 태그 피커 — 팀·선수 복수태그 (enableTags, 좌석팁 제외) */}
+              {enableTags && !seatTipMode && (
+                <div className="space-y-4">
+                  <TeamTagger
+                    selectedSlugs={teamSlugs}
+                    onToggle={(slug) =>
+                      setTeamSlugs((prev) =>
+                        prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug],
+                      )
+                    }
+                  />
+                  <PlayerTagger
+                    game={null}
+                    selectedPlayers={taggedPlayers}
+                    onToggle={(player) =>
+                      setTaggedPlayers((prev) =>
+                        prev.some((p) => p.kboId === player.kboId)
+                          ? prev.filter((p) => p.kboId !== player.kboId)
+                          : [...prev, player],
+                      )
+                    }
+                  />
+                </div>
+              )}
 
               {/* 이미지 첨부 — 좌석팁에서 활성화 */}
               {seatTipMode && (

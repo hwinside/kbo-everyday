@@ -8,6 +8,8 @@ import { usePosts, createPost } from "@/lib/supabase/usePosts";
 import WritePost from "@/components/community/WritePost";
 import PostList from "@/components/community/PostList";
 import type { Post } from "@/lib/types";
+import { getMyTeamId } from "@/lib/store/myteam";
+import { getTeamById } from "@/lib/constants/teams";
 
 export default function FreeBoardPage() {
   const { user } = useAuth();
@@ -74,8 +76,21 @@ export default function FreeBoardPage() {
         isOpen={showWrite}
         onClose={() => setShowWrite(false)}
         teamName="자유게시판"
-        onSubmit={async (title, content, imageUrls) => {
-          await createPost({ boardType: "free", boardId: "general", title, content, imageUrls });
+        enableTags
+        defaultTeamSlugs={(() => {
+          const slug = getTeamById(getMyTeamId() ?? -1)?.slug;
+          return slug ? [slug] : [];
+        })()}
+        onSubmit={async (title, content, imageUrls, _seatInfo, tags) => {
+          await createPost({
+            boardType: "free",
+            boardId: "general",
+            title,
+            content,
+            imageUrls,
+            teamTags: tags?.teamTags,
+            playerTags: tags?.playerTags,
+          });
           reload();
           setShowWrite(false);
         }}
