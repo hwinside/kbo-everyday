@@ -93,8 +93,9 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const dragStartY = useRef(0);
   const dragShouldClose = useRef(false);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
-  const [vvTop, setVvTop] = useState(0);
+  const [layoutHeight, setLayoutHeight] = useState<number | null>(null);
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const blurCollapseTimer = useRef<number | null>(null);
   // 인스타 2단계: (b) 아이콘 클릭 → 부분 높이 오픈, (c) 입력창 포커스 → 화면 상단까지 확장.
   // 확장은 sticky (한 번 입력 시작하면 닫을 때까지 유지) — 인스타 동일.
   const [expanded, setExpanded] = useState(false);
@@ -176,6 +177,10 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       setReplyTo(null);
       setShowGifPicker(false);
       setExpanded(false);
+      if (blurCollapseTimer.current) {
+        clearTimeout(blurCollapseTimer.current);
+        blurCollapseTimer.current = null;
+      }
     }
   }, [shouldRender]);
 
@@ -189,22 +194,22 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
 
     if (typeof window === "undefined" || !window.visualViewport) {
       setViewportHeight(window.innerHeight);
-      setVvTop(0);
+      setLayoutHeight(window.innerHeight);
       setKeyboardInset(0);
       return;
     }
 
     const vv = window.visualViewport;
-    let layoutHeight = Math.max(window.innerHeight, vv.height + Math.max(0, vv.offsetTop));
+    let layout = Math.max(window.innerHeight, vv.height + Math.max(0, vv.offsetTop));
     const timers: number[] = [];
 
     const update = () => {
       const offsetTop = Math.max(0, vv.offsetTop);
-      layoutHeight = Math.max(layoutHeight, window.innerHeight, vv.height + offsetTop);
+      layout = Math.max(layout, window.innerHeight, vv.height + offsetTop);
 
       setViewportHeight(vv.height);
-      setVvTop(offsetTop);
-      setKeyboardInset(Math.max(0, layoutHeight - offsetTop - vv.height));
+      setLayoutHeight(layout);
+      setKeyboardInset(Math.max(0, layout - offsetTop - vv.height));
     };
 
     const scheduleUpdate = () => {
@@ -716,18 +721,21 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
               zIndex: 9999,
               ...(() => {
                 // (b) 오픈 시 부분 높이(화면 절반, 뒤 피드 보임), (c) 입력창 포커스 후 화면 최상단까지 확장.
-                const ratio = expanded ? 0.0 : 0.5;
-                const minTop = expanded ? 12 : 24;
-                const topOffset = viewportHeight ? Math.max(minTop, viewportHeight * ratio) : null;
-                return viewportHeight && topOffset !== null
-                  ? {
-                      top: `${vvTop + topOffset}px`,
-                      height: `${Math.max(320, viewportHeight - topOffset)}px`,
-                    }
-                  : {
-                      top: expanded ? "1.5vh" : "50vh",
-                      height: expanded ? "98dvh" : "50dvh",
-                    };
+                // (b)는 키보드와 무관한 *layout* 높이에 앵커 → 키보드 여닫을 때 위치가 흔들리지 않음(바운스 제거).
+                // (c)만 visual viewport 높이를 써서 input이 키보드 위에 오게 한다. top은 vvTop을 더하지 않는다
+                //   (vvTop을 더하면 키보드 애니메이션 동안 시트 전체가 미끄러져 뒤 배경이 같이 움직여 보임).
+                const base = expanded ? viewportHeight : (layoutHeight ?? viewportHeight);
+                if (!base) {
+                  return {
+                    top: expanded ? "1.5vh" : "50vh",
+                    height: expanded ? "98dvh" : "50dvh",
+                  };
+                }
+                const topOffset = expanded ? 12 : Math.max(24, base * 0.5);
+                return {
+                  top: `${topOffset}px`,
+                  height: `${Math.max(320, base - topOffset)}px`,
+                };
               })(),
               transition: "height 160ms ease-out, top 160ms ease-out",
             }}
@@ -824,7 +832,11 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                 {user ? (
                   <>
                     <button
-                      onClick={() => { setExpanded(true); setShowGifPicker((v) => !v); }}
+                      onClick={() => {
+                        if (blurCollapseTimer.current) { clearTimeout(blurCollapseTimer.current); blurCollapseTimer.current = null; }
+                        setExpanded(true);
+                        setShowGifPicker((v) => !v);
+                      }}
                       className={`flex items-center justify-center w-9 h-9 rounded-full transition-colors ${showGifPicker ? "bg-accent/20 text-accent" : "text-text-tertiary hover:text-text-primary"}`}
                       aria-label="GIF"
                     >
@@ -836,6 +848,10 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onFocus={() => {
+                        if (blurCollapseTimer.current) {
+                          clearTimeout(blurCollapseTimer.current);
+                          blurCollapseTimer.current = null;
+                        }
                         setShowGifPicker(false);
                         setExpanded(true);
                         const scrollToBottom = () => {
@@ -843,6 +859,16 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                         };
                         requestAnimationFrame(scrollToBottom);
                         [120, 300, 600].forEach((ms) => setTimeout(scrollToBottom, ms));
+                      }}
+                      onBlur={() => {
+                        // 키보드가 내려가면 (c)확장 → (b)중간 높이로 복귀. 전송/GIF 버튼 탭으로 잠깐
+                        // 포커스를 잃는 경우는 곧 다시 포커스가 돌아오므로, 짧게 지연 후에도 여전히
+                        // input이 비포커스일 때만 접는다.
+                        if (blurCollapseTimer.current) clearTimeout(blurCollapseTimer.current);
+                        blurCollapseTimer.current = window.setTimeout(() => {
+                          if (document.activeElement !== inputRef.current) setExpanded(false);
+                          blurCollapseTimer.current = null;
+                        }, 120);
                       }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.nativeEvent.isComposing) {
@@ -864,6 +890,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                   </button>
                 )}
                 <button
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={handleSubmit}
                   disabled={!input.trim() || submitting || cooldown || !user}
                   className="flex items-center justify-center w-9 h-9 rounded-full text-white disabled:opacity-50 transition-opacity"
