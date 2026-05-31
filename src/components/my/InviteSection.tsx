@@ -42,6 +42,9 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
 }
 
+// 얼리멤버 이벤트 종료 시점 (KST 5/31 24:00) — 종료 후 이벤트 바로가기를 결과 동선으로 전환
+const EVENT_END = new Date("2026-06-01T00:00:00+09:00");
+
 export default function InviteSection() {
   const { user, profile } = useAuth();
   const [data, setData] = useState<InviteData | null>(null);
@@ -55,6 +58,8 @@ export default function InviteSection() {
   const [registerError, setRegisterError] = useState("");
   const [registerSuccess, setRegisterSuccess] = useState(false);
   const [refillToast, setRefillToast] = useState<{ count: number } | null>(null);
+  // 얼리멤버 이벤트 종료(KST 5/31 24:00) 후 결과 모드 — hydration 안전하게 초기값 1회 계산
+  const [eventEnded] = useState(() => Date.now() >= EVENT_END.getTime());
 
   const fetchData = useCallback(async () => {
     if (!user) return;
@@ -317,16 +322,20 @@ export default function InviteSection() {
               )}
             </div>
 
-            {/* 이벤트 바로가기 — 얼리멤버 이벤트 (2026-04-20 ~ 2026-05-31) */}
+            {/* 이벤트 바로가기 — 종료 전: 리더보드 / 종료 후: 최종 결과 공지 */}
             <Link
-              href="/events/invite"
+              href={eventEnded ? "/whats-new" : "/events/invite"}
               className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg bg-gradient-to-r from-yellow-400/10 to-orange-400/10 border border-yellow-400/20 mt-1"
             >
               <div className="flex items-center gap-2">
                 <Trophy size={16} className="text-yellow-400" />
                 <div className="flex flex-col">
-                  <span className="text-sm font-semibold leading-tight">얼리멤버 이벤트</span>
-                  <span className="text-[10px] text-text-tertiary leading-tight">초대 · 글쓰기 리더보드</span>
+                  <span className="text-sm font-semibold leading-tight">
+                    {eventEnded ? "얼리멤버 이벤트 결과" : "얼리멤버 이벤트"}
+                  </span>
+                  <span className="text-[10px] text-text-tertiary leading-tight">
+                    {eventEnded ? "최종 순위 · 상품 · 뱃지 보기" : "초대 · 글쓰기 리더보드"}
+                  </span>
                 </div>
               </div>
               <ChevronRight size={16} className="text-text-tertiary" />
