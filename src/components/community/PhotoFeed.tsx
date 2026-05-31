@@ -145,23 +145,10 @@ function FeedVideo({ url }: { url: string }) {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    // iOS Safari: preload="metadata"로는 첫 프레임이 안 그려진다. 재생은 화면 중앙 1개만(아래
-    // recomputeVideoFocus) 하므로, 나머지 영상은 poster 없는 검은 박스로 남아 "끝까지 로딩 안 됨"처럼
-    // 보인다. 메타데이터 로드 후 아주 살짝 seek해 첫 프레임을 강제 paint(poster 대용).
-    // 스토리지가 Range 요청(accept-ranges: bytes)을 지원해 안전·저비용.
-    const paintFirstFrame = () => {
-      if (el.currentTime === 0) {
-        try { el.currentTime = 0.001; } catch { /* seek 미지원 시 무시 */ }
-      }
-    };
-    if (el.readyState >= 1) paintFirstFrame();
-    el.addEventListener("loadedmetadata", paintFirstFrame);
-
     const observer = ensureVideoObserver();
     videoRegistry.add(el);
     observer.observe(el);
     return () => {
-      el.removeEventListener("loadedmetadata", paintFirstFrame);
       observer.unobserve(el);
       videoRegistry.delete(el);
       videoRatio.delete(el);
