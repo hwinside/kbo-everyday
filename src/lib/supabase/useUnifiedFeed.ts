@@ -81,7 +81,9 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
   const loadPage = useCallback(
     async (cursor: number | null): Promise<Post[]> => {
       let query = supabase.from("posts").select(SELECT).neq("is_hidden", true);
-      if (board.kind === "team") query = query.eq("board_type", "team").eq("board_id", board.teamId);
+      // 태그 기반 조회(V3): 팀탭 = team_tags 에 팀 슬러그 포함(팀 글 + 그 팀 선수 글 모두).
+      // 선수 글은 카드에서 배경색으로 구분. board_id는 레거시 호환용으로 남아있지만 조회엔 안 씀.
+      if (board.kind === "team") query = query.contains("team_tags", [board.teamId]);
       else if (board.kind === "player") query = query.eq("board_type", "player").eq("board_id", board.kboId);
       else query = query.in("board_type", ["team", "player", "free"]);
       if (cursor !== null) query = query.lt("id", cursor);
