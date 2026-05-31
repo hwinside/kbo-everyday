@@ -12,6 +12,7 @@ import LinkPreview from "@/components/community/LinkPreview";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
+import { isYouTubeShortUrl, toYouTubeEmbedUrl } from "@/lib/video/youtube-url";
 import DMButton from "@/components/ui/DMButton";
 import GifPicker, { isGifComment } from "@/components/community/GifPicker";
 import LoginSheet from "@/components/auth/LoginSheet";
@@ -19,6 +20,31 @@ import LoginSheet from "@/components/auth/LoginSheet";
 interface PostDetailProps {
   postId: number;
   headerTitle: string;
+}
+
+function DetailVideo({ url }: { url: string }) {
+  const youtubeEmbedUrl = toYouTubeEmbedUrl(url);
+  if (youtubeEmbedUrl) {
+    return (
+      <iframe
+        src={youtubeEmbedUrl}
+        title="YouTube video"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        allowFullScreen
+        className={`rounded-xl w-full bg-black ${isYouTubeShortUrl(url) ? "aspect-[9/16] max-h-[80vh]" : "aspect-video"}`}
+      />
+    );
+  }
+
+  return (
+    <video
+      src={url}
+      controls
+      playsInline
+      className="rounded-xl w-full"
+      style={{ backgroundColor: "#000" }}
+    />
+  );
 }
 
 export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
@@ -458,14 +484,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         {post.video_urls && post.video_urls.length > 0 && (
           <div className="mt-4 space-y-2">
             {post.video_urls.map((url: string, i: number) => (
-              <video
-                key={i}
-                src={url}
-                controls
-                playsInline
-                className="rounded-xl w-full"
-                style={{ backgroundColor: "#000" }}
-              />
+              <DetailVideo key={i} url={url} />
             ))}
           </div>
         )}

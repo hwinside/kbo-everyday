@@ -5,6 +5,7 @@
  */
 
 import { extractMediaList, extractOgMedia, inferMediaExt } from "@/lib/gif-collector/og-media";
+import { extractYouTubeVideoId, toCanonicalYouTubeUrl, toYouTubeEmbedUrl } from "@/lib/video/youtube-url";
 
 let pass = 0;
 let fail = 0;
@@ -177,6 +178,18 @@ check("content-type video/mp4 → mp4", inferMediaExt("video/mp4", "https://x.co
 check("content-type image/jpeg → jpg", inferMediaExt("image/jpeg", "https://x.com/a") === "jpg");
 check("content-type 없을 때 URL 확장자 fallback (.gif)", inferMediaExt("application/octet-stream", "https://x.com/a.gif?q=1") === "gif");
 check("content-type 없고 URL도 확장자 없으면 bin", inferMediaExt("application/octet-stream", "https://x.com/a") === "bin");
+
+// YouTube URL normalization
+check("YouTube Shorts ID 추출", extractYouTubeVideoId("https://youtube.com/shorts/afzzOodArjA?si=x") === "afzzOodArjA");
+check("youtu.be ID 추출", extractYouTubeVideoId("https://youtu.be/afzzOodArjA?si=x") === "afzzOodArjA");
+check(
+  "YouTube Shorts canonical URL 보존",
+  toCanonicalYouTubeUrl("https://youtube.com/shorts/afzzOodArjA?si=x") === "https://www.youtube.com/shorts/afzzOodArjA",
+);
+check(
+  "YouTube embed URL 생성",
+  toYouTubeEmbedUrl("https://youtube.com/shorts/afzzOodArjA?si=x") === "https://www.youtube.com/embed/afzzOodArjA?controls=1&rel=0&playsinline=1",
+);
 
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

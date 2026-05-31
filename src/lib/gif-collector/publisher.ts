@@ -23,6 +23,7 @@ import { extractMediaList, inferMediaExt, type OgMedia } from "./og-media";
 import playersRoster from "@/lib/constants/players-roster.json";
 import type { RosterPlayer } from "@/types/api";
 import { getTeamBySlug } from "@/lib/constants/teams";
+import { toCanonicalYouTubeUrl } from "@/lib/video/youtube-url";
 
 const ROSTER = playersRoster as RosterPlayer[];
 
@@ -44,6 +45,9 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Re
 }
 
 async function fetchMediaList(sourceUrl: string): Promise<OgMedia[]> {
+  const youtubeUrl = toCanonicalYouTubeUrl(sourceUrl);
+  if (youtubeUrl) return [{ url: youtubeUrl, type: "video", provider: "youtube" }];
+
   const html = await fetchPageHtml(sourceUrl);
   if (!html) return [];
 
@@ -175,13 +179,15 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
   }
 
   // best-effort 다운로드 — 항목별 실패는 mediaErrors에 누적, 0건 성공 시 전체 reject.
+  const externalMedia = mediaList.filter((m) => m.provider === "youtube");
+  const downloadableMedia = mediaList.filter((m) => !m.provider);
   const downloaded: Array<{
     og: OgMedia;
     data: NonNullable<Awaited<ReturnType<typeof downloadMedia>>>;
   }> = [];
   const mediaErrors: string[] = [];
-  for (let i = 0; i < mediaList.length; i++) {
-    const og = mediaList[i];
+  for (let i = 0; i < downloadableMedia.length; i++) {
+    const og = downloadableMedia[i];
     let data: Awaited<ReturnType<typeof downloadMedia>>;
     try {
       data = await downloadMedia(og.url, refererOrigin);
@@ -195,13 +201,16 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     }
     downloaded.push({ og, data });
   }
-  if (downloaded.length === 0) {
+  if (downloaded.length === 0 && externalMedia.length === 0) {
     return rejectAndReturn(queueId, `all media downloads failed: ${mediaErrors.join("; ")}`);
   }
 
   // best-effort 업로드 — 실패는 mediaErrors에 누적. 0건 성공 시 reject.
   // 경로는 queueId-N.ext 로 결정적 — 동일 queueId 재시도(status guard로 막혀 있긴 함) 시 upsert.
-  const uploaded: Array<{ og: OgMedia; publicUrl: string; path: string }> = [];
+  const uploaded: Array<{ og: OgMedia; publicUrl: string; path?: string }> = externalMedia.map((og) => ({
+    og,
+    publicUrl: og.url,
+  }));
   for (let i = 0; i < downloaded.length; i++) {
     const { og, data } = downloaded[i];
     const path = `${STORAGE_FOLDER}/${queueId}-${i + 1}.${data.ext}`;
@@ -257,10 +266,12 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     .single<{ id: number }>();
   if (insErr || !post) {
     // Storage orphan 정리: 업로드된 모든 객체 제거.
-    const paths = uploaded.map((u) => u.path);
-    const { error: rmErr } = await supabaseAdmin.storage.from(BUCKET).remove(paths);
-    if (rmErr) {
-      console.error(`[gif-collector] storage cleanup failed for ${paths.join(",")}:`, rmErr);
+    const paths = uploaded.map((u) => u.path).filter((path): path is string => !!path);
+    if (paths.length > 0) {
+      const { error: rmErr } = await supabaseAdmin.storage.from(BUCKET).remove(paths);
+      if (rmErr) {
+        console.error(`[gif-collector] storage cleanup failed for ${paths.join(",")}:`, rmErr);
+      }
     }
     return { ok: false, error: `posts insert failed: ${insErr?.message ?? "no row"}` };
   }

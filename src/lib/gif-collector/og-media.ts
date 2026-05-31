@@ -6,6 +6,7 @@
 export interface OgMedia {
   url: string;
   type: "video" | "image";
+  provider?: "youtube";
 }
 
 const META_RE = /<meta\b[^>]*>/gi;

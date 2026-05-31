@@ -14,6 +14,7 @@ import type { Post } from "@/lib/supabase/usePosts";
 import { deletePost } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import type { CommunitySourceLabel } from "@/lib/utils/community-board";
+import { isYouTubeShortUrl, toYouTubeEmbedUrl } from "@/lib/video/youtube-url";
 import CommentSheet from "./CommentSheet";
 
 function findPlayerByName(name: string): { kboId: string; teamId: number } | null {
@@ -62,6 +63,19 @@ function MediaElement({ url, isVideo, sizes }: { url: string; isVideo: boolean; 
   const isGif = !isVideo && url.toLowerCase().endsWith(".gif");
 
   if (isVideo) {
+    const youtubeEmbedUrl = toYouTubeEmbedUrl(url);
+    if (youtubeEmbedUrl) {
+      return (
+        <iframe
+          src={youtubeEmbedUrl}
+          title="YouTube video"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+          className={`mx-auto w-full bg-black ${isYouTubeShortUrl(url) ? "aspect-[9/16] max-h-[80vh]" : "aspect-video"}`}
+        />
+      );
+    }
+
     return (
       <video
         src={url}

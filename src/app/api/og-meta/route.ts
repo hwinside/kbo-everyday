@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { extractYouTubeVideoId } from "@/lib/video/youtube-url";
 
 // Simple in-memory cache (per-instance, cleared on redeploy)
 const cache = new Map<string, { data: OGData; ts: number }>();
@@ -51,7 +52,7 @@ export async function GET(req: NextRequest) {
   }
 
   // YouTube shortcut — oEmbed API returns clean metadata without 1MB+ HTML fetch
-  const ytId = extractYouTubeId(parsed);
+  const ytId = extractYouTubeVideoId(parsed);
   if (ytId) {
     try {
       const controller = new AbortController();
@@ -181,22 +182,6 @@ export async function GET(req: NextRequest) {
       { status: 502 }
     );
   }
-}
-
-/** Extract YouTube video id from youtu.be/VIDEO_ID, youtube.com/watch?v=, /embed/, /shorts/ */
-function extractYouTubeId(u: URL): string | null {
-  const host = u.hostname.toLowerCase();
-  if (host === "youtu.be" || host === "www.youtu.be") {
-    const id = u.pathname.slice(1).split("/")[0];
-    return /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : null;
-  }
-  if (host === "youtube.com" || host === "www.youtube.com" || host === "m.youtube.com" || host === "music.youtube.com") {
-    const v = u.searchParams.get("v");
-    if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
-    const embed = u.pathname.match(/^\/(?:embed|shorts|v)\/([a-zA-Z0-9_-]{11})/);
-    if (embed?.[1]) return embed[1];
-  }
-  return null;
 }
 
 /** Stream response body, stop at </head> or byteCap, whichever comes first. */
