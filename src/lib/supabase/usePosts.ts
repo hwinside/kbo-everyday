@@ -214,6 +214,7 @@ export async function createPost(params: {
   imageHashes?: string[];
   contentType?: "general" | "photo";
   gameId?: string;
+  teamTags?: string[];
   playerTags?: string[];
   hashtags?: string[];
   seatInfo?: { zone: string; block?: string; row?: string; seat?: string };
@@ -231,6 +232,8 @@ export async function createPost(params: {
     image_urls: params.imageUrls ?? [],
     video_urls: params.videoUrls ?? [],
     image_hashes: params.imageHashes ?? [],
+    // 태그 기반(V3): 팀태그 배열. board_type/board_id는 레거시 호환용으로 계속 채움.
+    team_tags: params.teamTags ?? [],
   };
 
   if (params.gameId) row.game_id = params.gameId;
