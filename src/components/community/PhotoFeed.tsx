@@ -66,11 +66,15 @@ function timeAgo(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("ko-KR");
 }
 
-/** 제목 필드 제거(spec §4·§11) → 기존 글의 title+content를 하나의 본문으로 합쳐 렌더. */
+/** 제목 필드 제거(spec §4·§11) → 기존 글의 title+content를 하나의 본문으로 합쳐 렌더.
+ *  단, 움짤콜렉터 등 title===content(또는 본문이 제목으로 시작)인 글은 중복 노출 방지(③). */
 function mergedBody(post: Post): string {
   const t = (post.title ?? "").trim();
   const c = (post.content ?? "").trim();
-  return t && c ? `${t}\n${c}` : t || c;
+  if (!t) return c;
+  if (!c) return t;
+  if (c === t || c.startsWith(t)) return c;
+  return `${t}\n${c}`;
 }
 
 // 본문 내 링크 매칭(PostCard와 동일 패턴). test용은 non-global, strip용은 global.

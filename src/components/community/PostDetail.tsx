@@ -752,11 +752,15 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   );
 }
 
-/** 기존 글 title을 본문 앞에 합침(피드 mergedBody와 동일). 신규 글은 title="" → content만. */
+/** 기존 글 title을 본문 앞에 합침(피드 mergedBody와 동일). 신규 글은 title="" → content만.
+ *  움짤콜렉터 등 title===content(또는 본문이 제목으로 시작)인 글은 중복 방지(③). */
 function mergeTitleBody(title: string | null | undefined, content: string | null | undefined): string {
   const t = (title ?? "").trim();
   const c = (content ?? "").trim();
-  return t && c ? `${t}\n${c}` : t || c;
+  if (!t) return c;
+  if (!c) return t;
+  if (c === t || c.startsWith(t)) return c;
+  return `${t}\n${c}`;
 }
 
 /** Strip URLs from text (OG cards handle link display). Trims leftover blank lines. */
