@@ -13,6 +13,11 @@ export const ACTIVE_BADGE_IDS = new Set([
   "debut", "writer-1", "writer-2", "writer-3", "writer-4", "writer-5",
   "popular-1", "popular-2", "popular-3", "popular-4", "popular-5",
   "inviter-1", "inviter-5", "inviter-10", "inviter-30", "inviter-50", "pioneer-2026",
+  // 얼리멤버 이벤트 등수별 뱃지 (스냅샷 기준 1회 부여, prizes.ts 와 1:1)
+  "event2026-invite-champion", "event2026-invite-master", "event2026-invite-legend",
+  "event2026-invite-ace", "event2026-invite-recruiter", "event2026-invite-connector",
+  "event2026-writing-director", "event2026-writing-manager", "event2026-writing-scout",
+  "event2026-writing-commentator", "event2026-writing-press", "event2026-writing-supporter",
 ]);
 
 export const ALL_BADGES: BadgeDefinition[] = [
@@ -82,6 +87,22 @@ export const ALL_BADGES: BadgeDefinition[] = [
   // === 시즌 한정 ===
   { id: "first-pitch-2026", name: "2026 퍼스트피치", icon: "⚾", description: "2026 시즌 개막전 참여", category: "season", rarity: "epic" },
   { id: "autumn-2026", name: "가을야구 생존자", icon: "🍂", description: "2026 포스트시즌 활동", category: "season", rarity: "epic" },
+
+  // === 얼리멤버 이벤트 등수별 뱃지 (2026-04~05, 최종 스냅샷 기준 1회 부여 / prizes.ts 와 1:1) ===
+  // 초대 부문
+  { id: "event2026-invite-champion", name: "초대 챔피언", icon: "🏆", description: "얼리멤버 이벤트 친구 초대 부문 1위", category: "season", rarity: "legendary" },
+  { id: "event2026-invite-master", name: "초대 마스터", icon: "🥇", description: "얼리멤버 이벤트 친구 초대 부문 2~4위", category: "season", rarity: "epic" },
+  { id: "event2026-invite-legend", name: "초대 레전드", icon: "🌟", description: "얼리멤버 이벤트 친구 초대 부문 5~9위", category: "season", rarity: "epic" },
+  { id: "event2026-invite-ace", name: "초대 에이스", icon: "🃏", description: "얼리멤버 이벤트 친구 초대 부문 10~19위", category: "season", rarity: "rare" },
+  { id: "event2026-invite-recruiter", name: "리크루터", icon: "🤝", description: "얼리멤버 이벤트 친구 초대 부문 20~39위", category: "season", rarity: "rare" },
+  { id: "event2026-invite-connector", name: "커넥터", icon: "🔗", description: "얼리멤버 이벤트 친구 초대 부문 40~50위", category: "season", rarity: "common" },
+  // 글쓰기 부문
+  { id: "event2026-writing-director", name: "단장", icon: "👑", description: "얼리멤버 이벤트 글쓰기 부문 1위", category: "season", rarity: "legendary" },
+  { id: "event2026-writing-manager", name: "운영팀장", icon: "🎖️", description: "얼리멤버 이벤트 글쓰기 부문 2~4위", category: "season", rarity: "epic" },
+  { id: "event2026-writing-scout", name: "스카우트", icon: "🔍", description: "얼리멤버 이벤트 글쓰기 부문 5~9위", category: "season", rarity: "epic" },
+  { id: "event2026-writing-commentator", name: "해설위원", icon: "🎙️", description: "얼리멤버 이벤트 글쓰기 부문 10~19위", category: "season", rarity: "rare" },
+  { id: "event2026-writing-press", name: "기자단", icon: "📰", description: "얼리멤버 이벤트 글쓰기 부문 20~39위", category: "season", rarity: "rare" },
+  { id: "event2026-writing-supporter", name: "서포터즈", icon: "📣", description: "얼리멤버 이벤트 글쓰기 부문 40~50위", category: "season", rarity: "common" },
 ];
 
 // 활성 뱃지만 노출
