@@ -166,7 +166,7 @@ export default function WritePost({
   }
 
   async function handleSubmit() {
-    if (!title.trim() || !content.trim() || submittingRef.current) return;
+    if (!content.trim() || submittingRef.current) return; // 제목 제거 → 본문만 필수
     if (seatTipMode && !effectiveZone) return; // 구역 필수
 
     submittingRef.current = true;
@@ -210,7 +210,7 @@ export default function WritePost({
     reset();
   }
 
-  const canSubmit = title.trim() && content.trim() && (!seatTipMode || effectiveZone);
+  const canSubmit = content.trim() && (!seatTipMode || effectiveZone);
 
   return (
     <AnimatePresence>
@@ -245,7 +245,7 @@ export default function WritePost({
                 {submitting ? `${submitText ?? "등록"} 중...` : (submitText ?? "등록")}
               </button>
             </div>
-            <div className="px-5 pb-8 space-y-4 flex-1 flex flex-col">
+            <div className="px-5 pb-8 space-y-4">
               {/* 좌석팁: 구역/좌석 입력 */}
               {seatTipMode && (
                 <div className="space-y-3">
@@ -302,19 +302,12 @@ export default function WritePost({
                 </div>
               )}
 
-              <input
-                type="text"
-                placeholder="제목"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                maxLength={100}
-                className="w-full rounded-xl bg-bg-tertiary px-5 py-4 text-base text-text-primary placeholder:text-text-tertiary outline-none"
-              />
+              {/* 제목 필드 제거(V3 §6) — 피드가 제목/본문 구분 없는 통합 형식. 본문만 입력. */}
               <textarea
                 placeholder={seatTipMode ? "좌석 팁을 작성해주세요 (시야, 그늘, 통로/벽, 음식 접근성 등)" : "내용을 입력하세요"}
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
-                className="w-full flex-1 min-h-[200px] resize-none rounded-xl bg-bg-tertiary px-5 py-4 text-base text-text-primary placeholder:text-text-tertiary outline-none"
+                className="w-full min-h-[200px] resize-none rounded-xl bg-bg-tertiary px-5 py-4 text-base text-text-primary placeholder:text-text-tertiary outline-none"
               />
 
               {/* V3 태그 피커 — 팀·선수 복수태그 (enableTags, 좌석팁 제외) */}
