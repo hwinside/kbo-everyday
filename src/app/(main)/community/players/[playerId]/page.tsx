@@ -552,7 +552,17 @@ export default function PlayerBoardPage() {
         isOpen={showWrite}
         onClose={() => setShowWrite(false)}
         onSubmit={async (title, content, imageUrls) => {
-          await createPost({ boardType: "player", boardId: kboId, title, content, imageUrls });
+          // V3 태그 모델: 선수 글은 player_tags(선수 페이지·cross-board) + team_tags(팀 탭) 둘 다 부여.
+          const teamSlug = TEAMS.find((t) => t.id === player.teamId)?.slug;
+          await createPost({
+            boardType: "player",
+            boardId: kboId,
+            title,
+            content,
+            imageUrls,
+            playerTags: [formatPlayerTag(kboId, player.name)],
+            ...(teamSlug ? { teamTags: [teamSlug] } : {}),
+          });
           setShowWrite(false);
           if (user) checkBadges(user.id);
           loadFeed();

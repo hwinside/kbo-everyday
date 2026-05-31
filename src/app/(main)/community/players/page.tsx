@@ -14,8 +14,21 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { createPost, toggleLike } from "@/lib/supabase/usePosts";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS, getTeamById } from "@/lib/constants/teams";
+import { formatPlayerTag } from "@/lib/utils/player-tags";
 import { usePlayerCommunity } from "@/hooks/usePlayerCommunity";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
+
+/** V3 태그 모델: 선수 글에 player_tags + team_tags(선수 소속팀) 둘 다 부여.
+ *  누락 시 새 글이 팀 탭/선수 페이지 태그 피드에서 사라짐. roster 기준 매핑. */
+function playerTagsForBoard(kboId: string): { playerTags?: string[]; teamTags?: string[] } {
+  const r = PLAYERS_ROSTER.find((p) => p.kboId === kboId);
+  if (!r) return {};
+  const slug = TEAMS.find((t) => t.id === r.teamId)?.slug;
+  return {
+    playerTags: [formatPlayerTag(r.kboId, r.name)],
+    ...(slug ? { teamTags: [slug] } : {}),
+  };
+}
 
 export default function CommunityPlayersPage() {
   const router = useRouter();
@@ -140,7 +153,7 @@ export default function CommunityPlayersPage() {
           })() : "선수 게시판"}
           onSubmit={async (title, content, imageUrls) => {
             const targetId = writePlayerTarget || "";
-            await createPost({ boardType: "player", boardId: targetId, title, content, imageUrls, contentType: "general" });
+            await createPost({ boardType: "player", boardId: targetId, title, content, imageUrls, contentType: "general", ...playerTagsForBoard(targetId) });
             setWriteOpen(false);
             setWritePlayerTarget(null);
             if (targetId) router.push(`/community/players/${targetId}`);
@@ -294,7 +307,7 @@ export default function CommunityPlayersPage() {
         })() : "선수 게시판"}
         onSubmit={async (title, content, imageUrls) => {
           const targetId = writePlayerTarget || favPlayerIds[0];
-          await createPost({ boardType: "player", boardId: targetId, title, content, imageUrls, contentType: "general" });
+          await createPost({ boardType: "player", boardId: targetId, title, content, imageUrls, contentType: "general", ...playerTagsForBoard(targetId) });
           setWriteOpen(false);
           setWritePlayerTarget(null);
           // 비최애 선수면 해당 선수 게시판으로 이동 (P0: 작성 직후 내 글 확인 보장)

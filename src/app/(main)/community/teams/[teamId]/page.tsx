@@ -124,6 +124,9 @@ export default function CommunityTeamBoardPage() {
             content,
             imageUrls,
             contentType: "general",
+            // V3 태그 모델: 팀 게시판 글은 해당 팀 태그를 자동 부여해야
+            // team_tags 기준 팀 피드(ad1987be)에 노출됨. 누락 시 자기 팀 탭에서 사라짐.
+            teamTags: [teamSlug],
           });
           reload();
           setWriteOpen(false);
