@@ -37,10 +37,6 @@ function timeAgo(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("ko-KR");
 }
 
-// 실제 iOS 키보드는 ~260-340px, 브라우저 크롬(주소창+툴바)이 만드는 phantom inset은 보통 <130px.
-// 이 임계값 이상일 때만 "키보드 떴다"로 판단해 (c)확장을 트리거한다.
-const KEYBOARD_INSET_THRESHOLD = 150;
-
 /** flat 댓글 배열 → 트리 구조 (2depth 제한) */
 function buildCommentTree(comments: Comment[]): Comment[] {
   // 방어적 dedup: 같은 id가 두 번 들어오면(낙관적 append ↔ 재조회 레이스 등) 댓글이 2번 보일 수 있다.
@@ -165,24 +161,23 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     }
   }, [shouldRender]);
 
-  // Reset input + replyTo + 확장 상태 when sheet closes
+  // (b)/(c) 높이는 오직 "사용자 의도"로만 결정한다.
+  //  - 열 때: 항상 (b)부분높이부터 (직전 세션의 (c)확장 상태가 남지 않도록 매 오픈마다 강제 리셋)
+  //  - 입력창 onFocus / GIF 버튼 탭: (c)최상단 확장 (아래 input onFocus에서 setExpanded(true))
+  //  - 닫을 때: 전체 리셋
+  // ⚠️ 과거엔 keyboardInset(>=임계값)으로 키보드를 추론해 (c)확장을 트리거했는데, iOS Safari/인앱브라우저는
+  //    주소창·툴바 때문에 키보드 없이도 phantom inset이 생기고 그 크기가 기기/브라우저마다 달라(임계값 가드가
+  //    통하지 않음) "열자마자 맨 위 고정"이 됐다. viewport 수치 추론을 버리고 명시적 focus로만 확장한다.
   useEffect(() => {
-    if (!shouldRender) {
+    if (shouldRender) {
+      setExpanded(false);
+    } else {
       setInput("");
       setReplyTo(null);
       setShowGifPicker(false);
       setExpanded(false);
     }
   }, [shouldRender]);
-
-  // 키보드가 떠 있으면(=입력 중) 무조건 확장 상태 유지.
-  // 포커스 onFocus만으로는 키보드 settle 전 시트가 짧게 보일 수 있어 키보드 inset도 트리거로.
-  // ⚠️ iOS Safari/인앱브라우저는 주소창·툴바 때문에 키보드가 없어도 innerHeight > visualViewport.height
-  // 라서 keyboardInset이 phantom 양수(보통 <130px)가 된다. 이걸 키보드로 오인하면 (b)부분높이 없이
-  // 열자마자 (c)최상단 확장으로 고정돼 "높이 변화 없음"으로 보인다. 실제 키보드(>=150px)일 때만 트리거.
-  useEffect(() => {
-    if (keyboardInset >= KEYBOARD_INSET_THRESHOLD && !expanded) setExpanded(true);
-  }, [keyboardInset, expanded]);
 
   // Track visualViewport for iOS keyboard-aware sheet height.
   // Important: do not drive the sheet with `bottom: keyboardInset`.

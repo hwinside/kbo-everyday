@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, MoreHorizontal } from "lucide-react";
+import { MessageCircle, MoreHorizontal, Volume2, VolumeX } from "lucide-react";
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import { getTeamById, getTeamBySlug, getTeamBgColor, type TeamData } from "@/lib/constants/teams";
 import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
@@ -103,6 +103,27 @@ let videoObserver: IntersectionObserver | null = null;
 let videoRecomputeScheduled = false;
 const VIDEO_MIN_VISIBLE = 0.5; // 절반 이상 보일 때만 재생 대상
 
+// 영상 음소거 전역 상태 — 기본 음소거(인스타 동일). 우하단 토글 버튼으로 한 번 소리를 켜면
+// 이후 포커스되는 모든 영상에 그대로 유지된다. 모듈 스코프 + 구독자 set으로 모든 FeedVideo가 동기화.
+let globalVideoMuted = true;
+const muteSubscribers = new Set<() => void>();
+function setGlobalVideoMuted(next: boolean) {
+  globalVideoMuted = next;
+  muteSubscribers.forEach((fn) => fn());
+}
+function useGlobalVideoMuted(): [boolean, (next: boolean) => void] {
+  const [muted, setLocal] = useState(globalVideoMuted);
+  useEffect(() => {
+    const sync = () => setLocal(globalVideoMuted);
+    muteSubscribers.add(sync);
+    sync();
+    return () => {
+      muteSubscribers.delete(sync);
+    };
+  }, []);
+  return [muted, setGlobalVideoMuted];
+}
+
 function recomputeVideoFocus() {
   let best: HTMLVideoElement | null = null;
   let bestRatio = 0;
@@ -142,6 +163,8 @@ function ensureVideoObserver(): IntersectionObserver {
 
 function FeedVideo({ url }: { url: string }) {
   const ref = useRef<HTMLVideoElement>(null);
+  const [muted, setMuted] = useGlobalVideoMuted();
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -155,17 +178,35 @@ function FeedVideo({ url }: { url: string }) {
       recomputeVideoFocus();
     };
   }, []);
+
+  // 전역 음소거 상태를 element에 반영. React의 muted 속성은 property 반영이 불안정해 직접 세팅.
+  // 소리를 켠 직후 포커스된 영상은 사용자 제스처 컨텍스트라 iOS에서도 사운드 재생이 허용된다.
+  useEffect(() => {
+    const el = ref.current;
+    if (el) el.muted = muted;
+  }, [muted]);
+
   return (
-    <video
-      ref={ref}
-      src={url}
-      muted
-      loop
-      playsInline
-      preload="metadata"
-      className="w-full object-contain pointer-events-none select-none bg-black"
-      style={{ maxHeight: "80vh", WebkitTouchCallout: "none" } as React.CSSProperties}
-    />
+    <div className="relative w-full">
+      <video
+        ref={ref}
+        src={url}
+        muted={muted}
+        loop
+        playsInline
+        preload="metadata"
+        className="w-full object-contain pointer-events-none select-none bg-black"
+        style={{ maxHeight: "80vh", WebkitTouchCallout: "none" } as React.CSSProperties}
+      />
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setMuted(!muted); }}
+        className="absolute bottom-2 right-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm pointer-events-auto"
+        aria-label={muted ? "소리 켜기" : "소리 끄기"}
+      >
+        {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+      </button>
+    </div>
   );
 }
 
@@ -510,13 +551,13 @@ function PhotoCarousel({
           </div>
         ))}
       </div>
-      {/* Dot indicators */}
-      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+      {/* Dot indicators — 인스타처럼 콘텐츠 위 오버레이가 아니라 영상/사진 아래에 배치(여러 개임을 명확히 인지) */}
+      <div className="flex justify-center gap-1.5 py-2.5">
         {slides.map((_, i) => (
           <div
             key={i}
             className={`w-1.5 h-1.5 rounded-full transition-colors ${
-              i === current ? "bg-white" : "bg-white/40"
+              i === current ? "bg-text-primary" : "bg-text-tertiary/40"
             }`}
           />
         ))}
@@ -888,30 +929,43 @@ function BrandedTextCard({ post, body }: { post: Post; body: string }) {
   );
 }
 
-/** 카드 C — 긴 텍스트. 3줄 클램프 + '더 보기' 인라인 펼침(상세 이동 없음). */
+/** 카드 C — 긴 텍스트. 3줄 클램프 + '더 보기' 인라인 펼침(상세 이동 없음). 링크 포함 시 OG 프리뷰. */
 function LongTextCard({ body }: { body: string }) {
   const [expanded, setExpanded] = useState(false);
   const [clamped, setClamped] = useState(false);
   const ref = useRef<HTMLParagraphElement>(null);
+  // 본문에서 URL은 strip하고 OG 카드로 대신 노출(짧은글 BrandedTextCard와 동일 규칙).
+  // 기존엔 긴 글 분기에 OG 카드가 아예 없어 "텍스트 길고 링크 포함 글에서 OG 안뜸" 버그였음.
+  const displayBody = stripUrls(body);
+  const linked = hasLink(body);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     requestAnimationFrame(() => setClamped(el.scrollHeight > el.clientHeight + 2));
-  }, [body]);
+  }, [displayBody]);
 
   return (
     <div className="px-5 pt-1 pb-2">
-      <p
-        ref={ref}
-        className={`whitespace-pre-line break-words text-base leading-relaxed text-text-primary ${expanded ? "" : "line-clamp-3"}`}
-      >
-        {body}
-      </p>
-      {clamped && !expanded && (
-        <button onClick={() => setExpanded(true)} className="mt-0.5 text-base text-text-tertiary">
-          더 보기
-        </button>
+      {displayBody && (
+        <>
+          <p
+            ref={ref}
+            className={`whitespace-pre-line break-words text-base leading-relaxed text-text-primary ${expanded ? "" : "line-clamp-3"}`}
+          >
+            {displayBody}
+          </p>
+          {clamped && !expanded && (
+            <button onClick={() => setExpanded(true)} className="mt-0.5 text-base text-text-tertiary">
+              더 보기
+            </button>
+          )}
+        </>
+      )}
+      {linked && (
+        <div className="mt-2 max-w-sm">
+          <LinkPreview text={body} maxPreviews={1} stopPropagation />
+        </div>
       )}
     </div>
   );
