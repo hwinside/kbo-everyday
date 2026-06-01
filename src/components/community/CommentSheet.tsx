@@ -181,11 +181,38 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     }
   }, [shouldRender]);
 
-  // 키보드 회피는 viewport meta의 interactive-widget=resizes-content가 처리한다
-  // (키보드가 열리면 레이아웃 뷰포트 자체가 축소 → bottom:0 고정 + dvh 높이면 시트/컴포저가
-  //  자동으로 키보드 위에 정렬). 과거 visualViewport로 top/height를 직접 계산하던 방식은
-  //  resizes-content와 충돌해(레이아웃 높이 단조증가→시트 off-screen, vv.height base→시트 수축)
-  //  실기기에서 시트가 안 뜨거나 사라지는 버그를 유발 → 제거.
+  // 키보드 회피: visualViewport에 시트를 정렬한다.
+  // iOS Safari/WKWebView는 interactive-widget=resizes-content를 *미지원* → 키보드가 떠도
+  // 레이아웃 뷰포트(dvh/innerHeight)는 그대로다. 그 상태에서 position:fixed; bottom:0 시트는
+  // 키보드 높이만큼 화면 밖(위)으로 밀려 상단(댓글 목록)이 사라진다(입력창만 키보드 위에 남음).
+  //  → 시각 뷰포트(키보드를 제외한 실제 보이는 영역)에 맞춰 (1) 시트 바닥을 키보드 위로 올리고
+  //    (2) 높이를 시각 뷰포트로 캡 → 목록·컴포저가 항상 키보드 위에 함께 보인다.
+  // stateless 재계산(매 vv 이벤트마다 절대값 산출)이라 과거 단조증가/수축 버그가 없다.
+  // resizes-content 지원 브라우저(Android Chrome)에서는 innerHeight도 축소 → keyboard≈0, maxHeight=vv.height로
+  // 동일하게 안전하게 동작한다.
+  useEffect(() => {
+    if (!shouldRender) return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    const apply = () => {
+      const keyboard = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      sheet.style.bottom = `${keyboard}px`;
+      sheet.style.maxHeight = `${vv.height}px`;
+    };
+    apply();
+    vv.addEventListener("resize", apply);
+    vv.addEventListener("scroll", apply);
+    return () => {
+      vv.removeEventListener("resize", apply);
+      vv.removeEventListener("scroll", apply);
+      sheet.style.bottom = "";
+      sheet.style.maxHeight = "";
+    };
+  }, [shouldRender]);
+
+  // 시트가 (b)/(c)로 높이가 바뀐 직후, 목록이 바닥 근처면 자동으로 맨 아래로(최신 댓글) 스냅.
   useEffect(() => {
     if (!shouldRender) return;
     const el = listRef.current;
