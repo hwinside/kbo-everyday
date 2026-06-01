@@ -109,6 +109,7 @@ check("출처/URL 없으면 중복 아님", hasExistingAttribution("그냥 본�
   const p = parseAttribution(content);
   check("parse: IG roundtrip body", p?.body === "구자욱과 이용찬의 신경전", `got ${JSON.stringify(p)}`);
   check("parse: IG roundtrip source", p?.source === "인스타 @deliciousports", `got ${JSON.stringify(p)}`);
+  check("parse: IG label/handle 분리", p?.label === "인스타" && p?.handle === "deliciousports", `got ${JSON.stringify(p)}`);
   check("parse: IG roundtrip url", p?.url === IG_URL, `got ${JSON.stringify(p)}`);
 }
 {
@@ -124,7 +125,7 @@ check("출처/URL 없으면 중복 아님", hasExistingAttribution("그냥 본�
 }
 {
   const p = parseAttribution("엠팍 짤" + `\n\n(출처: 엠팍)\n${MLBPARK_URL}`);
-  check("parse: 핸들 없는 (출처: 엠팍) source", p?.source === "엠팍" && p?.url === MLBPARK_URL, `got ${JSON.stringify(p)}`);
+  check("parse: 핸들 없는 (출처: 엠팍) → label 엠팍 + handle null", p?.label === "엠팍" && p?.handle === null && p?.url === MLBPARK_URL, `got ${JSON.stringify(p)}`);
 }
 check("parse: 출처 블록 없으면 null", parseAttribution("그냥 본문") === null);
 check("parse: URL 없는 수동 출처는 매치 안 함(링크 대상 없음)", parseAttribution("멋진 장면 (출처: 인스타 @x)") === null);

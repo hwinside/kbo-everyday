@@ -1135,15 +1135,19 @@ function CaptionBlock({ nickname, content, onPress }: { nickname: string; conten
         <span className="font-semibold text-text-primary mr-1.5">{nickname}</span>
         {bodyText && <span className="text-text-secondary">{bodyText}</span>}
         {attr && (
-          <a
-            href={attr.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="text-accent ml-1.5"
-          >
-            (출처: {attr.source})
-          </a>
+          <span className="text-text-secondary">
+            {` (출처: ${attr.handle ? attr.label + " " : ""}`}
+            <a
+              href={attr.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="text-accent"
+            >
+              {attr.handle ? `@${attr.handle}` : attr.label}
+            </a>
+            {")"}
+          </span>
         )}
       </div>
       {clamped && !expanded && (

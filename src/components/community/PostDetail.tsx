@@ -439,10 +439,11 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                 {stripUrls(attr ? attr.body : merged)}
                 {attr && (
                   <>
-                    {attr.body ? "\n\n" : ""}
+                    {`${attr.body ? "\n\n" : ""}(출처: ${attr.handle ? attr.label + " " : ""}`}
                     <a href={attr.url} target="_blank" rel="noopener noreferrer" className="text-accent">
-                      (출처: {attr.source})
+                      {attr.handle ? `@${attr.handle}` : attr.label}
                     </a>
+                    {")"}
                   </>
                 )}
               </p>

@@ -124,13 +124,19 @@ export function appendAttribution(
  */
 export function parseAttribution(
   content: string | null | undefined,
-): { body: string; source: string; url: string } | null {
+): { body: string; source: string; label: string; handle: string | null; url: string } | null {
   if (!content) return null;
   const m = content.match(/\(출처:\s*([^)]*)\)\s*\n(https?:\/\/\S+)\s*$/);
   if (!m || m.index === undefined) return null;
+  const source = m[1].trim();
+  // source = "인스타 @deliciousports" → label "인스타" + handle "deliciousports"
+  //        = "엠팍"(핸들 없음) → label "엠팍" + handle null
+  const hm = source.match(/^(.*?)\s*@(\S+)$/);
   return {
     body: content.slice(0, m.index).trim(),
-    source: m[1].trim(),
+    source,
+    label: hm ? hm[1].trim() : source,
+    handle: hm ? hm[2] : null,
     url: m[2],
   };
 }
