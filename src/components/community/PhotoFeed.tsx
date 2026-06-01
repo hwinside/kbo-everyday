@@ -757,8 +757,15 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
         const dupTeamLabel =
           !!sourceLabel?.teamId && !sourceLabel.playerName && sourceLabel.teamId === post.team_id;
         const prominent = boardType !== "player" ? buildProminentLabel(post) : null;
+        // 선수명만(팀 prefix 없이) — 헤더 단일 칩은 TeamBadge가 "두산 " prefix를 붙이므로 분리.
+        const prominentPlayers = prominent
+          ? `${prominent.players.slice(0, 2).join("/")}${prominent.players.length > 2 ? ` 외 ${prominent.players.length - 2}명` : ""}`
+          : "";
+        // 단일 팀이면 헤더 작성자 왼쪽 칩 하나로 병합: [(로고)두산 김기연]. 별도 둘째 줄 라벨 제거(2 depth → 1).
+        const mergedInHeader = !!(prominent && prominent.teamId);
+        // 다중 팀 혼합 등 병합 불가 시에만 둘째 줄 pill 폴백.
         const prominentText = prominent
-          ? `${prominent.teamShort ? prominent.teamShort + " " : ""}${prominent.players.slice(0, 2).join("/")}${prominent.players.length > 2 ? ` 외 ${prominent.players.length - 2}명` : ""}`
+          ? `${prominent.teamShort ? prominent.teamShort + " " : ""}${prominentPlayers}`
           : "";
         const prominentTeam = prominent?.teamId ? getTeamById(prominent.teamId) : undefined;
         const prominentStyle = prominentTeam
@@ -781,6 +788,14 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
               <div className="flex items-center gap-3 px-5 py-3">
                 {boardType === "player" && playerLabels?.[post.id] ? (
                   <TeamBadge teamId={playerLabels[post.id].teamId} playerName={playerLabels[post.id].playerName} />
+                ) : mergedInHeader ? (
+                  prominent!.href ? (
+                    <Link href={prominent!.href} className="shrink-0 active:opacity-70 transition-opacity">
+                      <TeamBadge teamId={prominent!.teamId!} playerName={prominentPlayers} />
+                    </Link>
+                  ) : (
+                    <TeamBadge teamId={prominent!.teamId!} playerName={prominentPlayers} />
+                  )
                 ) : (
                   post.team_id ? <TeamBadge teamId={post.team_id} /> : null
                 )}
@@ -821,8 +836,8 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 )}
               </div>
 
-              {/* 선수 라벨(적극적) — "두산 김기연" / "두산 김기연/곽빈". 헤더 바로 아래 팀컬러 pill로 노출(①). */}
-              {prominent ? (
+              {/* 선수 라벨(적극적) — 단일 팀은 헤더 칩으로 병합됨. 다중 팀 혼합 등 병합 불가 시에만 팀컬러 pill 폴백. */}
+              {prominent && !mergedInHeader ? (
                 <div className="px-5 pb-2">
                   {prominent.href ? (
                     <Link
