@@ -14,8 +14,34 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { createPost, toggleLike } from "@/lib/supabase/usePosts";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS, getTeamById } from "@/lib/constants/teams";
+import { formatPlayerTag } from "@/lib/utils/player-tags";
 import { usePlayerCommunity } from "@/hooks/usePlayerCommunity";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
+
+/** V3 태그 모델: 선수 글에 player_tags + team_tags(선수 소속팀) 둘 다 부여.
+ *  누락 시 새 글이 팀 탭/선수 페이지 태그 피드에서 사라짐. roster 기준 매핑. */
+function playerTagsForBoard(kboId: string): { playerTags?: string[]; teamTags?: string[] } {
+  const r = PLAYERS_ROSTER.find((p) => p.kboId === kboId);
+  if (!r) return {};
+  const slug = TEAMS.find((t) => t.id === r.teamId)?.slug;
+  return {
+    playerTags: [formatPlayerTag(r.kboId, r.name)],
+    ...(slug ? { teamTags: [slug] } : {}),
+  };
+}
+
+// V3 태그 피커 기본값 — 현재 선수 대상이 있으면 그 선수/소속팀을 프리셀렉트.
+function defaultPlayerTagFor(kboId: string | null): { kboId: string; name: string; teamId: number } | undefined {
+  if (!kboId) return undefined;
+  const r = PLAYERS_ROSTER.find((p) => p.kboId === kboId);
+  return r ? { kboId: r.kboId, name: r.name, teamId: r.teamId } : undefined;
+}
+function defaultTeamSlugsFor(kboId: string | null): string[] | undefined {
+  if (!kboId) return undefined;
+  const r = PLAYERS_ROSTER.find((p) => p.kboId === kboId);
+  const slug = r ? TEAMS.find((t) => t.id === r.teamId)?.slug : undefined;
+  return slug ? [slug] : undefined;
+}
 
 export default function CommunityPlayersPage() {
   const router = useRouter();
@@ -138,9 +164,17 @@ export default function CommunityPlayersPage() {
             const label = team ? `${team.shortName} ${r!.name} 선수` : writePlayerTarget + " 선수";
             return label + " 게시판";
           })() : "선수 게시판"}
-          onSubmit={async (title, content, imageUrls) => {
+          enableTags
+          defaultTeamSlugs={defaultTeamSlugsFor(writePlayerTarget)}
+          defaultPlayerTag={defaultPlayerTagFor(writePlayerTarget)}
+          onSubmit={async (title, content, imageUrls, _seatInfo, tags) => {
             const targetId = writePlayerTarget || "";
-            await createPost({ boardType: "player", boardId: targetId, title, content, imageUrls, contentType: "general" });
+            const fallback = playerTagsForBoard(targetId);
+            await createPost({
+              boardType: "player", boardId: targetId, title, content, imageUrls, contentType: "general",
+              playerTags: tags?.playerTags?.length ? tags.playerTags : fallback.playerTags,
+              teamTags: tags?.teamTags?.length ? tags.teamTags : fallback.teamTags,
+            });
             setWriteOpen(false);
             setWritePlayerTarget(null);
             if (targetId) router.push(`/community/players/${targetId}`);
@@ -162,6 +196,12 @@ export default function CommunityPlayersPage() {
             const r = PLAYERS_ROSTER.find((p) => p.kboId === writePlayerTarget);
             if (!r) return undefined;
             return { kboId: r.kboId, name: r.name, teamId: r.teamId };
+          })()}
+          defaultTeamSlugs={(() => {
+            if (!writePlayerTarget) return undefined;
+            const r = PLAYERS_ROSTER.find((p) => p.kboId === writePlayerTarget);
+            const slug = r ? TEAMS.find((t) => t.id === r.teamId)?.slug : undefined;
+            return slug ? [slug] : undefined;
           })()}
           onSuccess={() => {
             const targetId = writePlayerTarget;
@@ -294,7 +334,7 @@ export default function CommunityPlayersPage() {
         })() : "선수 게시판"}
         onSubmit={async (title, content, imageUrls) => {
           const targetId = writePlayerTarget || favPlayerIds[0];
-          await createPost({ boardType: "player", boardId: targetId, title, content, imageUrls, contentType: "general" });
+          await createPost({ boardType: "player", boardId: targetId, title, content, imageUrls, contentType: "general", ...playerTagsForBoard(targetId) });
           setWriteOpen(false);
           setWritePlayerTarget(null);
           // 비최애 선수면 해당 선수 게시판으로 이동 (P0: 작성 직후 내 글 확인 보장)
@@ -321,6 +361,12 @@ export default function CommunityPlayersPage() {
           const r = PLAYERS_ROSTER.find((p) => p.kboId === writePlayerTarget);
           if (!r) return undefined;
           return { kboId: r.kboId, name: r.name, teamId: r.teamId };
+        })()}
+        defaultTeamSlugs={(() => {
+          if (!writePlayerTarget) return undefined;
+          const r = PLAYERS_ROSTER.find((p) => p.kboId === writePlayerTarget);
+          const slug = r ? TEAMS.find((t) => t.id === r.teamId)?.slug : undefined;
+          return slug ? [slug] : undefined;
         })()}
         onSuccess={() => {
           const targetId = writePlayerTarget;

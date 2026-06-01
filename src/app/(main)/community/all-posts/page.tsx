@@ -1,121 +1,117 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import PostList from "@/components/community/PostList";
-import type { Post } from "@/lib/types";
-import { supabase } from "@/lib/supabase/client";
-import { getCommunitySourceLabel } from "@/lib/utils/community-board";
-
-type SortTab = "latest" | "hot";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Pencil } from "lucide-react";
+import PhotoFeed from "@/components/community/PhotoFeed";
+import WritePost from "@/components/community/WritePost";
+import WritePhotoPost from "@/components/community/WritePhotoPost";
+import WriteEntrySheet from "@/components/community/WriteEntrySheet";
+import LoginSheet from "@/components/auth/LoginSheet";
+import { useUnifiedFeed } from "@/lib/supabase/useUnifiedFeed";
+import { createPost, toggleLike } from "@/lib/supabase/usePosts";
+import { useAuth } from "@/lib/supabase/AuthContext";
+import { getCommunitySourceLabel, type CommunitySourceLabel } from "@/lib/utils/community-board";
 
 export default function AllPostsPage() {
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [sortTab, setSortTab] = useState<SortTab>("latest");
-  // hot 필터의 "최근 30일" 기준 시각 — useMemo 안에서 Date.now() 직접 호출은
-  // react-hooks/purity 룰 위반이라 useState lazy init으로 mount 시 한 번만 잡아둔다.
-  // (30일 정밀도라 페이지 오래 열어둬도 무관.)
-  const [nowMs] = useState(() => Date.now());
+  const { posts, likedIds, loading, loadingMore, hasMore, loadMore, setPostLiked, reload } =
+    useUnifiedFeed({ kind: "all" });
+  const { user } = useAuth();
 
-  useEffect(() => {
-    let cancelled = false;
+  const [showLogin, setShowLogin] = useState(false);
+  const [showEntry, setShowEntry] = useState(false);
+  const [showWrite, setShowWrite] = useState(false);
+  const [showPhoto, setShowPhoto] = useState(false);
 
-    async function load() {
-      setLoading(true);
-      const { data } = await supabase
-        .from("posts")
-        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, author_team_id_snapshot, profiles(nickname, team_id, grade, points)")
-        .in("board_type", ["team", "player", "free"])
-        .eq("content_type", "general")
-        .neq("is_hidden", true)
-        .order("created_at", { ascending: false })
-        .limit(100);
-
-      if (cancelled) return;
-
-      setPosts((data ?? []).map((p) => {
-        const profileRaw = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
-        const profile = (profileRaw ?? null) as unknown as Record<string, unknown> | null;
-        return {
-          id: p.id,
-          boardType: p.board_type as "team" | "player" | "free",
-          boardId: p.board_id,
-          authorId: p.author_id,
-          title: p.title,
-          content: p.content,
-          imageUrls: (p.image_urls ?? []) as string[],
-          videoUrls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
-          likeCount: p.like_count,
-          commentCount: p.comment_count,
-          isReported: false,
-          createdAt: p.created_at,
-          author: {
-            nickname: (profile?.nickname as string) || "익명",
-            avatarUrl: null,
-            myTeamId: ((p as Record<string, unknown>).author_team_id_snapshot as number | null | undefined) ?? (profile?.team_id as number | null) ?? null,
-            level: 1,
-            title: "",
-            grade: profile?.grade as string | undefined,
-          },
-        };
-      }));
-      setLoading(false);
-    }
-
-    load();
-    return () => { cancelled = true; };
-  }, []);
-
-  const sortedPosts = useMemo(() => {
-    if (sortTab === "latest") return posts;
-    return [...posts]
-      .filter((p) => nowMs - new Date(p.createdAt).getTime() < 30 * 24 * 60 * 60 * 1000)
-      .sort((a, b) => b.likeCount - a.likeCount || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [posts, sortTab, nowMs]);
-
-  const sourceLabels = useMemo(
-    () => Object.fromEntries(sortedPosts.map((post) => [post.id, getCommunitySourceLabel(post.boardType, post.boardId)])),
-    [sortedPosts],
+  // 좋아요: optimistic 토글 → 서버 반영 → 실패/불일치 시 롤백·reconcile. 비로그인은 no-op.
+  const handleLike = useCallback(
+    async (postId: number) => {
+      if (!user) return;
+      const wasLiked = likedIds.has(postId);
+      const next = !wasLiked;
+      setPostLiked(postId, next);
+      try {
+        const serverLiked = await toggleLike(postId);
+        if (serverLiked !== next) setPostLiked(postId, serverLiked);
+      } catch {
+        setPostLiked(postId, wasLiked);
+      }
+    },
+    [user, likedIds, setPostLiked],
   );
+
+  const sourceLabels = useMemo<Record<number, CommunitySourceLabel>>(
+    () => Object.fromEntries(posts.map((p) => [p.id, getCommunitySourceLabel(p.board_type, p.board_id)])),
+    [posts],
+  );
+
+  // 무한 스크롤 — 하단 센티넬 진입 시 다음 페이지 로드.
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) loadMore();
+    }, { rootMargin: "400px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [loadMore]);
 
   return (
     <div className="mx-auto max-w-lg pb-24">
-      <div className="px-5 pt-4 pb-2">
+      <div className="px-5 pt-4 pb-3">
         <p className="text-sm text-text-tertiary">팀, 선수, 자유게시판 글을 한 번에 봅니다.</p>
       </div>
 
-      <div className="px-5 pb-2">
-        <div className="flex gap-2">
-          {(["latest", "hot"] as const).map((sort) => (
-            <button
-              key={sort}
-              onClick={() => setSortTab(sort)}
-              className={`px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                sortTab === sort ? "bg-bg-tertiary text-text-primary" : "text-text-tertiary hover:text-text-secondary"
-              }`}
-            >
-              {sort === "latest" ? "최신" : "인기"}
-            </button>
-          ))}
-          {sortTab === "hot" && <span className="flex items-center text-xs text-text-tertiary ml-1">최근 30일</span>}
-        </div>
-      </div>
+      <PhotoFeed posts={posts} loading={loading} onLike={handleLike} likedIds={likedIds} sourceLabels={sourceLabels} />
 
-      <div className="px-5">
-        {loading ? (
-          <div className="space-y-3 py-3">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="glass-card p-5 animate-pulse">
-                <div className="h-4 bg-bg-tertiary rounded w-24 mb-3" />
-                <div className="h-5 bg-bg-tertiary rounded w-3/4 mb-2" />
-                <div className="h-4 bg-bg-tertiary rounded w-full" />
-              </div>
-            ))}
-          </div>
-        ) : (
-          <PostList posts={sortedPosts} sourceLabels={sourceLabels} />
-        )}
-      </div>
+      {hasMore && (
+        <div ref={sentinelRef} className="flex justify-center py-6 text-sm text-text-tertiary">
+          {loadingMore ? "불러오는 중…" : ""}
+        </div>
+      )}
+
+      {/* FAB — 전체글 탭에서도 글쓰기 진입 (작성 글은 자유게시판 + 선택 태그) */}
+      <button
+        onClick={() => (user ? setShowEntry(true) : setShowLogin(true))}
+        className="fixed bottom-24 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
+      >
+        <Pencil size={24} />
+      </button>
+
+      <WriteEntrySheet
+        isOpen={showEntry}
+        onClose={() => setShowEntry(false)}
+        onChoosePhoto={() => { setShowEntry(false); setShowPhoto(true); }}
+        onChooseText={() => { setShowEntry(false); setShowWrite(true); }}
+      />
+      <WritePost
+        isOpen={showWrite}
+        onClose={() => setShowWrite(false)}
+        teamName="자유게시판"
+        enableTags
+        onSubmit={async (title, content, imageUrls, _seatInfo, tags) => {
+          await createPost({
+            boardType: "free",
+            boardId: "general",
+            title,
+            content,
+            imageUrls,
+            teamTags: tags?.teamTags,
+            playerTags: tags?.playerTags,
+          });
+          reload();
+          setShowWrite(false);
+        }}
+      />
+      <WritePhotoPost
+        isOpen={showPhoto}
+        onClose={() => setShowPhoto(false)}
+        teamName="자유게시판"
+        boardType="free"
+        boardId="general"
+        onSuccess={() => { setShowPhoto(false); reload(); }}
+      />
+      {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
     </div>
   );
 }

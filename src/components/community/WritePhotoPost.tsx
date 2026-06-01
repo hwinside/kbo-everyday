@@ -9,9 +9,11 @@ import { createPost, uploadImages, uploadVideos, computeImageHashes } from "@/li
 import MemeEditor from "@/components/editor/MemeEditor";
 import GamePicker, { type PickedGame } from "./GamePicker";
 import PlayerTagger from "./PlayerTagger";
+import TeamTagger from "./TeamTagger";
 import HashtagInput from "./HashtagInput";
 import { getTeamById, TEAMS } from "@/lib/constants/teams";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
+import { useAuth } from "@/lib/supabase/AuthContext";
 
 interface WritePhotoPostProps {
   isOpen: boolean;
@@ -20,6 +22,8 @@ interface WritePhotoPostProps {
   boardType: string;
   boardId: string;
   defaultPlayerTag?: { kboId: string; name: string; teamId: number };
+  /** V3 팀태그 초기값(보통 글이 속한 팀 슬러그). 사진 글도 팀 피드에 노출되도록 team_tags 부여. */
+  defaultTeamSlugs?: string[];
   onSuccess?: () => void;
 }
 
@@ -41,10 +45,10 @@ interface PlayerTag {
 export default function WritePhotoPost({
   isOpen,
   onClose,
-  teamName,
   boardType,
   boardId,
   defaultPlayerTag,
+  defaultTeamSlugs,
   onSuccess,
 }: WritePhotoPostProps) {
   const [step, setStep] = useState<Step>(1);
@@ -55,6 +59,7 @@ export default function WritePhotoPost({
   const [selectedPlayers, setSelectedPlayers] = useState<PlayerTag[]>(
     defaultPlayerTag ? [defaultPlayerTag] : []
   );
+  const [teamSlugs, setTeamSlugs] = useState<string[]>(defaultTeamSlugs ?? []);
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
@@ -70,6 +75,37 @@ export default function WritePhotoPost({
       });
     }
   }, [isOpen, defaultPlayerTag]);
+
+  // Sync defaultTeamSlugs when modal opens (preselect 글이 속한 팀)
+  useEffect(() => {
+    if (isOpen && defaultTeamSlugs?.length) {
+      setTeamSlugs((prev) => {
+        const merged = [...prev];
+        defaultTeamSlugs.forEach((s) => {
+          if (!merged.includes(s)) merged.push(s);
+        });
+        return merged;
+      });
+    }
+  }, [isOpen, defaultTeamSlugs]);
+
+  // 최애팀(profile.team_id) — board 컨텍스트(defaultTeamSlugs)가 없을 때만 기본 선택(해제 가능).
+  const { profile } = useAuth();
+  const favoriteSlug = (() => {
+    const id = (profile as Record<string, unknown> | null)?.team_id as number | undefined;
+    return id ? getTeamById(id)?.slug : undefined;
+  })();
+  useEffect(() => {
+    if (isOpen && !defaultTeamSlugs?.length && favoriteSlug) {
+      setTeamSlugs((prev) => (prev.length ? prev : [favoriteSlug]));
+    }
+  }, [isOpen, defaultTeamSlugs, favoriteSlug]);
+
+  const handleTeamToggle = useCallback((slug: string) => {
+    setTeamSlugs((prev) =>
+      prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug]
+    );
+  }, []);
 
   // Team → stadium mapping
   const TEAM_STADIUMS: Record<number, string> = {
@@ -231,6 +267,7 @@ export default function WritePhotoPost({
         imageHashes,
         contentType: "photo",
         gameId: selectedGame?.id,
+        teamTags: teamSlugs,
         playerTags: selectedPlayers.map((p) => formatPlayerTag(p.kboId, p.name)),
         hashtags: hashtags,
       });
@@ -260,6 +297,7 @@ export default function WritePhotoPost({
     setMedia([]);
     setSelectedGame(null);
     setSelectedPlayers(defaultPlayerTag ? [defaultPlayerTag] : []);
+    setTeamSlugs(defaultTeamSlugs ?? []);
     setHashtags([]);
     setEditingIndex(null);
   }
@@ -317,8 +355,8 @@ export default function WritePhotoPost({
               <button onClick={step === 1 ? handleClose : undefined} className="flex items-center gap-0.5 text-text-secondary p-1">
                 {step === 1 ? <X size={24} /> : <div className="w-6" />}
               </button>
-              <h2 className="text-base font-semibold text-text-primary">
-                {teamName ? `${teamName} 사진 게시판` : "사진 올리기"}
+              <h2 className="text-lg font-semibold text-text-primary">
+                사진글 작성
               </h2>
               <div className="w-10" />
             </div>
@@ -492,6 +530,12 @@ export default function WritePhotoPost({
                     <GamePicker
                       selectedGameId={selectedGame?.id ?? null}
                       onSelect={setSelectedGame}
+                    />
+
+                    {/* Team tagger — 사진 글도 팀 피드에 노출되도록 팀태그 부여 */}
+                    <TeamTagger
+                      selectedSlugs={teamSlugs}
+                      onToggle={handleTeamToggle}
                     />
 
                     {/* Player tagger */}

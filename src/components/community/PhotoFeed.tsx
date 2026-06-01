@@ -4,17 +4,25 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, MoreHorizontal } from "lucide-react";
+import { MessageCircle, MoreHorizontal, Volume2, VolumeX } from "lucide-react";
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, getTeamBySlug, getTeamBgColor, type TeamData } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
+import heroApprovedList from "@/lib/constants/hero-approved-kboids.json";
 import { parsePlayerTag } from "@/lib/utils/player-tags";
+
+// Hero cutout: 검수 통과(allowlist) 선수만 노출. public/players-hero/{kboId}.webp
+const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
+function getPlayerHeroPath(kboId: string | null | undefined): string | null {
+  return kboId && HERO_APPROVED.has(kboId) ? `/players-hero/${kboId}.webp` : null;
+}
 import TeamBadge from "@/components/ui/TeamBadge";
 import type { Post } from "@/lib/supabase/usePosts";
 import { deletePost } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import type { CommunitySourceLabel } from "@/lib/utils/community-board";
 import CommentSheet from "./CommentSheet";
+import LinkPreview from "./LinkPreview";
 
 function findPlayerByName(name: string): { kboId: string; teamId: number } | null {
   for (const p of PLAYERS_ROSTER) {
@@ -23,11 +31,65 @@ function findPlayerByName(name: string): { kboId: string; teamId: number } | nul
   return null;
 }
 
-function findPlayerByKboId(kboId: string): { teamId: number } | null {
+function findPlayerByKboId(kboId: string): { teamId: number; name: string } | null {
   for (const p of PLAYERS_ROSTER) {
-    if (p.kboId === kboId) return { teamId: p.teamId };
+    if (p.kboId === kboId) return { teamId: p.teamId, name: p.name };
   }
   return null;
+}
+
+type ProminentLabel = { teamShort?: string; teamId?: number; href?: string; players: string[] };
+
+/**
+ * 피드 카드 상단 "적극적" 라벨 빌더 (팀 + 선수명) — 하린아빠 스펙.
+ * - 팀 태그만: null (헤더 팀배지/출처라벨이 담당)
+ * - 선수 1명: "두산 김기연" (선수 페이지 링크)
+ * - 선수 N명(같은 팀): "두산 김기연/곽빈" (팀 prefix 1회, 섞이면 팀 생략)
+ * 출처 선수명은 sourceLabel(전체글 탭만 주입)이 없어도 board_id(kboId)→roster로 직접 resolve.
+ * name-only 태그도 roster로 canonical kboId 변환 후 dedupe → 출처/태그 중복 라벨 방지.
+ */
+function buildProminentLabel(post: Post): ProminentLabel | null {
+  const seen = new Set<string>();
+  const players: string[] = [];
+  const teamIds = new Set<number>();
+  let firstKboId: string | null = null;
+
+  const add = (kboId: string | null, displayName: string) => {
+    let rk = kboId;
+    let name = displayName;
+    let teamId: number | undefined;
+    if (rk) {
+      const r = findPlayerByKboId(rk);
+      if (r) { name = r.name; teamId = r.teamId; }
+    } else {
+      const p = findPlayerByName(displayName);
+      if (p) { rk = p.kboId; teamId = p.teamId; }
+    }
+    const key = rk ?? `name:${name}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    if (firstKboId === null && rk) firstKboId = rk;
+    if (teamId) teamIds.add(teamId);
+    players.push(name);
+  };
+
+  if (post.board_type === "player" && post.board_id) {
+    const r = findPlayerByKboId(post.board_id);
+    if (r) add(post.board_id, r.name);
+  }
+  if (Array.isArray(post.player_tags)) {
+    for (const tag of post.player_tags as string[]) {
+      const { kboId, displayName } = parsePlayerTag(tag);
+      add(kboId, displayName);
+    }
+  }
+
+  if (players.length === 0) return null;
+  const teamId = teamIds.size === 1 ? [...teamIds][0] : undefined;
+  const team = teamId ? getTeamById(teamId) : undefined;
+  // 단일 선수만 선수 페이지로 이동(여러 명은 모호하므로 비링크).
+  const href = players.length === 1 && firstKboId ? `/community/players/${firstKboId}` : undefined;
+  return { teamShort: team?.shortName, teamId, href, players };
 }
 
 interface PhotoFeedProps {
@@ -38,6 +100,12 @@ interface PhotoFeedProps {
   /** 선수 게시판: post별 playerLabel 맵 (postId → {teamId, playerName}) */
   playerLabels?: Record<number, { teamId: number; playerName: string }>;
   sourceLabels?: Record<number, CommunitySourceLabel>;
+  /**
+   * controlled 좋아요 모드: 부모가 좋아요 상태를 소유(배치 프리페치 + optimistic + 롤백)할 때 주입.
+   * 주입되면 PhotoFeed 내부 Set 대신 이 Set으로 하트를 그리고, like_count는 부모가 이미 보정한 값을 그대로 표시.
+   * 미주입 시 기존 동작(내부 Set, like_count + isLiked) 유지.
+   */
+  likedIds?: Set<number>;
 }
 
 function timeAgo(dateStr: string): string {
@@ -52,28 +120,165 @@ function timeAgo(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("ko-KR");
 }
 
+/** 제목 필드 제거(spec §4·§11) → 기존 글의 title+content를 하나의 본문으로 합쳐 렌더.
+ *  단, 움짤콜렉터 등 title===content(또는 본문이 제목으로 시작)인 글은 중복 노출 방지(③). */
+function mergedBody(post: Post): string {
+  const t = (post.title ?? "").trim();
+  const c = (post.content ?? "").trim();
+  if (!t) return c;
+  if (!c) return t;
+  if (c === t || c.startsWith(t)) return c;
+  return `${t}\n${c}`;
+}
+
+// 본문 내 링크 매칭(PostCard와 동일 패턴). test용은 non-global, strip용은 global.
+const URL_REGEX = /(?:https?:\/\/|www\.)[^\s<>"')\]]+/;
+const URL_REGEX_G = /(?:https?:\/\/|www\.)[^\s<>"')\]]+/g;
+
+/** URL을 제거한 본문 — 짧은글 판정/표시에 사용(OG 카드가 링크를 대신 노출). */
+function stripUrls(text: string): string {
+  return text.replace(URL_REGEX_G, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function hasLink(text: string): boolean {
+  return URL_REGEX.test(text);
+}
+
+/**
+ * 배경 텍스트 카드(B) 조건: 첨부 0(호출부 보장) + URL 제거 본문 ≤ 80자.
+ * 링크/OG만 달랑 있는 OG-only 글(하린아빠 확정 예외)도 LongTextCard로 빠지지 않고
+ * 배경카드 유지 → BrandedTextCard 내부에서 카드 위에 OG 프리뷰 노출 + 본문 URL strip.
+ */
+function isShortText(body: string): boolean {
+  return stripUrls(body).length <= 80;
+}
+
 
 interface MediaSlide {
   url: string;
   isVideo: boolean;
 }
 
-function MediaElement({ url, isVideo, sizes }: { url: string; isVideo: boolean; sizes?: string }) {
-  const isGif = !isVideo && url.toLowerCase().endsWith(".gif");
+// 화면에 동영상이 2개 이상 떠 있을 때 가운데로 가장 많이 보이는 1개만 재생.
+// iOS Safari가 동시 muted-autoplay를 막아 "재생 안 됨"으로 보이던 문제도 함께 해소.
+const videoRegistry = new Set<HTMLVideoElement>();
+const videoRatio = new Map<HTMLVideoElement, number>();
+let videoObserver: IntersectionObserver | null = null;
+let videoRecomputeScheduled = false;
+const VIDEO_MIN_VISIBLE = 0.5; // 절반 이상 보일 때만 재생 대상
 
-  if (isVideo) {
-    return (
+// 영상 음소거 전역 상태 — 기본 음소거(인스타 동일). 우하단 토글 버튼으로 한 번 소리를 켜면
+// 이후 포커스되는 모든 영상에 그대로 유지된다. 모듈 스코프 + 구독자 set으로 모든 FeedVideo가 동기화.
+let globalVideoMuted = true;
+const muteSubscribers = new Set<() => void>();
+function setGlobalVideoMuted(next: boolean) {
+  globalVideoMuted = next;
+  muteSubscribers.forEach((fn) => fn());
+}
+function useGlobalVideoMuted(): [boolean, (next: boolean) => void] {
+  const [muted, setLocal] = useState(globalVideoMuted);
+  useEffect(() => {
+    const sync = () => setLocal(globalVideoMuted);
+    muteSubscribers.add(sync);
+    sync();
+    return () => {
+      muteSubscribers.delete(sync);
+    };
+  }, []);
+  return [muted, setGlobalVideoMuted];
+}
+
+function recomputeVideoFocus() {
+  let best: HTMLVideoElement | null = null;
+  let bestRatio = 0;
+  videoRegistry.forEach((el) => {
+    const r = videoRatio.get(el) ?? 0;
+    if (r > bestRatio) {
+      bestRatio = r;
+      best = el;
+    }
+  });
+  videoRegistry.forEach((el) => {
+    if (el === best && bestRatio >= VIDEO_MIN_VISIBLE) {
+      el.play().catch(() => {});
+    } else if (!el.paused) {
+      el.pause();
+    }
+  });
+}
+
+function ensureVideoObserver(): IntersectionObserver {
+  if (videoObserver) return videoObserver;
+  videoObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((e) => videoRatio.set(e.target as HTMLVideoElement, e.intersectionRatio));
+      if (!videoRecomputeScheduled) {
+        videoRecomputeScheduled = true;
+        requestAnimationFrame(() => {
+          videoRecomputeScheduled = false;
+          recomputeVideoFocus();
+        });
+      }
+    },
+    { threshold: [0, 0.25, 0.5, 0.75, 1] },
+  );
+  return videoObserver;
+}
+
+function FeedVideo({ url }: { url: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [muted, setMuted] = useGlobalVideoMuted();
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = ensureVideoObserver();
+    videoRegistry.add(el);
+    observer.observe(el);
+    return () => {
+      observer.unobserve(el);
+      videoRegistry.delete(el);
+      videoRatio.delete(el);
+      recomputeVideoFocus();
+    };
+  }, []);
+
+  // 전역 음소거 상태를 element에 반영. React의 muted 속성은 property 반영이 불안정해 직접 세팅.
+  // 소리를 켠 직후 포커스된 영상은 사용자 제스처 컨텍스트라 iOS에서도 사운드 재생이 허용된다.
+  useEffect(() => {
+    const el = ref.current;
+    if (el) el.muted = muted;
+  }, [muted]);
+
+  return (
+    <div className="relative w-full">
       <video
+        ref={ref}
         src={url}
-        autoPlay
-        muted
+        muted={muted}
         loop
         playsInline
         preload="metadata"
         className="w-full object-contain pointer-events-none select-none bg-black"
         style={{ maxHeight: "80vh", WebkitTouchCallout: "none" } as React.CSSProperties}
       />
-    );
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setMuted(!muted); }}
+        className="absolute bottom-2 right-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm pointer-events-auto"
+        aria-label={muted ? "소리 켜기" : "소리 끄기"}
+      >
+        {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+      </button>
+    </div>
+  );
+}
+
+function MediaElement({ url, isVideo, sizes }: { url: string; isVideo: boolean; sizes?: string }) {
+  const isGif = !isVideo && url.toLowerCase().endsWith(".gif");
+
+  if (isVideo) {
+    return <FeedVideo url={url} />;
   }
 
   if (isGif) {
@@ -380,43 +585,45 @@ function PhotoCarousel({
   }
 
   return (
-    <div
-      className={outerClass}
-      onDoubleClick={handleDoubleClick}
-      onClick={handleTap}
-    >
-      {dimOverlay}
+    <div className="relative w-full">
       <div
-        ref={containerRef}
-        className="flex"
-        style={{
-          // 줌 중이라도 carousel transform은 그대로 유지 — 자리 줌이라 줌하던 슬라이드가 자기 자리에서 부풀어야 함.
-          transform: `translateX(calc(-${current * 100}% + ${isSwiping ? translateX : 0}px))`,
-          // 줌 중/swipe 중/줌 release cooldown에서는 transition off — 인라인 복귀 시 슬라이드 swoosh 방지
-          transition: isSwiping || zoomedIdx !== null || zoomCooldown ? "none" : "transform 0.3s ease-out",
-        }}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
+        className={outerClass}
+        onDoubleClick={handleDoubleClick}
+        onClick={handleTap}
       >
-        {slides.map((slide, i) => (
-          <div key={i} className="w-full flex-shrink-0">
-            <ZoomableSlide
-              slide={slide}
-              elevationGrace={elevationGrace}
-              onZoomChange={(z) => handleZoomChange(i, z)}
-              onScale={handleScale}
-            />
-          </div>
-        ))}
+        {dimOverlay}
+        <div
+          ref={containerRef}
+          className="flex"
+          style={{
+            // 줌 중이라도 carousel transform은 그대로 유지 — 자리 줌이라 줌하던 슬라이드가 자기 자리에서 부풀어야 함.
+            transform: `translateX(calc(-${current * 100}% + ${isSwiping ? translateX : 0}px))`,
+            // 줌 중/swipe 중/줌 release cooldown에서는 transition off — 인라인 복귀 시 슬라이드 swoosh 방지
+            transition: isSwiping || zoomedIdx !== null || zoomCooldown ? "none" : "transform 0.3s ease-out",
+          }}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
+          {slides.map((slide, i) => (
+            <div key={i} className="w-full flex-shrink-0">
+              <ZoomableSlide
+                slide={slide}
+                elevationGrace={elevationGrace}
+                onZoomChange={(z) => handleZoomChange(i, z)}
+                onScale={handleScale}
+              />
+            </div>
+          ))}
+        </div>
       </div>
-      {/* Dot indicators */}
-      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+      {/* Dot indicators — 콘텐츠 아래(인스타처럼) + 별도 배경색 없이 카드 기본 배경 위에 */}
+      <div className="flex justify-center gap-1.5 py-2.5">
         {slides.map((_, i) => (
           <div
             key={i}
             className={`w-1.5 h-1.5 rounded-full transition-colors ${
-              i === current ? "bg-white" : "bg-white/40"
+              i === current ? "bg-text-primary" : "bg-text-tertiary/40"
             }`}
           />
         ))}
@@ -452,8 +659,9 @@ function HeartOverlay({ show }: { show: boolean }) {
   );
 }
 
-export default function PhotoFeed({ posts, loading, onLike, boardType = "team", playerLabels, sourceLabels }: PhotoFeedProps) {
+export default function PhotoFeed({ posts, loading, onLike, boardType = "team", playerLabels, sourceLabels, likedIds }: PhotoFeedProps) {
   const { user } = useAuth();
+  const controlledLikes = likedIds !== undefined;
   const [likedPosts, setLikedPosts] = useState<Set<number>>(new Set());
   const [heartPostId, setHeartPostId] = useState<number | null>(null);
   const [commentPostId, setCommentPostId] = useState<number | null>(null);
@@ -477,19 +685,28 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
     }
   }, []);
 
+  const openComments = (post: Post) => {
+    setCommentPostId(post.id);
+    setCommentTeamId(post.team_id ?? null);
+  };
+
   const handleLike = (postId: number) => {
-    setLikedPosts((prev) => {
-      const next = new Set(prev);
-      if (next.has(postId)) next.delete(postId);
-      else next.add(postId);
-      return next;
-    });
+    // controlled 모드에선 부모가 상태를 소유 → 내부 Set 건드리지 않고 onLike에 위임.
+    if (!controlledLikes) {
+      setLikedPosts((prev) => {
+        const next = new Set(prev);
+        if (next.has(postId)) next.delete(postId);
+        else next.add(postId);
+        return next;
+      });
+    }
     onLike(postId);
   };
 
   // Double-tap: always adds like (never removes), Instagram-style
   const handleDoubleTap = (postId: number) => {
-    if (!likedPosts.has(postId)) {
+    const alreadyLiked = controlledLikes ? likedIds!.has(postId) : likedPosts.has(postId);
+    if (!alreadyLiked) {
       handleLike(postId);
     }
     // Show heart animation
@@ -516,8 +733,8 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   if (posts.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-text-tertiary">
-        <p className="text-base">아직 사진이 없어요.</p>
-        <p className="mt-1 text-sm">첫 번째 사진을 올려보세요!</p>
+        <p className="text-base">아직 게시물이 없어요.</p>
+        <p className="mt-1 text-sm">첫 게시물을 남겨보세요!</p>
       </div>
     );
   }
@@ -525,8 +742,35 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   return (
     <div>
       {posts.map((post, index) => {
-        const isLiked = likedPosts.has(post.id);
+        const isLiked = controlledLikes ? likedIds!.has(post.id) : likedPosts.has(post.id);
         const isMine = !!user && post.author_id === user.id;
+        const hasMedia = post.image_urls.length > 0 || (post.video_urls?.length ?? 0) > 0;
+        const body = mergedBody(post);
+        // 태그 기반(V3): 팀/전체 피드에서 선수 태그가 달린 글은 배경 틴트로 "선수 글"임을 구분.
+        // 선수 페이지(boardType==="player")에선 전부 선수 글이라 틴트 불필요.
+        const isPlayerPost =
+          boardType !== "player" && Array.isArray(post.player_tags) && post.player_tags.length > 0;
+        // 선수 라벨 통합: 레거시 선수게시판 출처 + player_tags 를 dedupe (팀/전체 피드에서만; 선수 페이지는 헤더 라벨로 충분)
+        const sourceLabel = sourceLabels?.[post.id];
+        // 헤더 작성자 배지(post.team_id)와 같은 팀의 팀 출처 라벨은 중복이므로 숨김
+        // ("같은 라벨이 두 개일 필요 없이 하나로"). 다른 팀(타팀 팬이 팀 게시판에 쓴 글)은 정보가 다르니 유지.
+        const dupTeamLabel =
+          !!sourceLabel?.teamId && !sourceLabel.playerName && sourceLabel.teamId === post.team_id;
+        const prominent = boardType !== "player" ? buildProminentLabel(post) : null;
+        // 선수명만(팀 prefix 없이) — 헤더 단일 칩은 TeamBadge가 "두산 " prefix를 붙이므로 분리.
+        const prominentPlayers = prominent
+          ? `${prominent.players.slice(0, 2).join("/")}${prominent.players.length > 2 ? ` 외 ${prominent.players.length - 2}명` : ""}`
+          : "";
+        // 단일 팀이면 헤더 작성자 왼쪽 칩 하나로 병합: [(로고)두산 김기연]. 별도 둘째 줄 라벨 제거(2 depth → 1).
+        const mergedInHeader = !!(prominent && prominent.teamId);
+        // 다중 팀 혼합 등 병합 불가 시에만 둘째 줄 pill 폴백.
+        const prominentText = prominent
+          ? `${prominent.teamShort ? prominent.teamShort + " " : ""}${prominentPlayers}`
+          : "";
+        const prominentTeam = prominent?.teamId ? getTeamById(prominent.teamId) : undefined;
+        const prominentStyle = prominentTeam
+          ? { backgroundColor: `color-mix(in srgb, ${getTeamBgColor(prominentTeam)} 26%, transparent)` }
+          : undefined;
 
         if (deletedIds.has(post.id)) return null;
 
@@ -535,11 +779,23 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
             {/* Post separator */}
             {index > 0 && <div className="h-2 bg-white/[0.02]" />}
 
-            <div className={zoomedPostId === post.id ? "" : "overflow-hidden"}>
+            <div
+              className={`${zoomedPostId === post.id ? "" : "overflow-hidden"}${
+                isPlayerPost ? " bg-accent/[0.06] border-l-2 border-accent/40" : ""
+              }`}
+            >
               {/* Author header — 일반게시판(PostCard) 기준 통일 */}
               <div className="flex items-center gap-3 px-5 py-3">
                 {boardType === "player" && playerLabels?.[post.id] ? (
                   <TeamBadge teamId={playerLabels[post.id].teamId} playerName={playerLabels[post.id].playerName} />
+                ) : mergedInHeader ? (
+                  prominent!.href ? (
+                    <Link href={prominent!.href} className="shrink-0 active:opacity-70 transition-opacity">
+                      <TeamBadge teamId={prominent!.teamId!} playerName={prominentPlayers} />
+                    </Link>
+                  ) : (
+                    <TeamBadge teamId={prominent!.teamId!} playerName={prominentPlayers} />
+                  )
                 ) : (
                   post.team_id ? <TeamBadge teamId={post.team_id} /> : null
                 )}
@@ -580,24 +836,42 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 )}
               </div>
 
-              {sourceLabels?.[post.id] && (
+              {/* 선수 라벨(적극적) — 단일 팀은 헤더 칩으로 병합됨. 다중 팀 혼합 등 병합 불가 시에만 팀컬러 pill 폴백. */}
+              {prominent && !mergedInHeader ? (
                 <div className="px-5 pb-2">
-                  {sourceLabels[post.id].teamId ? (
-                    <TeamBadge
-                      teamId={sourceLabels[post.id].teamId!}
-                      playerName={sourceLabels[post.id].playerName}
-                      size="xs"
-                    />
+                  {prominent.href ? (
+                    <Link
+                      href={prominent.href}
+                      className="inline-flex items-center rounded-full px-2.5 py-1 text-sm font-bold text-text-primary active:opacity-70 transition-opacity"
+                      style={prominentStyle}
+                    >
+                      {prominentText}
+                    </Link>
                   ) : (
-                    <span className="inline-flex items-center rounded-full bg-bg-tertiary px-2 py-0.5 text-xs font-medium text-text-secondary">
-                      {sourceLabels[post.id].text}
+                    <span
+                      className="inline-flex items-center rounded-full px-2.5 py-1 text-sm font-bold text-text-primary"
+                      style={prominentStyle}
+                    >
+                      {prominentText}
                     </span>
                   )}
                 </div>
-              )}
+              ) : sourceLabel && !sourceLabel.playerName && !dupTeamLabel ? (
+                /* 선수 없음 → 비선수(팀/자유 등) 출처 라벨. 헤더와 같은 팀이면 위에서 숨김 처리됨. */
+                <div className="px-5 pb-2">
+                  {sourceLabel.teamId ? (
+                    <TeamBadge teamId={sourceLabel.teamId} size="xs" />
+                  ) : (
+                    <span className="inline-flex items-center rounded-full bg-bg-tertiary px-2 py-0.5 text-xs font-medium text-text-secondary">
+                      {sourceLabel.text}
+                    </span>
+                  )}
+                </div>
+              ) : null}
 
-              {/* Photo/video carousel — full bleed, no padding, no rounded corners */}
-              {(post.image_urls.length > 0 || (post.video_urls && post.video_urls.length > 0)) && (
+              {/* 본문 슬롯 — 미디어(카드 A) / 짧은 글(카드 B) / 긴 글(카드 C) 분기 */}
+              {hasMedia ? (
+                /* 사진/영상 캐러셀 — full bleed, no padding, no rounded corners */
                 <div className="relative">
                   <PhotoCarousel
                     slides={[
@@ -611,7 +885,11 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   />
                   <HeartOverlay show={heartPostId === post.id} />
                 </div>
-              )}
+              ) : body && isShortText(body) ? (
+                <BrandedTextCard post={post} body={body} />
+              ) : body ? (
+                <LongTextCard body={body} />
+              ) : null}
 
               {/* Action bar */}
               <div className="flex items-center gap-4 px-5 py-2.5">
@@ -624,11 +902,12 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 >
                   <span className="text-xl leading-none">{isLiked ? "\u2764\uFE0F" : "\u2661"}</span>
                   <span className={isLiked ? "text-red-500 font-medium" : "text-text-secondary"}>
-                    {post.like_count + (isLiked ? 1 : 0)}
+                    {/* controlled 모드: 부모가 like_count를 이미 optimistic 보정 → 그대로 표시. uncontrolled: 내부 하트 기준 +1 */}
+                    {post.like_count + (controlledLikes ? 0 : isLiked ? 1 : 0)}
                   </span>
                 </button>
                 <button
-                  onClick={() => { setCommentPostId(post.id); setCommentTeamId(post.team_id ?? null); }}
+                  onClick={() => openComments(post)}
                   className="flex items-center gap-1 text-base text-text-secondary"
                 >
                   <MessageCircle size={20} />
@@ -636,51 +915,14 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 </button>
               </div>
 
-              {/* Caption */}
-              {post.content && (
+              {/* Caption — 미디어 카드에만 (텍스트 카드는 본문이 카드 자체).
+                  작성자 본문만 1줄로 노출(피드에선 타 댓글 프리뷰 미표시) → 전체는 댓글 시트. */}
+              {hasMedia && body && (
                 <CaptionBlock
                   nickname={post.nickname || "익명"}
-                  content={post.content}
-                  onPress={() => { setCommentPostId(post.id); setCommentTeamId(post.team_id ?? null); }}
+                  content={body}
+                  onPress={() => openComments(post)}
                 />
-              )}
-
-              {/* Player tags — clickable, links to player page */}
-              {post.player_tags && Array.isArray(post.player_tags) && post.player_tags.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 px-5 pb-1">
-                  {(post.player_tags as string[]).map((tag: string) => {
-                    const { kboId, displayName } = parsePlayerTag(tag);
-
-                    let href: string | undefined;
-                    let team: ReturnType<typeof getTeamById> = undefined;
-
-                    if (kboId) {
-                      // New format: kboId directly available
-                      href = `/community/players/${kboId}`;
-                      const rosterEntry = findPlayerByKboId(kboId);
-                      team = rosterEntry ? getTeamById(rosterEntry.teamId) : undefined;
-                    } else {
-                      // Legacy name-only fallback
-                      const player = findPlayerByName(displayName);
-                      if (player) {
-                        href = `/community/players/${player.kboId}`;
-                        team = getTeamById(player.teamId);
-                      }
-                    }
-
-                    const label = team ? `@${team.shortName} ${displayName}` : `@${displayName}`;
-
-                    return href ? (
-                      <Link key={tag} href={href} className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full active:bg-bg-quaternary transition-colors">
-                        {label}
-                      </Link>
-                    ) : (
-                      <span key={tag} className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full">
-                        {label}
-                      </span>
-                    );
-                  })}
-                </div>
               )}
 
               {/* Hashtags */}
@@ -715,7 +957,144 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   );
 }
 
-/** 인스타 스타일 캡션: 2줄 초과 시 "더보기" / 펼친 후 클릭하면 접기 */
+/**
+ * 카드 배경 컨텍스트(V3 태그 기반) — 팀컬러 + 선수 Hero 결정.
+ * - 선수 1명 태그 → 그 선수 팀컬러 BG + 그 선수 Hero(우하단)
+ * - 선수 2명↑ 태그 → 모두 같은 팀이면 팀컬러 BG(단일 Hero 없음), 다른 팀 섞이면 기본 BG
+ * - 선수 태그 없음 → (레거시 board_type / 자유글 작성자팀)으로 폴백
+ */
+function deriveBrandContext(post: Post): { team?: TeamData; heroKboId?: string } {
+  const playerTags = Array.isArray(post.player_tags) ? (post.player_tags as string[]) : [];
+  if (playerTags.length > 0) {
+    const parsed = playerTags.map((t) => {
+      const { kboId, displayName } = parsePlayerTag(t);
+      if (kboId) return { kboId, teamId: findPlayerByKboId(kboId)?.teamId };
+      const p = findPlayerByName(displayName);
+      return { kboId: p?.kboId, teamId: p?.teamId };
+    });
+    if (playerTags.length === 1) {
+      const only = parsed[0];
+      return { team: only.teamId ? getTeamById(only.teamId) : undefined, heroKboId: only.kboId ?? undefined };
+    }
+    const teamIds = new Set(parsed.map((p) => p.teamId).filter((x): x is number => !!x));
+    if (teamIds.size === 1) return { team: getTeamById([...teamIds][0]) };
+    return {}; // 다른 팀 혼합 → 기본 BG
+  }
+  // 레거시 board 기반(player_tags 없는 기존 글)
+  if (post.board_type === "team") return { team: getTeamBySlug(post.board_id) };
+  if (post.board_type === "player") {
+    const entry = findPlayerByKboId(post.board_id);
+    return { team: entry ? getTeamById(entry.teamId) : undefined, heroKboId: post.board_id };
+  }
+  // 자유게시판 → 작성자 응원팀 컬러(없으면 중립)
+  return { team: post.team_id ? getTeamById(post.team_id) : undefined };
+}
+
+/** 카드 B — 페북식 배경 텍스트 카드. 태그 기반으로 팀컬러 + 선수 Hero(우하단) 결정. */
+function BrandedTextCard({ post, body }: { post: Post; body: string }) {
+  const { team, heroKboId } = deriveBrandContext(post);
+  const heroPath = getPlayerHeroPath(heroKboId);
+
+  const gradient = team
+    ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 35%, #1a1a1d) 0%, #1a1a1d 100%)`
+    : "linear-gradient(135deg, #2a2a3d 0%, #1a1a1d 100%)";
+
+  // OG-only 예외: URL은 본문에서 strip하고 OG 프리뷰를 카드 위에 노출(하린아빠 확정).
+  const displayBody = stripUrls(body);
+  const linked = hasLink(body);
+
+  return (
+    <div
+      className="relative flex min-h-[200px] w-full items-center justify-center overflow-hidden px-8 py-10"
+      style={{ background: gradient }}
+    >
+      {heroPath ? (
+        // 선수 1명 태그 → 팀컬러 BG 위에 선수 Hero 우하단(팀글의 로고 자리 대신 인물 컷아웃)
+        <Image
+          src={heroPath}
+          alt=""
+          width={200}
+          height={240}
+          unoptimized
+          // 30% 축소(h 88%→62%) + 반투명 + 좌상단 페이드 마스크 → 팀 로고처럼 배경에 스며드는 느낌(①).
+          className="pointer-events-none absolute bottom-0 right-0 h-[62%] w-auto object-contain object-bottom"
+          style={{
+            opacity: 0.4,
+            maskImage: "linear-gradient(to top left, #000 50%, transparent 100%)",
+            WebkitMaskImage: "linear-gradient(to top left, #000 50%, transparent 100%)",
+          }}
+        />
+      ) : team ? (
+        <div className="absolute right-4 top-4 opacity-20">
+          <Image src={team.logoPath} alt="" width={88} height={88} unoptimized className="object-contain" />
+        </div>
+      ) : null}
+      {/* 하단 스크림 — 히어로처럼 컷아웃 바닥을 배경으로 페이드(딱 잘리는 느낌 제거). 선수 Hero가 있을 때만. */}
+      {heroPath && (
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2"
+          style={{ background: "linear-gradient(to top, #1a1a1d 0%, transparent 100%)" }}
+        />
+      )}
+      <div className="relative z-10 flex w-full flex-col items-center gap-3">
+        {displayBody && (
+          <p className="whitespace-pre-line break-keep text-center text-xl font-bold leading-snug text-white line-clamp-5">
+            {displayBody}
+          </p>
+        )}
+        {linked && (
+          <div className="w-full max-w-sm">
+            <LinkPreview text={body} maxPreviews={1} stopPropagation />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 카드 C — 긴 텍스트. 3줄 클램프 + '더 보기' 인라인 펼침(상세 이동 없음). 링크 포함 시 OG 프리뷰. */
+function LongTextCard({ body }: { body: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [clamped, setClamped] = useState(false);
+  const ref = useRef<HTMLParagraphElement>(null);
+  // 본문에서 URL은 strip하고 OG 카드로 대신 노출(짧은글 BrandedTextCard와 동일 규칙).
+  // 기존엔 긴 글 분기에 OG 카드가 아예 없어 "텍스트 길고 링크 포함 글에서 OG 안뜸" 버그였음.
+  const displayBody = stripUrls(body);
+  const linked = hasLink(body);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    requestAnimationFrame(() => setClamped(el.scrollHeight > el.clientHeight + 2));
+  }, [displayBody]);
+
+  return (
+    <div className="px-5 pt-1 pb-2">
+      {displayBody && (
+        <>
+          <p
+            ref={ref}
+            className={`whitespace-pre-line break-words text-base leading-relaxed text-text-primary ${expanded ? "" : "line-clamp-3"}`}
+          >
+            {displayBody}
+          </p>
+          {clamped && !expanded && (
+            <button onClick={() => setExpanded(true)} className="mt-0.5 text-base text-text-tertiary">
+              더 보기
+            </button>
+          )}
+        </>
+      )}
+      {linked && (
+        <div className="mt-2 max-w-sm">
+          <LinkPreview text={body} maxPreviews={1} stopPropagation />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 인스타 스타일 캡션: 1줄 초과 시 "더보기" / 펼친 후 클릭하면 접기 */
 function CaptionBlock({ nickname, content, onPress }: { nickname: string; content: string; onPress: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const [clamped, setClamped] = useState(false);
@@ -738,7 +1117,7 @@ function CaptionBlock({ nickname, content, onPress }: { nickname: string; conten
         role="button"
         tabIndex={0}
         onClick={expanded ? () => setExpanded(false) : clamped ? () => setExpanded(true) : onPress}
-        className={`text-left text-base cursor-pointer ${!expanded ? "line-clamp-2" : ""}`}
+        className={`text-left text-base cursor-pointer ${!expanded ? "line-clamp-1" : ""}`}
       >
         <span className="font-semibold text-text-primary mr-1.5">{nickname}</span>
         <span className="text-text-secondary">{content}</span>

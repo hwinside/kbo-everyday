@@ -144,7 +144,6 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   // 게시글 메뉴/편집 상태
   const [postMenuOpen, setPostMenuOpen] = useState(false);
   const [postEditing, setPostEditing] = useState(false);
-  const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
   const [savingPost, setSavingPost] = useState(false);
   const [deletingPost, setDeletingPost] = useState(false);
@@ -163,8 +162,8 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
 
   function startPostEdit() {
     setPostMenuOpen(false);
-    setEditTitle(post!.title);
-    setEditContent(post!.content);
+    // 제목 필드 제거(⑥) — 기존 제목은 본문 앞에 합쳐 한 본문으로 편집. 저장 시 title은 비움.
+    setEditContent(mergeTitleBody(post!.title, post!.content));
     setPostEditing(true);
   }
 
@@ -174,12 +173,12 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
 
   async function savePostEdit() {
     if (savingPost) return;
-    const t = editTitle.trim();
-    if (!t) { alert("제목을 입력해주세요"); return; }
+    const c = editContent.trim();
+    if (!c) { alert("내용을 입력해주세요"); return; }
     setSavingPost(true);
     try {
-      await updatePost(post!.id, { title: t, content: editContent });
-      setPostPatch({ title: t, content: editContent, updated_at: new Date().toISOString() });
+      await updatePost(post!.id, { title: "", content: editContent });
+      setPostPatch({ title: "", content: editContent, updated_at: new Date().toISOString() });
       setPostEditing(false);
     } catch {
       alert("게시글 수정에 실패했어요");
@@ -409,13 +408,6 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
 
         {postEditing ? (
           <div className="space-y-2 mb-3">
-            <input
-              type="text"
-              value={editTitle}
-              onChange={e => setEditTitle(e.target.value)}
-              placeholder="제목"
-              className="w-full bg-bg-secondary rounded-lg px-3 py-2 text-base text-text-primary outline-none border border-border"
-            />
             <textarea
               value={editContent}
               onChange={e => setEditContent(e.target.value)}
@@ -426,7 +418,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
             <div className="flex items-center gap-2">
               <button
                 onClick={savePostEdit}
-                disabled={savingPost || !editTitle.trim()}
+                disabled={savingPost || !editContent.trim()}
                 className="px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
                 style={{ backgroundColor: post.team_id ? (() => { const t = getTeamById(post.team_id); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}
               >
@@ -436,10 +428,8 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
             </div>
           </div>
         ) : (
-          <>
-            <h1 className="text-lg font-bold text-text-primary mb-3">{postPatch.title ?? post.title}</h1>
-            <p className="readable-body whitespace-pre-line">{stripUrls(postPatch.content ?? post.content)}</p>
-          </>
+          // 제목 필드 제거(⑥) → 기존 글의 title은 본문 앞에 합쳐 렌더(피드 mergedBody와 동일 형식, 데이터 보존).
+          <p className="readable-body whitespace-pre-line">{stripUrls(mergeTitleBody(postPatch.title ?? post.title, postPatch.content ?? post.content))}</p>
         )}
 
         {/* Link previews (수정된 content 반영) */}
@@ -752,6 +742,17 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
       {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
     </div>
   );
+}
+
+/** 기존 글 title을 본문 앞에 합침(피드 mergedBody와 동일). 신규 글은 title="" → content만.
+ *  움짤콜렉터 등 title===content(또는 본문이 제목으로 시작)인 글은 중복 방지(③). */
+function mergeTitleBody(title: string | null | undefined, content: string | null | undefined): string {
+  const t = (title ?? "").trim();
+  const c = (content ?? "").trim();
+  if (!t) return c;
+  if (!c) return t;
+  if (c === t || c.startsWith(t)) return c;
+  return `${t}\n${c}`;
 }
 
 /** Strip URLs from text (OG cards handle link display). Trims leftover blank lines. */

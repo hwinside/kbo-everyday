@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ChevronLeft, MessageSquare, Users, User, Ticket, MapPin, FileText, Images } from "lucide-react";
+import { ChevronLeft, MessageSquare, Users, User, Ticket, MapPin, FileText } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamById, getTeamBySlug } from "@/lib/constants/teams";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -12,7 +12,6 @@ import { getTeamBorderColor } from "@/lib/utils/team-border-color";
 
 const COMMUNITY_TABS = [
   { key: "all-posts", label: "전체글", href: "/community/all-posts", icon: FileText },
-  { key: "all-photos", label: "전체사진", href: "/community/all-photos", icon: Images },
   { key: "teams", label: "팀", href: "/community/teams", icon: Users },
   { key: "players", label: "선수", href: "/community/players", icon: User },
   { key: "tickets", label: "티켓", href: "/community/tickets", icon: Ticket },
@@ -93,6 +92,19 @@ export default function CommunityLayout({
   const headerTeam = currentTeam || myTeam;
   const headerBorderColor = headerTeam?.colorPrimary ? getTeamBorderColor(headerTeam.colorPrimary, headerTeam.colorLight) : undefined;
 
+  // 태그 기반 전환(V3): 팀/선수 탭 통합 → 최애팀 단일 탭.
+  // 최애팀 탭은 그 팀 team_tags 글(팀 글 + 그 팀 선수 글)을 보여준다. 로그인 전엔 일반 "팀" 탭으로 폴백.
+  const myTeamTab = myTeam
+    ? { key: "my-team", label: myTeam.name, href: `/community/teams/${myTeam.slug}`, icon: Users }
+    : { key: "teams", label: "팀", href: "/community/teams", icon: Users };
+  const displayTabs = [
+    myTeamTab,
+    { key: "all-posts", label: "전체글", href: "/community/all-posts", icon: FileText },
+    { key: "tickets", label: "티켓", href: "/community/tickets", icon: Ticket },
+    { key: "stadiums", label: "구장", href: "/community/stadiums", icon: MapPin },
+    { key: "free", label: "자유", href: "/community/free", icon: MessageSquare },
+  ];
+
   // Only show tabs on top-level community pages, not deep nested (e.g. post detail)
   const isHubLevel = COMMUNITY_TABS.some(
     (tab) =>
@@ -139,7 +151,7 @@ export default function CommunityLayout({
 
             {/* Community tabs (헤더 아래 2번째 줄) */}
             <div className="flex px-5 gap-1 overflow-x-auto hide-scrollbar">
-              {COMMUNITY_TABS.map((tab) => {
+              {displayTabs.map((tab) => {
                 const isActive = pathname === tab.href || pathname.startsWith(tab.href + "/");
                 const Icon = tab.icon;
                 return (
