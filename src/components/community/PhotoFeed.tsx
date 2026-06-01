@@ -38,6 +38,51 @@ function findPlayerByKboId(kboId: string): { teamId: number } | null {
   return null;
 }
 
+type FeedPlayerLabel = { key: string; href?: string; label: string };
+
+/**
+ * 피드 카드 선수 라벨 통합 빌더.
+ * - 레거시 선수게시판 출처 글(board_type=player)의 출처 선수를 선수 라벨로 편입 (board_id = kboId)
+ * - player_tags 와 합쳐 kboId(없으면 이름) 기준 dedupe
+ * 렌더는 최대 2개 + "외 N명"으로 캡핑한다.
+ */
+function buildFeedPlayerLabels(post: Post, sourceLabel?: CommunitySourceLabel): FeedPlayerLabel[] {
+  const out: FeedPlayerLabel[] = [];
+  const seen = new Set<string>();
+
+  const push = (kboId: string | null, displayName: string) => {
+    const dedupeKey = kboId ?? `name:${displayName}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+
+    let href: string | undefined;
+    let teamShort: string | undefined;
+    if (kboId) {
+      href = `/community/players/${kboId}`;
+      const r = findPlayerByKboId(kboId);
+      teamShort = r ? getTeamById(r.teamId)?.shortName : undefined;
+    } else {
+      const p = findPlayerByName(displayName);
+      if (p) {
+        href = `/community/players/${p.kboId}`;
+        teamShort = getTeamById(p.teamId)?.shortName;
+      }
+    }
+    out.push({ key: dedupeKey, href, label: teamShort ? `@${teamShort} ${displayName}` : `@${displayName}` });
+  };
+
+  if (post.board_type === "player" && sourceLabel?.playerName) {
+    push(post.board_id, sourceLabel.playerName);
+  }
+  if (Array.isArray(post.player_tags)) {
+    for (const tag of post.player_tags as string[]) {
+      const { kboId, displayName } = parsePlayerTag(tag);
+      push(kboId, displayName);
+    }
+  }
+  return out;
+}
+
 interface PhotoFeedProps {
   posts: Post[];
   loading: boolean;
@@ -696,6 +741,9 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
         // 선수 페이지(boardType==="player")에선 전부 선수 글이라 틴트 불필요.
         const isPlayerPost =
           boardType !== "player" && Array.isArray(post.player_tags) && post.player_tags.length > 0;
+        // 선수 라벨 통합: 레거시 선수게시판 출처 + player_tags 를 dedupe (팀/전체 피드에서만; 선수 페이지는 헤더 라벨로 충분)
+        const sourceLabel = sourceLabels?.[post.id];
+        const feedPlayerLabels = boardType !== "player" ? buildFeedPlayerLabels(post, sourceLabel) : [];
 
         if (deletedIds.has(post.id)) return null;
 
@@ -753,17 +801,14 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 )}
               </div>
 
-              {sourceLabels?.[post.id] && (
+              {/* 출처 라벨 — 선수 출처(board_type=player)는 아래 선수 라벨 행으로 통합되므로 여기선 비선수(팀/자유 등) 출처만 노출 */}
+              {sourceLabel && !sourceLabel.playerName && (
                 <div className="px-5 pb-2">
-                  {sourceLabels[post.id].teamId ? (
-                    <TeamBadge
-                      teamId={sourceLabels[post.id].teamId!}
-                      playerName={sourceLabels[post.id].playerName}
-                      size="xs"
-                    />
+                  {sourceLabel.teamId ? (
+                    <TeamBadge teamId={sourceLabel.teamId} size="xs" />
                   ) : (
                     <span className="inline-flex items-center rounded-full bg-bg-tertiary px-2 py-0.5 text-xs font-medium text-text-secondary">
-                      {sourceLabels[post.id].text}
+                      {sourceLabel.text}
                     </span>
                   )}
                 </div>
@@ -825,44 +870,23 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 />
               )}
 
-              {/* Player tags — clickable, links to player page. 최대 2개 노출 + 나머지는 "외 N명" */}
-              {post.player_tags && Array.isArray(post.player_tags) && post.player_tags.length > 0 && (
+              {/* 선수 라벨 — 레거시 출처 + player_tags 통합, clickable. 최대 2개 노출 + 나머지는 "외 N명" */}
+              {feedPlayerLabels.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 px-5 pb-1">
-                  {(post.player_tags as string[]).slice(0, 2).map((tag: string) => {
-                    const { kboId, displayName } = parsePlayerTag(tag);
-
-                    let href: string | undefined;
-                    let team: ReturnType<typeof getTeamById> = undefined;
-
-                    if (kboId) {
-                      // New format: kboId directly available
-                      href = `/community/players/${kboId}`;
-                      const rosterEntry = findPlayerByKboId(kboId);
-                      team = rosterEntry ? getTeamById(rosterEntry.teamId) : undefined;
-                    } else {
-                      // Legacy name-only fallback
-                      const player = findPlayerByName(displayName);
-                      if (player) {
-                        href = `/community/players/${player.kboId}`;
-                        team = getTeamById(player.teamId);
-                      }
-                    }
-
-                    const label = team ? `@${team.shortName} ${displayName}` : `@${displayName}`;
-
-                    return href ? (
-                      <Link key={tag} href={href} className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full active:bg-bg-quaternary transition-colors">
-                        {label}
+                  {feedPlayerLabels.slice(0, 2).map((entry) =>
+                    entry.href ? (
+                      <Link key={entry.key} href={entry.href} className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full active:bg-bg-quaternary transition-colors">
+                        {entry.label}
                       </Link>
                     ) : (
-                      <span key={tag} className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full">
-                        {label}
+                      <span key={entry.key} className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full">
+                        {entry.label}
                       </span>
-                    );
-                  })}
-                  {(post.player_tags as string[]).length > 2 && (
+                    )
+                  )}
+                  {feedPlayerLabels.length > 2 && (
                     <span className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full">
-                      외 {(post.player_tags as string[]).length - 2}명
+                      외 {feedPlayerLabels.length - 2}명
                     </span>
                   )}
                 </div>
