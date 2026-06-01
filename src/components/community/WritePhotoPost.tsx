@@ -44,7 +44,6 @@ interface PlayerTag {
 export default function WritePhotoPost({
   isOpen,
   onClose,
-  teamName,
   boardType,
   boardId,
   defaultPlayerTag,
@@ -343,8 +342,8 @@ export default function WritePhotoPost({
               <button onClick={step === 1 ? handleClose : undefined} className="flex items-center gap-0.5 text-text-secondary p-1">
                 {step === 1 ? <X size={24} /> : <div className="w-6" />}
               </button>
-              <h2 className="text-base font-semibold text-text-primary">
-                {teamName ? `${teamName} 사진 게시판` : "사진 올리기"}
+              <h2 className="text-lg font-semibold text-text-primary">
+                사진글 작성
               </h2>
               <div className="w-10" />
             </div>

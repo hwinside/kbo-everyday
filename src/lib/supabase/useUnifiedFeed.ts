@@ -83,7 +83,9 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
       let query = supabase.from("posts").select(SELECT).neq("is_hidden", true);
       // 태그 기반 조회(V3): 팀탭 = team_tags 에 팀 슬러그 포함(팀 글 + 그 팀 선수 글 모두).
       // 선수 글은 카드에서 배경색으로 구분. board_id는 레거시 호환용으로 남아있지만 조회엔 안 씀.
-      if (board.kind === "team") query = query.contains("team_tags", [board.teamId]);
+      // team_tags 는 JSONB → PostgREST 가 `cs.["lg"]`(JSON)로 보내도록 문자열로 전달.
+      // 배열을 그대로 넘기면 `cs.{lg}`(PG 배열 리터럴)가 되어 jsonb @> 파싱 에러 → 팀탭 전체 빈 화면.
+      if (board.kind === "team") query = query.contains("team_tags", JSON.stringify([board.teamId]));
       else if (board.kind === "player") query = query.eq("board_type", "player").eq("board_id", board.kboId);
       else query = query.in("board_type", ["team", "player", "free"]);
       if (cursor !== null) query = query.lt("id", cursor);

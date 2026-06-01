@@ -713,7 +713,8 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             }}
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
-            exit={{ y: "100%" }}
+            // ③ 닫힘은 스프링 스냅 대신 아래로 미끄러지는 ease-in 트윈으로(스와이프 닫기가 뚝 끊기지 않게).
+            exit={{ y: "100%", transition: { duration: 0.28, ease: [0.4, 0, 1, 1] } }}
             transition={{ type: "spring", damping: 28, stiffness: 300 }}
             onTouchStart={handleSheetTouchStart}
             onTouchMove={handleSheetTouchMove}

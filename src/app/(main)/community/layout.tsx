@@ -98,8 +98,8 @@ export default function CommunityLayout({
     ? { key: "my-team", label: myTeam.name, href: `/community/teams/${myTeam.slug}`, icon: Users }
     : { key: "teams", label: "팀", href: "/community/teams", icon: Users };
   const displayTabs = [
-    { key: "all-posts", label: "전체글", href: "/community/all-posts", icon: FileText },
     myTeamTab,
+    { key: "all-posts", label: "전체글", href: "/community/all-posts", icon: FileText },
     { key: "tickets", label: "티켓", href: "/community/tickets", icon: Ticket },
     { key: "stadiums", label: "구장", href: "/community/stadiums", icon: MapPin },
     { key: "free", label: "자유", href: "/community/free", icon: MessageSquare },

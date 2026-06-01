@@ -8,6 +8,7 @@ import imageCompression from "browser-image-compression";
 import { uploadImages, computeImageHashes } from "@/lib/supabase/usePosts";
 import TeamTagger from "./TeamTagger";
 import PlayerTagger from "./PlayerTagger";
+import LinkPreview from "./LinkPreview";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
 
 export interface SeatInfo {
@@ -75,6 +76,8 @@ export default function WritePost({
 }: WritePostProps) {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
+  // OG 프리뷰용 디바운스 텍스트 — 타이핑마다 og-meta fetch 하지 않도록 600ms 지연.
+  const [linkPreviewText, setLinkPreviewText] = useState("");
   const [images, setImages] = useState<WriteImage[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
@@ -90,6 +93,12 @@ export default function WritePost({
   const [block, setBlock] = useState("");
   const [row, setRow] = useState("");
   const [seat, setSeat] = useState("");
+
+  // OG 프리뷰: 본문 입력이 멈춘 뒤(600ms) linkPreviewText 갱신 → LinkPreview 가 URL 추출·og-meta fetch.
+  useEffect(() => {
+    const t = setTimeout(() => setLinkPreviewText(content), 600);
+    return () => clearTimeout(t);
+  }, [content]);
 
   // 모달이 열리는 edge에서만 초기값으로 리셋. 열린 상태에서는 부모 리렌더로 initial*이 바뀌더라도 입력 날리지 않도록.
   const wasOpenRef = useRef(false);
@@ -235,7 +244,7 @@ export default function WritePost({
                 <X size={24} />
               </button>
               <h2 className="text-lg font-semibold text-text-primary">
-                {teamName ? `${teamName} 글쓰기` : "글쓰기"}
+                {seatTipMode ? (teamName ? `${teamName} 글쓰기` : "글쓰기") : "일반글 작성"}
               </h2>
               <button
                 onClick={handleSubmit}
@@ -309,6 +318,9 @@ export default function WritePost({
                 onChange={(e) => setContent(e.target.value)}
                 className="w-full min-h-[200px] resize-none rounded-xl bg-bg-tertiary px-5 py-4 text-base text-text-primary placeholder:text-text-tertiary outline-none"
               />
+
+              {/* ② 일반글: 본문에 OG 링크 입력 시 즉시 미리보기 (좌석팁 제외) */}
+              {!seatTipMode && <LinkPreview text={linkPreviewText} maxPreviews={1} />}
 
               {/* V3 태그 피커 — 팀·선수 복수태그 (enableTags, 좌석팁 제외) */}
               {enableTags && !seatTipMode && (
