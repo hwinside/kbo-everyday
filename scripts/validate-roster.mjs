@@ -21,7 +21,7 @@ const FOREIGN_MAP_PATH = path.resolve(__dirname, "../src/lib/constants/foreign-i
 // ============================================================================
 // 기대값 (스펙 §3.1)
 // ============================================================================
-const EXPECTED_COUNT = 800;
+const EXPECTED_COUNT = 803; // 2026-06-01: 김현종/손용준(LG) + 히우라(FP021, 키움) 시즌 중 합류 반영 (main 기준 실제 803명)
 const MIN_PER_TEAM = 30;
 const BACKNO_REGEX = /^(\d{1,3}|-|\?)$/; // 숫자 1~3자리 | "-" | "?"
 const KNOWN_TEAMS = new Set([
