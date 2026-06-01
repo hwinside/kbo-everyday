@@ -11,7 +11,6 @@ import PostList from "@/components/community/PostList";
 import PhotoFeed from "@/components/community/PhotoFeed";
 import WritePost from "@/components/community/WritePost";
 import WritePhotoPost from "@/components/community/WritePhotoPost";
-import EventBanner from "@/components/home/EventBanner";
 import type { Post } from "@/lib/types";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
@@ -148,11 +147,6 @@ export default function CommunityTeamBoardPage() {
             다른 팀
           </Link>
         </div>
-      </div>
-
-      {/* 이벤트 배너 (2026-04-20 — 얼리멤버 초대/글쓰기) */}
-      <div className="px-5">
-        <EventBanner source="community" />
       </div>
 
       {/* Controls */}
