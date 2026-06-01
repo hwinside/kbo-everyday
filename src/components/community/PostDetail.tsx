@@ -9,6 +9,7 @@ import { getAvatarPath } from "@/lib/constants/avatars";
 import { usePostDetail, createComment, toggleLike, toggleCommentLike, updatePost, deletePost, updateComment, deleteComment } from "@/lib/supabase/usePosts";
 import ReportSheet from "@/components/community/ReportSheet";
 import LinkPreview from "@/components/community/LinkPreview";
+import { parseAttribution } from "@/lib/gif-collector/attribution";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
@@ -429,11 +430,32 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           </div>
         ) : (
           // 제목 필드 제거(⑥) → 기존 글의 title은 본문 앞에 합쳐 렌더(피드 mergedBody와 동일 형식, 데이터 보존).
-          <p className="readable-body whitespace-pre-line">{stripUrls(mergeTitleBody(postPatch.title ?? post.title, postPatch.content ?? post.content))}</p>
+          // 움짤콜렉터 자동 출처 "(출처: …)\n{url}"는 분리해 원문 하이퍼링크로 렌더.
+          (() => {
+            const merged = mergeTitleBody(postPatch.title ?? post.title, postPatch.content ?? post.content);
+            const attr = parseAttribution(merged);
+            return (
+              <p className="readable-body whitespace-pre-line">
+                {stripUrls(attr ? attr.body : merged)}
+                {attr && (
+                  <>
+                    {`${attr.body ? "\n\n" : ""}(출처: ${attr.handle ? attr.label + " " : ""}`}
+                    <a href={attr.url} target="_blank" rel="noopener noreferrer" className="text-accent">
+                      {attr.handle ? `@${attr.handle}` : attr.label}
+                    </a>
+                    {")"}
+                  </>
+                )}
+              </p>
+            );
+          })()
         )}
 
-        {/* Link previews (수정된 content 반영) */}
-        <LinkPreview text={postPatch.content ?? post.content} maxPreviews={3} />
+        {/* Link previews (수정된 content 반영) — 자동 출처 URL은 위 하이퍼링크로 대체되므로 제외 */}
+        <LinkPreview
+          text={parseAttribution(mergeTitleBody(postPatch.title ?? post.title, postPatch.content ?? post.content))?.body ?? (postPatch.content ?? post.content)}
+          maxPreviews={3}
+        />
 
         {/* Images */}
         {post.image_urls.length > 0 && (
