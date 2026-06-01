@@ -96,6 +96,9 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   // 인스타 2단계: (b) 아이콘 클릭 → 부분 높이 오픈, (c) 입력창 포커스 → 화면 상단까지 확장.
   // 확장은 sticky (한 번 입력 시작하면 닫을 때까지 유지) — 인스타 동일.
   const [expanded, setExpanded] = useState(false);
+  // 키보드 회피용 visualViewport 수치(React state). imperative style 충돌 방지를 위해 단일 style에서만 사용.
+  const [kbInset, setKbInset] = useState(0);
+  const [vvHeight, setVvHeight] = useState<number | null>(null);
   const { user, profile } = useAuth();
   const shouldRender = isOpen && postId !== null;
 
@@ -181,14 +184,35 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     }
   }, [shouldRender]);
 
-  // 키보드 회피는 전적으로 viewport meta의 interactive-widget=resizes-content에 위임한다
-  // (크관 GameChat / PostDetail이 실기기에서 검증된 방식과 동일).
-  // 키보드가 열리면 resizes-content가 *레이아웃 뷰포트(ICB)* 를 키보드만큼 줄여준다.
-  // → (c)확장 상태의 시트를 dvh가 아니라 top:0 + bottom:0(순수 inset)으로 잡으면, 시트 높이가
-  //   줄어든 ICB에 정확히 맞춰져 컴포저는 키보드 바로 위에 도킹하고 목록은 그 위에 그대로 남는다.
-  // ⚠️ dvh는 키보드가 아니라 브라우저 크롬(주소창)만 추적 → 키보드가 떠도 안 줄어든다.
-  //   과거 height:94dvh는 그래서 시트가 키보드만큼 화면 밖(위)으로 넘쳐 댓글 목록이 사라졌다.
-  //   visualViewport로 top/height를 직접 계산하는 방식은 resizes-content와 충돌해 더 불안정했다 → 둘 다 폐기.
+  // 키보드 회피 — visualViewport 수치를 React state로 끌어와 단일 style에서 적용한다.
+  // iOS Safari/WKWebView는 interactive-widget=resizes-content를 *미지원* → 키보드가 떠도
+  // 레이아웃 뷰포트(innerHeight/dvh)는 그대로다. 그 상태의 position:fixed; bottom:0 시트는
+  // 키보드 높이만큼 화면 밖(위)으로 밀려 댓글 목록이 사라진다(입력창만 키보드 위에 남음).
+  // → 시각 뷰포트(키보드 제외 영역)에 맞춰 (1) 시트 바닥을 키보드 위로 올리고(bottom=kbInset)
+  //   (2) 확장 높이를 시각 뷰포트로 잡는다(height=vvHeight). 목록(flex-1 min-h-0)이 줄어
+  //   컴포저는 키보드 바로 위, 목록은 그 위에 함께 보인다.
+  // ⚠️ 과거 b22f72cd는 동일 계산을 imperative(sheet.style.x)로 박았는데 React 리렌더가 인라인
+  //   style을 덮어써 무효화됐다 → 이번엔 state→단일 style로 적용해 충돌 자체를 제거한다.
+  // resizes-content 지원 브라우저(Android)는 innerHeight도 축소 → kbInset≈0, vvHeight=축소분으로
+  //   동일하게 안전 동작한다.
+  useEffect(() => {
+    if (!shouldRender) return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const apply = () => {
+      setKbInset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop));
+      setVvHeight(vv.height);
+    };
+    apply();
+    vv.addEventListener("resize", apply);
+    vv.addEventListener("scroll", apply);
+    return () => {
+      vv.removeEventListener("resize", apply);
+      vv.removeEventListener("scroll", apply);
+      setKbInset(0);
+      setVvHeight(null);
+    };
+  }, [shouldRender]);
 
   // 시트가 (b)/(c)로 높이가 바뀐 직후, 목록이 바닥 근처면 자동으로 맨 아래로(최신 댓글) 스냅.
   useEffect(() => {
@@ -678,12 +702,14 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             className="fixed inset-x-0 flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
             style={{
               zIndex: 9999,
-              // (b) 부분 높이(뒤 피드 보임): bottom:0 고정 + 60dvh.
-              // (c) 입력창 포커스 시 확장: top:0 + bottom:0(순수 inset, dvh 미사용). 키보드가 열리면
-              //   interactive-widget=resizes-content가 레이아웃 뷰포트(ICB)를 키보드만큼 줄여주므로,
-              //   inset으로 잡힌 시트 높이도 같이 줄어 컴포저는 키보드 바로 위, 목록은 그 위에 그대로 보인다.
-              //   (GameChat/PostDetail의 검증된 resizes-content 도킹과 동일 원리. dvh는 키보드에 안 줄어 폐기.)
-              ...(expanded ? { top: 0, bottom: 0 } : { bottom: 0, height: "60dvh" }),
+              // 시트 바닥은 항상 키보드 위(bottom=kbInset). 키보드 없으면 kbInset=0 → 화면 바닥.
+              // (c) 확장: 높이=시각 뷰포트(vvHeight) → 키보드 열려도 목록+컴포저가 키보드 위에 함께 보임.
+              // (b) 부분: 60dvh(단 시각 뷰포트보다 크지 않게 캡) — 뒤 피드 보이는 중간 높이.
+              // vvHeight는 visualViewport 리스너가 state로 공급(위 effect). imperative style 미사용.
+              bottom: kbInset,
+              ...(expanded
+                ? { height: vvHeight != null ? `${vvHeight}px` : "100dvh" }
+                : { height: vvHeight != null ? `min(60dvh, ${vvHeight}px)` : "60dvh" }),
             }}
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
@@ -712,7 +738,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             </div>
 
             {/* Comment list */}
-            <div ref={listRef} data-comment-scroll="true" className="flex-1 overflow-y-auto overscroll-contain px-4 py-3 space-y-4">
+            <div ref={listRef} data-comment-scroll="true" className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-3 space-y-4">
               {loading ? (
                 <div className="space-y-4">
                   {[...Array(4)].map((_, i) => (
