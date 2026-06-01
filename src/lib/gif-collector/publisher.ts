@@ -19,7 +19,7 @@
  */
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { extractMediaList, inferMediaExt, type OgMedia } from "./og-media";
+import { extractMediaList, extractInstagramVideoUrls, inferMediaExt, type OgMedia } from "./og-media";
 import playersRoster from "@/lib/constants/players-roster.json";
 import type { RosterPlayer } from "@/types/api";
 import { getTeamBySlug } from "@/lib/constants/teams";
@@ -60,6 +60,16 @@ async function fetchMediaList(sourceUrl: string): Promise<OgMedia[]> {
     }
   }
 
+  // Instagram reel/p/tv — 본문엔 og:image(썸네일)만 있고, /embed/ 페이지 contextJSON에 video_url이 있음
+  const instagramEmbedUrl = getInstagramEmbedUrl(sourceUrl);
+  if (instagramEmbedUrl) {
+    const embedHtml = await fetchPageHtml(instagramEmbedUrl);
+    if (embedHtml) {
+      const igVideos = extractInstagramVideoUrls(embedHtml, MAX_MEDIA_ITEMS);
+      if (igVideos.length > 0) return igVideos;
+    }
+  }
+
   return media;
 }
 
@@ -81,6 +91,20 @@ function getThreadsEmbedUrl(sourceUrl: string): string | null {
     const pathname = u.pathname.replace(/\/+$/, "");
     if (!/^\/@[^/]+\/post\/[^/]+$/i.test(pathname)) return null;
     return `${u.origin}${pathname}/embed`;
+  } catch {
+    return null;
+  }
+}
+
+function getInstagramEmbedUrl(sourceUrl: string): string | null {
+  try {
+    const u = new URL(sourceUrl);
+    const host = u.hostname.toLowerCase();
+    if (!host.endsWith("instagram.com")) return null;
+    // reel / reels / p / tv 의 단축코드 기반 게시물만 — 원본 세그먼트를 유지해 /embed/ 부착
+    const m = u.pathname.match(/^\/((?:reel|reels|p|tv)\/[^/]+)/i);
+    if (!m) return null;
+    return `${u.origin}/${m[1]}/embed/`;
   } catch {
     return null;
   }

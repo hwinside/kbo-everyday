@@ -111,6 +111,40 @@ export function extractOgMedia(html: string): OgMedia | null {
   return extractMediaList(html, 1)[0] ?? null;
 }
 
+// JSON 문자열 안에 이스케이프된 URL을 원형으로 복원.
+// contextJSON은 이중 인코딩이라 백슬래시가 여러 개 붙을 수 있어(\/ , \\/ ...) 백슬래시 런을 포괄 처리한다.
+function unescapeJsonUrl(raw: string): string {
+  return raw
+    .replace(/\\+u0026/gi, "&")
+    .replace(/\\+u003[dD]/g, "=")
+    .replace(/\\+\//g, "/");
+}
+
+/**
+ * Instagram 임베드(/embed/) 페이지의 `contextJSON` 안에 들어있는 동영상 URL 추출.
+ *
+ * reel/p 본문 페이지엔 og:image(썸네일)만 노출되고 영상 URL이 없다. /embed/ 페이지를
+ * 따로 받으면 GraphVideo 데이터의 `"video_url":"https:\/\/...mp4..."` 가 들어있는데,
+ * JSON 문자열로 이스케이프(\/ , &)돼 있어 일반 og:video / 직접 mp4 정규식엔 안 걸린다.
+ * 그래서 video_url 키를 직접 찾아 언이스케이프한다. 등장 순서대로 최대 max개, URL dedupe.
+ */
+export function extractInstagramVideoUrls(html: string, max: number): OgMedia[] {
+  if (max <= 0) return [];
+  const out: OgMedia[] = [];
+  const seen = new Set<string>();
+  // "video_url" 키(이스케이프 가능) : "https:....mp4..." (escaped sequence 허용) 닫는 따옴표 전까지.
+  const re = /"video_url\\?"\s*:\s*\\?"(https:(?:[^"\\]|\\.)*?\.mp4(?:[^"\\]|\\.)*?)\\?"/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null && out.length < max) {
+    const url = unescapeJsonUrl(m[1]);
+    if (url && !seen.has(url)) {
+      seen.add(url);
+      out.push({ url, type: "video" });
+    }
+  }
+  return out;
+}
+
 export function inferMediaExt(contentType: string, url: string): string {
   const ct = contentType.toLowerCase();
   if (ct.includes("gif")) return "gif";
