@@ -38,55 +38,58 @@ function findPlayerByKboId(kboId: string): { teamId: number; name: string } | nu
   return null;
 }
 
-type FeedPlayerLabel = { key: string; href?: string; label: string };
+type ProminentLabel = { teamShort?: string; teamId?: number; href?: string; players: string[] };
 
 /**
- * 피드 카드 선수 라벨 통합 빌더.
- * - 레거시 선수게시판 출처 글(board_type=player)의 출처 선수를 선수 라벨로 편입 (board_id = kboId)
- * - player_tags 와 합쳐 kboId(없으면 이름) 기준 dedupe
- * 렌더는 최대 2개 + "외 N명"으로 캡핑한다.
+ * 피드 카드 상단 "적극적" 라벨 빌더 (팀 + 선수명) — 하린아빠 스펙.
+ * - 팀 태그만: null (헤더 팀배지/출처라벨이 담당)
+ * - 선수 1명: "두산 김기연" (선수 페이지 링크)
+ * - 선수 N명(같은 팀): "두산 김기연/곽빈" (팀 prefix 1회, 섞이면 팀 생략)
+ * 출처 선수명은 sourceLabel(전체글 탭만 주입)이 없어도 board_id(kboId)→roster로 직접 resolve.
+ * name-only 태그도 roster로 canonical kboId 변환 후 dedupe → 출처/태그 중복 라벨 방지.
  */
-function buildFeedPlayerLabels(post: Post, sourceLabel?: CommunitySourceLabel): FeedPlayerLabel[] {
-  const out: FeedPlayerLabel[] = [];
+function buildProminentLabel(post: Post): ProminentLabel | null {
   const seen = new Set<string>();
+  const players: string[] = [];
+  const teamIds = new Set<number>();
+  let firstKboId: string | null = null;
 
-  const push = (kboId: string | null, displayName: string) => {
-    // name-only 태그는 dedupe 전에 roster에서 canonical kboId로 resolve한다.
-    // (그래야 kboId 출처/태그와 name-only 태그가 같은 선수면 자연 병합되어 중복 라벨이 안 생김)
-    let resolvedKboId = kboId;
-    let teamShort: string | undefined;
-    if (resolvedKboId) {
-      const r = findPlayerByKboId(resolvedKboId);
-      teamShort = r ? getTeamById(r.teamId)?.shortName : undefined;
+  const add = (kboId: string | null, displayName: string) => {
+    let rk = kboId;
+    let name = displayName;
+    let teamId: number | undefined;
+    if (rk) {
+      const r = findPlayerByKboId(rk);
+      if (r) { name = r.name; teamId = r.teamId; }
     } else {
       const p = findPlayerByName(displayName);
-      if (p) {
-        resolvedKboId = p.kboId;
-        teamShort = getTeamById(p.teamId)?.shortName;
-      }
+      if (p) { rk = p.kboId; teamId = p.teamId; }
     }
-
-    const dedupeKey = resolvedKboId ?? `name:${displayName}`;
-    if (seen.has(dedupeKey)) return;
-    seen.add(dedupeKey);
-
-    const href = resolvedKboId ? `/community/players/${resolvedKboId}` : undefined;
-    out.push({ key: dedupeKey, href, label: teamShort ? `@${teamShort} ${displayName}` : `@${displayName}` });
+    const key = rk ?? `name:${name}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    if (firstKboId === null && rk) firstKboId = rk;
+    if (teamId) teamIds.add(teamId);
+    players.push(name);
   };
 
   if (post.board_type === "player" && post.board_id) {
-    // 출처 선수명: sourceLabel(전체글 탭에서만 주입)이 없어도 board_id(kboId)로 roster에서 직접 resolve.
-    // (팀 탭은 sourceLabels를 안 넘겨 → 레거시/움짤콜렉터 선수보드 글에 선수 라벨이 안 떴던 버그)
-    const playerName = sourceLabel?.playerName ?? findPlayerByKboId(post.board_id)?.name;
-    if (playerName) push(post.board_id, playerName);
+    const r = findPlayerByKboId(post.board_id);
+    if (r) add(post.board_id, r.name);
   }
   if (Array.isArray(post.player_tags)) {
     for (const tag of post.player_tags as string[]) {
       const { kboId, displayName } = parsePlayerTag(tag);
-      push(kboId, displayName);
+      add(kboId, displayName);
     }
   }
-  return out;
+
+  if (players.length === 0) return null;
+  const teamId = teamIds.size === 1 ? [...teamIds][0] : undefined;
+  const team = teamId ? getTeamById(teamId) : undefined;
+  // 단일 선수만 선수 페이지로 이동(여러 명은 모호하므로 비링크).
+  const href = players.length === 1 && firstKboId ? `/community/players/${firstKboId}` : undefined;
+  return { teamShort: team?.shortName, teamId, href, players };
 }
 
 interface PhotoFeedProps {
@@ -749,7 +752,14 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
           boardType !== "player" && Array.isArray(post.player_tags) && post.player_tags.length > 0;
         // 선수 라벨 통합: 레거시 선수게시판 출처 + player_tags 를 dedupe (팀/전체 피드에서만; 선수 페이지는 헤더 라벨로 충분)
         const sourceLabel = sourceLabels?.[post.id];
-        const feedPlayerLabels = boardType !== "player" ? buildFeedPlayerLabels(post, sourceLabel) : [];
+        const prominent = boardType !== "player" ? buildProminentLabel(post) : null;
+        const prominentText = prominent
+          ? `${prominent.teamShort ? prominent.teamShort + " " : ""}${prominent.players.slice(0, 2).join("/")}${prominent.players.length > 2 ? ` 외 ${prominent.players.length - 2}명` : ""}`
+          : "";
+        const prominentTeam = prominent?.teamId ? getTeamById(prominent.teamId) : undefined;
+        const prominentStyle = prominentTeam
+          ? { backgroundColor: `color-mix(in srgb, ${getTeamBgColor(prominentTeam)} 26%, transparent)` }
+          : undefined;
 
         if (deletedIds.has(post.id)) return null;
 
@@ -807,8 +817,28 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 )}
               </div>
 
-              {/* 출처 라벨 — 선수 출처(board_type=player)는 아래 선수 라벨 행으로 통합되므로 여기선 비선수(팀/자유 등) 출처만 노출 */}
-              {sourceLabel && !sourceLabel.playerName && (
+              {/* 선수 라벨(적극적) — "두산 김기연" / "두산 김기연/곽빈". 헤더 바로 아래 팀컬러 pill로 노출(①). */}
+              {prominent ? (
+                <div className="px-5 pb-2">
+                  {prominent.href ? (
+                    <Link
+                      href={prominent.href}
+                      className="inline-flex items-center rounded-full px-2.5 py-1 text-sm font-bold text-text-primary active:opacity-70 transition-opacity"
+                      style={prominentStyle}
+                    >
+                      {prominentText}
+                    </Link>
+                  ) : (
+                    <span
+                      className="inline-flex items-center rounded-full px-2.5 py-1 text-sm font-bold text-text-primary"
+                      style={prominentStyle}
+                    >
+                      {prominentText}
+                    </span>
+                  )}
+                </div>
+              ) : sourceLabel && !sourceLabel.playerName ? (
+                /* 선수 없음 → 비선수(팀/자유 등) 출처 라벨 */
                 <div className="px-5 pb-2">
                   {sourceLabel.teamId ? (
                     <TeamBadge teamId={sourceLabel.teamId} size="xs" />
@@ -818,7 +848,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                     </span>
                   )}
                 </div>
-              )}
+              ) : null}
 
               {/* 본문 슬롯 — 미디어(카드 A) / 짧은 글(카드 B) / 긴 글(카드 C) 분기 */}
               {hasMedia ? (
@@ -874,28 +904,6 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   content={body}
                   onPress={() => openComments(post)}
                 />
-              )}
-
-              {/* 선수 라벨 — 레거시 출처 + player_tags 통합, clickable. 최대 2개 노출 + 나머지는 "외 N명" */}
-              {feedPlayerLabels.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 px-5 pb-1">
-                  {feedPlayerLabels.slice(0, 2).map((entry) =>
-                    entry.href ? (
-                      <Link key={entry.key} href={entry.href} className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full active:bg-bg-quaternary transition-colors">
-                        {entry.label}
-                      </Link>
-                    ) : (
-                      <span key={entry.key} className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full">
-                        {entry.label}
-                      </span>
-                    )
-                  )}
-                  {feedPlayerLabels.length > 2 && (
-                    <span className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full">
-                      외 {feedPlayerLabels.length - 2}명
-                    </span>
-                  )}
-                </div>
               )}
 
               {/* Hashtags */}
