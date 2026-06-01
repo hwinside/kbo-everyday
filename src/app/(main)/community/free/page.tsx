@@ -10,8 +10,6 @@ import WritePhotoPost from "@/components/community/WritePhotoPost";
 import WriteEntrySheet from "@/components/community/WriteEntrySheet";
 import PostList from "@/components/community/PostList";
 import type { Post } from "@/lib/types";
-import { getMyTeamId } from "@/lib/store/myteam";
-import { getTeamById } from "@/lib/constants/teams";
 
 export default function FreeBoardPage() {
   const { user } = useAuth();
@@ -20,11 +18,6 @@ export default function FreeBoardPage() {
   const [showWrite, setShowWrite] = useState(false);
   const [showPhoto, setShowPhoto] = useState(false);
   const { posts: rawPosts, loading, reload } = usePosts("free", "general");
-
-  const myTeamSlugs = (() => {
-    const slug = getTeamById(getMyTeamId() ?? -1)?.slug;
-    return slug ? [slug] : [];
-  })();
 
   // Transform to shared Post type (same pattern as team/player boards)
   const posts: Post[] = rawPosts.map((p) => ({
@@ -92,7 +85,6 @@ export default function FreeBoardPage() {
         onClose={() => setShowWrite(false)}
         teamName="자유게시판"
         enableTags
-        defaultTeamSlugs={myTeamSlugs}
         onSubmit={async (title, content, imageUrls, _seatInfo, tags) => {
           await createPost({
             boardType: "free",
@@ -113,7 +105,6 @@ export default function FreeBoardPage() {
         teamName="자유게시판"
         boardType="free"
         boardId="general"
-        defaultTeamSlugs={myTeamSlugs}
         onSuccess={() => { setShowPhoto(false); reload(); }}
       />
     </div>
