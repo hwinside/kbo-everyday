@@ -10,7 +10,6 @@ import PhotoFeed from "@/components/community/PhotoFeed";
 import WritePost from "@/components/community/WritePost";
 import WritePhotoPost from "@/components/community/WritePhotoPost";
 import WriteEntrySheet from "@/components/community/WriteEntrySheet";
-import EventBanner from "@/components/home/EventBanner";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { createPost, toggleLike } from "@/lib/supabase/usePosts";
@@ -89,11 +88,6 @@ export default function CommunityTeamBoardPage() {
             다른 팀
           </Link>
         </div>
-      </div>
-
-      {/* 이벤트 배너 (2026-04-20 — 얼리멤버 초대/글쓰기) */}
-      <div className="px-5">
-        <EventBanner source="community" />
       </div>
 
       {/* 통합 피드 (글·사진 혼합, 최신순 단일) */}
