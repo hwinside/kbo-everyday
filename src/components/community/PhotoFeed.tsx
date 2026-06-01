@@ -225,6 +225,14 @@ function ensureVideoObserver(): IntersectionObserver {
   return videoObserver;
 }
 
+// iOS Safari는 preload="metadata"만으론 첫 프레임을 그리지 않아, 재생 중이 아닌(일시정지) 영상이
+// poster 없이 검은 배경(bg-black)만 보인다. 미디어 프래그먼트 #t= 로 시작 시점을 지정하면 재생 없이도
+// 해당 프레임을 디코드해 poster처럼 페인트한다. → 캐러셀에서 가운데 1개만 재생되고 나머지 슬라이드는
+// 검은 화면 대신 첫 프레임을 보여준다. (움짤콜렉터 다중 영상 글에서 2·3번째가 검게 나오던 문제)
+function videoPosterSrc(url: string): string {
+  return url.includes("#") ? url : `${url}#t=0.001`;
+}
+
 function FeedVideo({ url }: { url: string }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [muted, setMuted] = useGlobalVideoMuted();
@@ -254,7 +262,7 @@ function FeedVideo({ url }: { url: string }) {
     <div className="relative w-full">
       <video
         ref={ref}
-        src={url}
+        src={videoPosterSrc(url)}
         muted={muted}
         loop
         playsInline
