@@ -31,9 +31,9 @@ function findPlayerByName(name: string): { kboId: string; teamId: number } | nul
   return null;
 }
 
-function findPlayerByKboId(kboId: string): { teamId: number } | null {
+function findPlayerByKboId(kboId: string): { teamId: number; name: string } | null {
   for (const p of PLAYERS_ROSTER) {
-    if (p.kboId === kboId) return { teamId: p.teamId };
+    if (p.kboId === kboId) return { teamId: p.teamId, name: p.name };
   }
   return null;
 }
@@ -74,8 +74,11 @@ function buildFeedPlayerLabels(post: Post, sourceLabel?: CommunitySourceLabel): 
     out.push({ key: dedupeKey, href, label: teamShort ? `@${teamShort} ${displayName}` : `@${displayName}` });
   };
 
-  if (post.board_type === "player" && sourceLabel?.playerName) {
-    push(post.board_id, sourceLabel.playerName);
+  if (post.board_type === "player" && post.board_id) {
+    // 출처 선수명: sourceLabel(전체글 탭에서만 주입)이 없어도 board_id(kboId)로 roster에서 직접 resolve.
+    // (팀 탭은 sourceLabels를 안 넘겨 → 레거시/움짤콜렉터 선수보드 글에 선수 라벨이 안 떴던 버그)
+    const playerName = sourceLabel?.playerName ?? findPlayerByKboId(post.board_id)?.name;
+    if (playerName) push(post.board_id, playerName);
   }
   if (Array.isArray(post.player_tags)) {
     for (const tag of post.player_tags as string[]) {
