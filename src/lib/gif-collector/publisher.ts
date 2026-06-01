@@ -20,6 +20,7 @@
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { extractMediaList, extractInstagramVideoUrls, inferMediaExt, type OgMedia } from "./og-media";
+import { appendAttribution } from "./attribution";
 import playersRoster from "@/lib/constants/players-roster.json";
 import type { RosterPlayer } from "@/types/api";
 import { getTeamBySlug } from "@/lib/constants/teams";
@@ -43,12 +44,13 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Re
   }
 }
 
-async function fetchMediaList(sourceUrl: string): Promise<OgMedia[]> {
+// sourceHtml: 원문 페이지 HTML(출처 핸들 추출용). embed로 영상을 찾아도 원문 페이지 HTML을 함께 돌려준다.
+async function fetchMediaList(sourceUrl: string): Promise<{ media: OgMedia[]; sourceHtml: string | null }> {
   const html = await fetchPageHtml(sourceUrl);
-  if (!html) return [];
+  if (!html) return { media: [], sourceHtml: null };
 
   const media = extractMediaList(html, MAX_MEDIA_ITEMS);
-  if (media.some((m) => m.type === "video")) return media;
+  if (media.some((m) => m.type === "video")) return { media, sourceHtml: html };
 
   // SPA(Threads 등) — embed 페이지에서 한 번 더 시도
   const threadsEmbedUrl = getThreadsEmbedUrl(sourceUrl);
@@ -56,7 +58,7 @@ async function fetchMediaList(sourceUrl: string): Promise<OgMedia[]> {
     const embedHtml = await fetchPageHtml(threadsEmbedUrl);
     if (embedHtml) {
       const embedMedia = extractMediaList(embedHtml, MAX_MEDIA_ITEMS);
-      if (embedMedia.some((m) => m.type === "video")) return embedMedia;
+      if (embedMedia.some((m) => m.type === "video")) return { media: embedMedia, sourceHtml: html };
     }
   }
 
@@ -66,11 +68,11 @@ async function fetchMediaList(sourceUrl: string): Promise<OgMedia[]> {
     const embedHtml = await fetchPageHtml(instagramEmbedUrl);
     if (embedHtml) {
       const igVideos = extractInstagramVideoUrls(embedHtml, MAX_MEDIA_ITEMS);
-      if (igVideos.length > 0) return igVideos;
+      if (igVideos.length > 0) return { media: igVideos, sourceHtml: html };
     }
   }
 
-  return media;
+  return { media, sourceHtml: html };
 }
 
 async function fetchPageHtml(url: string): Promise<string | null> {
@@ -182,8 +184,11 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
   }
 
   let mediaList: OgMedia[];
+  let sourceHtml: string | null = null;
   try {
-    mediaList = await fetchMediaList(row.source_url);
+    const fetched = await fetchMediaList(row.source_url);
+    mediaList = fetched.media;
+    sourceHtml = fetched.sourceHtml;
   } catch (e) {
     return rejectAndReturn(queueId, `og fetch error: ${(e as Error).message}`);
   }
@@ -262,13 +267,17 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
   const videoUrls = uploaded.filter((u) => u.og.type === "video").map((u) => u.publicUrl);
   const imageUrls = uploaded.filter((u) => u.og.type === "image").map((u) => u.publicUrl);
 
+  // 출처 자동 표기 — 운영자가 본문에 출처/URL을 직접 안 적었으면 source_url 기반으로 append.
+  // "(출처: 인스타 @handle)\n원문URL" — URL은 LinkPreview가 클릭 카드로 렌더.
+  const content = appendAttribution(row.source_content ?? "", row.source_url, sourceHtml);
+
   const postInsert: Record<string, unknown> = {
     author_id: BOT_USER_ID,
     board_type: row.matched_board_type,
     board_id: row.matched_board_id,
     content_type: "photo",
     title: row.source_title || `${row.matched_board_id} 움짤`,
-    content: row.source_content ?? "",
+    content,
     author_team_id_snapshot: authorTeamIdSnapshot,
   };
   if (videoUrls.length > 0) postInsert.video_urls = videoUrls;
