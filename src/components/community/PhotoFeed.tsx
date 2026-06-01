@@ -752,6 +752,10 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
           boardType !== "player" && Array.isArray(post.player_tags) && post.player_tags.length > 0;
         // 선수 라벨 통합: 레거시 선수게시판 출처 + player_tags 를 dedupe (팀/전체 피드에서만; 선수 페이지는 헤더 라벨로 충분)
         const sourceLabel = sourceLabels?.[post.id];
+        // 헤더 작성자 배지(post.team_id)와 같은 팀의 팀 출처 라벨은 중복이므로 숨김
+        // ("같은 라벨이 두 개일 필요 없이 하나로"). 다른 팀(타팀 팬이 팀 게시판에 쓴 글)은 정보가 다르니 유지.
+        const dupTeamLabel =
+          !!sourceLabel?.teamId && !sourceLabel.playerName && sourceLabel.teamId === post.team_id;
         const prominent = boardType !== "player" ? buildProminentLabel(post) : null;
         const prominentText = prominent
           ? `${prominent.teamShort ? prominent.teamShort + " " : ""}${prominent.players.slice(0, 2).join("/")}${prominent.players.length > 2 ? ` 외 ${prominent.players.length - 2}명` : ""}`
@@ -837,8 +841,8 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                     </span>
                   )}
                 </div>
-              ) : sourceLabel && !sourceLabel.playerName ? (
-                /* 선수 없음 → 비선수(팀/자유 등) 출처 라벨 */
+              ) : sourceLabel && !sourceLabel.playerName && !dupTeamLabel ? (
+                /* 선수 없음 → 비선수(팀/자유 등) 출처 라벨. 헤더와 같은 팀이면 위에서 숨김 처리됨. */
                 <div className="px-5 pb-2">
                   {sourceLabel.teamId ? (
                     <TeamBadge teamId={sourceLabel.teamId} size="xs" />

@@ -96,6 +96,11 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   // 인스타 2단계: (b) 아이콘 클릭 → 부분 높이 오픈, (c) 입력창 포커스 → 화면 상단까지 확장.
   // 확장은 sticky (한 번 입력 시작하면 닫을 때까지 유지) — 인스타 동일.
   const [expanded, setExpanded] = useState(false);
+  // 닫힘 애니메이션: 부모가 CommentSheet를 조건부 마운트(commentPostId!==null)하므로 onClose를
+  // 곧장 호출하면 컴포넌트(=AnimatePresence 포함)가 즉시 언마운트돼 exit 스프링이 재생되지 않고
+  // "뚝 사라진다". → 스와이프/X/백드롭 모두 일단 closing=true로 시트를 아래로 애니메이션 시키고,
+  // 애니메이션이 끝난 뒤(onAnimationComplete)에야 부모 onClose를 호출한다(올라온 속도와 대칭).
+  const [closing, setClosing] = useState(false);
   // 키보드 회피용 visualViewport 수치(React state). imperative style 충돌 방지를 위해 단일 style에서만 사용.
   const [kbInset, setKbInset] = useState(0);
   const [vvHeight, setVvHeight] = useState<number | null>(null);
@@ -490,6 +495,11 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     };
   }, [menuOpenId]);
 
+  // 닫기 요청 — 즉시 onClose 하지 않고 아래로 미끄러지는 애니메이션을 먼저 재생한다.
+  const requestClose = useCallback(() => {
+    setClosing(true);
+  }, []);
+
   const handleSheetTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
     if (e.touches.length !== 1) return;
     dragStartX.current = e.touches[0].clientX;
@@ -524,8 +534,8 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     const shouldClose = dragShouldClose.current && deltaY > 80 && deltaY > deltaX * 1.2;
     dragShouldClose.current = false;
 
-    if (shouldClose) onClose();
-  }, [onClose]);
+    if (shouldClose) requestClose();
+  }, [requestClose]);
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
@@ -689,10 +699,10 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
           className="fixed inset-0 bg-black/60"
           style={{ zIndex: 9998, touchAction: "none", overscrollBehavior: "none" }}
           initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
+          animate={{ opacity: closing ? 0 : 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
-          onClick={onClose}
+          onClick={requestClose}
           onTouchMove={(e) => { if (e.cancelable) e.preventDefault(); }}
         />
       )}
@@ -718,11 +728,15 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                 : { height: vvHeight != null ? `min(60dvh, ${vvHeight}px)` : "60dvh" }),
             }}
             initial={{ y: "100%" }}
-            animate={{ y: 0 }}
+            // 닫힘(closing)이면 아래로 슬라이드. 부모가 컴포넌트를 통째로 언마운트하므로
+            // AnimatePresence exit가 안 먹는다 → animate 타깃을 직접 내리고, 내려간 뒤
+            // onAnimationComplete에서 진짜 onClose를 호출(=그제서야 언마운트).
+            animate={{ y: closing ? "100%" : 0 }}
             // ③ 닫힘 = 열릴 때 올라오는 것과 동일한 스프링으로 내려가게(속도/감속 대칭).
             //    이전 0.28s ease-in 트윈은 시작이 느려 "가만있다 뚝 사라지는" 느낌이라 폐기.
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 28, stiffness: 300 }}
+            onAnimationComplete={() => { if (closing) onClose(); }}
             onTouchStart={handleSheetTouchStart}
             onTouchMove={handleSheetTouchMove}
             onTouchEnd={handleSheetTouchEnd}
@@ -738,7 +752,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             <div className="relative px-4 pb-3 border-b border-border">
               <h3 className="text-base font-semibold text-text-primary text-center">댓글</h3>
               <button
-                onClick={onClose}
+                onClick={requestClose}
                 className="absolute right-4 top-0 p-1 text-text-tertiary hover:text-text-primary transition-colors"
               >
                 <X size={20} />
