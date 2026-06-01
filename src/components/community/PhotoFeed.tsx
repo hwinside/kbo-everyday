@@ -954,7 +954,13 @@ function BrandedTextCard({ post, body }: { post: Post; body: string }) {
           width={200}
           height={240}
           unoptimized
-          className="pointer-events-none absolute bottom-0 right-0 h-[88%] w-auto object-contain object-bottom opacity-90"
+          // 30% 축소(h 88%→62%) + 반투명 + 좌상단 페이드 마스크 → 팀 로고처럼 배경에 스며드는 느낌(①).
+          className="pointer-events-none absolute bottom-0 right-0 h-[62%] w-auto object-contain object-bottom"
+          style={{
+            opacity: 0.4,
+            maskImage: "linear-gradient(to top left, #000 50%, transparent 100%)",
+            WebkitMaskImage: "linear-gradient(to top left, #000 50%, transparent 100%)",
+          }}
         />
       ) : team ? (
         <div className="absolute right-4 top-4 opacity-20">
