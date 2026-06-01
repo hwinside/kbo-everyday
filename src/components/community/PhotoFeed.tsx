@@ -51,23 +51,26 @@ function buildFeedPlayerLabels(post: Post, sourceLabel?: CommunitySourceLabel): 
   const seen = new Set<string>();
 
   const push = (kboId: string | null, displayName: string) => {
-    const dedupeKey = kboId ?? `name:${displayName}`;
-    if (seen.has(dedupeKey)) return;
-    seen.add(dedupeKey);
-
-    let href: string | undefined;
+    // name-only 태그는 dedupe 전에 roster에서 canonical kboId로 resolve한다.
+    // (그래야 kboId 출처/태그와 name-only 태그가 같은 선수면 자연 병합되어 중복 라벨이 안 생김)
+    let resolvedKboId = kboId;
     let teamShort: string | undefined;
-    if (kboId) {
-      href = `/community/players/${kboId}`;
-      const r = findPlayerByKboId(kboId);
+    if (resolvedKboId) {
+      const r = findPlayerByKboId(resolvedKboId);
       teamShort = r ? getTeamById(r.teamId)?.shortName : undefined;
     } else {
       const p = findPlayerByName(displayName);
       if (p) {
-        href = `/community/players/${p.kboId}`;
+        resolvedKboId = p.kboId;
         teamShort = getTeamById(p.teamId)?.shortName;
       }
     }
+
+    const dedupeKey = resolvedKboId ?? `name:${displayName}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+
+    const href = resolvedKboId ? `/community/players/${resolvedKboId}` : undefined;
     out.push({ key: dedupeKey, href, label: teamShort ? `@${teamShort} ${displayName}` : `@${displayName}` });
   };
 
