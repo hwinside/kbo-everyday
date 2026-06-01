@@ -825,10 +825,10 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 />
               )}
 
-              {/* Player tags — clickable, links to player page */}
+              {/* Player tags — clickable, links to player page. 최대 2개 노출 + 나머지는 "외 N명" */}
               {post.player_tags && Array.isArray(post.player_tags) && post.player_tags.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 px-5 pb-1">
-                  {(post.player_tags as string[]).map((tag: string) => {
+                  {(post.player_tags as string[]).slice(0, 2).map((tag: string) => {
                     const { kboId, displayName } = parsePlayerTag(tag);
 
                     let href: string | undefined;
@@ -860,6 +860,11 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                       </span>
                     );
                   })}
+                  {(post.player_tags as string[]).length > 2 && (
+                    <span className="text-xs font-medium text-text-secondary bg-bg-tertiary px-2 py-0.5 rounded-full">
+                      외 {(post.player_tags as string[]).length - 2}명
+                    </span>
+                  )}
                 </div>
               )}
 
