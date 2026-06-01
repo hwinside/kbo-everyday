@@ -10,6 +10,8 @@ import TeamTagger from "./TeamTagger";
 import PlayerTagger from "./PlayerTagger";
 import LinkPreview from "./LinkPreview";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
+import { useAuth } from "@/lib/supabase/AuthContext";
+import { getTeamById } from "@/lib/constants/teams";
 
 export interface SeatInfo {
   zone: string;
@@ -87,6 +89,13 @@ export default function WritePost({
   const [teamSlugs, setTeamSlugs] = useState<string[]>([]);
   const [taggedPlayers, setTaggedPlayers] = useState<PlayerTag[]>([]);
 
+  // 최애팀(profile.team_id) — board 컨텍스트가 없을 때 기본 선택 칩으로 사용.
+  const { profile } = useAuth();
+  const favoriteSlug = (() => {
+    const id = (profile as Record<string, unknown> | null)?.team_id as number | undefined;
+    return id ? getTeamById(id)?.slug : undefined;
+  })();
+
   // 좌석팁 구조화 필드
   const [zone, setZone] = useState("");
   const [customZone, setCustomZone] = useState("");
@@ -114,7 +123,14 @@ export default function WritePost({
       setBlock(initialSeatInfo?.block ?? "");
       setRow(initialSeatInfo?.row ?? "");
       setSeat(initialSeatInfo?.seat ?? "");
-      setTeamSlugs(defaultTeamSlugs ?? []);
+      // board 컨텍스트(defaultTeamSlugs)가 있으면 그것, 없으면 최애팀을 기본 선택(해제 가능).
+      setTeamSlugs(
+        defaultTeamSlugs?.length
+          ? defaultTeamSlugs
+          : enableTags && !seatTipMode && favoriteSlug
+            ? [favoriteSlug]
+            : [],
+      );
       setTaggedPlayers(defaultPlayerTag ? [defaultPlayerTag] : []);
     }
     wasOpenRef.current = isOpen;

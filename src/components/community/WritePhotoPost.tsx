@@ -13,6 +13,7 @@ import TeamTagger from "./TeamTagger";
 import HashtagInput from "./HashtagInput";
 import { getTeamById, TEAMS } from "@/lib/constants/teams";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
+import { useAuth } from "@/lib/supabase/AuthContext";
 
 interface WritePhotoPostProps {
   isOpen: boolean;
@@ -87,6 +88,18 @@ export default function WritePhotoPost({
       });
     }
   }, [isOpen, defaultTeamSlugs]);
+
+  // 최애팀(profile.team_id) — board 컨텍스트(defaultTeamSlugs)가 없을 때만 기본 선택(해제 가능).
+  const { profile } = useAuth();
+  const favoriteSlug = (() => {
+    const id = (profile as Record<string, unknown> | null)?.team_id as number | undefined;
+    return id ? getTeamById(id)?.slug : undefined;
+  })();
+  useEffect(() => {
+    if (isOpen && !defaultTeamSlugs?.length && favoriteSlug) {
+      setTeamSlugs((prev) => (prev.length ? prev : [favoriteSlug]));
+    }
+  }, [isOpen, defaultTeamSlugs, favoriteSlug]);
 
   const handleTeamToggle = useCallback((slug: string) => {
     setTeamSlugs((prev) =>
