@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import type { Post } from "./usePosts";
+import { kboIdsForTeamSlug } from "@/lib/utils/player-roster";
 
 /** 피드가 바라보는 보드 컨텍스트. 전체글/팀/선수가 같은 훅을 source만 바꿔 재사용. */
 export type FeedBoard =
@@ -81,12 +82,25 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
   const loadPage = useCallback(
     async (cursor: number | null): Promise<Post[]> => {
       let query = supabase.from("posts").select(SELECT).neq("is_hidden", true);
-      // 태그 기반 조회(V3): 팀탭 = team_tags 에 팀 슬러그 포함(팀 글 + 그 팀 선수 글 모두).
-      // 선수 글은 카드에서 배경색으로 구분. board_id는 레거시 호환용으로 남아있지만 조회엔 안 씀.
-      // team_tags 는 JSONB → PostgREST 가 `cs.["lg"]`(JSON)로 보내도록 문자열로 전달.
-      // 배열을 그대로 넘기면 `cs.{lg}`(PG 배열 리터럴)가 되어 jsonb @> 파싱 에러 → 팀탭 전체 빈 화면.
-      if (board.kind === "team") query = query.contains("team_tags", JSON.stringify([board.teamId]));
-      else if (board.kind === "player") query = query.eq("board_type", "player").eq("board_id", board.kboId);
+      // 태그 기반 조회(V3): 팀탭 = "LG가 태그되거나 LG선수가 태그된 모든 글".
+      // team_tags 만 보면 레거시·움짤콜렉터 글(board_type='player'/'team' + board_id, team_tags 빈 값)이
+      // 누락되므로 3가지를 OR 로 묶는다:
+      //   ① team_tags 에 팀 슬러그 포함 (신규 태그 글)             — jsonb cs.["lg"]
+      //   ② 레거시 팀보드 글 (board_type='team' AND board_id=slug)
+      //   ③ 레거시/움짤콜렉터 선수보드 글 (board_type='player' AND board_id ∈ 해당 팀 선수 kboId)
+      // team_tags 는 JSONB → `cs.["lg"]`(JSON) 형태로 전달(배열 리터럴 `cs.{lg}`는 @> 파싱 에러).
+      if (board.kind === "team") {
+        const slug = board.teamId;
+        const kboIds = kboIdsForTeamSlug(slug);
+        const orParts = [
+          `team_tags.cs.${JSON.stringify([slug])}`,
+          `and(board_type.eq.team,board_id.eq.${slug})`,
+        ];
+        if (kboIds.length) {
+          orParts.push(`and(board_type.eq.player,board_id.in.(${kboIds.map((id) => `"${id}"`).join(",")}))`);
+        }
+        query = query.or(orParts.join(","));
+      } else if (board.kind === "player") query = query.eq("board_type", "player").eq("board_id", board.kboId);
       else query = query.in("board_type", ["team", "player", "free"]);
       if (cursor !== null) query = query.lt("id", cursor);
       // keyset = id desc 단일 컬럼. id가 BIGSERIAL(삽입=created_at 순 단조증가)이라
