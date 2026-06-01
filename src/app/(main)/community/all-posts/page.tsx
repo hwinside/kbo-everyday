@@ -11,8 +11,6 @@ import { useUnifiedFeed } from "@/lib/supabase/useUnifiedFeed";
 import { createPost, toggleLike } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getCommunitySourceLabel, type CommunitySourceLabel } from "@/lib/utils/community-board";
-import { getMyTeamId } from "@/lib/store/myteam";
-import { getTeamById } from "@/lib/constants/teams";
 
 export default function AllPostsPage() {
   const { posts, likedIds, loading, loadingMore, hasMore, loadMore, setPostLiked, reload } =
@@ -23,11 +21,6 @@ export default function AllPostsPage() {
   const [showEntry, setShowEntry] = useState(false);
   const [showWrite, setShowWrite] = useState(false);
   const [showPhoto, setShowPhoto] = useState(false);
-
-  const myTeamSlugs = (() => {
-    const slug = getTeamById(getMyTeamId() ?? -1)?.slug;
-    return slug ? [slug] : [];
-  })();
 
   // 좋아요: optimistic 토글 → 서버 반영 → 실패/불일치 시 롤백·reconcile. 비로그인은 no-op.
   const handleLike = useCallback(
@@ -96,7 +89,6 @@ export default function AllPostsPage() {
         onClose={() => setShowWrite(false)}
         teamName="자유게시판"
         enableTags
-        defaultTeamSlugs={myTeamSlugs}
         onSubmit={async (title, content, imageUrls, _seatInfo, tags) => {
           await createPost({
             boardType: "free",
@@ -117,7 +109,6 @@ export default function AllPostsPage() {
         teamName="자유게시판"
         boardType="free"
         boardId="general"
-        defaultTeamSlugs={myTeamSlugs}
         onSuccess={() => { setShowPhoto(false); reload(); }}
       />
       {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
