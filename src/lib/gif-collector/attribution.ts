@@ -115,3 +115,22 @@ export function appendAttribution(
 
   return base.trim().length > 0 ? `${base.trim()}\n\n${line}` : line;
 }
+
+/**
+ * appendAttribution가 붙인 "(출처: …)\n{url}" 블록을 본문에서 분리한다.
+ * 봇이 자동 생성한 출처(끝에 원문 URL이 따라오는 형태)만 매치 — 렌더러가
+ * "(출처: …)" 문구를 원문 하이퍼링크로 그릴 때 사용한다.
+ * 운영자가 URL 없이 손으로 적은 "(출처: …)"는 링크 대상이 없으므로 매치하지 않는다.
+ */
+export function parseAttribution(
+  content: string | null | undefined,
+): { body: string; source: string; url: string } | null {
+  if (!content) return null;
+  const m = content.match(/\(출처:\s*([^)]*)\)\s*\n(https?:\/\/\S+)\s*$/);
+  if (!m || m.index === undefined) return null;
+  return {
+    body: content.slice(0, m.index).trim(),
+    source: m[1].trim(),
+    url: m[2],
+  };
+}

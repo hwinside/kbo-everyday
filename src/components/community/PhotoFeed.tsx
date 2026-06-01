@@ -10,6 +10,7 @@ import { getTeamById, getTeamBySlug, getTeamBgColor, type TeamData } from "@/lib
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import heroApprovedList from "@/lib/constants/hero-approved-kboids.json";
 import { parsePlayerTag } from "@/lib/utils/player-tags";
+import { parseAttribution } from "@/lib/gif-collector/attribution";
 
 // Hero cutout: 검수 통과(allowlist) 선수만 노출. public/players-hero/{kboId}.webp
 const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
@@ -1108,6 +1109,10 @@ function CaptionBlock({ nickname, content, onPress }: { nickname: string; conten
   const [clamped, setClamped] = useState(false);
   const textRef = useRef<HTMLDivElement>(null);
 
+  // 움짤콜렉터 자동 출처 "(출처: …)\n{url}"는 본문에서 분리해 원문 하이퍼링크로 렌더.
+  const attr = parseAttribution(content);
+  const bodyText = attr ? attr.body : content;
+
   useEffect(() => {
     const el = textRef.current;
     if (!el) return;
@@ -1128,7 +1133,18 @@ function CaptionBlock({ nickname, content, onPress }: { nickname: string; conten
         className={`text-left text-base cursor-pointer ${!expanded ? "line-clamp-1" : ""}`}
       >
         <span className="font-semibold text-text-primary mr-1.5">{nickname}</span>
-        <span className="text-text-secondary">{content}</span>
+        {bodyText && <span className="text-text-secondary">{bodyText}</span>}
+        {attr && (
+          <a
+            href={attr.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-accent ml-1.5"
+          >
+            (출처: {attr.source})
+          </a>
+        )}
       </div>
       {clamped && !expanded && (
         <button

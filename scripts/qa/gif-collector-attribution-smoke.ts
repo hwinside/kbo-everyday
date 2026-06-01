@@ -11,6 +11,7 @@ import {
   resolveHandle,
   hasExistingAttribution,
   appendAttribution,
+  parseAttribution,
 } from "@/lib/gif-collector/attribution";
 
 let pass = 0;
@@ -101,6 +102,33 @@ check("출처/URL 없으면 중복 아님", hasExistingAttribution("그냥 본�
     `got ${JSON.stringify(r)}`,
   );
 }
+
+// parseAttribution — appendAttribution 역연산(렌더러가 원문 하이퍼링크로 그릴 때 사용)
+{
+  const content = appendAttribution("구자욱과 이용찬의 신경전", IG_URL, IG_DESC_HTML);
+  const p = parseAttribution(content);
+  check("parse: IG roundtrip body", p?.body === "구자욱과 이용찬의 신경전", `got ${JSON.stringify(p)}`);
+  check("parse: IG roundtrip source", p?.source === "인스타 @deliciousports", `got ${JSON.stringify(p)}`);
+  check("parse: IG roundtrip url", p?.url === IG_URL, `got ${JSON.stringify(p)}`);
+}
+{
+  const content = appendAttribution("좋은 영상", THREADS_URL, null);
+  const p = parseAttribution(content);
+  check("parse: 스레드 source", p?.source === "스레드 @chunkizzi_", `got ${JSON.stringify(p)}`);
+  check("parse: 스레드 url", p?.url === THREADS_URL, `got ${JSON.stringify(p)}`);
+}
+{
+  const content = appendAttribution("", IG_URL, IG_DESC_HTML);
+  const p = parseAttribution(content);
+  check("parse: 본문 없는 출처-only → body 빈 문자열", p?.body === "" && p?.url === IG_URL, `got ${JSON.stringify(p)}`);
+}
+{
+  const p = parseAttribution("엠팍 짤" + `\n\n(출처: 엠팍)\n${MLBPARK_URL}`);
+  check("parse: 핸들 없는 (출처: 엠팍) source", p?.source === "엠팍" && p?.url === MLBPARK_URL, `got ${JSON.stringify(p)}`);
+}
+check("parse: 출처 블록 없으면 null", parseAttribution("그냥 본문") === null);
+check("parse: URL 없는 수동 출처는 매치 안 함(링크 대상 없음)", parseAttribution("멋진 장면 (출처: 인스타 @x)") === null);
+check("parse: 빈/누락 입력 → null", parseAttribution("") === null && parseAttribution(null) === null && parseAttribution(undefined) === null);
 
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
