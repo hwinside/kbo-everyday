@@ -536,6 +536,12 @@ export default function PlayerBoardPage() {
             loading={feedLoading}
             onLike={handleFeedLike}
             boardType="player"
+            // 이 보드 전체가 해당 선수 글 → 작성자 왼쪽 칩을 [(로고)팀 선수명] 단일 칩으로 통일.
+            playerLabels={
+              player?.teamId && playerName
+                ? Object.fromEntries(feedPosts.map((p) => [p.id, { teamId: player.teamId, playerName }]))
+                : undefined
+            }
           />
         </div>
       )}
