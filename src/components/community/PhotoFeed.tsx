@@ -1029,6 +1029,13 @@ function BrandedTextCard({ post, body }: { post: Post; body: string }) {
           <Image src={team.logoPath} alt="" width={88} height={88} unoptimized className="object-contain" />
         </div>
       ) : null}
+      {/* 하단 스크림 — 히어로처럼 컷아웃 바닥을 배경으로 페이드(딱 잘리는 느낌 제거). 선수 Hero가 있을 때만. */}
+      {heroPath && (
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2"
+          style={{ background: "linear-gradient(to top, #1a1a1d 0%, transparent 100%)" }}
+        />
+      )}
       <div className="relative z-10 flex w-full flex-col items-center gap-3">
         {displayBody && (
           <p className="whitespace-pre-line break-keep text-center text-xl font-bold leading-snug text-white line-clamp-5">
