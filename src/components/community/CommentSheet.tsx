@@ -181,36 +181,14 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     }
   }, [shouldRender]);
 
-  // 키보드 회피: visualViewport에 시트를 정렬한다.
-  // iOS Safari/WKWebView는 interactive-widget=resizes-content를 *미지원* → 키보드가 떠도
-  // 레이아웃 뷰포트(dvh/innerHeight)는 그대로다. 그 상태에서 position:fixed; bottom:0 시트는
-  // 키보드 높이만큼 화면 밖(위)으로 밀려 상단(댓글 목록)이 사라진다(입력창만 키보드 위에 남음).
-  //  → 시각 뷰포트(키보드를 제외한 실제 보이는 영역)에 맞춰 (1) 시트 바닥을 키보드 위로 올리고
-  //    (2) 높이를 시각 뷰포트로 캡 → 목록·컴포저가 항상 키보드 위에 함께 보인다.
-  // stateless 재계산(매 vv 이벤트마다 절대값 산출)이라 과거 단조증가/수축 버그가 없다.
-  // resizes-content 지원 브라우저(Android Chrome)에서는 innerHeight도 축소 → keyboard≈0, maxHeight=vv.height로
-  // 동일하게 안전하게 동작한다.
-  useEffect(() => {
-    if (!shouldRender) return;
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const sheet = sheetRef.current;
-    if (!sheet) return;
-    const apply = () => {
-      const keyboard = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-      sheet.style.bottom = `${keyboard}px`;
-      sheet.style.maxHeight = `${vv.height}px`;
-    };
-    apply();
-    vv.addEventListener("resize", apply);
-    vv.addEventListener("scroll", apply);
-    return () => {
-      vv.removeEventListener("resize", apply);
-      vv.removeEventListener("scroll", apply);
-      sheet.style.bottom = "";
-      sheet.style.maxHeight = "";
-    };
-  }, [shouldRender]);
+  // 키보드 회피는 전적으로 viewport meta의 interactive-widget=resizes-content에 위임한다
+  // (크관 GameChat / PostDetail이 실기기에서 검증된 방식과 동일).
+  // 키보드가 열리면 resizes-content가 *레이아웃 뷰포트(ICB)* 를 키보드만큼 줄여준다.
+  // → (c)확장 상태의 시트를 dvh가 아니라 top:0 + bottom:0(순수 inset)으로 잡으면, 시트 높이가
+  //   줄어든 ICB에 정확히 맞춰져 컴포저는 키보드 바로 위에 도킹하고 목록은 그 위에 그대로 남는다.
+  // ⚠️ dvh는 키보드가 아니라 브라우저 크롬(주소창)만 추적 → 키보드가 떠도 안 줄어든다.
+  //   과거 height:94dvh는 그래서 시트가 키보드만큼 화면 밖(위)으로 넘쳐 댓글 목록이 사라졌다.
+  //   visualViewport로 top/height를 직접 계산하는 방식은 resizes-content와 충돌해 더 불안정했다 → 둘 다 폐기.
 
   // 시트가 (b)/(c)로 높이가 바뀐 직후, 목록이 바닥 근처면 자동으로 맨 아래로(최신 댓글) 스냅.
   useEffect(() => {
@@ -697,14 +675,15 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
           {/* Sheet */}
           <motion.div
             ref={sheetRef}
-            className="fixed inset-x-0 bottom-0 flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
+            className="fixed inset-x-0 flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
             style={{
               zIndex: 9999,
-              // (b) 부분 높이(뒤 피드 보임) → (c) 입력창 포커스 시 상단까지 확장. 컴포저는 flex-col 최하단이라
-              //   bottom:0에 고정. 키보드 회피는 interactive-widget=resizes-content가 처리(레이아웃 뷰포트 축소)
-              //   → dvh가 따라 줄어 컴포저가 키보드 위에 정렬된다. JS 높이 계산 없음.
-              height: expanded ? "94dvh" : "60dvh",
-              transition: "height 200ms ease-out",
+              // (b) 부분 높이(뒤 피드 보임): bottom:0 고정 + 60dvh.
+              // (c) 입력창 포커스 시 확장: top:0 + bottom:0(순수 inset, dvh 미사용). 키보드가 열리면
+              //   interactive-widget=resizes-content가 레이아웃 뷰포트(ICB)를 키보드만큼 줄여주므로,
+              //   inset으로 잡힌 시트 높이도 같이 줄어 컴포저는 키보드 바로 위, 목록은 그 위에 그대로 보인다.
+              //   (GameChat/PostDetail의 검증된 resizes-content 도킹과 동일 원리. dvh는 키보드에 안 줄어 폐기.)
+              ...(expanded ? { top: 0, bottom: 0 } : { bottom: 0, height: "60dvh" }),
             }}
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
