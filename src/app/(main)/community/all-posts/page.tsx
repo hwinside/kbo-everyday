@@ -1,15 +1,33 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Pencil } from "lucide-react";
 import PhotoFeed from "@/components/community/PhotoFeed";
+import WritePost from "@/components/community/WritePost";
+import WritePhotoPost from "@/components/community/WritePhotoPost";
+import WriteEntrySheet from "@/components/community/WriteEntrySheet";
+import LoginSheet from "@/components/auth/LoginSheet";
 import { useUnifiedFeed } from "@/lib/supabase/useUnifiedFeed";
-import { toggleLike } from "@/lib/supabase/usePosts";
+import { createPost, toggleLike } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getCommunitySourceLabel, type CommunitySourceLabel } from "@/lib/utils/community-board";
+import { getMyTeamId } from "@/lib/store/myteam";
+import { getTeamById } from "@/lib/constants/teams";
 
 export default function AllPostsPage() {
-  const { posts, likedIds, loading, loadingMore, hasMore, loadMore, setPostLiked } = useUnifiedFeed({ kind: "all" });
+  const { posts, likedIds, loading, loadingMore, hasMore, loadMore, setPostLiked, reload } =
+    useUnifiedFeed({ kind: "all" });
   const { user } = useAuth();
+
+  const [showLogin, setShowLogin] = useState(false);
+  const [showEntry, setShowEntry] = useState(false);
+  const [showWrite, setShowWrite] = useState(false);
+  const [showPhoto, setShowPhoto] = useState(false);
+
+  const myTeamSlugs = (() => {
+    const slug = getTeamById(getMyTeamId() ?? -1)?.slug;
+    return slug ? [slug] : [];
+  })();
 
   // 좋아요: optimistic 토글 → 서버 반영 → 실패/불일치 시 롤백·reconcile. 비로그인은 no-op.
   const handleLike = useCallback(
@@ -58,6 +76,51 @@ export default function AllPostsPage() {
           {loadingMore ? "불러오는 중…" : ""}
         </div>
       )}
+
+      {/* FAB — 전체글 탭에서도 글쓰기 진입 (작성 글은 자유게시판 + 선택 태그) */}
+      <button
+        onClick={() => (user ? setShowEntry(true) : setShowLogin(true))}
+        className="fixed bottom-24 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-transform hover:scale-105 active:scale-95"
+      >
+        <Pencil size={24} />
+      </button>
+
+      <WriteEntrySheet
+        isOpen={showEntry}
+        onClose={() => setShowEntry(false)}
+        onChoosePhoto={() => { setShowEntry(false); setShowPhoto(true); }}
+        onChooseText={() => { setShowEntry(false); setShowWrite(true); }}
+      />
+      <WritePost
+        isOpen={showWrite}
+        onClose={() => setShowWrite(false)}
+        teamName="자유게시판"
+        enableTags
+        defaultTeamSlugs={myTeamSlugs}
+        onSubmit={async (title, content, imageUrls, _seatInfo, tags) => {
+          await createPost({
+            boardType: "free",
+            boardId: "general",
+            title,
+            content,
+            imageUrls,
+            teamTags: tags?.teamTags,
+            playerTags: tags?.playerTags,
+          });
+          reload();
+          setShowWrite(false);
+        }}
+      />
+      <WritePhotoPost
+        isOpen={showPhoto}
+        onClose={() => setShowPhoto(false)}
+        teamName="자유게시판"
+        boardType="free"
+        boardId="general"
+        defaultTeamSlugs={myTeamSlugs}
+        onSuccess={() => { setShowPhoto(false); reload(); }}
+      />
+      {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
     </div>
   );
 }

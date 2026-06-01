@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
+import { teamSlugsForPlayerTags } from "@/lib/utils/player-roster";
 
 export interface Post {
   id: number;
@@ -233,7 +234,10 @@ export async function createPost(params: {
     video_urls: params.videoUrls ?? [],
     image_hashes: params.imageHashes ?? [],
     // 태그 기반(V3): 팀태그 배열. board_type/board_id는 레거시 호환용으로 계속 채움.
-    team_tags: params.teamTags ?? [],
+    // 선수 태그가 달린 글은 그 선수 소속팀도 team_tags 에 union → 팀 피드(team_tags contains)에 노출.
+    team_tags: Array.from(
+      new Set([...(params.teamTags ?? []), ...teamSlugsForPlayerTags(params.playerTags)]),
+    ),
   };
 
   if (params.gameId) row.game_id = params.gameId;
