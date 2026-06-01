@@ -781,6 +781,7 @@ export const PLAYER_PHOTO_MAP: Record<string, string> = {
   "황희성": "56707",
   "황희천": "55258",
   "후라도": "53375",
+  "히우라": "FP021",
 };
 // === GENERATED:PHOTO_MAP:END ===
 
@@ -871,7 +872,7 @@ export const PLAYER_PHOTO_ID_SET = new Set([
   "79231", "79240", "79365", "79402", "79456", "79608", "98116", "AQ001", "AQ002", "AQ003",
   "AQ004", "AQ005", "AQ006", "AQ007", "AQ008", "AQ009", "AQ010", "FP001", "FP002", "FP003",
   "FP004", "FP005", "FP006", "FP007", "FP008", "FP009", "FP010", "FP011", "FP012", "FP013",
-  "FP014", "FP015", "FP016", "FP017", "FP018", "FP019", "FP020", "TR001",
+  "FP014", "FP015", "FP016", "FP017", "FP018", "FP019", "FP020", "FP021", "TR001",
 ]);
 // === GENERATED:PHOTO_ID_SET:END ===
 

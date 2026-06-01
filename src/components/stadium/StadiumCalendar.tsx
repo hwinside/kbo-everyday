@@ -3,9 +3,10 @@
 import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
 import { ChevronLeft, ChevronRight, ExternalLink, Loader2 } from "lucide-react";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import type { Stadium } from "@/lib/constants/stadiums";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { useTheme } from "@/components/ThemeProvider";
 import GlassCard from "@/components/ui/GlassCard";
 
 interface StadiumGame {
@@ -82,10 +83,17 @@ function getMonthKey(date: Date): string {
 
 export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
   const { profile } = useAuth();
+  const { resolvedTheme } = useTheme();
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [games, setGames] = useState<StadiumGame[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  // SSR 하이드레이션 mismatch 방지: 마운트 전엔 다크 기준(앱 강제 다크), 마운트 후 실제 테마로 스왑 (TeamBadge와 동일 패턴)
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  const theme: "dark" | "light" = mounted ? resolvedTheme : "dark";
 
   const monthKey = getMonthKey(currentDate);
   const year = currentDate.getFullYear();
@@ -201,9 +209,13 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
           {sortedTeamIds.map((teamId) => {
             const team = getTeamById(teamId);
             if (!team) return null;
+            const legendColor = getTeamBgColor(team, theme);
             return (
               <div key={teamId} className="flex items-center gap-1.5">
-                <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: `${team.colorPrimary}40` }} />
+                <div
+                  className="w-3 h-3 rounded-sm"
+                  style={{ backgroundColor: `${legendColor}40`, border: `1.5px solid ${legendColor}` }}
+                />
                 <span className="text-xs text-text-secondary">{team.shortName} 홈</span>
               </div>
             );
@@ -252,18 +264,19 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
             const isToday = dateStr === todayStr;
             const isSelected = dateStr === selectedDate;
             const dayOfWeek = (firstDay + day - 1) % 7;
-            // 멀티팀 구장: 홈팀 컬러로 배경 구분
+            // 멀티팀 구장: 홈팀 컬러로 배경 구분 (테마 인식 + 테두리 stroke로 색약/저시각/프라이버시 모드 대응)
             const homeTeam = hasGame && dayGames ? getTeamById(dayGames[0].homeTeamId) : null;
             const hasMultipleTeams = stadium.teamIds.length > 1;
-            const cellBg = hasGame && hasMultipleTeams && homeTeam
-              ? `${homeTeam.colorPrimary}25`
+            const homeColor = hasGame && hasMultipleTeams && homeTeam
+              ? getTeamBgColor(homeTeam, theme)
               : undefined;
+            const cellBg = homeColor ? `${homeColor}25` : undefined;
 
             return (
               <button
                 key={dateStr}
                 onClick={() => hasGame ? setSelectedDate(isSelected ? null : dateStr) : undefined}
-                style={cellBg && !isSelected ? { backgroundColor: cellBg } : undefined}
+                style={cellBg && !isSelected ? { backgroundColor: cellBg, border: `1.5px solid ${homeColor}` } : undefined}
                 className={`relative aspect-square rounded-lg flex flex-col items-center justify-center gap-0.5 transition-colors ${
                   isSelected
                     ? "bg-accent/20 ring-1 ring-accent"

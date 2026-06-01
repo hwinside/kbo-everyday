@@ -6414,5 +6414,13 @@
     "position": "투수",
     "backNo": "75",
     "team": "삼성"
+  },
+  {
+    "name": "히우라",
+    "kboId": "FP021",
+    "teamId": 10,
+    "position": "야수",
+    "backNo": "22",
+    "team": "키움"
   }
 ]

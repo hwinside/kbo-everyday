@@ -36,6 +36,7 @@ export const FOREIGN_NUMERIC_TO_ALPHA: Record<string, string> = {
   "55553": "AQ009",  // 다무라 이치로
   "53901": "AQ005",  // 다케다 쇼타
   "52502": "FP005",  // 맷 매닝
+  "56305": "FP021",  // 케스턴 히우라 (키움, 트렌턴 브룩스 대체)
 };
 
 /** 영문 kboId → 숫자 kboId 역매핑 (KBO 공식 사이트 스크래핑용) */
