@@ -92,9 +92,6 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const dragStartX = useRef(0);
   const dragStartY = useRef(0);
   const dragShouldClose = useRef(false);
-  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
-  const [layoutHeight, setLayoutHeight] = useState<number | null>(null);
-  const [keyboardInset, setKeyboardInset] = useState(0);
   const blurCollapseTimer = useRef<number | null>(null);
   // 인스타 2단계: (b) 아이콘 클릭 → 부분 높이 오픈, (c) 입력창 포커스 → 화면 상단까지 확장.
   // 확장은 sticky (한 번 입력 시작하면 닫을 때까지 유지) — 인스타 동일.
@@ -184,54 +181,11 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     }
   }, [shouldRender]);
 
-  // Track visualViewport for iOS keyboard-aware sheet height.
-  // Important: do not drive the sheet with `bottom: keyboardInset`.
-  // iOS Safari/WebView can leave a stale keyboard inset after focus/blur, which
-  // compresses the sheet and exposes the photo feed behind the comment UI.
-  // Instead, pin the sheet to the visual viewport with explicit top + height.
-  useEffect(() => {
-    if (!shouldRender) return;
-
-    if (typeof window === "undefined" || !window.visualViewport) {
-      setViewportHeight(window.innerHeight);
-      setLayoutHeight(window.innerHeight);
-      setKeyboardInset(0);
-      return;
-    }
-
-    const vv = window.visualViewport;
-    let layout = Math.max(window.innerHeight, vv.height + Math.max(0, vv.offsetTop));
-    const timers: number[] = [];
-
-    const update = () => {
-      const offsetTop = Math.max(0, vv.offsetTop);
-      layout = Math.max(layout, window.innerHeight, vv.height + offsetTop);
-
-      setViewportHeight(vv.height);
-      setLayoutHeight(layout);
-      setKeyboardInset(Math.max(0, layout - offsetTop - vv.height));
-    };
-
-    const scheduleUpdate = () => {
-      update();
-      [80, 180, 360].forEach((delay) => {
-        timers.push(window.setTimeout(update, delay));
-      });
-    };
-
-    scheduleUpdate();
-    vv.addEventListener("resize", scheduleUpdate);
-    vv.addEventListener("scroll", scheduleUpdate);
-    window.addEventListener("orientationchange", scheduleUpdate);
-
-    return () => {
-      vv.removeEventListener("resize", scheduleUpdate);
-      vv.removeEventListener("scroll", scheduleUpdate);
-      window.removeEventListener("orientationchange", scheduleUpdate);
-      timers.forEach((timer) => window.clearTimeout(timer));
-    };
-  }, [shouldRender]);
-
+  // 키보드 회피는 viewport meta의 interactive-widget=resizes-content가 처리한다
+  // (키보드가 열리면 레이아웃 뷰포트 자체가 축소 → bottom:0 고정 + dvh 높이면 시트/컴포저가
+  //  자동으로 키보드 위에 정렬). 과거 visualViewport로 top/height를 직접 계산하던 방식은
+  //  resizes-content와 충돌해(레이아웃 높이 단조증가→시트 off-screen, vv.height base→시트 수축)
+  //  실기기에서 시트가 안 뜨거나 사라지는 버그를 유발 → 제거.
   useEffect(() => {
     if (!shouldRender) return;
     const el = listRef.current;
@@ -242,7 +196,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       el.scrollTop = el.scrollHeight;
     });
     return () => cancelAnimationFrame(id);
-  }, [shouldRender, viewportHeight, comments.length]);
+  }, [shouldRender, expanded, comments.length]);
 
   // 댓글 목록 DB 재조회
   const refetchComments = useCallback(async (pid: number) => {
@@ -716,28 +670,14 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
           {/* Sheet */}
           <motion.div
             ref={sheetRef}
-            className="fixed inset-x-0 flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
+            className="fixed inset-x-0 bottom-0 flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
             style={{
               zIndex: 9999,
-              ...(() => {
-                // (b) 오픈 시 부분 높이(화면 절반, 뒤 피드 보임), (c) 입력창 포커스 후 화면 최상단까지 확장.
-                // (b)는 키보드와 무관한 *layout* 높이에 앵커 → 키보드 여닫을 때 위치가 흔들리지 않음(바운스 제거).
-                // (c)만 visual viewport 높이를 써서 input이 키보드 위에 오게 한다. top은 vvTop을 더하지 않는다
-                //   (vvTop을 더하면 키보드 애니메이션 동안 시트 전체가 미끄러져 뒤 배경이 같이 움직여 보임).
-                const base = expanded ? viewportHeight : (layoutHeight ?? viewportHeight);
-                if (!base) {
-                  return {
-                    top: expanded ? "1.5vh" : "50vh",
-                    height: expanded ? "98dvh" : "50dvh",
-                  };
-                }
-                const topOffset = expanded ? 12 : Math.max(24, base * 0.5);
-                return {
-                  top: `${topOffset}px`,
-                  height: `${Math.max(320, base - topOffset)}px`,
-                };
-              })(),
-              transition: "height 160ms ease-out, top 160ms ease-out",
+              // (b) 부분 높이(뒤 피드 보임) → (c) 입력창 포커스 시 상단까지 확장. 컴포저는 flex-col 최하단이라
+              //   bottom:0에 고정. 키보드 회피는 interactive-widget=resizes-content가 처리(레이아웃 뷰포트 축소)
+              //   → dvh가 따라 줄어 컴포저가 키보드 위에 정렬된다. JS 높이 계산 없음.
+              height: expanded ? "94dvh" : "60dvh",
+              transition: "height 200ms ease-out",
             }}
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
@@ -809,7 +749,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             )}
 
             {/* Input area + GIF Picker overlay */}
-            <div className="flex-none relative border-t border-border px-4 py-3" style={{ paddingBottom: keyboardInset > 0 ? "0.75rem" : "calc(0.75rem + env(safe-area-inset-bottom))" }}>
+            <div className="flex-none relative border-t border-border px-4 py-3" style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}>
               {/* GIF Picker — pure overlay above input, no layout shift */}
               <AnimatePresence>
                 {showGifPicker && (
