@@ -682,22 +682,28 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   return (<>
     {createPortal(
     <AnimatePresence>
+      {/* Backdrop — 뒤 피드 스크롤 전파 차단(터치/오버스크롤) */}
       {shouldRender && (
-        <>
-          {/* Backdrop — 뒤 피드 스크롤 전파 차단(터치/오버스크롤) */}
-          <motion.div
-            className="fixed inset-0 bg-black/60"
-            style={{ zIndex: 9998, touchAction: "none", overscrollBehavior: "none" }}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            onClick={onClose}
-            onTouchMove={(e) => { if (e.cancelable) e.preventDefault(); }}
-          />
+        <motion.div
+          key="comment-backdrop"
+          className="fixed inset-0 bg-black/60"
+          style={{ zIndex: 9998, touchAction: "none", overscrollBehavior: "none" }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          onClick={onClose}
+          onTouchMove={(e) => { if (e.cancelable) e.preventDefault(); }}
+        />
+      )}
 
-          {/* Sheet */}
+      {/* Sheet — AnimatePresence 직속 keyed child. (과거: backdrop+sheet를 <>fragment로 묶어
+          AnimatePresence 자식이 1개의 fragment가 됐고, fragment엔 exit 추적이 안 걸려
+          닫힘(스와이프/X) 시 exit 스프링이 *발화하지 않고* 즉시 언마운트됐다. transition만
+          몇 번 바꿔도 변화 없던 근본 원인. backdrop/sheet를 각각 keyed 직속 child로 분리.) */}
+      {shouldRender && (
           <motion.div
+            key="comment-sheet"
             ref={sheetRef}
             className="fixed inset-x-0 flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
             style={{
@@ -875,7 +881,6 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
               </div>
             </div>
           </motion.div>
-        </>
       )}
     </AnimatePresence>,
     document.body
