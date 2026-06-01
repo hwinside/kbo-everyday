@@ -4,7 +4,12 @@
  * Usage: npx tsx scripts/qa/gif-collector-publisher-smoke.ts
  */
 
-import { extractMediaList, extractOgMedia, inferMediaExt } from "@/lib/gif-collector/og-media";
+import {
+  extractMediaList,
+  extractOgMedia,
+  extractInstagramVideoUrls,
+  inferMediaExt,
+} from "@/lib/gif-collector/og-media";
 
 let pass = 0;
 let fail = 0;
@@ -169,6 +174,38 @@ function check(name: string, ok: boolean, detail?: string): void {
     r.length === 1 && !r[0].url.includes("&amp;") && r[0].url.endsWith("&oe=6A1CC356"),
     `got ${JSON.stringify(r)}`,
   );
+}
+
+// Instagram /embed 추출 회귀 가드 — 실데이터(instagram.com /embed) 구조 기반.
+// reel/p 본문엔 og:image(썸네일)만 있고, /embed/ 페이지 contextJSON 안에 video_url이
+// 이중 인코딩(\\/ , \\u0026)된 채 들어있다. Meta가 embed/contextJSON 포맷 바꾸면 먼저 깨진다.
+{
+  // 실제 IG embed의 이중 이스케이프 형태(\\\/, \\u0026). String.raw로 원형 바이트 그대로 표현.
+  const html = String.raw`<script>{"is_video":true,"video_url":"https:\\\/\\\/scontent-icn2-1.cdninstagram.com\\\/o1\\\/v\\\/t2\\\/AQabc.mp4?_nc_cat=106\\u0026_nc_sid=5e9851\\u0026oe=6A23A572","width":720}</script>`;
+  const r = extractInstagramVideoUrls(html, 3);
+  check(
+    "IG embed: 이중 이스케이프 video_url → 단일 video 추출 + 언이스케이프",
+    r.length === 1 &&
+      r[0].type === "video" &&
+      r[0].url ===
+        "https://scontent-icn2-1.cdninstagram.com/o1/v/t2/AQabc.mp4?_nc_cat=106&_nc_sid=5e9851&oe=6A23A572",
+    `got ${JSON.stringify(r)}`,
+  );
+}
+{
+  // 단일 이스케이프(\/) 형태도 동일하게 처리
+  const html = String.raw`{"video_url":"https:\/\/cdn.example.com\/v.mp4?a=1&b=2"}`;
+  const r = extractInstagramVideoUrls(html, 1);
+  check(
+    "IG embed: 단일 이스케이프 video_url + \\u0026 → & 디코딩",
+    r.length === 1 && r[0].url === "https://cdn.example.com/v.mp4?a=1&b=2",
+    `got ${JSON.stringify(r)}`,
+  );
+}
+{
+  const html = `<html><head><meta property="og:image" content="https://cdn.example.com/thumb.jpg"></head></html>`;
+  const r = extractInstagramVideoUrls(html, 3);
+  check("IG embed: video_url 없으면 빈 배열 (썸네일 fallback은 호출부 책임)", r.length === 0, `got ${JSON.stringify(r)}`);
 }
 
 // inferMediaExt
