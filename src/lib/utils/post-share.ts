@@ -26,8 +26,9 @@ export function getPostDetailPath(post: ShareablePost): string {
   return `/community/free/${postId}`;
 }
 
+/** 공유용 단축 URL. /p/[id] → OG 노출 후 실제 상세로 리다이렉트. */
 export function getPostShareUrl(post: ShareablePost, origin: string): string {
-  return `${origin}${getPostDetailPath(post)}`;
+  return `${origin}/p/${post.id}`;
 }
 
 export function getPostShareTitle(post: ShareablePost): string {

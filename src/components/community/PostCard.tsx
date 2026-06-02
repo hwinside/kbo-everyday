@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { Check, Heart, MessageCircle, Play, Share2 } from "lucide-react";
+import { Heart, MessageCircle, Play, Share2 } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LinkPreview from "@/components/community/LinkPreview";
 import type { Post } from "@/lib/types";
 import type { CommunitySourceLabel } from "@/lib/utils/community-board";
-import { sharePost } from "@/lib/utils/post-share";
+import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
 
 interface PostCardProps {
   post: Post;
@@ -19,26 +19,11 @@ interface PostCardProps {
 
 export default function PostCard({ post, onPress, playerLabel, sourceLabel }: PostCardProps) {
   const timeAgo = getTimeAgo(post.createdAt);
-  const [shared, setShared] = useState(false);
-  const shareResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
 
-  useEffect(() => {
-    return () => {
-      if (shareResetTimerRef.current) clearTimeout(shareResetTimerRef.current);
-    };
-  }, []);
-
-  async function handleShare(e: React.MouseEvent<HTMLButtonElement>) {
+  function handleShare(e: React.MouseEvent<HTMLButtonElement>) {
     e.stopPropagation();
-    try {
-      const result = await sharePost(post);
-      if (result === "cancelled") return;
-      setShared(true);
-      if (shareResetTimerRef.current) clearTimeout(shareResetTimerRef.current);
-      shareResetTimerRef.current = setTimeout(() => setShared(false), 1500);
-    } catch {
-      alert("공유 링크 복사에 실패했어요");
-    }
+    setShareOpen(true);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
@@ -50,6 +35,7 @@ export default function PostCard({ post, onPress, playerLabel, sourceLabel }: Po
   }
 
   return (
+    <>
     <motion.div
       role="button"
       tabIndex={0}
@@ -135,10 +121,27 @@ export default function PostCard({ post, onPress, playerLabel, sourceLabel }: Po
           className="ml-auto flex min-h-[32px] min-w-[32px] items-center justify-center rounded-lg text-text-tertiary active:bg-bg-tertiary"
           aria-label="게시글 공유"
         >
-          {shared ? <Check size={20} className="text-accent" /> : <Share2 size={20} />}
+          <Share2 size={20} />
         </button>
       </div>
     </motion.div>
+    <ShareSheet
+      isOpen={shareOpen}
+      post={
+        shareOpen
+          ? ({
+              id: post.id,
+              title: post.title,
+              content: post.content,
+              videoUrl: post.videoUrls?.[0] ?? null,
+              board_type: post.boardType,
+              board_id: post.boardId,
+            } satisfies ShareSheetPost)
+          : null
+      }
+      onClose={() => setShareOpen(false)}
+    />
+    </>
   );
 }
 

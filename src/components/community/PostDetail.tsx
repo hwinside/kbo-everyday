@@ -16,7 +16,7 @@ import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import DMButton from "@/components/ui/DMButton";
 import GifPicker, { isGifComment } from "@/components/community/GifPicker";
 import LoginSheet from "@/components/auth/LoginSheet";
-import { sharePost } from "@/lib/utils/post-share";
+import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
 
 interface PostDetailProps {
   postId: number;
@@ -34,8 +34,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   const [replyTo, setReplyTo] = useState<{ id: number; nickname: string } | null>(null);
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
-  const [shareCopied, setShareCopied] = useState(false);
-  const shareResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
 
   // Chat-layout keyboard handling:
   // 1) Toggle body.kbd-open based on composer focus (TabBar hidden via CSS).
@@ -145,12 +144,6 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
     };
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (shareResetTimerRef.current) clearTimeout(shareResetTimerRef.current);
-    };
-  }, []);
-
   // 게시글 메뉴/편집 상태
   const [postMenuOpen, setPostMenuOpen] = useState(false);
   const [postEditing, setPostEditing] = useState(false);
@@ -169,18 +162,6 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   if (!post) return <div className="flex items-center justify-center h-screen text-text-secondary">게시글을 찾을 수 없습니다</div>;
 
   const isPostMine = !!user && post.author_id === user.id;
-
-  async function handleSharePost() {
-    try {
-      const result = await sharePost(post!);
-      if (result === "cancelled") return;
-      setShareCopied(true);
-      if (shareResetTimerRef.current) clearTimeout(shareResetTimerRef.current);
-      shareResetTimerRef.current = setTimeout(() => setShareCopied(false), 1500);
-    } catch {
-      alert("공유 링크 복사에 실패했어요");
-    }
-  }
 
   function startPostEdit() {
     setPostMenuOpen(false);
@@ -379,12 +360,8 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
             <ChevronLeft size={24} className="text-text-secondary" />
           </button>
           <span className="text-lg font-semibold text-text-primary flex-1">{headerTitle}</span>
-          <button onClick={handleSharePost} aria-label="게시글 공유">
-            {shareCopied ? (
-              <Check size={20} className="text-accent" />
-            ) : (
-              <Share2 size={20} className="text-text-tertiary" />
-            )}
+          <button onClick={() => setShareOpen(true)} aria-label="게시글 공유">
+            <Share2 size={20} className="text-text-tertiary" />
           </button>
         </div>
       </div>
@@ -784,6 +761,22 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
       </div>
       <ReportSheet isOpen={showReport} onClose={() => setShowReport(false)} targetType={reportTarget.type} targetId={reportTarget.id} />
       {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
+      <ShareSheet
+        isOpen={shareOpen}
+        post={
+          shareOpen
+            ? ({
+                id: post.id,
+                title: post.title,
+                content: post.content,
+                videoUrl: post.video_urls?.[0] ?? null,
+                board_type: post.board_type,
+                board_id: post.board_id,
+              } satisfies ShareSheetPost)
+            : null
+        }
+        onClose={() => setShareOpen(false)}
+      />
     </div>
   );
 }
