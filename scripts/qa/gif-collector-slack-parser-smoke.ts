@@ -128,6 +128,22 @@ const cases: Case[] = [
     },
   },
   {
+    name: "Slack emoji shortcode: baseball → 유니코드 이모지",
+    text: "https://www.threads.com/@yang_eui_ji/post/abc\n두산 양의지\n화제입니다.:baseball: 곡 후렴",
+    expect: {
+      ok: true,
+      value: { body: "화제입니다.⚾ 곡 후렴" },
+    },
+  },
+  {
+    name: "Slack emoji shortcode + variation selector: :baseball:️ → ⚾",
+    text: "팀: 두산\n선수: 양의지\n링크: https://www.threads.com/@yang_eui_ji/post/abc\n본문: 화제입니다.:baseball:️ 곡 후렴",
+    expect: {
+      ok: true,
+      value: { body: "화제입니다.⚾ 곡 후렴" },
+    },
+  },
+  {
     name: "외국인 풀네임 (공백 포함)",
     text: "https://example.com/gif\nLG 라클란 웰스\n호투",
     expect: {

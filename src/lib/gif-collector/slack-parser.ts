@@ -45,6 +45,58 @@ function decodeHtmlEntities(s: string): string {
     .replace(/&#39;/g, "'");
 }
 
+const SLACK_EMOJI_SHORTCODES: Record<string, string> = {
+  baseball: "⚾",
+  basketball: "🏀",
+  soccer: "⚽",
+  football: "🏈",
+  tennis: "🎾",
+  volleyball: "🏐",
+  golf: "⛳",
+  tada: "🎉",
+  fire: "🔥",
+  heart: "❤️",
+  red_heart: "❤️",
+  orange_heart: "🧡",
+  yellow_heart: "💛",
+  green_heart: "💚",
+  blue_heart: "💙",
+  purple_heart: "💜",
+  black_heart: "🖤",
+  white_heart: "🤍",
+  clap: "👏",
+  raised_hands: "🙌",
+  muscle: "💪",
+  thumbs_up: "👍",
+  thumbsup: "👍",
+  eyes: "👀",
+  joy: "😂",
+  laughing: "😆",
+  smile: "😄",
+  wink: "😉",
+  sob: "😭",
+  pray: "🙏",
+  star: "⭐",
+  star2: "🌟",
+  trophy: "🏆",
+  crown: "👑",
+  checkered_flag: "🏁",
+  dart: "🎯",
+  boom: "💥",
+  collision: "💥",
+  sweat_drops: "💦",
+  100: "💯",
+  lightning: "⚡",
+  zap: "⚡",
+};
+
+function decodeSlackEmojiShortcodes(s: string): string {
+  return s.replace(/:([a-z0-9_+-]+):\uFE0F?/gi, (match, rawName: string) => {
+    const emoji = SLACK_EMOJI_SHORTCODES[rawName.toLowerCase()];
+    return emoji ?? match;
+  });
+}
+
 function extractFirstUrl(s: string): string | null {
   const slack = s.match(SLACK_LINK_RE);
   if (slack) return decodeHtmlEntities(slack[1]);
@@ -80,6 +132,7 @@ function tryKvParse(text: string): ParseResult | null {
         inline.length === 0 && rest.length > 0
           ? rest
           : inline + (rest.length > 0 ? "\n" + rest : "");
+      meta.body = decodeSlackEmojiShortcodes(meta.body);
       bodyStartIdx = i;
       break;
     }
@@ -143,7 +196,7 @@ function tryMultilineParse(text: string): ParseResult {
 
   // 본문은 메타 라인 다음부터 원본 그대로 (leading 빈 줄만 제거해 가독성 확보).
   const bodyRaw = lines.slice(metaLineIdx + 1).join("\n");
-  const body = bodyRaw.replace(/^\n+/, "");
+  const body = decodeSlackEmojiShortcodes(bodyRaw.replace(/^\n+/, ""));
 
   return { ok: true, value: { url, teamName, playerName, body } };
 }
