@@ -10,6 +10,7 @@ import {
   extractInstagramVideoUrls,
   inferMediaExt,
 } from "@/lib/gif-collector/og-media";
+import { normalizeQueueTextForPost } from "@/lib/gif-collector/text-normalizer";
 
 let pass = 0;
 let fail = 0;
@@ -214,6 +215,19 @@ check("content-type video/mp4 → mp4", inferMediaExt("video/mp4", "https://x.co
 check("content-type image/jpeg → jpg", inferMediaExt("image/jpeg", "https://x.com/a") === "jpg");
 check("content-type 없을 때 URL 확장자 fallback (.gif)", inferMediaExt("application/octet-stream", "https://x.com/a.gif?q=1") === "gif");
 check("content-type 없고 URL도 확장자 없으면 bin", inferMediaExt("application/octet-stream", "https://x.com/a") === "bin");
+
+{
+  const r = normalizeQueueTextForPost({
+    source_title: "화제입니다.:baseball:️ 곡 후렴",
+    source_content: "본문에도 :fire: 남음",
+    matched_board_id: "76232",
+  });
+  check(
+    "queue source_title/source_content Slack emoji shortcode 디코드",
+    r.title === "화제입니다.⚾ 곡 후렴" && r.sourceContent === "본문에도 🔥 남음",
+    `got ${JSON.stringify(r)}`,
+  );
+}
 
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

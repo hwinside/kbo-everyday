@@ -21,6 +21,7 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { extractMediaList, extractInstagramVideoUrls, inferMediaExt, type OgMedia } from "./og-media";
 import { appendAttribution } from "./attribution";
+import { normalizeQueueTextForPost } from "./text-normalizer";
 import playersRoster from "@/lib/constants/players-roster.json";
 import type { RosterPlayer } from "@/types/api";
 import { getTeamBySlug } from "@/lib/constants/teams";
@@ -269,14 +270,15 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
 
   // 출처 자동 표기 — 운영자가 본문에 출처/URL을 직접 안 적었으면 source_url 기반으로 append.
   // "(출처: 인스타 @handle)\n원문URL" — URL은 LinkPreview가 클릭 카드로 렌더.
-  const content = appendAttribution(row.source_content ?? "", row.source_url, sourceHtml);
+  const text = normalizeQueueTextForPost(row);
+  const content = appendAttribution(text.sourceContent, row.source_url, sourceHtml);
 
   const postInsert: Record<string, unknown> = {
     author_id: BOT_USER_ID,
     board_type: row.matched_board_type,
     board_id: row.matched_board_id,
     content_type: "photo",
-    title: row.source_title || `${row.matched_board_id} 움짤`,
+    title: text.title,
     content,
     author_team_id_snapshot: authorTeamIdSnapshot,
   };
