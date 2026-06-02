@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, MoreHorizontal, Volume2, VolumeX } from "lucide-react";
+import { MessageCircle, MoreHorizontal, Share2, Volume2, VolumeX } from "lucide-react";
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import { getTeamById, getTeamBySlug, getTeamBgColor, type TeamData } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
@@ -22,6 +22,7 @@ import type { Post } from "@/lib/supabase/usePosts";
 import { deletePost } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import type { CommunitySourceLabel } from "@/lib/utils/community-board";
+import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
 import CommentSheet from "./CommentSheet";
 import LinkPreview from "./LinkPreview";
 
@@ -680,6 +681,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   // 게시글 메뉴 / 삭제 상태
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
   const [deletedIds, setDeletedIds] = useState<Set<number>>(new Set());
+  const [shareTarget, setShareTarget] = useState<ShareSheetPost | null>(null);
   // 줌 활성 post id — post container의 overflow-hidden을 풀어 fixed overlay가 viewport까지 확장
   const [zoomedPostId, setZoomedPostId] = useState<number | null>(null);
 
@@ -698,6 +700,17 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
     setCommentPostId(post.id);
     setCommentTeamId(post.team_id ?? null);
   };
+
+  const handleShare = useCallback((post: Post) => {
+    setShareTarget({
+      id: post.id,
+      title: post.title,
+      content: post.content,
+      videoUrl: post.video_urls?.[0] ?? null,
+      board_type: post.board_type,
+      board_id: post.board_id,
+    });
+  }, []);
 
   const handleLike = (postId: number) => {
     // controlled 모드에선 부모가 상태를 소유 → 내부 Set 건드리지 않고 onLike에 위임.
@@ -922,6 +935,17 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   <MessageCircle size={20} />
                   <span>{post.comment_count + (commentDeltas[post.id] ?? 0)}</span>
                 </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleShare(post);
+                  }}
+                  className="ml-auto flex items-center gap-1 text-base text-text-secondary"
+                  aria-label="게시글 공유"
+                >
+                  <Share2 size={20} />
+                  <span className="sr-only">공유</span>
+                </button>
               </div>
 
               {/* Caption — 미디어 카드에만 (텍스트 카드는 본문이 카드 자체).
@@ -962,6 +986,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
           }}
         />
       )}
+      <ShareSheet isOpen={shareTarget !== null} post={shareTarget} onClose={() => setShareTarget(null)} />
     </div>
   );
 }
