@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, MoreHorizontal, Volume2, VolumeX } from "lucide-react";
+import { Check, MessageCircle, MoreHorizontal, Share2, Volume2, VolumeX } from "lucide-react";
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import { getTeamById, getTeamBySlug, getTeamBgColor, type TeamData } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
@@ -22,6 +22,7 @@ import type { Post } from "@/lib/supabase/usePosts";
 import { deletePost } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import type { CommunitySourceLabel } from "@/lib/utils/community-board";
+import { sharePost } from "@/lib/utils/post-share";
 import CommentSheet from "./CommentSheet";
 import LinkPreview from "./LinkPreview";
 
@@ -680,8 +681,16 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   // 게시글 메뉴 / 삭제 상태
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
   const [deletedIds, setDeletedIds] = useState<Set<number>>(new Set());
+  const [sharedPostId, setSharedPostId] = useState<number | null>(null);
+  const shareResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 줌 활성 post id — post container의 overflow-hidden을 풀어 fixed overlay가 viewport까지 확장
   const [zoomedPostId, setZoomedPostId] = useState<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (shareResetTimerRef.current) clearTimeout(shareResetTimerRef.current);
+    };
+  }, []);
 
   const handleDelete = useCallback(async (postId: number) => {
     setMenuOpenId(null);
@@ -698,6 +707,18 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
     setCommentPostId(post.id);
     setCommentTeamId(post.team_id ?? null);
   };
+
+  const handleShare = useCallback(async (post: Post) => {
+    try {
+      const result = await sharePost(post);
+      if (result === "cancelled") return;
+      setSharedPostId(post.id);
+      if (shareResetTimerRef.current) clearTimeout(shareResetTimerRef.current);
+      shareResetTimerRef.current = setTimeout(() => setSharedPostId(null), 1500);
+    } catch {
+      alert("공유 링크 복사에 실패했어요");
+    }
+  }, []);
 
   const handleLike = (postId: number) => {
     // controlled 모드에선 부모가 상태를 소유 → 내부 Set 건드리지 않고 onLike에 위임.
@@ -921,6 +942,17 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 >
                   <MessageCircle size={20} />
                   <span>{post.comment_count + (commentDeltas[post.id] ?? 0)}</span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleShare(post);
+                  }}
+                  className="ml-auto flex items-center gap-1 text-base text-text-secondary"
+                  aria-label="게시글 공유"
+                >
+                  {sharedPostId === post.id ? <Check size={20} className="text-accent" /> : <Share2 size={20} />}
+                  <span className="sr-only">공유</span>
                 </button>
               </div>
 
