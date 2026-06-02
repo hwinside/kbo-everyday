@@ -90,7 +90,7 @@ const SLACK_EMOJI_SHORTCODES: Record<string, string> = {
   zap: "⚡",
 };
 
-function decodeSlackEmojiShortcodes(s: string): string {
+export function decodeSlackEmojiShortcodes(s: string): string {
   return s.replace(/:([a-z0-9_+-]+):\uFE0F?/gi, (match, rawName: string) => {
     const emoji = SLACK_EMOJI_SHORTCODES[rawName.toLowerCase()];
     return emoji ?? match;
