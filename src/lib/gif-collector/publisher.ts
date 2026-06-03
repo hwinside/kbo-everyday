@@ -19,7 +19,7 @@
  */
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { extractMediaList, extractInstagramVideoUrls, inferMediaExt, type OgMedia } from "./og-media";
+import { extractMediaList, extractInstagramVideoUrls, hasVideoMedia, inferMediaExt, type OgMedia } from "./og-media";
 import { appendAttribution } from "./attribution";
 import { normalizeQueueTextForPost } from "./text-normalizer";
 import playersRoster from "@/lib/constants/players-roster.json";
@@ -195,6 +195,12 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
   }
   if (mediaList.length === 0) {
     return rejectAndReturn(queueId, "media not found (og:video / og:image 모두 없음)");
+  }
+  if (!hasVideoMedia(mediaList)) {
+    return rejectAndReturn(
+      queueId,
+      "video media not found; thumbnail-only image fallback is disabled for gif collector publishing",
+    );
   }
 
   let refererOrigin: string;

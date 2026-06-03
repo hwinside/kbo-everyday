@@ -111,6 +111,10 @@ export function extractOgMedia(html: string): OgMedia | null {
   return extractMediaList(html, 1)[0] ?? null;
 }
 
+export function hasVideoMedia(media: OgMedia[]): boolean {
+  return media.some((m) => m.type === "video");
+}
+
 // JSON 문자열 안에 이스케이프된 URL을 원형으로 복원.
 // contextJSON은 이중 인코딩이라 백슬래시가 여러 개 붙을 수 있어(\/ , \\/ ...) 백슬래시 런을 포괄 처리한다.
 function unescapeJsonUrl(raw: string): string {

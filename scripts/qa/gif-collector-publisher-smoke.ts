@@ -8,6 +8,7 @@ import {
   extractMediaList,
   extractOgMedia,
   extractInstagramVideoUrls,
+  hasVideoMedia,
   inferMediaExt,
 } from "@/lib/gif-collector/og-media";
 import { normalizeQueueTextForPost } from "@/lib/gif-collector/text-normalizer";
@@ -139,6 +140,15 @@ function check(name: string, ok: boolean, detail?: string): void {
   const html = `<meta property="og:image" content="https://cdn.example.com/only.gif">`;
   const r = extractMediaList(html, 3);
   check("비디오 0건이면 og:image fallback (단일)", r.length === 1 && r[0].type === "image", `got ${JSON.stringify(r)}`);
+}
+{
+  const imageOnly = extractMediaList(`<meta property="og:image" content="https://cdn.example.com/thumb.jpg">`, 3);
+  const video = extractMediaList(`<meta property="og:video" content="https://cdn.example.com/v.mp4">`, 3);
+  check(
+    "publisher gate: image-only fallback은 추출되지만 발행 가능 video로 보지 않음",
+    !hasVideoMedia(imageOnly) && hasVideoMedia(video),
+    `got imageOnly=${JSON.stringify(imageOnly)} video=${JSON.stringify(video)}`,
+  );
 }
 {
   const r = extractMediaList(`<html></html>`, 3);
