@@ -3,6 +3,7 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { TEAMS } from "@/lib/constants/teams";
 import { fetchStandings } from "@/lib/crawler/kbo-api";
 import { computeSeriesSnapshot, serializeSeriesSnapshot } from "@/lib/series/snapshot";
+import { loserClaimedWin } from "@/lib/game-summary/winner-check";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -465,18 +466,14 @@ export async function POST(req: NextRequest) {
           gf?.late || "",
           summary.standingsImpact || "",
         ].join(" ");
-        const winKws = ["승리", "신승", "대승", "완승", "역전승", "끝내기", "이기", "꺾", "잡았", "제압", "대파", "격파", "등극", "위닝시리즈"];
-        // 패팀이 목적격 조사(에/를/을/한테/에게) 뒤에 승리 키워드가 오면 패팀은 목적어(오탐 방지)
-        // 예: "KIA, 한화에 역전승" = KIA가 이김 (한화는 진 팀)
-        const loserClaimedWin = winKws.some(kw => {
-          const re = new RegExp(`${actualLoser}(?!에|를|을|한테|에게)[^.!?]{0,20}${kw}`);
-          return re.test(fullText);
-        });
+        // 패팀을 승자로 서술했는지 검증 (winner-check 헬퍼).
+        // "롯데, KIA 꺾고 승리"처럼 승팀이 패팀을 타동사로 제압하는 정상 헤드라인은 통과.
+        const loserWrong = loserClaimedWin(fullText, actualWinner, actualLoser);
         // winner 필드 검증
         const llmWinner = summary.winner;
         const winnerFieldWrong = llmWinner && llmWinner !== "무승부" && llmWinner !== actualWinner;
 
-        if (loserClaimedWin || winnerFieldWrong) {
+        if (loserWrong || winnerFieldWrong) {
           console.error(`Winner mismatch (attempt ${attempt}): actual=${actualWinner}, headline="${summary.headline}", llmWinner=${llmWinner}`);
           winnerMismatch = true;
         }
