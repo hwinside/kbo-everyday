@@ -33,6 +33,12 @@ const cases: Case[] = [
   { desc: "패팀이 주어로 끝내기 승리 (KIA 패배인데 승자 서술)", text: "KIA, 짜릿한 끝내기 승리", winner: "롯데", loser: "KIA", expect: true },
   { desc: "패팀 완승 서술 (두산 패배)", text: "두산 완승으로 분위기 반전", winner: "LG", loser: "두산", expect: true },
   { desc: "패팀 단독 승리 서술", text: "한화 대승", winner: "삼성", loser: "한화", expect: true },
+
+  // === 삼순 리뷰 보강: 어순 뒤집힌 타동사 오답 (패팀=주어, 승팀=목적어) ===
+  { desc: "어순 역전 — KIA, 롯데 꺾고 승리 (실승자 롯데인데 KIA가 꺾었다고 서술)", text: "KIA, 롯데 꺾고 승리", winner: "롯데", loser: "KIA", expect: true },
+  { desc: "어순 역전 — 두산, 삼성 제압 (실승자 삼성)", text: "두산, 삼성 제압하며 위닝시리즈", winner: "삼성", loser: "두산", expect: true },
+  { desc: "조사 역전 — 롯데를 KIA가 대파 (실승자 롯데)", text: "롯데를 KIA가 대파한 경기", winner: "롯데", loser: "KIA", expect: true },
+  { desc: "winner 필드 정상이어도 헤드라인 오답은 reject (NC, LG 격파 / 실승자 LG)", text: "NC, LG 격파로 단독 선두", winner: "LG", loser: "NC", expect: true },
 ];
 
 let pass = 0;
