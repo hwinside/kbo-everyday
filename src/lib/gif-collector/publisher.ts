@@ -197,6 +197,15 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     return rejectAndReturn(queueId, "media not found (og:video / og:image 모두 없음)");
   }
 
+  // 움짤콜렉터 — 영상만 발행. 영상을 못 뽑으면 썸네일(og:image) 폴백 없이 철회한다.
+  const videoMedia = mediaList.filter((m) => m.type === "video");
+  if (videoMedia.length === 0) {
+    return rejectAndReturn(
+      queueId,
+      "영상 추출 실패 — 움짤콜렉터는 영상만 등록합니다 (썸네일/사진 미등록).",
+    );
+  }
+
   let refererOrigin: string;
   try {
     refererOrigin = new URL(row.source_url).origin;
@@ -210,8 +219,8 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     data: NonNullable<Awaited<ReturnType<typeof downloadMedia>>>;
   }> = [];
   const mediaErrors: string[] = [];
-  for (let i = 0; i < mediaList.length; i++) {
-    const og = mediaList[i];
+  for (let i = 0; i < videoMedia.length; i++) {
+    const og = videoMedia[i];
     let data: Awaited<ReturnType<typeof downloadMedia>>;
     try {
       data = await downloadMedia(og.url, refererOrigin);
@@ -264,9 +273,8 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
   }
 
   // content_type='photo' 고정 — 선수 사진탭/전체 사진탭이 'photo' 필터링하기 때문.
-  // 미디어는 og.type에 따라 video_urls / image_urls 두 배열로 분기 (둘 다 비어있지 않다면 모두 채움).
-  const videoUrls = uploaded.filter((u) => u.og.type === "video").map((u) => u.publicUrl);
-  const imageUrls = uploaded.filter((u) => u.og.type === "image").map((u) => u.publicUrl);
+  // 움짤콜렉터는 영상만 발행 (위 videoMedia 게이트) → 업로드된 미디어는 전부 video_urls.
+  const videoUrls = uploaded.map((u) => u.publicUrl);
 
   // 출처 자동 표기 — 운영자가 본문에 출처/URL을 직접 안 적었으면 source_url 기반으로 append.
   // "(출처: 인스타 @handle)\n원문URL" — URL은 LinkPreview가 클릭 카드로 렌더.
@@ -282,8 +290,7 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     content,
     author_team_id_snapshot: authorTeamIdSnapshot,
   };
-  if (videoUrls.length > 0) postInsert.video_urls = videoUrls;
-  if (imageUrls.length > 0) postInsert.image_urls = imageUrls;
+  postInsert.video_urls = videoUrls;
 
   const { data: post, error: insErr } = await supabaseAdmin
     .from("posts")
@@ -304,7 +311,7 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     .from("gif_collector_queue")
     .update({
       match_status: "auto_posted",
-      original_media_urls: mediaList.map((m) => m.url),
+      original_media_urls: videoMedia.map((m) => m.url),
       posted_post_id: post.id,
       posted_at: new Date().toISOString(),
     })
@@ -316,7 +323,7 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
       publicUrl: uploaded[0].publicUrl,
       publicUrls: uploaded.map((u) => u.publicUrl),
       partial: true,
-      attempted: mediaList.length,
+      attempted: videoMedia.length,
       succeeded: uploaded.length,
       mediaErrors: mediaErrors.length > 0 ? mediaErrors : undefined,
       error: `queue update failed (post created): ${updErr.message}`,

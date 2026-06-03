@@ -139,6 +139,13 @@ function check(name: string, ok: boolean, detail?: string): void {
   const html = `<meta property="og:image" content="https://cdn.example.com/only.gif">`;
   const r = extractMediaList(html, 3);
   check("비디오 0건이면 og:image fallback (단일)", r.length === 1 && r[0].type === "image", `got ${JSON.stringify(r)}`);
+  // 움짤콜렉터 video-only 게이트: publisher가 videoMedia(=type==='video')만 발행하고,
+  // 영상이 0건이면 썸네일 폴백 없이 철회한다. 그 reject 트리거 조건을 여기서 못박는다.
+  check(
+    "video-only 게이트: 이미지만 추출되면 영상 0건 → 발행 철회 대상",
+    r.filter((m) => m.type === "video").length === 0,
+    `got ${JSON.stringify(r)}`,
+  );
 }
 {
   const r = extractMediaList(`<html></html>`, 3);
