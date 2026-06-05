@@ -20,10 +20,17 @@ export const WIN_KEYWORDS = [
 // 타동사 키워드: "A가 B를 ~다" 구조. 주어=승자, 목적어=패자여야 정상.
 const TRANSITIVE_KEYWORDS = ["이기", "꺾", "잡았", "제압", "대파", "격파"];
 
-// 팀명 뒤에 이 조사가 붙으면 목적어/부사어 → 승자가 아님
-const OBJECT_PARTICLE_RE = /^(에게|한테|에|를|을)/;
+// 팀명 뒤에 이 조사가 붙으면 목적어/부사어/수식어 → 행위 주어가 아님.
+// 의(소유격): "롯데의 추격"처럼 팀이 다음 명사를 수식할 뿐 동사의 주어가 아님.
+//   (2026-06-05: "롯데의 추격을 꺾고" 같은 정상 서술에서 '롯데의'를 주어로 오인해
+//    패팀이 이겼다고 false reject 하던 문제 차단.)
+const OBJECT_PARTICLE_RE = /^(에게|한테|에|를|을|의)/;
 
-const WINDOW = 25; // 승리 키워드 앞에서 살펴볼 같은 문장 최대 길이
+// 승리 키워드 앞 검사 범위는 '같은 문장(절) 전체'다. 고정 글자수 윈도를 쓰면
+// "한화, 류현진 호투 페라자 맹타 앞세워 롯데 9-2 대파"처럼 승팀(한화)이 문두에 있고
+// 키워드가 멀리 있는 정상 헤드라인에서 승팀을 못 보고 false reject 한다 (2026-06-05).
+// 헤드라인은 단문이라 같은 절 전체를 봐도 안전하다.
+const SENTENCE_BREAK_RE = /[.!?…]/g;
 
 // seg에서 team이 목적격 조사 없이(=주어로) 등장하는지.
 function appearsAsSubject(seg: string, team: string): boolean {
@@ -71,9 +78,10 @@ export function loserClaimedWin(fullText: string, winner: string, loser: string)
     const transitive = TRANSITIVE_KEYWORDS.includes(kw);
     let idx = fullText.indexOf(kw);
     while (idx !== -1) {
-      let seg = fullText.slice(Math.max(0, idx - WINDOW), idx);
-      // 문장 경계를 넘지 않도록 마지막 종결부호 뒤로 자른다.
-      const brk = Math.max(seg.lastIndexOf("."), seg.lastIndexOf("!"), seg.lastIndexOf("?"));
+      let seg = fullText.slice(0, idx);
+      // 키워드가 속한 같은 절만 보도록 마지막 종결부호(.!?…) 뒤로 자른다.
+      let brk = -1;
+      for (const m of seg.matchAll(SENTENCE_BREAK_RE)) brk = m.index;
       if (brk !== -1) seg = seg.slice(brk + 1);
 
       if (transitive) {
