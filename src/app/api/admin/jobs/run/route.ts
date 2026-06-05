@@ -23,6 +23,11 @@ const GITHUB_WORKFLOW_JOBS: Record<
     repo: "kbo-everyday",
     workflow: "update-roster-stats.yml",
   },
+  "hero-shot-batch": {
+    owner: "hwinside",
+    repo: "kbo-everyday",
+    workflow: "hero-shot-batch.yml",
+  },
 };
 
 const ALL_JOBS = new Set([...Object.keys(JOB_PATHS), ...Object.keys(GITHUB_WORKFLOW_JOBS)]);
