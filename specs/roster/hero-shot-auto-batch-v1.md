@@ -13,10 +13,14 @@
 
 ## 2. 목표 (Goal-Driven 성공 기준)
 
-1. 히어로 없는 roster 선수를 자동 탐지 → 검증 통과분만 cutout 생성 → allowlist 추가 → **PR 자동 생성**.
+1. 히어로 없는 roster 선수를 자동 탐지 → 검증 통과분만 cutout 생성 → allowlist 추가 → **PR 자동 생성 + 자동 머지**.
 2. **매핑 오류 0**: 잘못된 사람/깨진 이미지가 히어로로 들어가는 것을 코드로 차단. (검증 게이트 통과 못 하면 skip + 플래그)
 3. **맥미니 의존 0**: GitHub Action에서 완결.
-4. 자동 머지 금지 — 삼순 리뷰 + 하린아빠 승인 게이트 유지.
+4. **완전 무인 운영 (2026-06-05 하린아빠 명시: "내 승인 필요없이 자동으로, 일일이 승인 못함")**:
+   - 정기 배치 결과물은 **하린아빠 승인 없이 자동 머지**. 안전은 사람 승인이 아니라 *검증 3중 게이트*가 담보.
+   - 검증 통과분 → 자동 반영·자동 머지. 검증 실패/불확실 → 자동 적용 *안 함* + Slack 플래그(알림만, 액션 강제 X).
+   - **최초 빌드(배치 인프라 코드 자체)는 삼순 코드리뷰 1회** — 이건 일회성 품질 게이트(하린아빠 부담 아님). 이후 정기 배치는 무인.
+   - 핵심 안전 불변식: *검증 미통과 이미지는 절대 자동으로 prod에 나가지 않는다* (조용한 통과 금지).
 
 ### 비목표 (v1 범위 밖)
 - 기존 749명 히어로의 소급 재검증 (별도 1회성 작업으로 분리 가능).
@@ -54,7 +58,8 @@
 4. generate     PASS분만 phase2-pipeline.sh로 cutout 생성 (Nano Banana → remove.bg → face-crop → webp)
 5. verify       생성물 ↔ 앵커 재대조 (3.3) → FAIL이면 폐기+skip+flag
 6. publish      PASS분 copy-to-hero.sh로 players-hero/ 반영 + allowlist에 kboId 추가
-7. PR           브랜치 push → PR 생성 (자동 머지 X) + Slack 요약(생성 N / skip M + 사유)
+7. merge        브랜치 push → PR 생성 → CI green 확인 후 **자동 머지(squash)** + Slack 요약(생성 N / skip M + 사유)
+                skip(검증 실패/불확실) 건은 절대 머지 대상에 포함 안 됨 — 별도 플래그 알림만
 ```
 
 - 선수별 실패 격리(한 명 실패해도 배치 계속). 기존 `phase2-pipeline.sh` `set -u`(`-e` 제외) 패턴 준수.
@@ -65,8 +70,8 @@
   - `schedule`: 주 1회 (예: 매주 월 새벽). + `workflow_dispatch` 수동.
   - 추가 트리거 검토: roster 변경 PR 머지 후. v1은 주간 cron + 수동으로 시작, roster 연동은 v1.1.
   - `permissions: contents: write, pull-requests: write`.
-  - secrets: `GEMINI_API_KEY`, `REMOVE_BG_API_KEY` (GH repo secrets 등록 필요 — 하린아빠/운영).
-  - 산출물 변경 있을 때만 PR 생성(`update-roster-stats.yml`의 changes 게이트 재사용).
+  - secrets: `GEMINI_API_KEY`(=HERO 키. 기본 키 크레딧 소진 확인됨), `REMOVE_BG_API_KEY` (GH repo secrets 등록 필요 — 하린아빠/운영).
+  - 산출물 변경 있을 때만 PR 생성 후 **자동 머지**(`gh pr merge --squash --admin`, branch protection 미설정 환경). changes 게이트는 `update-roster-stats.yml` 재사용.
 - **CI 실행 가능성 (스펙 단계 검증 항목)**: cutout의 face-detect-crop 단계가 로컬 파이썬/네이티브 의존이면 CI에 설치 필요. 구현 1단계에서 face-crop 의존성 확인 후, 불가 시 대체(Gemini bbox 또는 sharp 기반 crop)로 전환.
 
 ## 6. 변경 파일 (예정)
@@ -89,6 +94,7 @@
 
 - ~~대조 엔진 Gemini Vision~~ → GO (오탐 시 face-embedding 추가)
 - ~~GitHub Action 운영~~ → GO (CI 실행성은 구현 1단계 검증)
+- ~~머지 승인 방식~~ → **완전 자동 머지 GO** (2026-06-05 하린아빠: 승인 없이 자동). 안전은 검증 게이트가 담보, 실패분만 플래그
 - 배치 주기: **주 1회** 제안 (변경 필요 시 조정).
 - 검증 임계값 0.75: 구현 후 55명 dry-run 결과 보고 튜닝.
 
