@@ -234,7 +234,19 @@ async function main() {
 
   // 어드민 모니터링: 실배치 실행을 admin_job_logs 에 기록 (dry-run 은 제외).
   // GH Action 이라 Vercel cron job-logger 를 못 쓰므로 service_role REST 로 직접 기록.
+  // CI 에서는 여기서 *열어만* 두고, 워크플로 마지막 finalize 단계가 PR/머지/QA/롤백
+  // 최종 결과까지 반영해 닫는다 (삼순 NO-GO #1). 로컬 수동 실행(비 GH Action)은
+  // finalize 단계가 없으므로 이 스크립트가 배치 결과로 직접 닫는다.
+  const inCI = Boolean(process.env.GITHUB_ACTIONS);
   const logId = dryRun ? null : await startJob("hero-shot-batch");
+  if (logId) {
+    // finalize 가 배치 throw 후에도 찾을 수 있게 즉시 파일에 기록.
+    fs.mkdirSync(WORK_DIR, { recursive: true });
+    fs.writeFileSync(path.join(WORK_DIR, "job-log-id.txt"), String(logId));
+    if (process.env.GITHUB_OUTPUT) {
+      fs.appendFileSync(process.env.GITHUB_OUTPUT, `log_id=${logId}\n`);
+    }
+  }
 
   try {
     const allowArr = JSON.parse(fs.readFileSync(ALLOWLIST, "utf8")).map(String);
@@ -275,7 +287,7 @@ async function main() {
       console.log(`\nallowlist 갱신: +${generated.length} → 총 ${sorted.length}명`);
     }
 
-    const report = { dryRun, generated, passedGate, skipped, ts: process.env.BATCH_TS || null };
+    const report = { dryRun, detected: missing.length, generated, passedGate, skipped, ts: process.env.BATCH_TS || null };
     fs.mkdirSync(WORK_DIR, { recursive: true });
     fs.writeFileSync(path.join(WORK_DIR, "report.json"), JSON.stringify(report, null, 2));
 
@@ -292,12 +304,25 @@ async function main() {
 
     // 어드민 한 줄 요약: 탐지 / 검증통과 / 생성·반영(=자동머지 대상) / 보류·플래그.
     // 보류·실패가 있으면 warning(애매한 건 알림), 전부 깔끔하면 success.
-    const summary =
-      `탐지 ${missing.length} · 검증통과 ${passedGate.length} · ` +
-      `생성·반영 ${generated.length}(PR 자동머지 대상) · 보류·플래그 ${skipped.length}`;
-    await finishJob(logId, skipped.length ? "warning" : "success", summary);
+    // CI 에서는 닫지 않고 finalize 단계에 위임(PR/머지/QA/롤백까지 반영) — 삼순 NO-GO #1.
+    if (!inCI) {
+      const summary =
+        `탐지 ${missing.length} · 검증통과 ${passedGate.length} · ` +
+        `생성·반영 ${generated.length}(PR 자동머지 대상) · 보류·플래그 ${skipped.length}`;
+      await finishJob(logId, skipped.length ? "warning" : "success", summary);
+    }
   } catch (e) {
-    await finishJob(logId, "error", `배치 실패: ${e.message}`, e.stack?.slice(0, 800));
+    // 배치 throw — finalize 가 BATCH_OUTCOME=failure 로 닫도록 사유를 report 에 남긴다.
+    try {
+      fs.mkdirSync(WORK_DIR, { recursive: true });
+      const reportPath = path.join(WORK_DIR, "report.json");
+      const prev = fs.existsSync(reportPath) ? JSON.parse(fs.readFileSync(reportPath, "utf8")) : {};
+      fs.writeFileSync(reportPath, JSON.stringify({ ...prev, batchError: `배치 실패: ${e.message}` }, null, 2));
+    } catch {
+      /* report 기록 실패는 무시 */
+    }
+    // 로컬(비 CI)은 finalize 단계가 없으므로 여기서 직접 error 로 닫는다.
+    if (!inCI) await finishJob(logId, "error", `배치 실패: ${e.message}`, e.stack?.slice(0, 800));
     throw e;
   }
 }

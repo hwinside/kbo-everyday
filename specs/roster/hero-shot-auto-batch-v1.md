@@ -71,7 +71,7 @@
 |---|---|---|---|
 | cross-check (maxSim) | ≥0.85 → 진행 | 0.5~0.85 → skip + Slack 알림 | <0.5 → skip + Slack 알림 |
 | post-gen 재검증 | ≥0.85 → 반영 | — | <0.85 → 산출물 폐기 + skip |
-| post-deploy QA | 200 + 재대조 OK → 유지 | — | 실패 → **allowlist 자동 롤백 PR** |
+| post-deploy QA | asset 200 polling(timeout까지) 후 재대조 OK → 유지 | 전파 지연 → polling 대기(롤백 X) | timeout 내 미전파 / 재대조 실패 → **allowlist 자동 롤백 PR** |
 
 핵심 불변식: *세 게이트 중 하나라도 통과 못 하면 그 선수는 자동으로 prod 노출되지 않는다.* 자동 머지는 "통과" 경로에만 적용.
 
@@ -83,7 +83,8 @@
   - `schedule`: 주 1회 (예: 매주 월 새벽). + `workflow_dispatch` 수동.
   - 추가 트리거 검토: roster 변경 PR 머지 후. v1은 주간 cron + 수동으로 시작, roster 연동은 v1.1.
   - `permissions: contents: write, pull-requests: write`.
-  - secrets (CI 단일 고정 이름): `GEMINI_API_KEY_HERO`(기본 `GEMINI_API_KEY` 프로젝트 크레딧 소진 확인됨 → HERO 키로 고정. 코드는 `gemini-key.mjs` 한 곳에서만 읽음), `NAVER_CLIENT_ID`/`NAVER_CLIENT_SECRET`, `REMOVE_BG_API_KEY` (GH repo secrets 등록 필요 — 하린아빠/운영).
+  - secrets (CI 단일 고정 이름): `GEMINI_API_KEY_HERO`(기본 `GEMINI_API_KEY` 프로젝트 크레딧 소진 확인됨 → HERO 키로 고정. 코드는 `gemini-key.mjs` 한 곳에서만 읽음), `NAVER_CLIENT_ID`/`NAVER_CLIENT_SECRET`, `REMOVE_BG_API_KEY`, **`NEXT_PUBLIC_SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`(어드민 모니터링 필수 — preflight 에서 누락 시 실패 처리, 조용한 no-op 금지)** (GH repo secrets 등록 필요 — 하린아빠/운영).
+- **어드민 모니터링(필수)**: 배치는 `admin_job_logs` 에 service_role REST 로 직접 기록 → `/admin/jobs` 카드·히스토리 노출. job log 는 배치 단계가 아니라 **워크플로 최종 결과(PR/머지/QA/롤백)까지** 반영해 닫는다(`finalize-job-log.mjs`, `if: always()`). 뒤 단계 실패가 success 로 잘못 남지 않음.
   - 산출물 변경 있을 때만 PR 생성 후 **자동 머지**(`gh pr merge --squash --admin`, branch protection 미설정 환경). changes 게이트는 `update-roster-stats.yml` 재사용.
 - **CI 실행 가능성 (조사 완료 2026-06-05)**: `phase2-pipeline.sh` 의 cutout 생성은 **그대로 CI 불가** — 두 의존성 확인:
   - 🔴 이미지 생성이 `uv run ~/.openclaw/workspace/skills/nano-banana-pro/scripts/generate_image.py` (맥미니 로컬 워크스페이스 스킬) 호출 → GH Action(ubuntu)에 없음.

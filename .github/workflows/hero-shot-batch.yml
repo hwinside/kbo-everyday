@@ -60,6 +60,9 @@ jobs:
           [ -z "$NAVER_CLIENT_ID" ] && missing="$missing NAVER_CLIENT_ID"
           [ -z "$NAVER_CLIENT_SECRET" ] && missing="$missing NAVER_CLIENT_SECRET"
           [ -z "$REMOVE_BG_API_KEY" ] && missing="$missing REMOVE_BG_API_KEY"
+          # 어드민 모니터링은 필수 요구사항(하린아빠) — secret 누락 시 조용한 no-op 금지.
+          [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] && missing="$missing NEXT_PUBLIC_SUPABASE_URL"
+          [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && missing="$missing SUPABASE_SERVICE_ROLE_KEY"
           if [ -n "$missing" ]; then
             echo "::error::missing secrets:$missing"
             exit 1
@@ -96,8 +99,10 @@ jobs:
         env:
           PROD_BASE: https://keubo.fan
         run: |
-          echo "배포 전파 대기(120s)..."
-          sleep 120
+          # 배포 시작 grace 후, asset 200 을 timeout 까지 polling(스크립트 내부) → 재검증.
+          # 고정 대기 단발 체크는 false rollback 위험이라 polling 으로 대체(삼순 NO-GO #3).
+          echo "배포 시작 grace(20s)..."
+          sleep 20
           git checkout main
           git pull origin main
           node scripts/hero-batch/post-deploy-qa.mjs
@@ -120,11 +125,30 @@ jobs:
             --body "post-deploy QA 실패: ${RB_IDS}. allowlist 에서 제거(히어로 미노출 → 기본 헤드샷 폴백).")
           gh pr merge "$PR_URL" --squash --admin --delete-branch
 
+      # 어드민 모니터링 마감 — 배치 단계가 아니라 *워크플로 최종 결과*(PR/머지/QA/롤백)
+      # 까지 반영해 admin_job_logs 를 닫는다 (삼순 NO-GO #1). 뒤 단계 실패가 success 로
+      # 잘못 남는 것 차단. always() 라 어떤 단계가 죽어도 반드시 닫힌다.
+      - name: Finalize admin job log
+        if: always()
+        env:
+          BATCH_OUTCOME: ${{ steps.batch.outcome }}
+          MERGE_OUTCOME: ${{ steps.merge.outcome }}
+          MERGE_PR_URL: ${{ steps.merge.outputs.pr_url }}
+          QA_OUTCOME: ${{ steps.qa.outcome }}
+          ROLLED_BACK_COUNT: ${{ steps.qa.outputs.rolled_back_count }}
+          ROLLED_BACK_IDS: ${{ steps.qa.outputs.rolled_back_ids }}
+          GENERATED_COUNT: ${{ steps.batch.outputs.generated_count }}
+          SKIPPED_COUNT: ${{ steps.batch.outputs.skipped_count }}
+        run: node scripts/hero-batch/finalize-job-log.mjs
+
       - name: Slack 요약 (best-effort)
         if: always() && env.SLACK_WEBHOOK_URL != ''
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.HERO_BATCH_SLACK_WEBHOOK }}
+          GENERATED_COUNT: ${{ steps.batch.outputs.generated_count || 0 }}
+          SKIPPED_COUNT: ${{ steps.batch.outputs.skipped_count || 0 }}
+          ROLLED_BACK_COUNT: ${{ steps.qa.outputs.rolled_back_count || 0 }}
         run: |
-          MSG="[hero-batch] 생성 ${{ steps.batch.outputs.generated_count || 0 }} / skip ${{ steps.batch.outputs.skipped_count || 0 }} / 롤백 ${{ steps.qa.outputs.rolled_back_count || 0 }}"
+          MSG="[hero-batch] 생성 ${GENERATED_COUNT} / skip ${SKIPPED_COUNT} / 롤백 ${ROLLED_BACK_COUNT}"
           curl -sS -X POST -H 'Content-type: application/json' \
             --data "{\"text\":\"$MSG\"}" "$SLACK_WEBHOOK_URL" || true

@@ -22,6 +22,38 @@ const ALLOWLIST = path.join(ROOT, "src/lib/constants/hero-approved-kboids.json")
 const SEED_DIR = path.join(ROOT, "public/players");
 const PROD_BASE = process.env.PROD_BASE || "https://keubo.fan";
 const QA_SIM = 0.85;
+// 배포/캐시 전파 대기 — 단발 체크는 false rollback 위험(삼순 NO-GO #3).
+// asset 200 을 timeout 까지 polling 한 뒤에야 동일인 재검증/롤백 판정.
+const DEPLOY_TIMEOUT_MS = Number(process.env.QA_DEPLOY_TIMEOUT_MS) || 360000; // 6분
+const POLL_INTERVAL_MS = Number(process.env.QA_POLL_INTERVAL_MS) || 15000; // 15초
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * url 이 200 으로 서빙될 때까지 polling. 성공 시 {ok:true, status, buf}.
+ * timeout 까지 한 번도 200 이 아니면 {ok:false, status} (= 진짜 미전파/실패 → 롤백).
+ */
+async function fetchUntilLive(url) {
+  const deadline = Date.now() + DEPLOY_TIMEOUT_MS;
+  let lastStatus = 0;
+  let attempt = 0;
+  while (Date.now() < deadline) {
+    attempt++;
+    try {
+      const res = await fetch(url, { headers: { "User-Agent": "kbo-hero-qa" } });
+      lastStatus = res.status;
+      if (res.ok) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        return { ok: true, status: res.status, buf, attempt };
+      }
+    } catch (e) {
+      lastStatus = `err:${e.message}`;
+    }
+    if (Date.now() + POLL_INTERVAL_MS >= deadline) break;
+    await sleep(POLL_INTERVAL_MS);
+  }
+  return { ok: false, status: lastStatus, attempt };
+}
 
 function targetIds() {
   const a = process.argv.slice(2);
@@ -47,23 +79,24 @@ async function main() {
   for (const kbo of ids) {
     const url = `${PROD_BASE}/players-hero/${kbo}.webp`;
     let reason = "";
-    try {
-      const res = await fetch(url, { headers: { "User-Agent": "kbo-hero-qa" } });
-      if (!res.ok) {
-        reason = `HTTP ${res.status}`;
-      } else {
-        const buf = Buffer.from(await res.arrayBuffer());
-        const tmp = `/tmp/hero-batch/.qa.${kbo}.webp`;
-        fs.mkdirSync(path.dirname(tmp), { recursive: true });
-        fs.writeFileSync(tmp, buf);
-        const seed = path.join(SEED_DIR, `${kbo}.jpg`);
-        if (fs.existsSync(seed)) {
+    // 1) asset 200 polling (전파 지연은 대기, timeout 까지 미전파면 진짜 실패)
+    const live = await fetchUntilLive(url);
+    if (!live.ok) {
+      reason = `미전파/HTTP ${live.status} (${Math.round(DEPLOY_TIMEOUT_MS / 1000)}s 내 200 실패, ${live.attempt}회 시도)`;
+    } else {
+      // 2) 200 확인 후에만 동일인 재검증
+      const tmp = `/tmp/hero-batch/.qa.${kbo}.webp`;
+      fs.mkdirSync(path.dirname(tmp), { recursive: true });
+      fs.writeFileSync(tmp, live.buf);
+      const seed = path.join(SEED_DIR, `${kbo}.jpg`);
+      if (fs.existsSync(seed)) {
+        try {
           const r = await verifyIdentity(seed, tmp);
           if (r.similarity < QA_SIM) reason = `재대조 sim=${r.similarity.toFixed(2)}<${QA_SIM}`;
+        } catch (e) {
+          reason = `재대조 실패: ${e.message}`;
         }
       }
-    } catch (e) {
-      reason = `fetch 실패: ${e.message}`;
     }
     if (reason) {
       console.log(`❌ ${kbo} — ${reason} → 롤백 대상`);
