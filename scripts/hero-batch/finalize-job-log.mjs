@@ -43,12 +43,19 @@ function num(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
+const IN_CI = Boolean(process.env.GITHUB_ACTIONS);
+
 async function main() {
   const logId = readLogId();
   if (!logId) {
-    // startJob 이 null (secret 누락/REST 실패) — preflight 가 secret 은 막으므로
-    // 여기 도달하면 전송 자체 실패. 닫을 로그가 없으니 종료.
-    console.error("[finalize] job-log-id 없음 — admin 로그 마감 skip");
+    // startJob 이 로그를 못 열었다는 뜻 → admin 에 기록 없음 = silent failure.
+    // CI 에서는 fatal(삼순 조건부 NO-GO), 로컬은 skip.
+    const msg = "[finalize] job-log-id 없음 — admin 로그 마감 불가";
+    if (IN_CI) {
+      console.error(msg + " (CI 필수 — 실패 처리)");
+      process.exit(1);
+    }
+    console.error(msg + " (로컬 — skip)");
     return;
   }
   const rep = readReport();
@@ -97,6 +104,6 @@ async function main() {
 
 main().catch((e) => {
   console.error("[finalize] FATAL:", e);
-  // 마감 실패가 워크플로 전체를 죽이지 않게 (best-effort).
-  process.exit(0);
+  // CI: admin 마감 실패는 silent failure 라 fatal. 로컬: best-effort 0.
+  process.exit(IN_CI ? 1 : 0);
 });
