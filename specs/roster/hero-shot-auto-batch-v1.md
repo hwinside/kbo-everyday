@@ -83,7 +83,12 @@
   - `permissions: contents: write, pull-requests: write`.
   - secrets: `GEMINI_API_KEY`(=HERO 키. 기본 키 크레딧 소진 확인됨), `REMOVE_BG_API_KEY` (GH repo secrets 등록 필요 — 하린아빠/운영).
   - 산출물 변경 있을 때만 PR 생성 후 **자동 머지**(`gh pr merge --squash --admin`, branch protection 미설정 환경). changes 게이트는 `update-roster-stats.yml` 재사용.
-- **CI 실행 가능성 (스펙 단계 검증 항목)**: cutout의 face-detect-crop 단계가 로컬 파이썬/네이티브 의존이면 CI에 설치 필요. 구현 1단계에서 face-crop 의존성 확인 후, 불가 시 대체(Gemini bbox 또는 sharp 기반 crop)로 전환.
+- **CI 실행 가능성 (조사 완료 2026-06-05)**: `phase2-pipeline.sh` 의 cutout 생성은 **그대로 CI 불가** — 두 의존성 확인:
+  - 🔴 이미지 생성이 `uv run ~/.openclaw/workspace/skills/nano-banana-pro/scripts/generate_image.py` (맥미니 로컬 워크스페이스 스킬) 호출 → GH Action(ubuntu)에 없음.
+    → **대응**: Nano Banana Pro(Gemini 이미지 API)를 *repo 내장 스크립트*(`scripts/hero-batch/generate-cutout.mjs`)로 포팅. verify-identity.mjs 와 동일한 generativelanguage API fetch 패턴 재사용 → 맥미니 의존 제거.
+  - 🟢 face-detect-crop = `python3 + opencv(cv2, haarcascade)` → CI에서 `pip install opencv-python-headless` 로 설치 가능.
+  - 🟢 remove.bg = HTTP API, cwebp = apt 설치. 둘 다 CI OK.
+  - 결론: 생성 스크립트만 repo 로 vendoring 하면 전 파이프라인 CI 완결. (구현 우선 작업)
 
 ## 6. 변경 파일 (예정)
 
