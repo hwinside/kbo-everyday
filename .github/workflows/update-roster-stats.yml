@@ -55,11 +55,15 @@ jobs:
         run: node scripts/update-player-photos.mjs
 
       - name: Validate roster SSOT
+        id: validate_roster
+        continue-on-error: true
         env:
           ROSTER_SIZE_CHANGE_ACK: "1"
         run: node scripts/validate-roster.mjs
 
       - name: Validate player identity invariant
+        id: validate_identity
+        continue-on-error: true
         run: node scripts/validate-player-identity.mjs
 
       - name: Check for changes
@@ -92,7 +96,8 @@ jobs:
 
           - Roster: ${{ steps.changes.outputs.roster_count }}명
           - 타자 스탯: ${{ steps.changes.outputs.batter_count }}명
-          - 투수 스탯: ${{ steps.changes.outputs.pitcher_count }}명"
+          - 투수 스탯: ${{ steps.changes.outputs.pitcher_count }}명
+          - roster-size-change"
 
           git push origin "$BRANCH"
 
@@ -106,7 +111,14 @@ jobs:
           | 타자 스탯 | ${{ steps.changes.outputs.batter_count }}명 |
           | 투수 스탯 | ${{ steps.changes.outputs.pitcher_count }}명 |
 
-          매일 새벽 5시(KST) 자동 크롤링 결과입니다." \
+          roster-size-change
+
+          검증 결과:
+          - Roster SSOT: ${{ steps.validate_roster.outcome }}
+          - Player identity: ${{ steps.validate_identity.outcome }}
+
+          매일 새벽 5시(KST) 자동 크롤링 결과입니다.
+          검증이 failure여도 PR은 생성합니다. 실패 상태를 확인하고 누락 선수/매핑을 보강한 뒤 머지하세요." \
             --base main \
             --head "$BRANCH")
 
@@ -115,6 +127,20 @@ jobs:
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Report validation failure after PR creation
+        if: steps.changes.outputs.changed == 'true' && (steps.validate_roster.outcome == 'failure' || steps.validate_identity.outcome == 'failure')
+        run: |
+          {
+            echo "## ❌ 자동 업데이트 검증 실패"
+            echo ""
+            echo "PR: ${{ steps.pr.outputs.pr_url }}"
+            echo "Roster SSOT: ${{ steps.validate_roster.outcome }}"
+            echo "Player identity: ${{ steps.validate_identity.outcome }}"
+            echo ""
+            echo "PR은 생성했으므로 누락 선수/매핑 보강 후 수동 검토하세요."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
 
       - name: Wait for Vercel build and report
         if: steps.changes.outputs.changed == 'true'
