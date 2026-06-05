@@ -60,7 +60,18 @@
 6. publish      PASS분 copy-to-hero.sh로 players-hero/ 반영 + allowlist에 kboId 추가
 7. merge        브랜치 push → PR 생성 → CI green 확인 후 **자동 머지(squash)** + Slack 요약(생성 N / skip M + 사유)
                 skip(검증 실패/불확실) 건은 절대 머지 대상에 포함 안 됨 — 별도 플래그 알림만
+8. post-QA      배포 반영 후 추가 선수의 prod `/players/{kbo}.webp` 200 + 앵커 재대조 샘플 QA.
+                실패분은 **allowlist에서 해당 kboId 제거하는 자동 롤백 PR 생성 → 자동 머지** + Slack 경고.
 ```
+
+### 4.1 안전 경로 정리 (삼순 NO-GO 반영 — 잘못된 이미지 자동 노출 차단)
+| 단계 | 통과 | 애매/충돌/불명확 | 실패 |
+|---|---|---|---|
+| cross-check (maxSim) | ≥0.85 → 진행 | 0.5~0.85 → skip + Slack 알림 | <0.5 → skip + Slack 알림 |
+| post-gen 재검증 | ≥0.85 → 반영 | — | <0.85 → 산출물 폐기 + skip |
+| post-deploy QA | 200 + 재대조 OK → 유지 | — | 실패 → **allowlist 자동 롤백 PR** |
+
+핵심 불변식: *세 게이트 중 하나라도 통과 못 하면 그 선수는 자동으로 prod 노출되지 않는다.* 자동 머지는 "통과" 경로에만 적용.
 
 - 선수별 실패 격리(한 명 실패해도 배치 계속). 기존 `phase2-pipeline.sh` `set -u`(`-e` 제외) 패턴 준수.
 

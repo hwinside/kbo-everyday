@@ -60,8 +60,9 @@ function guessMime(p) {
  * @param {string} anchorSrc   진실 기준(KBO 공식 헤드샷 등)
  * @param {string} candidateSrc 검증 대상(네이버 후보 / 생성 cutout 등)
  * @param {object} [opts]
- * @param {number} [opts.threshold=0.75] same 판정 임계값
- * @returns {Promise<{same:boolean, confidence:number, reason:string}>}
+ * @param {number} [opts.threshold=0.75] same 판정 임계값 (similarity 기준)
+ * @returns {Promise<{same:boolean, similarity:number, reason:string}>}
+ *   similarity = 동일 인물일 확률 (1=확실히 동일인, 0=확실히 다른 사람).
  */
 export async function verifyIdentity(anchorSrc, candidateSrc, opts = {}) {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
@@ -74,10 +75,11 @@ export async function verifyIdentity(anchorSrc, candidateSrc, opts = {}) {
 
   const prompt =
     "두 이미지는 KBO 프로야구 선수 사진입니다. " +
-    "첫 번째(기준)와 두 번째(후보)가 동일 인물인지 얼굴 특징 위주로 판정하세요. " +
-    "유니폼/배경/화질 차이는 무시하고 인물 동일성만 봅니다. " +
-    "확신이 없으면 보수적으로 낮은 confidence 를 주세요. " +
-    'JSON 만 출력: {"same": boolean, "confidence": 0~1 사이 숫자, "reason": "짧은 근거"}';
+    "첫 번째(기준)와 두 번째(후보)가 *동일 인물일 확률*을 0~1 사이 숫자(similarity)로 매기세요. " +
+    "1=확실히 같은 사람, 0=확실히 다른 사람, 0.5=불확실. " +
+    "얼굴 특징(얼굴형/눈/코/입)만 보고, 유니폼/배경/화질/포즈 차이는 무시합니다. " +
+    "후보가 단체사진/타인/로고/얼굴없음이면 낮은 similarity 를 주세요. " +
+    'JSON 만 출력: {"similarity": 0~1 사이 숫자, "reason": "짧은 근거"}';
 
   const body = {
     contents: [
@@ -118,10 +120,11 @@ export async function verifyIdentity(anchorSrc, candidateSrc, opts = {}) {
     parsed = JSON.parse(m[0]);
   }
 
-  const confidence = Number(parsed.confidence) || 0;
-  // 모델 same 과 임계값을 AND: 둘 다 만족해야 통과 (보수적)
-  const same = Boolean(parsed.same) && confidence >= threshold;
-  return { same, confidence, reason: String(parsed.reason || "") };
+  let similarity = Number(parsed.similarity);
+  if (!Number.isFinite(similarity)) similarity = 0;
+  similarity = Math.max(0, Math.min(1, similarity));
+  const same = similarity >= threshold;
+  return { same, similarity, reason: String(parsed.reason || "") };
 }
 
 // ===== 셀프테스트 (실 API 호출) =====
@@ -141,7 +144,7 @@ async function selftest() {
       const r = await verifyIdentity(c.a, c.b);
       const ok = r.same === c.expect;
       console.log(
-        `${ok ? "✅" : "❌"} ${c.name} → same=${r.same} conf=${r.confidence.toFixed(2)} (expect same=${c.expect}) :: ${r.reason}`
+        `${ok ? "✅" : "❌"} ${c.name} → same=${r.same} sim=${r.similarity.toFixed(2)} (expect same=${c.expect}) :: ${r.reason}`
       );
       if (ok) pass++;
     } catch (e) {
