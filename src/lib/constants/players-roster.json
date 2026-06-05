@@ -2888,6 +2888,14 @@
     "team": "KT"
   },
   {
+    "name": "시라카와",
+    "kboId": "AQ011",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "63",
+    "team": "KIA"
+  },
+  {
     "name": "신동건",
     "kboId": "56567",
     "teamId": 7,
