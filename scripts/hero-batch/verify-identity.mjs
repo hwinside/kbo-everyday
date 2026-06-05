@@ -16,23 +16,14 @@
  */
 
 import fs from "fs";
+import { getGeminiKey } from "./gemini-key.mjs";
 
-const GEMINI_API_KEY =
-  process.env.GEMINI_API_KEY ||
-  (() => {
-    // 로컬 실행 fallback: ~/.zshrc 에서 export GEMINI_API_KEY 추출 (CI 에선 env 로 주입)
-    try {
-      const rc = fs.readFileSync(`${process.env.HOME}/.zshrc`, "utf8");
-      const m = rc.match(/^export GEMINI_API_KEY="?([^"\n]+)"?/m);
-      return m ? m[1] : "";
-    } catch {
-      return "";
-    }
-  })();
+const GEMINI_API_KEY = getGeminiKey();
 
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
-const DEFAULT_THRESHOLD = 0.75;
+// 동일인 판정 임계값 — 전 파이프라인 단일 기준 0.85 (스펙 §4.1).
+const DEFAULT_THRESHOLD = 0.85;
 
 /** 이미지 소스(URL 또는 로컬 경로)를 { mimeType, data(base64) } 로 로드. */
 async function loadImage(src) {

@@ -36,13 +36,15 @@
 ### 3.2 독립 소스 교차검증 (네이버)
 - 선수명으로 **네이버 이미지 검색**(`"{선수명} {팀명} 야구선수"`) → 상위 후보 N장 수집.
 - **Gemini Vision 동일인 대조**: 앵커(KBO 공식 헤드샷) vs 네이버 후보 → "같은 사람인가? confidence 0~1".
-- 판정:
-  - 앵커가 KBO CDN(numericId) 직링크면 신뢰도 높음 → 네이버 대조는 *보강* (1장이라도 일치하면 통과).
-  - 앵커가 수동 URL(AQ/FP osen 등)이면 네이버 대조 **필수** → 임계값 미달 시 거부.
-- 임계값: confidence ≥ **0.75** PASS (튜닝 대상). 네이버 후보 과반이 불일치면 거부.
+- 판정 (단일 기준 — §4.1 표와 일치):
+  - 후보 한 장이 "동일인"으로 인정되는 유사도 = **0.85** 이상.
+  - **통과 조건: 0.85 이상 후보가 ≥2건 AND 서로 다른 독립 도메인(eTLD+1) ≥2곳에 분산.**
+    (오염된 동일 이미지가 1장만 일치해도 통과되던 구멍 차단 — 2026-06-05 삼순 NO-GO #2 반영)
+  - 최고 유사도 < **0.5** → 즉시 거부(seed 가 다른 사람일 의심). 그 사이는 보류(skip)+플래그.
+- 전 파이프라인이 **0.85 단일 임계값**을 쓴다(§3.3 재검증, §4.1 표 동일).
 
 ### 3.3 생성 후 재검증
-- cutout 생성(`phase2-pipeline.sh`) 후 결과 webp ↔ 앵커 Gemini Vision 동일인 대조.
+- cutout 생성(`generate-cutout.mjs`) 후 결과 webp ↔ 앵커 Gemini Vision 동일인 대조(유사도 ≥ **0.85**).
 - 생성 모델이 다른 얼굴을 만들거나 crop이 엉뚱하면 여기서 차단. 미달 시 해당 선수 산출물 폐기 + skip.
 
 ### 3.4 실패 처리
@@ -55,7 +57,7 @@
 1. detect       roster ∖ allowlist = 미보유 선수 목록
 2. anchor       각 선수 KBO 공식 헤드샷 확보 (없으면 skip+flag)
 3. cross-check  네이버 후보 수집 → Gemini Vision 앵커 대조 (3.2) → FAIL이면 skip+flag
-4. generate     PASS분만 phase2-pipeline.sh로 cutout 생성 (Nano Banana → remove.bg → face-crop → webp)
+4. generate     PASS분만 generate-cutout.mjs(Gemini 3 Pro Image, repo 내장) → remove.bg → face-crop.py → cwebp
 5. verify       생성물 ↔ 앵커 재대조 (3.3) → FAIL이면 폐기+skip+flag
 6. publish      PASS분 copy-to-hero.sh로 players-hero/ 반영 + allowlist에 kboId 추가
 7. merge        브랜치 push → PR 생성 → CI green 확인 후 **자동 머지(squash)** + Slack 요약(생성 N / skip M + 사유)
@@ -81,7 +83,7 @@
   - `schedule`: 주 1회 (예: 매주 월 새벽). + `workflow_dispatch` 수동.
   - 추가 트리거 검토: roster 변경 PR 머지 후. v1은 주간 cron + 수동으로 시작, roster 연동은 v1.1.
   - `permissions: contents: write, pull-requests: write`.
-  - secrets: `GEMINI_API_KEY`(=HERO 키. 기본 키 크레딧 소진 확인됨), `REMOVE_BG_API_KEY` (GH repo secrets 등록 필요 — 하린아빠/운영).
+  - secrets (CI 단일 고정 이름): `GEMINI_API_KEY_HERO`(기본 `GEMINI_API_KEY` 프로젝트 크레딧 소진 확인됨 → HERO 키로 고정. 코드는 `gemini-key.mjs` 한 곳에서만 읽음), `NAVER_CLIENT_ID`/`NAVER_CLIENT_SECRET`, `REMOVE_BG_API_KEY` (GH repo secrets 등록 필요 — 하린아빠/운영).
   - 산출물 변경 있을 때만 PR 생성 후 **자동 머지**(`gh pr merge --squash --admin`, branch protection 미설정 환경). changes 게이트는 `update-roster-stats.yml` 재사용.
 - **CI 실행 가능성 (조사 완료 2026-06-05)**: `phase2-pipeline.sh` 의 cutout 생성은 **그대로 CI 불가** — 두 의존성 확인:
   - 🔴 이미지 생성이 `uv run ~/.openclaw/workspace/skills/nano-banana-pro/scripts/generate_image.py` (맥미니 로컬 워크스페이스 스킬) 호출 → GH Action(ubuntu)에 없음.

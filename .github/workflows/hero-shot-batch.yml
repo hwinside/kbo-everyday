@@ -1,0 +1,130 @@
+name: Hero Shot Auto Batch
+
+# 히어로샷 없는 roster 선수를 자동 탐지 → 매핑검증 3중 게이트 통과분만 cutout 생성
+# → allowlist 반영 → PR 자동 생성·자동 머지 → 배포 후 QA → 실패분 자동 롤백.
+# 완전 무인 운영 (2026-06-05 하린아빠: 승인 없이 자동). 안전은 검증 게이트가 담보.
+# 맥미니 의존 0 — 생성은 generate-cutout.mjs(Gemini REST)로 포팅됨.
+
+on:
+  schedule:
+    - cron: "0 18 * * 0" # 매주 일 18:00 UTC = 월 03:00 KST
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "이번 실행에서 처리할 최대 선수 수 (크레딧 보호)"
+        required: false
+        default: "8"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: hero-shot-batch
+  cancel-in-progress: false
+
+jobs:
+  batch:
+    runs-on: ubuntu-latest
+    env:
+      GEMINI_API_KEY_HERO: ${{ secrets.GEMINI_API_KEY_HERO }}
+      NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+      NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+      REMOVE_BG_API_KEY: ${{ secrets.REMOVE_BG_API_KEY }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 어드민 모니터링용 — admin_job_logs 직접 기록 (없으면 배치는 정상, 로깅만 no-op)
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      LIMIT: ${{ github.event.inputs.limit || '8' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install image tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y webp
+          pip install --quiet opencv-python-headless pillow numpy
+
+      - name: Preflight (required secrets)
+        run: |
+          missing=""
+          [ -z "$GEMINI_API_KEY_HERO" ] && missing="$missing GEMINI_API_KEY_HERO"
+          [ -z "$NAVER_CLIENT_ID" ] && missing="$missing NAVER_CLIENT_ID"
+          [ -z "$NAVER_CLIENT_SECRET" ] && missing="$missing NAVER_CLIENT_SECRET"
+          [ -z "$REMOVE_BG_API_KEY" ] && missing="$missing REMOVE_BG_API_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::missing secrets:$missing"
+            exit 1
+          fi
+
+      - name: Unit test (cross-check decision logic)
+        run: node scripts/hero-batch/test-crosscheck.mjs
+
+      - name: Run batch
+        id: batch
+        run: node scripts/hero-batch/run-batch.mjs --limit "$LIMIT"
+
+      - name: Create + auto-merge PR (generated > 0)
+        if: steps.batch.outputs.generated_count != '0'
+        id: merge
+        run: |
+          set -e
+          BRANCH="auto/hero-shot-batch-${{ github.run_id }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add public/players-hero public/players-hero-v2/webp src/lib/constants/hero-approved-kboids.json
+          git commit -m "chore(hero): 자동 배치 — 히어로샷 ${{ steps.batch.outputs.generated_count }}명 추가 (검증 3중 게이트 통과)"
+          git push origin "$BRANCH"
+          PR_URL=$(gh pr create --base main --head "$BRANCH" \
+            --title "chore(hero): 자동 히어로샷 배치 (+${{ steps.batch.outputs.generated_count }})" \
+            --body "히어로 미보유 선수 자동 배치. cross-check(≥2 독립 도메인) + post-gen 재검증 통과분만 포함. skip: ${{ steps.batch.outputs.skipped_count }}건. 무인 자동 머지(2026-06-05 정책).")
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+          gh pr merge "$PR_URL" --squash --admin --delete-branch
+
+      - name: Post-deploy QA + auto-rollback
+        if: steps.batch.outputs.generated_count != '0'
+        id: qa
+        env:
+          PROD_BASE: https://keubo.fan
+        run: |
+          echo "배포 전파 대기(120s)..."
+          sleep 120
+          git checkout main
+          git pull origin main
+          node scripts/hero-batch/post-deploy-qa.mjs
+
+      - name: Open rollback PR (QA 실패분)
+        if: steps.qa.outputs.rolled_back_count != '0' && steps.qa.outputs.rolled_back_count != ''
+        env:
+          RB_IDS: ${{ steps.qa.outputs.rolled_back_ids }}
+        run: |
+          set -e
+          BRANCH="auto/hero-rollback-${{ github.run_id }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add src/lib/constants/hero-approved-kboids.json
+          git commit -m "revert(hero): 배포 후 QA 실패 자동 롤백 — ${RB_IDS}"
+          git push origin "$BRANCH"
+          PR_URL=$(gh pr create --base main --head "$BRANCH" \
+            --title "revert(hero): 배포 후 QA 실패 자동 롤백" \
+            --body "post-deploy QA 실패: ${RB_IDS}. allowlist 에서 제거(히어로 미노출 → 기본 헤드샷 폴백).")
+          gh pr merge "$PR_URL" --squash --admin --delete-branch
+
+      - name: Slack 요약 (best-effort)
+        if: always() && env.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.HERO_BATCH_SLACK_WEBHOOK }}
+        run: |
+          MSG="[hero-batch] 생성 ${{ steps.batch.outputs.generated_count || 0 }} / skip ${{ steps.batch.outputs.skipped_count || 0 }} / 롤백 ${{ steps.qa.outputs.rolled_back_count || 0 }}"
+          curl -sS -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"$MSG\"}" "$SLACK_WEBHOOK_URL" || true
