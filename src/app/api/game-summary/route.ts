@@ -451,25 +451,21 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      // 승패 검증 — headline + 본문 전체(insight/turningPoint/gameFlow/standingsImpact)에서 패팀을 승자로 언급하면 reject
+      // 승패 검증 — 패팀을 승자로 잘못 서술한 요약만 reject.
+      // 텍스트 스캔은 *헤드라인만* 대상으로 한다. 본문(gameFlow/turningPoint/insight)은
+      // 자유 서사라 "롯데의 추격을 꺾기에는 역부족" 같은 부정문·소유격 구문에서
+      // 키워드 근접 휴리스틱이 패팀을 승자로 오인 → 정상 요약을 false reject 했다
+      // (2026-06-05 한화 9:2 롯데 / 삼성 2:5 KIA 등 다수 경기 "AI 분석 지연").
+      // 헤드라인은 단문·구조적이라 신뢰 가능하고, 본문의 구조적 승패 오류는
+      // winner 필드 검증(아래)이 백스톱으로 잡는다.
       let winnerMismatch = false;
       if (body.awayScore !== body.homeScore) {
         const actualWinner = body.awayScore > body.homeScore ? body.awayTeam : body.homeTeam;
         const actualLoser = body.awayScore > body.homeScore ? body.homeTeam : body.awayTeam;
-        const gf = summary.gameFlow as Record<string, string> | undefined;
-        const fullText = [
-          summary.headline || "",
-          summary.insight || "",
-          summary.turningPoint || "",
-          gf?.early || "",
-          gf?.mid || "",
-          gf?.late || "",
-          summary.standingsImpact || "",
-        ].join(" ");
-        // 패팀을 승자로 서술했는지 검증 (winner-check 헬퍼).
+        // 헤드라인에서 패팀을 승자로 서술했는지 검증 (winner-check 헬퍼).
         // "롯데, KIA 꺾고 승리"처럼 승팀이 패팀을 타동사로 제압하는 정상 헤드라인은 통과.
-        const loserWrong = loserClaimedWin(fullText, actualWinner, actualLoser);
-        // winner 필드 검증
+        const loserWrong = loserClaimedWin(summary.headline || "", actualWinner, actualLoser);
+        // winner 필드 검증 (구조화된 값 — 본문 승패 오류의 백스톱)
         const llmWinner = summary.winner;
         const winnerFieldWrong = llmWinner && llmWinner !== "무승부" && llmWinner !== actualWinner;
 

@@ -8,6 +8,11 @@
  * (정상)와 주어(오류)를 구분하지 못한 것.
  *
  * 이 테스트는 정상 요약은 통과(false), 패팀을 승자로 서술한 요약만 reject(true)됨을 보장.
+ *
+ * 2026-06-05 재발: 본문 자유서사("롯데의 추격을 꺾기에는 역부족")와 긴 헤드라인에서
+ * 또 false reject → 다수 경기 "AI 분석 지연". 대응: (1) route는 *헤드라인만* 스캔
+ * (본문 부정문/소유격은 winner 필드 백스톱에 위임), (2) winner-check는 소유격 '의'를
+ * 비주어로, 검사 범위를 고정 윈도→'같은 절 전체'로 보강. 아래 6/5 케이스가 회귀 가드.
  */
 
 import { loserClaimedWin } from "../../src/lib/game-summary/winner-check";
@@ -39,6 +44,17 @@ const cases: Case[] = [
   { desc: "어순 역전 — 두산, 삼성 제압 (실승자 삼성)", text: "두산, 삼성 제압하며 위닝시리즈", winner: "삼성", loser: "두산", expect: true },
   { desc: "조사 역전 — 롯데를 KIA가 대파 (실승자 롯데)", text: "롯데를 KIA가 대파한 경기", winner: "롯데", loser: "KIA", expect: true },
   { desc: "winner 필드 정상이어도 헤드라인 오답은 reject (NC, LG 격파 / 실승자 LG)", text: "NC, LG 격파로 단독 선두", winner: "LG", loser: "NC", expect: true },
+
+  // === 2026-06-05 보강: 정상 헤드라인 false-reject 차단 (한화 9:2 롯데 / 삼성 2:5 KIA 등 다수 경기) ===
+  // ① 소유격 '의' — 패팀이 동사 주어가 아니라 수식어
+  { desc: "소유격 — 한화가 롯데의 추격을 꺾고 대승 (정상)", text: "한화가 롯데의 추격을 꺾고 대승", winner: "한화", loser: "롯데", expect: false },
+  // ② 긴 헤드라인 — 승팀이 문두, 키워드가 25자 밖 (고정 윈도였으면 false reject)
+  { desc: "긴 헤드라인 — 한화, …앞세워 롯데 9-2 대파 (정상)", text: "한화, 류현진 호투 페라자 맹타 앞세워 롯데 9-2 대파", winner: "한화", loser: "롯데", expect: false },
+  // ③ 실제 6/5 프로덕션 헤드라인 (모두 정상 = 통과해야 함)
+  { desc: "실제 — 한화, 페라자 맹타 앞세워 롯데 9-2 대파", text: "한화, 페라자 맹타 앞세워 롯데 9-2 대파", winner: "한화", loser: "롯데", expect: false },
+  { desc: "실제 — KIA, 삼성 꺾고 5-2 승리... 올러 쾌투", text: "KIA, 삼성 꺾고 5-2 승리... 올러 7이닝 무실점 쾌투", winner: "KIA", loser: "삼성", expect: false },
+  { desc: "실제 — SSG, 최지훈 맹타 앞세워 KT에 6-5 역전승", text: "SSG, 최지훈 맹타 앞세워 KT에 6-5 역전승", winner: "SSG", loser: "KT", expect: false },
+  { desc: "실제 — 한화, 롯데 마운드 맹폭! 9대2 대승으로 위닝시리즈 확보", text: "한화, 롯데 마운드 맹폭! 9대2 대승으로 위닝시리즈 확보", winner: "한화", loser: "롯데", expect: false },
 ];
 
 let pass = 0;
