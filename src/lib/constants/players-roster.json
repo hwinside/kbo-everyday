@@ -6430,5 +6430,37 @@
     "position": "야수",
     "backNo": "22",
     "team": "키움"
+  },
+  {
+    "name": "전의산",
+    "kboId": "50820",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "47",
+    "team": "SSG"
+  },
+  {
+    "name": "최용준",
+    "kboId": "50650",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "67",
+    "team": "SSG"
+  },
+  {
+    "name": "한승주",
+    "kboId": "50726",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "59",
+    "team": "KT"
+  },
+  {
+    "name": "이용준",
+    "kboId": "51948",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "48",
+    "team": "NC"
   }
 ]
