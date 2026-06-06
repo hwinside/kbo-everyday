@@ -21,7 +21,7 @@ const FOREIGN_MAP_PATH = path.resolve(__dirname, "../src/lib/constants/foreign-i
 // ============================================================================
 // 기대값 (스펙 §3.1)
 // ============================================================================
-const EXPECTED_COUNT = 808; // 2026-06-06: 라인업 미등록 4명 합류 (전의산·최용준 SSG, 한승주 KT, 이용준 NC)
+const EXPECTED_COUNT = 810; // 2026-06-06: stats 미등록 박채울(키움 #72)·정준영(KT #58) 합류
 const MIN_PER_TEAM = 30;
 const BACKNO_REGEX = /^(\d{1,3}|-|\?)$/; // 숫자 1~3자리 | "-" | "?"
 const KNOWN_TEAMS = new Set([
