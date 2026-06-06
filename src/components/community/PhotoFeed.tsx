@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, MoreHorizontal, Share2, Volume2, VolumeX } from "lucide-react";
+import { Loader2, MessageCircle, MoreHorizontal, Share2, Volume2, VolumeX } from "lucide-react";
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import { getTeamById, getTeamBySlug, getTeamBgColor, type TeamData } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
@@ -260,6 +260,7 @@ function videoPosterSrc(url: string): string {
 function FeedVideo({ url }: { url: string }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [muted, setMuted] = useGlobalVideoMuted();
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const el = ref.current;
@@ -271,6 +272,26 @@ function FeedVideo({ url }: { url: string }) {
       observer.unobserve(el);
       videoRegistry.delete(el);
       recomputeVideoFocus();
+    };
+  }, []);
+
+  // 로딩 인디케이터: 재생을 시도한 영상이 데이터 부족으로 버퍼링할 때만 스피너를 띄운다.
+  // waiting(버퍼링)→표시, playing/canplay(재생/준비 완료)→숨김. 일시정지 상태로 poster만
+  // 보이는 영상은 재생 시도가 없어 waiting이 안 떠 스피너도 안 뜬다(피드 전체 스피너 노이즈 방지).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const show = () => setLoading(true);
+    const hide = () => setLoading(false);
+    el.addEventListener("waiting", show);
+    el.addEventListener("playing", hide);
+    el.addEventListener("canplay", hide);
+    el.addEventListener("error", hide);
+    return () => {
+      el.removeEventListener("waiting", show);
+      el.removeEventListener("playing", hide);
+      el.removeEventListener("canplay", hide);
+      el.removeEventListener("error", hide);
     };
   }, []);
 
@@ -293,6 +314,11 @@ function FeedVideo({ url }: { url: string }) {
         className="w-full object-contain pointer-events-none select-none bg-black"
         style={{ maxHeight: "80vh", WebkitTouchCallout: "none" } as React.CSSProperties}
       />
+      {loading && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+          <Loader2 className="h-8 w-8 animate-spin text-white/90 drop-shadow" />
+        </div>
+      )}
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); setMuted(!muted); }}
