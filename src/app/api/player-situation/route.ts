@@ -17,7 +17,7 @@ const KBO_HEADERS = {
  *
  * GET /api/player-situation?id=<kboId|raw>&pos=<position>
  *   - KBO PitcherDetail/Situation.aspx 파싱(parseSituation 재사용).
- *   - 투수: vs좌타 / vs우타 / 2아웃의 피안타율(AVG) + 삼진(SO) 반환.
+ *   - 투수: vs좌타 / vs우타 / 득점권의 피안타율(AVG) + 삼진(SO) 반환.
  *   - 데이터 없으면 splits:[] (fail-closed — 화면은 살아남음).
  */
 export async function GET(req: NextRequest) {

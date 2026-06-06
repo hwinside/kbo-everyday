@@ -9,7 +9,7 @@ interface Split {
   so: number; // 삼진
 }
 
-/** 투수 상황별 스플릿 (선수 스탯 V1 빌드4) — vs좌타/vs우타/2아웃 피안타율 + 삼진.
+/** 투수 상황별 스플릿 (선수 스탯 V1 빌드4) — vs좌타/vs우타/득점권 피안타율 + 삼진.
  *  KBO Situation.aspx 실데이터(/api/player-situation). 데이터 없으면 조용히 미표시(fail-closed). */
 export default function PitcherSplitTable({ playerId, teamColor }: { playerId: string; teamColor: string }) {
   const [splits, setSplits] = useState<Split[]>([]);
