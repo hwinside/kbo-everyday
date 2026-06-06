@@ -41,7 +41,11 @@ function fmtIp(outs: number): string {
 async function main() {
   console.log(`[backfill] season=${SEASON} mode=${APPLY ? "APPLY" : "DRY-RUN"}${LIMIT ? ` limit=${LIMIT}` : ""}`);
 
-  const all = await getSeasonGames(SEASON);
+  // 정규시즌만. KBO srId: 0=정규시즌 / 1=시범경기 / 3·4·5·7=포스트시즌 / 9=올스타.
+  // getSeasonGames 기본 srId은 전부 포함하므로, 시즌 누적 AVG/ERA 오염 방지를 위해 정규시즌으로 한정.
+  // (삼순 리뷰 PR #178. srId 값은 실측 확인 — 6/6 정규경기=srId 0, 3/15 시범경기=srId 1)
+  const REGULAR_SEASON_SR_ID = "0";
+  const all = await getSeasonGames(SEASON, REGULAR_SEASON_SR_ID);
   const finals = all.filter((g) => g.status === "final");
   const targets = LIMIT > 0 ? finals.slice(-LIMIT) : finals;
   console.log(`[backfill] games: ${all.length} total, ${finals.length} final, ${targets.length} target`);
