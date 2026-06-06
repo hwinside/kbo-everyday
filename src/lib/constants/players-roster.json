@@ -6462,5 +6462,21 @@
     "position": "투수",
     "backNo": "48",
     "team": "NC"
+  },
+  {
+    "name": "박채울",
+    "kboId": "54303",
+    "teamId": 10,
+    "position": "외야수",
+    "backNo": "72",
+    "team": "키움"
+  },
+  {
+    "name": "정준영",
+    "kboId": "53058",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "58",
+    "team": "KT"
   }
 ]
