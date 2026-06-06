@@ -9,6 +9,7 @@ import Link from "next/link";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import NicheStats from "@/components/player/NicheStats";
+import PlayerGameLogs from "@/components/player/PlayerGameLogs";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
@@ -81,7 +82,7 @@ export default function PlayerBoardPage() {
   const [player, setPlayer] = useState<PlayerData | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"stats" | "board">("stats");
+  const [activeTab, setActiveTab] = useState<"stats" | "games" | "board">("stats");
   const [showEntry, setShowEntry] = useState(false);
   const [showWrite, setShowWrite] = useState(false);
   const [showPhoto, setShowPhoto] = useState(false);
@@ -388,7 +389,7 @@ export default function PlayerBoardPage() {
       {/* Tabs (Hero/fallback 공통) */}
       <div className="border-b border-border">
         <div className="flex">
-          {((["stats", "board"] as const)).map((tab) => (
+          {((["stats", "games", "board"] as const)).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -396,7 +397,7 @@ export default function PlayerBoardPage() {
                 activeTab === tab ? "text-text-primary" : "text-text-tertiary"
               }`}
             >
-              {tab === "stats" ? "⚾ 선수정보" : "📝 게시판"}
+              {tab === "stats" ? "⚾ 선수정보" : tab === "games" ? "📅 경기별" : "📝 게시판"}
               {activeTab === tab && (
                 <motion.div
                   layoutId="board-tab"
@@ -526,6 +527,11 @@ export default function PlayerBoardPage() {
             <PlayerNews playerName={player.name} teamId={player.teamId} />
           </div>
         </div>
+      )}
+
+      {/* 경기별 탭 (선수 스탯 V1 빌드 2) — 2026 시즌 game_logs */}
+      {activeTab === "games" && (
+        <PlayerGameLogs playerId={kboId} position={player.position} teamColor={teamColor} />
       )}
 
       {/* 게시판 통합 피드 (글·사진 한 스트림, 최신순 단일) */}
