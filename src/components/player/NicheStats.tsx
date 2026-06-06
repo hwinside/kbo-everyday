@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
 import GlassCard from "@/components/ui/GlassCard";
+import PitcherSplitTable from "@/components/player/PitcherSplitTable";
 import { calcBatterSaber, calcPitcherSaber, type CalcBatterSaber, type CalcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
 import {
   BATTER_ADVANCED, PITCHER_ADVANCED,
@@ -254,6 +255,7 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
             </div>
             <p className="text-[10px] text-text-tertiary mt-3 text-center">※ KBO 공식 기록 기반 계산값</p>
           </GlassCard>
+          <PitcherSplitTable playerId={playerId} teamColor={teamColor} />
         </div>
       );
     }
