@@ -82,6 +82,6 @@ proxyGwUrl = 'https://proxy-gateway.sports.naver.com'
 
 ## 주의사항
 - KBO ASMX 응답 뒤에 ASP.NET 에러 HTML이 붙을 수 있음 → JSON 파싱 시 `}<!` 앞까지만
-- srId: 0=시범, 1=정규, 3=와카, 4=준PO, 5=PO, 7=한국시리즈, 9=올스타
+- srId: 0=정규, 1=시범, 3=와카, 4=준PO, 5=PO, 7=한국시리즈, 9=올스타
 - leId: 1=KBO 1군
 - 2025 실제 데이터 확인됨 (순위: LG 1위 85승, 한화 2위 83승)
