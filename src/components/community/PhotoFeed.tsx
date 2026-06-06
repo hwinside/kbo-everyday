@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, MoreHorizontal, Share2, Volume2, VolumeX } from "lucide-react";
+import { Loader2, MessageCircle, MoreHorizontal, Share2, Volume2, VolumeX } from "lucide-react";
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import { getTeamById, getTeamBySlug, getTeamBgColor, type TeamData } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
@@ -161,12 +161,12 @@ interface MediaSlide {
   isVideo: boolean;
 }
 
-// 화면에 동영상이 2개 이상 떠 있을 때 가운데로 가장 많이 보이는 1개만 재생.
+// 화면에 동영상이 2개 이상 떠 있을 때 화면 중앙에 가장 가까운 1개만 재생.
 // iOS Safari가 동시 muted-autoplay를 막아 "재생 안 됨"으로 보이던 문제도 함께 해소.
 const videoRegistry = new Set<HTMLVideoElement>();
-const videoRatio = new Map<HTMLVideoElement, number>();
 let videoObserver: IntersectionObserver | null = null;
 let videoRecomputeScheduled = false;
+let videoScrollBound = false;
 const VIDEO_MIN_VISIBLE = 0.5; // 절반 이상 보일 때만 재생 대상
 
 // 영상 음소거 전역 상태 — 기본 음소거(인스타 동일). 우하단 토글 버튼으로 한 번 소리를 켜면
@@ -190,18 +190,33 @@ function useGlobalVideoMuted(): [boolean, (next: boolean) => void] {
   return [muted, setGlobalVideoMuted];
 }
 
+// 재생 대상 = 뷰포트 중앙에 세로 중심이 가장 가까운 영상 (가로·세로 모두 절반 이상 보이는 것 중).
+// intersectionRatio(엘리먼트 자기 크기 대비 비율)로 고르면, 작거나 아래쪽 영상이 "꽉 차 보여서"
+// 위쪽 큰 영상보다 비율이 높게 잡혀 엉뚱한 영상이 재생되던 문제가 있었다. 매 호출마다 live
+// getBoundingClientRect를 읽어 위치 기준으로 고르면 스크롤 위치와 화면상 보이는 것이 일치한다.
 function recomputeVideoFocus() {
+  const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+  const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+  const focusLine = vh / 2;
   let best: HTMLVideoElement | null = null;
-  let bestRatio = 0;
+  let bestDist = Infinity;
   videoRegistry.forEach((el) => {
-    const r = videoRatio.get(el) ?? 0;
-    if (r > bestRatio) {
-      bestRatio = r;
+    const rect = el.getBoundingClientRect();
+    if (rect.height <= 0 || rect.width <= 0) return;
+    const visibleY = Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0));
+    if (visibleY / rect.height < VIDEO_MIN_VISIBLE) return; // 세로 절반 미만은 후보 제외
+    // 캐러셀에서 가로로 나란히 놓인 슬라이드는 rect.top/bottom(세로)이 같아, 가로로 벗어난
+    // offscreen 슬라이드도 세로 거리로 best가 될 수 있다. 가로 가시성도 함께 봐서 제외한다.
+    const visibleX = Math.max(0, Math.min(rect.right, vw) - Math.max(rect.left, 0));
+    if (visibleX / rect.width < VIDEO_MIN_VISIBLE) return; // 가로 절반 미만은 후보 제외
+    const dist = Math.abs((rect.top + rect.bottom) / 2 - focusLine);
+    if (dist < bestDist) {
+      bestDist = dist;
       best = el;
     }
   });
   videoRegistry.forEach((el) => {
-    if (el === best && bestRatio >= VIDEO_MIN_VISIBLE) {
+    if (el === best) {
       el.play().catch(() => {});
     } else if (!el.paused) {
       el.pause();
@@ -209,21 +224,28 @@ function recomputeVideoFocus() {
   });
 }
 
+function scheduleVideoRecompute() {
+  if (videoRecomputeScheduled) return;
+  videoRecomputeScheduled = true;
+  requestAnimationFrame(() => {
+    videoRecomputeScheduled = false;
+    recomputeVideoFocus();
+  });
+}
+
 function ensureVideoObserver(): IntersectionObserver {
   if (videoObserver) return videoObserver;
-  videoObserver = new IntersectionObserver(
-    (entries) => {
-      entries.forEach((e) => videoRatio.set(e.target as HTMLVideoElement, e.intersectionRatio));
-      if (!videoRecomputeScheduled) {
-        videoRecomputeScheduled = true;
-        requestAnimationFrame(() => {
-          videoRecomputeScheduled = false;
-          recomputeVideoFocus();
-        });
-      }
-    },
-    { threshold: [0, 0.25, 0.5, 0.75, 1] },
-  );
+  videoObserver = new IntersectionObserver(() => scheduleVideoRecompute(), {
+    threshold: [0, 0.25, 0.5, 0.75, 1],
+  });
+  // IntersectionObserver는 threshold를 넘을 때만 발화하므로, 연속 스크롤 중 화면상 위치가
+  // 바뀌어도 재계산이 안 될 수 있다. passive scroll/resize로 위치 기준 포커스를 따라가게 한다.
+  if (!videoScrollBound && typeof window !== "undefined") {
+    videoScrollBound = true;
+    // capture: true → 중첩 스크롤 컨테이너(scroll 이벤트는 버블 안 함)에서도 잡는다.
+    window.addEventListener("scroll", scheduleVideoRecompute, { passive: true, capture: true });
+    window.addEventListener("resize", scheduleVideoRecompute, { passive: true });
+  }
   return videoObserver;
 }
 
@@ -238,6 +260,7 @@ function videoPosterSrc(url: string): string {
 function FeedVideo({ url }: { url: string }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [muted, setMuted] = useGlobalVideoMuted();
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const el = ref.current;
@@ -248,8 +271,27 @@ function FeedVideo({ url }: { url: string }) {
     return () => {
       observer.unobserve(el);
       videoRegistry.delete(el);
-      videoRatio.delete(el);
       recomputeVideoFocus();
+    };
+  }, []);
+
+  // 로딩 인디케이터: 재생을 시도한 영상이 데이터 부족으로 버퍼링할 때만 스피너를 띄운다.
+  // waiting(버퍼링)→표시, playing/canplay(재생/준비 완료)→숨김. 일시정지 상태로 poster만
+  // 보이는 영상은 재생 시도가 없어 waiting이 안 떠 스피너도 안 뜬다(피드 전체 스피너 노이즈 방지).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const show = () => setLoading(true);
+    const hide = () => setLoading(false);
+    el.addEventListener("waiting", show);
+    el.addEventListener("playing", hide);
+    el.addEventListener("canplay", hide);
+    el.addEventListener("error", hide);
+    return () => {
+      el.removeEventListener("waiting", show);
+      el.removeEventListener("playing", hide);
+      el.removeEventListener("canplay", hide);
+      el.removeEventListener("error", hide);
     };
   }, []);
 
@@ -272,6 +314,11 @@ function FeedVideo({ url }: { url: string }) {
         className="w-full object-contain pointer-events-none select-none bg-black"
         style={{ maxHeight: "80vh", WebkitTouchCallout: "none" } as React.CSSProperties}
       />
+      {loading && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+          <Loader2 className="h-8 w-8 animate-spin text-white/90 drop-shadow" />
+        </div>
+      )}
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); setMuted(!muted); }}
