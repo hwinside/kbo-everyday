@@ -32,7 +32,10 @@ export async function GET(request: NextRequest) {
     )
     .eq("kbo_id", kboId)
     .eq("player_type", playerType)
-    .order("game_date", { ascending: true });
+    // 더블헤더/동일일 2경기 누적 AVG/ERA 순서 안정화: game_date 동률 시 game_id로 2차 정렬
+    // (game_id = YYYYMMDD+매치업+말미 index → 동일일 DH 순서 보장)
+    .order("game_date", { ascending: true })
+    .order("game_id", { ascending: true });
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
