@@ -41,11 +41,12 @@ export async function GET(req: NextRequest) {
     const pick = (rows: { label: string; AVG: string; SO: number }[], label: string) =>
       rows.find((r) => r.label === label) ?? null;
 
-    // 투수: 손잡이별(Table 4) 좌타자/우타자 + 주자상황(Table 0) 만루
+    // 투수: 손잡이별(Table 4) 좌타자/우타자 + 주자상황(Table 0) 득점권
+    // (득점권은 KBO가 집계 행으로 직접 제공 — 만루보다 표본 안정적)
     const wanted: { label: string; row: { AVG: string; SO: number } | null }[] = [
       { label: "vs좌타", row: pick(tables.byHand, "좌타자") },
       { label: "vs우타", row: pick(tables.byHand, "우타자") },
-      { label: "만루", row: pick(tables.bases, "만루") },
+      { label: "득점권", row: pick(tables.bases, "득점권") },
     ];
 
     const splits = wanted
