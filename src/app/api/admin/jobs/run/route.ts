@@ -8,6 +8,7 @@ const JOB_PATHS: Record<string, string> = {
   "videos-rss": "/api/cron/videos",
   "videos-player-shorts": "/api/cron/videos-shorts",
   "stats-update": "/api/cron/stats",
+  "game-logs-ingest": "/api/cron/game-logs",
   "daily-analysis": "/api/cron/daily-analysis",
   "retention": "/api/cron/retention",
   "daily-fallback-report": "/api/cron/daily-fallback-report",
