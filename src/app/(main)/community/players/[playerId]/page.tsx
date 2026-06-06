@@ -10,6 +10,7 @@ import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import NicheStats from "@/components/player/NicheStats";
 import PlayerGameLogs from "@/components/player/PlayerGameLogs";
+import PlayerWeeklyTrend from "@/components/player/PlayerWeeklyTrend";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
@@ -518,6 +519,11 @@ export default function PlayerBoardPage() {
             <div className="glass-card p-4 mb-4 text-center text-text-tertiary text-sm">
               {statSeason} 시즌 데이터를 찾을 수 없습니다
             </div>
+          )}
+
+          {/* 주간 추이 — 시즌기록 ↔ 세이버메트릭스 사이 (game_logs 2026 한정) */}
+          {statSeason === 2026 && (
+            <PlayerWeeklyTrend playerId={kboId} position={player.position} teamColor={teamColor} />
           )}
 
           <NicheStats playerId={numericKboId} position={player.position} teamColor={teamColor} playerName={player.name} season={statSeason} />
