@@ -190,20 +190,25 @@ function useGlobalVideoMuted(): [boolean, (next: boolean) => void] {
   return [muted, setGlobalVideoMuted];
 }
 
-// 재생 대상 = 뷰포트 중앙에 세로 중심이 가장 가까운 영상 (절반 이상 보이는 것 중).
+// 재생 대상 = 뷰포트 중앙에 세로 중심이 가장 가까운 영상 (가로·세로 모두 절반 이상 보이는 것 중).
 // intersectionRatio(엘리먼트 자기 크기 대비 비율)로 고르면, 작거나 아래쪽 영상이 "꽉 차 보여서"
 // 위쪽 큰 영상보다 비율이 높게 잡혀 엉뚱한 영상이 재생되던 문제가 있었다. 매 호출마다 live
 // getBoundingClientRect를 읽어 위치 기준으로 고르면 스크롤 위치와 화면상 보이는 것이 일치한다.
 function recomputeVideoFocus() {
   const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+  const vw = window.innerWidth || document.documentElement.clientWidth || 0;
   const focusLine = vh / 2;
   let best: HTMLVideoElement | null = null;
   let bestDist = Infinity;
   videoRegistry.forEach((el) => {
     const rect = el.getBoundingClientRect();
-    if (rect.height <= 0) return;
-    const visible = Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0));
-    if (visible / rect.height < VIDEO_MIN_VISIBLE) return; // 절반 미만은 후보 제외
+    if (rect.height <= 0 || rect.width <= 0) return;
+    const visibleY = Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0));
+    if (visibleY / rect.height < VIDEO_MIN_VISIBLE) return; // 세로 절반 미만은 후보 제외
+    // 캐러셀에서 가로로 나란히 놓인 슬라이드는 rect.top/bottom(세로)이 같아, 가로로 벗어난
+    // offscreen 슬라이드도 세로 거리로 best가 될 수 있다. 가로 가시성도 함께 봐서 제외한다.
+    const visibleX = Math.max(0, Math.min(rect.right, vw) - Math.max(rect.left, 0));
+    if (visibleX / rect.width < VIDEO_MIN_VISIBLE) return; // 가로 절반 미만은 후보 제외
     const dist = Math.abs((rect.top + rect.bottom) / 2 - focusLine);
     if (dist < bestDist) {
       bestDist = dist;
