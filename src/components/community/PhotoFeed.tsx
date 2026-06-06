@@ -275,22 +275,27 @@ function FeedVideo({ url }: { url: string }) {
     };
   }, []);
 
-  // 로딩 인디케이터: 재생을 시도한 영상이 데이터 부족으로 버퍼링할 때만 스피너를 띄운다.
-  // waiting(버퍼링)→표시, playing/canplay(재생/준비 완료)→숨김. 일시정지 상태로 poster만
-  // 보이는 영상은 재생 시도가 없어 waiting이 안 떠 스피너도 안 뜬다(피드 전체 스피너 노이즈 방지).
+  // 로딩 인디케이터: "지금 재생 중인(포커스된) 영상이 데이터를 기다리며 버퍼링할 때"만 스피너.
+  // #t=0.001 poster 프레임을 디코드하는 seek도 waiting을 발생시키므로, 재생 중이 아닌(paused)
+  // 영상까지 스피너가 켜져 모든 영상이 검은 화면 위에서 스피너만 돌던 문제가 있었다(첫 배포 회귀).
+  // → waiting 시 !el.paused 가드로 재생 대상 1개에만 표시, pause(포커스 잃음)/ended/error 시 숨김.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const show = () => setLoading(true);
+    const show = () => { if (!el.paused) setLoading(true); };
     const hide = () => setLoading(false);
     el.addEventListener("waiting", show);
     el.addEventListener("playing", hide);
     el.addEventListener("canplay", hide);
+    el.addEventListener("pause", hide);
+    el.addEventListener("ended", hide);
     el.addEventListener("error", hide);
     return () => {
       el.removeEventListener("waiting", show);
       el.removeEventListener("playing", hide);
       el.removeEventListener("canplay", hide);
+      el.removeEventListener("pause", hide);
+      el.removeEventListener("ended", hide);
       el.removeEventListener("error", hide);
     };
   }, []);
