@@ -141,12 +141,12 @@ function parseGame(raw: KboGameRaw): KboGame {
 }
 
 /** 특정 날짜 경기 목록 조회 */
-export async function fetchGames(date: string): Promise<KboGame[]> {
+export async function fetchGames(date: string, srId = "0,1,3,4,5,7,9"): Promise<KboGame[]> {
   try {
     const res = await fetch(`${KBO_BASE}/ws/Main.asmx/GetKboGameList`, {
       method: "POST",
       headers: KBO_JSON_HEADERS,
-      body: JSON.stringify({ leId: "1", srId: "0,1,3,4,5,7,9", date }),
+      body: JSON.stringify({ leId: "1", srId, date }),
       signal: AbortSignal.timeout(10000),
     });
 
