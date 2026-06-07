@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, Settings } from "lucide-react";
+import { ChevronRight, Settings, Trophy } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
@@ -20,9 +20,10 @@ interface ProfileCardProps {
   onAvatarClick: () => void;
   onNicknameClick: () => void;
   onViewProfile?: () => void;
+  onHallOfFame?: () => void;
 }
 
-export default function ProfileCard({ user, profile, team, points, onAvatarClick, onNicknameClick, onViewProfile }: ProfileCardProps) {
+export default function ProfileCard({ user, profile, team, points, onAvatarClick, onNicknameClick, onViewProfile, onHallOfFame }: ProfileCardProps) {
   // 점수 확정 전(로딩/토큰없음/실패)에는 0으로 떨어뜨리지 않고 보류 표시.
   const isScoreLoading = !!user && typeof points !== "number";
   const score = user && typeof points === "number" ? points : null;
@@ -92,6 +93,19 @@ export default function ProfileCard({ user, profile, team, points, onAvatarClick
           className="mt-4 flex w-full items-center justify-between rounded-2xl bg-bg-tertiary px-4 py-3 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
         >
           <span className="text-sm font-medium text-text-primary">내 프로필 보기</span>
+          <ChevronRight size={18} className="text-text-tertiary" />
+        </button>
+      )}
+
+      {user && onHallOfFame && (
+        <button
+          onClick={onHallOfFame}
+          className="mt-2 flex w-full items-center justify-between rounded-2xl bg-bg-tertiary px-4 py-3 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+        >
+          <span className="flex items-center gap-2 text-sm font-medium text-text-primary">
+            <Trophy size={16} className="text-yellow-500" />
+            명예의 전당
+          </span>
           <ChevronRight size={18} className="text-text-tertiary" />
         </button>
       )}
