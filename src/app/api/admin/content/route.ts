@@ -22,6 +22,7 @@ export async function GET(req: NextRequest) {
   const { data: posts, error: postsError } = await supabase
     .from("posts")
     .select("created_at, content_type, board_id, author_id")
+    .neq("board_type", "announcement") // 새소식 댓글용 브리지 포스트 제외
     .gte("created_at", since);
 
   if (postsError) return supabaseErrorResponse(postsError);
@@ -117,6 +118,7 @@ export async function GET(req: NextRequest) {
   const { data: popularPosts, error: popularError } = await supabase
     .from("posts")
     .select("id, title, board_id, board_type, like_count, comment_count, created_at, image_urls")
+    .neq("board_type", "announcement") // 새소식 댓글용 브리지 포스트 제외
     .order("like_count", { ascending: false })
     .limit(10);
 
