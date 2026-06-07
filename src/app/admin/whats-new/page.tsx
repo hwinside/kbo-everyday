@@ -104,6 +104,8 @@ export default function AdminWhatsNewPage() {
     setLoading(false);
   }, []);
 
+  // 마운트 시 목록 로드 — fetchItems 첫 동기 호출이 setLoading(true)라 룰이 잡지만 의도된 패턴
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchItems(); }, [fetchItems]);
 
   const openCreate = () => {

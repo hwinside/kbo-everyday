@@ -24,8 +24,17 @@ function escapeHtml(str: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/** 본문 한 줄짜리 이미지 마커: ![alt](https://...) — https만 허용 */
-const IMG_LINE = /^!\[([^\]]*)\]\((https:\/\/[^\s)]+)\)\s*$/;
+/** 본문 한 줄짜리 이미지 마커: ![alt](url) */
+const IMG_LINE = /^!\[([^\]]*)\]\(([^\s)]+)\)\s*$/;
+
+/** 우리 Supabase Storage 공개 photos 경로만 이미지로 렌더 (외부 tracking 이미지 차단) */
+const ALLOWED_IMG_PREFIX = process.env.NEXT_PUBLIC_SUPABASE_URL
+  ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/photos/`
+  : "";
+
+function isAllowedImageUrl(url: string): boolean {
+  return ALLOWED_IMG_PREFIX !== "" && url.startsWith(ALLOWED_IMG_PREFIX);
+}
 
 /**
  * 본문을 텍스트/이미지 세그먼트로 파싱해 렌더.
@@ -54,7 +63,7 @@ function renderBody(body: string): ReactNode[] {
 
   for (const line of body.split("\n")) {
     const m = line.match(IMG_LINE);
-    if (m) {
+    if (m && isAllowedImageUrl(m[2])) {
       flushText();
       const alt = m[1] || "";
       const src = m[2];
