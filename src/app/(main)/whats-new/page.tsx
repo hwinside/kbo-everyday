@@ -2,10 +2,12 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { ArrowLeft, Sparkles, ChevronRight, MessageCircle } from "lucide-react";
+import { ArrowLeft, Sparkles, ChevronRight, MessageCircle, Heart } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import CommentSheet from "@/components/community/CommentSheet";
+import LoginSheet from "@/components/auth/LoginSheet";
 import { supabase } from "@/lib/supabase/client";
+import { toggleLike } from "@/lib/supabase/usePosts";
 
 interface Announcement {
   id: string;
@@ -100,6 +102,9 @@ export default function WhatsNewPage() {
   const [loading, setLoading] = useState(true);
   const [openPostId, setOpenPostId] = useState<number | null>(null);
   const [commentCounts, setCommentCounts] = useState<Record<number, number>>({});
+  const [likeCounts, setLikeCounts] = useState<Record<number, number>>({});
+  const [likedSet, setLikedSet] = useState<Set<number>>(new Set());
+  const [showLogin, setShowLogin] = useState(false);
 
   useEffect(() => {
     fetch("/api/whats-new")
@@ -109,21 +114,56 @@ export default function WhatsNewPage() {
         if (data.length > 0) {
           localStorage.setItem("whats-new-seen-id", data[0].id);
         }
-        // 브리지 포스트들의 댓글 수 일괄 조회
+        // 브리지 포스트들의 댓글 수·좋아요 수 일괄 조회
         const postIds = data.map((d) => d.post_id).filter((v): v is number => typeof v === "number");
-        if (postIds.length > 0) {
-          const { data: posts } = await supabase
-            .from("posts")
-            .select("id, comment_count")
-            .in("id", postIds);
-          if (posts) {
-            setCommentCounts(Object.fromEntries(posts.map((p) => [p.id as number, (p.comment_count as number) ?? 0])));
-          }
+        if (postIds.length === 0) return;
+
+        const { data: posts } = await supabase
+          .from("posts")
+          .select("id, comment_count, like_count")
+          .in("id", postIds);
+        if (posts) {
+          setCommentCounts(Object.fromEntries(posts.map((p) => [p.id as number, (p.comment_count as number) ?? 0])));
+          setLikeCounts(Object.fromEntries(posts.map((p) => [p.id as number, (p.like_count as number) ?? 0])));
+        }
+
+        // 현재 유저가 좋아요한 새소식 조회
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data: likes } = await supabase
+            .from("likes")
+            .select("post_id")
+            .eq("user_id", user.id)
+            .in("post_id", postIds);
+          if (likes) setLikedSet(new Set(likes.map((l) => l.post_id as number)));
         }
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  const handleToggleLike = async (postId: number) => {
+    const wasLiked = likedSet.has(postId);
+    // optimistic
+    setLikedSet((prev) => {
+      const next = new Set(prev);
+      if (wasLiked) next.delete(postId); else next.add(postId);
+      return next;
+    });
+    setLikeCounts((prev) => ({ ...prev, [postId]: Math.max(0, (prev[postId] ?? 0) + (wasLiked ? -1 : 1)) }));
+    try {
+      await toggleLike(postId);
+    } catch (e) {
+      // 롤백 + 로그인 필요 시 로그인 시트
+      setLikedSet((prev) => {
+        const next = new Set(prev);
+        if (wasLiked) next.add(postId); else next.delete(postId);
+        return next;
+      });
+      setLikeCounts((prev) => ({ ...prev, [postId]: Math.max(0, (prev[postId] ?? 0) + (wasLiked ? 1 : -1)) }));
+      if (e instanceof Error && e.message.includes("로그인")) setShowLogin(true);
+    }
+  };
 
   return (
     <div className="min-h-screen px-5 pt-4 pb-24">
@@ -173,13 +213,26 @@ export default function WhatsNewPage() {
                 </button>
               )}
               {item.post_id !== null && (
-                <button
-                  onClick={() => setOpenPostId(item.post_id)}
-                  className="mt-4 flex items-center gap-1.5 text-sm text-text-secondary transition-colors hover:text-text-primary"
-                >
-                  <MessageCircle size={16} />
-                  댓글 {commentCounts[item.post_id] ?? 0}
-                </button>
+                <div className="mt-4 flex items-center gap-4">
+                  <button
+                    onClick={() => handleToggleLike(item.post_id!)}
+                    className={`flex items-center gap-1.5 text-sm transition-colors ${
+                      likedSet.has(item.post_id)
+                        ? "text-red-400"
+                        : "text-text-secondary hover:text-text-primary"
+                    }`}
+                  >
+                    <Heart size={16} fill={likedSet.has(item.post_id) ? "currentColor" : "none"} />
+                    {likeCounts[item.post_id] ?? 0}
+                  </button>
+                  <button
+                    onClick={() => setOpenPostId(item.post_id)}
+                    className="flex items-center gap-1.5 text-sm text-text-secondary transition-colors hover:text-text-primary"
+                  >
+                    <MessageCircle size={16} />
+                    댓글 {commentCounts[item.post_id] ?? 0}
+                  </button>
+                </div>
               )}
             </GlassCard>
           ))}
@@ -197,6 +250,8 @@ export default function WhatsNewPage() {
           setCommentCounts((prev) => ({ ...prev, [postId]: Math.max(0, (prev[postId] ?? 0) - 1) }))
         }
       />
+
+      <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
     </div>
   );
 }

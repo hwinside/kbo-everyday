@@ -8,6 +8,7 @@ import { isAdminRequest } from "@/lib/admin/pin";
  */
 
 function postLink(boardType: unknown, boardId: unknown, postId: unknown): string {
+  if (boardType === "announcement") return "/whats-new"; // 새소식 댓글용 브리지 포스트
   if (boardType === "free") return `/community/free/${postId}`;
   if (boardType === "player") return `/community/players/${boardId}/posts/${postId}`;
   return `/community/teams/${boardId}/posts/${postId}`;
@@ -51,6 +52,7 @@ export async function GET(req: NextRequest) {
       .from("posts")
       .select("id, title, content, content_type, board_type, board_id, created_at, author_id, profiles(nickname)")
       .neq("content_type", "photo")
+      .neq("board_type", "announcement") // 새소식 브리지 포스트 제외
       .gte("created_at", start)
       .lte("created_at", end)
       .order("created_at", { ascending: false })
