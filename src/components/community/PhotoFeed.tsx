@@ -249,6 +249,31 @@ function ensureVideoObserver(): IntersectionObserver {
   return videoObserver;
 }
 
+// 영상 lazy-load: 화면(+아래 ~0.8화면)에 들어온 영상만 src/preload를 활성화한다. 모든 영상을 한꺼번에
+// preload="metadata"로 깔면 피드 한참 아래 영상이 위쪽보다 먼저 로드되고, 포스터+플레이어 2개 레이어라
+// 디코더/네트워크 부담이 커진다. rootMargin으로 "뷰포트 + 다음 1~2개"만 로드 시작하게 한다.
+let videoLoadObserver: IntersectionObserver | null = null;
+const videoLoadCallbacks = new WeakMap<Element, () => void>();
+function ensureVideoLoadObserver(): IntersectionObserver {
+  if (videoLoadObserver) return videoLoadObserver;
+  const ahead = typeof window !== "undefined" ? Math.round((window.innerHeight || 800) * 0.8) : 640;
+  videoLoadObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((e) => {
+        if (!e.isIntersecting) return;
+        const cb = videoLoadCallbacks.get(e.target);
+        if (cb) {
+          cb();
+          videoLoadObserver?.unobserve(e.target); // 한 번 로드 허용되면 sticky (스크롤 업 시 재언로드 방지)
+          videoLoadCallbacks.delete(e.target);
+        }
+      });
+    },
+    { rootMargin: `300px 0px ${ahead}px 0px`, threshold: 0 },
+  );
+  return videoLoadObserver;
+}
+
 // iOS Safari는 preload="metadata"만으론 첫 프레임을 그리지 않아, 재생 중이 아닌(일시정지) 영상이
 // poster 없이 검은 배경(bg-black)만 보인다. 미디어 프래그먼트 #t= 로 시작 시점을 지정하면 재생 없이도
 // 해당 프레임을 디코드해 poster처럼 페인트한다. → 캐러셀에서 가운데 1개만 재생되고 나머지 슬라이드는
@@ -259,8 +284,28 @@ function videoPosterSrc(url: string): string {
 
 function FeedVideo({ url }: { url: string }) {
   const ref = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [muted, setMuted] = useGlobalVideoMuted();
   const [loading, setLoading] = useState(false);
+  // 실제 프레임이 재생되는 동안에만 플레이어를 노출(opacity)한다. 버퍼링/일시정지 중에는 플레이어가
+  // 투명이 되어 뒤에 깔린 포스터(첫 프레임 썸네일)가 보인다. → 재생 시작 시 검은 화면으로 빠지던 문제 해소.
+  const [playing, setPlaying] = useState(false);
+  // lazy-load: 뷰포트(+아래 ~0.8화면)에 가까워질 때까지 src/preload를 비워 둔다. 위→아래 순서 로딩 +
+  // 화면 밖 아래쪽 영상 선로딩 1~2개 제한 (포스터+플레이어 2레이어 디코더/네트워크 부담 완화).
+  const [shouldLoad, setShouldLoad] = useState(false);
+
+  useEffect(() => {
+    if (shouldLoad) return;
+    const node = containerRef.current;
+    if (!node) return;
+    const obs = ensureVideoLoadObserver();
+    videoLoadCallbacks.set(node, () => setShouldLoad(true));
+    obs.observe(node);
+    return () => {
+      obs.unobserve(node);
+      videoLoadCallbacks.delete(node);
+    };
+  }, [shouldLoad]);
 
   useEffect(() => {
     const el = ref.current;
@@ -291,21 +336,27 @@ function FeedVideo({ url }: { url: string }) {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const show = () => { if (!el.paused) setLoading(true); };
-    const hide = () => setLoading(false);
-    el.addEventListener("waiting", show);
-    el.addEventListener("playing", hide);
-    el.addEventListener("canplay", hide);
-    el.addEventListener("pause", hide);
-    el.addEventListener("ended", hide);
-    el.addEventListener("error", hide);
+    // 재생 중 재버퍼링(waiting/stalled)이 오면 플레이어를 다시 투명으로 돌려(setPlaying(false)) 뒤의
+    // 포스터(썸네일)가 보이게 한다. 안 그러면 opacity가 1로 남아 검은 버퍼 프레임이 포스터를 덮는다.
+    const onWaiting = () => { if (!el.paused) { setLoading(true); setPlaying(false); } };
+    const onPlaying = () => { setLoading(false); setPlaying(true); };
+    const onCanPlay = () => setLoading(false);
+    const onStopped = () => { setLoading(false); setPlaying(false); };
+    el.addEventListener("waiting", onWaiting);
+    el.addEventListener("stalled", onWaiting);
+    el.addEventListener("playing", onPlaying);
+    el.addEventListener("canplay", onCanPlay);
+    el.addEventListener("pause", onStopped);
+    el.addEventListener("ended", onStopped);
+    el.addEventListener("error", onStopped);
     return () => {
-      el.removeEventListener("waiting", show);
-      el.removeEventListener("playing", hide);
-      el.removeEventListener("canplay", hide);
-      el.removeEventListener("pause", hide);
-      el.removeEventListener("ended", hide);
-      el.removeEventListener("error", hide);
+      el.removeEventListener("waiting", onWaiting);
+      el.removeEventListener("stalled", onWaiting);
+      el.removeEventListener("playing", onPlaying);
+      el.removeEventListener("canplay", onCanPlay);
+      el.removeEventListener("pause", onStopped);
+      el.removeEventListener("ended", onStopped);
+      el.removeEventListener("error", onStopped);
     };
   }, []);
 
@@ -317,16 +368,37 @@ function FeedVideo({ url }: { url: string }) {
   }, [muted]);
 
   return (
-    <div className="relative w-full">
+    // 로드 전에는 세로 공간을 예약(minHeight)해 둔다. src 없는 video는 높이가 ~0이라 피드가 무너지면
+    // 아래쪽 영상들이 전부 rootMargin 안으로 들어와 한꺼번에 로드돼 lazy-load가 무력화되기 때문.
+    <div
+      ref={containerRef}
+      className="relative w-full bg-black"
+      style={shouldLoad ? undefined : { minHeight: "56vh" }}
+    >
+      {/* 포스터 레이어: 첫 프레임만 보여주는 일시정지 영상(재생하지 않음). 플레이어가 버퍼링/일시정지로
+          투명일 때 뒤에서 썸네일(첫 프레임)을 항상 노출한다. 일시정지 #t=0.001 프레임은 안정적으로
+          페인트되므로(재생 중 검은 화면으로 빠지지 않음) 로딩 내내 썸네일이 보인다.
+          src/preload는 lazy-load(shouldLoad) 전까지 비워 둔다. */}
+      <video
+        src={shouldLoad ? videoPosterSrc(url) : undefined}
+        muted
+        playsInline
+        preload={shouldLoad ? "metadata" : "none"}
+        tabIndex={-1}
+        aria-hidden
+        className="absolute inset-0 h-full w-full object-contain pointer-events-none select-none"
+        style={{ WebkitTouchCallout: "none" } as React.CSSProperties}
+      />
+      {/* 플레이어: 실제 프레임이 재생되는 동안(playing)만 노출. 버퍼링/일시정지 땐 투명 → 포스터 노출 */}
       <video
         ref={ref}
-        src={videoPosterSrc(url)}
+        src={shouldLoad ? videoPosterSrc(url) : undefined}
         muted={muted}
         loop
         playsInline
-        preload="metadata"
-        className="w-full object-contain pointer-events-none select-none bg-black"
-        style={{ maxHeight: "80vh", WebkitTouchCallout: "none" } as React.CSSProperties}
+        preload={shouldLoad ? "metadata" : "none"}
+        className="relative w-full object-contain pointer-events-none select-none"
+        style={{ maxHeight: "80vh", opacity: playing ? 1 : 0, transition: "opacity 120ms ease", WebkitTouchCallout: "none" } as React.CSSProperties}
       />
       {loading && (
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
