@@ -98,15 +98,19 @@ export default function MyPage() {
       const token = data.session?.access_token;
       if (!token) return; // 토큰 없음 → null 유지(0 확정 X)
 
-      const res = await fetch("/api/leaderboard/my-rank?track=writing", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return; // 실패 → null 유지(0 확정 X)
+      try {
+        const res = await fetch("/api/leaderboard/my-rank?track=writing", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return; // 실패 → null 유지(0 확정 X)
 
-      const json = await res.json();
-      if (cancelled) return; // 유저 전환 race 방지
-      // 성공 시에만 확정: score 숫자면 그 값, rank null(집계 0건)이면 0pt(루키)
-      setWritingPoints(typeof json.score === "number" ? json.score : 0);
+        const json = await res.json();
+        if (cancelled) return; // 유저 전환 race 방지
+        // 성공 시에만 확정: score 숫자면 그 값, rank null(집계 0건)이면 0pt(루키)
+        setWritingPoints(typeof json.score === "number" ? json.score : 0);
+      } catch {
+        // 네트워크 reject / json parse 실패 → null 유지(0 확정 X), 콘솔 unhandled 방지
+      }
     }
 
     loadWritingPoints();
