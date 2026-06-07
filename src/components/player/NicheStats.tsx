@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
 import GlassCard from "@/components/ui/GlassCard";
-import PitcherSplitTable from "@/components/player/PitcherSplitTable";
+import PlayerSplitTable from "@/components/player/PlayerSplitTable";
 import { calcBatterSaber, calcPitcherSaber, type CalcBatterSaber, type CalcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
 import {
   BATTER_ADVANCED, PITCHER_ADVANCED,
@@ -241,6 +241,7 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
       const ps = realSaber as CalcPitcherSaber;
       return (
         <div className="space-y-4">
+          <PlayerSplitTable playerId={playerId} position={position} teamColor={teamColor} />
           <GlassCard className="p-4">
             <h3 className="text-sm font-bold text-text-primary mb-3">📊 세이버메트릭스 (실데이터 기반)</h3>
             <div className="grid grid-cols-4 gap-3">
@@ -255,7 +256,6 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
             </div>
             <p className="text-[10px] text-text-tertiary mt-3 text-center">※ KBO 공식 기록 기반 계산값</p>
           </GlassCard>
-          <PitcherSplitTable playerId={playerId} teamColor={teamColor} />
         </div>
       );
     }
@@ -263,6 +263,7 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
     const bs = realSaber as CalcBatterSaber;
     return (
       <div className="space-y-4">
+        <PlayerSplitTable playerId={playerId} position={position} teamColor={teamColor} />
         <GlassCard className="p-4">
           <h3 className="text-sm font-bold text-text-primary mb-3">📊 세이버메트릭스 (실데이터 기반)</h3>
           <div className="grid grid-cols-4 gap-3">
