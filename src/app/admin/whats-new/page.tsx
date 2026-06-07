@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Plus, Pencil, Trash2, Eye, EyeOff, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Plus, Pencil, Trash2, Eye, EyeOff, Loader2, ImagePlus } from "lucide-react";
 
 interface Announcement {
   id: string;
@@ -44,6 +44,54 @@ export default function AdminWhatsNewPage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  /** 본문 textarea 커서 위치에 텍스트 삽입 */
+  const insertAtCursor = (snippet: string) => {
+    const el = bodyRef.current;
+    setForm((prev) => {
+      if (!el) return { ...prev, body: prev.body + snippet };
+      const start = el.selectionStart ?? prev.body.length;
+      const end = el.selectionEnd ?? prev.body.length;
+      const next = prev.body.slice(0, start) + snippet + prev.body.slice(end);
+      // 삽입 후 커서를 삽입한 텍스트 끝으로 이동
+      requestAnimationFrame(() => {
+        const pos = start + snippet.length;
+        el.focus();
+        el.setSelectionRange(pos, pos);
+      });
+      return { ...prev, body: next };
+    });
+  };
+
+  const handleImagePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // 같은 파일 재선택 허용
+    if (!file) return;
+
+    setUploading(true);
+    setError("");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/admin/whats-new/upload", {
+        method: "POST",
+        headers: { "x-admin-pin": getPin() },
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "이미지 업로드 실패");
+      } else {
+        insertAtCursor(`\n![](${data.url})\n`);
+      }
+    } catch {
+      setError("이미지 업로드 네트워크 오류");
+    }
+    setUploading(false);
+  };
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
@@ -179,14 +227,36 @@ export default function AdminWhatsNewPage() {
             </div>
 
             <div>
-              <label className="block text-xs text-text-secondary mb-1">본문 * (줄바꿈으로 구분)</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs text-text-secondary">본문 * (줄바꿈으로 구분)</label>
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={uploading}
+                  className="flex items-center gap-1 rounded-md bg-[var(--bg-tertiary)] px-2 py-1 text-xs text-text-secondary hover:text-text-primary disabled:opacity-50 transition-colors"
+                >
+                  {uploading ? <Loader2 size={12} className="animate-spin" /> : <ImagePlus size={12} />}
+                  사진 첨부
+                </button>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  className="hidden"
+                  onChange={handleImagePick}
+                />
+              </div>
               <textarea
+                ref={bodyRef}
                 value={form.body}
                 onChange={(e) => setForm({ ...form, body: e.target.value })}
                 rows={8}
                 className="w-full rounded-lg bg-[var(--bg-tertiary)] px-3 py-2 text-sm text-text-primary outline-none resize-y"
                 placeholder={"1. GIPHY 댓글 달기\n댓글에 움짤을 붙여보세요!\n\n2. 커스텀 아바타\n프로필 사진을 직접 등록하세요."}
               />
+              <p className="mt-1 text-[11px] text-text-tertiary">
+                커서 위치에 <code>![](이미지주소)</code> 형태로 삽입됩니다. 원하는 위치에 사진을 끼워넣으세요.
+              </p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { ArrowLeft, Sparkles, ChevronRight } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
@@ -22,6 +22,58 @@ function escapeHtml(str: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/** 본문 한 줄짜리 이미지 마커: ![alt](https://...) — https만 허용 */
+const IMG_LINE = /^!\[([^\]]*)\]\((https:\/\/[^\s)]+)\)\s*$/;
+
+/**
+ * 본문을 텍스트/이미지 세그먼트로 파싱해 렌더.
+ * 이미지 마커 줄은 <img>로, 나머지 텍스트는 기존처럼 줄바꿈 보존 렌더.
+ * URL/텍스트는 React가 자동 이스케이프하므로 dangerouslySetInnerHTML 미사용.
+ */
+function renderBody(body: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let textBuf: string[] = [];
+
+  const flushText = () => {
+    if (textBuf.length === 0) return;
+    const block = textBuf.join("\n").replace(/^\n+|\n+$/g, "");
+    if (block) {
+      nodes.push(
+        <p
+          key={`t-${nodes.length}`}
+          className="text-sm text-text-secondary whitespace-pre-line leading-relaxed"
+        >
+          {block}
+        </p>,
+      );
+    }
+    textBuf = [];
+  };
+
+  for (const line of body.split("\n")) {
+    const m = line.match(IMG_LINE);
+    if (m) {
+      flushText();
+      const alt = m[1] || "";
+      const src = m[2];
+      nodes.push(
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          key={`i-${nodes.length}`}
+          src={src}
+          alt={alt}
+          loading="lazy"
+          className="my-3 w-full rounded-lg border border-[var(--color-border)]"
+        />,
+      );
+    } else {
+      textBuf.push(line);
+    }
+  }
+  flushText();
+  return nodes;
 }
 
 function formatDate(iso: string): string {
@@ -85,10 +137,7 @@ export default function WhatsNewPage() {
               <h2 className="text-base font-semibold text-text-primary mb-2">
                 {escapeHtml(item.title)}
               </h2>
-              <p
-                className="text-sm text-text-secondary whitespace-pre-line leading-relaxed"
-                dangerouslySetInnerHTML={{ __html: escapeHtml(item.body).replace(/\n/g, "<br />") }}
-              />
+              <div className="space-y-1">{renderBody(item.body)}</div>
               {item.cta_label && item.cta_path && item.cta_path !== pathname && (
                 <button
                   onClick={() => router.push(item.cta_path!)}
