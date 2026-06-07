@@ -15,13 +15,78 @@ interface Announcement {
   published_at: string;
 }
 
-/** HTML-escape to prevent XSS from admin-authored content */
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+const IMAGE_LINE_REGEX = /^!\[([^\]\n]{0,80})\]\((https?:\/\/[^\s)]+)\)$/;
+
+type BodyBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; alt: string; src: string };
+
+function isSafeImageUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function parseBody(body: string): BodyBlock[] {
+  const blocks: BodyBlock[] = [];
+  const textLines: string[] = [];
+
+  const flushText = () => {
+    const text = textLines.join("\n").trim();
+    if (text) blocks.push({ type: "text", text });
+    textLines.length = 0;
+  };
+
+  for (const line of body.replace(/\r\n/g, "\n").split("\n")) {
+    const match = line.trim().match(IMAGE_LINE_REGEX);
+    if (match && isSafeImageUrl(match[2])) {
+      flushText();
+      blocks.push({ type: "image", alt: match[1] || "새소식 이미지", src: match[2] });
+    } else {
+      textLines.push(line);
+    }
+  }
+
+  flushText();
+  return blocks;
+}
+
+function AnnouncementBody({ body }: { body: string }) {
+  const blocks = parseBody(body);
+
+  return (
+    <div className="space-y-3 text-sm leading-relaxed text-text-secondary">
+      {blocks.map((block, index) => {
+        if (block.type === "image") {
+          return (
+            <figure key={`${block.src}-${index}`} className="overflow-hidden rounded-xl border border-white/10 bg-black/20">
+              {/* eslint-disable-next-line @next/next/no-img-element -- admin-uploaded Supabase Storage image */}
+              <img
+                src={block.src}
+                alt={block.alt}
+                loading="lazy"
+                className="h-auto w-full object-contain"
+              />
+              {block.alt && block.alt !== "스크린샷" && (
+                <figcaption className="px-3 py-2 text-xs text-text-tertiary">
+                  {block.alt}
+                </figcaption>
+              )}
+            </figure>
+          );
+        }
+
+        return (
+          <p key={`${block.text}-${index}`} className="whitespace-pre-line">
+            {block.text}
+          </p>
+        );
+      })}
+    </div>
+  );
 }
 
 function formatDate(iso: string): string {
@@ -83,18 +148,15 @@ export default function WhatsNewPage() {
                 {formatDate(item.published_at)}
               </div>
               <h2 className="text-base font-semibold text-text-primary mb-2">
-                {escapeHtml(item.title)}
+                {item.title}
               </h2>
-              <p
-                className="text-sm text-text-secondary whitespace-pre-line leading-relaxed"
-                dangerouslySetInnerHTML={{ __html: escapeHtml(item.body).replace(/\n/g, "<br />") }}
-              />
+              <AnnouncementBody body={item.body} />
               {item.cta_label && item.cta_path && item.cta_path !== pathname && (
                 <button
                   onClick={() => router.push(item.cta_path!)}
                   className="mt-4 flex items-center gap-1 rounded-lg bg-white/10 px-4 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-white/15"
                 >
-                  {escapeHtml(item.cta_label)}
+                  {item.cta_label}
                   <ChevronRight size={16} />
                 </button>
               )}

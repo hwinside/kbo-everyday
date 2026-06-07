@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Plus, Pencil, Trash2, Eye, EyeOff, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
+import { Plus, Pencil, Trash2, Eye, EyeOff, Loader2, ImagePlus } from "lucide-react";
 
 interface Announcement {
   id: string;
@@ -43,7 +43,10 @@ export default function AdminWhatsNewPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [error, setError] = useState("");
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
@@ -121,6 +124,61 @@ export default function AdminWhatsNewPage() {
     setSaving(false);
   };
 
+  const insertBodyText = (text: string) => {
+    const textarea = bodyRef.current;
+    const start = textarea?.selectionStart ?? form.body.length;
+    const end = textarea?.selectionEnd ?? form.body.length;
+    const before = form.body.slice(0, start);
+    const after = form.body.slice(end);
+    const prefix = before.length > 0 && !before.endsWith("\n") ? "\n\n" : "";
+    const suffix = after.length > 0 && !after.startsWith("\n") ? "\n\n" : "";
+    const nextBody = `${before}${prefix}${text}${suffix}${after}`;
+    const cursor = before.length + prefix.length + text.length;
+
+    setForm((prev) => ({ ...prev, body: nextBody }));
+    requestAnimationFrame(() => {
+      bodyRef.current?.focus();
+      bodyRef.current?.setSelectionRange(cursor, cursor);
+    });
+  };
+
+  const handleImageSelect = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setError("이미지 파일만 첨부할 수 있습니다");
+      return;
+    }
+
+    setUploadingImage(true);
+    setError("");
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res = await fetch("/api/admin/whats-new/image", {
+        method: "POST",
+        headers: { "x-admin-pin": getPin() },
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "이미지 업로드 실패");
+        return;
+      }
+
+      insertBodyText(`![스크린샷](${data.url})`);
+    } catch {
+      setError("이미지 업로드 중 네트워크 오류가 발생했습니다");
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
   const handleToggle = async (item: Announcement) => {
     await fetch("/api/admin/whats-new", {
       method: "PUT",
@@ -179,8 +237,31 @@ export default function AdminWhatsNewPage() {
             </div>
 
             <div>
-              <label className="block text-xs text-text-secondary mb-1">본문 * (줄바꿈으로 구분)</label>
+              <div className="mb-1 flex items-center justify-between gap-3">
+                <label className="block text-xs text-text-secondary">본문 *</label>
+                <button
+                  type="button"
+                  onClick={() => imageInputRef.current?.click()}
+                  disabled={uploadingImage}
+                  className="flex items-center gap-1 rounded-lg bg-white/10 px-2.5 py-1.5 text-xs font-medium text-text-primary transition-colors hover:bg-white/15 disabled:opacity-50"
+                >
+                  {uploadingImage ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <ImagePlus size={14} />
+                  )}
+                  사진 첨부
+                </button>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleImageSelect}
+                />
+              </div>
               <textarea
+                ref={bodyRef}
                 value={form.body}
                 onChange={(e) => setForm({ ...form, body: e.target.value })}
                 rows={8}
