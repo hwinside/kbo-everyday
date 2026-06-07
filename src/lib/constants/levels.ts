@@ -29,3 +29,9 @@ export function getLevelForPoints(points: number): LevelData {
   }
   return LEVELS[0];
 }
+
+// 현재 점수 기준 다음 티어. 최상위(GOAT) 도달 시 null.
+export function getNextLevel(points: number): LevelData | null {
+  const current = getLevelForPoints(points);
+  return LEVELS.find((l) => l.level === current.level + 1) ?? null;
+}

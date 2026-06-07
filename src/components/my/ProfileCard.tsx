@@ -4,6 +4,7 @@ import { ChevronRight, Settings } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LevelBadge from "@/components/ui/LevelBadge";
+import { getNextLevel } from "@/lib/constants/levels";
 import { getTeamBgColor } from "@/lib/constants/teams";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import type { User } from "@supabase/supabase-js";
@@ -11,14 +12,19 @@ import type { TeamData } from "@/lib/constants/teams";
 
 interface ProfileCardProps {
   user: User | null;
-  profile: { nickname?: string; avatar_url?: string | null; points?: number } | null;
+  profile: { nickname?: string; avatar_url?: string | null } | null;
   team: TeamData | null;
+  // 누적 점수(SSOT = v_leaderboard_writing, my-rank API). profile.points 비의존(드리프트 방지).
+  points?: number | null;
   onAvatarClick: () => void;
   onNicknameClick: () => void;
   onViewProfile?: () => void;
 }
 
-export default function ProfileCard({ user, profile, team, onAvatarClick, onNicknameClick, onViewProfile }: ProfileCardProps) {
+export default function ProfileCard({ user, profile, team, points, onAvatarClick, onNicknameClick, onViewProfile }: ProfileCardProps) {
+  const score = user ? points ?? 0 : null;
+  const nextLevel = score !== null ? getNextLevel(score) : null;
+  const remaining = nextLevel ? Math.max(0, nextLevel.requiredPoints - (score ?? 0)) : 0;
   return (
     <GlassCard className="p-5">
       <div className="flex items-center gap-4">
@@ -56,9 +62,20 @@ export default function ProfileCard({ user, profile, team, onAvatarClick, onNick
             )}
             {team && <TeamBadge teamId={team.id} />}
           </div>
-          <LevelBadge level={15} showTitle />
-          {user && <p className="mt-1 text-xs text-text-tertiary">닉네임을 누르면 변경할 수 있어요</p>}
-          <p className="mt-0.5 text-base text-text-tertiary">{user ? `${profile?.points || 0} 포인트` : "로그인 해주세요"}</p>
+          {user ? (
+            <>
+              <div className="flex items-center gap-2">
+                <LevelBadge points={score ?? 0} showTitle />
+                <span className="text-xs text-text-tertiary">
+                  {nextLevel ? `· 다음 레벨까지 ${remaining}점` : "· 최고 레벨 달성 🎉"}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-text-tertiary">닉네임을 누르면 변경할 수 있어요</p>
+              <p className="mt-0.5 text-base text-text-tertiary">{score ?? 0} 포인트</p>
+            </>
+          ) : (
+            <p className="mt-0.5 text-base text-text-tertiary">로그인 해주세요</p>
+          )}
         </div>
       </div>
 

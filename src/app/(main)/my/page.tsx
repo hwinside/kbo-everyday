@@ -51,6 +51,7 @@ export default function MyPage() {
   const [showNicknameEdit, setShowNicknameEdit] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
+  const [writingPoints, setWritingPoints] = useState<number | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -85,6 +86,30 @@ export default function MyPage() {
 
     loadNicknameStatus();
   }, [user, profile?.nickname]);
+
+  useEffect(() => {
+    async function loadWritingPoints() {
+      if (!user) {
+        setWritingPoints(null);
+        return;
+      }
+
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) return;
+
+      const res = await fetch("/api/leaderboard/my-rank?track=writing", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+
+      const json = await res.json();
+      // rank null(집계 미포함·0건) → score 없음 → 0pt(루키)
+      setWritingPoints(typeof json.score === "number" ? json.score : 0);
+    }
+
+    loadWritingPoints();
+  }, [user]);
 
   const team = teamId ? getTeamById(teamId) ?? null : null;
 
@@ -139,6 +164,7 @@ export default function MyPage() {
           user={user}
           profile={profile}
           team={team}
+          points={writingPoints}
           onAvatarClick={() => user && setShowAvatarSelect(true)}
           onNicknameClick={() => user && setShowNicknameEdit(true)}
           onViewProfile={() => user && router.push(`/profile/${user.id}`)}
