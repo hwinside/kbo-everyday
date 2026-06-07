@@ -3,7 +3,6 @@
 import { motion } from "framer-motion";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
-import LevelBadge from "@/components/ui/LevelBadge";
 import type { LeaderboardEntry } from "@/lib/constants/predictions";
 
 interface LeaderboardProps {
@@ -105,7 +104,8 @@ export default function Leaderboard({ entries }: LeaderboardProps) {
                 >
                   {entry.nickname}
                 </span>
-                <LevelBadge level={entry.level} />
+                {/* 예측 도메인 레벨 — 활동 levels.ts와 분리(독립 표시) */}
+                <span className="text-xs text-text-tertiary">Lv.{entry.level}</span>
               </div>
             </div>
 
@@ -140,7 +140,8 @@ export default function Leaderboard({ entries }: LeaderboardProps) {
                 <span className="truncate text-sm font-bold text-accent">
                   {myEntry.nickname} (나)
                 </span>
-                <LevelBadge level={myEntry.level} />
+                {/* 예측 도메인 레벨 — 활동 levels.ts와 분리(독립 표시) */}
+                <span className="text-xs text-text-tertiary">Lv.{myEntry.level}</span>
               </div>
             </div>
             <div className="text-right flex-shrink-0">
