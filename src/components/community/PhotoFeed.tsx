@@ -268,7 +268,16 @@ function FeedVideo({ url }: { url: string }) {
     const observer = ensureVideoObserver();
     videoRegistry.add(el);
     observer.observe(el);
+    // preload="metadata" + 정적 화면에서 첫 recompute의 play()가 데이터 준비 전이라 시작되지
+    // 못하면, 스크롤/IO 추가 트리거가 없어 영상이 첫 프레임(poster)에 멈춘 채 재생되지 않던 문제.
+    // (이전 IO-ratio 방식은 로딩 중 IO가 여러 번 발화해 play()를 자연히 재시도했었다.)
+    // 재생 가능한 데이터를 확보(loadeddata/canplay)할 때 포커스 재계산을 돌려 play()를 다시 시도한다.
+    const retryPlay = () => scheduleVideoRecompute();
+    el.addEventListener("loadeddata", retryPlay);
+    el.addEventListener("canplay", retryPlay);
     return () => {
+      el.removeEventListener("loadeddata", retryPlay);
+      el.removeEventListener("canplay", retryPlay);
       observer.unobserve(el);
       videoRegistry.delete(el);
       recomputeVideoFocus();
