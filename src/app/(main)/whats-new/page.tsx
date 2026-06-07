@@ -2,8 +2,10 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { ArrowLeft, Sparkles, ChevronRight } from "lucide-react";
+import { ArrowLeft, Sparkles, ChevronRight, MessageCircle } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
+import CommentSheet from "@/components/community/CommentSheet";
+import { supabase } from "@/lib/supabase/client";
 
 interface Announcement {
   id: string;
@@ -13,6 +15,7 @@ interface Announcement {
   cta_label: string | null;
   cta_path: string | null;
   published_at: string;
+  post_id: number | null;
 }
 
 /** HTML-escape to prevent XSS from admin-authored content */
@@ -95,14 +98,27 @@ export default function WhatsNewPage() {
   const pathname = usePathname();
   const [items, setItems] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
+  const [openPostId, setOpenPostId] = useState<number | null>(null);
+  const [commentCounts, setCommentCounts] = useState<Record<number, number>>({});
 
   useEffect(() => {
     fetch("/api/whats-new")
       .then((r) => r.json())
-      .then((data: Announcement[]) => {
+      .then(async (data: Announcement[]) => {
         setItems(data);
         if (data.length > 0) {
           localStorage.setItem("whats-new-seen-id", data[0].id);
+        }
+        // 브리지 포스트들의 댓글 수 일괄 조회
+        const postIds = data.map((d) => d.post_id).filter((v): v is number => typeof v === "number");
+        if (postIds.length > 0) {
+          const { data: posts } = await supabase
+            .from("posts")
+            .select("id, comment_count")
+            .in("id", postIds);
+          if (posts) {
+            setCommentCounts(Object.fromEntries(posts.map((p) => [p.id as number, (p.comment_count as number) ?? 0])));
+          }
         }
       })
       .catch(() => {})
@@ -156,10 +172,31 @@ export default function WhatsNewPage() {
                   <ChevronRight size={16} />
                 </button>
               )}
+              {item.post_id !== null && (
+                <button
+                  onClick={() => setOpenPostId(item.post_id)}
+                  className="mt-4 flex items-center gap-1.5 text-sm text-text-secondary transition-colors hover:text-text-primary"
+                >
+                  <MessageCircle size={16} />
+                  댓글 {commentCounts[item.post_id] ?? 0}
+                </button>
+              )}
             </GlassCard>
           ))}
         </div>
       )}
+
+      <CommentSheet
+        isOpen={openPostId !== null}
+        onClose={() => setOpenPostId(null)}
+        postId={openPostId}
+        onCommentAdded={(postId) =>
+          setCommentCounts((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }))
+        }
+        onCommentDeleted={(postId) =>
+          setCommentCounts((prev) => ({ ...prev, [postId]: Math.max(0, (prev[postId] ?? 0) - 1) }))
+        }
+      />
     </div>
   );
 }

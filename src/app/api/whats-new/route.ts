@@ -9,7 +9,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from("announcements")
-    .select("id, title, summary, body, cta_label, cta_path, published_at")
+    .select("id, title, summary, body, cta_label, cta_path, published_at, post_id")
     .eq("is_active", true)
     .or(`display_until.is.null,display_until.gt.${now}`)
     .order("published_at", { ascending: false })

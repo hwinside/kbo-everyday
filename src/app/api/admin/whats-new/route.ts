@@ -5,6 +5,52 @@ import { isAdminRequest } from "@/lib/admin/pin";
 
 const SAFE_CTA_PATH = /^\/[A-Za-z0-9/_?=&%#.-]*$/;
 
+type AdminClient = ReturnType<typeof getSupabaseAdmin>;
+
+interface AnnouncementRow {
+  id: string;
+  title: string;
+  summary: string;
+  is_active?: boolean | null;
+  post_id?: number | null;
+}
+
+/**
+ * 댓글용 브리지 포스트 보장.
+ * 새소식이 활성(발행) 상태이고 아직 연결된 포스트가 없으면
+ * board_type='announcement' + is_hidden=true 숨김 포스트를 만들어 연결한다.
+ * 이 포스트는 통합 피드(team/player/free + is_hidden<>true)에 노출되지 않는다.
+ * 결과로 row.post_id를 채워 응답에 반영한다. (실패해도 새소식 저장 자체는 유지)
+ */
+async function ensureBridgePost(supabase: AdminClient, row: AnnouncementRow): Promise<void> {
+  if (!row.is_active || row.post_id) return;
+  const systemUserId = process.env.SYSTEM_USER_ID;
+  if (!systemUserId) return; // env 미설정 시 조용히 skip → 댓글만 비활성, 발행은 정상
+
+  const { data: post, error: postErr } = await supabase
+    .from("posts")
+    .insert({
+      author_id: systemUserId,
+      board_type: "announcement",
+      board_id: "announcement",
+      content_type: "general",
+      title: row.title,
+      content: row.summary || row.title,
+      is_hidden: true,
+    })
+    .select("id")
+    .single();
+
+  if (postErr || !post) return;
+
+  const { error: linkErr } = await supabase
+    .from("announcements")
+    .update({ post_id: post.id })
+    .eq("id", row.id);
+
+  if (!linkErr) row.post_id = post.id as number;
+}
+
 export async function GET(req: NextRequest) {
   if (!isAdminRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -51,6 +97,7 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  await ensureBridgePost(supabase, data as AnnouncementRow);
   revalidatePath("/api/whats-new");
   return NextResponse.json(data, { status: 201 });
 }
@@ -80,6 +127,7 @@ export async function PUT(req: NextRequest) {
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  await ensureBridgePost(supabase, data as AnnouncementRow); // 발행(활성화) 시 댓글 브리지 보장
   revalidatePath("/api/whats-new");
   return NextResponse.json(data);
 }
