@@ -88,27 +88,29 @@ export default function MyPage() {
   }, [user, profile?.nickname]);
 
   useEffect(() => {
+    let cancelled = false;
     async function loadWritingPoints() {
-      if (!user) {
-        setWritingPoints(null);
-        return;
-      }
+      // 유저 변경/로딩 시작 → null(확인 중)로 초기화. 이전 유저 점수 잔존·0 확정 방지.
+      setWritingPoints(null);
+      if (!user) return;
 
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
-      if (!token) return;
+      if (!token) return; // 토큰 없음 → null 유지(0 확정 X)
 
       const res = await fetch("/api/leaderboard/my-rank?track=writing", {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) return;
+      if (!res.ok) return; // 실패 → null 유지(0 확정 X)
 
       const json = await res.json();
-      // rank null(집계 미포함·0건) → score 없음 → 0pt(루키)
+      if (cancelled) return; // 유저 전환 race 방지
+      // 성공 시에만 확정: score 숫자면 그 값, rank null(집계 0건)이면 0pt(루키)
       setWritingPoints(typeof json.score === "number" ? json.score : 0);
     }
 
     loadWritingPoints();
+    return () => { cancelled = true; };
   }, [user]);
 
   const team = teamId ? getTeamById(teamId) ?? null : null;
