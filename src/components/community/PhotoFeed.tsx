@@ -261,6 +261,9 @@ function FeedVideo({ url }: { url: string }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [muted, setMuted] = useGlobalVideoMuted();
   const [loading, setLoading] = useState(false);
+  // 실제 프레임이 재생되는 동안에만 플레이어를 노출(opacity)한다. 버퍼링/일시정지 중에는 플레이어가
+  // 투명이 되어 뒤에 깔린 포스터(첫 프레임 썸네일)가 보인다. → 재생 시작 시 검은 화면으로 빠지던 문제 해소.
+  const [playing, setPlaying] = useState(false);
 
   useEffect(() => {
     const el = ref.current;
@@ -291,21 +294,23 @@ function FeedVideo({ url }: { url: string }) {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const show = () => { if (!el.paused) setLoading(true); };
-    const hide = () => setLoading(false);
-    el.addEventListener("waiting", show);
-    el.addEventListener("playing", hide);
-    el.addEventListener("canplay", hide);
-    el.addEventListener("pause", hide);
-    el.addEventListener("ended", hide);
-    el.addEventListener("error", hide);
+    const onWaiting = () => { if (!el.paused) setLoading(true); };
+    const onPlaying = () => { setLoading(false); setPlaying(true); };
+    const onCanPlay = () => setLoading(false);
+    const onStopped = () => { setLoading(false); setPlaying(false); };
+    el.addEventListener("waiting", onWaiting);
+    el.addEventListener("playing", onPlaying);
+    el.addEventListener("canplay", onCanPlay);
+    el.addEventListener("pause", onStopped);
+    el.addEventListener("ended", onStopped);
+    el.addEventListener("error", onStopped);
     return () => {
-      el.removeEventListener("waiting", show);
-      el.removeEventListener("playing", hide);
-      el.removeEventListener("canplay", hide);
-      el.removeEventListener("pause", hide);
-      el.removeEventListener("ended", hide);
-      el.removeEventListener("error", hide);
+      el.removeEventListener("waiting", onWaiting);
+      el.removeEventListener("playing", onPlaying);
+      el.removeEventListener("canplay", onCanPlay);
+      el.removeEventListener("pause", onStopped);
+      el.removeEventListener("ended", onStopped);
+      el.removeEventListener("error", onStopped);
     };
   }, []);
 
@@ -317,7 +322,21 @@ function FeedVideo({ url }: { url: string }) {
   }, [muted]);
 
   return (
-    <div className="relative w-full">
+    <div className="relative w-full bg-black">
+      {/* 포스터 레이어: 첫 프레임만 보여주는 일시정지 영상(재생하지 않음). 플레이어가 버퍼링/일시정지로
+          투명일 때 뒤에서 썸네일(첫 프레임)을 항상 노출한다. 일시정지 #t=0.001 프레임은 안정적으로
+          페인트되므로(재생 중 검은 화면으로 빠지지 않음) 로딩 내내 썸네일이 보인다. */}
+      <video
+        src={videoPosterSrc(url)}
+        muted
+        playsInline
+        preload="metadata"
+        tabIndex={-1}
+        aria-hidden
+        className="absolute inset-0 h-full w-full object-contain pointer-events-none select-none"
+        style={{ WebkitTouchCallout: "none" } as React.CSSProperties}
+      />
+      {/* 플레이어: 실제 프레임이 재생되는 동안(playing)만 노출. 버퍼링/일시정지 땐 투명 → 포스터 노출 */}
       <video
         ref={ref}
         src={videoPosterSrc(url)}
@@ -325,8 +344,8 @@ function FeedVideo({ url }: { url: string }) {
         loop
         playsInline
         preload="metadata"
-        className="w-full object-contain pointer-events-none select-none bg-black"
-        style={{ maxHeight: "80vh", WebkitTouchCallout: "none" } as React.CSSProperties}
+        className="relative w-full object-contain pointer-events-none select-none"
+        style={{ maxHeight: "80vh", opacity: playing ? 1 : 0, transition: "opacity 120ms ease", WebkitTouchCallout: "none" } as React.CSSProperties}
       />
       {loading && (
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
