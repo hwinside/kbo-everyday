@@ -21,6 +21,48 @@ ALTER TABLE profiles ADD COLUMN IF NOT EXISTS is_operator BOOLEAN DEFAULT false;
 COMMENT ON COLUMN profiles.is_operator IS '운영자 플래그 — 글/댓글/채팅 삭제 권한 게이트';
 
 -- ============================================================
+-- 0.5 is_operator 셀프-부여 차단 가드 (권한 상승 방지)
+--    문제: profiles RLS "Users update own"이 본인 row 전체 UPDATE를 허용하고
+--          Supabase 기본 grant가 authenticated에 테이블 레벨 UPDATE를 줘서,
+--          일반 유저가 SDK로 .update({ is_operator: true })를 직접 호출하면
+--          posts RLS / delete_any_chat_message 게이트를 셀프로 통과할 수 있음.
+--    해결: is_operator 컬럼 변경을 elevated role(마이그레이션/서버) 외에는 차단.
+--          앱 updateProfile은 is_operator를 안 건드리므로 정상 흐름 영향 없음.
+--          INSERT 경로(신규 row에 is_operator=true)도 동일 차단.
+--    트리거는 SECURITY INVOKER(기본)라 current_user가 호출 role을 그대로 반영:
+--          PostgREST 일반 유저 = 'authenticated'/'anon', 마이그레이션 = 'postgres'/
+--          'supabase_admin', 서버 admin = 'service_role'.
+-- ============================================================
+CREATE OR REPLACE FUNCTION guard_profiles_is_operator()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF current_user IN ('postgres', 'supabase_admin', 'supabase_auth_admin', 'service_role') THEN
+    RETURN NEW;  -- 마이그레이션/서버측 admin은 허용
+  END IF;
+
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.is_operator IS TRUE THEN
+      RAISE EXCEPTION 'is_operator can only be set by an administrator' USING ERRCODE = '42501';
+    END IF;
+  ELSIF TG_OP = 'UPDATE' THEN
+    IF NEW.is_operator IS DISTINCT FROM OLD.is_operator THEN
+      RAISE EXCEPTION 'is_operator can only be changed by an administrator' USING ERRCODE = '42501';
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_guard_profiles_is_operator ON profiles;
+CREATE TRIGGER trg_guard_profiles_is_operator
+  BEFORE INSERT OR UPDATE ON profiles
+  FOR EACH ROW
+  EXECUTE FUNCTION guard_profiles_is_operator();
+
+-- ============================================================
 -- 1. posts — 운영자 삭제 정책 (comments 정책과 동일 패턴)
 --    앱 경로: usePosts.deletePost 가 .delete() 하드삭제 (author_id eq 게이트).
 --    운영자는 UI에서 author_id 필터 생략 → 이 RLS 정책이 허용.
