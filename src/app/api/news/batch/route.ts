@@ -34,6 +34,22 @@ const TEAM_MASCOTS = [
   "이글스",
   "히어로즈",
 ];
+
+// shortName → 검색용 풀네임 + 마스코트. 팀 뉴스는 마스코트 게이트로
+// LG그룹·삼성전자 등 동음 기업 기사(예: 젠슨 황 시구 기사가 "프로야구"를
+// 본문에 달고 들어오는 케이스)를 걸러낸다.
+const TEAM_INFO: Record<string, { full: string; mascot: string }> = {
+  LG: { full: "LG 트윈스", mascot: "트윈스" },
+  두산: { full: "두산 베어스", mascot: "베어스" },
+  KT: { full: "KT 위즈", mascot: "위즈" },
+  SSG: { full: "SSG 랜더스", mascot: "랜더스" },
+  NC: { full: "NC 다이노스", mascot: "다이노스" },
+  KIA: { full: "KIA 타이거즈", mascot: "타이거즈" },
+  롯데: { full: "롯데 자이언츠", mascot: "자이언츠" },
+  삼성: { full: "삼성 라이온즈", mascot: "라이온즈" },
+  한화: { full: "한화 이글스", mascot: "이글스" },
+  키움: { full: "키움 히어로즈", mascot: "히어로즈" },
+};
 const NON_BASEBALL_NEGATIVE = [
   "시장",
   "재선",
@@ -66,6 +82,18 @@ function isBaseballRelevant(
   if (NON_BASEBALL_NEGATIVE.some((n) => title.includes(n))) return false;
   if (requiredLabel && !title.includes(requiredLabel)) return false;
   return hasBaseballSignal(`${title} ${description}`);
+}
+
+// 팀 뉴스 전용 — 마스코트가 제목/본문에 있어야 통과. 마스코트를 모르는
+// 팀(매핑 누락)은 기존 baseball signal로 폴백한다.
+function isTeamBaseballRelevant(
+  title: string,
+  description: string,
+  mascot?: string
+): boolean {
+  if (NON_BASEBALL_NEGATIVE.some((n) => title.includes(n))) return false;
+  if (!mascot) return hasBaseballSignal(`${title} ${description}`);
+  return `${title} ${description}`.includes(mascot);
 }
 
 async function fetchNews(query: string): Promise<NewsItem[]> {
@@ -114,10 +142,21 @@ export async function POST(req: NextRequest) {
     const players: { name: string; teamName: string }[] = body.players || [];
 
     // 모든 쿼리를 병렬로 실행
-    const queries: { query: string; label: string; isPlayer: boolean }[] = [];
+    const queries: {
+      query: string;
+      label: string;
+      isPlayer: boolean;
+      mascot?: string;
+    }[] = [];
 
     if (team) {
-      queries.push({ query: `프로야구 ${team}`, label: team, isPlayer: false });
+      const info = TEAM_INFO[team];
+      queries.push({
+        query: `프로야구 ${info?.full || team}`,
+        label: team,
+        isPlayer: false,
+        mascot: info?.mascot,
+      });
     }
 
     for (const p of players.slice(0, 5)) {
@@ -135,27 +174,30 @@ export async function POST(req: NextRequest) {
           ...item,
           _label: q.label,
           _isPlayer: q.isPlayer,
+          _mascot: q.mascot,
         }));
       })
     );
 
+    type LabeledItem = NewsItem & {
+      _label: string;
+      _isPlayer: boolean;
+      _mascot?: string;
+    };
+
     // 중복 제거 + relevance 필터 + 선수별 균등 분배
     const seen = new Set<string>();
-    const dedup = (items: (NewsItem & { _label: string; _isPlayer: boolean })[]) =>
+    const dedup = (items: LabeledItem[]) =>
       items.filter((item) => {
         if (seen.has(item.link)) return false;
         seen.add(item.link);
         return true;
       });
-    const relevantOnly = (
-      items: (NewsItem & { _label: string; _isPlayer: boolean })[]
-    ) =>
+    const relevantOnly = (items: LabeledItem[]) =>
       items.filter((item) =>
-        isBaseballRelevant(
-          item.title,
-          item.description,
-          item._isPlayer ? item._label : undefined
-        )
+        item._isPlayer
+          ? isBaseballRelevant(item.title, item.description, item._label)
+          : isTeamBaseballRelevant(item.title, item.description, item._mascot)
       );
 
     // 팀 뉴스는 첫 번째, 나머지는 선수별. filter→slice 순서로 잡음 자리 채움.

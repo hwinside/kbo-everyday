@@ -80,6 +80,14 @@ function isPlayerRelevantNews(item: NewsItem, playerName: string, teamTokens: st
   return teamTokens.some((token) => normalizedBody.includes(normalizeForMatch(token)));
 }
 
+// 팀 뉴스탭 — 제목/본문에 마스코트가 있어야 통과. LG그룹·삼성전자 등
+// 동음 기업 기사(예: 젠슨 황 시구 기사가 "프로야구"를 본문에 달고 들어옴)를
+// 걸러낸다. 마스코트를 모르는 팀(매핑 누락)은 전부 통과(기존 동작 유지).
+function isTeamRelevantNews(item: NewsItem, mascot: string | null): boolean {
+  if (!mascot) return true;
+  return `${item.title} ${item.description}`.includes(mascot);
+}
+
 async function fetchNaverNews(searchQuery: string, start = 1, display = NEWS_DISPLAY_LIMIT): Promise<NewsItem[]> {
   const res = await fetch(
     `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(searchQuery)}&display=${display}&start=${start}&sort=date`,
@@ -283,11 +291,13 @@ export async function GET(req: NextRequest) {
         return isPlayerRelevantNews(item, player, teamTokens);
       }).slice(0, THUMBNAIL_FETCH_LIMIT);
     } else {
+      // 팀 뉴스는 마스코트 게이트 적용, q/기본(KBO 전체) 검색은 그대로 통과.
+      const teamMascot = team ? TEAM_SEARCH[team]?.split(/\s+/).pop() || null : null;
       const items = await fetchNaverNews(searchQuery, 1, NEWS_DISPLAY_LIMIT);
       unique = items.filter((item: NewsItem) => {
         if (seen.has(item.link)) return false;
         seen.add(item.link);
-        return true;
+        return team ? isTeamRelevantNews(item, teamMascot) : true;
       });
     }
 
