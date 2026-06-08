@@ -12,6 +12,15 @@
 -- 식별: profiles.is_operator = true (per-user 플래그). 새 운영자는 아래 grant에 UUID 추가.
 
 -- ============================================================
+-- 0. profiles.is_operator 컬럼 보장 (멱등)
+--    prod엔 이미 존재(2026-05-30 댓글 운영자삭제 PR #145)하나,
+--    그 migration이 main 미머지라 클린 환경/main 기준 본 migration 단독 실행 시
+--    아래 is_operator 참조가 실패할 수 있음 → IF NOT EXISTS로 선보장.
+-- ============================================================
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS is_operator BOOLEAN DEFAULT false;
+COMMENT ON COLUMN profiles.is_operator IS '운영자 플래그 — 글/댓글/채팅 삭제 권한 게이트';
+
+-- ============================================================
 -- 1. posts — 운영자 삭제 정책 (comments 정책과 동일 패턴)
 --    앱 경로: usePosts.deletePost 가 .delete() 하드삭제 (author_id eq 게이트).
 --    운영자는 UI에서 author_id 필터 생략 → 이 RLS 정책이 허용.
@@ -63,8 +72,12 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION delete_any_chat_message(BIGINT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION delete_any_chat_message(BIGINT) TO authenticated;
+-- grant hardening: REVOKE ALL ... FROM PUBLIC만으로는 Supabase 기본 grant로
+-- anon/service_role에 EXECUTE가 남을 수 있어, delete_own_chat_message hotfix
+-- (20260527_gamechat_message_delete_grants_hotfix)와 동일하게 명시 revoke.
+REVOKE ALL    ON FUNCTION delete_any_chat_message(BIGINT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION delete_any_chat_message(BIGINT) FROM anon, service_role, PUBLIC;
+GRANT  EXECUTE ON FUNCTION delete_any_chat_message(BIGINT) TO authenticated;
 
 -- ============================================================
 -- 3. 운영자 권한 부여 (멱등) — 하린아빠 / 하린엄마 / 윤연률
