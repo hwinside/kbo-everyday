@@ -721,18 +721,18 @@
   },
   {
     "name": "김민준",
-    "kboId": "53893",
-    "teamId": 4,
-    "position": "내야수",
-    "backNo": "47",
-    "team": "SSG"
-  },
-  {
-    "name": "김민준",
     "kboId": "56840",
     "teamId": 4,
     "position": "투수",
     "backNo": "40",
+    "team": "SSG"
+  },
+  {
+    "name": "김민준",
+    "kboId": "53893",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "47",
     "team": "SSG"
   },
   {
