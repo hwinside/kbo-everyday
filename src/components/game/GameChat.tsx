@@ -62,9 +62,10 @@ function getRoomId(gameId: string, room: ChatRoom): string {
 export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatProps) {
   const [room, setRoom] = useState<ChatRoom>("all");
   const roomId = getRoomId(gameId, room);
-  const { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, cooldown, cooldownReason, isLoggedIn } = useChat(roomId);
+  const { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, deleteAnyMessage, cooldown, cooldownReason, isLoggedIn } = useChat(roomId);
   const { homePct } = useMoodGauge(gameId, homeTeamId, awayTeamId);
   const { user, profile, loading: authLoading } = useAuth();
+  const canModerateChat = profile?.is_operator === true;
   const [input, setInput] = useState("");
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const composerRef = useRef<HTMLDivElement>(null);
@@ -182,11 +183,13 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     if (ok) setInput("");
   }
 
-  async function handleDelete(messageId: number) {
+  async function handleDelete(messageId: number, isMine: boolean) {
     if (typeof window === "undefined") return;
     const ok = window.confirm("이 메시지를 삭제하시겠어요?\n삭제된 메시지는 복구할 수 없습니다.");
     if (!ok) return;
-    await deleteMyMessage(messageId);
+    // 본인 메시지는 본인삭제 RPC, 타인 메시지는 운영자삭제 RPC(서버측 is_operator 확인).
+    if (isMine) await deleteMyMessage(messageId);
+    else await deleteAnyMessage(messageId);
   }
 
   function formatTime(dateStr: string) {
@@ -393,10 +396,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
                         <span className="text-[10px] text-text-tertiary opacity-0 group-hover:opacity-100 transition-opacity">
                           {formatTime(msg.created_at)}
                         </span>
-                        {isMe && (
+                        {(isMe || canModerateChat) && (
                           <button
                             type="button"
-                            onClick={() => handleDelete(msg.id)}
+                            onClick={() => handleDelete(msg.id, isMe)}
                             aria-label="메시지 삭제"
                             className="text-text-tertiary hover:text-red-400 opacity-50 hover:opacity-100 transition-colors p-1 -m-1"
                           >
