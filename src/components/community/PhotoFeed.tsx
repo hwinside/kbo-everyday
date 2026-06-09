@@ -803,7 +803,8 @@ function HeartOverlay({ show }: { show: boolean }) {
 }
 
 export default function PhotoFeed({ posts, loading, onLike, boardType = "team", playerLabels, sourceLabels, likedIds }: PhotoFeedProps) {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
+  const canDeleteAnyPost = profile?.is_operator === true;
   const controlledLikes = likedIds !== undefined;
   const [likedPosts, setLikedPosts] = useState<Set<number>>(new Set());
   const [heartPostId, setHeartPostId] = useState<number | null>(null);
@@ -822,12 +823,12 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
     setMenuOpenId(null);
     if (!confirm("이 게시글을 삭제할까요? 댓글/좋아요도 함께 삭제됩니다.")) return;
     try {
-      await deletePost(postId);
+      await deletePost(postId, { canDeleteAny: canDeleteAnyPost });
       setDeletedIds(prev => { const n = new Set(prev); n.add(postId); return n; });
     } catch {
       alert("게시글 삭제에 실패했어요");
     }
-  }, []);
+  }, [canDeleteAnyPost]);
 
   const openComments = (post: Post) => {
     setCommentPostId(post.id);
@@ -965,7 +966,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 <span className="ml-auto text-base text-text-tertiary flex-shrink-0">
                   {timeAgo(post.created_at)}{post.updated_at ? " · 수정됨" : ""}
                 </span>
-                {isMine && (
+                {(isMine || canDeleteAnyPost) && (
                   <div className="relative flex-shrink-0">
                     <button
                       onClick={(e) => { e.stopPropagation(); setMenuOpenId(prev => prev === post.id ? null : post.id); }}
