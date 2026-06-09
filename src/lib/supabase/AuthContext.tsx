@@ -18,6 +18,7 @@ interface Profile {
   grade: string;
   avatar_url: string | null;
   invited_by: string | null;
+  is_operator?: boolean | null;
 }
 
 interface AuthContextType {

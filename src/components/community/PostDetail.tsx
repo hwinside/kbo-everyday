@@ -162,6 +162,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   if (!post) return <div className="flex items-center justify-center h-screen text-text-secondary">게시글을 찾을 수 없습니다</div>;
 
   const isPostMine = !!user && post.author_id === user.id;
+  const canModerateComments = profile?.is_operator === true;
 
   function startPostEdit() {
     setPostMenuOpen(false);
@@ -232,7 +233,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
     setCmtMenuOpenId(null);
     if (!confirm("이 댓글을 삭제할까요?")) return;
     try {
-      await deleteComment(id);
+      await deleteComment(id, { canDeleteAny: canModerateComments });
       setComments(prev => prev.filter(c => c.id !== id));
     } catch {
       alert("댓글 삭제에 실패했어요");
@@ -524,6 +525,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                 const avatarPath = getAvatarPath(c.avatar_url ?? null);
                 const cmtTeam = c.team_id ? getTeamById(c.team_id) : undefined;
                 const isCmtMine = !!user && c.author_id === user.id;
+                const canDeleteCmt = isCmtMine || canModerateComments;
                 const isCmtEditing = cmtEditingId === c.id;
                 const isCmtEdited = !!c.updated_at;
                 const cmtLikeCount = c.like_count ?? 0;
@@ -556,7 +558,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                         <span className="text-xs text-text-tertiary ml-auto flex-shrink-0">
                           {timeAgo(c.created_at)}{isCmtEdited ? " · 수정됨" : ""}
                         </span>
-                        {isCmtMine && !isCmtEditing && (
+                        {canDeleteCmt && !isCmtEditing && (
                           <div className="relative flex-shrink-0">
                             <button
                               onClick={(e) => { e.stopPropagation(); setCmtMenuOpenId(prev => prev === c.id ? null : c.id); }}
@@ -569,7 +571,9 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                               <>
                                 <div className="fixed inset-0 z-10" onClick={() => setCmtMenuOpenId(null)} />
                                 <div className="absolute right-0 top-6 z-20 min-w-[96px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
-                                  <button onClick={() => startCmtEdit(c)} className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">수정</button>
+                                  {isCmtMine && (
+                                    <button onClick={() => startCmtEdit(c)} className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">수정</button>
+                                  )}
                                   <button onClick={() => handleDeleteComment(c.id)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
                                 </div>
                               </>

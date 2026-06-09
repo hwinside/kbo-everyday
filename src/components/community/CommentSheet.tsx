@@ -105,6 +105,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const [kbInset, setKbInset] = useState(0);
   const [vvHeight, setVvHeight] = useState<number | null>(null);
   const { user, profile } = useAuth();
+  const canModerateComments = profile?.is_operator === true;
   const shouldRender = isOpen && postId !== null;
 
   // Fetch comments + liked_by_me
@@ -443,13 +444,13 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     if (!confirm("이 댓글을 삭제할까요?")) return;
 
     try {
-      await deleteComment(commentId);
+      await deleteComment(commentId, { canDeleteAny: canModerateComments });
       setComments((prev) => prev.filter((c) => c.id !== commentId && c.parent_id !== commentId));
       if (postId) onCommentDeleted?.(postId);
     } catch {
       alert("댓글 삭제에 실패했어요");
     }
-  }, [postId, onCommentDeleted]);
+  }, [postId, onCommentDeleted, canModerateComments]);
 
   const handleLike = useCallback(async (commentId: number) => {
     if (!user) { setShowLogin(true); return; }
@@ -548,6 +549,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     const avatarPath = getAvatarPath((comment as Comment & { avatar_url?: string }).avatar_url ?? null);
     const commentTeam = comment.team_id ? getTeamById(comment.team_id) : undefined;
     const isMine = !!user && comment.author_id === user.id;
+    const canDelete = isMine || canModerateComments;
     const isEditing = editingId === comment.id;
     const isEdited = !!comment.updated_at;
     const likeCount = comment.like_count ?? 0;
@@ -582,7 +584,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             <span className="text-[11px] text-text-tertiary ml-auto flex-shrink-0">
               {timeAgo(comment.created_at)}{isEdited ? " · 수정됨" : ""}
             </span>
-            {isMine && !isEditing && (
+            {canDelete && !isEditing && (
               <div className="relative flex-shrink-0">
                 <button
                   onClick={(e) => {
@@ -599,12 +601,14 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                     className="absolute right-0 top-6 z-10 min-w-[96px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <button
-                      onClick={() => startEdit(comment)}
-                      className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary"
-                    >
-                      수정
-                    </button>
+                    {isMine && (
+                      <button
+                        onClick={() => startEdit(comment)}
+                        className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary"
+                      >
+                        수정
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDelete(comment.id)}
                       className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary"
