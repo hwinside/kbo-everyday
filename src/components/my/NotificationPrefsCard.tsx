@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Bell, ChevronDown, ChevronUp } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { supabase } from "@/lib/supabase/client";
+import { useAuth } from "@/lib/supabase/AuthContext";
 import { isNative } from "@/lib/capacitor/platform";
 import { requestNativePushPermission } from "@/lib/native-push";
 import { PREF_LABELS, DEFAULT_PREFS, type NotificationPrefs, type PrefKey } from "@/lib/notifications/prefs";
@@ -14,6 +15,7 @@ import { PREF_LABELS, DEFAULT_PREFS, type NotificationPrefs, type PrefKey } from
  * 디폴트 전부 on(이닝 요약만 off)이라 row 없이도 토글 상태가 의미를 가짐.
  */
 export default function NotificationPrefsCard() {
+  const { user } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [prefs, setPrefs] = useState<NotificationPrefs>(DEFAULT_PREFS);
   const [loaded, setLoaded] = useState(false);
@@ -61,7 +63,9 @@ export default function NotificationPrefsCard() {
     }
   }, [prefs, authHeader]);
 
-  if (!isNative) return null;
+  // 네이티브 앱 + 로그인 유저에게만 — 비로그인에게 계정 설정 카드/권한 요청 노출 금지
+  // (PR #206 리뷰 blocker 1)
+  if (!isNative || !user) return null;
 
   return (
     <GlassCard className="p-5">

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { PostgrestError } from "@supabase/supabase-js";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
@@ -9,13 +10,15 @@ import { PREF_KEYS, DEFAULT_PREFS, type NotificationPrefs } from "@/lib/notifica
 
 const SELECT_COLS = PREF_KEYS.join(",");
 
-async function fetchPrefs(userId: string): Promise<Partial<NotificationPrefs>> {
-  const { data } = await supabase
+// error를 호출자에 전파 — 테이블/마이그레이션 문제를 디폴트 성공처럼 숨기지 않는다
+// (PR #206 리뷰 blocker 2)
+async function fetchPrefs(userId: string): Promise<{ prefs: Partial<NotificationPrefs>; error: PostgrestError | null }> {
+  const { data, error } = await supabase
     .from("notification_prefs")
     .select(SELECT_COLS)
     .eq("user_id", userId)
     .maybeSingle();
-  return (data as Partial<NotificationPrefs> | null) ?? {};
+  return { prefs: (data as Partial<NotificationPrefs> | null) ?? {}, error };
 }
 
 export async function GET(req: NextRequest) {
@@ -24,7 +27,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const saved = await fetchPrefs(verified.user.id);
+  const { prefs: saved, error } = await fetchPrefs(verified.user.id);
+  if (error) return supabaseErrorResponse(error);
   return NextResponse.json({ prefs: { ...DEFAULT_PREFS, ...saved } });
 }
 
@@ -44,7 +48,8 @@ export async function PUT(req: NextRequest) {
   }
 
   // row 없으면 디폴트에 기존 저장값 + 변경분을 얹어 생성 (부분 PUT로 디폴트 유실 방지)
-  const saved = await fetchPrefs(verified.user.id);
+  const { prefs: saved, error: readError } = await fetchPrefs(verified.user.id);
+  if (readError) return supabaseErrorResponse(readError);
   const { error } = await supabase.from("notification_prefs").upsert({
     user_id: verified.user.id,
     ...DEFAULT_PREFS,

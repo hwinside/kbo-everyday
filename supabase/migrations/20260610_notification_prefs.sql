@@ -18,9 +18,12 @@ CREATE TABLE IF NOT EXISTS notification_prefs (
 
 ALTER TABLE notification_prefs ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users read own notification prefs" ON notification_prefs;
 CREATE POLICY "Users read own notification prefs" ON notification_prefs
   FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users insert own notification prefs" ON notification_prefs;
 CREATE POLICY "Users insert own notification prefs" ON notification_prefs
   FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users update own notification prefs" ON notification_prefs;
 CREATE POLICY "Users update own notification prefs" ON notification_prefs
   FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
