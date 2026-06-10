@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { KboRawGame } from "@/types/api";
+import { notifyGameStatusTransitions } from "@/lib/notifications/game-status";
 
 /**
  * Warm up the in-memory prevState cache of /api/game-events for every
@@ -66,10 +67,21 @@ export async function GET(req: NextRequest) {
     ),
   );
 
+  // 경기 시작/종료 푸시 (push-notifications-v1 S4) — 같은 게임 목록을 재사용.
+  // 실패해도 warmup 본연의 동작(이벤트 캐시)에 영향 없음.
+  let gameNotify: { started: number; ended: number } | { error: string } = { started: 0, ended: 0 };
+  try {
+    gameNotify = await notifyGameStatusTransitions(games);
+  } catch (e) {
+    gameNotify = { error: (e as Error).message };
+    console.error("[warmup] game status notify failed:", (e as Error).message);
+  }
+
   return NextResponse.json({
     date,
     polled: liveGameIds.length,
     liveGameIds,
+    gameNotify,
     results: results.map(r =>
       r.status === "fulfilled" ? r.value : { error: String(r.reason) },
     ),
