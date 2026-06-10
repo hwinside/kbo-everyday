@@ -7,9 +7,12 @@ import { supabase } from "@/lib/supabase/client";
 // 웹 Web Push는 기존 usePushNotification 경로 유지 — 여기는 native 전용.
 // @capacitor-firebase/messaging은 dynamic import로 웹 번들 오염 방지.
 
-async function getMessaging() {
-  const { FirebaseMessaging } = await import("@capacitor-firebase/messaging");
-  return FirebaseMessaging;
+// ⚠️ Capacitor plugin proxy를 async 함수에서 직접 반환하면 안 됨 —
+// await의 thenable 검사가 proxy의 .then을 네이티브 호출로 변환해
+// "FirebaseMessaging.then() is not implemented" 런타임 에러 발생.
+// 모듈 namespace(일반 객체)를 반환하고 사용처에서 destructure한다.
+function loadMessaging() {
+  return import("@capacitor-firebase/messaging");
 }
 
 /** 서버에 FCM 토큰 등록 (로그인 필수 — 세션 없으면 조용히 skip) */
@@ -36,11 +39,11 @@ export async function registerTokenWithServer(fcmToken: string): Promise<boolean
 export async function requestNativePushPermission(): Promise<boolean> {
   if (!isNative) return false;
   try {
-    const messaging = await getMessaging();
-    const { receive } = await messaging.requestPermissions();
+    const { FirebaseMessaging } = await loadMessaging();
+    const { receive } = await FirebaseMessaging.requestPermissions();
     if (receive !== "granted") return false;
 
-    const { token } = await messaging.getToken();
+    const { token } = await FirebaseMessaging.getToken();
     if (!token) return false;
 
     await registerTokenWithServer(token);
@@ -57,11 +60,11 @@ export async function requestNativePushPermission(): Promise<boolean> {
 export async function syncNativePushToken(): Promise<void> {
   if (!isNative) return;
   try {
-    const messaging = await getMessaging();
-    const { receive } = await messaging.checkPermissions();
+    const { FirebaseMessaging } = await loadMessaging();
+    const { receive } = await FirebaseMessaging.checkPermissions();
     if (receive !== "granted") return;
 
-    const { token } = await messaging.getToken();
+    const { token } = await FirebaseMessaging.getToken();
     if (token) await registerTokenWithServer(token);
   } catch {
     // silent — 푸시는 부가 기능
@@ -72,8 +75,8 @@ export async function syncNativePushToken(): Promise<void> {
 export async function listenForTokenRefresh(): Promise<void> {
   if (!isNative) return;
   try {
-    const messaging = await getMessaging();
-    await messaging.addListener("tokenReceived", ({ token }) => {
+    const { FirebaseMessaging } = await loadMessaging();
+    await FirebaseMessaging.addListener("tokenReceived", ({ token }) => {
       if (token) void registerTokenWithServer(token);
     });
   } catch {
