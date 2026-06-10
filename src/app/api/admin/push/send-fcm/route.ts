@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
+import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { isAdminRequest } from "@/lib/admin/pin";
 import { getMessaging } from "firebase-admin/messaging";
 import { initializeApp, getApps, cert } from "firebase-admin/app";
@@ -35,27 +36,41 @@ export async function POST(req: NextRequest) {
   let query = supabase.from("device_push_tokens").select("fcm_token");
   if (userIds?.length) query = query.in("user_id", userIds);
 
-  const { data: rows } = await query;
+  const { data: rows, error: queryError } = await query;
+  if (queryError) return supabaseErrorResponse(queryError);
   const tokens = (rows ?? []).map((r: { fcm_token: string }) => r.fcm_token);
   if (tokens.length === 0) return NextResponse.json({ sent: 0, failed: 0 });
 
-  const res = await fcm.sendEachForMulticast({
-    tokens,
-    notification: { title, body },
-    data: url ? { url } : undefined,
-  });
-
-  // 무효 토큰 정리 (앱 삭제/토큰 만료)
+  // FCM sendEachForMulticast는 호출당 최대 500 토큰 — chunk 분할
+  const CHUNK = 500;
+  let sent = 0;
+  let failed = 0;
   const invalid: string[] = [];
-  res.responses.forEach((r, i) => {
-    const code = r.error?.code;
-    if (code === "messaging/registration-token-not-registered" || code === "messaging/invalid-argument") {
-      invalid.push(tokens[i]);
-    }
-  });
-  if (invalid.length > 0) {
-    await supabase.from("device_push_tokens").delete().in("fcm_token", invalid);
+  for (let i = 0; i < tokens.length; i += CHUNK) {
+    const chunk = tokens.slice(i, i + CHUNK);
+    const res = await fcm.sendEachForMulticast({
+      tokens: chunk,
+      notification: { title, body },
+      data: url ? { url } : undefined,
+    });
+    sent += res.successCount;
+    failed += res.failureCount;
+    // 무효 토큰 수집 (앱 삭제/토큰 만료)
+    res.responses.forEach((r, j) => {
+      const code = r.error?.code;
+      if (code === "messaging/registration-token-not-registered" || code === "messaging/invalid-argument") {
+        invalid.push(chunk[j]);
+      }
+    });
   }
 
-  return NextResponse.json({ sent: res.successCount, failed: res.failureCount, cleaned: invalid.length });
+  if (invalid.length > 0) {
+    const { error: cleanupError } = await supabase.from("device_push_tokens").delete().in("fcm_token", invalid);
+    if (cleanupError) {
+      // 정리 실패는 발송 결과에 영향 없음 — 로그만
+      console.error("[send-fcm] invalid token cleanup failed:", cleanupError.message);
+    }
+  }
+
+  return NextResponse.json({ sent, failed, cleaned: invalid.length });
 }
