@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1093557716927",
+    "project_id": "keubo-fan",
+    "storage_bucket": "keubo-fan.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1093557716927:android:7fd5fbb82f9e61c90d430a",
+        "android_client_info": {
+          "package_name": "fan.keubo.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAL8xBtuSIQElmQ3z-vyCieE4FWfvv-jnM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

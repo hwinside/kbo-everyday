@@ -4,6 +4,7 @@ import "@/styles/globals.css";
 import { AuthProvider } from "@/lib/supabase/AuthContext";
 import { ThemeProvider, themeScript } from "@/components/ThemeProvider";
 import { AdAttributionMount } from "@/components/AdAttributionMount";
+import { NativePushMount } from "@/components/NativePushMount";
 import { PageViewTracker } from "@/components/PageViewTracker";
 import { Analytics } from "@vercel/analytics/next";
 
@@ -99,6 +100,7 @@ export default function RootLayout({
       </head>
       <body className="font-pretendard antialiased bg-bg-primary text-text-primary">
         <AdAttributionMount />
+        <NativePushMount />
         <ThemeProvider>
           <AuthProvider>
             <PageViewTracker />
