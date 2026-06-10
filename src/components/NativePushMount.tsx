@@ -23,7 +23,11 @@ export function NativePushMount() {
     void listenForNotificationTap();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "SIGNED_IN") void syncNativePushToken();
+      // ⚠️ onAuthStateChange 콜백 안에서 supabase 함수를 직접 호출하면 auth 락
+      // 경합으로 이후 모든 쿼리가 pending될 수 있음 (supabase-js 공식 경고).
+      // 신규가입 직후 ProfileSetupModal "생성 중…" 영구 스턱의 원인으로 추정 —
+      // setTimeout으로 콜백(락) 컨텍스트 밖에서 실행 (2026-06-11 애플 가입 hotfix)
+      if (event === "SIGNED_IN") setTimeout(() => void syncNativePushToken(), 0);
     });
     return () => subscription.unsubscribe();
   }, []);
