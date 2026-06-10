@@ -309,16 +309,22 @@ export async function updatePost(
  *  CASCADE로 comments/likes 자동 삭제.
  *  v1: Storage 이미지/비디오는 고아로 남김 (정리는 별도 cron/v2).
  */
-export async function deletePost(postId: number) {
+export async function deletePost(postId: number, options?: { canDeleteAny?: boolean }) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
 
-  const { error } = await supabase
+  // 운영자(canDeleteAny)는 author_id 필터 생략 → posts "Operators delete any posts" RLS가 허용.
+  // 일반 유저는 본인 글만. 권한 경계는 서버측 RLS가 최종 판정.
+  let query = supabase
     .from("posts")
     .delete()
-    .eq("id", postId)
-    .eq("author_id", user.id);
+    .eq("id", postId);
 
+  if (!options?.canDeleteAny) {
+    query = query.eq("author_id", user.id);
+  }
+
+  const { error } = await query;
   if (error) throw error;
 }
 
