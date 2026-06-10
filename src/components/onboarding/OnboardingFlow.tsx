@@ -13,6 +13,7 @@ import {
   type OnboardingStatus,
 } from "@/lib/store/onboarding";
 import { trackEvent, OnboardingEvents } from "@/lib/analytics";
+import { requestNativePushPermission } from "@/lib/native-push";
 
 interface OnboardingFlowProps {
   onComplete: (teamId: number, players: FavoritePlayer[]) => void;
@@ -53,6 +54,9 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     setTeamId(selectedTeamId);
     setOnboardingStatus("team_selected");
     trackEvent(OnboardingEvents.TEAM_SELECTED, { team_id: selectedTeamId });
+    // 알림 권한 요청 = 최애팀 설정 직후 (push-notifications-v1 스펙 확정).
+    // native 앱에서만 동작, 실패/거부는 silent — 온보딩 흐름 무영향.
+    void requestNativePushPermission();
     setStep("player");
   }
 
