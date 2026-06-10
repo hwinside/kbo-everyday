@@ -140,6 +140,20 @@ export function useHomeInit(options?: UseHomeInitOptions) {
     startTransition(() => {
       setShowPlayerSetupCTA(false);
 
+      // 온보딩 진행 중(팀 선택 → 선수 선택 사이)이면 어떤 분기도 온보딩을 끊지 않는다.
+      // 푸시 권한 다이얼로그 등으로 앱이 inactive↔active 전환되며 이 effect가
+      // 재실행될 때 profile 분기가 status를 skipped로 덮어쓰고 온보딩을 숨기던
+      // 회귀 방지 (PR #205 리뷰 blocker 1).
+      if (getOnboardingStatus() === "team_selected") {
+        const savedTeam = getMyTeamId();
+        if (savedTeam) {
+          setMyTeam(savedTeam);
+          setFavPlayers(getFavoritePlayers());
+          setShowOnboarding(true);
+          return;
+        }
+      }
+
       if (profile && profile.team_id) {
         const dbFavs = Array.isArray(profile.favorite_players) ? profile.favorite_players : [];
         // localStorage is updated synchronously in handleTeamChange, so it may be

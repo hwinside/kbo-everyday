@@ -13,13 +13,17 @@ CREATE TABLE IF NOT EXISTS device_push_tokens (
 ALTER TABLE device_push_tokens ENABLE ROW LEVEL SECURITY;
 
 -- 본인 토큰만 등록/upsert (auth.uid() 일치 필수 — 익명 등록 불가)
+DROP POLICY IF EXISTS "Users insert own device token" ON device_push_tokens;
 CREATE POLICY "Users insert own device token" ON device_push_tokens
   FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users update own device token" ON device_push_tokens;
 CREATE POLICY "Users update own device token" ON device_push_tokens
   FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users read own device token" ON device_push_tokens;
 CREATE POLICY "Users read own device token" ON device_push_tokens
   FOR SELECT USING (auth.uid() = user_id);
 -- 만료/무효 토큰 정리는 service_role(서버)에서 수행
+DROP POLICY IF EXISTS "Users delete own device token" ON device_push_tokens;
 CREATE POLICY "Users delete own device token" ON device_push_tokens
   FOR DELETE USING (auth.uid() = user_id);
 
