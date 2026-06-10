@@ -17,14 +17,14 @@
 | # | 성공 기준 | 검증 |
 |---|-----------|------|
 | G1 | iOS/Android 네이티브 앱에서 디바이스 토큰 등록 → 푸시 수신 | 실기기 |
-| G2 | 알림 4종(경기 시작·종료 / 내 팀 득점 / 댓글·답글 / 쪽지) 자동 트리거 | 트리거별 E2E |
+| G2 | 알림 7종(경기 시작·종료 / 내 팀 득점 / 최애선수 활약·삼진 / 최애선수 관련글 / 댓글·답글 / 쪽지) 자동 트리거 | 트리거별 E2E |
 | G3 | 알림 탭 → 해당 화면 딥링크 (경기룸/게시글/쪽지함) | 실기기 |
 | G4 | 마이페이지 알림 설정에서 종류별 on/off | UI + 전송 필터 검증 |
 | G5 | 권한 미허용/구독 없음 시 silent (앱 동작 무영향) | fail-safe |
 | G6 | 내 팀 득점 알림 폭탄 방지(rate limit/묶음) | 다득점 경기 시뮬 |
 | G7 | 웹 Web Push 회귀 없음 (기존 경로 유지) | 웹 smoke |
 
-## 3. 알림 4종 정의
+## 3. 알림 종류 정의 (7종)
 
 | 종류 | 트리거 소스 | 수신 대상 | 딥링크 | 비고 |
 |------|------------|-----------|--------|------|
@@ -32,7 +32,7 @@
 | 경기 종료 | 게임 상태 전이(진행→종료) | 동일 | 경기룸(결과) | 최종 스코어 포함 |
 | 내 팀 득점 | celebration/relay 득점 이벤트(이미 감지중) | 득점한 팀을 최애팀으로 둔 유저 | 경기룸 | 매 득점 개별(기본) + 이닝묶음요약 옵션. 중복 발화 dedup 필수 |
 | 댓글/답글 | `comments` insert (on_comment_change 트리거 존재) | 글 작성자 / 부모 댓글 작성자 | 게시글 | 본인 글에 본인 댓글 제외 |
-| 쪽지 수신 | `dm_messages` insert | 수신자 | 쪽지함 대화 | 운영팀 공지 포함 여부 = 오픈이슈 |
+| 쪽지 수신 | `dm_messages` insert | 수신자 | 쪽지함 대화 | 유저 DM + 운영팀 공지 둘 다 포함(확정) |
 | 최애선수 관련글 | `posts` insert + `player_tags`에 최애선수 매칭 | 해당 선수를 최애선수로 둔 유저 | 게시글 | 일반글·사진글 |
 | 최애선수 활약(타자) | celebration 득점/타점/홈런 이벤트 batter=최애선수 | 동일 | 경기룸 | *내 팀 득점과 별개로 강조 톤*(예: "⚾ {선수} 홈런!") |
 | 최애선수 삼진(투수) | relay/game-events 삼진 이벤트 pitcher=최애선수 | 동일 | 경기룸 | ⚠️ 삼진 이벤트가 relay에 파싱 가능한지 *데이터 소스 확인 필요* — 불가 시 V1.5 |
@@ -47,14 +47,17 @@
           └─ 웹: 기존 web-push(VAPID)                              ← 유지
 ```
 
-- **권장: FCM 단일 게이트웨이.** Firebase Cloud Messaging이 Android 네이티브 + iOS(APNs 경유) 둘 다 처리 → 서버 전송 코드 1벌. Capacitor `@capacitor/push-notifications` 플러그인이 iOS=APNs 토큰/Android=FCM 토큰을 앱에서 등록.
-- **디바이스 토큰 테이블 신규**: `device_push_tokens`(user_id, platform[ios|android|web], token, created_at, last_seen). 기존 `push_subscriptions`(web)와 분리 또는 통합 — 구현 시 결정.
+- **✅ 확정: A안 — FCM 단일 게이트웨이 (2026-06-10, 하린아빠 "a로 가자" + 삼순 GO)**. iOS/Android 모두 *FCM token*으로 통일.
+  - iOS: APNs 키/인증서를 **Firebase 콘솔에 연결**하고, 앱에서는 **Firebase Messaging SDK 기반 `@capacitor-firebase/messaging`**으로 *FCM token*을 받아 저장. ⚠️ `@capacitor/push-notifications` 단독은 iOS에서 raw APNs token을 반환 → FCM 게이트웨이와 불일치(iOS 수신 실패 위험)라 **iOS 토큰 확보는 FCM token으로 명시**.
+  - Android: `@capacitor-firebase/messaging` FCM token 직접.
+  - 서버 전송 = FCM Admin SDK 1벌. Web은 기존 `web-push`(VAPID) 유지.
+- **디바이스 토큰 테이블 신규**: `device_push_tokens`(user_id, platform[ios|android], fcm_token, created_at, last_seen) — 네이티브 FCM token 전용. 웹은 기존 `push_subscriptions`(VAPID) 유지(분리).
 - **알림 설정 테이블 신규**: `notification_prefs`(user_id, game_start, game_end, my_team_score, my_team_score_inning_summary, comment_reply, dm, fav_player_post, fav_player_highlight, fav_player_strikeout) — **모든 알림 종류별 on/off**(하린아빠 명시). 디폴트 전부 on, 단 `my_team_score_inning_summary`만 기본 off. quiet_hours 없음(확정).
 - **최애선수 전제**: 유저 프로필의 최애선수(kboId, `player_tags`/profile favorite). 최애선수 알림 3종(관련글·활약·삼진)은 이 매칭에 의존 — 최애선수 미설정 유저는 대상 제외.
 
 ## 5. 빌드 슬라이스 (얇은 수직 슬라이스)
 
-- **S1 토대**: `@capacitor/push-notifications` 설치 + iOS APNs/Android FCM 셋업 + `device_push_tokens` 테이블 + 토큰 등록 API + 권한 요청 UX. **검증 = 어드민 수동 푸시가 실기기 앱에 도착.**
+- **S1 토대**: `@capacitor-firebase/messaging`(Firebase Messaging) 설치 + Firebase 프로젝트/APNs 키 연결 + FCM Admin SDK 서버 전송 + `device_push_tokens`(FCM token) 테이블 + 토큰 등록 API + 권한 요청 UX. **성공 기준 = iOS/Android 실기기에서 어드민 수동 테스트 푸시 1건 도달**(삼순 명시).
 - **S2 알림 설정**: `notification_prefs` 테이블 + 마이페이지 설정 UI(종류별 토글) + 디스패처가 설정 필터 적용. (PR #143에서 숨긴 NotificationCard 자리 재활용)
 - **S3 댓글/답글 + 쪽지 + 최애선수 관련글**: `comments`/`dm_messages`/`posts`(player_tags 매칭) insert 트리거 → 디스패처. 딥링크 연결. (앱 내부 이벤트라 트리거 단순)
 - **S4 경기 시작/종료**: game-events 상태 전이 → 디스패처. 최애팀 매칭.
