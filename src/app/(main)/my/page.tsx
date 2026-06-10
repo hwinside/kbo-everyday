@@ -25,6 +25,7 @@ import InviteSection from "@/components/my/InviteSection";
 import EventResultCard from "@/components/my/EventResultCard";
 import FavoritePlayersCard from "@/components/my/FavoritePlayersCard";
 import NotificationCard from "@/components/my/NotificationCard";
+import NotificationPrefsCard from "@/components/my/NotificationPrefsCard";
 import MenuSection from "@/components/my/MenuSection";
 import ThemeToggleCard from "@/components/my/ThemeToggleCard";
 import PwaGuideModal from "@/components/my/PwaGuideModal";
@@ -245,6 +246,11 @@ export default function MyPage() {
           <NotificationCard permission={permission} subscription={subscription} subscribe={subscribe} unsubscribe={unsubscribe} onShowPwaGuide={() => setShowPwaGuide(true)} />
         </motion.div>
       )}
+
+      {/* 알림 종류별 설정 (네이티브 앱 전용 — 컴포넌트 내부 isNative 가드) */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.13 }} className="mt-3">
+        <NotificationPrefsCard />
+      </motion.div>
 
       {/* 테마 설정 */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.14 }} className="mt-3">

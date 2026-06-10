@@ -1,0 +1,103 @@
+"use client";
+
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Bell, ChevronDown, ChevronUp } from "lucide-react";
+import GlassCard from "@/components/ui/GlassCard";
+import { supabase } from "@/lib/supabase/client";
+import { isNative } from "@/lib/capacitor/platform";
+import { requestNativePushPermission } from "@/lib/native-push";
+import { PREF_LABELS, DEFAULT_PREFS, type NotificationPrefs, type PrefKey } from "@/lib/notifications/prefs";
+
+/**
+ * 알림 종류별 on/off 설정 카드 (push-notifications-v1 S2).
+ * 네이티브 앱(iOS/Android)에서만 노출 — 웹 푸시 토글은 기존 NotificationCard(별도 게이팅).
+ * 디폴트 전부 on(이닝 요약만 off)이라 row 없이도 토글 상태가 의미를 가짐.
+ */
+export default function NotificationPrefsCard() {
+  const [expanded, setExpanded] = useState(false);
+  const [prefs, setPrefs] = useState<NotificationPrefs>(DEFAULT_PREFS);
+  const [loaded, setLoaded] = useState(false);
+  const savingRef = useRef(false);
+
+  const authHeader = useCallback(async (): Promise<Record<string, string>> => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }, []);
+
+  useEffect(() => {
+    if (!expanded || loaded) return;
+    (async () => {
+      try {
+        const res = await fetch("/api/push/prefs", { headers: await authHeader() });
+        if (res.ok) {
+          const { prefs: saved } = await res.json();
+          setPrefs({ ...DEFAULT_PREFS, ...saved });
+        }
+      } catch {
+        // 디폴트 유지
+      } finally {
+        setLoaded(true);
+      }
+    })();
+  }, [expanded, loaded, authHeader]);
+
+  const toggle = useCallback(async (key: PrefKey) => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    const next = !prefs[key];
+    setPrefs((p) => ({ ...p, [key]: next }));
+    try {
+      const res = await fetch("/api/push/prefs", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...(await authHeader()) },
+        body: JSON.stringify({ [key]: next }),
+      });
+      if (!res.ok) setPrefs((p) => ({ ...p, [key]: !next })); // 실패 시 롤백
+    } catch {
+      setPrefs((p) => ({ ...p, [key]: !next }));
+    } finally {
+      savingRef.current = false;
+    }
+  }, [prefs, authHeader]);
+
+  if (!isNative) return null;
+
+  return (
+    <GlassCard className="p-5">
+      <button className="w-full flex items-center justify-between" onClick={async () => {
+        if (!expanded) void requestNativePushPermission(); // 미허용 상태로 진입 시 권한 요청 기회
+        setExpanded(!expanded);
+      }}>
+        <div className="flex items-center gap-4">
+          <Bell size={22} className="text-text-secondary" />
+          <div className="text-left">
+            <span className="text-base text-text-primary">알림 설정</span>
+            <p className="text-xs text-text-tertiary mt-0.5">경기·최애선수·댓글·쪽지 알림을 종류별로 켜고 끄세요</p>
+          </div>
+        </div>
+        {expanded ? <ChevronUp size={20} className="text-text-tertiary" /> : <ChevronDown size={20} className="text-text-tertiary" />}
+      </button>
+
+      {expanded && (
+        <div className="mt-4 flex flex-col divide-y divide-white/10">
+          {PREF_LABELS.map(({ key, label, desc }) => (
+            <div key={key} className="flex items-center justify-between py-3">
+              <div>
+                <span className="text-sm text-text-primary">{label}</span>
+                {desc && <p className="text-xs text-text-tertiary mt-0.5">{desc}</p>}
+              </div>
+              <button
+                onClick={() => void toggle(key)}
+                className={`relative w-12 h-7 rounded-full transition-colors ${prefs[key] ? "bg-accent" : "bg-bg-tertiary"}`}
+                aria-label={`${label} 알림 ${prefs[key] ? "끄기" : "켜기"}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${prefs[key] ? "translate-x-5" : "translate-x-0"}`} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </GlassCard>
+  );
+}
