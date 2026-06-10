@@ -435,5 +435,32 @@ export function useChat(roomId: string) {
     [user]
   );
 
-  return { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, cooldown, cooldownReason, isLoggedIn: !!user };
+  // 운영자 삭제 — 타인 메시지 soft-delete. SECURITY DEFINER RPC가 서버측 is_operator 확인.
+  // 클라이언트가 chat_messages를 직접 .update() 하는 경로는 금지(본인삭제와 동일).
+  const deleteAnyMessage = useCallback(
+    async (messageId: number) => {
+      if (!user) return false;
+      const { error } = await supabase.rpc("delete_any_chat_message", { p_message_id: messageId });
+      if (error) {
+        console.error("[useChat] operator delete error:", error.message);
+        return false;
+      }
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId
+            ? {
+                ...m,
+                content: DELETED_PLACEHOLDER,
+                deleted_at: new Date().toISOString(),
+                deleted_by: user.id,
+              }
+            : m
+        )
+      );
+      return true;
+    },
+    [user]
+  );
+
+  return { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, deleteAnyMessage, cooldown, cooldownReason, isLoggedIn: !!user };
 }
