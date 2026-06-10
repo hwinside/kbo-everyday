@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { isNative } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
-import { syncNativePushToken, listenForTokenRefresh } from "@/lib/native-push";
+import { syncNativePushToken, listenForTokenRefresh, listenForNotificationTap } from "@/lib/native-push";
 
 /**
  * 네이티브 앱(iOS/Android) FCM 토큰 동기화용 얇은 클라이언트 마운트.
@@ -20,6 +20,7 @@ export function NativePushMount() {
     if (!isNative) return;
     void syncNativePushToken();
     void listenForTokenRefresh();
+    void listenForNotificationTap();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === "SIGNED_IN") void syncNativePushToken();
