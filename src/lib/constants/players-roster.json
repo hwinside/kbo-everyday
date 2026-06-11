@@ -721,18 +721,18 @@
   },
   {
     "name": "김민준",
-    "kboId": "53893",
-    "teamId": 4,
-    "position": "내야수",
-    "backNo": "47",
-    "team": "SSG"
-  },
-  {
-    "name": "김민준",
     "kboId": "56840",
     "teamId": 4,
     "position": "투수",
     "backNo": "40",
+    "team": "SSG"
+  },
+  {
+    "name": "김민준",
+    "kboId": "53893",
+    "teamId": 4,
+    "position": "내야수",
+    "backNo": "47",
     "team": "SSG"
   },
   {
@@ -1808,6 +1808,14 @@
     "team": "삼성"
   },
   {
+    "name": "리오스",
+    "kboId": "56146",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "46",
+    "team": "LG"
+  },
+  {
     "name": "맷 매닝",
     "kboId": "FP005",
     "teamId": 8,
@@ -2878,6 +2886,14 @@
     "position": "내야수",
     "backNo": "131",
     "team": "LG"
+  },
+  {
+    "name": "송명기",
+    "kboId": "69962",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "45",
+    "team": "NC"
   },
   {
     "name": "송승기",
