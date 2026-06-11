@@ -22,12 +22,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Deep Links: Android App Links for OAuth callback -->
+            <!-- Deep Links: Android App Links for OAuth callback.
+                 /auth/callback 경로로 한정 — keubo.fan 전체를 잡으면 네이버 중간 콜백
+                 (/api/auth/naver/callback?code=)까지 앱이 가로채 서버 토큰 교환이 안 돌고
+                 네이버 code를 Supabase PKCE로 잘못 교환해 로그인 실패함. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="keubo.fan" />
+                <data android:scheme="https" android:host="keubo.fan" android:pathPrefix="/auth/callback" />
             </intent-filter>
 
         </activity>
