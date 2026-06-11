@@ -36,20 +36,21 @@
 ```
 
 - **플러그인**: 커뮤니티 `capacitor-live-activity` 계열(JS start/update/end + Swift ActivityKit). Widget Extension UI(SwiftUI)는 직접 작성.
-- **APNs Live Activity push**: 기존 FCM/APNs 인프라 재활용. ActivityKit push token을 서버에 등록(기존 device_push_tokens 확장 또는 신규 `live_activity_tokens`) → content-state push.
+- **🔴 Live Activity push = APNs 직접 경로 (FCM 헬퍼 재사용 금지, 삼순 리뷰)**: ActivityKit 갱신은 일반 FCM/web-push와 다름. **token-based APNs** + 헤더 `apns-push-type: liveactivity` + `apns-topic: {bundleId}.push-type.liveactivity`. content-state(스코어/이닝/BSO/투수타자/베이스)를 `aps.content-state`로 전송. 기존 `sendFcmToUsers`(알림용)와 별개 발송 경로 신설. 근거: [Apple WWDC23 ActivityKit push](https://developer.apple.com/videos/play/wwdc2023/10185/)
+- **토큰 = 신규 `live_activity_tokens` 테이블 (삼순 리뷰)**: ActivityKit push token은 device token이 아니라 *activity별 token*이고 중간에 회전될 수 있음. `user_id / game_id / activity_id / push_token / status(active|ended) / ended_at / updated_at`. device_push_tokens 확장 아님.
 - **Widget Extension target**: `ios/App`에 신규 Xcode target. App Group으로 메인 앱 ↔ 위젯 데이터 공유.
 
 ## 4. 빌드 슬라이스
 
 - **W1 토대**: Widget Extension target + App Group + ActivityKit ContentState(스코어/이닝/BSO/투수타자/베이스) 정의 + 잠금화면 SwiftUI 레이아웃. **검증 = 더미 데이터로 잠금화면에 카드 표시(앱에서 수동 start/end).**
 - **W2 경기룸 연동**: 경기룸([gameId]) 진입 시 game-live 1회 fetch → Activity 시작. 다이나믹아일랜드 compact/expanded. 재진입 시 중복 방지.
-- **W3 실시간 업데이트**: ①포그라운드 JS 폴링 update ②백그라운드 APNs Live Activity push(서버가 content-state 전송, ActivityKit push token 등록).
-- **W4 종료**: 경기 final 감지(S4 종료 트리거 연계 또는 폴링) → end push. 최종 스코어 잔상 후 dismiss.
+- **W3 실시간 업데이트** (삼순 조건부 — 착수 전 §3 APNs/토큰 + 아래 dedup 확정): ①포그라운드 JS 폴링 update ②백그라운드 APNs Live Activity push(token-based, content-state). **dedup/빈도 정책 필수**: 직전 발송 state hash(스코어/이닝/BSO/주자/투수타자)와 동일하면 push 안 보냄. 스코어·이닝 변화 = high priority 즉시, B/S/O만 변화 = low priority/주기 묶음. `frequentPushesEnabled` 확인 + APNs 예산 초과 시 degrade(스코어·이닝만 발송).
+- **W4 종료**: 경기 final 감지(S4 종료 트리거 연계 또는 폴링) → end push. **end payload에 최종 content-state + `dismissal-date = now + 15분`** (stale-date 아님 — stale은 "오래된 정보" 표시용). 15분 후 ActivityKit이 자동 제거.
 - 각 슬라이스 삼순 리뷰 게이트. W1은 실기기 잠금화면 표시 필수.
 
 ## 5. 확정 결정 (2026-06-11 하린아빠 "추천대로")
 
-1. **종료 후 잔상** — 경기 종료 시 최종 스코어로 **15분 유지** 후 dismiss (stale date 활용).
+1. **종료 후 잔상** — 경기 종료 시 최종 스코어로 **15분 유지** 후 dismiss. 구현 = end payload `dismissal-date = now + 15m` + 최종 content-state (삼순 리뷰 — stale-date 아님).
 2. **실시간성** — 스코어·이닝 변화는 **즉시 push**, 단순 볼카운트(B/S/O)는 **주기 묶음**(과도한 push 방지). 포그라운드는 JS 폴링으로 더 촘촘히.
 3. **경기룸 나가도 Activity 유지** — 경기 끝까지 (잠금화면 목적).
 4. **v1은 진입한 경기 1개만** — 최근 진입 경기 우선, 새 경기 진입 시 이전 Activity 종료 후 신규.
