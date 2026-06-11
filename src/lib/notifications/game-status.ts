@@ -12,7 +12,7 @@ import type { KboRawGame } from "@/types/api";
 // cron/배포 장애가 한참 뒤 복구돼도 뒷북 "경기 시작!"이 안 가게 (삼순 리뷰 #210-2)
 const START_WINDOW_MS = 90 * 60 * 1000;
 
-function teamIdByShortName(name: string): number | null {
+export function teamIdByShortName(name: string): number | null {
   const t = TEAMS.find((t) => t.shortName === name);
   return t?.id ?? null;
 }
@@ -27,7 +27,7 @@ function scheduledStartMs(gDt: string | undefined, gTm: string | undefined): num
 }
 
 /** 양팀을 최애팀으로 둔 유저 id 목록. ok=false면 조회 실패(재시도 대상) */
-async function fansOfTeams(teamIds: number[]): Promise<{ ids: string[]; ok: boolean }> {
+export async function fansOfTeams(teamIds: number[]): Promise<{ ids: string[]; ok: boolean }> {
   if (teamIds.length === 0) return { ids: [], ok: true };
   const { data, error } = await supabase.from("profiles").select("id").in("team_id", teamIds);
   if (error) {
