@@ -57,8 +57,17 @@ export async function notifyScoreEvents(
     for (const ev of events) {
       if (!SCORE_EVENT_TYPES.has(ev.type)) continue;
 
-      // 공격팀 = 득점팀. isTop(초)이면 원정팀 공격.
-      const scoringTeamName = ev.isTop ? away : home;
+      // 득점팀 판정. run_scored는 generator가 detail.scoringSide로 팀을 확정해줌
+      // (isTop 추론은 이닝교대 lag/양팀 동시득점에 취약 — 삼순 #213-②).
+      // at_bat_homerun은 batterDiff 경로라 isTop이 이미 이닝교대 보정돼 있음.
+      let scoringTeamName: string;
+      if (ev.type === "run_scored") {
+        const side = ev.detail?.scoringSide;
+        if (side !== "away" && side !== "home") continue; // scoringSide 없는 구버전 이벤트 방어
+        scoringTeamName = side === "away" ? away : home;
+      } else {
+        scoringTeamName = ev.isTop ? away : home;
+      }
       const teamId = teamIdByShortName(scoringTeamName);
       if (teamId === null) continue;
 

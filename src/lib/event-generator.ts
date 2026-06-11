@@ -384,21 +384,29 @@ export function generateEvents(
     }
   }
 
-  // --- Score change ---
-  // Score is monotonic per game so the (away,home) pair is itself a stable
-  // dedupe key — two instances seeing the same KBO snapshot mint the same id.
-  const awayDiff = currentLive.awayScore - prevLive.awayScore;
-  const homeDiff = currentLive.homeScore - prevLive.homeScore;
-  const totalScoreDiff = awayDiff + homeDiff;
-
-  if (totalScoreDiff > 0) {
-    const hrEvents = events.filter(e => e.type === "at_bat_homerun").length;
-    const runsToReport = totalScoreDiff - hrEvents;
-    if (runsToReport > 0) {
-      events.push(makeEvent(gameId, currentLive, "run_scored", {
-        rbi: runsToReport,
-      }, `${currentLive.awayScore}-${currentLive.homeScore}`));
-    }
+  // --- Score change (per team) ---
+  // 팀별로 분리해 득점 이벤트를 만든다. 한 polling에 양팀이 모두 득점했어도 각각
+  // 발화하고, detail.scoringSide로 득점팀을 확정한다 — 알림 레이어가 isTop을
+  // 추론(이닝교대 lag/양팀 동시 득점에 취약)하지 않게 (push S5a, 삼순 #213-②).
+  // 같은 팀에 홈런 이벤트가 있으면 그 점수는 at_bat_homerun으로 이미 발화되므로
+  // run_scored를 suppress해 한 득점 상황 2푸시(홈런+득점)를 막는다. BoxScore에
+  // 홈런 타점이 없어 멀티런 홈런을 개수로 차감하면 부정확하므로(2/3점 홈런이면
+  // 잔여 run_scored 발생) 홈런 동반 사이클은 통째 suppress한다 (삼순 #213-①).
+  // score는 게임 내 monotonic이라 (away,home,side)가 안정적 dedupe id.
+  const scoreSides: Array<{ side: "away" | "home"; isTop: boolean; diff: number }> = [
+    { side: "away", isTop: true, diff: currentLive.awayScore - prevLive.awayScore },
+    { side: "home", isTop: false, diff: currentLive.homeScore - prevLive.homeScore },
+  ];
+  for (const s of scoreSides) {
+    if (s.diff <= 0) continue;
+    const teamHr = events.filter(
+      e => e.type === "at_bat_homerun" && e.isTop === s.isTop,
+    ).length;
+    if (teamHr > 0) continue; // 홈런이 이 팀 득점을 설명 — 중복 방지로 run_scored suppress
+    events.push(makeEvent(gameId, currentLive, "run_scored", {
+      rbi: s.diff,
+      scoringSide: s.side,
+    }, `${currentLive.awayScore}-${currentLive.homeScore}-${s.side}`));
   }
 
   // --- Out count change (inferred) ---
