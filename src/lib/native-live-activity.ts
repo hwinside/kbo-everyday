@@ -17,6 +17,7 @@ export interface LiveActivityState {
   onThird: boolean;
   pitcherName: string;
   batterName: string;
+  stadium: string;
   status: "live" | "final";
 }
 
@@ -26,6 +27,8 @@ export interface LiveActivityStartData extends LiveActivityState {
   homeTeam: string;
   awayTeamCode: string;
   homeTeamCode: string;
+  /** 최애팀 코드(KBO 2자 코드). 강조/컬러용. 미설정/비참여 시 "". */
+  myTeamCode: string;
 }
 
 interface LiveActivityPlugin {

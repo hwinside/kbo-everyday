@@ -42,7 +42,8 @@ final class LiveActivityController {
             awayTeam: "LG",
             homeTeam: "두산",
             awayTeamCode: "LG",
-            homeTeamCode: "OB"
+            homeTeamCode: "OB",
+            myTeamCode: "LG"
         )
         let initialState = KBOGameAttributes.ContentState(
             awayScore: 3,
@@ -57,6 +58,7 @@ final class LiveActivityController {
             onThird: true,
             pitcherName: "고우석",
             batterName: "양석환",
+            stadium: "잠실",
             status: .live
         )
 
@@ -86,6 +88,7 @@ final class LiveActivityController {
         homeTeam: String,
         awayTeamCode: String,
         homeTeamCode: String,
+        myTeamCode: String,
         state: KBOGameAttributes.ContentState
     ) async -> Bool {
         guard isEnabled else {
@@ -116,7 +119,8 @@ final class LiveActivityController {
             awayTeam: awayTeam,
             homeTeam: homeTeam,
             awayTeamCode: awayTeamCode,
-            homeTeamCode: homeTeamCode
+            homeTeamCode: homeTeamCode,
+            myTeamCode: myTeamCode
         )
         do {
             let activity = try Activity.request(

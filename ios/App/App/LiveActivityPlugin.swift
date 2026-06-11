@@ -36,6 +36,8 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("missing game info (gameId/teams)")
             return
         }
+        // 최애팀 코드(강조용). 미설정/비참여 경기면 빈 문자열 → 위젯이 중립 표시.
+        let myTeamCode = call.getString("myTeamCode") ?? ""
         let state = Self.parseState(call)
         Task {
             let started = await LiveActivityController.shared.start(
@@ -44,6 +46,7 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
                 homeTeam: homeTeam,
                 awayTeamCode: awayTeamCode,
                 homeTeamCode: homeTeamCode,
+                myTeamCode: myTeamCode,
                 state: state
             )
             call.resolve(["started": started])
@@ -101,6 +104,7 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             onThird: call.getBool("onThird") ?? false,
             pitcherName: call.getString("pitcherName") ?? "",
             batterName: call.getString("batterName") ?? "",
+            stadium: call.getString("stadium") ?? "",
             status: status == "final" ? .final : .live
         )
     }

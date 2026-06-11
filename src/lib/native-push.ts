@@ -54,6 +54,22 @@ export async function requestNativePushPermission(): Promise<boolean> {
 }
 
 /**
+ * 현재 푸시 권한이 허용(granted) 상태인지 확인 (팝업 없음).
+ * 기존 회원/재설치 유저에게 "알림 꺼짐" 안내를 띄울지 판단하는 데 사용.
+ * 네이티브 아님/오류 시 true(안내 숨김) — 거짓 경보 방지.
+ */
+export async function checkNativePushPermission(): Promise<boolean> {
+  if (!isNative) return true;
+  try {
+    const { FirebaseMessaging } = await loadMessaging();
+    const { receive } = await FirebaseMessaging.checkPermissions();
+    return receive === "granted";
+  } catch {
+    return true;
+  }
+}
+
+/**
  * 앱 부팅 시 토큰 동기화: 권한이 이미 granted인 경우에만
  * (권한 팝업을 띄우지 않음) 최신 토큰을 서버에 재등록.
  */

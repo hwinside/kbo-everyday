@@ -6,7 +6,7 @@ import GlassCard from "@/components/ui/GlassCard";
 import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { isNative } from "@/lib/capacitor/platform";
-import { requestNativePushPermission } from "@/lib/native-push";
+import { requestNativePushPermission, checkNativePushPermission } from "@/lib/native-push";
 import { PREF_LABELS, DEFAULT_PREFS, type NotificationPrefs, type PrefKey } from "@/lib/notifications/prefs";
 
 /**
@@ -19,12 +19,30 @@ export default function NotificationPrefsCard() {
   const [expanded, setExpanded] = useState(false);
   const [prefs, setPrefs] = useState<NotificationPrefs>(DEFAULT_PREFS);
   const [loaded, setLoaded] = useState(false);
+  // OS 푸시 권한 미허용 여부 — 기존 회원/재설치 유저 커버용 안내 배너 게이트.
+  const [permissionDenied, setPermissionDenied] = useState(false);
   const savingRef = useRef(false);
 
   const authHeader = useCallback(async (): Promise<Record<string, string>> => {
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token;
     return token ? { Authorization: `Bearer ${token}` } : {};
+  }, []);
+
+  // 마운트 시 OS 권한 상태 확인 → 미허용이면 안내 배너 노출.
+  useEffect(() => {
+    if (!isNative) return;
+    let cancelled = false;
+    void (async () => {
+      const granted = await checkNativePushPermission();
+      if (!cancelled) setPermissionDenied(!granted);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const enablePush = useCallback(async () => {
+    const ok = await requestNativePushPermission();
+    if (ok) setPermissionDenied(false);
   }, []);
 
   useEffect(() => {
@@ -69,6 +87,15 @@ export default function NotificationPrefsCard() {
 
   return (
     <GlassCard className="p-5">
+      {permissionDenied && (
+        <button
+          onClick={() => void enablePush()}
+          className="w-full mb-4 flex items-center justify-between rounded-xl bg-accent/15 border border-accent/30 px-4 py-3"
+        >
+          <span className="text-sm text-text-primary">🔔 알림이 꺼져 있어요</span>
+          <span className="text-sm font-semibold text-accent">켜기</span>
+        </button>
+      )}
       <button className="w-full flex items-center justify-between" onClick={async () => {
         if (!expanded) void requestNativePushPermission(); // 미허용 상태로 진입 시 권한 요청 기회
         setExpanded(!expanded);
