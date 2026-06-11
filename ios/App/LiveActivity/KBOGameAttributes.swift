@@ -41,6 +41,8 @@ struct KBOGameAttributes: ActivityAttributes {
         var pitcherName: String
         var batterName: String
 
+        var stadium: String     // 구장명 (game-live 제공) — 잠금화면 pill 표시용
+
         var status: GameStatus
 
         // MARK: 표시용 파생값
@@ -64,4 +66,5 @@ struct KBOGameAttributes: ActivityAttributes {
     var homeTeam: String      // 홈팀 풀네임
     var awayTeamCode: String  // 로고/약어용 코드 (예: "LG")
     var homeTeamCode: String
+    var myTeamCode: String     // 최애팀 코드 — 잠금화면 컬러/MY TEAM 강조용 (없으면 "")
 }

@@ -46,10 +46,27 @@ export async function requestNativePushPermission(): Promise<boolean> {
     const { token } = await FirebaseMessaging.getToken();
     if (!token) return false;
 
-    await registerTokenWithServer(token);
-    return true;
+    // 토큰 서버 등록까지 성공해야 true — 등록 실패(토큰 row 0건)인데 UI가 "알림 켜짐"으로
+    // 보이는 false-positive 방지 (삼순 #220).
+    return await registerTokenWithServer(token);
   } catch {
     return false;
+  }
+}
+
+/**
+ * 현재 푸시 권한이 허용(granted) 상태인지 확인 (팝업 없음).
+ * 기존 회원/재설치 유저에게 "알림 꺼짐" 안내를 띄울지 판단하는 데 사용.
+ * 네이티브 아님/오류 시 true(안내 숨김) — 거짓 경보 방지.
+ */
+export async function checkNativePushPermission(): Promise<boolean> {
+  if (!isNative) return true;
+  try {
+    const { FirebaseMessaging } = await loadMessaging();
+    const { receive } = await FirebaseMessaging.checkPermissions();
+    return receive === "granted";
+  } catch {
+    return true;
   }
 }
 

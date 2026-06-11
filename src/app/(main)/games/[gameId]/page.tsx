@@ -114,6 +114,11 @@ const KBO_CODE_TO_ID: Record<string, number> = {
   HT: 6, LT: 7, SS: 8, HH: 9, WO: 10,
 };
 
+/* 팀 id → KBO 2자 코드 역매핑 (Live Activity 최애팀 강조용). */
+const ID_TO_KBO_CODE: Record<number, string> = Object.fromEntries(
+  Object.entries(KBO_CODE_TO_ID).map(([code, id]) => [id, code]),
+);
+
 function parseKboGameId(gameId: string) {
   // Format: YYYYMMDD + 2-char away + 2-char home + game#
   const m = gameId.match(/^(\d{8})([A-Z]{2})([A-Z]{2})(\d)$/);
@@ -175,12 +180,18 @@ export default function GameDetailPage() {
   useEffect(() => {
     if (!liveGame || !liveGame.isLive) return;
     const m = gameId.match(/^(\d{8})([A-Z]{2})([A-Z]{2})(\d)$/);
+    // 최애팀 id → KBO 2자 코드 역매핑(강조/컬러용). 미설정/비참여면 "".
+    const myTeamId = getMyTeamId();
+    const myTeamCode = myTeamId
+      ? ID_TO_KBO_CODE[myTeamId] ?? ""
+      : "";
     void startLiveActivity({
       gameId,
       awayTeam: liveGame.awayName,
       homeTeam: liveGame.homeName,
       awayTeamCode: m?.[2] ?? "",
       homeTeamCode: m?.[3] ?? "",
+      myTeamCode,
       awayScore: liveGame.awayScore,
       homeScore: liveGame.homeScore,
       inning: liveGame.inning,
@@ -193,6 +204,7 @@ export default function GameDetailPage() {
       onThird: liveGame.runner3b,
       pitcherName: liveGame.currentPitcher ?? "",
       batterName: liveGame.currentBatter ?? "",
+      stadium: liveGame.stadium ?? "",
       status: "live",
     });
   }, [liveGame, gameId]);
