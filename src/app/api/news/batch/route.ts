@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { NaverNewsRawItem, NewsItem } from "@/types/api";
+import {
+  isPlayerBaseballRelevant,
+  isTeamBaseballRelevant,
+} from "@/lib/news-relevance";
 
 export const runtime = "edge";
 
@@ -21,23 +25,9 @@ function cleanHtml(str: string): string {
     .replace(/&apos;/g, "'");
 }
 
-const BASEBALL_KEYWORDS = ["프로야구", "KBO", "야구"];
-const TEAM_MASCOTS = [
-  "트윈스",
-  "베어스",
-  "위즈",
-  "랜더스",
-  "다이노스",
-  "타이거즈",
-  "자이언츠",
-  "라이온즈",
-  "이글스",
-  "히어로즈",
-];
-
 // shortName → 검색용 풀네임 + 마스코트. 팀 뉴스는 마스코트 게이트로
 // LG그룹·삼성전자 등 동음 기업 기사(예: 젠슨 황 시구 기사가 "프로야구"를
-// 본문에 달고 들어오는 케이스)를 걸러낸다.
+// 본문에 달고 들어오는 케이스)를 걸러낸다. relevance 로직은 news-relevance에 SSOT.
 const TEAM_INFO: Record<string, { full: string; mascot: string }> = {
   LG: { full: "LG 트윈스", mascot: "트윈스" },
   두산: { full: "두산 베어스", mascot: "베어스" },
@@ -50,51 +40,6 @@ const TEAM_INFO: Record<string, { full: string; mascot: string }> = {
   한화: { full: "한화 이글스", mascot: "이글스" },
   키움: { full: "키움 히어로즈", mascot: "히어로즈" },
 };
-const NON_BASEBALL_NEGATIVE = [
-  "시장",
-  "재선",
-  "유통레이더",
-  "생활건강",
-  "디스플레이",
-  "갤럭시",
-  "5G",
-  "통신",
-  "자동차",
-  "분양",
-  "부동산",
-  "주가",
-  "공시",
-  "신제품",
-];
-
-function hasBaseballSignal(text: string): boolean {
-  return (
-    BASEBALL_KEYWORDS.some((kw) => text.includes(kw)) ||
-    TEAM_MASCOTS.some((m) => text.includes(m))
-  );
-}
-
-function isBaseballRelevant(
-  title: string,
-  description: string,
-  requiredLabel?: string
-): boolean {
-  if (NON_BASEBALL_NEGATIVE.some((n) => title.includes(n))) return false;
-  if (requiredLabel && !title.includes(requiredLabel)) return false;
-  return hasBaseballSignal(`${title} ${description}`);
-}
-
-// 팀 뉴스 전용 — 마스코트가 제목/본문에 있어야 통과. 마스코트를 모르는
-// 팀(매핑 누락)은 기존 baseball signal로 폴백한다.
-function isTeamBaseballRelevant(
-  title: string,
-  description: string,
-  mascot?: string
-): boolean {
-  if (NON_BASEBALL_NEGATIVE.some((n) => title.includes(n))) return false;
-  if (!mascot) return hasBaseballSignal(`${title} ${description}`);
-  return `${title} ${description}`.includes(mascot);
-}
 
 async function fetchNews(query: string): Promise<NewsItem[]> {
   const cached = cache.get(query);
@@ -196,7 +141,7 @@ export async function POST(req: NextRequest) {
     const relevantOnly = (items: LabeledItem[]) =>
       items.filter((item) =>
         item._isPlayer
-          ? isBaseballRelevant(item.title, item.description, item._label)
+          ? isPlayerBaseballRelevant(item.title, item.description, item._label)
           : isTeamBaseballRelevant(item.title, item.description, item._mascot)
       );
 
