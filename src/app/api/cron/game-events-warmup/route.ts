@@ -3,6 +3,7 @@ import type { KboRawGame } from "@/types/api";
 import type { GameEvent } from "@/types/game-events";
 import { notifyGameStatusTransitions } from "@/lib/notifications/game-status";
 import { notifyScoreEvents } from "@/lib/notifications/game-score";
+import { notifyPlayerHighlights } from "@/lib/notifications/player-highlight";
 
 /**
  * Warm up the in-memory prevState cache of /api/game-events for every
@@ -95,12 +96,22 @@ export async function GET(req: NextRequest) {
     console.error("[warmup] score notify failed:", (e as Error).message);
   }
 
+  // 최애선수 활약(타자) 푸시 (push-notifications-v1 S5b) — 장타/홈런 batter 매칭.
+  let highlightNotify: { highlighted: number } | { error: string } = { highlighted: 0 };
+  try {
+    highlightNotify = await notifyPlayerHighlights(games, eventsByGame);
+  } catch (e) {
+    highlightNotify = { error: (e as Error).message };
+    console.error("[warmup] highlight notify failed:", (e as Error).message);
+  }
+
   return NextResponse.json({
     date,
     polled: liveGameIds.length,
     liveGameIds,
     gameNotify,
     scoreNotify,
+    highlightNotify,
     results: results.map(r =>
       r.status === "fulfilled"
         ? { gameId: r.value.gameId, ok: r.value.ok, status: r.value.status, eventCount: r.value.eventCount }

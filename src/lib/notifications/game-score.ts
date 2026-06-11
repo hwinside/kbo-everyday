@@ -20,7 +20,7 @@ const SCORE_EVENT_TYPES = new Set<string>(["run_scored", "at_bat_homerun"]);
  * event_id 선점 — 멱등 INSERT에 성공한(첫 발송) 호출만 true.
  * UNIQUE 충돌(23505) = 이미 다른 인스턴스가 발송 → false. 기타 에러도 보류(다음 cron).
  */
-async function claimEvent(eventId: string, gameId: string): Promise<boolean> {
+export async function claimEvent(eventId: string, gameId: string): Promise<boolean> {
   const { data, error } = await supabase
     .from("notified_score_events")
     .insert({ event_id: eventId, game_id: gameId })
@@ -30,7 +30,7 @@ async function claimEvent(eventId: string, gameId: string): Promise<boolean> {
 }
 
 /** 발송 인프라 실패 시 선점 해제 — 다음 cron이 재시도하게 함 (game-status unclaim과 동형) */
-async function unclaimEvent(eventId: string): Promise<void> {
+export async function unclaimEvent(eventId: string): Promise<void> {
   const { error } = await supabase.from("notified_score_events").delete().eq("event_id", eventId);
   if (error) console.error("[game-score] unclaim failed:", error.message);
 }
