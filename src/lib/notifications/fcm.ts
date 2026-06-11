@@ -42,9 +42,24 @@ export async function sendFcmToUsers(
   payload: PushPayload,
   prefKey?: PrefKey,
 ): Promise<SendResult> {
+  if (userIds.length === 0) return { sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: true };
+  try {
+    return await sendFcmToUsersInner(userIds, payload, prefKey);
+  } catch (e) {
+    // getFcm()의 JSON parse/init 또는 sendEachForMulticast throw 등 —
+    // ok:false로 호출자(game-status unclaim)가 재시도하게 함 (삼순 #210 재리뷰 NO-GO)
+    console.error("[fcm] send threw:", (e as Error).message);
+    return { sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false };
+  }
+}
+
+async function sendFcmToUsersInner(
+  userIds: string[],
+  payload: PushPayload,
+  prefKey?: PrefKey,
+): Promise<SendResult> {
   const fcm = getFcm();
   if (!fcm) return { sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false }; // env 미설정 = 인프라 실패
-  if (userIds.length === 0) return { sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: true };
 
   // 1. 알림 종류별 설정 필터 (row 없음 = 디폴트)
   // ⚠️ .in()에 id를 한 번에 넣으면 대상이 수백 명일 때 URL 한도 초과(Bad Request)
