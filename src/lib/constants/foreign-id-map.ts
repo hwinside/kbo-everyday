@@ -38,6 +38,7 @@ export const FOREIGN_NUMERIC_TO_ALPHA: Record<string, string> = {
   "52502": "FP005",  // 맷 매닝
   "56305": "FP021",  // 케스턴 히우라 (키움, 트렌턴 브룩스 대체)
   "54843": "AQ011",  // 시라카와
+  "56146": "FP022",  // 약셀 리오스 (LG, 시즌 중 합류)
 };
 
 /** 영문 kboId → 숫자 kboId 역매핑 (KBO 공식 사이트 스크래핑용) */
