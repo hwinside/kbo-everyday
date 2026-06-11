@@ -19,7 +19,7 @@ export const revalidate = 300; // 5분 ISR 캐시
 //   photoUrl (향후 확장 예정)
 // ============================================================================
 
-const EXPECTED_ROSTER_COUNT = 800; // specs §3.2: 이 값과 정확히 일치해야 정상
+const EXPECTED_ROSTER_COUNT = 820; // specs §3.2: 이 값과 정확히 일치해야 정상 (2026-06-11: 약셀 리오스 FP022 등 시즌중 합류 반영)
 
 interface RosterPlayer {
   kboId: string;

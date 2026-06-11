@@ -1808,6 +1808,14 @@
     "team": "삼성"
   },
   {
+    "name": "리오스",
+    "kboId": "FP022",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "46",
+    "team": "LG"
+  },
+  {
     "name": "맷 매닝",
     "kboId": "FP005",
     "teamId": 8,
