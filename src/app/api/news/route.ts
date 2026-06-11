@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { NaverNewsRawItem, NewsItem } from "@/types/api";
+import { isTeamBaseballRelevant } from "@/lib/news-relevance";
 
 const NAVER_CLIENT_ID = process.env.NAVER_CLIENT_ID || "";
 const NAVER_CLIENT_SECRET = process.env.NAVER_CLIENT_SECRET || "";
@@ -78,14 +79,6 @@ function isPlayerRelevantNews(item: NewsItem, playerName: string, teamTokens: st
   if (teamTokens.length === 0) return true;
 
   return teamTokens.some((token) => normalizedBody.includes(normalizeForMatch(token)));
-}
-
-// 팀 뉴스탭 — 제목/본문에 마스코트가 있어야 통과. LG그룹·삼성전자 등
-// 동음 기업 기사(예: 젠슨 황 시구 기사가 "프로야구"를 본문에 달고 들어옴)를
-// 걸러낸다. 마스코트를 모르는 팀(매핑 누락)은 전부 통과(기존 동작 유지).
-function isTeamRelevantNews(item: NewsItem, mascot: string | null): boolean {
-  if (!mascot) return true;
-  return `${item.title} ${item.description}`.includes(mascot);
 }
 
 async function fetchNaverNews(searchQuery: string, start = 1, display = NEWS_DISPLAY_LIMIT): Promise<NewsItem[]> {
@@ -297,7 +290,9 @@ export async function GET(req: NextRequest) {
       unique = items.filter((item: NewsItem) => {
         if (seen.has(item.link)) return false;
         seen.add(item.link);
-        return team ? isTeamRelevantNews(item, teamMascot) : true;
+        return team
+          ? isTeamBaseballRelevant(item.title, item.description, teamMascot)
+          : true;
       });
     }
 
