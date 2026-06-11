@@ -32,6 +32,9 @@ export interface EventDetail {
   inning?: number;
   isTop?: boolean;
   message?: string;
+  /** 득점 이벤트(run_scored)에서 어느 팀이 득점했는지 — 알림 레이어가
+   *  isTop 추론(이닝교대 lag에 취약) 없이 팀을 확정하게 함 (push S5a). */
+  scoringSide?: "away" | "home";
 }
 
 export interface GameSnapshot {

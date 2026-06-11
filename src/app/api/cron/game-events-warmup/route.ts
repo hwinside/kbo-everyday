@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { KboRawGame } from "@/types/api";
+import type { GameEvent } from "@/types/game-events";
 import { notifyGameStatusTransitions } from "@/lib/notifications/game-status";
+import { notifyScoreEvents } from "@/lib/notifications/game-score";
 
 /**
  * Warm up the in-memory prevState cache of /api/game-events for every
@@ -58,14 +60,21 @@ export async function GET(req: NextRequest) {
       fetch(`${baseUrl}/api/game-events?gameId=${gameId}`, {
         cache: "no-store",
         headers: { "User-Agent": "kbo-everyday-warmup/1.0" },
-      }).then(async r => ({
-        gameId,
-        ok: r.ok,
-        status: r.status,
-        eventCount: r.ok ? ((await r.json())?.events?.length ?? 0) : null,
-      })),
+      }).then(async r => {
+        const json = r.ok ? await r.json().catch(() => null) : null;
+        const events = (json?.events ?? []) as GameEvent[];
+        return { gameId, ok: r.ok, status: r.status, events, eventCount: r.ok ? events.length : null };
+      }),
     ),
   );
+
+  // self-fetch로 받은 game-events를 gameId별로 모음 (S5 득점 알림용)
+  const eventsByGame = new Map<string, GameEvent[]>();
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value.ok) {
+      eventsByGame.set(r.value.gameId, r.value.events);
+    }
+  }
 
   // 경기 시작/종료 푸시 (push-notifications-v1 S4) — 같은 게임 목록을 재사용.
   // 실패해도 warmup 본연의 동작(이벤트 캐시)에 영향 없음.
@@ -77,13 +86,25 @@ export async function GET(req: NextRequest) {
     console.error("[warmup] game status notify failed:", (e as Error).message);
   }
 
+  // 내 팀 득점 푸시 (push-notifications-v1 S5a) — game-events의 득점 이벤트 기반.
+  let scoreNotify: { scored: number } | { error: string } = { scored: 0 };
+  try {
+    scoreNotify = await notifyScoreEvents(games, eventsByGame);
+  } catch (e) {
+    scoreNotify = { error: (e as Error).message };
+    console.error("[warmup] score notify failed:", (e as Error).message);
+  }
+
   return NextResponse.json({
     date,
     polled: liveGameIds.length,
     liveGameIds,
     gameNotify,
+    scoreNotify,
     results: results.map(r =>
-      r.status === "fulfilled" ? r.value : { error: String(r.reason) },
+      r.status === "fulfilled"
+        ? { gameId: r.value.gameId, ok: r.value.ok, status: r.value.status, eventCount: r.value.eventCount }
+        : { error: String(r.reason) },
     ),
   });
 }
