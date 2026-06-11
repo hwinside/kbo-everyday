@@ -87,7 +87,7 @@ final class LiveActivityController {
         awayTeamCode: String,
         homeTeamCode: String,
         state: KBOGameAttributes.ContentState
-    ) -> Bool {
+    ) async -> Bool {
         guard isEnabled else {
             NSLog("[LiveActivity] disabled in settings")
             return false
@@ -101,12 +101,14 @@ final class LiveActivityController {
         // 이미 같은 경기가 떠 있으면 갱신만 (재진입 중복 방지)
         if let existing = currentActivity {
             if existing.attributes.gameId == gameId {
-                Task { await existing.update(using: state) }
+                await existing.update(using: state)
                 return true
             }
-            // 다른 경기 진입 → 이전 Activity 종료 후 신규 (v1은 단일 경기)
-            Task { await end() }
-            currentActivity = nil
+            // 다른 경기 진입 → 이전 Activity를 *완료까지 대기*하며 즉시 종료한 뒤 신규.
+            // (await로 순차 — Task로 던지고 currentActivity=nil 하면 end가 no-op 돼
+            //  이전 카드가 남는 문제, 삼순 W2 블로커). 전환은 즉시 dismiss(.immediate),
+            //  15분 잔상은 경기 final 종료(W4)에만.
+            await endCurrent(immediate: true)
         }
 
         let attributes = KBOGameAttributes(
@@ -137,17 +139,20 @@ final class LiveActivityController {
         await activity.update(using: state)
     }
 
-    /// 종료 — 최종 content-state + 15분 후 자동 제거(dismissal-date).
+    /// 종료(경기 final) — 최종 content-state + 15분 후 자동 제거(dismissal-date).
     func end(finalState: KBOGameAttributes.ContentState? = nil) async {
+        await endCurrent(immediate: false, finalState: finalState)
+    }
+
+    /// 공통 종료 헬퍼. immediate=true면 즉시 제거(경기 전환), false면 now+15m 잔상(W4 final).
+    private func endCurrent(immediate: Bool, finalState: KBOGameAttributes.ContentState? = nil) async {
         guard let activity = currentActivity else { return }
         let last = finalState ?? activity.contentState
-        let dismissAt = Date().addingTimeInterval(15 * 60) // now + 15m
-        await activity.end(
-            using: last,
-            dismissalPolicy: .after(dismissAt)
-        )
+        let policy: ActivityUIDismissalPolicy =
+            immediate ? .immediate : .after(Date().addingTimeInterval(15 * 60))
+        await activity.end(using: last, dismissalPolicy: policy)
         currentActivity = nil
-        NSLog("[LiveActivity] ended, dismiss at \(dismissAt)")
+        NSLog("[LiveActivity] ended (immediate=\(immediate))")
     }
     #else
     var isEnabled: Bool { false }

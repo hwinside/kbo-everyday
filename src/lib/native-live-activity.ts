@@ -31,7 +31,7 @@ export interface LiveActivityStartData extends LiveActivityState {
 interface LiveActivityPlugin {
   start(data: LiveActivityStartData): Promise<{ started: boolean }>;
   update(state: LiveActivityState): Promise<void>;
-  end(data?: { state?: LiveActivityState }): Promise<void>;
+  end(state?: LiveActivityState): Promise<void>;
   isEnabled(): Promise<{ enabled: boolean }>;
 }
 
@@ -63,11 +63,12 @@ export async function updateLiveActivity(state: LiveActivityState): Promise<void
   }
 }
 
-/** 경기 종료 — 최종 스코어로 15분 유지 후 자동 제거(네이티브). */
+/** 경기 종료 — 최종 스코어로 15분 유지 후 자동 제거(네이티브).
+ *  finalState 필드는 top-level로 전달(Swift parseState가 top-level을 읽음 — 삼순 W2-②). */
 export async function endLiveActivity(finalState?: LiveActivityState): Promise<void> {
   if (!isNativeIOS()) return;
   try {
-    await LiveActivity.end(finalState ? { state: finalState } : undefined);
+    await LiveActivity.end(finalState);
   } catch {
     /* silent */
   }

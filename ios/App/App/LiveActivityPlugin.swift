@@ -36,15 +36,18 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("missing game info (gameId/teams)")
             return
         }
-        let started = LiveActivityController.shared.start(
-            gameId: gameId,
-            awayTeam: awayTeam,
-            homeTeam: homeTeam,
-            awayTeamCode: awayTeamCode,
-            homeTeamCode: homeTeamCode,
-            state: Self.parseState(call)
-        )
-        call.resolve(["started": started])
+        let state = Self.parseState(call)
+        Task {
+            let started = await LiveActivityController.shared.start(
+                gameId: gameId,
+                awayTeam: awayTeam,
+                homeTeam: homeTeam,
+                awayTeamCode: awayTeamCode,
+                homeTeamCode: homeTeamCode,
+                state: state
+            )
+            call.resolve(["started": started])
+        }
     }
 
     @objc func update(_ call: CAPPluginCall) {
@@ -64,9 +67,10 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             call.resolve()
             return
         }
-        // finalState가 넘어오면 그걸로 종료(최종 스코어 표시), 아니면 현재 상태로
+        // finalState 필드(top-level)가 오면 그걸로 종료(최종 스코어), 아니면 현재 상태로.
+        // JS는 finalState를 top-level로 보냄(awayScore 존재 = 최종 상태 지정, 삼순 W2-②).
         let finalState: KBOGameAttributes.ContentState? =
-            call.getObject("state") != nil ? Self.parseState(call) : nil
+            call.getInt("awayScore") != nil ? Self.parseState(call) : nil
         Task {
             await LiveActivityController.shared.end(finalState: finalState)
             call.resolve()
