@@ -41,12 +41,12 @@ export async function signInWithGoogle() {
  * GoTrue를 우회하고 직접 OAuth flow를 처리
  */
 export async function signInWithNaver() {
-  // 서버 API route가 네이버 OAuth URL로 redirect
-  const naverStartUrl = isIOS
-    ? "https://keubo.fan/api/auth/naver?native=ios"
-    : "https://keubo.fan/api/auth/naver";
+  // 서버 API route가 네이버 OAuth URL로 redirect.
+  // 네이티브(iOS/Android)는 native 플래그를 넘겨 콜백이 앱으로 세션을 돌려주게 한다.
+  // (web은 서버 쿠키로 세션 유지 — 플래그 없음)
   if (isNative) {
-    await openOAuthInBrowser(naverStartUrl);
+    const nativeParam = isIOS ? "ios" : "android";
+    await openOAuthInBrowser(`https://keubo.fan/api/auth/naver?native=${nativeParam}`);
   } else {
     window.location.assign("/api/auth/naver");
   }

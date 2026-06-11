@@ -70,7 +70,9 @@ export async function GET(request: NextRequest) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const error = url.searchParams.get("error");
-  const isNativeIOS = url.searchParams.get("native") === "ios";
+  const nativeParam = url.searchParams.get("native");
+  const isNativeIOS = nativeParam === "ios";
+  const isNativeAndroid = nativeParam === "android";
   const userAgent = request.headers.get("user-agent") || "";
   const referer = request.headers.get("referer") || "";
   // Structured diag log for mobile login triage (2026-04-21)
@@ -360,9 +362,19 @@ export async function GET(request: NextRequest) {
       : "";
 
     // state 쿠키 정리 + verifyOtp 쿠키를 response에 전달
-    const redirectUrl = isNativeIOS && hashParams
-      ? `${IOS_NATIVE_CALLBACK_ORIGIN}?next=${encodeURIComponent(redirectPath || "/")}${hashParams}`
-      : `${CANONICAL_ORIGIN}${redirectPath}${hashParams}`;
+    //  - iOS 네이티브: custom scheme(fan.keubo.app://)으로 세션 토큰 전달
+    //  - Android 네이티브: App Link로 검증된 /auth/callback 경로 + 해시로 전달
+    //    (서버 쿠키는 Custom Tab에만 남아 앱 WebView로 안 넘어옴 → appUrlOpen이 해시를
+    //     가로채 setSession. 중간 /api/auth/naver/callback은 App Link 비대상이라 서버에서 처리됨)
+    //  - web: 서버 쿠키로 세션 유지
+    let redirectUrl: string;
+    if (isNativeIOS && hashParams) {
+      redirectUrl = `${IOS_NATIVE_CALLBACK_ORIGIN}?next=${encodeURIComponent(redirectPath || "/")}${hashParams}`;
+    } else if (isNativeAndroid && hashParams) {
+      redirectUrl = `${CANONICAL_ORIGIN}/auth/callback?next=${encodeURIComponent(redirectPath || "/")}${hashParams}`;
+    } else {
+      redirectUrl = `${CANONICAL_ORIGIN}${redirectPath}${hashParams}`;
+    }
     const response = NextResponse.redirect(redirectUrl);
     response.cookies.delete("naver_oauth_state");
     response.cookies.delete("naver_native_ios");
