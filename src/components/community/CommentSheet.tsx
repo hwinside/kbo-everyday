@@ -12,6 +12,7 @@ import { supabase } from "@/lib/supabase/client";
 import type { Comment } from "@/lib/supabase/usePosts";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import GifPicker, { isGifComment } from "@/components/community/GifPicker";
+import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
 
 interface CommentSheetProps {
   isOpen: boolean;
@@ -286,8 +287,9 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       return;
     }
 
-    // 동일 댓글 차단: 최근 5건 내 같은 내용
-    if (recentContentsRef.current.includes(trimmed)) {
+    // 동일/변형 도배 차단: 정규화 키 기준 최근 5건 내 같은 내용
+    const floodKey = normalizeForFloodKey(trimmed);
+    if (recentContentsRef.current.includes(floodKey)) {
       setCooldown(true);
       setCooldownReason("같은 댓글은 반복해서 달 수 없어요");
       setTimeout(() => { setCooldown(false); setCooldownReason(""); }, COOLDOWN_MS);
@@ -296,7 +298,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
 
     lastSentRef.current = now;
     sentTimestampsRef.current.push(now);
-    recentContentsRef.current = [...recentContentsRef.current.slice(-4), trimmed];
+    recentContentsRef.current = [...recentContentsRef.current.slice(-4), floodKey];
     setCooldown(true);
     setCooldownReason("");
     setTimeout(() => setCooldown(false), COOLDOWN_MS);

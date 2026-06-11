@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
+import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
 
 export interface ChatMessage {
   id: number;
@@ -347,8 +348,10 @@ export function useChat(roomId: string) {
         return false;
       }
 
-      // 동일 메시지 차단: 최근 5건 내 같은 내용
-      if (recentContentsRef.current.includes(trimmed)) {
+      // 동일/변형 도배 차단: 정규화 키 기준 최근 5건 내 같은 내용
+      // (ㄷㄷㄷ → ㄷㄷㄷㄷ → "ㄷ ㄷ ㄷ" 변형이 같은 키로 묶여 차단됨)
+      const floodKey = normalizeForFloodKey(trimmed);
+      if (recentContentsRef.current.includes(floodKey)) {
         setCooldown(true);
         setCooldownReason("같은 메시지는 반복해서 보낼 수 없어요");
         setTimeout(() => { setCooldown(false); setCooldownReason(""); }, COOLDOWN_MS);
@@ -357,7 +360,7 @@ export function useChat(roomId: string) {
 
       lastSentRef.current = now;
       sentTimestampsRef.current.push(now);
-      recentContentsRef.current = [...recentContentsRef.current.slice(-4), trimmed];
+      recentContentsRef.current = [...recentContentsRef.current.slice(-4), floodKey];
       setCooldown(true);
       setCooldownReason("");
       setTimeout(() => setCooldown(false), COOLDOWN_MS);
