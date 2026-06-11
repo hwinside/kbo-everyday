@@ -27,13 +27,24 @@ export interface PushPayload {
  * - prefKey 지정 시 notification_prefs로 필터 (row 없음 = 디폴트)
  * - 토큰 500개 chunk + 무효 토큰 정리
  */
+export interface SendResult {
+  sent: number;
+  failed: number;
+  cleaned: number;
+  skipped: number;
+  /** 인프라 정상 여부 — env 누락/DB 조회 실패면 false (호출자 재시도 판단용).
+   *  대상/토큰 0명은 정상이므로 ok:true (보낼 사람이 없을 뿐) */
+  ok: boolean;
+}
+
 export async function sendFcmToUsers(
   userIds: string[],
   payload: PushPayload,
   prefKey?: PrefKey,
-): Promise<{ sent: number; failed: number; cleaned: number; skipped: number }> {
+): Promise<SendResult> {
   const fcm = getFcm();
-  if (!fcm || userIds.length === 0) return { sent: 0, failed: 0, cleaned: 0, skipped: 0 };
+  if (!fcm) return { sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false }; // env 미설정 = 인프라 실패
+  if (userIds.length === 0) return { sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: true };
 
   // 1. 알림 종류별 설정 필터 (row 없음 = 디폴트)
   // ⚠️ .in()에 id를 한 번에 넣으면 대상이 수백 명일 때 URL 한도 초과(Bad Request)
@@ -51,7 +62,7 @@ export async function sendFcmToUsers(
         .in("user_id", slice);
       if (prefErr) {
         console.error("[fcm] prefs query failed:", prefErr.message);
-        return { sent: 0, failed: 0, cleaned: 0, skipped: 0 };
+        return { sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false };
       }
       for (const r of prefRows ?? []) {
         const row = r as unknown as Record<string, unknown>;
@@ -62,7 +73,7 @@ export async function sendFcmToUsers(
     targets = targets.filter((id) => explicit.get(id) ?? DEFAULT_PREFS[prefKey]);
     skipped = before - targets.length;
   }
-  if (targets.length === 0) return { sent: 0, failed: 0, cleaned: 0, skipped };
+  if (targets.length === 0) return { sent: 0, failed: 0, cleaned: 0, skipped, ok: true };
 
   // 2. 디바이스 토큰 (동일하게 분할 조회)
   const tokens: string[] = [];
@@ -74,11 +85,11 @@ export async function sendFcmToUsers(
       .in("user_id", slice);
     if (tokenErr) {
       console.error("[fcm] token query failed:", tokenErr.message);
-      return { sent: 0, failed: 0, cleaned: 0, skipped };
+      return { sent: 0, failed: 0, cleaned: 0, skipped, ok: false };
     }
     for (const r of rows ?? []) tokens.push((r as { fcm_token: string }).fcm_token);
   }
-  if (tokens.length === 0) return { sent: 0, failed: 0, cleaned: 0, skipped };
+  if (tokens.length === 0) return { sent: 0, failed: 0, cleaned: 0, skipped, ok: true };
 
   // 3. chunk 발송 (FCM multicast 한도 500)
   const CHUNK = 500;
@@ -108,5 +119,5 @@ export async function sendFcmToUsers(
     if (cleanupError) console.error("[fcm] invalid token cleanup failed:", cleanupError.message);
   }
 
-  return { sent, failed, cleaned: invalid.length, skipped };
+  return { sent, failed, cleaned: invalid.length, skipped, ok: true };
 }
