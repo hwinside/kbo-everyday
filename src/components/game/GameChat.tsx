@@ -147,7 +147,9 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     return () => io.disconnect();
   }, [loading, hasMore, loadMore]);
 
-  const renderedMessages = displayMessages;
+  // 삭제된 메시지는 화면에서 완전히 숨김(placeholder 미표시).
+  // DB는 여전히 soft-delete(content 마스킹 + deleted_at)로 보존됨.
+  const renderedMessages = displayMessages.filter((m) => m.deleted_at == null);
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -352,26 +354,6 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
             <AnimatePresence initial={false}>
                 {renderedMessages.map((msg) => {
                   const isMe = user?.id === msg.user_id;
-                  const isDeleted = msg.deleted_at != null;
-                  if (isDeleted) {
-                    return (
-                      <motion.div
-                        key={msg.id}
-                        data-chat-msg
-                        data-deleted="true"
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.15 }}
-                        className="flex items-start py-0.5"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <span className="text-sm text-text-tertiary italic">
-                            {msg.content || "삭제된 메시지입니다"}
-                          </span>
-                        </div>
-                      </motion.div>
-                    );
-                  }
                   return (
                     <motion.div
                       key={msg.id}
