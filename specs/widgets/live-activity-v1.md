@@ -42,7 +42,9 @@
 
 ## 4. 빌드 슬라이스
 
-- **W1 토대**: Widget Extension target + App Group + ActivityKit ContentState(스코어/이닝/BSO/투수타자/베이스) 정의 + 잠금화면 SwiftUI 레이아웃. **검증 = 더미 데이터로 잠금화면에 카드 표시(앱에서 수동 start/end).**
+- **W1 토대** (🟡 소스 완료 / Xcode target 등록·실기기 빌드 = 하린아빠 게이트): Widget Extension target + App Group + ActivityKit ContentState(스코어/이닝/BSO/투수타자/베이스) 정의 + 잠금화면 SwiftUI 레이아웃. **검증 = 더미 데이터로 잠금화면에 카드 표시(앱에서 수동 start/end).**
+  - 작성됨: `ios/App/LiveActivity/`(`KBOGameAttributes`·`KBOLiveActivityWidget`·`KBOWidgetBundle`·`Info.plist`·`LiveActivity.entitlements`) + `ios/App/App/LiveActivityController.swift`(start/update/end, end=dismissal-date now+15m) + 앱 `App.entitlements`(App Group)·`Info.plist`(NSSupportsLiveActivities) 편집.
+  - 남은 단계 = Xcode GUI: Widget Extension target 추가 + App Group provisioning + 익스텐션 배포타깃 16.1 + 실기기 잠금화면 카드 확인. 상세 `ios/App/LiveActivity/WIDGET_SETUP.md`.
 - **W2 경기룸 연동**: 경기룸([gameId]) 진입 시 game-live 1회 fetch → Activity 시작. 다이나믹아일랜드 compact/expanded. 재진입 시 중복 방지.
 - **W3 실시간 업데이트** (삼순 조건부 — 착수 전 §3 APNs/토큰 + 아래 dedup 확정): ①포그라운드 JS 폴링 update ②백그라운드 APNs Live Activity push(token-based, content-state). **dedup/빈도 정책 필수**: 직전 발송 state hash(스코어/이닝/BSO/주자/투수타자)와 동일하면 push 안 보냄. 스코어·이닝 변화 = high priority 즉시, B/S/O만 변화 = low priority/주기 묶음. `frequentPushesEnabled` 확인 + APNs 예산 초과 시 degrade(스코어·이닝만 발송).
 - **W4 종료**: 경기 final 감지(S4 종료 트리거 연계 또는 폴링) → end push. **end payload에 최종 content-state + `dismissal-date = now + 15분`** (stale-date 아님 — stale은 "오래된 정보" 표시용). 15분 후 ActivityKit이 자동 제거.
