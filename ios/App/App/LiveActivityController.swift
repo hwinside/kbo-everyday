@@ -96,22 +96,24 @@ final class LiveActivityController {
             return false
         }
 
-        // 메모리엔 없지만 시스템에 살아있는 Activity 회수 (앱 재시작 대비)
-        if currentActivity == nil {
-            currentActivity = Activity<KBOGameAttributes>.activities.first
-        }
-
-        // 이미 같은 경기가 떠 있으면 갱신만 (재진입 중복 방지)
-        if let existing = currentActivity {
-            if existing.attributes.gameId == gameId {
-                await existing.update(using: state)
-                return true
+        // 시스템에 살아있는 *모든* Activity를 회수해 정리한다 (앱 재시작·더미 누적으로
+        // 여러 장 남은 상태를 코드로 거둠 — `.activities.first` 하나만으론 정리 불가, 삼순 #220).
+        // 같은 gameId의 첫 한 개만 보존(아래서 갱신), 나머지(다른 경기·중복·더미)는 즉시 종료.
+        // 전환/중복 종료는 .immediate, 15분 잔상은 경기 final(W4)에만.
+        var keep: Activity<KBOGameAttributes>? = nil
+        for activity in Activity<KBOGameAttributes>.activities {
+            if activity.attributes.gameId == gameId && keep == nil {
+                keep = activity
+            } else {
+                await activity.end(using: activity.contentState, dismissalPolicy: .immediate)
             }
-            // 다른 경기 진입 → 이전 Activity를 *완료까지 대기*하며 즉시 종료한 뒤 신규.
-            // (await로 순차 — Task로 던지고 currentActivity=nil 하면 end가 no-op 돼
-            //  이전 카드가 남는 문제, 삼순 W2 블로커). 전환은 즉시 dismiss(.immediate),
-            //  15분 잔상은 경기 final 종료(W4)에만.
-            await endCurrent(immediate: true)
+        }
+        currentActivity = keep
+
+        // 같은 경기가 이미 떠 있으면 갱신만 (재진입 중복 방지)
+        if let existing = currentActivity {
+            await existing.update(using: state)
+            return true
         }
 
         let attributes = KBOGameAttributes(
