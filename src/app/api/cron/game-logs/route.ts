@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { startJob, finishJob } from "@/lib/admin/job-logger";
 import { fetchGames } from "@/lib/crawler/kbo-api";
-import { ingestGameRows, type PlayerGameLogRow } from "@/lib/game-logs/ingest";
+import { ingestGameRows, type PlayerGameLogRow, type UnresolvedBoxScorePlayer } from "@/lib/game-logs/ingest";
+import { notifyRosterGaps } from "@/lib/game-logs/roster-gap-alert";
 import { getKSTToday, getKSTYesterday } from "@/lib/utils/date-kst";
 
 export const dynamic = "force-dynamic";
@@ -45,7 +46,9 @@ export async function GET(req: NextRequest) {
     const finals = [...finalsById.values()];
 
     // 경기별 박스스코어 → 행 매핑 (실패한 경기는 건너뜀, 나머지는 진행)
-    const settled = await Promise.allSettled(finals.map((g) => ingestGameRows(g)));
+    // unresolved: 박스스코어엔 떴지만 로스터 미등록이라 스킵된 선수 (신규/시즌중 합류 탐지)
+    const unresolved: UnresolvedBoxScorePlayer[] = [];
+    const settled = await Promise.allSettled(finals.map((g) => ingestGameRows(g, unresolved)));
     const rows: PlayerGameLogRow[] = [];
     let gamesOk = 0;
     let gamesNoBox = 0;
@@ -70,7 +73,15 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const summary = `${dates.join(",")} | final ${finals.length} (박스 ${gamesOk}/없음 ${gamesNoBox}) | upsert ${upserted}행`;
+    // 미등록 선수 탐지 → 슬랙 알림 (부가 기능, throw 없음). 결과는 summary에 항상 기록.
+    const gapResult = await notifyRosterGaps(unresolved);
+    const gapNote = gapResult.gaps.length
+      ? ` | ⚠️미등록 ${gapResult.gaps.length}명 [${gapResult.gaps
+          .map((g) => `${g.name}(${g.teamName})`)
+          .join(",")}] (알림:${gapResult.status})`
+      : "";
+
+    const summary = `${dates.join(",")} | final ${finals.length} (박스 ${gamesOk}/없음 ${gamesNoBox}) | upsert ${upserted}행${gapNote}`;
     await finishJob(logId, "success", summary);
 
     return NextResponse.json({
@@ -81,6 +92,8 @@ export async function GET(req: NextRequest) {
       gamesOk,
       gamesNoBox,
       upserted,
+      rosterGaps: gapResult.gaps,
+      rosterGapAlert: gapResult.status,
     });
   } catch (e) {
     await finishJob(logId, "error", undefined, (e as Error).message);

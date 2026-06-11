@@ -94,11 +94,28 @@ export async function fetchGameBoxscore(kboGameId: string): Promise<GameBoxscore
 }
 
 /**
+ * 박스스코어에 출전했지만 로스터 매칭(resolvePlayer)에 실패한 선수.
+ * 신규/시즌중 합류 선수(특히 외국인)가 미등록일 때 fail-closed로 스킵되는데,
+ * 그 누락을 cron이 모아서 알림하도록 수집한다. (roster-gap-alert)
+ */
+export interface UnresolvedBoxScorePlayer {
+  name: string;
+  teamId: number;
+  teamCode: string;
+  playerType: "batter" | "pitcher";
+}
+
+/**
  * 한 경기 박스스코어 → `player_game_logs` 행 배열. 순수 함수(네트워크 X).
  * - kbo_id는 {name, teamId}로 resolvePlayer (동명이인 팀 분리). 매칭 실패 행은 제외(fail-closed).
  * - 같은 (kbo_id, player_type)은 1행만 (박스스코어 중복 방어).
+ * - unresolvedSink 전달 시: 매칭 실패한 선수를 거기에 모은다(미등록 탐지용, 옵션).
  */
-export function buildGameLogRows(game: KboGame, box: GameBoxscore): PlayerGameLogRow[] {
+export function buildGameLogRows(
+  game: KboGame,
+  box: GameBoxscore,
+  unresolvedSink?: UnresolvedBoxScorePlayer[],
+): PlayerGameLogRow[] {
   if (game.awayScore == null || game.homeScore == null) return [];
   const gameDate = toIsoDate(game.date);
   const rows: PlayerGameLogRow[] = [];
@@ -131,7 +148,10 @@ export function buildGameLogRows(game: KboGame, box: GameBoxscore): PlayerGameLo
       const name = String(b.name ?? "").trim();
       if (!name) continue;
       const resolved = resolvePlayer({ name, teamId: side.teamId }, undefined, { context: "game-logs:batter" });
-      if (!resolved) continue;
+      if (!resolved) {
+        unresolvedSink?.push({ name, teamId: side.teamId, teamCode, playerType: "batter" });
+        continue;
+      }
       const key = `${resolved.kboId}|batter`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -146,7 +166,10 @@ export function buildGameLogRows(game: KboGame, box: GameBoxscore): PlayerGameLo
       const name = String(p.name ?? "").trim();
       if (!name) continue;
       const resolved = resolvePlayer({ name, teamId: side.teamId }, undefined, { context: "game-logs:pitcher" });
-      if (!resolved) continue;
+      if (!resolved) {
+        unresolvedSink?.push({ name, teamId: side.teamId, teamCode, playerType: "pitcher" });
+        continue;
+      }
       const key = `${resolved.kboId}|pitcher`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -162,8 +185,11 @@ export function buildGameLogRows(game: KboGame, box: GameBoxscore): PlayerGameLo
 }
 
 /** 한 경기 적재용 행 생성: 페치 + 매핑. 박스 없음(취소 등) 시 null. */
-export async function ingestGameRows(game: KboGame): Promise<PlayerGameLogRow[] | null> {
+export async function ingestGameRows(
+  game: KboGame,
+  unresolvedSink?: UnresolvedBoxScorePlayer[],
+): Promise<PlayerGameLogRow[] | null> {
   const box = await fetchGameBoxscore(game.gameId);
   if (!box) return null;
-  return buildGameLogRows(game, box);
+  return buildGameLogRows(game, box, unresolvedSink);
 }
