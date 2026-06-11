@@ -8,6 +8,14 @@ CREATE TABLE IF NOT EXISTS game_notify_state (
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- 종료 알림은 최애팀 기준 승팀/패팀 다른 메시지라 away/home 팀 슬롯별로 발송한다.
+-- 한 슬롯 성공·다른 슬롯 실패 시 부분 재시도(중복/누락 방지)를 위해 슬롯 단위 상태 보유.
+-- end_notified는 "두 슬롯 모두 발송됨" 요약 플래그로 유지(조기 skip용). (삼순 #210 재리뷰)
+ALTER TABLE game_notify_state ADD COLUMN IF NOT EXISTS end_away_notified BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE game_notify_state ADD COLUMN IF NOT EXISTS end_home_notified BOOLEAN NOT NULL DEFAULT false;
+-- 기존 end_notified=true 행은 양 슬롯 발송 완료로 간주 (재발송 방지)
+UPDATE game_notify_state SET end_away_notified = true, end_home_notified = true WHERE end_notified = true;
+
 ALTER TABLE game_notify_state ENABLE ROW LEVEL SECURITY;
 -- service_role(cron)만 사용 — 클라이언트 정책 없음 (default deny)
 

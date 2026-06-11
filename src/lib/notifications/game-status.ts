@@ -37,11 +37,20 @@ async function fansOfTeams(teamIds: number[]): Promise<{ ids: string[]; ok: bool
   return { ids: (data ?? []).map((r: { id: string }) => r.id), ok: true };
 }
 
+// 종료 알림은 수신자 최애팀 기준으로 승팀/패팀 다른 메시지라 한 게임에서 away/home
+// 두 그룹으로 나눠 발송한다. 상태를 game 단위 end_notified 하나로 두면 한 그룹 성공·다른
+// 그룹 실패 시 전체 롤백 → 성공 그룹 중복 발송 위험이 있어, 팀 슬롯 단위로 선점한다 (삼순 #210).
+type NotifyFlag =
+  | "start_notified"
+  | "end_notified"
+  | "end_away_notified"
+  | "end_home_notified";
+
 /**
  * 알림 권한 선점 — 해당 플래그가 false인 행을 true로 바꾸는 데 성공한
  * 호출만 발송 자격을 가짐 (semantic key = game_id + 플래그).
  */
-async function claim(gameId: string, flag: "start_notified" | "end_notified"): Promise<boolean> {
+async function claim(gameId: string, flag: NotifyFlag): Promise<boolean> {
   // 행 보장 (이미 있으면 no-op)
   const { error: insertErr } = await supabase
     .from("game_notify_state")
@@ -64,7 +73,7 @@ async function claim(gameId: string, flag: "start_notified" | "end_notified"): P
 }
 
 /** 발송 인프라 실패 시 선점 플래그를 되돌려 다음 cron이 재시도하게 함 (삼순 #210-1) */
-async function unclaim(gameId: string, flag: "start_notified" | "end_notified"): Promise<void> {
+async function unclaim(gameId: string, flag: NotifyFlag): Promise<void> {
   const { error } = await supabase
     .from("game_notify_state")
     .update({ [flag]: false, updated_at: new Date().toISOString() })
@@ -73,19 +82,20 @@ async function unclaim(gameId: string, flag: "start_notified" | "end_notified"):
 }
 
 /**
- * teamId → 연승/연패 표시 문자열 ("3연승"/"2연패"). 2 미만이거나 미상이면 null.
+ * teamId → 연승/연패 { n, dir }. 2 미만이거나 미상이면 미수록.
  * KBO standings의 continuousGameResult("3승"/"1패") 기반 — 종료 직후 갱신 지연이
- * 있으면 직전 streak일 수 있으나 best-effort. fetch 실패 시 빈 맵(스코어만 발송).
+ * 있으면 직전 streak일 수 있어, 표기는 호출부에서 "이번 경기 결과 방향과 일치할 때만"
+ * 노출(fail-closed)한다. fetch 실패 시 빈 맵(스코어만 발송).
  */
-async function fetchTeamStreaks(): Promise<Map<number, string>> {
-  const out = new Map<number, string>();
+async function fetchTeamStreaks(): Promise<Map<number, { n: number; dir: "승" | "패" }>> {
+  const out = new Map<number, { n: number; dir: "승" | "패" }>();
   try {
     const standings = await fetchStandings();
     for (const s of standings) {
       const m = (s.continuousGameResult ?? "").match(/^(\d+)(승|패)$/);
       if (!m) continue;
       const n = parseInt(m[1]);
-      if (n >= 2 && s.teamId > 0) out.set(s.teamId, `${n}연${m[2] === "승" ? "승" : "패"}`);
+      if (n >= 2 && s.teamId > 0) out.set(s.teamId, { n, dir: m[2] as "승" | "패" });
     }
   } catch (e) {
     console.error("[game-status] standings fetch failed:", (e as Error).message);
@@ -155,61 +165,63 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
         await markOnly(gameId, { start: true, end: true });
         continue;
       }
-      if (await claim(gameId, "end_notified")) {
-        const awayScore = parseInt(g.T_SCORE_CN ?? "0") || 0;
-        const homeScore = parseInt(g.B_SCORE_CN ?? "0") || 0;
-        const awayId = teamIdByShortName(away);
-        const homeId = teamIdByShortName(home);
-        const scoreLine = `${away} ${awayScore} : ${homeScore} ${home}`;
-        const streaks = await fetchTeamStreaks();
-        const withStreak = (id: number | null) => {
-          const s = id !== null ? streaks.get(id) : undefined;
-          return s ? `${scoreLine} · ${s} 중` : scoreLine;
-        };
+      if (state.end_notified) continue; // 양 슬롯 종료 발송 완료 — 재평가 불필요
 
-        if (awayScore === homeScore) {
-          // 무승부 — 양팀 중립
-          const fans = await fansOfTeams(teamIds);
-          if (!fans.ok) { await unclaim(gameId, "end_notified"); continue; }
-          const res = await sendFcmToUsers(fans.ids, { title: "🏁 경기 종료", body: scoreLine, url }, "game_end");
-          if (!res.ok) { await unclaim(gameId, "end_notified"); continue; }
-          ended += res.sent;
-        } else {
-          // 최애팀 기준 승팀=축하 / 패팀=위로 (수신자별 다른 메시지 → 그룹 분리 발송)
-          const awayWon = awayScore > homeScore;
-          const winId = awayWon ? awayId : homeId;
-          const loseId = awayWon ? homeId : awayId;
-          const winName = awayWon ? away : home;
-          const loseName = awayWon ? home : away;
+      const awayScore = parseInt(g.T_SCORE_CN ?? "0") || 0;
+      const homeScore = parseInt(g.B_SCORE_CN ?? "0") || 0;
+      const tie = awayScore === homeScore;
+      const awayWon = awayScore > homeScore;
+      const scoreLine = `${away} ${awayScore} : ${homeScore} ${home}`;
 
-          let failed = false;
-          if (winId !== null) {
-            const f = await fansOfTeams([winId]);
-            if (!f.ok) failed = true;
-            else {
-              const res = await sendFcmToUsers(f.ids, {
-                title: `🎉 ${winName} 승리!`,
-                body: withStreak(winId),
-                url,
-              }, "game_end");
-              if (!res.ok) failed = true; else ended += res.sent;
-            }
-          }
-          if (!failed && loseId !== null) {
-            const f = await fansOfTeams([loseId]);
-            if (!f.ok) failed = true;
-            else {
-              const res = await sendFcmToUsers(f.ids, {
-                title: `🥲 ${loseName} 아쉬운 패배`,
-                body: withStreak(loseId),
-                url,
-              }, "game_end");
-              if (!res.ok) failed = true; else ended += res.sent;
-            }
-          }
-          if (failed) { await unclaim(gameId, "end_notified"); continue; }
+      // streak은 이번 경기 결과 방향과 일치할 때만 노출 — standings 갱신 지연 시
+      // "승리! · 3연패 중" 같은 모순을 fail-closed로 차단 (삼순 #210 재리뷰)
+      const streaks = await fetchTeamStreaks();
+      const streakSuffix = (id: number | null, expected: "승" | "패"): string => {
+        const s = id !== null ? streaks.get(id) : undefined;
+        if (!s || s.dir !== expected) return "";
+        return ` · ${s.n}연${s.dir} 중`;
+      };
+
+      // away/home 슬롯을 독립 선점·발송 — 한 슬롯 실패가 다른 슬롯을 중복/누락시키지 않음.
+      // 한 유저는 team_id 하나라 두 슬롯 수신자는 서로소.
+      const slots: Array<{ teamId: number | null; flag: NotifyFlag; isAway: boolean }> = [
+        { teamId: teamIdByShortName(away), flag: "end_away_notified", isAway: true },
+        { teamId: teamIdByShortName(home), flag: "end_home_notified", isAway: false },
+      ];
+
+      for (const slot of slots) {
+        if (slot.teamId === null) {
+          // 팀 미상 — 보낼 수신자 없음. 슬롯만 마킹해 end_notified 도달 가능하게.
+          await supabase.from("game_notify_state")
+            .update({ [slot.flag]: true, updated_at: new Date().toISOString() })
+            .eq("game_id", gameId);
+          continue;
         }
+        if (!(await claim(gameId, slot.flag))) continue; // 이미 발송됨
+
+        const fans = await fansOfTeams([slot.teamId]);
+        if (!fans.ok) { await unclaim(gameId, slot.flag); continue; }
+
+        let res;
+        if (tie) {
+          res = await sendFcmToUsers(fans.ids, { title: "🏁 경기 종료", body: scoreLine, url }, "game_end");
+        } else {
+          const won = slot.isAway ? awayWon : !awayWon;
+          const name = slot.isAway ? away : home;
+          res = won
+            ? await sendFcmToUsers(fans.ids, { title: `🎉 ${name} 승리!`, body: `${scoreLine}${streakSuffix(slot.teamId, "승")}`, url }, "game_end")
+            : await sendFcmToUsers(fans.ids, { title: `🥲 ${name} 아쉬운 패배`, body: `${scoreLine}${streakSuffix(slot.teamId, "패")}`, url }, "game_end");
+        }
+        if (!res.ok) { await unclaim(gameId, slot.flag); continue; }
+        ended += res.sent;
       }
+
+      // 두 슬롯 다 발송되면 end_notified=true (다음 cron부터 조기 skip)
+      await supabase.from("game_notify_state")
+        .update({ end_notified: true, updated_at: new Date().toISOString() })
+        .eq("game_id", gameId)
+        .eq("end_away_notified", true)
+        .eq("end_home_notified", true);
     }
   }
 
