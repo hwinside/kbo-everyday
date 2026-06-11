@@ -75,6 +75,62 @@ final class LiveActivityController {
         }
     }
 
+    /// 실데이터로 Activity 시작/전환 (W2 경기룸 진입). 같은 gameId가 이미 떠 있으면
+    /// 갱신만, 다른 gameId면 이전 종료 후 신규(v1 단일 경기). 앱 재시작으로
+    /// currentActivity가 nil이어도 시스템에 살아있는 Activity를 회수해 중복 생성을
+    /// 막는다 (삼순 W2-① 복구/중복방지).
+    @discardableResult
+    func start(
+        gameId: String,
+        awayTeam: String,
+        homeTeam: String,
+        awayTeamCode: String,
+        homeTeamCode: String,
+        state: KBOGameAttributes.ContentState
+    ) -> Bool {
+        guard isEnabled else {
+            NSLog("[LiveActivity] disabled in settings")
+            return false
+        }
+
+        // 메모리엔 없지만 시스템에 살아있는 Activity 회수 (앱 재시작 대비)
+        if currentActivity == nil {
+            currentActivity = Activity<KBOGameAttributes>.activities.first
+        }
+
+        // 이미 같은 경기가 떠 있으면 갱신만 (재진입 중복 방지)
+        if let existing = currentActivity {
+            if existing.attributes.gameId == gameId {
+                Task { await existing.update(using: state) }
+                return true
+            }
+            // 다른 경기 진입 → 이전 Activity 종료 후 신규 (v1은 단일 경기)
+            Task { await end() }
+            currentActivity = nil
+        }
+
+        let attributes = KBOGameAttributes(
+            gameId: gameId,
+            awayTeam: awayTeam,
+            homeTeam: homeTeam,
+            awayTeamCode: awayTeamCode,
+            homeTeamCode: homeTeamCode
+        )
+        do {
+            let activity = try Activity.request(
+                attributes: attributes,
+                contentState: state,
+                pushType: nil   // W2는 로컬 update. W3에서 .token(APNs)로 전환
+            )
+            currentActivity = activity
+            NSLog("[LiveActivity] started game=\(gameId) id=\(activity.id)")
+            return true
+        } catch {
+            NSLog("[LiveActivity] start failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
     /// 진행 중 Activity 상태 갱신(로컬). W3에서 push로 대체/병행.
     func update(_ state: KBOGameAttributes.ContentState) async {
         guard let activity = currentActivity else { return }

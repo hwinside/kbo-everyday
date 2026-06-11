@@ -18,6 +18,7 @@ import type { GameStats, BatterStat, PitcherStat } from "@/lib/constants/game-st
 import type { GameDetailResponse } from "@/app/api/game-detail/route";
 import { getPreseasonGameById } from "@/lib/constants/preseason-schedule";
 import { useLiveGame } from "@/lib/hooks/useLiveGame";
+import { startLiveActivity } from "@/lib/native-live-activity";
 import { useGameDetail } from "@/lib/hooks/useGameDetail";
 import { useGameEvents } from "@/lib/hooks/useGameEvents";
 import { generateEvents, type PrevGameState } from "@/lib/event-generator";
@@ -166,6 +167,35 @@ export default function GameDetailPage() {
     homeTeamId: game?.homeTeamId ?? 0,
     awayTeamId: game?.awayTeamId ?? 0,
   });
+
+  // 잠금화면 Live Activity (W2): 경기룸에서 라이브 경기일 때 실데이터로 카드를
+  // 시작/갱신한다. iOS 네이티브에서만 동작(웹/Android no-op). 같은 gameId
+  // 재호출은 네이티브가 update로 처리(중복 방지). 경기룸을 나가도 카드는 유지
+  // (스펙 §5-3 잠금화면 목적, 종료는 W4). 팀 코드는 G_ID에서 파싱(로고/컬러는 후속).
+  useEffect(() => {
+    if (!liveGame || !liveGame.isLive) return;
+    const m = gameId.match(/^(\d{8})([A-Z]{2})([A-Z]{2})(\d)$/);
+    void startLiveActivity({
+      gameId,
+      awayTeam: liveGame.awayName,
+      homeTeam: liveGame.homeName,
+      awayTeamCode: m?.[2] ?? "",
+      homeTeamCode: m?.[3] ?? "",
+      awayScore: liveGame.awayScore,
+      homeScore: liveGame.homeScore,
+      inning: liveGame.inning,
+      isTopInning: liveGame.isTop,
+      balls: liveGame.balls,
+      strikes: liveGame.strikes,
+      outs: liveGame.outs,
+      onFirst: liveGame.runner1b,
+      onSecond: liveGame.runner2b,
+      onThird: liveGame.runner3b,
+      pitcherName: liveGame.currentPitcher ?? "",
+      batterName: liveGame.currentBatter ?? "",
+      status: "live",
+    });
+  }, [liveGame, gameId]);
 
   // Client-side diff for celebration triggers.
   // Server events (gameEvents) are only used for text relay (KgwanTab), not celebrations,
