@@ -19,6 +19,7 @@ import type { GameDetailResponse } from "@/app/api/game-detail/route";
 import { getPreseasonGameById } from "@/lib/constants/preseason-schedule";
 import { useLiveGame } from "@/lib/hooks/useLiveGame";
 import { startLiveActivity } from "@/lib/native-live-activity";
+import { startGameNotification, removeGameNotification } from "@/lib/capacitor/game-notification";
 import { useGameDetail } from "@/lib/hooks/useGameDetail";
 import { useGameEvents } from "@/lib/hooks/useGameEvents";
 import { generateEvents, type PrevGameState } from "@/lib/event-generator";
@@ -208,6 +209,29 @@ export default function GameDetailPage() {
       status: "live",
     });
   }, [liveGame, gameId]);
+
+  // 잠금화면 ongoing notification (안드로이드, A4 B2): 라이브 경기일 때 스코어를
+  // 상단 고정 알림으로 게시/갱신, 종료/이탈 시 제거. iOS Live Activity의 안드로이드판
+  // (ActivityKit 없음). 래퍼가 android 전용 가드 — 웹/iOS는 no-op.
+  // 앱 미진입 자동 시작/유지는 FCM 푸시 경로(후속 슬라이스). 여기선 경기룸 생명주기에
+  // 묶어 stuck notification을 방지한다(라이브→게시, 종료/언마운트→제거).
+  useEffect(() => {
+    if (liveGame?.isLive) {
+      const half = liveGame.isTop ? "초" : "말";
+      const title = `${liveGame.awayName} ${liveGame.awayScore} : ${liveGame.homeScore} ${liveGame.homeName}`;
+      const body = `${liveGame.inning}회${half}${liveGame.stadium ? ` · ${liveGame.stadium}` : ""}`;
+      void startGameNotification(title, body);
+    } else {
+      void removeGameNotification();
+    }
+  }, [liveGame]);
+
+  // 경기룸 이탈(언마운트) 시 ongoing notification 정리.
+  useEffect(() => {
+    return () => {
+      void removeGameNotification();
+    };
+  }, []);
 
   // Client-side diff for celebration triggers.
   // Server events (gameEvents) are only used for text relay (KgwanTab), not celebrations,
