@@ -32,10 +32,12 @@ public class MainActivity extends BridgeActivity {
     private void handleCardDeepLink(Intent intent) {
         if (intent == null) return;
         String path = intent.getStringExtra(GameNotificationPlugin.EXTRA_PATH);
-        if (path == null || path.isEmpty()) return;
-        final String target = path.startsWith("http") ? path : BASE_URL + path;
-        // 재진입 방지 — 같은 카드가 다시 deliver되지 않게 extra 소비.
+        // 재진입 방지 — 무효 path여도 extra는 먼저 소비.
         intent.removeExtra(GameNotificationPlugin.EXTRA_PATH);
+        // 경기룸 내부 경로(/games/...)만 허용 — 절대 URL/오픈 리다이렉트로 외부 페이지가
+        // 웹뷰에 열리는 걸 차단(삼순 리뷰). 이 기능 스코프는 경기룸 딥링크뿐.
+        if (path == null || !path.startsWith("/games/")) return;
+        final String target = BASE_URL + path;
         Bridge bridge = getBridge();
         if (bridge == null) return;
         final WebView webView = bridge.getWebView();
