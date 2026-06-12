@@ -1,5 +1,13 @@
 apply plugin: 'com.android.application'
 
+// 릴리스 서명 — keystore.properties(gitignore, 로컬 시크릿)가 있을 때만 적용.
+// 없으면(다른 개발자/CI) release도 서명 없이 빌드되어 깨지지 않는다(Play 업로드만 불가).
+def keystorePropsFile = rootProject.file("keystore.properties")
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystoreProps.load(new FileInputStream(keystorePropsFile))
+}
+
 android {
     namespace = "fan.keubo.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -16,10 +24,24 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (keystorePropsFile.exists()) {
+            release {
+                storeFile file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
     buildTypes {
         release {
+            // minify는 v1 비활성 유지 — Capacitor 플러그인 리플렉션 리스크 회피(후속 검토).
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (keystorePropsFile.exists()) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }
