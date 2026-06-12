@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 이하 splash. 12+ 는 styles.xml의 SplashScreen API 속성 사용. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/splash_background" />
+    <item>
+        <bitmap android:src="@drawable/splash_icon" android:gravity="center" />
+    </item>
+</layer-list>
