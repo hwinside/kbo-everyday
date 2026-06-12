@@ -5,7 +5,8 @@
       "namespace": "android_app",
       "package_name": "fan.keubo.app",
       "sha256_cert_fingerprints": [
-        "72:38:AF:92:53:20:F4:82:F7:9E:6F:52:AF:DB:7C:C3:C2:F9:32:3E:5D:67:75:88:B0:2B:36:55:A6:E8:A9:60"
+        "72:38:AF:92:53:20:F4:82:F7:9E:6F:52:AF:DB:7C:C3:C2:F9:32:3E:5D:67:75:88:B0:2B:36:55:A6:E8:A9:60",
+        "A0:F8:C7:87:3C:8E:36:2D:6E:4D:E9:AA:C2:63:CE:97:2B:DE:9C:FA:BC:16:AD:2E:0E:5D:DA:BB:15:35:27:97"
       ]
     }
   }
