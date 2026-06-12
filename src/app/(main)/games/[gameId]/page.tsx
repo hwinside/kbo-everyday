@@ -210,28 +210,35 @@ export default function GameDetailPage() {
     });
   }, [liveGame, gameId]);
 
-  // 잠금화면 ongoing notification (안드로이드, A4 B2): 라이브 경기일 때 스코어를
-  // 상단 고정 알림으로 게시/갱신, 종료/이탈 시 제거. iOS Live Activity의 안드로이드판
-  // (ActivityKit 없음). 래퍼가 android 전용 가드 — 웹/iOS는 no-op.
-  // 앱 미진입 자동 시작/유지는 FCM 푸시 경로(후속 슬라이스). 여기선 경기룸 생명주기에
-  // 묶어 stuck notification을 방지한다(라이브→게시, 종료/언마운트→제거).
+  // 잠금화면 ongoing notification (안드로이드, A4 B2 + lifecycle 정리). 래퍼가 android
+  // 전용 가드 — 웹/iOS는 no-op.
+  // - 최애팀 경기: 카드 생명주기는 *푸시*(C2 game_live/game_end)가 소유. 경기룸에서는
+  //   라이브 중 갱신만 하고, 비라이브/이탈 시 제거하지 않는다(푸시 game_end가 정리).
+  //   → 경기룸을 잠깐 들렀다 나가도 잠금화면 자동 카드가 유지됨.
+  // - 비-최애팀 경기: 푸시가 없으므로 경기룸이 생명주기 소유 — 라이브→게시, 비라이브/이탈→제거.
+  const isMyTeamGame =
+    myTeamIdForCelebration != null && myTeamIdForCelebration !== 0 &&
+    (myTeamIdForCelebration === game?.awayTeamId || myTeamIdForCelebration === game?.homeTeamId);
+
   useEffect(() => {
     if (liveGame?.isLive) {
       const half = liveGame.isTop ? "초" : "말";
       const title = `${liveGame.awayName} ${liveGame.awayScore} : ${liveGame.homeScore} ${liveGame.homeName}`;
       const body = `${liveGame.inning}회${half}${liveGame.stadium ? ` · ${liveGame.stadium}` : ""}`;
       void startGameNotification(title, body);
-    } else {
+    } else if (!isMyTeamGame) {
+      // 비-최애팀 경기 종료/비라이브 → 카드 제거. 최애팀은 푸시 game_end가 정리.
       void removeGameNotification();
     }
-  }, [liveGame]);
+  }, [liveGame, isMyTeamGame]);
 
-  // 경기룸 이탈(언마운트) 시 ongoing notification 정리.
+  // 경기룸 이탈(언마운트) 시 — 비-최애팀 경기만 정리. 최애팀 경기는 푸시가 생명주기 소유라
+  // 이탈해도 잠금화면 자동 카드를 유지한다.
   useEffect(() => {
     return () => {
-      void removeGameNotification();
+      if (!isMyTeamGame) void removeGameNotification();
     };
-  }, []);
+  }, [isMyTeamGame]);
 
   // Client-side diff for celebration triggers.
   // Server events (gameEvents) are only used for text relay (KgwanTab), not celebrations,
