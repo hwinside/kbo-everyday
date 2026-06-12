@@ -111,7 +111,7 @@ public class GameNotificationPlugin extends Plugin {
         call.resolve();
     }
 
-    /** 경기룸(포그라운드)에서 풀 라이브 데이터로 위젯 갱신 (주자/투수/타자 포함). */
+    /** 경기룸(포그라운드)에서 풀 라이브 데이터로 위젯 갱신 (OUT/주자/투수·타자 소속 포함). */
     @PluginMethod
     public void updateWidget(PluginCall call) {
         GameScoreWidget.writeAndRefresh(
@@ -122,7 +122,11 @@ public class GameNotificationPlugin extends Plugin {
             call.getString("awayScore", "0"),
             call.getString("homeScore", "0"),
             call.getString("status", ""),
-            call.getString("pb", ""),
+            call.getString("pitcher", ""),
+            call.getString("pitcherTeam", ""),
+            call.getString("batter", ""),
+            call.getString("batterTeam", ""),
+            call.getString("outs", ""),
             call.getString("diamond", "000"));
         call.resolve();
     }

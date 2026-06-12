@@ -51,7 +51,7 @@ public class KboMessagingService extends MessagingService {
                 data.get("w_as"),
                 data.get("w_hs"),
                 data.get("w_status"),
-                "",
+                "", "", "", "", "",
                 "000");
         } else if ("game_end".equals(kind)) {
             GameNotificationPlugin.clear(this);

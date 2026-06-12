@@ -13,7 +13,11 @@ interface WidgetData {
   awayScore: string;
   homeScore: string;
   status: string;
-  pb: string;
+  pitcher: string;
+  pitcherTeam: string;
+  batter: string;
+  batterTeam: string;
+  outs: string;
   diamond: string;
 }
 

@@ -154,7 +154,7 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- 하단: 투수/타자 + 다이아몬드 -->
+        <!-- 하단: (OUT + 투수/타자 소속표기) + 다이아몬드 — SSOT lockscreen-card-approved -->
         <LinearLayout
             android:id="@+id/widget_live_row"
             android:layout_width="match_parent"
@@ -163,20 +163,86 @@
             android:paddingTop="8dp"
             android:orientation="horizontal"
             android:gravity="center_vertical">
-            <TextView
-                android:id="@+id/widget_pb"
+
+            <!-- 좌측: OUT 카운트 + 투수/타자 2줄 -->
+            <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:textColor="#D7CDD0"
-                android:textSize="13sp"
-                android:maxLines="1"
-                android:ellipsize="end"
-                android:text="투수 웰스   타자 조형우" />
+                android:orientation="vertical">
+
+                <!-- 아웃카운트 (B/S 제거, OUT만) -->
+                <ImageView
+                    android:id="@+id/widget_out"
+                    android:layout_width="74dp"
+                    android:layout_height="20dp"
+                    android:layout_marginBottom="6dp"
+                    android:scaleType="fitStart"
+                    android:src="@drawable/out_0"
+                    android:contentDescription="@null" />
+
+                <!-- 투수 (소속) 이름 -->
+                <LinearLayout
+                    android:id="@+id/widget_pitcher_row"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+                    <TextView
+                        android:id="@+id/widget_pitcher_label"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="#AEAEB4"
+                        android:textStyle="bold"
+                        android:textSize="15sp"
+                        android:text="투수" />
+                    <TextView
+                        android:id="@+id/widget_pitcher_name"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:textColor="#F2F2F5"
+                        android:textStyle="bold"
+                        android:textSize="15sp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="" />
+                </LinearLayout>
+
+                <!-- 타자 (소속) 이름 -->
+                <LinearLayout
+                    android:id="@+id/widget_batter_row"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+                    <TextView
+                        android:id="@+id/widget_batter_label"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="#AEAEB4"
+                        android:textStyle="bold"
+                        android:textSize="15sp"
+                        android:text="타자" />
+                    <TextView
+                        android:id="@+id/widget_batter_name"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:textColor="#F2F2F5"
+                        android:textStyle="bold"
+                        android:textSize="15sp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="" />
+                </LinearLayout>
+            </LinearLayout>
+
             <ImageView
                 android:id="@+id/widget_diamond"
-                android:layout_width="30dp"
-                android:layout_height="30dp"
+                android:layout_width="40dp"
+                android:layout_height="34dp"
                 android:scaleType="fitCenter"
                 android:src="@drawable/diamond_000"
                 android:contentDescription="@null" />

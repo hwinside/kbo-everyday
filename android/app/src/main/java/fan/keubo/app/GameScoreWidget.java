@@ -36,7 +36,11 @@ public class GameScoreWidget extends AppWidgetProvider {
     static final String KEY_AS = "as";
     static final String KEY_HS = "hs";
     static final String KEY_STATUS = "status";
-    static final String KEY_PB = "pb";
+    static final String KEY_PITCHER = "pitcher";
+    static final String KEY_PTEAM = "pteam";
+    static final String KEY_BATTER = "batter";
+    static final String KEY_BTEAM = "bteam";
+    static final String KEY_OUTS = "outs";
     static final String KEY_DIAMOND = "diamond";
     // legacy(알림 호환) — 위젯 렌더에는 미사용
     static final String KEY_TITLE = "title";
@@ -73,7 +77,11 @@ public class GameScoreWidget extends AppWidgetProvider {
         String as = p.getString(KEY_AS, "0");
         String hs = p.getString(KEY_HS, "0");
         String status = p.getString(KEY_STATUS, "");
-        String pb = p.getString(KEY_PB, "");
+        String pitcher = p.getString(KEY_PITCHER, "");
+        String pteam = p.getString(KEY_PTEAM, "");
+        String batter = p.getString(KEY_BATTER, "");
+        String bteam = p.getString(KEY_BTEAM, "");
+        String outs = p.getString(KEY_OUTS, "");
         String diamond = p.getString(KEY_DIAMOND, "000");
 
         // 카드 탭 → 앱 실행 (딥링크는 알림 카드가 담당, 위젯은 앱 홈)
@@ -134,17 +142,44 @@ public class GameScoreWidget extends AppWidgetProvider {
                 v.setTextViewText(R.id.widget_status, status);
             }
 
-            // 하단: 투수/타자 + 다이아몬드 (둘 다 비면 행 숨김)
+            // 하단: OUT + 투수/타자 소속표기 + 다이아몬드 (라이브 정보 없으면 행 숨김)
             int diaRes = draw(context, "diamond_" + diamond);
-            boolean hasLive = !TextUtils.isEmpty(pb) || !"000".equals(diamond);
+            boolean hasPitcher = !TextUtils.isEmpty(pitcher);
+            boolean hasBatter = !TextUtils.isEmpty(batter);
+            boolean hasOuts = !TextUtils.isEmpty(outs);
+            boolean hasLive = hasPitcher || hasBatter || hasOuts || !"000".equals(diamond);
             if (hasLive) {
                 v.setViewVisibility(R.id.widget_live_row, View.VISIBLE);
-                if (TextUtils.isEmpty(pb)) {
-                    v.setViewVisibility(R.id.widget_pb, View.GONE);
+
+                // OUT 카운트 (B/S 제거, 아웃만)
+                int outRes = hasOuts ? draw(context, "out_" + outs) : 0;
+                if (outRes != 0) {
+                    v.setViewVisibility(R.id.widget_out, View.VISIBLE);
+                    v.setImageViewResource(R.id.widget_out, outRes);
                 } else {
-                    v.setViewVisibility(R.id.widget_pb, View.VISIBLE);
-                    v.setTextViewText(R.id.widget_pb, pb);
+                    v.setViewVisibility(R.id.widget_out, View.GONE);
                 }
+
+                // 투수 (소속) 이름
+                if (hasPitcher) {
+                    v.setViewVisibility(R.id.widget_pitcher_row, View.VISIBLE);
+                    String pl = pteam.isEmpty() ? "투수" : "투수 (" + shortName(pteam) + ")";
+                    v.setTextViewText(R.id.widget_pitcher_label, pl);
+                    v.setTextViewText(R.id.widget_pitcher_name, pitcher);
+                } else {
+                    v.setViewVisibility(R.id.widget_pitcher_row, View.GONE);
+                }
+
+                // 타자 (소속) 이름
+                if (hasBatter) {
+                    v.setViewVisibility(R.id.widget_batter_row, View.VISIBLE);
+                    String bl = bteam.isEmpty() ? "타자" : "타자 (" + shortName(bteam) + ")";
+                    v.setTextViewText(R.id.widget_batter_label, bl);
+                    v.setTextViewText(R.id.widget_batter_name, batter);
+                } else {
+                    v.setViewVisibility(R.id.widget_batter_row, View.GONE);
+                }
+
                 if (diaRes != 0) v.setImageViewResource(R.id.widget_diamond, diaRes);
             } else {
                 v.setViewVisibility(R.id.widget_live_row, View.GONE);
@@ -157,7 +192,8 @@ public class GameScoreWidget extends AppWidgetProvider {
     /** 구조화 데이터 기록 후 배치된 위젯 즉시 갱신.
      *  myTeam==null/빈값 → 기존 최애팀 값 유지(푸시는 디바이스 최애팀을 모름). */
     static void writeAndRefresh(Context ctx, String myTeam, String away, String home,
-                                String as, String hs, String status, String pb, String diamond) {
+                                String as, String hs, String status, String pitcher, String pteam,
+                                String batter, String bteam, String outs, String diamond) {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         SharedPreferences.Editor e = p.edit();
         e.putBoolean(KEY_HAS_GAME, true);
@@ -167,7 +203,11 @@ public class GameScoreWidget extends AppWidgetProvider {
         e.putString(KEY_AS, as == null ? "0" : as);
         e.putString(KEY_HS, hs == null ? "0" : hs);
         e.putString(KEY_STATUS, status == null ? "" : status);
-        e.putString(KEY_PB, pb == null ? "" : pb);
+        e.putString(KEY_PITCHER, pitcher == null ? "" : pitcher);
+        e.putString(KEY_PTEAM, pteam == null ? "" : pteam);
+        e.putString(KEY_BATTER, batter == null ? "" : batter);
+        e.putString(KEY_BTEAM, bteam == null ? "" : bteam);
+        e.putString(KEY_OUTS, outs == null ? "" : outs);
         e.putString(KEY_DIAMOND, (diamond == null || diamond.isEmpty()) ? "000" : diamond);
         e.apply();
         refresh(ctx);

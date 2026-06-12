@@ -216,9 +216,9 @@ export default function GameDetailPage() {
     const homeCode = m?.[3] ?? "";
     if (myTeamCode) void setWidgetMyTeam(myTeamCode);
     if (myTeamCode && (myTeamCode === awayCode || myTeamCode === homeCode)) {
-      const pbParts: string[] = [];
-      if (liveGame.currentPitcher) pbParts.push(`투수 ${liveGame.currentPitcher}`);
-      if (liveGame.currentBatter) pbParts.push(`타자 ${liveGame.currentBatter}`);
+      // 공격팀(타자) = isTop ? away : home, 수비팀(투수) = 반대.
+      const batterTeam = liveGame.isTop ? awayCode : homeCode;
+      const pitcherTeam = liveGame.isTop ? homeCode : awayCode;
       void updateGameWidget({
         myTeam: myTeamCode,
         away: awayCode,
@@ -226,7 +226,11 @@ export default function GameDetailPage() {
         awayScore: String(liveGame.awayScore),
         homeScore: String(liveGame.homeScore),
         status: `LIVE ${liveGame.inning}`,
-        pb: pbParts.join("   "),
+        pitcher: liveGame.currentPitcher ?? "",
+        pitcherTeam: liveGame.currentPitcher ? pitcherTeam : "",
+        batter: liveGame.currentBatter ?? "",
+        batterTeam: liveGame.currentBatter ? batterTeam : "",
+        outs: String(Math.min(Math.max(liveGame.outs ?? 0, 0), 2)),
         diamond: `${liveGame.runner1b ? 1 : 0}${liveGame.runner2b ? 1 : 0}${liveGame.runner3b ? 1 : 0}`,
       });
     }

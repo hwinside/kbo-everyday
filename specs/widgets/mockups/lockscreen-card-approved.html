@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800;900&family=Noto+Sans+KR:wght@500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  /* 숫자·영어 = Montserrat(스택 1순위, Latin/digit 글리프 담당),
+     한글 = Noto Sans KR(폴백, 한글 글리프 담당). 한글 자간 좁게는 요소별 letter-spacing. */
+  body {
+    background:#000; padding:40px;
+    font-family:'Montserrat','Noto Sans KR',-apple-system,sans-serif;
+    display:flex; justify-content:center;
+  }
+  .kr { font-family:'Noto Sans KR','Montserrat',sans-serif; letter-spacing:-0.04em; }
+  .card {
+    position:relative; width:560px; border-radius:24px; padding:26px 30px;
+    overflow:hidden; color:#F5F5F7;
+    background:linear-gradient(135deg,
+      color-mix(in srgb, #C60C30 40%, #1a1a1d) 0%, #1a1a1d 100%);
+    border:1px solid rgba(255,255,255,0.10);
+  }
+  .watermark { position:absolute; right:18px; top:14px; width:150px; opacity:0.13; }
+
+  .header { display:flex; align-items:center; gap:11px; margin-bottom:18px; }
+  .header .logo-sm { width:46px; height:46px; border-radius:50%; background:#fff;
+    display:flex; align-items:center; justify-content:center; }
+  .header .logo-sm img { width:32px; height:32px; object-fit:contain; }
+  .header .label { font-size:26px; font-weight:800; letter-spacing:1px; color:#E04050; }
+
+  .score { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+  .team { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; flex:1; }
+  .team .logo { width:64px; height:64px; border-radius:50%; background:#fff;
+    display:flex; align-items:center; justify-content:center; }
+  .team .logo img { width:46px; height:46px; object-fit:contain; }
+  .team .name { font-size:30px; font-weight:800; color:#E04050; }
+  .center { display:flex; flex-direction:column; align-items:center; gap:8px; }
+  .center .nums { display:flex; align-items:center; gap:18px; }
+  .center .nums .n { font-size:54px; font-weight:900; color:#fff; font-variant-numeric:tabular-nums; }
+  .center .nums .colon { font-size:26px; color:#9b9b9f; }
+  .center .live { font-size:20px; font-weight:700; color:#fff; letter-spacing:-0.02em;
+    background:rgba(224,64,80,0.85); padding:5px 16px; border-radius:999px; }
+
+  .divider { height:1px; background:rgba(255,255,255,0.12); margin:6px 0 16px; }
+
+  .bottom { display:flex; align-items:center; justify-content:space-between; }
+  .left { display:flex; flex-direction:column; gap:10px; }
+  /* 아웃카운트만 유지 (B/S 제거) */
+  .out { display:flex; align-items:center; gap:8px; font-size:18px; color:#C9C9CE; font-weight:600; }
+  .out .dots { display:flex; gap:6px; }
+  .out .dots i { width:13px; height:13px; border-radius:50%;
+    border:1.5px solid rgba(229,57,53,0.55); display:inline-block; }
+  .out .dots i.on { background:#E53935; border-color:#E53935; }
+  /* 투수/타자 — 폰트 더 키움 + 소속 표기 */
+  .pab { display:flex; flex-direction:column; gap:8px; font-size:27px; font-weight:700; color:#F2F2F5;
+    font-family:'Noto Sans KR','Montserrat',sans-serif; letter-spacing:-0.045em; }
+  .pab .k { color:#AEAEB4; font-weight:600; margin-right:8px; }
+
+  .diamond { position:relative; width:92px; height:78px; }
+  .base { position:absolute; width:23px; height:23px; border-radius:3px;
+    background:rgba(255,255,255,0.18); border:1.5px solid rgba(255,255,255,0.32);
+    transform:rotate(45deg); }
+  .b2 { left:34px; top:0; }
+  .b1 { right:0; top:27px; }
+  .b3 { left:0; top:27px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <img class="watermark" src="./logos/lg.svg" alt="">
+    <div class="header">
+      <div class="logo-sm"><img src="./logos/lg.svg"></div>
+      <span class="label">MY TEAM</span>
+    </div>
+
+    <div class="score">
+      <div class="team">
+        <div class="logo"><img src="./logos/ssg.svg"></div>
+        <span class="name">SSG</span>
+      </div>
+      <div class="center">
+        <div class="nums"><span class="n">2</span><span class="colon">:</span><span class="n">1</span></div>
+        <span class="live">LIVE 2회초</span>
+      </div>
+      <div class="team">
+        <div class="logo"><img src="./logos/lg.svg"></div>
+        <span class="name">LG</span>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="bottom">
+      <div class="left">
+        <div class="out">O <span class="dots"><i class="on"></i><i></i><i></i></span></div>
+        <div class="pab">
+          <span><span class="k">투수 (LG)</span>웰스</span>
+          <span><span class="k">타자 (SSG)</span>조형우</span>
+        </div>
+      </div>
+      <div class="diamond">
+        <div class="base b2"></div>
+        <div class="base b1"></div>
+        <div class="base b3"></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
