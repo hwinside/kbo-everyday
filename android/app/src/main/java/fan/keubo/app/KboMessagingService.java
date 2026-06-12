@@ -1,0 +1,43 @@
+package fan.keubo.app;
+
+import androidx.annotation.NonNull;
+
+import com.google.firebase.messaging.RemoteMessage;
+
+import java.util.Map;
+
+import io.capawesome.capacitorjs.plugins.firebase.messaging.MessagingService;
+
+/**
+ * FCM 수신 서비스 — capawesome MessagingService를 확장해서, 앱이 꺼져 있어도
+ * 경기 라이브 data 푸시를 받으면 잠금화면 ongoing notification + 홈 위젯을 갱신한다.
+ * (A4 푸시 자동 시작 C1 — 앱 미진입 자동 표시)
+ *
+ * super 호출로 플러그인의 기존 동작(토큰 갱신, JS 이벤트 전달, notification 메시지 표시)은
+ * 그대로 유지. 추가로 data.kind == "game_live"/"game_end"를 네이티브로 처리한다.
+ *
+ * 매니페스트에서 이 서비스가 플러그인 MessagingService를 대체 등록한다(tools:node="remove").
+ */
+public class KboMessagingService extends MessagingService {
+
+    @Override
+    public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
+        super.onMessageReceived(remoteMessage);
+
+        Map<String, String> data = remoteMessage.getData();
+        if (data == null) {
+            return;
+        }
+        String kind = data.get("kind");
+        if ("game_live".equals(kind)) {
+            String title = data.get("title");
+            String body = data.get("body");
+            GameNotificationPlugin.post(
+                this,
+                title == null || title.isEmpty() ? "크보팬" : title,
+                body == null ? "" : body);
+        } else if ("game_end".equals(kind)) {
+            GameNotificationPlugin.clear(this);
+        }
+    }
+}
