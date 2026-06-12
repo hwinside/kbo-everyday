@@ -60,7 +60,7 @@ export default function LeaderSection({ title, leaders, myTeamId, favoriteNames 
               {l.name}
               {isFavorite && <span className="ml-1">★</span>}
             </span>
-            <span className="text-base font-bold tabular-nums text-accent">{l.value}</span>
+            <span className="text-2xl font-bold tabular-nums text-accent">{l.value}</span>
           </div>
           );
         })}
