@@ -27,17 +27,25 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 @CapacitorPlugin(name = "GameNotification")
 public class GameNotificationPlugin extends Plugin {
 
-    private static final String CHANNEL_ID = "game_live";
+    // v2: 잠금화면 가시성 위해 IMPORTANCE_DEFAULT로 상향(LOW는 삼성 잠금화면에서 숨겨짐).
+    // 채널 importance는 최초 생성 후 코드로 못 올리므로 새 ID로 채널 교체.
+    private static final String CHANNEL_ID = "game_live_v2";
     private static final int NOTIFICATION_ID = 7001;
 
     private static void ensureChannel(Context context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
-                CHANNEL_ID, "실시간 경기", NotificationManager.IMPORTANCE_LOW);
+                CHANNEL_ID, "실시간 경기", NotificationManager.IMPORTANCE_DEFAULT);
             channel.setDescription("잠금화면 실시간 스코어 (ongoing)");
             channel.setShowBadge(false);
+            // 잠금화면에 내용 그대로 표시 (ONLY_ALERT_ONCE로 갱신 땐 조용).
+            channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             NotificationManager mgr = context.getSystemService(NotificationManager.class);
-            if (mgr != null) mgr.createNotificationChannel(channel);
+            if (mgr != null) {
+                mgr.createNotificationChannel(channel);
+                // 구 LOW 채널 제거(잔존 시 사용자에게 중복 노출).
+                mgr.deleteNotificationChannel("game_live");
+            }
         }
     }
 
