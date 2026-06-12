@@ -27,7 +27,9 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
     public override func load() {
         if #available(iOS 16.1, *) {
             LiveActivityController.shared.onPushToken = { [weak self] gameId, token in
-                self?.notifyListeners("liveActivityPushToken", data: ["gameId": gameId, "token": token])
+                // retainUntilConsumed: JS 리스너가 아직 안 붙었어도 이벤트를 버퍼링했다가
+                // 부착 시 전달 → push token 유실로 서버 등록이 누락되는 race 방지(삼순 W3a NO-GO).
+                self?.notifyListeners("liveActivityPushToken", data: ["gameId": gameId, "token": token], retainUntilConsumed: true)
             }
         }
     }

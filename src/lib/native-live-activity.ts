@@ -71,10 +71,12 @@ async function registerLiveActivityToken(gameId: string, token: string): Promise
   }
 }
 
-function ensureTokenListener(): void {
+async function ensureTokenListener(): Promise<void> {
   if (tokenListenerReady || !isNativeIOS()) return;
   tokenListenerReady = true;
-  void LiveActivity.addListener("liveActivityPushToken", ({ gameId, token }) => {
+  // start() 호출 전에 listener 설치를 await → ActivityKit push token이 빨리 나와도
+  // 이벤트를 받을 준비가 된 뒤 start 하도록(삼순 W3a NO-GO). native는 retainUntilConsumed로 이중 방어.
+  await LiveActivity.addListener("liveActivityPushToken", ({ gameId, token }) => {
     void registerLiveActivityToken(gameId, token);
   });
 }
@@ -82,7 +84,7 @@ function ensureTokenListener(): void {
 /** 경기룸 진입 시 호출. 같은 gameId 재호출은 네이티브에서 update로 처리(중복 방지). */
 export async function startLiveActivity(data: LiveActivityStartData): Promise<boolean> {
   if (!isNativeIOS()) return false;
-  ensureTokenListener();
+  await ensureTokenListener();
   try {
     const res = await LiveActivity.start(data);
     return res?.started ?? false;
