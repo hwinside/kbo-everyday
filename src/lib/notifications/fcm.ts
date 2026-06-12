@@ -20,6 +20,14 @@ export interface PushPayload {
   body: string;
   /** 알림 탭 시 이동할 앱 내 경로 (예: "/community?post=123") */
   url?: string;
+  /**
+   * data-only 메시지 — notification 블록 생략, title/body/추가 data를 data 블록에 실음.
+   * 안드로이드 네이티브(KboMessagingService)가 직접 처리하는 잠금화면 ongoing card용.
+   * notification 블록을 같이 보내면 일반 푸시 + ongoing이 이중 표시됨 (삼순 C2 조건).
+   */
+  dataOnly?: boolean;
+  /** data 블록에 추가로 실을 키 (예: { kind: "game_live" }). */
+  data?: Record<string, string>;
 }
 
 /**
@@ -113,10 +121,18 @@ async function sendFcmToUsersInner(
   const invalid: string[] = [];
   for (let i = 0; i < tokens.length; i += CHUNK) {
     const chunk = tokens.slice(i, i + CHUNK);
+    // data-only(ongoing card)는 notification 블록 생략 + title/body를 data에 실음.
+    // (네이티브가 data.title/body를 읽어 잠금화면 카드/위젯에 표시 — 삼순 C2 조건)
+    const dataBlock: Record<string, string> = {
+      ...(payload.url ? { url: payload.url } : {}),
+      ...(payload.data ?? {}),
+      ...(payload.dataOnly ? { title: payload.title, body: payload.body } : {}),
+    };
     const res = await fcm.sendEachForMulticast({
       tokens: chunk,
-      notification: { title: payload.title, body: payload.body },
-      data: payload.url ? { url: payload.url } : undefined,
+      ...(payload.dataOnly ? {} : { notification: { title: payload.title, body: payload.body } }),
+      ...(Object.keys(dataBlock).length ? { data: dataBlock } : {}),
+      ...(payload.dataOnly ? { android: { priority: "high" as const } } : {}),
     });
     sent += res.successCount;
     failed += res.failureCount;

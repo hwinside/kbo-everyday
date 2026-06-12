@@ -153,6 +153,17 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
         }, "game_start");
         if (!res.ok) { await unclaim(gameId, "start_notified"); continue; } // 인프라 실패 → 재시도
         started += res.sent;
+        // 잠금화면 ongoing card 시작 (앱 미진입 자동 표시, C2) — data-only, fire-and-forget.
+        // 시작 알림은 이미 성공(started 카운트)이라 카드 실패해도 unclaim 안 함.
+        const aScore = parseInt(g.T_SCORE_CN ?? "0") || 0;
+        const hScore = parseInt(g.B_SCORE_CN ?? "0") || 0;
+        await sendFcmToUsers(fans.ids, {
+          title: `${away} ${aScore} : ${hScore} ${home}`,
+          body: "경기 시작",
+          url,
+          dataOnly: true,
+          data: { kind: "game_live" },
+        }, "game_start");
       }
     } else if (g.GAME_STATE_SC === "3") {
       // 종료 — 한 번도 안 본 게임(시작 미발송)이면 뒷북 방지로 마킹만
@@ -222,6 +233,18 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
         .eq("game_id", gameId)
         .eq("end_away_notified", true)
         .eq("end_home_notified", true);
+
+      // 잠금화면 ongoing card 제거 (C2) — data-only, 양팀 팬 모두에게.
+      // clear는 멱등(없는 알림 cancel = no-op)이라 prefKey 무관·매 종료틱 발송 무해.
+      const endFans = await fansOfTeams(teamIds);
+      if (endFans.ok && endFans.ids.length > 0) {
+        await sendFcmToUsers(endFans.ids, {
+          title: "",
+          body: "",
+          dataOnly: true,
+          data: { kind: "game_end" },
+        });
+      }
     }
   }
 
