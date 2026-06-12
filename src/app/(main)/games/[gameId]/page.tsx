@@ -19,6 +19,7 @@ import type { GameDetailResponse } from "@/app/api/game-detail/route";
 import { getPreseasonGameById } from "@/lib/constants/preseason-schedule";
 import { useLiveGame } from "@/lib/hooks/useLiveGame";
 import { startLiveActivity } from "@/lib/native-live-activity";
+import { updateGameWidget, setWidgetMyTeam } from "@/lib/capacitor/game-notification";
 import { useGameDetail } from "@/lib/hooks/useGameDetail";
 import { useGameEvents } from "@/lib/hooks/useGameEvents";
 import { generateEvents, type PrevGameState } from "@/lib/event-generator";
@@ -207,6 +208,32 @@ export default function GameDetailPage() {
       stadium: liveGame.stadium ?? "",
       status: "live",
     });
+
+    // Android 홈/잠금화면 위젯(GameScoreWidget) — *최애팀 경기*일 때만 풀 데이터로 갱신.
+    // iOS Live Activity와 동일 데이터(주자/투수/타자 포함). 디바이스 최애팀도 기록해
+    // 빈 상태 위젯 배경색까지 최애팀으로 맞춘다. (iOS는 no-op.)
+    const awayCode = m?.[2] ?? "";
+    const homeCode = m?.[3] ?? "";
+    if (myTeamCode) void setWidgetMyTeam(myTeamCode);
+    if (myTeamCode && (myTeamCode === awayCode || myTeamCode === homeCode)) {
+      // 공격팀(타자) = isTop ? away : home, 수비팀(투수) = 반대.
+      const batterTeam = liveGame.isTop ? awayCode : homeCode;
+      const pitcherTeam = liveGame.isTop ? homeCode : awayCode;
+      void updateGameWidget({
+        myTeam: myTeamCode,
+        away: awayCode,
+        home: homeCode,
+        awayScore: String(liveGame.awayScore),
+        homeScore: String(liveGame.homeScore),
+        status: `LIVE ${liveGame.inning}`,
+        pitcher: liveGame.currentPitcher ?? "",
+        pitcherTeam: liveGame.currentPitcher ? pitcherTeam : "",
+        batter: liveGame.currentBatter ?? "",
+        batterTeam: liveGame.currentBatter ? batterTeam : "",
+        outs: String(Math.min(Math.max(liveGame.outs ?? 0, 0), 2)),
+        diamond: `${liveGame.runner1b ? 1 : 0}${liveGame.runner2b ? 1 : 0}${liveGame.runner3b ? 1 : 0}`,
+      });
+    }
   }, [liveGame, gameId]);
 
   // 잠금화면 ongoing notification 카드는 *오직 최애팀 경기*에만 노출하며, 생성·갱신·제거를
