@@ -1,5 +1,10 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+# 서명/시크릿 — 리포 어디에도 커밋 금지(루트 방어층, android/.gitignore와 이중)
+*.jks
+*.keystore
+keystore.properties
+
 # dependencies
 /node_modules
 /.pnp
