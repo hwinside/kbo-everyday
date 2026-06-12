@@ -305,7 +305,7 @@ struct TeamBadge: View {
             }
             .frame(width: 38, height: 38)
             Text(teamShortName(code))
-                .font(montserrat(16, .extraBold))
+                .font(montserrat(16, .heavy))
                 .lineLimit(1).minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity)
