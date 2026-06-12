@@ -19,7 +19,6 @@ import type { GameDetailResponse } from "@/app/api/game-detail/route";
 import { getPreseasonGameById } from "@/lib/constants/preseason-schedule";
 import { useLiveGame } from "@/lib/hooks/useLiveGame";
 import { startLiveActivity } from "@/lib/native-live-activity";
-import { startGameNotification, removeGameNotification } from "@/lib/capacitor/game-notification";
 import { useGameDetail } from "@/lib/hooks/useGameDetail";
 import { useGameEvents } from "@/lib/hooks/useGameEvents";
 import { generateEvents, type PrevGameState } from "@/lib/event-generator";
@@ -210,41 +209,10 @@ export default function GameDetailPage() {
     });
   }, [liveGame, gameId]);
 
-  // 잠금화면 ongoing notification (안드로이드, A4 B2 + lifecycle 정리). 래퍼가 android
-  // 전용 가드 — 웹/iOS는 no-op.
-  // - 최애팀 경기: 카드 생성·갱신·제거를 전부 *푸시*(C2 game_live/game_end)가 소유한다.
-  //   경기룸은 카드에 일절 관여하지 않는다 → (1) 경기룸을 잠깐 들렀다 나가도 잠금화면
-  //   자동 카드가 유지되고, (2) 경기룸이 만든 로컬 카드가 push game_end 미도달
-  //   엣지(토큰 미등록/FCM 실패/권한 설정)에서 stuck되는 경로 자체가 없다.
-  // - 비-최애팀 경기: 푸시가 없으므로 경기룸이 생명주기 소유 — 라이브→게시, 비라이브/이탈→제거.
-  // game은 gameId에서 동기 파싱(parseKboGameId)되므로 isMyTeamGame은 첫 렌더부터 안정적
-  // (라이브 로딩 레이스로 분기가 뒤바뀌지 않음).
-  const isMyTeamGame =
-    myTeamIdForCelebration != null && myTeamIdForCelebration !== 0 &&
-    (myTeamIdForCelebration === game?.awayTeamId || myTeamIdForCelebration === game?.homeTeamId);
-
-  useEffect(() => {
-    // 최애팀 경기는 푸시가 카드를 전담 — 경기룸은 만들지도 지우지도 않는다.
-    if (isMyTeamGame) return;
-    if (liveGame?.isLive) {
-      const half = liveGame.isTop ? "초" : "말";
-      const title = `${liveGame.awayName} ${liveGame.awayScore} : ${liveGame.homeScore} ${liveGame.homeName}`;
-      const body = `${liveGame.inning}회${half}${liveGame.stadium ? ` · ${liveGame.stadium}` : ""}`;
-      void startGameNotification(title, body);
-    } else {
-      // 비-최애팀 경기 종료/비라이브 → 경기룸이 만든 카드 제거.
-      void removeGameNotification();
-    }
-  }, [liveGame, isMyTeamGame]);
-
-  // 경기룸 이탈(언마운트) 시 정리 — 비-최애팀 경기만. 최애팀 경기는 경기룸이 카드를
-  // 만들지 않으므로 정리할 것도 없다(푸시 game_end가 생명주기 종료를 담당).
-  useEffect(() => {
-    if (isMyTeamGame) return;
-    return () => {
-      void removeGameNotification();
-    };
-  }, [isMyTeamGame]);
+  // 잠금화면 ongoing notification 카드는 *오직 최애팀 경기*에만 노출하며, 생성·갱신·제거를
+  // 전부 *푸시*(C2 game_live/game_end)가 소유한다. 비-최애팀 경기는 카드를 아예 띄우지 않는다.
+  // 따라서 경기룸(page)은 카드 생명주기에 일절 관여하지 않는다 — start/removeGameNotification
+  // 호출 없음. (이전엔 비-최애팀을 경기룸이 소유했으나 2026-06-12 "오직 최애팀만" 방침으로 제거.)
 
   // Client-side diff for celebration triggers.
   // Server events (gameEvents) are only used for text relay (KgwanTab), not celebrations,
