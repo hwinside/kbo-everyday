@@ -153,6 +153,17 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
         }, "game_start");
         if (!res.ok) { await unclaim(gameId, "start_notified"); continue; } // 인프라 실패 → 재시도
         started += res.sent;
+        // 잠금화면 ongoing card 시작 (앱 미진입 자동 표시, C2) — data-only, fire-and-forget.
+        // 시작 알림은 이미 성공(started 카운트)이라 카드 실패해도 unclaim 안 함.
+        const aScore = parseInt(g.T_SCORE_CN ?? "0") || 0;
+        const hScore = parseInt(g.B_SCORE_CN ?? "0") || 0;
+        await sendFcmToUsers(fans.ids, {
+          title: `${away} ${aScore} : ${hScore} ${home}`,
+          body: "경기 시작",
+          url,
+          dataOnly: true,
+          data: { kind: "game_live" },
+        }, "game_start");
       }
     } else if (g.GAME_STATE_SC === "3") {
       // 종료 — 한 번도 안 본 게임(시작 미발송)이면 뒷북 방지로 마킹만
@@ -216,12 +227,32 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
         ended += res.sent;
       }
 
-      // 두 슬롯 다 발송되면 end_notified=true (다음 cron부터 조기 skip)
-      await supabase.from("game_notify_state")
-        .update({ end_notified: true, updated_at: new Date().toISOString() })
-        .eq("game_id", gameId)
-        .eq("end_away_notified", true)
-        .eq("end_home_notified", true);
+      // 잠금화면 ongoing card 제거 (C2) — data-only, 양팀 팬 모두에게.
+      // ⚠️ end_notified=true 마킹보다 *먼저* 보내고, clear가 ok일 때만 마킹으로 넘어간다.
+      // 먼저 마킹하면 clear 조회/FCM 실패 시 다음 cron이 end_notified에서 skip → 카드가
+      // 잠금화면/위젯에 stale로 stuck. clear는 멱등이라 재시도 안전 (삼순 C2 필수수정).
+      const endFans = await fansOfTeams(teamIds);
+      let clearOk = endFans.ok;
+      if (endFans.ok && endFans.ids.length > 0) {
+        const clearRes = await sendFcmToUsers(endFans.ids, {
+          title: "",
+          body: "",
+          dataOnly: true,
+          data: { kind: "game_end" },
+        });
+        clearOk = clearRes.ok;
+      }
+
+      // 두 슬롯 다 발송 + clear ok면 end_notified=true (다음 cron부터 조기 skip).
+      // clear 실패 시 미마킹 → 다음 cron이 end 브랜치 재진입해 clear 재시도(슬롯은 이미
+      // 선점돼 알림 재발송은 없음).
+      if (clearOk) {
+        await supabase.from("game_notify_state")
+          .update({ end_notified: true, updated_at: new Date().toISOString() })
+          .eq("game_id", gameId)
+          .eq("end_away_notified", true)
+          .eq("end_home_notified", true);
+      }
     }
   }
 
