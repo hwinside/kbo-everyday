@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <application
         android:allowBackup="true"
@@ -56,6 +57,19 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/game_score_widget_info" />
         </receiver>
+
+        <!-- FCM 수신 서비스 — capawesome MessagingService를 확장(앱 꺼져도 라이브 푸시 →
+             잠금화면 ongoing notification + 위젯). 플러그인 기본 서비스는 제거하고 이걸로 대체. -->
+        <service
+            android:name=".KboMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <service
+            android:name="io.capawesome.capacitorjs.plugins.firebase.messaging.MessagingService"
+            tools:node="remove" />
     </application>
 
     <!-- Permissions -->
