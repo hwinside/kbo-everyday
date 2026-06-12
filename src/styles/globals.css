@@ -177,13 +177,16 @@
   --color-team-kiwoom: var(--team-kiwoom);
 
   --font-pretendard: "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+  /* Global UI stack: Latin/numbers -> Montserrat, Korean falls back to Noto Sans KR (Montserrat has no Hangul glyphs) */
+  --font-sans: "Montserrat", "Noto Sans KR", -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
 }
 
 /* ===== Base Styles ===== */
 body {
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: var(--font-pretendard);
+  font-family: var(--font-sans);
+  letter-spacing: -0.02em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
