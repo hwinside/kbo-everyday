@@ -99,6 +99,22 @@ export function useDMList() {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load(); }, [load]);
 
+  // Realtime — dm_messages 변경(읽음 처리 포함) 시 목록/대화별 안읽음 재계산
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel("dm-list")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "dm_messages" },
+        () => { load(); }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [user, load]);
+
   return { conversations, loading, refresh: load };
 }
 
