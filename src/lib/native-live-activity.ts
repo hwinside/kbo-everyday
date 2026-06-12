@@ -1,4 +1,5 @@
 import { registerPlugin, Capacitor } from "@capacitor/core";
+import { supabase } from "@/lib/supabase/client";
 
 // Live Activity 네이티브 브리지 (W2) — 잠금화면 라이브 스코어 카드.
 // 경기룸 진입 시 game-live 데이터로 start, 폴링으로 update, 종료 시 end.
@@ -36,6 +37,10 @@ interface LiveActivityPlugin {
   update(state: LiveActivityState): Promise<void>;
   end(state?: LiveActivityState): Promise<void>;
   isEnabled(): Promise<{ enabled: boolean }>;
+  addListener(
+    eventName: "liveActivityPushToken",
+    listenerFunc: (data: { gameId: string; token: string }) => void,
+  ): Promise<{ remove: () => Promise<void> }>;
 }
 
 const LiveActivity = registerPlugin<LiveActivityPlugin>("LiveActivity");
@@ -44,9 +49,42 @@ function isNativeIOS(): boolean {
   return Capacitor.isNativePlatform() && Capacitor.getPlatform() === "ios";
 }
 
+// W3: Activity push token이 발급되면(네이티브 이벤트) 서버에 등록 →
+// warmup cron이 그 토큰으로 백그라운드 갱신 푸시를 보낸다. 리스너는 1회만 설치.
+let tokenListenerReady = false;
+
+async function registerLiveActivityToken(gameId: string, token: string): Promise<void> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const accessToken = session?.access_token;
+    if (!accessToken) return;
+    await fetch("/api/live-activity/register", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ gameId, pushToken: token }),
+    });
+  } catch {
+    /* silent — 등록 실패가 앱에 영향 주지 않게 */
+  }
+}
+
+async function ensureTokenListener(): Promise<void> {
+  if (tokenListenerReady || !isNativeIOS()) return;
+  tokenListenerReady = true;
+  // start() 호출 전에 listener 설치를 await → ActivityKit push token이 빨리 나와도
+  // 이벤트를 받을 준비가 된 뒤 start 하도록(삼순 W3a NO-GO). native는 retainUntilConsumed로 이중 방어.
+  await LiveActivity.addListener("liveActivityPushToken", ({ gameId, token }) => {
+    void registerLiveActivityToken(gameId, token);
+  });
+}
+
 /** 경기룸 진입 시 호출. 같은 gameId 재호출은 네이티브에서 update로 처리(중복 방지). */
 export async function startLiveActivity(data: LiveActivityStartData): Promise<boolean> {
   if (!isNativeIOS()) return false;
+  await ensureTokenListener();
   try {
     const res = await LiveActivity.start(data);
     return res?.started ?? false;

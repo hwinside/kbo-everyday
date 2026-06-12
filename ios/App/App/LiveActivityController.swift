@@ -24,6 +24,23 @@ final class LiveActivityController {
     #if canImport(ActivityKit)
     private var currentActivity: Activity<KBOGameAttributes>?
 
+    /// per-activity APNs push token 발급 콜백 (gameId, tokenHex). 플러그인이 JS로 전달.
+    var onPushToken: ((String, String) -> Void)?
+    /// 같은 Activity에 대한 중복 토큰 관찰 방지.
+    private var observedActivityIds = Set<String>()
+
+    /// Activity의 push token 업데이트를 관찰해 콜백으로 흘려보낸다(W3 APNs 등록용).
+    private func observePushToken(_ activity: Activity<KBOGameAttributes>, gameId: String) {
+        guard !observedActivityIds.contains(activity.id) else { return }
+        observedActivityIds.insert(activity.id)
+        Task {
+            for await tokenData in activity.pushTokenUpdates {
+                let hex = tokenData.map { String(format: "%02x", $0) }.joined()
+                onPushToken?(gameId, hex)
+            }
+        }
+    }
+
     /// Live Activity 사용 가능 여부(설정에서 꺼져 있을 수 있음).
     var isEnabled: Bool {
         ActivityAuthorizationInfo().areActivitiesEnabled
@@ -113,6 +130,7 @@ final class LiveActivityController {
         // 같은 경기가 이미 떠 있으면 갱신만 (재진입 중복 방지)
         if let existing = currentActivity {
             await existing.update(using: state)
+            observePushToken(existing, gameId: gameId)   // 앱 재시작 복구분도 토큰 재관찰
             return true
         }
 
@@ -128,9 +146,10 @@ final class LiveActivityController {
             let activity = try Activity.request(
                 attributes: attributes,
                 contentState: state,
-                pushType: nil   // W2는 로컬 update. W3에서 .token(APNs)로 전환
+                pushType: .token   // W3: APNs 토큰 발급 → 서버가 백그라운드 갱신 푸시
             )
             currentActivity = activity
+            observePushToken(activity, gameId: gameId)
             NSLog("[LiveActivity] started game=\(gameId) id=\(activity.id)")
             return true
         } catch {
