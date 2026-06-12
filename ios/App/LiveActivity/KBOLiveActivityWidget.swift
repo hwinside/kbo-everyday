@@ -67,6 +67,19 @@ private func teamFullName(_ code: String) -> String {
     }
 }
 
+// MARK: - 폰트 (숫자·영어 = Montserrat / 한글 = Noto Sans KR). 위젯 Extension에 .ttf 번들 필요.
+// 미번들 시 시스템 폰트로 graceful fallback.
+
+@available(iOS 16.1, *)
+private func montserrat(_ size: CGFloat, _ weight: Font.Weight = .bold) -> Font {
+    Font.custom("Montserrat", size: size).weight(weight)
+}
+
+@available(iOS 16.1, *)
+private func notoKR(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+    Font.custom("Noto Sans KR", size: size).weight(weight)
+}
+
 @available(iOS 16.1, *)
 extension Color {
     /// 0xRRGGBB 정수 → Color.
@@ -165,6 +178,14 @@ struct KBOLockScreenCard: View {
         hasMyTeam ? teamColor(attributes.myTeamCode) : Color(hex: 0x1A1A1A)
     }
 
+    // 투수/타자 소속 — 초(top)면 홈팀 투수·원정팀 타자, 말이면 반대.
+    private var pitcherTeamCode: String {
+        state.isTopInning ? attributes.homeTeamCode : attributes.awayTeamCode
+    }
+    private var batterTeamCode: String {
+        state.isTopInning ? attributes.awayTeamCode : attributes.homeTeamCode
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             // 헤더: MY TEAM
@@ -172,7 +193,7 @@ struct KBOLockScreenCard: View {
                 HStack(spacing: 5) {
                     TeamLogo(code: attributes.myTeamCode, size: 16)
                     Text("MY TEAM")
-                        .font(.system(size: 10, weight: .heavy)).tracking(1.0)
+                        .font(montserrat(11, .heavy)).tracking(1.0)
                     Spacer()
                 }
                 .foregroundStyle(.white.opacity(0.92))
@@ -182,15 +203,15 @@ struct KBOLockScreenCard: View {
             HStack(spacing: 4) {
                 TeamBadge(code: attributes.awayTeamCode)
                 VStack(spacing: 3) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 9) {
                         Text("\(state.awayScore)")
-                            .font(.system(size: 26, weight: .black)).monospacedDigit()
-                        Text(":").font(.system(size: 14)).foregroundStyle(.white.opacity(0.5))
+                            .font(montserrat(30, .black)).monospacedDigit()
+                        Text(":").font(montserrat(16, .bold)).foregroundStyle(.white.opacity(0.5))
                         Text("\(state.homeScore)")
-                            .font(.system(size: 26, weight: .black)).monospacedDigit()
+                            .font(montserrat(30, .black)).monospacedDigit()
                     }
                     Text(state.isFinal ? "경기 종료" : "LIVE \(state.inningText)")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(notoKR(10, .bold))
                         .padding(.horizontal, 7).padding(.vertical, 2)
                         .background(
                             Capsule().fill(state.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
@@ -199,27 +220,29 @@ struct KBOLockScreenCard: View {
                 TeamBadge(code: attributes.homeTeamCode)
             }
 
-            // 하단: P/AB + 다이아몬드 (진행 중에만, BSO 없음)
+            // 하단: 아웃카운트(B/S 제거) + 투수/타자(소속) + 다이아몬드 (진행 중에만)
             if !state.isFinal {
                 HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        // 아웃카운트만 유지
+                        HStack(spacing: 5) {
+                            Text("O")
+                                .font(montserrat(12, .semibold))
+                                .foregroundStyle(.white.opacity(0.7))
+                            HStack(spacing: 4) { outDot(0); outDot(1); outDot(2) }
+                        }
+                        // 투수/타자 — 소속 표기 + 폰트 키움
                         if !state.pitcherName.isEmpty {
-                            Text("P \(state.pitcherName)")
-                                .font(.system(size: 11, weight: .medium)).lineLimit(1)
+                            playerLine(label: "투수", team: pitcherTeamCode, name: state.pitcherName)
                         }
                         if !state.batterName.isEmpty {
-                            Text("AB \(state.batterName)")
-                                .font(.system(size: 11, weight: .medium)).lineLimit(1)
-                        }
-                        if !state.stadium.isEmpty {
-                            Text(state.stadium)
-                                .font(.system(size: 10)).foregroundStyle(.white.opacity(0.6))
+                            playerLine(label: "타자", team: batterTeamCode, name: state.batterName)
                         }
                     }
                     Spacer()
                     DiamondView(onFirst: state.onFirst, onSecond: state.onSecond, onThird: state.onThird)
                 }
-                .padding(.top, 2)
+                .padding(.top, 3)
                 .overlay(alignment: .top) {
                     Rectangle().fill(.white.opacity(0.12)).frame(height: 1)
                 }
@@ -237,6 +260,25 @@ struct KBOLockScreenCard: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
+
+    // 아웃카운트 점 (채워진=빨강, 빈=반투명)
+    private func outDot(_ i: Int) -> some View {
+        Circle()
+            .fill(i < state.outs ? Color(hex: 0xE53935) : Color.white.opacity(0.18))
+            .frame(width: 8, height: 8)
+    }
+
+    // 투수/타자 행 — "투수 (LG) 웰스" 형태, 폰트 키움. 라벨·소속=한글, 이름=한글.
+    private func playerLine(label: String, team: String, name: String) -> some View {
+        HStack(spacing: 6) {
+            Text("\(label) (\(teamShortName(team)))")
+                .font(notoKR(13, .medium))
+                .foregroundStyle(.white.opacity(0.72))
+            Text(name)
+                .font(notoKR(16, .bold))
+        }
+        .lineLimit(1).minimumScaleFactor(0.8)
+    }
 }
 
 // MARK: - 팀 뱃지 (로고 원형 + 풀네임)
@@ -250,10 +292,10 @@ struct TeamBadge: View {
                 Circle().fill(.white)
                 TeamLogo(code: code, size: 26)
             }
-            .frame(width: 36, height: 36)
-            Text(teamFullName(code))
-                .font(.system(size: 11, weight: .bold))
-                .lineLimit(1).minimumScaleFactor(0.65)
+            .frame(width: 38, height: 38)
+            Text(teamShortName(code))
+                .font(montserrat(16, .extraBold))
+                .lineLimit(1).minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity)
     }
