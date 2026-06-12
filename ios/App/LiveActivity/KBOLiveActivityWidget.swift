@@ -67,8 +67,10 @@ private func teamFullName(_ code: String) -> String {
     }
 }
 
-// MARK: - 폰트 (숫자·영어 = Montserrat / 한글 = Noto Sans KR). 위젯 Extension에 .ttf 번들 필요.
-// 미번들 시 시스템 폰트로 graceful fallback.
+// MARK: - 폰트 (숫자·영어 = Montserrat / 한글 = Noto Sans KR).
+// 가변 폰트(.ttf) 2종을 Extension 번들에 포함 + Info.plist UIAppFonts 등록.
+// 가변축 wght 기본값이 Thin이라 아래 helper는 항상 .weight()를 적용해 굵기 축을 지정한다.
+// 등록 실패 시에도 시스템 폰트로 graceful fallback.
 
 @available(iOS 16.1, *)
 private func montserrat(_ size: CGFloat, _ weight: Font.Weight = .bold) -> Font {
@@ -253,10 +255,19 @@ struct KBOLockScreenCard: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
         .background(
-            LinearGradient(
-                colors: [accentColor.opacity(0.92), accentColor.opacity(0.55)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
+            ZStack(alignment: .topTrailing) {
+                LinearGradient(
+                    colors: [accentColor.opacity(0.92), accentColor.opacity(0.55)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+                // 배경 팀 로고 watermark (앱 MyTeamHero: absolute right-3 top-3 opacity-[0.08])
+                if hasMyTeam {
+                    TeamLogo(code: attributes.myTeamCode, size: 64)
+                        .opacity(0.13)
+                        .padding(.top, 10)
+                        .padding(.trailing, 12)
+                }
+            }
         )
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
