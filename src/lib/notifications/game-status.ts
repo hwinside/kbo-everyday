@@ -157,12 +157,20 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
         // 시작 알림은 이미 성공(started 카운트)이라 카드 실패해도 unclaim 안 함.
         const aScore = parseInt(g.T_SCORE_CN ?? "0") || 0;
         const hScore = parseInt(g.B_SCORE_CN ?? "0") || 0;
+        // 위젯(안드로이드)용 구조화 필드 — gameId에서 2자 팀코드 파싱(YYYYMMDD+AWAY+HOME+N).
+        const codes = gameId.match(/^\d{8}([A-Z]{2})([A-Z]{2})\d$/);
         await sendFcmToUsers(fans.ids, {
           title: `${away} ${aScore} : ${hScore} ${home}`,
           body: "경기 시작",
           url,
           dataOnly: true,
-          data: { kind: "game_live" },
+          data: {
+            kind: "game_live",
+            ...(codes ? { w_away: codes[1], w_home: codes[2] } : {}),
+            w_as: String(aScore),
+            w_hs: String(hScore),
+            w_status: "LIVE",
+          },
         }, "game_start");
       }
     } else if (g.GAME_STATE_SC === "3") {

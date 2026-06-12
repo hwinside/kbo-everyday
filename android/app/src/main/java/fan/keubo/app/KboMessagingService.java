@@ -39,8 +39,23 @@ public class KboMessagingService extends MessagingService {
                 title == null || title.isEmpty() ? "크보팬" : title,
                 body == null ? "" : body,
                 path == null ? "" : path);
+            // 잠금/홈 위젯도 구조화 데이터로 갱신(앱 종료 상태). 팀/점수/이닝은 서버가
+            // gameId에서 파싱한 2자 코드로 실어 보냄. 최애팀(w_my)은 보통 비어 있어
+            // 디바이스 저장값(앱이 기록)을 유지. 주자/투수/타자는 푸시엔 없어 비움
+            // (경기룸 포그라운드 진입 시 풀 데이터로 채워짐).
+            GameScoreWidget.writeAndRefresh(
+                this,
+                data.get("w_my"),
+                data.get("w_away"),
+                data.get("w_home"),
+                data.get("w_as"),
+                data.get("w_hs"),
+                data.get("w_status"),
+                "",
+                "000");
         } else if ("game_end".equals(kind)) {
             GameNotificationPlugin.clear(this);
+            GameScoreWidget.clear(this);
         }
     }
 }

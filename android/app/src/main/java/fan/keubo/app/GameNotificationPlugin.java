@@ -4,11 +4,8 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
-import android.appwidget.AppWidgetManager;
-import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.os.Build;
 
 import androidx.core.app.NotificationCompat;
@@ -86,29 +83,12 @@ public class GameNotificationPlugin extends Plugin {
         } catch (SecurityException ignored) {
             // POST_NOTIFICATIONS 미허용 — 무시 (권한 UX가 별도 처리)
         }
-        // 잠금화면 notification과 홈 위젯은 같은 라이브 데이터 — 위젯도 함께 갱신(A4 B3 연동).
-        updateWidget(context, title, body);
+        // 위젯(GameScoreWidget)은 구조화 데이터로 별도 구동(KboMessagingService / JS updateWidget).
+        // 여기서 title/sub로 위젯을 건드리지 않는다.
     }
 
     static void clear(Context context) {
         NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID);
-        // 위젯도 빈 상태로 (경기 종료/경기룸 이탈 시 stale 스코어 방지).
-        updateWidget(context, "", "");
-    }
-
-    /** 홈 위젯(GameScoreWidget)의 SharedPreferences를 갱신하고 배치된 위젯을 즉시 리프레시. */
-    private static void updateWidget(Context context, String title, String sub) {
-        SharedPreferences p = context.getSharedPreferences(
-            GameScoreWidget.PREFS, Context.MODE_PRIVATE);
-        p.edit()
-            .putString(GameScoreWidget.KEY_TITLE, title)
-            .putString(GameScoreWidget.KEY_SUB, sub)
-            .apply();
-        AppWidgetManager mgr = AppWidgetManager.getInstance(context);
-        int[] ids = mgr.getAppWidgetIds(new ComponentName(context, GameScoreWidget.class));
-        if (ids != null && ids.length > 0) {
-            new GameScoreWidget().onUpdate(context, mgr, ids);
-        }
     }
 
     @PluginMethod
@@ -128,6 +108,36 @@ public class GameNotificationPlugin extends Plugin {
     @PluginMethod
     public void remove(PluginCall call) {
         clear(getContext());
+        call.resolve();
+    }
+
+    /** 경기룸(포그라운드)에서 풀 라이브 데이터로 위젯 갱신 (주자/투수/타자 포함). */
+    @PluginMethod
+    public void updateWidget(PluginCall call) {
+        GameScoreWidget.writeAndRefresh(
+            getContext(),
+            call.getString("myTeam", ""),
+            call.getString("away", ""),
+            call.getString("home", ""),
+            call.getString("awayScore", "0"),
+            call.getString("homeScore", "0"),
+            call.getString("status", ""),
+            call.getString("pb", ""),
+            call.getString("diamond", "000"));
+        call.resolve();
+    }
+
+    /** 위젯 빈 상태로 전환 (경기 종료). */
+    @PluginMethod
+    public void clearWidget(PluginCall call) {
+        GameScoreWidget.clear(getContext());
+        call.resolve();
+    }
+
+    /** 디바이스 최애팀 코드 기록 (위젯 배경/워터마크 색 결정). */
+    @PluginMethod
+    public void setMyTeam(PluginCall call) {
+        GameScoreWidget.setMyTeam(getContext(), call.getString("code", ""));
         call.resolve();
     }
 }

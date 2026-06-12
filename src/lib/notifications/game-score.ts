@@ -100,12 +100,20 @@ export async function notifyScoreEvents(
         .filter((v): v is number => v !== null);
       const cardFans = await fansOfTeams(cardTeamIds);
       if (cardFans.ok && cardFans.ids.length > 0) {
+        // 위젯(안드로이드)용 구조화 필드 — gameId에서 2자 팀코드 파싱(YYYYMMDD+AWAY+HOME+N).
+        const codes = gameId.match(/^\d{8}([A-Z]{2})([A-Z]{2})\d$/);
         await sendFcmToUsers(cardFans.ids, {
           title: scoreLine,
           body: `${ev.inning}회${cardHalf}`,
           url,
           dataOnly: true,
-          data: { kind: "game_live" },
+          data: {
+            kind: "game_live",
+            ...(codes ? { w_away: codes[1], w_home: codes[2] } : {}),
+            w_as: String(aS),
+            w_hs: String(hS),
+            w_status: `LIVE ${ev.inning}회${cardHalf}`,
+          },
         }, "game_start");
       }
     }

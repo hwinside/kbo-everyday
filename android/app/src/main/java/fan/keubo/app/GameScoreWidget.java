@@ -3,29 +3,80 @@ package fan.keubo.app;
 import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.text.TextUtils;
+import android.view.View;
 import android.widget.RemoteViews;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /**
- * 홈 화면 App Widget — 실시간 경기 스코어 (A4 B3, "둘 다"의 위젯 파트).
- * 데이터는 SharedPreferences(kbo_game_widget)에서 읽는다. 앱이 라이브 경기 시
- * title/sub를 기록 + AppWidgetManager로 갱신(데이터 연결은 후속 슬라이스).
- * 값이 없으면 빈 상태("경기 정보가 없어요")를 보여 실유저에게 가짜 스코어 노출 방지.
+ * 홈/잠금화면 App Widget — iOS MY TEAM 카드(IMG_6990)와 동일, BSO 제외.
+ * 배경=최애팀 컬러 그라데이션 + 반투명 로고 워터마크, 양팀 로고/약어/점수,
+ * LIVE 이닝 pill, 투수/타자, 베이스 다이아몬드.
+ *
+ * 데이터는 SharedPreferences(kbo_game_widget)에 구조화 저장:
+ *  - 앱 포그라운드(경기룸): 풀 데이터(주자/투수/타자 포함) — JS가 updateWidget으로 기록.
+ *  - 앱 종료 상태: FCM data 푸시(game_live) — KboMessagingService가 팀/점수/이닝 기록.
+ * 값이 없으면 빈 상태("경기 정보가 없어요")로 가짜 스코어 노출 방지.
+ *
+ * 팀 코드 = KBO 2자 코드(gameId에서 파싱): LG/OB/KT/SK/NC/HT/LT/SS/HH/WO.
  */
 public class GameScoreWidget extends AppWidgetProvider {
 
     static final String PREFS = "kbo_game_widget";
+    static final String KEY_HAS_GAME = "has_game";
+    static final String KEY_MY_TEAM = "my_team";
+    static final String KEY_AWAY = "away";
+    static final String KEY_HOME = "home";
+    static final String KEY_AS = "as";
+    static final String KEY_HS = "hs";
+    static final String KEY_STATUS = "status";
+    static final String KEY_PB = "pb";
+    static final String KEY_DIAMOND = "diamond";
+    // legacy(알림 호환) — 위젯 렌더에는 미사용
     static final String KEY_TITLE = "title";
     static final String KEY_SUB = "sub";
+
+    // KBO 2자 코드 → 팀 약어(라벨용)
+    private static final Map<String, String> SHORT = new HashMap<>();
+    static {
+        SHORT.put("LG", "LG"); SHORT.put("OB", "두산"); SHORT.put("KT", "KT");
+        SHORT.put("SK", "SSG"); SHORT.put("NC", "NC"); SHORT.put("HT", "KIA");
+        SHORT.put("LT", "롯데"); SHORT.put("SS", "삼성"); SHORT.put("HH", "한화");
+        SHORT.put("WO", "키움");
+    }
+
+    private static String shortName(String code) {
+        if (code == null) return "";
+        String s = SHORT.get(code.toUpperCase());
+        return s != null ? s : code.toUpperCase();
+    }
+
+    /** drawable 리소스 id 해석 (없으면 0). drawable-nodpi PNG도 "drawable" 타입. */
+    private static int draw(Context ctx, String name) {
+        return ctx.getResources().getIdentifier(name, "drawable", ctx.getPackageName());
+    }
 
     @Override
     public void onUpdate(Context context, AppWidgetManager mgr, int[] appWidgetIds) {
         SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        String title = p.getString(KEY_TITLE, "");
-        String sub = p.getString(KEY_SUB, "");
+        boolean hasGame = p.getBoolean(KEY_HAS_GAME, false);
 
+        String myTeam = p.getString(KEY_MY_TEAM, "");
+        String away = p.getString(KEY_AWAY, "");
+        String home = p.getString(KEY_HOME, "");
+        String as = p.getString(KEY_AS, "0");
+        String hs = p.getString(KEY_HS, "0");
+        String status = p.getString(KEY_STATUS, "");
+        String pb = p.getString(KEY_PB, "");
+        String diamond = p.getString(KEY_DIAMOND, "000");
+
+        // 카드 탭 → 앱 실행 (딥링크는 알림 카드가 담당, 위젯은 앱 홈)
         Intent launch = context.getPackageManager()
             .getLaunchIntentForPackage(context.getPackageName());
         PendingIntent pi = PendingIntent.getActivity(
@@ -33,11 +84,116 @@ public class GameScoreWidget extends AppWidgetProvider {
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
         for (int id : appWidgetIds) {
-            RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_game_score);
-            views.setTextViewText(R.id.widget_score, title.isEmpty() ? "크보팬" : title);
-            views.setTextViewText(R.id.widget_sub, sub.isEmpty() ? "경기 정보가 없어요" : sub);
-            views.setOnClickPendingIntent(R.id.widget_root, pi);
-            mgr.updateAppWidget(id, views);
+            RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget_game_score);
+            v.setOnClickPendingIntent(R.id.widget_root, pi);
+
+            if (!hasGame || away.isEmpty() || home.isEmpty()) {
+                // 빈 상태
+                v.setViewVisibility(R.id.widget_content, View.GONE);
+                v.setViewVisibility(R.id.widget_empty, View.VISIBLE);
+                v.setViewVisibility(R.id.widget_wm, View.GONE);
+                v.setInt(R.id.widget_root, "setBackgroundResource", R.drawable.widget_bg_lg);
+                mgr.updateAppWidget(id, v);
+                continue;
+            }
+
+            v.setViewVisibility(R.id.widget_content, View.VISIBLE);
+            v.setViewVisibility(R.id.widget_empty, View.GONE);
+
+            // 배경 = 최애팀 컬러(미설정 시 home 팀). 워터마크 동일 팀.
+            String bgTeam = !myTeam.isEmpty() ? myTeam : home;
+            int bgRes = draw(context, "widget_bg_" + bgTeam.toLowerCase());
+            v.setInt(R.id.widget_root, "setBackgroundResource",
+                bgRes != 0 ? bgRes : R.drawable.widget_bg_lg);
+            int wmRes = draw(context, "widget_wm_" + bgTeam.toLowerCase());
+            if (wmRes != 0) {
+                v.setViewVisibility(R.id.widget_wm, View.VISIBLE);
+                v.setImageViewResource(R.id.widget_wm, wmRes);
+            } else {
+                v.setViewVisibility(R.id.widget_wm, View.GONE);
+            }
+
+            // MY TEAM 헤더 로고 (최애팀 미설정 시 home 로고로 대체)
+            int myLogo = draw(context, "teamlogo_" + bgTeam.toLowerCase());
+            if (myLogo != 0) v.setImageViewResource(R.id.widget_myteam_logo, myLogo);
+
+            // 양팀 로고/약어/점수
+            int awayLogo = draw(context, "teamlogo_" + away.toLowerCase());
+            int homeLogo = draw(context, "teamlogo_" + home.toLowerCase());
+            if (awayLogo != 0) v.setImageViewResource(R.id.widget_away_logo, awayLogo);
+            if (homeLogo != 0) v.setImageViewResource(R.id.widget_home_logo, homeLogo);
+            v.setTextViewText(R.id.widget_away_name, shortName(away));
+            v.setTextViewText(R.id.widget_home_name, shortName(home));
+            v.setTextViewText(R.id.widget_score, as + " : " + hs);
+
+            // 상태 pill
+            if (status.isEmpty()) {
+                v.setViewVisibility(R.id.widget_status, View.GONE);
+            } else {
+                v.setViewVisibility(R.id.widget_status, View.VISIBLE);
+                v.setTextViewText(R.id.widget_status, status);
+            }
+
+            // 하단: 투수/타자 + 다이아몬드 (둘 다 비면 행 숨김)
+            int diaRes = draw(context, "diamond_" + diamond);
+            boolean hasLive = !TextUtils.isEmpty(pb) || !"000".equals(diamond);
+            if (hasLive) {
+                v.setViewVisibility(R.id.widget_live_row, View.VISIBLE);
+                if (TextUtils.isEmpty(pb)) {
+                    v.setViewVisibility(R.id.widget_pb, View.GONE);
+                } else {
+                    v.setViewVisibility(R.id.widget_pb, View.VISIBLE);
+                    v.setTextViewText(R.id.widget_pb, pb);
+                }
+                if (diaRes != 0) v.setImageViewResource(R.id.widget_diamond, diaRes);
+            } else {
+                v.setViewVisibility(R.id.widget_live_row, View.GONE);
+            }
+
+            mgr.updateAppWidget(id, v);
+        }
+    }
+
+    /** 구조화 데이터 기록 후 배치된 위젯 즉시 갱신.
+     *  myTeam==null/빈값 → 기존 최애팀 값 유지(푸시는 디바이스 최애팀을 모름). */
+    static void writeAndRefresh(Context ctx, String myTeam, String away, String home,
+                                String as, String hs, String status, String pb, String diamond) {
+        SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        SharedPreferences.Editor e = p.edit();
+        e.putBoolean(KEY_HAS_GAME, true);
+        if (myTeam != null && !myTeam.isEmpty()) e.putString(KEY_MY_TEAM, myTeam);
+        e.putString(KEY_AWAY, away == null ? "" : away);
+        e.putString(KEY_HOME, home == null ? "" : home);
+        e.putString(KEY_AS, as == null ? "0" : as);
+        e.putString(KEY_HS, hs == null ? "0" : hs);
+        e.putString(KEY_STATUS, status == null ? "" : status);
+        e.putString(KEY_PB, pb == null ? "" : pb);
+        e.putString(KEY_DIAMOND, (diamond == null || diamond.isEmpty()) ? "000" : diamond);
+        e.apply();
+        refresh(ctx);
+    }
+
+    /** 빈 상태로 전환 (경기 종료/이탈). 최애팀 값은 유지. */
+    static void clear(Context ctx) {
+        SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        p.edit().putBoolean(KEY_HAS_GAME, false).apply();
+        refresh(ctx);
+    }
+
+    /** 디바이스 최애팀 코드 기록(앱이 알 때). 위젯 배경/워터마크/헤더 색 결정. */
+    static void setMyTeam(Context ctx, String code) {
+        if (code == null) return;
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putString(KEY_MY_TEAM, code).apply();
+        refresh(ctx);
+    }
+
+    /** 현재 prefs로 배치된 모든 위젯 재렌더. */
+    static void refresh(Context ctx) {
+        AppWidgetManager mgr = AppWidgetManager.getInstance(ctx);
+        int[] ids = mgr.getAppWidgetIds(new ComponentName(ctx, GameScoreWidget.class));
+        if (ids != null && ids.length > 0) {
+            new GameScoreWidget().onUpdate(ctx, mgr, ids);
         }
     }
 }
