@@ -138,6 +138,7 @@ export default function AdminMessagesPage() {
   );
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadConversations(tab);
   }, [tab, loadConversations]);
 
@@ -153,6 +154,9 @@ export default function AdminMessagesPage() {
       if (res.ok) {
         const json = await res.json();
         setMessages(json.messages || []);
+        setConversations((prev) =>
+          prev.map((item) => (item.id === conv.id ? { ...item, unread_count: 0 } : item))
+        );
       }
     } catch {
       /* ignore */
