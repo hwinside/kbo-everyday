@@ -114,6 +114,17 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "not_found_or_unauthorized" }, { status: 403 });
     }
 
+    const { error: markReadError } = await admin
+      .from("dm_messages")
+      .update({ is_read: true })
+      .eq("conversation_id", conversationId)
+      .neq("sender_id", systemUserId)
+      .eq("is_read", false);
+
+    if (markReadError) {
+      console.warn("[admin/messages] mark read failed:", markReadError.message);
+    }
+
     const { data: messages } = await admin
       .from("dm_messages")
       .select("*")
