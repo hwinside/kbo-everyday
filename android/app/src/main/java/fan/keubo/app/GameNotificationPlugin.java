@@ -66,7 +66,8 @@ public class GameNotificationPlugin extends Plugin {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         }
         return new NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            // 모노크롬 small icon — 컬러 launcher를 쓰면 상태바에 흰 사각형으로 뭉개짐.
+            .setSmallIcon(R.drawable.ic_stat_kbo)
             .setContentTitle(title)
             .setContentText(body)
             .setOngoing(true)
