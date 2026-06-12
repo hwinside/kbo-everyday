@@ -87,6 +87,27 @@ export async function notifyScoreEvents(
       const res = await sendFcmToUsers(fans.ids, { title, body, url }, "my_team_score");
       if (!res.ok) { await unclaimEvent(ev.id); continue; } // 인프라 실패 → 재시도
       scored += res.sent;
+
+      // 잠금화면 ongoing card 스코어 갱신 (C2b) — 득점팀뿐 아니라 *양팀 팬* 카드를
+      // 신선화(게임 관전자 모두). data-only, fire-and-forget(득점 알림은 이미 성공이라
+      // 카드 실패해도 unclaim 안 함). 시작 카드와 동일하게 game_start 옵트인 유저만.
+      // 이닝 half — run_scored는 isTop이 이닝교대 lag에 취약(득점팀 판정과 동일 이유)이라
+      // scoringSide로 판정(away 공격=초, home 공격=말). 홈런은 isTop이 이미 보정됨 (삼순 C2b).
+      const cardHalf = ev.type === "run_scored"
+        ? (ev.detail?.scoringSide === "away" ? "초" : "말")
+        : (ev.isTop ? "초" : "말");
+      const cardTeamIds = [teamIdByShortName(away), teamIdByShortName(home)]
+        .filter((v): v is number => v !== null);
+      const cardFans = await fansOfTeams(cardTeamIds);
+      if (cardFans.ok && cardFans.ids.length > 0) {
+        await sendFcmToUsers(cardFans.ids, {
+          title: scoreLine,
+          body: `${ev.inning}회${cardHalf}`,
+          url,
+          dataOnly: true,
+          data: { kind: "game_live" },
+        }, "game_start");
+      }
     }
   }
 
