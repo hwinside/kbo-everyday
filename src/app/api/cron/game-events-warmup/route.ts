@@ -4,6 +4,7 @@ import type { GameEvent } from "@/types/game-events";
 import { notifyGameStatusTransitions } from "@/lib/notifications/game-status";
 import { notifyScoreEvents } from "@/lib/notifications/game-score";
 import { notifyPlayerHighlights } from "@/lib/notifications/player-highlight";
+import { pushLiveActivityUpdates } from "@/lib/notifications/live-activity";
 
 /**
  * Warm up the in-memory prevState cache of /api/game-events for every
@@ -105,6 +106,18 @@ export async function GET(req: NextRequest) {
     console.error("[warmup] highlight notify failed:", (e as Error).message);
   }
 
+  // 잠금화면 Live Activity 백그라운드 갱신 (W3a) — 같은 게임 목록 재사용.
+  // APNs 직접 푸시. 미설정(APNS env 없음) 시 no-op. 실패해도 warmup 본연에 영향 없음.
+  let liveActivity:
+    | { pushed: number; ended: number; cleaned: number }
+    | { error: string } = { pushed: 0, ended: 0, cleaned: 0 };
+  try {
+    liveActivity = await pushLiveActivityUpdates(games);
+  } catch (e) {
+    liveActivity = { error: (e as Error).message };
+    console.error("[warmup] live activity push failed:", (e as Error).message);
+  }
+
   return NextResponse.json({
     date,
     polled: liveGameIds.length,
@@ -112,6 +125,7 @@ export async function GET(req: NextRequest) {
     gameNotify,
     scoreNotify,
     highlightNotify,
+    liveActivity,
     results: results.map(r =>
       r.status === "fulfilled"
         ? { gameId: r.value.gameId, ok: r.value.ok, status: r.value.status, eventCount: r.value.eventCount }

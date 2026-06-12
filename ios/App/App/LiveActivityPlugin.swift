@@ -23,6 +23,15 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "isEnabled", returnType: CAPPluginReturnPromise),
     ]
 
+    /// 브리지 로드 시 — Activity push token 발급 콜백을 JS 이벤트로 연결 (W3 APNs 등록).
+    public override func load() {
+        if #available(iOS 16.1, *) {
+            LiveActivityController.shared.onPushToken = { [weak self] gameId, token in
+                self?.notifyListeners("liveActivityPushToken", data: ["gameId": gameId, "token": token])
+            }
+        }
+    }
+
     @objc func start(_ call: CAPPluginCall) {
         guard #available(iOS 16.1, *) else {
             call.resolve(["started": false])
