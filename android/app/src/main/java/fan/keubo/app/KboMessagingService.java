@@ -32,10 +32,13 @@ public class KboMessagingService extends MessagingService {
         if ("game_live".equals(kind)) {
             String title = data.get("title");
             String body = data.get("body");
+            // url(=/games/{gameId})은 서버가 data에 실어 보냄 — 카드 탭 시 경기룸 딥링크용(②).
+            String path = data.get("url");
             GameNotificationPlugin.post(
                 this,
                 title == null || title.isEmpty() ? "크보팬" : title,
-                body == null ? "" : body);
+                body == null ? "" : body,
+                path == null ? "" : path);
         } else if ("game_end".equals(kind)) {
             GameNotificationPlugin.clear(this);
         }
