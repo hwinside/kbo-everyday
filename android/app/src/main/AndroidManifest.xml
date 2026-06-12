@@ -70,6 +70,11 @@
         <service
             android:name="io.capawesome.capacitorjs.plugins.firebase.messaging.MessagingService"
             tools:node="remove" />
+
+        <!-- FCM notification 페이로드 푸시도 모노크롬 small icon 사용(흰 사각형 방지). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_kbo" />
     </application>
 
     <!-- Permissions -->
