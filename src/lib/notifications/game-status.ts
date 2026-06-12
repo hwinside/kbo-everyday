@@ -227,23 +227,31 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
         ended += res.sent;
       }
 
-      // 두 슬롯 다 발송되면 end_notified=true (다음 cron부터 조기 skip)
-      await supabase.from("game_notify_state")
-        .update({ end_notified: true, updated_at: new Date().toISOString() })
-        .eq("game_id", gameId)
-        .eq("end_away_notified", true)
-        .eq("end_home_notified", true);
-
       // 잠금화면 ongoing card 제거 (C2) — data-only, 양팀 팬 모두에게.
-      // clear는 멱등(없는 알림 cancel = no-op)이라 prefKey 무관·매 종료틱 발송 무해.
+      // ⚠️ end_notified=true 마킹보다 *먼저* 보내고, clear가 ok일 때만 마킹으로 넘어간다.
+      // 먼저 마킹하면 clear 조회/FCM 실패 시 다음 cron이 end_notified에서 skip → 카드가
+      // 잠금화면/위젯에 stale로 stuck. clear는 멱등이라 재시도 안전 (삼순 C2 필수수정).
       const endFans = await fansOfTeams(teamIds);
+      let clearOk = endFans.ok;
       if (endFans.ok && endFans.ids.length > 0) {
-        await sendFcmToUsers(endFans.ids, {
+        const clearRes = await sendFcmToUsers(endFans.ids, {
           title: "",
           body: "",
           dataOnly: true,
           data: { kind: "game_end" },
         });
+        clearOk = clearRes.ok;
+      }
+
+      // 두 슬롯 다 발송 + clear ok면 end_notified=true (다음 cron부터 조기 skip).
+      // clear 실패 시 미마킹 → 다음 cron이 end 브랜치 재진입해 clear 재시도(슬롯은 이미
+      // 선점돼 알림 재발송은 없음).
+      if (clearOk) {
+        await supabase.from("game_notify_state")
+          .update({ end_notified: true, updated_at: new Date().toISOString() })
+          .eq("game_id", gameId)
+          .eq("end_away_notified", true)
+          .eq("end_home_notified", true);
       }
     }
   }
