@@ -68,6 +68,23 @@ public class GameScoreWidget extends AppWidgetProvider {
 
     @Override
     public void onUpdate(Context context, AppWidgetManager mgr, int[] appWidgetIds) {
+        // 카드 탭 → 앱 실행 (딥링크는 알림 카드가 담당, 위젯은 앱 홈)
+        Intent launch = context.getPackageManager()
+            .getLaunchIntentForPackage(context.getPackageName());
+        PendingIntent pi = PendingIntent.getActivity(
+            context, 0, launch,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        for (int id : appWidgetIds) {
+            RemoteViews v = buildCard(context);
+            v.setOnClickPendingIntent(R.id.widget_root, pi);
+            mgr.updateAppWidget(id, v);
+        }
+    }
+
+    /** 현재 prefs로 카드 RemoteViews 생성 — 위젯 + 잠금화면 알림 카드 공용.
+     *  경기 없으면 빈 상태("경기 정보가 없어요"). */
+    static RemoteViews buildCard(Context context) {
         SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         boolean hasGame = p.getBoolean(KEY_HAS_GAME, false);
 
@@ -84,109 +101,137 @@ public class GameScoreWidget extends AppWidgetProvider {
         String outs = p.getString(KEY_OUTS, "");
         String diamond = p.getString(KEY_DIAMOND, "000");
 
-        // 카드 탭 → 앱 실행 (딥링크는 알림 카드가 담당, 위젯은 앱 홈)
-        Intent launch = context.getPackageManager()
-            .getLaunchIntentForPackage(context.getPackageName());
-        PendingIntent pi = PendingIntent.getActivity(
-            context, 0, launch,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget_game_score);
 
-        for (int id : appWidgetIds) {
-            RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget_game_score);
-            v.setOnClickPendingIntent(R.id.widget_root, pi);
-
-            if (!hasGame || away.isEmpty() || home.isEmpty()) {
-                // 빈 상태
-                v.setViewVisibility(R.id.widget_content, View.GONE);
-                v.setViewVisibility(R.id.widget_empty, View.VISIBLE);
-                v.setViewVisibility(R.id.widget_wm, View.GONE);
-                v.setInt(R.id.widget_root, "setBackgroundResource", R.drawable.widget_bg_lg);
-                mgr.updateAppWidget(id, v);
-                continue;
-            }
-
-            v.setViewVisibility(R.id.widget_content, View.VISIBLE);
-            v.setViewVisibility(R.id.widget_empty, View.GONE);
-
-            // 배경 = 최애팀 컬러(미설정 시 home 팀). 워터마크 동일 팀.
-            String bgTeam = !myTeam.isEmpty() ? myTeam : home;
-            int bgRes = draw(context, "widget_bg_" + bgTeam.toLowerCase());
-            v.setInt(R.id.widget_root, "setBackgroundResource",
-                bgRes != 0 ? bgRes : R.drawable.widget_bg_lg);
-            int wmRes = draw(context, "widget_wm_" + bgTeam.toLowerCase());
-            if (wmRes != 0) {
-                v.setViewVisibility(R.id.widget_wm, View.VISIBLE);
-                v.setImageViewResource(R.id.widget_wm, wmRes);
-            } else {
-                v.setViewVisibility(R.id.widget_wm, View.GONE);
-            }
-
-            // MY TEAM 헤더 로고 (최애팀 미설정 시 home 로고로 대체)
-            int myLogo = draw(context, "teamlogo_" + bgTeam.toLowerCase());
-            if (myLogo != 0) v.setImageViewResource(R.id.widget_myteam_logo, myLogo);
-
-            // 양팀 로고/약어/점수
-            int awayLogo = draw(context, "teamlogo_" + away.toLowerCase());
-            int homeLogo = draw(context, "teamlogo_" + home.toLowerCase());
-            if (awayLogo != 0) v.setImageViewResource(R.id.widget_away_logo, awayLogo);
-            if (homeLogo != 0) v.setImageViewResource(R.id.widget_home_logo, homeLogo);
-            v.setTextViewText(R.id.widget_away_name, shortName(away));
-            v.setTextViewText(R.id.widget_home_name, shortName(home));
-            v.setTextViewText(R.id.widget_score, as + " : " + hs);
-
-            // 상태 pill
-            if (status.isEmpty()) {
-                v.setViewVisibility(R.id.widget_status, View.GONE);
-            } else {
-                v.setViewVisibility(R.id.widget_status, View.VISIBLE);
-                v.setTextViewText(R.id.widget_status, status);
-            }
-
-            // 하단: OUT + 투수/타자 소속표기 + 다이아몬드 (라이브 정보 없으면 행 숨김)
-            int diaRes = draw(context, "diamond_" + diamond);
-            boolean hasPitcher = !TextUtils.isEmpty(pitcher);
-            boolean hasBatter = !TextUtils.isEmpty(batter);
-            boolean hasOuts = !TextUtils.isEmpty(outs);
-            boolean hasLive = hasPitcher || hasBatter || hasOuts || !"000".equals(diamond);
-            if (hasLive) {
-                v.setViewVisibility(R.id.widget_live_row, View.VISIBLE);
-
-                // OUT 카운트 (B/S 제거, 아웃만)
-                int outRes = hasOuts ? draw(context, "out_" + outs) : 0;
-                if (outRes != 0) {
-                    v.setViewVisibility(R.id.widget_out, View.VISIBLE);
-                    v.setImageViewResource(R.id.widget_out, outRes);
-                } else {
-                    v.setViewVisibility(R.id.widget_out, View.GONE);
-                }
-
-                // 투수 (소속) 이름
-                if (hasPitcher) {
-                    v.setViewVisibility(R.id.widget_pitcher_row, View.VISIBLE);
-                    String pl = pteam.isEmpty() ? "투수" : "투수 (" + shortName(pteam) + ")";
-                    v.setTextViewText(R.id.widget_pitcher_label, pl);
-                    v.setTextViewText(R.id.widget_pitcher_name, pitcher);
-                } else {
-                    v.setViewVisibility(R.id.widget_pitcher_row, View.GONE);
-                }
-
-                // 타자 (소속) 이름
-                if (hasBatter) {
-                    v.setViewVisibility(R.id.widget_batter_row, View.VISIBLE);
-                    String bl = bteam.isEmpty() ? "타자" : "타자 (" + shortName(bteam) + ")";
-                    v.setTextViewText(R.id.widget_batter_label, bl);
-                    v.setTextViewText(R.id.widget_batter_name, batter);
-                } else {
-                    v.setViewVisibility(R.id.widget_batter_row, View.GONE);
-                }
-
-                if (diaRes != 0) v.setImageViewResource(R.id.widget_diamond, diaRes);
-            } else {
-                v.setViewVisibility(R.id.widget_live_row, View.GONE);
-            }
-
-            mgr.updateAppWidget(id, v);
+        if (!hasGame || away.isEmpty() || home.isEmpty()) {
+            // 빈 상태
+            v.setViewVisibility(R.id.widget_content, View.GONE);
+            v.setViewVisibility(R.id.widget_empty, View.VISIBLE);
+            v.setViewVisibility(R.id.widget_wm, View.GONE);
+            v.setInt(R.id.widget_root, "setBackgroundResource", R.drawable.widget_bg_lg);
+            return v;
         }
+
+        v.setViewVisibility(R.id.widget_content, View.VISIBLE);
+        v.setViewVisibility(R.id.widget_empty, View.GONE);
+
+        // 배경 = 최애팀 컬러(미설정 시 home 팀). 워터마크 동일 팀.
+        String bgTeam = !myTeam.isEmpty() ? myTeam : home;
+        int bgRes = draw(context, "widget_bg_" + bgTeam.toLowerCase());
+        v.setInt(R.id.widget_root, "setBackgroundResource",
+            bgRes != 0 ? bgRes : R.drawable.widget_bg_lg);
+        int wmRes = draw(context, "widget_wm_" + bgTeam.toLowerCase());
+        if (wmRes != 0) {
+            v.setViewVisibility(R.id.widget_wm, View.VISIBLE);
+            v.setImageViewResource(R.id.widget_wm, wmRes);
+        } else {
+            v.setViewVisibility(R.id.widget_wm, View.GONE);
+        }
+
+        // MY TEAM 헤더 로고 (최애팀 미설정 시 home 로고로 대체)
+        int myLogo = draw(context, "teamlogo_" + bgTeam.toLowerCase());
+        if (myLogo != 0) v.setImageViewResource(R.id.widget_myteam_logo, myLogo);
+
+        // 양팀 로고/약어/점수
+        int awayLogo = draw(context, "teamlogo_" + away.toLowerCase());
+        int homeLogo = draw(context, "teamlogo_" + home.toLowerCase());
+        if (awayLogo != 0) v.setImageViewResource(R.id.widget_away_logo, awayLogo);
+        if (homeLogo != 0) v.setImageViewResource(R.id.widget_home_logo, homeLogo);
+        v.setTextViewText(R.id.widget_away_name, shortName(away));
+        v.setTextViewText(R.id.widget_home_name, shortName(home));
+        v.setTextViewText(R.id.widget_score, as + " : " + hs);
+
+        // 상태 pill
+        if (status.isEmpty()) {
+            v.setViewVisibility(R.id.widget_status, View.GONE);
+        } else {
+            v.setViewVisibility(R.id.widget_status, View.VISIBLE);
+            v.setTextViewText(R.id.widget_status, status);
+        }
+
+        // 하단: OUT + 투수/타자 소속표기 + 다이아몬드 (라이브 정보 없으면 행 숨김)
+        int diaRes = draw(context, "diamond_" + diamond);
+        boolean hasPitcher = !TextUtils.isEmpty(pitcher);
+        boolean hasBatter = !TextUtils.isEmpty(batter);
+        boolean hasOuts = !TextUtils.isEmpty(outs);
+        boolean hasLive = hasPitcher || hasBatter || hasOuts || !"000".equals(diamond);
+        if (hasLive) {
+            v.setViewVisibility(R.id.widget_live_row, View.VISIBLE);
+
+            // OUT 카운트 (B/S 제거, 아웃만)
+            int outRes = hasOuts ? draw(context, "out_" + outs) : 0;
+            if (outRes != 0) {
+                v.setViewVisibility(R.id.widget_out, View.VISIBLE);
+                v.setImageViewResource(R.id.widget_out, outRes);
+            } else {
+                v.setViewVisibility(R.id.widget_out, View.GONE);
+            }
+
+            // 투수 (소속) 이름
+            if (hasPitcher) {
+                v.setViewVisibility(R.id.widget_pitcher_row, View.VISIBLE);
+                String pl = pteam.isEmpty() ? "투수" : "투수 (" + shortName(pteam) + ")";
+                v.setTextViewText(R.id.widget_pitcher_label, pl);
+                v.setTextViewText(R.id.widget_pitcher_name, pitcher);
+            } else {
+                v.setViewVisibility(R.id.widget_pitcher_row, View.GONE);
+            }
+
+            // 타자 (소속) 이름
+            if (hasBatter) {
+                v.setViewVisibility(R.id.widget_batter_row, View.VISIBLE);
+                String bl = bteam.isEmpty() ? "타자" : "타자 (" + shortName(bteam) + ")";
+                v.setTextViewText(R.id.widget_batter_label, bl);
+                v.setTextViewText(R.id.widget_batter_name, batter);
+            } else {
+                v.setViewVisibility(R.id.widget_batter_row, View.GONE);
+            }
+
+            if (diaRes != 0) v.setImageViewResource(R.id.widget_diamond, diaRes);
+        } else {
+            v.setViewVisibility(R.id.widget_live_row, View.GONE);
+        }
+
+        return v;
+    }
+
+    /** 알림 접힌 뷰용 컴팩트 카드(점수 한 줄). 경기 없으면 null. */
+    static RemoteViews buildCompactCard(Context context) {
+        SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String away = p.getString(KEY_AWAY, "");
+        String home = p.getString(KEY_HOME, "");
+        if (!p.getBoolean(KEY_HAS_GAME, false) || away.isEmpty() || home.isEmpty()) return null;
+
+        String myTeam = p.getString(KEY_MY_TEAM, "");
+        String bgTeam = !myTeam.isEmpty() ? myTeam : home;
+        RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.notif_card_compact);
+        int bgRes = draw(context, "widget_bg_" + bgTeam.toLowerCase());
+        v.setInt(R.id.ncc_root, "setBackgroundResource", bgRes != 0 ? bgRes : R.drawable.widget_bg_lg);
+
+        int awayLogo = draw(context, "teamlogo_" + away.toLowerCase());
+        int homeLogo = draw(context, "teamlogo_" + home.toLowerCase());
+        if (awayLogo != 0) v.setImageViewResource(R.id.ncc_away_logo, awayLogo);
+        if (homeLogo != 0) v.setImageViewResource(R.id.ncc_home_logo, homeLogo);
+        v.setTextViewText(R.id.ncc_away_name, shortName(away));
+        v.setTextViewText(R.id.ncc_home_name, shortName(home));
+        v.setTextViewText(R.id.ncc_score, p.getString(KEY_AS, "0") + " : " + p.getString(KEY_HS, "0"));
+
+        String status = p.getString(KEY_STATUS, "");
+        if (status.isEmpty()) {
+            v.setViewVisibility(R.id.ncc_status, View.GONE);
+        } else {
+            v.setViewVisibility(R.id.ncc_status, View.VISIBLE);
+            v.setTextViewText(R.id.ncc_status, status);
+        }
+        return v;
+    }
+
+    /** 현재 경기 데이터가 있는지 (알림 카드 게시 여부 판단용). */
+    static boolean hasGame(Context context) {
+        SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        return p.getBoolean(KEY_HAS_GAME, false)
+            && !p.getString(KEY_AWAY, "").isEmpty()
+            && !p.getString(KEY_HOME, "").isEmpty();
     }
 
     /** 구조화 데이터 기록 후 배치된 위젯 즉시 갱신.

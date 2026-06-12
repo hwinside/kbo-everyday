@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 잠금화면 알림 접힌 뷰 — 점수 한 줄 (팀컬러 배경). 펼치면 widget_game_score 전체 카드.
+     알림 접힌 높이(~64dp) 제약상 핵심(양팀 로고/약어/점수/이닝)만. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/ncc_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="@drawable/widget_bg_lg"
+    android:paddingStart="14dp"
+    android:paddingEnd="14dp"
+    android:paddingTop="10dp"
+    android:paddingBottom="10dp">
+
+    <ImageView
+        android:id="@+id/ncc_away_logo"
+        android:layout_width="30dp"
+        android:layout_height="30dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/teamlogo_sk"
+        android:contentDescription="@null" />
+    <TextView
+        android:id="@+id/ncc_away_name"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="6dp"
+        android:textColor="#E8B0BC"
+        android:textStyle="bold"
+        android:textSize="14sp"
+        android:text="SSG" />
+
+    <TextView
+        android:id="@+id/ncc_score"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:textColor="#F5F5F7"
+        android:textStyle="bold"
+        android:textSize="20sp"
+        android:text="2 : 1" />
+
+    <TextView
+        android:id="@+id/ncc_home_name"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="6dp"
+        android:textColor="#E8B0BC"
+        android:textStyle="bold"
+        android:textSize="14sp"
+        android:text="LG" />
+    <ImageView
+        android:id="@+id/ncc_home_logo"
+        android:layout_width="30dp"
+        android:layout_height="30dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/teamlogo_lg"
+        android:contentDescription="@null" />
+
+    <TextView
+        android:id="@+id/ncc_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:paddingStart="9dp"
+        android:paddingEnd="9dp"
+        android:paddingTop="2dp"
+        android:paddingBottom="2dp"
+        android:background="@drawable/widget_status_pill"
+        android:textColor="#FF6B7A"
+        android:textStyle="bold"
+        android:textSize="11sp"
+        android:text="LIVE 2회초" />
+</LinearLayout>
