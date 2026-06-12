@@ -4,8 +4,11 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.appwidget.AppWidgetManager;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Build;
 
 import androidx.core.app.NotificationCompat;
@@ -56,7 +59,7 @@ public class GameNotificationPlugin extends Plugin {
             .build();
     }
 
-    /** ongoing notification 게시/갱신 (동일 ID라 갱신은 re-notify). */
+    /** ongoing notification 게시/갱신 (동일 ID라 갱신은 re-notify) + 홈 위젯 동기 갱신. */
     static void post(Context context, String title, String body) {
         try {
             NotificationManagerCompat.from(context)
@@ -64,10 +67,29 @@ public class GameNotificationPlugin extends Plugin {
         } catch (SecurityException ignored) {
             // POST_NOTIFICATIONS 미허용 — 무시 (권한 UX가 별도 처리)
         }
+        // 잠금화면 notification과 홈 위젯은 같은 라이브 데이터 — 위젯도 함께 갱신(A4 B3 연동).
+        updateWidget(context, title, body);
     }
 
     static void clear(Context context) {
         NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID);
+        // 위젯도 빈 상태로 (경기 종료/경기룸 이탈 시 stale 스코어 방지).
+        updateWidget(context, "", "");
+    }
+
+    /** 홈 위젯(GameScoreWidget)의 SharedPreferences를 갱신하고 배치된 위젯을 즉시 리프레시. */
+    private static void updateWidget(Context context, String title, String sub) {
+        SharedPreferences p = context.getSharedPreferences(
+            GameScoreWidget.PREFS, Context.MODE_PRIVATE);
+        p.edit()
+            .putString(GameScoreWidget.KEY_TITLE, title)
+            .putString(GameScoreWidget.KEY_SUB, sub)
+            .apply();
+        AppWidgetManager mgr = AppWidgetManager.getInstance(context);
+        int[] ids = mgr.getAppWidgetIds(new ComponentName(context, GameScoreWidget.class));
+        if (ids != null && ids.length > 0) {
+            new GameScoreWidget().onUpdate(context, mgr, ids);
+        }
     }
 
     @PluginMethod
