@@ -129,7 +129,7 @@ struct KBOLiveActivityWidget: Widget {
                 }
             } compactLeading: {
                 HStack(spacing: 2) {
-                    TeamLogo(code: context.attributes.awayTeamCode, size: 14)
+                    TeamLogo(code: context.attributes.awayTeamCode, size: 21)
                     Text(teamShortName(context.attributes.awayTeamCode))
                         .font(.system(size: 11, weight: .semibold))
                     Text("\(context.state.awayScore)")
@@ -141,7 +141,7 @@ struct KBOLiveActivityWidget: Widget {
                         .font(.system(size: 13, weight: .bold)).monospacedDigit()
                     Text(teamShortName(context.attributes.homeTeamCode))
                         .font(.system(size: 11, weight: .semibold))
-                    TeamLogo(code: context.attributes.homeTeamCode, size: 14)
+                    TeamLogo(code: context.attributes.homeTeamCode, size: 21)
                 }
             } minimal: {
                 Text("\(context.state.awayScore):\(context.state.homeScore)")
@@ -159,7 +159,7 @@ struct DITeam: View {
     let score: Int
     var body: some View {
         HStack(spacing: 4) {
-            TeamLogo(code: code, size: 22)
+            TeamLogo(code: code, size: 33)
             Text(teamShortName(code)).font(.caption2).bold()
             Text("\(score)").font(.title3).bold().monospacedDigit()
         }
