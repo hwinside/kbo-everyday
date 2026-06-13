@@ -304,10 +304,13 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     const homeCode = ID_TO_KBO_CODE[widgetGame.homeTeamId];
     if (!awayCode || !homeCode) return;
 
-    const status = widgetGame.status === "scheduled"
-      ? `SCHEDULED|${widgetGame.time}`
+    const isScheduled = widgetGame.status === "scheduled";
+    // 경기장 정보(예: 잠실) — status 뒤에 붙여 위젯 pill에 노출
+    const venue = widgetGame.stadium ? ` · ${widgetGame.stadium}` : "";
+    const status = isScheduled
+      ? `SCHEDULED|${widgetGame.time}${venue}`
       : widgetGame.status === "live"
-        ? `LIVE ${widgetGame.inning ?? ""}`.trim()
+        ? `${`LIVE ${widgetGame.inning ?? ""}`.trim()}${venue}`
         : "";
     if (!status) return;
 
@@ -320,12 +323,14 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       awayScore: String(widgetGame.awayScore ?? 0),
       homeScore: String(widgetGame.homeScore ?? 0),
       status,
-      pitcher: widgetGame.currentPitcher ?? "",
-      pitcherTeam: widgetGame.currentPitcher ? pitcherTeam : "",
-      batter: widgetGame.currentBatter ?? "",
-      batterTeam: widgetGame.currentBatter ? batterTeam : "",
-      outs: widgetGame.outs === undefined ? "" : String(Math.min(Math.max(widgetGame.outs, 0), 2)),
-      diamond: `${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}`,
+      // 예정 경기는 라이브 정보(투수/타자/아웃/주자)가 없으므로 전부 비워 라이브 행 자체를 숨긴다
+      // (빈 다이아몬드 + "O ○○○"가 미시작 경기에 떠서 완성도 떨어져 보이던 문제).
+      pitcher: isScheduled ? "" : (widgetGame.currentPitcher ?? ""),
+      pitcherTeam: !isScheduled && widgetGame.currentPitcher ? pitcherTeam : "",
+      batter: isScheduled ? "" : (widgetGame.currentBatter ?? ""),
+      batterTeam: !isScheduled && widgetGame.currentBatter ? batterTeam : "",
+      outs: isScheduled ? "" : (widgetGame.outs === undefined ? "" : String(Math.min(Math.max(widgetGame.outs, 0), 2))),
+      diamond: isScheduled ? "000" : `${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}`,
     });
   }, [myTeamId, widgetGame]);
 
