@@ -230,13 +230,19 @@ struct HomeWidgetSmallCard: View {
                 smallTeam(code: snap.homeTeamCode, score: snap.homeScore)
             }
 
-            Text(snap.isFinal ? "경기 종료" : "LIVE \(snap.inning)회\(snap.isTopInning ? "초" : "말")")
-                .font(notoKR(9, .bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 7).padding(.vertical, 2)
-                .background(
-                    Capsule().fill(snap.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
-                )
+            Group {
+                if snap.isFinal {
+                    Text("경기 종료").font(notoKR(9, .bold))
+                } else {
+                    Text("LIVE ").font(montserrat(9, .bold))
+                        + inningRun("\(snap.inning)회\(snap.isTopInning ? "초" : "말")", 9, .bold)
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .background(
+                Capsule().fill(snap.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
+            )
         }
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -300,10 +306,16 @@ struct HomeWidgetMediumCard: View {
                         Text(":").font(montserrat(13, .bold)).foregroundStyle(.white.opacity(0.5))
                         Text("\(snap.homeScore)").font(montserrat(24, .black)).monospacedDigit()
                     }
-                    Text(snap.isFinal ? "경기 종료" : "LIVE \(snap.inning)회\(snap.isTopInning ? "초" : "말")")
-                        .font(notoKR(9, .bold))
-                        .padding(.horizontal, 7).padding(.vertical, 2)
-                        .background(Capsule().fill(snap.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85)))
+                    Group {
+                        if snap.isFinal {
+                            Text("경기 종료").font(notoKR(9, .bold))
+                        } else {
+                            Text("LIVE ").font(montserrat(9, .bold))
+                                + inningRun("\(snap.inning)회\(snap.isTopInning ? "초" : "말")", 9, .bold)
+                        }
+                    }
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Capsule().fill(snap.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85)))
                 }
                 mediumBadge(code: snap.homeTeamCode)
             }
@@ -359,8 +371,10 @@ struct HomeWidgetMediumCard: View {
 
     private func medPlayerLine(label: String, team: String, name: String) -> some View {
         HStack(spacing: 5) {
-            Text("\(label) (\(teamShortName(team)))")
-                .font(notoKR(10, .medium)).foregroundStyle(.white.opacity(0.72))
+            (Text("\(label) (").font(notoKR(10, .medium))
+             + teamShortText(team, 10, .medium)
+             + Text(")").font(notoKR(10, .medium)))
+                .foregroundStyle(.white.opacity(0.72))
             Text(name).font(notoKR(12, .bold))
         }
         .lineLimit(1).minimumScaleFactor(0.8)

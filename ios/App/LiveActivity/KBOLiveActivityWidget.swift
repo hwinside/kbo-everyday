@@ -110,6 +110,28 @@ func notoKR(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
     Font.custom("Noto Sans KR", size: size).weight(weight)
 }
 
+// 혼합 문자열을 글자 종류별 폰트로 — 영숫자(LIVE/점수/LG·SSG 약어)=Montserrat, 한글=Noto.
+// SwiftUI Text 연결로 per-run 폰트를 지정한다.
+
+// 팀 약어가 라틴(LG/KT/SSG/NC/KIA)이면 Montserrat, 한글(롯데/두산/삼성/한화/키움)이면 Noto.
+@available(iOS 16.1, *)
+func teamShortText(_ code: String, _ size: CGFloat, _ weight: Font.Weight) -> Text {
+    let s = teamShortName(code)
+    let isLatin = s.allSatisfy { $0.isASCII }
+    return Text(s).font(isLatin ? montserrat(size, weight) : notoKR(size, weight))
+}
+
+// "2회초" → "2"(Montserrat) + "회초"(Noto). 숫자 접두부와 한글 접미부를 분리.
+@available(iOS 16.1, *)
+func inningRun(_ inning: String, _ size: CGFloat, _ weight: Font.Weight) -> Text {
+    let num = inning.prefix { $0.isNumber }
+    let suffix = inning.dropFirst(num.count)
+    var t = Text("")
+    if !num.isEmpty { t = t + Text(String(num)).font(montserrat(size, weight)) }
+    if !suffix.isEmpty { t = t + Text(String(suffix)).font(notoKR(size, weight)) }
+    return t
+}
+
 @available(iOS 16.1, *)
 extension Color {
     /// 0xRRGGBB 정수 → Color.
@@ -144,13 +166,16 @@ struct KBOLiveActivityWidget: Widget {
                     DITeam(code: context.attributes.homeTeamCode, score: context.state.homeScore)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    // 가운데에 N회초/말 (하린아빠 요청). leading/trailing을 로고+점수로 좁혀
-                    // 가운데 영역을 확보한다.
-                    Text(context.state.isFinal ? "경기 종료" : context.state.inningText)
-                        .font(.system(size: 13, weight: .bold))
-                        .monospacedDigit()
-                        .foregroundStyle(.white)
-                        .lineLimit(1).minimumScaleFactor(0.7)
+                    // 가운데에 N회초/말. 숫자=Montserrat, 회초/말=Noto.
+                    Group {
+                        if context.state.isFinal {
+                            Text("경기 종료").font(notoKR(13, .bold))
+                        } else {
+                            inningRun(context.state.inningText, 13, .bold)
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .lineLimit(1).minimumScaleFactor(0.7)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     if !context.state.isFinal && !context.state.pitcherName.isEmpty {
@@ -160,32 +185,29 @@ struct KBOLiveActivityWidget: Widget {
                     }
                 }
             } compactLeading: {
-                // 로고 + 약어 + 점수 (하린아빠 B안: 팀 약어 복원)
+                // 로고 + 약어(라틴=Montserrat) + 점수(Montserrat) — B안
                 HStack(spacing: 2) {
                     TeamLogo(code: context.attributes.awayTeamCode, size: 18)
-                    Text(teamShortName(context.attributes.awayTeamCode))
-                        .font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                    teamShortText(context.attributes.awayTeamCode, 11, .semibold).lineLimit(1)
                     Text("\(context.state.awayScore)")
-                        .font(.system(size: 14, weight: .bold)).monospacedDigit()
+                        .font(montserrat(14, .bold)).monospacedDigit()
                 }
             } compactTrailing: {
                 // 노치 바로 우측에 N회초/말(센터 인접) + 점수 + 약어 + 로고.
                 HStack(spacing: 2) {
                     if !context.state.isFinal && !context.state.inningText.isEmpty {
-                        Text(context.state.inningText)
-                            .font(.system(size: 10, weight: .semibold))
+                        inningRun(context.state.inningText, 10, .semibold)
                             .foregroundStyle(.white.opacity(0.85))
                             .lineLimit(1)
                     }
                     Text("\(context.state.homeScore)")
-                        .font(.system(size: 14, weight: .bold)).monospacedDigit()
-                    Text(teamShortName(context.attributes.homeTeamCode))
-                        .font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                        .font(montserrat(14, .bold)).monospacedDigit()
+                    teamShortText(context.attributes.homeTeamCode, 11, .semibold).lineLimit(1)
                     TeamLogo(code: context.attributes.homeTeamCode, size: 18)
                 }
             } minimal: {
                 Text("\(context.state.awayScore):\(context.state.homeScore)")
-                    .font(.caption2).bold().monospacedDigit()
+                    .font(montserrat(13, .bold)).monospacedDigit()
             }
         }
     }
@@ -201,7 +223,7 @@ struct DITeam: View {
     var body: some View {
         HStack(spacing: 5) {
             TeamLogo(code: code, size: 30)
-            Text("\(score)").font(.title3).bold().monospacedDigit()
+            Text("\(score)").font(montserrat(20, .bold)).monospacedDigit()
         }
     }
 }
@@ -256,12 +278,18 @@ struct KBOLockScreenCard: View {
                         Text("\(state.homeScore)")
                             .font(montserrat(22, .black)).monospacedDigit()
                     }
-                    Text(state.isFinal ? "경기 종료" : "LIVE \(state.inningText)")
-                        .font(notoKR(9, .bold))
-                        .padding(.horizontal, 6).padding(.vertical, 1.5)
-                        .background(
-                            Capsule().fill(state.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
-                        )
+                    Group {
+                        if state.isFinal {
+                            Text("경기 종료").font(notoKR(9, .bold))
+                        } else {
+                            // LIVE + 숫자 = Montserrat, 회초/말 = Noto
+                            Text("LIVE ").font(montserrat(9, .bold)) + inningRun(state.inningText, 9, .bold)
+                        }
+                    }
+                    .padding(.horizontal, 6).padding(.vertical, 1.5)
+                    .background(
+                        Capsule().fill(state.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
+                    )
                 }
                 TeamBadge(code: attributes.homeTeamCode)
             }
@@ -324,11 +352,12 @@ struct KBOLockScreenCard: View {
             .frame(width: 7, height: 7)
     }
 
-    // 투수/타자 행 — "투수 (LG) 웰스" 형태. 라벨·소속=한글, 이름=한글.
+    // 투수/타자 행 — "투수 (LG) 웰스". 라벨/괄호/이름=Noto, 라틴 약어(LG/SSG)=Montserrat.
     private func playerLine(label: String, team: String, name: String) -> some View {
         HStack(spacing: 5) {
-            Text("\(label) (\(teamShortName(team)))")
-                .font(notoKR(11, .medium))
+            (Text("\(label) (").font(notoKR(11, .medium))
+             + teamShortText(team, 11, .medium)
+             + Text(")").font(notoKR(11, .medium)))
                 .foregroundStyle(.white.opacity(0.72))
             Text(name)
                 .font(notoKR(13, .bold))
