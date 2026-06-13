@@ -148,7 +148,8 @@ public class GameNotificationPlugin extends Plugin {
             call.getString("batter", ""),
             call.getString("batterTeam", ""),
             call.getString("outs", ""),
-            call.getString("diamond", "000"));
+            call.getString("diamond", "000"),
+            call.getString("stadium", ""));
         call.resolve();
     }
 

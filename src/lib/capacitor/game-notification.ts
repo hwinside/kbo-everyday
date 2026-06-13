@@ -19,6 +19,7 @@ interface WidgetData {
   batterTeam: string;
   outs: string;
   diamond: string;
+  stadium?: string; // 경기장(잠실 등) — 위젯에서 점수 위 별도 표시
 }
 
 interface GameNotificationPlugin {

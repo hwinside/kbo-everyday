@@ -89,6 +89,7 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise
         w_bteam: currentBatter ? (isTop ? codes.away : codes.home) : "",
         w_outs: clampOuts(g.OUT_CN),
         w_diamond: diamond(g),
+        w_stadium: g.S_NM ?? "",
       },
     }, "game_start");
 

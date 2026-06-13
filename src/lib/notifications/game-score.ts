@@ -113,6 +113,7 @@ export async function notifyScoreEvents(
             w_as: String(aS),
             w_hs: String(hS),
             w_status: `LIVE ${ev.inning}회${cardHalf}`,
+            w_stadium: g.S_NM ?? "",
           },
         }, "game_start");
       }

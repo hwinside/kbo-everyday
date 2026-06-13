@@ -43,6 +43,7 @@ public class GameScoreWidget extends AppWidgetProvider {
     static final String KEY_BTEAM = "bteam";
     static final String KEY_OUTS = "outs";
     static final String KEY_DIAMOND = "diamond";
+    static final String KEY_STADIUM = "stadium"; // 경기장명(잠실 등) — 점수 위 별도 표시
     // legacy(알림 호환) — 위젯 렌더에는 미사용
     static final String KEY_TITLE = "title";
     static final String KEY_SUB = "sub";
@@ -113,6 +114,7 @@ public class GameScoreWidget extends AppWidgetProvider {
         String bteam = p.getString(KEY_BTEAM, "");
         String outs = p.getString(KEY_OUTS, "");
         String diamond = p.getString(KEY_DIAMOND, "000");
+        String stadium = p.getString(KEY_STADIUM, "");
 
         RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget_game_score);
 
@@ -158,7 +160,7 @@ public class GameScoreWidget extends AppWidgetProvider {
             v.setViewVisibility(R.id.widget_score_scheduled, View.VISIBLE);
             v.setTextViewText(R.id.widget_score_scheduled, "경기 예정");
             v.setTextViewTextSize(R.id.widget_score_scheduled, TypedValue.COMPLEX_UNIT_SP, 22);
-            v.setTextViewText(R.id.widget_status, status.substring("SCHEDULED|".length()));
+            setStatusPill(v, R.id.widget_status_main, R.id.widget_status_suf, status.substring("SCHEDULED|".length()));
         } else {
             v.setViewVisibility(R.id.widget_score, View.VISIBLE);
             v.setViewVisibility(R.id.widget_score_scheduled, View.GONE);
@@ -166,12 +168,21 @@ public class GameScoreWidget extends AppWidgetProvider {
             v.setTextViewTextSize(R.id.widget_score, TypedValue.COMPLEX_UNIT_SP, 30);
         }
 
-        // 상태 pill
+        // 경기장(잠실) — 가운데 점수 위 별도 표시
+        if (stadium.isEmpty()) {
+            v.setViewVisibility(R.id.widget_stadium, View.GONE);
+        } else {
+            v.setViewVisibility(R.id.widget_stadium, View.VISIBLE);
+            v.setTextViewText(R.id.widget_stadium, stadium);
+        }
+
+        // 상태 pill — 라이브는 "● LIVE N회초" 빨강 정적 강조(위젯은 애니 불가). 예정은 시간.
+        // 영문/숫자=Montserrat(main) / 한글=Noto(suf) 분리 렌더.
         if (status.isEmpty() || "SCHEDULED|".equals(status)) {
             v.setViewVisibility(R.id.widget_status, View.GONE);
         } else {
             v.setViewVisibility(R.id.widget_status, View.VISIBLE);
-            if (!isScheduled) v.setTextViewText(R.id.widget_status, status);
+            if (!isScheduled) setStatusPill(v, R.id.widget_status_main, R.id.widget_status_suf, "● " + status);
         }
 
         // 하단: OUT + 투수/타자 소속표기 + 다이아몬드 (라이브 정보 없으면 행 숨김)
@@ -220,6 +231,22 @@ public class GameScoreWidget extends AppWidgetProvider {
         return v;
     }
 
+    /** 상태 pill 텍스트를 영문/숫자(main=Montserrat)와 한글(suf=Noto Sans KR)로 분리해 두 TextView에 세팅. */
+    private static void setStatusPill(RemoteViews v, int mainId, int sufId, String text) {
+        if (text == null) text = "";
+        int idx = -1;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c >= '가' && c <= '힣') { idx = i; break; }
+        }
+        String main = (idx < 0 ? text : text.substring(0, idx)).trim();
+        String suf = (idx < 0 ? "" : text.substring(idx)).trim();
+        v.setTextViewText(mainId, main);
+        v.setTextViewText(sufId, suf);
+        v.setViewVisibility(sufId, suf.isEmpty() ? View.GONE : View.VISIBLE);
+        v.setViewVisibility(mainId, main.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
     /** 알림 접힌 뷰용 컴팩트 카드(점수 한 줄). 경기 없으면 null. */
     static RemoteViews buildCompactCard(Context context) {
         SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
@@ -255,7 +282,7 @@ public class GameScoreWidget extends AppWidgetProvider {
             v.setViewVisibility(R.id.ncc_status, View.GONE);
         } else {
             v.setViewVisibility(R.id.ncc_status, View.VISIBLE);
-            v.setTextViewText(R.id.ncc_status, isScheduled
+            setStatusPill(v, R.id.ncc_status_main, R.id.ncc_status_suf, isScheduled
                 ? status.substring("SCHEDULED|".length())
                 : status);
         }
@@ -274,10 +301,12 @@ public class GameScoreWidget extends AppWidgetProvider {
      *  myTeam==null/빈값 → 기존 최애팀 값 유지(푸시는 디바이스 최애팀을 모름). */
     static void writeAndRefresh(Context ctx, String myTeam, String away, String home,
                                 String as, String hs, String status, String pitcher, String pteam,
-                                String batter, String bteam, String outs, String diamond) {
+                                String batter, String bteam, String outs, String diamond,
+                                String stadium) {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         SharedPreferences.Editor e = p.edit();
         e.putBoolean(KEY_HAS_GAME, true);
+        e.putString(KEY_STADIUM, stadium == null ? "" : stadium);
         if (myTeam != null && !myTeam.isEmpty()) e.putString(KEY_MY_TEAM, myTeam);
         e.putString(KEY_AWAY, away == null ? "" : away);
         e.putString(KEY_HOME, home == null ? "" : home);
