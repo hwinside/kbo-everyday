@@ -289,6 +289,10 @@ struct KBOLockScreenCard: View {
                 .foregroundStyle(.white.opacity(0.92))
             }
 
+            // medium(fillHeight): 헤더는 상단 고정, 점수/하단은 남은 공간 세로 중앙.
+            // Spacer는 fillHeight일 때만 추가 — 잠금화면 LA(콘텐츠 높이)는 영향 없음.
+            if fillHeight { Spacer(minLength: 0) }
+
             // 스코어 행: 원정[로고+풀네임] | 점수:점수 + LIVE이닝 | 홈[로고+풀네임]
             HStack(spacing: 4) {
                 TeamBadge(code: attributes.awayTeamCode)
@@ -350,14 +354,18 @@ struct KBOLockScreenCard: View {
                     Rectangle().fill(.white.opacity(0.12)).frame(height: 1)
                 }
             }
+
+            // medium(fillHeight): 헤더 아래 점수/하단을 남은 공간 세로 중앙에. (LA는 미적용)
+            if fillHeight { Spacer(minLength: 0) }
         }
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
         // medium 위젯: 콘텐츠보다 큰 위젯 높이를 카드가 꽉 채워 배경 seam(윗쪽 어두운 띠) 제거.
-        // 콘텐츠는 상단 정렬. 잠금화면 LA(fillHeight=false)는 콘텐츠 높이 그대로.
-        .frame(maxWidth: .infinity, maxHeight: fillHeight ? .infinity : nil, alignment: .top)
+        // 콘텐츠는 *세로 중앙* 정렬 — 종료(짧은 콘텐츠)면 위/아래 여백이 균형있게 나뉘고,
+        // 라이브(긴 콘텐츠)면 자연히 꽉 찬다. 잠금화면 LA(fillHeight=false)는 콘텐츠 높이 그대로.
+        .frame(maxWidth: .infinity, maxHeight: fillHeight ? .infinity : nil, alignment: .center)
         .background(
             ZStack(alignment: .topTrailing) {
                 cardGradient(attributes.myTeamCode, hasMyTeam: hasMyTeam)
