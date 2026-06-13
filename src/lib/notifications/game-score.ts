@@ -121,3 +121,70 @@ export async function notifyScoreEvents(
 
   return { scored };
 }
+
+/**
+ * 이닝 득점 요약 알림 (push-notifications-v1 S5a-2, pref: my_team_score_inning_summary).
+ * 이닝(half) 종료 시 그 이닝에 공격팀이 낸 득점을 묶어 1회 발송. "내 팀 득점"(득점마다)과
+ * 별개 토글(기본 off) — on 유저만 받음. 득점 수는 이벤트 snapshot 누적점수의 단조증가를
+ * 이용해 정확히 계산(홈런 포함): runs = maxScore(이닝≤I) − maxScore(이닝<I).
+ * dedup = (game, inning, half) 단위. fcm은 pref 키로 토글 자동 게이팅.
+ */
+export async function notifyInningScoreSummary(
+  games: KboRawGame[],
+  eventsByGame: Map<string, GameEvent[]>,
+): Promise<{ summarized: number }> {
+  let summarized = 0;
+  const gameById = new Map(games.map((g) => [g.G_ID, g]));
+
+  for (const [gameId, events] of eventsByGame) {
+    const g = gameById.get(gameId);
+    if (!g || g.CANCEL_SC_ID !== "0") continue;
+    const away = g.AWAY_NM ?? "";
+    const home = g.HOME_NM ?? "";
+    const url = `/games/${gameId}`;
+
+    // 이닝≤maxInn 까지 한 팀의 누적 득점 최대값 (snapshot 단조증가 → 홈런 포함 정확).
+    const sideScoreUpTo = (side: "away" | "home", maxInn: number): number => {
+      let m = 0;
+      for (const e of events) {
+        if (e.inning > maxInn) continue;
+        const s = side === "away" ? e.snapshot.awayScore : e.snapshot.homeScore;
+        if (s > m) m = s;
+      }
+      return m;
+    };
+
+    for (const ev of events) {
+      if (ev.type !== "inning_end") continue;
+      const inning = ev.inning;
+      if (!inning) continue;
+      const isTop = ev.isTop; // top 종료 → 원정 공격, bottom 종료 → 홈 공격
+      const side: "away" | "home" = isTop ? "away" : "home";
+      const teamName = isTop ? away : home;
+
+      const runs = sideScoreUpTo(side, inning) - sideScoreUpTo(side, inning - 1);
+      if (runs <= 0) continue; // 그 이닝 무득점 → 요약 없음
+
+      const teamId = teamIdByShortName(teamName);
+      if (teamId === null) continue;
+
+      // dedup: 이닝×half 단위 1회. 발송 전 선점(과거 알림 방지, S5a와 동일 원칙).
+      const dedupId = `${gameId}-inning_summary-${inning}-${isTop ? "T" : "B"}`;
+      if (!(await claimEvent(dedupId, gameId))) continue;
+
+      const fans = await fansOfTeams([teamId]);
+      if (!fans.ok) { await unclaimEvent(dedupId); continue; }
+      if (fans.ids.length === 0) continue; // 팬 없음 — claim 유지
+
+      const res = await sendFcmToUsers(fans.ids, {
+        title: `⚾ ${teamName} ${inning}회${isTop ? "초" : "말"} ${runs}득점`,
+        body: `${away} vs ${home}`,
+        url,
+      }, "my_team_score_inning_summary");
+      if (!res.ok) { await unclaimEvent(dedupId); continue; }
+      summarized += res.sent;
+    }
+  }
+
+  return { summarized };
+}

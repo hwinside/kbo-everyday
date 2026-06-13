@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent } from "@/types/game-events";
 import { notifyGameStatusTransitions } from "@/lib/notifications/game-status";
-import { notifyScoreEvents } from "@/lib/notifications/game-score";
-import { notifyPlayerHighlights } from "@/lib/notifications/player-highlight";
+import { notifyScoreEvents, notifyInningScoreSummary } from "@/lib/notifications/game-score";
+import { notifyPlayerHighlights, notifyPitcherStrikeouts } from "@/lib/notifications/player-highlight";
 import { pushLiveActivityUpdates } from "@/lib/notifications/live-activity";
 import { pushAndroidWidgetLiveUpdates } from "@/lib/notifications/android-widget-live";
 
@@ -125,6 +125,24 @@ export async function GET(req: NextRequest) {
     console.error("[warmup] highlight notify failed:", (e as Error).message);
   }
 
+  // 이닝 득점 요약 푸시 (S5a-2) — 이닝 종료 시 공격팀 득점 묶음.
+  let inningSummary: { summarized: number } | { error: string } = { summarized: 0 };
+  try {
+    inningSummary = await notifyInningScoreSummary(games, eventsByGame);
+  } catch (e) {
+    inningSummary = { error: (e as Error).message };
+    console.error("[warmup] inning summary notify failed:", (e as Error).message);
+  }
+
+  // 최애선수 삼진(투수) 푸시 (S6) — at_bat_strikeout 투수 매칭.
+  let strikeoutNotify: { struckOut: number } | { error: string } = { struckOut: 0 };
+  try {
+    strikeoutNotify = await notifyPitcherStrikeouts(games, eventsByGame);
+  } catch (e) {
+    strikeoutNotify = { error: (e as Error).message };
+    console.error("[warmup] strikeout notify failed:", (e as Error).message);
+  }
+
   // 잠금화면 Live Activity 백그라운드 갱신 (W3a) — 같은 게임 목록 재사용.
   // APNs 직접 푸시. 미설정(APNS env 없음) 시 no-op. 실패해도 warmup 본연에 영향 없음.
   let liveActivity:
@@ -145,6 +163,8 @@ export async function GET(req: NextRequest) {
     scoreNotify,
     androidWidget,
     highlightNotify,
+    inningSummary,
+    strikeoutNotify,
     liveActivity,
     results: results.map(r =>
       r.status === "fulfilled"

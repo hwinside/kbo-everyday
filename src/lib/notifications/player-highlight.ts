@@ -76,3 +76,54 @@ export async function notifyPlayerHighlights(
 
   return { highlighted };
 }
+
+// 최애선수 삼진(투수) 알림 (push-notifications-v1 S6, pref: fav_player_strikeout).
+// at_bat_strikeout 이벤트의 *투수*를 최애선수로 둔 유저에게 발송. 활약(타자)과 같은
+// cron·dedup 패턴이지만 대상=투수, 소속=수비팀(공격이 원정[isTop]이면 홈이 수비).
+export async function notifyPitcherStrikeouts(
+  games: KboRawGame[],
+  eventsByGame: Map<string, GameEvent[]>,
+): Promise<{ struckOut: number }> {
+  let struckOut = 0;
+  const gameById = new Map(games.map((g) => [g.G_ID, g]));
+
+  for (const [gameId, events] of eventsByGame) {
+    const g = gameById.get(gameId);
+    if (!g || g.CANCEL_SC_ID !== "0") continue;
+    const away = g.AWAY_NM ?? "";
+    const home = g.HOME_NM ?? "";
+    const url = `/games/${gameId}`;
+
+    for (const ev of events) {
+      if (ev.type !== "at_bat_strikeout") continue;
+      const pitcher = ev.detail?.pitcher;
+      if (!pitcher) continue;
+
+      const teamId = teamIdByShortName(ev.isTop ? home : away);
+      if (teamId === null) continue;
+      const resolved = resolvePlayer({ name: pitcher, teamId }, undefined, { context: "push:fav-strikeout" });
+      if (!resolved) continue;
+
+      const dedupId = `${ev.id}#fav_so`;
+      if (!(await claimEvent(dedupId, gameId))) continue; // 이미 발송/보류
+
+      const { data: fansData, error } = await supabase
+        .from("profiles")
+        .select("id")
+        .contains("favorite_players", JSON.stringify([{ playerId: resolved.kboId }]));
+      if (error) { await unclaimEvent(dedupId); continue; }
+      const userIds = (fansData ?? []).map((r: { id: string }) => r.id);
+      if (userIds.length === 0) continue; // 최애로 둔 유저 없음 — claim 유지
+
+      const res = await sendFcmToUsers(userIds, {
+        title: `⚾ ${resolved.name} 삼진!`,
+        body: `${away} vs ${home}`,
+        url,
+      }, "fav_player_strikeout");
+      if (!res.ok) { await unclaimEvent(dedupId); continue; }
+      struckOut += res.sent;
+    }
+  }
+
+  return { struckOut };
+}
