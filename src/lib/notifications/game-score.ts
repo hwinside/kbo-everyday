@@ -112,7 +112,7 @@ export async function notifyScoreEvents(
             ...(codes ? { w_away: codes[1], w_home: codes[2] } : {}),
             w_as: String(aS),
             w_hs: String(hS),
-            w_status: `LIVE ${ev.inning}회${cardHalf}`,
+            w_status: `LIVE ${ev.inning}회${cardHalf}${g.S_NM ? ` · ${g.S_NM}` : ""}`,
           },
         }, "game_start");
       }

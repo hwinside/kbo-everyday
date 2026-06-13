@@ -64,6 +64,8 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise
     const awayScore = safeInt(g.T_SCORE_CN);
     const homeScore = safeInt(g.B_SCORE_CN);
     const status = inningLabel(g);
+    // 경기장(예: 잠실) 표기 — 홈 effect와 동일 포맷으로 맞춰 위젯 status flicker 방지
+    const venue = g.S_NM ? ` · ${g.S_NM}` : "";
     const isTop = g.GAME_TB_SC === "T";
     const { currentBatter, currentPitcher } = resolveCurrentPlayers({
       tPlayerName: g.T_P_NM,
@@ -82,7 +84,7 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise
         w_home: codes.home,
         w_as: String(awayScore),
         w_hs: String(homeScore),
-        w_status: status,
+        w_status: `${status}${venue}`,
         w_pitcher: currentPitcher ?? "",
         w_pteam: currentPitcher ? (isTop ? codes.home : codes.away) : "",
         w_batter: currentBatter ?? "",

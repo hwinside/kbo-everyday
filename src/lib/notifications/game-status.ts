@@ -169,7 +169,7 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
             ...(codes ? { w_away: codes[1], w_home: codes[2] } : {}),
             w_as: String(aScore),
             w_hs: String(hScore),
-            w_status: "LIVE",
+            w_status: `LIVE${g.S_NM ? ` · ${g.S_NM}` : ""}`,
           },
         }, "game_start");
       }
