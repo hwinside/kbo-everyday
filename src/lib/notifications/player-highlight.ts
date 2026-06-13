@@ -23,6 +23,14 @@ const HIGHLIGHT_LABEL: Partial<Record<GameEventType, string>> = {
   at_bat_double: "2루타",
 };
 
+// 삼진 알림 freshness 컷오프 (삼순 #274 NO-GO): fav_player_strikeout은 신규 dedup
+// namespace(#fav-so) + 기본값 on이라, 배포/활성화 직후 warmup이 넘기는 *전체 경기
+// history*의 과거 at_bat_strikeout이 한꺼번에 claim·발송되는 backlog 플러시 위험이
+// 있다. #271(inning-summary)과 동일 패턴으로, 삼진 신규 경로에만 ev.timestamp가
+// FRESH_MS보다 오래된 과거 삼진을 skip한다(매분 cron이 갓 잡힌 삼진을 1~2분 내 처리).
+// 활약(#fav, 기존 prod 경로)은 동작 유지 위해 컷오프 미적용.
+const STRIKEOUT_FRESH_MS = 10 * 60 * 1000;
+
 export async function notifyPlayerHighlights(
   games: KboRawGame[],
   eventsByGame: Map<string, GameEvent[]>,
@@ -42,6 +50,12 @@ export async function notifyPlayerHighlights(
       // 삼진 → 삼진 알림(투수 최애 팬, fav_player_strikeout). 그 외 이벤트는 skip.
       const isStrikeout = ev.type === "at_bat_strikeout";
       if (!HIGHLIGHT_TYPES.has(ev.type) && !isStrikeout) continue;
+
+      // 삼진만: 배포 전/이전 이닝의 과거 삼진은 skip → backlog 일괄 발송 방지(삼순 #274).
+      if (isStrikeout) {
+        const evMs = Date.parse(ev.timestamp);
+        if (Number.isFinite(evMs) && Date.now() - evMs > STRIKEOUT_FRESH_MS) continue;
+      }
 
       // 대상 선수: 활약=타자(공격팀, isTop이면 원정) / 삼진=투수(수비팀, isTop이면 홈).
       // 동명이인 27그룹 → teamId로 구분(SSOT resolve-player). at_bat_strikeout의
