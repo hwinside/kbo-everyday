@@ -194,11 +194,8 @@ struct KBOHomeWidgetEntryView: View {
     private func smallBackground(_ s: WidgetGameSnapshot) -> some View {
         let hasMyTeam = !s.myTeamCode.isEmpty &&
             (s.myTeamCode == s.awayTeamCode || s.myTeamCode == s.homeTeamCode)
-        let accent = hasMyTeam ? teamColor(s.myTeamCode) : Color(hex: 0x1A1A1A)
-        return LinearGradient(
-            colors: [accent.opacity(0.95), accent.opacity(0.6)],
-            startPoint: .topLeading, endPoint: .bottomTrailing
-        )
+        // 잠금화면 카드와 동일한 "어두운 그라데이션" (승인 목업 기준). 하단이 어두워 아웃/주자 점이 또렷.
+        return cardGradient(s.myTeamCode, hasMyTeam: hasMyTeam)
     }
 }
 
