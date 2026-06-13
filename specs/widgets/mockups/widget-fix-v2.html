@@ -45,16 +45,17 @@
   .base.on { background:#FF4D4D; border-color:#FF4D4D; }
   .b2 { left:31px; top:0; } .b1 { right:0; top:25px; } .b3 { left:0; top:25px; }
 
-  /* ===== 다이나믹 아일랜드 (확장) — 가운데 N회초/말 ===== */
-  .di { width:430px; background:#000; border-radius:42px; padding:16px 26px; display:flex; flex-direction:column; gap:9px;
-        border:1px solid rgba(255,255,255,0.08); }
-  .di-top { display:flex; align-items:center; justify-content:space-between; }
-  .di-team { display:flex; align-items:center; gap:8px; }
-  .di-team .lg { width:40px; height:40px; border-radius:50%; background:#fff; display:flex; align-items:center; justify-content:center; }
-  .di-team .lg img { width:29px; height:29px; object-fit:contain; }
-  .di-team .sc { font-size:30px; font-weight:800; color:#fff; font-variant-numeric:tabular-nums; }
-  .di-inning { font-size:20px; font-weight:700; color:#fff; font-family:'Noto Sans KR',sans-serif; letter-spacing:-0.03em; }
-  .di-bottom { text-align:center; font-size:16px; color:rgba(255,255,255,0.62); font-family:'Noto Sans KR',sans-serif; letter-spacing:-0.04em; }
+  /* ===== 컴팩트 다이나믹 아일랜드 (상단 알약, IMG_7054) — 노치 우측에 N회초/말 ===== */
+  .statusbar { width:560px; display:flex; align-items:center; justify-content:space-between; }
+  .sb-time { font-size:26px; font-weight:600; color:#fff; }
+  .sb-batt { font-size:18px; color:#30D158; font-weight:700; }
+  .pill { background:#000; border-radius:999px; height:56px; display:flex; align-items:center; gap:10px; padding:0 14px; }
+  .pill .side { display:flex; align-items:center; gap:6px; }
+  .pill .lg { width:34px; height:34px; border-radius:50%; background:#fff; display:flex; align-items:center; justify-content:center; }
+  .pill .lg img { width:25px; height:25px; object-fit:contain; }
+  .pill .sc { font-size:24px; font-weight:800; color:#fff; font-variant-numeric:tabular-nums; }
+  .pill .notch { width:78px; height:30px; background:#000; border-radius:999px; }
+  .pill .inn { font-size:16px; font-weight:600; color:rgba(255,255,255,0.85); font-family:'Noto Sans KR',sans-serif; letter-spacing:-0.03em; }
 </style>
 </head>
 <body>
@@ -88,14 +89,15 @@
     </div>
   </div>
 
-  <div class="cap">② 다이나믹 아일랜드 (확장) — 가운데 N회초/말 추가</div>
-  <div class="di">
-    <div class="di-top">
-      <div class="di-team"><div class="lg"><img src="./logos/ssg.svg"></div><span class="sc">2</span></div>
-      <span class="di-inning">2회초</span>
-      <div class="di-team"><span class="sc">1</span><div class="lg"><img src="./logos/lg.svg"></div></div>
+  <div class="cap">② 컴팩트 다이나믹 아일랜드 — 노치(카메라) 우측에 N회초/말 (정중앙은 카메라라 불가)</div>
+  <div class="statusbar">
+    <span class="sb-time">19:39</span>
+    <div class="pill">
+      <div class="side"><div class="lg"><img src="./logos/ssg.svg"></div><span class="sc">2</span></div>
+      <div class="notch"></div>
+      <div class="side"><span class="inn">2회초</span><span class="sc">1</span><div class="lg"><img src="./logos/lg.svg"></div></div>
     </div>
-    <div class="di-bottom">웰스 → 조형우</div>
+    <span class="sb-batt">99%</span>
   </div>
 </body>
 </html>

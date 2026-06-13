@@ -160,20 +160,25 @@ struct KBOLiveActivityWidget: Widget {
                     }
                 }
             } compactLeading: {
-                HStack(spacing: 2) {
-                    TeamLogo(code: context.attributes.awayTeamCode, size: 21)
-                    Text(teamShortName(context.attributes.awayTeamCode))
-                        .font(.system(size: 11, weight: .semibold))
+                // 로고 + 점수 (약어는 로고로 갈음 → 가운데 이닝 공간 확보)
+                HStack(spacing: 3) {
+                    TeamLogo(code: context.attributes.awayTeamCode, size: 20)
                     Text("\(context.state.awayScore)")
-                        .font(.system(size: 13, weight: .bold)).monospacedDigit()
+                        .font(.system(size: 15, weight: .bold)).monospacedDigit()
                 }
             } compactTrailing: {
-                HStack(spacing: 2) {
+                // 노치(카메라) 바로 우측 = 화면 가운데에 가장 가까운 위치에 N회초/말.
+                // 정중앙은 카메라 하드웨어라 텍스트 불가 → 센터 인접에 배치.
+                HStack(spacing: 3) {
+                    if !context.state.isFinal && !context.state.inningText.isEmpty {
+                        Text(context.state.inningText)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .lineLimit(1)
+                    }
                     Text("\(context.state.homeScore)")
-                        .font(.system(size: 13, weight: .bold)).monospacedDigit()
-                    Text(teamShortName(context.attributes.homeTeamCode))
-                        .font(.system(size: 11, weight: .semibold))
-                    TeamLogo(code: context.attributes.homeTeamCode, size: 21)
+                        .font(.system(size: 15, weight: .bold)).monospacedDigit()
+                    TeamLogo(code: context.attributes.homeTeamCode, size: 20)
                 }
             } minimal: {
                 Text("\(context.state.awayScore):\(context.state.homeScore)")
