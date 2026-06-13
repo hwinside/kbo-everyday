@@ -16,6 +16,10 @@ import type { GameEvent } from "@/types/game-events";
 // (이닝 묶음 요약 = my_team_score_inning_summary는 후속 슬라이스)
 const SCORE_EVENT_TYPES = new Set<string>(["run_scored", "at_bat_homerun"]);
 
+// game-events가 누적 event_history 전체를 반환하므로, 알림은 최근 이벤트만 대상으로
+// (배포 직후 과거 이벤트 몰림 방지, 삼순 #273). cron 매분 실행이라 신규 이벤트는 <1분.
+const RECENT_EVENT_MS = 5 * 60 * 1000;
+
 /**
  * event_id 선점 — 멱등 INSERT에 성공한(첫 발송) 호출만 true.
  * UNIQUE 충돌(23505) = 이미 다른 인스턴스가 발송 → false. 기타 에러도 보류(다음 cron).
@@ -156,6 +160,8 @@ export async function notifyInningScoreSummary(
 
     for (const ev of events) {
       if (ev.type !== "inning_end") continue;
+      // game-events는 누적 history 전체를 반환 → 과거 이벤트 발송 차단 (최근 5분만, 삼순 #273).
+      if (Date.now() - new Date(ev.timestamp).getTime() > RECENT_EVENT_MS) continue;
       const inning = ev.inning;
       if (!inning) continue;
       const isTop = ev.isTop; // top 종료 → 원정 공격, bottom 종료 → 홈 공격

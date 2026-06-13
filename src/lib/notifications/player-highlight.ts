@@ -23,6 +23,9 @@ const HIGHLIGHT_LABEL: Partial<Record<GameEventType, string>> = {
   at_bat_double: "2루타",
 };
 
+// 누적 event_history 전체 반환 → 알림은 최근 이벤트만 (과거 몰림 방지, 삼순 #273).
+const RECENT_EVENT_MS = 5 * 60 * 1000;
+
 export async function notifyPlayerHighlights(
   games: KboRawGame[],
   eventsByGame: Map<string, GameEvent[]>,
@@ -96,6 +99,8 @@ export async function notifyPitcherStrikeouts(
 
     for (const ev of events) {
       if (ev.type !== "at_bat_strikeout") continue;
+      // game-events는 누적 history 전체 반환 → 과거 삼진 몰림 차단 (최근 5분, 기본 on이라 필수, 삼순 #273).
+      if (Date.now() - new Date(ev.timestamp).getTime() > RECENT_EVENT_MS) continue;
       const pitcher = ev.detail?.pitcher;
       if (!pitcher) continue;
 
