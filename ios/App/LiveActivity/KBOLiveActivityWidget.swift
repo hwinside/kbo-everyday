@@ -278,14 +278,16 @@ struct KBOLockScreenCard: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            // 헤더: MY TEAM
+            // 헤더: MY TEAM — 살짝 키우고(로고 14→18, 텍스트 10→13) medium에선 위 여백을 줘
+            // 너무 상단에 쏠리지 않게 한다(하린아빠 요청). 잠금화면 LA는 위 여백 0(기존 유지).
             if hasMyTeam {
-                HStack(spacing: 5) {
-                    TeamLogo(code: attributes.myTeamCode, size: 14)
+                HStack(spacing: 6) {
+                    TeamLogo(code: attributes.myTeamCode, size: 18)
                     Text("MY TEAM")
-                        .font(montserrat(10, .heavy)).tracking(1.0)
+                        .font(montserrat(13, .heavy)).tracking(1.0)
                     Spacer()
                 }
+                .padding(.top, fillHeight ? 5 : 0)
                 .foregroundStyle(.white.opacity(0.92))
             }
 
