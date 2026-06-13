@@ -38,20 +38,29 @@ export async function notifyPlayerHighlights(
     const url = `/games/${gameId}`;
 
     for (const ev of events) {
-      if (!HIGHLIGHT_TYPES.has(ev.type)) continue;
-      const batter = ev.detail?.batter;
-      if (!batter) continue;
+      // 타자 장타/홈런 → 활약 알림(타자 최애 팬, fav_player_highlight) /
+      // 삼진 → 삼진 알림(투수 최애 팬, fav_player_strikeout). 그 외 이벤트는 skip.
+      const isStrikeout = ev.type === "at_bat_strikeout";
+      if (!HIGHLIGHT_TYPES.has(ev.type) && !isStrikeout) continue;
 
-      // 타자 소속팀 = 공격팀(isTop이면 원정). 동명이인은 teamId로 구분.
-      const teamId = teamIdByShortName(ev.isTop ? away : home);
+      // 대상 선수: 활약=타자(공격팀, isTop이면 원정) / 삼진=투수(수비팀, isTop이면 홈).
+      // 동명이인 27그룹 → teamId로 구분(SSOT resolve-player). at_bat_strikeout의
+      // detail.pitcher = 삼진 잡은 투수.
+      const playerName = isStrikeout ? ev.detail?.pitcher : ev.detail?.batter;
+      if (!playerName) continue;
+      const teamId = teamIdByShortName(isStrikeout ? (ev.isTop ? home : away) : (ev.isTop ? away : home));
       if (teamId === null) continue;
-      const resolved = resolvePlayer({ name: batter, teamId }, undefined, { context: "push:fav-highlight" });
+      const resolved = resolvePlayer(
+        { name: playerName, teamId },
+        undefined,
+        { context: isStrikeout ? "push:fav-strikeout" : "push:fav-highlight" },
+      );
       if (!resolved) continue;
 
       // dedup 키 선점을 팬 조회 *전*에 먼저 — 이벤트 발생 당시 기준으로 마킹해야
-      // 경기 중 누가 그 선수를 최애로 추가해도 과거 장타/홈런 알림이 뒤늦게 안 감
-      // (삼순 #214-③). S4/S5a의 "대상 0명도 마킹 유지" 원칙과 일치.
-      const dedupId = `${ev.id}#fav`;
+      // 경기 중 누가 그 선수를 최애로 추가해도 과거 알림이 뒤늦게 안 감(삼순 #214-③).
+      // 활약/삼진은 별개 타입이라 suffix로 키 분리.
+      const dedupId = isStrikeout ? `${ev.id}#fav-so` : `${ev.id}#fav`;
       if (!(await claimEvent(dedupId, gameId))) continue; // 이미 발송됨/보류
 
       // 이 선수를 최애선수로 둔 유저 (favorite_players: [{playerId: kboId}])
@@ -63,12 +72,14 @@ export async function notifyPlayerHighlights(
       const userIds = (fansData ?? []).map((r: { id: string }) => r.id);
       if (userIds.length === 0) continue; // 최애로 둔 유저 없음 — claim 유지(과거 알림 방지)
 
-      const label = HIGHLIGHT_LABEL[ev.type] ?? "활약";
+      const title = isStrikeout
+        ? `⚾ ${resolved.name} 삼진!`
+        : `⚾ ${resolved.name} ${HIGHLIGHT_LABEL[ev.type] ?? "활약"}!`;
       const res = await sendFcmToUsers(userIds, {
-        title: `⚾ ${resolved.name} ${label}!`,
+        title,
         body: `${away} vs ${home}`,
         url,
-      }, "fav_player_highlight");
+      }, isStrikeout ? "fav_player_strikeout" : "fav_player_highlight");
       if (!res.ok) { await unclaimEvent(dedupId); continue; } // 인프라 실패 → 재시도
       highlighted += res.sent;
     }
