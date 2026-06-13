@@ -160,7 +160,7 @@ public class GameScoreWidget extends AppWidgetProvider {
             v.setViewVisibility(R.id.widget_score_scheduled, View.VISIBLE);
             v.setTextViewText(R.id.widget_score_scheduled, "경기 예정");
             v.setTextViewTextSize(R.id.widget_score_scheduled, TypedValue.COMPLEX_UNIT_SP, 22);
-            v.setTextViewText(R.id.widget_status, status.substring("SCHEDULED|".length()));
+            setStatusPill(v, R.id.widget_status_main, R.id.widget_status_suf, status.substring("SCHEDULED|".length()));
         } else {
             v.setViewVisibility(R.id.widget_score, View.VISIBLE);
             v.setViewVisibility(R.id.widget_score_scheduled, View.GONE);
@@ -177,11 +177,12 @@ public class GameScoreWidget extends AppWidgetProvider {
         }
 
         // 상태 pill — 라이브는 "● LIVE N회초" 빨강 정적 강조(위젯은 애니 불가). 예정은 시간.
+        // 영문/숫자=Montserrat(main) / 한글=Noto(suf) 분리 렌더.
         if (status.isEmpty() || "SCHEDULED|".equals(status)) {
             v.setViewVisibility(R.id.widget_status, View.GONE);
         } else {
             v.setViewVisibility(R.id.widget_status, View.VISIBLE);
-            if (!isScheduled) v.setTextViewText(R.id.widget_status, "● " + status);
+            if (!isScheduled) setStatusPill(v, R.id.widget_status_main, R.id.widget_status_suf, "● " + status);
         }
 
         // 하단: OUT + 투수/타자 소속표기 + 다이아몬드 (라이브 정보 없으면 행 숨김)
@@ -230,6 +231,22 @@ public class GameScoreWidget extends AppWidgetProvider {
         return v;
     }
 
+    /** 상태 pill 텍스트를 영문/숫자(main=Montserrat)와 한글(suf=Noto Sans KR)로 분리해 두 TextView에 세팅. */
+    private static void setStatusPill(RemoteViews v, int mainId, int sufId, String text) {
+        if (text == null) text = "";
+        int idx = -1;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c >= '가' && c <= '힣') { idx = i; break; }
+        }
+        String main = (idx < 0 ? text : text.substring(0, idx)).trim();
+        String suf = (idx < 0 ? "" : text.substring(idx)).trim();
+        v.setTextViewText(mainId, main);
+        v.setTextViewText(sufId, suf);
+        v.setViewVisibility(sufId, suf.isEmpty() ? View.GONE : View.VISIBLE);
+        v.setViewVisibility(mainId, main.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
     /** 알림 접힌 뷰용 컴팩트 카드(점수 한 줄). 경기 없으면 null. */
     static RemoteViews buildCompactCard(Context context) {
         SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
@@ -265,7 +282,7 @@ public class GameScoreWidget extends AppWidgetProvider {
             v.setViewVisibility(R.id.ncc_status, View.GONE);
         } else {
             v.setViewVisibility(R.id.ncc_status, View.VISIBLE);
-            v.setTextViewText(R.id.ncc_status, isScheduled
+            setStatusPill(v, R.id.ncc_status_main, R.id.ncc_status_suf, isScheduled
                 ? status.substring("SCHEDULED|".length())
                 : status);
         }

@@ -142,7 +142,8 @@
                     android:textSize="22sp"
                     android:visibility="gone"
                     android:text="경기 예정" />
-                <TextView
+<!-- 상태 pill — 영문/숫자(LIVE N)=Montserrat, 한글(회초/말)=Noto Sans KR 분리 -->
+                <LinearLayout
                     android:id="@+id/widget_status"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -152,12 +153,29 @@
                     android:paddingTop="2dp"
                     android:paddingBottom="2dp"
                     android:background="@drawable/widget_status_pill"
-                    android:fontFamily="@font/notosanskr"
-                    android:letterSpacing="-0.04"
-                    android:textColor="#FF6B7A"
-                    android:textStyle="bold"
-                    android:textSize="12sp"
-                    android:text="LIVE 2회초" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+                    <TextView
+                        android:id="@+id/widget_status_main"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/montserrat"
+                        android:letterSpacing="-0.02"
+                        android:textColor="#FF6B7A"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:text="● LIVE 2" />
+                    <TextView
+                        android:id="@+id/widget_status_suf"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/notosanskr"
+                        android:letterSpacing="-0.04"
+                        android:textColor="#FF6B7A"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:text="회초" />
+                </LinearLayout>
             </LinearLayout>
 
             <!-- home 컬럼 -->

@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<font-family xmlns:app="http://schemas.android.com/apk/res-auto">
-    <font app:fontStyle="normal" app:fontWeight="600"
+<font-family xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <font
+        android:fontStyle="normal" android:fontWeight="600"
+        android:font="@font/notosanskr_vf" android:fontVariationSettings="'wght' 600"
+        app:fontStyle="normal" app:fontWeight="600"
         app:font="@font/notosanskr_vf" app:fontVariationSettings="'wght' 600" />
 </font-family>
