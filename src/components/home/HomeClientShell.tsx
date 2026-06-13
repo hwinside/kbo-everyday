@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { LazyMotion, domAnimation, m, AnimatePresence } from "framer-motion";
 import { ChevronRight, MessageCircle } from "lucide-react";
@@ -16,6 +16,7 @@ import { useLiveGame, type LiveGameData } from "@/lib/hooks/useLiveGame";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
 import { useHomeInit, type HomeGame } from "@/hooks/useHomeInit";
+import { setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
 import MyTeamHero from "@/components/home/MyTeamHero";
 import FavoritePlayersSection from "@/components/home/FavoritePlayersSection";
@@ -51,6 +52,87 @@ function isGameTimeKST(): boolean {
   return kstHour >= 11;
 }
 
+const ID_TO_KBO_CODE: Record<number, string> = {
+  1: "LG",
+  2: "OB",
+  3: "KT",
+  4: "SK",
+  5: "NC",
+  6: "HT",
+  7: "LT",
+  8: "SS",
+  9: "HH",
+  10: "WO",
+};
+
+interface ApiGameData {
+  gameId: string;
+  awayTeamId: number;
+  homeTeamId: number;
+  time: string;
+  stadium: string;
+  awayScore?: number | null;
+  homeScore?: number | null;
+  status: HomeGame["status"];
+  inning?: number | string | null;
+  isTop?: boolean;
+}
+
+type MyTeamHeroGame = HomeGame & {
+  balls: number;
+  strikes: number;
+  outs: number;
+  runner1b: boolean;
+  runner2b: boolean;
+  runner3b: boolean;
+  currentBatter: string | null;
+  currentPitcher: string | null;
+  isTop: boolean;
+};
+
+type WidgetGame = HomeGame & {
+  balls?: number;
+  strikes?: number;
+  outs?: number;
+  runner1b?: boolean;
+  runner2b?: boolean;
+  runner3b?: boolean;
+  currentBatter?: string | null;
+  currentPitcher?: string | null;
+  isTop?: boolean;
+};
+
+function formatKSTDateOffset(offsetDays: number): string {
+  const base = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  base.setUTCDate(base.getUTCDate() + offsetDays);
+  return base.toISOString().slice(0, 10);
+}
+
+function formatApiDate(date: string): string {
+  return date.replace(/-/g, "");
+}
+
+function mapApiGame(g: ApiGameData): HomeGame {
+  return {
+    id: g.gameId,
+    homeTeamId: g.homeTeamId,
+    awayTeamId: g.awayTeamId,
+    time: g.time,
+    stadium: g.stadium,
+    homeScore: g.homeScore ?? 0,
+    awayScore: g.awayScore ?? 0,
+    status: g.status,
+    inning: g.status === "live" && g.inning ? `${g.inning}회${g.isTop ? "초" : "말"}` : null,
+  };
+}
+
+function findWidgetGame(games: HomeGame[], myTeamId: number): HomeGame | undefined {
+  return games.find((g) =>
+    (g.homeTeamId === myTeamId || g.awayTeamId === myTeamId) &&
+    (g.status === "live" || g.status === "scheduled")
+  );
+}
+
 interface HomeClientShellProps {
   initialGames: HomeGame[];
   initialLiveGames: LiveGameData[];
@@ -61,6 +143,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   const router = useRouter();
   const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number; gameId: string} | null>(null);
   const [showLogin, setShowLogin] = useState(false);
+  const [nextWidgetGame, setNextWidgetGame] = useState<HomeGame | null>(null);
   const lastRefreshAtRef = useRef(0);
 
   const {
@@ -137,24 +220,111 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   const allLiveData = polledLiveGames.length > 0 ? polledLiveGames :
     (initialLiveGames as LiveGameData[]);
   const myTeamLive = myTeamGameBase ? allLiveData.find(g => g.gameId === myTeamGameBase.id) : undefined;
-  const myTeamGame = myTeamGameBase ? {
-    ...myTeamGameBase,
-    balls: myTeamLive?.balls ?? 0,
-    strikes: myTeamLive?.strikes ?? 0,
-    outs: myTeamLive?.outs ?? 0,
-    runner1b: myTeamLive?.runner1b ?? false,
-    runner2b: myTeamLive?.runner2b ?? false,
-    runner3b: myTeamLive?.runner3b ?? false,
-    currentBatter: myTeamLive?.currentBatter ?? null,
-    currentPitcher: myTeamLive?.currentPitcher ?? null,
-    isTop: myTeamLive?.isTop ?? true,
-    ...(myTeamLive ? {
-      homeScore: myTeamLive.homeScore,
-      awayScore: myTeamLive.awayScore,
-      status: myTeamLive.status ?? (myTeamLive.isLive ? "live" as const : myTeamGameBase.status),
-      inning: (myTeamLive.status ?? (myTeamLive.isLive ? "live" : myTeamGameBase.status)) === "live" ? (myTeamLive.currentInning || null) : null,
-    } : {}),
-  } : undefined;
+  const myTeamGame = useMemo<MyTeamHeroGame | undefined>(() => {
+    if (!myTeamGameBase) return undefined;
+    return {
+      ...myTeamGameBase,
+      balls: myTeamLive?.balls ?? 0,
+      strikes: myTeamLive?.strikes ?? 0,
+      outs: myTeamLive?.outs ?? 0,
+      runner1b: myTeamLive?.runner1b ?? false,
+      runner2b: myTeamLive?.runner2b ?? false,
+      runner3b: myTeamLive?.runner3b ?? false,
+      currentBatter: myTeamLive?.currentBatter ?? null,
+      currentPitcher: myTeamLive?.currentPitcher ?? null,
+      isTop: myTeamLive?.isTop ?? true,
+      ...(myTeamLive ? {
+        homeScore: myTeamLive.homeScore,
+        awayScore: myTeamLive.awayScore,
+        status: myTeamLive.status ?? (myTeamLive.isLive ? "live" as const : myTeamGameBase.status),
+        inning: (myTeamLive.status ?? (myTeamLive.isLive ? "live" : myTeamGameBase.status)) === "live" ? (myTeamLive.currentInning || null) : null,
+      } : {}),
+    };
+  }, [myTeamGameBase, myTeamLive]);
+  const widgetGame = useMemo<WidgetGame | undefined>(() => {
+    if (myTeamGame && (myTeamGame.status === "live" || myTeamGame.status === "scheduled")) {
+      return myTeamGame;
+    }
+    return nextWidgetGame ?? undefined;
+  }, [myTeamGame, nextWidgetGame]);
+
+  useEffect(() => {
+    if (!myTeamId) {
+      setNextWidgetGame(null);
+      return;
+    }
+    const teamId = myTeamId;
+
+    const todayCandidate = findWidgetGame(todayGames, teamId);
+    if (todayCandidate) {
+      setNextWidgetGame(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadNextGame() {
+      for (let offset = 1; offset <= 14; offset += 1) {
+        const date = formatKSTDateOffset(offset);
+        try {
+          const res = await fetch(`/api/games?date=${formatApiDate(date)}`);
+          if (!res.ok) continue;
+          const data = await res.json();
+          const games = ((data.games ?? []) as ApiGameData[]).map(mapApiGame);
+          const candidate = findWidgetGame(games, teamId);
+          if (candidate) {
+            if (!cancelled) setNextWidgetGame(candidate);
+            return;
+          }
+        } catch {
+          // 후보 조회 실패는 위젯 fallback만 건너뛴다.
+        }
+      }
+      if (!cancelled) setNextWidgetGame(null);
+    }
+
+    void loadNextGame();
+    return () => {
+      cancelled = true;
+    };
+  }, [myTeamId, todayGames]);
+
+  useEffect(() => {
+    if (!myTeamId) return;
+    const myTeamCode = ID_TO_KBO_CODE[myTeamId];
+    if (!myTeamCode) return;
+
+    void setWidgetMyTeam(myTeamCode);
+    if (!widgetGame) return;
+
+    const awayCode = ID_TO_KBO_CODE[widgetGame.awayTeamId];
+    const homeCode = ID_TO_KBO_CODE[widgetGame.homeTeamId];
+    if (!awayCode || !homeCode) return;
+
+    const status = widgetGame.status === "scheduled"
+      ? `SCHEDULED|${widgetGame.time}`
+      : widgetGame.status === "live"
+        ? `LIVE ${widgetGame.inning ?? ""}`.trim()
+        : "";
+    if (!status) return;
+
+    const batterTeam = widgetGame.isTop ? awayCode : homeCode;
+    const pitcherTeam = widgetGame.isTop ? homeCode : awayCode;
+    void updateGameWidget({
+      myTeam: myTeamCode,
+      away: awayCode,
+      home: homeCode,
+      awayScore: String(widgetGame.awayScore ?? 0),
+      homeScore: String(widgetGame.homeScore ?? 0),
+      status,
+      pitcher: widgetGame.currentPitcher ?? "",
+      pitcherTeam: widgetGame.currentPitcher ? pitcherTeam : "",
+      batter: widgetGame.currentBatter ?? "",
+      batterTeam: widgetGame.currentBatter ? batterTeam : "",
+      outs: widgetGame.outs === undefined ? "" : String(Math.min(Math.max(widgetGame.outs, 0), 2)),
+      diamond: `${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}`,
+    });
+  }, [myTeamId, widgetGame]);
 
   return (
     <PullToRefresh onRefresh={handleRefresh}>
