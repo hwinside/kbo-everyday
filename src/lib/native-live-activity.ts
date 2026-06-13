@@ -65,6 +65,8 @@ export interface WidgetSnapshotInput {
   stadium?: string;
   /** 예정 경기 표시용 시각(예: "18:30"). live/final이면 생략. */
   startText?: string;
+  /** 예정 경기 날짜 라벨(예: "6월 7일 (토)"). 구장 위에 표시. scheduled에서만. */
+  dateText?: string;
 }
 
 /** teamId(1-10) → KBO 2자 코드 (gameId·공식 코드 기준). */
@@ -93,6 +95,8 @@ export interface HomeWidgetGame {
   stadium: string;
   /** "18:30" 형태 시작 시각(예정 경기 표시용). */
   time: string;
+  /** "6월 7일 (토)" 형태 날짜 라벨(예정 경기, 구장 위 표시). */
+  dateText?: string;
 }
 
 const LiveActivity = registerPlugin<LiveActivityPlugin>("LiveActivity");
@@ -241,5 +245,6 @@ export async function writeHomeWidgetSnapshot(
     batterName: game.currentBatter ?? "",
     stadium: game.stadium,
     startText: game.status === "scheduled" ? game.time : "",
+    dateText: game.status === "scheduled" ? (game.dateText ?? "") : "",
   });
 }

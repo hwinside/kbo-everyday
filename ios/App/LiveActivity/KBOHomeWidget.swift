@@ -48,6 +48,8 @@ struct WidgetGameSnapshot: Codable {
     var status: String? = nil
     /// 예정/취소 경기 표시용 시각 문구(예: "18:30"). live/final이면 빈 문자열.
     var startText: String? = nil
+    /// 예정 경기 날짜 라벨(예: "6월 7일 (토)"). 구장 위에 표시. scheduled에서만.
+    var dateText: String? = nil
 
     /// 렌더 분기용 정규화 상태.
     var resolvedStatus: String {
@@ -430,11 +432,17 @@ struct HomeWidgetScheduledCard: View {
                 teamColumn(code: snap.homeTeamCode)
             }
 
-            // medium에서만 구장 표기 (있을 때)
-            if !compact, !snap.stadium.isEmpty {
-                Text(snap.stadium)
-                    .font(notoKR(11, .medium))
-                    .foregroundStyle(.white.opacity(0.8))
+            // medium에서만 날짜('6월 7일 (토)') + 구장 표기. 날짜 숫자=Montserrat 분리.
+            if !compact {
+                if let d = snap.dateText, !d.isEmpty {
+                    mixedNumText(d, 11, .semibold)
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                if !snap.stadium.isEmpty {
+                    Text(snap.stadium)
+                        .font(notoKR(11, .medium))
+                        .foregroundStyle(.white.opacity(0.8))
+                }
             }
         }
         .foregroundStyle(.white)

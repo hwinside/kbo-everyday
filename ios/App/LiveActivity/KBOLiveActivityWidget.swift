@@ -132,6 +132,27 @@ func inningRun(_ inning: String, _ size: CGFloat, _ weight: Font.Weight) -> Text
     return t
 }
 
+// 임의 혼합 문자열에서 숫자 런=Montserrat, 그 외(한글/기호/공백)=Noto. "6월 7일 (토)" 등.
+@available(iOS 16.1, *)
+func mixedNumText(_ s: String, _ size: CGFloat, _ weight: Font.Weight) -> Text {
+    var out = Text("")
+    var buf = ""
+    var bufIsNum = false
+    func flush() {
+        guard !buf.isEmpty else { return }
+        out = out + Text(buf).font(bufIsNum ? montserrat(size, weight) : notoKR(size, weight))
+        buf = ""
+    }
+    for ch in s {
+        let isNum = ch.isNumber
+        if buf.isEmpty { buf.append(ch); bufIsNum = isNum }
+        else if isNum == bufIsNum { buf.append(ch) }
+        else { flush(); buf.append(ch); bufIsNum = isNum }
+    }
+    flush()
+    return out
+}
+
 @available(iOS 16.1, *)
 extension Color {
     /// 0xRRGGBB 정수 → Color.
