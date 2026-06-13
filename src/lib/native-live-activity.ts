@@ -37,10 +37,62 @@ interface LiveActivityPlugin {
   update(state: LiveActivityState): Promise<void>;
   end(state?: LiveActivityState): Promise<void>;
   isEnabled(): Promise<{ enabled: boolean }>;
+  writeWidgetSnapshot(input: WidgetSnapshotInput): Promise<void>;
   addListener(
     eventName: "liveActivityPushToken",
     listenerFunc: (data: { gameId: string; token: string }) => void,
   ): Promise<{ remove: () => Promise<void> }>;
+}
+
+/** 홈 화면 위젯(KBOHomeWidget) App Group 스냅샷. 라이브/예정/종료 모두 표현 가능.
+ *  라이브 경기가 없을 때 홈 화면이 최애팀 다음 경기(scheduled)를 기록하는 fallback 경로. */
+export interface WidgetSnapshotInput {
+  gameId: string;
+  awayTeamCode: string;
+  homeTeamCode: string;
+  myTeamCode: string;
+  status: "live" | "final" | "scheduled" | "cancelled";
+  awayScore?: number;
+  homeScore?: number;
+  inning?: number;
+  isTopInning?: boolean;
+  outs?: number;
+  onFirst?: boolean;
+  onSecond?: boolean;
+  onThird?: boolean;
+  pitcherName?: string;
+  batterName?: string;
+  stadium?: string;
+  /** 예정 경기 표시용 시각(예: "18:30"). live/final이면 생략. */
+  startText?: string;
+}
+
+/** teamId(1-10) → KBO 2자 코드 (gameId·공식 코드 기준). */
+const ID_TO_KBO_CODE: Record<number, string> = {
+  1: "LG", 2: "OB", 3: "KT", 4: "SK", 5: "NC",
+  6: "HT", 7: "LT", 8: "SS", 9: "HH", 10: "WO",
+};
+
+/** 홈 화면이 가진 최애팀 경기(HomeGame 형태) → 홈 위젯 스냅샷 기록용 입력. */
+export interface HomeWidgetGame {
+  gameId: string;
+  awayTeamId: number;
+  homeTeamId: number;
+  status: "live" | "final" | "scheduled" | "cancelled";
+  awayScore: number;
+  homeScore: number;
+  /** "7회초" 형태(라이브) 또는 null. */
+  inning: string | null;
+  isTop: boolean;
+  outs: number;
+  runner1b: boolean;
+  runner2b: boolean;
+  runner3b: boolean;
+  currentPitcher: string | null;
+  currentBatter: string | null;
+  stadium: string;
+  /** "18:30" 형태 시작 시각(예정 경기 표시용). */
+  time: string;
 }
 
 const LiveActivity = registerPlugin<LiveActivityPlugin>("LiveActivity");
@@ -113,4 +165,44 @@ export async function endLiveActivity(finalState?: LiveActivityState): Promise<v
   } catch {
     /* silent */
   }
+}
+
+/** 홈 화면 위젯 스냅샷 직접 기록(저수준). iOS 네이티브 외엔 no-op. */
+export async function writeWidgetSnapshot(input: WidgetSnapshotInput): Promise<void> {
+  if (!isNativeIOS()) return;
+  try {
+    await LiveActivity.writeWidgetSnapshot(input);
+  } catch {
+    /* silent — 위젯 갱신 실패가 앱에 영향 주지 않게 */
+  }
+}
+
+/** 홈 화면이 가진 최애팀 경기를 홈 위젯에 기록.
+ *  라이브 경기가 없을 때 *최애팀 다음 예정 경기*가 위젯에 뜨게 하는 핵심 fallback 경로
+ *  (안드로이드/앱 홈 MY TEAM 카드와 동일 컨셉). live/final도 그대로 표현. */
+export async function writeHomeWidgetSnapshot(
+  myTeamId: number | null,
+  game: HomeWidgetGame,
+): Promise<void> {
+  if (!isNativeIOS()) return;
+  const inningNum = game.inning ? parseInt(game.inning, 10) || 1 : 1;
+  await writeWidgetSnapshot({
+    gameId: game.gameId,
+    awayTeamCode: ID_TO_KBO_CODE[game.awayTeamId] ?? "",
+    homeTeamCode: ID_TO_KBO_CODE[game.homeTeamId] ?? "",
+    myTeamCode: myTeamId ? ID_TO_KBO_CODE[myTeamId] ?? "" : "",
+    status: game.status,
+    awayScore: game.awayScore,
+    homeScore: game.homeScore,
+    inning: inningNum,
+    isTopInning: game.isTop,
+    outs: game.outs,
+    onFirst: game.runner1b,
+    onSecond: game.runner2b,
+    onThird: game.runner3b,
+    pitcherName: game.currentPitcher ?? "",
+    batterName: game.currentBatter ?? "",
+    stadium: game.stadium,
+    startText: game.status === "scheduled" ? game.time : "",
+  });
 }

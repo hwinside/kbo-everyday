@@ -195,13 +195,9 @@ final class LiveActivityController {
     // WidgetCenter.reloadAllTimelines()로 위젯을 즉시 갱신한다. (안드로이드
     // GameNotificationPlugin.updateWidget의 iOS판)
 
-    private static let appGroupId = "group.fan.keubo.app"
-    private static let widgetSnapshotKey = "kbo_widget_snapshot"
-
     private func writeWidgetSnapshot(attributes: KBOGameAttributes,
                                      state: KBOGameAttributes.ContentState,
                                      hasGame: Bool = true) {
-        guard let ud = UserDefaults(suiteName: Self.appGroupId) else { return }
         let dict: [String: Any] = [
             "hasGame": hasGame,
             "gameId": attributes.gameId,
@@ -220,14 +216,32 @@ final class LiveActivityController {
             "batterName": state.batterName,
             "stadium": state.stadium,
             "isFinal": state.isFinal,
+            "status": state.isFinal ? "final" : "live",
+            "startText": "",
         ]
-        if let data = try? JSONSerialization.data(withJSONObject: dict) {
-            ud.set(data, forKey: Self.widgetSnapshotKey)
-        }
-        WidgetCenter.shared.reloadAllTimelines()
+        WidgetSnapshotStore.write(dict)
     }
     #else
     var isEnabled: Bool { false }
     @discardableResult func startDummyActivity() -> Bool { false }
     #endif
+}
+
+// MARK: - 홈 위젯 스냅샷 공용 store
+//
+// 앱(LiveActivityController) ↔ JS 브리지(LiveActivityPlugin.writeWidgetSnapshot) 둘 다
+// 이 store로 App Group에 기록한다. ActivityKit/16.1 비의존(WidgetKit은 iOS 14+) — 예정
+// 경기 fallback 스냅샷은 Live Activity 없이도 기록돼야 하므로 별도 타입으로 분리한다.
+
+enum WidgetSnapshotStore {
+    static let appGroupId = "group.fan.keubo.app"
+    static let key = "kbo_widget_snapshot"
+
+    static func write(_ dict: [String: Any]) {
+        guard let ud = UserDefaults(suiteName: appGroupId) else { return }
+        if let data = try? JSONSerialization.data(withJSONObject: dict) {
+            ud.set(data, forKey: key)
+        }
+        WidgetCenter.shared.reloadAllTimelines()
+    }
 }

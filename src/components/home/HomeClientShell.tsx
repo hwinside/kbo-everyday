@@ -16,6 +16,7 @@ import { useLiveGame, type LiveGameData } from "@/lib/hooks/useLiveGame";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
 import { useHomeInit, type HomeGame } from "@/hooks/useHomeInit";
+import { writeHomeWidgetSnapshot } from "@/lib/native-live-activity";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
 import MyTeamHero from "@/components/home/MyTeamHero";
 import FavoritePlayersSection from "@/components/home/FavoritePlayersSection";
@@ -155,6 +156,35 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       inning: (myTeamLive.status ?? (myTeamLive.isLive ? "live" : myTeamGameBase.status)) === "live" ? (myTeamLive.currentInning || null) : null,
     } : {}),
   } : undefined;
+
+  // iOS 홈 화면 위젯 — 최애팀 경기(라이브/예정/종료)를 App Group에 기록해 위젯에 표시한다.
+  // 라이브 경기가 없을 때 *다음 예정 경기*가 위젯에 뜨게 하는 핵심 fallback 경로.
+  // (네이티브 iOS 외엔 no-op.) 스코어/이닝/주자 등 변할 때만 재기록되도록 signature로 dep.
+  const widgetSig = myTeamGame
+    ? `${myTeamGame.id}|${myTeamGame.status}|${myTeamGame.awayScore}|${myTeamGame.homeScore}|${myTeamGame.inning ?? ""}|${myTeamGame.outs}|${myTeamGame.runner1b ? 1 : 0}${myTeamGame.runner2b ? 1 : 0}${myTeamGame.runner3b ? 1 : 0}|${myTeamGame.currentPitcher ?? ""}|${myTeamGame.currentBatter ?? ""}`
+    : "";
+  useEffect(() => {
+    if (!myTeamGame) return;
+    void writeHomeWidgetSnapshot(myTeamId, {
+      gameId: myTeamGame.id,
+      awayTeamId: myTeamGame.awayTeamId,
+      homeTeamId: myTeamGame.homeTeamId,
+      status: myTeamGame.status,
+      awayScore: myTeamGame.awayScore,
+      homeScore: myTeamGame.homeScore,
+      inning: myTeamGame.inning,
+      isTop: myTeamGame.isTop,
+      outs: myTeamGame.outs,
+      runner1b: myTeamGame.runner1b,
+      runner2b: myTeamGame.runner2b,
+      runner3b: myTeamGame.runner3b,
+      currentPitcher: myTeamGame.currentPitcher,
+      currentBatter: myTeamGame.currentBatter,
+      stadium: myTeamGame.stadium,
+      time: myTeamGame.time,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myTeamId, widgetSig]);
 
   return (
     <PullToRefresh onRefresh={handleRefresh}>

@@ -43,6 +43,17 @@ struct WidgetGameSnapshot: Codable {
     var batterName: String
     var stadium: String
     var isFinal: Bool
+    /// "live" | "final" | "scheduled" | "cancelled". 구버전 스냅샷엔 없을 수 있어 옵셔널(기본 nil).
+    /// 없으면 isFinal로 live/final을 추론(하위호환). "scheduled"/"cancelled"면 다음 경기 카드.
+    var status: String? = nil
+    /// 예정/취소 경기 표시용 시각 문구(예: "18:30"). live/final이면 빈 문자열.
+    var startText: String? = nil
+
+    /// 렌더 분기용 정규화 상태.
+    var resolvedStatus: String {
+        if let s = status, !s.isEmpty { return s }
+        return isFinal ? "final" : "live"
+    }
 }
 
 private func loadSnapshot() -> WidgetGameSnapshot? {
@@ -110,16 +121,28 @@ struct KBOHomeWidgetEntryView: View {
 
     var body: some View {
         if let snap = entry.snapshot {
+            let scheduled = snap.resolvedStatus == "scheduled" || snap.resolvedStatus == "cancelled"
             switch family {
             case .systemSmall:
-                HomeWidgetSmallCard(snap: snap)
-                    .widgetContainerBackground { smallBackground(snap) }
+                if scheduled {
+                    HomeWidgetScheduledCard(snap: snap, compact: true)
+                        .widgetContainerBackground { smallBackground(snap) }
+                } else {
+                    HomeWidgetSmallCard(snap: snap)
+                        .widgetContainerBackground { smallBackground(snap) }
+                }
             default:
-                // medium / large — 잠금화면 카드 그대로 재사용 (디자인 동일)
-                KBOLockScreenCard(attributes: attributes(from: snap),
-                                  state: state(from: snap))
-                    .padding(8)
-                    .widgetContainerBackground { Color(hex: 0x0A0A0B) }
+                if scheduled {
+                    // 예정/취소 — 라이브 스코어 카드 대신 "다음 경기" 카드 (안드/앱 홈 동일 컨셉)
+                    HomeWidgetScheduledCard(snap: snap, compact: false)
+                        .widgetContainerBackground { smallBackground(snap) }
+                } else {
+                    // medium / large — 잠금화면 카드 그대로 재사용 (디자인 동일)
+                    KBOLockScreenCard(attributes: attributes(from: snap),
+                                      state: state(from: snap))
+                        .padding(8)
+                        .widgetContainerBackground { Color(hex: 0x0A0A0B) }
+                }
             }
         } else {
             HomeWidgetEmptyCard()
@@ -225,6 +248,82 @@ struct HomeWidgetSmallCard: View {
                 .lineLimit(1).minimumScaleFactor(0.7)
             Text("\(score)")
                 .font(montserrat(24, .black)).monospacedDigit()
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - 예정/취소 경기 카드 (최애팀 다음 경기 — 라이브 경기 없을 때 fallback)
+
+@available(iOS 16.1, *)
+struct HomeWidgetScheduledCard: View {
+    let snap: WidgetGameSnapshot
+    /// true = systemSmall(컴팩트), false = systemMedium.
+    let compact: Bool
+
+    private var isCancelled: Bool { snap.resolvedStatus == "cancelled" }
+
+    private var hasMyTeam: Bool {
+        !snap.myTeamCode.isEmpty &&
+        (snap.myTeamCode == snap.awayTeamCode || snap.myTeamCode == snap.homeTeamCode)
+    }
+
+    /// 가운데 라벨: 취소면 "경기 취소", 예정이면 시각(없으면 "경기 예정").
+    private var centerLabel: String {
+        if isCancelled { return "경기 취소" }
+        let t = snap.startText ?? ""
+        return t.isEmpty ? "경기 예정" : t
+    }
+
+    var body: some View {
+        VStack(spacing: compact ? 7 : 10) {
+            if hasMyTeam {
+                HStack(spacing: 4) {
+                    TeamLogo(code: snap.myTeamCode, size: compact ? 13 : 16)
+                    Text("MY TEAM")
+                        .font(montserrat(compact ? 9 : 11, .heavy)).tracking(compact ? 0.8 : 1.0)
+                    Spacer()
+                }
+                .foregroundStyle(.white.opacity(0.9))
+            }
+
+            HStack(spacing: compact ? 8 : 14) {
+                teamColumn(code: snap.awayTeamCode)
+                VStack(spacing: 3) {
+                    Text(isCancelled ? "✕" : "VS")
+                        .font(montserrat(compact ? 13 : 16, .heavy))
+                        .foregroundStyle(.white.opacity(0.7))
+                    Text(centerLabel)
+                        .font(notoKR(compact ? 9 : 11, .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, compact ? 7 : 9).padding(.vertical, 2)
+                        .background(Capsule().fill(Color.white.opacity(0.18)))
+                }
+                teamColumn(code: snap.homeTeamCode)
+            }
+
+            // medium에서만 구장 표기 (있을 때)
+            if !compact, !snap.stadium.isEmpty {
+                Text(snap.stadium)
+                    .font(notoKR(11, .medium))
+                    .foregroundStyle(.white.opacity(0.8))
+            }
+        }
+        .foregroundStyle(.white)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(compact ? 10 : 14)
+    }
+
+    private func teamColumn(code: String) -> some View {
+        VStack(spacing: 3) {
+            ZStack {
+                Circle().fill(.white)
+                TeamLogo(code: code, size: compact ? 22 : 28)
+            }
+            .frame(width: compact ? 32 : 40, height: compact ? 32 : 40)
+            Text(teamShortName(code))
+                .font(montserrat(compact ? 11 : 13, .heavy))
+                .lineLimit(1).minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity)
     }
