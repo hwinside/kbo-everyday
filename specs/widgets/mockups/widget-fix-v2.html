@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800;900&family=Noto+Sans+KR:wght@500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#000; padding:40px; font-family:'Montserrat','Noto Sans KR',sans-serif;
+         display:flex; flex-direction:column; align-items:center; gap:34px; }
+  .cap { color:#8a8a90; font-size:18px; font-family:'Noto Sans KR',sans-serif; letter-spacing:-0.03em; align-self:flex-start; }
+
+  /* ===== 잠금화면 / 홈위젯 카드 (복원된 어두운 그라데이션) ===== */
+  .card { position:relative; width:560px; border-radius:24px; padding:22px 30px; overflow:hidden; color:#F5F5F7;
+    background:linear-gradient(135deg, color-mix(in srgb, #C60C30 40%, #1a1a1d) 0%, #1a1a1d 100%);
+    border:1px solid rgba(255,255,255,0.10); }
+  .watermark { position:absolute; right:18px; top:14px; width:140px; opacity:0.13; }
+  .header { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  .header .logo-sm { width:40px; height:40px; border-radius:50%; background:#fff; display:flex; align-items:center; justify-content:center; }
+  .header .logo-sm img { width:28px; height:28px; object-fit:contain; }
+  .header .label { font-size:24px; font-weight:900; letter-spacing:1px; color:#fff; }
+  .score { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+  .team { display:flex; flex-direction:column; align-items:center; gap:6px; flex:1; }
+  .team .logo { width:58px; height:58px; border-radius:50%; background:#fff; display:flex; align-items:center; justify-content:center; }
+  .team .logo img { width:42px; height:42px; object-fit:contain; }
+  .team .name { font-size:26px; font-weight:900; color:#fff; }
+  .center { display:flex; flex-direction:column; align-items:center; gap:7px; }
+  .center .stadium { font-size:16px; color:rgba(255,255,255,0.75); font-family:'Noto Sans KR',sans-serif; letter-spacing:-0.04em; }
+  .center .nums { display:flex; align-items:center; gap:16px; }
+  .center .nums .n { font-size:50px; font-weight:900; color:#fff; font-variant-numeric:tabular-nums; }
+  .center .nums .colon { font-size:24px; color:#9b9b9f; }
+  .center .live { font-size:18px; font-weight:700; color:#fff; letter-spacing:-0.02em; background:rgba(229,57,53,0.85); padding:4px 14px; border-radius:999px; font-family:'Noto Sans KR',sans-serif; }
+  .divider { height:1px; background:rgba(255,255,255,0.12); margin:4px 0 14px; }
+  .bottom { display:flex; align-items:center; justify-content:space-between; }
+  .left { display:flex; flex-direction:column; gap:9px; }
+  .out { display:flex; align-items:center; gap:8px; font-size:17px; color:#C9C9CE; font-weight:600; }
+  .out .dots { display:flex; gap:6px; }
+  .out .dots i { width:12px; height:12px; border-radius:50%; background:rgba(255,255,255,0.18); border:1.5px solid rgba(255,255,255,0.32); display:inline-block; }
+  .out .dots i.on { background:#FF4D4D; border-color:#FF4D4D; }
+  .pab { display:flex; flex-direction:column; gap:7px; font-size:25px; font-weight:700; color:#F2F2F5; font-family:'Noto Sans KR',sans-serif; letter-spacing:-0.045em; }
+  .pab .k { color:#AEAEB4; font-weight:600; margin-right:7px; }
+  .diamond { position:relative; width:84px; height:72px; }
+  .base { position:absolute; width:21px; height:21px; border-radius:3px; background:rgba(255,255,255,0.18); border:1.5px solid rgba(255,255,255,0.32); transform:rotate(45deg); }
+  .base.on { background:#FF4D4D; border-color:#FF4D4D; }
+  .b2 { left:31px; top:0; } .b1 { right:0; top:25px; } .b3 { left:0; top:25px; }
+
+  /* ===== 컴팩트 다이나믹 아일랜드 (상단 알약, IMG_7054) — 노치 우측에 N회초/말 ===== */
+  .statusbar { width:560px; display:flex; align-items:center; justify-content:space-between; }
+  .sb-time { font-size:26px; font-weight:600; color:#fff; }
+  .sb-batt { font-size:18px; color:#30D158; font-weight:700; }
+  .pill { background:#000; border-radius:999px; height:56px; display:flex; align-items:center; gap:10px; padding:0 14px; }
+  .pill .side { display:flex; align-items:center; gap:6px; }
+  .pill .lg { width:34px; height:34px; border-radius:50%; background:#fff; display:flex; align-items:center; justify-content:center; }
+  .pill .lg img { width:25px; height:25px; object-fit:contain; }
+  .pill .sc { font-size:24px; font-weight:800; color:#fff; font-variant-numeric:tabular-nums; }
+  .pill .notch { width:78px; height:30px; background:#000; border-radius:999px; }
+  .pill .inn { font-size:16px; font-weight:600; color:rgba(255,255,255,0.85); font-family:'Noto Sans KR',sans-serif; letter-spacing:-0.03em; }
+</style>
+</head>
+<body>
+  <div class="cap">① 잠금화면 / 홈위젯 카드 — 어두운 그라데이션 복원 + 아웃/주자 빨강 점 또렷</div>
+  <div class="card">
+    <img class="watermark" src="./logos/lg.svg" alt="">
+    <div class="header"><div class="logo-sm"><img src="./logos/lg.svg"></div><span class="label">MY TEAM</span></div>
+    <div class="score">
+      <div class="team"><div class="logo"><img src="./logos/ssg.svg"></div><span class="name">SSG</span></div>
+      <div class="center">
+        <span class="stadium">잠실</span>
+        <div class="nums"><span class="n">2</span><span class="colon">:</span><span class="n">1</span></div>
+        <span class="live">LIVE 2회초</span>
+      </div>
+      <div class="team"><div class="logo"><img src="./logos/lg.svg"></div><span class="name">LG</span></div>
+    </div>
+    <div class="divider"></div>
+    <div class="bottom">
+      <div class="left">
+        <div class="out">O <span class="dots"><i class="on"></i><i></i><i></i></span></div>
+        <div class="pab">
+          <span><span class="k">투수 (LG)</span>웰스</span>
+          <span><span class="k">타자 (SSG)</span>조형우</span>
+        </div>
+      </div>
+      <div class="diamond">
+        <div class="base b2"></div>
+        <div class="base b1 on"></div>
+        <div class="base b3 on"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cap">② 컴팩트 다이나믹 아일랜드 — 노치(카메라) 우측에 N회초/말 (정중앙은 카메라라 불가)</div>
+  <div class="statusbar">
+    <span class="sb-time">19:39</span>
+    <div class="pill">
+      <div class="side"><div class="lg"><img src="./logos/ssg.svg"></div><span class="sc">2</span></div>
+      <div class="notch"></div>
+      <div class="side"><span class="inn">2회초</span><span class="sc">1</span><div class="lg"><img src="./logos/lg.svg"></div></div>
+    </div>
+    <span class="sb-batt">99%</span>
+  </div>
+</body>
+</html>

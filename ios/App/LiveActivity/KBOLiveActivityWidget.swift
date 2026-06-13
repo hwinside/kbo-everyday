@@ -15,20 +15,48 @@ import ActivityKit
 // MARK: - 팀 컬러 (src/lib/constants/teams.ts colorPrimary)
 
 @available(iOS 16.1, *)
-func teamColor(_ code: String) -> Color {
+func teamColorHex(_ code: String) -> UInt32 {
     switch code {
-    case "LG": return Color(hex: 0xC60C30)
-    case "OB": return Color(hex: 0x131230)  // 두산
-    case "KT": return Color(hex: 0x000000)
-    case "SK": return Color(hex: 0xCE0E2D)  // SSG
-    case "NC": return Color(hex: 0x315288)
-    case "HT": return Color(hex: 0xEA0029)  // KIA
-    case "LT": return Color(hex: 0x002856)  // 롯데
-    case "SS": return Color(hex: 0x074CA1)  // 삼성
-    case "HH": return Color(hex: 0xFF6600)  // 한화
-    case "WO": return Color(hex: 0x820024)  // 키움
-    default:   return Color(hex: 0x222222)
+    case "LG": return 0xC60C30
+    case "OB": return 0x131230  // 두산
+    case "KT": return 0x000000
+    case "SK": return 0xCE0E2D  // SSG
+    case "NC": return 0x315288
+    case "HT": return 0xEA0029  // KIA
+    case "LT": return 0x002856  // 롯데
+    case "SS": return 0x074CA1  // 삼성
+    case "HH": return 0xFF6600  // 한화
+    case "WO": return 0x820024  // 키움
+    default:   return 0x222222
     }
+}
+
+@available(iOS 16.1, *)
+func teamColor(_ code: String) -> Color { Color(hex: teamColorHex(code)) }
+
+// 두 hex 컬러를 t:1-t 비율로 섞는다(t = a의 비율). 그라데이션 톤 계산용.
+func mixHex(_ a: UInt32, _ b: UInt32, _ t: Double) -> UInt32 {
+    func ch(_ x: UInt32, _ s: UInt32) -> Double { Double((x >> s) & 0xFF) }
+    let r = ch(a, 16) * t + ch(b, 16) * (1 - t)
+    let g = ch(a, 8)  * t + ch(b, 8)  * (1 - t)
+    let bl = ch(a, 0) * t + ch(b, 0)  * (1 - t)
+    return (UInt32(r) << 16) | (UInt32(g) << 8) | UInt32(bl)
+}
+
+// 카드 배경 그라데이션 — 승인 목업(specs/widgets/mockups/lockscreen-card-approved) 기준.
+// 팀 컬러를 어두운 베이스(#1A1A1D)에 40% 섞은 톤(top) → 어두운 베이스(bottom)로 떨어지는
+// "고급스럽고 어두운" 그라데이션. 최애팀 없으면 전체 다크. 하단(아웃/주자)이 어두워져
+// 빨강 점이 다시 또렷하게 보인다.
+@available(iOS 16.1, *)
+let kCardDarkBase: UInt32 = 0x1A1A1D
+
+@available(iOS 16.1, *)
+func cardGradient(_ code: String, hasMyTeam: Bool) -> LinearGradient {
+    let topHex = hasMyTeam ? mixHex(teamColorHex(code), kCardDarkBase, 0.40) : kCardDarkBase
+    return LinearGradient(
+        colors: [Color(hex: topHex), Color(hex: kCardDarkBase)],
+        startPoint: .topLeading, endPoint: .bottomTrailing
+    )
 }
 
 // MARK: - 팀 표기 (teams.ts shortName / name). DI=약어, 잠금=풀네임.
@@ -100,12 +128,11 @@ extension Color {
 struct KBOLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: KBOGameAttributes.self) { context in
-            // 잠금화면 / 배너 표시. activityBackgroundTint로 시스템 컨테이너 전체를 카드 accent로
-            // 깔아, 시스템 기본(어두운) 배경이 가장자리(양옆/위아래)·모서리에 비치는 것을 막는다.
-            let my = context.attributes.myTeamCode
-            let isMy = !my.isEmpty && (my == context.attributes.awayTeamCode || my == context.attributes.homeTeamCode)
+            // 잠금화면 / 배너 표시. activityBackgroundTint는 그라데이션 하단과 같은 "어두운 베이스"로
+            // 깔아, 시스템 기본 배경이 가장자리에 비치지 않게 하면서도 카드의 어두운 그라데이션이
+            // 단색으로 뭉개지지 않게 한다(이전엔 팀 컬러 솔리드를 깔아 그라데이션이 발산됨).
             KBOLockScreenCard(attributes: context.attributes, state: context.state)
-                .activityBackgroundTint(isMy ? teamColor(my) : Color(hex: 0x1A1A1A))
+                .activityBackgroundTint(Color(hex: kCardDarkBase))
                 .activitySystemActionForegroundColor(Color.white)
         } dynamicIsland: { context in
             DynamicIsland {
@@ -117,8 +144,13 @@ struct KBOLiveActivityWidget: Widget {
                     DITeam(code: context.attributes.homeTeamCode, score: context.state.homeScore)
                 }
                 DynamicIslandExpandedRegion(.center) {
+                    // 가운데에 N회초/말 (하린아빠 요청). leading/trailing을 로고+점수로 좁혀
+                    // 가운데 영역을 확보한다.
                     Text(context.state.isFinal ? "경기 종료" : context.state.inningText)
-                        .font(.caption).bold()
+                        .font(.system(size: 13, weight: .bold))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .lineLimit(1).minimumScaleFactor(0.7)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     if !context.state.isFinal && !context.state.pitcherName.isEmpty {
@@ -128,20 +160,25 @@ struct KBOLiveActivityWidget: Widget {
                     }
                 }
             } compactLeading: {
-                HStack(spacing: 2) {
-                    TeamLogo(code: context.attributes.awayTeamCode, size: 21)
-                    Text(teamShortName(context.attributes.awayTeamCode))
-                        .font(.system(size: 11, weight: .semibold))
+                // 로고 + 점수 (약어는 로고로 갈음 → 가운데 이닝 공간 확보)
+                HStack(spacing: 3) {
+                    TeamLogo(code: context.attributes.awayTeamCode, size: 20)
                     Text("\(context.state.awayScore)")
-                        .font(.system(size: 13, weight: .bold)).monospacedDigit()
+                        .font(.system(size: 15, weight: .bold)).monospacedDigit()
                 }
             } compactTrailing: {
-                HStack(spacing: 2) {
+                // 노치(카메라) 바로 우측 = 화면 가운데에 가장 가까운 위치에 N회초/말.
+                // 정중앙은 카메라 하드웨어라 텍스트 불가 → 센터 인접에 배치.
+                HStack(spacing: 3) {
+                    if !context.state.isFinal && !context.state.inningText.isEmpty {
+                        Text(context.state.inningText)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .lineLimit(1)
+                    }
                     Text("\(context.state.homeScore)")
-                        .font(.system(size: 13, weight: .bold)).monospacedDigit()
-                    Text(teamShortName(context.attributes.homeTeamCode))
-                        .font(.system(size: 11, weight: .semibold))
-                    TeamLogo(code: context.attributes.homeTeamCode, size: 21)
+                        .font(.system(size: 15, weight: .bold)).monospacedDigit()
+                    TeamLogo(code: context.attributes.homeTeamCode, size: 20)
                 }
             } minimal: {
                 Text("\(context.state.awayScore):\(context.state.homeScore)")
@@ -151,16 +188,16 @@ struct KBOLiveActivityWidget: Widget {
     }
 }
 
-// MARK: - 다이나믹 아일랜드 팀 (로고 + 약어 + 점수)
+// MARK: - 다이나믹 아일랜드 팀 (로고 + 점수). 가운데 이닝 영역 확보 위해 약어 텍스트는 생략
+// (팀은 로고로 식별). compact 영역에선 약어를 유지한다.
 
 @available(iOS 16.1, *)
 struct DITeam: View {
     let code: String
     let score: Int
     var body: some View {
-        HStack(spacing: 4) {
-            TeamLogo(code: code, size: 33)
-            Text(teamShortName(code)).font(.caption2).bold()
+        HStack(spacing: 5) {
+            TeamLogo(code: code, size: 30)
             Text("\(score)").font(.title3).bold().monospacedDigit()
         }
     }
@@ -178,10 +215,6 @@ struct KBOLockScreenCard: View {
         (attributes.myTeamCode == attributes.awayTeamCode ||
          attributes.myTeamCode == attributes.homeTeamCode)
     }
-    private var accentColor: Color {
-        hasMyTeam ? teamColor(attributes.myTeamCode) : Color(hex: 0x1A1A1A)
-    }
-
     // 투수/타자 소속 — 초(top)면 홈팀 투수·원정팀 타자, 말이면 반대.
     private var pitcherTeamCode: String {
         state.isTopInning ? attributes.homeTeamCode : attributes.awayTeamCode
@@ -191,11 +224,11 @@ struct KBOLockScreenCard: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             // 헤더: MY TEAM
             if hasMyTeam {
                 HStack(spacing: 5) {
-                    TeamLogo(code: attributes.myTeamCode, size: 16)
+                    TeamLogo(code: attributes.myTeamCode, size: 15)
                     Text("MY TEAM")
                         .font(montserrat(11, .heavy)).tracking(1.0)
                     Spacer()
@@ -215,10 +248,10 @@ struct KBOLockScreenCard: View {
                     }
                     HStack(spacing: 9) {
                         Text("\(state.awayScore)")
-                            .font(montserrat(30, .black)).monospacedDigit()
-                        Text(":").font(montserrat(16, .bold)).foregroundStyle(.white.opacity(0.5))
+                            .font(montserrat(27, .black)).monospacedDigit()
+                        Text(":").font(montserrat(15, .bold)).foregroundStyle(.white.opacity(0.5))
                         Text("\(state.homeScore)")
-                            .font(montserrat(30, .black)).monospacedDigit()
+                            .font(montserrat(27, .black)).monospacedDigit()
                     }
                     Text(state.isFinal ? "경기 종료" : "LIVE \(state.inningText)")
                         .font(notoKR(10, .bold))
@@ -261,13 +294,10 @@ struct KBOLockScreenCard: View {
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.vertical, 9)
         .background(
             ZStack(alignment: .topTrailing) {
-                LinearGradient(
-                    colors: [accentColor.opacity(0.92), accentColor.opacity(0.55)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
+                cardGradient(attributes.myTeamCode, hasMyTeam: hasMyTeam)
                 // 배경 팀 로고 watermark (앱 MyTeamHero: absolute right-3 top-3 opacity-[0.08])
                 if hasMyTeam {
                     TeamLogo(code: attributes.myTeamCode, size: 64)
@@ -309,14 +339,14 @@ struct KBOLockScreenCard: View {
 struct TeamBadge: View {
     let code: String
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 3) {
             ZStack {
                 Circle().fill(.white)
-                TeamLogo(code: code, size: 26)
+                TeamLogo(code: code, size: 23)
             }
-            .frame(width: 38, height: 38)
+            .frame(width: 34, height: 34)
             Text(teamShortName(code))
-                .font(montserrat(16, .heavy))
+                .font(montserrat(15, .heavy))
                 .lineLimit(1).minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity)
