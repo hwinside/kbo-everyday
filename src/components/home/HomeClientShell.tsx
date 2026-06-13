@@ -284,8 +284,10 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     }
 
     void loadNextGame();
+    const interval = window.setInterval(loadNextGame, 5 * 60_000);
     return () => {
       cancelled = true;
+      window.clearInterval(interval);
     };
   }, [myTeamId, todayGames]);
 

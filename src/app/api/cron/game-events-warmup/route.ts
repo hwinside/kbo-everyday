@@ -5,6 +5,7 @@ import { notifyGameStatusTransitions } from "@/lib/notifications/game-status";
 import { notifyScoreEvents } from "@/lib/notifications/game-score";
 import { notifyPlayerHighlights } from "@/lib/notifications/player-highlight";
 import { pushLiveActivityUpdates } from "@/lib/notifications/live-activity";
+import { pushAndroidWidgetLiveUpdates } from "@/lib/notifications/android-widget-live";
 
 /**
  * Warm up the in-memory prevState cache of /api/game-events for every
@@ -97,6 +98,18 @@ export async function GET(req: NextRequest) {
     console.error("[warmup] score notify failed:", (e as Error).message);
   }
 
+  // Android 홈 위젯/잠금 알림 카드 신선화 — 득점 이벤트가 없어도 warmup cron의
+  // 매분 KBO 원천 스냅샷으로 score/inning/out/runner/player 상태를 갱신한다.
+  let androidWidget:
+    | { games: number; sent: number; failed: number; cleaned: number; skipped: number }
+    | { error: string } = { games: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0 };
+  try {
+    androidWidget = await pushAndroidWidgetLiveUpdates(games);
+  } catch (e) {
+    androidWidget = { error: (e as Error).message };
+    console.error("[warmup] android widget live update failed:", (e as Error).message);
+  }
+
   // 최애선수 활약(타자) 푸시 (push-notifications-v1 S5b) — 장타/홈런 batter 매칭.
   let highlightNotify: { highlighted: number } | { error: string } = { highlighted: 0 };
   try {
@@ -124,6 +137,7 @@ export async function GET(req: NextRequest) {
     liveGameIds,
     gameNotify,
     scoreNotify,
+    androidWidget,
     highlightNotify,
     liveActivity,
     results: results.map(r =>
