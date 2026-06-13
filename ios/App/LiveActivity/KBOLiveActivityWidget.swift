@@ -132,22 +132,24 @@ func inningRun(_ inning: String, _ size: CGFloat, _ weight: Font.Weight) -> Text
     return t
 }
 
-// 임의 혼합 문자열에서 숫자 런=Montserrat, 그 외(한글/기호/공백)=Noto. "6월 7일 (토)" 등.
+// 임의 혼합 문자열에서 라틴 글자/숫자 런=Montserrat, 그 외(한글/기호/공백)=Noto.
+// "6월 7일 (토)"(날짜) · "LG 트윈스"·"SSG 랜더스"(팀 풀네임) 등 한글+영숫자 혼합 대응.
 @available(iOS 16.1, *)
-func mixedNumText(_ s: String, _ size: CGFloat, _ weight: Font.Weight) -> Text {
+func mixedScriptText(_ s: String, _ size: CGFloat, _ weight: Font.Weight) -> Text {
     var out = Text("")
     var buf = ""
-    var bufIsNum = false
+    var bufIsLatin = false
+    func isLatin(_ ch: Character) -> Bool { ch.isASCII && (ch.isLetter || ch.isNumber) }
     func flush() {
         guard !buf.isEmpty else { return }
-        out = out + Text(buf).font(bufIsNum ? montserrat(size, weight) : notoKR(size, weight))
+        out = out + Text(buf).font(bufIsLatin ? montserrat(size, weight) : notoKR(size, weight))
         buf = ""
     }
     for ch in s {
-        let isNum = ch.isNumber
-        if buf.isEmpty { buf.append(ch); bufIsNum = isNum }
-        else if isNum == bufIsNum { buf.append(ch) }
-        else { flush(); buf.append(ch); bufIsNum = isNum }
+        let lat = isLatin(ch)
+        if buf.isEmpty { buf.append(ch); bufIsLatin = lat }
+        else if lat == bufIsLatin { buf.append(ch) }
+        else { flush(); buf.append(ch); bufIsLatin = lat }
     }
     flush()
     return out
@@ -399,9 +401,9 @@ struct TeamBadge: View {
                 TeamLogo(code: code, size: 19)
             }
             .frame(width: 28, height: 28)
-            Text(teamShortName(code))
-                .font(montserrat(13, .heavy))
-                .lineLimit(1).minimumScaleFactor(0.7)
+            // 풀네임(롯데 자이언츠 / LG 트윈스) — 라틴=Montserrat, 한글=Noto. 좁으면 축소.
+            mixedScriptText(teamFullName(code), 13, .heavy)
+                .lineLimit(1).minimumScaleFactor(0.55)
         }
         .frame(maxWidth: .infinity)
     }
