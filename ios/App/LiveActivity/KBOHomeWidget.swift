@@ -495,5 +495,9 @@ struct KBOHomeWidget: Widget {
         .configurationDisplayName("크보팬 경기")
         .description("최애팀 경기 스코어를 홈 화면에서 바로 확인하세요.")
         .supportedFamilies([.systemSmall, .systemMedium])
+        // 기본 content margins를 끄면 containerBackground 그라데이션이 위젯 가장자리까지
+        // 꽉 찬다(이전엔 기본 여백 때문에 카드 둘레에 검은 테두리가 보였다). 콘텐츠는
+        // 각 카드의 자체 내부 패딩으로 가장자리에 붙지 않는다.
+        .contentMarginsDisabled()
     }
 }
