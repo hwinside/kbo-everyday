@@ -13,8 +13,21 @@ import type { GameEvent } from "@/types/game-events";
 //    `${away}-${home}` 점수상태 단위라 다중 인스턴스가 같은 id를 mint → race-safe.
 //  - at_bat_homerun: run_scored가 홈런분을 제외하므로(event-generator L395) 솔로/
 //    멀티 홈런 득점은 이 이벤트로 별도 커버. batter 포함이라 "홈런!" 강조 메시지.
-// (이닝 묶음 요약 = my_team_score_inning_summary는 후속 슬라이스)
 const SCORE_EVENT_TYPES = new Set<string>(["run_scored", "at_bat_homerun"]);
+
+interface InningSummaryRow {
+  game_id: string;
+  inning: number;
+  is_top: boolean;
+  team_id: number;
+  team_name: string;
+  away_name: string;
+  home_name: string;
+  runs: number;
+  away_score: number;
+  home_score: number;
+  sent: boolean;
+}
 
 /**
  * event_id 선점 — 멱등 INSERT에 성공한(첫 발송) 호출만 true.
@@ -43,7 +56,7 @@ export async function unclaimEvent(eventId: string): Promise<void> {
 export async function notifyScoreEvents(
   games: KboRawGame[],
   eventsByGame: Map<string, GameEvent[]>,
-): Promise<{ scored: number }> {
+): Promise<{ scored: number; inningSummaries: number }> {
   let scored = 0;
   const gameById = new Map(games.map((g) => [g.G_ID, g]));
 
@@ -87,6 +100,7 @@ export async function notifyScoreEvents(
       const res = await sendFcmToUsers(fans.ids, { title, body, url }, "my_team_score");
       if (!res.ok) { await unclaimEvent(ev.id); continue; } // 인프라 실패 → 재시도
       scored += res.sent;
+      await recordInningScore(g, ev, teamId, scoringTeamName);
 
       // 잠금화면 ongoing card 스코어 갱신 (C2b) — 득점팀뿐 아니라 *양팀 팬* 카드를
       // 신선화(게임 관전자 모두). data-only, fire-and-forget(득점 알림은 이미 성공이라
@@ -119,5 +133,123 @@ export async function notifyScoreEvents(
     }
   }
 
-  return { scored };
+  const inningSummaries = await sendPendingInningScoreSummaries(games);
+  return { scored, inningSummaries };
+}
+
+function scoreEventRuns(ev: GameEvent): number {
+  const rbi = Number(ev.detail?.rbi ?? 1);
+  return Number.isFinite(rbi) && rbi > 0 ? rbi : 1;
+}
+
+function scoreEventSide(ev: GameEvent): "away" | "home" {
+  if (ev.type === "run_scored" && ev.detail?.scoringSide) return ev.detail.scoringSide;
+  return ev.isTop ? "away" : "home";
+}
+
+async function recordInningScore(
+  g: KboRawGame,
+  ev: GameEvent,
+  teamId: number,
+  teamName: string,
+): Promise<void> {
+  const side = scoreEventSide(ev);
+  const isTop = side === "away";
+  const key = { game_id: g.G_ID, inning: ev.inning, is_top: isTop };
+  const runs = scoreEventRuns(ev);
+  const awayScore = ev.snapshot?.awayScore ?? (parseInt(g.T_SCORE_CN ?? "0") || 0);
+  const homeScore = ev.snapshot?.homeScore ?? (parseInt(g.B_SCORE_CN ?? "0") || 0);
+
+  const { data: existing, error: selectError } = await supabase
+    .from("inning_score_summary_state")
+    .select("runs")
+    .eq("game_id", key.game_id)
+    .eq("inning", key.inning)
+    .eq("is_top", key.is_top)
+    .maybeSingle();
+  if (selectError) {
+    console.error("[game-score] inning summary state select failed:", selectError.message);
+    return;
+  }
+
+  const nextRuns = ((existing as { runs?: number } | null)?.runs ?? 0) + runs;
+  const payload = {
+    ...key,
+    team_id: teamId,
+    team_name: teamName,
+    away_name: g.AWAY_NM ?? "",
+    home_name: g.HOME_NM ?? "",
+    runs: nextRuns,
+    away_score: awayScore,
+    home_score: homeScore,
+    updated_at: new Date().toISOString(),
+  };
+
+  const query = existing
+    ? supabase.from("inning_score_summary_state")
+      .update(payload)
+      .eq("game_id", key.game_id)
+      .eq("inning", key.inning)
+      .eq("is_top", key.is_top)
+    : supabase.from("inning_score_summary_state")
+      .insert({ ...payload, sent: false });
+  const { error } = await query;
+  if (error) console.error("[game-score] inning summary state write failed:", error.message);
+}
+
+function halfInningComplete(row: InningSummaryRow, g: KboRawGame): boolean {
+  if (g.CANCEL_SC_ID !== "0") return false;
+  if (g.GAME_STATE_SC === "3") return true;
+  if (g.GAME_STATE_SC !== "2") return false;
+
+  const currentInning = Number(g.GAME_INN_NO ?? 0);
+  if (currentInning > row.inning) return true;
+  if (currentInning < row.inning) return false;
+  return row.is_top && g.GAME_TB_SC === "B";
+}
+
+async function sendPendingInningScoreSummaries(games: KboRawGame[]): Promise<number> {
+  const gameById = new Map(games.map((g) => [g.G_ID, g]));
+  const gameIds = [...gameById.keys()].filter(Boolean);
+  if (gameIds.length === 0) return 0;
+
+  const { data, error } = await supabase
+    .from("inning_score_summary_state")
+    .select("game_id, inning, is_top, team_id, team_name, away_name, home_name, runs, away_score, home_score, sent")
+    .eq("sent", false)
+    .in("game_id", gameIds);
+  if (error) {
+    console.error("[game-score] inning summary pending query failed:", error.message);
+    return 0;
+  }
+
+  let sent = 0;
+  for (const row of (data ?? []) as InningSummaryRow[]) {
+    const g = gameById.get(row.game_id);
+    if (!g || !halfInningComplete(row, g) || row.runs <= 0) continue;
+
+    const fans = await fansOfTeams([row.team_id]);
+    if (!fans.ok) continue;
+    const half = row.is_top ? "초" : "말";
+    const scoreLine = `${row.away_name} ${row.away_score} : ${row.home_score} ${row.home_name}`;
+    const res = await sendFcmToUsers(fans.ids, {
+      title: `📌 ${row.team_name} ${row.inning}회${half} ${row.runs}득점`,
+      body: scoreLine,
+      url: `/games/${row.game_id}`,
+    }, "my_team_score_inning_summary");
+    if (!res.ok) continue;
+
+    const { error: updateError } = await supabase
+      .from("inning_score_summary_state")
+      .update({ sent: true, updated_at: new Date().toISOString() })
+      .eq("game_id", row.game_id)
+      .eq("inning", row.inning)
+      .eq("is_top", row.is_top);
+    if (updateError) {
+      console.error("[game-score] inning summary sent mark failed:", updateError.message);
+      continue;
+    }
+    sent += res.sent;
+  }
+  return sent;
 }

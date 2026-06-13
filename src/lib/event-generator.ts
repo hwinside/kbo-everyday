@@ -399,10 +399,15 @@ export function generateEvents(
   ];
   for (const s of scoreSides) {
     if (s.diff <= 0) continue;
-    const teamHr = events.filter(
+    const teamHrEvents = events.filter(
       e => e.type === "at_bat_homerun" && e.isTop === s.isTop,
-    ).length;
-    if (teamHr > 0) continue; // 홈런이 이 팀 득점을 설명 — 중복 방지로 run_scored suppress
+    );
+    if (teamHrEvents.length > 0) {
+      // 홈런이 이 팀 득점을 설명 — 중복 방지로 run_scored suppress.
+      // 단일 홈런이면 이닝 요약 알림이 멀티런 홈런 점수를 알 수 있게 rbi를 보강한다.
+      if (teamHrEvents.length === 1) teamHrEvents[0].detail.rbi = s.diff;
+      continue;
+    }
     events.push(makeEvent(gameId, currentLive, "run_scored", {
       rbi: s.diff,
       scoringSide: s.side,

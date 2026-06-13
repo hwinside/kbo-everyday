@@ -76,3 +76,54 @@ export async function notifyPlayerHighlights(
 
   return { highlighted };
 }
+
+export async function notifyPlayerStrikeouts(
+  games: KboRawGame[],
+  eventsByGame: Map<string, GameEvent[]>,
+): Promise<{ strikeouts: number }> {
+  let strikeouts = 0;
+  const gameById = new Map(games.map((g) => [g.G_ID, g]));
+
+  for (const [gameId, events] of eventsByGame) {
+    const g = gameById.get(gameId);
+    if (!g || g.CANCEL_SC_ID !== "0") continue;
+    const away = g.AWAY_NM ?? "";
+    const home = g.HOME_NM ?? "";
+    const url = `/games/${gameId}`;
+
+    for (const ev of events) {
+      if (ev.type !== "at_bat_strikeout") continue;
+      const pitcher = ev.detail?.pitcher;
+      if (!pitcher) continue;
+
+      // 투수 소속팀 = 수비팀. 초 공격이면 홈팀 투수, 말 공격이면 원정팀 투수.
+      const pitchingTeamId = teamIdByShortName(ev.isTop ? home : away);
+      if (pitchingTeamId === null) continue;
+      const resolved = resolvePlayer({ name: pitcher, teamId: pitchingTeamId }, undefined, { context: "push:fav-strikeout" });
+      if (!resolved) continue;
+
+      const dedupId = `${ev.id}#fav-strikeout`;
+      if (!(await claimEvent(dedupId, gameId))) continue;
+
+      const { data: fansData, error } = await supabase
+        .from("profiles")
+        .select("id")
+        .contains("favorite_players", JSON.stringify([{ playerId: resolved.kboId }]));
+      if (error) { await unclaimEvent(dedupId); continue; }
+      const userIds = (fansData ?? []).map((r: { id: string }) => r.id);
+      if (userIds.length === 0) continue;
+
+      const half = ev.isTop ? "초" : "말";
+      const batter = ev.detail?.batter;
+      const res = await sendFcmToUsers(userIds, {
+        title: `🔥 ${resolved.name} 삼진!`,
+        body: batter ? `${ev.inning}회${half} · ${batter} 상대` : `${away} vs ${home}`,
+        url,
+      }, "fav_player_strikeout");
+      if (!res.ok) { await unclaimEvent(dedupId); continue; }
+      strikeouts += res.sent;
+    }
+  }
+
+  return { strikeouts };
+}

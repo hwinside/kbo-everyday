@@ -3,7 +3,7 @@ import type { KboRawGame } from "@/types/api";
 import type { GameEvent } from "@/types/game-events";
 import { notifyGameStatusTransitions } from "@/lib/notifications/game-status";
 import { notifyScoreEvents } from "@/lib/notifications/game-score";
-import { notifyPlayerHighlights } from "@/lib/notifications/player-highlight";
+import { notifyPlayerHighlights, notifyPlayerStrikeouts } from "@/lib/notifications/player-highlight";
 import { pushLiveActivityUpdates } from "@/lib/notifications/live-activity";
 import { pushAndroidWidgetLiveUpdates } from "@/lib/notifications/android-widget-live";
 
@@ -96,7 +96,7 @@ export async function GET(req: NextRequest) {
   }
 
   // 내 팀 득점 푸시 (push-notifications-v1 S5a) — game-events의 득점 이벤트 기반.
-  let scoreNotify: { scored: number } | { error: string } = { scored: 0 };
+  let scoreNotify: { scored: number; inningSummaries?: number } | { error: string } = { scored: 0 };
   try {
     scoreNotify = await notifyScoreEvents(games, eventsByGame);
   } catch (e) {
@@ -125,6 +125,15 @@ export async function GET(req: NextRequest) {
     console.error("[warmup] highlight notify failed:", (e as Error).message);
   }
 
+  // 최애선수 삼진(투수) 푸시 — 삼진 이벤트의 투수를 최애선수로 둔 유저에게 발송.
+  let strikeoutNotify: { strikeouts: number } | { error: string } = { strikeouts: 0 };
+  try {
+    strikeoutNotify = await notifyPlayerStrikeouts(games, eventsByGame);
+  } catch (e) {
+    strikeoutNotify = { error: (e as Error).message };
+    console.error("[warmup] strikeout notify failed:", (e as Error).message);
+  }
+
   // 잠금화면 Live Activity 백그라운드 갱신 (W3a) — 같은 게임 목록 재사용.
   // APNs 직접 푸시. 미설정(APNS env 없음) 시 no-op. 실패해도 warmup 본연에 영향 없음.
   let liveActivity:
@@ -145,6 +154,7 @@ export async function GET(req: NextRequest) {
     scoreNotify,
     androidWidget,
     highlightNotify,
+    strikeoutNotify,
     liveActivity,
     results: results.map(r =>
       r.status === "fulfilled"
