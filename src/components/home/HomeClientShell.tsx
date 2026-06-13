@@ -305,12 +305,19 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     if (!awayCode || !homeCode) return;
 
     const isScheduled = widgetGame.status === "scheduled";
-    // 경기장 정보(예: 잠실) — status 뒤에 붙여 위젯 pill에 노출
-    const venue = widgetGame.stadium ? ` · ${widgetGame.stadium}` : "";
+    // 이닝 라벨 항상 "N회초/말"로 재구성 — inning이 숫자(라이브 폴 갭 시 base 게임의
+    // 원시 숫자로 떨어짐)거나 "회" 없는 문자열일 때 bare "LIVE 3"으로 새던 버그 차단.
+    const inn = widgetGame.inning;
+    const half = widgetGame.isTop ? "초" : "말";
+    const inningLabel =
+      typeof inn === "number" ? `${inn}회${half}`
+      : typeof inn === "string" && inn ? (inn.includes("회") ? inn : `${inn}회${half}`)
+      : "";
+    // 경기장(잠실)은 status에 붙이지 않고 별도 필드(stadium)로 — 위젯에서 점수 위에 따로 표시
     const status = isScheduled
-      ? `SCHEDULED|${widgetGame.time}${venue}`
+      ? `SCHEDULED|${widgetGame.time}`
       : widgetGame.status === "live"
-        ? `${`LIVE ${widgetGame.inning ?? ""}`.trim()}${venue}`
+        ? `LIVE ${inningLabel}`.trim()
         : "";
     if (!status) return;
 
@@ -331,6 +338,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       batterTeam: !isScheduled && widgetGame.currentBatter ? batterTeam : "",
       outs: isScheduled ? "" : (widgetGame.outs === undefined ? "" : String(Math.min(Math.max(widgetGame.outs, 0), 2))),
       diamond: isScheduled ? "000" : `${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}`,
+      stadium: widgetGame.stadium ?? "",
     });
   }, [myTeamId, widgetGame]);
 
