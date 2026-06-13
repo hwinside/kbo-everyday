@@ -322,11 +322,11 @@ struct KBOLockScreenCard: View {
                 HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 4) {
                         // 아웃카운트만 유지
-                        HStack(spacing: 5) {
+                        HStack(spacing: 6) {
                             Text("O")
-                                .font(montserrat(11, .semibold))
+                                .font(montserrat(14, .bold))
                                 .foregroundStyle(.white.opacity(0.7))
-                            HStack(spacing: 4) { outDot(0); outDot(1); outDot(2) }
+                            HStack(spacing: 5) { outDot(0); outDot(1); outDot(2) }
                         }
                         // 투수/타자 — 소속 표기
                         if !state.pitcherName.isEmpty {
@@ -372,20 +372,21 @@ struct KBOLockScreenCard: View {
     private func outDot(_ i: Int) -> some View {
         Circle()
             .fill(i < state.outs ? Color(hex: 0xFF4D4D) : Color.white.opacity(0.2))
-            .frame(width: 7, height: 7)
+            .frame(width: 9, height: 9)
     }
 
-    // 투수/타자 행 — "투수 (LG) 웰스". 라벨/괄호/이름=Noto, 라틴 약어(LG/SSG)=Montserrat.
+    // 투수/타자 행 — "투수 (LG) 웰스". 팀명과 동일 크기(하린아빠 요청). 라벨/괄호/이름=Noto,
+    // 라틴 약어(LG/SSG)=Montserrat. 폰트 원칙: 영숫자=Montserrat, 한글=Noto.
     private func playerLine(label: String, team: String, name: String) -> some View {
         HStack(spacing: 5) {
-            (Text("\(label) (").font(notoKR(11, .medium))
-             + teamShortText(team, 11, .medium)
-             + Text(")").font(notoKR(11, .medium)))
-                .foregroundStyle(.white.opacity(0.72))
+            (Text("\(label) (").font(notoKR(13, .medium))
+             + teamShortText(team, 13, .medium)
+             + Text(")").font(notoKR(13, .medium)))
+                .foregroundStyle(.white.opacity(0.75))
             Text(name)
-                .font(notoKR(13, .bold))
+                .font(notoKR(15, .bold))
         }
-        .lineLimit(1).minimumScaleFactor(0.8)
+        .lineLimit(1).minimumScaleFactor(0.75)
     }
 }
 
