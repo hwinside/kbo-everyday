@@ -101,12 +101,21 @@ type WidgetGame = HomeGame & {
   currentBatter?: string | null;
   currentPitcher?: string | null;
   isTop?: boolean;
+  dateISO?: string; // 예정 경기 날짜(YYYY-MM-DD) — 위젯에 '6월 7일 (토)' 표기용
 };
 
 function formatKSTDateOffset(offsetDays: number): string {
   const base = new Date(Date.now() + 9 * 60 * 60 * 1000);
   base.setUTCDate(base.getUTCDate() + offsetDays);
   return base.toISOString().slice(0, 10);
+}
+
+// 'YYYY-MM-DD' → '6월 7일 (토)'. 숫자 요일은 해당 날짜(UTC 자정 기준)로 계산.
+function formatKoreanDate(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return "";
+  const wd = ["일", "월", "화", "수", "목", "금", "토"][new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+  return `${m}월 ${d}일 (${wd})`;
 }
 
 function formatApiDate(date: string): string {
@@ -144,7 +153,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   const router = useRouter();
   const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number; gameId: string} | null>(null);
   const [showLogin, setShowLogin] = useState(false);
-  const [nextWidgetGame, setNextWidgetGame] = useState<HomeGame | null>(null);
+  const [nextWidgetGame, setNextWidgetGame] = useState<WidgetGame | null>(null);
   const lastRefreshAtRef = useRef(0);
 
   const {
@@ -243,9 +252,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     };
   }, [myTeamGameBase, myTeamLive]);
   const widgetGame = useMemo<WidgetGame | undefined>(() => {
-    if (myTeamGame && (myTeamGame.status === "live" || myTeamGame.status === "scheduled")) {
-      return myTeamGame;
-    }
+    // 오늘 최애팀 경기가 있으면 상태 무관(라이브/예정/종료) 우선 표시 —
+    // 종료 경기는 결과(스코어)를 보여주고, 미래 예정 경기로 건너뛰지 않는다.
+    if (myTeamGame) return myTeamGame;
     return nextWidgetGame ?? undefined;
   }, [myTeamGame, nextWidgetGame]);
 
@@ -256,8 +265,11 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     }
     const teamId = myTeamId;
 
-    const todayCandidate = findWidgetGame(todayGames, teamId);
-    if (todayCandidate) {
+    // 오늘 최애팀 경기가 있으면(상태 무관) 그 경기를 표시하므로 미래 경기 탐색 불필요.
+    const hasTodayGame = todayGames.some(
+      (g) => g.homeTeamId === teamId || g.awayTeamId === teamId,
+    );
+    if (hasTodayGame) {
       setNextWidgetGame(null);
       return;
     }
@@ -274,7 +286,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           const games = ((data.games ?? []) as ApiGameData[]).map(mapApiGame);
           const candidate = findWidgetGame(games, teamId);
           if (candidate) {
-            if (!cancelled) setNextWidgetGame(candidate);
+            // 미래 예정 경기는 날짜(YYYY-MM-DD)를 함께 실어 위젯에 '6월 7일 (토)' 표기.
+            if (!cancelled) setNextWidgetGame({ ...candidate, dateISO: date });
             return;
           }
         } catch {
@@ -305,6 +318,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     if (!awayCode || !homeCode) return;
 
     const isScheduled = widgetGame.status === "scheduled";
+    const isFinal = widgetGame.status === "final";
+    // 라이브 행(투수/타자/아웃/주자)은 라이브 경기에만 표시. 예정/종료는 숨김.
+    const hideLive = isScheduled || isFinal;
     // 이닝 라벨 항상 "N회초/말"로 재구성 — inning이 숫자(라이브 폴 갭 시 base 게임의
     // 원시 숫자로 떨어짐)거나 "회" 없는 문자열일 때 bare "LIVE 3"으로 새던 버그 차단.
     const inn = widgetGame.inning;
@@ -313,12 +329,18 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       typeof inn === "number" ? `${inn}회${half}`
       : typeof inn === "string" && inn ? (inn.includes("회") ? inn : `${inn}회${half}`)
       : "";
-    // 경기장(잠실)은 status에 붙이지 않고 별도 필드(stadium)로 — 위젯에서 점수 위에 따로 표시
+    // 예정 경기는 날짜를 status에 함께 인코딩(SCHEDULED|시간|날짜라벨) — 위젯이 '6월 7일 (토)' 표기.
+    // 오늘 예정 경기는 dateISO가 없으므로 오늘 날짜로 폴백. 경기장(잠실)은 별도 stadium 필드.
+    const dateLabel = isScheduled
+      ? formatKoreanDate(widgetGame.dateISO ?? formatKSTDateOffset(0))
+      : "";
     const status = isScheduled
-      ? `SCHEDULED|${widgetGame.time}`
+      ? `SCHEDULED|${widgetGame.time}|${dateLabel}`
       : widgetGame.status === "live"
         ? `LIVE ${inningLabel}`.trim()
-        : "";
+        : isFinal
+          ? "FINAL"
+          : "";
     if (!status) return;
 
     const batterTeam = widgetGame.isTop ? awayCode : homeCode;
@@ -330,14 +352,14 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       awayScore: String(widgetGame.awayScore ?? 0),
       homeScore: String(widgetGame.homeScore ?? 0),
       status,
-      // 예정 경기는 라이브 정보(투수/타자/아웃/주자)가 없으므로 전부 비워 라이브 행 자체를 숨긴다
-      // (빈 다이아몬드 + "O ○○○"가 미시작 경기에 떠서 완성도 떨어져 보이던 문제).
-      pitcher: isScheduled ? "" : (widgetGame.currentPitcher ?? ""),
-      pitcherTeam: !isScheduled && widgetGame.currentPitcher ? pitcherTeam : "",
-      batter: isScheduled ? "" : (widgetGame.currentBatter ?? ""),
-      batterTeam: !isScheduled && widgetGame.currentBatter ? batterTeam : "",
-      outs: isScheduled ? "" : (widgetGame.outs === undefined ? "" : String(Math.min(Math.max(widgetGame.outs, 0), 2))),
-      diamond: isScheduled ? "000" : `${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}`,
+      // 예정/종료 경기는 라이브 정보가 없으므로 전부 비워 라이브 행 자체를 숨긴다
+      // (빈 다이아몬드 + "O ○○○"가 미시작/종료 경기에 떠서 완성도 떨어져 보이던 문제).
+      pitcher: hideLive ? "" : (widgetGame.currentPitcher ?? ""),
+      pitcherTeam: !hideLive && widgetGame.currentPitcher ? pitcherTeam : "",
+      batter: hideLive ? "" : (widgetGame.currentBatter ?? ""),
+      batterTeam: !hideLive && widgetGame.currentBatter ? batterTeam : "",
+      outs: hideLive ? "" : (widgetGame.outs === undefined ? "" : String(Math.min(Math.max(widgetGame.outs, 0), 2))),
+      diamond: hideLive ? "000" : `${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}`,
       stadium: widgetGame.stadium ?? "",
     });
   }, [myTeamId, widgetGame]);

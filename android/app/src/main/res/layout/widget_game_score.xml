@@ -109,6 +109,19 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
                 android:gravity="center">
+                <!-- 경기 날짜('6월 7일 (토)') — 예정 경기일 때 경기장 위 표시 -->
+                <TextView
+                    android:id="@+id/widget_date"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="1dp"
+                    android:fontFamily="@font/notosanskr"
+                    android:letterSpacing="-0.04"
+                    android:textColor="#C8C8CE"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:visibility="gone"
+                    android:text="6월 7일 (토)" />
                 <!-- 경기장(잠실) — 가운데 점수 위 별도 표시 -->
                 <TextView
                     android:id="@+id/widget_stadium"

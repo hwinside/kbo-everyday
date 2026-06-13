@@ -155,17 +155,36 @@ public class GameScoreWidget extends AppWidgetProvider {
         v.setTextViewText(R.id.widget_away_name, fullName(away));
         v.setTextViewText(R.id.widget_home_name, fullName(home));
         boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
+        boolean isFinal = status != null && status.startsWith("FINAL");
+        // 예정 status = "SCHEDULED|<시간>|<날짜라벨>" (날짜라벨은 선택)
+        String schedTime = "";
+        String dateLabel = "";
+        if (isScheduled) {
+            String sched = status.substring("SCHEDULED|".length());
+            int bar = sched.indexOf('|');
+            schedTime = bar >= 0 ? sched.substring(0, bar) : sched;
+            dateLabel = bar >= 0 ? sched.substring(bar + 1) : "";
+        }
         if (isScheduled) {
             v.setViewVisibility(R.id.widget_score, View.GONE);
             v.setViewVisibility(R.id.widget_score_scheduled, View.VISIBLE);
             v.setTextViewText(R.id.widget_score_scheduled, "경기 예정");
             v.setTextViewTextSize(R.id.widget_score_scheduled, TypedValue.COMPLEX_UNIT_SP, 22);
-            setStatusPill(v, R.id.widget_status_main, R.id.widget_status_suf, status.substring("SCHEDULED|".length()));
+            setStatusPill(v, R.id.widget_status_main, R.id.widget_status_suf, schedTime);
         } else {
+            // 라이브/종료 둘 다 점수 표시 (종료=결과)
             v.setViewVisibility(R.id.widget_score, View.VISIBLE);
             v.setViewVisibility(R.id.widget_score_scheduled, View.GONE);
             v.setTextViewText(R.id.widget_score, as + " : " + hs);
             v.setTextViewTextSize(R.id.widget_score, TypedValue.COMPLEX_UNIT_SP, 30);
+        }
+
+        // 경기 날짜('6월 7일 (토)') — 예정 경기일 때만 경기장 위 표시
+        if (dateLabel.isEmpty()) {
+            v.setViewVisibility(R.id.widget_date, View.GONE);
+        } else {
+            v.setViewVisibility(R.id.widget_date, View.VISIBLE);
+            v.setTextViewText(R.id.widget_date, dateLabel);
         }
 
         // 경기장(잠실) — 가운데 점수 위 별도 표시
@@ -176,13 +195,17 @@ public class GameScoreWidget extends AppWidgetProvider {
             v.setTextViewText(R.id.widget_stadium, stadium);
         }
 
-        // 상태 pill — 라이브는 "● LIVE N회초" 빨강 정적 강조(위젯은 애니 불가). 예정은 시간.
+        // 상태 pill — 라이브 "● LIVE N회초" 빨강 정적, 종료 "경기 종료", 예정은 시간.
         // 영문/숫자=Montserrat(main) / 한글=Noto(suf) 분리 렌더.
         if (status.isEmpty() || "SCHEDULED|".equals(status)) {
             v.setViewVisibility(R.id.widget_status, View.GONE);
         } else {
             v.setViewVisibility(R.id.widget_status, View.VISIBLE);
-            if (!isScheduled) setStatusPill(v, R.id.widget_status_main, R.id.widget_status_suf, "● " + status);
+            if (isFinal) {
+                setStatusPill(v, R.id.widget_status_main, R.id.widget_status_suf, "경기 종료");
+            } else if (!isScheduled) {
+                setStatusPill(v, R.id.widget_status_main, R.id.widget_status_suf, "● " + status);
+            }
         }
 
         // 하단: OUT + 투수/타자 소속표기 + 다이아몬드 (라이브 정보 없으면 행 숨김)
