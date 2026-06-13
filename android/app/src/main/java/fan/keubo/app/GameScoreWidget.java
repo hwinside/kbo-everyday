@@ -179,12 +179,13 @@ public class GameScoreWidget extends AppWidgetProvider {
             v.setTextViewTextSize(R.id.widget_score, TypedValue.COMPLEX_UNIT_SP, 30);
         }
 
-        // 경기 날짜('6월 7일 (토)') — 예정 경기일 때만 경기장 위 표시
+        // 경기 날짜('6월 7일 (토)') — 예정 경기일 때만 경기장 위 표시.
+        // 숫자는 한글에 섞여도 Montserrat → 숫자/비숫자 구간별 TextView 슬롯에 분배.
         if (dateLabel.isEmpty()) {
             v.setViewVisibility(R.id.widget_date, View.GONE);
         } else {
             v.setViewVisibility(R.id.widget_date, View.VISIBLE);
-            v.setTextViewText(R.id.widget_date, dateLabel);
+            setDateRow(v, dateLabel);
         }
 
         // 경기장(잠실) — 가운데 점수 위 별도 표시
@@ -255,6 +256,34 @@ public class GameScoreWidget extends AppWidgetProvider {
     }
 
     /** 상태 pill 텍스트를 영문/숫자(main=Montserrat)와 한글(suf=Noto Sans KR)로 분리해 두 TextView에 세팅. */
+    // 날짜 라벨('6월 7일 (토)')을 숫자/비숫자 구간으로 쪼개 4개 슬롯에 분배.
+    // 슬롯 0/2 = Montserrat(숫자), 1/3 = Noto. 날짜는 항상 숫자로 시작·숫자 2개라 정렬 일치.
+    private static void setDateRow(RemoteViews v, String label) {
+        int[] ids = { R.id.widget_date_0, R.id.widget_date_1, R.id.widget_date_2, R.id.widget_date_3 };
+        java.util.List<String> runs = new java.util.ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        boolean curDigit = false;
+        for (int i = 0; i < label.length(); i++) {
+            char c = label.charAt(i);
+            boolean d = Character.isDigit(c);
+            if (cur.length() > 0 && d != curDigit) {
+                runs.add(cur.toString());
+                cur.setLength(0);
+            }
+            cur.append(c);
+            curDigit = d;
+        }
+        if (cur.length() > 0) runs.add(cur.toString());
+        for (int i = 0; i < ids.length; i++) {
+            if (i < runs.size()) {
+                v.setViewVisibility(ids[i], View.VISIBLE);
+                v.setTextViewText(ids[i], runs.get(i));
+            } else {
+                v.setViewVisibility(ids[i], View.GONE);
+            }
+        }
+    }
+
     private static void setStatusPill(RemoteViews v, int mainId, int sufId, String text) {
         if (text == null) text = "";
         int idx = -1;
