@@ -207,6 +207,12 @@ struct KBOLockScreenCard: View {
             HStack(spacing: 4) {
                 TeamBadge(code: attributes.awayTeamCode)
                 VStack(spacing: 3) {
+                    // 경기장(구장) — 가운데 점수 위에 표기 (하린아빠 요청)
+                    if !state.stadium.isEmpty {
+                        Text(state.stadium)
+                            .font(notoKR(10, .medium))
+                            .foregroundStyle(.white.opacity(0.75))
+                    }
                     HStack(spacing: 9) {
                         Text("\(state.awayScore)")
                             .font(montserrat(30, .black)).monospacedDigit()
