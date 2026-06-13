@@ -100,10 +100,12 @@ extension Color {
 struct KBOLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: KBOGameAttributes.self) { context in
-            // 잠금화면 / 배너 표시
+            // 잠금화면 / 배너 표시. activityBackgroundTint로 시스템 컨테이너 전체를 카드 accent로
+            // 깔아, 시스템 기본(어두운) 배경이 가장자리(양옆/위아래)·모서리에 비치는 것을 막는다.
+            let my = context.attributes.myTeamCode
+            let isMy = !my.isEmpty && (my == context.attributes.awayTeamCode || my == context.attributes.homeTeamCode)
             KBOLockScreenCard(attributes: context.attributes, state: context.state)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 2)
+                .activityBackgroundTint(isMy ? teamColor(my) : Color(hex: 0x1A1A1A))
                 .activitySystemActionForegroundColor(Color.white)
         } dynamicIsland: { context in
             DynamicIsland {
@@ -268,8 +270,11 @@ struct KBOLockScreenCard: View {
                         .padding(.trailing, 12)
                 }
             }
+            // 시스템이 Live Activity 컨테이너를 자체 라운딩하므로, 안쪽에서 따로 clipShape하지
+            // 않는다(안쪽 라운딩 ↔ 컨테이너 가장자리 사이에 어두운 여백이 생기던 원인). gradient가
+            // 컨테이너 가장자리까지 꽉 차고, 모서리는 시스템이 둥글게 깎는다.
+            .ignoresSafeArea()
         )
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     // 아웃카운트 점 (채워진=빨강, 빈=반투명)
