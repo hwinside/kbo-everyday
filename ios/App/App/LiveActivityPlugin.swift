@@ -21,6 +21,7 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "update", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "end", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "isEnabled", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "writeWidgetSnapshot", returnType: CAPPluginReturnPromise),
     ]
 
     /// 브리지 로드 시 — Activity push token 발급 콜백을 JS 이벤트로 연결 (W3 APNs 등록).
@@ -97,6 +98,43 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
         } else {
             call.resolve(["enabled": false])
         }
+    }
+
+    /// 홈 화면 위젯 스냅샷 직접 기록(JS 주도). 라이브 경기가 없을 때 홈 화면이
+    /// *최애팀의 다음 예정 경기*(status="scheduled")를 기록하는 fallback 경로.
+    /// live/final 스냅샷도 받을 수 있어 경기룸 밖 갱신에도 쓸 수 있다.
+    /// ActivityKit 비의존(WidgetKit은 iOS 14+) — 16.1 미만에서도 안전하게 no-op/기록.
+    @objc func writeWidgetSnapshot(_ call: CAPPluginCall) {
+        guard let gameId = call.getString("gameId"),
+              let awayTeamCode = call.getString("awayTeamCode"),
+              let homeTeamCode = call.getString("homeTeamCode") else {
+            call.reject("missing game info (gameId/teamCodes)")
+            return
+        }
+        let status = call.getString("status") ?? "scheduled"
+        let dict: [String: Any] = [
+            "hasGame": true,
+            "gameId": gameId,
+            "awayTeamCode": awayTeamCode,
+            "homeTeamCode": homeTeamCode,
+            "myTeamCode": call.getString("myTeamCode") ?? "",
+            "awayScore": call.getInt("awayScore") ?? 0,
+            "homeScore": call.getInt("homeScore") ?? 0,
+            "inning": call.getInt("inning") ?? 1,
+            "isTopInning": call.getBool("isTopInning") ?? true,
+            "outs": call.getInt("outs") ?? 0,
+            "onFirst": call.getBool("onFirst") ?? false,
+            "onSecond": call.getBool("onSecond") ?? false,
+            "onThird": call.getBool("onThird") ?? false,
+            "pitcherName": call.getString("pitcherName") ?? "",
+            "batterName": call.getString("batterName") ?? "",
+            "stadium": call.getString("stadium") ?? "",
+            "isFinal": status == "final",
+            "status": status,
+            "startText": call.getString("startText") ?? "",
+        ]
+        WidgetSnapshotStore.write(dict)
+        call.resolve()
     }
 
     @available(iOS 16.1, *)

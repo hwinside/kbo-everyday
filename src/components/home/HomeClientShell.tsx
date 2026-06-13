@@ -17,6 +17,7 @@ import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
 import { useHomeInit, type HomeGame } from "@/hooks/useHomeInit";
 import { setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
+import { writeHomeWidgetSnapshot } from "@/lib/native-live-activity";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
 import MyTeamHero from "@/components/home/MyTeamHero";
 import FavoritePlayersSection from "@/components/home/FavoritePlayersSection";
@@ -169,7 +170,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   const gameTime = isGameTimeKST();
   const { liveGames: polledLiveGames } = useLiveGame(
     undefined,
-    gameTime ? 15000 : 0 // 0이면 폴링 안 함
+    gameTime ? 10000 : 0 // 0이면 폴링 안 함
   );
   // 서버 초기 → 클라이언트 폴링으로 점진 교체
   const liveGames = polledLiveGames.length > 0 ? polledLiveGames :
@@ -327,6 +328,35 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       diamond: `${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}`,
     });
   }, [myTeamId, widgetGame]);
+
+  // iOS 홈 화면 위젯 — 최애팀 경기(라이브/예정/종료)를 App Group에 기록해 위젯에 표시한다.
+  // 라이브 경기가 없을 때 *다음 예정 경기*가 위젯에 뜨게 하는 핵심 fallback 경로.
+  // (네이티브 iOS 외엔 no-op.) 스코어/이닝/주자 등 변할 때만 재기록되도록 signature로 dep.
+  const widgetSig = widgetGame
+    ? `${widgetGame.id}|${widgetGame.status}|${widgetGame.awayScore}|${widgetGame.homeScore}|${widgetGame.inning ?? ""}|${widgetGame.outs ?? ""}|${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}|${widgetGame.currentPitcher ?? ""}|${widgetGame.currentBatter ?? ""}`
+    : "";
+  useEffect(() => {
+    if (!widgetGame) return;
+    void writeHomeWidgetSnapshot(myTeamId, {
+      gameId: widgetGame.id,
+      awayTeamId: widgetGame.awayTeamId,
+      homeTeamId: widgetGame.homeTeamId,
+      status: widgetGame.status,
+      awayScore: widgetGame.awayScore,
+      homeScore: widgetGame.homeScore,
+      inning: widgetGame.inning ?? null,
+      isTop: widgetGame.isTop ?? true,
+      outs: widgetGame.outs ?? 0,
+      runner1b: widgetGame.runner1b ?? false,
+      runner2b: widgetGame.runner2b ?? false,
+      runner3b: widgetGame.runner3b ?? false,
+      currentPitcher: widgetGame.currentPitcher ?? null,
+      currentBatter: widgetGame.currentBatter ?? null,
+      stadium: widgetGame.stadium,
+      time: widgetGame.time,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myTeamId, widgetSig]);
 
   return (
     <PullToRefresh onRefresh={handleRefresh}>
