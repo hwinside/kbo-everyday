@@ -139,9 +139,11 @@ struct KBOHomeWidgetEntryView: View {
                     HomeWidgetScheduledCard(snap: snap, compact: false)
                         .widgetContainerBackground { smallBackground(snap) }
                 } else {
-                    // medium LIVE — 잠금화면 풀카드는 medium 높이(~141pt)를 넘쳐 위/아래가
-                    // 잘리므로, 동일 MY TEAM 디자인을 medium 높이에 맞춘 컴팩트 카드를 쓴다.
-                    HomeWidgetMediumCard(snap: snap)
+                    // medium LIVE/FINAL — 잠금화면 Live Activity 카드(KBOLockScreenCard)와 *동일*하게
+                    // (하린아빠 요청). 아웃카운트·투수/타자·다이아몬드·풀네임·폰트 전부 잠금화면 그대로.
+                    // #278에서 카드를 충분히 컴팩트화해 medium 높이에 수용.
+                    KBOLockScreenCard(attributes: attributes(from: snap),
+                                      state: state(from: snap))
                         .widgetContainerBackground { smallBackground(snap) }
                 }
             default:
@@ -268,121 +270,6 @@ struct HomeWidgetSmallCard: View {
     }
 }
 
-// MARK: - medium LIVE 카드 (잠금화면 카드의 systemMedium 높이 맞춤판 — 동일 MY TEAM 디자인)
-//
-// 구성·표기는 KBOLockScreenCard와 동일(MY TEAM 헤더 + 3컬럼 스코어 + 구장 + LIVE 이닝 +
-// 아웃/투수/타자 + 다이아몬드 + watermark)하되, 폰트·뱃지·간격을 medium 높이(~141pt)에
-// 맞게 줄여 잘림 없이 들어가게 한다. 배경(팀 그라데이션)은 widgetContainerBackground가 담당.
-
-@available(iOS 16.1, *)
-struct HomeWidgetMediumCard: View {
-    let snap: WidgetGameSnapshot
-
-    private var hasMyTeam: Bool {
-        !snap.myTeamCode.isEmpty &&
-        (snap.myTeamCode == snap.awayTeamCode || snap.myTeamCode == snap.homeTeamCode)
-    }
-    // 초(top)=홈 투수·원정 타자, 말=반대 (KBOLockScreenCard와 동일).
-    private var pitcherTeamCode: String { snap.isTopInning ? snap.homeTeamCode : snap.awayTeamCode }
-    private var batterTeamCode: String { snap.isTopInning ? snap.awayTeamCode : snap.homeTeamCode }
-
-    var body: some View {
-        VStack(spacing: 4) {
-            if hasMyTeam {
-                HStack(spacing: 4) {
-                    TeamLogo(code: snap.myTeamCode, size: 12)
-                    Text("MY TEAM").font(montserrat(9, .heavy)).tracking(0.8)
-                    Spacer()
-                }
-                .foregroundStyle(.white.opacity(0.9))
-            }
-
-            HStack(spacing: 4) {
-                mediumBadge(code: snap.awayTeamCode)
-                VStack(spacing: 2) {
-                    if !snap.stadium.isEmpty {
-                        Text(snap.stadium).font(notoKR(9, .medium)).foregroundStyle(.white.opacity(0.75))
-                    }
-                    HStack(spacing: 7) {
-                        Text("\(snap.awayScore)").font(montserrat(24, .black)).monospacedDigit()
-                        Text(":").font(montserrat(13, .bold)).foregroundStyle(.white.opacity(0.5))
-                        Text("\(snap.homeScore)").font(montserrat(24, .black)).monospacedDigit()
-                    }
-                    Group {
-                        if snap.isFinal {
-                            Text("경기 종료").font(notoKR(9, .bold))
-                        } else {
-                            Text("LIVE ").font(montserrat(9, .bold))
-                                + inningRun("\(snap.inning)회\(snap.isTopInning ? "초" : "말")", 9, .bold)
-                        }
-                    }
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(Capsule().fill(snap.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85)))
-                }
-                mediumBadge(code: snap.homeTeamCode)
-            }
-
-            if !snap.isFinal {
-                HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 4) {
-                            Text("O").font(montserrat(10, .semibold)).foregroundStyle(.white.opacity(0.7))
-                            HStack(spacing: 3) { medOutDot(0); medOutDot(1); medOutDot(2) }
-                        }
-                        if !snap.pitcherName.isEmpty {
-                            medPlayerLine(label: "투수", team: pitcherTeamCode, name: snap.pitcherName)
-                        }
-                        if !snap.batterName.isEmpty {
-                            medPlayerLine(label: "타자", team: batterTeamCode, name: snap.batterName)
-                        }
-                    }
-                    Spacer()
-                    DiamondView(onFirst: snap.onFirst, onSecond: snap.onSecond, onThird: snap.onThird)
-                        .scaleEffect(0.78)
-                }
-                .padding(.top, 1)
-                .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.12)).frame(height: 1) }
-            }
-        }
-        .foregroundStyle(.white)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 12).padding(.vertical, 7)
-        .overlay(alignment: .topTrailing) {
-            if hasMyTeam {
-                TeamLogo(code: snap.myTeamCode, size: 50)
-                    .opacity(0.12).padding(.top, 6).padding(.trailing, 8)
-            }
-        }
-    }
-
-    private func mediumBadge(code: String) -> some View {
-        VStack(spacing: 3) {
-            ZStack { Circle().fill(.white); TeamLogo(code: code, size: 17) }
-                .frame(width: 26, height: 26)
-            Text(teamShortName(code))
-                .font(montserrat(11, .heavy)).lineLimit(1).minimumScaleFactor(0.7)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func medOutDot(_ i: Int) -> some View {
-        Circle()
-            .fill(i < snap.outs ? Color(hex: 0xFF4D4D) : Color.white.opacity(0.2))
-            .frame(width: 7, height: 7)
-    }
-
-    private func medPlayerLine(label: String, team: String, name: String) -> some View {
-        HStack(spacing: 5) {
-            (Text("\(label) (").font(notoKR(10, .medium))
-             + teamShortText(team, 10, .medium)
-             + Text(")").font(notoKR(10, .medium)))
-                .foregroundStyle(.white.opacity(0.72))
-            Text(name).font(notoKR(12, .bold))
-        }
-        .lineLimit(1).minimumScaleFactor(0.8)
-    }
-}
-
 // MARK: - 예정/취소 경기 카드 (최애팀 다음 경기 — 라이브 경기 없을 때 fallback)
 
 @available(iOS 16.1, *)
@@ -435,7 +322,7 @@ struct HomeWidgetScheduledCard: View {
             // medium에서만 날짜('6월 7일 (토)') + 구장 표기. 날짜 숫자=Montserrat 분리.
             if !compact {
                 if let d = snap.dateText, !d.isEmpty {
-                    mixedNumText(d, 11, .semibold)
+                    mixedScriptText(d, 11, .semibold)
                         .foregroundStyle(.white.opacity(0.85))
                 }
                 if !snap.stadium.isEmpty {
