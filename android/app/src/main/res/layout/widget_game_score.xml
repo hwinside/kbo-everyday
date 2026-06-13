@@ -100,7 +100,7 @@
                     android:textColor="#E8B0BC"
                     android:textStyle="bold"
                     android:textSize="14sp"
-                    android:text="SSG" />
+                    android:text="롯데 자이언츠" />
             </LinearLayout>
 
             <!-- 가운데: 점수 + 상태 pill -->
@@ -172,7 +172,7 @@
                     android:textColor="#E8B0BC"
                     android:textStyle="bold"
                     android:textSize="14sp"
-                    android:text="LG" />
+                    android:text="LG 트윈스" />
             </LinearLayout>
         </LinearLayout>
 
