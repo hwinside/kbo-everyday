@@ -47,19 +47,31 @@ public class GameScoreWidget extends AppWidgetProvider {
     static final String KEY_TITLE = "title";
     static final String KEY_SUB = "sub";
 
-    // KBO 2자 코드 → 팀 약어(라벨용)
+    // KBO 2자 코드 → 팀명
     private static final Map<String, String> SHORT = new HashMap<>();
+    private static final Map<String, String> FULL = new HashMap<>();
     static {
         SHORT.put("LG", "LG"); SHORT.put("OB", "두산"); SHORT.put("KT", "KT");
         SHORT.put("SK", "SSG"); SHORT.put("NC", "NC"); SHORT.put("HT", "KIA");
         SHORT.put("LT", "롯데"); SHORT.put("SS", "삼성"); SHORT.put("HH", "한화");
         SHORT.put("WO", "키움");
+
+        FULL.put("LG", "LG 트윈스"); FULL.put("OB", "두산 베어스"); FULL.put("KT", "KT 위즈");
+        FULL.put("SK", "SSG 랜더스"); FULL.put("NC", "NC 다이노스"); FULL.put("HT", "KIA 타이거즈");
+        FULL.put("LT", "롯데 자이언츠"); FULL.put("SS", "삼성 라이온즈"); FULL.put("HH", "한화 이글스");
+        FULL.put("WO", "키움 히어로즈");
     }
 
     private static String shortName(String code) {
         if (code == null) return "";
         String s = SHORT.get(code.toUpperCase());
         return s != null ? s : code.toUpperCase();
+    }
+
+    private static String fullName(String code) {
+        if (code == null) return "";
+        String s = FULL.get(code.toUpperCase());
+        return s != null ? s : shortName(code);
     }
 
     /** drawable 리소스 id 해석 (없으면 0). drawable-nodpi PNG도 "drawable" 타입. */
@@ -138,14 +150,18 @@ public class GameScoreWidget extends AppWidgetProvider {
         int homeLogo = draw(context, "teamlogo_" + home.toLowerCase());
         if (awayLogo != 0) v.setImageViewResource(R.id.widget_away_logo, awayLogo);
         if (homeLogo != 0) v.setImageViewResource(R.id.widget_home_logo, homeLogo);
-        v.setTextViewText(R.id.widget_away_name, shortName(away));
-        v.setTextViewText(R.id.widget_home_name, shortName(home));
+        v.setTextViewText(R.id.widget_away_name, fullName(away));
+        v.setTextViewText(R.id.widget_home_name, fullName(home));
         boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
         if (isScheduled) {
-            v.setTextViewText(R.id.widget_score, "경기 예정");
-            v.setTextViewTextSize(R.id.widget_score, TypedValue.COMPLEX_UNIT_SP, 22);
+            v.setViewVisibility(R.id.widget_score, View.GONE);
+            v.setViewVisibility(R.id.widget_score_scheduled, View.VISIBLE);
+            v.setTextViewText(R.id.widget_score_scheduled, "경기 예정");
+            v.setTextViewTextSize(R.id.widget_score_scheduled, TypedValue.COMPLEX_UNIT_SP, 22);
             v.setTextViewText(R.id.widget_status, status.substring("SCHEDULED|".length()));
         } else {
+            v.setViewVisibility(R.id.widget_score, View.VISIBLE);
+            v.setViewVisibility(R.id.widget_score_scheduled, View.GONE);
             v.setTextViewText(R.id.widget_score, as + " : " + hs);
             v.setTextViewTextSize(R.id.widget_score, TypedValue.COMPLEX_UNIT_SP, 30);
         }
@@ -225,9 +241,15 @@ public class GameScoreWidget extends AppWidgetProvider {
         v.setTextViewText(R.id.ncc_home_name, shortName(home));
         String status = p.getString(KEY_STATUS, "");
         boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
-        v.setTextViewText(R.id.ncc_score, isScheduled
-            ? "경기 예정"
-            : p.getString(KEY_AS, "0") + " : " + p.getString(KEY_HS, "0"));
+        if (isScheduled) {
+            v.setViewVisibility(R.id.ncc_score, View.GONE);
+            v.setViewVisibility(R.id.ncc_score_scheduled, View.VISIBLE);
+            v.setTextViewText(R.id.ncc_score_scheduled, "경기 예정");
+        } else {
+            v.setViewVisibility(R.id.ncc_score, View.VISIBLE);
+            v.setViewVisibility(R.id.ncc_score_scheduled, View.GONE);
+            v.setTextViewText(R.id.ncc_score, p.getString(KEY_AS, "0") + " : " + p.getString(KEY_HS, "0"));
+        }
 
         if (status.isEmpty()) {
             v.setViewVisibility(R.id.ncc_status, View.GONE);

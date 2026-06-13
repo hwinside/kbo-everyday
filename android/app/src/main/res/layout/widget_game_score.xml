@@ -27,6 +27,8 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
+        android:fontFamily="@font/notosanskr_vf"
+        android:letterSpacing="-0.04"
         android:textColor="#A1A1AA"
         android:textSize="13sp"
         android:visibility="gone"
@@ -58,10 +60,11 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="6dp"
+                android:fontFamily="@font/montserrat_vf"
                 android:textColor="#E0506A"
                 android:textStyle="bold"
                 android:textSize="13sp"
-                android:letterSpacing="0.05"
+                android:letterSpacing="-0.02"
                 android:text="MY TEAM" />
         </LinearLayout>
 
@@ -92,10 +95,12 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="3dp"
+                    android:fontFamily="@font/notosanskr_vf"
+                    android:letterSpacing="-0.04"
                     android:textColor="#E8B0BC"
                     android:textStyle="bold"
                     android:textSize="14sp"
-                    android:text="SSG" />
+                    android:text="롯데 자이언츠" />
             </LinearLayout>
 
             <!-- 가운데: 점수 + 상태 pill -->
@@ -108,10 +113,23 @@
                     android:id="@+id/widget_score"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:fontFamily="@font/montserrat_vf"
+                    android:letterSpacing="-0.02"
                     android:textColor="#F5F5F7"
                     android:textStyle="bold"
                     android:textSize="30sp"
                     android:text="2 : 1" />
+                <TextView
+                    android:id="@+id/widget_score_scheduled"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/notosanskr_vf"
+                    android:letterSpacing="-0.04"
+                    android:textColor="#F5F5F7"
+                    android:textStyle="bold"
+                    android:textSize="22sp"
+                    android:visibility="gone"
+                    android:text="경기 예정" />
                 <TextView
                     android:id="@+id/widget_status"
                     android:layout_width="wrap_content"
@@ -122,6 +140,8 @@
                     android:paddingTop="2dp"
                     android:paddingBottom="2dp"
                     android:background="@drawable/widget_status_pill"
+                    android:fontFamily="@font/notosanskr_vf"
+                    android:letterSpacing="-0.04"
                     android:textColor="#FF6B7A"
                     android:textStyle="bold"
                     android:textSize="12sp"
@@ -147,10 +167,12 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="3dp"
+                    android:fontFamily="@font/notosanskr_vf"
+                    android:letterSpacing="-0.04"
                     android:textColor="#E8B0BC"
                     android:textStyle="bold"
                     android:textSize="14sp"
-                    android:text="LG" />
+                    android:text="LG 트윈스" />
             </LinearLayout>
         </LinearLayout>
 
@@ -192,6 +214,8 @@
                         android:id="@+id/widget_pitcher_label"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        android:fontFamily="@font/notosanskr_vf"
+                        android:letterSpacing="-0.04"
                         android:textColor="#AEAEB4"
                         android:textStyle="bold"
                         android:textSize="15sp"
@@ -201,6 +225,8 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="6dp"
+                        android:fontFamily="@font/notosanskr_vf"
+                        android:letterSpacing="-0.04"
                         android:textColor="#F2F2F5"
                         android:textStyle="bold"
                         android:textSize="15sp"
@@ -221,6 +247,8 @@
                         android:id="@+id/widget_batter_label"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        android:fontFamily="@font/notosanskr_vf"
+                        android:letterSpacing="-0.04"
                         android:textColor="#AEAEB4"
                         android:textStyle="bold"
                         android:textSize="15sp"
@@ -230,6 +258,8 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="6dp"
+                        android:fontFamily="@font/notosanskr_vf"
+                        android:letterSpacing="-0.04"
                         android:textColor="#F2F2F5"
                         android:textStyle="bold"
                         android:textSize="15sp"
@@ -241,8 +271,11 @@
 
             <ImageView
                 android:id="@+id/widget_diamond"
-                android:layout_width="40dp"
-                android:layout_height="34dp"
+                android:layout_width="52dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:paddingStart="2dp"
+                android:paddingEnd="2dp"
                 android:scaleType="fitCenter"
                 android:src="@drawable/diamond_000"
                 android:contentDescription="@null" />
