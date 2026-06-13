@@ -132,6 +132,7 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             "isFinal": status == "final",
             "status": status,
             "startText": call.getString("startText") ?? "",
+            "dateText": call.getString("dateText") ?? "",
         ]
         WidgetSnapshotStore.write(dict)
         call.resolve()

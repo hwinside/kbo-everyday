@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Noto+Sans+KR:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#1b1b1f; padding:40px; font-family:'Montserrat','Noto Sans KR',sans-serif;
+         display:flex; flex-direction:column; align-items:center; gap:26px; }
+  .cap { color:#cfcfd4; font-size:17px; font-family:'Noto Sans KR',sans-serif; letter-spacing:-0.03em; align-self:flex-start; }
+  /* 아이폰 상단 폭 가정 (15 Pro ~393pt). 알약은 컨텐츠만큼 확장. */
+  .statusbar { width:480px; display:flex; align-items:center; justify-content:space-between; }
+  .sb-time { font-size:24px; font-weight:600; color:#fff; }
+  .sb-batt { font-size:17px; color:#30D158; font-weight:700; }
+  .pill { background:#000; border-radius:999px; height:52px; display:flex; align-items:center; padding:0 12px; gap:8px; }
+  .side { display:flex; align-items:center; gap:5px; }
+  .lg { width:30px; height:30px; border-radius:50%; background:#fff; display:flex; align-items:center; justify-content:center; }
+  .lg img { width:22px; height:22px; object-fit:contain; }
+  .nm { font-size:15px; font-weight:600; color:#fff; font-family:'Noto Sans KR',sans-serif; letter-spacing:-0.03em; }
+  .sc { font-size:20px; font-weight:800; color:#fff; }
+  .notch { width:96px; height:30px; background:#000; border-radius:999px; }
+  .inn { font-size:14px; font-weight:600; color:rgba(255,255,255,0.85); font-family:'Noto Sans KR',sans-serif; letter-spacing:-0.03em; }
+  .lbl { color:#8a8a90; font-size:14px; font-family:'Noto Sans KR',sans-serif; }
+</style>
+</head>
+<body>
+  <div class="cap">B안 — 컴팩트 DI에 팀 약어 복원 + 이닝 유지</div>
+  <div class="statusbar">
+    <span class="sb-time">19:39</span>
+    <div class="pill">
+      <div class="side"><div class="lg"><img src="./logos/ssg.svg"></div><span class="nm">SSG</span><span class="sc">2</span></div>
+      <div class="notch"></div>
+      <div class="side"><span class="inn">2회초</span><span class="sc">1</span><span class="nm">LG</span><div class="lg"><img src="./logos/lg.svg"></div></div>
+    </div>
+    <span class="sb-batt">99%</span>
+  </div>
+  <div class="cap" style="margin-top:8px">참고 — A안 (약어 없이 로고+점수, 이닝)</div>
+  <div class="statusbar">
+    <span class="sb-time">19:39</span>
+    <div class="pill">
+      <div class="side"><div class="lg"><img src="./logos/ssg.svg"></div><span class="sc">2</span></div>
+      <div class="notch"></div>
+      <div class="side"><span class="inn">2회초</span><span class="sc">1</span><div class="lg"><img src="./logos/lg.svg"></div></div>
+    </div>
+    <span class="sb-batt">99%</span>
+  </div>
+</body>
+</html>

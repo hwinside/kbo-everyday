@@ -389,6 +389,11 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       currentBatter: widgetGame.currentBatter ?? null,
       stadium: widgetGame.stadium,
       time: widgetGame.time,
+      // 예정 경기 날짜 라벨('6월 7일 (토)') — 구장 위 표시. 오늘 예정은 dateISO 없으니 오늘로 폴백.
+      dateText:
+        widgetGame.status === "scheduled"
+          ? formatKoreanDate(widgetGame.dateISO ?? formatKSTDateOffset(0))
+          : "",
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myTeamId, widgetSig]);

@@ -48,6 +48,8 @@ struct WidgetGameSnapshot: Codable {
     var status: String? = nil
     /// 예정/취소 경기 표시용 시각 문구(예: "18:30"). live/final이면 빈 문자열.
     var startText: String? = nil
+    /// 예정 경기 날짜 라벨(예: "6월 7일 (토)"). 구장 위에 표시. scheduled에서만.
+    var dateText: String? = nil
 
     /// 렌더 분기용 정규화 상태.
     var resolvedStatus: String {
@@ -230,13 +232,19 @@ struct HomeWidgetSmallCard: View {
                 smallTeam(code: snap.homeTeamCode, score: snap.homeScore)
             }
 
-            Text(snap.isFinal ? "경기 종료" : "LIVE \(snap.inning)회\(snap.isTopInning ? "초" : "말")")
-                .font(notoKR(9, .bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 7).padding(.vertical, 2)
-                .background(
-                    Capsule().fill(snap.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
-                )
+            Group {
+                if snap.isFinal {
+                    Text("경기 종료").font(notoKR(9, .bold))
+                } else {
+                    Text("LIVE ").font(montserrat(9, .bold))
+                        + inningRun("\(snap.inning)회\(snap.isTopInning ? "초" : "말")", 9, .bold)
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .background(
+                Capsule().fill(snap.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
+            )
         }
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -300,10 +308,16 @@ struct HomeWidgetMediumCard: View {
                         Text(":").font(montserrat(13, .bold)).foregroundStyle(.white.opacity(0.5))
                         Text("\(snap.homeScore)").font(montserrat(24, .black)).monospacedDigit()
                     }
-                    Text(snap.isFinal ? "경기 종료" : "LIVE \(snap.inning)회\(snap.isTopInning ? "초" : "말")")
-                        .font(notoKR(9, .bold))
-                        .padding(.horizontal, 7).padding(.vertical, 2)
-                        .background(Capsule().fill(snap.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85)))
+                    Group {
+                        if snap.isFinal {
+                            Text("경기 종료").font(notoKR(9, .bold))
+                        } else {
+                            Text("LIVE ").font(montserrat(9, .bold))
+                                + inningRun("\(snap.inning)회\(snap.isTopInning ? "초" : "말")", 9, .bold)
+                        }
+                    }
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Capsule().fill(snap.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85)))
                 }
                 mediumBadge(code: snap.homeTeamCode)
             }
@@ -353,14 +367,16 @@ struct HomeWidgetMediumCard: View {
 
     private func medOutDot(_ i: Int) -> some View {
         Circle()
-            .fill(i < snap.outs ? Color(hex: 0xE53935) : Color.white.opacity(0.18))
+            .fill(i < snap.outs ? Color(hex: 0xFF4D4D) : Color.white.opacity(0.2))
             .frame(width: 7, height: 7)
     }
 
     private func medPlayerLine(label: String, team: String, name: String) -> some View {
         HStack(spacing: 5) {
-            Text("\(label) (\(teamShortName(team)))")
-                .font(notoKR(10, .medium)).foregroundStyle(.white.opacity(0.72))
+            (Text("\(label) (").font(notoKR(10, .medium))
+             + teamShortText(team, 10, .medium)
+             + Text(")").font(notoKR(10, .medium)))
+                .foregroundStyle(.white.opacity(0.72))
             Text(name).font(notoKR(12, .bold))
         }
         .lineLimit(1).minimumScaleFactor(0.8)
@@ -416,11 +432,17 @@ struct HomeWidgetScheduledCard: View {
                 teamColumn(code: snap.homeTeamCode)
             }
 
-            // medium에서만 구장 표기 (있을 때)
-            if !compact, !snap.stadium.isEmpty {
-                Text(snap.stadium)
-                    .font(notoKR(11, .medium))
-                    .foregroundStyle(.white.opacity(0.8))
+            // medium에서만 날짜('6월 7일 (토)') + 구장 표기. 날짜 숫자=Montserrat 분리.
+            if !compact {
+                if let d = snap.dateText, !d.isEmpty {
+                    mixedNumText(d, 11, .semibold)
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                if !snap.stadium.isEmpty {
+                    Text(snap.stadium)
+                        .font(notoKR(11, .medium))
+                        .foregroundStyle(.white.opacity(0.8))
+                }
             }
         }
         .foregroundStyle(.white)
