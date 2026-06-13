@@ -53,11 +53,17 @@ export async function GET(req: NextRequest) {
     .map(g => g.G_ID as string);
 
   // Self-fetch to traverse the same generateEvents path the client takes.
-  // Vercel cron invokes via internal loadbalancer, so req.nextUrl.origin
-  // can resolve to localhost / internal IP. Prefer VERCEL_URL when set.
+  // ⚠️ VERCEL_URL은 *배포별 URL*이라 Deployment Protection(인증)이 걸려 self-fetch가
+  // 401로 막힐 수 있다(S5 득점/선수활약 알림이 조용히 0건 나던 원인). 따라서 보호가 없는
+  // *공개 프로덕션 도메인* VERCEL_PROJECT_PRODUCTION_URL을 먼저 쓴다. (S4/Live Activity는
+  // games를 직접 써서 self-fetch 의존이 없어 영향 없었음.)
   const baseUrl =
     process.env.NEXT_PUBLIC_APP_URL ??
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : req.nextUrl.origin);
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+      : process.env.VERCEL_URL
+        ? `https://${process.env.VERCEL_URL}`
+        : req.nextUrl.origin);
   const results = await Promise.allSettled(
     liveGameIds.map(gameId =>
       fetch(`${baseUrl}/api/game-events?gameId=${gameId}`, {
