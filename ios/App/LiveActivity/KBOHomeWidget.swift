@@ -143,7 +143,8 @@ struct KBOHomeWidgetEntryView: View {
                     // (하린아빠 요청). 아웃카운트·투수/타자·다이아몬드·풀네임·폰트 전부 잠금화면 그대로.
                     // #278에서 카드를 충분히 컴팩트화해 medium 높이에 수용.
                     KBOLockScreenCard(attributes: attributes(from: snap),
-                                      state: state(from: snap))
+                                      state: state(from: snap),
+                                      fillHeight: true)
                         .widgetContainerBackground { smallBackground(snap) }
                 }
             default:
