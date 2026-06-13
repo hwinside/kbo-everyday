@@ -15,7 +15,7 @@ import ActivityKit
 // MARK: - 팀 컬러 (src/lib/constants/teams.ts colorPrimary)
 
 @available(iOS 16.1, *)
-private func teamColor(_ code: String) -> Color {
+func teamColor(_ code: String) -> Color {
     switch code {
     case "LG": return Color(hex: 0xC60C30)
     case "OB": return Color(hex: 0x131230)  // 두산
@@ -34,7 +34,7 @@ private func teamColor(_ code: String) -> Color {
 // MARK: - 팀 표기 (teams.ts shortName / name). DI=약어, 잠금=풀네임.
 
 @available(iOS 16.1, *)
-private func teamShortName(_ code: String) -> String {
+func teamShortName(_ code: String) -> String {
     switch code {
     case "LG": return "LG"
     case "OB": return "두산"
@@ -51,7 +51,7 @@ private func teamShortName(_ code: String) -> String {
 }
 
 @available(iOS 16.1, *)
-private func teamFullName(_ code: String) -> String {
+func teamFullName(_ code: String) -> String {
     switch code {
     case "LG": return "LG 트윈스"
     case "OB": return "두산 베어스"
@@ -73,12 +73,12 @@ private func teamFullName(_ code: String) -> String {
 // 등록 실패 시에도 시스템 폰트로 graceful fallback.
 
 @available(iOS 16.1, *)
-private func montserrat(_ size: CGFloat, _ weight: Font.Weight = .bold) -> Font {
+func montserrat(_ size: CGFloat, _ weight: Font.Weight = .bold) -> Font {
     Font.custom("Montserrat", size: size).weight(weight)
 }
 
 @available(iOS 16.1, *)
-private func notoKR(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+func notoKR(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
     Font.custom("Noto Sans KR", size: size).weight(weight)
 }
 
