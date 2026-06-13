@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { isNative } from "@/lib/capacitor/platform";
 import { requestNativePushPermission, checkNativePushPermission } from "@/lib/native-push";
+import { endLiveActivity, setLiveActivityEnabledCache } from "@/lib/native-live-activity";
 import { PREF_LABELS, DEFAULT_PREFS, type NotificationPrefs, type PrefKey } from "@/lib/notifications/prefs";
 
 /**
@@ -52,7 +53,10 @@ export default function NotificationPrefsCard() {
         const res = await fetch("/api/push/prefs", { headers: await authHeader() });
         if (res.ok) {
           const { prefs: saved } = await res.json();
-          setPrefs({ ...DEFAULT_PREFS, ...saved });
+          const merged = { ...DEFAULT_PREFS, ...saved };
+          setPrefs(merged);
+          // 클라 게이트 캐시를 서버 SSOT로 동기화 (start/update가 이 캐시로 판단).
+          setLiveActivityEnabledCache(merged.live_activity !== false);
         }
       } catch {
         // 디폴트 유지
@@ -67,15 +71,24 @@ export default function NotificationPrefsCard() {
     savingRef.current = true;
     const next = !prefs[key];
     setPrefs((p) => ({ ...p, [key]: next }));
+    // W3c: "잠금화면 실시간 중계" 토글은 클라 게이트 캐시도 즉시 갱신 + off면 현재 활성 카드 종료.
+    if (key === "live_activity") {
+      setLiveActivityEnabledCache(next);
+      if (!next) void endLiveActivity();
+    }
     try {
       const res = await fetch("/api/push/prefs", {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...(await authHeader()) },
         body: JSON.stringify({ [key]: next }),
       });
-      if (!res.ok) setPrefs((p) => ({ ...p, [key]: !next })); // 실패 시 롤백
+      if (!res.ok) {
+        setPrefs((p) => ({ ...p, [key]: !next })); // 실패 시 롤백
+        if (key === "live_activity") setLiveActivityEnabledCache(!next);
+      }
     } catch {
       setPrefs((p) => ({ ...p, [key]: !next }));
+      if (key === "live_activity") setLiveActivityEnabledCache(!next);
     } finally {
       savingRef.current = false;
     }

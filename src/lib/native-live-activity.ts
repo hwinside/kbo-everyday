@@ -101,6 +101,39 @@ function isNativeIOS(): boolean {
   return Capacitor.isNativePlatform() && Capacitor.getPlatform() === "ios";
 }
 
+// W3c 토글("잠금화면 실시간 중계") 클라 게이트. 서버 prefs를 세션당 1회 fetch해 캐시한다.
+// off면 startLiveActivity/updateLiveActivity를 아예 호출하지 않아 잠금화면 카드가 뜨지 않는다.
+// (서버 push 제외 + register skip은 백스톱.) 마이페이지 토글이 setLiveActivityEnabledCache로
+// 즉시 캐시를 갱신한다.
+let liveActivityPrefCache: boolean | null = null;
+
+async function isLiveActivityEnabled(): Promise<boolean> {
+  if (liveActivityPrefCache !== null) return liveActivityPrefCache;
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) {
+      liveActivityPrefCache = true; // 비로그인 → 기본 on (토큰 등록 자체가 로그인 필요라 무해)
+      return true;
+    }
+    const res = await fetch("/api/push/prefs", { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) {
+      const { prefs } = await res.json();
+      liveActivityPrefCache = prefs?.live_activity !== false; // 디폴트 on
+    } else {
+      liveActivityPrefCache = true;
+    }
+  } catch {
+    liveActivityPrefCache = true;
+  }
+  return liveActivityPrefCache;
+}
+
+/** 마이페이지 토글이 즉시 클라 캐시를 갱신 → 다음 start/update 게이트에 반영. */
+export function setLiveActivityEnabledCache(enabled: boolean): void {
+  liveActivityPrefCache = enabled;
+}
+
 // W3: Activity push token이 발급되면(네이티브 이벤트) 서버에 등록 →
 // warmup cron이 그 토큰으로 백그라운드 갱신 푸시를 보낸다. 리스너는 1회만 설치.
 let tokenListenerReady = false;
@@ -136,6 +169,8 @@ async function ensureTokenListener(): Promise<void> {
 /** 경기룸 진입 시 호출. 같은 gameId 재호출은 네이티브에서 update로 처리(중복 방지). */
 export async function startLiveActivity(data: LiveActivityStartData): Promise<boolean> {
   if (!isNativeIOS()) return false;
+  // W3c: "잠금화면 실시간 중계" off면 카드를 아예 시작하지 않는다(토큰도 발급 안 됨).
+  if (!(await isLiveActivityEnabled())) return false;
   await ensureTokenListener();
   try {
     const res = await LiveActivity.start(data);
@@ -149,6 +184,8 @@ export async function startLiveActivity(data: LiveActivityStartData): Promise<bo
 /** 진행 중 상태 갱신(포그라운드 폴링). */
 export async function updateLiveActivity(state: LiveActivityState): Promise<void> {
   if (!isNativeIOS()) return;
+  // W3c: 토글 off면 갱신도 건너뛴다(캐시 기준 — start가 이미 fetch/세팅, 토글이 즉시 갱신).
+  if (liveActivityPrefCache === false) return;
   try {
     await LiveActivity.update(state);
   } catch {
