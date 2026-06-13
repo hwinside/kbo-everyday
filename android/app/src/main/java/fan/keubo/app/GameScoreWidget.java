@@ -142,10 +142,14 @@ public class GameScoreWidget extends AppWidgetProvider {
         v.setTextViewText(R.id.widget_home_name, shortName(home));
         boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
         if (isScheduled) {
-            v.setTextViewText(R.id.widget_score, "경기 예정");
-            v.setTextViewTextSize(R.id.widget_score, TypedValue.COMPLEX_UNIT_SP, 22);
+            v.setViewVisibility(R.id.widget_score, View.GONE);
+            v.setViewVisibility(R.id.widget_score_scheduled, View.VISIBLE);
+            v.setTextViewText(R.id.widget_score_scheduled, "경기 예정");
+            v.setTextViewTextSize(R.id.widget_score_scheduled, TypedValue.COMPLEX_UNIT_SP, 22);
             v.setTextViewText(R.id.widget_status, status.substring("SCHEDULED|".length()));
         } else {
+            v.setViewVisibility(R.id.widget_score, View.VISIBLE);
+            v.setViewVisibility(R.id.widget_score_scheduled, View.GONE);
             v.setTextViewText(R.id.widget_score, as + " : " + hs);
             v.setTextViewTextSize(R.id.widget_score, TypedValue.COMPLEX_UNIT_SP, 30);
         }
@@ -225,9 +229,15 @@ public class GameScoreWidget extends AppWidgetProvider {
         v.setTextViewText(R.id.ncc_home_name, shortName(home));
         String status = p.getString(KEY_STATUS, "");
         boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
-        v.setTextViewText(R.id.ncc_score, isScheduled
-            ? "경기 예정"
-            : p.getString(KEY_AS, "0") + " : " + p.getString(KEY_HS, "0"));
+        if (isScheduled) {
+            v.setViewVisibility(R.id.ncc_score, View.GONE);
+            v.setViewVisibility(R.id.ncc_score_scheduled, View.VISIBLE);
+            v.setTextViewText(R.id.ncc_score_scheduled, "경기 예정");
+        } else {
+            v.setViewVisibility(R.id.ncc_score, View.VISIBLE);
+            v.setViewVisibility(R.id.ncc_score_scheduled, View.GONE);
+            v.setTextViewText(R.id.ncc_score, p.getString(KEY_AS, "0") + " : " + p.getString(KEY_HS, "0"));
+        }
 
         if (status.isEmpty()) {
             v.setViewVisibility(R.id.ncc_status, View.GONE);
