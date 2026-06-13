@@ -18,6 +18,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "gameId and pushToken required" }, { status: 400 });
   }
 
+  // W3c 토글: "잠금화면 실시간 중계"를 끈 유저는 토큰을 저장하지 않는다(스펙: 클라/서버
+  // 둘 다 off 유저 제외). row 없음/null = 디폴트 on. 명시적으로 false일 때만 skip.
+  const { data: prefRow } = await supabase
+    .from("notification_prefs")
+    .select("live_activity")
+    .eq("user_id", verified.user.id)
+    .maybeSingle();
+  if (prefRow?.live_activity === false) {
+    return NextResponse.json({ success: true, skipped: "live_activity_off" });
+  }
+
   const { error } = await supabase.from("live_activity_tokens").upsert(
     {
       user_id: verified.user.id,

@@ -75,6 +75,20 @@ export async function pushLiveActivityUpdates(
   if (error) return { error: error.message };
   if (!tokens || tokens.length === 0) return { pushed: 0, ended: 0, cleaned: 0 };
 
+  // W3c 토글: "잠금화면 실시간 중계"를 끈 유저는 update 푸시에서 제외(row 없음/null = 디폴트 on).
+  // end 푸시는 허용해 기존 카드/토큰을 정리한다. .in()은 URL 한도 회피 위해 200개 청크.
+  const userIds = [...new Set((tokens as TokenRow[]).map((t) => t.user_id))];
+  const optedOut = new Set<string>();
+  for (let i = 0; i < userIds.length; i += 200) {
+    const { data: prefRows } = await supabase
+      .from("notification_prefs")
+      .select("user_id, live_activity")
+      .in("user_id", userIds.slice(i, i + 200));
+    for (const r of (prefRows ?? []) as { user_id: string; live_activity: boolean | null }[]) {
+      if (r.live_activity === false) optedOut.add(r.user_id);
+    }
+  }
+
   const jwt = await getProviderTokenSafe();
   if (!jwt) return { error: "apns provider token failed" };
 
@@ -92,6 +106,8 @@ export async function pushLiveActivityUpdates(
       const status = stateByGame.get(t.game_id);
       if (!g || !status) return;
       const isEnd = status === "final";
+      // 토글 off 유저: 실시간 update는 건너뛰고, end(카드/토큰 정리)만 진행.
+      if (optedOut.has(t.user_id) && !isEnd) return;
       const res = await sendLiveActivityPush(
         {
           pushToken: t.push_token,

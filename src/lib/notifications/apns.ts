@@ -15,10 +15,12 @@ import { SignJWT, importPKCS8 } from "jose";
 const BUNDLE_ID = "fan.keubo.app";
 const LIVE_ACTIVITY_TOPIC = `${BUNDLE_ID}.push-type.liveactivity`;
 
+const PROD_HOST = "api.push.apple.com";
+const SANDBOX_HOST = "api.sandbox.push.apple.com";
+
+/** APNS_ENV가 가리키는 1차 시도 호스트(기본 sandbox). 실패 시 반대 env로 재시도한다. */
 function apnsHost(): string {
-  return (process.env.APNS_ENV || "sandbox") === "production"
-    ? "api.push.apple.com"
-    : "api.sandbox.push.apple.com";
+  return (process.env.APNS_ENV || "sandbox") === "production" ? PROD_HOST : SANDBOX_HOST;
 }
 
 /** APNs provider JWT(ES256). 최대 1시간 유효 — 호출 단위 생성(서버리스 단순화). */
@@ -67,6 +69,20 @@ export async function sendLiveActivityPush(
   jwt?: string,
 ): Promise<ApnsResult> {
   const token = jwt ?? (await providerToken());
+  // 1차 = APNS_ENV 호스트. BadDeviceToken(= 토큰이 반대 env용)이면 반대 호스트로 1회 재시도.
+  // dev(sandbox) 빌드와 출시(production) 빌드 토큰을 한 서버에서 모두 처리하기 위함.
+  const primary = apnsHost();
+  const other = primary === PROD_HOST ? SANDBOX_HOST : PROD_HOST;
+  const first = await sendToHost(input, token, primary);
+  if (first.ok || first.reason !== "BadDeviceToken") return first;
+  return sendToHost(input, token, other);
+}
+
+async function sendToHost(
+  input: LiveActivityPushInput,
+  token: string,
+  host: string,
+): Promise<ApnsResult> {
   const aps: Record<string, unknown> = {
     timestamp: Math.floor(Date.now() / 1000),
     event: input.event,
@@ -79,7 +95,7 @@ export async function sendLiveActivityPush(
   const body = JSON.stringify({ aps });
 
   return new Promise<ApnsResult>((resolve) => {
-    const client = http2.connect(`https://${apnsHost()}`);
+    const client = http2.connect(`https://${host}`);
     let settled = false;
     const done = (r: ApnsResult) => {
       if (settled) return;
