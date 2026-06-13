@@ -1,9 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- notosanskr_vf.ttf는 wght=600로 instancing된 static 폰트(위 Montserrat과 동일 사유 — VF 폴백 차단). -->
 <font-family xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
     <font
-        android:fontStyle="normal" android:fontWeight="600"
-        android:font="@font/notosanskr_vf" android:fontVariationSettings="'wght' 600"
-        app:fontStyle="normal" app:fontWeight="600"
-        app:font="@font/notosanskr_vf" app:fontVariationSettings="'wght' 600" />
+        android:fontStyle="normal" android:fontWeight="600" android:font="@font/notosanskr_vf"
+        app:fontStyle="normal" app:fontWeight="600" app:font="@font/notosanskr_vf" />
 </font-family>

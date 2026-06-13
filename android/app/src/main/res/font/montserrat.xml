@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- montserrat_vf.ttf는 wght=700로 instancing된 static 폰트. RemoteViews/런처는 변수폰트
+     fontVariationSettings를 안정적으로 적용 못 해 default(Thin 100)로 폴백되던 문제 →
+     static 폰트 직접 참조로 위젯에서 확실히 Bold Montserrat 렌더. -->
 <font-family xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
     <font
-        android:fontStyle="normal" android:fontWeight="700"
-        android:font="@font/montserrat_vf" android:fontVariationSettings="'wght' 700"
-        app:fontStyle="normal" app:fontWeight="700"
-        app:font="@font/montserrat_vf" app:fontVariationSettings="'wght' 700" />
+        android:fontStyle="normal" android:fontWeight="700" android:font="@font/montserrat_vf"
+        app:fontStyle="normal" app:fontWeight="700" app:font="@font/montserrat_vf" />
 </font-family>
