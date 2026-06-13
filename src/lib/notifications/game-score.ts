@@ -121,3 +121,62 @@ export async function notifyScoreEvents(
 
   return { scored };
 }
+
+/**
+ * 이닝 득점 요약 알림 (push-notifications-v1 S5 — my_team_score_inning_summary).
+ * 이닝(half) 종료 시 그 half에 공격팀이 낸 득점을 *1건으로 묶어* 발송(득점마다 알림과 별개 옵션).
+ * 득점량 = inning_end snapshot − 같은 half의 inning_start snapshot(공격팀 점수 델타)이라
+ * run_scored·홈런 등 모든 득점 포함. dedup = notified_score_events에 `${inning_end.id}-summary` 선점.
+ * 수신자 = 공격팀 팬 중 my_team_score_inning_summary on (sendFcmToUsers가 pref 필터, 디폴트 off).
+ */
+export async function notifyInningSummaries(
+  games: KboRawGame[],
+  eventsByGame: Map<string, GameEvent[]>,
+): Promise<{ summarized: number }> {
+  let summarized = 0;
+  const gameById = new Map(games.map((g) => [g.G_ID, g]));
+
+  for (const [gameId, events] of eventsByGame) {
+    const g = gameById.get(gameId);
+    if (!g || g.CANCEL_SC_ID !== "0") continue;
+    const away = g.AWAY_NM ?? "";
+    const home = g.HOME_NM ?? "";
+    const url = `/games/${gameId}`;
+
+    for (const ev of events) {
+      if (ev.type !== "inning_end") continue;
+      // 초(isTop) = 원정 공격, 말 = 홈 공격.
+      const side: "away" | "home" = ev.isTop ? "away" : "home";
+      const scoringTeamName = side === "away" ? away : home;
+      const teamId = teamIdByShortName(scoringTeamName);
+      if (teamId === null) continue;
+
+      // 같은 half(inning+isTop)의 inning_start 스냅샷 대비 점수 델타 = 그 half 득점.
+      const start = events.find(
+        (e) => e.type === "inning_start" && e.inning === ev.inning && e.isTop === ev.isTop,
+      );
+      const endScore = side === "away" ? ev.snapshot.awayScore : ev.snapshot.homeScore;
+      const startScore = start
+        ? (side === "away" ? start.snapshot.awayScore : start.snapshot.homeScore)
+        : endScore; // 시작 스냅샷 없으면 델타 0 → 발송 안 함(보수적)
+      const runs = endScore - startScore;
+      if (runs <= 0) continue; // 그 half 무득점 → 요약 없음
+
+      if (!(await claimEvent(`${ev.id}-summary`, gameId))) continue; // 이미 발송됨/보류
+
+      const fans = await fansOfTeams([teamId]);
+      if (!fans.ok) { await unclaimEvent(`${ev.id}-summary`); continue; }
+
+      const scoreLine = `${away} ${ev.snapshot.awayScore} : ${ev.snapshot.homeScore} ${home}`;
+      const half = ev.isTop ? "초" : "말";
+      const res = await sendFcmToUsers(
+        fans.ids,
+        { title: `⚾ ${scoringTeamName} ${ev.inning}회${half} ${runs}득점`, body: scoreLine, url },
+        "my_team_score_inning_summary",
+      );
+      if (!res.ok) { await unclaimEvent(`${ev.id}-summary`); continue; } // 인프라 실패 → 재시도
+      summarized += res.sent;
+    }
+  }
+  return { summarized };
+}

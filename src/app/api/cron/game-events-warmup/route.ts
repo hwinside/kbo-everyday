@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent } from "@/types/game-events";
 import { notifyGameStatusTransitions } from "@/lib/notifications/game-status";
-import { notifyScoreEvents } from "@/lib/notifications/game-score";
+import { notifyScoreEvents, notifyInningSummaries } from "@/lib/notifications/game-score";
 import { notifyPlayerHighlights } from "@/lib/notifications/player-highlight";
 import { pushLiveActivityUpdates } from "@/lib/notifications/live-activity";
 import { pushAndroidWidgetLiveUpdates } from "@/lib/notifications/android-widget-live";
@@ -104,6 +104,15 @@ export async function GET(req: NextRequest) {
     console.error("[warmup] score notify failed:", (e as Error).message);
   }
 
+  // 이닝 득점 요약 푸시 (S5 — my_team_score_inning_summary). 이닝 종료 시 묶음 1건.
+  let summaryNotify: { summarized: number } | { error: string } = { summarized: 0 };
+  try {
+    summaryNotify = await notifyInningSummaries(games, eventsByGame);
+  } catch (e) {
+    summaryNotify = { error: (e as Error).message };
+    console.error("[warmup] inning summary notify failed:", (e as Error).message);
+  }
+
   // Android 홈 위젯/잠금 알림 카드 신선화 — 득점 이벤트가 없어도 warmup cron의
   // 매분 KBO 원천 스냅샷으로 score/inning/out/runner/player 상태를 갱신한다.
   let androidWidget:
@@ -143,6 +152,7 @@ export async function GET(req: NextRequest) {
     liveGameIds,
     gameNotify,
     scoreNotify,
+    summaryNotify,
     androidWidget,
     highlightNotify,
     liveActivity,
