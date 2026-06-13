@@ -46,8 +46,12 @@ public class KboMessagingService extends MessagingService {
                 data.get("w_as"),
                 data.get("w_hs"),
                 data.get("w_status"),
-                "", "", "", "", "",
-                "000");
+                data.get("w_pitcher"),
+                data.get("w_pteam"),
+                data.get("w_batter"),
+                data.get("w_bteam"),
+                data.get("w_outs"),
+                data.get("w_diamond"));
             // 그 다음 잠금화면 알림 카드 게시(prefs 기반 RemoteViews).
             GameNotificationPlugin.post(
                 this,

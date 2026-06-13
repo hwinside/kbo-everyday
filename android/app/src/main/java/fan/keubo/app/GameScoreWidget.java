@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.text.TextUtils;
+import android.util.TypedValue;
 import android.view.View;
 import android.widget.RemoteViews;
 
@@ -139,14 +140,22 @@ public class GameScoreWidget extends AppWidgetProvider {
         if (homeLogo != 0) v.setImageViewResource(R.id.widget_home_logo, homeLogo);
         v.setTextViewText(R.id.widget_away_name, shortName(away));
         v.setTextViewText(R.id.widget_home_name, shortName(home));
-        v.setTextViewText(R.id.widget_score, as + " : " + hs);
+        boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
+        if (isScheduled) {
+            v.setTextViewText(R.id.widget_score, "경기 예정");
+            v.setTextViewTextSize(R.id.widget_score, TypedValue.COMPLEX_UNIT_SP, 22);
+            v.setTextViewText(R.id.widget_status, status.substring("SCHEDULED|".length()));
+        } else {
+            v.setTextViewText(R.id.widget_score, as + " : " + hs);
+            v.setTextViewTextSize(R.id.widget_score, TypedValue.COMPLEX_UNIT_SP, 30);
+        }
 
         // 상태 pill
-        if (status.isEmpty()) {
+        if (status.isEmpty() || "SCHEDULED|".equals(status)) {
             v.setViewVisibility(R.id.widget_status, View.GONE);
         } else {
             v.setViewVisibility(R.id.widget_status, View.VISIBLE);
-            v.setTextViewText(R.id.widget_status, status);
+            if (!isScheduled) v.setTextViewText(R.id.widget_status, status);
         }
 
         // 하단: OUT + 투수/타자 소속표기 + 다이아몬드 (라이브 정보 없으면 행 숨김)
@@ -214,14 +223,19 @@ public class GameScoreWidget extends AppWidgetProvider {
         if (homeLogo != 0) v.setImageViewResource(R.id.ncc_home_logo, homeLogo);
         v.setTextViewText(R.id.ncc_away_name, shortName(away));
         v.setTextViewText(R.id.ncc_home_name, shortName(home));
-        v.setTextViewText(R.id.ncc_score, p.getString(KEY_AS, "0") + " : " + p.getString(KEY_HS, "0"));
-
         String status = p.getString(KEY_STATUS, "");
+        boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
+        v.setTextViewText(R.id.ncc_score, isScheduled
+            ? "경기 예정"
+            : p.getString(KEY_AS, "0") + " : " + p.getString(KEY_HS, "0"));
+
         if (status.isEmpty()) {
             v.setViewVisibility(R.id.ncc_status, View.GONE);
         } else {
             v.setViewVisibility(R.id.ncc_status, View.VISIBLE);
-            v.setTextViewText(R.id.ncc_status, status);
+            v.setTextViewText(R.id.ncc_status, isScheduled
+                ? status.substring("SCHEDULED|".length())
+                : status);
         }
         return v;
     }
