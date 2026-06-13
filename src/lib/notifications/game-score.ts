@@ -135,6 +135,12 @@ export async function notifyInningSummaries(
 ): Promise<{ summarized: number }> {
   let summarized = 0;
   const gameById = new Map(games.map((g) => [g.G_ID, g]));
+  // future-only 컷오프: warmup이 받는 events는 *전체 경기 history*라, 기능 배포/활성화
+  // 직후 과거 inning_end가 한꺼번에 claim·발송되는 backlog 플러시를 막아야 한다(삼순 #271
+  // NO-GO). 매분 도는 cron이 갓 끝난 이닝을 1~2분 내 처리하므로, inning_end timestamp가
+  // FRESH_MS보다 오래된(=이전 이닝/배포 전) 것은 skip → 최근 종료 이닝만 요약.
+  const FRESH_MS = 10 * 60 * 1000;
+  const nowMs = Date.now();
 
   for (const [gameId, events] of eventsByGame) {
     const g = gameById.get(gameId);
@@ -145,6 +151,9 @@ export async function notifyInningSummaries(
 
     for (const ev of events) {
       if (ev.type !== "inning_end") continue;
+      // 오래된 inning_end(이전 이닝·배포 전) skip — 배포 시 과거 요약 일괄 발송 방지.
+      const evMs = Date.parse(ev.timestamp);
+      if (Number.isFinite(evMs) && nowMs - evMs > FRESH_MS) continue;
       // 초(isTop) = 원정 공격, 말 = 홈 공격.
       const side: "away" | "home" = ev.isTop ? "away" : "home";
       const scoringTeamName = side === "away" ? away : home;
