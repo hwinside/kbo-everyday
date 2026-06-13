@@ -59,5 +59,11 @@ export async function PUT(req: NextRequest) {
   }, { onConflict: "user_id" });
 
   if (error) return supabaseErrorResponse(error);
+
+  // W3c: "잠금화면 실시간 중계"를 끄면 기존 Live Activity push token도 정리(stale 방지).
+  if (updates.live_activity === false) {
+    await supabase.from("live_activity_tokens").delete().eq("user_id", verified.user.id);
+  }
+
   return NextResponse.json({ success: true, prefs: { ...DEFAULT_PREFS, ...saved, ...updates } });
 }
