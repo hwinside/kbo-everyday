@@ -356,8 +356,9 @@ struct KBOLockScreenCard: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
         // medium 위젯: 콘텐츠보다 큰 위젯 높이를 카드가 꽉 채워 배경 seam(윗쪽 어두운 띠) 제거.
-        // 콘텐츠는 상단 정렬. 잠금화면 LA(fillHeight=false)는 콘텐츠 높이 그대로.
-        .frame(maxWidth: .infinity, maxHeight: fillHeight ? .infinity : nil, alignment: .top)
+        // 콘텐츠는 *세로 중앙* 정렬 — 종료(짧은 콘텐츠)면 위/아래 여백이 균형있게 나뉘고,
+        // 라이브(긴 콘텐츠)면 자연히 꽉 찬다. 잠금화면 LA(fillHeight=false)는 콘텐츠 높이 그대로.
+        .frame(maxWidth: .infinity, maxHeight: fillHeight ? .infinity : nil, alignment: .center)
         .background(
             ZStack(alignment: .topTrailing) {
                 cardGradient(attributes.myTeamCode, hasMyTeam: hasMyTeam)
