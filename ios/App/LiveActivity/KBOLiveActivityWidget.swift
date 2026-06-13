@@ -224,13 +224,13 @@ struct KBOLockScreenCard: View {
     }
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 4) {
             // 헤더: MY TEAM
             if hasMyTeam {
                 HStack(spacing: 5) {
-                    TeamLogo(code: attributes.myTeamCode, size: 15)
+                    TeamLogo(code: attributes.myTeamCode, size: 14)
                     Text("MY TEAM")
-                        .font(montserrat(11, .heavy)).tracking(1.0)
+                        .font(montserrat(10, .heavy)).tracking(1.0)
                     Spacer()
                 }
                 .foregroundStyle(.white.opacity(0.92))
@@ -239,23 +239,23 @@ struct KBOLockScreenCard: View {
             // 스코어 행: 원정[로고+풀네임] | 점수:점수 + LIVE이닝 | 홈[로고+풀네임]
             HStack(spacing: 4) {
                 TeamBadge(code: attributes.awayTeamCode)
-                VStack(spacing: 3) {
+                VStack(spacing: 2) {
                     // 경기장(구장) — 가운데 점수 위에 표기 (하린아빠 요청)
                     if !state.stadium.isEmpty {
                         Text(state.stadium)
-                            .font(notoKR(10, .medium))
+                            .font(notoKR(9, .medium))
                             .foregroundStyle(.white.opacity(0.75))
                     }
-                    HStack(spacing: 9) {
+                    HStack(spacing: 8) {
                         Text("\(state.awayScore)")
-                            .font(montserrat(27, .black)).monospacedDigit()
-                        Text(":").font(montserrat(15, .bold)).foregroundStyle(.white.opacity(0.5))
+                            .font(montserrat(22, .black)).monospacedDigit()
+                        Text(":").font(montserrat(13, .bold)).foregroundStyle(.white.opacity(0.5))
                         Text("\(state.homeScore)")
-                            .font(montserrat(27, .black)).monospacedDigit()
+                            .font(montserrat(22, .black)).monospacedDigit()
                     }
                     Text(state.isFinal ? "경기 종료" : "LIVE \(state.inningText)")
-                        .font(notoKR(10, .bold))
-                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .font(notoKR(9, .bold))
+                        .padding(.horizontal, 6).padding(.vertical, 1.5)
                         .background(
                             Capsule().fill(state.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
                         )
@@ -266,15 +266,15 @@ struct KBOLockScreenCard: View {
             // 하단: 아웃카운트(B/S 제거) + 투수/타자(소속) + 다이아몬드 (진행 중에만)
             if !state.isFinal {
                 HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 4) {
                         // 아웃카운트만 유지
                         HStack(spacing: 5) {
                             Text("O")
-                                .font(montserrat(12, .semibold))
+                                .font(montserrat(11, .semibold))
                                 .foregroundStyle(.white.opacity(0.7))
                             HStack(spacing: 4) { outDot(0); outDot(1); outDot(2) }
                         }
-                        // 투수/타자 — 소속 표기 + 폰트 키움
+                        // 투수/타자 — 소속 표기
                         if !state.pitcherName.isEmpty {
                             playerLine(label: "투수", team: pitcherTeamCode, name: state.pitcherName)
                         }
@@ -284,8 +284,9 @@ struct KBOLockScreenCard: View {
                     }
                     Spacer()
                     DiamondView(onFirst: state.onFirst, onSecond: state.onSecond, onThird: state.onThird)
+                        .scaleEffect(0.82)
                 }
-                .padding(.top, 3)
+                .padding(.top, 2)
                 .overlay(alignment: .top) {
                     Rectangle().fill(.white.opacity(0.12)).frame(height: 1)
                 }
@@ -294,7 +295,7 @@ struct KBOLockScreenCard: View {
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        .padding(.vertical, 7)
         .background(
             ZStack(alignment: .topTrailing) {
                 cardGradient(attributes.myTeamCode, hasMyTeam: hasMyTeam)
@@ -316,18 +317,18 @@ struct KBOLockScreenCard: View {
     // 아웃카운트 점 (채워진=빨강, 빈=반투명)
     private func outDot(_ i: Int) -> some View {
         Circle()
-            .fill(i < state.outs ? Color(hex: 0xE53935) : Color.white.opacity(0.18))
-            .frame(width: 8, height: 8)
+            .fill(i < state.outs ? Color(hex: 0xFF4D4D) : Color.white.opacity(0.2))
+            .frame(width: 7, height: 7)
     }
 
-    // 투수/타자 행 — "투수 (LG) 웰스" 형태, 폰트 키움. 라벨·소속=한글, 이름=한글.
+    // 투수/타자 행 — "투수 (LG) 웰스" 형태. 라벨·소속=한글, 이름=한글.
     private func playerLine(label: String, team: String, name: String) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 5) {
             Text("\(label) (\(teamShortName(team)))")
-                .font(notoKR(13, .medium))
+                .font(notoKR(11, .medium))
                 .foregroundStyle(.white.opacity(0.72))
             Text(name)
-                .font(notoKR(16, .bold))
+                .font(notoKR(13, .bold))
         }
         .lineLimit(1).minimumScaleFactor(0.8)
     }
@@ -339,14 +340,14 @@ struct KBOLockScreenCard: View {
 struct TeamBadge: View {
     let code: String
     var body: some View {
-        VStack(spacing: 3) {
+        VStack(spacing: 2) {
             ZStack {
                 Circle().fill(.white)
-                TeamLogo(code: code, size: 23)
+                TeamLogo(code: code, size: 19)
             }
-            .frame(width: 34, height: 34)
+            .frame(width: 28, height: 28)
             Text(teamShortName(code))
-                .font(montserrat(15, .heavy))
+                .font(montserrat(13, .heavy))
                 .lineLimit(1).minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity)
@@ -362,7 +363,7 @@ struct DiamondView: View {
     let onSecond: Bool
     let onThird: Bool
 
-    private let active = Color(hex: 0xE53935)
+    private let active = Color(hex: 0xFF4D4D)
     private let empty = Color.white.opacity(0.22)
     private let emptyStroke = Color.white.opacity(0.4)
 

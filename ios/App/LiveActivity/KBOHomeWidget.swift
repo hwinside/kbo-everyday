@@ -353,7 +353,7 @@ struct HomeWidgetMediumCard: View {
 
     private func medOutDot(_ i: Int) -> some View {
         Circle()
-            .fill(i < snap.outs ? Color(hex: 0xE53935) : Color.white.opacity(0.18))
+            .fill(i < snap.outs ? Color(hex: 0xFF4D4D) : Color.white.opacity(0.2))
             .frame(width: 7, height: 7)
     }
 
