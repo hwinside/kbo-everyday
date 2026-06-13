@@ -7,12 +7,19 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Typeface;
 import android.text.TextUtils;
-import android.util.TypedValue;
 import android.view.View;
 import android.widget.RemoteViews;
 
+import androidx.core.content.res.ResourcesCompat;
+
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -146,14 +153,17 @@ public class GameScoreWidget extends AppWidgetProvider {
         // MY TEAM 헤더 로고 (최애팀 미설정 시 home 로고로 대체)
         int myLogo = draw(context, "teamlogo_" + bgTeam.toLowerCase());
         if (myLogo != 0) v.setImageViewResource(R.id.widget_myteam_logo, myLogo);
+        // 모든 텍스트는 비트맵 렌더 — RemoteViews(런처 프로세스)가 커스텀 fontFamily를
+        // 무시해 Montserrat이 시스템 폰트로 폴백되던 문제 회피(숫자/영문=Montserrat, 한글=Noto).
+        v.setImageViewBitmap(R.id.widget_myteam_label, textBitmap(context, "MY TEAM", 13f, 0xFFE0506A));
 
         // 양팀 로고/약어/점수
         int awayLogo = draw(context, "teamlogo_" + away.toLowerCase());
         int homeLogo = draw(context, "teamlogo_" + home.toLowerCase());
         if (awayLogo != 0) v.setImageViewResource(R.id.widget_away_logo, awayLogo);
         if (homeLogo != 0) v.setImageViewResource(R.id.widget_home_logo, homeLogo);
-        v.setTextViewText(R.id.widget_away_name, fullName(away));
-        v.setTextViewText(R.id.widget_home_name, fullName(home));
+        v.setImageViewBitmap(R.id.widget_away_name, textBitmap(context, fullName(away), 14f, 0xFFE8B0BC));
+        v.setImageViewBitmap(R.id.widget_home_name, textBitmap(context, fullName(home), 14f, 0xFFE8B0BC));
         boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
         boolean isFinal = status != null && status.startsWith("FINAL");
         // 예정 status = "SCHEDULED|<시간>|<날짜라벨>" (날짜라벨은 선택)
@@ -169,26 +179,22 @@ public class GameScoreWidget extends AppWidgetProvider {
             v.setViewVisibility(R.id.widget_score, View.GONE);
             v.setViewVisibility(R.id.widget_score_scheduled, View.VISIBLE);
             v.setTextViewText(R.id.widget_score_scheduled, "경기 예정");
-            v.setTextViewTextSize(R.id.widget_score_scheduled, TypedValue.COMPLEX_UNIT_SP, 22);
-            setStatusPill(v, R.id.widget_status_main, R.id.widget_status_suf, schedTime);
         } else {
-            // 라이브/종료 둘 다 점수 표시 (종료=결과)
+            // 라이브/종료 둘 다 점수 표시 (종료=결과). Montserrat 숫자 비트맵.
             v.setViewVisibility(R.id.widget_score, View.VISIBLE);
             v.setViewVisibility(R.id.widget_score_scheduled, View.GONE);
-            v.setTextViewText(R.id.widget_score, as + " : " + hs);
-            v.setTextViewTextSize(R.id.widget_score, TypedValue.COMPLEX_UNIT_SP, 30);
+            v.setImageViewBitmap(R.id.widget_score, textBitmap(context, as + " : " + hs, 30f, 0xFFF5F5F7));
         }
 
-        // 경기 날짜('6월 7일 (토)') — 예정 경기일 때만 경기장 위 표시.
-        // 숫자는 한글에 섞여도 Montserrat → 숫자/비숫자 구간별 TextView 슬롯에 분배.
+        // 경기 날짜('6월 7일 (토)') — 예정 경기일 때만 경기장 위 표시. 숫자(Mont)+한글(Noto) 비트맵.
         if (dateLabel.isEmpty()) {
             v.setViewVisibility(R.id.widget_date, View.GONE);
         } else {
             v.setViewVisibility(R.id.widget_date, View.VISIBLE);
-            setDateRow(v, dateLabel);
+            v.setImageViewBitmap(R.id.widget_date, textBitmap(context, dateLabel, 12f, 0xFFC8C8CE));
         }
 
-        // 경기장(잠실) — 가운데 점수 위 별도 표시
+        // 경기장(잠실) — 가운데 점수 위 별도 표시 (한글이라 TextView 유지)
         if (stadium.isEmpty()) {
             v.setViewVisibility(R.id.widget_stadium, View.GONE);
         } else {
@@ -196,17 +202,13 @@ public class GameScoreWidget extends AppWidgetProvider {
             v.setTextViewText(R.id.widget_stadium, stadium);
         }
 
-        // 상태 pill — 라이브 "● LIVE N회초" 빨강 정적, 종료 "경기 종료", 예정은 시간.
-        // 영문/숫자=Montserrat(main) / 한글=Noto(suf) 분리 렌더.
+        // 상태 pill — 라이브 "● LIVE N회초" 빨강 정적, 종료 "경기 종료", 예정은 시간. 혼합 비트맵.
         if (status.isEmpty() || "SCHEDULED|".equals(status)) {
             v.setViewVisibility(R.id.widget_status, View.GONE);
         } else {
             v.setViewVisibility(R.id.widget_status, View.VISIBLE);
-            if (isFinal) {
-                setStatusPill(v, R.id.widget_status_main, R.id.widget_status_suf, "경기 종료");
-            } else if (!isScheduled) {
-                setStatusPill(v, R.id.widget_status_main, R.id.widget_status_suf, "● " + status);
-            }
+            String pill = isScheduled ? schedTime : isFinal ? "경기 종료" : "● " + status;
+            v.setImageViewBitmap(R.id.widget_status_img, textBitmap(context, pill, 12f, 0xFFFF6B7A));
         }
 
         // 하단: OUT + 투수/타자 소속표기 + 다이아몬드 (라이브 정보 없으면 행 숨김)
@@ -255,35 +257,82 @@ public class GameScoreWidget extends AppWidgetProvider {
         return v;
     }
 
-    /** 상태 pill 텍스트를 영문/숫자(main=Montserrat)와 한글(suf=Noto Sans KR)로 분리해 두 TextView에 세팅. */
-    // 날짜 라벨('6월 7일 (토)')을 숫자/비숫자 구간으로 쪼개 4개 슬롯에 분배.
-    // 슬롯 0/2 = Montserrat(숫자), 1/3 = Noto. 날짜는 항상 숫자로 시작·숫자 2개라 정렬 일치.
-    private static void setDateRow(RemoteViews v, String label) {
-        int[] ids = { R.id.widget_date_0, R.id.widget_date_1, R.id.widget_date_2, R.id.widget_date_3 };
-        java.util.List<String> runs = new java.util.ArrayList<>();
-        StringBuilder cur = new StringBuilder();
-        boolean curDigit = false;
-        for (int i = 0; i < label.length(); i++) {
-            char c = label.charAt(i);
-            boolean d = Character.isDigit(c);
-            if (cur.length() > 0 && d != curDigit) {
-                runs.add(cur.toString());
-                cur.setLength(0);
-            }
-            cur.append(c);
-            curDigit = d;
+    // ── 텍스트 비트맵 렌더 ──────────────────────────────────────────────
+    // RemoteViews(홈 위젯)는 런처 프로세스에서 inflate되며 커스텀 fontFamily를 무시한다
+    // (삼성 런처 등). 그래서 Montserrat이 시스템 폰트로 폴백돼 안 보였다. 텍스트를 Paint로
+    // 직접 비트맵에 그려 ImageView에 넣으면 런처 무관하게 폰트가 확실히 적용된다.
+    // 분류: 한글 = Noto Sans KR(600), 그 외(숫자/영문/기호) = Montserrat(700).
+    private static Typeface tfMont, tfNoto;
+
+    private static Typeface mont(Context c) {
+        if (tfMont == null) {
+            Typeface t = ResourcesCompat.getFont(c, R.font.montserrat_vf);
+            tfMont = t != null ? t : Typeface.DEFAULT_BOLD;
         }
-        if (cur.length() > 0) runs.add(cur.toString());
-        for (int i = 0; i < ids.length; i++) {
-            if (i < runs.size()) {
-                v.setViewVisibility(ids[i], View.VISIBLE);
-                v.setTextViewText(ids[i], runs.get(i));
-            } else {
-                v.setViewVisibility(ids[i], View.GONE);
-            }
-        }
+        return tfMont;
     }
 
+    private static Typeface noto(Context c) {
+        if (tfNoto == null) {
+            Typeface t = ResourcesCompat.getFont(c, R.font.notosanskr_vf);
+            tfNoto = t != null ? t : Typeface.DEFAULT;
+        }
+        return tfNoto;
+    }
+
+    private static boolean isHangul(char c) {
+        return (c >= 0xAC00 && c <= 0xD7A3)   // 음절
+            || (c >= 0x1100 && c <= 0x11FF)   // 자모
+            || (c >= 0x3130 && c <= 0x318F);  // 호환 자모
+    }
+
+    /** 혼합 텍스트(숫자/영문=Montserrat, 한글=Noto)를 한 비트맵으로 렌더. spSize는 dp 환산. */
+    private static Bitmap textBitmap(Context ctx, String text, float spSize, int color) {
+        if (text == null) text = "";
+        float density = ctx.getResources().getDisplayMetrics().density;
+        float px = spSize * density;
+        Paint pm = new Paint(Paint.ANTI_ALIAS_FLAG);
+        pm.setTypeface(mont(ctx)); pm.setTextSize(px); pm.setColor(color);
+        pm.setLetterSpacing(-0.02f); pm.setSubpixelText(true);
+        Paint pn = new Paint(Paint.ANTI_ALIAS_FLAG);
+        pn.setTypeface(noto(ctx)); pn.setTextSize(px); pn.setColor(color);
+        pn.setLetterSpacing(-0.04f); pn.setSubpixelText(true);
+
+        // 한글/비한글 런으로 분할
+        List<String> runs = new ArrayList<>();
+        List<Boolean> runHangul = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        boolean curH = false;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            boolean h = isHangul(c);
+            if (cur.length() > 0 && h != curH) { runs.add(cur.toString()); runHangul.add(curH); cur.setLength(0); }
+            cur.append(c); curH = h;
+        }
+        if (cur.length() > 0) { runs.add(cur.toString()); runHangul.add(curH); }
+
+        float w = 0;
+        for (int i = 0; i < runs.size(); i++) w += (runHangul.get(i) ? pn : pm).measureText(runs.get(i));
+        Paint.FontMetrics fm = pm.getFontMetrics();
+        Paint.FontMetrics fn = pn.getFontMetrics();
+        float top = Math.min(fm.top, fn.top);
+        float bottom = Math.max(fm.bottom, fn.bottom);
+        int bw = Math.max(1, (int) Math.ceil(w) + 2);
+        int bh = Math.max(1, (int) Math.ceil(bottom - top) + 2);
+        Bitmap bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
+        Canvas cv = new Canvas(bmp);
+        float x = 1f;
+        float baseline = -top + 1f;
+        for (int i = 0; i < runs.size(); i++) {
+            Paint p = runHangul.get(i) ? pn : pm;
+            cv.drawText(runs.get(i), x, baseline, p);
+            x += p.measureText(runs.get(i));
+        }
+        return bmp;
+    }
+
+    /** 상태 pill 텍스트를 영문/숫자(main=Montserrat)와 한글(suf=Noto Sans KR)로 분리해 두 TextView에 세팅.
+     *  (notif 컴팩트 카드 전용 — 홈 위젯은 textBitmap 사용.) */
     private static void setStatusPill(RemoteViews v, int mainId, int sufId, String text) {
         if (text == null) text = "";
         int idx = -1;
