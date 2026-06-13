@@ -15,6 +15,8 @@ import { TEAMS, getTeamById } from "@/lib/constants/teams";
 import { useLiveGame, type LiveGameData } from "@/lib/hooks/useLiveGame";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
+import { isAndroid } from "@/lib/capacitor/platform";
+import { updateGameWidget, setWidgetMyTeam } from "@/lib/capacitor/game-notification";
 import { useHomeInit, type HomeGame } from "@/hooks/useHomeInit";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
 import MyTeamHero from "@/components/home/MyTeamHero";
@@ -155,6 +157,46 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       inning: (myTeamLive.status ?? (myTeamLive.isLive ? "live" : myTeamGameBase.status)) === "live" ? (myTeamLive.currentInning || null) : null,
     } : {}),
   } : undefined;
+
+  // 안드로이드 홈/잠금 위젯에 최애팀 오늘 경기 반영 (앱 진입 시). 라이브 외에
+  // 예정/종료 상태도 채워, 경기룸·푸시가 비워둔 평소에도 위젯이 빈 상태가 아니게 한다.
+  // 예정 경기 → 점수(0:0) 대신 "경기 예정" + 시작 시간. iOS/웹은 래퍼가 no-op.
+  useEffect(() => {
+    if (!isAndroid || !myTeamGame || myTeamId === null) return;
+    const mm = myTeamGame.id.match(/^(\d{8})([A-Z]{2})([A-Z]{2})(\d)$/);
+    if (!mm) return;
+    const awayCode = mm[2];
+    const homeCode = mm[3];
+    const myCode = myTeamId === myTeamGame.homeTeamId ? homeCode : awayCode;
+    void setWidgetMyTeam(myCode);
+    const isLive = myTeamGame.status === "live";
+    const isScheduled = myTeamGame.status === "scheduled";
+    const statusText = isLive
+      ? `LIVE ${myTeamGame.inning ?? ""}`.trim()
+      : myTeamGame.status === "final" ? "경기 종료"
+      : myTeamGame.status === "cancelled" ? "경기 취소"
+      : myTeamGame.time;
+    void updateGameWidget({
+      myTeam: myCode,
+      away: awayCode,
+      home: homeCode,
+      awayScore: isScheduled ? "" : String(myTeamGame.awayScore),
+      homeScore: isScheduled ? "" : String(myTeamGame.homeScore),
+      status: statusText,
+      scheduled: isScheduled,
+      pitcher: isLive ? (myTeamGame.currentPitcher ?? "") : "",
+      pitcherTeam: isLive && myTeamGame.currentPitcher ? (myTeamGame.isTop ? homeCode : awayCode) : "",
+      batter: isLive ? (myTeamGame.currentBatter ?? "") : "",
+      batterTeam: isLive && myTeamGame.currentBatter ? (myTeamGame.isTop ? awayCode : homeCode) : "",
+      outs: isLive ? String(Math.min(Math.max(myTeamGame.outs ?? 0, 0), 2)) : "",
+      diamond: isLive ? `${myTeamGame.runner1b ? 1 : 0}${myTeamGame.runner2b ? 1 : 0}${myTeamGame.runner3b ? 1 : 0}` : "000",
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    myTeamId, myTeamGame?.id, myTeamGame?.status, myTeamGame?.awayScore, myTeamGame?.homeScore,
+    myTeamGame?.inning, myTeamGame?.currentPitcher, myTeamGame?.currentBatter, myTeamGame?.outs,
+    myTeamGame?.runner1b, myTeamGame?.runner2b, myTeamGame?.runner3b, myTeamGame?.isTop,
+  ]);
 
   return (
     <PullToRefresh onRefresh={handleRefresh}>

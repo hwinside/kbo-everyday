@@ -47,7 +47,8 @@ public class KboMessagingService extends MessagingService {
                 data.get("w_hs"),
                 data.get("w_status"),
                 "", "", "", "", "",
-                "000");
+                "000",
+                false); // 푸시(game_live)는 항상 라이브 — 예정 아님
             // 그 다음 잠금화면 알림 카드 게시(prefs 기반 RemoteViews).
             GameNotificationPlugin.post(
                 this,

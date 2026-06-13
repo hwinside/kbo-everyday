@@ -19,6 +19,7 @@ interface WidgetData {
   batterTeam: string;
   outs: string;
   diamond: string;
+  scheduled?: boolean; // 경기 예정(미시작): 점수 대신 "경기 예정" + status에 시작 시간
 }
 
 interface GameNotificationPlugin {

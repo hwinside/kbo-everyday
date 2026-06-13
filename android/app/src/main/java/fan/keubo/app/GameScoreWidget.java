@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.text.TextUtils;
+import android.util.TypedValue;
 import android.view.View;
 import android.widget.RemoteViews;
 
@@ -42,6 +43,7 @@ public class GameScoreWidget extends AppWidgetProvider {
     static final String KEY_BTEAM = "bteam";
     static final String KEY_OUTS = "outs";
     static final String KEY_DIAMOND = "diamond";
+    static final String KEY_SCHED = "sched"; // 경기 예정(미시작) — 점수 대신 "경기 예정" + 시간 pill
     // legacy(알림 호환) — 위젯 렌더에는 미사용
     static final String KEY_TITLE = "title";
     static final String KEY_SUB = "sub";
@@ -100,6 +102,7 @@ public class GameScoreWidget extends AppWidgetProvider {
         String bteam = p.getString(KEY_BTEAM, "");
         String outs = p.getString(KEY_OUTS, "");
         String diamond = p.getString(KEY_DIAMOND, "000");
+        boolean sched = p.getBoolean(KEY_SCHED, false);
 
         RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget_game_score);
 
@@ -139,7 +142,14 @@ public class GameScoreWidget extends AppWidgetProvider {
         if (homeLogo != 0) v.setImageViewResource(R.id.widget_home_logo, homeLogo);
         v.setTextViewText(R.id.widget_away_name, shortName(away));
         v.setTextViewText(R.id.widget_home_name, shortName(home));
-        v.setTextViewText(R.id.widget_score, as + " : " + hs);
+        // 예정 경기: 점수(0:0) 대신 "경기 예정"(작게) — 앱 MY TEAM 카드와 동일. 시간은 status pill.
+        if (sched) {
+            v.setTextViewText(R.id.widget_score, "경기 예정");
+            v.setTextViewTextSize(R.id.widget_score, TypedValue.COMPLEX_UNIT_SP, 17f);
+        } else {
+            v.setTextViewText(R.id.widget_score, as + " : " + hs);
+            v.setTextViewTextSize(R.id.widget_score, TypedValue.COMPLEX_UNIT_SP, 30f);
+        }
 
         // 상태 pill
         if (status.isEmpty()) {
@@ -238,10 +248,12 @@ public class GameScoreWidget extends AppWidgetProvider {
      *  myTeam==null/빈값 → 기존 최애팀 값 유지(푸시는 디바이스 최애팀을 모름). */
     static void writeAndRefresh(Context ctx, String myTeam, String away, String home,
                                 String as, String hs, String status, String pitcher, String pteam,
-                                String batter, String bteam, String outs, String diamond) {
+                                String batter, String bteam, String outs, String diamond,
+                                boolean scheduled) {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         SharedPreferences.Editor e = p.edit();
         e.putBoolean(KEY_HAS_GAME, true);
+        e.putBoolean(KEY_SCHED, scheduled);
         if (myTeam != null && !myTeam.isEmpty()) e.putString(KEY_MY_TEAM, myTeam);
         e.putString(KEY_AWAY, away == null ? "" : away);
         e.putString(KEY_HOME, home == null ? "" : home);
