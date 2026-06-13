@@ -11,6 +11,7 @@ import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getTeamById } from "@/lib/constants/teams";
 import { getMyTeamId, setMyTeamId } from "@/lib/store/myteam";
+import { isNative } from "@/lib/capacitor/platform";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { usePushNotification } from "@/lib/hooks/usePushNotification";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -210,8 +211,8 @@ export default function MyPage() {
         </GlassCard>
       </motion.div>
 
-      {/* 앱 설치 */}
-      {typeof window !== "undefined" && !window.matchMedia("(display-mode: standalone)").matches && (
+      {/* 앱 설치 — 네이티브 앱에선 불필요 */}
+      {typeof window !== "undefined" && !isNative && !window.matchMedia("(display-mode: standalone)").matches && (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="mt-3">
           <GlassCard
             pressable
