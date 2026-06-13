@@ -257,6 +257,11 @@ struct DITeam: View {
 struct KBOLockScreenCard: View {
     let attributes: KBOGameAttributes
     let state: KBOGameAttributes.ContentState
+    /// 홈 위젯(medium)처럼 컨테이너가 카드 콘텐츠보다 클 때, 카드 배경이 컨테이너 전체를
+    /// 채우도록 세로로 늘린다(콘텐츠는 상단 정렬). false면 콘텐츠 높이만큼만(잠금화면 LA 기존 동작).
+    /// 이전엔 false라 medium에서 카드 배경(콘텐츠 높이)과 위젯 containerBackground 사이에
+    /// 윗쪽 어두운 띠(seam)가 보였다.
+    var fillHeight: Bool = false
 
     private var hasMyTeam: Bool {
         !attributes.myTeamCode.isEmpty &&
@@ -350,6 +355,9 @@ struct KBOLockScreenCard: View {
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
+        // medium 위젯: 콘텐츠보다 큰 위젯 높이를 카드가 꽉 채워 배경 seam(윗쪽 어두운 띠) 제거.
+        // 콘텐츠는 상단 정렬. 잠금화면 LA(fillHeight=false)는 콘텐츠 높이 그대로.
+        .frame(maxWidth: .infinity, maxHeight: fillHeight ? .infinity : nil, alignment: .top)
         .background(
             ZStack(alignment: .topTrailing) {
                 cardGradient(attributes.myTeamCode, hasMyTeam: hasMyTeam)
