@@ -26,6 +26,11 @@ function scheduledStartMs(gDt: string | undefined, gTm: string | undefined): num
   return Date.UTC(y, mo - 1, d, hh - 9, mm);
 }
 
+/** 현재 KST 날짜 "YYYYMMDD" (G_DT와 같은 포맷, 사전식 비교용). */
+function kstDateStr(): string {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10).replace(/-/g, "");
+}
+
 /** 양팀을 최애팀으로 둔 유저 id 목록. ok=false면 조회 실패(재시도 대상) */
 export async function fansOfTeams(teamIds: number[]): Promise<{ ids: string[]; ok: boolean }> {
   if (teamIds.length === 0) return { ids: [], ok: true };
@@ -138,17 +143,18 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
     const url = `/games/${gameId}`;
 
     // 경기 취소 알림 (우천 등). pref는 "game_start"(경기 일정 관심자)에 연계 — 별도 토글 미신설.
-    // dedup = cancel_notified 선점. 예정시각 +90분 밖(배포 직후 과거 취소 등)이면 마킹만.
+    // dedup = cancel_notified 선점. 시작 알림과 달리 +90분 윈도우를 쓰지 않는다 — 우천 지연이
+    // 90분을 넘겨 취소되는 "기다리다 취소"가 가장 중요한 알림이라(삼순 #287 블로커1). 대신
+    // *과거 날짜*(배포 직후 지난 경기 백필)만 markOnly로 차단하고, 오늘(KST) 이후 경기 취소는 발송.
     if (g.CANCEL_SC_ID !== "0") {
-      const startedAt = scheduledStartMs(g.G_DT, g.G_TM);
-      const tooLate = startedAt !== null && Date.now() - startedAt > START_WINDOW_MS;
-      if (tooLate) { await markOnly(gameId, { cancel: true }); continue; }
+      const isPastDay = g.G_DT != null && g.G_DT.length === 8 && g.G_DT < kstDateStr();
+      if (isPastDay) { await markOnly(gameId, { cancel: true }); continue; }
       if (await claim(gameId, "cancel_notified")) {
         const fans = await fansOfTeams(teamIds);
         if (!fans.ok) { await unclaim(gameId, "cancel_notified"); continue; } // 조회 실패 → 재시도
         const res = await sendFcmToUsers(fans.ids, {
           title: "🌧️ 경기 취소",
-          body: `${away} vs ${home} 경기가 취소됐어요`,
+          body: `${away} vs ${home} 경기가 취소됐어요. 변경된 일정은 크보팬에서 확인해 보세요`,
           url,
         }, "game_start");
         if (!res.ok) { await unclaim(gameId, "cancel_notified"); continue; } // 인프라 실패 → 재시도
