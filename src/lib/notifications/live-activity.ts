@@ -5,6 +5,7 @@ import {
   getProviderTokenSafe,
   sendLiveActivityPush,
 } from "@/lib/notifications/apns";
+import { teamIdByShortName, fansOfTeams } from "@/lib/notifications/game-status";
 import type { KboRawGame } from "@/types/api";
 
 // Live Activity W3a — 백그라운드 실시간 갱신.
@@ -144,4 +145,157 @@ export async function pushLiveActivityUpdates(
   }
 
   return { pushed, ended, cleaned };
+}
+
+// ── W3b — push-to-start 자동 시작 ──────────────────────────────────────────
+// 최애팀 경기가 라이브로 전환되면, 앱을 안 열어도 잠금화면 Live Activity가 뜨도록
+// 등록된 push-to-start 토큰으로 APNs event:start 푸시를 보낸다. 이후 갱신은 W3a.
+
+// 시작 윈도우(game-status.ts와 동일 정책) — 한참 뒤 복구된 cron의 뒷북 자동시작 차단.
+const START_WINDOW_MS = 90 * 60 * 1000;
+
+/** G_DT("20260611") + G_TM("18:30", KST) → epoch ms. 파싱 실패 시 null (game-status.ts 동일) */
+function scheduledStartMs(gDt: string | undefined, gTm: string | undefined): number | null {
+  if (!gDt || !gTm || gDt.length !== 8 || !/^\d{2}:\d{2}$/.test(gTm)) return null;
+  const y = +gDt.slice(0, 4), mo = +gDt.slice(4, 6), d = +gDt.slice(6, 8);
+  const [hh, mm] = gTm.split(":").map(Number);
+  return Date.UTC(y, mo - 1, d, hh - 9, mm);
+}
+
+/** 한 팀 슬롯(away 또는 home)의 팬들에게 push-to-start. myTeamCode = 그 팀 코드(강조용). */
+async function startForTeamSide(params: {
+  gameId: string;
+  teamId: number | null;
+  myTeamCode: string;
+  attributes: Record<string, unknown>;
+  contentState: Record<string, unknown>;
+  staleDate: number;
+  jwt: string;
+}): Promise<number> {
+  if (params.teamId === null) return 0;
+  const fans = await fansOfTeams([params.teamId]);
+  if (!fans.ok || fans.ids.length === 0) return 0;
+
+  // push-to-start 토큰 보유 유저만. .in()은 URL 한도 회피 위해 200개 청크.
+  const tokenByUser = new Map<string, string>();
+  for (let i = 0; i < fans.ids.length; i += 200) {
+    const { data } = await supabase
+      .from("live_activity_start_tokens")
+      .select("user_id, push_to_start_token")
+      .in("user_id", fans.ids.slice(i, i + 200));
+    for (const r of (data ?? []) as { user_id: string; push_to_start_token: string }[]) {
+      tokenByUser.set(r.user_id, r.push_to_start_token);
+    }
+  }
+  if (tokenByUser.size === 0) return 0;
+  const candidateIds = [...tokenByUser.keys()];
+
+  // W3c off 제외 (row 없음/null = 디폴트 on).
+  const optedOut = new Set<string>();
+  // 이미 이 경기 활성 토큰 보유(앱에서 직접 start) 제외 — 중복 카드 방지.
+  const alreadyActive = new Set<string>();
+  for (let i = 0; i < candidateIds.length; i += 200) {
+    const chunk = candidateIds.slice(i, i + 200);
+    const [{ data: prefRows }, { data: activeRows }] = await Promise.all([
+      supabase.from("notification_prefs").select("user_id, live_activity").in("user_id", chunk),
+      supabase
+        .from("live_activity_tokens")
+        .select("user_id")
+        .eq("game_id", params.gameId)
+        .in("user_id", chunk),
+    ]);
+    for (const r of (prefRows ?? []) as { user_id: string; live_activity: boolean | null }[]) {
+      if (r.live_activity === false) optedOut.add(r.user_id);
+    }
+    for (const r of (activeRows ?? []) as { user_id: string }[]) alreadyActive.add(r.user_id);
+  }
+
+  let sent = 0;
+  const invalid: string[] = [];
+  await Promise.all(
+    [...tokenByUser.entries()].map(async ([userId, token]) => {
+      if (optedOut.has(userId) || alreadyActive.has(userId)) return;
+      const res = await sendLiveActivityPush(
+        {
+          pushToken: token,
+          event: "start",
+          attributesType: "KBOGameAttributes",
+          attributes: { ...params.attributes, myTeamCode: params.myTeamCode },
+          contentState: params.contentState,
+          staleDate: params.staleDate,
+        },
+        params.jwt,
+      );
+      if (res.ok) sent += 1;
+      else if (res.invalidToken) invalid.push(userId);
+    }),
+  );
+
+  // 무효 push-to-start 토큰 정리(디바이스당 1개라 user_id로 삭제).
+  for (const u of invalid) {
+    await supabase.from("live_activity_start_tokens").delete().eq("user_id", u);
+  }
+  return sent;
+}
+
+/**
+ * 라이브 경기 → 최애팀 팬의 push-to-start 토큰으로 자동 시작 푸시.
+ * 게임 단위 1회 선점(live_activity_started insert)으로 중복 발송 차단.
+ */
+export async function pushLiveActivityStarts(
+  games: KboRawGame[],
+): Promise<{ started: number } | { error: string }> {
+  if (!apnsConfigured()) return { started: 0 };
+
+  const liveGames = games.filter((g) => gameStatus(g) === "live" && g.G_ID);
+  if (liveGames.length === 0) return { started: 0 };
+
+  // jwt를 선점(insert) 전에 확보 — 토큰 발급 실패가 게임 선점을 소진(미발송으로 마킹)하지
+  // 않게. 실패 시 아무 게임도 선점 안 하고 다음 cron에서 재시도.
+  const jwt = await getProviderTokenSafe();
+  if (!jwt) return { error: "apns provider token failed" };
+
+  let started = 0;
+
+  for (const g of liveGames) {
+    const gameId = g.G_ID as string;
+    const codes = gameId.match(/^\d{8}([A-Z]{2})([A-Z]{2})\d$/);
+    if (!codes) continue;
+
+    // 게임 단위 1회 선점 — insert 성공한 호출만 발송(unique violation = 이미 처리됨).
+    const { error: claimErr } = await supabase
+      .from("live_activity_started")
+      .insert({ game_id: gameId });
+    if (claimErr) continue;
+
+    // 윈도우 가드 — 너무 늦은 자동시작은 마킹만(이미 insert)하고 발송 skip.
+    const startedAt = scheduledStartMs(g.G_DT, g.G_TM);
+    if (startedAt !== null && Date.now() - startedAt > START_WINDOW_MS) continue;
+
+    const away = g.AWAY_NM ?? "";
+    const home = g.HOME_NM ?? "";
+    const awayCode = codes[1];
+    const homeCode = codes[2];
+    const attributes = {
+      gameId,
+      awayTeam: away,
+      homeTeam: home,
+      awayTeamCode: awayCode,
+      homeTeamCode: homeCode,
+    };
+    const contentState = buildContentState(g, "live");
+    const staleDate = Math.floor(Date.now() / 1000) + 5 * 60;
+
+    // away/home 슬롯을 각자 그 팀 코드로 강조(myTeamCode) — 수신자별 최애팀 반영.
+    started += await startForTeamSide({
+      gameId, teamId: teamIdByShortName(away), myTeamCode: awayCode,
+      attributes, contentState, staleDate, jwt,
+    });
+    started += await startForTeamSide({
+      gameId, teamId: teamIdByShortName(home), myTeamCode: homeCode,
+      attributes, contentState, staleDate, jwt,
+    });
+  }
+
+  return { started };
 }

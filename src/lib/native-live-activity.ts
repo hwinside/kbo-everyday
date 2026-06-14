@@ -42,6 +42,10 @@ interface LiveActivityPlugin {
     eventName: "liveActivityPushToken",
     listenerFunc: (data: { gameId: string; token: string }) => void,
   ): Promise<{ remove: () => Promise<void> }>;
+  addListener(
+    eventName: "liveActivityPushToStartToken",
+    listenerFunc: (data: { token: string }) => void,
+  ): Promise<{ remove: () => Promise<void> }>;
 }
 
 /** 홈 화면 위젯(KBOHomeWidget) App Group 스냅샷. 라이브/예정/종료 모두 표현 가능.
@@ -168,6 +172,49 @@ async function ensureTokenListener(): Promise<void> {
   await LiveActivity.addListener("liveActivityPushToken", ({ gameId, token }) => {
     void registerLiveActivityToken(gameId, token);
   });
+}
+
+// W3b: push-to-start 토큰(디바이스 단위, iOS 17.2+)을 서버에 등록 → 최애팀 경기 시작 시
+// 앱 미실행 자동 카드. 리스너는 앱 부팅 시 1회 설치(경기룸 진입 무관).
+let startTokenListenerReady = false;
+// 마지막으로 발급받은 push-to-start 토큰 — 비로그인 부팅 후 로그인(SIGNED_IN) 시 재등록용.
+let lastPushToStartToken: string | null = null;
+
+async function registerPushToStartToken(token: string): Promise<void> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const accessToken = session?.access_token;
+    if (!accessToken) return; // 비로그인 → 등록 불가(로그인 후 재부팅 시 재시도)
+    await fetch("/api/live-activity/register-start", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ pushToStartToken: token }),
+    });
+  } catch {
+    /* silent — 등록 실패가 앱에 영향 주지 않게 */
+  }
+}
+
+/** 앱 부팅 시 1회 — push-to-start 토큰 리스너 설치(W3b). native가 retainUntilConsumed로
+ *  버퍼링하므로 listener가 늦게 붙어도 토큰 유실 없음. W3c 토글 off 유저는 서버
+ *  register-start 엔드포인트가 저장을 skip(클라/서버 이중 게이트). iOS 외엔 no-op. */
+export async function bootstrapLiveActivityPushToStart(): Promise<void> {
+  if (startTokenListenerReady || !isNativeIOS()) return;
+  startTokenListenerReady = true;
+  await LiveActivity.addListener("liveActivityPushToStartToken", ({ token }) => {
+    lastPushToStartToken = token;
+    void registerPushToStartToken(token);
+  });
+}
+
+/** 로그인 직후(SIGNED_IN) 호출 — 비로그인 부팅 때 등록 skip된 push-to-start 토큰을 재등록.
+ *  토큰은 디바이스 단위라 재발급 없이 마지막 값으로 등록 가능. iOS 외/토큰 없으면 no-op. */
+export function reregisterPushToStartToken(): void {
+  if (!isNativeIOS() || !lastPushToStartToken) return;
+  void registerPushToStartToken(lastPushToStartToken);
 }
 
 /** 경기룸 진입 시 호출. 같은 gameId 재호출은 네이티브에서 update로 처리(중복 방지). */

@@ -32,6 +32,12 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
                 // 부착 시 전달 → push token 유실로 서버 등록이 누락되는 race 방지(삼순 W3a NO-GO).
                 self?.notifyListeners("liveActivityPushToken", data: ["gameId": gameId, "token": token], retainUntilConsumed: true)
             }
+            // W3b — push-to-start 토큰(iOS 17.2+). 앱 부팅 즉시 관찰 시작해 디바이스 토큰을
+            // JS로 전달 → 서버 등록. retainUntilConsumed로 리스너 부착 전 발급분도 버퍼링.
+            LiveActivityController.shared.onPushToStartToken = { [weak self] token in
+                self?.notifyListeners("liveActivityPushToStartToken", data: ["token": token], retainUntilConsumed: true)
+            }
+            LiveActivityController.shared.observePushToStartToken()
         }
     }
 

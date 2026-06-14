@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { isNative } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
 import { syncNativePushToken, listenForTokenRefresh, listenForNotificationTap } from "@/lib/native-push";
+import { bootstrapLiveActivityPushToStart, reregisterPushToStartToken } from "@/lib/native-live-activity";
 
 /**
  * 네이티브 앱(iOS/Android) FCM 토큰 동기화용 얇은 클라이언트 마운트.
@@ -21,13 +22,18 @@ export function NativePushMount() {
     void syncNativePushToken();
     void listenForTokenRefresh();
     void listenForNotificationTap();
+    // W3b — 잠금화면 Live Activity 자동 시작용 push-to-start 토큰 등록(iOS 17.2+, 그 외 no-op).
+    void bootstrapLiveActivityPushToStart();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       // ⚠️ onAuthStateChange 콜백 안에서 supabase 함수를 직접 호출하면 auth 락
       // 경합으로 이후 모든 쿼리가 pending될 수 있음 (supabase-js 공식 경고).
       // 신규가입 직후 ProfileSetupModal "생성 중…" 영구 스턱의 원인으로 추정 —
       // setTimeout으로 콜백(락) 컨텍스트 밖에서 실행 (2026-06-11 애플 가입 hotfix)
-      if (event === "SIGNED_IN") setTimeout(() => void syncNativePushToken(), 0);
+      if (event === "SIGNED_IN") setTimeout(() => {
+        void syncNativePushToken();
+        reregisterPushToStartToken(); // W3b — 비로그인 부팅 시 skip된 push-to-start 토큰 등록
+      }, 0);
     });
     return () => subscription.unsubscribe();
   }, []);
