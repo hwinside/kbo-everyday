@@ -34,10 +34,10 @@ export default function LinescoreTable({
   awayScore,
   homeScore,
   currentInning,
-  awayHits = 7,
-  homeHits = 5,
-  awayErrors = 0,
-  homeErrors = 1,
+  awayHits,
+  homeHits,
+  awayErrors,
+  homeErrors,
   linescore,
 }: LinescoreTableProps) {
   const maxInning = 9;
@@ -128,8 +128,8 @@ export default function LinescoreTable({
                 );
               })}
               <td className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">{resolvedAwayScore}</td>
-              <td className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">{resolvedAwayHits}</td>
-              <td className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">{resolvedAwayErrors}</td>
+              <td className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">{resolvedAwayHits ?? "-"}</td>
+              <td className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">{resolvedAwayErrors ?? "-"}</td>
             </tr>
             {/* Home */}
             <tr className="border-b border-border">
@@ -156,8 +156,8 @@ export default function LinescoreTable({
                 );
               })}
               <td className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">{resolvedHomeScore}</td>
-              <td className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">{resolvedHomeHits}</td>
-              <td className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">{resolvedHomeErrors}</td>
+              <td className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">{resolvedHomeHits ?? "-"}</td>
+              <td className="font-bold text-text-primary border-l border-border px-1.5 py-1 text-center">{resolvedHomeErrors ?? "-"}</td>
             </tr>
           </tbody>
         </table>
