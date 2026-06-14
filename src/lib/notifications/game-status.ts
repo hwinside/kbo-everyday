@@ -26,6 +26,11 @@ function scheduledStartMs(gDt: string | undefined, gTm: string | undefined): num
   return Date.UTC(y, mo - 1, d, hh - 9, mm);
 }
 
+/** 현재 KST 날짜 "YYYYMMDD" (G_DT와 같은 포맷, 사전식 비교용). */
+function kstDateStr(): string {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10).replace(/-/g, "");
+}
+
 /** 양팀을 최애팀으로 둔 유저 id 목록. ok=false면 조회 실패(재시도 대상) */
 export async function fansOfTeams(teamIds: number[]): Promise<{ ids: string[]; ok: boolean }> {
   if (teamIds.length === 0) return { ids: [], ok: true };
@@ -44,7 +49,8 @@ type NotifyFlag =
   | "start_notified"
   | "end_notified"
   | "end_away_notified"
-  | "end_home_notified";
+  | "end_home_notified"
+  | "cancel_notified";
 
 /**
  * 알림 권한 선점 — 해당 플래그가 false인 행을 true로 바꾸는 데 성공한
@@ -104,11 +110,12 @@ async function fetchTeamStreaks(): Promise<Map<number, { n: number; dir: "승" |
 }
 
 /** 도입 직후/과거 경기 보호 — 발송 없이 플래그만 마킹 */
-async function markOnly(gameId: string, flags: { start?: boolean; end?: boolean }): Promise<void> {
+async function markOnly(gameId: string, flags: { start?: boolean; end?: boolean; cancel?: boolean }): Promise<void> {
   await supabase.from("game_notify_state").upsert({
     game_id: gameId,
     ...(flags.start ? { start_notified: true } : {}),
     ...(flags.end ? { end_notified: true } : {}),
+    ...(flags.cancel ? { cancel_notified: true } : {}),
     updated_at: new Date().toISOString(),
   }, { onConflict: "game_id" });
 }
@@ -119,21 +126,42 @@ async function markOnly(gameId: string, flags: { start?: boolean; end?: boolean 
  * - final && end 미발송 → (start도 미발송이면 cron이 경기 중 못 본 것 — 종료만 발송)
  * - 처음 보는 게임이 이미 final이고 start/end 둘 다 미발송 → 발송 없이 마킹
  *   (배포/도입 직후 과거 경기에 뒷북 알림 방지)
- * - cancelled → 알림 없음
+ * - cancelled(CANCEL_SC_ID != "0") → "경기 취소" 알림 1회(우천 등). 예정시각 +90분 밖이면 마킹만(뒷북 차단).
  */
-export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<{ started: number; ended: number }> {
+export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<{ started: number; ended: number; cancelled: number }> {
   let started = 0;
   let ended = 0;
+  let cancelled = 0;
 
   for (const g of games) {
     const gameId = g.G_ID;
     if (!gameId) continue;
-    if (g.CANCEL_SC_ID !== "0") continue;
 
     const away = g.AWAY_NM ?? "";
     const home = g.HOME_NM ?? "";
     const teamIds = [teamIdByShortName(away), teamIdByShortName(home)].filter((v): v is number => v !== null);
     const url = `/games/${gameId}`;
+
+    // 경기 취소 알림 (우천 등). pref는 "game_start"(경기 일정 관심자)에 연계 — 별도 토글 미신설.
+    // dedup = cancel_notified 선점. 시작 알림과 달리 +90분 윈도우를 쓰지 않는다 — 우천 지연이
+    // 90분을 넘겨 취소되는 "기다리다 취소"가 가장 중요한 알림이라(삼순 #287 블로커1). 대신
+    // *과거 날짜*(배포 직후 지난 경기 백필)만 markOnly로 차단하고, 오늘(KST) 이후 경기 취소는 발송.
+    if (g.CANCEL_SC_ID !== "0") {
+      const isPastDay = g.G_DT != null && g.G_DT.length === 8 && g.G_DT < kstDateStr();
+      if (isPastDay) { await markOnly(gameId, { cancel: true }); continue; }
+      if (await claim(gameId, "cancel_notified")) {
+        const fans = await fansOfTeams(teamIds);
+        if (!fans.ok) { await unclaim(gameId, "cancel_notified"); continue; } // 조회 실패 → 재시도
+        const res = await sendFcmToUsers(fans.ids, {
+          title: "🌧️ 경기 취소",
+          body: `${away} vs ${home} 경기가 취소됐어요. 변경된 일정은 크보팬에서 확인해 보세요`,
+          url,
+        }, "game_start");
+        if (!res.ok) { await unclaim(gameId, "cancel_notified"); continue; } // 인프라 실패 → 재시도
+        cancelled += res.sent;
+      }
+      continue;
+    }
 
     if (g.GAME_STATE_SC === "2") {
       // 진행 중 — 시작 알림. 시간 윈도우 밖이면 발송 없이 마킹만(뒷북 차단)
@@ -265,5 +293,5 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
     }
   }
 
-  return { started, ended };
+  return { started, ended, cancelled };
 }
