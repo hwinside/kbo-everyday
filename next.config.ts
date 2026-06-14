@@ -9,6 +9,11 @@ const nextConfig: NextConfig = {
         hostname: "lbmbdjgsnenqjwjotoei.supabase.co",
         pathname: "/storage/v1/object/public/**",
       },
+      {
+        protocol: "https",
+        hostname: "6ptotvmi5753.edge.naverncp.com",
+        pathname: "/KBO_IMAGE/person/**",
+      },
     ],
   },
   async redirects() {
