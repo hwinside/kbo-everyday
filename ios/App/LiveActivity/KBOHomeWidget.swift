@@ -341,6 +341,8 @@ struct HomeWidgetScheduledCard: View {
     private func teamColumn(code: String) -> some View {
         // medium: 풀네임(롯데 자이언츠/LG 트윈스) + 로고·팀명 25%↑(하린아빠 요청). 라틴=Montserrat,
         // 한글=Noto 글자단위 분리. compact(small 위젯)는 공간 제약상 약어 유지.
+        // ⚠️ 풀네임은 한 줄에 안 들어가 minimumScaleFactor로 쪼그라들면 오히려 작아진다 →
+        //    medium은 2줄 허용(롯데/자이언츠)으로 16pt 폰트 유지(하린아빠 "텍스트 더 작아짐" 수정).
         let name: Text = compact
             ? Text(teamShortName(code)).font(montserrat(11, .heavy))
             : mixedScriptText(teamFullName(code), 16, .heavy)
@@ -351,7 +353,10 @@ struct HomeWidgetScheduledCard: View {
             }
             .frame(width: compact ? 32 : 50, height: compact ? 32 : 50)
             name
-                .lineLimit(1).minimumScaleFactor(0.55)
+                .multilineTextAlignment(.center)
+                .lineLimit(compact ? 1 : 2)
+                .minimumScaleFactor(compact ? 0.7 : 0.85)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
     }
