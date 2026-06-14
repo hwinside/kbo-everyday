@@ -294,7 +294,7 @@ struct HomeWidgetScheduledCard: View {
     }
 
     var body: some View {
-        VStack(spacing: compact ? 7 : 10) {
+        VStack(spacing: compact ? 7 : 11) {
             if hasMyTeam {
                 HStack(spacing: 4) {
                     TeamLogo(code: snap.myTeamCode, size: compact ? 13 : 16)
@@ -335,7 +335,7 @@ struct HomeWidgetScheduledCard: View {
         }
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(compact ? 10 : 14)
+        .padding(compact ? 10 : 18)
     }
 
     private func teamColumn(code: String) -> some View {
@@ -349,9 +349,9 @@ struct HomeWidgetScheduledCard: View {
         return VStack(spacing: 3) {
             ZStack {
                 Circle().fill(.white)
-                TeamLogo(code: code, size: compact ? 22 : 35)
+                TeamLogo(code: code, size: compact ? 22 : 31)
             }
-            .frame(width: compact ? 32 : 50, height: compact ? 32 : 50)
+            .frame(width: compact ? 32 : 45, height: compact ? 32 : 45)
             name
                 .multilineTextAlignment(.center)
                 .lineLimit(compact ? 1 : 2)
