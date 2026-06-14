@@ -38,6 +38,9 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
                 self?.notifyListeners("liveActivityPushToStartToken", data: ["token": token], retainUntilConsumed: true)
             }
             LiveActivityController.shared.observePushToStartToken()
+            // W3b — 원격(push-to-start) 생성 Activity도 per-activity update 토큰을 등록하도록
+            // 모든 Activity 생성을 관찰. 없으면 자동시작 카드가 갱신 안 됨(삼순 NO-GO ①).
+            LiveActivityController.shared.observeAllActivities()
         }
     }
 

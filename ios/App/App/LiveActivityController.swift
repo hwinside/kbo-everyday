@@ -62,6 +62,25 @@ final class LiveActivityController {
         }
     }
 
+    /// push-to-start 관찰 중복 설치 방지.
+    private var activityUpdatesObserved = false
+
+    /// 로컬·원격(push-to-start) 가리지 않고 *모든* Activity 생성을 관찰해 per-activity
+    /// update 토큰을 W3a 등록 경로(`onPushToken`)로 흘려보낸다. W3b로 앱 미실행 중 OS가
+    /// 원격 생성한 Activity는 로컬 start()를 안 거치므로, 이 관찰이 없으면 update 토큰이
+    /// 서버에 등록되지 않아 카드가 시작 스냅샷에 얼어붙는다(삼순 W3b NO-GO ①). iOS 16.2+.
+    func observeAllActivities() {
+        guard !activityUpdatesObserved else { return }
+        if #available(iOS 16.2, *) {
+            activityUpdatesObserved = true
+            Task {
+                for await activity in Activity<KBOGameAttributes>.activityUpdates {
+                    observePushToken(activity, gameId: activity.attributes.gameId)
+                }
+            }
+        }
+    }
+
     /// Live Activity 사용 가능 여부(설정에서 꺼져 있을 수 있음).
     var isEnabled: Bool {
         ActivityAuthorizationInfo().areActivitiesEnabled

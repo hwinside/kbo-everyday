@@ -162,7 +162,11 @@ function scheduledStartMs(gDt: string | undefined, gTm: string | undefined): num
   return Date.UTC(y, mo - 1, d, hh - 9, mm);
 }
 
-/** 한 팀 슬롯(away 또는 home)의 팬들에게 push-to-start. myTeamCode = 그 팀 코드(강조용). */
+/**
+ * 한 팀 슬롯(away 또는 home)의 팬들에게 push-to-start. myTeamCode = 그 팀 코드(강조용).
+ * 반환 failed=true = 인프라 오류(쿼리 실패 / 발송 전부 일시 실패) → 호출부가 선점 해제·재시도.
+ * "수신 대상 0명"(legit zero)은 failed=false (선점 유지 — 재시도해도 의미 없음). 삼순 NO-GO ②.
+ */
 async function startForTeamSide(params: {
   gameId: string;
   teamId: number | null;
@@ -171,39 +175,43 @@ async function startForTeamSide(params: {
   contentState: Record<string, unknown>;
   staleDate: number;
   jwt: string;
-}): Promise<number> {
-  if (params.teamId === null) return 0;
+}): Promise<{ sent: number; failed: boolean }> {
+  if (params.teamId === null) return { sent: 0, failed: false };
   const fans = await fansOfTeams([params.teamId]);
-  if (!fans.ok || fans.ids.length === 0) return 0;
+  if (!fans.ok) return { sent: 0, failed: true }; // 팬 조회 실패 → 재시도
+  if (fans.ids.length === 0) return { sent: 0, failed: false };
 
   // push-to-start 토큰 보유 유저만. .in()은 URL 한도 회피 위해 200개 청크.
   const tokenByUser = new Map<string, string>();
   for (let i = 0; i < fans.ids.length; i += 200) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("live_activity_start_tokens")
       .select("user_id, push_to_start_token")
       .in("user_id", fans.ids.slice(i, i + 200));
+    if (error) return { sent: 0, failed: true }; // 토큰 조회 실패 → 재시도
     for (const r of (data ?? []) as { user_id: string; push_to_start_token: string }[]) {
       tokenByUser.set(r.user_id, r.push_to_start_token);
     }
   }
-  if (tokenByUser.size === 0) return 0;
+  if (tokenByUser.size === 0) return { sent: 0, failed: false };
   const candidateIds = [...tokenByUser.keys()];
 
   // W3c off 제외 (row 없음/null = 디폴트 on).
   const optedOut = new Set<string>();
-  // 이미 이 경기 활성 토큰 보유(앱에서 직접 start) 제외 — 중복 카드 방지.
+  // 이미 이 경기 활성 토큰 보유(앱에서 직접 start 또는 원격 시작 후 update 토큰 등록) 제외 — 중복 카드 방지.
   const alreadyActive = new Set<string>();
   for (let i = 0; i < candidateIds.length; i += 200) {
     const chunk = candidateIds.slice(i, i + 200);
-    const [{ data: prefRows }, { data: activeRows }] = await Promise.all([
-      supabase.from("notification_prefs").select("user_id, live_activity").in("user_id", chunk),
-      supabase
-        .from("live_activity_tokens")
-        .select("user_id")
-        .eq("game_id", params.gameId)
-        .in("user_id", chunk),
-    ]);
+    const [{ data: prefRows, error: prefErr }, { data: activeRows, error: activeErr }] =
+      await Promise.all([
+        supabase.from("notification_prefs").select("user_id, live_activity").in("user_id", chunk),
+        supabase
+          .from("live_activity_tokens")
+          .select("user_id")
+          .eq("game_id", params.gameId)
+          .in("user_id", chunk),
+      ]);
+    if (prefErr || activeErr) return { sent: 0, failed: true }; // pref/active 조회 실패 → 재시도
     for (const r of (prefRows ?? []) as { user_id: string; live_activity: boolean | null }[]) {
       if (r.live_activity === false) optedOut.add(r.user_id);
     }
@@ -211,6 +219,7 @@ async function startForTeamSide(params: {
   }
 
   let sent = 0;
+  let transientFail = false;
   const invalid: string[] = [];
   await Promise.all(
     [...tokenByUser.entries()].map(async ([userId, token]) => {
@@ -228,6 +237,7 @@ async function startForTeamSide(params: {
       );
       if (res.ok) sent += 1;
       else if (res.invalidToken) invalid.push(userId);
+      else transientFail = true; // 일시 APNs 오류(무효 토큰 아님)
     }),
   );
 
@@ -235,7 +245,9 @@ async function startForTeamSide(params: {
   for (const u of invalid) {
     await supabase.from("live_activity_start_tokens").delete().eq("user_id", u);
   }
-  return sent;
+  // 발송이 전부 일시 실패(0건 도달)면 인프라 실패로 보고 재시도. 일부라도 도달했으면
+  // 재시도 시 도달분 중복 카드라 failed=false(부분 손실 감수, alreadyActive로 차후 보호).
+  return { sent, failed: transientFail && sent === 0 };
 }
 
 /**
@@ -287,14 +299,22 @@ export async function pushLiveActivityStarts(
     const staleDate = Math.floor(Date.now() / 1000) + 5 * 60;
 
     // away/home 슬롯을 각자 그 팀 코드로 강조(myTeamCode) — 수신자별 최애팀 반영.
-    started += await startForTeamSide({
+    const awaySide = await startForTeamSide({
       gameId, teamId: teamIdByShortName(away), myTeamCode: awayCode,
       attributes, contentState, staleDate, jwt,
     });
-    started += await startForTeamSide({
+    const homeSide = await startForTeamSide({
       gameId, teamId: teamIdByShortName(home), myTeamCode: homeCode,
       attributes, contentState, staleDate, jwt,
     });
+    started += awaySide.sent + homeSide.sent;
+
+    // 인프라 실패(쿼리/발송 오류)면 선점 해제 → 다음 cron 재시도. 경기당 트리거 윈도우가
+    // 한 번뿐이라 일시 장애에 게임을 영구 누락하지 않게 함(삼순 NO-GO ②). 이미 도달한
+    // 유저는 다음 cron에서 alreadyActive(update 토큰 등록분)로 자연 제외 → 중복 최소화.
+    if (awaySide.failed || homeSide.failed) {
+      await supabase.from("live_activity_started").delete().eq("game_id", gameId);
+    }
   }
 
   return { started };
