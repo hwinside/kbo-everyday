@@ -30,6 +30,26 @@ final class LiveActivityController {
     /// 같은 Activity에 대한 중복 토큰 관찰 방지.
     private var observedActivityIds = Set<String>()
 
+    /// push-to-start 토큰 발급 콜백 (tokenHex). W3b — 앱 미실행 자동 시작용. 플러그인이 JS로 전달.
+    var onPushToStartToken: ((String) -> Void)?
+    /// push-to-start 관찰 중복 설치 방지.
+    private var pushToStartObserved = false
+
+    /// 디바이스 단위 push-to-start 토큰을 관찰(iOS 17.2+). 활성 Activity가 없어도 발급되며,
+    /// 서버는 이 토큰으로 최애팀 경기 시작 시 Activity를 원격 시작한다(W3b). 17.2 미만은 no-op.
+    func observePushToStartToken() {
+        guard !pushToStartObserved else { return }
+        if #available(iOS 17.2, *) {
+            pushToStartObserved = true
+            Task {
+                for await tokenData in Activity<KBOGameAttributes>.pushToStartTokenUpdates {
+                    let hex = tokenData.map { String(format: "%02x", $0) }.joined()
+                    onPushToStartToken?(hex)
+                }
+            }
+        }
+    }
+
     /// Activity의 push token 업데이트를 관찰해 콜백으로 흘려보낸다(W3 APNs 등록용).
     private func observePushToken(_ activity: Activity<KBOGameAttributes>, gameId: String) {
         guard !observedActivityIds.contains(activity.id) else { return }
@@ -38,6 +58,25 @@ final class LiveActivityController {
             for await tokenData in activity.pushTokenUpdates {
                 let hex = tokenData.map { String(format: "%02x", $0) }.joined()
                 onPushToken?(gameId, hex)
+            }
+        }
+    }
+
+    /// push-to-start 관찰 중복 설치 방지.
+    private var activityUpdatesObserved = false
+
+    /// 로컬·원격(push-to-start) 가리지 않고 *모든* Activity 생성을 관찰해 per-activity
+    /// update 토큰을 W3a 등록 경로(`onPushToken`)로 흘려보낸다. W3b로 앱 미실행 중 OS가
+    /// 원격 생성한 Activity는 로컬 start()를 안 거치므로, 이 관찰이 없으면 update 토큰이
+    /// 서버에 등록되지 않아 카드가 시작 스냅샷에 얼어붙는다(삼순 W3b NO-GO ①). iOS 16.2+.
+    func observeAllActivities() {
+        guard !activityUpdatesObserved else { return }
+        if #available(iOS 16.2, *) {
+            activityUpdatesObserved = true
+            Task {
+                for await activity in Activity<KBOGameAttributes>.activityUpdates {
+                    observePushToken(activity, gameId: activity.attributes.gameId)
+                }
             }
         }
     }

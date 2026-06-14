@@ -4,7 +4,7 @@ import type { GameEvent } from "@/types/game-events";
 import { notifyGameStatusTransitions } from "@/lib/notifications/game-status";
 import { notifyScoreEvents, notifyInningSummaries } from "@/lib/notifications/game-score";
 import { notifyPlayerHighlights } from "@/lib/notifications/player-highlight";
-import { pushLiveActivityUpdates } from "@/lib/notifications/live-activity";
+import { pushLiveActivityUpdates, pushLiveActivityStarts } from "@/lib/notifications/live-activity";
 import { pushAndroidWidgetLiveUpdates } from "@/lib/notifications/android-widget-live";
 
 /**
@@ -146,6 +146,16 @@ export async function GET(req: NextRequest) {
     console.error("[warmup] live activity push failed:", (e as Error).message);
   }
 
+  // 잠금화면 Live Activity 자동 시작 (W3b) — 최애팀 경기 라이브 전환 시 push-to-start.
+  // 게임 단위 1회 선점이라 매분 호출해도 중복 시작 없음. APNs 미설정 시 no-op.
+  let liveActivityStart: { started: number } | { error: string } = { started: 0 };
+  try {
+    liveActivityStart = await pushLiveActivityStarts(games);
+  } catch (e) {
+    liveActivityStart = { error: (e as Error).message };
+    console.error("[warmup] live activity start failed:", (e as Error).message);
+  }
+
   return NextResponse.json({
     date,
     polled: liveGameIds.length,
@@ -156,6 +166,7 @@ export async function GET(req: NextRequest) {
     androidWidget,
     highlightNotify,
     liveActivity,
+    liveActivityStart,
     results: results.map(r =>
       r.status === "fulfilled"
         ? { gameId: r.value.gameId, ok: r.value.ok, status: r.value.status, eventCount: r.value.eventCount }

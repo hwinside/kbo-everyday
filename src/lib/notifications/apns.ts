@@ -39,7 +39,7 @@ async function providerToken(): Promise<string> {
     .sign(key);
 }
 
-export type LiveActivityEvent = "update" | "end";
+export type LiveActivityEvent = "start" | "update" | "end";
 
 export interface LiveActivityPushInput {
   pushToken: string;
@@ -50,6 +50,12 @@ export interface LiveActivityPushInput {
   dismissalDate?: number;
   /** 콘텐츠 신선도 만료(unix sec). 이후 시스템이 "outdated" 표시. */
   staleDate?: number;
+  /** event=start(W3b push-to-start) 전용 — ActivityAttributes 타입명("KBOGameAttributes"). */
+  attributesType?: string;
+  /** event=start 전용 — static attributes(KBOGameAttributes Codable 키와 일치). */
+  attributes?: Record<string, unknown>;
+  /** event=start 전용 — 잠금화면 배너 alert(선택). 미지정 시 무음 시작. */
+  alert?: { title: string; body: string };
 }
 
 export interface ApnsResult {
@@ -90,6 +96,12 @@ async function sendToHost(
   };
   if (input.event === "end" && input.dismissalDate != null) {
     aps["dismissal-date"] = input.dismissalDate;
+  }
+  if (input.event === "start") {
+    // push-to-start payload — static attributes를 동봉해 시스템이 Activity를 생성한다.
+    if (input.attributesType) aps["attributes-type"] = input.attributesType;
+    if (input.attributes) aps["attributes"] = input.attributes;
+    if (input.alert) aps["alert"] = input.alert;
   }
   if (input.staleDate != null) aps["stale-date"] = input.staleDate;
   const body = JSON.stringify({ aps });
