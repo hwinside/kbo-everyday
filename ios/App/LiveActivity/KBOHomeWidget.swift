@@ -339,15 +339,19 @@ struct HomeWidgetScheduledCard: View {
     }
 
     private func teamColumn(code: String) -> some View {
-        VStack(spacing: 3) {
+        // medium: 풀네임(롯데 자이언츠/LG 트윈스) + 로고·팀명 25%↑(하린아빠 요청). 라틴=Montserrat,
+        // 한글=Noto 글자단위 분리. compact(small 위젯)는 공간 제약상 약어 유지.
+        let name: Text = compact
+            ? Text(teamShortName(code)).font(montserrat(11, .heavy))
+            : mixedScriptText(teamFullName(code), 16, .heavy)
+        return VStack(spacing: 3) {
             ZStack {
                 Circle().fill(.white)
-                TeamLogo(code: code, size: compact ? 22 : 28)
+                TeamLogo(code: code, size: compact ? 22 : 35)
             }
-            .frame(width: compact ? 32 : 40, height: compact ? 32 : 40)
-            Text(teamShortName(code))
-                .font(montserrat(compact ? 11 : 13, .heavy))
-                .lineLimit(1).minimumScaleFactor(0.7)
+            .frame(width: compact ? 32 : 50, height: compact ? 32 : 50)
+            name
+                .lineLimit(1).minimumScaleFactor(0.55)
         }
         .frame(maxWidth: .infinity)
     }
