@@ -16,6 +16,7 @@ import {
   Lock,
   TrendingUp,
   Sparkles,
+  Image as ImageIcon,
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -27,6 +28,7 @@ const NAV_ITEMS = [
   { href: "/admin/messages", label: "쪽지함", icon: Mail },
   { href: "/admin/feedback", label: "건의함", icon: MessageSquare },
   { href: "/admin/whats-new", label: "새 소식", icon: Sparkles },
+  { href: "/admin/hero-compare", label: "히어로샷 비교", icon: ImageIcon },
   { href: "/admin/system", label: "시스템", icon: Activity },
 ] as const;
 
