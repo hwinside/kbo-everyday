@@ -294,7 +294,7 @@ struct HomeWidgetScheduledCard: View {
     }
 
     var body: some View {
-        VStack(spacing: compact ? 7 : 10) {
+        VStack(spacing: compact ? 7 : 11) {
             if hasMyTeam {
                 HStack(spacing: 4) {
                     TeamLogo(code: snap.myTeamCode, size: compact ? 13 : 16)
@@ -335,19 +335,28 @@ struct HomeWidgetScheduledCard: View {
         }
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(compact ? 10 : 14)
+        .padding(compact ? 10 : 18)
     }
 
     private func teamColumn(code: String) -> some View {
-        VStack(spacing: 3) {
+        // medium: 풀네임(롯데 자이언츠/LG 트윈스) + 로고·팀명 25%↑(하린아빠 요청). 라틴=Montserrat,
+        // 한글=Noto 글자단위 분리. compact(small 위젯)는 공간 제약상 약어 유지.
+        // ⚠️ 풀네임은 한 줄에 안 들어가 minimumScaleFactor로 쪼그라들면 오히려 작아진다 →
+        //    medium은 2줄 허용(롯데/자이언츠)으로 16pt 폰트 유지(하린아빠 "텍스트 더 작아짐" 수정).
+        let name: Text = compact
+            ? Text(teamShortName(code)).font(montserrat(11, .heavy))
+            : mixedScriptText(teamFullName(code), 16, .heavy)
+        return VStack(spacing: 3) {
             ZStack {
                 Circle().fill(.white)
-                TeamLogo(code: code, size: compact ? 22 : 28)
+                TeamLogo(code: code, size: compact ? 22 : 31)
             }
-            .frame(width: compact ? 32 : 40, height: compact ? 32 : 40)
-            Text(teamShortName(code))
-                .font(montserrat(compact ? 11 : 13, .heavy))
-                .lineLimit(1).minimumScaleFactor(0.7)
+            .frame(width: compact ? 32 : 45, height: compact ? 32 : 45)
+            name
+                .multilineTextAlignment(.center)
+                .lineLimit(compact ? 1 : 2)
+                .minimumScaleFactor(compact ? 0.7 : 0.85)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
     }

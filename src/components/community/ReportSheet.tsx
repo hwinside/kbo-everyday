@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { supabase } from "@/lib/supabase/client";
 
 interface ReportSheetProps {
   isOpen: boolean;
@@ -32,11 +33,21 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId }: R
     setSubmitting(true);
     setError("");
 
+    const { data: { session } } = await supabase.auth.getSession();
+    const accessToken = session?.access_token;
+    if (!accessToken) {
+      setError("로그인이 필요합니다");
+      setSubmitting(false);
+      return;
+    }
+
     const res = await fetch("/api/report", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
       body: JSON.stringify({
-        reporterId: user.id,
         targetType,
         targetId,
         reason: selected,
