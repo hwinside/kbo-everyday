@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
+import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 
 // AI 필터 — 간단한 금칙어 체크 (추후 LLM 연동)
 const BLOCKED_WORDS = [
@@ -20,14 +21,19 @@ export function checkContent(text: string): { blocked: boolean; reason?: string 
 
 // POST: 신고
 export async function POST(req: NextRequest) {
-  const { reporterId, targetType, targetId, reason, detail } = await req.json();
+  const verified = await getVerifiedUserFromRequest(req);
+  if (!verified) {
+    return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
+  }
 
-  if (!reporterId || !targetType || !targetId || !reason) {
+  const { targetType, targetId, reason, detail } = await req.json();
+
+  if (!targetType || !targetId || !reason) {
     return NextResponse.json({ error: "필수 값 누락" }, { status: 400 });
   }
 
   const { error } = await supabase.from("reports").insert({
-    reporter_id: reporterId,
+    reporter_id: verified.user.id,
     target_type: targetType,
     target_id: targetId,
     reason,
