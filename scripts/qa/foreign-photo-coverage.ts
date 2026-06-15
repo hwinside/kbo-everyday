@@ -161,7 +161,7 @@ for (const p of foreigners) {
 const heroApprovedSet = new Set(heroApproved as string[]);
 for (const p of foreigners) {
   if (!heroApprovedSet.has(p.kboId)) continue;
-  const heroPath = `/players-hero-v2/webp/${p.kboId}.webp`;
+  const heroPath = `/players-hero/${p.kboId}.webp`;
   if (!publicFileExists(heroPath)) {
     results.push({
       player: p.name,
