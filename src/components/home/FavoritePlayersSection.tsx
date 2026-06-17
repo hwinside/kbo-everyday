@@ -258,7 +258,8 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
             <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
               <div className="rounded-2xl overflow-hidden border border-border bg-bg-secondary">
                 {/* 상단: 히어로샷 + 기본정보 (선수 무관 동일 높이) */}
-                <div className="flex gap-2.5 pr-3.5 py-3 min-h-[116px]">
+                <div className="flex gap-2.5 pr-3.5 min-h-[116px]">
+                  {/* 히어로 컷아웃 — 카드 위쪽 끝까지 배경, 하단은 구분선에 밀착 */}
                   <div
                     className="w-[92px] flex-shrink-0 self-stretch flex items-end justify-center"
                     style={{ background: `linear-gradient(160deg, ${teamColor}1F, transparent 72%)` }}
@@ -270,10 +271,10 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                         width={92}
                         height={116}
                         unoptimized
-                        className="w-[92px] h-auto object-contain"
+                        className="w-[92px] h-auto object-contain object-bottom block"
                       />
                     ) : (
-                      <div className="self-center">
+                      <div className="self-center py-3">
                         <PlayerAvatar
                           name={player.name}
                           teamId={player.teamId}
@@ -285,7 +286,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                     )}
                   </div>
 
-                  <div className="flex-1 min-w-0 pt-0.5">
+                  <div className="flex-1 min-w-0 py-3">
                     <div className="flex justify-between items-start gap-2">
                       <div className="min-w-0">
                         <p className="text-[16px] leading-[22px] font-semibold text-text-primary truncate">{player.name}</p>
