@@ -138,32 +138,8 @@ export async function GET(req: NextRequest) {
       // 스냅샷 조회 실패해도 카드의 나머지는 정상 반환
     }
 
-    // 5) 순위권 선수 — daily_stats_snapshot 최신일, 팀 소속 부문 rank<=5
-    let topPlayers: { category: string; rank: number; playerName: string; value: number }[] = [];
-    try {
-      const { data: latest } = await supabaseAdmin
-        .from("daily_stats_snapshot").select("date").order("date", { ascending: false }).limit(1);
-      const latestDate = latest?.[0]?.date;
-      if (latestDate) {
-        const { data } = await supabaseAdmin
-          .from("daily_stats_snapshot")
-          .select("category, rank, player_name, value")
-          .eq("date", latestDate)
-          .eq("team", team.shortName)
-          .lte("rank", 5)
-          .order("rank", { ascending: true });
-        if (Array.isArray(data)) {
-          topPlayers = data.map((r) => ({
-            category: String(r.category),
-            rank: Number(r.rank),
-            playerName: String(r.player_name),
-            value: Number(r.value),
-          }));
-        }
-      }
-    } catch {
-      // 순위권 조회 실패해도 나머지 정상 반환
-    }
+    // 5) 순위권 선수는 TeamCard 클라이언트가 /api/stats + rankByStat(공식 랭킹 소스)로
+    //    계산한다(리더보드와 100% 동일). daily_stats_snapshot은 부문이 9개뿐이라 미사용.
 
     // 6) 주간 팀 타율/방어율 추이 — player_game_logs 주(월요일 기준) 단위 합산
     let weeklyBatting: { week: string; avg: number }[] = [];
@@ -193,8 +169,22 @@ export async function GET(req: NextRequest) {
       // 주간 스탯 실패해도 나머지 정상 반환
     }
 
+    // 7) 커뮤니티 새글 수 — 최근 7일 (숨김 제외)
+    let communityNewPosts = 0;
+    try {
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const { count } = await supabaseAdmin
+        .from("posts")
+        .select("id", { count: "exact", head: true })
+        .eq("is_hidden", false)
+        .gte("created_at", since);
+      communityNewPosts = count ?? 0;
+    } catch {
+      // 카운트 실패해도 나머지 정상 반환
+    }
+
     return NextResponse.json(
-      { team: team.slug, standing, recentForm, nextGame, rankHistory, topPlayers, weeklyBatting, weeklyPitching },
+      { team: team.slug, standing, recentForm, nextGame, rankHistory, weeklyBatting, weeklyPitching, communityNewPosts },
       { headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600" } },
     );
   } catch (e: unknown) {

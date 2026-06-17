@@ -30,6 +30,11 @@ export interface HomeGame {
   awayScore: number;
   status: "scheduled" | "live" | "final" | "cancelled";
   inning: string | null;
+  // 팀카드 경기카드 모드용 (예정=예고선발 / 종료=승·패투수). 없으면 미표시.
+  awayStarterName?: string | null;
+  homeStarterName?: string | null;
+  winPitcher?: string | null;
+  losePitcher?: string | null;
 }
 
 interface UseHomeInitOptions {

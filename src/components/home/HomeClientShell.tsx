@@ -79,6 +79,10 @@ interface ApiGameData {
   status: HomeGame["status"];
   inning?: number | string | null;
   isTop?: boolean;
+  awayStarterName?: string | null;
+  homeStarterName?: string | null;
+  winPitcher?: string | null;
+  losePitcher?: string | null;
 }
 
 type MyTeamHeroGame = HomeGame & {
@@ -135,6 +139,10 @@ function mapApiGame(g: ApiGameData): HomeGame {
     awayScore: g.awayScore ?? 0,
     status: g.status,
     inning: g.status === "live" && g.inning ? `${g.inning}회${g.isTop ? "초" : "말"}` : null,
+    awayStarterName: g.awayStarterName ?? null,
+    homeStarterName: g.homeStarterName ?? null,
+    winPitcher: g.winPitcher ?? null,
+    losePitcher: g.losePitcher ?? null,
   };
 }
 
