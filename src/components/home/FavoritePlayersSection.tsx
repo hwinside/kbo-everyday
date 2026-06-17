@@ -261,18 +261,21 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                 <div className="flex gap-2.5 pr-3.5 min-h-[120px]">
                   {/* 히어로 컷아웃 — 정보 영역 높이에 맞춰 채움(고정 높이로 행을 키우지 않음) */}
                   <div
-                    className="relative w-[132px] flex-shrink-0 self-stretch overflow-hidden"
+                    className="relative w-[108px] flex-shrink-0 self-stretch overflow-hidden"
                     style={{ background: `linear-gradient(160deg, ${teamColor}1F, transparent 72%)` }}
                   >
                     {heroUrl ? (
-                      <Image
-                        src={heroUrl}
-                        alt={player.name}
-                        fill
-                        unoptimized
-                        sizes="132px"
-                        className="object-cover object-bottom"
-                      />
+                      // 사진을 약 20% 작게 + 상단 헤드룸 확보: 하단 밴드(상단 16px 비움)에 fill
+                      <div className="absolute inset-x-0 bottom-0 top-[16px]">
+                        <Image
+                          src={heroUrl}
+                          alt={player.name}
+                          fill
+                          unoptimized
+                          sizes="108px"
+                          className="object-cover object-bottom"
+                        />
+                      </div>
                     ) : (
                       <div className="absolute inset-0 flex items-center justify-center">
                         <PlayerAvatar
