@@ -4,6 +4,7 @@ import {
   isPlayerBaseballRelevant,
   isTeamBaseballRelevant,
 } from "@/lib/news-relevance";
+import { attachThumbnails } from "@/lib/news/og-thumbnail";
 
 export const runtime = "edge";
 
@@ -157,7 +158,10 @@ export async function POST(req: NextRequest) {
       (a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime()
     );
 
-    return NextResponse.json({ items: allItems.slice(0, 10) });
+    // 홈 뉴스 카드에 기사 og:image 썸네일 부착 (팀 뉴스탭과 동일 SSOT).
+    // 추출 실패 시 thumbnailUrl=null → 캐러셀이 썸네일 없이 현행 렌더.
+    const items = await attachThumbnails(allItems.slice(0, 10));
+    return NextResponse.json({ items });
   } catch {
     return NextResponse.json({ items: [] });
   }

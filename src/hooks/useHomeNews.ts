@@ -7,6 +7,7 @@ interface NewsItem {
   link: string;
   pubDate: string;
   _label?: string;
+  thumbnailUrl?: string | null;
 }
 
 export interface HomeNewsItem {
@@ -17,7 +18,7 @@ export interface HomeNewsItem {
   label: string;
   source: string;
   sourceUrl: string;
-  thumbnailUrl: null;
+  thumbnailUrl: string | null;
   timeAgo: string;
   teamId: number | null;
   type: "news";
@@ -46,7 +47,7 @@ function toHomeNewsItems(items: NewsItem[], myTeamId: number | null): HomeNewsIt
       const days = Math.floor(hours / 24);
       return `${days}일 전`;
     })(),
-    thumbnailUrl: null,
+    thumbnailUrl: item.thumbnailUrl ?? null,
     type: "news" as const,
     teamId: myTeamId || null,
   }));

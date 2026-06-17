@@ -14,6 +14,8 @@ const AUTO_INTERVAL = 4000;
 export default function NewsCarousel({ news }: NewsCarouselProps) {
   const [current, setCurrent] = useState(0);
   const [isUserPaused, setIsUserPaused] = useState(false);
+  // 썸네일 로드 실패 id 집합 — 실패하면 썸네일 없이 현행 레이아웃으로 폴백.
+  const [failedThumbs, setFailedThumbs] = useState<Set<NewsMock["id"]>>(new Set());
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   const slides = news.slice(0, 10);
@@ -93,6 +95,8 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
             const bg = team
               ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 35%, #1a1a1d) 0%, #1a1a1d 100%)`
               : "linear-gradient(135deg, #2a2a3d 0%, #1a1a1d 100%)";
+            // 썸네일이 있고 로드 실패하지 않았으면 왼쪽 사진 + 제목 우측. 없으면 현행 그대로.
+            const hasThumb = Boolean(item.thumbnailUrl) && !failedThumbs.has(item.id);
 
             return (
               <div
@@ -121,8 +125,22 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                       />
                     </div>
                   )}
+                  {hasThumb && (
+                    <div className="absolute left-3 top-3 bottom-3 w-[38%] overflow-hidden rounded-xl">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={item.thumbnailUrl as string}
+                        alt=""
+                        referrerPolicy="no-referrer"
+                        onError={() =>
+                          setFailedThumbs((prev) => new Set(prev).add(item.id))
+                        }
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                  )}
                   <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#1a1a1d] to-transparent" />
-                  <div className="absolute inset-x-0 bottom-0 px-4 pb-10">
+                  <div className={`absolute inset-x-0 bottom-0 pb-10 pr-4 ${hasThumb ? "pl-[42%]" : "px-4"}`}>
                     {item.label && (
                       <span className="inline-block px-2 py-0.5 mb-1 rounded-full bg-accent/80 text-xs font-semibold text-white">
                         {item.label}
