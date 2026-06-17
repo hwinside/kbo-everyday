@@ -257,8 +257,8 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
           return (
             <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
               <div className="rounded-2xl overflow-hidden border border-border bg-bg-secondary">
-                {/* 상단: 히어로샷 + 기본정보 — 정보 높이가 카드 높이를 결정(히어로는 fill로 채움) */}
-                <div className="flex gap-2.5 pr-3.5">
+                {/* 상단: 히어로샷 + 기본정보 — 히어로 사진이 잘리지 않을 높이 확보, 하단 정렬 */}
+                <div className="flex gap-2.5 pr-3.5 min-h-[120px]">
                   {/* 히어로 컷아웃 — 정보 영역 높이에 맞춰 채움(고정 높이로 행을 키우지 않음) */}
                   <div
                     className="relative w-[132px] flex-shrink-0 self-stretch overflow-hidden"
@@ -271,7 +271,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                         fill
                         unoptimized
                         sizes="132px"
-                        className="object-cover object-[center_56%]"
+                        className="object-cover object-bottom"
                       />
                     ) : (
                       <div className="absolute inset-0 flex items-center justify-center">
