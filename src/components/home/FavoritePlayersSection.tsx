@@ -16,6 +16,7 @@ import {
   type WeeklyTrendRow,
   type TrendDirection,
 } from "@/lib/stats/weekly-trend";
+import { getPlayerTitles } from "@/lib/stats/title-rankings";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 import batterStats from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
@@ -106,6 +107,10 @@ function TrendIcon({ dir }: { dir: TrendDirection }) {
 export default function FavoritePlayersSection({ favPlayers }: { favPlayers: FavoritePlayer[] }) {
   const [liveStats, setLiveStats] = useState<Record<string, StatLike>>({});
   const [gameLogs, setGameLogs] = useState<Record<string, WeeklyTrendRow[]>>({});
+  const [leagueStats, setLeagueStats] = useState<{ batter: StatLike[]; pitcher: StatLike[] }>({
+    batter: [],
+    pitcher: [],
+  });
   const favKey = useMemo(() => favPlayers.map((p) => p.playerId).join(","), [favPlayers]);
 
   // 선수 상세 페이지와 동일한 라이브 소스로 갱신:
@@ -116,28 +121,41 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
     if (favPlayers.length === 0) {
       setLiveStats({});
       setGameLogs({});
+      setLeagueStats({ batter: [], pitcher: [] });
       return;
     }
     let cancelled = false;
+    const needBatter = favPlayers.some((p) => !classifyIsPitcher(p));
+    const needPitcher = favPlayers.some((p) => classifyIsPitcher(p));
+    // 부문 랭킹(타이틀 라벨)은 랭킹 페이지와 동일한 /api/stats 리그 전체에서 산출
+    const fetchLeague = (type: "batter" | "pitcher") =>
+      fetch(`/api/stats?type=${type}&season=2026`)
+        .then((res) => (res.ok ? res.json() : { stats: [] }))
+        .then((data) => (Array.isArray(data?.stats) ? (data.stats as StatLike[]) : []))
+        .catch(() => [] as StatLike[]);
     (async () => {
-      const results = await Promise.all(
-        favPlayers.map(async (p) => {
-          const pos = classifyIsPitcher(p) ? "투수" : "타자";
-          const idQ = encodeURIComponent(p.playerId);
-          const posQ = encodeURIComponent(pos);
-          const [stats, logs] = await Promise.all([
-            fetch(`/api/player-stats?id=${idQ}&pos=${posQ}`)
-              .then((res) => (res.ok ? res.json() : null))
-              .then((data) => (data?.stats as StatLike | null) ?? null)
-              .catch(() => null),
-            fetch(`/api/player-game-logs?id=${idQ}&pos=${posQ}`)
-              .then((res) => (res.ok ? res.json() : { rows: [] }))
-              .then((data) => (Array.isArray(data?.rows) ? (data.rows as WeeklyTrendRow[]) : []))
-              .catch(() => [] as WeeklyTrendRow[]),
-          ]);
-          return [p.playerId, stats, logs] as const;
-        })
-      );
+      const [results, batterLeague, pitcherLeague] = await Promise.all([
+        Promise.all(
+          favPlayers.map(async (p) => {
+            const pos = classifyIsPitcher(p) ? "투수" : "타자";
+            const idQ = encodeURIComponent(p.playerId);
+            const posQ = encodeURIComponent(pos);
+            const [stats, logs] = await Promise.all([
+              fetch(`/api/player-stats?id=${idQ}&pos=${posQ}`)
+                .then((res) => (res.ok ? res.json() : null))
+                .then((data) => (data?.stats as StatLike | null) ?? null)
+                .catch(() => null),
+              fetch(`/api/player-game-logs?id=${idQ}&pos=${posQ}`)
+                .then((res) => (res.ok ? res.json() : { rows: [] }))
+                .then((data) => (Array.isArray(data?.rows) ? (data.rows as WeeklyTrendRow[]) : []))
+                .catch(() => [] as WeeklyTrendRow[]),
+            ]);
+            return [p.playerId, stats, logs] as const;
+          })
+        ),
+        needBatter ? fetchLeague("batter") : Promise.resolve([] as StatLike[]),
+        needPitcher ? fetchLeague("pitcher") : Promise.resolve([] as StatLike[]),
+      ]);
       if (cancelled) return;
       const sMap: Record<string, StatLike> = {};
       const gMap: Record<string, WeeklyTrendRow[]> = {};
@@ -147,6 +165,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
       }
       setLiveStats(sMap);
       setGameLogs(gMap);
+      setLeagueStats({ batter: batterLeague, pitcher: pitcherLeague });
     })();
     return () => {
       cancelled = true;
@@ -191,6 +210,10 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
           const recent3 = recentAverage(logs, isPitcher, 3);
           const weekly = toWeeklyTrend(logs, isPitcher);
           const direction = weeklyDirection(weekly, isPitcher);
+
+          // 부문 타이틀 5위 이내면 대표 1개를 하단에 라벨로 (예: "홈런 1위")
+          const league = isPitcher ? leagueStats.pitcher : leagueStats.batter;
+          const topTitle = getPlayerTitles(league, player.playerId, player.name, isPitcher)[0] ?? null;
 
           const recentLabel = isPitcher ? "최근 3경기 ERA" : "최근 3경기 타율";
           const recentText =
@@ -260,6 +283,16 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                         시즌 {isPitcher ? (seasonEra as number).toFixed(2) : fmtAvg(seasonAvg as number)}
                         {seasonSub ? ` · ${seasonSub}` : ""}
                       </p>
+                    ) : null}
+
+                    {/* 부문 타이틀 라벨 (5위 이내) */}
+                    {topTitle ? (
+                      <span
+                        className="mt-1 text-[10px] leading-[14px] font-semibold px-2 py-0.5 rounded-full"
+                        style={{ color: teamColor, backgroundColor: `${teamColor}1F` }}
+                      >
+                        🏆 {topTitle.name} {topTitle.rank}위
+                      </span>
                     ) : null}
                   </div>
                 ) : (
