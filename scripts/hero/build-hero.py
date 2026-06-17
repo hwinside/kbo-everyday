@@ -103,15 +103,48 @@ def roster_ids():
     return [p["kboId"] for p in json.load(open(ROSTER, encoding="utf-8"))]
 
 
+def verify():
+    """머지 게이트: hero-approved 목록과 실제 webp 정합성 + 규격(752x944 RGBA, 비어있지 않은 알파)."""
+    present = sorted(f[:-5] for f in os.listdir(OUT_DIR) if f.endswith(".webp"))
+    approved = json.load(open(APPROVED, encoding="utf-8"))
+    ok = True
+    extra = set(approved) - set(present)
+    missing = set(present) - set(approved)
+    if extra:
+        print(f"VERIFY FAIL: approved에 있으나 webp 없음 {sorted(extra)[:10]}", file=sys.stderr); ok = False
+    if missing:
+        print(f"VERIFY FAIL: webp 있으나 approved 누락 {sorted(missing)[:10]}", file=sys.stderr); ok = False
+    bad = []
+    for kid in present:
+        im = Image.open(os.path.join(OUT_DIR, f"{kid}.webp"))
+        if im.size != (CANVAS_W, CANVAS_H):
+            bad.append((kid, f"size {im.size}")); continue
+        if im.convert("RGBA").mode != "RGBA":
+            bad.append((kid, "no alpha")); continue
+        if (np.array(im.convert("RGBA"))[..., 3] > 10).sum() == 0:
+            bad.append((kid, "empty alpha"))
+    if bad:
+        ok = False
+        for kid, why in bad[:15]:
+            print(f"VERIFY FAIL {kid}: {why}", file=sys.stderr)
+    print(f"verify: approved={len(approved)} present={len(present)} bad={len(bad)} -> {'PASS' if ok else 'FAIL'}")
+    return ok
+
+
 def main():
     ap = argparse.ArgumentParser()
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--all", action="store_true", help="every roster player with an official shot")
     g.add_argument("--missing-only", action="store_true", help="only roster players lacking a hero webp")
     g.add_argument("--ids", help="comma-separated kboIds")
+    g.add_argument("--verify", action="store_true",
+                   help="머지 게이트: approved==present 정합성 + 모든 hero webp 752x944 RGBA 비어있지 않은 알파 검증")
     ap.add_argument("--keep", default="", help="comma-separated kboIds to skip (preserve existing)")
     ap.add_argument("--update-approved", action="store_true", help="rewrite hero-approved list to all heroes present")
     args = ap.parse_args()
+
+    if args.verify:
+        sys.exit(0 if verify() else 1)
 
     keep = {x for x in args.keep.split(",") if x}
     if args.ids:
