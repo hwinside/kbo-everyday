@@ -29,10 +29,35 @@ interface TeamCardData {
     myStarter: string | null;
     oppStarter: string | null;
   } | null;
+  rankHistory?: { date: string; rank: number }[];
 }
 
 interface TeamCardProps {
   team: TeamData;
+}
+
+// 순위 시계열 → SVG 폴리라인. rank 1=위, 10=아래(반전). 최대 ~40점 다운샘플.
+function buildRankLine(
+  history: { rank: number }[],
+  w: number,
+  h: number,
+  pad: number,
+): { line: string; lastX: number; lastY: number } | null {
+  const ranks = history.map((p) => p.rank).filter((r) => r >= 1 && r <= 10);
+  const n = ranks.length;
+  if (n < 2) return null;
+  const step = n > 40 ? Math.ceil(n / 40) : 1;
+  const pts: { x: number; y: number }[] = [];
+  for (let i = 0; i < n; i += step) {
+    const x = pad + (i / (n - 1)) * (w - pad * 2);
+    const y = pad + ((ranks[i] - 1) / 9) * (h - pad * 2);
+    pts.push({ x, y });
+  }
+  // 마지막 점 보장
+  const lastX = pad + (w - pad * 2);
+  const lastY = pad + ((ranks[n - 1] - 1) / 9) * (h - pad * 2);
+  if (pts[pts.length - 1].x !== lastX) pts.push({ x: lastX, y: lastY });
+  return { line: pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "), lastX, lastY };
 }
 
 // "3승"/"2패"/"1무" → 표시 문자열 + 톤
@@ -89,6 +114,7 @@ export default function TeamCard({ team }: TeamCardProps) {
 
   const streak = formatStreak(data?.standing?.streak ?? null);
   const opponent = data?.nextGame ? getTeamById(data.nextGame.opponentId) : null;
+  const rankLine = data?.rankHistory ? buildRankLine(data.rankHistory, 320, 56, 6) : null;
 
   return (
     <GlassCard className="p-5 mb-3">
@@ -189,6 +215,26 @@ export default function TeamCard({ team }: TeamCardProps) {
                 경기 일정 보기
                 <ChevronRight size={14} />
               </Link>
+            </div>
+          )}
+
+          {/* 시즌 순위 변동 그래프 */}
+          {rankLine && (
+            <div className="mt-4 border-t border-border/40 pt-3.5">
+              <p className="text-[11px] text-text-tertiary mb-2">시즌 순위 변동 (개막 ~ 현재)</p>
+              <div className="rounded-[10px] bg-bg-secondary/60 px-2 pt-2.5 pb-1">
+                <svg width="100%" height="56" viewBox="0 0 320 56" preserveAspectRatio="none" aria-hidden>
+                  <polyline
+                    fill="none"
+                    stroke={accent}
+                    strokeWidth="2.5"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                    points={rankLine.line}
+                  />
+                  <circle cx={rankLine.lastX} cy={rankLine.lastY} r="3.5" fill={accent} />
+                </svg>
+              </div>
             </div>
           )}
         </>

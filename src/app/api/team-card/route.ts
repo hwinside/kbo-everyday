@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchStandings, fetchGames } from "@/lib/crawler/kbo-api";
 import { getMonthGames } from "@/lib/crawler/season-games-cache";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { TEAMS } from "@/lib/constants/teams";
 
 // GET /api/team-card?team=<slug>
-// 홈 팀 카드용 데이터 조립: 순위/게임차 + 연승연패 + 최근 5경기 폼 + 다음 경기(예고선발).
-// 기존 lib(fetchStandings/getMonthGames/fetchGames) 재사용. 신규 크롤 없음.
+// 홈 팀 카드용 데이터 조립: 순위/게임차 + 연승연패 + 최근 5경기 폼 + 다음 경기(예고선발)
+// + 시즌 순위 변동(daily_standings_snapshot). 기존 lib 재사용, 신규 크롤 없음.
 
 type FormResult = "W" | "L" | "D";
 
@@ -114,8 +115,23 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // 4) 시즌 순위 변동 — daily_standings_snapshot에서 팀 rank 시계열(public read)
+    let rankHistory: { date: string; rank: number }[] = [];
+    try {
+      const { data } = await supabaseAdmin
+        .from("daily_standings_snapshot")
+        .select("date, rank")
+        .eq("team_id", team.id)
+        .order("date", { ascending: true });
+      if (Array.isArray(data)) {
+        rankHistory = data.map((r) => ({ date: String(r.date), rank: Number(r.rank) }));
+      }
+    } catch {
+      // 스냅샷 조회 실패해도 카드의 나머지는 정상 반환
+    }
+
     return NextResponse.json(
-      { team: team.slug, standing, recentForm, nextGame },
+      { team: team.slug, standing, recentForm, nextGame, rankHistory },
       { headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600" } },
     );
   } catch (e: unknown) {
