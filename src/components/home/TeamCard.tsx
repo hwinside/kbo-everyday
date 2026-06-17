@@ -226,31 +226,30 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
           {/* 2. 경기 카드 (임베드) */}
           {gameSlot && <div className="mt-4 border-t border-border/40 pt-3.5">{gameSlot}</div>}
 
-          {/* 3. 그래프 — 좌(전체높이) 순위변동(1~10위 빗금) + 우(상하) 타율/방어율 */}
+          {/* 3. 그래프 — 좌(전체높이) 순위변동(Y축 1~10위 라벨·빗금) + 우(상하) 타율/방어율 */}
           {rg && (
             <div className="mt-4 border-t border-border/40 pt-3.5">
-              <div className="flex items-baseline justify-between mb-2">
-                <p className="text-[11px] text-text-tertiary">시즌 순위 변동 · 주간 팀 스탯</p>
-                <p className="text-[11px] text-text-secondary">{rg.first}위 <span className="text-text-tertiary">→</span> <b className="text-text-primary">{rg.last}위</b></p>
-              </div>
+              <p className="text-[11px] text-text-tertiary mb-2">시즌 순위 변동 · 주간 팀 스탯</p>
               <div className="flex gap-2">
-                {/* 좌: 순위 변동 (1~10위 빗금 가이드) */}
-                <div className="flex-[1.3] rounded-[10px] bg-bg-secondary/60 px-2 py-2">
-                  <svg width="100%" height="120" viewBox="0 0 300 120" preserveAspectRatio="none" aria-hidden>
+                {/* 좌: 순위 변동 — 클릭 → 팀 순위 페이지. Y축에 1~10위 라벨 + 빗금 */}
+                <Link href="/standings" className="flex-[1.3] rounded-[10px] bg-bg-secondary/60 px-1.5 py-2 flex gap-1.5">
+                  <div className="flex flex-col justify-between text-[8px] leading-none text-text-tertiary/80 h-[120px] py-[7px]">
+                    {Array.from({ length: 10 }, (_, i) => <span key={i}>{i + 1}</span>)}
+                  </div>
+                  <svg width="100%" height="120" viewBox="0 0 300 120" preserveAspectRatio="none" aria-hidden className="flex-1">
                     {Array.from({ length: 10 }, (_, i) => {
                       const y = rg.yOf(i + 1);
-                      return <line key={i} x1="0" y1={y} x2="300" y2={y} stroke="currentColor" className="text-text-tertiary/20" strokeWidth="0.5" strokeDasharray="3 3" />;
+                      return <line key={i} x1="0" y1={y} x2="300" y2={y} stroke="currentColor" className="text-text-tertiary/35" strokeWidth="1" strokeDasharray="5 4" />;
                     })}
                     <polyline fill="none" stroke={accent} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" points={rg.line} />
                     <circle cx={rg.lastX} cy={rg.lastY} r="3.5" fill={accent} />
                   </svg>
-                  <div className="flex justify-between text-[9px] text-text-tertiary/70 mt-0.5"><span>1위</span><span>10위</span></div>
-                </div>
-                {/* 우: 타율 / 방어율 */}
-                <div className="flex-1 flex flex-col gap-2">
+                </Link>
+                {/* 우: 타율 / 방어율 — 클릭 → 팀 기록 페이지 */}
+                <Link href={`/teams/${team.slug}/records`} className="flex-1 flex flex-col gap-2">
                   <MiniStatChart title="주간 팀 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} fmt={(v) => v.toFixed(3)} higherIsBetter accent={accent} />
                   <MiniStatChart title="주간 팀 방어율" values={(data?.weeklyPitching ?? []).map((w) => w.era)} fmt={(v) => v.toFixed(2)} higherIsBetter={false} accent={accent} />
-                </div>
+                </Link>
               </div>
             </div>
           )}
