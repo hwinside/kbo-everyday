@@ -34,7 +34,7 @@ const JOB_INFOS = [
   { name: "daily-fallback-report", label: "API 장애 리포트", schedule: "매일 09:00", description: "전일 API 장애 집계 → 텔레그램 전송" },
   { name: "photos-check", label: "선수 사진 모니터링", schedule: "매주 일 06:00", description: "KBO CDN 선수 사진 존재 여부 확인" },
   { name: "roster-update", label: "로스터 업데이트", schedule: "매일 05:00", description: "GitHub Actions 크롤링 → 자동 PR+머지" },
-  { name: "hero-shot-batch", label: "히어로샷 자동 배치", schedule: "매주 월 03:00", description: "히어로샷 없는 선수 탐지 → 네이버 교차검증 → cutout 생성 → 자동 PR+머지 (검증 게이트 통과분만)" },
+  { name: "hero-shot-batch", label: "히어로샷 자동 배치", schedule: "매주 월 03:00", description: "히어로샷 없는 선수(공식샷 보유) 탐지 → KBO 공식샷 rembg 컷아웃 생성 → 리뷰 PR (외부 API 없음)" },
 ];
 
 function JobStatusBadge({ status }: { status: string }) {
