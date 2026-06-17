@@ -27,26 +27,30 @@ interface HomeGame {
   isTop: boolean;
 }
 
-export default function MyTeamHero({ myTeam, myTeamGame }: { myTeam: TeamData; myTeamGame: HomeGame }) {
+export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { myTeam: TeamData; myTeamGame: HomeGame; embedded?: boolean }) {
   return (
-    <div className="mb-3">
+    <div className={embedded ? "" : "mb-3"}>
       <Link href={`/games/${myTeamGame.id}`}>
         <div
           className="relative rounded-2xl p-3 overflow-hidden myteam-card"
           style={{ ['--team-bg' as string]: getTeamBgColor(myTeam) }}
         >
-          {/* Team logo watermark */}
-          <div className="absolute right-3 top-3 opacity-[0.08] dark:opacity-15">
-            <Image src={myTeam.logoPath} alt="" width={64} height={64} unoptimized className="object-contain" />
-          </div>
-
-          {/* Header: MY TEAM */}
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-7 h-7 rounded-full bg-bg-tertiary dark:bg-white p-0.5 flex items-center justify-center">
-              <Image src={myTeam.logoPath} alt="" width={18} height={18} unoptimized className="object-contain" />
+          {/* Team logo watermark — 팀카드 임베드 시엔 헤더에 이미 있으므로 숨김 */}
+          {!embedded && (
+            <div className="absolute right-3 top-3 opacity-[0.08] dark:opacity-15">
+              <Image src={myTeam.logoPath} alt="" width={64} height={64} unoptimized className="object-contain" />
             </div>
-            <span className="text-sm leading-[20px] font-bold tracking-wide text-accent">MY TEAM</span>
-          </div>
+          )}
+
+          {/* Header: MY TEAM — 임베드 시 숨김 */}
+          {!embedded && (
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-7 h-7 rounded-full bg-bg-tertiary dark:bg-white p-0.5 flex items-center justify-center">
+                <Image src={myTeam.logoPath} alt="" width={18} height={18} unoptimized className="object-contain" />
+              </div>
+              <span className="text-sm leading-[20px] font-bold tracking-wide text-accent">MY TEAM</span>
+            </div>
+          )}
 
           {/* Score row */}
           <div className="flex items-center justify-between mb-2">

@@ -10,6 +10,14 @@ import { TEAMS } from "@/lib/constants/teams";
 
 type FormResult = "W" | "L" | "D";
 
+// YYYY-MM-DD → 그 주 월요일 YYYY-MM-DD (주간 버킷 키)
+function mondayOf(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  const dow = (d.getUTCDay() + 6) % 7; // 월=0
+  d.setUTCDate(d.getUTCDate() - dow);
+  return d.toISOString().slice(0, 10);
+}
+
 function kstDateStr(offsetDays: number): string {
   const base = new Date(Date.now() + 9 * 60 * 60 * 1000);
   base.setUTCDate(base.getUTCDate() + offsetDays);
@@ -130,8 +138,63 @@ export async function GET(req: NextRequest) {
       // 스냅샷 조회 실패해도 카드의 나머지는 정상 반환
     }
 
+    // 5) 순위권 선수 — daily_stats_snapshot 최신일, 팀 소속 부문 rank<=5
+    let topPlayers: { category: string; rank: number; playerName: string; value: number }[] = [];
+    try {
+      const { data: latest } = await supabaseAdmin
+        .from("daily_stats_snapshot").select("date").order("date", { ascending: false }).limit(1);
+      const latestDate = latest?.[0]?.date;
+      if (latestDate) {
+        const { data } = await supabaseAdmin
+          .from("daily_stats_snapshot")
+          .select("category, rank, player_name, value")
+          .eq("date", latestDate)
+          .eq("team", team.shortName)
+          .lte("rank", 5)
+          .order("rank", { ascending: true });
+        if (Array.isArray(data)) {
+          topPlayers = data.map((r) => ({
+            category: String(r.category),
+            rank: Number(r.rank),
+            playerName: String(r.player_name),
+            value: Number(r.value),
+          }));
+        }
+      }
+    } catch {
+      // 순위권 조회 실패해도 나머지 정상 반환
+    }
+
+    // 6) 주간 팀 타율/방어율 추이 — player_game_logs 주(월요일 기준) 단위 합산
+    let weeklyBatting: { week: string; avg: number }[] = [];
+    let weeklyPitching: { week: string; era: number }[] = [];
+    try {
+      const { data } = await supabaseAdmin
+        .from("player_game_logs")
+        .select("game_date, ab, h, ip_outs, er")
+        .eq("team_id", team.id)
+        .order("game_date", { ascending: true });
+      if (Array.isArray(data)) {
+        const wk = new Map<string, { ab: number; h: number; outs: number; er: number }>();
+        for (const r of data) {
+          const key = mondayOf(String(r.game_date));
+          const e = wk.get(key) ?? { ab: 0, h: 0, outs: 0, er: 0 };
+          e.ab += Number(r.ab) || 0;
+          e.h += Number(r.h) || 0;
+          e.outs += Number(r.ip_outs) || 0;
+          e.er += Number(r.er) || 0;
+          wk.set(key, e);
+        }
+        const weeks = [...wk.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+        weeklyBatting = weeks.filter(([, e]) => e.ab > 0).map(([week, e]) => ({ week, avg: Number((e.h / e.ab).toFixed(3)) }));
+        weeklyPitching = weeks.filter(([, e]) => e.outs > 0).map(([week, e]) => ({ week, era: Number(((e.er * 27) / e.outs).toFixed(2)) }));
+      }
+    } catch {
+      // 주간 스탯 실패해도 나머지 정상 반환
+    }
+
     return NextResponse.json(
-      { team: team.slug, standing, recentForm, nextGame, rankHistory },
+      { team: team.slug, standing, recentForm, nextGame, rankHistory, topPlayers, weeklyBatting, weeklyPitching },
       { headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600" } },
     );
   } catch (e: unknown) {

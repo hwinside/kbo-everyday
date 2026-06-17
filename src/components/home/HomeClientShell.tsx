@@ -263,6 +263,18 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     return nextWidgetGame ?? undefined;
   }, [myTeamGame, nextWidgetGame]);
 
+  // 팀카드 임베드 경기카드용 — 오늘 경기(종료 당일=결과) 우선, 없으면 다음 예정경기.
+  const embeddedGame = useMemo<MyTeamHeroGame | undefined>(() => {
+    if (myTeamGame) return myTeamGame;
+    if (!nextWidgetGame) return undefined;
+    return {
+      ...nextWidgetGame,
+      balls: 0, strikes: 0, outs: 0,
+      runner1b: false, runner2b: false, runner3b: false,
+      currentBatter: null, currentPitcher: null, isTop: true,
+    };
+  }, [myTeamGame, nextWidgetGame]);
+
   useEffect(() => {
     if (!myTeamId) {
       setNextWidgetGame(null);
@@ -479,8 +491,13 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       {/* 섹션 순서: 팀카드 → 뉴스 → 경기 → 최애선수 → 숏츠 → 전체경기현황.
           각 섹션은 마이페이지 토글(sections.*)로 on/off. 팀카드는 S3에서 삽입. */}
 
-      {/* 팀 카드 (최애팀 순위·일정·소식) */}
-      {sections.teamCard && myTeam && <TeamCard team={myTeam} />}
+      {/* 팀 카드 (필수, 토글 없음) — 경기카드(MyTeamHero)를 안에 종속 임베드(④=B) */}
+      {myTeam && (
+        <TeamCard
+          team={myTeam}
+          gameSlot={embeddedGame ? <MyTeamHero myTeam={myTeam} myTeamGame={embeddedGame} embedded /> : undefined}
+        />
+      )}
 
       {/* News Carousel */}
       {sections.news && realNews.length > 0 && (
@@ -498,10 +515,6 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         <WhatsNewCard />
       </Suspense>
 
-      {/* My Team Hero (경기 카드) */}
-      {sections.game && myTeam && myTeamGame && (
-        <MyTeamHero myTeam={myTeam} myTeamGame={myTeamGame} />
-      )}
 
       {/* 최애선수 카드 */}
       {sections.favPlayers && (

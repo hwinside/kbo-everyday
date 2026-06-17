@@ -4,10 +4,9 @@
 // 기본값 = 전부 표시. 숏츠는 기존 키(kbo-shorts-visible)를 재사용해
 // HomeHighlights(getShortsVisible)와 설정이 호환되게 한다.
 
+// 팀카드는 필수(토글 없음), 경기카드는 팀카드에 종속 → 토글 대상에서 제외.
 export type HomeSectionKey =
-  | "teamCard"
   | "news"
-  | "game"
   | "favPlayers"
   | "shorts"
   | "allGames";
@@ -19,11 +18,9 @@ interface SectionDef {
   storageKey: string;
 }
 
-// 표시 순서 = 홈 배열 순서 (팀카드 → 뉴스 → 경기 → 최애선수 → 숏츠 → 전체현황).
+// 토글 가능한 홈 섹션 (팀카드=필수·경기카드=종속이라 제외). 표시 순서 = 홈 배열 순서.
 export const HOME_SECTIONS: SectionDef[] = [
-  { key: "teamCard", label: "팀 카드", desc: "최애팀 순위·일정·소식 요약", storageKey: "kbo-home-teamcard-visible" },
   { key: "news", label: "뉴스", desc: "주요 뉴스 카드", storageKey: "kbo-home-news-visible" },
-  { key: "game", label: "경기 카드", desc: "최애팀 오늘 경기", storageKey: "kbo-home-game-visible" },
   { key: "favPlayers", label: "최애선수 카드", desc: "최애선수 최근 기록", storageKey: "kbo-home-favplayers-visible" },
   { key: "shorts", label: "숏츠", desc: "홈 숏츠 영상 섹션", storageKey: "kbo-shorts-visible" },
   { key: "allGames", label: "전체 경기 현황", desc: "다른 경기 라이브·오늘 일정", storageKey: "kbo-home-allgames-visible" },
