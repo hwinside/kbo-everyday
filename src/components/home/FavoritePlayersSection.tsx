@@ -271,7 +271,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                         width={132}
                         height={140}
                         unoptimized
-                        className="w-full h-full object-cover object-[center_22%]"
+                        className="w-full h-full object-cover object-[center_34%]"
                       />
                     ) : (
                       <div className="self-center py-3">
@@ -286,7 +286,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                     )}
                   </div>
 
-                  <div className="flex-1 min-w-0 py-2.5">
+                  <div className="flex-1 min-w-0 py-2.5 flex flex-col justify-center">
                     <div className="flex justify-between items-start gap-2">
                       <div className="min-w-0">
                         <p className="text-[16px] leading-[22px] font-semibold text-text-primary truncate">{player.name}</p>
