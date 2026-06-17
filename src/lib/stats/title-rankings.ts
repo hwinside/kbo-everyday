@@ -63,16 +63,16 @@ export function rankByStat(rows: StatRow[], statKey: string): RankedRow[] {
     def.higherIsBetter ? valueOf(b) - valueOf(a) : valueOf(a) - valueOf(b)
   );
 
-  // 공동 순위 (competition ranking: 같은 값이면 같은 rank, 다음 순위는 건너뛰기)
+  // 공동 순위 (competition ranking: 같은 값이면 같은 rank, 다음 순위는 건너뛰기).
+  // 직전 행의 "재계산된" rank를 들고 가며 비교한다.
+  // (원본 행의 scrape `rank` 필드를 참조하면 안 됨 — 부문과 무관한 값이라 동률에서 오순위 발생)
+  let prevVal: number | null = null;
+  let prevRank = 0;
   return sorted.map((p, i) => {
-    let rank = 1;
-    if (i > 0) {
-      if (valueOf(p) === valueOf(sorted[i - 1])) {
-        rank = (sorted[i - 1] as { rank?: number }).rank || i;
-      } else {
-        rank = i + 1;
-      }
-    }
+    const v = valueOf(p);
+    const rank = i > 0 && v === prevVal ? prevRank : i + 1;
+    prevVal = v;
+    prevRank = rank;
     return { ...p, rank };
   });
 }

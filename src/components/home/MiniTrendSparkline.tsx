@@ -19,7 +19,7 @@ export default function MiniTrendSparkline({
   const dataKey = isPitcher ? "era" : "avg";
   const gradId = `mini-${isPitcher ? "era" : "avg"}-${teamColor.replace("#", "")}`;
   return (
-    <div className="h-[36px] w-full">
+    <div className="h-[34px] w-full">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data} margin={{ top: 3, right: 0, left: 0, bottom: 0 }}>
           <defs>
