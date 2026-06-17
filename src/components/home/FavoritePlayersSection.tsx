@@ -261,7 +261,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                 <div className="flex gap-2.5 pr-3.5 min-h-[116px]">
                   {/* 히어로 컷아웃 — 카드 위쪽 끝까지 배경, 하단은 구분선에 밀착 */}
                   <div
-                    className="w-[92px] flex-shrink-0 self-stretch flex items-end justify-center"
+                    className="w-[92px] flex-shrink-0 self-stretch flex items-stretch justify-center overflow-hidden"
                     style={{ background: `linear-gradient(160deg, ${teamColor}1F, transparent 72%)` }}
                   >
                     {heroUrl ? (
@@ -269,9 +269,9 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                         src={heroUrl}
                         alt={player.name}
                         width={92}
-                        height={116}
+                        height={140}
                         unoptimized
-                        className="w-[92px] h-auto object-contain object-bottom block"
+                        className="w-full h-full object-cover object-top"
                       />
                     ) : (
                       <div className="self-center py-3">
@@ -318,7 +318,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                           </div>
                         ) : null}
                         {seasonValid ? (
-                          <p className="text-[11px] leading-[15px] text-text-tertiary mt-1">
+                          <p className="text-[10px] leading-[14px] text-text-tertiary mt-1">
                             시즌 {isPitcher ? (seasonEra as number).toFixed(2) : fmtAvg(seasonAvg as number)}
                             {seasonSub ? ` · ${seasonSub}` : ""}
                           </p>
@@ -338,7 +338,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                     {titles.map((t, i) => (
                       <span
                         key={t.statKey}
-                        className="text-[11px] leading-[15px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap"
+                        className="text-[10px] leading-[14px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap"
                         style={{ color: teamColor, backgroundColor: `${teamColor}1F` }}
                       >
                         {i === 0 ? "🏆 " : ""}{t.name} {t.rank}위
