@@ -10,6 +10,8 @@ import GlassCard from "@/components/ui/GlassCard";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { getFavoritePlayers } from "@/lib/store/favorites";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { STAT_DEFS } from "@/lib/stats/title-defs";
+import { rankByStat } from "@/lib/stats/title-rankings";
 
 import Link from "next/link";
 
@@ -35,8 +37,6 @@ function getTeamIdFromTeamText(team?: string): number | null {
   return found?.id ?? null;
 }
 
-type StatType = "batter" | "pitcher";
-
 type PlayerRow = {
   kboId?: string;
   playerId?: string;
@@ -48,39 +48,6 @@ type PlayerRow = {
   triples?: number;
   rank?: number;
   [key: string]: unknown;
-};
-
-// 스탯 정의
-const STAT_DEFS: Record<string, {
-  label: string;
-  emoji: string;
-  desc: string;
-  criteria: string;
-  key: string;
-  type: StatType;
-  format?: (v: number) => string;
-  higherIsBetter: boolean;
-}> = {
-  hr: { label: "파워히터", emoji: "💣", desc: "홈런 랭킹", criteria: "시즌 15홈런 이상이면 💣 파워히터 뱃지 획득", key: "hr", type: "batter", higherIsBetter: true },
-  avg: { label: "방망이장인", emoji: "🏏", desc: "타율 랭킹", criteria: "시즌 타율 .300 이상이면 🏏 방망이장인 뱃지 획득", key: "avg", type: "batter", format: (v) => v.toFixed(3), higherIsBetter: true },
-  sb: { label: "도루왕", emoji: "🏃", desc: "도루 랭킹", criteria: "시즌 20도루 이상이면 🏃 도루왕 뱃지 획득", key: "sb", type: "batter", higherIsBetter: true },
-  bb: { label: "선구안", emoji: "👁️", desc: "볼넷 랭킹", criteria: "40볼넷+ & BB/K 0.5 이상이면 👁️ 선구안 뱃지 획득", key: "bb", type: "batter", higherIsBetter: true },
-  obp: { label: "출루기계", emoji: "📊", desc: "출루율 랭킹", criteria: "출루율 .380 이상이면 📊 출루기계 뱃지 획득", key: "obp", type: "batter", format: (v) => v.toFixed(3), higherIsBetter: true },
-  rbi: { label: "청소부", emoji: "🧹", desc: "타점 랭킹", criteria: "시즌 80타점 이상이면 🧹 청소부 뱃지 획득", key: "rbi", type: "batter", higherIsBetter: true },
-  ops: { label: "OPS 괴물", emoji: "💎", desc: "OPS 랭킹", criteria: "OPS .900 이상이면 💎 OPS 괴물 뱃지 획득", key: "ops", type: "batter", format: (v) => v.toFixed(3), higherIsBetter: true },
-  runs: { label: "득점기계", emoji: "🎪", desc: "득점 랭킹", criteria: "시즌 80득점 이상이면 🎪 득점기계 뱃지 획득", key: "runs", type: "batter", higherIsBetter: true },
-  so_batter: { label: "삼진머신", emoji: "💀", desc: "삼진 랭킹 (타자)", criteria: "시즌 120삼진 이상이면 💀 삼진머신 뱃지 (풀스윙형)", key: "so", type: "batter", higherIsBetter: true },
-  hbp: { label: "존압박", emoji: "🧲", desc: "사구 랭킹", criteria: "시즌 10사구 이상이면 🧲 존압박 뱃지 획득", key: "hbp", type: "batter", higherIsBetter: true },
-  doubles: { label: "장타제조기", emoji: "🦵", desc: "2루타+3루타 랭킹", criteria: "2루타+3루타 30개 이상이면 🦵 장타제조기 뱃지 획득", key: "doubles", type: "batter", higherIsBetter: true },
-  wins: { label: "에이스", emoji: "👑", desc: "승수 랭킹", criteria: "10승+ & ERA 3.50 이하이면 👑 에이스 뱃지 획득", key: "wins", type: "pitcher", higherIsBetter: true },
-  era: { label: "철벽", emoji: "🛡️", desc: "ERA 랭킹", criteria: "ERA 2.50 이하 (50이닝+)이면 🛡️ 철벽 뱃지 획득", key: "era", type: "pitcher", format: (v) => v.toFixed(2), higherIsBetter: false },
-  so_pitcher: { label: "탈삼진", emoji: "🔥", desc: "탈삼진 랭킹", criteria: "K/9 8.0 이상이면 🔥 탈삼진 뱃지 획득", key: "so", type: "pitcher", higherIsBetter: true },
-  saves: { label: "마무리", emoji: "💪", desc: "세이브 랭킹", criteria: "시즌 20세이브 이상이면 💪 마무리 뱃지 획득", key: "saves", type: "pitcher", higherIsBetter: true },
-  holds: { label: "벽", emoji: "🧱", desc: "홀드 랭킹", criteria: "시즌 20홀드 이상이면 🧱 벽 뱃지 획득", key: "holds", type: "pitcher", higherIsBetter: true },
-  ip: { label: "이닝이터", emoji: "🏔️", desc: "이닝 랭킹", criteria: "시즌 150이닝 이상이면 🏔️ 이닝이터 뱃지 획득", key: "ip", type: "pitcher", format: (v) => v.toFixed(1), higherIsBetter: true },
-  whip: { label: "포커페이스", emoji: "🧊", desc: "WHIP 랭킹", criteria: "WHIP 1.10 이하 (50이닝+)이면 🧊 포커페이스 뱃지 획득", key: "whip", type: "pitcher", format: (v) => v.toFixed(2), higherIsBetter: false },
-  games_batter: { label: "풀타임", emoji: "🔋", desc: "출전경기 랭킹", criteria: "시즌 140경기 이상 출전이면 🔋 풀타임 뱃지 획득", key: "games", type: "batter", higherIsBetter: true },
-  games_pitcher: { label: "불펜철인", emoji: "🔋", desc: "등판수 랭킹", criteria: "시즌 60경기 이상 등판이면 🔋 불펜철인 뱃지 획득", key: "games", type: "pitcher", higherIsBetter: true },
 };
 
 function RankingContent() {
@@ -119,59 +86,8 @@ function RankingContent() {
       .then((r) => r.json())
       .then((data: { stats?: PlayerRow[] }) => {
         const rows: PlayerRow[] = data.stats || [];
-        // 비율 스탯 필터링:
-        // - 타자: avg/obp/ops/slg → 최소 30타석 (시즌 초 기준)
-        // - 투수: era/whip → 최소 12이닝 (KBO 공식 규정이닝 기준, 시즌 초반)
-        // 누적 스탯(hr/rbi/wins/so 등)은 최소 경기수만 체크
-        const parseIP = (ip: string | number): number => {
-          if (typeof ip === "number") return ip;
-          const s = String(ip).trim();
-          const match = s.match(/^(\d+)(?:\s+(\d+)\/(\d+))?$/);
-          if (!match) return 0;
-          const whole = parseInt(match[1]) || 0;
-          const frac = match[2] && match[3] ? parseInt(match[2]) / parseInt(match[3]) : 0;
-          return whole + frac;
-        };
-        const isRateStat = ["avg", "era", "obp", "ops", "whip"].includes(stat);
-        const filtered = isRateStat
-          ? def.type === "batter"
-            ? rows.filter((p) => (Number(p['pa']) || 0) >= 30) // 타자: 최소 30타석
-            : rows.filter((p) => parseIP((p['ip'] as string | number) || 0) >= 12) // 투수: 최소 12이닝
-          : def.type === "batter"
-            ? rows.filter((p) => (p.games || 0) >= 10)
-            : rows.filter((p) => (p.games || 0) >= 5);
-
-        const sorted = [...filtered].sort((a, b) => {
-          let aVal = Number(a[def.key] ?? 0) || 0;
-          let bVal = Number(b[def.key] ?? 0) || 0;
-          if (stat === "doubles") {
-            aVal = (a.doubles || 0) + (a.triples || 0);
-            bVal = (b.doubles || 0) + (b.triples || 0);
-          }
-          return def.higherIsBetter ? bVal - aVal : aVal - bVal;
-        });
-
-        // 공동 순위 적용 (competition ranking: 같은 값이면 같은 rank, 다음 순위는 건너뛰기)
-        const withRank: PlayerRow[] = sorted.map((p, i) => {
-          let currentVal = Number(p[def.key] ?? 0) || 0;
-          if (stat === "doubles") {
-            currentVal = (p.doubles || 0) + (p.triples || 0);
-          }
-          let rank = 1;
-          if (i > 0) {
-            let prevVal = Number(sorted[i - 1][def.key] ?? 0) || 0;
-            if (stat === "doubles") {
-              prevVal = (sorted[i - 1].doubles || 0) + (sorted[i - 1].triples || 0);
-            }
-            if (currentVal === prevVal) {
-              rank = sorted[i - 1].rank || i;
-            } else {
-              rank = i + 1;
-            }
-          }
-          return { ...p, rank };
-        });
-
+        // 자격 필터 + 정렬 + 공동순위 = 공용 rankByStat (홈 최애선수 카드 타이틀과 동일 SSOT)
+        const withRank = rankByStat(rows, stat) as PlayerRow[];
         setPlayers(withRank.slice(0, 100));
         setLoading(false);
       })

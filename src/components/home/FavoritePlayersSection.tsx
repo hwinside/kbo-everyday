@@ -5,8 +5,18 @@ import Link from "next/link";
 
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import SectionHeader from "@/components/ui/SectionHeader";
+import MiniTrendSparkline from "@/components/home/MiniTrendSparkline";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getTeamById } from "@/lib/constants/teams";
+import { getTeamColor } from "@/lib/utils/team";
+import {
+  toWeeklyTrend,
+  recentAverage,
+  weeklyDirection,
+  type WeeklyTrendRow,
+  type TrendDirection,
+} from "@/lib/stats/weekly-trend";
+import { getPlayerTitles } from "@/lib/stats/title-rankings";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 import batterStats from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
@@ -83,38 +93,79 @@ function classifyIsPitcher(p: FavoritePlayer): boolean {
 // 라이브 소스(/api/player-stats)는 선수 상세 페이지 히어로와 동일 — 카드/페이지 숫자 일치 보장.
 type StatLike = Record<string, string | number | undefined>;
 
+// 타율을 KBO 관례(.324) 표기로.
+function fmtAvg(n: number): string {
+  return n.toFixed(3).replace(/^0\./, ".");
+}
+
+function TrendIcon({ dir }: { dir: TrendDirection }) {
+  if (dir === "improving") return <span className="text-[#34C759] text-[11px] leading-none">▲</span>;
+  if (dir === "declining") return <span className="text-[#FF453A] text-[11px] leading-none">▼</span>;
+  return <span className="text-text-tertiary text-[11px] leading-none">–</span>;
+}
+
 export default function FavoritePlayersSection({ favPlayers }: { favPlayers: FavoritePlayer[] }) {
   const [liveStats, setLiveStats] = useState<Record<string, StatLike>>({});
+  const [gameLogs, setGameLogs] = useState<Record<string, WeeklyTrendRow[]>>({});
+  const [leagueStats, setLeagueStats] = useState<{ batter: StatLike[]; pitcher: StatLike[] }>({
+    batter: [],
+    pitcher: [],
+  });
   const favKey = useMemo(() => favPlayers.map((p) => p.playerId).join(","), [favPlayers]);
 
-  // 선수 상세 페이지와 동일한 /api/player-stats 라이브 소스로 스탯 갱신.
-  // 비-투수는 어떤 pos든 KBO 타자 상세로 크롤링되므로 상세 페이지 히어로와 정확히 같은 값.
+  // 선수 상세 페이지와 동일한 라이브 소스로 갱신:
+  //  - /api/player-stats     → 시즌 누적(보조 표시)
+  //  - /api/player-game-logs → 출전 경기 로그(최근 3경기 평균 + 주간 추이)
+  // 비-투수는 어떤 pos든 KBO 타자 상세로 크롤링되므로 상세 페이지와 정확히 같은 값.
   useEffect(() => {
     if (favPlayers.length === 0) {
       setLiveStats({});
+      setGameLogs({});
+      setLeagueStats({ batter: [], pitcher: [] });
       return;
     }
     let cancelled = false;
+    const needBatter = favPlayers.some((p) => !classifyIsPitcher(p));
+    const needPitcher = favPlayers.some((p) => classifyIsPitcher(p));
+    // 부문 랭킹(타이틀 라벨)은 랭킹 페이지와 동일한 /api/stats 리그 전체에서 산출
+    const fetchLeague = (type: "batter" | "pitcher") =>
+      fetch(`/api/stats?type=${type}&season=2026`)
+        .then((res) => (res.ok ? res.json() : { stats: [] }))
+        .then((data) => (Array.isArray(data?.stats) ? (data.stats as StatLike[]) : []))
+        .catch(() => [] as StatLike[]);
     (async () => {
-      const results = await Promise.all(
-        favPlayers.map(async (p) => {
-          const pos = classifyIsPitcher(p) ? "투수" : "타자";
-          try {
-            const res = await fetch(
-              `/api/player-stats?id=${encodeURIComponent(p.playerId)}&pos=${encodeURIComponent(pos)}`
-            );
-            if (!res.ok) return [p.playerId, null] as const;
-            const data = await res.json();
-            return [p.playerId, (data?.stats as StatLike | null) ?? null] as const;
-          } catch {
-            return [p.playerId, null] as const;
-          }
-        })
-      );
+      const [results, batterLeague, pitcherLeague] = await Promise.all([
+        Promise.all(
+          favPlayers.map(async (p) => {
+            const pos = classifyIsPitcher(p) ? "투수" : "타자";
+            const idQ = encodeURIComponent(p.playerId);
+            const posQ = encodeURIComponent(pos);
+            const [stats, logs] = await Promise.all([
+              fetch(`/api/player-stats?id=${idQ}&pos=${posQ}`)
+                .then((res) => (res.ok ? res.json() : null))
+                .then((data) => (data?.stats as StatLike | null) ?? null)
+                .catch(() => null),
+              fetch(`/api/player-game-logs?id=${idQ}&pos=${posQ}`)
+                .then((res) => (res.ok ? res.json() : { rows: [] }))
+                .then((data) => (Array.isArray(data?.rows) ? (data.rows as WeeklyTrendRow[]) : []))
+                .catch(() => [] as WeeklyTrendRow[]),
+            ]);
+            return [p.playerId, stats, logs] as const;
+          })
+        ),
+        needBatter ? fetchLeague("batter") : Promise.resolve([] as StatLike[]),
+        needPitcher ? fetchLeague("pitcher") : Promise.resolve([] as StatLike[]),
+      ]);
       if (cancelled) return;
-      const map: Record<string, StatLike> = {};
-      for (const [id, stats] of results) if (stats) map[id] = stats;
-      setLiveStats(map);
+      const sMap: Record<string, StatLike> = {};
+      const gMap: Record<string, WeeklyTrendRow[]> = {};
+      for (const [id, stats, logs] of results) {
+        if (stats) sMap[id] = stats;
+        gMap[id] = logs;
+      }
+      setLiveStats(sMap);
+      setGameLogs(gMap);
+      setLeagueStats({ batter: batterLeague, pitcher: pitcherLeague });
     })();
     return () => {
       cancelled = true;
@@ -134,34 +185,53 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
           const isPitcher = classifyIsPitcher(player);
           const staticBatter = findBatter(player.playerId, player.name, player.teamId);
           const staticPitcher = findPitcher(player.playerId, player.name, player.teamId);
+          const teamColor = getTeamColor(player.teamId);
 
-          // 라이브 우선, 없으면(미도착/실패) 정적 스냅샷 폴백 → 빈화면 방지
-          let batterView: { avg: string; hr: number; rbi: number; ops: string } | null = null;
-          let pitcherView: { era: string; wins: number; losses: number; saves: number; ip: string; so: number } | null = null;
+          // 시즌 누적(보조): 라이브 우선, 없으면 정적 스냅샷 폴백
+          let seasonAvg: number | null = null;
+          let seasonEra: number | null = null;
+          let seasonSub = "";
           if (isPitcher) {
             const src = (live ?? (staticPitcher as unknown as StatLike | undefined)) as StatLike | undefined;
             if (src) {
-              pitcherView = {
-                era: String(src.era ?? "0.00"),
-                wins: Number(src.wins ?? 0),
-                losses: Number(src.losses ?? 0),
-                saves: Number(src.saves ?? 0),
-                ip: String(src.ip ?? "0"),
-                so: Number(src.so ?? 0),
-              };
+              seasonEra = Number(src.era ?? NaN);
+              seasonSub = `${Number(src.wins ?? 0)}승 ${Number(src.losses ?? 0)}패 ${Number(src.saves ?? 0)}세`;
             }
           } else {
             const src = (live ?? (staticBatter as unknown as StatLike | undefined)) as StatLike | undefined;
             if (src) {
-              batterView = {
-                avg: String(src.avg ?? ".000"),
-                hr: Number(src.hr ?? 0),
-                rbi: Number(src.rbi ?? 0),
-                ops: String(src.ops ?? ".000"),
-              };
+              seasonAvg = Number(src.avg ?? NaN);
+              seasonSub = `${Number(src.hr ?? 0)}홈런 ${Number(src.rbi ?? 0)}타점`;
             }
           }
-          const hasStats = !!batterView || !!pitcherView;
+
+          // 최근 출전 3경기 평균 + 주간 추이 + 전주 대비 추세
+          const logs = gameLogs[player.playerId] ?? [];
+          const recent3 = recentAverage(logs, isPitcher, 3);
+          const weekly = toWeeklyTrend(logs, isPitcher);
+          const direction = weeklyDirection(weekly, isPitcher);
+
+          // 부문 타이틀 5위 이내면 대표 1개를 하단에 라벨로 (예: "홈런 1위")
+          const league = isPitcher ? leagueStats.pitcher : leagueStats.batter;
+          const topTitle = getPlayerTitles(league, player.playerId, player.name, isPitcher)[0] ?? null;
+
+          const recentLabel = isPitcher ? "최근 3경기 ERA" : "최근 3경기 타율";
+          const recentText =
+            recent3 != null ? (isPitcher ? recent3.toFixed(2) : fmtAvg(recent3)) : null;
+
+          // 헤드라인: 최근 3경기 → 없으면 시즌 누적으로 graceful 폴백
+          const seasonValid = isPitcher
+            ? seasonEra != null && Number.isFinite(seasonEra)
+            : seasonAvg != null && Number.isFinite(seasonAvg);
+          const headlineText =
+            recentText ??
+            (seasonValid
+              ? isPitcher
+                ? (seasonEra as number).toFixed(2)
+                : fmtAvg(seasonAvg as number)
+              : null);
+          const headlineLabel = recentText ? recentLabel : isPitcher ? "시즌 ERA" : "시즌 타율";
+
           // roster에서 실제 등번호 가져오기 (favorite 저장값이 0인 경우 대응)
           const rosterEntry = rosterMap.get(player.playerId);
           const displayNumber = (player.number && player.number !== 0)
@@ -172,9 +242,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
 
           return (
             <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
-              <div
-                className="min-w-[160px] min-h-[200px] rounded-2xl p-3 flex flex-col items-center gap-2 border border-border bg-bg-secondary"
-              >
+              <div className="min-w-[168px] min-h-[208px] rounded-2xl p-3 flex flex-col items-center gap-2 border border-border bg-bg-secondary">
                 <PlayerAvatar
                   name={player.name}
                   teamId={player.teamId}
@@ -190,38 +258,41 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                     <p className="text-xs leading-[18px] text-text-tertiary">{player.position}</p>
                   )}
                 </div>
-                {hasStats ? (
-                  <div className="w-full space-y-1">
-                    {pitcherView ? (
-                      <>
-                        <div className="flex justify-between text-xs leading-[18px]">
-                          <span className="text-text-tertiary">ERA</span>
-                          <span className="font-medium tabular-nums text-text-primary">{pitcherView.era}</span>
-                        </div>
-                        <div className="flex justify-between text-xs leading-[18px]">
-                          <span className="text-text-tertiary">승·패·세</span>
-                          <span className="font-medium tabular-nums text-text-primary">{pitcherView.wins} · {pitcherView.losses} · {pitcherView.saves}</span>
-                        </div>
-                        <div className="flex justify-between text-xs leading-[18px]">
-                          <span className="text-text-tertiary">이닝·K</span>
-                          <span className="font-medium tabular-nums text-text-primary">{pitcherView.ip} · {pitcherView.so}</span>
-                        </div>
-                      </>
-                    ) : batterView ? (
-                      <>
-                        <div className="flex justify-between text-xs leading-[18px]">
-                          <span className="text-text-tertiary">타율</span>
-                          <span className="font-medium tabular-nums text-text-primary">{Number(batterView.avg).toFixed(3)}</span>
-                        </div>
-                        <div className="flex justify-between text-xs leading-[18px]">
-                          <span className="text-text-tertiary">HR·타점</span>
-                          <span className="font-medium tabular-nums text-text-primary">{batterView.hr} · {batterView.rbi}</span>
-                        </div>
-                        <div className="flex justify-between text-xs leading-[18px]">
-                          <span className="text-text-tertiary">OPS</span>
-                          <span className="font-medium tabular-nums text-text-primary">{Number(batterView.ops).toFixed(3)}</span>
-                        </div>
-                      </>
+
+                {headlineText ? (
+                  <div className="w-full flex flex-col items-center gap-1">
+                    {/* 헤드라인: 최근 3경기 평균 + 전주 대비 추세 아이콘 */}
+                    <p className="text-[11px] leading-[14px] text-text-tertiary">{headlineLabel}</p>
+                    <div className="flex items-baseline justify-center gap-1">
+                      <span className="text-[22px] leading-[26px] font-bold tabular-nums text-text-primary">
+                        {headlineText}
+                      </span>
+                      {direction ? <TrendIcon dir={direction} /> : null}
+                    </div>
+
+                    {/* 주간 추이 미니 스파크라인 (2주 이상부터) */}
+                    {weekly.length >= 2 ? (
+                      <div className="w-full mt-0.5">
+                        <MiniTrendSparkline data={weekly} teamColor={teamColor} isPitcher={isPitcher} />
+                      </div>
+                    ) : null}
+
+                    {/* 시즌 누적 (보조) */}
+                    {seasonValid ? (
+                      <p className="text-[11px] leading-[15px] text-text-tertiary text-center">
+                        시즌 {isPitcher ? (seasonEra as number).toFixed(2) : fmtAvg(seasonAvg as number)}
+                        {seasonSub ? ` · ${seasonSub}` : ""}
+                      </p>
+                    ) : null}
+
+                    {/* 부문 타이틀 라벨 (5위 이내) */}
+                    {topTitle ? (
+                      <span
+                        className="mt-1 text-[10px] leading-[14px] font-semibold px-2 py-0.5 rounded-full"
+                        style={{ color: teamColor, backgroundColor: `${teamColor}1F` }}
+                      >
+                        🏆 {topTitle.name} {topTitle.rank}위
+                      </span>
                     ) : null}
                   </div>
                 ) : (
