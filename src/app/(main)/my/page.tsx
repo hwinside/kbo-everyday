@@ -29,7 +29,7 @@ import NotificationCard from "@/components/my/NotificationCard";
 import NotificationPrefsCard from "@/components/my/NotificationPrefsCard";
 import MenuSection from "@/components/my/MenuSection";
 import ThemeToggleCard from "@/components/my/ThemeToggleCard";
-import ShortsToggleCard from "@/components/my/ShortsToggleCard";
+import HomeSectionsCard from "@/components/my/HomeSectionsCard";
 import PwaGuideModal from "@/components/my/PwaGuideModal";
 import DeleteAccountSheet from "@/components/my/DeleteAccountSheet";
 
@@ -254,9 +254,9 @@ export default function MyPage() {
         <NotificationPrefsCard />
       </motion.div>
 
-      {/* 숏츠 표시 설정 (기기 로컬) */}
+      {/* 홈 화면 섹션 구성 (기기 로컬) — 숏츠 포함 6섹션 on/off */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.135 }} className="mt-3">
-        <ShortsToggleCard />
+        <HomeSectionsCard />
       </motion.div>
 
       {/* 테마 설정 */}
