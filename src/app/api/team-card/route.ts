@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchStandings, fetchGames } from "@/lib/crawler/kbo-api";
 import { getMonthGames } from "@/lib/crawler/season-games-cache";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
 import { TEAMS } from "@/lib/constants/teams";
 
 // GET /api/team-card?team=<slug>
@@ -138,8 +139,9 @@ export async function GET(req: NextRequest) {
       // 스냅샷 조회 실패해도 카드의 나머지는 정상 반환
     }
 
-    // 5) 순위권 선수 — daily_stats_snapshot 최신일, 팀 소속 부문 rank<=5
-    let topPlayers: { category: string; rank: number; playerName: string; value: number }[] = [];
+    // 5) 순위권 선수 — daily_stats_snapshot 최신일, 팀 소속 부문 rank<=5.
+    //    선수별로 묶고(여러 타이틀 합침) 선수 페이지 href 부착.
+    let topPlayers: { playerName: string; href: string | null; titles: { category: string; rank: number }[] }[] = [];
     try {
       const { data: latest } = await supabaseAdmin
         .from("daily_stats_snapshot").select("date").order("date", { ascending: false }).limit(1);
@@ -153,12 +155,22 @@ export async function GET(req: NextRequest) {
           .lte("rank", 5)
           .order("rank", { ascending: true });
         if (Array.isArray(data)) {
-          topPlayers = data.map((r) => ({
-            category: String(r.category),
-            rank: Number(r.rank),
-            playerName: String(r.player_name),
-            value: Number(r.value),
-          }));
+          // 선수별 그룹핑: { name -> [{category, rank}] }
+          const byPlayer = new Map<string, { category: string; rank: number }[]>();
+          for (const r of data) {
+            const name = String(r.player_name);
+            const arr = byPlayer.get(name) ?? [];
+            arr.push({ category: String(r.category), rank: Number(r.rank) });
+            byPlayer.set(name, arr);
+          }
+          topPlayers = [...byPlayer.entries()]
+            .map(([playerName, titles]) => ({
+              playerName,
+              href: getCanonicalPlayerHref({ name: playerName, team: team.shortName }),
+              titles: titles.sort((a, b) => a.rank - b.rank),
+            }))
+            // 최고 순위(가장 낮은 rank) 우선 정렬
+            .sort((a, b) => Math.min(...a.titles.map((t) => t.rank)) - Math.min(...b.titles.map((t) => t.rank)));
         }
       }
     } catch {
@@ -193,8 +205,22 @@ export async function GET(req: NextRequest) {
       // 주간 스탯 실패해도 나머지 정상 반환
     }
 
+    // 7) 커뮤니티 새글 수 — 최근 7일 (숨김 제외)
+    let communityNewPosts = 0;
+    try {
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const { count } = await supabaseAdmin
+        .from("posts")
+        .select("id", { count: "exact", head: true })
+        .eq("is_hidden", false)
+        .gte("created_at", since);
+      communityNewPosts = count ?? 0;
+    } catch {
+      // 카운트 실패해도 나머지 정상 반환
+    }
+
     return NextResponse.json(
-      { team: team.slug, standing, recentForm, nextGame, rankHistory, topPlayers, weeklyBatting, weeklyPitching },
+      { team: team.slug, standing, recentForm, nextGame, rankHistory, topPlayers, weeklyBatting, weeklyPitching, communityNewPosts },
       { headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600" } },
     );
   } catch (e: unknown) {

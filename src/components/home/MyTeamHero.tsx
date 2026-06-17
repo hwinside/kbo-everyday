@@ -25,6 +25,10 @@ interface HomeGame {
   currentBatter: string | null;
   currentPitcher: string | null;
   isTop: boolean;
+  awayStarterName?: string | null;
+  homeStarterName?: string | null;
+  winPitcher?: string | null;
+  losePitcher?: string | null;
 }
 
 export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { myTeam: TeamData; myTeamGame: HomeGame; embedded?: boolean }) {
@@ -115,6 +119,19 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
                 runner3b={myTeamGame.runner3b}
                 teamColor="var(--accent)"
               />
+            </div>
+          )}
+
+          {/* 종료/예정 모드: 구장 + (종료=승·패투수 / 예정=예고선발) */}
+          {(myTeamGame.status === "scheduled" || myTeamGame.status === "final") && (
+            <div className="pt-2 border-t border-white/10 text-[11px] text-text-tertiary space-y-0.5">
+              <div>🏟 {myTeamGame.stadium}</div>
+              {myTeamGame.status === "scheduled" && (myTeamGame.awayStarterName || myTeamGame.homeStarterName) && (
+                <div>예고선발 {myTeamGame.awayStarterName || "미정"} vs {myTeamGame.homeStarterName || "미정"}</div>
+              )}
+              {myTeamGame.status === "final" && (myTeamGame.winPitcher || myTeamGame.losePitcher) && (
+                <div>승 {myTeamGame.winPitcher || "-"} · 패 {myTeamGame.losePitcher || "-"}</div>
+              )}
             </div>
           )}
         </div>

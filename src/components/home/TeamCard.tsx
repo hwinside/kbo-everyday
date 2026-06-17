@@ -10,7 +10,7 @@ import { getTeamColor } from "@/lib/utils/team";
 
 type FormResult = "W" | "L" | "D";
 
-interface TopPlayer { category: string; rank: number; playerName: string; value: number }
+interface TopPlayer { playerName: string; href: string | null; titles: { category: string; rank: number }[] }
 
 interface TeamCardData {
   standing: {
@@ -21,25 +21,16 @@ interface TeamCardData {
     below: { teamId: number; gap: number } | null;
   } | null;
   recentForm: FormResult[];
-  nextGame: {
-    gameId: string;
-    date: string;
-    time: string;
-    stadium: string;
-    home: boolean;
-    opponentId: number;
-    myStarter: string | null;
-    oppStarter: string | null;
-  } | null;
+  nextGame: { gameId: string; date: string; time: string; stadium: string; home: boolean; opponentId: number; myStarter: string | null; oppStarter: string | null } | null;
   rankHistory?: { date: string; rank: number }[];
   topPlayers?: TopPlayer[];
   weeklyBatting?: { week: string; avg: number }[];
   weeklyPitching?: { week: string; era: number }[];
+  communityNewPosts?: number;
 }
 
 interface TeamCardProps {
   team: TeamData;
-  // 오늘 경기 카드(MyTeamHero)를 팀카드 안에 임베드. 없으면(오늘 경기 없음) 다음 경기 블록 표시.
   gameSlot?: ReactNode;
 }
 
@@ -48,27 +39,23 @@ const CAT_LABEL: Record<string, string> = {
   k: "탈삼진", wins: "다승", saves: "세이브", whip: "WHIP",
 };
 
-// 순위 시계열 → SVG 폴리라인. rank 1=위, 10=아래(반전). 최대 ~40점 다운샘플.
-function buildRankLine(history: { rank: number }[], w: number, h: number, pad: number) {
+// 순위 시계열 → 좌표(rank 1=위, 10=아래). 다운샘플 ~60점. yOf로 빗금 가이드도 공유.
+function rankPoints(history: { rank: number }[], w: number, h: number, pad: number) {
   const ranks = history.map((p) => p.rank).filter((r) => r >= 1 && r <= 10);
   const n = ranks.length;
   if (n < 2) return null;
-  const step = n > 40 ? Math.ceil(n / 40) : 1;
+  const step = n > 60 ? Math.ceil(n / 60) : 1;
+  const yOf = (r: number) => pad + ((r - 1) / 9) * (h - pad * 2);
   const pts: { x: number; y: number }[] = [];
-  for (let i = 0; i < n; i += step) {
-    pts.push({ x: pad + (i / (n - 1)) * (w - pad * 2), y: pad + ((ranks[i] - 1) / 9) * (h - pad * 2) });
-  }
+  for (let i = 0; i < n; i += step) pts.push({ x: pad + (i / (n - 1)) * (w - pad * 2), y: yOf(ranks[i]) });
   const lastX = pad + (w - pad * 2);
-  const lastY = pad + ((ranks[n - 1] - 1) / 9) * (h - pad * 2);
-  if (pts[pts.length - 1].x !== lastX) pts.push({ x: lastX, y: lastY });
-  return { line: pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "), lastX, lastY, first: ranks[0], last: ranks[n - 1] };
+  if (pts[pts.length - 1].x !== lastX) pts.push({ x: lastX, y: yOf(ranks[n - 1]) });
+  return { line: pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "), lastX, lastY: yOf(ranks[n - 1]), yOf, first: ranks[0], last: ranks[n - 1] };
 }
 
-// 일반 시계열(타율/방어율) → 폴리라인. higherIsBetter=false면 낮을수록 위로.
 function buildSeriesLine(values: number[], w: number, h: number, pad: number, higherIsBetter: boolean) {
   if (values.length < 2) return null;
-  const min = Math.min(...values), max = Math.max(...values);
-  const span = max - min || 1;
+  const min = Math.min(...values), max = Math.max(...values), span = max - min || 1;
   const pts = values.map((v, i) => {
     const norm = (v - min) / span;
     const y = higherIsBetter ? pad + (1 - norm) * (h - pad * 2) : pad + norm * (h - pad * 2);
@@ -92,30 +79,24 @@ function gapLabel(gap: number): string {
   return Number.isInteger(gap) ? `${gap}` : gap.toFixed(1);
 }
 
-function formatNextDate(yyyymmdd: string): string {
-  const y = Number(yyyymmdd.slice(0, 4)), mo = Number(yyyymmdd.slice(4, 6)), d = Number(yyyymmdd.slice(6, 8));
-  const wd = ["일", "월", "화", "수", "목", "금", "토"][new Date(Date.UTC(y, mo - 1, d)).getUTCDay()];
-  return `${mo}/${d} (${wd})`;
-}
-
-function MiniStatChart({ title, values, unit, fmt, higherIsBetter, accent }: {
-  title: string; values: number[]; unit: string; fmt: (v: number) => string; higherIsBetter: boolean; accent: string;
+function MiniStatChart({ title, values, fmt, higherIsBetter, accent }: {
+  title: string; values: number[]; fmt: (v: number) => string; higherIsBetter: boolean; accent: string;
 }) {
-  const line = buildSeriesLine(values, 140, 40, 5, higherIsBetter);
+  const line = buildSeriesLine(values, 140, 38, 5, higherIsBetter);
   const current = values.length ? values[values.length - 1] : null;
   return (
     <div className="flex-1 rounded-[10px] bg-bg-secondary/60 px-2.5 py-2">
       <div className="flex items-baseline justify-between mb-1">
         <span className="text-[10.5px] text-text-tertiary">{title}</span>
-        {current != null && <span className="text-[12px] font-bold text-text-primary">{fmt(current)}<span className="text-[9px] text-text-tertiary ml-0.5">{unit}</span></span>}
+        {current != null && <span className="text-[12px] font-bold text-text-primary">{fmt(current)}</span>}
       </div>
       {line ? (
-        <svg width="100%" height="40" viewBox="0 0 140 40" preserveAspectRatio="none" aria-hidden>
+        <svg width="100%" height="34" viewBox="0 0 140 38" preserveAspectRatio="none" aria-hidden>
           <polyline fill="none" stroke={accent} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" points={line.line} />
-          <circle cx={line.lastX} cy={line.lastY} r="2.8" fill={accent} />
+          <circle cx={line.lastX} cy={line.lastY} r="2.6" fill={accent} />
         </svg>
       ) : (
-        <div className="h-10 flex items-center text-[10px] text-text-tertiary">데이터 부족</div>
+        <div className="h-[34px] flex items-center text-[10px] text-text-tertiary">데이터 부족</div>
       )}
     </div>
   );
@@ -130,9 +111,7 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
     let cancelled = false;
     fetch(`/api/team-card?team=${team.slug}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((d: TeamCardData | null) => {
-        if (!cancelled) { setData(d && !("error" in d) ? d : null); setLoaded(true); }
-      })
+      .then((d: TeamCardData | null) => { if (!cancelled) { setData(d && !("error" in d) ? d : null); setLoaded(true); } })
       .catch(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
   }, [team.slug]);
@@ -140,68 +119,38 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
   if (loaded && !data?.standing && !data?.nextGame && !data?.recentForm?.length) return null;
 
   const streak = formatStreak(data?.standing?.streak ?? null);
-  const opponent = data?.nextGame ? getTeamById(data.nextGame.opponentId) : null;
-  const rankLine = data?.rankHistory ? buildRankLine(data.rankHistory, 320, 56, 8) : null;
-  // 순위권 칩 — rank 오름차순, 최대 6개
-  const topChips = (data?.topPlayers ?? []).slice(0, 6);
+  const st = data?.standing;
+  const rg = data?.rankHistory ? rankPoints(data.rankHistory, 300, 120, 10) : null;
+  const topPlayers = data?.topPlayers ?? [];
 
   return (
     <GlassCard className="p-5 mb-3">
-      <div className="flex items-center gap-2.5 mb-3.5">
+      {/* 헤더 — 팀명 옆 화살표 클릭 시 팀 페이지 */}
+      <Link href={`/teams/${team.slug}`} className="flex items-center gap-2.5 mb-3.5">
         <TeamLogo team={team} size={34} />
         <span className="text-base font-bold text-text-primary">{team.name}</span>
+        <ChevronRight size={18} className="text-text-tertiary -ml-1" />
         <span className="ml-auto text-[10px] font-bold text-white px-1.5 py-0.5 rounded-md" style={{ background: accent }}>MY TEAM</span>
-      </div>
+      </Link>
 
       {!loaded ? (
         <div className="h-24 animate-pulse rounded-xl bg-bg-secondary" />
       ) : (
         <>
-          {/* 경기 — 헤더 바로 아래(라이브 시 스크롤 없이 노출). 오늘 경기카드(임베드) 또는 다음 경기. (④=B) */}
-          {(gameSlot || (data?.nextGame && opponent)) && (
-            <div className="mb-1">
-              {gameSlot ? (
-                <>
-                  {gameSlot}
-                  {data?.nextGame && opponent && (data.nextGame.myStarter || data.nextGame.oppStarter) && (
-                    <div className="text-[11.5px] text-text-tertiary mt-2">
-                      다음 예고선발 · {formatNextDate(data.nextGame.date)} {data.nextGame.myStarter || "미정"}({team.shortName}) vs {data.nextGame.oppStarter || "미정"}({opponent.shortName})
-                    </div>
-                  )}
-                </>
-              ) : data?.nextGame && opponent ? (
-                <>
-                  <p className="text-[11px] text-text-tertiary mb-2">다음 경기</p>
-                  <div className="text-xs text-text-secondary">{formatNextDate(data.nextGame.date)} {data.nextGame.time} · {data.nextGame.stadium}</div>
-                  <div className="text-sm font-bold text-text-primary mt-0.5">
-                    {team.shortName} <span className="text-text-tertiary font-normal">{data.nextGame.home ? "vs" : "@"}</span> {opponent.shortName}
-                  </div>
-                  {(data.nextGame.myStarter || data.nextGame.oppStarter) && (
-                    <div className="text-[11.5px] text-text-tertiary mt-1">예고선발 {data.nextGame.myStarter || "미정"}({team.shortName}) vs {data.nextGame.oppStarter || "미정"}({opponent.shortName})</div>
-                  )}
-                </>
-              ) : null}
-            </div>
-          )}
-
-          {/* 순위/게임차/연승연패 ↔ 최근 5경기 2분할 */}
-          {(data?.standing || (data?.recentForm?.length ?? 0) > 0) && (
-            <div className="flex items-start gap-3 mt-4 border-t border-border/40 pt-3.5">
-              {data?.standing && (
-                <div className="flex-1 min-w-0">
+          {/* 1. 순위 정보 (클릭 → 순위 페이지) + 최근 5경기 2분할 */}
+          {(st || (data?.recentForm?.length ?? 0) > 0) && (
+            <div className="flex items-start gap-3">
+              {st && (
+                <Link href="/standings" className="flex-1 min-w-0 block">
                   <div className="flex items-end gap-2">
-                    <span className="text-[34px] font-extrabold leading-none text-text-primary">{data.standing.rank}위</span>
-                    {streak && (
-                      <span className="text-[12px] font-bold pb-1" style={{ color: streak.hot ? "#ff6b6b" : "var(--text-tertiary)" }}>
-                        {streak.hot ? "🔥" : ""}{streak.text}
-                      </span>
-                    )}
+                    <span className="text-[34px] font-extrabold leading-none text-text-primary">{st.rank}위</span>
+                    {streak && <span className="text-[12px] font-bold pb-1" style={{ color: streak.hot ? "#ff6b6b" : "var(--text-tertiary)" }}>{streak.hot ? "🔥" : ""}{streak.text}</span>}
                   </div>
                   <div className="text-[11px] text-text-secondary leading-[16px] mt-1.5">
-                    {data.standing.above && (<div>↑ {getTeamById(data.standing.above.teamId)?.shortName} <b className="text-text-primary">{gapLabel(data.standing.above.gap)}G</b></div>)}
-                    {data.standing.below && (<div>↓ {getTeamById(data.standing.below.teamId)?.shortName} <b className="text-text-primary">{gapLabel(data.standing.below.gap)}G</b></div>)}
+                    {st.above && <div>{st.rank - 1}위 {getTeamById(st.above.teamId)?.shortName}와 <b className="text-text-primary">{gapLabel(st.above.gap)}게임차</b></div>}
+                    {st.below && <div>{st.rank + 1}위 {getTeamById(st.below.teamId)?.shortName}와 <b className="text-text-primary">{gapLabel(st.below.gap)}게임차</b></div>}
                   </div>
-                </div>
+                </Link>
               )}
               {data?.recentForm && data.recentForm.length > 0 && (
                 <div className="flex-shrink-0 text-right">
@@ -219,50 +168,74 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
             </div>
           )}
 
-          {/* 순위권 선수 칩 */}
-          {topChips.length > 0 && (
-            <div className="mt-4 border-t border-border/40 pt-3.5">
-              <p className="text-[11px] text-text-tertiary mb-2">순위권 선수</p>
-              <div className="flex flex-wrap gap-1.5">
-                {topChips.map((p, i) => (
-                  <span key={i} className="text-[11.5px] px-2 py-1 rounded-full bg-white/[0.06] border border-border">
-                    {CAT_LABEL[p.category] ?? p.category} {p.playerName} <b style={{ color: p.rank === 1 ? "#ffd24a" : "var(--text-primary)" }}>{p.rank}위</b>
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* 2. 경기 카드 (임베드) */}
+          {gameSlot && <div className="mt-4 border-t border-border/40 pt-3.5">{gameSlot}</div>}
 
-          {/* 시즌 순위 변동 그래프 (순위 라벨) */}
-          {rankLine && (
+          {/* 3. 그래프 — 좌(전체높이) 순위변동(1~10위 빗금) + 우(상하) 타율/방어율 */}
+          {rg && (
             <div className="mt-4 border-t border-border/40 pt-3.5">
               <div className="flex items-baseline justify-between mb-2">
-                <p className="text-[11px] text-text-tertiary">시즌 순위 변동 (개막 ~ 현재)</p>
-                <p className="text-[11px] text-text-secondary">{rankLine.first}위 <span className="text-text-tertiary">→</span> <b className="text-text-primary">{rankLine.last}위</b></p>
+                <p className="text-[11px] text-text-tertiary">시즌 순위 변동 · 주간 팀 스탯</p>
+                <p className="text-[11px] text-text-secondary">{rg.first}위 <span className="text-text-tertiary">→</span> <b className="text-text-primary">{rg.last}위</b></p>
               </div>
-              <div className="relative rounded-[10px] bg-bg-secondary/60 px-2 pt-2.5 pb-1">
-                <span className="absolute left-2 top-1 text-[9px] text-text-tertiary/70">1위</span>
-                <span className="absolute left-2 bottom-1 text-[9px] text-text-tertiary/70">10위</span>
-                <svg width="100%" height="56" viewBox="0 0 320 56" preserveAspectRatio="none" aria-hidden>
-                  <polyline fill="none" stroke={accent} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" points={rankLine.line} />
-                  <circle cx={rankLine.lastX} cy={rankLine.lastY} r="3.5" fill={accent} />
-                </svg>
+              <div className="flex gap-2">
+                {/* 좌: 순위 변동 (1~10위 빗금 가이드) */}
+                <div className="flex-[1.3] rounded-[10px] bg-bg-secondary/60 px-2 py-2">
+                  <svg width="100%" height="120" viewBox="0 0 300 120" preserveAspectRatio="none" aria-hidden>
+                    {Array.from({ length: 10 }, (_, i) => {
+                      const y = rg.yOf(i + 1);
+                      return <line key={i} x1="0" y1={y} x2="300" y2={y} stroke="currentColor" className="text-text-tertiary/20" strokeWidth="0.5" strokeDasharray="3 3" />;
+                    })}
+                    <polyline fill="none" stroke={accent} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" points={rg.line} />
+                    <circle cx={rg.lastX} cy={rg.lastY} r="3.5" fill={accent} />
+                  </svg>
+                  <div className="flex justify-between text-[9px] text-text-tertiary/70 mt-0.5"><span>1위</span><span>10위</span></div>
+                </div>
+                {/* 우: 타율 / 방어율 */}
+                <div className="flex-1 flex flex-col gap-2">
+                  <MiniStatChart title="주간 팀 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} fmt={(v) => v.toFixed(3)} higherIsBetter accent={accent} />
+                  <MiniStatChart title="주간 팀 방어율" values={(data?.weeklyPitching ?? []).map((w) => w.era)} fmt={(v) => v.toFixed(2)} higherIsBetter={false} accent={accent} />
+                </div>
               </div>
             </div>
           )}
 
-          {/* 주간 팀 타율 | 방어율 2분할 */}
-          {((data?.weeklyBatting?.length ?? 0) >= 2 || (data?.weeklyPitching?.length ?? 0) >= 2) && (
-            <div className="mt-3 flex gap-2">
-              <MiniStatChart title="주간 팀 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} unit="" fmt={(v) => v.toFixed(3)} higherIsBetter accent={accent} />
-              <MiniStatChart title="주간 팀 방어율" values={(data?.weeklyPitching ?? []).map((w) => w.era)} unit="" fmt={(v) => v.toFixed(2)} higherIsBetter={false} accent={accent} />
+          {/* 4. 순위권 선수 — 선수별 묶음, 클릭 → 선수 페이지 */}
+          {topPlayers.length > 0 && (
+            <div className="mt-4 border-t border-border/40 pt-3.5">
+              <p className="text-[11px] text-text-tertiary mb-2">순위권 선수</p>
+              <div className="flex flex-col gap-1.5">
+                {topPlayers.map((p, i) => {
+                  const inner = (
+                    <>
+                      <span className="font-bold text-text-primary">{p.playerName}</span>{" "}
+                      <span className="text-text-secondary">
+                        {p.titles.map((t, j) => (
+                          <span key={j}>
+                            {j > 0 && ", "}
+                            {CAT_LABEL[t.category] ?? t.category} <b style={{ color: t.rank === 1 ? "#ffd24a" : "var(--text-secondary)" }}>{t.rank}위</b>
+                          </span>
+                        ))}
+                      </span>
+                    </>
+                  );
+                  return p.href ? (
+                    <Link key={i} href={p.href} className="text-[12.5px] flex items-center gap-1">
+                      <span className="min-w-0">{inner}</span><ChevronRight size={13} className="text-text-tertiary flex-shrink-0" />
+                    </Link>
+                  ) : (
+                    <div key={i} className="text-[12.5px]">{inner}</div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
-          {/* 경기 일정 CTA (카드 푸터) */}
-          {(data?.nextGame || data?.standing) && (
-            <Link href={`/teams/${team.slug}/schedule`} className="mt-4 flex items-center justify-center gap-1 rounded-[10px] border border-border bg-white/[0.06] py-2.5 text-[12.5px] font-semibold text-text-secondary">
-              경기 일정 보기<ChevronRight size={14} />
+          {/* 5. 커뮤니티 새 글 — 클릭 → 커뮤니티 */}
+          {(data?.communityNewPosts ?? 0) > 0 && (
+            <Link href="/community" className="mt-4 border-t border-border/40 pt-3.5 flex items-center justify-between">
+              <span className="text-[12.5px] text-text-secondary">💬 최근 1주 새 글 <b className="text-text-primary">{data!.communityNewPosts}</b>개</span>
+              <ChevronRight size={15} className="text-text-tertiary" />
             </Link>
           )}
         </>
