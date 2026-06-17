@@ -16,6 +16,7 @@ import { useLiveGame, type LiveGameData } from "@/lib/hooks/useLiveGame";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
 import { useHomeInit, type HomeGame } from "@/hooks/useHomeInit";
+import { useHomeSectionsPref } from "@/hooks/useHomeSectionsPref";
 import { setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
 import { writeHomeWidgetSnapshot } from "@/lib/native-live-activity";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
@@ -165,6 +166,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     todayGames, isPreseason,
     handleOnboardingComplete, handlePlayerSelect,
   } = useHomeInit({ initialGames, initialIsPreseason });
+
+  // 홈 섹션 표시 여부 (마이페이지 토글, 기기 로컬)
+  const sections = useHomeSectionsPref();
 
   // useHomeNews — lazy import to avoid SSR issues
   const [realNews, setRealNews] = useState<{ id: number; title: string; link: string; pubDate: string; label: string; source: string; sourceUrl: string; thumbnailUrl: null; timeAgo: string; teamId: number | null; type: "news" }[]>([]);
@@ -471,8 +475,13 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         </m.div>
       )}
 
+      {/* 섹션 순서: 팀카드 → 뉴스 → 경기 → 최애선수 → 숏츠 → 전체경기현황.
+          각 섹션은 마이페이지 토글(sections.*)로 on/off. 팀카드는 S3에서 삽입. */}
+
+      {/* TODO(S3): 팀 카드 — {sections.teamCard && <TeamCard ... />} */}
+
       {/* News Carousel */}
-      {realNews.length > 0 && (
+      {sections.news && realNews.length > 0 && (
         <div className="mb-3">
           <div className="-mx-5">
             <Suspense fallback={<SectionSkeleton height={180} />}>
@@ -482,26 +491,39 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         </div>
       )}
 
-      {/* What's New Card */}
+      {/* What's New Card (토글 대상 아님) */}
       <Suspense fallback={null}>
         <WhatsNewCard />
       </Suspense>
 
-      {/* My Team Hero */}
-      {myTeam && myTeamGame && (
+      {/* My Team Hero (경기 카드) */}
+      {sections.game && myTeam && myTeamGame && (
         <MyTeamHero myTeam={myTeam} myTeamGame={myTeamGame} />
       )}
 
-      <div className="mb-3">
-        <FavoritePlayersSection favPlayers={favPlayers} />
+      {/* 최애선수 카드 */}
+      {sections.favPlayers && (
+        <div className="mb-3">
+          <FavoritePlayersSection favPlayers={favPlayers} />
+        </div>
+      )}
 
-        <Suspense fallback={<SectionSkeleton height={250} />}>
-          <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
-        </Suspense>
-      </div>
+      {/* 숏츠 슬롯 */}
+      {sections.shorts && (
+        <div className="mb-3">
+          <Suspense fallback={<SectionSkeleton height={250} />}>
+            <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
+          </Suspense>
+        </div>
+      )}
 
-      <LiveGameBanner excludeGameId={myTeamGameBase?.id} liveGames={liveGames} />
-      <TodayGamesSection todayGames={todayGames} isPreseason={isPreseason} myTeamId={myTeamId} />
+      {/* 전체 경기 현황 */}
+      {sections.allGames && (
+        <>
+          <LiveGameBanner excludeGameId={myTeamGameBase?.id} liveGames={liveGames} />
+          <TodayGamesSection todayGames={todayGames} isPreseason={isPreseason} myTeamId={myTeamId} />
+        </>
+      )}
 
       {/* 퀵액션 버튼 */}
       <m.div variants={item} className="flex gap-3 mb-6">
