@@ -479,8 +479,13 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       {/* 섹션 순서: 팀카드 → 뉴스 → 경기 → 최애선수 → 숏츠 → 전체경기현황.
           각 섹션은 마이페이지 토글(sections.*)로 on/off. 팀카드는 S3에서 삽입. */}
 
-      {/* 팀 카드 (최애팀 순위·일정·소식) */}
-      {sections.teamCard && myTeam && <TeamCard team={myTeam} />}
+      {/* 팀 카드 (최애팀 순위·일정·소식) — 경기카드(MyTeamHero)를 안에 임베드(④=B) */}
+      {sections.teamCard && myTeam && (
+        <TeamCard
+          team={myTeam}
+          gameSlot={sections.game && myTeamGame ? <MyTeamHero myTeam={myTeam} myTeamGame={myTeamGame} /> : undefined}
+        />
+      )}
 
       {/* News Carousel */}
       {sections.news && realNews.length > 0 && (
@@ -498,10 +503,6 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         <WhatsNewCard />
       </Suspense>
 
-      {/* My Team Hero (경기 카드) */}
-      {sections.game && myTeam && myTeamGame && (
-        <MyTeamHero myTeam={myTeam} myTeamGame={myTeamGame} />
-      )}
 
       {/* 최애선수 카드 */}
       {sections.favPlayers && (
