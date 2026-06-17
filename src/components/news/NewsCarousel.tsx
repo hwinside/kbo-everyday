@@ -151,7 +151,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                     </div>
                   )}
                   {hasThumb && (
-                    <div className="absolute left-[14px] top-4 bottom-4 w-[31%] overflow-hidden rounded-xl shadow-[0_2px_10px_rgba(0,0,0,0.35)]">
+                    <div className="absolute left-[14px] top-4 bottom-10 w-[31%] overflow-hidden rounded-xl shadow-[0_2px_10px_rgba(0,0,0,0.35)]">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={thumbUrl as string}
@@ -171,7 +171,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                         {item.label}
                       </span>
                     )}
-                    <h3 className="text-lg font-semibold leading-[26px] text-white line-clamp-3">
+                    <h3 className="text-[15px] font-semibold leading-[21px] text-white line-clamp-3">
                       {item.title}
                     </h3>
                     <p className="mt-1 text-xs leading-[18px] text-gray-400">
