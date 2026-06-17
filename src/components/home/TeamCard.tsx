@@ -157,9 +157,36 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
         <div className="h-24 animate-pulse rounded-xl bg-bg-secondary" />
       ) : (
         <>
-          {/* 상단 2분할: 좌 순위/게임차/연승연패 | 우 최근 5경기 */}
+          {/* 경기 — 헤더 바로 아래(라이브 시 스크롤 없이 노출). 오늘 경기카드(임베드) 또는 다음 경기. (④=B) */}
+          {(gameSlot || (data?.nextGame && opponent)) && (
+            <div className="mb-1">
+              {gameSlot ? (
+                <>
+                  {gameSlot}
+                  {data?.nextGame && opponent && (data.nextGame.myStarter || data.nextGame.oppStarter) && (
+                    <div className="text-[11.5px] text-text-tertiary mt-2">
+                      다음 예고선발 · {formatNextDate(data.nextGame.date)} {data.nextGame.myStarter || "미정"}({team.shortName}) vs {data.nextGame.oppStarter || "미정"}({opponent.shortName})
+                    </div>
+                  )}
+                </>
+              ) : data?.nextGame && opponent ? (
+                <>
+                  <p className="text-[11px] text-text-tertiary mb-2">다음 경기</p>
+                  <div className="text-xs text-text-secondary">{formatNextDate(data.nextGame.date)} {data.nextGame.time} · {data.nextGame.stadium}</div>
+                  <div className="text-sm font-bold text-text-primary mt-0.5">
+                    {team.shortName} <span className="text-text-tertiary font-normal">{data.nextGame.home ? "vs" : "@"}</span> {opponent.shortName}
+                  </div>
+                  {(data.nextGame.myStarter || data.nextGame.oppStarter) && (
+                    <div className="text-[11.5px] text-text-tertiary mt-1">예고선발 {data.nextGame.myStarter || "미정"}({team.shortName}) vs {data.nextGame.oppStarter || "미정"}({opponent.shortName})</div>
+                  )}
+                </>
+              ) : null}
+            </div>
+          )}
+
+          {/* 순위/게임차/연승연패 ↔ 최근 5경기 2분할 */}
           {(data?.standing || (data?.recentForm?.length ?? 0) > 0) && (
-            <div className="flex items-start gap-3">
+            <div className="flex items-start gap-3 mt-4 border-t border-border/40 pt-3.5">
               {data?.standing && (
                 <div className="flex-1 min-w-0">
                   <div className="flex items-end gap-2">
@@ -206,37 +233,6 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
             </div>
           )}
 
-          {/* 경기 — 오늘 경기카드(임베드) 또는 다음 경기. 예고선발 포함. (④=B) */}
-          {(gameSlot || (data?.nextGame && opponent)) && (
-            <div className="mt-4 border-t border-border/40 pt-3.5">
-              {gameSlot ? (
-                <>
-                  <p className="text-[11px] text-text-tertiary mb-2">경기</p>
-                  {gameSlot}
-                  {data?.nextGame && opponent && (data.nextGame.myStarter || data.nextGame.oppStarter) && (
-                    <div className="text-[11.5px] text-text-tertiary mt-2">
-                      다음 예고선발 · {formatNextDate(data.nextGame.date)} {data.nextGame.myStarter || "미정"}({team.shortName}) vs {data.nextGame.oppStarter || "미정"}({opponent.shortName})
-                    </div>
-                  )}
-                </>
-              ) : data?.nextGame && opponent ? (
-                <>
-                  <p className="text-[11px] text-text-tertiary mb-2">다음 경기</p>
-                  <div className="text-xs text-text-secondary">{formatNextDate(data.nextGame.date)} {data.nextGame.time} · {data.nextGame.stadium}</div>
-                  <div className="text-sm font-bold text-text-primary mt-0.5">
-                    {team.shortName} <span className="text-text-tertiary font-normal">{data.nextGame.home ? "vs" : "@"}</span> {opponent.shortName}
-                  </div>
-                  {(data.nextGame.myStarter || data.nextGame.oppStarter) && (
-                    <div className="text-[11.5px] text-text-tertiary mt-1">예고선발 {data.nextGame.myStarter || "미정"}({team.shortName}) vs {data.nextGame.oppStarter || "미정"}({opponent.shortName})</div>
-                  )}
-                </>
-              ) : null}
-              <Link href={`/teams/${team.slug}/schedule`} className="mt-3 flex items-center justify-center gap-1 rounded-[10px] border border-border bg-white/[0.06] py-2.5 text-[12.5px] font-semibold text-text-secondary">
-                경기 일정 보기<ChevronRight size={14} />
-              </Link>
-            </div>
-          )}
-
           {/* 시즌 순위 변동 그래프 (순위 라벨) */}
           {rankLine && (
             <div className="mt-4 border-t border-border/40 pt-3.5">
@@ -261,6 +257,13 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
               <MiniStatChart title="주간 팀 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} unit="" fmt={(v) => v.toFixed(3)} higherIsBetter accent={accent} />
               <MiniStatChart title="주간 팀 방어율" values={(data?.weeklyPitching ?? []).map((w) => w.era)} unit="" fmt={(v) => v.toFixed(2)} higherIsBetter={false} accent={accent} />
             </div>
+          )}
+
+          {/* 경기 일정 CTA (카드 푸터) */}
+          {(data?.nextGame || data?.standing) && (
+            <Link href={`/teams/${team.slug}/schedule`} className="mt-4 flex items-center justify-center gap-1 rounded-[10px] border border-border bg-white/[0.06] py-2.5 text-[12.5px] font-semibold text-text-secondary">
+              경기 일정 보기<ChevronRight size={14} />
+            </Link>
           )}
         </>
       )}

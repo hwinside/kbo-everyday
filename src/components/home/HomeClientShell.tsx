@@ -263,6 +263,18 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     return nextWidgetGame ?? undefined;
   }, [myTeamGame, nextWidgetGame]);
 
+  // 팀카드 임베드 경기카드용 — 오늘 경기(종료 당일=결과) 우선, 없으면 다음 예정경기.
+  const embeddedGame = useMemo<MyTeamHeroGame | undefined>(() => {
+    if (myTeamGame) return myTeamGame;
+    if (!nextWidgetGame) return undefined;
+    return {
+      ...nextWidgetGame,
+      balls: 0, strikes: 0, outs: 0,
+      runner1b: false, runner2b: false, runner3b: false,
+      currentBatter: null, currentPitcher: null, isTop: true,
+    };
+  }, [myTeamGame, nextWidgetGame]);
+
   useEffect(() => {
     if (!myTeamId) {
       setNextWidgetGame(null);
@@ -483,7 +495,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       {sections.teamCard && myTeam && (
         <TeamCard
           team={myTeam}
-          gameSlot={sections.game && myTeamGame ? <MyTeamHero myTeam={myTeam} myTeamGame={myTeamGame} /> : undefined}
+          gameSlot={sections.game && embeddedGame ? <MyTeamHero myTeam={myTeam} myTeamGame={embeddedGame} embedded /> : undefined}
         />
       )}
 
