@@ -257,24 +257,24 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
           return (
             <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
               <div className="rounded-2xl overflow-hidden border border-border bg-bg-secondary">
-                {/* 상단: 히어로샷 + 기본정보 (선수 무관 동일 높이) */}
-                <div className="flex gap-2.5 pr-3.5 min-h-[64px]">
-                  {/* 히어로 컷아웃 — 카드 위쪽 끝까지 배경, 하단은 구분선에 밀착 */}
+                {/* 상단: 히어로샷 + 기본정보 — 정보 높이가 카드 높이를 결정(히어로는 fill로 채움) */}
+                <div className="flex gap-2.5 pr-3.5">
+                  {/* 히어로 컷아웃 — 정보 영역 높이에 맞춰 채움(고정 높이로 행을 키우지 않음) */}
                   <div
-                    className="w-[132px] flex-shrink-0 self-stretch flex items-stretch justify-center overflow-hidden"
+                    className="relative w-[132px] flex-shrink-0 self-stretch overflow-hidden"
                     style={{ background: `linear-gradient(160deg, ${teamColor}1F, transparent 72%)` }}
                   >
                     {heroUrl ? (
                       <Image
                         src={heroUrl}
                         alt={player.name}
-                        width={132}
-                        height={140}
+                        fill
                         unoptimized
-                        className="w-full h-full object-cover object-[center_56%]"
+                        sizes="132px"
+                        className="object-cover object-[center_56%]"
                       />
                     ) : (
-                      <div className="self-center py-3">
+                      <div className="absolute inset-0 flex items-center justify-center">
                         <PlayerAvatar
                           name={player.name}
                           teamId={player.teamId}
@@ -286,7 +286,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                     )}
                   </div>
 
-                  <div className="flex-1 min-w-0 py-1.5 flex flex-col justify-center">
+                  <div className="flex-1 min-w-0 py-2.5">
                     <div className="flex justify-between items-start gap-2">
                       <div className="min-w-0">
                         <p className="text-[16px] leading-[22px] font-semibold text-text-primary truncate">{player.name}</p>
