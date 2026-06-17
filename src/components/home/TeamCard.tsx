@@ -147,18 +147,18 @@ function MiniStatChart({ title, values, fmt, higherIsBetter, accent }: {
   const line = buildSeriesLine(values, 140, 38, 5, higherIsBetter);
   const current = values.length ? values[values.length - 1] : null;
   return (
-    <div className="flex-1 rounded-[10px] bg-bg-secondary/60 px-2.5 py-2">
-      <div className="flex items-baseline justify-between mb-1">
+    <div className="flex min-h-0 flex-1 flex-col rounded-[10px] bg-bg-secondary/60 px-2.5 py-2">
+      <div className="mb-1 flex items-baseline justify-between">
         <span className="text-[10.5px] text-text-tertiary">{title}</span>
         {current != null && <span className="text-[12px] font-bold text-text-primary">{fmt(current)}</span>}
       </div>
       {line ? (
-        <svg width="100%" height="34" viewBox="0 0 140 38" preserveAspectRatio="none" aria-hidden>
+        <svg width="100%" height="34" viewBox="0 0 140 38" preserveAspectRatio="none" aria-hidden className="min-h-0 flex-1">
           <polyline fill="none" stroke={accent} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" points={line.line} />
           <circle cx={line.lastX} cy={line.lastY} r="2.6" fill={accent} />
         </svg>
       ) : (
-        <div className="h-[34px] flex items-center text-[10px] text-text-tertiary">데이터 부족</div>
+        <div className="flex min-h-0 flex-1 items-center text-[10px] text-text-tertiary">데이터 부족</div>
       )}
     </div>
   );
@@ -254,9 +254,9 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
           {rg && (
             <div className="mt-4 border-t border-border/40 pt-3.5">
               <p className="text-[11px] text-text-tertiary mb-2">시즌 순위 변동 · 주간 팀 스탯</p>
-              <div className="flex gap-2">
+              <div className="flex items-stretch gap-2">
                 {/* 좌: 순위 변동 — 클릭 → 팀 순위 페이지. Y축에 1~10위 라벨 + 빗금 */}
-                <Link href="/standings" className="flex-[1.3] rounded-[10px] bg-bg-secondary/60 px-1.5 py-2 flex gap-1.5">
+                <Link href="/standings" className="flex h-[136px] flex-[1.3] gap-1.5 rounded-[10px] bg-bg-secondary/60 px-1.5 py-2">
                   <div className="flex flex-col justify-between text-[8px] leading-none text-text-tertiary/80 h-[120px] py-[7px]">
                     {Array.from({ length: 10 }, (_, i) => <span key={i}>{i + 1}</span>)}
                   </div>
@@ -270,7 +270,7 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
                   </svg>
                 </Link>
                 {/* 우: 타율 / 방어율 — 클릭 → 팀 기록 페이지 */}
-                <Link href={`/teams/${team.slug}/records`} className="flex-1 flex flex-col gap-2">
+                <Link href={`/teams/${team.slug}/records`} className="flex h-[136px] flex-1 flex-col gap-2">
                   <MiniStatChart title="주간 팀 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} fmt={(v) => v.toFixed(3)} higherIsBetter accent={accent} />
                   <MiniStatChart title="주간 팀 방어율" values={(data?.weeklyPitching ?? []).map((w) => w.era)} fmt={(v) => v.toFixed(2)} higherIsBetter={false} accent={accent} />
                 </Link>
@@ -282,8 +282,9 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
           {topPlayers.length > 0 && (
             <div className="mt-4 border-t border-border/40 pt-3.5">
               <p className="text-[11px] text-text-tertiary mb-2">순위권 선수</p>
-              <div className="flex flex-col gap-1.5">
+              <div className="flex flex-wrap items-start gap-x-1.5 gap-y-1">
                 {topPlayers.map((p, i) => {
+                  const isLong = p.titles.length >= 4;
                   const inner = (
                     <>
                       <span className="font-bold text-text-primary">{p.playerName}</span>{" "}
@@ -297,12 +298,18 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
                       </span>
                     </>
                   );
+                  const itemClassName = [
+                    "inline-flex max-w-full items-center gap-0.5 rounded-full border border-border bg-white/[0.05] px-1.5 py-0.5 text-[12px] leading-[17px]",
+                    isLong ? "basis-full rounded-[10px]" : "",
+                  ].join(" ");
                   return p.href ? (
-                    <Link key={i} href={p.href} className="text-[12.5px] flex items-center gap-1">
-                      <span className="min-w-0">{inner}</span><ChevronRight size={13} className="text-text-tertiary flex-shrink-0" />
+                    <Link key={i} href={p.href} className={itemClassName}>
+                      <span className="min-w-0 whitespace-normal">{inner}</span><ChevronRight size={13} className="text-text-tertiary flex-shrink-0" />
                     </Link>
                   ) : (
-                    <div key={i} className="text-[12.5px]">{inner}</div>
+                    <div key={i} className={itemClassName}>
+                      <span className="min-w-0 whitespace-normal">{inner}</span>
+                    </div>
                   );
                 })}
               </div>
