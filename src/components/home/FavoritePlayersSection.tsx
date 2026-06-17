@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
 
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import SectionHeader from "@/components/ui/SectionHeader";
@@ -10,7 +9,6 @@ import MiniTrendSparkline from "@/components/home/MiniTrendSparkline";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getTeamById } from "@/lib/constants/teams";
 import { getTeamColor } from "@/lib/utils/team";
-import heroApprovedList from "@/lib/constants/hero-approved-kboids.json";
 import {
   toWeeklyTrend,
   recentAverage,
@@ -38,11 +36,6 @@ interface RosterEntry {
 const rosterMap = new Map(
   (rosterData as RosterEntry[]).filter((r) => r.backNo).map((r) => [r.kboId, r])
 );
-
-// 히어로 컷아웃(배경 제거)은 검수 통과 선수만 — 없으면 헤드샷 아바타 폴백
-const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
-const heroCutoutUrl = (kboId: string): string | null =>
-  HERO_APPROVED.has(kboId) ? `/players-hero/${kboId}.webp` : null;
 
 interface BatterStat {
   playerId: string;
@@ -252,34 +245,18 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
               ? Number(rosterEntry.backNo)
               : null;
 
-          const heroUrl = heroCutoutUrl(player.playerId);
-
           return (
             <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
-              <div className="flex gap-2 min-h-[136px] rounded-2xl overflow-hidden border border-border bg-bg-secondary">
-                {/* 좌측: 히어로 컷아웃(배경 제거) — 가운데 정렬. 없으면 헤드샷 폴백 */}
-                <div
-                  className="w-[132px] flex-shrink-0 self-stretch flex items-center justify-center"
-                  style={{ background: `linear-gradient(160deg, ${teamColor}1A, transparent 70%)` }}
-                >
-                  {heroUrl ? (
-                    <Image
-                      src={heroUrl}
-                      alt={player.name}
-                      width={132}
-                      height={166}
-                      unoptimized
-                      className="w-[132px] h-auto object-contain"
-                    />
-                  ) : (
-                    <PlayerAvatar
-                      name={player.name}
-                      teamId={player.teamId}
-                      photoUrl={getPlayerPhotoUrl(player.name, player.playerId)}
-                      number={displayNumber ?? player.number}
-                      size={72}
-                    />
-                  )}
+              <div className="flex gap-2 rounded-2xl border border-border bg-bg-secondary">
+                {/* 좌측: 동그라미 선수 사진 — 카드 가운데 정렬 (원안 유지, 30% 확대) */}
+                <div className="w-[96px] flex-shrink-0 self-stretch flex items-center justify-center py-3">
+                  <PlayerAvatar
+                    name={player.name}
+                    teamId={player.teamId}
+                    photoUrl={getPlayerPhotoUrl(player.name, player.playerId)}
+                    number={displayNumber ?? player.number}
+                    size={72}
+                  />
                 </div>
 
                 {/* 우측: 정보 */}
@@ -306,9 +283,12 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
 
                   {headlineText ? (
                     <>
-                      {/* 주간 추이 미니 스파크라인 (2주 이상부터) */}
+                      {/* 주간 추이 미니 스파크라인 (2주 이상부터) + 설명 */}
                       {weekly.length >= 2 ? (
                         <div className="w-full mt-1.5">
+                          <p className="text-[10px] leading-[13px] text-text-tertiary mb-0.5">
+                            시즌 주간 페이스 · {isPitcher ? "ERA" : "타율"}
+                          </p>
                           <MiniTrendSparkline data={weekly} teamColor={teamColor} isPitcher={isPitcher} />
                         </div>
                       ) : null}
