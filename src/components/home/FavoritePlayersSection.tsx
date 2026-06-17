@@ -261,14 +261,14 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                 <div className="flex gap-2.5 pr-3.5 min-h-[116px]">
                   {/* 히어로 컷아웃 — 카드 위쪽 끝까지 배경, 하단은 구분선에 밀착 */}
                   <div
-                    className="w-[110px] flex-shrink-0 self-stretch flex items-stretch justify-center overflow-hidden"
+                    className="w-[132px] flex-shrink-0 self-stretch flex items-stretch justify-center overflow-hidden"
                     style={{ background: `linear-gradient(160deg, ${teamColor}1F, transparent 72%)` }}
                   >
                     {heroUrl ? (
                       <Image
                         src={heroUrl}
                         alt={player.name}
-                        width={110}
+                        width={132}
                         height={140}
                         unoptimized
                         className="w-full h-full object-cover object-top"
