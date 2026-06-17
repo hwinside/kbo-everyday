@@ -35,6 +35,10 @@ jobs:
         with:
           python-version: "3.11"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Install pipeline deps
         run: pip install --quiet rembg onnxruntime pillow numpy scipy
 
@@ -49,7 +53,18 @@ jobs:
             echo "신규 히어로 없음 — 변경 사항 없이 종료."
           fi
 
-      - name: Create + auto-merge PR (changes only)
+      # 머지 게이트 (삼순 NO-GO 반영, 2026-06-17): --admin 자동 머지가 Vercel/validator 체크를
+      # 우회하므로, 머지 직전 워크플로 안에서 명시 검증을 PASS해야만 다음 머지 스텝으로 넘어간다.
+      # 어느 하나라도 실패하면 set -e 로 잡이 즉시 stop → 머지 스텝 미실행.
+      - name: Verify (merge gate)
+        if: steps.gen.outputs.changed == 'true'
+        run: |
+          set -e
+          npm ci
+          npm run qa:foreign-photo
+          python scripts/hero/build-hero.py --verify
+
+      - name: Create + auto-merge PR (verified changes only)
         if: steps.gen.outputs.changed == 'true'
         run: |
           set -e
@@ -60,8 +75,9 @@ jobs:
           git add public/players-hero src/lib/constants/hero-approved-kboids.json
           git commit -m "chore(hero): 자동 배치 — 신규 히어로샷 생성 (rembg 컷아웃)"
           git push origin "$BRANCH"
+          HEAD_SHA="$(git rev-parse HEAD)"
           PR_URL=$(gh pr create --base main --head "$BRANCH" \
             --title "chore(hero): 자동 히어로샷 배치 (rembg)" \
-            --body "공식 헤드샷(public/players/) → rembg 로컬 컷아웃(scripts/hero/build-hero.py)으로 신규 히어로샷 생성. 외부 API/시크릿 없음. 결정적 파이프라인. 저위험 자동 머지(2026-06-17 하린아빠 정책). 생성 로그는 워크플로 실행의 'Generate missing heroes' 스텝 참조.")
-          # 소스가 KBO 공식샷 그대로라 결정적·저위험 → 즉시 squash 자동 머지.
-          gh pr merge "$PR_URL" --squash --admin --delete-branch
+            --body "공식 헤드샷(public/players/) → rembg 로컬 컷아웃(scripts/hero/build-hero.py)으로 신규 히어로샷 생성. 외부 API/시크릿 없음. 결정적 파이프라인. 머지 전 qa:foreign-photo + hero webp 규격/approved 정합성 검증 PASS. 저위험 자동 머지(2026-06-17 하린아빠 정책).")
+          # 검증(Verify 스텝)을 통과한 경우에만 도달. 생성한 head 커밋만 머지(--match-head-commit).
+          gh pr merge "$PR_URL" --squash --admin --delete-branch --match-head-commit "$HEAD_SHA"
