@@ -14,10 +14,36 @@ const AUTO_INTERVAL = 4000;
 export default function NewsCarousel({ news }: NewsCarouselProps) {
   const [current, setCurrent] = useState(0);
   const [isUserPaused, setIsUserPaused] = useState(false);
+  // 썸네일 로드 실패 id 집합 — 실패하면 썸네일 없이 현행 레이아웃으로 폴백.
+  const [failedThumbs, setFailedThumbs] = useState<Set<NewsMock["id"]>>(new Set());
+  // 기사 og:image를 클라이언트에서 점진 로드 — 뉴스 텍스트는 즉시 뜨고 사진은
+  // 뒤따라 채워져 홈 로딩이 og 추출에 막히지 않게 한다(서버 블로킹 회피).
+  const [ogThumbs, setOgThumbs] = useState<Record<NewsMock["id"], string | null>>({});
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   const slides = news.slice(0, 10);
   const len = slides.length;
+
+  // 슬라이드별 og:image를 캐시된 /api/og-meta로 비동기 조회(텍스트 렌더 비차단).
+  useEffect(() => {
+    let cancelled = false;
+    slides.forEach((item) => {
+      if (item.thumbnailUrl || ogThumbs[item.id] !== undefined) return;
+      if (!item.sourceUrl || item.sourceUrl === "#") return;
+      fetch(`/api/og-meta?url=${encodeURIComponent(item.sourceUrl)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (!cancelled) setOgThumbs((prev) => ({ ...prev, [item.id]: d?.image ?? null }));
+        })
+        .catch(() => {
+          if (!cancelled) setOgThumbs((prev) => ({ ...prev, [item.id]: null }));
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [news]);
 
   // len 변경 시 current clamp
   useEffect(() => {
@@ -93,6 +119,9 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
             const bg = team
               ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 35%, #1a1a1d) 0%, #1a1a1d 100%)`
               : "linear-gradient(135deg, #2a2a3d 0%, #1a1a1d 100%)";
+            // 썸네일이 있고 로드 실패하지 않았으면 왼쪽 사진 + 제목 우측. 없으면 현행 그대로.
+            const thumbUrl = item.thumbnailUrl ?? ogThumbs[item.id] ?? null;
+            const hasThumb = Boolean(thumbUrl) && !failedThumbs.has(item.id);
 
             return (
               <div
@@ -121,8 +150,22 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                       />
                     </div>
                   )}
+                  {hasThumb && (
+                    <div className="absolute left-[14px] top-4 bottom-4 w-[31%] overflow-hidden rounded-xl shadow-[0_2px_10px_rgba(0,0,0,0.35)]">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={thumbUrl as string}
+                        alt=""
+                        referrerPolicy="no-referrer"
+                        onError={() =>
+                          setFailedThumbs((prev) => new Set(prev).add(item.id))
+                        }
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                  )}
                   <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#1a1a1d] to-transparent" />
-                  <div className="absolute inset-x-0 bottom-0 px-4 pb-10">
+                  <div className={`absolute inset-x-0 bottom-0 pb-10 pr-4 ${hasThumb ? "pl-[47%]" : "px-4"}`}>
                     {item.label && (
                       <span className="inline-block px-2 py-0.5 mb-1 rounded-full bg-accent/80 text-xs font-semibold text-white">
                         {item.label}
