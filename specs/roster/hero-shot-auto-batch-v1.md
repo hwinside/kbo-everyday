@@ -1,6 +1,12 @@
 # 히어로샷 자동 배치 + 매핑검증 v1
 
-> Status: DRAFT (삼순 리뷰 대기)
+> ⚠️ **DEPRECATED (2026-06-14).** 이 문서가 설명하는 Gemini 이미지 생성 + remove.bg + 네이버 후보
+> 교차검증 파이프라인은 전면 폐기되었습니다(불쾌한 골짜기 품질 이슈, #cs 1781402263.616939).
+> 현재 히어로샷은 **KBO 공식 헤드샷 → 로컬 rembg 컷아웃**(`scripts/hero/build-hero.py`)으로 생성하며,
+> 정기 배치는 `.github/workflows/hero-shot-batch.yml`(외부 API/시크릿 0)이 담당합니다.
+> 아래 내용은 히스토리 보존용이며 더 이상 유효하지 않습니다.
+
+> Status: DEPRECATED (superseded by rembg pipeline)
 > Author: 삼식이 | 2026-06-05
 > Trigger: 하린아빠 #cs `1780211325.735349` — "다른 소스(네이버 검색)와 대조해서 잘못매핑 방지 + 정기 배치 운영"
 

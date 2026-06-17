@@ -16,7 +16,7 @@ on:
       - "src/lib/constants/foreign-id-map.ts"
       - "src/lib/constants/hero-approved-kboids.json"
       - "public/players/**"
-      - "public/players-hero-v2/**"
+      - "public/players-hero/**"
       - "scripts/validate-roster.mjs"
       - "scripts/qa/foreign-photo-coverage.ts"
       - ".github/workflows/validate-roster.yml"
@@ -34,7 +34,7 @@ on:
       - "src/lib/constants/foreign-id-map.ts"
       - "src/lib/constants/hero-approved-kboids.json"
       - "public/players/**"
-      - "public/players-hero-v2/**"
+      - "public/players-hero/**"
       - "scripts/validate-roster.mjs"
       - "scripts/qa/foreign-photo-coverage.ts"
 
