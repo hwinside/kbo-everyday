@@ -126,7 +126,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                     </div>
                   )}
                   {hasThumb && (
-                    <div className="absolute left-3 top-3 bottom-3 w-[38%] overflow-hidden rounded-xl">
+                    <div className="absolute left-[14px] top-4 bottom-4 w-[31%] overflow-hidden rounded-xl shadow-[0_2px_10px_rgba(0,0,0,0.35)]">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={item.thumbnailUrl as string}
@@ -140,7 +140,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                     </div>
                   )}
                   <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#1a1a1d] to-transparent" />
-                  <div className={`absolute inset-x-0 bottom-0 pb-10 pr-4 ${hasThumb ? "pl-[42%]" : "px-4"}`}>
+                  <div className={`absolute inset-x-0 bottom-0 pb-10 pr-4 ${hasThumb ? "pl-[47%]" : "px-4"}`}>
                     {item.label && (
                       <span className="inline-block px-2 py-0.5 mb-1 rounded-full bg-accent/80 text-xs font-semibold text-white">
                         {item.label}
