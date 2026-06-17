@@ -7,10 +7,48 @@ import GlassCard from "@/components/ui/GlassCard";
 import TeamLogo from "@/components/ui/TeamLogo";
 import { getTeamById, type TeamData } from "@/lib/constants/teams";
 import { getTeamColor } from "@/lib/utils/team";
+import { STAT_DEFS } from "@/lib/stats/title-defs";
+import { rankByStat } from "@/lib/stats/title-rankings";
+import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
 
 type FormResult = "W" | "L" | "D";
 
 interface TopPlayer { playerName: string; href: string | null; titles: { category: string; rank: number }[] }
+
+// 순위권에서 제외할 부문(순위 페이지 미노출 — 하린아빠 지정: 2루타+3루타·출전경기).
+const TOPPLAYER_DENY = new Set(["doubles", "games_batter", "games_pitcher"]);
+
+// 부문 표기명: STAT_DEFS desc("홈런 랭킹"/"삼진 랭킹 (타자)") → "홈런"/"삼진"
+function catName(statKey: string): string {
+  const d = STAT_DEFS[statKey];
+  if (!d) return statKey;
+  return d.desc.replace(/\s*랭킹.*$/, "").replace(/\s*\(.*\)\s*$/, "").trim();
+}
+
+// /api/stats(batter+pitcher) → 마이팀 선수별 top5 타이틀 묶음(공식 랭킹 소스).
+function computeTopPlayers(batters: Record<string, unknown>[], pitchers: Record<string, unknown>[], teamShort: string): TopPlayer[] {
+  const byPlayer = new Map<string, TopPlayer>();
+  for (const [statKey, def] of Object.entries(STAT_DEFS)) {
+    if (TOPPLAYER_DENY.has(statKey)) continue;
+    const rows = (def.type === "batter" ? batters : pitchers) as Parameters<typeof rankByStat>[0];
+    for (const r of rankByStat(rows, statKey)) {
+      if (r.rank > 5) continue;
+      if (String((r as { team?: string }).team ?? "") !== teamShort) continue;
+      const name = String((r as { name?: string }).name ?? "");
+      if (!name) continue;
+      const entry = byPlayer.get(name) ?? {
+        playerName: name,
+        href: getCanonicalPlayerHref({ name, team: teamShort, kboId: (r as { kboId?: string }).kboId }),
+        titles: [],
+      };
+      entry.titles.push({ category: statKey, rank: r.rank });
+      byPlayer.set(name, entry);
+    }
+  }
+  return [...byPlayer.values()]
+    .map((p) => ({ ...p, titles: p.titles.sort((a, b) => a.rank - b.rank) }))
+    .sort((a, b) => Math.min(...a.titles.map((t) => t.rank)) - Math.min(...b.titles.map((t) => t.rank)));
+}
 
 interface TeamCardData {
   standing: {
@@ -23,7 +61,6 @@ interface TeamCardData {
   recentForm: FormResult[];
   nextGame: { gameId: string; date: string; time: string; stadium: string; home: boolean; opponentId: number; myStarter: string | null; oppStarter: string | null } | null;
   rankHistory?: { date: string; rank: number }[];
-  topPlayers?: TopPlayer[];
   weeklyBatting?: { week: string; avg: number }[];
   weeklyPitching?: { week: string; era: number }[];
   communityNewPosts?: number;
@@ -34,10 +71,6 @@ interface TeamCardProps {
   gameSlot?: ReactNode;
 }
 
-const CAT_LABEL: Record<string, string> = {
-  avg: "타율", hr: "홈런", rbi: "타점", sb: "도루", era: "평균자책",
-  k: "탈삼진", wins: "다승", saves: "세이브", whip: "WHIP",
-};
 
 // 순위 시계열 → 좌표(rank 1=위, 10=아래). 다운샘플 ~60점. yOf로 빗금 가이드도 공유.
 function rankPoints(history: { rank: number }[], w: number, h: number, pad: number) {
@@ -105,6 +138,7 @@ function MiniStatChart({ title, values, fmt, higherIsBetter, accent }: {
 export default function TeamCard({ team, gameSlot }: TeamCardProps) {
   const [data, setData] = useState<TeamCardData | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [topPlayers, setTopPlayers] = useState<TopPlayer[]>([]);
   const accent = getTeamColor(team.id);
 
   useEffect(() => {
@@ -116,12 +150,28 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
     return () => { cancelled = true; };
   }, [team.slug]);
 
+  // 순위권 선수 — 공식 랭킹 소스(/api/stats + rankByStat). 리더보드와 동일.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      fetch(`/api/stats?type=batter&season=2026`).then((r) => (r.ok ? r.json() : [])),
+      fetch(`/api/stats?type=pitcher&season=2026`).then((r) => (r.ok ? r.json() : [])),
+    ])
+      .then(([b, p]) => {
+        if (cancelled) return;
+        const batters = Array.isArray(b) ? b : (b?.stats ?? []);
+        const pitchers = Array.isArray(p) ? p : (p?.stats ?? []);
+        setTopPlayers(computeTopPlayers(batters, pitchers, team.shortName));
+      })
+      .catch(() => { /* 순위권 실패해도 카드 나머지는 정상 */ });
+    return () => { cancelled = true; };
+  }, [team.shortName]);
+
   if (loaded && !data?.standing && !data?.nextGame && !data?.recentForm?.length) return null;
 
   const streak = formatStreak(data?.standing?.streak ?? null);
   const st = data?.standing;
   const rg = data?.rankHistory ? rankPoints(data.rankHistory, 300, 120, 10) : null;
-  const topPlayers = data?.topPlayers ?? [];
 
   return (
     <GlassCard className="p-5 mb-3">
@@ -213,7 +263,7 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
                         {p.titles.map((t, j) => (
                           <span key={j}>
                             {j > 0 && ", "}
-                            {CAT_LABEL[t.category] ?? t.category} <b style={{ color: t.rank === 1 ? "#ffd24a" : "var(--text-secondary)" }}>{t.rank}위</b>
+                            {catName(t.category)} <b style={{ color: t.rank === 1 ? "#ffd24a" : "var(--text-secondary)" }}>{t.rank}위</b>
                           </span>
                         ))}
                       </span>

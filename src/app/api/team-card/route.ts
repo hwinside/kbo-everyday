@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchStandings, fetchGames } from "@/lib/crawler/kbo-api";
 import { getMonthGames } from "@/lib/crawler/season-games-cache";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
 import { TEAMS } from "@/lib/constants/teams";
 
 // GET /api/team-card?team=<slug>
@@ -139,43 +138,8 @@ export async function GET(req: NextRequest) {
       // 스냅샷 조회 실패해도 카드의 나머지는 정상 반환
     }
 
-    // 5) 순위권 선수 — daily_stats_snapshot 최신일, 팀 소속 부문 rank<=5.
-    //    선수별로 묶고(여러 타이틀 합침) 선수 페이지 href 부착.
-    let topPlayers: { playerName: string; href: string | null; titles: { category: string; rank: number }[] }[] = [];
-    try {
-      const { data: latest } = await supabaseAdmin
-        .from("daily_stats_snapshot").select("date").order("date", { ascending: false }).limit(1);
-      const latestDate = latest?.[0]?.date;
-      if (latestDate) {
-        const { data } = await supabaseAdmin
-          .from("daily_stats_snapshot")
-          .select("category, rank, player_name, value")
-          .eq("date", latestDate)
-          .eq("team", team.shortName)
-          .lte("rank", 5)
-          .order("rank", { ascending: true });
-        if (Array.isArray(data)) {
-          // 선수별 그룹핑: { name -> [{category, rank}] }
-          const byPlayer = new Map<string, { category: string; rank: number }[]>();
-          for (const r of data) {
-            const name = String(r.player_name);
-            const arr = byPlayer.get(name) ?? [];
-            arr.push({ category: String(r.category), rank: Number(r.rank) });
-            byPlayer.set(name, arr);
-          }
-          topPlayers = [...byPlayer.entries()]
-            .map(([playerName, titles]) => ({
-              playerName,
-              href: getCanonicalPlayerHref({ name: playerName, team: team.shortName }),
-              titles: titles.sort((a, b) => a.rank - b.rank),
-            }))
-            // 최고 순위(가장 낮은 rank) 우선 정렬
-            .sort((a, b) => Math.min(...a.titles.map((t) => t.rank)) - Math.min(...b.titles.map((t) => t.rank)));
-        }
-      }
-    } catch {
-      // 순위권 조회 실패해도 나머지 정상 반환
-    }
+    // 5) 순위권 선수는 TeamCard 클라이언트가 /api/stats + rankByStat(공식 랭킹 소스)로
+    //    계산한다(리더보드와 100% 동일). daily_stats_snapshot은 부문이 9개뿐이라 미사용.
 
     // 6) 주간 팀 타율/방어율 추이 — player_game_logs 주(월요일 기준) 단위 합산
     let weeklyBatting: { week: string; avg: number }[] = [];
@@ -220,7 +184,7 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json(
-      { team: team.slug, standing, recentForm, nextGame, rankHistory, topPlayers, weeklyBatting, weeklyPitching, communityNewPosts },
+      { team: team.slug, standing, recentForm, nextGame, rankHistory, weeklyBatting, weeklyPitching, communityNewPosts },
       { headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600" } },
     );
   } catch (e: unknown) {
