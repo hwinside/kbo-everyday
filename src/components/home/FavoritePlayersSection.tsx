@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import SectionHeader from "@/components/ui/SectionHeader";
@@ -9,6 +10,7 @@ import MiniTrendSparkline from "@/components/home/MiniTrendSparkline";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getTeamById } from "@/lib/constants/teams";
 import { getTeamColor } from "@/lib/utils/team";
+import heroApprovedList from "@/lib/constants/hero-approved-kboids.json";
 import {
   toWeeklyTrend,
   recentAverage,
@@ -36,6 +38,11 @@ interface RosterEntry {
 const rosterMap = new Map(
   (rosterData as RosterEntry[]).filter((r) => r.backNo).map((r) => [r.kboId, r])
 );
+
+// 히어로 컷아웃(배경 제거)은 검수 통과 선수만 — 없으면 헤드샷 아바타 폴백
+const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
+const heroCutoutUrl = (kboId: string): string | null =>
+  HERO_APPROVED.has(kboId) ? `/players-hero/${kboId}.webp` : null;
 
 interface BatterStat {
   playerId: string;
@@ -245,83 +252,99 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
               ? Number(rosterEntry.backNo)
               : null;
 
+          const heroUrl = heroCutoutUrl(player.playerId);
+
           return (
             <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
-              <div className="flex gap-2 rounded-2xl border border-border bg-bg-secondary">
-                {/* 좌측: 동그라미 선수 사진 — 카드 가운데 정렬 (원안 유지, 30% 확대) */}
-                <div className="w-[96px] flex-shrink-0 self-stretch flex items-center justify-center py-3">
-                  <PlayerAvatar
-                    name={player.name}
-                    teamId={player.teamId}
-                    photoUrl={getPlayerPhotoUrl(player.name, player.playerId)}
-                    number={displayNumber ?? player.number}
-                    size={72}
-                  />
-                </div>
-
-                {/* 우측: 정보 */}
-                <div className="flex-1 min-w-0 py-3 pr-3 pl-1">
-                  <div className="flex justify-between items-start gap-2">
-                    <div className="min-w-0">
-                      <p className="text-[16px] leading-[22px] font-semibold text-text-primary truncate">{player.name}</p>
-                      <p className="text-xs leading-[18px] text-text-tertiary">
-                        {displayNumber ? `#${displayNumber} ${player.position}` : player.position}
-                      </p>
-                    </div>
-                    {headlineText ? (
-                      <div className="text-right flex-shrink-0">
-                        <p className="text-[11px] leading-[14px] text-text-tertiary">{headlineLabel}</p>
-                        <div className="flex items-baseline justify-end gap-1">
-                          <span className="text-[22px] leading-[26px] font-bold tabular-nums text-text-primary">
-                            {headlineText}
-                          </span>
-                          {direction ? <TrendIcon dir={direction} /> : null}
-                        </div>
+              <div className="rounded-2xl overflow-hidden border border-border bg-bg-secondary">
+                {/* 상단: 히어로샷 + 기본정보 (선수 무관 동일 높이) */}
+                <div className="flex gap-2.5 pr-3.5 py-3 min-h-[116px]">
+                  <div
+                    className="w-[92px] flex-shrink-0 self-stretch flex items-end justify-center"
+                    style={{ background: `linear-gradient(160deg, ${teamColor}1F, transparent 72%)` }}
+                  >
+                    {heroUrl ? (
+                      <Image
+                        src={heroUrl}
+                        alt={player.name}
+                        width={92}
+                        height={116}
+                        unoptimized
+                        className="w-[92px] h-auto object-contain"
+                      />
+                    ) : (
+                      <div className="self-center">
+                        <PlayerAvatar
+                          name={player.name}
+                          teamId={player.teamId}
+                          photoUrl={getPlayerPhotoUrl(player.name, player.playerId)}
+                          number={displayNumber ?? player.number}
+                          size={72}
+                        />
                       </div>
-                    ) : null}
+                    )}
                   </div>
 
-                  {headlineText ? (
-                    <>
-                      {/* 주간 추이 미니 스파크라인 (2주 이상부터) + 설명 */}
-                      {weekly.length >= 2 ? (
-                        <div className="w-full mt-1.5">
-                          <p className="text-[10px] leading-[13px] text-text-tertiary mb-0.5">
-                            시즌 주간 페이스 · {isPitcher ? "ERA" : "타율"}
-                          </p>
-                          <MiniTrendSparkline data={weekly} teamColor={teamColor} isPitcher={isPitcher} />
-                        </div>
-                      ) : null}
-
-                      {/* 시즌 누적 (보조) */}
-                      {seasonValid ? (
-                        <p className="text-[11px] leading-[15px] text-text-tertiary mt-1">
-                          시즌 {isPitcher ? (seasonEra as number).toFixed(2) : fmtAvg(seasonAvg as number)}
-                          {seasonSub ? ` · ${seasonSub}` : ""}
+                  <div className="flex-1 min-w-0 pt-0.5">
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[16px] leading-[22px] font-semibold text-text-primary truncate">{player.name}</p>
+                        <p className="text-xs leading-[18px] text-text-tertiary">
+                          {displayNumber ? `#${displayNumber} ${player.position}` : player.position}
                         </p>
-                      ) : null}
-
-                      {/* 부문 타이틀 — 5위 이내 전부, 순위순. 약어/생략 없이 그대로 노출 */}
-                      {titles.length > 0 ? (
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {titles.map((t, i) => (
-                            <span
-                              key={t.statKey}
-                              className="text-[11px] leading-[14px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap"
-                              style={{ color: teamColor, backgroundColor: `${teamColor}1F` }}
-                            >
-                              {i === 0 ? "🏆 " : ""}{t.name} {t.rank}위
+                      </div>
+                      {headlineText ? (
+                        <div className="text-right flex-shrink-0">
+                          <p className="text-[11px] leading-[14px] text-text-tertiary">{headlineLabel}</p>
+                          <div className="flex items-baseline justify-end gap-1">
+                            <span className="text-[22px] leading-[26px] font-bold tabular-nums text-text-primary">
+                              {headlineText}
                             </span>
-                          ))}
+                            {direction ? <TrendIcon dir={direction} /> : null}
+                          </div>
                         </div>
                       ) : null}
-                    </>
-                  ) : (
-                    <p className="text-[12px] leading-[16px] text-text-tertiary mt-2">
-                      2026 시즌 기록 준비 중
-                    </p>
-                  )}
+                    </div>
+
+                    {headlineText ? (
+                      <>
+                        {weekly.length >= 2 ? (
+                          <div className="w-full mt-1.5">
+                            <p className="text-[10px] leading-[13px] text-text-tertiary mb-0.5">
+                              시즌 주간 페이스 · {isPitcher ? "ERA" : "타율"}
+                            </p>
+                            <MiniTrendSparkline data={weekly} teamColor={teamColor} isPitcher={isPitcher} />
+                          </div>
+                        ) : null}
+                        {seasonValid ? (
+                          <p className="text-[11px] leading-[15px] text-text-tertiary mt-1">
+                            시즌 {isPitcher ? (seasonEra as number).toFixed(2) : fmtAvg(seasonAvg as number)}
+                            {seasonSub ? ` · ${seasonSub}` : ""}
+                          </p>
+                        ) : null}
+                      </>
+                    ) : (
+                      <p className="text-[12px] leading-[16px] text-text-tertiary mt-2">
+                        2026 시즌 기록 준비 중
+                      </p>
+                    )}
+                  </div>
                 </div>
+
+                {/* 하단: 부문 타이틀 — 카드 전체 폭, 5위 이내 전부 (폰트=시즌 라인 크기로 축소해 한 줄에 최대한) */}
+                {titles.length > 0 ? (
+                  <div className="border-t border-border px-3.5 py-2.5 flex flex-wrap gap-1.5">
+                    {titles.map((t, i) => (
+                      <span
+                        key={t.statKey}
+                        className="text-[11px] leading-[15px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap"
+                        style={{ color: teamColor, backgroundColor: `${teamColor}1F` }}
+                      >
+                        {i === 0 ? "🏆 " : ""}{t.name} {t.rank}위
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </Link>
           );
