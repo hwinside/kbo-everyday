@@ -2,11 +2,13 @@ name: Hero Shot Auto Batch
 
 # roster 선수 중 히어로샷이 없고 공식 헤드샷(public/players/)이 있는 선수를 자동 탐지
 # → 로컬 rembg 파이프라인(scripts/hero/build-hero.py)으로 컷아웃 생성 → allowlist 갱신
-# → 리뷰용 PR 생성.
+# → PR 생성 후 자동 머지.
 #
 # 2026-06-14 재작성: 이전 Gemini 이미지 생성 + remove.bg + naver 후보 교차검증 파이프라인을
 # 전면 폐기. KBO 공식 헤드샷을 소스로 한 결정적(deterministic) 로컬 컷아웃으로 전환해
-# 불쾌한 골짜기 제거 + 외부 API/시크릿 의존 0. 자동 머지 대신 리뷰 PR(머지 게이트 준수).
+# 불쾌한 골짜기 제거 + 외부 API/시크릿 의존 0.
+# 2026-06-17: 소스가 KBO 공식샷 그대로(AI 생성 없음)라 매핑 외 리스크가 없어 자동 머지로 전환
+# (하린아빠 결정, #cs 1781402263.616939). 신규 선수 채우기 전용(--missing-only)이라 기존 히어로는 불변.
 
 on:
   schedule:
@@ -47,7 +49,7 @@ jobs:
             echo "신규 히어로 없음 — 변경 사항 없이 종료."
           fi
 
-      - name: Open review PR (changes only)
+      - name: Create + auto-merge PR (changes only)
         if: steps.gen.outputs.changed == 'true'
         run: |
           set -e
@@ -58,6 +60,8 @@ jobs:
           git add public/players-hero src/lib/constants/hero-approved-kboids.json
           git commit -m "chore(hero): 자동 배치 — 신규 히어로샷 생성 (rembg 컷아웃)"
           git push origin "$BRANCH"
-          gh pr create --base main --head "$BRANCH" \
+          PR_URL=$(gh pr create --base main --head "$BRANCH" \
             --title "chore(hero): 자동 히어로샷 배치 (rembg)" \
-            --body "공식 헤드샷(public/players/) → rembg 로컬 컷아웃(scripts/hero/build-hero.py)으로 신규 히어로샷 생성. 외부 API/시크릿 없음. 결정적 파이프라인. 리뷰 후 머지(머지 게이트 준수). 생성 로그는 워크플로 실행의 'Generate missing heroes' 스텝 참조."
+            --body "공식 헤드샷(public/players/) → rembg 로컬 컷아웃(scripts/hero/build-hero.py)으로 신규 히어로샷 생성. 외부 API/시크릿 없음. 결정적 파이프라인. 저위험 자동 머지(2026-06-17 하린아빠 정책). 생성 로그는 워크플로 실행의 'Generate missing heroes' 스텝 참조.")
+          # 소스가 KBO 공식샷 그대로라 결정적·저위험 → 즉시 squash 자동 머지.
+          gh pr merge "$PR_URL" --squash --admin --delete-branch
