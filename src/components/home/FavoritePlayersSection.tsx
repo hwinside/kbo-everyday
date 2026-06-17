@@ -179,7 +179,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
   return (
     <div>
       <SectionHeader title="⭐ 나의 최애 선수" />
-      <div className="flex gap-3 overflow-x-auto hide-scrollbar pb-2">
+      <div className="flex items-stretch gap-3 overflow-x-auto hide-scrollbar pb-2">
         {favPlayers.map((player) => {
           const live = liveStats[player.playerId];
           const isPitcher = classifyIsPitcher(player);
@@ -241,8 +241,8 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
               : null;
 
           return (
-            <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
-              <div className="min-w-[168px] min-h-[208px] rounded-2xl p-3 flex flex-col items-center gap-2 border border-border bg-bg-secondary">
+            <Link key={player.playerId} href={`/community/players/${player.playerId}`} className="h-full">
+              <div className="min-w-[168px] h-full min-h-[224px] rounded-2xl p-3 flex flex-col items-center gap-2 border border-border bg-bg-secondary">
                 <PlayerAvatar
                   name={player.name}
                   teamId={player.teamId}
@@ -285,15 +285,17 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                       </p>
                     ) : null}
 
-                    {/* 부문 타이틀 라벨 (5위 이내) */}
-                    {topTitle ? (
-                      <span
-                        className="mt-1 text-[10px] leading-[14px] font-semibold px-2 py-0.5 rounded-full"
-                        style={{ color: teamColor, backgroundColor: `${teamColor}1F` }}
-                      >
-                        🏆 {topTitle.name} {topTitle.rank}위
-                      </span>
-                    ) : null}
+                    {/* 부문 타이틀 라벨 (5위 이내) — 슬롯 높이 항상 확보해 라벨 유무로 카드 높이가 변하지 않게 */}
+                    <div className="mt-1 h-[20px] flex items-center justify-center">
+                      {topTitle ? (
+                        <span
+                          className="text-[10px] leading-[14px] font-semibold px-2 py-0.5 rounded-full"
+                          style={{ color: teamColor, backgroundColor: `${teamColor}1F` }}
+                        >
+                          🏆 {topTitle.name} {topTitle.rank}위
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
                 ) : (
                   <p className="text-[11px] leading-[16px] text-text-tertiary text-center">
