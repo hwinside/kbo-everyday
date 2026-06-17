@@ -11,6 +11,7 @@ import { getMyTeamId } from "@/lib/store/myteam";
 import { getFavoritePlayers } from "@/lib/store/favorites";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { STAT_DEFS } from "@/lib/stats/title-defs";
+import { rankByStat } from "@/lib/stats/title-rankings";
 
 import Link from "next/link";
 
@@ -85,59 +86,8 @@ function RankingContent() {
       .then((r) => r.json())
       .then((data: { stats?: PlayerRow[] }) => {
         const rows: PlayerRow[] = data.stats || [];
-        // 비율 스탯 필터링:
-        // - 타자: avg/obp/ops/slg → 최소 30타석 (시즌 초 기준)
-        // - 투수: era/whip → 최소 12이닝 (KBO 공식 규정이닝 기준, 시즌 초반)
-        // 누적 스탯(hr/rbi/wins/so 등)은 최소 경기수만 체크
-        const parseIP = (ip: string | number): number => {
-          if (typeof ip === "number") return ip;
-          const s = String(ip).trim();
-          const match = s.match(/^(\d+)(?:\s+(\d+)\/(\d+))?$/);
-          if (!match) return 0;
-          const whole = parseInt(match[1]) || 0;
-          const frac = match[2] && match[3] ? parseInt(match[2]) / parseInt(match[3]) : 0;
-          return whole + frac;
-        };
-        const isRateStat = ["avg", "era", "obp", "ops", "whip"].includes(stat);
-        const filtered = isRateStat
-          ? def.type === "batter"
-            ? rows.filter((p) => (Number(p['pa']) || 0) >= 30) // 타자: 최소 30타석
-            : rows.filter((p) => parseIP((p['ip'] as string | number) || 0) >= 12) // 투수: 최소 12이닝
-          : def.type === "batter"
-            ? rows.filter((p) => (p.games || 0) >= 10)
-            : rows.filter((p) => (p.games || 0) >= 5);
-
-        const sorted = [...filtered].sort((a, b) => {
-          let aVal = Number(a[def.key] ?? 0) || 0;
-          let bVal = Number(b[def.key] ?? 0) || 0;
-          if (stat === "doubles") {
-            aVal = (a.doubles || 0) + (a.triples || 0);
-            bVal = (b.doubles || 0) + (b.triples || 0);
-          }
-          return def.higherIsBetter ? bVal - aVal : aVal - bVal;
-        });
-
-        // 공동 순위 적용 (competition ranking: 같은 값이면 같은 rank, 다음 순위는 건너뛰기)
-        const withRank: PlayerRow[] = sorted.map((p, i) => {
-          let currentVal = Number(p[def.key] ?? 0) || 0;
-          if (stat === "doubles") {
-            currentVal = (p.doubles || 0) + (p.triples || 0);
-          }
-          let rank = 1;
-          if (i > 0) {
-            let prevVal = Number(sorted[i - 1][def.key] ?? 0) || 0;
-            if (stat === "doubles") {
-              prevVal = (sorted[i - 1].doubles || 0) + (sorted[i - 1].triples || 0);
-            }
-            if (currentVal === prevVal) {
-              rank = sorted[i - 1].rank || i;
-            } else {
-              rank = i + 1;
-            }
-          }
-          return { ...p, rank };
-        });
-
+        // 자격 필터 + 정렬 + 공동순위 = 공용 rankByStat (홈 최애선수 카드 타이틀과 동일 SSOT)
+        const withRank = rankByStat(rows, stat) as PlayerRow[];
         setPlayers(withRank.slice(0, 100));
         setLoading(false);
       })
