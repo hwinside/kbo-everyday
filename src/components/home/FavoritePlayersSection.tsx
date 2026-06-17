@@ -214,9 +214,9 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
           const weekly = toWeeklyTrend(logs, isPitcher);
           const direction = weeklyDirection(weekly, isPitcher);
 
-          // 부문 타이틀 5위 이내면 대표 1개를 하단에 라벨로 (예: "홈런 1위")
+          // 부문 타이틀 5위 이내면 전부 라벨로 (순위순). 타이틀 하나하나가 영광 — 약어/생략 없이 그대로
           const league = isPitcher ? leagueStats.pitcher : leagueStats.batter;
-          const topTitle = getPlayerTitles(league, player.playerId, player.name, isPitcher)[0] ?? null;
+          const titles = getPlayerTitles(league, player.playerId, player.name, isPitcher);
 
           const recentLabel = isPitcher
             ? `최근 ${pitcherEra ? outsToInnings(pitcherEra.outs) : 9}이닝 ERA`
@@ -290,17 +290,20 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                       </p>
                     ) : null}
 
-                    {/* 부문 타이틀 라벨 (5위 이내) — 슬롯 높이 항상 확보해 라벨 유무로 카드 높이가 변하지 않게 */}
-                    <div className="mt-1 h-[20px] flex items-center justify-center">
-                      {topTitle ? (
-                        <span
-                          className="text-[10px] leading-[14px] font-semibold px-2 py-0.5 rounded-full"
-                          style={{ color: teamColor, backgroundColor: `${teamColor}1F` }}
-                        >
-                          🏆 {topTitle.name} {topTitle.rank}위
-                        </span>
-                      ) : null}
-                    </div>
+                    {/* 부문 타이틀 — 5위 이내 전부, 순위순. 약어/생략 없이 그대로 노출 */}
+                    {titles.length > 0 ? (
+                      <div className="mt-1 flex flex-wrap gap-1 justify-center">
+                        {titles.map((t, i) => (
+                          <span
+                            key={t.statKey}
+                            className="text-[10px] leading-[14px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap"
+                            style={{ color: teamColor, backgroundColor: `${teamColor}1F` }}
+                          >
+                            {i === 0 ? "🏆 " : ""}{t.name} {t.rank}위
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <p className="text-[11px] leading-[16px] text-text-tertiary text-center">
