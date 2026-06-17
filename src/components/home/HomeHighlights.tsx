@@ -5,6 +5,7 @@ import { Play } from "lucide-react";
 import { getFavoritePlayers } from "@/lib/store/favorites";
 import { TEAMS } from "@/lib/constants/teams";
 import ReelViewer from "@/components/home/ReelViewer";
+import { getShortsVisible, SHORTS_PREF_EVENT } from "@/lib/store/shorts-pref";
 
 /** team shortName lookup by various keys */
 const TEAM_LABEL: Record<string, string> = {};
@@ -35,6 +36,16 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
   const [reelIndex, setReelIndex] = useState<number | null>(null);
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [shortsVisible, setShortsVisible] = useState(true);
+
+  // 마이페이지 '숏츠 표시' 토글 반영 (기기 로컬 설정, 변경 즉시 반영)
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setShortsVisible(getShortsVisible());
+    const onChange = () => setShortsVisible(getShortsVisible());
+    window.addEventListener(SHORTS_PREF_EVENT, onChange);
+    return () => window.removeEventListener(SHORTS_PREF_EVENT, onChange);
+  }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -77,7 +88,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
       }).catch(() => setLoading(false));
   }, [team]);
 
-  if (loading || videos.length === 0) return null;
+  if (loading || videos.length === 0 || !shortsVisible) return null;
 
   return (
     <section className="mt-6">
