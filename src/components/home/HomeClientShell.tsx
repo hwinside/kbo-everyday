@@ -273,8 +273,16 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     return nextWidgetGame ?? undefined;
   }, [myTeamGame, nextWidgetGame]);
 
+  // 1분마다 현재 시각 갱신 → 홈을 켜둔 채 06:00을 넘겨도 경기카드가 자동 전환됨.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  const isOvernight = ((new Date(nowMs).getUTCHours() + 9) % 24) < 6;
+
   // 팀카드 임베드 경기카드용 — 06시 경계.
-  //  · 자정~06:00: 전날 종료 경기 유지(overnightGame) → 06시부터 오늘 경기/다음 예정으로 전환
+  //  · 자정~06:00(isOvernight): 전날 종료 경기 유지(overnightGame)
   //  · 06:00~: 오늘 경기(종료 당일=결과) 우선, 없으면 다음 예정경기
   const embeddedGame = useMemo<MyTeamHeroGame | undefined>(() => {
     const coerce = (g: WidgetGame): MyTeamHeroGame => ({
@@ -283,17 +291,15 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       runner1b: false, runner2b: false, runner3b: false,
       currentBatter: null, currentPitcher: null, isTop: true,
     });
-    const kstHour = (new Date().getUTCHours() + 9) % 24;
-    if (kstHour < 6 && overnightGame) return coerce(overnightGame);
+    if (isOvernight && overnightGame) return coerce(overnightGame);
     if (myTeamGame) return myTeamGame;
     if (nextWidgetGame) return coerce(nextWidgetGame);
     return undefined;
-  }, [myTeamGame, nextWidgetGame, overnightGame]);
+  }, [myTeamGame, nextWidgetGame, overnightGame, isOvernight]);
 
-  // 자정~06:00에만 전날 경기를 조회해 종료 경기를 계속 노출.
+  // 자정~06:00에만 전날 경기 조회. 06:00 넘어가면 isOvernight=false → 비우고 재계산.
   useEffect(() => {
-    const kstHour = (new Date().getUTCHours() + 9) % 24;
-    if (kstHour >= 6 || !myTeamId) { setOvernightGame(null); return; }
+    if (!isOvernight || !myTeamId) { setOvernightGame(null); return; }
     const teamId = myTeamId;
     let cancelled = false;
     const yday = formatKSTDateOffset(-1);
@@ -307,7 +313,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       })
       .catch(() => { /* 전날 경기 조회 실패는 무시 */ });
     return () => { cancelled = true; };
-  }, [myTeamId]);
+  }, [myTeamId, isOvernight]);
 
   useEffect(() => {
     if (!myTeamId) {

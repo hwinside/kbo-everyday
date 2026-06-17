@@ -7,49 +7,73 @@ import GlassCard from "@/components/ui/GlassCard";
 import TeamLogo from "@/components/ui/TeamLogo";
 import { getTeamById, type TeamData } from "@/lib/constants/teams";
 import { getTeamColor } from "@/lib/utils/team";
-import { STAT_DEFS } from "@/lib/stats/title-defs";
-import { rankByStat } from "@/lib/stats/title-rankings";
 import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
 
 type FormResult = "W" | "L" | "D";
 
-interface TopPlayer { playerName: string; href: string | null; titles: { category: string; rank: number }[] }
+interface TopPlayer { playerName: string; href: string | null; titles: { label: string; rank: number }[] }
 
-// 순위권 노출 부문 = 순위 페이지 타이틀 탭(BatterTitleTab/PitcherTitleTab) allowlist ∩ STAT_DEFS.
-// 타이틀 탭: 타자[타율·홈런·타점·도루·OPS·출루율] 투수[평균자책·다승·탈삼진·세이브·홀드·WHIP].
-// (안타·장타율은 STAT_DEFS 미정의라 제외 / 득점·볼넷·사구·2루타+3루타·출전경기는 탭 미노출이라 제외)
-const TOPPLAYER_ALLOW = new Set([
-  "avg", "hr", "rbi", "sb", "ops", "obp",
-  "era", "wins", "so_pitcher", "saves", "holds", "whip",
-]);
+type StatRow = Record<string, unknown>;
+const num = (v: unknown) => Number(v ?? 0) || 0;
 
-// 부문 표기명: STAT_DEFS desc("홈런 랭킹"/"삼진 랭킹 (타자)") → "홈런"/"삼진"
-function catName(statKey: string): string {
-  const d = STAT_DEFS[statKey];
-  if (!d) return statKey;
-  return d.desc.replace(/\s*랭킹.*$/, "").replace(/\s*\(.*\)\s*$/, "").trim();
+// 순위 페이지 타이틀 탭(BatterTitleTab/PitcherTitleTab)과 100% 동일한 부문/자격/정렬.
+// 자격: rate 스탯(타율·OPS·출루율·장타율·ERA·WHIP)은 규정타석/이닝 충족(qualifiedRate=1),
+//       counting 스탯은 전체. (득점·볼넷·사구·2루타+3루타·출전경기는 탭에 없어 자동 제외)
+interface CatDef { key: string; label: string; desc: boolean; pool: "qual" | "all" | "ratefield" }
+const BATTER_CATS: CatDef[] = [
+  { key: "avg", label: "타율", desc: true, pool: "qual" },
+  { key: "hr", label: "홈런", desc: true, pool: "all" },
+  { key: "rbi", label: "타점", desc: true, pool: "all" },
+  { key: "hits", label: "안타", desc: true, pool: "all" },
+  { key: "sb", label: "도루", desc: true, pool: "all" },
+  { key: "ops", label: "OPS", desc: true, pool: "ratefield" },
+  { key: "obp", label: "출루율", desc: true, pool: "ratefield" },
+  { key: "slg", label: "장타율", desc: true, pool: "ratefield" },
+];
+const PITCHER_CATS: CatDef[] = [
+  { key: "era", label: "평균자책", desc: false, pool: "qual" },
+  { key: "wins", label: "다승", desc: true, pool: "all" },
+  { key: "so", label: "탈삼진", desc: true, pool: "all" },
+  { key: "saves", label: "세이브", desc: true, pool: "all" },
+  { key: "holds", label: "홀드", desc: true, pool: "all" },
+  { key: "whip", label: "WHIP", desc: false, pool: "ratefield" },
+];
+
+// 공동 순위(competition ranking), 상위 20 — 타이틀 탭 sorted()와 동일.
+function rankPool(rows: StatRow[], key: string, desc: boolean): (StatRow & { _rank: number })[] {
+  const arr = [...rows].sort((a, b) => (desc ? num(b[key]) - num(a[key]) : num(a[key]) - num(b[key])));
+  let cur = 1;
+  return arr.slice(0, 20).map((r, i) => {
+    if (i > 0 && num(r[key]) !== num(arr[i - 1][key])) cur = i + 1;
+    return { ...r, _rank: cur };
+  });
 }
 
-// /api/stats(batter+pitcher) → 마이팀 선수별 top5 타이틀 묶음(공식 랭킹 소스).
-function computeTopPlayers(batters: Record<string, unknown>[], pitchers: Record<string, unknown>[], teamShort: string): TopPlayer[] {
+// /api/stats(batter+pitcher) → 마이팀 선수별 top5 타이틀 묶음(타이틀 탭과 동일).
+function computeTopPlayers(batters: StatRow[], pitchers: StatRow[], teamShort: string): TopPlayer[] {
   const byPlayer = new Map<string, TopPlayer>();
-  for (const [statKey, def] of Object.entries(STAT_DEFS)) {
-    if (!TOPPLAYER_ALLOW.has(statKey)) continue;
-    const rows = (def.type === "batter" ? batters : pitchers) as Parameters<typeof rankByStat>[0];
-    for (const r of rankByStat(rows, statKey)) {
-      if (r.rank > 5) continue;
-      if (String((r as { team?: string }).team ?? "") !== teamShort) continue;
-      const name = String((r as { name?: string }).name ?? "");
-      if (!name) continue;
-      const entry = byPlayer.get(name) ?? {
-        playerName: name,
-        href: getCanonicalPlayerHref({ name, team: teamShort, kboId: (r as { kboId?: string }).kboId }),
-        titles: [],
-      };
-      entry.titles.push({ category: statKey, rank: r.rank });
-      byPlayer.set(name, entry);
+  const qualB = batters.filter((b) => b.qualifiedRate === 1);
+  const qualP = pitchers.filter((p) => p.qualifiedRate === 1);
+  const collect = (allPool: StatRow[], qualPool: StatRow[], cats: CatDef[]) => {
+    for (const c of cats) {
+      const pool = c.pool === "qual" ? qualPool : c.pool === "ratefield" ? qualPool.filter((r) => r[c.key]) : allPool;
+      for (const r of rankPool(pool, c.key, c.desc)) {
+        if (r._rank > 5) continue;
+        if (String(r.team ?? "") !== teamShort) continue;
+        const name = String(r.name ?? "");
+        if (!name) continue;
+        const entry = byPlayer.get(name) ?? {
+          playerName: name,
+          href: getCanonicalPlayerHref({ name, team: teamShort, kboId: r.kboId as string }),
+          titles: [],
+        };
+        entry.titles.push({ label: c.label, rank: r._rank });
+        byPlayer.set(name, entry);
+      }
     }
-  }
+  };
+  collect(batters, qualB, BATTER_CATS);
+  collect(pitchers, qualP, PITCHER_CATS);
   return [...byPlayer.values()]
     .map((p) => ({ ...p, titles: p.titles.sort((a, b) => a.rank - b.rank) }))
     .sort((a, b) => Math.min(...a.titles.map((t) => t.rank)) - Math.min(...b.titles.map((t) => t.rank)));
@@ -267,7 +291,7 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
                         {p.titles.map((t, j) => (
                           <span key={j}>
                             {j > 0 && ", "}
-                            {catName(t.category)} <b style={{ color: t.rank === 1 ? "#ffd24a" : "var(--text-secondary)" }}>{t.rank}위</b>
+                            {t.label} <b style={{ color: t.rank === 1 ? "#ffd24a" : "var(--text-secondary)" }}>{t.rank}위</b>
                           </span>
                         ))}
                       </span>
