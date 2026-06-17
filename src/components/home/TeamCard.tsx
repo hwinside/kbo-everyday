@@ -147,18 +147,18 @@ function MiniStatChart({ title, values, fmt, higherIsBetter, accent }: {
   const line = buildSeriesLine(values, 140, 38, 5, higherIsBetter);
   const current = values.length ? values[values.length - 1] : null;
   return (
-    <div className="flex-1 rounded-[10px] bg-bg-secondary/60 px-2.5 py-2">
+    <div className="flex-1 rounded-[10px] bg-bg-secondary/60 px-2.5 py-2 flex flex-col">
       <div className="flex items-baseline justify-between mb-1">
         <span className="text-[10.5px] text-text-tertiary">{title}</span>
         {current != null && <span className="text-[12px] font-bold text-text-primary">{fmt(current)}</span>}
       </div>
       {line ? (
-        <svg width="100%" height="34" viewBox="0 0 140 38" preserveAspectRatio="none" aria-hidden>
+        <svg width="100%" height="100%" viewBox="0 0 140 38" preserveAspectRatio="none" aria-hidden className="flex-1 min-h-[28px]">
           <polyline fill="none" stroke={accent} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" points={line.line} />
           <circle cx={line.lastX} cy={line.lastY} r="2.6" fill={accent} />
         </svg>
       ) : (
-        <div className="h-[34px] flex items-center text-[10px] text-text-tertiary">데이터 부족</div>
+        <div className="flex-1 min-h-[28px] flex items-center text-[10px] text-text-tertiary">데이터 부족</div>
       )}
     </div>
   );
@@ -282,11 +282,12 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
           {topPlayers.length > 0 && (
             <div className="mt-4 border-t border-border/40 pt-3.5">
               <p className="text-[11px] text-text-tertiary mb-2">순위권 선수</p>
-              <div className="flex flex-col gap-1.5">
+              {/* 인라인 흐름 — 짧은 선수는 한 줄에 여럿, 타이틀 많은 선수(오스틴 등)는 자연 줄바꿈 */}
+              <div className="text-[12.5px] leading-[22px]">
                 {topPlayers.map((p, i) => {
                   const inner = (
                     <>
-                      <span className="font-bold text-text-primary">{p.playerName}</span>{" "}
+                      <b className="font-bold text-text-primary">{p.playerName}</b>{" "}
                       <span className="text-text-secondary">
                         {p.titles.map((t, j) => (
                           <span key={j}>
@@ -297,12 +298,11 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
                       </span>
                     </>
                   );
-                  return p.href ? (
-                    <Link key={i} href={p.href} className="text-[12.5px] flex items-center gap-1">
-                      <span className="min-w-0">{inner}</span><ChevronRight size={13} className="text-text-tertiary flex-shrink-0" />
-                    </Link>
-                  ) : (
-                    <div key={i} className="text-[12.5px]">{inner}</div>
+                  return (
+                    <span key={i}>
+                      {i > 0 && <span className="text-text-tertiary mx-1.5">·</span>}
+                      {p.href ? <Link href={p.href}>{inner}</Link> : <span>{inner}</span>}
+                    </span>
                   );
                 })}
               </div>
