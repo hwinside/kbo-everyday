@@ -12,6 +12,7 @@ import { getTeamColor } from "@/lib/utils/team";
 import {
   toWeeklyTrend,
   recentAverage,
+  recentEraByInnings,
   weeklyDirection,
   type WeeklyTrendRow,
   type TrendDirection,
@@ -205,9 +206,11 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
             }
           }
 
-          // 최근 출전 3경기 평균 + 주간 추이 + 전주 대비 추세
+          // 헤드라인 지표: 타자=최근 3경기 타율 / 투수=최근 9이닝 ERA(분모 안정화)
           const logs = gameLogs[player.playerId] ?? [];
-          const recent3 = recentAverage(logs, isPitcher, 3);
+          const recentMetric = isPitcher
+            ? recentEraByInnings(logs, 27)
+            : recentAverage(logs, false, 3);
           const weekly = toWeeklyTrend(logs, isPitcher);
           const direction = weeklyDirection(weekly, isPitcher);
 
@@ -215,9 +218,9 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
           const league = isPitcher ? leagueStats.pitcher : leagueStats.batter;
           const topTitle = getPlayerTitles(league, player.playerId, player.name, isPitcher)[0] ?? null;
 
-          const recentLabel = isPitcher ? "최근 3경기 ERA" : "최근 3경기 타율";
+          const recentLabel = isPitcher ? "최근 9이닝 ERA" : "최근 3경기 타율";
           const recentText =
-            recent3 != null ? (isPitcher ? recent3.toFixed(2) : fmtAvg(recent3)) : null;
+            recentMetric != null ? (isPitcher ? recentMetric.toFixed(2) : fmtAvg(recentMetric)) : null;
 
           // 헤드라인: 최근 3경기 → 없으면 시즌 누적으로 graceful 폴백
           const seasonValid = isPitcher

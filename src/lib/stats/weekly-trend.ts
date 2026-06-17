@@ -76,6 +76,27 @@ export function recentAverage(
   return h / ab;
 }
 
+/**
+ * 투수 최근 ERA — 최근 등판부터 거꾸로 누적해 targetOuts(기본 27아웃=9이닝)를
+ * 채우는 최소 등판 묶음의 ERA = (자책×27)/아웃.
+ * "최근 3경기"는 불펜이 1이닝 안팎이라 1실점에 폭등 → 이닝 기준으로 분모를 안정화.
+ * 게임로그가 등판 단위라 경계 등판은 통째 포함(정확히 9.0이닝을 못 자르면 9이닝 이상).
+ */
+export function recentEraByInnings(
+  rows: WeeklyTrendRow[],
+  targetOuts = 27
+): number | null {
+  let outs = 0;
+  let er = 0;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    outs += rows[i].ip_outs ?? 0;
+    er += rows[i].er ?? 0;
+    if (outs >= targetOuts) break;
+  }
+  if (outs === 0) return null;
+  return (er * 27) / outs;
+}
+
 export type TrendDirection = "improving" | "declining" | "flat";
 
 /**
