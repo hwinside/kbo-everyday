@@ -13,6 +13,7 @@ import {
   toWeeklyTrend,
   recentAverage,
   recentEraByInnings,
+  outsToInnings,
   weeklyDirection,
   type WeeklyTrendRow,
   type TrendDirection,
@@ -206,11 +207,10 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
             }
           }
 
-          // 헤드라인 지표: 타자=최근 3경기 타율 / 투수=최근 9이닝 ERA(분모 안정화)
+          // 헤드라인 지표: 타자=최근 3경기 타율 / 투수=최근 9이닝(이상) ERA(분모 안정화)
           const logs = gameLogs[player.playerId] ?? [];
-          const recentMetric = isPitcher
-            ? recentEraByInnings(logs, 27)
-            : recentAverage(logs, false, 3);
+          const pitcherEra = isPitcher ? recentEraByInnings(logs, 27) : null;
+          const recentMetric = isPitcher ? (pitcherEra?.era ?? null) : recentAverage(logs, false, 3);
           const weekly = toWeeklyTrend(logs, isPitcher);
           const direction = weeklyDirection(weekly, isPitcher);
 
@@ -218,7 +218,9 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
           const league = isPitcher ? leagueStats.pitcher : leagueStats.batter;
           const topTitle = getPlayerTitles(league, player.playerId, player.name, isPitcher)[0] ?? null;
 
-          const recentLabel = isPitcher ? "최근 9이닝 ERA" : "최근 3경기 타율";
+          const recentLabel = isPitcher
+            ? `최근 ${pitcherEra ? outsToInnings(pitcherEra.outs) : 9}이닝 ERA`
+            : "최근 3경기 타율";
           const recentText =
             recentMetric != null ? (isPitcher ? recentMetric.toFixed(2) : fmtAvg(recentMetric)) : null;
 
