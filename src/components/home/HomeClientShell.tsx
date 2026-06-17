@@ -226,6 +226,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   }, [router, gameTime]);
 
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
+  const showShorts = profile?.show_shorts !== false;
   const myTeamGameBase = todayGames.find(g => g.homeTeamId === myTeamId || g.awayTeamId === myTeamId);
   const allLiveData = polledLiveGames.length > 0 ? polledLiveGames :
     (initialLiveGames as LiveGameData[]);
@@ -495,9 +496,11 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       <div className="mb-3">
         <FavoritePlayersSection favPlayers={favPlayers} />
 
-        <Suspense fallback={<SectionSkeleton height={250} />}>
-          <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
-        </Suspense>
+        {showShorts && (
+          <Suspense fallback={<SectionSkeleton height={250} />}>
+            <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
+          </Suspense>
+        )}
       </div>
 
       <LiveGameBanner excludeGameId={myTeamGameBase?.id} liveGames={liveGames} />

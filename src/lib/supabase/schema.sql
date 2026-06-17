@@ -9,6 +9,7 @@ CREATE TABLE profiles (
   points INT DEFAULT 0,
   grade TEXT DEFAULT 'rookie',
   avatar_url TEXT,
+  show_shorts BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );

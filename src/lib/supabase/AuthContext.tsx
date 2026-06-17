@@ -18,6 +18,7 @@ interface Profile {
   grade: string;
   avatar_url: string | null;
   invited_by: string | null;
+  show_shorts?: boolean | null;
   is_operator?: boolean | null;
 }
 

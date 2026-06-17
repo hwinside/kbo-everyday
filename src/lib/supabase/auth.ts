@@ -139,6 +139,7 @@ export async function updateProfile(userId: string, updates: {
   team_id?: number;
   favorite_players?: { playerId: string; name: string; teamId: number; position: string; number: number }[];
   avatar_url?: string;
+  show_shorts?: boolean;
 }) {
   return supabase
     .from("profiles")
