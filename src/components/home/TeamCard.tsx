@@ -7,44 +7,73 @@ import GlassCard from "@/components/ui/GlassCard";
 import TeamLogo from "@/components/ui/TeamLogo";
 import { getTeamById, type TeamData } from "@/lib/constants/teams";
 import { getTeamColor } from "@/lib/utils/team";
-import { STAT_DEFS } from "@/lib/stats/title-defs";
-import { rankByStat } from "@/lib/stats/title-rankings";
 import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
 
 type FormResult = "W" | "L" | "D";
 
-interface TopPlayer { playerName: string; href: string | null; titles: { category: string; rank: number }[] }
+interface TopPlayer { playerName: string; href: string | null; titles: { label: string; rank: number }[] }
 
-// 순위권에서 제외할 부문(순위 페이지 미노출 — 하린아빠 지정: 2루타+3루타·출전경기).
-const TOPPLAYER_DENY = new Set(["doubles", "games_batter", "games_pitcher"]);
+type StatRow = Record<string, unknown>;
+const num = (v: unknown) => Number(v ?? 0) || 0;
 
-// 부문 표기명: STAT_DEFS desc("홈런 랭킹"/"삼진 랭킹 (타자)") → "홈런"/"삼진"
-function catName(statKey: string): string {
-  const d = STAT_DEFS[statKey];
-  if (!d) return statKey;
-  return d.desc.replace(/\s*랭킹.*$/, "").replace(/\s*\(.*\)\s*$/, "").trim();
+// 순위 페이지 타이틀 탭(BatterTitleTab/PitcherTitleTab)과 100% 동일한 부문/자격/정렬.
+// 자격: rate 스탯(타율·OPS·출루율·장타율·ERA·WHIP)은 규정타석/이닝 충족(qualifiedRate=1),
+//       counting 스탯은 전체. (득점·볼넷·사구·2루타+3루타·출전경기는 탭에 없어 자동 제외)
+interface CatDef { key: string; label: string; desc: boolean; pool: "qual" | "all" | "ratefield" }
+const BATTER_CATS: CatDef[] = [
+  { key: "avg", label: "타율", desc: true, pool: "qual" },
+  { key: "hr", label: "홈런", desc: true, pool: "all" },
+  { key: "rbi", label: "타점", desc: true, pool: "all" },
+  { key: "hits", label: "안타", desc: true, pool: "all" },
+  { key: "sb", label: "도루", desc: true, pool: "all" },
+  { key: "ops", label: "OPS", desc: true, pool: "ratefield" },
+  { key: "obp", label: "출루율", desc: true, pool: "ratefield" },
+  { key: "slg", label: "장타율", desc: true, pool: "ratefield" },
+];
+const PITCHER_CATS: CatDef[] = [
+  { key: "era", label: "평균자책", desc: false, pool: "qual" },
+  { key: "wins", label: "다승", desc: true, pool: "all" },
+  { key: "so", label: "탈삼진", desc: true, pool: "all" },
+  { key: "saves", label: "세이브", desc: true, pool: "all" },
+  { key: "holds", label: "홀드", desc: true, pool: "all" },
+  { key: "whip", label: "WHIP", desc: false, pool: "ratefield" },
+];
+
+// 공동 순위(competition ranking), 상위 20 — 타이틀 탭 sorted()와 동일.
+function rankPool(rows: StatRow[], key: string, desc: boolean): (StatRow & { _rank: number })[] {
+  const arr = [...rows].sort((a, b) => (desc ? num(b[key]) - num(a[key]) : num(a[key]) - num(b[key])));
+  let cur = 1;
+  return arr.slice(0, 20).map((r, i) => {
+    if (i > 0 && num(r[key]) !== num(arr[i - 1][key])) cur = i + 1;
+    return { ...r, _rank: cur };
+  });
 }
 
-// /api/stats(batter+pitcher) → 마이팀 선수별 top5 타이틀 묶음(공식 랭킹 소스).
-function computeTopPlayers(batters: Record<string, unknown>[], pitchers: Record<string, unknown>[], teamShort: string): TopPlayer[] {
+// /api/stats(batter+pitcher) → 마이팀 선수별 top5 타이틀 묶음(타이틀 탭과 동일).
+function computeTopPlayers(batters: StatRow[], pitchers: StatRow[], teamShort: string): TopPlayer[] {
   const byPlayer = new Map<string, TopPlayer>();
-  for (const [statKey, def] of Object.entries(STAT_DEFS)) {
-    if (TOPPLAYER_DENY.has(statKey)) continue;
-    const rows = (def.type === "batter" ? batters : pitchers) as Parameters<typeof rankByStat>[0];
-    for (const r of rankByStat(rows, statKey)) {
-      if (r.rank > 5) continue;
-      if (String((r as { team?: string }).team ?? "") !== teamShort) continue;
-      const name = String((r as { name?: string }).name ?? "");
-      if (!name) continue;
-      const entry = byPlayer.get(name) ?? {
-        playerName: name,
-        href: getCanonicalPlayerHref({ name, team: teamShort, kboId: (r as { kboId?: string }).kboId }),
-        titles: [],
-      };
-      entry.titles.push({ category: statKey, rank: r.rank });
-      byPlayer.set(name, entry);
+  const qualB = batters.filter((b) => b.qualifiedRate === 1);
+  const qualP = pitchers.filter((p) => p.qualifiedRate === 1);
+  const collect = (allPool: StatRow[], qualPool: StatRow[], cats: CatDef[]) => {
+    for (const c of cats) {
+      const pool = c.pool === "qual" ? qualPool : c.pool === "ratefield" ? qualPool.filter((r) => r[c.key]) : allPool;
+      for (const r of rankPool(pool, c.key, c.desc)) {
+        if (r._rank > 5) continue;
+        if (String(r.team ?? "") !== teamShort) continue;
+        const name = String(r.name ?? "");
+        if (!name) continue;
+        const entry = byPlayer.get(name) ?? {
+          playerName: name,
+          href: getCanonicalPlayerHref({ name, team: teamShort, kboId: r.kboId as string }),
+          titles: [],
+        };
+        entry.titles.push({ label: c.label, rank: r._rank });
+        byPlayer.set(name, entry);
+      }
     }
-  }
+  };
+  collect(batters, qualB, BATTER_CATS);
+  collect(pitchers, qualP, PITCHER_CATS);
   return [...byPlayer.values()]
     .map((p) => ({ ...p, titles: p.titles.sort((a, b) => a.rank - b.rank) }))
     .sort((a, b) => Math.min(...a.titles.map((t) => t.rank)) - Math.min(...b.titles.map((t) => t.rank)));
@@ -221,31 +250,30 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
           {/* 2. 경기 카드 (임베드) */}
           {gameSlot && <div className="mt-4 border-t border-border/40 pt-3.5">{gameSlot}</div>}
 
-          {/* 3. 그래프 — 좌(전체높이) 순위변동(1~10위 빗금) + 우(상하) 타율/방어율 */}
+          {/* 3. 그래프 — 좌(전체높이) 순위변동(Y축 1~10위 라벨·빗금) + 우(상하) 타율/방어율 */}
           {rg && (
             <div className="mt-4 border-t border-border/40 pt-3.5">
-              <div className="flex items-baseline justify-between mb-2">
-                <p className="text-[11px] text-text-tertiary">시즌 순위 변동 · 주간 팀 스탯</p>
-                <p className="text-[11px] text-text-secondary">{rg.first}위 <span className="text-text-tertiary">→</span> <b className="text-text-primary">{rg.last}위</b></p>
-              </div>
+              <p className="text-[11px] text-text-tertiary mb-2">시즌 순위 변동 · 주간 팀 스탯</p>
               <div className="flex gap-2">
-                {/* 좌: 순위 변동 (1~10위 빗금 가이드) */}
-                <div className="flex-[1.3] rounded-[10px] bg-bg-secondary/60 px-2 py-2">
-                  <svg width="100%" height="120" viewBox="0 0 300 120" preserveAspectRatio="none" aria-hidden>
+                {/* 좌: 순위 변동 — 클릭 → 팀 순위 페이지. Y축에 1~10위 라벨 + 빗금 */}
+                <Link href="/standings" className="flex-[1.3] rounded-[10px] bg-bg-secondary/60 px-1.5 py-2 flex gap-1.5">
+                  <div className="flex flex-col justify-between text-[8px] leading-none text-text-tertiary/80 h-[120px] py-[7px]">
+                    {Array.from({ length: 10 }, (_, i) => <span key={i}>{i + 1}</span>)}
+                  </div>
+                  <svg width="100%" height="120" viewBox="0 0 300 120" preserveAspectRatio="none" aria-hidden className="flex-1">
                     {Array.from({ length: 10 }, (_, i) => {
                       const y = rg.yOf(i + 1);
-                      return <line key={i} x1="0" y1={y} x2="300" y2={y} stroke="currentColor" className="text-text-tertiary/20" strokeWidth="0.5" strokeDasharray="3 3" />;
+                      return <line key={i} x1="0" y1={y} x2="300" y2={y} stroke="currentColor" className="text-text-tertiary/35" strokeWidth="1" strokeDasharray="5 4" />;
                     })}
                     <polyline fill="none" stroke={accent} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" points={rg.line} />
                     <circle cx={rg.lastX} cy={rg.lastY} r="3.5" fill={accent} />
                   </svg>
-                  <div className="flex justify-between text-[9px] text-text-tertiary/70 mt-0.5"><span>1위</span><span>10위</span></div>
-                </div>
-                {/* 우: 타율 / 방어율 */}
-                <div className="flex-1 flex flex-col gap-2">
+                </Link>
+                {/* 우: 타율 / 방어율 — 클릭 → 팀 기록 페이지 */}
+                <Link href={`/teams/${team.slug}/records`} className="flex-1 flex flex-col gap-2">
                   <MiniStatChart title="주간 팀 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} fmt={(v) => v.toFixed(3)} higherIsBetter accent={accent} />
                   <MiniStatChart title="주간 팀 방어율" values={(data?.weeklyPitching ?? []).map((w) => w.era)} fmt={(v) => v.toFixed(2)} higherIsBetter={false} accent={accent} />
-                </div>
+                </Link>
               </div>
             </div>
           )}
@@ -263,7 +291,7 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
                         {p.titles.map((t, j) => (
                           <span key={j}>
                             {j > 0 && ", "}
-                            {catName(t.category)} <b style={{ color: t.rank === 1 ? "#ffd24a" : "var(--text-secondary)" }}>{t.rank}위</b>
+                            {t.label} <b style={{ color: t.rank === 1 ? "#ffd24a" : "var(--text-secondary)" }}>{t.rank}위</b>
                           </span>
                         ))}
                       </span>
