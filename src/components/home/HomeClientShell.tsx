@@ -21,6 +21,7 @@ import { setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notifica
 import { writeHomeWidgetSnapshot } from "@/lib/native-live-activity";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
 import MyTeamHero from "@/components/home/MyTeamHero";
+import TeamCard from "@/components/home/TeamCard";
 import FavoritePlayersSection from "@/components/home/FavoritePlayersSection";
 import TodayGamesSection from "@/components/home/TodayGamesSection";
 import LiveGameBanner from "@/components/home/LiveGameBanner";
@@ -478,7 +479,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       {/* 섹션 순서: 팀카드 → 뉴스 → 경기 → 최애선수 → 숏츠 → 전체경기현황.
           각 섹션은 마이페이지 토글(sections.*)로 on/off. 팀카드는 S3에서 삽입. */}
 
-      {/* TODO(S3): 팀 카드 — {sections.teamCard && <TeamCard ... />} */}
+      {/* 팀 카드 (최애팀 순위·일정·소식) */}
+      {sections.teamCard && myTeam && <TeamCard team={myTeam} />}
 
       {/* News Carousel */}
       {sections.news && realNews.length > 0 && (
