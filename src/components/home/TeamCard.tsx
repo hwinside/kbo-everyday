@@ -15,8 +15,13 @@ type FormResult = "W" | "L" | "D";
 
 interface TopPlayer { playerName: string; href: string | null; titles: { category: string; rank: number }[] }
 
-// 순위권에서 제외할 부문(순위 페이지 미노출 — 하린아빠 지정: 2루타+3루타·출전경기).
-const TOPPLAYER_DENY = new Set(["doubles", "games_batter", "games_pitcher"]);
+// 순위권 노출 부문 = 순위 페이지 타이틀 탭(BatterTitleTab/PitcherTitleTab) allowlist ∩ STAT_DEFS.
+// 타이틀 탭: 타자[타율·홈런·타점·도루·OPS·출루율] 투수[평균자책·다승·탈삼진·세이브·홀드·WHIP].
+// (안타·장타율은 STAT_DEFS 미정의라 제외 / 득점·볼넷·사구·2루타+3루타·출전경기는 탭 미노출이라 제외)
+const TOPPLAYER_ALLOW = new Set([
+  "avg", "hr", "rbi", "sb", "ops", "obp",
+  "era", "wins", "so_pitcher", "saves", "holds", "whip",
+]);
 
 // 부문 표기명: STAT_DEFS desc("홈런 랭킹"/"삼진 랭킹 (타자)") → "홈런"/"삼진"
 function catName(statKey: string): string {
@@ -29,7 +34,7 @@ function catName(statKey: string): string {
 function computeTopPlayers(batters: Record<string, unknown>[], pitchers: Record<string, unknown>[], teamShort: string): TopPlayer[] {
   const byPlayer = new Map<string, TopPlayer>();
   for (const [statKey, def] of Object.entries(STAT_DEFS)) {
-    if (TOPPLAYER_DENY.has(statKey)) continue;
+    if (!TOPPLAYER_ALLOW.has(statKey)) continue;
     const rows = (def.type === "batter" ? batters : pitchers) as Parameters<typeof rankByStat>[0];
     for (const r of rankByStat(rows, statKey)) {
       if (r.rank > 5) continue;

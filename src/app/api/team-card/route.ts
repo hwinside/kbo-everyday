@@ -169,13 +169,15 @@ export async function GET(req: NextRequest) {
       // 주간 스탯 실패해도 나머지 정상 반환
     }
 
-    // 7) 커뮤니티 새글 수 — 최근 7일 (숨김 제외)
+    // 7) 커뮤니티 새글 수 — 해당 팀 게시판(board_type='team', board_id=슬러그) 최근 7일 (숨김 제외)
     let communityNewPosts = 0;
     try {
       const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
       const { count } = await supabaseAdmin
         .from("posts")
         .select("id", { count: "exact", head: true })
+        .eq("board_type", "team")
+        .eq("board_id", team.slug)
         .eq("is_hidden", false)
         .gte("created_at", since);
       communityNewPosts = count ?? 0;
