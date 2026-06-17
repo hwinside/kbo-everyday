@@ -28,6 +28,18 @@ interface VideoItem {
   label: string;
 }
 
+// /api/shorts-feed 원본 아이템 (map 입력)
+interface ShortsFeedItem {
+  id: string;
+  title: string;
+  thumbnail: string;
+  channel: string;
+  publishedAt: string;
+  playerIds?: string[];
+  teamId?: string | null;
+  playerName?: string | null;
+}
+
 interface HomeHighlightsProps {
   team: string | null;
 }
@@ -60,7 +72,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
     fetch(`/api/shorts-feed?team=${encodeURIComponent(team)}${playerIdsParam}`)
       .then(r => r.json())
       .then((data) => {
-        const items: VideoItem[] = (data.items || []).map((v: any) => {
+        const items: VideoItem[] = ((data.items ?? []) as ShortsFeedItem[]).map((v) => {
           // Label: 최애선수명 > 태깅된 선수명 > 팀명 > 없음
           const matchedPlayer = (v.playerIds ?? []).find((id: string) => favPlayerMap.has(id));
           const teamLabel = v.teamId ? (TEAM_LABEL[v.teamId] ?? null) : null;
