@@ -141,6 +141,10 @@ function gapLabel(gap: number): string {
   return Number.isInteger(gap) ? `${gap}` : gap.toFixed(1);
 }
 
+function formatBattingAverage(value: number): string {
+  return value.toFixed(3).replace(/^0(?=\.)/, "");
+}
+
 function MiniStatChart({ title, values, fmt, higherIsBetter, accent, rank }: {
   title: string; values: number[]; fmt: (v: number) => string; higherIsBetter: boolean; accent: string; rank?: number | null;
 }) {
@@ -291,7 +295,7 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
                 </Link>
                 {/* 우: 타율 / 방어율 — 클릭 → 팀 기록 페이지 */}
                 <Link href={`/teams/${team.slug}/records`} className="flex h-[136px] flex-1 flex-col gap-2">
-                  <MiniStatChart title="주간 팀 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} fmt={(v) => v.toFixed(3)} higherIsBetter accent={accent} rank={teamRank.batting} />
+                  <MiniStatChart title="주간 팀 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} fmt={formatBattingAverage} higherIsBetter accent={accent} rank={teamRank.batting} />
                   <MiniStatChart title="주간 팀 방어율" values={(data?.weeklyPitching ?? []).map((w) => w.era)} fmt={(v) => v.toFixed(2)} higherIsBetter={false} accent={accent} rank={teamRank.era} />
                 </Link>
               </div>
