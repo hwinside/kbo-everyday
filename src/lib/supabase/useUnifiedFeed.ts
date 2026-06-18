@@ -13,7 +13,7 @@ export type FeedBoard =
   | { kind: "player"; kboId: string };
 
 const SELECT =
-  "id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, author_team_id_snapshot, profiles(nickname, team_id, grade, points)";
+  "id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, team_tags, hashtags, author_team_id_snapshot, profiles(nickname, team_id, grade, points)";
 
 function mapRow(p: Record<string, unknown>): Post {
   const prof = p.profiles as Record<string, unknown> | null;

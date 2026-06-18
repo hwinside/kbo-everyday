@@ -1128,8 +1128,13 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
 /**
  * 카드 배경 컨텍스트(V3 태그 기반) — 팀컬러 + 선수 Hero 결정.
  * - 선수 1명 태그 → 그 선수 팀컬러 BG + 그 선수 Hero(우하단)
- * - 선수 2명↑ 태그 → 모두 같은 팀이면 팀컬러 BG(단일 Hero 없음), 다른 팀 섞이면 기본 BG
- * - 선수 태그 없음 → (레거시 board_type / 자유글 작성자팀)으로 폴백
+ * - 선수 2명↑ 태그 → 모두 같은 팀이면 팀컬러 BG(단일 Hero 없음), 다른 팀 섞이면 중립 BG
+ * - 레거시 선수보드 글 → 그 선수 팀컬러 + Hero(컷아웃 유지)
+ * - 그 외 팀/자유 글 → team_tags 단일이면 그 팀, 2개↑(다중 태그)면 중립 BG(구단 로고 미노출)
+ *
+ * 다중 팀 태그 글(예: 전 구단 태그한 올스타 투표 글)은 여러 팀 탭에 노출되는데, 특정 한 팀
+ * 로고/컬러를 칠하면 "LG탭인데 두산 로고" 같은 혼란이 생긴다(#cs id 2044). 하린아빠 확정 기준:
+ * 다중 태그 글은 *중립 배경*(특정 구단 색/로고 없음). 작성자 배지(post.team_id)는 별개로 유지.
  */
 function deriveBrandContext(post: Post): { team?: TeamData; heroKboId?: string } {
   const playerTags = Array.isArray(post.player_tags) ? (post.player_tags as string[]) : [];
@@ -1146,15 +1151,19 @@ function deriveBrandContext(post: Post): { team?: TeamData; heroKboId?: string }
     }
     const teamIds = new Set(parsed.map((p) => p.teamId).filter((x): x is number => !!x));
     if (teamIds.size === 1) return { team: getTeamById([...teamIds][0]) };
-    return {}; // 다른 팀 혼합 → 기본 BG
+    return {}; // 다른 팀 선수 혼합 → 중립 BG
   }
-  // 레거시 board 기반(player_tags 없는 기존 글)
-  if (post.board_type === "team") return { team: getTeamBySlug(post.board_id) };
+  // 레거시 선수보드 글(player_tags 없음) → 그 선수 Hero 컷아웃 유지.
   if (post.board_type === "player") {
     const entry = findPlayerByKboId(post.board_id);
     return { team: entry ? getTeamById(entry.teamId) : undefined, heroKboId: post.board_id };
   }
-  // 자유게시판 → 작성자 응원팀 컬러(없으면 중립)
+  // 팀/자유 글 → team_tags 기준. 다중(2개↑)이면 중립, 단일이면 그 팀.
+  const teamTags = Array.isArray(post.team_tags) ? (post.team_tags as string[]) : [];
+  if (teamTags.length >= 2) return {}; // 다중 팀 태그 → 중립 BG(구단 로고 미노출)
+  if (teamTags.length === 1) return { team: getTeamBySlug(teamTags[0]) };
+  // team_tags 비어있는 레거시 글 → 작성 게시판(team) → 작성자 응원팀(free) 폴백.
+  if (post.board_type === "team") return { team: getTeamBySlug(post.board_id) };
   return { team: post.team_id ? getTeamById(post.team_id) : undefined };
 }
 
