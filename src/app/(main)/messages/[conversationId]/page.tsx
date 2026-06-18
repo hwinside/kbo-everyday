@@ -194,7 +194,7 @@ export default function DMChatPage() {
                     </div>
                   )}
                   <div
-                    className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
+                    className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words ${
                       isMe
                         ? "bg-accent text-white rounded-br-md"
                         : "bg-bg-tertiary text-text-primary rounded-bl-md"
@@ -221,14 +221,19 @@ export default function DMChatPage() {
         </div>
       ) : (
         <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe">
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
+          <div className="flex items-end gap-2">
+            <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleSend()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
               placeholder="쪽지를 입력하세요..."
-              className="flex-1 px-4 py-2.5 rounded-full bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+              rows={1}
+              className="flex-1 px-4 py-2.5 rounded-2xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none resize-none max-h-32"
             />
             <button
               onClick={handleSend}
