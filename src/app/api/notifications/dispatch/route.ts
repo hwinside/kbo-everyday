@@ -71,6 +71,7 @@ async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
   const conversationId = record.conversation_id as string;
   const senderId = record.sender_id as string;
   const content = (record.content as string) || "";
+  const imageUrls = (record.image_urls as string[] | null) ?? [];
   if (!conversationId || !senderId) return [];
 
   const { data: conv } = await supabase
@@ -86,7 +87,11 @@ async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
   const sender = await nickname(senderId);
   return [{
     userIds: [receiver as string],
-    payload: { title: `✉️ ${sender}님의 쪽지`, body: truncate(content), url: `/messages/${conversationId}` },
+    payload: {
+      title: `✉️ ${sender}님의 쪽지`,
+      body: content.trim() ? truncate(content) : imageUrls.length > 0 ? "사진을 보냈습니다" : "",
+      url: `/messages/${conversationId}`,
+    },
     prefKey: "dm",
   }];
 }
