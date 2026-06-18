@@ -304,19 +304,19 @@ export default function AdminMessagesPage() {
         </div>
 
         {/* 답장 입력 */}
-        <div className="glass-card p-3 flex items-center gap-2">
-          <input
-            type="text"
+        <div className="glass-card p-3 flex items-end gap-2">
+          <textarea
             value={replyText}
             onChange={(e) => setReplyText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 handleSend();
               }
             }}
-            placeholder="운영팀으로 답장..."
-            className="flex-1 bg-transparent outline-none text-sm placeholder:text-[#636366]"
+            placeholder="운영팀으로 답장... (Shift+Enter 줄바꿈)"
+            rows={1}
+            className="flex-1 bg-transparent outline-none text-sm placeholder:text-[#636366] resize-none max-h-32"
           />
           <button
             onClick={handleSend}
