@@ -113,6 +113,30 @@ function TrendIcon({ dir }: { dir: TrendDirection }) {
   return <span className="text-text-tertiary text-[11px] leading-none">–</span>;
 }
 
+type TodayGame = {
+  show: boolean;
+  isLive: boolean;
+  opponentName: string | null;
+  type: "batter" | "pitcher";
+  batter?: { ab: number; h: number; hr: number; rbi: number; runs: number; bb: number; sb: number; onBase: number };
+  pitcher?: { ip: string; pitches: number; k: number; bb: number; hits: number; runs: number; er: number; decision: string };
+};
+
+// 타자 강조칩 (값>0만, 최대 4개): 홈런·타점·출루·도루·득점 우선순위
+function batterTodayChips(b: NonNullable<TodayGame["batter"]>): string[] {
+  const out: string[] = [];
+  if (b.hr > 0) out.push(`${b.hr}홈런`);
+  if (b.rbi > 0) out.push(`${b.rbi}타점`);
+  if (b.onBase > 0) out.push(`${b.onBase}출루`);
+  if (b.sb > 0) out.push(`${b.sb}도루`);
+  if (b.runs > 0) out.push(`${b.runs}득점`);
+  return out.slice(0, 4);
+}
+// 투수 강조칩: 탈삼진·볼넷·피안타·실점
+function pitcherTodayChips(p: NonNullable<TodayGame["pitcher"]>): string[] {
+  return [`${p.k}K`, `${p.bb}볼넷`, `${p.hits}피안타`, `${p.runs}실점`];
+}
+
 export default function FavoritePlayersSection({ favPlayers }: { favPlayers: FavoritePlayer[] }) {
   const [liveStats, setLiveStats] = useState<Record<string, StatLike>>({});
   const [gameLogs, setGameLogs] = useState<Record<string, WeeklyTrendRow[]>>({});
@@ -120,6 +144,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
     batter: [],
     pitcher: [],
   });
+  const [todayGames, setTodayGames] = useState<Record<string, TodayGame>>({});
   const favKey = useMemo(() => favPlayers.map((p) => p.playerId).join(","), [favPlayers]);
 
   // 선수 상세 페이지와 동일한 라이브 소스로 갱신:
@@ -183,6 +208,33 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [favKey]);
 
+  // 오늘 경기 활약 — 팀의 당일 경기 박스스코어 라인. 라이브 갱신 위해 45초 폴링.
+  useEffect(() => {
+    if (favPlayers.length === 0) { setTodayGames({}); return; }
+    let cancelled = false;
+    const load = async () => {
+      const entries = await Promise.all(
+        favPlayers.map(async (p) => {
+          const pos = classifyIsPitcher(p) ? "투수" : "타자";
+          const r: TodayGame | null = await fetch(
+            `/api/player-today-game?team=${p.teamId}&name=${encodeURIComponent(p.name)}&pos=${encodeURIComponent(pos)}`,
+          )
+            .then((res) => (res.ok ? res.json() : null))
+            .catch(() => null);
+          return [p.playerId, r] as const;
+        }),
+      );
+      if (cancelled) return;
+      const m: Record<string, TodayGame> = {};
+      for (const [id, r] of entries) if (r && r.show) m[id] = r;
+      setTodayGames(m);
+    };
+    load();
+    const iv = setInterval(load, 45000);
+    return () => { cancelled = true; clearInterval(iv); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [favKey]);
+
   if (favPlayers.length === 0) return null;
 
   return (
@@ -213,6 +265,8 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
               seasonSub = `${Number(src.hr ?? 0)}홈런 ${Number(src.rbi ?? 0)}타점`;
             }
           }
+
+          const today = todayGames[player.playerId];
 
           // 헤드라인 지표: 타자=최근 3경기 타율 / 투수=최근 9이닝(이상) ERA(분모 안정화)
           const logs = gameLogs[player.playerId] ?? [];
@@ -334,6 +388,43 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                     )}
                   </div>
                 </div>
+
+                {/* 오늘 경기 활약 — 라이브~당일 24:00. 기본 정보와 타이틀 사이 */}
+                {today?.show ? (
+                  <div className="border-t border-border px-3.5 py-2.5">
+                    <div className="mb-1.5 flex items-center gap-1.5">
+                      <span className="text-[10px] font-bold tracking-wide text-text-tertiary">오늘 경기</span>
+                      {today.isLive ? (
+                        <span className="rounded-full bg-red-500/20 px-1.5 py-[1px] text-[9px] font-extrabold tracking-wide text-red-400 animate-pulse">LIVE</span>
+                      ) : null}
+                      {today.opponentName ? (
+                        <span className="text-[10px] text-text-tertiary">vs {today.opponentName}</span>
+                      ) : null}
+                    </div>
+                    {today.type === "batter" && today.batter ? (
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                        <span className="text-[15px] font-bold leading-[18px] text-text-primary">{today.batter.ab}타수 {today.batter.h}안타</span>
+                        <span className="flex flex-wrap gap-1.5">
+                          {batterTodayChips(today.batter).map((c, i) => (
+                            <span key={i} className="rounded-full px-1.5 py-0.5 text-[11px] font-semibold whitespace-nowrap" style={{ color: teamColor, backgroundColor: `${teamColor}1F` }}>{c}</span>
+                          ))}
+                        </span>
+                      </div>
+                    ) : today.type === "pitcher" && today.pitcher ? (
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                        <span className="text-[15px] font-bold leading-[18px] text-text-primary">{today.pitcher.ip}이닝{today.pitcher.pitches > 0 ? ` · ${today.pitcher.pitches}구` : ""}</span>
+                        <span className="flex flex-wrap items-center gap-1.5">
+                          {today.pitcher.decision ? (
+                            <span className="rounded-full px-1.5 py-0.5 text-[11px] font-bold whitespace-nowrap" style={{ color: "#fff", backgroundColor: teamColor }}>{today.pitcher.decision}</span>
+                          ) : null}
+                          {pitcherTodayChips(today.pitcher).map((c, i) => (
+                            <span key={i} className="rounded-full px-1.5 py-0.5 text-[11px] font-semibold whitespace-nowrap" style={{ color: teamColor, backgroundColor: `${teamColor}1F` }}>{c}</span>
+                          ))}
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 {/* 하단: 부문 타이틀 — 카드 전체 폭, 5위 이내 전부 (폰트=시즌 라인 크기로 축소해 한 줄에 최대한) */}
                 {titles.length > 0 ? (
