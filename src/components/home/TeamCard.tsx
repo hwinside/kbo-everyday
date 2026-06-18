@@ -153,7 +153,7 @@ function MiniStatChart({ title, values, fmt, higherIsBetter, accent, rank }: {
         {current != null && <span className="text-[12px] font-bold text-text-primary">{fmt(current)}{rank ? ` (${rank}위)` : ""}</span>}
       </div>
       {line ? (
-        <svg width="100%" height="34" viewBox="0 0 140 38" preserveAspectRatio="none" aria-hidden className="-mt-1.5 min-h-0 flex-1">
+        <svg width="100%" height="34" viewBox="0 0 140 38" preserveAspectRatio="none" aria-hidden className="mt-1 min-h-0 flex-1">
           <polyline fill="none" stroke={accent} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" points={line.line} />
           <circle cx={line.lastX} cy={line.lastY} r="2.6" fill={accent} />
         </svg>
@@ -275,7 +275,7 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
                 {/* 좌: 순위 변동 — 클릭 → 팀 순위 페이지. Y축에 1~10위 라벨 + 빗금 */}
                 <Link href="/standings" className="flex h-[136px] flex-1 flex-col rounded-[10px] bg-bg-secondary/60 px-1.5 py-2">
                   <span className="px-0.5 text-[10.5px] leading-[14px] text-text-tertiary">시즌 순위 변동</span>
-                  <div className="mt-1 flex min-h-0 flex-1 gap-1.5">
+                  <div className="mt-2 flex min-h-0 flex-1 gap-1.5">
                     <div className="flex h-full flex-col justify-between py-[6px] text-[8px] leading-none text-text-tertiary/80">
                       {Array.from({ length: 10 }, (_, i) => <span key={i}>{i + 1}</span>)}
                     </div>
