@@ -16,7 +16,8 @@ import { useLiveGame, type LiveGameData } from "@/lib/hooks/useLiveGame";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
 import { useHomeInit, type HomeGame } from "@/hooks/useHomeInit";
-import { useHomeSectionsPref } from "@/hooks/useHomeSectionsPref";
+import { useHomeSectionsPref, useHomeSectionsOrder } from "@/hooks/useHomeSectionsPref";
+import type { HomeSectionKey } from "@/lib/store/home-sections-pref";
 import { setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
 import { writeHomeWidgetSnapshot } from "@/lib/native-live-activity";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
@@ -182,6 +183,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
 
   // 홈 섹션 표시 여부 (마이페이지 토글, 기기 로컬)
   const sections = useHomeSectionsPref();
+  // 홈 섹션 순서 (마이페이지 드래그, 기기 로컬). 팀카드는 배열 밖 최상단 고정.
+  const sectionOrder = useHomeSectionsOrder();
 
   // useHomeNews — lazy import to avoid SSR issues
   const [realNews, setRealNews] = useState<{ id: number; title: string; link: string; pubDate: string; label: string; source: string; sourceUrl: string; thumbnailUrl: null; timeAgo: string; teamId: number | null; type: "news" }[]>([]);
@@ -541,46 +544,51 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         />
       )}
 
-      {/* News Carousel */}
-      {sections.news && realNews.length > 0 && (
-        <div className="mb-3">
-          <div className="-mx-5">
-            <Suspense fallback={<SectionSkeleton height={180} />}>
-              <NewsCarousel news={realNews.slice(0, 10)} />
-            </Suspense>
-          </div>
-        </div>
-      )}
-
-      {/* What's New Card (토글 대상 아님) */}
+      {/* What's New Card (토글/순서 대상 아님 — 팀카드 바로 아래 고정) */}
       <Suspense fallback={null}>
         <WhatsNewCard />
       </Suspense>
 
-
-      {/* 최애선수 카드 */}
-      {sections.favPlayers && (
-        <div className="mb-3">
-          <FavoritePlayersSection favPlayers={favPlayers} />
-        </div>
-      )}
-
-      {/* 숏츠 슬롯 */}
-      {sections.shorts && (
-        <div className="mb-3">
-          <Suspense fallback={<SectionSkeleton height={250} />}>
-            <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
-          </Suspense>
-        </div>
-      )}
-
-      {/* 전체 경기 현황 */}
-      {sections.allGames && (
-        <>
-          <LiveGameBanner excludeGameId={myTeamGameBase?.id} liveGames={liveGames} />
-          <TodayGamesSection todayGames={todayGames} isPreseason={isPreseason} myTeamId={myTeamId} />
-        </>
-      )}
+      {/* 순서 조정 가능한 섹션들. sectionOrder(마이페이지 드래그)대로 렌더.
+          각 섹션은 토글(sections.*) off면 숨김. LiveGameBanner는 liveOtherTeams로 독립. */}
+      {sectionOrder.map((key: HomeSectionKey) => {
+        switch (key) {
+          case "news":
+            return sections.news && realNews.length > 0 ? (
+              <div key={key} className="mb-3">
+                <div className="-mx-5">
+                  <Suspense fallback={<SectionSkeleton height={180} />}>
+                    <NewsCarousel news={realNews.slice(0, 10)} />
+                  </Suspense>
+                </div>
+              </div>
+            ) : null;
+          case "favPlayers":
+            return sections.favPlayers ? (
+              <div key={key} className="mb-3">
+                <FavoritePlayersSection favPlayers={favPlayers} />
+              </div>
+            ) : null;
+          case "shorts":
+            return sections.shorts ? (
+              <div key={key} className="mb-3">
+                <Suspense fallback={<SectionSkeleton height={250} />}>
+                  <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
+                </Suspense>
+              </div>
+            ) : null;
+          case "liveOtherTeams":
+            return sections.liveOtherTeams ? (
+              <LiveGameBanner key={key} excludeGameId={myTeamGameBase?.id} liveGames={liveGames} />
+            ) : null;
+          case "allGames":
+            return sections.allGames ? (
+              <TodayGamesSection key={key} todayGames={todayGames} isPreseason={isPreseason} myTeamId={myTeamId} />
+            ) : null;
+          default:
+            return null;
+        }
+      })}
 
       {/* 퀵액션 버튼 */}
       <m.div variants={item} className="flex gap-3 mb-6">
