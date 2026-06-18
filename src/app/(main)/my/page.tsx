@@ -246,7 +246,7 @@ export default function MyPage() {
         <NotificationPrefsCard />
       </motion.div>
 
-      {/* 홈 화면 섹션 구성 (기기 로컬) — 숏츠 포함 6섹션 on/off */}
+      {/* 홈 화면 섹션 구성 (기기 로컬) */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.135 }} className="mt-3">
         <HomeSectionsCard />
       </motion.div>

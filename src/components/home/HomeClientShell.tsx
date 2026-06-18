@@ -574,12 +574,14 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         </div>
       )}
 
+      {/* 다른 팀 실시간 (Live시에만 노출) */}
+      {sections.liveGames && (
+        <LiveGameBanner excludeGameId={myTeamGameBase?.id} liveGames={liveGames} />
+      )}
+
       {/* 전체 경기 현황 */}
       {sections.allGames && (
-        <>
-          <LiveGameBanner excludeGameId={myTeamGameBase?.id} liveGames={liveGames} />
-          <TodayGamesSection todayGames={todayGames} isPreseason={isPreseason} myTeamId={myTeamId} />
-        </>
+        <TodayGamesSection todayGames={todayGames} isPreseason={isPreseason} myTeamId={myTeamId} />
       )}
 
       {/* 퀵액션 버튼 */}
