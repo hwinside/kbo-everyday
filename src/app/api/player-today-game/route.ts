@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchGames, fetchBoxScore } from "@/lib/crawler/kbo-api";
+import { fetchGames } from "@/lib/crawler/kbo-api";
 import { getKSTToday } from "@/lib/utils/date-kst";
 import { getTeamById } from "@/lib/constants/teams";
 
 // 선수 '오늘 경기 활약' — 팀의 당일 경기 박스스코어에서 해당 선수 라인 추출.
-// 라이브/종료 모두 박스스코어로 커버. 경기 전(scheduled)·경기 없음·미출전이면 show:false.
+// 박스스코어는 game-detail(KBO+네이버 폴백 병합)을 재사용한다.
+// ⚠️ KBO fetchBoxScore는 라이브 중 빈 배열을 반환(경기 종료 후에만 채워짐) → 라이브 커버 위해 game-detail 필수.
 // 노출 윈도우는 getKSTToday() 기준이라 당일 24:00(KST)이 지나면 자연히 사라진다.
 
 interface BatterLine {
@@ -12,8 +13,7 @@ interface BatterLine {
   onBase: number; // 출루 = 안타 + 볼넷 (사구 데이터 없어 근사)
 }
 interface PitcherLine {
-  ip: string; pitches: number; k: number; bb: number; hits: number; runs: number; er: number;
-  decision: string; // 승/패/세/홀 등
+  ip: string; pitches: number; k: number; bb: number; hits: number; runs: number; er: number; decision: string;
 }
 
 export interface PlayerTodayGameResponse {
@@ -26,9 +26,16 @@ export interface PlayerTodayGameResponse {
   pitcher?: PitcherLine;
 }
 
+interface DetailBatter { name: string; atBats: number; hits: number; hr: number; rbi: number; runs: number; bb: number; sb: number; }
+interface DetailPitcher { name: string; inningsPitched: string; pitchCount: number; strikeouts: number; walks: number; hits: number; runs: number; earnedRuns: number; decision: string; }
+interface DetailBox { awayBatters: DetailBatter[]; homeBatters: DetailBatter[]; awayPitchers: DetailPitcher[]; homePitchers: DetailPitcher[]; }
+
 const HIDDEN = (status: PlayerTodayGameResponse["status"], type: PlayerTodayGameResponse["type"]): PlayerTodayGameResponse => ({
   show: false, status, isLive: false, opponentName: null, type,
 });
+
+// 공개 도메인으로 self-fetch (VERCEL_URL은 배포 보호에 막힘 → NEXT_PUBLIC_APP_URL/공개 도메인)
+const PUBLIC_BASE = process.env.NEXT_PUBLIC_APP_URL || "https://keubo.fan";
 
 export async function GET(req: NextRequest) {
   const teamId = parseInt(req.nextUrl.searchParams.get("team") ?? "", 10);
@@ -50,12 +57,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(HIDDEN(game.status, type), { headers: { "Cache-Control": "s-maxage=60" } });
     }
 
-    const box = await fetchBoxScore(game.gameId);
+    // 라이브 박스스코어는 KBO 직접 호출이 비어 있어 game-detail(네이버 폴백 병합)을 재사용
+    const detail = await fetch(`${PUBLIC_BASE}/api/game-detail?gameId=${game.gameId}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+    const box: DetailBox | null = detail?.boxScore ?? null;
     if (!box) return NextResponse.json(HIDDEN(game.status, type), { headers: { "Cache-Control": "s-maxage=20" } });
 
     const isHome = game.homeTeamId === teamId;
     const opponentName = getTeamById(isHome ? game.awayTeamId : game.homeTeamId)?.shortName ?? null;
     const isLive = game.status === "live";
+    const ok = { "Cache-Control": "s-maxage=20, stale-while-revalidate=40" };
 
     if (type === "pitcher") {
       const row = (isHome ? box.homePitchers : box.awayPitchers).find((p) => p.name.trim() === name);
@@ -64,8 +76,7 @@ export async function GET(req: NextRequest) {
         ip: row.inningsPitched, pitches: row.pitchCount, k: row.strikeouts, bb: row.walks,
         hits: row.hits, runs: row.runs, er: row.earnedRuns, decision: row.decision ?? "",
       };
-      const res: PlayerTodayGameResponse = { show: true, status: game.status, isLive, opponentName, type, pitcher };
-      return NextResponse.json(res, { headers: { "Cache-Control": "s-maxage=20, stale-while-revalidate=40" } });
+      return NextResponse.json<PlayerTodayGameResponse>({ show: true, status: game.status, isLive, opponentName, type, pitcher }, { headers: ok });
     }
 
     const row = (isHome ? box.homeBatters : box.awayBatters).find((b) => b.name.trim() === name);
@@ -74,8 +85,7 @@ export async function GET(req: NextRequest) {
       ab: row.atBats, h: row.hits, hr: row.hr, rbi: row.rbi, runs: row.runs, bb: row.bb, sb: row.sb,
       onBase: row.hits + row.bb,
     };
-    const res: PlayerTodayGameResponse = { show: true, status: game.status, isLive, opponentName, type, batter };
-    return NextResponse.json(res, { headers: { "Cache-Control": "s-maxage=20, stale-while-revalidate=40" } });
+    return NextResponse.json<PlayerTodayGameResponse>({ show: true, status: game.status, isLive, opponentName, type, batter }, { headers: ok });
   } catch {
     return NextResponse.json(HIDDEN("none", type), { status: 200, headers: { "Cache-Control": "no-store" } });
   }
