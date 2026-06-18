@@ -23,7 +23,6 @@ import AvatarSelectSheet from "@/components/profile/AvatarSelectSheet";
 import NicknameEditSheet from "@/components/profile/NicknameEditSheet";
 import ProfileCard from "@/components/my/ProfileCard";
 import InviteSection from "@/components/my/InviteSection";
-import EventResultCard from "@/components/my/EventResultCard";
 import FavoritePlayersCard from "@/components/my/FavoritePlayersCard";
 import NotificationCard from "@/components/my/NotificationCard";
 import NotificationPrefsCard from "@/components/my/NotificationPrefsCard";
@@ -183,13 +182,6 @@ export default function MyPage() {
 
       {/* 친구 초대 */}
       <InviteSection />
-
-      {/* 얼리멤버 이벤트 최종 결과 (스냅샷 기준 — 공지 CTA /my#event-result 앵커 타깃) */}
-      {user && (
-        <motion.div id="event-result" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.06 }} className="mt-5 scroll-mt-20">
-          <EventResultCard />
-        </motion.div>
-      )}
 
       {/* 응원 구단 변경 */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }} className="mt-5">
