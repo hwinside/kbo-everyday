@@ -92,7 +92,7 @@ export default function CommunityTeamBoardPage() {
 
       {/* 통합 피드 (글·사진 혼합, 최신순 단일) */}
       <div className="pt-2">
-        <PhotoFeed posts={posts} loading={loading} onLike={handleLike} likedIds={likedIds} />
+        <PhotoFeed posts={posts} loading={loading} onLike={handleLike} likedIds={likedIds} viewingTeamSlug={teamSlug} />
       </div>
 
       {hasMore && (
