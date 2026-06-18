@@ -5,7 +5,7 @@ import {
   ALL_VISIBLE,
   getAllSectionVisibility,
   getSectionOrder,
-  HOME_SECTION_KEYS,
+  DEFAULT_SECTION_ORDER,
   HOME_SECTIONS_PREF_EVENT,
   type HomeSectionKey,
   type HomeSectionVisibility,
@@ -29,7 +29,7 @@ export function useHomeSectionsPref(): HomeSectionVisibility {
 // 홈 섹션 순서 구독. SSR/hydration 불일치 방지 위해 초기값은 기본 순서,
 // 마운트 후 localStorage 읽어 동기화(visibility 훅과 동일 패턴).
 export function useHomeSectionsOrder(): HomeSectionKey[] {
-  const [order, setOrder] = useState<HomeSectionKey[]>(HOME_SECTION_KEYS);
+  const [order, setOrder] = useState<HomeSectionKey[]>(DEFAULT_SECTION_ORDER);
 
   useEffect(() => {
     const update = () => setOrder(getSectionOrder());

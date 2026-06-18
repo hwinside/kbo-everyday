@@ -32,6 +32,17 @@ export const HOME_SECTIONS: SectionDef[] = [
 
 export const HOME_SECTION_KEYS: HomeSectionKey[] = HOME_SECTIONS.map((s) => s.key);
 
+// 기본 섹션 표시 순서(합의안). 팀카드는 배열 밖 최상단 고정이라 제외.
+// 순서 설정이 없을 때의 fallback·복원·normalize 모두 이 상수를 단일 소스로 사용한다.
+// (HOME_SECTIONS 배열 순서는 마이페이지 토글 목록 표시 순서일 뿐, 홈 렌더 기본순서와 분리.)
+export const DEFAULT_SECTION_ORDER: HomeSectionKey[] = [
+  "liveOtherTeams",
+  "news",
+  "favPlayers",
+  "shorts",
+  "allGames",
+];
+
 export const HOME_SECTIONS_PREF_EVENT = "home-sections-pref-changed";
 const SHORTS_PREF_EVENT = "shorts-pref-changed"; // 기존 HomeHighlights 호환용
 
@@ -89,23 +100,23 @@ function normalizeOrder(saved: string[]): HomeSectionKey[] {
       seen.add(k as HomeSectionKey);
     }
   }
-  // 저장된 순서에 없는 신규/누락 키는 기본 순서 위치를 따라 뒤에 붙인다.
-  for (const k of HOME_SECTION_KEYS) {
+  // 저장된 순서에 없는 신규/누락 키는 기본 순서(합의안) 위치를 따라 뒤에 붙인다.
+  for (const k of DEFAULT_SECTION_ORDER) {
     if (!seen.has(k)) result.push(k);
   }
   return result;
 }
 
 export function getSectionOrder(): HomeSectionKey[] {
-  if (typeof window === "undefined") return [...HOME_SECTION_KEYS];
+  if (typeof window === "undefined") return [...DEFAULT_SECTION_ORDER];
   const raw = localStorage.getItem(SECTION_ORDER_KEY);
-  if (!raw) return [...HOME_SECTION_KEYS];
+  if (!raw) return [...DEFAULT_SECTION_ORDER];
   try {
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [...HOME_SECTION_KEYS];
+    if (!Array.isArray(parsed)) return [...DEFAULT_SECTION_ORDER];
     return normalizeOrder(parsed.filter((x): x is string => typeof x === "string"));
   } catch {
-    return [...HOME_SECTION_KEYS];
+    return [...DEFAULT_SECTION_ORDER];
   }
 }
 
@@ -114,4 +125,18 @@ export function setSectionOrder(order: HomeSectionKey[]): void {
   const normalized = normalizeOrder(order);
   localStorage.setItem(SECTION_ORDER_KEY, JSON.stringify(normalized));
   window.dispatchEvent(new Event(HOME_SECTIONS_PREF_EVENT));
+}
+
+// ── 기본값 복원 ─────────────────────────────────────────────
+// 순서(SECTION_ORDER_KEY) + 모든 섹션 표시 토글(각 storageKey)을 기본값으로 리셋.
+// 키 자체를 제거 → getSectionOrder는 DEFAULT_SECTION_ORDER, getSectionVisible는 전부 on(기본)으로 복귀.
+// 이벤트를 발화해 홈·마이페이지 UI가 즉시 반영되게 한다(숏츠 호환 이벤트 포함).
+export function resetSections(): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(SECTION_ORDER_KEY);
+  for (const s of HOME_SECTIONS) {
+    localStorage.removeItem(s.storageKey);
+  }
+  window.dispatchEvent(new Event(HOME_SECTIONS_PREF_EVENT));
+  window.dispatchEvent(new Event(SHORTS_PREF_EVENT));
 }

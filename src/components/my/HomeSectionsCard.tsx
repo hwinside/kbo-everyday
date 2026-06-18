@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LayoutDashboard, GripVertical, Lock } from "lucide-react";
+import { LayoutDashboard, GripVertical, Lock, ChevronUp, ChevronDown, RotateCcw } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -26,8 +26,9 @@ import {
   HOME_SECTIONS_PREF_EVENT,
   setSectionOrder,
   setSectionVisible,
+  resetSections,
   ALL_VISIBLE,
-  HOME_SECTION_KEYS,
+  DEFAULT_SECTION_ORDER,
   type HomeSectionKey,
   type HomeSectionVisibility,
 } from "@/lib/store/home-sections-pref";
@@ -51,16 +52,48 @@ function Toggle({ on, label, onClick }: { on: boolean; label: string; onClick: (
   );
 }
 
-// 드래그 가능한 섹션 행: 핸들(≡) + 라벨/설명 + 토글. 핸들에만 listeners를 달아
-// 세로 스크롤과의 충돌을 막는다.
+// 위/아래 이동 버튼 (드래그 보조 — 모바일 fallback). 경계 항목은 해당 방향 비활성.
+function MoveButton({
+  dir,
+  disabled,
+  label,
+  onClick,
+}: {
+  dir: "up" | "down";
+  disabled: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="flex-shrink-0 p-1 rounded-md text-text-tertiary hover:bg-bg-tertiary transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
+      aria-label={`${label} ${dir === "up" ? "위로" : "아래로"} 이동`}
+    >
+      {dir === "up" ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+    </button>
+  );
+}
+
+// 드래그 가능한 섹션 행: 핸들(≡) + 라벨/설명 + ↑↓ 버튼 + 토글. 핸들에만 listeners를 달아
+// 세로 스크롤과의 충돌을 막는다. ↑↓ 버튼은 드래그와 병행되는 보조 이동 수단.
 function SortableSectionRow({
   sectionKey,
   on,
+  isFirst,
+  isLast,
   onToggle,
+  onMoveUp,
+  onMoveDown,
 }: {
   sectionKey: HomeSectionKey;
   on: boolean;
+  isFirst: boolean;
+  isLast: boolean;
   onToggle: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
 }) {
   const def = SECTION_BY_KEY[sectionKey];
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
@@ -78,7 +111,7 @@ function SortableSectionRow({
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex items-center gap-3 py-3 first:pt-0 last:pb-0 ${
+      className={`flex items-center gap-2 py-3 first:pt-0 last:pb-0 ${
         isDragging ? "bg-bg-secondary rounded-xl" : ""
       }`}
     >
@@ -90,9 +123,13 @@ function SortableSectionRow({
       >
         <GripVertical size={18} />
       </button>
-      <div className="flex-1 text-left">
+      <div className="flex-1 min-w-0 text-left">
         <span className="text-[15px] text-text-primary">{def.label}</span>
         <p className="text-xs text-text-tertiary mt-0.5">{def.desc}</p>
+      </div>
+      <div className="flex items-center flex-shrink-0">
+        <MoveButton dir="up" disabled={isFirst} label={def.label} onClick={onMoveUp} />
+        <MoveButton dir="down" disabled={isLast} label={def.label} onClick={onMoveDown} />
       </div>
       <Toggle on={on} label={def.label} onClick={onToggle} />
     </div>
@@ -102,7 +139,7 @@ function SortableSectionRow({
 // 홈 화면 섹션별 on/off + 순서 조정 (기기 로컬 설정).
 export default function HomeSectionsCard() {
   const [visibility, setVisibility] = useState<HomeSectionVisibility>(ALL_VISIBLE);
-  const [order, setOrder] = useState<HomeSectionKey[]>(HOME_SECTION_KEYS);
+  const [order, setOrder] = useState<HomeSectionKey[]>(DEFAULT_SECTION_ORDER);
 
   useEffect(() => {
     const sync = () => {
@@ -131,6 +168,25 @@ export default function HomeSectionsCard() {
     setSectionOrder(next);
   };
 
+  // ↑↓ 버튼: 인접 항목과 swap (드래그 보조). 경계는 버튼 비활성이라 호출 안 됨.
+  const moveSection = (index: number, delta: number) => {
+    const target = index + delta;
+    if (target < 0 || target >= order.length) return;
+    const next = arrayMove(order, index, target);
+    setOrder(next);
+    setSectionOrder(next);
+  };
+
+  // 기본값 복원: 순서 + 표시 토글을 전부 기본값으로 리셋(파괴적 → 확인 받음).
+  const handleReset = () => {
+    if (typeof window !== "undefined" && !window.confirm("홈 화면 구성을 기본값으로 되돌릴까요?")) return;
+    resetSections();
+    // resetSections가 PREF_EVENT를 발화해 sync()로 visibility/order가 갱신되지만,
+    // 즉시 반영을 위해 로컬 state도 함께 맞춘다.
+    setVisibility(getAllSectionVisibility());
+    setOrder(getSectionOrder());
+  };
+
   return (
     <GlassCard className="p-5">
       <div className="flex items-center gap-4 mb-4">
@@ -155,16 +211,31 @@ export default function HomeSectionsCard() {
 
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={order} strategy={verticalListSortingStrategy}>
-            {order.map((key) => (
+            {order.map((key, i) => (
               <SortableSectionRow
                 key={key}
                 sectionKey={key}
                 on={visibility[key]}
+                isFirst={i === 0}
+                isLast={i === order.length - 1}
                 onToggle={() => setSectionVisible(key, !visibility[key])}
+                onMoveUp={() => moveSection(i, -1)}
+                onMoveDown={() => moveSection(i, 1)}
               />
             ))}
           </SortableContext>
         </DndContext>
+      </div>
+
+      {/* 기본값으로 복원 — 순서 + 표시 토글 전부 리셋(파괴적, confirm 받음) */}
+      <div className="mt-4 pt-4 border-t border-border/40">
+        <button
+          onClick={handleReset}
+          className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm text-text-secondary bg-bg-secondary hover:bg-bg-tertiary transition-colors"
+        >
+          <RotateCcw size={15} />
+          기본값으로 복원
+        </button>
       </div>
     </GlassCard>
   );
