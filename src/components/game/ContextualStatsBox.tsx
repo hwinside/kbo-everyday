@@ -12,6 +12,7 @@ import type {
   VsHandPair,
 } from "@/lib/contextual-stats/types";
 import { formatPlayerDisplayName } from "@/lib/utils/player-name";
+import { formatSplitInline } from "@/lib/contextual-stats/format";
 
 const POLL_INTERVAL_MS = 10_000;
 
@@ -186,7 +187,7 @@ function PairLineRow({
           <SideRow
             name={pair.pitcher.name}
             label={pitcherLabel}
-            valueNode={<SplitValueInline row={pair.pitcher.row} />}
+            valueNode={<SplitValueInline row={pair.pitcher.row} isPitcher />}
           />
         )}
       </PairColumn>
@@ -248,7 +249,7 @@ function VsHandLineRow({ pair }: { pair: VsHandPair }) {
           <SideRow
             name={pair.pitcher.name}
             label={`${sideLabel(pair.pitcher.opponentSide)}타 피안타율`}
-            valueNode={<SplitValueInline row={pair.pitcher.row} />}
+            valueNode={<SplitValueInline row={pair.pitcher.row} isPitcher />}
           />
         )}
       </PairColumn>
@@ -326,12 +327,18 @@ function Badge({ children }: { children: React.ReactNode }) {
   );
 }
 
-function SplitValueInline({ row }: { row: SplitRow }) {
+function SplitValueInline({
+  row,
+  isPitcher = false,
+}: {
+  row: SplitRow;
+  isPitcher?: boolean;
+}) {
   return (
     <>
       {row.AVG}
       <small className="ml-1 text-text-tertiary font-normal text-[11px]">
-        {row.AB}타수 {row.H}안타{row.HR > 0 ? ` (${row.HR}HR)` : ""}
+        {formatSplitInline(row, isPitcher)}
       </small>
     </>
   );
