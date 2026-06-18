@@ -6,6 +6,7 @@ import { getOnboardingStatus, setOnboardingStatus } from "@/lib/store/onboarding
 import { updateProfile } from "@/lib/supabase/auth";
 import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
+import type { BroadcastChannel } from "@/lib/broadcast-channels";
 
 interface RawGameData {
   gameId: string;
@@ -18,6 +19,7 @@ interface RawGameData {
   status: "scheduled" | "live" | "final" | "cancelled";
   inning?: string;
   isTop?: boolean;
+  broadcastChannels?: BroadcastChannel[];
 }
 
 export interface HomeGame {
@@ -35,6 +37,8 @@ export interface HomeGame {
   homeStarterName?: string | null;
   winPitcher?: string | null;
   losePitcher?: string | null;
+  // 중계방송사(TV/IPTV). 없으면 미표시.
+  broadcastChannels?: BroadcastChannel[];
 }
 
 interface UseHomeInitOptions {
@@ -103,6 +107,7 @@ export function useHomeInit(options?: UseHomeInitOptions) {
           awayScore: g.awayScore ?? 0,
           status: g.status,
           inning: g.status === "live" ? `${g.inning}회${g.isTop ? "초" : "말"}` : null,
+          broadcastChannels: g.broadcastChannels,
         }));
         if (games.length > 0) {
           setTodayGames(games);

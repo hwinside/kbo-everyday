@@ -27,7 +27,7 @@ async function getInitialData(): Promise<{
 
     // 1) 경기 목록
     const gamesData = await fetchGames(yyyymmdd);
-    const games: HomeGame[] = gamesData.map((g: { gameId: string; homeTeamId: number; awayTeamId: number; time: string; stadium: string; homeScore?: number | null; awayScore?: number | null; status: string; inning?: number; isTop?: boolean; awayStarterName?: string | null; homeStarterName?: string | null; winPitcher?: string | null; losePitcher?: string | null }) => ({
+    const games: HomeGame[] = gamesData.map((g: { gameId: string; homeTeamId: number; awayTeamId: number; time: string; stadium: string; homeScore?: number | null; awayScore?: number | null; status: string; inning?: number; isTop?: boolean; awayStarterName?: string | null; homeStarterName?: string | null; winPitcher?: string | null; losePitcher?: string | null; broadcastChannels?: HomeGame["broadcastChannels"] }) => ({
       id: g.gameId,
       homeTeamId: g.homeTeamId,
       awayTeamId: g.awayTeamId,
@@ -41,6 +41,7 @@ async function getInitialData(): Promise<{
       homeStarterName: g.homeStarterName ?? null,
       winPitcher: g.winPitcher ?? null,
       losePitcher: g.losePitcher ?? null,
+      broadcastChannels: g.broadcastChannels,
     }));
 
     // 2) 라이브 데이터 (KBO GameList — BSO/주자/타자/투수 포함)

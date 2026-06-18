@@ -3,6 +3,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { getTeamById } from "@/lib/constants/teams";
+import type { BroadcastChannel } from "@/lib/broadcast-channels";
+import BroadcastBadges from "@/components/game/BroadcastBadges";
 
 interface CompactGameCardProps {
   isPreseason?: boolean;
@@ -17,6 +19,7 @@ interface CompactGameCardProps {
     inning?: string;
     time: string;
     stadium: string;
+    broadcastChannels?: BroadcastChannel[];
   };
 }
 
@@ -47,7 +50,10 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
               <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-500">시범경기</span>
             )}
           </div>
-          <span className="text-xs text-text-tertiary">{game.stadium}</span>
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+            <BroadcastBadges channels={game.broadcastChannels} />
+            <span className="truncate text-xs text-text-tertiary">{game.stadium}</span>
+          </div>
         </div>
 
         {/* Away team row */}
