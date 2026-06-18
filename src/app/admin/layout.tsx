@@ -151,7 +151,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
   const [authed, setAuthed] = useState(false);
   const [checking, setChecking] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const unreadDM = useAdminUnreadDMCount();
+  const unreadDM = useAdminUnreadDMCount(30000, authed);
 
   useEffect(() => {
     const pin = sessionStorage.getItem("admin_pin");

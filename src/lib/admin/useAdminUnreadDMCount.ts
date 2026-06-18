@@ -11,8 +11,9 @@ function getAdminPin(): string {
  * 어드민 좌측 메뉴 배지용 — 운영팀 계정의 안읽은 쪽지 총 갯수.
  * 어드민은 Supabase 세션이 아닌 PIN 인증이라 client realtime 구독이 불가하므로
  * 폴링 + 탭 포커스 복귀 시 재조회로 갱신한다.
+ * enabled=true로 바뀌는 순간(PIN 인증 완료) 즉시 1회 재조회한다.
  */
-export function useAdminUnreadDMCount(pollMs = 30000): number {
+export function useAdminUnreadDMCount(pollMs = 30000, enabled = true): number {
   const [count, setCount] = useState(0);
 
   const load = useCallback(async () => {
@@ -32,6 +33,7 @@ export function useAdminUnreadDMCount(pollMs = 30000): number {
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
     load(); // eslint-disable-line react-hooks/set-state-in-effect
     const interval = setInterval(load, pollMs);
     const onVisible = () => {
@@ -44,7 +46,7 @@ export function useAdminUnreadDMCount(pollMs = 30000): number {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", load);
     };
-  }, [load, pollMs]);
+  }, [load, pollMs, enabled]);
 
   return count;
 }
