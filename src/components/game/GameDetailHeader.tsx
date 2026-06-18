@@ -2,12 +2,14 @@
 
 import { useRouter } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
+import type { BroadcastChannel } from "@/lib/broadcast-channels";
+import BroadcastBadges from "@/components/game/BroadcastBadges";
 
 interface GameDetailHeaderProps {
   status: string;
   time: string;
   stadium: string;
-  broadcastChannels?: string[];
+  broadcastChannels?: BroadcastChannel[];
 }
 
 export default function GameDetailHeader({ status, time, stadium, broadcastChannels }: GameDetailHeaderProps) {
@@ -39,15 +41,7 @@ export default function GameDetailHeader({ status, time, stadium, broadcastChann
         )}
       </div>
       <div className="flex items-center gap-1.5">
-        {broadcastChannels && broadcastChannels.length > 0 && (
-          <div className="flex items-center gap-1">
-            {broadcastChannels.map((ch) => (
-              <span key={ch} className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-text-tertiary/10 text-text-tertiary">
-                {ch}
-              </span>
-            ))}
-          </div>
-        )}
+        <BroadcastBadges channels={broadcastChannels} />
         <span className="text-[13px] text-text-tertiary">{stadium}</span>
       </div>
     </div>

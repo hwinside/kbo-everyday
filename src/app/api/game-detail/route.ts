@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchGames } from "@/lib/crawler/kbo-api";
+import type { BroadcastChannel } from "@/lib/broadcast-channels";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { fetchNaverRelayBatterCounts } from "@/lib/naver-relay-counts";
 
@@ -20,7 +21,7 @@ export interface GameDetailResponse {
     startTime: string | null;
     endTime: string | null;
     duration: string | null;
-    broadcastChannels?: string[];
+    broadcastChannels?: BroadcastChannel[];
   } | null;
   linescore: {
     away: { innings: (number | null)[]; R: number; H: number; E: number };
