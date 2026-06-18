@@ -2,6 +2,7 @@
 
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { trackFallback } from "@/lib/monitoring/api-fallback-tracker";
+import { decodeBroadcast } from "@/lib/broadcast-channels";
 
 /** 숫자 kboId로 로스터 조회 — 외국인 숫자→영문 변환 포함 */
 function findPlayerByNumericId(numericId: string): { name: string } | undefined {
@@ -62,6 +63,8 @@ export interface KboGame {
   // 순위
   awayRank: number;
   homeRank: number;
+  // 중계방송사(TV/IPTV, 라디오 제외). 없으면 undefined.
+  broadcastChannels?: string[];
 }
 
 function parseGameStatus(stateCode: string, cancelCode: string): KboGame["status"] {
@@ -101,6 +104,7 @@ interface KboGameRaw {
   T_P_NM: string;
   T_RANK_NO: number;
   B_RANK_NO: number;
+  TV_IF?: string;
 }
 
 function parseGame(raw: KboGameRaw): KboGame {
@@ -137,6 +141,7 @@ function parseGame(raw: KboGameRaw): KboGame {
     currentBatter: isTop ? (raw.T_P_NM?.trim() ?? "") : (raw.B_P_NM?.trim() ?? ""),
     awayRank: raw.T_RANK_NO ?? 0,
     homeRank: raw.B_RANK_NO ?? 0,
+    broadcastChannels: decodeBroadcast(raw.TV_IF),
   };
 }
 

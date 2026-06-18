@@ -7,9 +7,10 @@ interface GameDetailHeaderProps {
   status: string;
   time: string;
   stadium: string;
+  broadcastChannels?: string[];
 }
 
-export default function GameDetailHeader({ status, time, stadium }: GameDetailHeaderProps) {
+export default function GameDetailHeader({ status, time, stadium, broadcastChannels }: GameDetailHeaderProps) {
   const router = useRouter();
 
   const titleText =
@@ -37,7 +38,18 @@ export default function GameDetailHeader({ status, time, stadium }: GameDetailHe
           </span>
         )}
       </div>
-      <span className="text-[13px] text-text-tertiary">{stadium}</span>
+      <div className="flex items-center gap-1.5">
+        {broadcastChannels && broadcastChannels.length > 0 && (
+          <div className="flex items-center gap-1">
+            {broadcastChannels.map((ch) => (
+              <span key={ch} className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-text-tertiary/10 text-text-tertiary">
+                {ch}
+              </span>
+            ))}
+          </div>
+        )}
+        <span className="text-[13px] text-text-tertiary">{stadium}</span>
+      </div>
     </div>
   );
 }

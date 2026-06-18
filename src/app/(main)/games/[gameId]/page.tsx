@@ -344,6 +344,7 @@ export default function GameDetailPage() {
         status={d.derivedStatus}
         time={gameDetail?.meta?.startTime || liveGame?.time || game.time}
         stadium={gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium}
+        broadcastChannels={gameDetail?.meta?.broadcastChannels}
       />
 
       {d.derivedStatus === "cancelled" ? (

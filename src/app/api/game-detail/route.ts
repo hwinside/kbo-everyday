@@ -20,6 +20,7 @@ export interface GameDetailResponse {
     startTime: string | null;
     endTime: string | null;
     duration: string | null;
+    broadcastChannels?: string[];
   } | null;
   linescore: {
     away: { innings: (number | null)[]; R: number; H: number; E: number };
@@ -599,7 +600,12 @@ export async function GET(req: NextRequest) {
     try {
       const dateStr = gameId.slice(0, 8);
       const games = await fetchGames(dateStr);
-      liveListStatus = games.find(g => g.gameId === gameId)?.status ?? null;
+      const listGame = games.find(g => g.gameId === gameId);
+      liveListStatus = listGame?.status ?? null;
+      // 중계방송사는 GetKboGameList(TV_IF)에만 있으므로 여기서 meta에 채운다.
+      if (meta && listGame?.broadcastChannels && listGame.broadcastChannels.length > 0) {
+        meta.broadcastChannels = listGame.broadcastChannels;
+      }
     } catch {
       liveListStatus = null;
     }

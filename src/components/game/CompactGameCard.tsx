@@ -17,6 +17,7 @@ interface CompactGameCardProps {
     inning?: string;
     time: string;
     stadium: string;
+    broadcastChannels?: string[];
   };
 }
 
@@ -47,7 +48,18 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
               <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-500">시범경기</span>
             )}
           </div>
-          <span className="text-xs text-text-tertiary">{game.stadium}</span>
+          <div className="flex items-center gap-1.5">
+            {game.broadcastChannels && game.broadcastChannels.length > 0 && (
+              <div className="flex items-center gap-1">
+                {game.broadcastChannels.map((ch) => (
+                  <span key={ch} className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-text-tertiary/10 text-text-tertiary">
+                    {ch}
+                  </span>
+                ))}
+              </div>
+            )}
+            <span className="text-xs text-text-tertiary">{game.stadium}</span>
+          </div>
         </div>
 
         {/* Away team row */}
