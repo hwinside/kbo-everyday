@@ -14,6 +14,7 @@
     "qa:gif-collector-slack-parser": "tsx scripts/qa/gif-collector-slack-parser-smoke.ts",
     "qa:gif-collector-inbox-resolver": "tsx scripts/qa/gif-collector-inbox-resolver-smoke.ts",
     "qa:gif-collector-publisher": "tsx scripts/qa/gif-collector-publisher-smoke.ts",
+    "qa:favorite-player-order": "tsx scripts/qa/favorite-player-order-smoke.ts",
     "qa:push-score-events": "tsx scripts/qa/push-score-events-smoke.ts",
     "qa:celebration-hit-overcount": "tsx scripts/qa/celebration-hit-overcount-smoke.ts",
     "qa:celebration-client-dedupe": "tsx scripts/qa/celebration-client-dedupe-smoke.ts",

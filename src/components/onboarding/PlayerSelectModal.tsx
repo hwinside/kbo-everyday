@@ -11,7 +11,7 @@ import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getTeamById, TEAMS } from "@/lib/constants/teams";
 import TeamBadge from "@/components/ui/TeamBadge";
-import type { FavoritePlayer } from "@/lib/store/favorites";
+import { buildFavoritePlayersInSelectionOrder, type FavoritePlayer } from "@/lib/store/favorites";
 import playersRoster from "@/lib/constants/players-roster.json";
 import { matchHangul } from "@/lib/utils/hangul-search";
 
@@ -146,15 +146,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip, 
   const handleComplete = () => {
     closingRef.current = true;
     history.back();
-    const favs: FavoritePlayer[] = allPlayers
-      .filter(p => selected.has(p.id))
-      .map(p => ({
-        playerId: p.id,
-        name: p.name,
-        teamId: p.teamId,
-        position: p.position || "",
-        number: p.backNo ? parseInt(p.backNo, 10) || 0 : 0,
-      }));
+    const favs: FavoritePlayer[] = buildFavoritePlayersInSelectionOrder(selected, allPlayers);
     onComplete(favs);
   };
 
