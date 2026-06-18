@@ -4,7 +4,9 @@ import { getTeamBgColor } from "@/lib/constants/teams";
 import { getTeamShortName, getTeamLogo } from "@/lib/utils/team";
 
 import Diamond from "@/components/game/Diamond";
+import BroadcastBadges from "@/components/game/BroadcastBadges";
 import type { TeamData } from "@/lib/constants/teams";
+import type { BroadcastChannel } from "@/lib/broadcast-channels";
 
 interface HomeGame {
   id: string;
@@ -29,6 +31,7 @@ interface HomeGame {
   homeStarterName?: string | null;
   winPitcher?: string | null;
   losePitcher?: string | null;
+  broadcastChannels?: BroadcastChannel[];
 }
 
 export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { myTeam: TeamData; myTeamGame: HomeGame; embedded?: boolean }) {
@@ -67,9 +70,14 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
                 <span className="max-w-full truncate text-[10px] text-text-tertiary">{myTeamGame.awayStarterName || "선발 미정"}</span>
               )}
             </div>
-            <div className="flex flex-col items-center gap-1.5 text-center">
+            <div className="flex min-w-0 flex-col items-center gap-1.5 text-center">
               {(myTeamGame.status === "scheduled" || myTeamGame.status === "final") && (
                 <div className="text-[10px] text-text-tertiary">🏟 {myTeamGame.stadium}</div>
+              )}
+              {myTeamGame.status !== "cancelled" && myTeamGame.broadcastChannels && myTeamGame.broadcastChannels.length > 0 && (
+                <div className="flex justify-center">
+                  <BroadcastBadges channels={myTeamGame.broadcastChannels} />
+                </div>
               )}
               {myTeamGame.status === "scheduled" ? (
                 <div className="px-3 py-1 rounded-full bg-accent/10">

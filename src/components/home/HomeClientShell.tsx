@@ -83,6 +83,7 @@ interface ApiGameData {
   homeStarterName?: string | null;
   winPitcher?: string | null;
   losePitcher?: string | null;
+  broadcastChannels?: HomeGame["broadcastChannels"];
 }
 
 type MyTeamHeroGame = HomeGame & {
@@ -143,6 +144,7 @@ function mapApiGame(g: ApiGameData): HomeGame {
     homeStarterName: g.homeStarterName ?? null,
     winPitcher: g.winPitcher ?? null,
     losePitcher: g.losePitcher ?? null,
+    broadcastChannels: g.broadcastChannels,
   };
 }
 

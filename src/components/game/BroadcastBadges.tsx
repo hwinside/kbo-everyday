@@ -12,7 +12,7 @@ import type { BroadcastChannel } from "@/lib/broadcast-channels";
 export default function BroadcastBadges({ channels }: { channels?: BroadcastChannel[] }) {
   if (!channels || channels.length === 0) return null;
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex flex-wrap items-center gap-1">
       {channels.map((ch) =>
         ch.logoSrc ? (
           <span

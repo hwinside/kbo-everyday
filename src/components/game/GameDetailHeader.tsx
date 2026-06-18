@@ -40,9 +40,9 @@ export default function GameDetailHeader({ status, time, stadium, broadcastChann
           </span>
         )}
       </div>
-      <div className="flex items-center gap-1.5">
+      <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
         <BroadcastBadges channels={broadcastChannels} />
-        <span className="text-[13px] text-text-tertiary">{stadium}</span>
+        <span className="truncate text-[13px] text-text-tertiary">{stadium}</span>
       </div>
     </div>
   );
