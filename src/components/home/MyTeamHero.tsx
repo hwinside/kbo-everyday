@@ -67,9 +67,9 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
                 <span className="max-w-full truncate text-[10px] text-text-tertiary">{myTeamGame.awayStarterName || "선발 미정"}</span>
               )}
             </div>
-            <div className="text-center">
+            <div className="flex flex-col items-center gap-1.5 text-center">
               {(myTeamGame.status === "scheduled" || myTeamGame.status === "final") && (
-                <div className="mb-1.5 text-[10px] text-text-tertiary">🏟 {myTeamGame.stadium}</div>
+                <div className="text-[10px] text-text-tertiary">🏟 {myTeamGame.stadium}</div>
               )}
               {myTeamGame.status === "scheduled" ? (
                 <div className="px-3 py-1 rounded-full bg-accent/10">
@@ -86,7 +86,7 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
                   <span className="text-2xl font-black tabular-nums text-text-primary">{myTeamGame.homeScore}</span>
                 </div>
               )}
-              <span className={`text-xs font-semibold mt-1.5 px-2 py-0.5 rounded-full ${
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
                 myTeamGame.status === "live" ? "bg-red-500/20 text-red-400 animate-pulse" :
                 myTeamGame.status === "cancelled" ? "bg-text-tertiary/20 text-text-tertiary" :
                 myTeamGame.status === "final" ? "bg-text-tertiary/20 text-text-tertiary" :
