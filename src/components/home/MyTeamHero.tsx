@@ -62,7 +62,7 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
               <div className="w-8 h-8 rounded-full bg-white p-0.5 flex items-center justify-center">
                 <Image src={getTeamLogo(myTeamGame.awayTeamId)} alt="" width={24} height={24} unoptimized className="object-contain" />
               </div>
-              <span className="text-base font-bold text-accent">{getTeamShortName(myTeamGame.awayTeamId)}</span>
+              <span className="text-sm font-bold leading-none text-accent">{getTeamShortName(myTeamGame.awayTeamId)}</span>
               {myTeamGame.status === "scheduled" && (
                 <span className="max-w-full truncate text-[10px] text-text-tertiary">{myTeamGame.awayStarterName || "선발 미정"}</span>
               )}
@@ -99,7 +99,7 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
               <div className="w-8 h-8 rounded-full bg-white p-0.5 flex items-center justify-center">
                 <Image src={getTeamLogo(myTeamGame.homeTeamId)} alt="" width={24} height={24} unoptimized className="object-contain" />
               </div>
-              <span className="text-base font-bold text-accent">{getTeamShortName(myTeamGame.homeTeamId)}</span>
+              <span className="text-sm font-bold leading-none text-accent">{getTeamShortName(myTeamGame.homeTeamId)}</span>
               {myTeamGame.status === "scheduled" && (
                 <span className="max-w-full truncate text-[10px] text-text-tertiary">{myTeamGame.homeStarterName || "선발 미정"}</span>
               )}
