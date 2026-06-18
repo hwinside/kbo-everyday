@@ -36,7 +36,7 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
     <div className={embedded ? "" : "mb-3"}>
       <Link href={`/games/${myTeamGame.id}`}>
         <div
-          className="relative rounded-2xl p-3 overflow-hidden myteam-card"
+          className="relative rounded-2xl p-3.5 overflow-hidden myteam-card"
           style={{ ['--team-bg' as string]: getTeamBgColor(myTeam) }}
         >
           {/* Team logo watermark — 팀카드 임베드 시엔 헤더에 이미 있으므로 숨김 */}
@@ -58,18 +58,18 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
 
           {/* Score row */}
           <div className="flex items-center justify-between mb-2">
-            <div className="flex flex-col items-center gap-0.5 flex-1">
+            <div className="flex flex-col items-center gap-1.5 flex-1">
               <div className="w-8 h-8 rounded-full bg-white p-0.5 flex items-center justify-center">
                 <Image src={getTeamLogo(myTeamGame.awayTeamId)} alt="" width={24} height={24} unoptimized className="object-contain" />
               </div>
-              <span className="mt-1 text-sm font-bold leading-none text-accent">{getTeamShortName(myTeamGame.awayTeamId)}</span>
+              <span className="text-sm font-bold leading-none text-accent">{getTeamShortName(myTeamGame.awayTeamId)}</span>
               {myTeamGame.status === "scheduled" && (
                 <span className="max-w-full truncate text-[10px] text-text-tertiary">{myTeamGame.awayStarterName || "선발 미정"}</span>
               )}
             </div>
             <div className="text-center">
               {(myTeamGame.status === "scheduled" || myTeamGame.status === "final") && (
-                <div className="mb-1 text-[10px] text-text-tertiary">🏟 {myTeamGame.stadium}</div>
+                <div className="mb-1.5 text-[10px] text-text-tertiary">🏟 {myTeamGame.stadium}</div>
               )}
               {myTeamGame.status === "scheduled" ? (
                 <div className="px-3 py-1 rounded-full bg-accent/10">
@@ -86,7 +86,7 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
                   <span className="text-2xl font-black tabular-nums text-text-primary">{myTeamGame.homeScore}</span>
                 </div>
               )}
-              <span className={`text-xs font-semibold mt-1 px-2 py-0.5 rounded-full ${
+              <span className={`text-xs font-semibold mt-1.5 px-2 py-0.5 rounded-full ${
                 myTeamGame.status === "live" ? "bg-red-500/20 text-red-400 animate-pulse" :
                 myTeamGame.status === "cancelled" ? "bg-text-tertiary/20 text-text-tertiary" :
                 myTeamGame.status === "final" ? "bg-text-tertiary/20 text-text-tertiary" :
@@ -95,11 +95,11 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
                 {myTeamGame.status === "live" ? `LIVE ${myTeamGame.inning}` : myTeamGame.status === "cancelled" ? "경기 취소" : myTeamGame.status === "final" ? "경기 종료" : myTeamGame.time}
               </span>
             </div>
-            <div className="flex flex-col items-center gap-0.5 flex-1">
+            <div className="flex flex-col items-center gap-1.5 flex-1">
               <div className="w-8 h-8 rounded-full bg-white p-0.5 flex items-center justify-center">
                 <Image src={getTeamLogo(myTeamGame.homeTeamId)} alt="" width={24} height={24} unoptimized className="object-contain" />
               </div>
-              <span className="mt-1 text-sm font-bold leading-none text-accent">{getTeamShortName(myTeamGame.homeTeamId)}</span>
+              <span className="text-sm font-bold leading-none text-accent">{getTeamShortName(myTeamGame.homeTeamId)}</span>
               {myTeamGame.status === "scheduled" && (
                 <span className="max-w-full truncate text-[10px] text-text-tertiary">{myTeamGame.homeStarterName || "선발 미정"}</span>
               )}
