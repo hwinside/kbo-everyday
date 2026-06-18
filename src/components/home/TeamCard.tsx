@@ -141,6 +141,16 @@ function gapLabel(gap: number): string {
   return Number.isInteger(gap) ? `${gap}` : gap.toFixed(1);
 }
 
+// 와/과 조사 — 마지막 글자 받침 유무로 판단. 영문 약어(KT·LG·SSG·NC·KIA)는 모음 발음 종결 → 와.
+function withGwaWa(name: string): string {
+  if (!name) return name;
+  const last = name.charCodeAt(name.length - 1);
+  if (last >= 0xac00 && last <= 0xd7a3) {
+    return (last - 0xac00) % 28 !== 0 ? `${name}과` : `${name}와`;
+  }
+  return `${name}와`;
+}
+
 function MiniStatChart({ title, values, fmt, higherIsBetter, accent, rank }: {
   title: string; values: number[]; fmt: (v: number) => string; higherIsBetter: boolean; accent: string; rank?: number | null;
 }) {
@@ -244,8 +254,8 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
                     {streak && <span className="text-[12px] font-bold pb-1" style={{ color: streak.hot ? "#ff6b6b" : "var(--text-tertiary)" }}>{streak.hot ? "🔥" : ""}{streak.text}</span>}
                   </div>
                   <div className="text-[11px] text-text-secondary leading-[16px] mt-1.5">
-                    {st.above && <div>{st.rank - 1}위 {getTeamById(st.above.teamId)?.shortName}와 <b className="text-text-primary">{gapLabel(st.above.gap)}게임차</b></div>}
-                    {st.below && <div>{st.rank + 1}위 {getTeamById(st.below.teamId)?.shortName}와 <b className="text-text-primary">{gapLabel(st.below.gap)}게임차</b></div>}
+                    {st.above && <div>{st.rank - 1}위 {withGwaWa(getTeamById(st.above.teamId)?.shortName ?? "")} <b className="text-text-primary">{gapLabel(st.above.gap)}게임차</b></div>}
+                    {st.below && <div>{st.rank + 1}위 {withGwaWa(getTeamById(st.below.teamId)?.shortName ?? "")} <b className="text-text-primary">{gapLabel(st.below.gap)}게임차</b></div>}
                   </div>
                 </Link>
               )}
