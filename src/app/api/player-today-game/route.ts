@@ -50,7 +50,9 @@ export async function GET(req: NextRequest) {
   try {
     const date = getKSTToday().replace(/-/g, "");
     const games = await fetchGames(date);
-    const game = games.find((g) => g.awayTeamId === teamId || g.homeTeamId === teamId);
+    // 더블헤더 대비: live 우선 → 없으면 오늘 final 우선 → 그 외 첫 경기
+    const teamGames = games.filter((g) => g.awayTeamId === teamId || g.homeTeamId === teamId);
+    const game = teamGames.find((g) => g.status === "live") ?? teamGames.find((g) => g.status === "final") ?? teamGames[0];
 
     if (!game) return NextResponse.json(HIDDEN("none", type), { headers: { "Cache-Control": "s-maxage=60" } });
     if (game.status === "scheduled" || game.status === "cancelled") {

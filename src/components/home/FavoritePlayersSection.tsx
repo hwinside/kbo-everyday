@@ -412,7 +412,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                       </div>
                     ) : today.type === "pitcher" && today.pitcher ? (
                       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                        <span className="text-[15px] font-bold leading-[18px] text-text-primary">{today.pitcher.ip}이닝 · {today.pitcher.pitches}구</span>
+                        <span className="text-[15px] font-bold leading-[18px] text-text-primary">{today.pitcher.ip}이닝{today.pitcher.pitches > 0 ? ` · ${today.pitcher.pitches}구` : ""}</span>
                         <span className="flex flex-wrap items-center gap-1.5">
                           {today.pitcher.decision ? (
                             <span className="rounded-full px-1.5 py-0.5 text-[11px] font-bold whitespace-nowrap" style={{ color: "#fff", backgroundColor: teamColor }}>{today.pitcher.decision}</span>
