@@ -141,8 +141,8 @@ function gapLabel(gap: number): string {
   return Number.isInteger(gap) ? `${gap}` : gap.toFixed(1);
 }
 
-function MiniStatChart({ title, values, fmt, higherIsBetter, accent }: {
-  title: string; values: number[]; fmt: (v: number) => string; higherIsBetter: boolean; accent: string;
+function MiniStatChart({ title, values, fmt, higherIsBetter, accent, rank }: {
+  title: string; values: number[]; fmt: (v: number) => string; higherIsBetter: boolean; accent: string; rank?: number | null;
 }) {
   const line = buildSeriesLine(values, 140, 38, 5, higherIsBetter);
   const current = values.length ? values[values.length - 1] : null;
@@ -150,7 +150,7 @@ function MiniStatChart({ title, values, fmt, higherIsBetter, accent }: {
     <div className="flex min-h-0 flex-1 flex-col rounded-[10px] bg-bg-secondary/60 px-2.5 py-2">
       <div className="flex items-baseline justify-between">
         <span className="text-[10.5px] text-text-tertiary">{title}</span>
-        {current != null && <span className="text-[12px] font-bold text-text-primary">{fmt(current)}</span>}
+        {current != null && <span className="text-[12px] font-bold text-text-primary">{fmt(current)}{rank ? ` (${rank}위)` : ""}</span>}
       </div>
       {line ? (
         <svg width="100%" height="34" viewBox="0 0 140 38" preserveAspectRatio="none" aria-hidden className="-mt-1.5 min-h-0 flex-1">
@@ -168,6 +168,7 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
   const [data, setData] = useState<TeamCardData | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [topPlayers, setTopPlayers] = useState<TopPlayer[]>([]);
+  const [teamRank, setTeamRank] = useState<{ batting: number | null; era: number | null }>({ batting: null, era: null });
   const accent = getTeamColor(team.id);
 
   useEffect(() => {
@@ -178,6 +179,23 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
       .catch(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
   }, [team.slug]);
+
+  // 주간 타율/방어율 리그 순위 — team-records(전 구단) 정렬로 산출
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/team-records?season=2026`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { batting?: { teamId: number; avg: string }[]; pitching?: { teamId: number; era: string }[] } | null) => {
+        if (cancelled || !d) return;
+        const bat = [...(d.batting ?? [])].sort((a, b) => parseFloat(b.avg) - parseFloat(a.avg));
+        const pit = [...(d.pitching ?? [])].sort((a, b) => parseFloat(a.era) - parseFloat(b.era));
+        const bi = bat.findIndex((t) => t.teamId === team.id);
+        const pi = pit.findIndex((t) => t.teamId === team.id);
+        setTeamRank({ batting: bi >= 0 ? bi + 1 : null, era: pi >= 0 ? pi + 1 : null });
+      })
+      .catch(() => { /* 순위 실패해도 카드 정상 */ });
+    return () => { cancelled = true; };
+  }, [team.id]);
 
   // 순위권 선수 — 공식 랭킹 소스(/api/stats + rankByStat). 리더보드와 동일.
   useEffect(() => {
@@ -255,7 +273,7 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
             <div className="mt-4 border-t border-border/40 pt-3.5">
               <div className="flex items-stretch gap-2">
                 {/* 좌: 순위 변동 — 클릭 → 팀 순위 페이지. Y축에 1~10위 라벨 + 빗금 */}
-                <Link href="/standings" className="flex h-[136px] flex-[1.3] flex-col rounded-[10px] bg-bg-secondary/60 px-1.5 py-2">
+                <Link href="/standings" className="flex h-[136px] flex-1 flex-col rounded-[10px] bg-bg-secondary/60 px-1.5 py-2">
                   <span className="px-0.5 text-[10.5px] leading-[14px] text-text-tertiary">시즌 순위 변동</span>
                   <div className="mt-1 flex min-h-0 flex-1 gap-1.5">
                     <div className="flex h-full flex-col justify-between py-[6px] text-[8px] leading-none text-text-tertiary/80">
@@ -273,8 +291,8 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
                 </Link>
                 {/* 우: 타율 / 방어율 — 클릭 → 팀 기록 페이지 */}
                 <Link href={`/teams/${team.slug}/records`} className="flex h-[136px] flex-1 flex-col gap-2">
-                  <MiniStatChart title="주간 팀 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} fmt={(v) => v.toFixed(3)} higherIsBetter accent={accent} />
-                  <MiniStatChart title="주간 팀 방어율" values={(data?.weeklyPitching ?? []).map((w) => w.era)} fmt={(v) => v.toFixed(2)} higherIsBetter={false} accent={accent} />
+                  <MiniStatChart title="주간 팀 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} fmt={(v) => v.toFixed(3)} higherIsBetter accent={accent} rank={teamRank.batting} />
+                  <MiniStatChart title="주간 팀 방어율" values={(data?.weeklyPitching ?? []).map((w) => w.era)} fmt={(v) => v.toFixed(2)} higherIsBetter={false} accent={accent} rank={teamRank.era} />
                 </Link>
               </div>
             </div>
@@ -284,7 +302,7 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
           {topPlayers.length > 0 && (
             <div className="mt-4 border-t border-border/40 pt-3.5">
               <p className="text-[11px] text-text-tertiary mb-2">순위권 선수</p>
-              <div className="flex flex-wrap items-start gap-x-1.5 gap-y-1">
+              <div className="flex flex-wrap items-start gap-x-1.5 gap-y-0.5">
                 {topPlayers.map((p, i) => {
                   const isLong = p.titles.length >= 4;
                   const inner = (
@@ -301,12 +319,12 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
                     </>
                   );
                   const itemClassName = [
-                    "inline-flex max-w-full items-center gap-0.5 rounded-full border border-border bg-white/[0.05] px-1.5 py-0.5 text-[12px] leading-[17px]",
+                    "inline-flex max-w-full items-center gap-0.5 rounded-full border border-border bg-white/[0.05] px-1.5 py-0.5 text-[11px] leading-[15px]",
                     isLong ? "basis-full rounded-[10px]" : "",
                   ].join(" ");
                   return p.href ? (
                     <Link key={i} href={p.href} className={itemClassName}>
-                      <span className="min-w-0 whitespace-normal">{inner}</span><ChevronRight size={13} className="text-text-tertiary flex-shrink-0" />
+                      <span className="min-w-0 whitespace-normal">{inner}</span><ChevronRight size={12} className="text-text-tertiary flex-shrink-0" />
                     </Link>
                   ) : (
                     <div key={i} className={itemClassName}>

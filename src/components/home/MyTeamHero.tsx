@@ -63,8 +63,14 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
                 <Image src={getTeamLogo(myTeamGame.awayTeamId)} alt="" width={24} height={24} unoptimized className="object-contain" />
               </div>
               <span className="text-base font-bold text-accent">{getTeamShortName(myTeamGame.awayTeamId)}</span>
+              {myTeamGame.status === "scheduled" && (
+                <span className="max-w-full truncate text-[10px] text-text-tertiary">{myTeamGame.awayStarterName || "선발 미정"}</span>
+              )}
             </div>
             <div className="text-center">
+              {(myTeamGame.status === "scheduled" || myTeamGame.status === "final") && (
+                <div className="mb-1 text-[10px] text-text-tertiary">🏟 {myTeamGame.stadium}</div>
+              )}
               {myTeamGame.status === "scheduled" ? (
                 <div className="px-3 py-1 rounded-full bg-accent/10">
                   <span className="text-sm font-semibold text-accent">경기 예정</span>
@@ -94,6 +100,9 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
                 <Image src={getTeamLogo(myTeamGame.homeTeamId)} alt="" width={24} height={24} unoptimized className="object-contain" />
               </div>
               <span className="text-base font-bold text-accent">{getTeamShortName(myTeamGame.homeTeamId)}</span>
+              {myTeamGame.status === "scheduled" && (
+                <span className="max-w-full truncate text-[10px] text-text-tertiary">{myTeamGame.homeStarterName || "선발 미정"}</span>
+              )}
             </div>
           </div>
 
@@ -122,16 +131,10 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
             </div>
           )}
 
-          {/* 종료/예정 모드: 구장 + (종료=승·패투수 / 예정=예고선발) */}
-          {(myTeamGame.status === "scheduled" || myTeamGame.status === "final") && (
-            <div className="pt-2 border-t border-white/10 text-[11px] text-text-tertiary space-y-0.5">
-              <div>🏟 {myTeamGame.stadium}</div>
-              {myTeamGame.status === "scheduled" && (myTeamGame.awayStarterName || myTeamGame.homeStarterName) && (
-                <div>예고선발 {myTeamGame.awayStarterName || "미정"} vs {myTeamGame.homeStarterName || "미정"}</div>
-              )}
-              {myTeamGame.status === "final" && (myTeamGame.winPitcher || myTeamGame.losePitcher) && (
-                <div>승 {myTeamGame.winPitcher || "-"} · 패 {myTeamGame.losePitcher || "-"}</div>
-              )}
+          {/* 종료 모드: 구장은 중앙 상단으로 이동, 승·패투수만 하단 */}
+          {myTeamGame.status === "final" && (myTeamGame.winPitcher || myTeamGame.losePitcher) && (
+            <div className="pt-2 border-t border-white/10 text-[11px] text-text-tertiary">
+              승 {myTeamGame.winPitcher || "-"} · 패 {myTeamGame.losePitcher || "-"}
             </div>
           )}
         </div>
