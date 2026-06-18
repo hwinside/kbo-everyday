@@ -62,6 +62,23 @@ async function countMessagesByConversation(
   return map;
 }
 
+// 안읽은 메시지(운영팀 외 sender + is_read=false) 총합을 id 청크별 head 카운트로 가볍게 집계한다.
+// 좌측 메뉴 배지용 — 대화별 분해 없이 합계만 필요하므로 row를 가져오지 않는다.
+async function countUnreadTotal(admin: SupabaseAdmin, convIds: string[], systemUserId: string) {
+  let total = 0;
+  for (let i = 0; i < convIds.length; i += IN_CHUNK) {
+    const slice = convIds.slice(i, i + IN_CHUNK);
+    const { count } = await admin
+      .from("dm_messages")
+      .select("*", { count: "exact", head: true })
+      .in("conversation_id", slice)
+      .neq("sender_id", systemUserId)
+      .eq("is_read", false);
+    total += count ?? 0;
+  }
+  return total;
+}
+
 // 프로필을 id 청크로 나눠 batch fetch 한다.
 async function fetchProfilesByIds(admin: SupabaseAdmin, ids: string[]) {
   const map = new Map<string, { id: string; nickname: string; team_id: number | null }>();
@@ -88,6 +105,14 @@ export async function GET(request: NextRequest) {
   const admin = getSupabaseAdmin();
   const conversationId = request.nextUrl.searchParams.get("conversationId");
   const tab = request.nextUrl.searchParams.get("tab") || "inbox";
+
+  // 안읽은 쪽지 총 갯수 (어드민 좌측 메뉴 배지용)
+  if (request.nextUrl.searchParams.get("count") === "unread") {
+    const convs = await fetchAllSystemConversations(admin, systemUserId);
+    const convIds = convs.map((c) => c.id as string);
+    const unreadTotal = convIds.length === 0 ? 0 : await countUnreadTotal(admin, convIds, systemUserId);
+    return NextResponse.json({ unreadTotal });
+  }
 
   // 발송 로그 조회 (발송함 탭)
   if (tab === "sent") {
