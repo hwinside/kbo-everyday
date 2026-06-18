@@ -533,7 +533,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         </m.div>
       )}
 
-      {/* 섹션 순서: 팀카드 → 뉴스 → 경기 → 최애선수 → 숏츠 → 전체경기현황.
+      {/* 섹션 순서: 팀카드 → 뉴스 → 최애선수 → 숏츠 → 다른팀실시간 → 전체경기현황.
           각 섹션은 마이페이지 토글(sections.*)로 on/off. 팀카드는 S3에서 삽입. */}
 
       {/* 팀 카드 (필수, 토글 없음) — 경기카드(MyTeamHero)를 안에 종속 임베드(④=B) */}
