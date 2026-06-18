@@ -51,7 +51,7 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
             )}
           </div>
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
-            {!isLive && <BroadcastBadges channels={game.broadcastChannels} />}
+            {(game.status === "scheduled" || game.status === "final") && <BroadcastBadges channels={game.broadcastChannels} />}
             <span className="truncate text-xs text-text-tertiary">{game.stadium}</span>
           </div>
         </div>

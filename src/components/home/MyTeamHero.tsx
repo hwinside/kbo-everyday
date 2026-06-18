@@ -74,7 +74,7 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
               {(myTeamGame.status === "scheduled" || myTeamGame.status === "final") && (
                 <div className="text-[10px] text-text-tertiary">🏟 {myTeamGame.stadium}</div>
               )}
-              {myTeamGame.status !== "cancelled" && myTeamGame.status !== "live" && myTeamGame.broadcastChannels && myTeamGame.broadcastChannels.length > 0 && (
+              {(myTeamGame.status === "scheduled" || myTeamGame.status === "final") && myTeamGame.broadcastChannels && myTeamGame.broadcastChannels.length > 0 && (
                 <div className="flex justify-center">
                   <BroadcastBadges channels={myTeamGame.broadcastChannels} />
                 </div>
