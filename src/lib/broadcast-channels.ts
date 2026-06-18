@@ -37,8 +37,10 @@ const BROADCAST_LOGO_MAP: Record<string, string> = {
   "M-T": "/broadcast-logos/M-T.svg",       // MBC
   "S-T": "/broadcast-logos/S-T.svg",       // SBS
   "KN-T": "/broadcast-logos/KN-T.svg",     // KBSN SPORTS
+  "MS-T": "/broadcast-logos/MS-T.svg",     // MBC SPORTS+
+  "SS-T": "/broadcast-logos/SS-T.svg",     // SBS Sports
   "SPO-T": "/broadcast-logos/SPO-T.svg",   // SPOTV
-  "SPO-2T": "/broadcast-logos/SPO-2T.png", // SPOTV2(SPOTV PLUS)
+  "SPO-2T": "/broadcast-logos/SPO-2T.svg", // SPOTV2
 };
 
 /** 디코드된 단일 중계방송사. 로고가 있으면 logoSrc, 없으면 텍스트(name) fallback. */
