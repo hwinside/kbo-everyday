@@ -9,6 +9,7 @@ export type HomeSectionKey =
   | "news"
   | "favPlayers"
   | "shorts"
+  | "liveOtherTeams"
   | "allGames";
 
 interface SectionDef {
@@ -23,7 +24,8 @@ export const HOME_SECTIONS: SectionDef[] = [
   { key: "news", label: "뉴스", desc: "주요 뉴스 카드", storageKey: "kbo-home-news-visible" },
   { key: "favPlayers", label: "최애선수 카드", desc: "최애선수 최근 기록", storageKey: "kbo-home-favplayers-visible" },
   { key: "shorts", label: "숏츠", desc: "홈 숏츠 영상 섹션", storageKey: "kbo-shorts-visible" },
-  { key: "allGames", label: "전체 경기 현황", desc: "다른 경기 라이브·오늘 일정", storageKey: "kbo-home-allgames-visible" },
+  { key: "liveOtherTeams", label: "다른 팀 실시간", desc: "다른 경기 실시간 스코어 (Live 시에만 노출)", storageKey: "kbo-home-livegames-visible" },
+  { key: "allGames", label: "전체 경기 현황", desc: "오늘 경기 일정·결과", storageKey: "kbo-home-allgames-visible" },
 ];
 
 export const HOME_SECTIONS_PREF_EVENT = "home-sections-pref-changed";
