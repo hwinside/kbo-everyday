@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { Sparkles, ChevronRight } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 
@@ -18,6 +18,7 @@ const SEEN_KEY = "whats-new-seen-id";
 
 export default function WhatsNewCard() {
   const router = useRouter();
+  const pathname = usePathname();
   const [item, setItem] = useState<Announcement | null>(null);
 
   useEffect(() => {
@@ -62,7 +63,7 @@ export default function WhatsNewCard() {
           <ChevronRight size={18} className="mt-1 shrink-0 text-text-tertiary" />
         </div>
 
-        {item.cta_label && item.cta_path && (
+        {item.cta_label && item.cta_path && item.cta_path !== pathname && (
           <button
             onClick={(e) => {
               e.stopPropagation();
