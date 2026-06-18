@@ -146,8 +146,9 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip, 
   const handleComplete = () => {
     closingRef.current = true;
     history.back();
-    const favs: FavoritePlayer[] = allPlayers
-      .filter(p => selected.has(p.id))
+    // 저장 순서 = 화면 슬롯 순서(선택 순서). allPlayers.filter는 로스터 원본 순서로
+    // 뒤바뀌어 DB에 저장돼, 재조회 시 사용자가 지정한 순서가 사라지는 회귀가 있었음.
+    const favs: FavoritePlayer[] = selectedPlayersArr
       .map(p => ({
         playerId: p.id,
         name: p.name,
