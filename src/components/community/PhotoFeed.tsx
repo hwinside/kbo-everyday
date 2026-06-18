@@ -749,7 +749,7 @@ function PhotoCarousel({
           onTouchEnd={handleTouchEnd}
         >
           {slides.map((slide, i) => (
-            <div key={i} className="w-full flex-shrink-0">
+            <div key={i} className="w-full flex-shrink-0 flex items-center justify-center">
               <ZoomableSlide
                 slide={slide}
                 elevationGrace={elevationGrace}
