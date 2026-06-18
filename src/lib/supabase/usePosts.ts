@@ -22,6 +22,7 @@ export interface Post {
   // meme editor fields
   game_id?: string | null;
   player_tags?: string[];
+  team_tags?: string[];
   hashtags?: string[];
   seat_info?: { zone: string; block?: string; row?: string; seat?: string } | null;
   // joined
