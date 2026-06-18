@@ -200,7 +200,7 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
 
   const streak = formatStreak(data?.standing?.streak ?? null);
   const st = data?.standing;
-  const rg = data?.rankHistory ? rankPoints(data.rankHistory, 300, 104, 6) : null;
+  const rg = data?.rankHistory ? rankPoints(data.rankHistory, 300, 96, 6) : null;
 
   return (
     <GlassCard className="p-5 mb-3">
@@ -253,21 +253,23 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
           {/* 3. 그래프 — 좌(전체높이) 순위변동(Y축 1~10위 라벨·빗금) + 우(상하) 타율/방어율 */}
           {rg && (
             <div className="mt-4 border-t border-border/40 pt-3.5">
-              <p className="text-[11px] text-text-tertiary mb-2">시즌 순위 변동 · 주간 팀 스탯</p>
               <div className="flex items-stretch gap-2">
                 {/* 좌: 순위 변동 — 클릭 → 팀 순위 페이지. Y축에 1~10위 라벨 + 빗금 */}
-                <Link href="/standings" className="flex h-[136px] flex-[1.3] gap-1.5 rounded-[10px] bg-bg-secondary/60 px-1.5 pb-2 pt-6">
-                  <div className="flex h-[104px] flex-col justify-between py-[6px] text-[8px] leading-none text-text-tertiary/80">
-                    {Array.from({ length: 10 }, (_, i) => <span key={i}>{i + 1}</span>)}
+                <Link href="/standings" className="flex h-[136px] flex-[1.3] flex-col rounded-[10px] bg-bg-secondary/60 px-1.5 py-2">
+                  <span className="px-0.5 text-[10.5px] leading-[14px] text-text-tertiary">시즌 순위 변동</span>
+                  <div className="mt-1 flex min-h-0 flex-1 gap-1.5">
+                    <div className="flex h-full flex-col justify-between py-[6px] text-[8px] leading-none text-text-tertiary/80">
+                      {Array.from({ length: 10 }, (_, i) => <span key={i}>{i + 1}</span>)}
+                    </div>
+                    <svg width="100%" height="96" viewBox="0 0 300 96" preserveAspectRatio="none" aria-hidden className="min-h-0 flex-1">
+                      {Array.from({ length: 10 }, (_, i) => {
+                        const y = rg.yOf(i + 1);
+                        return <line key={i} x1="0" y1={y} x2="300" y2={y} stroke="currentColor" className="text-text-tertiary/35" strokeWidth="1" strokeDasharray="5 4" />;
+                      })}
+                      <polyline fill="none" stroke={accent} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" points={rg.line} />
+                      <circle cx={rg.lastX} cy={rg.lastY} r="3.5" fill={accent} />
+                    </svg>
                   </div>
-                  <svg width="100%" height="104" viewBox="0 0 300 104" preserveAspectRatio="none" aria-hidden className="flex-1">
-                    {Array.from({ length: 10 }, (_, i) => {
-                      const y = rg.yOf(i + 1);
-                      return <line key={i} x1="0" y1={y} x2="300" y2={y} stroke="currentColor" className="text-text-tertiary/35" strokeWidth="1" strokeDasharray="5 4" />;
-                    })}
-                    <polyline fill="none" stroke={accent} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" points={rg.line} />
-                    <circle cx={rg.lastX} cy={rg.lastY} r="3.5" fill={accent} />
-                  </svg>
                 </Link>
                 {/* 우: 타율 / 방어율 — 클릭 → 팀 기록 페이지 */}
                 <Link href={`/teams/${team.slug}/records`} className="flex h-[136px] flex-1 flex-col gap-2">
