@@ -68,7 +68,7 @@ export default function TeamNextTicketCard({ team }: Props) {
       }
 
       if (aborted) return;
-      // 최신 일정으로 재계산 → on_sale 경기가 취소/변경됐어도 다음 fetch에서 자동 보정
+      // 최신 일정으로 재계산 → 오픈 지난 경기는 다음 fetch에서 다음 대기 경기로 자동 보정
       setTicketInfo(getNextTicketOpen(team.id, homeGames));
     }
 
@@ -100,11 +100,8 @@ export default function TeamNextTicketCard({ team }: Props) {
       const ms = ticketInfo!.openAt.getTime() - Date.now();
       setCountdown(formatCountdown(ms));
       setNear(ms > 0 && ms < 60 * 60 * 1000);
-      // 오픈 시각 지나면 판매 중으로 전환
-      if (ms <= 0) {
-        setTicketInfo((prev) => (prev ? { ...prev, status: "on_sale", msUntilOpen: 0 } : null));
-        return;
-      }
+      // 오픈 시각 지나면 카운트다운 종료('오픈!') — 다음 주기 fetch가 다음 오픈 대기 경기로 자동 갱신
+      if (ms <= 0) return;
       // 매 틱마다 남은 시간 기준으로 다음 간격 재계산 → 페이지 열어둔 채 임박(1시간 이내) 구간 진입해도 1초 카운트다운/LIVE로 전환됨
       timer = setTimeout(tick, ms < 60 * 60 * 1000 ? 1000 : 60_000);
     }
@@ -145,21 +142,14 @@ export default function TeamNextTicketCard({ team }: Props) {
           // 더블헤더/일정 변경 경기 — 표준 룰로 확정 표기 금지, 예매처에서 별도 확인 유도
           <p className="text-sm font-bold text-yellow-400">변경 경기 · 예매 일정 별도 확인</p>
         ) : (
-          <p className="text-sm font-bold text-text-primary">
-            {ticketInfo.status === "on_sale" ? "지금 예매 중" : countdown}
-          </p>
+          <p className="text-sm font-bold text-text-primary">{countdown}</p>
         )}
-        {!ticketInfo.uncertain && ticketInfo.status === "countdown" && (
+        {!ticketInfo.uncertain && (
           <p className="text-xs font-semibold text-text-primary mt-0.5">{openLabel} 예매 오픈</p>
         )}
         <p className="text-xs text-text-secondary mt-0.5">
           {gameLabel}{ticketInfo.opponentName ? ` vs ${ticketInfo.opponentName}` : ""} 홈경기 · {ticketInfo.provider}
         </p>
-        {ticketInfo.concurrentOnSaleDate && (
-          <p className="text-[11px] text-text-secondary mt-0.5">
-            🎟 {parseInt(ticketInfo.concurrentOnSaleDate.slice(4, 6))}/{parseInt(ticketInfo.concurrentOnSaleDate.slice(6, 8))} 경기는 지금 예매 중
-          </p>
-        )}
         {!ticketInfo.uncertain && (
           <p className="text-[10px] leading-[13px] text-text-tertiary mt-1">
             * 안내된 예매 오픈 시간은 정확하지 않을 수 있어요. 정확한 시간은 예매처에서 확인해주세요.
