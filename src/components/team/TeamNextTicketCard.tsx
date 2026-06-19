@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { getTeamBgColor, type TeamData } from "@/lib/constants/teams";
 import { getNextTicketOpen, formatCountdown, type NextTicketOpen } from "@/lib/utils/ticket-utils";
+import { TICKET_OPEN_RULES } from "@/lib/constants/tickets";
 
 interface Props {
   team: TeamData;
@@ -18,11 +19,22 @@ export default function TeamNextTicketCard({ team }: Props) {
   useEffect(() => {
     let aborted = false;
 
+    const policy = TICKET_OPEN_RULES[team.id];
+    const ticketOpenAt = (date: string): Date | null => {
+      if (!policy) return null;
+      const y = parseInt(date.slice(0, 4));
+      const m = parseInt(date.slice(4, 6)) - 1;
+      const dd = parseInt(date.slice(6, 8));
+      return new Date(y, m, dd - policy.daysBefore, policy.hour, 0, 0);
+    };
+
     async function fetchHomeGames() {
       const homeGames: Array<{ date: string; uncertain: boolean }> = [];
       const now = new Date();
 
-      for (let i = 0; i < 21 && homeGames.length < 6; i++) {
+      // 현재 예매중 홈스탠드를 지나 '다음 예매 오픈 대기(countdown)' 경기를 만날 때까지 수집.
+      // 홈스탠드가 길면 6경기 캡으로 끊겨 countdown 경기를 못 보던 문제 → 조기종료 조건 + 5주/12경기 안전한도.
+      for (let i = 0; i < 35 && homeGames.length < 12; i++) {
         const d = new Date(now);
         d.setDate(d.getDate() + i);
         const dateStr = d
@@ -46,6 +58,9 @@ export default function TeamNextTicketCard({ team }: Props) {
           // 같은 날 홈경기 2건 이상 = 더블헤더/변경 경기 → 예매 일정 확정 불가(별도 확인)
           if (home && !homeGames.some((h) => h.date === home.date)) {
             homeGames.push({ date: home.date, uncertain: teamHome.length >= 2 });
+            // 예매 오픈이 미래(countdown)인 경기를 찾으면 충분 → 조기 종료(불필요한 추가 fetch 방지)
+            const openAt = ticketOpenAt(home.date);
+            if (openAt && openAt.getTime() > now.getTime()) break;
           }
         } catch {
           /* skip */
