@@ -15,6 +15,23 @@ const IN_CHUNK = 150;
 
 type SupabaseAdmin = ReturnType<typeof getSupabaseAdmin>;
 
+function normalizeContent(content: unknown) {
+  return typeof content === "string" ? content.replace(/\r\n/g, "\n").trimEnd() : "";
+}
+
+function normalizeImageUrls(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((url): url is string => typeof url === "string" && /^https?:\/\//.test(url))
+    .slice(0, 3);
+}
+
+function lastMessagePreview(content: string, imageUrls: string[]) {
+  const text = content.trim();
+  if (text) return text.replace(/\s+/g, " ").substring(0, 100);
+  return imageUrls.length > 0 ? "사진을 보냈습니다" : "";
+}
+
 // 1,000행 상한을 넘겨 운영팀의 모든 대화를 가져온다.
 async function fetchAllSystemConversations(admin: SupabaseAdmin, systemUserId: string) {
   const all: Record<string, unknown>[] = [];
@@ -256,10 +273,13 @@ export async function POST(request: NextRequest) {
 
   // 개별 유저에게 쪽지 발송
   if (body.action === "send_to_user") {
-    const { userId, content } = body as { userId?: string; content?: string };
-    if (!userId || !content?.trim()) {
+    const { userId } = body as { userId?: string };
+    const content = normalizeContent(body.content);
+    const imageUrls = normalizeImageUrls(body.imageUrls);
+    if (!userId || (!content.trim() && imageUrls.length === 0)) {
       return NextResponse.json({ error: "missing_params" }, { status: 400 });
     }
+    const preview = lastMessagePreview(content, imageUrls);
 
     // 기존 conversation 찾기
     const [u1, u2] = [systemUserId, userId].sort();
@@ -292,7 +312,8 @@ export async function POST(request: NextRequest) {
       .insert({
         conversation_id: conversationId,
         sender_id: systemUserId,
-        content: content.trim(),
+        content,
+        image_urls: imageUrls,
       });
 
     if (msgError) {
@@ -302,7 +323,7 @@ export async function POST(request: NextRequest) {
     await admin
       .from("dm_conversations")
       .update({
-        last_message: content.trim().substring(0, 100),
+        last_message: preview,
         last_message_at: new Date().toISOString(),
       })
       .eq("id", conversationId);
@@ -419,10 +440,13 @@ export async function POST(request: NextRequest) {
   }
 
   // 기존 답장 로직
-  const { conversationId, content } = body;
-  if (!conversationId || !content?.trim()) {
+  const { conversationId } = body;
+  const content = normalizeContent(body.content);
+  const imageUrls = normalizeImageUrls(body.imageUrls);
+  if (!conversationId || (!content.trim() && imageUrls.length === 0)) {
     return NextResponse.json({ error: "missing_params" }, { status: 400 });
   }
+  const preview = lastMessagePreview(content, imageUrls);
 
   // 운영팀 대화인지 검증
   const { data: conv } = await admin
@@ -441,7 +465,8 @@ export async function POST(request: NextRequest) {
     .insert({
       conversation_id: conversationId,
       sender_id: systemUserId,
-      content: content.trim(),
+      content,
+      image_urls: imageUrls,
     });
 
   if (msgError) {
@@ -451,7 +476,7 @@ export async function POST(request: NextRequest) {
   await admin
     .from("dm_conversations")
     .update({
-      last_message: content.trim().substring(0, 100),
+      last_message: preview,
       last_message_at: new Date().toISOString(),
     })
     .eq("id", conversationId);
