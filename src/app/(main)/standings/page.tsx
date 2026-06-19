@@ -20,18 +20,15 @@ import BatterTitleTab from "@/components/standings/BatterTitleTab";
 import PitcherTitleTab from "@/components/standings/PitcherTitleTab";
 import DailyAnalysisCard from "@/components/standings/DailyAnalysisCard";
 
-// 순위표 팀명 아래 '오늘 경기' 상태 미니 칩 (당일 반영 여부 가늠용)
-function TodayStatus({ status }: { status?: string }) {
-  if (!status) return null; // 오늘 경기 없음 → 미표시
-  if (status === "live") {
-    return (
-      <span className="flex items-center gap-1 text-[10px] sm:text-xs font-semibold text-accent-green">
-        <span className="h-1.5 w-1.5 rounded-full bg-accent-green animate-pulse" />진행중
-      </span>
-    );
+// 순위표 팀명 아래 '오늘 결과 반영' 미니 칩.
+// reflected === null → 오늘 그 팀 경기 없음(미표시).
+// reflected === true → 오늘 경기 결과가 순위에 반영됨, false → 아직 반영 전.
+function TodayStatus({ reflected }: { reflected: boolean | null }) {
+  if (reflected === null) return null; // 오늘 경기 없음 → 미표시
+  if (reflected) {
+    return <span className="text-[10px] sm:text-xs font-semibold text-accent-green">오늘 결과 반영됨</span>;
   }
-  const label = status === "final" ? "종료" : status === "cancelled" ? "취소" : "경기전";
-  return <span className="text-[10px] sm:text-xs text-text-tertiary">{label}</span>;
+  return <span className="text-[10px] sm:text-xs text-text-tertiary">오늘 결과 반영전</span>;
 }
 
 export default function StandingsPage() {
@@ -46,8 +43,8 @@ export default function StandingsPage() {
 
   const [realStandings, setRealStandings] = useState<TeamStanding[] | null>(null);
   const [season, setSeason] = useState<2025 | 2026>(2026);
-  // 오늘 경기 상태(팀별): 순위에 당일 경기가 반영됐는지 가늠용
-  const [gameStatus, setGameStatus] = useState<Map<number, string>>(new Map());
+  // 팀별 '오늘 결과 반영' 여부: true=반영됨, false=반영 전, undefined=오늘 경기 없음
+  const [reflectedMap, setReflectedMap] = useState<Map<number, boolean>>(new Map());
 
   const [dailyAnalysis, setDailyAnalysis] = useState<{ date: string; analysis: Record<string, { copy: string | null; lastUpdated?: string }> } | null>(null);
   const [dailyAnalysisLoading, setDailyAnalysisLoading] = useState(true);
@@ -108,22 +105,63 @@ export default function StandingsPage() {
       .catch(() => {});
   }, [season]);
 
+  // '오늘 결과 반영' 판정:
+  // baseline = 오늘(KST) 날짜의 daily_standings_snapshot (01:00 KST cron이 저장 → 오늘 경기 이전 누적 경기수)
+  // 현재 = /api/standings 의 팀별 누적 경기수(승+패+무)
+  // 오늘 final 경기수만큼 누적이 늘었으면(현재 >= baseline + 오늘 final) → 반영됨.
+  // baseline 부재/오늘 경기 없음 등 불확실 시 보수적으로 '반영 전'(false)로 둔다.
   useEffect(() => {
-    if (season !== 2026) { setGameStatus(new Map()); return; } // eslint-disable-line react-hooks/set-state-in-effect
+    if (season !== 2026) { setReflectedMap(new Map()); return; } // eslint-disable-line react-hooks/set-state-in-effect
     const today = getKSTToday().replace(/-/g, "");
-    fetch(`/api/games?date=${today}`, { cache: "no-store" })
-      .then(r => r.json())
-      .then(data => {
-        if (Array.isArray(data.games)) {
-          const m = new Map<number, string>();
-          for (const g of data.games as { homeTeamId?: number; awayTeamId?: number; status?: string }[]) {
-            if (g.homeTeamId && g.status) m.set(g.homeTeamId, g.status);
-            if (g.awayTeamId && g.status) m.set(g.awayTeamId, g.status);
-          }
-          setGameStatus(m);
+    Promise.all([
+      fetch(`/api/games?date=${today}`, { cache: "no-store" }).then(r => r.json()).catch(() => null),
+      fetch("/api/standings", { cache: "no-store" }).then(r => r.json()).catch(() => null),
+      fetch(`/api/standings-snapshot?date=${today}`, { cache: "no-store" }).then(r => r.json()).catch(() => null),
+    ]).then(([gamesData, standingsData, snapshotData]) => {
+      // 오늘 팀별 final 경기수
+      const todayFinals = new Map<number, number>();
+      if (Array.isArray(gamesData?.games)) {
+        for (const g of gamesData.games as { homeTeamId?: number; awayTeamId?: number; status?: string }[]) {
+          if (g.status !== "final") continue;
+          if (g.homeTeamId) todayFinals.set(g.homeTeamId, (todayFinals.get(g.homeTeamId) ?? 0) + 1);
+          if (g.awayTeamId) todayFinals.set(g.awayTeamId, (todayFinals.get(g.awayTeamId) ?? 0) + 1);
         }
-      })
-      .catch(() => {});
+      }
+      // 오늘 경기가 있는 팀 (scheduled/live/final/cancelled 모두 — 칩 표시 여부 판단용)
+      const teamsWithGameToday = new Set<number>();
+      if (Array.isArray(gamesData?.games)) {
+        for (const g of gamesData.games as { homeTeamId?: number; awayTeamId?: number }[]) {
+          if (g.homeTeamId) teamsWithGameToday.add(g.homeTeamId);
+          if (g.awayTeamId) teamsWithGameToday.add(g.awayTeamId);
+        }
+      }
+      // 현재 누적 경기수 (승+패+무)
+      const currentGames = new Map<number, number>();
+      if (Array.isArray(standingsData?.standings)) {
+        for (const s of standingsData.standings as RawStanding[]) {
+          const id = TEAM_NAME_TO_ID[s.teamName];
+          if (id) currentGames.set(id, (s.wins ?? 0) + (s.losses ?? 0) + (s.draws ?? 0));
+        }
+      }
+      // baseline 누적 경기수 (오늘 스냅샷)
+      const baselineGames = new Map<number, number>();
+      if (Array.isArray(snapshotData?.teams)) {
+        for (const t of snapshotData.teams as { teamId: number; games: number }[]) {
+          baselineGames.set(t.teamId, t.games);
+        }
+      }
+      const m = new Map<number, boolean>();
+      for (const teamId of teamsWithGameToday) {
+        const finals = todayFinals.get(teamId) ?? 0;
+        if (finals === 0) { m.set(teamId, false); continue; } // 아직 종료 경기 없음 → 반영 전
+        const cur = currentGames.get(teamId);
+        const base = baselineGames.get(teamId);
+        // baseline 또는 현재값 부재 시 보수적으로 반영 전 처리
+        const reflected = cur != null && base != null && cur - base >= finals;
+        m.set(teamId, reflected);
+      }
+      setReflectedMap(m);
+    });
   }, [season]);
 
   const standings = season === 2025 ? STANDINGS_2025 : (realStandings ?? MOCK_STANDINGS);
@@ -250,7 +288,7 @@ export default function StandingsPage() {
                         <TeamLogo team={team} size={24} className="sm:!h-7 sm:!w-7" />
                         <div className="flex flex-col min-w-0 leading-tight">
                           <span className="font-medium text-text-primary truncate">{team.shortName}</span>
-                          {season === 2026 && <TodayStatus status={gameStatus.get(standing.teamId)} />}
+                          {season === 2026 && <TodayStatus reflected={reflectedMap.has(standing.teamId) ? reflectedMap.get(standing.teamId)! : null} />}
                         </div>
                         {getStreakIcon(standing.streak) && <span className="hidden min-[360px]:inline-block text-sm sm:text-base shrink-0">{getStreakIcon(standing.streak)}</span>}
                       </div>
