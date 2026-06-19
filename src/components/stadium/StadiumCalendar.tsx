@@ -8,6 +8,7 @@ import type { Stadium } from "@/lib/constants/stadiums";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { useTheme } from "@/components/ThemeProvider";
 import GlassCard from "@/components/ui/GlassCard";
+import { TICKET_OPEN_RULES } from "@/lib/constants/tickets";
 
 interface StadiumGame {
   gameId: string;
@@ -26,28 +27,7 @@ interface StadiumCalendarProps {
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
-/** 구단별 예매 오픈 정보 (구조화) */
-interface TicketOpenRule {
-  daysBefore: number; // 경기 며칠 전
-  hour: number;       // 오픈 시각 (24h)
-  maxTickets: number;
-  label: string;      // 표시용 텍스트
-  provider: string;   // 예매처 이름
-  url: string;        // 예매 링크
-}
-
-const TICKET_OPEN_RULES: Record<number, TicketOpenRule> = {
-  1:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
-  2:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)", provider: "인터파크", url: "https://ticket.interpark.com" },
-  3:  { daysBefore: 7,  hour: 16, maxTickets: 8,  label: "경기 7일 전 오후 4시 (최대 8매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
-  4:  { daysBefore: 5,  hour: 11, maxTickets: 6,  label: "경기 5일 전 오전 11시 (최대 6매)", provider: "SSG닷컴", url: "https://www.ssg.com" },
-  5:  { daysBefore: 6,  hour: 11, maxTickets: 10, label: "경기 6일 전 오전 11시 (최대 10매)", provider: "NC 다이노스", url: "https://www.ncdinos.com" },
-  6:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
-  7:  { daysBefore: 14, hour: 14, maxTickets: 8,  label: "경기 14일 전 오후 2시 (최대 8매)", provider: "롯데 자이언츠", url: "https://www.giantsclub.com" },
-  8:  { daysBefore: 7,  hour: 11, maxTickets: 6,  label: "경기 7일 전 오전 11시 (최대 6매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
-  9:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
-  10: { daysBefore: 7,  hour: 14, maxTickets: 4,  label: "경기 7일 전 오후 2시 (최대 4매)", provider: "놀티켓", url: "https://ticket.interpark.com" },
-};
+// 구단별 예매 오픈 룰 — 공용 SSOT (tickets.ts). TeamNextTicketCard와 동일 규칙 공유.
 
 /** 경기 날짜 + 구단 오픈 룰 → 예매 오픈 일시 계산 */
 function getTicketOpenDate(gameDate: string, teamId: number): Date | null {
