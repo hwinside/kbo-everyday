@@ -28,6 +28,7 @@ export default function DMChatPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // 상대방 프로필 직접 fetch
   const [otherName, setOtherName] = useState("상대방");
@@ -77,6 +78,14 @@ export default function DMChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
+
+  // 입력창 내용 길이에 맞춰 세로 자동 확장 (최대 max-h-32 = 128px)
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
+  }, [input]);
 
   const handleSend = async () => {
     if (!input.trim() || sending) return;
@@ -223,6 +232,7 @@ export default function DMChatPage() {
         <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe">
           <div className="flex items-end gap-2">
             <textarea
+              ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -233,7 +243,7 @@ export default function DMChatPage() {
               }}
               placeholder="쪽지를 입력하세요..."
               rows={1}
-              className="flex-1 px-4 py-2.5 rounded-2xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none resize-none max-h-32"
+              className="flex-1 px-4 py-2.5 rounded-2xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none resize-none max-h-32 overflow-y-auto"
             />
             <button
               onClick={handleSend}
