@@ -176,7 +176,7 @@ export default function StandingsPage() {
               <col className="w-7 sm:w-10" />
               <col className="w-7 sm:w-10" />
               <col className="w-6 sm:w-8" />
-              <col className="w-10 sm:w-12" />
+              <col className="w-9 sm:w-12" />
               <col className="w-9 sm:w-10" />
               <col className="w-9 sm:w-11" />
             </colgroup>
@@ -214,7 +214,7 @@ export default function StandingsPage() {
                       <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
                         <TeamLogo team={team} size={24} className="sm:!h-7 sm:!w-7" />
                         <span className="font-medium text-text-primary truncate">{team.shortName}</span>
-                        {getStreakIcon(standing.streak) && <span className="text-sm sm:text-base shrink-0">{getStreakIcon(standing.streak)}</span>}
+                        {getStreakIcon(standing.streak) && <span className="hidden min-[360px]:inline-block text-sm sm:text-base shrink-0">{getStreakIcon(standing.streak)}</span>}
                       </div>
                     </td>
                     <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums text-text-primary">{standing.wins}</td>
