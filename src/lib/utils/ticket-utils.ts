@@ -63,7 +63,8 @@ export function getNextTicketOpen(
         provider: policy.provider,
         msUntilOpen,
         uncertain: !!game.uncertain,
-        concurrentOnSaleDate: onSale ? onSale.date : null,
+        // 보조라인은 '확정 예매중'만 — 더블헤더/변경(uncertain) on_sale 경기는 확정 표기 금지(별도 확인 리스크 재유입 방지)
+        concurrentOnSaleDate: onSale && !onSale.uncertain ? onSale.date : null,
       };
     }
     // 이미 오픈된 경기 — 가장 가까운 것만 기록
