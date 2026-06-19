@@ -146,6 +146,11 @@ export default function TeamNextTicketCard({ team }: Props) {
         <p className="text-xs text-text-secondary mt-0.5">
           {gameDateLabel} 홈경기 · {ticketInfo.provider}
         </p>
+        {!ticketInfo.uncertain && (
+          <p className="text-[10px] leading-[13px] text-text-tertiary mt-1">
+            * 안내된 예매 오픈 시간은 정확하지 않을 수 있어요. 정확한 시간은 예매처에서 확인해주세요.
+          </p>
+        )}
       </div>
       <a
         href={ticketInfo.buyUrl}
