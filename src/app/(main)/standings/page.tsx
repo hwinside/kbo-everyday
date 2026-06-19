@@ -28,7 +28,7 @@ function TodayStatus({ reflected }: { reflected: boolean | null }) {
   if (reflected) {
     return <span className="text-[10px] sm:text-xs font-semibold text-accent-green">오늘 결과 반영됨</span>;
   }
-  return <span className="text-[10px] sm:text-xs text-text-tertiary">반영 전</span>;
+  return <span className="text-[10px] sm:text-xs text-text-tertiary">오늘 결과 반영전</span>;
 }
 
 export default function StandingsPage() {
