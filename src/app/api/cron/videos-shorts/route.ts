@@ -31,6 +31,10 @@ import {
 } from "@/lib/video/noise-flags";
 import { upsertVideos, type VideoUpsertRow } from "@/lib/video/videos-repo";
 import { isOfficialChannel } from "@/lib/video/team-channels";
+import {
+  hasNonBaseballSignal,
+  isPlayerShortRelevant,
+} from "@/lib/video/shorts-relevance";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
@@ -203,11 +207,19 @@ export async function GET(req: NextRequest) {
       const items = await searchPlayerShorts(query);
       queriedCount += 1;
 
-      const rows: VideoUpsertRow[] = items.map((it) => {
+      const rows: VideoUpsertRow[] = items.flatMap((it) => {
+        const official = isOfficialChannel(it.channel_id);
+        // 야구 관련성 게이트. 공식 채널은 신뢰하되(하이라이트 제목엔 선수명이
+        // 없을 수 있음) 정치·종교 negative만 안전망으로 차단. 검색 기반
+        // 'player' 결과는 선수명이 제목에 있어야 + negative 없어야 통과 —
+        // 채널명/설명으로만 우연 매칭된 비-야구 영상 차단(2026-06-19 제보).
+        const relevant = official
+          ? !hasNonBaseballSignal(it.title)
+          : isPlayerShortRelevant(it.title, p.name);
+        if (!relevant) return [];
         const noiseFlags = extractNoiseFlags(it.title, it.channel);
         const isShort = isShortCandidate({ title: it.title });
-        const official = isOfficialChannel(it.channel_id);
-        return {
+        return [{
           video_id: it.video_id,
           team_id: p.team,
           player_id: p.kbo_id,
@@ -220,7 +232,7 @@ export async function GET(req: NextRequest) {
           source_type: official ? "official_short" : "player",
           is_short_candidate: isShort,
           noise_flags: noiseFlags,
-        };
+        }];
       });
 
       const { upserted, error } = await upsertVideos(supabaseAdmin, rows);

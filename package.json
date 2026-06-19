@@ -19,6 +19,7 @@
     "qa:celebration-hit-overcount": "tsx scripts/qa/celebration-hit-overcount-smoke.ts",
     "qa:celebration-client-dedupe": "tsx scripts/qa/celebration-client-dedupe-smoke.ts",
     "qa:celebration-relay-source": "tsx scripts/qa/celebration-relay-source-smoke.ts",
+    "qa:shorts-relevance": "tsx scripts/qa/shorts-relevance-smoke.ts",
     "qa:naver-relay-counts": "tsx scripts/qa/naver-relay-counts-smoke.ts",
     "qa:foreign-photo": "tsx scripts/qa/foreign-photo-coverage.ts",
     "lint": "eslint",
