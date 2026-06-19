@@ -94,6 +94,7 @@ export default function AdminMessagesPage() {
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const replyRef = useRef<HTMLTextAreaElement>(null);
 
   const [broadcastLogs, setBroadcastLogs] = useState<BroadcastLog[]>([]);
   // 전체발송 상태
@@ -240,6 +241,14 @@ export default function AdminMessagesPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // 답장 입력창 내용 길이에 맞춰 세로 자동 확장 (최대 max-h-32 = 128px)
+  useEffect(() => {
+    const el = replyRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
+  }, [replyText, selectedConv]);
+
   // 대화 상세 보기
   if (selectedConv) {
     return (
@@ -306,6 +315,7 @@ export default function AdminMessagesPage() {
         {/* 답장 입력 */}
         <div className="glass-card p-3 flex items-end gap-2">
           <textarea
+            ref={replyRef}
             value={replyText}
             onChange={(e) => setReplyText(e.target.value)}
             onKeyDown={(e) => {
@@ -316,7 +326,7 @@ export default function AdminMessagesPage() {
             }}
             placeholder="운영팀으로 답장... (Shift+Enter 줄바꿈)"
             rows={1}
-            className="flex-1 bg-transparent outline-none text-sm placeholder:text-[#636366] resize-none max-h-32"
+            className="flex-1 bg-transparent outline-none text-sm placeholder:text-[#636366] resize-none max-h-32 overflow-y-auto"
           />
           <button
             onClick={handleSend}
