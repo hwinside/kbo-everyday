@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { getTeamBgColor, type TeamData } from "@/lib/constants/teams";
 import { getNextTicketOpen, formatCountdown, type NextTicketOpen } from "@/lib/utils/ticket-utils";
@@ -12,7 +12,8 @@ interface Props {
 export default function TeamNextTicketCard({ team }: Props) {
   const [ticketInfo, setTicketInfo] = useState<NextTicketOpen | null>(null);
   const [countdown, setCountdown] = useState("");
-  const intervalRef = useRef<ReturnType<typeof setInterval>>();
+  // 오픈 1시간 이내 임박 여부 — tick에서 실시간 잔여로 갱신 (렌더 중 Date.now 호출 회피)
+  const [near, setNear] = useState(false);
 
   useEffect(() => {
     async function fetchHomeGames() {
@@ -54,19 +55,22 @@ export default function TeamNextTicketCard({ team }: Props) {
   useEffect(() => {
     if (!ticketInfo || ticketInfo.status !== "countdown") return;
 
+    let timer: ReturnType<typeof setTimeout>;
     function tick() {
       const ms = ticketInfo!.openAt.getTime() - Date.now();
       setCountdown(formatCountdown(ms));
-      // transition to on_sale if time passed
+      setNear(ms > 0 && ms < 60 * 60 * 1000);
+      // 오픈 시각 지나면 판매 중으로 전환
       if (ms <= 0) {
-        setTicketInfo((prev) => prev ? { ...prev, status: "on_sale", msUntilOpen: 0 } : null);
+        setTicketInfo((prev) => (prev ? { ...prev, status: "on_sale", msUntilOpen: 0 } : null));
+        return;
       }
+      // 매 틱마다 남은 시간 기준으로 다음 간격 재계산 → 페이지 열어둔 채 임박(1시간 이내) 구간 진입해도 1초 카운트다운/LIVE로 전환됨
+      timer = setTimeout(tick, ms < 60 * 60 * 1000 ? 1000 : 60_000);
     }
 
     tick();
-    const isNear = ticketInfo.msUntilOpen < 60 * 60 * 1000;
-    intervalRef.current = setInterval(tick, isNear ? 1000 : 60_000);
-    return () => clearInterval(intervalRef.current);
+    return () => clearTimeout(timer);
   }, [ticketInfo]);
 
   if (!ticketInfo) return null;
@@ -83,8 +87,7 @@ export default function TeamNextTicketCard({ team }: Props) {
     weekday: "short",
   });
 
-  const isNear =
-    ticketInfo.status === "countdown" && ticketInfo.msUntilOpen < 60 * 60 * 1000;
+  const isNear = ticketInfo.status === "countdown" && near;
   const bgColor = getTeamBgColor(team);
 
   return (

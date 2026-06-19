@@ -1,4 +1,4 @@
-import { TICKET_POLICIES } from "@/lib/constants/tickets";
+import { TICKET_OPEN_RULES } from "@/lib/constants/tickets";
 
 export type TicketOpenStatus = "countdown" | "on_sale" | "none";
 
@@ -24,7 +24,7 @@ export function getNextTicketOpen(
   upcomingHomeGames: Array<{ date: string }>,
   now: Date = new Date()
 ): NextTicketOpen | null {
-  const policy = TICKET_POLICIES.find((p) => p.teamId === teamId);
+  const policy = TICKET_OPEN_RULES[teamId];
   if (!policy || upcomingHomeGames.length === 0) return null;
 
   for (const game of upcomingHomeGames) {
@@ -35,7 +35,7 @@ export function getNextTicketOpen(
     const gameDay = new Date(y, m, d, 23, 59, 59); // end of game day
     if (gameDay < now) continue; // 이미 지난 경기
 
-    const openAt = new Date(y, m, d - policy.daysBeforeGame, policy.openHour, 0, 0);
+    const openAt = new Date(y, m, d - policy.daysBefore, policy.hour, 0, 0);
     const msUntilOpen = openAt.getTime() - now.getTime();
 
     if (msUntilOpen > 0) {
@@ -44,7 +44,7 @@ export function getNextTicketOpen(
         status: "countdown",
         openAt,
         gameDate: game.date,
-        buyUrl: policy.buyUrl,
+        buyUrl: policy.url,
         provider: policy.provider,
         msUntilOpen,
       };
@@ -54,7 +54,7 @@ export function getNextTicketOpen(
         status: "on_sale",
         openAt,
         gameDate: game.date,
-        buyUrl: policy.buyUrl,
+        buyUrl: policy.url,
         provider: policy.provider,
         msUntilOpen: 0,
       };

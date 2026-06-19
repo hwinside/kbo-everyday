@@ -1,24 +1,32 @@
-export interface TicketPolicy {
-  teamId: number;
-  /** 홈경기 기준 예매 오픈까지 남은 일수 */
-  daysBeforeGame: number;
+export interface TicketOpenRule {
+  /** 홈경기 기준 예매 오픈까지 며칠 전 */
+  daysBefore: number;
   /** 예매 오픈 KST 시각 (0-23) */
-  openHour: number;
-  /** 예매 URL */
-  buyUrl: string;
+  hour: number;
+  /** 최대 예매 매수 */
+  maxTickets: number;
+  /** 표시용 텍스트 */
+  label: string;
   /** 예매처 이름 */
   provider: string;
+  /** 예매 링크 */
+  url: string;
 }
 
-export const TICKET_POLICIES: TicketPolicy[] = [
-  { teamId: 1,  daysBeforeGame: 7, openHour: 10, buyUrl: "https://www.ticketlink.co.kr/sports/baseball/5", provider: "티켓링크" },   // LG
-  { teamId: 2,  daysBeforeGame: 7, openHour: 10, buyUrl: "https://ticket.interpark.com/sports/baseball",  provider: "인터파크" },    // 두산
-  { teamId: 3,  daysBeforeGame: 7, openHour: 17, buyUrl: "https://www.ticketlink.co.kr/sports/baseball/5", provider: "티켓링크" },   // KT (수원 주차처럼 경기 7일 전 17시)
-  { teamId: 4,  daysBeforeGame: 7, openHour: 10, buyUrl: "https://www.ssg.com/event/sports.ssg",           provider: "SSG닷컴" },      // SSG
-  { teamId: 5,  daysBeforeGame: 5, openHour: 10, buyUrl: "https://www.ncdinos.com/ticket/reservation",     provider: "NC 공식앱" },   // NC
-  { teamId: 6,  daysBeforeGame: 7, openHour: 10, buyUrl: "https://www.ticketlink.co.kr/sports/baseball/5", provider: "티켓링크" },   // KIA
-  { teamId: 7,  daysBeforeGame: 7, openHour: 10, buyUrl: "https://www.giantsclub.com/ticket",              provider: "롯데 공식앱" }, // 롯데
-  { teamId: 8,  daysBeforeGame: 7, openHour: 10, buyUrl: "https://www.ticketlink.co.kr/sports/baseball/5", provider: "티켓링크" },   // 삼성
-  { teamId: 9,  daysBeforeGame: 7, openHour: 10, buyUrl: "https://www.ticketlink.co.kr/sports/baseball/5", provider: "티켓링크" },   // 한화
-  { teamId: 10, daysBeforeGame: 7, openHour: 10, buyUrl: "https://ticket.interpark.com/sports/baseball",   provider: "놀티켓" },      // 키움
-];
+/**
+ * 구단별 예매 오픈 룰 — SSOT.
+ * StadiumCalendar(예매 일정 달력)와 TeamNextTicketCard(팀 페이지 다음 예매 카운트다운)가
+ * 동일 규칙을 공유하도록 한 곳에서 관리한다. 룰 변경 시 여기만 고치면 양쪽 반영.
+ */
+export const TICKET_OPEN_RULES: Record<number, TicketOpenRule> = {
+  1:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
+  2:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)", provider: "인터파크", url: "https://ticket.interpark.com" },
+  3:  { daysBefore: 7,  hour: 16, maxTickets: 8,  label: "경기 7일 전 오후 4시 (최대 8매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
+  4:  { daysBefore: 5,  hour: 11, maxTickets: 6,  label: "경기 5일 전 오전 11시 (최대 6매)", provider: "SSG닷컴", url: "https://www.ssg.com" },
+  5:  { daysBefore: 6,  hour: 11, maxTickets: 10, label: "경기 6일 전 오전 11시 (최대 10매)", provider: "NC 다이노스", url: "https://www.ncdinos.com" },
+  6:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
+  7:  { daysBefore: 14, hour: 14, maxTickets: 8,  label: "경기 14일 전 오후 2시 (최대 8매)", provider: "롯데 자이언츠", url: "https://www.giantsclub.com" },
+  8:  { daysBefore: 7,  hour: 11, maxTickets: 6,  label: "경기 7일 전 오전 11시 (최대 6매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
+  9:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
+  10: { daysBefore: 7,  hour: 14, maxTickets: 4,  label: "경기 7일 전 오후 2시 (최대 4매)", provider: "놀티켓", url: "https://ticket.interpark.com" },
+};
