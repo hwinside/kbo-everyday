@@ -33,9 +33,25 @@ export const SHORTS_NON_BASEBALL_NEGATIVE = [
   "법회",
 ];
 
+// 뉴스 negative의 `시장`은 정치(市長)·경제(市場)를 노린 키워드지만, 야구에선
+// 'FA 시장·트레이드 시장·외국인 시장' 등 市場이 정상 토픽이라 한글이 겹친다.
+// 아래 야구 시장 구문이 제목에 있으면 `시장`만 차단 예외로 둔다(다른 negative는 유지).
+const BASEBALL_MARKET_PHRASES = [
+  "fa시장",
+  "이적시장",
+  "트레이드시장",
+  "외국인시장",
+  "외국인투수시장",
+  "스토브시장",
+];
+
 /** 제목에 비-야구 negative 키워드가 있으면 차단(노출/수집 공통 2차 필터) */
 export function hasNonBaseballSignal(title: string): boolean {
-  return SHORTS_NON_BASEBALL_NEGATIVE.some((n) => title.includes(n));
+  const compact = title.replace(/\s+/g, "").toLowerCase();
+  const isBaseballMarket = BASEBALL_MARKET_PHRASES.some((p) => compact.includes(p));
+  return SHORTS_NON_BASEBALL_NEGATIVE.some((n) =>
+    n === "시장" && isBaseballMarket ? false : title.includes(n),
+  );
 }
 
 // 선수 검색(source_type="player") 결과가 실제 그 선수 영상인지 판정.

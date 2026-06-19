@@ -42,6 +42,13 @@ check(
 );
 check("정상 케이스 negative 없음", hasNonBaseballSignal("오스틴 결승 적시타"), false);
 
+// --- '시장' allowlist: 야구 市場은 통과, 정치 市長은 차단 (삼순 조건부 GO) ---
+check("정상: FA 시장 (공백)", hasNonBaseballSignal("LG 최대어 FA 시장 큰손 등판"), false);
+check("정상: FA시장 (붙임)", hasNonBaseballSignal("올겨울 FA시장 전망"), false);
+check("정상: 트레이드 시장", hasNonBaseballSignal("마감 임박 트레이드 시장 정리"), false);
+check("정상: 외국인 투수 시장", hasNonBaseballSignal("외국인 투수 시장 매물 분석"), false);
+check("차단 유지: 정치 시장(市長) 후보", hasNonBaseballSignal("OO 시장 후보 유세 현장"), true);
+
 // --- 우연 매칭 차단 (선수명이 제목에 없음) ---
 check(
   "선수명 없는 일반 영상 차단",
