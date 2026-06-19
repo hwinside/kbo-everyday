@@ -12,6 +12,8 @@ export interface NextTicketOpen {
   provider: string;
   /** 오픈까지 남은 ms (countdown only) */
   msUntilOpen: number;
+  /** 더블헤더/일정 변경 경기 → 예매 일정 확정 불가(별도 확인 안내) */
+  uncertain: boolean;
 }
 
 /**
@@ -21,7 +23,7 @@ export interface NextTicketOpen {
  */
 export function getNextTicketOpen(
   teamId: number,
-  upcomingHomeGames: Array<{ date: string }>,
+  upcomingHomeGames: Array<{ date: string; uncertain?: boolean }>,
   now: Date = new Date()
 ): NextTicketOpen | null {
   const policy = TICKET_OPEN_RULES[teamId];
@@ -47,6 +49,7 @@ export function getNextTicketOpen(
         buyUrl: policy.url,
         provider: policy.provider,
         msUntilOpen,
+        uncertain: !!game.uncertain,
       };
     } else {
       // 이미 예매 중 (openAt 지남, 경기는 아직 안 됨)
@@ -57,6 +60,7 @@ export function getNextTicketOpen(
         buyUrl: policy.url,
         provider: policy.provider,
         msUntilOpen: 0,
+        uncertain: !!game.uncertain,
       };
     }
   }

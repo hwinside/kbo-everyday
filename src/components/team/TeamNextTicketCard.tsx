@@ -19,7 +19,7 @@ export default function TeamNextTicketCard({ team }: Props) {
     let aborted = false;
 
     async function fetchHomeGames() {
-      const homeGames: Array<{ date: string }> = [];
+      const homeGames: Array<{ date: string; uncertain: boolean }> = [];
       const now = new Date();
 
       for (let i = 0; i < 21 && homeGames.length < 6; i++) {
@@ -36,15 +36,16 @@ export default function TeamNextTicketCard({ team }: Props) {
             data.games ?? data;
           if (!Array.isArray(games)) continue;
           // 우천취소/종료 경기 제외 → 일정 변경(취소·연기)은 자동으로 다음 유효 경기로 스킵
-          const home = games.find(
+          const teamHome = games.filter(
             (g) =>
               g.homeTeamId === team.id &&
               g.status !== "cancelled" &&
               g.status !== "final"
           );
-          // 더블헤더(같은 날 2경기) 등 같은 날짜 중복 방지
+          const home = teamHome[0];
+          // 같은 날 홈경기 2건 이상 = 더블헤더/변경 경기 → 예매 일정 확정 불가(별도 확인)
           if (home && !homeGames.some((h) => h.date === home.date)) {
-            homeGames.push({ date: home.date });
+            homeGames.push({ date: home.date, uncertain: teamHome.length >= 2 });
           }
         } catch {
           /* skip */
@@ -111,7 +112,7 @@ export default function TeamNextTicketCard({ team }: Props) {
     weekday: "short",
   });
 
-  const isNear = ticketInfo.status === "countdown" && near;
+  const isNear = ticketInfo.status === "countdown" && near && !ticketInfo.uncertain;
   const bgColor = getTeamBgColor(team);
 
   return (
@@ -134,9 +135,14 @@ export default function TeamNextTicketCard({ team }: Props) {
             </span>
           )}
         </div>
-        <p className="text-sm font-bold text-text-primary">
-          {ticketInfo.status === "on_sale" ? "지금 예매 중" : countdown}
-        </p>
+        {ticketInfo.uncertain ? (
+          // 더블헤더/일정 변경 경기 — 표준 룰로 확정 표기 금지, 예매처에서 별도 확인 유도
+          <p className="text-sm font-bold text-yellow-400">변경 경기 · 예매 일정 별도 확인</p>
+        ) : (
+          <p className="text-sm font-bold text-text-primary">
+            {ticketInfo.status === "on_sale" ? "지금 예매 중" : countdown}
+          </p>
+        )}
         <p className="text-xs text-text-secondary mt-0.5">
           {gameDateLabel} 홈경기 · {ticketInfo.provider}
         </p>
