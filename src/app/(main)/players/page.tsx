@@ -26,30 +26,11 @@ interface PlayerItem {
 const STATIC_PLAYERS: PlayerItem[] = playersRosterStatic as PlayerItem[];
 
 type FilterMode = "all" | "team" | "position";
-type SortMode = "name" | "posts" | "photos";
 
 const POSITIONS = ["투수", "포수", "내야수", "외야수"];
 
-const SORT_LABELS: Record<SortMode, string> = {
-  name: "가나다순",
-  posts: "게시글수",
-  photos: "직찍수",
-};
-
-function sortPlayers(players: PlayerItem[], mode: SortMode): PlayerItem[] {
-  const sorted = [...players];
-  switch (mode) {
-    case "name":
-      return sorted.sort((a, b) => a.name.localeCompare(b.name, "ko"));
-    case "posts":
-      // TODO(Phase 2): fetch post counts per player from Supabase (board_type='player'), then sort by count desc. Falls back to name sort for now.
-      return sorted.sort((a, b) => a.name.localeCompare(b.name, "ko"));
-    case "photos":
-      // TODO(Phase 2): fetch photo post counts per player from Supabase (content_type='photo'), then sort by count desc. Falls back to name sort for now.
-      return sorted.sort((a, b) => a.name.localeCompare(b.name, "ko"));
-    default:
-      return sorted;
-  }
+function sortPlayers(players: PlayerItem[]): PlayerItem[] {
+  return [...players].sort((a, b) => a.name.localeCompare(b.name, "ko"));
 }
 
 function PlayersPageContent() {
@@ -104,9 +85,6 @@ function PlayersPageContent() {
     }
   }, [myTeamId, hasUrlParams]);
   const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
-  const [sortMode, setSortMode] = useState<SortMode>(
-    (searchParams.get("sort") as SortMode) || "name"
-  );
   const [visibleCount, setVisibleCount] = useState(20);
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
@@ -129,8 +107,8 @@ function PlayersPageContent() {
       );
     }
 
-    return sortPlayers(result, sortMode);
-  }, [filterMode, filterTeam, filterPosition, searchQuery, sortMode]);
+    return sortPlayers(result);
+  }, [players, filterMode, filterTeam, filterPosition, searchQuery]);
 
   // 동명이인 감지: 이름이 같은 선수가 2명 이상이면 Set에 추가
   const duplicateNames = useMemo(() => {
@@ -163,11 +141,10 @@ function PlayersPageContent() {
     if (filterTeam) params.set("team", String(filterTeam));
     if (filterPosition) params.set("pos", filterPosition);
     if (searchQuery.trim()) params.set("q", searchQuery.trim());
-    if (sortMode !== "name") params.set("sort", sortMode);
     const qs = params.toString();
     const newUrl = qs ? `/players?${qs}` : "/players";
     router.replace(newUrl, { scroll: false });
-  }, [filterMode, filterTeam, filterPosition, searchQuery, sortMode, router]);
+  }, [filterMode, filterTeam, filterPosition, searchQuery, router]);
 
   function handleFilterMode(mode: FilterMode) {
     setFilterMode(mode);
@@ -274,26 +251,11 @@ function PlayersPageContent() {
         </div>
       )}
 
-      {/* 소팅 + 결과 수 */}
-      <div className="mb-3 flex items-center justify-between">
+      {/* 결과 수 */}
+      <div className="mb-3 flex items-center">
         <span className="text-xs text-text-tertiary">
           {searchQuery ? `검색 결과 ${filtered.length}명` : `${filtered.length}명`}
         </span>
-        <div className="flex gap-1">
-          {(Object.keys(SORT_LABELS) as SortMode[]).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => { setSortMode(mode); setVisibleCount(20); }}
-              className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
-                sortMode === mode
-                  ? "bg-black/8 dark:bg-white/10 text-text-primary"
-                  : "text-text-tertiary"
-              }`}
-            >
-              {SORT_LABELS[mode]}
-            </button>
-          ))}
-        </div>
       </div>
 
       {/* 선수 목록 */}
