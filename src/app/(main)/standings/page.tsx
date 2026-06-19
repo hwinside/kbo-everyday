@@ -15,9 +15,24 @@ import TeamLogo from "@/components/ui/TeamLogo";
 import type { TeamStanding } from "@/lib/types";
 import { STANDINGS_2025, MOCK_STANDINGS, TEAM_NAME_TO_ID, type RawStanding, type RealBatterStat, type RealPitcherStat, type MainTab } from "@/lib/constants/standings-data";
 import { getTeam, getStreakIcon } from "@/lib/utils/standings";
+import { getKSTToday } from "@/lib/utils/date-kst";
 import BatterTitleTab from "@/components/standings/BatterTitleTab";
 import PitcherTitleTab from "@/components/standings/PitcherTitleTab";
 import DailyAnalysisCard from "@/components/standings/DailyAnalysisCard";
+
+// 순위표 팀명 아래 '오늘 경기' 상태 미니 칩 (당일 반영 여부 가늠용)
+function TodayStatus({ status }: { status?: string }) {
+  if (!status) return null; // 오늘 경기 없음 → 미표시
+  if (status === "live") {
+    return (
+      <span className="flex items-center gap-1 text-[10px] sm:text-xs font-semibold text-accent-green">
+        <span className="h-1.5 w-1.5 rounded-full bg-accent-green animate-pulse" />진행중
+      </span>
+    );
+  }
+  const label = status === "final" ? "종료" : status === "cancelled" ? "취소" : "경기전";
+  return <span className="text-[10px] sm:text-xs text-text-tertiary">{label}</span>;
+}
 
 export default function StandingsPage() {
   const { profile } = useAuth();
@@ -31,6 +46,8 @@ export default function StandingsPage() {
 
   const [realStandings, setRealStandings] = useState<TeamStanding[] | null>(null);
   const [season, setSeason] = useState<2025 | 2026>(2026);
+  // 오늘 경기 상태(팀별): 순위에 당일 경기가 반영됐는지 가늠용
+  const [gameStatus, setGameStatus] = useState<Map<number, string>>(new Map());
 
   const [dailyAnalysis, setDailyAnalysis] = useState<{ date: string; analysis: Record<string, { copy: string | null; lastUpdated?: string }> } | null>(null);
   const [dailyAnalysisLoading, setDailyAnalysisLoading] = useState(true);
@@ -86,6 +103,24 @@ export default function StandingsPage() {
             };
           });
           setRealStandings(mapped);
+        }
+      })
+      .catch(() => {});
+  }, [season]);
+
+  useEffect(() => {
+    if (season !== 2026) { setGameStatus(new Map()); return; } // eslint-disable-line react-hooks/set-state-in-effect
+    const today = getKSTToday().replace(/-/g, "");
+    fetch(`/api/games?date=${today}`, { cache: "no-store" })
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data.games)) {
+          const m = new Map<number, string>();
+          for (const g of data.games as { homeTeamId?: number; awayTeamId?: number; status?: string }[]) {
+            if (g.homeTeamId && g.status) m.set(g.homeTeamId, g.status);
+            if (g.awayTeamId && g.status) m.set(g.awayTeamId, g.status);
+          }
+          setGameStatus(m);
         }
       })
       .catch(() => {});
@@ -213,7 +248,10 @@ export default function StandingsPage() {
                     <td className="py-2.5 pl-2">
                       <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
                         <TeamLogo team={team} size={24} className="sm:!h-7 sm:!w-7" />
-                        <span className="font-medium text-text-primary truncate">{team.shortName}</span>
+                        <div className="flex flex-col min-w-0 leading-tight">
+                          <span className="font-medium text-text-primary truncate">{team.shortName}</span>
+                          {season === 2026 && <TodayStatus status={gameStatus.get(standing.teamId)} />}
+                        </div>
                         {getStreakIcon(standing.streak) && <span className="hidden min-[360px]:inline-block text-sm sm:text-base shrink-0">{getStreakIcon(standing.streak)}</span>}
                       </div>
                     </td>
