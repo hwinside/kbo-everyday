@@ -146,6 +146,11 @@ export default function TeamNextTicketCard({ team }: Props) {
         <p className="text-xs text-text-secondary mt-0.5">
           {gameDateLabel} 홈경기 · {ticketInfo.provider}
         </p>
+        {ticketInfo.concurrentOnSaleDate && (
+          <p className="text-[11px] text-text-secondary mt-0.5">
+            🎟 {parseInt(ticketInfo.concurrentOnSaleDate.slice(4, 6))}/{parseInt(ticketInfo.concurrentOnSaleDate.slice(6, 8))} 경기는 지금 예매 중
+          </p>
+        )}
         {!ticketInfo.uncertain && (
           <p className="text-[10px] leading-[13px] text-text-tertiary mt-1">
             * 안내된 예매 오픈 시간은 정확하지 않을 수 있어요. 정확한 시간은 예매처에서 확인해주세요.
@@ -159,7 +164,7 @@ export default function TeamNextTicketCard({ team }: Props) {
         className="flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold text-white"
         style={{ backgroundColor: bgColor }}
       >
-        예매하기
+        예매처로 가기
       </a>
     </motion.div>
   );

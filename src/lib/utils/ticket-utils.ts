@@ -14,12 +14,15 @@ export interface NextTicketOpen {
   msUntilOpen: number;
   /** 더블헤더/일정 변경 경기 → 예매 일정 확정 불가(별도 확인 안내) */
   uncertain: boolean;
+  /** countdown 표시 시, 동시에 이미 예매 중인 더 가까운 홈경기 날짜(YYYYMMDD) — 보조 표기용. 없으면 null */
+  concurrentOnSaleDate: string | null;
 }
 
 /**
- * 팀 + 다가오는 홈경기 목록을 받아 다음 예매 오픈 정보 반환.
- * - 아직 오픈 안 된 가장 가까운 경기 → countdown
- * - 이미 오픈됐지만 경기 전인 경기  → on_sale
+ * 팀 + 다가오는 홈경기 목록을 받아 "다음 예매 오픈(대기중)" 경기를 우선 반환.
+ * - 예매처가 오픈 즉시 매진되므로 '지금 예매중'보다 *다음 오픈 예정* 경기가 더 유의미.
+ * - 다음 오픈 대기 경기(countdown)를 우선 노출하고, 동시에 이미 예매중인 더 가까운 경기는 보조(concurrentOnSaleDate)로 표기.
+ * - 대기중 경기가 전혀 없을 때만 가장 가까운 예매중(on_sale) 경기로 폴백.
  */
 export function getNextTicketOpen(
   teamId: number,
@@ -29,19 +32,29 @@ export function getNextTicketOpen(
   const policy = TICKET_OPEN_RULES[teamId];
   if (!policy || upcomingHomeGames.length === 0) return null;
 
+  const openAtOf = (date: string) => {
+    const y = parseInt(date.slice(0, 4));
+    const m = parseInt(date.slice(4, 6)) - 1;
+    const d = parseInt(date.slice(6, 8));
+    return new Date(y, m, d - policy.daysBefore, policy.hour, 0, 0);
+  };
+  const isPastGame = (date: string) => {
+    const y = parseInt(date.slice(0, 4));
+    const m = parseInt(date.slice(4, 6)) - 1;
+    const d = parseInt(date.slice(6, 8));
+    return new Date(y, m, d, 23, 59, 59) < now;
+  };
+
+  // 가장 가까운 '이미 예매중' 경기 (보조/폴백용)
+  let onSale: { date: string; uncertain: boolean } | null = null;
+
   for (const game of upcomingHomeGames) {
-    const y = parseInt(game.date.slice(0, 4));
-    const m = parseInt(game.date.slice(4, 6)) - 1;
-    const d = parseInt(game.date.slice(6, 8));
-
-    const gameDay = new Date(y, m, d, 23, 59, 59); // end of game day
-    if (gameDay < now) continue; // 이미 지난 경기
-
-    const openAt = new Date(y, m, d - policy.daysBefore, policy.hour, 0, 0);
+    if (isPastGame(game.date)) continue;
+    const openAt = openAtOf(game.date);
     const msUntilOpen = openAt.getTime() - now.getTime();
 
     if (msUntilOpen > 0) {
-      // 아직 예매 오픈 전
+      // 다음 예매 오픈(대기) — 우선 노출
       return {
         status: "countdown",
         openAt,
@@ -50,19 +63,26 @@ export function getNextTicketOpen(
         provider: policy.provider,
         msUntilOpen,
         uncertain: !!game.uncertain,
-      };
-    } else {
-      // 이미 예매 중 (openAt 지남, 경기는 아직 안 됨)
-      return {
-        status: "on_sale",
-        openAt,
-        gameDate: game.date,
-        buyUrl: policy.url,
-        provider: policy.provider,
-        msUntilOpen: 0,
-        uncertain: !!game.uncertain,
+        // 보조라인은 '확정 예매중'만 — 더블헤더/변경(uncertain) on_sale 경기는 확정 표기 금지(별도 확인 리스크 재유입 방지)
+        concurrentOnSaleDate: onSale && !onSale.uncertain ? onSale.date : null,
       };
     }
+    // 이미 오픈된 경기 — 가장 가까운 것만 기록
+    if (!onSale) onSale = { date: game.date, uncertain: !!game.uncertain };
+  }
+
+  // 대기중 경기 없음 → 가장 가까운 예매중 경기로 폴백
+  if (onSale) {
+    return {
+      status: "on_sale",
+      openAt: openAtOf(onSale.date),
+      gameDate: onSale.date,
+      buyUrl: policy.url,
+      provider: policy.provider,
+      msUntilOpen: 0,
+      uncertain: onSale.uncertain,
+      concurrentOnSaleDate: null,
+    };
   }
 
   return null;
