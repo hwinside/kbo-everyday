@@ -20,18 +20,49 @@ import BatterTitleTab from "@/components/standings/BatterTitleTab";
 import PitcherTitleTab from "@/components/standings/PitcherTitleTab";
 import DailyAnalysisCard from "@/components/standings/DailyAnalysisCard";
 
-// 순위표 팀명 아래 '오늘 경기' 상태 미니 칩 (당일 반영 여부 가늠용)
-function TodayStatus({ status }: { status?: string }) {
-  if (!status) return null; // 오늘 경기 없음 → 미표시
-  if (status === "live") {
-    return (
-      <span className="flex items-center gap-1 text-[10px] sm:text-xs font-semibold text-accent-green">
-        <span className="h-1.5 w-1.5 rounded-full bg-accent-green animate-pulse" />진행중
-      </span>
-    );
-  }
-  const label = status === "final" ? "종료" : status === "cancelled" ? "취소" : "경기전";
-  return <span className="text-[10px] sm:text-xs text-text-tertiary">{label}</span>;
+type TodayReflectionStatus = "reflected" | "pending";
+
+type TodayGameForReflection = {
+  homeTeamId?: number;
+  awayTeamId?: number;
+  homeScore?: number | null;
+  awayScore?: number | null;
+  status?: "scheduled" | "live" | "final" | "cancelled" | string;
+};
+
+// 순위표 팀명 아래 '오늘 결과' 반영 여부 미니 칩
+function TodayReflectionBadge({ status }: { status?: TodayReflectionStatus }) {
+  if (!status) return null; // 오늘 경기 없음/취소 → 미표시
+
+  const isReflected = status === "reflected";
+  return (
+    <span
+      className={clsx(
+        "text-[10px] sm:text-xs font-semibold whitespace-nowrap",
+        isReflected ? "text-accent-green" : "text-text-tertiary"
+      )}
+    >
+      {isReflected ? "결과 반영됨" : "결과 반영전"}
+    </span>
+  );
+}
+
+function getFinalGameResultForTeam(game: TodayGameForReflection, teamId: number): "승" | "패" | "무" | null {
+  if (game.status !== "final" || game.homeScore == null || game.awayScore == null) return null;
+  if (game.homeTeamId !== teamId && game.awayTeamId !== teamId) return null;
+  if (game.homeScore === game.awayScore) return "무";
+
+  const homeWon = game.homeScore > game.awayScore;
+  if (game.homeTeamId === teamId) return homeWon ? "승" : "패";
+  return homeWon ? "패" : "승";
+}
+
+function getTodayReflectionStatus(standing: TeamStanding, game?: TodayGameForReflection): TodayReflectionStatus | null {
+  if (!game || game.status === "cancelled") return null;
+  const result = getFinalGameResultForTeam(game, standing.teamId);
+  if (!result) return "pending";
+
+  return standing.streak.endsWith(result) ? "reflected" : "pending";
 }
 
 export default function StandingsPage() {
@@ -46,14 +77,14 @@ export default function StandingsPage() {
 
   const [realStandings, setRealStandings] = useState<TeamStanding[] | null>(null);
   const [season, setSeason] = useState<2025 | 2026>(2026);
-  // 오늘 경기 상태(팀별): 순위에 당일 경기가 반영됐는지 가늠용
-  const [gameStatus, setGameStatus] = useState<Map<number, string>>(new Map());
+  // 오늘 경기(팀별): 순위에 당일 결과가 반영됐는지 가늠용
+  const [todayGamesByTeam, setTodayGamesByTeam] = useState<Map<number, TodayGameForReflection>>(new Map());
 
   const [dailyAnalysis, setDailyAnalysis] = useState<{ date: string; analysis: Record<string, { copy: string | null; lastUpdated?: string }> } | null>(null);
   const [dailyAnalysisLoading, setDailyAnalysisLoading] = useState(true);
 
   useEffect(() => {
-    if (season !== 2026) { setDailyAnalysis(null); setDailyAnalysisLoading(false); return; }
+    if (season !== 2026) { setDailyAnalysis(null); setDailyAnalysisLoading(false); return; } // eslint-disable-line react-hooks/set-state-in-effect
     setDailyAnalysisLoading(true);
     const today = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10).replace(/-/g, "");
     fetch(`/api/daily-analysis?date=${today}&t=${Date.now()}`, { cache: "no-store" })
@@ -109,18 +140,18 @@ export default function StandingsPage() {
   }, [season]);
 
   useEffect(() => {
-    if (season !== 2026) { setGameStatus(new Map()); return; } // eslint-disable-line react-hooks/set-state-in-effect
+    if (season !== 2026) { setTodayGamesByTeam(new Map()); return; } // eslint-disable-line react-hooks/set-state-in-effect
     const today = getKSTToday().replace(/-/g, "");
     fetch(`/api/games?date=${today}`, { cache: "no-store" })
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data.games)) {
-          const m = new Map<number, string>();
-          for (const g of data.games as { homeTeamId?: number; awayTeamId?: number; status?: string }[]) {
-            if (g.homeTeamId && g.status) m.set(g.homeTeamId, g.status);
-            if (g.awayTeamId && g.status) m.set(g.awayTeamId, g.status);
+          const m = new Map<number, TodayGameForReflection>();
+          for (const g of data.games as TodayGameForReflection[]) {
+            if (g.homeTeamId) m.set(g.homeTeamId, g);
+            if (g.awayTeamId) m.set(g.awayTeamId, g);
           }
-          setGameStatus(m);
+          setTodayGamesByTeam(m);
         }
       })
       .catch(() => {});
@@ -135,12 +166,10 @@ export default function StandingsPage() {
     setRealBatters(null); setRealPitchers(null);
     fetch(`/api/stats?type=batter&season=${season}`)
       .then(r => r.json())
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       .then(d => d.stats?.length && setRealBatters(d.stats))
       .catch(() => {});
     fetch(`/api/stats?type=pitcher&season=${season}`)
       .then(r => r.json())
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       .then(d => d.stats?.length && setRealPitchers(d.stats))
       .catch(() => {});
   }, [season]);
@@ -250,7 +279,7 @@ export default function StandingsPage() {
                         <TeamLogo team={team} size={24} className="sm:!h-7 sm:!w-7" />
                         <div className="flex flex-col min-w-0 leading-tight">
                           <span className="font-medium text-text-primary truncate">{team.shortName}</span>
-                          {season === 2026 && <TodayStatus status={gameStatus.get(standing.teamId)} />}
+                          {season === 2026 && <TodayReflectionBadge status={getTodayReflectionStatus(standing, todayGamesByTeam.get(standing.teamId)) ?? undefined} />}
                         </div>
                         {getStreakIcon(standing.streak) && <span className="hidden min-[360px]:inline-block text-sm sm:text-base shrink-0">{getStreakIcon(standing.streak)}</span>}
                       </div>
