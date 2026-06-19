@@ -16,6 +16,8 @@ export default function TeamNextTicketCard({ team }: Props) {
   const [near, setNear] = useState(false);
 
   useEffect(() => {
+    let aborted = false;
+
     async function fetchHomeGames() {
       const homeGames: Array<{ date: string }> = [];
       const now = new Date();
@@ -33,23 +35,45 @@ export default function TeamNextTicketCard({ team }: Props) {
           const games: Array<{ homeTeamId: number; status: string; date: string }> =
             data.games ?? data;
           if (!Array.isArray(games)) continue;
+          // 우천취소/종료 경기 제외 → 일정 변경(취소·연기)은 자동으로 다음 유효 경기로 스킵
           const home = games.find(
             (g) =>
               g.homeTeamId === team.id &&
               g.status !== "cancelled" &&
               g.status !== "final"
           );
-          if (home) homeGames.push({ date: home.date });
+          // 더블헤더(같은 날 2경기) 등 같은 날짜 중복 방지
+          if (home && !homeGames.some((h) => h.date === home.date)) {
+            homeGames.push({ date: home.date });
+          }
         } catch {
           /* skip */
         }
       }
 
-      const info = getNextTicketOpen(team.id, homeGames);
-      setTicketInfo(info);
+      if (aborted) return;
+      // 최신 일정으로 재계산 → on_sale 경기가 취소/변경됐어도 다음 fetch에서 자동 보정
+      setTicketInfo(getNextTicketOpen(team.id, homeGames));
     }
 
     fetchHomeGames();
+
+    // 카드를 열어둔 사이 우천 연기/더블헤더 추가/취소 등 일정 변경 반영:
+    // 가시 상태일 때만 주기 재조회 + 앱/탭 복귀(visibilitychange) 시 재조회
+    const REFRESH_MS = 10 * 60 * 1000;
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") fetchHomeGames();
+    }, REFRESH_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") fetchHomeGames();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      aborted = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [team.id]);
 
   useEffect(() => {
