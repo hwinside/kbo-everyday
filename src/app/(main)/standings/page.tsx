@@ -169,19 +169,19 @@ export default function StandingsPage() {
           animate={{ opacity: 1, y: 0 }}
           className="glass-card overflow-hidden"
         >
-          <table className="w-full text-base table-fixed">
+          <table className="w-full text-sm sm:text-base table-fixed">
             <colgroup>
-              <col className="w-8" />
+              <col className="w-7" />
               <col />
-              <col className="w-10" />
-              <col className="w-10" />
-              <col className="w-8" />
-              <col className="w-12" />
-              <col className="w-10" />
-              <col className="w-11" />
+              <col className="w-9 sm:w-10" />
+              <col className="w-9 sm:w-10" />
+              <col className="w-7 sm:w-8" />
+              <col className="w-11 sm:w-12" />
+              <col className="w-9 sm:w-10" />
+              <col className="w-10 sm:w-11" />
             </colgroup>
             <thead>
-              <tr className="border-b border-border text-base font-semibold text-text-tertiary">
+              <tr className="border-b border-border text-sm sm:text-base font-semibold text-text-tertiary">
                 <th className="py-2 text-center">#</th>
                 <th className="py-2 text-left pl-2">팀</th>
                 <th className="py-2 text-right pr-2">승</th>
@@ -211,10 +211,10 @@ export default function StandingsPage() {
                   >
                     <td className="py-2.5 text-center font-bold text-text-primary">{standing.rank}</td>
                     <td className="py-2.5 pl-2">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
                         <TeamLogo team={team} size={28} />
-                        <span className="font-medium text-text-primary whitespace-nowrap">{team.shortName}</span>
-                        {getStreakIcon(standing.streak) && <span className="text-base">{getStreakIcon(standing.streak)}</span>}
+                        <span className="font-medium text-text-primary truncate">{team.shortName}</span>
+                        {getStreakIcon(standing.streak) && <span className="text-base shrink-0">{getStreakIcon(standing.streak)}</span>}
                       </div>
                     </td>
                     <td className="py-2.5 text-right pr-2 tabular-nums text-text-primary">{standing.wins}</td>
