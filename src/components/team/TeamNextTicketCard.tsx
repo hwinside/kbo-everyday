@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { getTeamBgColor, type TeamData } from "@/lib/constants/teams";
-import { getNextTicketOpen, formatCountdown, type NextTicketOpen } from "@/lib/utils/ticket-utils";
+import { getNextTicketOpen, formatCountdown, formatOpenAt, formatGameDateTime, type NextTicketOpen } from "@/lib/utils/ticket-utils";
 import { TICKET_OPEN_RULES } from "@/lib/constants/tickets";
 
 interface Props {
@@ -29,7 +29,7 @@ export default function TeamNextTicketCard({ team }: Props) {
     };
 
     async function fetchHomeGames() {
-      const homeGames: Array<{ date: string; uncertain: boolean }> = [];
+      const homeGames: Array<{ date: string; time: string; uncertain: boolean }> = [];
       const now = new Date();
 
       // 현재 예매중 홈스탠드를 지나 '다음 예매 오픈 대기(countdown)' 경기를 만날 때까지 수집.
@@ -44,7 +44,7 @@ export default function TeamNextTicketCard({ team }: Props) {
           const res = await fetch(`/api/games?date=${dateStr}`);
           if (!res.ok) continue;
           const data = await res.json();
-          const games: Array<{ homeTeamId: number; status: string; date: string }> =
+          const games: Array<{ homeTeamId: number; status: string; date: string; time?: string }> =
             data.games ?? data;
           if (!Array.isArray(games)) continue;
           // 우천취소/종료 경기 제외 → 일정 변경(취소·연기)은 자동으로 다음 유효 경기로 스킵
@@ -57,7 +57,7 @@ export default function TeamNextTicketCard({ team }: Props) {
           const home = teamHome[0];
           // 같은 날 홈경기 2건 이상 = 더블헤더/변경 경기 → 예매 일정 확정 불가(별도 확인)
           if (home && !homeGames.some((h) => h.date === home.date)) {
-            homeGames.push({ date: home.date, uncertain: teamHome.length >= 2 });
+            homeGames.push({ date: home.date, time: home.time ?? "", uncertain: teamHome.length >= 2 });
             // 예매 오픈이 미래(countdown)인 경기를 찾으면 충분 → 조기 종료(불필요한 추가 fetch 방지)
             const openAt = ticketOpenAt(home.date);
             if (openAt && openAt.getTime() > now.getTime()) break;
@@ -115,17 +115,8 @@ export default function TeamNextTicketCard({ team }: Props) {
 
   if (!ticketInfo) return null;
 
-  const gd = ticketInfo.gameDate;
-  const gameDate = new Date(
-    parseInt(gd.slice(0, 4)),
-    parseInt(gd.slice(4, 6)) - 1,
-    parseInt(gd.slice(6, 8))
-  );
-  const gameDateLabel = gameDate.toLocaleDateString("ko-KR", {
-    month: "short",
-    day: "numeric",
-    weekday: "short",
-  });
+  const gameLabel = formatGameDateTime(ticketInfo.gameDate, ticketInfo.gameTime);
+  const openLabel = formatOpenAt(ticketInfo.openAt);
 
   const isNear = ticketInfo.status === "countdown" && near && !ticketInfo.uncertain;
   const bgColor = getTeamBgColor(team);
@@ -158,8 +149,11 @@ export default function TeamNextTicketCard({ team }: Props) {
             {ticketInfo.status === "on_sale" ? "지금 예매 중" : countdown}
           </p>
         )}
+        {!ticketInfo.uncertain && ticketInfo.status === "countdown" && (
+          <p className="text-xs font-semibold text-text-primary mt-0.5">{openLabel} 예매 오픈</p>
+        )}
         <p className="text-xs text-text-secondary mt-0.5">
-          {gameDateLabel} 홈경기 · {ticketInfo.provider}
+          {gameLabel} 홈경기 · {ticketInfo.provider}
         </p>
         {ticketInfo.concurrentOnSaleDate && (
           <p className="text-[11px] text-text-secondary mt-0.5">

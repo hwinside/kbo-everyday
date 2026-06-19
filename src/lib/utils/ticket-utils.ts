@@ -8,6 +8,8 @@ export interface NextTicketOpen {
   openAt: Date;
   /** 대상 홈경기 날짜 YYYYMMDD */
   gameDate: string;
+  /** 대상 홈경기 시작 시각 (HH:MM) — 없으면 빈 문자열 */
+  gameTime: string;
   buyUrl: string;
   provider: string;
   /** 오픈까지 남은 ms (countdown only) */
@@ -26,7 +28,7 @@ export interface NextTicketOpen {
  */
 export function getNextTicketOpen(
   teamId: number,
-  upcomingHomeGames: Array<{ date: string; uncertain?: boolean }>,
+  upcomingHomeGames: Array<{ date: string; time?: string; uncertain?: boolean }>,
   now: Date = new Date()
 ): NextTicketOpen | null {
   const policy = TICKET_OPEN_RULES[teamId];
@@ -46,7 +48,7 @@ export function getNextTicketOpen(
   };
 
   // 가장 가까운 '이미 예매중' 경기 (보조/폴백용)
-  let onSale: { date: string; uncertain: boolean } | null = null;
+  let onSale: { date: string; time: string; uncertain: boolean } | null = null;
 
   for (const game of upcomingHomeGames) {
     if (isPastGame(game.date)) continue;
@@ -59,6 +61,7 @@ export function getNextTicketOpen(
         status: "countdown",
         openAt,
         gameDate: game.date,
+        gameTime: game.time ?? "",
         buyUrl: policy.url,
         provider: policy.provider,
         msUntilOpen,
@@ -68,7 +71,7 @@ export function getNextTicketOpen(
       };
     }
     // 이미 오픈된 경기 — 가장 가까운 것만 기록
-    if (!onSale) onSale = { date: game.date, uncertain: !!game.uncertain };
+    if (!onSale) onSale = { date: game.date, time: game.time ?? "", uncertain: !!game.uncertain };
   }
 
   // 대기중 경기 없음 → 가장 가까운 예매중 경기로 폴백
@@ -77,6 +80,7 @@ export function getNextTicketOpen(
       status: "on_sale",
       openAt: openAtOf(onSale.date),
       gameDate: onSale.date,
+      gameTime: onSale.time,
       buyUrl: policy.url,
       provider: policy.provider,
       msUntilOpen: 0,
@@ -100,4 +104,25 @@ export function formatCountdown(ms: number): string {
   if (hours > 0) return `${hours}시간 ${mins}분 후`;
   if (mins > 0) return `${mins}분 ${secs}초 후`;
   return `${secs}초 후`;
+}
+
+const WD = ["일", "월", "화", "수", "목", "금", "토"];
+
+/** 예매 오픈 일시 → "6/26 (목) 오전 11시" */
+export function formatOpenAt(d: Date): string {
+  const h = d.getHours();
+  const ampm = h < 12 ? "오전" : "오후";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  const min = d.getMinutes();
+  return `${d.getMonth() + 1}/${d.getDate()} (${WD[d.getDay()]}) ${ampm} ${h12}시${min > 0 ? ` ${min}분` : ""}`;
+}
+
+/** 대상 경기 일시 → "7/3 (목) 18:30" (시간 없으면 날짜만) */
+export function formatGameDateTime(yyyymmdd: string, time: string): string {
+  const y = parseInt(yyyymmdd.slice(0, 4));
+  const m = parseInt(yyyymmdd.slice(4, 6)) - 1;
+  const d = parseInt(yyyymmdd.slice(6, 8));
+  const dt = new Date(y, m, d);
+  const base = `${m + 1}/${d} (${WD[dt.getDay()]})`;
+  return time ? `${base} ${time}` : base;
 }
