@@ -203,13 +203,35 @@ export default function DMChatPage() {
                     </div>
                   )}
                   <div
-                    className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words ${
+                    className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
                       isMe
                         ? "bg-accent text-white rounded-br-md"
                         : "bg-bg-tertiary text-text-primary rounded-bl-md"
                     }`}
                   >
-                    {msg.content}
+                    {msg.content ? (
+                      <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                    ) : null}
+                    {Array.isArray(msg.image_urls) && msg.image_urls.length > 0 && (
+                      <div className={`grid gap-2 ${msg.content ? "mt-2" : ""}`}>
+                        {msg.image_urls.map((url, i) => (
+                          <a
+                            key={`${msg.id}-${url}`}
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block overflow-hidden rounded-xl bg-black/10"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element -- DM 첨부는 임의의 Supabase 공개 URL */}
+                            <img
+                              src={url}
+                              alt={`첨부 이미지 ${i + 1}`}
+                              className="max-h-64 w-full object-cover"
+                            />
+                          </a>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className={`text-[10px] text-text-tertiary mt-1 ${isMe ? "text-right" : ""}`}>
                     {new Date(msg.created_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef, type ChangeEvent } from "react";
 import {
   Loader2,
   MessageCircle,
@@ -12,6 +12,8 @@ import {
   SendHorizonal,
   CheckCircle2,
   AlertCircle,
+  Image as ImageIcon,
+  X,
 } from "lucide-react";
 import { getTeamById } from "@/lib/constants/teams";
 
@@ -33,10 +35,18 @@ interface Message {
   sender_id: string;
   sender_nickname: string;
   content: string;
+  image_urls?: string[] | null;
   is_read: boolean;
   is_system: boolean;
   created_at: string;
 }
+
+interface ReplyImage {
+  url: string;
+  name: string;
+}
+
+const MAX_REPLY_IMAGES = 3;
 
 interface BroadcastLog {
   id: number;
@@ -92,9 +102,12 @@ export default function AdminMessagesPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [msgLoading, setMsgLoading] = useState(false);
   const [replyText, setReplyText] = useState("");
+  const [replyImages, setReplyImages] = useState<ReplyImage[]>([]);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const replyRef = useRef<HTMLTextAreaElement>(null);
+  const replyFileInputRef = useRef<HTMLInputElement>(null);
 
   const [broadcastLogs, setBroadcastLogs] = useState<BroadcastLog[]>([]);
   // 전체발송 상태
@@ -165,9 +178,49 @@ export default function AdminMessagesPage() {
     setMsgLoading(false);
   }
 
+  // 사진 첨부 업로드
+  async function handleReplyImageSelect(e: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (files.length === 0 || replyImages.length >= MAX_REPLY_IMAGES) return;
+
+    setUploadingImage(true);
+    const remaining = MAX_REPLY_IMAGES - replyImages.length;
+    const nextImages: ReplyImage[] = [];
+
+    for (const file of files.slice(0, remaining)) {
+      const formData = new FormData();
+      formData.append("file", file);
+      try {
+        const res = await fetch("/api/admin/messages/upload", {
+          method: "POST",
+          headers: { "x-admin-pin": getPin() },
+          body: formData,
+        });
+        if (!res.ok) continue;
+        const json = await res.json();
+        if (typeof json.url === "string") {
+          nextImages.push({ url: json.url, name: file.name });
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (nextImages.length > 0) {
+      setReplyImages((prev) => [...prev, ...nextImages].slice(0, MAX_REPLY_IMAGES));
+    }
+    setUploadingImage(false);
+  }
+
+  function removeReplyImage(index: number) {
+    setReplyImages((prev) => prev.filter((_, i) => i !== index));
+  }
+
   // 답장 전송
   async function handleSend() {
-    if (!selectedConv || !replyText.trim() || sending) return;
+    if (!selectedConv || (!replyText.trim() && replyImages.length === 0) || sending || uploadingImage)
+      return;
     setSending(true);
     try {
       const res = await fetch("/api/admin/messages", {
@@ -178,11 +231,13 @@ export default function AdminMessagesPage() {
         },
         body: JSON.stringify({
           conversationId: selectedConv.id,
-          content: replyText.trim(),
+          content: replyText,
+          imageUrls: replyImages.map((img) => img.url),
         }),
       });
       if (res.ok) {
         setReplyText("");
+        setReplyImages([]);
         await loadMessages(selectedConv);
       }
     } catch {
@@ -258,6 +313,8 @@ export default function AdminMessagesPage() {
             onClick={() => {
               setSelectedConv(null);
               setMessages([]);
+              setReplyText("");
+              setReplyImages([]);
             }}
             className="p-2 rounded-lg hover:bg-white/5 transition-colors"
           >
@@ -299,7 +356,29 @@ export default function AdminMessagesPage() {
                   {!msg.is_system && (
                     <p className="text-xs text-[#8E8E93] mb-1">{msg.sender_nickname}</p>
                   )}
-                  <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                  {msg.content ? (
+                    <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                  ) : null}
+                  {Array.isArray(msg.image_urls) && msg.image_urls.length > 0 && (
+                    <div className={`grid gap-2 ${msg.content ? "mt-2" : ""}`}>
+                      {msg.image_urls.map((url, i) => (
+                        <a
+                          key={`${msg.id}-${url}`}
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block overflow-hidden rounded-xl bg-black/20"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element -- DM 첨부는 임의의 Supabase 공개 URL */}
+                          <img
+                            src={url}
+                            alt={`첨부 이미지 ${i + 1}`}
+                            className="max-h-60 w-full object-cover"
+                          />
+                        </a>
+                      ))}
+                    </div>
+                  )}
                   <p
                     className={`text-xs mt-1 ${msg.is_system ? "text-white/60" : "text-[#636366]"}`}
                   >
@@ -313,32 +392,77 @@ export default function AdminMessagesPage() {
         </div>
 
         {/* 답장 입력 */}
-        <div className="glass-card p-3 flex items-end gap-2">
-          <textarea
-            ref={replyRef}
-            value={replyText}
-            onChange={(e) => setReplyText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                handleSend();
-              }
-            }}
-            placeholder="운영팀으로 답장... (Shift+Enter 줄바꿈)"
-            rows={1}
-            className="flex-1 bg-transparent outline-none text-sm placeholder:text-[#636366] resize-none max-h-32 overflow-y-auto"
-          />
-          <button
-            onClick={handleSend}
-            disabled={!replyText.trim() || sending}
-            className="p-2 rounded-lg bg-[#6366F1] hover:bg-[#5558E6] disabled:opacity-40 transition-colors"
-          >
-            {sending ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Send className="w-4 h-4" />
-            )}
-          </button>
+        <div className="glass-card p-3 space-y-2">
+          {replyImages.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {replyImages.map((image, index) => (
+                <div
+                  key={image.url}
+                  className="relative h-16 w-16 overflow-hidden rounded-lg bg-white/5"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element -- 첨부 미리보기는 업로드된 Supabase URL */}
+                  <img src={image.url} alt={image.name} className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => removeReplyImage(index)}
+                    className="absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white"
+                    aria-label="첨부 이미지 제거"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-end gap-2">
+            <input
+              ref={replyFileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={handleReplyImageSelect}
+            />
+            <button
+              type="button"
+              onClick={() => replyFileInputRef.current?.click()}
+              disabled={replyImages.length >= MAX_REPLY_IMAGES || uploadingImage || sending}
+              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-40 transition-colors"
+              aria-label="사진 첨부"
+              title="사진 첨부"
+            >
+              {uploadingImage ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <ImageIcon className="w-4 h-4" />
+              )}
+            </button>
+            <textarea
+              ref={replyRef}
+              value={replyText}
+              onChange={(e) => setReplyText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              placeholder="운영팀으로 답장... (Shift+Enter 줄바꿈)"
+              rows={1}
+              className="flex-1 bg-transparent outline-none text-sm placeholder:text-[#636366] resize-none max-h-32 overflow-y-auto"
+            />
+            <button
+              onClick={handleSend}
+              disabled={(!replyText.trim() && replyImages.length === 0) || sending || uploadingImage}
+              className="p-2 rounded-lg bg-[#6366F1] hover:bg-[#5558E6] disabled:opacity-40 transition-colors"
+            >
+              {sending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Send className="w-4 h-4" />
+              )}
+            </button>
+          </div>
         </div>
       </div>
     );
