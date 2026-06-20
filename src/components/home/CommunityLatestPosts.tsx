@@ -6,6 +6,7 @@ import { MessageCircle, Heart, ChevronRight, MessagesSquare } from "lucide-react
 import { useUnifiedFeed } from "@/lib/supabase/useUnifiedFeed";
 import { getPostDetailPath } from "@/lib/utils/post-share";
 import { getTeamBySlug } from "@/lib/constants/teams";
+import { getTeamColor } from "@/lib/utils/team";
 import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
 import { teamIdForKboId } from "@/lib/utils/player-roster";
 import TeamBadge from "@/components/ui/TeamBadge";
@@ -101,12 +102,14 @@ function PostLabel({ post }: { post: Post }) {
 
 type Thumb =
   | { kind: "image"; src: string }
-  | { kind: "logo"; src: string }
+  | { kind: "player"; src: string; teamId: number | null }
+  | { kind: "logo"; src: string; teamId: number }
   | { kind: "none" };
 
 /**
  * 썸네일 우선순위 (하린아빠 스펙):
  *   사진글 사진 썸네일 > 선수글 히어로샷 > 팀글 팀 로고 > 기본(아이콘 타일).
+ * 선수 히어로샷·팀 로고는 팀컬러 그라데이션 배경 위에 얹는다(선수페이지 동일).
  * 이미지 로드 실패 시 onError로 아이콘 타일 fallback (320px·깨진 에셋 대비).
  */
 function resolveThumb(post: Post): Thumb {
@@ -117,15 +120,22 @@ function resolveThumb(post: Post): Thumb {
     const hero = HERO_APPROVED.has(post.board_id)
       ? `/players-hero/${post.board_id}.webp`
       : getPlayerPhotoByKboId(post.board_id);
-    if (hero) return { kind: "image", src: hero };
+    if (hero) return { kind: "player", src: hero, teamId: teamIdForKboId(post.board_id) };
   }
 
   if (post.board_type === "team" && post.board_id) {
     const team = getTeamBySlug(post.board_id);
-    if (team) return { kind: "logo", src: team.logoPath };
+    if (team) return { kind: "logo", src: team.logoPath, teamId: team.id };
   }
 
   return { kind: "none" };
+}
+
+/** 선수페이지(PlayerHero) 동일 팀컬러 그라데이션. teamId 없으면 undefined(중성 배경). */
+function teamGradient(teamId: number | null): string | undefined {
+  if (teamId == null) return undefined;
+  const c = getTeamColor(teamId);
+  return `linear-gradient(180deg, ${c}40 0%, ${c}1A 40%, #0F0F12 78%, #0A0A0B 100%)`;
 }
 
 function IconTile() {
@@ -146,17 +156,33 @@ function PostRow({ post }: { post: Post }) {
       href={getPostDetailPath(post)}
       className="flex items-center gap-3 py-2.5 active:opacity-70 transition-opacity"
     >
-      {/* 썸네일 56x56 */}
+      {/* 썸네일 56x56 — 선수 히어로샷/팀 로고는 팀컬러 그라데이션 배경(선수페이지 동일) */}
       <div className="w-14 h-14 shrink-0 rounded-xl overflow-hidden bg-bg-tertiary">
         {thumb.kind === "none" || imgFailed ? (
           <IconTile />
         ) : thumb.kind === "logo" ? (
-          <div className="w-full h-full flex items-center justify-center bg-bg-tertiary p-2.5">
+          <div
+            className="w-full h-full flex items-center justify-center p-2.5 bg-bg-tertiary"
+            style={{ background: teamGradient(thumb.teamId) }}
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={thumb.src}
               alt=""
               className="w-full h-full object-contain"
+              onError={() => setImgFailed(true)}
+            />
+          </div>
+        ) : thumb.kind === "player" ? (
+          <div
+            className="w-full h-full bg-bg-tertiary"
+            style={{ background: teamGradient(thumb.teamId) }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={thumb.src}
+              alt=""
+              className="w-full h-full object-cover object-top"
               onError={() => setImgFailed(true)}
             />
           </div>
