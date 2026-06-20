@@ -96,7 +96,8 @@ async function fetchNaverNews(searchQuery: string, start = 1, display = NEWS_DIS
   return (data.items || []).map((item: NaverNewsRawItem) => ({
     title: cleanHtml(item.title),
     description: cleanHtml(item.description),
-    link: item.originallink || item.link,
+    // 네이버 뉴스 URL(link) 우선 — 미등록 기사만 언론사 원문(originallink)으로 폴백
+    link: item.link || item.originallink,
     pubDate: item.pubDate,
   }));
 }
