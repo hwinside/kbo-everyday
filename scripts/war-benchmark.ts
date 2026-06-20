@@ -6,7 +6,7 @@
  * 동일 입력으로 자체 산식을 돌려 평균절대오차/상관/최대 괴리 선수를 출력한다.
  * 이 출력으로 산식을 상시 개선한다(수비/포지션 보강 효과 추적).
  */
-import { calcBatterSaber } from "../src/lib/utils/sabermetrics-calc";
+import { calcBatterSaber, calcPitcherSaber } from "../src/lib/utils/sabermetrics-calc";
 import positions from "../src/lib/constants/player-positions.json";
 
 const POS = positions as Record<string, string>;
@@ -21,55 +21,72 @@ type NaverHitter = {
   hitterBb: number; hitterHp: number; hitterKk: number; isQualified: boolean;
 };
 
-async function fetchAllHitters(): Promise<NaverHitter[]> {
-  const byId = new Map<string, NaverHitter>();
-  // page 파라미터가 무시될 수 있어 playerId 중복 제거 + 새 선수 0이면 중단
+type NaverPitcher = {
+  playerId: string; playerName: string; teamShortName: string; pitcherWar: number | null;
+  pitcherEra: number; pitcherInning: number | string; pitcherKk: number; pitcherBb: number;
+  pitcherHr: number; pitcherHit: number; pitcherGameCount: number;
+  pitcherWin: number; pitcherLose: number; pitcherSave: number; pitcherWhip: number; isQualified: boolean;
+};
+
+async function fetchAll<T extends { playerId: string }>(playerType: string): Promise<T[]> {
+  const byId = new Map<string, T>();
   for (let page = 1; page <= 20; page++) {
-    const url = `${BASE}/${SEASON}/players?playerType=HITTER&gameType=REGULAR_SEASON&page=${page}&pageSize=100`;
-    const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0", Referer: "https://m.sports.naver.com/" } });
-    if (!res.ok) break;
-    const json = await res.json();
-    const rows: NaverHitter[] = json?.result?.seasonPlayerStats ?? [];
-    if (rows.length === 0) break;
+    const r = await fetch(`${BASE}/${SEASON}/players?playerType=${playerType}&gameType=REGULAR_SEASON&page=${page}&pageSize=100`,
+      { headers: { "User-Agent": "Mozilla/5.0", Referer: "https://m.sports.naver.com/" } });
+    if (!r.ok) break;
+    const j = await r.json();
+    const rows: T[] = j?.result?.seasonPlayerStats ?? [];
+    if (!rows.length) break;
     const before = byId.size;
-    for (const r of rows) if (r.playerId && !byId.has(r.playerId)) byId.set(r.playerId, r);
-    if (byId.size === before) break; // 새 선수 없음 → 페이지네이션 끝(or 무시됨)
+    for (const x of rows) if (x.playerId && !byId.has(x.playerId)) byId.set(x.playerId, x);
+    if (byId.size === before) break;
   }
   return [...byId.values()];
 }
 
-async function main() {
-  const hitters = (await fetchAllHitters()).filter((h) => typeof h.hitterWar === "number" && h.isQualified);
-  console.log(`[war-benchmark] season=${SEASON} 자격타자=${hitters.length}명 (네이버 WAR 보유)`);
+type Diff = { name: string; team: string; ours: number; naver: number; d: number };
 
-  const diffs: { name: string; team: string; ours: number; naver: number; d: number }[] = [];
-  for (const h of hitters) {
-    const ours = calcBatterSaber({
-      avg: h.hitterHra, hits: h.hitterHit, hr: h.hitterHr, doubles: h.hitterH2, triples: h.hitterH3,
-      ab: h.hitterAb, pa: h.hitterAb + h.hitterBb + h.hitterHp, // PA 근사(SF/SH 제외)
-      runs: h.hitterRun, rbi: h.hitterRbi, sb: h.hitterSb, bb: h.hitterBb, so: h.hitterKk,
-      hbp: h.hitterHp, cs: h.hitterCs ?? 0, position: POS[h.playerId],
-    }).WAR;
-    const naver = h.hitterWar as number;
-    diffs.push({ name: h.playerName, team: h.teamShortName, ours, naver, d: ours - naver });
-  }
-
+function report(title: string, diffs: Diff[], note: string) {
   const n = diffs.length || 1;
   const mae = diffs.reduce((s, x) => s + Math.abs(x.d), 0) / n;
   const bias = diffs.reduce((s, x) => s + x.d, 0) / n;
-  // 피어슨 상관
   const mo = diffs.reduce((s, x) => s + x.ours, 0) / n, mn = diffs.reduce((s, x) => s + x.naver, 0) / n;
   let cov = 0, vo = 0, vn = 0;
   for (const x of diffs) { cov += (x.ours - mo) * (x.naver - mn); vo += (x.ours - mo) ** 2; vn += (x.naver - mn) ** 2; }
   const corr = vo && vn ? cov / Math.sqrt(vo * vn) : 0;
-
-  console.log(`\n=== 타자 예상 WAR vs 네이버 WAR ===`);
+  console.log(`\n=== ${title} (n=${n}) ===`);
   console.log(`평균절대오차(MAE): ${mae.toFixed(2)}  편향(bias, ours-naver): ${bias.toFixed(2)}  상관: ${corr.toFixed(3)}`);
-  console.log(`\n괴리 큰 선수 top 12 (수비/포지션 보강 후보):`);
-  diffs.sort((a, b) => Math.abs(b.d) - Math.abs(a.d));
-  for (const x of diffs.slice(0, 12)) {
-    console.log(`  ${x.name}(${x.team})  자체 ${x.ours.toFixed(1)}  네이버 ${x.naver.toFixed(1)}  Δ${x.d > 0 ? "+" : ""}${x.d.toFixed(1)}`);
-  }
+  console.log(`괴리 큰 선수 top 10 (${note}):`);
+  [...diffs].sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 10).forEach((x) =>
+    console.log(`  ${x.name}(${x.team})  자체 ${x.ours.toFixed(1)}  네이버 ${x.naver.toFixed(1)}  Δ${x.d > 0 ? "+" : ""}${x.d.toFixed(1)}`));
+}
+
+async function main() {
+  // 타자
+  const hitters = (await fetchAll<NaverHitter>("HITTER")).filter((h) => typeof h.hitterWar === "number" && h.isQualified);
+  const bDiffs: Diff[] = hitters.map((h) => {
+    const ours = calcBatterSaber({
+      avg: h.hitterHra, hits: h.hitterHit, hr: h.hitterHr, doubles: h.hitterH2, triples: h.hitterH3,
+      ab: h.hitterAb, pa: h.hitterAb + h.hitterBb + h.hitterHp, runs: h.hitterRun, rbi: h.hitterRbi,
+      sb: h.hitterSb, bb: h.hitterBb, so: h.hitterKk, hbp: h.hitterHp, cs: h.hitterCs ?? 0, position: POS[h.playerId],
+    }).WAR;
+    return { name: h.playerName, team: h.teamShortName, ours, naver: h.hitterWar as number, d: ours - (h.hitterWar as number) };
+  });
+
+  // 투수
+  const pitchers = (await fetchAll<NaverPitcher>("PITCHER")).filter((p) => typeof p.pitcherWar === "number" && p.isQualified);
+  const pDiffs: Diff[] = pitchers.map((p) => {
+    const ours = calcPitcherSaber({
+      era: p.pitcherEra, ip: p.pitcherInning, so: p.pitcherKk, bb: p.pitcherBb, hr: p.pitcherHr,
+      hits: p.pitcherHit, games: p.pitcherGameCount, wins: p.pitcherWin, losses: p.pitcherLose,
+      saves: p.pitcherSave, whip: p.pitcherWhip,
+    }).WAR;
+    return { name: p.playerName, team: p.teamShortName, ours, naver: p.pitcherWar as number, d: ours - (p.pitcherWar as number) };
+  });
+
+  console.log(`[war-benchmark] season=${SEASON} 자격타자=${bDiffs.length} 자격투수=${pDiffs.length} (네이버 WAR 보유)`);
+  report("타자 예상 WAR vs 네이버 WAR", bDiffs, "포지션/수비 보강 후보");
+  report("투수 예상 WAR vs 네이버 WAR", pDiffs, "FIP 외 요인");
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
