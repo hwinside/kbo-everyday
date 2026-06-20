@@ -119,6 +119,28 @@ export default function RootLayout({
             `,
           }}
         />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              /* iOS WKWebView 뒤로가기 빈화면 복구: bfcache 복원(persisted) 시
+                 <main> 콘텐츠가 비어 있으면(하단 탭바만 남는 증상) 새로고침으로 재렌더.
+                 정상 복원에는 영향 없음 — 실제로 비었을 때만 reload. */
+              (function () {
+                window.addEventListener('pageshow', function (e) {
+                  if (!e.persisted) return;
+                  requestAnimationFrame(function () {
+                    requestAnimationFrame(function () {
+                      var main = document.querySelector('main');
+                      if (!main || main.offsetHeight < 16) {
+                        window.location.reload();
+                      }
+                    });
+                  });
+                });
+              })();
+            `,
+          }}
+        />
         <Analytics />
       </body>
     </html>
