@@ -199,6 +199,15 @@ function resolveInternal(
 /** 명시적인 이름의 alias. 신규 코드에서는 이 이름을 우선 사용한다. */
 export const resolvePlayerIdentity = resolvePlayer;
 
+/**
+ * 외국인 숫자 kboId(56251)를 로스터 기준 canonical 영문 ID(FP009)로 정규화.
+ * 비외국인/빈값은 그대로 반환. (foreign-id-map 직접 import 금지 룰 — 정규화는 이 헬퍼 경유)
+ */
+export function canonicalKboId(id: string | number | undefined | null): string {
+  const s = String(id ?? "");
+  return FOREIGN_NUMERIC_TO_ALPHA[s] ?? s;
+}
+
 export function getCanonicalPlayerId(query: PlayerQuery): string | null {
   return resolvePlayerIdentity(query)?.kboId ?? null;
 }

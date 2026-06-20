@@ -7,7 +7,7 @@ import GlassCard from "@/components/ui/GlassCard";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
 import { TEAMS } from "@/lib/constants/teams";
-import { getMyTeamId } from "@/lib/store/myteam";
+import { getFavoritePlayers } from "@/lib/store/favorites";
 import { STAT_DEFS, type StatType } from "@/lib/stats/title-defs";
 import { rankByStat, type RankedRow } from "@/lib/stats/title-rankings";
 import { calcBatterSaber, calcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
@@ -129,13 +129,14 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
   const [rowsByType, setRowsByType] = useState<Record<string, Row[]>>({});
   const [updatedAtByType, setUpdatedAtByType] = useState<Record<string, string>>({});
   const [sourceByType, setSourceByType] = useState<Record<string, string>>({});
-  const [myTeamId, setMyTeamId] = useState<number | null>(null);
+  const [favIds, setFavIds] = useState<Set<string>>(new Set());
   const loading = rowsByType[view] === undefined;
   const isDefense = view === "defense";
 
   useEffect(() => {
+    // 최애선수(마이페이지 선택)만 하이라이트 — 팀 스코프에선 전원 강조 방지
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMyTeamId(getMyTeamId());
+    setFavIds(new Set(getFavoritePlayers().map((f) => String(f.playerId))));
   }, []);
 
   useEffect(() => {
@@ -302,11 +303,11 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
         <div key={`${view}-${activeStat}-${scopeTeamId ?? "all"}`} className="space-y-2 pb-24">
           {ranked.map((p, i) => {
             const teamId = (typeof p.teamId === "number" ? p.teamId : null) ?? teamIdFromText(p.team) ?? 0;
-            const isMyTeam = myTeamId != null && teamId === myTeamId;
+            const isFav = favIds.has(String(p.kboId ?? "")) || favIds.has(String(p.playerId ?? ""));
             const teamColor = TEAMS.find((t) => t.id === teamId)?.colorPrimary || "#FF6B35";
             const rank = p.rank || i + 1;
 
-            const cardStyle: CSSProperties | undefined = isMyTeam
+            const cardStyle: CSSProperties | undefined = isFav
               ? { borderLeft: `3px solid ${hexToRgba(teamColor, 0.8)}`, backgroundColor: hexToRgba(teamColor, 0.12) }
               : undefined;
 
