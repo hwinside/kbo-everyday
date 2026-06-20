@@ -88,6 +88,14 @@ function computeSaber(p: Row, view: StatType, key: string): number {
   return field ? Number(batterSaber(p)[field]) || 0 : 0;
 }
 
+/* ISO → "6/20 21:25" (KST). 파싱 실패 시 null */
+function fmtUpdated(iso?: string): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 function hexToRgba(hex: string, alpha: number): string {
   const c = hex.replace("#", "");
   const full = c.length === 3 ? c.split("").map((x) => x + x).join("") : c;
@@ -106,6 +114,7 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
   const [view, setView] = useState<View>("batter");
   const [activeStat, setActiveStat] = useState<string>("war");
   const [rowsByType, setRowsByType] = useState<Record<string, Row[]>>({});
+  const [updatedAtByType, setUpdatedAtByType] = useState<Record<string, string>>({});
   const [myTeamId, setMyTeamId] = useState<number | null>(null);
   const loading = rowsByType[view] === undefined;
   const isDefense = view === "defense";
@@ -119,9 +128,10 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
     if (rowsByType[view] !== undefined) return;
     fetch(`/api/stats?type=${view}&season=2026`)
       .then((r) => r.json())
-      .then((data: { stats?: Row[] }) =>
-        setRowsByType((prev) => ({ ...prev, [view]: data.stats || [] }))
-      )
+      .then((data: { stats?: Row[]; updatedAt?: string }) => {
+        setRowsByType((prev) => ({ ...prev, [view]: data.stats || [] }));
+        if (data.updatedAt) setUpdatedAtByType((prev) => ({ ...prev, [view]: data.updatedAt! }));
+      })
       .catch(() => setRowsByType((prev) => ({ ...prev, [view]: [] })));
   }, [view, rowsByType]);
 
@@ -242,6 +252,12 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
           );
         })}
       </div>
+
+      {fmtUpdated(updatedAtByType[view]) && (
+        <p className="mb-2 -mt-1 text-[11px] text-text-tertiary">
+          마지막 업데이트: {fmtUpdated(updatedAtByType[view])} {isDefense ? "(수비 기록 일일 갱신)" : "(경기 기록 실시간 반영)"}
+        </p>
+      )}
 
       {SABER_DEFS[activeStat]?.estimate && (
         <p className="mb-3 -mt-1 text-[11px] leading-snug text-text-tertiary">

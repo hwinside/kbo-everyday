@@ -436,15 +436,22 @@ async function main() {
     const defenseRunsPath = join(CONSTANTS_DIR, `player-defense-runs.json`);
     const defenseRuns = computeDefenseRuns(defense);
 
+    // 기록실 "마지막 업데이트" 표기용 메타(크롤 시각). 타자/투수는 런타임 라이브가 우선, 폴백/수비 표기에 사용.
+    const metaPath = join(CONSTANTS_DIR, `stats-${SEASON}-meta.json`);
+    const nowIso = new Date().toISOString();
+    const meta = { battersGeneratedAt: nowIso, pitchersGeneratedAt: nowIso, defenseGeneratedAt: nowIso };
+
     writeFileSync(batterPath, JSON.stringify(batters, null, 2));
     writeFileSync(pitcherPath, JSON.stringify(pitchers, null, 2));
     writeFileSync(defensePath, JSON.stringify(defense, null, 2));
     writeFileSync(defenseRunsPath, JSON.stringify(defenseRuns, null, 2));
+    writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 
     console.log(`\n✅ 타자 ${batters.length}명 → ${batterPath}`);
     console.log(`✅ 투수 ${pitchers.length}명 → ${pitcherPath}`);
     console.log(`✅ 수비 ${defense.length}행 → ${defensePath}`);
     console.log(`✅ 수비 runs ${Object.keys(defenseRuns).length}명 → ${defenseRunsPath}`);
+    console.log(`✅ 메타(크롤 시각) → ${metaPath}`);
 
     // Validation: compare top 5 with expected
     console.log("\n📋 타자 Top 5:");

@@ -8,10 +8,9 @@
  */
 import { calcBatterSaber, calcPitcherSaber } from "../src/lib/utils/sabermetrics-calc";
 import positions from "../src/lib/constants/player-positions.json";
-import defenseRuns from "../src/lib/constants/player-defense-runs.json";
 
 const POS = positions as Record<string, string>;
-const DEF = defenseRuns as Record<string, number>;
+// 수비는 WAR 미반영(하린아빠 결정, 네이버 SSOT) — 벤치마크도 UI와 동일 기준(수비 제외)으로 측정
 
 const SEASON = process.argv[2] || "2026";
 const BASE = "https://api-gw.sports.naver.com/statistics/categories/kbo/seasons";
@@ -81,7 +80,7 @@ async function main() {
     const ours = calcBatterSaber({
       avg: h.hitterHra, hits: h.hitterHit, hr: h.hitterHr, doubles: h.hitterH2, triples: h.hitterH3,
       ab: h.hitterAb, pa: h.hitterAb + h.hitterBb + h.hitterHp, runs: h.hitterRun, rbi: h.hitterRbi,
-      sb: h.hitterSb, bb: h.hitterBb, so: h.hitterKk, hbp: h.hitterHp, cs: h.hitterCs ?? 0, position: POS[h.playerId], defRuns: DEF[h.playerId] ?? 0,
+      sb: h.hitterSb, bb: h.hitterBb, so: h.hitterKk, hbp: h.hitterHp, cs: h.hitterCs ?? 0, position: POS[h.playerId],
     }).WAR;
     return { name: h.playerName, team: h.teamShortName, ours, naver: h.hitterWar as number, d: ours - (h.hitterWar as number) };
   });

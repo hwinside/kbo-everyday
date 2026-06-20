@@ -32,10 +32,22 @@ function estimateBatterWAR(woba: number, pa: number, brRuns = 0, posRuns = 0, de
   return Math.round(Math.max(war, -1) * 10) / 10;
 }
 
-// 투수 WAR ≈ (League ERA - FIP) / 9 * IP / 9 + Replacement
-function estimatePitcherWAR(fip: number, ip: number): number {
+/** KBO 이닝 표기 → 실제 이닝(thirds). "25 2/3"·"25 1/3" 분수 표기, "25.2"(thirds) 소수 표기, number 모두 처리 */
+function parseInnings(ip: string | number): number {
+  if (typeof ip === "string") {
+    const m = ip.trim().match(/^(\d+)\s+(\d)\/3$/);
+    if (m) return parseInt(m[1], 10) + parseInt(m[2], 10) / 3;
+  }
+  const n = typeof ip === "string" ? parseFloat(ip) : ip;
+  if (!isFinite(n)) return 0;
+  const whole = Math.floor(n);
+  const frac = Math.round((n - whole) * 10); // .1=1/3, .2=2/3 (KBO thirds 소수 표기)
+  return whole + (frac === 1 ? 1 / 3 : frac === 2 ? 2 / 3 : 0);
+}
+
+// 투수 WAR ≈ (League ERA - FIP) / 9 * IP / 9 + Replacement (fullIp = 실제 이닝)
+function estimatePitcherWAR(fip: number, fullIp: number): number {
   const leagueEra = 4.50; // KBO 평균 근사
-  const fullIp = Math.floor(ip) + (ip % 1) * 10 / 3;
   const runsAboveAvg = ((leagueEra - fip) / 9) * fullIp;
   const replacement = (fullIp / 200) * 12;
   const raw = (runsAboveAvg + replacement) / 10;
@@ -96,9 +108,8 @@ export function calcPitcherSaber(s: {
   hits?: number; games: number; wins: number; losses: number; saves: number;
   whip: string|number;
 }): CalcPitcherSaber {
-  const ip = typeof s.ip === "string" ? parseFloat(s.ip) : s.ip;
   const whip = typeof s.whip === "string" ? parseFloat(s.whip) : s.whip;
-  const fullIp = Math.floor(ip) + (ip % 1) * 10 / 3;
+  const fullIp = parseInnings(s.ip);
   const hitsA = s.hits ?? Math.round(whip * fullIp * 0.7);
   const bb = s.bb ?? Math.max(0, Math.round(whip * fullIp - hitsA));
   const hr = s.hr ?? Math.round(fullIp * 0.08);
@@ -113,6 +124,6 @@ export function calcPitcherSaber(s: {
     FIP: Math.round(fip*100)/100, WHIP: whip,
     K9: Math.round(k9*10)/10, BB9: Math.round(bb9*10)/10, HR9: Math.round(hr9*10)/10,
     K_pct: Math.round(kPct*10)/10, BB_pct: Math.round(bbPct*10)/10,
-    WAR: estimatePitcherWAR(fip, ip),
+    WAR: estimatePitcherWAR(fip, fullIp),
   };
 }
