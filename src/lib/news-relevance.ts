@@ -57,6 +57,18 @@ export function isPhotoArticle(title: string): boolean {
   return PHOTO_ARTICLE_KEYWORDS.some((kw) => title.includes(kw));
 }
 
+// Naver 뉴스 URL 여부 — 네이버 검색 API `link`는 *등록 기사*만 네이버 뉴스 URL이고,
+// 미등록 기사는 언론사 원문 URL(originallink와 동일)로 내려온다. '무조건 네이버'
+// 보장을 위해 link host가 naver.com 계열이 아닌 기사는 노출에서 제외하는 데 쓴다.
+export function isNaverNewsUrl(url: string | undefined | null): boolean {
+  if (!url) return false;
+  try {
+    return new URL(url).hostname.endsWith("naver.com");
+  } catch {
+    return false;
+  }
+}
+
 export function hasBaseballSignal(text: string): boolean {
   return (
     BASEBALL_KEYWORDS.some((kw) => text.includes(kw)) ||

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { NaverNewsRawItem, NewsItem } from "@/types/api";
-import { isTeamBaseballRelevant } from "@/lib/news-relevance";
+import { isTeamBaseballRelevant, isNaverNewsUrl } from "@/lib/news-relevance";
 
 const NAVER_CLIENT_ID = process.env.NAVER_CLIENT_ID || "";
 const NAVER_CLIENT_SECRET = process.env.NAVER_CLIENT_SECRET || "";
@@ -93,15 +93,18 @@ async function fetchNaverNews(searchQuery: string, start = 1, display = NEWS_DIS
   );
 
   const data = await res.json();
-  return (data.items || []).map((item: NaverNewsRawItem) => ({
-    title: cleanHtml(item.title),
-    description: cleanHtml(item.description),
-    // 네이버 뉴스 URL(link) 우선 — 미등록 기사만 언론사 원문(originallink)으로 폴백
-    link: item.link || item.originallink,
-    // 출처 표기용 언론사 원문 URL 보존 (클릭은 link, 출처는 originalLink)
-    originalLink: item.originallink || item.link,
-    pubDate: item.pubDate,
-  }));
+  return (data.items || [])
+    .map((item: NaverNewsRawItem) => ({
+      title: cleanHtml(item.title),
+      description: cleanHtml(item.description),
+      // 네이버 뉴스 URL(link) 우선 — 미등록 기사만 언론사 원문(originallink)으로 폴백
+      link: item.link || item.originallink,
+      // 출처 표기용 언론사 원문 URL 보존 (클릭은 link, 출처는 originalLink)
+      originalLink: item.originallink || item.link,
+      pubDate: item.pubDate,
+    }))
+    // '무조건 네이버' 보장 — link가 네이버 뉴스 URL이 아닌(미등록) 기사는 노출 제외
+    .filter((item: NewsItem) => isNaverNewsUrl(item.link));
 }
 
 function isSafeHttpUrl(url: string): boolean {
