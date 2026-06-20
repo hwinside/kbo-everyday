@@ -6,7 +6,9 @@ import { MessageCircle, Heart, ChevronRight, MessagesSquare } from "lucide-react
 import { useUnifiedFeed } from "@/lib/supabase/useUnifiedFeed";
 import { getPostDetailPath } from "@/lib/utils/post-share";
 import { getTeamBySlug } from "@/lib/constants/teams";
+import { getTeamColor } from "@/lib/utils/team";
 import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
+import { teamIdForKboId } from "@/lib/utils/player-roster";
 import TeamBadge from "@/components/ui/TeamBadge";
 import heroApprovedList from "@/lib/constants/hero-approved-kboids.json";
 import type { Post } from "@/lib/supabase/usePosts";
@@ -34,14 +36,80 @@ function summaryLine(post: Post): string {
   return firstLine?.trim() ?? "";
 }
 
+type Label =
+  | { kind: "player"; teamId: number; name: string }
+  | { kind: "team"; teamId: number }
+  | { kind: "kbo" };
+
+/**
+ * 글 소속 라벨 (하린아빠 스펙) — 작성자(닉네임) 대신 태그 기반으로 표기.
+ *   · 선수 태그 1명          → 팀명 + 선수이름 (예: "LG 김현수")
+ *   · 선수 태그 2명 이상(동팀) → 팀명
+ *   · 팀이 둘 이상            → 크보팬 로고
+ * player_tags("kboId:name")와 team_tags(슬러그)에서 관여 팀 집합을 만들어 분기한다.
+ */
+function resolveLabel(post: Post): Label {
+  const players = (post.player_tags ?? [])
+    .map((tag) => {
+      const parts = String(tag).split(":");
+      return { kboId: parts[0], name: parts.slice(1).join(":").trim() };
+    })
+    .filter((p) => p.kboId);
+
+  const teamIds = new Set<number>();
+  for (const p of players) {
+    const tid = teamIdForKboId(p.kboId);
+    if (tid != null) teamIds.add(tid);
+  }
+  for (const slug of post.team_tags ?? []) {
+    const tid = getTeamBySlug(String(slug))?.id;
+    if (tid != null) teamIds.add(tid);
+  }
+
+  // 관여 팀이 둘 이상이면 특정 팀으로 묶을 수 없음 → 크보팬 로고.
+  if (teamIds.size >= 2) return { kind: "kbo" };
+
+  if (players.length === 1) {
+    const teamId = teamIdForKboId(players[0].kboId) ?? [...teamIds][0];
+    if (teamId != null && players[0].name) return { kind: "player", teamId, name: players[0].name };
+    if (teamId != null) return { kind: "team", teamId };
+  }
+
+  if (teamIds.size === 1) return { kind: "team", teamId: [...teamIds][0] };
+
+  return { kind: "kbo" };
+}
+
+function PostLabel({ post }: { post: Post }) {
+  const label = resolveLabel(post);
+  if (label.kind === "player") {
+    return <TeamBadge teamId={label.teamId} playerName={label.name} size="xs" />;
+  }
+  if (label.kind === "team") {
+    return <TeamBadge teamId={label.teamId} size="xs" />;
+  }
+  // 크보팬 로고 배지 (팀 다수/태그 없음).
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-bg-tertiary py-0.5 pl-0.5 pr-2 text-[10px] font-semibold text-text-secondary whitespace-nowrap shrink-0">
+      <span className="inline-flex shrink-0 items-center justify-center w-4 h-4 rounded-full overflow-hidden">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/icon-192.png" alt="크보팬" className="w-full h-full object-cover" />
+      </span>
+      크보팬
+    </span>
+  );
+}
+
 type Thumb =
   | { kind: "image"; src: string }
-  | { kind: "logo"; src: string }
+  | { kind: "player"; src: string; teamId: number | null }
+  | { kind: "logo"; src: string; teamId: number }
   | { kind: "none" };
 
 /**
  * 썸네일 우선순위 (하린아빠 스펙):
  *   사진글 사진 썸네일 > 선수글 히어로샷 > 팀글 팀 로고 > 기본(아이콘 타일).
+ * 선수 히어로샷·팀 로고는 팀컬러 그라데이션 배경 위에 얹는다(선수페이지 동일).
  * 이미지 로드 실패 시 onError로 아이콘 타일 fallback (320px·깨진 에셋 대비).
  */
 function resolveThumb(post: Post): Thumb {
@@ -52,15 +120,22 @@ function resolveThumb(post: Post): Thumb {
     const hero = HERO_APPROVED.has(post.board_id)
       ? `/players-hero/${post.board_id}.webp`
       : getPlayerPhotoByKboId(post.board_id);
-    if (hero) return { kind: "image", src: hero };
+    if (hero) return { kind: "player", src: hero, teamId: teamIdForKboId(post.board_id) };
   }
 
   if (post.board_type === "team" && post.board_id) {
     const team = getTeamBySlug(post.board_id);
-    if (team) return { kind: "logo", src: team.logoPath };
+    if (team) return { kind: "logo", src: team.logoPath, teamId: team.id };
   }
 
   return { kind: "none" };
+}
+
+/** 선수페이지(PlayerHero) 동일 팀컬러 그라데이션. teamId 없으면 undefined(중성 배경). */
+function teamGradient(teamId: number | null): string | undefined {
+  if (teamId == null) return undefined;
+  const c = getTeamColor(teamId);
+  return `linear-gradient(180deg, ${c}40 0%, ${c}1A 40%, #0F0F12 78%, #0A0A0B 100%)`;
 }
 
 function IconTile() {
@@ -81,17 +156,33 @@ function PostRow({ post }: { post: Post }) {
       href={getPostDetailPath(post)}
       className="flex items-center gap-3 py-2.5 active:opacity-70 transition-opacity"
     >
-      {/* 썸네일 56x56 */}
+      {/* 썸네일 56x56 — 선수 히어로샷/팀 로고는 팀컬러 그라데이션 배경(선수페이지 동일) */}
       <div className="w-14 h-14 shrink-0 rounded-xl overflow-hidden bg-bg-tertiary">
         {thumb.kind === "none" || imgFailed ? (
           <IconTile />
         ) : thumb.kind === "logo" ? (
-          <div className="w-full h-full flex items-center justify-center bg-bg-tertiary p-2.5">
+          <div
+            className="w-full h-full flex items-center justify-center p-2.5 bg-bg-tertiary"
+            style={{ background: teamGradient(thumb.teamId) }}
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={thumb.src}
               alt=""
               className="w-full h-full object-contain"
+              onError={() => setImgFailed(true)}
+            />
+          </div>
+        ) : thumb.kind === "player" ? (
+          <div
+            className="w-full h-full bg-bg-tertiary"
+            style={{ background: teamGradient(thumb.teamId) }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={thumb.src}
+              alt=""
+              className="w-full h-full object-cover object-top"
               onError={() => setImgFailed(true)}
             />
           </div>
@@ -112,9 +203,7 @@ function PostRow({ post }: { post: Post }) {
           {summary || "(내용 없음)"}
         </p>
         <div className="flex items-center gap-1.5 mt-1 text-[11px] leading-[16px] text-text-tertiary">
-          {post.team_id ? <TeamBadge teamId={post.team_id} size="xs" /> : null}
-          <span className="truncate min-w-0">{post.nickname ?? "익명"}</span>
-          <span className="shrink-0">·</span>
+          <PostLabel post={post} />
           <span className="shrink-0">{timeAgo(post.created_at)}</span>
           <span className="shrink-0 flex items-center gap-0.5 ml-auto pl-1">
             <MessageCircle size={12} />
@@ -146,7 +235,7 @@ export default function CommunityLatestPosts() {
   return (
     <section>
       <div className="flex items-center justify-between mb-1">
-        <h2 className="text-[15px] font-bold text-text-primary">커뮤니티 최신글</h2>
+        <h2 className="text-lg font-semibold leading-[26px] text-text-primary">💬 커뮤니티 최신글</h2>
         <Link
           href="/community/all-posts"
           className="flex items-center text-xs text-text-tertiary active:opacity-70 transition-opacity"
