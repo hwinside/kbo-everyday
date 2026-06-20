@@ -17,6 +17,8 @@ import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
 import { useHomeInit, type HomeGame } from "@/hooks/useHomeInit";
 import { useHomeSectionsPref, useHomeSectionsOrder } from "@/hooks/useHomeSectionsPref";
+import { useNewsPhotoFilter } from "@/hooks/useNewsPhotoFilter";
+import { isPhotoArticle } from "@/lib/news-relevance";
 import type { HomeSectionKey } from "@/lib/store/home-sections-pref";
 import { setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
 import { writeHomeWidgetSnapshot } from "@/lib/native-live-activity";
@@ -185,6 +187,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   const sections = useHomeSectionsPref();
   // 홈 섹션 순서 (마이페이지 드래그, 기기 로컬). 팀카드는 배열 밖 최상단 고정.
   const sectionOrder = useHomeSectionsOrder();
+
+  // 사진기사 필터(마이페이지 토글). on이면 포토·화보 위주 기사를 뉴스 카드에서 숨김.
+  const photoFilterOn = useNewsPhotoFilter();
 
   // useHomeNews — lazy import to avoid SSR issues
   const [realNews, setRealNews] = useState<{ id: number; title: string; link: string; pubDate: string; label: string; source: string; sourceUrl: string; ogUrl: string; thumbnailUrl: null; timeAgo: string; teamId: number | null; type: "news" }[]>([]);
@@ -553,16 +558,20 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           각 섹션은 토글(sections.*) off면 숨김. LiveGameBanner는 liveOtherTeams로 독립. */}
       {sectionOrder.map((key: HomeSectionKey) => {
         switch (key) {
-          case "news":
-            return sections.news && realNews.length > 0 ? (
+          case "news": {
+            const newsToShow = photoFilterOn
+              ? realNews.filter((n) => !isPhotoArticle(n.title))
+              : realNews;
+            return sections.news && newsToShow.length > 0 ? (
               <div key={key} className="mb-3">
                 <div className="-mx-5">
                   <Suspense fallback={<SectionSkeleton height={180} />}>
-                    <NewsCarousel news={realNews.slice(0, 10)} />
+                    <NewsCarousel news={newsToShow.slice(0, 10)} />
                   </Suspense>
                 </div>
               </div>
             ) : null;
+          }
           case "favPlayers":
             return sections.favPlayers ? (
               <div key={key} className="mb-3">

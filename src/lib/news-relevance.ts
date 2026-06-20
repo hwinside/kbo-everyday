@@ -47,6 +47,16 @@ export const NON_BASEBALL_NEGATIVE = [
   "신제품",
 ];
 
+// 사진/화보 위주 기사(정보량 적은 포토 기사) 식별 — 사용자 토글(마이페이지)로
+// 홈·팀 뉴스에서 on/off. 제목 substring만 보므로 recall 영향 없이 포토데스크
+// 기사만 정밀하게 거른다. "사진"은 "사진 공개" 등 일반 기사에도 흔히 등장해
+// 오탐이 커서 제외하고, 포토 기사 고유 마커("포토/화보/갤러리")만 쓴다.
+export const PHOTO_ARTICLE_KEYWORDS = ["포토", "화보", "갤러리"];
+
+export function isPhotoArticle(title: string): boolean {
+  return PHOTO_ARTICLE_KEYWORDS.some((kw) => title.includes(kw));
+}
+
 export function hasBaseballSignal(text: string): boolean {
   return (
     BASEBALL_KEYWORDS.some((kw) => text.includes(kw)) ||
