@@ -530,102 +530,64 @@ export default function GameStatsTab({
           </span>
         </div>
 
-        {/* 투수 16컬럼 — table-fixed로 화면 폭에 압축, 좌우 스크롤 없음 (폰트 9px) */}
-        <table className="w-full table-fixed text-[9px] leading-tight border-collapse">
-          <colgroup>
-            {PITCHER_COLUMNS.map((col) => (
-              <col
-                key={col.key}
-                style={{
-                  width:
-                    col.key === "name"
-                      ? "15%"
-                      : col.key === "era"
-                        ? "9%"
-                        : col.key === "ip"
-                          ? "8%"
-                          : undefined,
-                }}
-              />
-            ))}
-          </colgroup>
-          <thead className="bg-bg-secondary">
-            <tr className="text-text-tertiary border-b border-border">
-              {PITCHER_COLUMNS.map((col) => (
-                <th
-                  key={col.key}
-                  className={clsx(
-                    "py-1.5 px-0.5 font-medium",
-                    col.key === "name" ? "text-left" : "text-center"
-                  )}
-                >
-                  {col.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {data.pitchers.map((p, i) => (
-              <tr
-                key={`${side}-pitcher-${i}-${p.name}`}
-                className={clsx(
-                  "border-b border-border/50",
-                  i % 2 === 0 ? "bg-bg-glass/30" : "bg-transparent"
-                )}
-              >
-                {PITCHER_COLUMNS.map((col) => {
-                  const isName = col.key === "name";
-
+        {/* 투수표 전치: 스탯=행 / 투수=열. 투수는 3~6명이라 세로로 두면 16스탯 라벨이
+            안 잘리고 폰트도 9px→10px로 키움. 투수 7+명이면 min-w + overflow로 가로 스크롤. */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-[10px] leading-tight border-collapse">
+            <thead className="bg-bg-secondary">
+              <tr className="text-text-tertiary border-b border-border">
+                <th className="py-1.5 px-1 text-left font-medium min-w-[40px]" />
+                {data.pitchers.map((p, i) => {
+                  const href = getPlayerHref(p.name, team.id);
+                  const head = (
+                    <span className="inline-flex items-center justify-center flex-wrap gap-0.5 text-text-primary font-semibold">
+                      {p.name}
+                      <ResultBadge result={p.result} />
+                    </span>
+                  );
                   return (
-                    <td
-                      key={col.key}
-                      className={clsx(
-                        "py-1.5 px-0.5 tabular-nums",
-                        isName
-                          ? "text-text-primary font-medium text-left"
-                          : "text-center text-text-secondary"
+                    <th key={`phead-${i}-${p.name}`} className="py-1.5 px-0.5 text-center font-medium min-w-[30px]">
+                      {href ? (
+                        <Link href={href} className="hover:underline">
+                          {head}
+                        </Link>
+                      ) : (
+                        head
                       )}
-                    >
-                      {isName ? (() => {
-                        const href = getPlayerHref(p.name, team.id);
-                        const content = (
-                          <span className="inline-flex items-center flex-wrap">
-                            {p.name}
-                            <ResultBadge result={p.result} />
-                          </span>
-                        );
-                        return href ? (
-                          <Link href={href} className="hover:underline">
-                            {content}
-                          </Link>
-                        ) : content;
-                      })() : (
-                        String(p[col.key] ?? "")
-                      )}
-                    </td>
+                    </th>
                   );
                 })}
+                <th className="py-1.5 px-0.5 text-center font-semibold text-text-secondary min-w-[30px]">합계</th>
               </tr>
-            ))}
-            {/* totals row */}
-            <tr className="border-t-2 border-border bg-bg-glass/50 font-semibold">
-              {PITCHER_COLUMNS.map((col) => {
-                const isName = col.key === "name";
-                return (
-                  <td
-                    key={col.key}
-                    className={clsx(
-                      "py-1.5 px-0.5 tabular-nums text-text-primary",
-                      isName ? "font-bold text-left" : "text-center"
-                    )}
-                  >
-                    {String(pitcherTotals[col.key])}
+            </thead>
+            <tbody>
+              {PITCHER_COLUMNS.filter((c) => c.key !== "name").map((col, ri) => (
+                <tr
+                  key={col.key}
+                  className={clsx(
+                    "border-b border-border/50",
+                    ri % 2 === 0 ? "bg-bg-glass/30" : "bg-transparent"
+                  )}
+                >
+                  <td className="py-1.5 px-1 text-left font-medium text-text-tertiary whitespace-nowrap">
+                    {col.label}
                   </td>
-                );
-              })}
-            </tr>
-          </tbody>
-        </table>
+                  {data.pitchers.map((p, i) => (
+                    <td
+                      key={`pval-${i}-${col.key}`}
+                      className="py-1.5 px-0.5 text-center tabular-nums text-text-secondary"
+                    >
+                      {String(p[col.key] ?? "")}
+                    </td>
+                  ))}
+                  <td className="py-1.5 px-0.5 text-center tabular-nums font-semibold text-text-primary">
+                    {String(pitcherTotals[col.key] ?? "")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
     </div>
   );
