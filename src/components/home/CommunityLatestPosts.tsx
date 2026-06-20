@@ -8,7 +8,7 @@ import { getPostDetailPath } from "@/lib/utils/post-share";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import { getTeamColor } from "@/lib/utils/team";
 import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
-import { teamIdForKboId } from "@/lib/utils/player-roster";
+import { teamIdForKboId, resolveRosterPlayer } from "@/lib/utils/player-roster";
 import TeamBadge from "@/components/ui/TeamBadge";
 import heroApprovedList from "@/lib/constants/hero-approved-kboids.json";
 import type { Post } from "@/lib/supabase/usePosts";
@@ -76,6 +76,19 @@ function resolveLabel(post: Post): Label {
   }
 
   if (teamIds.size === 1) return { kind: "team", teamId: [...teamIds][0] };
+
+  // 폴백: player_tags가 없거나 못 풀린 글(gif-collector 큐레이션 등)은 board/작성자 기준으로.
+  // (피드 deriveBrandContext와 동일 원칙 — 태그 없는 선수/팀 보드 글이 크보팬으로 떨어지던 회귀 수정)
+  if (post.board_type === "player") {
+    const rp = resolveRosterPlayer({ name: null, kboId: post.board_id });
+    if (rp?.teamId != null && rp.name) return { kind: "player", teamId: rp.teamId, name: rp.name };
+    if (rp?.teamId != null) return { kind: "team", teamId: rp.teamId };
+  }
+  if (post.board_type === "team") {
+    const teamId = getTeamBySlug(post.board_id)?.id;
+    if (teamId != null) return { kind: "team", teamId };
+  }
+  if (post.team_id != null) return { kind: "team", teamId: post.team_id };
 
   return { kind: "kbo" };
 }
