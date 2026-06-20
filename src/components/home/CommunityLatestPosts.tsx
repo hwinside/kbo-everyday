@@ -235,7 +235,7 @@ export default function CommunityLatestPosts() {
   return (
     <section>
       <div className="flex items-center justify-between mb-1">
-        <h2 className="text-[15px] font-bold text-text-primary">커뮤니티 최신글</h2>
+        <h2 className="text-lg font-semibold leading-[26px] text-text-primary">💬 커뮤니티 최신글</h2>
         <Link
           href="/community/all-posts"
           className="flex items-center text-xs text-text-tertiary active:opacity-70 transition-opacity"
