@@ -92,6 +92,22 @@ function deriveBrandContext(post: Post): { team?: TeamData; heroKboId?: string }
   return { team: post.team_id ? getTeamById(post.team_id) : undefined };
 }
 
+/**
+ * 글 소속 브레드크럼 스코프 — 글 상세 헤더 "커뮤니티 > {scope}"용(홈 최신글 라벨과 동일 원칙).
+ *   · 선수 태그 1명 → "팀단축명 선수이름" (예: "LG 송찬의")
+ *   · 선수 2명↑(동팀) / 팀 태그 단일 → "팀단축명"
+ *   · 팀이 둘 이상 / 없음 → "" (헤더는 "커뮤니티"만)
+ */
+export function getPostScopeLabel(post: Post): string {
+  const { team, heroKboId } = deriveBrandContext(post);
+  if (heroKboId) {
+    const nm = findPlayerByKboId(heroKboId)?.name;
+    if (team && nm) return `${team.shortName} ${nm}`;
+    if (nm) return nm;
+  }
+  return team ? team.shortName : "";
+}
+
 /** 카드 B — 페북식 배경 텍스트 카드. 태그 기반으로 팀컬러 + 선수 Hero(우하단) 결정. */
 export function BrandedTextCard({ post, body }: { post: Post; body: string }) {
   const { team, heroKboId } = deriveBrandContext(post);

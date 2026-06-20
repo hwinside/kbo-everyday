@@ -9,7 +9,7 @@ import { getAvatarPath } from "@/lib/constants/avatars";
 import { usePostDetail, createComment, toggleLike, toggleCommentLike, updatePost, deletePost, updateComment, deleteComment } from "@/lib/supabase/usePosts";
 import ReportSheet from "@/components/community/ReportSheet";
 import LinkPreview from "@/components/community/LinkPreview";
-import { isShortText, BrandedTextCard } from "@/components/community/FeedTextCards";
+import { isShortText, BrandedTextCard, getPostScopeLabel } from "@/components/community/FeedTextCards";
 import { parseAttribution } from "@/lib/gif-collector/attribution";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
@@ -21,10 +21,9 @@ import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareShe
 
 interface PostDetailProps {
   postId: number;
-  headerTitle: string;
 }
 
-export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
+export default function PostDetail({ postId }: PostDetailProps) {
   const router = useRouter();
   const { user, profile } = useAuth();
   const [showReport, setShowReport] = useState(false);
@@ -362,7 +361,12 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           <button onClick={() => router.back()}>
             <ChevronLeft size={24} className="text-text-secondary" />
           </button>
-          <span className="text-lg font-semibold text-text-primary flex-1">{headerTitle}</span>
+          <span className="text-lg font-semibold text-text-primary flex-1">{(() => {
+            // 헤더 = 태그 기반 브레드크럼(홈 최신글 라벨과 동일 원칙).
+            // 선수1명→"커뮤니티 > 팀 선수" / 선수2+·팀단일→"커뮤니티 > 팀" / 다팀·없음→"커뮤니티".
+            const scope = getPostScopeLabel(post);
+            return scope ? `커뮤니티 > ${scope}` : "커뮤니티";
+          })()}</span>
           <button onClick={() => setShareOpen(true)} aria-label="게시글 공유">
             <Share2 size={20} className="text-text-tertiary" />
           </button>
