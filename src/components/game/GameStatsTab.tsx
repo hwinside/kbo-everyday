@@ -227,7 +227,7 @@ function ResultBadge({ result }: { result: PitcherStat["result"] }) {
   return (
     <span
       className={clsx(
-        "ml-0.5 inline-flex items-center justify-center rounded px-1 py-px text-[9px] font-bold leading-none",
+        "inline-flex items-center justify-center rounded px-1 py-px text-[9px] font-bold leading-none",
         cfg.bg,
         cfg.text
       )}
@@ -540,9 +540,9 @@ export default function GameStatsTab({
                 {data.pitchers.map((p, i) => {
                   const href = getPlayerHref(p.name, team.id);
                   const head = (
-                    <span className="inline-flex items-center justify-center flex-wrap gap-0.5 text-text-primary font-semibold">
-                      {p.name}
+                    <span className="inline-flex flex-col items-center justify-center gap-0.5 text-text-primary font-semibold">
                       <ResultBadge result={p.result} />
+                      {p.name}
                     </span>
                   );
                   return (
