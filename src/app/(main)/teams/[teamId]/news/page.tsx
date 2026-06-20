@@ -5,6 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import { ExternalLink, ChevronLeft } from "lucide-react";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import GlassCard from "@/components/ui/GlassCard";
+import { useNewsPhotoFilter } from "@/hooks/useNewsPhotoFilter";
+import { isPhotoArticle } from "@/lib/news-relevance";
 
 interface NewsItem {
   title: string;
@@ -22,6 +24,10 @@ export default function TeamNewsPage() {
   const team = getTeamBySlug(teamSlug);
   const [news, setNews] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const photoFilterOn = useNewsPhotoFilter();
+  const visibleNews = photoFilterOn
+    ? news.filter((item) => !isPhotoArticle(item.title))
+    : news;
 
   useEffect(() => {
     if (!team) return;
@@ -64,13 +70,13 @@ export default function TeamNewsPage() {
           <div className="py-20 text-center text-sm text-text-tertiary">
             로딩 중...
           </div>
-        ) : news.length === 0 ? (
+        ) : visibleNews.length === 0 ? (
           <div className="py-20 text-center text-sm text-text-tertiary">
             관련 기사가 없습니다
           </div>
         ) : (
           <div className="space-y-3">
-            {news.map((item, i) => {
+            {visibleNews.map((item, i) => {
               // 출처 표기는 언론사 원문(originalLink) host 기준 — 클릭만 네이버
               const source = (item.originalLink || item.link).match(/\/\/(?:www\.)?([^/]+)/)?.[1]?.replace(/\.com$|\.co\.kr$|\.kr$/, "") ?? "";
               return (
