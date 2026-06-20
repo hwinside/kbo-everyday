@@ -202,7 +202,7 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
           const d = STAT_DEFS[key];
           if (!isWar && !d) return null;
           const label = isWar
-            ? "예상 WAR"
+            ? "예측 WAR"
             : d!.desc.replace(/\s*랭킹.*$/, "").replace(/\s*\(.*\)\s*$/, "").trim();
           const emoji = isWar ? "📈" : d!.emoji;
           return (
@@ -220,6 +220,12 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
           );
         })}
       </div>
+
+      {activeStat === "war" && (
+        <p className="mb-3 -mt-1 text-[11px] leading-snug text-text-tertiary">
+          ⓘ 예측 WAR은 내부 예측 모델을 바탕으로 한 추정치이며, 정확한 데이터가 아닙니다.
+        </p>
+      )}
 
       {loading ? (
         <div className="py-16 text-center text-text-tertiary text-sm">로딩 중...</div>
