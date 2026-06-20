@@ -76,10 +76,10 @@ const PITCHER_COLUMNS: { key: keyof PitcherStat; label: string; sticky?: boolean
   { key: "bf", label: "타자" },
   { key: "ab", label: "타수" },
   { key: "np", label: "투구수" },
-  { key: "g", label: "경기" },
   { key: "w", label: "승" },
   { key: "l", label: "패" },
   { key: "sv", label: "세이브" },
+  { key: "hd", label: "홀드" },
   { key: "era", label: "평균자책" },
 ];
 
@@ -89,7 +89,7 @@ const BATTER_SUM_KEYS: (keyof BatterStat)[] = [
 ];
 const PITCHER_SUM_KEYS: (keyof PitcherStat)[] = [
   "h", "r", "er", "bb", "so", "hr", "bf", "ab", "np",
-  // g, w, l, sv는 합계행에서 의미 없으므로 제외 (네이버도 비워둠)
+  // g, w, l, sv, hd는 합계행에서 의미 없으므로 제외 (네이버도 비워둠)
 ];
 
 function sumBatterField(batters: BatterStat[], key: keyof BatterStat): number {

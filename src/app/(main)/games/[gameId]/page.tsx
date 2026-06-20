@@ -98,6 +98,7 @@ function boxScoreToGameStats(
       w: DECISION_MAP[p.decision] === "win" ? 1 : 0,
       l: DECISION_MAP[p.decision] === "loss" ? 1 : 0,
       sv: DECISION_MAP[p.decision] === "save" ? 1 : 0,
+      hd: DECISION_MAP[p.decision] === "hold" ? 1 : 0,
       era: p.era,
     }));
   }
