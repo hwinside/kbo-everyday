@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ExternalLink, ChevronLeft } from "lucide-react";
+import { ExternalLink, ChevronLeft, Images } from "lucide-react";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import GlassCard from "@/components/ui/GlassCard";
 import { useNewsPhotoFilter } from "@/hooks/useNewsPhotoFilter";
+import { setPhotoFilterEnabled } from "@/lib/store/news-pref";
 import { isPhotoArticle } from "@/lib/news-relevance";
 
 interface NewsItem {
@@ -63,6 +64,18 @@ export default function TeamNewsPage() {
         <h1 className="text-lg font-bold text-text-primary">
           {team.shortName} 뉴스
         </h1>
+        {/* 사진기사 숨김 토글 — 마이페이지 '뉴스 설정'과 동일 상태 공유 (발견성 보강) */}
+        <button
+          onClick={() => setPhotoFilterEnabled(!photoFilterOn)}
+          className={`ml-auto flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+            photoFilterOn ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
+          }`}
+          aria-pressed={photoFilterOn}
+          aria-label={`사진기사 ${photoFilterOn ? "표시" : "숨기기"}`}
+        >
+          <Images size={14} />
+          사진기사 {photoFilterOn ? "숨김" : "표시"}
+        </button>
       </header>
 
       <div className="px-5">
