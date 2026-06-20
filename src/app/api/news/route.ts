@@ -96,7 +96,10 @@ async function fetchNaverNews(searchQuery: string, start = 1, display = NEWS_DIS
   return (data.items || []).map((item: NaverNewsRawItem) => ({
     title: cleanHtml(item.title),
     description: cleanHtml(item.description),
-    link: item.originallink || item.link,
+    // 네이버 뉴스 URL(link) 우선 — 미등록 기사만 언론사 원문(originallink)으로 폴백
+    link: item.link || item.originallink,
+    // 출처 표기용 언론사 원문 URL 보존 (클릭은 link, 출처는 originalLink)
+    originalLink: item.originallink || item.link,
     pubDate: item.pubDate,
   }));
 }
@@ -218,10 +221,12 @@ async function attachThumbnails(items: NewsItem[]): Promise<NewsItem[]> {
     targetItems,
     THUMBNAIL_CONCURRENCY,
     async (item) => {
-      const cached = getCachedThumbnail(item.link);
+      // 썸네일/OG는 언론사 원문(originalLink) 기준 — 클릭(link)은 네이버, OG 품질은 원문 유지
+      const ogTarget = item.originalLink || item.link;
+      const cached = getCachedThumbnail(ogTarget);
       if (cached !== undefined) return cached;
-      const url = await fetchThumbnailUrl(item.link);
-      setCachedThumbnail(item.link, url);
+      const url = await fetchThumbnailUrl(ogTarget);
+      setCachedThumbnail(ogTarget, url);
       return url;
     },
   );

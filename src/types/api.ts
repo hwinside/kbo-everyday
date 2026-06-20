@@ -58,6 +58,8 @@ export interface NewsItem {
   title: string;
   description: string;
   link: string;
+  /** 언론사 원문 URL — 클릭은 link(네이버) 우선이되 출처 표기는 이 값 기준 */
+  originalLink?: string;
   pubDate: string;
   thumbnailUrl?: string | null;
 }
