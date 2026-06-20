@@ -4,10 +4,11 @@ import { TEAMS } from "@/lib/constants/teams";
 import { fetchStandings } from "@/lib/crawler/kbo-api";
 import { computeSeriesSnapshot, serializeSeriesSnapshot } from "@/lib/series/snapshot";
 import { loserClaimedWin } from "@/lib/game-summary/winner-check";
+import { findSummaryLogicIssues } from "@/lib/game-summary/logic-check";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 11; // v11: 시리즈 게임 순번 명시 (gamePosition) — "첫 경기" 환각 방지
+const PROMPT_VERSION = 12; // v12: 박스스코어 기반 요약의 플레이 세부/야구 산술 검증 보강
 
 // ===== Types =====
 
@@ -139,7 +140,6 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
   const homeStarter = homePitchers[0];
   const result = awayScore === homeScore ? "무승부" : awayScore > homeScore ? `${awayTeam} 승리` : `${homeTeam} 승리`;
   const winnerTeam = awayScore > homeScore ? awayTeam : homeScore > awayScore ? homeTeam : null;
-  const loserTeam = awayScore > homeScore ? homeTeam : homeScore > awayScore ? awayTeam : null;
   const scoreDiff = Math.abs(awayScore - homeScore);
 
   // 경기 성격 힌트 (LLM이 서사 방향을 잡는 데 도움)
@@ -199,6 +199,10 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
    - 따라서 "문보경의 1회초 2점 홈런" 같은 이닝+선수+타격종류 조합은 추측이며, 틀릴 수 있다.
    - **이닝별 서술은 '팀 단위'("이 이닝에 LG가 2점") 또는 '득점 타임라인 데이터 그대로'만 쓴다.**
    - 선수 이름은 MVP 선정이나 경기 전체 활약 요약에서만 사용하라 ("문보경 3안타 2타점으로 활약" OK / "문보경의 1회 홈런" NG).
+   **주자/아웃/타석 순서 창작 금지:**
+   - 이 입력에는 플레이 바이 플레이가 없다. "2사 만루", "1,2루", "득점권", "연속 안타", "진루타", "볼넷으로 만루"처럼 주자·아웃·타석 순서를 특정하지 마라.
+   - "만루 + 3점 홈런"은 야구 산술상 불가능하다. 만루 홈런은 4점, 3점 홈런은 주자 2명 상황이다.
+   - 승부처도 선수별 특정 타석 장면이 아니라 "N회 팀 득점으로 스코어가 A-B가 됐다"처럼 라인스코어로 확인되는 변화만 써라.
 4. **이닝 해석 규칙 (경기 구조 반드시 준수).** 원정팀=이닝 초 공격, 홈팀=이닝 말 공격. 득점 타임라인이 주어졌으면 그 순서를 절대 바꾸지 마라. 예: "9회초 원정팀 2점" 다음에 "9회말 홈팀 4점"이라면, 홈팀이 나중에 득점한 것이다. 순서를 뒤집어 "홈팀이 먼저 역전하고 원정팀이 다시 재역전" 같은 물리적으로 불가능한 서사를 쓰면 절대 안 된다.
 4. **숫자를 서사로.** "3안타 4타점"을 나열하지 말고, 그 숫자가 경기 흐름에서 왜 중요했는지 해석하라.
 5. **빈 칸보다 침묵.** 해당 없는 필드는 null로 두라. 억지로 채우면 품질이 떨어진다.
@@ -212,7 +216,7 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
    - 시리즈 승수·날짜·스코어는 '## 시리즈 스냅샷'에 있는 값만 사용. 창작 금지.
 7. **상투구/클리셰 절대 금지.** 아래 표현은 쓰지 마라. 더 구체적이고 이 경기만의 표현으로 대체:
    - "팽팽한 투수전 양상" → 구체적 상황 ("양 선발이 5회까지 무안타로 맞섰다" 등)
-   - "경기의 결정적인 승부처는" → 바로 장면부터 시작 ("5회말 2사 만루, X의 타석에서~")
+   - "경기의 결정적인 승부처는" → 확인된 점수 변화부터 시작 ("5회말 홈팀 3득점으로~")
    - "분위기를 가져왔다/반전에 성공" → 구체적 결과로 ("이 안타로 2점 리드를 만들며~")
    - "흐름을 결정지었다/바꾸었다" → 실제 스코어 변화로 서술
    - "침묵을 깨고/깨뜨렸다" → "X이닝 만에 첫 안타가 나왔고" 등 팩트로
@@ -255,11 +259,11 @@ ${contextSection}
     "mid": "중반(4~6회) 경기 흐름. 전환점, 추가 득점, 투수 교체 등. 2~3문장.",
     "late": "후반(7~9회+) 경기 흐름. 추격/역전/마무리. 2~3문장."
   },
-  "turningPoint": "이 경기의 결정적 승부처. 구체적 상황+숫자+왜 경기를 갈랐는지 해석. 무승부여도 가장 팽팽했던 순간. 3~4문장. 반드시 작성. 빈 문자열 절대 금지.",
+  "turningPoint": "이 경기의 결정적 승부처. 라인스코어로 확인되는 이닝별 점수 변화+전체 기록+왜 경기를 갈랐는지 해석. 주자/아웃/타석 순서 추측 금지. 무승부여도 가장 팽팽했던 순간. 3~4문장. 반드시 작성. 빈 문자열 절대 금지.",
   "mvpBatter": {
     "name": "선수 이름",
     "stats": "구체적 기록 (예: 4타수 3안타 1홈런 3타점)",
-    "reason": "경기 흐름에서의 의미. 결정적 장면. 2~3문장."
+    "reason": "경기 흐름에서의 의미. 확인된 전체 기록 기준 기여. 2~3문장."
   },
   "mvpPitcher": null 또는 { "name": "...", "stats": "...", "reason": "..." },
   "insight": "경기 총평. 양 팀 입장에서 이 경기의 의미. 팬이 기억해야 할 포인트. 시리즈/순위 맥락이 있으면 자연스럽게 포함. 3~4문장.",
@@ -448,6 +452,15 @@ export async function POST(req: NextRequest) {
       if (!isZeroZero && headlineSaysZero) {
         console.error(`Score mismatch (attempt ${attempt}): actual ${body.awayScore}-${body.homeScore}, headline says 0-0.`);
         if (attempt === MAX_ATTEMPTS) return NextResponse.json({ error: "Generated summary score mismatch, discarded" }, { status: 422 });
+        continue;
+      }
+
+      const logicIssues = findSummaryLogicIssues(summary);
+      if (logicIssues.length > 0) {
+        console.error(`Summary logic mismatch (attempt ${attempt}): ${logicIssues.join(", ")}`);
+        if (attempt === MAX_ATTEMPTS) {
+          return NextResponse.json({ error: "Generated summary logic mismatch, discarded", issues: logicIssues }, { status: 422 });
+        }
         continue;
       }
 

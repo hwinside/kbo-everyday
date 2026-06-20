@@ -4,7 +4,7 @@ import { fetchGames, fetchBoxScore } from "@/lib/crawler/kbo-api";
 import { TEAMS } from "@/lib/constants/teams";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
-const PROMPT_VERSION = 11; // must match game-summary route
+const PROMPT_VERSION = 12; // must match game-summary route
 
 // ===== Helpers =====
 
