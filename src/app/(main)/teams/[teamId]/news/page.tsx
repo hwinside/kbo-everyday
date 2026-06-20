@@ -10,6 +10,7 @@ interface NewsItem {
   title: string;
   description: string;
   link: string;
+  originalLink?: string;
   pubDate: string;
   thumbnailUrl?: string | null;
 }
@@ -70,7 +71,8 @@ export default function TeamNewsPage() {
         ) : (
           <div className="space-y-3">
             {news.map((item, i) => {
-              const source = item.link.match(/\/\/(?:www\.)?([^/]+)/)?.[1]?.replace(/\.com$|\.co\.kr$|\.kr$/, "") ?? "";
+              // 출처 표기는 언론사 원문(originalLink) host 기준 — 클릭만 네이버
+              const source = (item.originalLink || item.link).match(/\/\/(?:www\.)?([^/]+)/)?.[1]?.replace(/\.com$|\.co\.kr$|\.kr$/, "") ?? "";
               return (
                 <a key={i} href={item.link} target="_blank" rel="noopener noreferrer">
                   <GlassCard pressable className="overflow-hidden p-0">

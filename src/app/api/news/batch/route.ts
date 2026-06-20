@@ -63,6 +63,8 @@ async function fetchNews(query: string): Promise<NewsItem[]> {
       description: cleanHtml(item.description),
       // 네이버 뉴스 URL(link) 우선 — 미등록 기사만 언론사 원문(originallink)으로 폴백
       link: item.link || item.originallink,
+      // 출처 표기용 언론사 원문 URL 보존 (클릭은 link, 출처는 originalLink)
+      originalLink: item.originallink || item.link,
       pubDate: item.pubDate,
     }));
     cache.set(query, { data: items, ts: Date.now() });
