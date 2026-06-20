@@ -21,13 +21,13 @@ const POS_ADJ: Record<string, number> = {
 
 // WAR 근사 계산 (Replacement level 기준) — "예상 WAR"
 // 타자 WAR ≈ (Batting Runs + Baserunning Runs + Position Adj + Defense + Replacement) / RPW
-// 현재 반영: wRAA(타격) + 주루(SB/CS) + 포지션 보정 + 대체선수.
-// 미반영(소스 확보 전까지 → "예상"): 정밀 수비 runs(PO/A/E — 네이버 미제공).
+// 반영: wRAA(타격) + 주루(SB/CS) + 포지션 보정 + 수비 runs(KBO 수비기록 RF-lite) + 대체선수.
+// 수비 runs는 KBO 공식 수비기록(PO/A/E 등) 기반 자체 환산(scripts/lib/defense-runs.mjs).
 // 내부 오차 벤치마크는 네이버 WAR(hitterWar)와 비교해 상시 축소(scripts/war-benchmark.ts).
-function estimateBatterWAR(woba: number, pa: number, brRuns = 0, posRuns = 0): number {
+function estimateBatterWAR(woba: number, pa: number, brRuns = 0, posRuns = 0, defRuns = 0): number {
   const wRAA = ((woba - 0.330) / 1.15) * pa;
   const replacement = (pa / 600) * 20; // ~20 runs per 600 PA
-  const raw = (wRAA + brRuns + posRuns + replacement) / 10;
+  const raw = (wRAA + brRuns + posRuns + defRuns + replacement) / 10;
   const war = BATTER_WAR_CAL.a * raw + BATTER_WAR_CAL.b; // 네이버 기준 캘리브레이션
   return Math.round(Math.max(war, -1) * 10) / 10;
 }
@@ -56,13 +56,15 @@ export interface CalcPitcherSaber {
 export function calcBatterSaber(s: {
   avg: string|number; hits: number; hr: number; doubles: number; triples: number;
   ab: number; pa: number; runs: number; rbi: number; sb: number;
-  bb?: number; so?: number; hbp?: number; cs?: number; position?: string;
+  bb?: number; so?: number; hbp?: number; cs?: number; position?: string; defRuns?: number;
 }): CalcBatterSaber {
   const avg = typeof s.avg === "string" ? parseFloat(s.avg) : s.avg;
   // 주루 runs 근사(wSB류): 도루 +0.2 / 도루실패 -0.4
   const brRuns = (s.sb || 0) * 0.2 - (s.cs || 0) * 0.4;
   // 포지션 보정 runs (시즌 환산: PA/600 비례)
   const posRuns = ((s.position && POS_ADJ[s.position]) || 0) * ((s.pa || 0) / 600);
+  // 수비 runs (KBO 수비기록 기반 RF-lite, kboId로 주입)
+  const defRuns = s.defRuns || 0;
   const singles = s.hits - s.doubles - s.triples - s.hr;
   const bb = s.bb ?? Math.round((s.pa - s.ab) * 0.75);
   const hbp = s.hbp ?? Math.round((s.pa - s.ab) * 0.1);
@@ -85,7 +87,7 @@ export function calcBatterSaber(s: {
     SLG: Math.round(slg*1000)/1000, ISO: Math.round(iso*1000)/1000,
     BABIP: Math.round(babip*1000)/1000, BB_pct: Math.round(bbPct*10)/10,
     K_pct: Math.round(kPct*10)/10, wOBA: Math.round(woba*1000)/1000, wRC_plus: wrc,
-    WAR: estimateBatterWAR(woba, s.pa, brRuns, posRuns),
+    WAR: estimateBatterWAR(woba, s.pa, brRuns, posRuns, defRuns),
   };
 }
 

@@ -12,6 +12,7 @@ import { chromium } from "playwright";
 import { readFileSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { computeDefenseRuns } from "./lib/defense-runs.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..");
@@ -298,6 +299,42 @@ async function crawlPitcher(page) {
   });
 }
 
+async function crawlDefense(page) {
+  console.log("\n📊 수비 크롤링...");
+  // GAME_CN 정렬로 출장기록 있는 전체 수비수 수집 (기본 정렬=수비이닝은 상위권만)
+  await page.goto(`${KBO_BASE}/Record/Player/Defense/Basic.aspx?sort=GAME_CN`);
+  await page.waitForLoadState("networkidle");
+  await selectSeason(page);
+
+  const rows = await scrapeAllPages(page);
+
+  // 한 선수가 여러 포지션을 보면 포지션별로 행이 나뉜다 → 행 단위로 보존(포지션 보정용).
+  // Columns: 순위(0) 선수명(1) 팀명(2) POS(3) G(4) GS(5) IP(6) E(7) PKO(8) PO(9) A(10) DP(11) FPCT(12) PB(13) SB(14) CS(15) CS%(16)
+  return rows.map((r) => {
+    const c = r.texts;
+    const name = c[1] || "";
+    const team = c[2] || "";
+    const kboId = extractPlayerId(r.hrefs[1] || "") || findKboId(name, team);
+    return {
+      name,
+      team,
+      kboId,
+      pos: c[3] || "",
+      games: parseInt(c[4]) || 0,
+      ip: c[6] || "0",
+      e: parseInt(c[7]) || 0,
+      pko: parseInt(c[8]) || 0,
+      po: parseInt(c[9]) || 0,
+      a: parseInt(c[10]) || 0,
+      dp: parseInt(c[11]) || 0,
+      fpct: c[12] || "0.000",
+      pb: parseInt(c[13]) || 0,
+      sb: parseInt(c[14]) || 0,
+      cs: parseInt(c[15]) || 0,
+    };
+  });
+}
+
 function parseIpToFloat(ip) {
   // "180 2/3" → 180.67, "164 1/3" → 164.33
   if (!ip || ip === "0") return 0;
@@ -387,15 +424,27 @@ async function main() {
     // ===== PITCHERS =====
     const pitchers = await crawlPitcher(page);
 
+    // ===== DEFENSE ===== (예상 WAR 수비 runs 보정용, 포지션별 행)
+    const defense = await crawlDefense(page);
+
     // ===== SAVE =====
     const batterPath = join(CONSTANTS_DIR, `stats-${SEASON}-batters.json`);
     const pitcherPath = join(CONSTANTS_DIR, `stats-${SEASON}-pitchers.json`);
+    const defensePath = join(CONSTANTS_DIR, `stats-${SEASON}-defense.json`);
+
+    // 수비 runs(RF-lite) 파생 → 기록실/예상 WAR 보정용
+    const defenseRunsPath = join(CONSTANTS_DIR, `player-defense-runs.json`);
+    const defenseRuns = computeDefenseRuns(defense);
 
     writeFileSync(batterPath, JSON.stringify(batters, null, 2));
     writeFileSync(pitcherPath, JSON.stringify(pitchers, null, 2));
+    writeFileSync(defensePath, JSON.stringify(defense, null, 2));
+    writeFileSync(defenseRunsPath, JSON.stringify(defenseRuns, null, 2));
 
     console.log(`\n✅ 타자 ${batters.length}명 → ${batterPath}`);
     console.log(`✅ 투수 ${pitchers.length}명 → ${pitcherPath}`);
+    console.log(`✅ 수비 ${defense.length}행 → ${defensePath}`);
+    console.log(`✅ 수비 runs ${Object.keys(defenseRuns).length}명 → ${defenseRunsPath}`);
 
     // Validation: compare top 5 with expected
     console.log("\n📋 타자 Top 5:");

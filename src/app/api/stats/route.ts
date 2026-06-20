@@ -4,8 +4,10 @@ import batterStats2025 from "@/lib/constants/stats-2025-batters.json";
 import pitcherStats2025 from "@/lib/constants/stats-2025-pitchers.json";
 import batterStats2026 from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats2026 from "@/lib/constants/stats-2026-pitchers.json";
+import defenseStats2026 from "@/lib/constants/stats-2026-defense.json";
 import type { RosterPlayer } from "@/types/api";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
+import { aggregateDefense, type DefenseRow } from "@/lib/utils/defense-aggregate";
 
 const KBO_BASE = "https://www.koreabaseball.com";
 
@@ -265,6 +267,12 @@ export async function GET(req: NextRequest) {
       ? (pitcherStats2025 as unknown as PlayerStat[])
       : (batterStats2025 as unknown as PlayerStat[]);
     return NextResponse.json({ stats, type, count: stats.length, season: 2025 });
+  }
+
+  // 수비 — 라이브 fetch 불가(KBO 수비페이지 POST 차단) → 정적 크롤 JSON(매일 CI 갱신) 집계
+  if (type === "defense") {
+    const stats = aggregateDefense(defenseStats2026 as unknown as DefenseRow[]) as unknown as PlayerStat[];
+    return NextResponse.json({ stats, type, count: stats.length, season: 2026, source: "static" });
   }
 
   // 2026 시즌 + current — 라이브 크롤링 (캐시: 경기시간대 10분 / 평시 1시간)
