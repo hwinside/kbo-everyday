@@ -18,8 +18,8 @@ const POSITIONS = playerPositions as Record<string, string>;
 /* 기록실 뷰 — 타자/투수/수비. WAR는 STAT_DEFS 밖 특수 처리(자체 산식). */
 type View = StatType | "defense";
 
-/* 기록실 노출 스탯 — "war"(예상 WAR)는 STAT_DEFS 밖 특수 처리(자체 산식 계산) */
-const BATTER_STATS = ["war", "hr", "avg", "ops", "obp", "rbi", "runs", "sb", "bb", "doubles", "so_batter", "games_batter"];
+/* 기록실 노출 스탯 — "war"·"woba"·"wrc"·"iso"·"babip"는 STAT_DEFS 밖 특수 처리(자체 산식 계산) */
+const BATTER_STATS = ["war", "woba", "wrc", "iso", "babip", "hr", "avg", "ops", "obp", "rbi", "runs", "sb", "bb", "doubles", "so_batter", "games_batter"];
 const PITCHER_STATS = ["war", "era", "wins", "saves", "holds", "so_pitcher", "whip", "ip", "games_pitcher"];
 
 /* 수비 스탯 — STAT_DEFS 밖 로컬 정의(수비기록은 정적 크롤 JSON 집계, /api/stats?type=defense) */
@@ -32,6 +32,21 @@ const DEF_DEFS: Record<string, { label: string; emoji: string; fmt: (v: number) 
   e: { label: "실책", emoji: "❌", fmt: (v) => String(v) },
 };
 const FPCT_MIN_INN = 100; // 수비율 리더보드 자격(저이닝 1.000 노이즈 방지)
+
+/* 자체 산식 스탯 — STAT_DEFS 밖. estimate=true는 '예측' 접두 + 추정치 disclaimer 대상.
+ * war는 타자/투수 양쪽, 나머지(woba/wrc/iso/babip)는 타자 전용. */
+const SABER_DEFS: Record<
+  string,
+  { label: string; emoji: string; field: "WAR" | "wOBA" | "wRC_plus" | "ISO" | "BABIP"; fmt: (v: number) => string; estimate: boolean }
+> = {
+  war: { label: "예측 WAR", emoji: "📈", field: "WAR", fmt: (v) => v.toFixed(1), estimate: true },
+  woba: { label: "예측 wOBA", emoji: "🎯", field: "wOBA", fmt: (v) => v.toFixed(3).replace(/^0/, ""), estimate: true },
+  wrc: { label: "예측 wRC+", emoji: "📊", field: "wRC_plus", fmt: (v) => String(Math.round(v)), estimate: true },
+  iso: { label: "IsoP", emoji: "💥", field: "ISO", fmt: (v) => v.toFixed(3).replace(/^0/, ""), estimate: false },
+  babip: { label: "BABIP", emoji: "🍀", field: "BABIP", fmt: (v) => v.toFixed(3).replace(/^0/, ""), estimate: false },
+};
+const SABER_DISCLAIMER =
+  "내부 예측 모델을 바탕으로 산출한 추정치입니다. 공식 WAR 또는 정확한 기록 데이터가 아니며, 실제 값과 차이가 날 수 있습니다.";
 
 type Row = Record<string, unknown> & {
   name: string;
@@ -46,24 +61,31 @@ function teamIdFromText(team?: string): number | null {
   return TEAMS.find((t) => t.shortName === team || t.name === team)?.id ?? null;
 }
 
-/* 자체 "예상 WAR" 계산 (타격+주루+포지션; 수비는 네이버 대비 정확도 저하로 미반영) */
-function computeWar(p: Row, statType: StatType): number {
-  if (statType === "batter") {
-    return calcBatterSaber({
-      avg: (p.avg as string | number) ?? 0, hits: Number(p.hits) || 0, hr: Number(p.hr) || 0,
-      doubles: Number(p.doubles) || 0, triples: Number(p.triples) || 0, ab: Number(p.ab) || 0,
-      pa: Number(p.pa) || 0, runs: Number(p.runs) || 0, rbi: Number(p.rbi) || 0,
-      sb: Number(p.sb) || 0, bb: Number(p.bb) || 0, so: Number(p.so) || 0,
-      hbp: Number(p.hbp) || 0, cs: Number(p.cs) || 0,
-      position: POSITIONS[String(p.kboId ?? p.playerId ?? "")],
+/* 자체 타격 세이버메트릭 (예측 WAR·wOBA·wRC+·ISO·BABIP 공통 소스; 타격+주루+포지션, 수비 미반영) */
+function batterSaber(p: Row) {
+  return calcBatterSaber({
+    avg: (p.avg as string | number) ?? 0, hits: Number(p.hits) || 0, hr: Number(p.hr) || 0,
+    doubles: Number(p.doubles) || 0, triples: Number(p.triples) || 0, ab: Number(p.ab) || 0,
+    pa: Number(p.pa) || 0, runs: Number(p.runs) || 0, rbi: Number(p.rbi) || 0,
+    sb: Number(p.sb) || 0, bb: Number(p.bb) || 0, so: Number(p.so) || 0,
+    hbp: Number(p.hbp) || 0, cs: Number(p.cs) || 0,
+    position: POSITIONS[String(p.kboId ?? p.playerId ?? "")],
+  });
+}
+
+/* 자체 산식 스탯 값 — war는 타자/투수 양쪽, 나머지는 타자 전용(투수 뷰엔 칩 없음) */
+function computeSaber(p: Row, view: StatType, key: string): number {
+  if (key === "war") {
+    if (view === "batter") return batterSaber(p).WAR;
+    return calcPitcherSaber({
+      era: (p.era as string | number) ?? 0, ip: (p.ip as string | number) ?? 0,
+      so: Number(p.so) || 0, bb: Number(p.bb) || 0, hr: Number(p.hr) || 0, hits: Number(p.h) || 0,
+      games: Number(p.games) || 0, wins: Number(p.wins) || 0, losses: Number(p.losses) || 0,
+      saves: Number(p.saves) || 0, whip: (p.whip as string | number) ?? 0,
     }).WAR;
   }
-  return calcPitcherSaber({
-    era: (p.era as string | number) ?? 0, ip: (p.ip as string | number) ?? 0,
-    so: Number(p.so) || 0, bb: Number(p.bb) || 0, hr: Number(p.hr) || 0, hits: Number(p.h) || 0,
-    games: Number(p.games) || 0, wins: Number(p.wins) || 0, losses: Number(p.losses) || 0,
-    saves: Number(p.saves) || 0, whip: (p.whip as string | number) ?? 0,
-  }).WAR;
+  const field = SABER_DEFS[key]?.field;
+  return field ? Number(batterSaber(p)[field]) || 0 : 0;
 }
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -127,17 +149,17 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
       }) as (RankedRow & Row)[];
     }
 
-    if (activeStat === "war") {
-      // 예상 WAR: 자체 산식 계산 → 자격(타자 10경기 / 투수 5경기) → 내림차순 → 공동순위
+    if (SABER_DEFS[activeStat]) {
+      // 자체 산식 스탯: 계산 → 자격(타자 10경기 / 투수 5경기) → 내림차순 → 공동순위
       const minG = view === "batter" ? 10 : 5;
-      const withWar = scoped
+      const withV = scoped
         .filter((p) => (Number(p.games) || 0) >= minG)
-        .map((p) => ({ ...p, __war: computeWar(p, view as StatType) }))
-        .sort((a, b) => b.__war - a.__war);
+        .map((p) => ({ ...p, __saber: computeSaber(p, view as StatType, activeStat) }))
+        .sort((a, b) => b.__saber - a.__saber);
       let prevV: number | null = null, prevR = 0;
-      return withWar.map((p, i) => {
-        const r = i > 0 && p.__war === prevV ? prevR : i + 1;
-        prevV = p.__war; prevR = r;
+      return withV.map((p, i) => {
+        const r = i > 0 && p.__saber === prevV ? prevR : i + 1;
+        prevV = p.__saber; prevR = r;
         return { ...p, rank: r };
       }) as (RankedRow & Row)[];
     }
@@ -152,14 +174,14 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
 
   const getValue = (p: Row): number => {
     if (isDefense) return Number(p[activeStat]) || 0;
-    if (activeStat === "war") return Number((p as Row & { __war?: number }).__war) || 0;
+    if (SABER_DEFS[activeStat]) return Number((p as Row & { __saber?: number }).__saber) || 0;
     if (!def) return 0;
     if (activeStat === "doubles") return (Number(p.doubles) || 0) + (Number(p.triples) || 0);
     return Number(p[def.key] ?? 0) || 0;
   };
   const fmt = (v: number) => {
     if (isDefense) return (DEF_DEFS[activeStat] ?? DEF_DEFS.fpct).fmt(v);
-    if (activeStat === "war") return v.toFixed(1);
+    if (SABER_DEFS[activeStat]) return SABER_DEFS[activeStat].fmt(v);
     return def?.format ? def.format(v) : String(v);
   };
 
@@ -198,13 +220,13 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
               </button>
             );
           }
-          const isWar = key === "war";
+          const saber = SABER_DEFS[key];
           const d = STAT_DEFS[key];
-          if (!isWar && !d) return null;
-          const label = isWar
-            ? "예측 WAR"
+          if (!saber && !d) return null;
+          const label = saber
+            ? saber.label
             : d!.desc.replace(/\s*랭킹.*$/, "").replace(/\s*\(.*\)\s*$/, "").trim();
-          const emoji = isWar ? "📈" : d!.emoji;
+          const emoji = saber ? saber.emoji : d!.emoji;
           return (
             <button
               key={key}
@@ -221,9 +243,9 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
         })}
       </div>
 
-      {activeStat === "war" && (
+      {SABER_DEFS[activeStat]?.estimate && (
         <p className="mb-3 -mt-1 text-[11px] leading-snug text-text-tertiary">
-          ⓘ 예측 WAR은 내부 예측 모델을 바탕으로 한 추정치이며, 정확한 데이터가 아닙니다.
+          ⓘ {SABER_DISCLAIMER}
         </p>
       )}
 
