@@ -29,8 +29,10 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
     let cancelled = false;
     slides.forEach((item) => {
       if (item.thumbnailUrl || ogThumbs[item.id] !== undefined) return;
-      if (!item.sourceUrl || item.sourceUrl === "#") return;
-      fetch(`/api/og-meta?url=${encodeURIComponent(item.sourceUrl)}`)
+      // OG 추출은 언론사 원문(ogUrl) 우선 — 클릭 타깃(sourceUrl=네이버)과 분리
+      const ogTarget = item.ogUrl || item.sourceUrl;
+      if (!ogTarget || ogTarget === "#") return;
+      fetch(`/api/og-meta?url=${encodeURIComponent(ogTarget)}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           if (!cancelled) setOgThumbs((prev) => ({ ...prev, [item.id]: d?.image ?? null }));

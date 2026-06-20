@@ -221,10 +221,12 @@ async function attachThumbnails(items: NewsItem[]): Promise<NewsItem[]> {
     targetItems,
     THUMBNAIL_CONCURRENCY,
     async (item) => {
-      const cached = getCachedThumbnail(item.link);
+      // 썸네일/OG는 언론사 원문(originalLink) 기준 — 클릭(link)은 네이버, OG 품질은 원문 유지
+      const ogTarget = item.originalLink || item.link;
+      const cached = getCachedThumbnail(ogTarget);
       if (cached !== undefined) return cached;
-      const url = await fetchThumbnailUrl(item.link);
-      setCachedThumbnail(item.link, url);
+      const url = await fetchThumbnailUrl(ogTarget);
+      setCachedThumbnail(ogTarget, url);
       return url;
     },
   );

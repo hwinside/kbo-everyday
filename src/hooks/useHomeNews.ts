@@ -18,6 +18,7 @@ export interface HomeNewsItem {
   label: string;
   source: string;
   sourceUrl: string;
+  ogUrl: string;
   thumbnailUrl: null;
   timeAgo: string;
   teamId: number | null;
@@ -37,11 +38,14 @@ function toHomeNewsItems(items: NewsItem[], myTeamId: number | null): HomeNewsIt
     pubDate: item.pubDate,
     label: item._label || "",
     source: (() => {
-      // 출처 표기는 언론사 원문(originalLink) host 기준 — 클릭만 네이버
+      // 출처 표기는 언론사 원문(originalLink) host 기준 — 계산만, 클릭은 네이버
       try { return new URL(item.originalLink || item.link).hostname.replace("www.", "").replace("m.", ""); }
       catch { return "뉴스"; }
     })(),
-    sourceUrl: item.originalLink || item.link,
+    // 클릭 타깃은 네이버 뉴스 URL(link) — '무조건 네이버' 보장
+    sourceUrl: item.link,
+    // 썸네일/OG 추출은 언론사 원문(originalLink) 기준 — 네이버보다 OG 이미지 품질 안정적
+    ogUrl: item.originalLink || item.link,
     timeAgo: (() => {
       const diff = Date.now() - new Date(item.pubDate).getTime();
       const hours = Math.floor(diff / (1000 * 60 * 60));

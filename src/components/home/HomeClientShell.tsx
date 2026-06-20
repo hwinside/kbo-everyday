@@ -187,7 +187,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   const sectionOrder = useHomeSectionsOrder();
 
   // useHomeNews — lazy import to avoid SSR issues
-  const [realNews, setRealNews] = useState<{ id: number; title: string; link: string; pubDate: string; label: string; source: string; sourceUrl: string; thumbnailUrl: null; timeAgo: string; teamId: number | null; type: "news" }[]>([]);
+  const [realNews, setRealNews] = useState<{ id: number; title: string; link: string; pubDate: string; label: string; source: string; sourceUrl: string; ogUrl: string; thumbnailUrl: null; timeAgo: string; teamId: number | null; type: "news" }[]>([]);
   useEffect(() => {
     if (myTeamId === null) return;
     import("@/hooks/useHomeNews").then(({ fetchHomeNews }) => {
