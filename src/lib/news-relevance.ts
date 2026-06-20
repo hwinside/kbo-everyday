@@ -63,7 +63,9 @@ export function isPhotoArticle(title: string): boolean {
 export function isNaverNewsUrl(url: string | undefined | null): boolean {
   if (!url) return false;
   try {
-    return new URL(url).hostname.endsWith("naver.com");
+    // dot-boundary 검사 — notnaver.com/fake-naver.com 같은 유사 도메인 오통과 방지
+    const host = new URL(url).hostname;
+    return host === "naver.com" || host.endsWith(".naver.com");
   } catch {
     return false;
   }
