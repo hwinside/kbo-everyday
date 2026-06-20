@@ -531,7 +531,7 @@ export default function GameStatsTab({
         </div>
 
         {/* 투수표 전치: 스탯=행 / 투수=열. 투수는 3~6명이라 세로로 두면 16스탯 라벨이
-            안 잘리고 폰트도 키울 수 있음(11px). 투수 7+명이면 min-w + overflow로 가로 스크롤. */}
+            안 잘리고 폰트도 9px→10px로 키움. 투수 7+명이면 min-w + overflow로 가로 스크롤. */}
         <div className="overflow-x-auto">
           <table className="w-full text-[10px] leading-tight border-collapse">
             <thead className="bg-bg-secondary">
