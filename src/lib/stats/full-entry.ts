@@ -1,4 +1,4 @@
-import { FOREIGN_NUMERIC_TO_ALPHA } from "@/lib/constants/foreign-id-map";
+import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
 
 /** 전체 엔트리 병합 대상 최소 형태 (라이브/크롤 스탯 공통). */
 export type FullEntryRow = {
@@ -12,7 +12,10 @@ export type FullEntryRow = {
 /** 외국인 숫자ID(56251) → canonical 영문ID(FP009). 비외국인/빈값은 그대로. */
 function canonId(id: string | number | undefined): string {
   const s = String(id ?? "");
-  return FOREIGN_NUMERIC_TO_ALPHA[s] ?? s;
+  if (!s) return s;
+  // SSOT 매칭(resolvePlayerIdentity)으로 canonical kboId 정규화.
+  // 외국인 숫자ID→영문ID, 한국/미해결은 그대로(?? s) — 기존 FOREIGN_NUMERIC_TO_ALPHA 동작과 동치.
+  return resolvePlayerIdentity(s)?.kboId ?? s;
 }
 
 /**
