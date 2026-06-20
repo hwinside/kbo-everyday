@@ -11,6 +11,9 @@ import { getMyTeamId } from "@/lib/store/myteam";
 import { STAT_DEFS, type StatType } from "@/lib/stats/title-defs";
 import { rankByStat, type RankedRow } from "@/lib/stats/title-rankings";
 import { calcBatterSaber, calcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
+import playerPositions from "@/lib/constants/player-positions.json";
+
+const POSITIONS = playerPositions as Record<string, string>;
 
 /* 기록실 노출 스탯 — "war"(예상 WAR)는 STAT_DEFS 밖 특수 처리(자체 산식 계산) */
 const BATTER_STATS = ["war", "hr", "avg", "ops", "obp", "rbi", "runs", "sb", "bb", "doubles", "so_batter", "games_batter"];
@@ -38,6 +41,7 @@ function computeWar(p: Row, statType: StatType): number {
       pa: Number(p.pa) || 0, runs: Number(p.runs) || 0, rbi: Number(p.rbi) || 0,
       sb: Number(p.sb) || 0, bb: Number(p.bb) || 0, so: Number(p.so) || 0,
       hbp: Number(p.hbp) || 0, cs: Number(p.cs) || 0,
+      position: POSITIONS[String(p.kboId ?? p.playerId ?? "")],
     }).WAR;
   }
   return calcPitcherSaber({

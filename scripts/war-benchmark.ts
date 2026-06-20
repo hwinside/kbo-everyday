@@ -7,6 +7,9 @@
  * 이 출력으로 산식을 상시 개선한다(수비/포지션 보강 효과 추적).
  */
 import { calcBatterSaber } from "../src/lib/utils/sabermetrics-calc";
+import positions from "../src/lib/constants/player-positions.json";
+
+const POS = positions as Record<string, string>;
 
 const SEASON = process.argv[2] || "2026";
 const BASE = "https://api-gw.sports.naver.com/statistics/categories/kbo/seasons";
@@ -45,7 +48,7 @@ async function main() {
       avg: h.hitterHra, hits: h.hitterHit, hr: h.hitterHr, doubles: h.hitterH2, triples: h.hitterH3,
       ab: h.hitterAb, pa: h.hitterAb + h.hitterBb + h.hitterHp, // PA 근사(SF/SH 제외)
       runs: h.hitterRun, rbi: h.hitterRbi, sb: h.hitterSb, bb: h.hitterBb, so: h.hitterKk,
-      hbp: h.hitterHp, cs: h.hitterCs ?? 0,
+      hbp: h.hitterHp, cs: h.hitterCs ?? 0, position: POS[h.playerId],
     }).WAR;
     const naver = h.hitterWar as number;
     diffs.push({ name: h.playerName, team: h.teamShortName, ours, naver, d: ours - naver });
