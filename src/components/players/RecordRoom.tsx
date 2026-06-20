@@ -39,7 +39,7 @@ const SABER_DEFS: Record<
   string,
   { label: string; emoji: string; field: "WAR" | "wOBA" | "wRC_plus" | "ISO" | "BABIP"; fmt: (v: number) => string; estimate: boolean }
 > = {
-  war: { label: "예측 WAR", emoji: "📈", field: "WAR", fmt: (v) => v.toFixed(1), estimate: true },
+  war: { label: "예측 WAR", emoji: "📈", field: "WAR", fmt: (v) => v.toFixed(2), estimate: true },
   woba: { label: "예측 wOBA", emoji: "🎯", field: "wOBA", fmt: (v) => v.toFixed(3).replace(/^0/, ""), estimate: true },
   wrc: { label: "예측 wRC+", emoji: "📊", field: "wRC_plus", fmt: (v) => String(Math.round(v)), estimate: true },
   iso: { label: "IsoP", emoji: "💥", field: "ISO", fmt: (v) => v.toFixed(3).replace(/^0/, ""), estimate: false },

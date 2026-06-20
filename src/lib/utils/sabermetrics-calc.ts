@@ -29,7 +29,7 @@ function estimateBatterWAR(woba: number, pa: number, brRuns = 0, posRuns = 0, de
   const replacement = (pa / 600) * 20; // ~20 runs per 600 PA
   const raw = (wRAA + brRuns + posRuns + defRuns + replacement) / 10;
   const war = BATTER_WAR_CAL.a * raw + BATTER_WAR_CAL.b; // 네이버 기준 캘리브레이션
-  return Math.round(Math.max(war, -1) * 10) / 10;
+  return Math.round(Math.max(war, -1) * 100) / 100; // 소수점 2자리(동률 변별)
 }
 
 /** KBO 이닝 표기 → 실제 이닝(thirds). "25 2/3"·"25 1/3" 분수 표기, "25.2"(thirds) 소수 표기, number 모두 처리 */
@@ -52,7 +52,7 @@ function estimatePitcherWAR(fip: number, fullIp: number): number {
   const replacement = (fullIp / 200) * 12;
   const raw = (runsAboveAvg + replacement) / 10;
   const war = PITCHER_WAR_CAL.a * raw + PITCHER_WAR_CAL.b; // 네이버 기준 캘리브레이션
-  return Math.round(Math.max(war, -1) * 10) / 10;
+  return Math.round(Math.max(war, -1) * 100) / 100; // 소수점 2자리(동률 변별)
 }
 
 export interface CalcBatterSaber {
