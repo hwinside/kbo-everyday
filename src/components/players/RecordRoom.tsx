@@ -129,7 +129,7 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
 
   useEffect(() => {
     if (rowsByType[view] !== undefined) return;
-    fetch(`/api/stats?type=${view}&season=2026`, { cache: "no-store" })
+    fetch(`/api/stats?type=${view}&season=2026&full=1`, { cache: "no-store" })
       .then((r) => r.json())
       .then((data: { stats?: Row[]; updatedAt?: string; source?: string }) => {
         setRowsByType((prev) => ({ ...prev, [view]: data.stats || [] }));

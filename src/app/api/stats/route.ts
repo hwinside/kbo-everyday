@@ -9,6 +9,7 @@ import statsMeta from "@/lib/constants/stats-2026-meta.json";
 import type { RosterPlayer } from "@/types/api";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { aggregateDefense, type DefenseRow } from "@/lib/utils/defense-aggregate";
+import { mergeFullEntry } from "@/lib/stats/full-entry";
 
 const KBO_BASE = "https://www.koreabaseball.com";
 
@@ -262,6 +263,7 @@ function setCache(key: string, data: StatsResult) {
 export async function GET(req: NextRequest) {
   const type = req.nextUrl.searchParams.get("type") || "batter";
   const season = req.nextUrl.searchParams.get("season") || "current";
+  const full = req.nextUrl.searchParams.get("full") === "1";
 
   // 2025 시즌 — 확정 static data (300 batters + 277 pitchers)
   if (season === "2025") {
@@ -278,12 +280,15 @@ export async function GET(req: NextRequest) {
   }
 
   // 2026 시즌 + current — 라이브 크롤링 (캐시: 경기시간대 10분 / 평시 1시간)
-  const cacheKey = `stats-${type}-${season}`;
+  const cacheKey = `stats-${type}-${season}${full ? "-full" : ""}`;
   const cached = getCached(cacheKey);
   if (cached) return NextResponse.json(cached);
 
   try {
-    const stats = type === "pitcher" ? await fetchPitcherStats() : await fetchBatterStats();
+    const live = type === "pitcher" ? await fetchPitcherStats() : await fetchBatterStats();
+    const stats = full
+      ? mergeFullEntry(live, (type === "pitcher" ? pitcherStats2026 : batterStats2026) as unknown as PlayerStat[])
+      : live;
     const result: StatsResult = { stats, type, count: stats.length, source: "live", updatedAt: new Date().toISOString() };
     setCache(cacheKey, result);
     return NextResponse.json(result);
