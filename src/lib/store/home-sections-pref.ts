@@ -8,6 +8,7 @@
 // liveOtherTeams(다른 팀 실시간)는 기존 allGames에 묶여 있던 LiveGameBanner를 분리한 독립 섹션.
 export type HomeSectionKey =
   | "news"
+  | "communityLatest"
   | "favPlayers"
   | "shorts"
   | "liveOtherTeams"
@@ -24,6 +25,7 @@ interface SectionDef {
 // 배열 순서 = 기본 표시 순서(순서 설정이 없을 때 fallback).
 export const HOME_SECTIONS: SectionDef[] = [
   { key: "news", label: "뉴스", desc: "주요 뉴스 카드", storageKey: "kbo-home-news-visible" },
+  { key: "communityLatest", label: "커뮤니티 최신글", desc: "커뮤니티 최신 글 미리보기", storageKey: "kbo-home-community-visible" },
   { key: "favPlayers", label: "최애선수 카드", desc: "최애선수 최근 기록", storageKey: "kbo-home-favplayers-visible" },
   { key: "shorts", label: "숏츠", desc: "홈 숏츠 영상 섹션", storageKey: "kbo-shorts-visible" },
   { key: "liveOtherTeams", label: "다른 팀 실시간", desc: "다른 경기 실시간 스코어 (Live 시에만 노출)", storageKey: "kbo-home-livegames-visible" },
@@ -38,6 +40,7 @@ export const HOME_SECTION_KEYS: HomeSectionKey[] = HOME_SECTIONS.map((s) => s.ke
 export const DEFAULT_SECTION_ORDER: HomeSectionKey[] = [
   "liveOtherTeams",
   "news",
+  "communityLatest",
   "favPlayers",
   "shorts",
   "allGames",

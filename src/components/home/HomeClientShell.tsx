@@ -35,6 +35,7 @@ import { lazy, Suspense } from "react";
 const NewsCarousel = lazy(() => import("@/components/news/NewsCarousel"));
 const HomeHighlights = lazy(() => import("@/components/home/HomeHighlights"));
 const WhatsNewCard = lazy(() => import("@/components/home/WhatsNewCard"));
+const CommunityLatestPosts = lazy(() => import("@/components/home/CommunityLatestPosts"));
 
 const container = {
   hidden: {},
@@ -572,6 +573,14 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
               </div>
             ) : null;
           }
+          case "communityLatest":
+            return sections.communityLatest ? (
+              <div key={key} className="mb-3">
+                <Suspense fallback={null}>
+                  <CommunityLatestPosts />
+                </Suspense>
+              </div>
+            ) : null;
           case "favPlayers":
             return sections.favPlayers ? (
               <div key={key} className="mb-3">
