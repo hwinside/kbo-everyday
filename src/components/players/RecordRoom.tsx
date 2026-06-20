@@ -45,8 +45,9 @@ const SABER_DEFS: Record<
   iso: { label: "IsoP", emoji: "💥", field: "ISO", fmt: (v) => v.toFixed(3).replace(/^0/, ""), estimate: false },
   babip: { label: "BABIP", emoji: "🍀", field: "BABIP", fmt: (v) => v.toFixed(3).replace(/^0/, ""), estimate: false },
 };
-const SABER_DISCLAIMER =
-  "내부 예측 모델을 바탕으로 산출한 추정치입니다. 공식 기록 데이터가 아니며, 실제 값과 차이가 날 수 있습니다.";
+/* 예측 지표 disclaimer — 칩 이름(WAR/wOBA/wRC+)에 따라 '공식 OO' 문구 동적 생성 */
+const saberDisclaimer = (statName: string) =>
+  `내부 예측 모델을 바탕으로 산출한 추정치입니다. 공식 ${statName} 또는 정확한 기록 데이터가 아니며, 실제 값과 차이가 날 수 있습니다.`;
 
 type Row = Record<string, unknown> & {
   name: string;
@@ -270,7 +271,7 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
 
       {SABER_DEFS[activeStat]?.estimate && (
         <p className="mb-3 -mt-1 text-[11px] leading-snug text-text-tertiary">
-          ⓘ {SABER_DISCLAIMER}
+          ⓘ {saberDisclaimer(SABER_DEFS[activeStat].label.replace(/^예측\s*/, ""))}
         </p>
       )}
 
