@@ -9,8 +9,8 @@ export default function PlayerPostDetailPage() {
   const rawId = playerId as string;
   const info = resolvePlayerIdentity(rawId);
   const headerTitle = info
-    ? `${info.team} ${info.name} 선수 게시판`
-    : "선수 게시판";
+    ? `커뮤니티 > ${info.team} ${info.name}`
+    : "커뮤니티";
 
   return <PostDetail postId={Number(postId)} headerTitle={headerTitle} />;
 }
