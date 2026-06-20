@@ -9,6 +9,7 @@ import { getAvatarPath } from "@/lib/constants/avatars";
 import { usePostDetail, createComment, toggleLike, toggleCommentLike, updatePost, deletePost, updateComment, deleteComment } from "@/lib/supabase/usePosts";
 import ReportSheet from "@/components/community/ReportSheet";
 import LinkPreview from "@/components/community/LinkPreview";
+import { isShortText, BrandedTextCard } from "@/components/community/FeedTextCards";
 import { parseAttribution } from "@/lib/gif-collector/attribution";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
@@ -434,6 +435,12 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           // 움짤콜렉터 자동 출처 "(출처: …)\n{url}"는 분리해 원문 하이퍼링크로 렌더.
           (() => {
             const merged = mergeTitleBody(postPatch.title ?? post.title, postPatch.content ?? post.content);
+            const hasMedia = post.image_urls.length > 0 || (post.video_urls?.length ?? 0) > 0;
+            // 미디어 없는 짧은 글은 피드(PhotoFeed)의 BrandedTextCard와 동일하게 렌더.
+            // BrandedTextCard가 내부적으로 LinkPreview를 처리하므로 아래 별도 LinkPreview는 생략(중복 방지).
+            if (!hasMedia && merged.trim() && isShortText(merged)) {
+              return <BrandedTextCard post={post} body={merged} />;
+            }
             const attr = parseAttribution(merged);
             return (
               <p className="readable-body whitespace-pre-line">
@@ -452,11 +459,19 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           })()
         )}
 
-        {/* Link previews (수정된 content 반영) — 자동 출처 URL은 위 하이퍼링크로 대체되므로 제외 */}
-        <LinkPreview
-          text={parseAttribution(mergeTitleBody(postPatch.title ?? post.title, postPatch.content ?? post.content))?.body ?? (postPatch.content ?? post.content)}
-          maxPreviews={3}
-        />
+        {/* Link previews (수정된 content 반영) — 자동 출처 URL은 위 하이퍼링크로 대체되므로 제외.
+            미디어 없는 짧은 글(BrandedTextCard 분기)은 카드가 LinkPreview를 내부 처리하므로 여기선 생략. */}
+        {(() => {
+          const merged = mergeTitleBody(postPatch.title ?? post.title, postPatch.content ?? post.content);
+          const hasMedia = post.image_urls.length > 0 || (post.video_urls?.length ?? 0) > 0;
+          if (!postEditing && !hasMedia && merged.trim() && isShortText(merged)) return null;
+          return (
+            <LinkPreview
+              text={parseAttribution(merged)?.body ?? (postPatch.content ?? post.content)}
+              maxPreviews={3}
+            />
+          );
+        })()}
 
         {/* Images */}
         {post.image_urls.length > 0 && (
