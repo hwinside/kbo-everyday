@@ -227,7 +227,7 @@ function ResultBadge({ result }: { result: PitcherStat["result"] }) {
   return (
     <span
       className={clsx(
-        "ml-1 inline-flex items-center justify-center rounded px-1 py-px text-sm font-bold leading-none",
+        "ml-0.5 inline-flex items-center justify-center rounded px-1 py-px text-[9px] font-bold leading-none",
         cfg.bg,
         cfg.text
       )}
