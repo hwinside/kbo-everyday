@@ -237,10 +237,6 @@ function ResultBadge({ result }: { result: PitcherStat["result"] }) {
   );
 }
 
-/* -- sticky cell shared style -- */
-const stickyBase =
-  "sticky bg-bg-primary z-[2]";
-
 export default function GameStatsTab({
   stats,
   awayTeam,
@@ -419,121 +415,107 @@ export default function GameStatsTab({
           </span>
         </div>
 
-        <div className="overflow-x-auto max-h-[45vh] relative">
-          <table className="w-max min-w-full text-sm border-collapse">
-            <thead className="sticky top-0 z-[3] bg-bg-secondary">
-              <tr className="text-text-tertiary border-b border-border">
-                {BATTER_COLUMNS.map((col) => (
-                  <th
-                    key={col.key}
-                    className={clsx(
-                      "py-2 px-2 font-medium whitespace-nowrap",
-                      col.sticky ? `${stickyBase} text-left ${col.key === "order" ? "left-0 min-w-[36px]" : col.key === "name" ? "left-[36px] min-w-[72px]" : "left-[108px] min-w-[40px]"}` : "text-center",
-                      col.key === "order" && "text-center w-8",
-                      col.key === "name" && "left-0 min-w-[56px]",
-                      col.key === "position" && "left-[56px] min-w-[36px]"
-                    )}
-                    style={
-                      col.key === "name"
-                        ? { left: 0 }
+        {/* table-fixed + w-full → 컬럼이 화면 폭에 맞춰 압축, 좌우 스크롤 없음 */}
+        <table className="w-full table-fixed text-[10px] leading-tight border-collapse">
+          <colgroup>
+            {BATTER_COLUMNS.map((col) => (
+              <col
+                key={col.key}
+                style={{
+                  width:
+                    col.key === "order"
+                      ? "6%"
+                      : col.key === "name"
+                        ? "16%"
                         : col.key === "position"
-                          ? { left: 56 }
-                          : undefined
-                    }
-                  >
-                    {col.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {data.batters.map((b, i) => (
-                <tr
-                  key={`${side}-${i}-${b.name}`}
+                          ? "8%"
+                          : col.key === "avg"
+                            ? "9%"
+                            : undefined,
+                }}
+              />
+            ))}
+          </colgroup>
+          <thead className="bg-bg-secondary">
+            <tr className="text-text-tertiary border-b border-border">
+              {BATTER_COLUMNS.map((col) => (
+                <th
+                  key={col.key}
                   className={clsx(
-                    "border-b border-border/50 group",
-                    i % 2 === 0 ? "bg-bg-glass/30" : "bg-transparent"
+                    "py-1.5 px-0.5 font-medium",
+                    col.key === "name" ? "text-left" : "text-center"
                   )}
                 >
-                  {BATTER_COLUMNS.map((col) => {
-                    const isSticky = col.sticky;
-                    const isName = col.key === "name";
-                    const isPos = col.key === "position";
-                    const isOrder = col.key === "order";
-
-                    return (
-                      <td
-                        key={col.key}
-                        className={clsx(
-                          "py-2 px-2 tabular-nums whitespace-nowrap",
-                          isSticky && stickyBase,
-                          isName && "text-text-primary font-medium",
-                          isPos && "text-text-tertiary text-xs",
-                          !isSticky && "text-center text-text-secondary",
-                          isOrder && "text-center text-text-tertiary w-8",
-                          b.isSubstitute && isOrder && "text-accent",
-                          // highlight: 3+ hits or 1+ HR
-                          col.key === "h" && b.h >= 3 && "text-accent font-semibold",
-                          col.key === "hr" && b.hr >= 1 && "text-accent font-semibold"
-                        )}
-                        style={
-                          isName
-                            ? { left: 0 }
-                            : isPos
-                              ? { left: 56 }
-                              : undefined
-                        }
-                      >
-                        {isOrder && b.isSubstitute ? (
-                          <span className="text-[10px] text-text-tertiary">↑</span>
-                        ) : isName ? (() => {
-                          const href = getPlayerHref(b.name, team.id);
-                          return href ? (
-                            <Link href={href} className="hover:underline">
-                              {String(b[col.key])}
-                            </Link>
-                          ) : (
-                            String(b[col.key])
-                          );
-                        })() : String(b[col.key])}
-                      </td>
-                    );
-                  })}
-                </tr>
+                  {col.label}
+                </th>
               ))}
-              {/* totals row */}
-              <tr className="border-t-2 border-border bg-bg-glass/50 font-semibold">
+            </tr>
+          </thead>
+          <tbody>
+            {data.batters.map((b, i) => (
+              <tr
+                key={`${side}-${i}-${b.name}`}
+                className={clsx(
+                  "border-b border-border/50 group",
+                  i % 2 === 0 ? "bg-bg-glass/30" : "bg-transparent"
+                )}
+              >
                 {BATTER_COLUMNS.map((col) => {
-                  const isSticky = col.sticky;
                   const isName = col.key === "name";
                   const isPos = col.key === "position";
+                  const isOrder = col.key === "order";
 
                   return (
                     <td
                       key={col.key}
                       className={clsx(
-                        "py-2 px-2 tabular-nums whitespace-nowrap text-text-primary",
-                        isSticky && stickyBase,
-                        isName && "font-bold",
-                        !isSticky && "text-center",
-                        col.key === "order" && "text-center w-8"
+                        "py-1.5 px-0.5 tabular-nums",
+                        isName && "text-text-primary font-medium text-left",
+                        isPos && "text-text-tertiary text-center",
+                        isOrder && "text-center text-text-tertiary",
+                        !isName && !isPos && !isOrder && "text-center text-text-secondary",
+                        b.isSubstitute && isOrder && "text-accent",
+                        // highlight: 3+ hits or 1+ HR
+                        col.key === "h" && b.h >= 3 && "text-accent font-semibold",
+                        col.key === "hr" && b.hr >= 1 && "text-accent font-semibold"
                       )}
-                      style={
-                        isName
-                          ? { left: 0 }
-                          : isPos
-                            ? { left: 56 }
-                            : undefined
-                      }
                     >
-                      {String(batterTotals[col.key])}
+                      {isOrder && b.isSubstitute ? (
+                        <span className="text-accent">↑</span>
+                      ) : isName ? (() => {
+                        const href = getPlayerHref(b.name, team.id);
+                        return href ? (
+                          <Link href={href} className="hover:underline">
+                            {String(b[col.key])}
+                          </Link>
+                        ) : (
+                          String(b[col.key])
+                        );
+                      })() : String(b[col.key])}
                     </td>
                   );
                 })}
               </tr>
-            </tbody>
-          </table>
-        </div>
+            ))}
+            {/* totals row */}
+            <tr className="border-t-2 border-border bg-bg-glass/50 font-semibold">
+              {BATTER_COLUMNS.map((col) => {
+                const isName = col.key === "name";
+                return (
+                  <td
+                    key={col.key}
+                    className={clsx(
+                      "py-1.5 px-0.5 tabular-nums text-text-primary",
+                      isName ? "font-bold text-left" : "text-center"
+                    )}
+                  >
+                    {String(batterTotals[col.key])}
+                  </td>
+                );
+              })}
+            </tr>
+          </tbody>
+        </table>
       </section>
 
       {/* -- pitcher stats -- */}
@@ -548,93 +530,102 @@ export default function GameStatsTab({
           </span>
         </div>
 
-        <div className="overflow-x-auto max-h-[45vh] relative">
-          <table className="w-max min-w-full text-sm border-collapse">
-            <thead className="sticky top-0 z-[3] bg-bg-secondary">
-              <tr className="text-text-tertiary border-b border-border">
-                {PITCHER_COLUMNS.map((col) => (
-                  <th
-                    key={col.key}
-                    className={clsx(
-                      "py-2 px-2 font-medium whitespace-nowrap",
-                      col.sticky
-                        ? `${stickyBase} left-0 text-left min-w-[80px]`
-                        : "text-center"
-                    )}
-                  >
-                    {col.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {data.pitchers.map((p, i) => (
-                <tr
-                  key={`${side}-pitcher-${i}-${p.name}`}
+        {/* 투수 16컬럼 — table-fixed로 화면 폭에 압축, 좌우 스크롤 없음 (폰트 9px) */}
+        <table className="w-full table-fixed text-[9px] leading-tight border-collapse">
+          <colgroup>
+            {PITCHER_COLUMNS.map((col) => (
+              <col
+                key={col.key}
+                style={{
+                  width:
+                    col.key === "name"
+                      ? "15%"
+                      : col.key === "era"
+                        ? "9%"
+                        : col.key === "ip"
+                          ? "8%"
+                          : undefined,
+                }}
+              />
+            ))}
+          </colgroup>
+          <thead className="bg-bg-secondary">
+            <tr className="text-text-tertiary border-b border-border">
+              {PITCHER_COLUMNS.map((col) => (
+                <th
+                  key={col.key}
                   className={clsx(
-                    "border-b border-border/50",
-                    i % 2 === 0 ? "bg-bg-glass/30" : "bg-transparent"
+                    "py-1.5 px-0.5 font-medium",
+                    col.key === "name" ? "text-left" : "text-center"
                   )}
                 >
-                  {PITCHER_COLUMNS.map((col) => {
-                    const isSticky = col.sticky;
-                    const isName = col.key === "name";
-
-                    return (
-                      <td
-                        key={col.key}
-                        className={clsx(
-                          "py-2 px-2 tabular-nums whitespace-nowrap",
-                          isSticky && `${stickyBase} left-0`,
-                          isName && "text-text-primary font-medium",
-                          !isSticky && "text-center text-text-secondary"
-                        )}
-                      >
-                        {isName ? (() => {
-                          const href = getPlayerHref(p.name, team.id);
-                          const content = (
-                            <span className="inline-flex items-center">
-                              {p.name}
-                              <ResultBadge result={p.result} />
-                            </span>
-                          );
-                          return href ? (
-                            <Link href={href} className="hover:underline">
-                              {content}
-                            </Link>
-                          ) : content;
-                        })() : (
-                          String(p[col.key] ?? "")
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
+                  {col.label}
+                </th>
               ))}
-              {/* totals row */}
-              <tr className="border-t-2 border-border bg-bg-glass/50 font-semibold">
+            </tr>
+          </thead>
+          <tbody>
+            {data.pitchers.map((p, i) => (
+              <tr
+                key={`${side}-pitcher-${i}-${p.name}`}
+                className={clsx(
+                  "border-b border-border/50",
+                  i % 2 === 0 ? "bg-bg-glass/30" : "bg-transparent"
+                )}
+              >
                 {PITCHER_COLUMNS.map((col) => {
-                  const isSticky = col.sticky;
                   const isName = col.key === "name";
 
                   return (
                     <td
                       key={col.key}
                       className={clsx(
-                        "py-2 px-2 tabular-nums whitespace-nowrap text-text-primary",
-                        isSticky && `${stickyBase} left-0`,
-                        isName && "font-bold",
-                        !isSticky && "text-center"
+                        "py-1.5 px-0.5 tabular-nums",
+                        isName
+                          ? "text-text-primary font-medium text-left"
+                          : "text-center text-text-secondary"
                       )}
                     >
-                      {String(pitcherTotals[col.key])}
+                      {isName ? (() => {
+                        const href = getPlayerHref(p.name, team.id);
+                        const content = (
+                          <span className="inline-flex items-center flex-wrap">
+                            {p.name}
+                            <ResultBadge result={p.result} />
+                          </span>
+                        );
+                        return href ? (
+                          <Link href={href} className="hover:underline">
+                            {content}
+                          </Link>
+                        ) : content;
+                      })() : (
+                        String(p[col.key] ?? "")
+                      )}
                     </td>
                   );
                 })}
               </tr>
-            </tbody>
-          </table>
-        </div>
+            ))}
+            {/* totals row */}
+            <tr className="border-t-2 border-border bg-bg-glass/50 font-semibold">
+              {PITCHER_COLUMNS.map((col) => {
+                const isName = col.key === "name";
+                return (
+                  <td
+                    key={col.key}
+                    className={clsx(
+                      "py-1.5 px-0.5 tabular-nums text-text-primary",
+                      isName ? "font-bold text-left" : "text-center"
+                    )}
+                  >
+                    {String(pitcherTotals[col.key])}
+                  </td>
+                );
+              })}
+            </tr>
+          </tbody>
+        </table>
       </section>
     </div>
   );
