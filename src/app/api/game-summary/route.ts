@@ -4,10 +4,11 @@ import { TEAMS } from "@/lib/constants/teams";
 import { fetchStandings } from "@/lib/crawler/kbo-api";
 import { computeSeriesSnapshot, serializeSeriesSnapshot } from "@/lib/series/snapshot";
 import { loserClaimedWin } from "@/lib/game-summary/winner-check";
+import { hasBaseRunnerContradiction } from "@/lib/game-summary/consistency-check";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 11; // v11: 시리즈 게임 순번 명시 (gamePosition) — "첫 경기" 환각 방지
+const PROMPT_VERSION = 12; // v12: 주자 상황(만루/주자 수/출루 과정) 창작 금지 + 만루홈런 산술 규칙
 
 // ===== Types =====
 
@@ -139,7 +140,6 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
   const homeStarter = homePitchers[0];
   const result = awayScore === homeScore ? "무승부" : awayScore > homeScore ? `${awayTeam} 승리` : `${homeTeam} 승리`;
   const winnerTeam = awayScore > homeScore ? awayTeam : homeScore > awayScore ? homeTeam : null;
-  const loserTeam = awayScore > homeScore ? homeTeam : homeScore > awayScore ? awayTeam : null;
   const scoreDiff = Math.abs(awayScore - homeScore);
 
   // 경기 성격 힌트 (LLM이 서사 방향을 잡는 데 도움)
@@ -199,6 +199,11 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
    - 따라서 "문보경의 1회초 2점 홈런" 같은 이닝+선수+타격종류 조합은 추측이며, 틀릴 수 있다.
    - **이닝별 서술은 '팀 단위'("이 이닝에 LG가 2점") 또는 '득점 타임라인 데이터 그대로'만 쓴다.**
    - 선수 이름은 MVP 선정이나 경기 전체 활약 요약에서만 사용하라 ("문보경 3안타 2타점으로 활약" OK / "문보경의 1회 홈런" NG).
+   **주자 상황·출루 과정 창작 절대 금지 (박스스코어에 없음 — 이번 사고의 핵심):**
+   - 박스스코어에는 '몇 루에 주자가 몇 명 있었는지'(만루/주자 2명/1·3루)와 '주자가 어떻게 출루했는지'(연속 안타/볼넷/진루타)가 **전혀 없다.** 절대 지어내지 마라.
+   - 금지 표현 예: "2사 만루에서", "연속 안타로 만루를 채우고", "볼넷과 진루타로 찬스를 잡아". → 같은 장면을 한 문단은 "연속 안타", 다른 문단은 "볼넷·진루타"로 다르게 쓰는 모순이 실제로 발생했다.
+   - 홈런/타점은 **타점 수(=그 타석에서 득점한 인원)로만** 서술하라. 솔로=1점, 2점 홈런=2점, 3점 홈런=3점, 만루홈런=4점.
+   - **산술 모순 절대 금지: 만루(주자 3명)에서 홈런이면 타자 포함 4명이 들어와 반드시 '만루홈런(4점)'이다. "만루"와 "3점(이하) 홈런"을 한 문장/한 경기 서술에 같이 쓰면 절대 안 된다.** 득점 타임라인과 선수 타점만으로 검증되는 사실만 써라.
 4. **이닝 해석 규칙 (경기 구조 반드시 준수).** 원정팀=이닝 초 공격, 홈팀=이닝 말 공격. 득점 타임라인이 주어졌으면 그 순서를 절대 바꾸지 마라. 예: "9회초 원정팀 2점" 다음에 "9회말 홈팀 4점"이라면, 홈팀이 나중에 득점한 것이다. 순서를 뒤집어 "홈팀이 먼저 역전하고 원정팀이 다시 재역전" 같은 물리적으로 불가능한 서사를 쓰면 절대 안 된다.
 4. **숫자를 서사로.** "3안타 4타점"을 나열하지 말고, 그 숫자가 경기 흐름에서 왜 중요했는지 해석하라.
 5. **빈 칸보다 침묵.** 해당 없는 필드는 null로 두라. 억지로 채우면 품질이 떨어진다.
@@ -255,7 +260,7 @@ ${contextSection}
     "mid": "중반(4~6회) 경기 흐름. 전환점, 추가 득점, 투수 교체 등. 2~3문장.",
     "late": "후반(7~9회+) 경기 흐름. 추격/역전/마무리. 2~3문장."
   },
-  "turningPoint": "이 경기의 결정적 승부처. 구체적 상황+숫자+왜 경기를 갈랐는지 해석. 무승부여도 가장 팽팽했던 순간. 3~4문장. 반드시 작성. 빈 문자열 절대 금지.",
+  "turningPoint": "이 경기의 결정적 승부처. 구체적 상황+숫자+왜 경기를 갈랐는지 해석. 무승부여도 가장 팽팽했던 순간. 3~4문장. 반드시 작성. 빈 문자열 절대 금지. ★ 주자 상황(만루/주자 수)·출루 과정(연속 안타/볼넷/진루타)은 박스스코어에 없으니 절대 지어내지 마라. 득점 타임라인의 이닝·팀 득점과 선수 타점/홈런 수로만 서술하라 (예: '8회말 문보경이 3타점 홈런으로 4-2 역전을 만들었다' OK / '2사 만루에서 3점 홈런' NG).",
   "mvpBatter": {
     "name": "선수 이름",
     "stats": "구체적 기록 (예: 4타수 3안타 1홈런 3타점)",
@@ -478,6 +483,28 @@ export async function POST(req: NextRequest) {
       if (winnerMismatch) {
         if (attempt === MAX_ATTEMPTS) {
           return NextResponse.json({ error: "Generated summary winner mismatch after retries, discarded" }, { status: 422 });
+        }
+        continue;
+      }
+
+      // 내부 정합성(산술) 검증 — 주자 상황 환각으로 생긴 모순 reject.
+      // 박스스코어엔 주자 상황(만루/주자 수)이 없는데 LLM이 승부처를 극적으로
+      // 쓰려고 "2사 만루에서 3점 홈런"처럼 산술 불가능한 장면을 지어내는 사고
+      // (2026-06-20 두산 2:4 LG). 본문 전체(자유 서사)를 스캔한다.
+      const gfc = summary.gameFlow as Record<string, unknown> | undefined;
+      const narrativeParts = [
+        summary.headline,
+        summary.turningPoint,
+        summary.insight,
+        gfc?.early, gfc?.mid, gfc?.late,
+        (summary.mvpBatter as Record<string, unknown> | undefined)?.reason,
+        (summary.mvpPitcher as Record<string, unknown> | undefined)?.reason,
+      ].filter((s): s is string => typeof s === "string");
+      const consistencyViolation = narrativeParts.some(hasBaseRunnerContradiction);
+      if (consistencyViolation) {
+        console.error(`Consistency violation (attempt ${attempt}): bases-loaded homer arithmetic. headline="${summary.headline}"`);
+        if (attempt === MAX_ATTEMPTS) {
+          return NextResponse.json({ error: "Generated summary internal contradiction after retries, discarded" }, { status: 422 });
         }
         continue;
       }
