@@ -122,24 +122,30 @@ export default function RootLayout({
         <script
           dangerouslySetInnerHTML={{
             __html: `
-              /* iOS WKWebView 뒤로가기 빈화면 복구: bfcache 복원(persisted) 시
-                 콘텐츠는 DOM에 있으나 컴포지터가 페인트를 안 해 검은화면이 된다
-                 (사용자가 살짝 스크롤하면 바로 떠짐). DOM이 빈 게 아니라 *페인트 누락*이라
-                 reload가 아니라 강제 리페인트로 해결: 스크롤 1px 넛지 + transform 토글.
-                 정상 복원에는 사실상 무영향(1px 왕복 스크롤·즉시 원복되는 transform). */
+              /* iOS WKWebView 뒤로가기 빈화면 복구.
+                 콘텐츠는 DOM에 있으나 컴포지터가 페인트를 안 해 검은화면(스크롤하면 바로 뜸)=페인트 누락.
+                 핵심: 앱 내 뒤로가기는 Next 클라이언트 라우팅이라 *popstate*가 발화한다(전체 reload/bfcache 아님)
+                 → pageshow 가드(#388/#392)는 발동하지 않았음. popstate에서 라우트 재렌더 후 강제 리페인트.
+                 강제 리페인트 = 스크롤 1px 왕복 넛지 + <main> transform 토글(즉시 원복, 정상 nav엔 무영향). */
               (function () {
+                function forceRepaint() {
+                  var y = window.scrollY || window.pageYOffset || 0;
+                  window.scrollTo(0, y + 1);
+                  window.scrollTo(0, y);
+                  var main = document.querySelector('main');
+                  if (main) {
+                    main.style.transform = 'translateZ(0)';
+                    requestAnimationFrame(function () { main.style.transform = ''; });
+                  }
+                }
+                // 앱 내 뒤로/앞으로 = popstate. 라우트 재렌더 후(이중 rAF) + 늦은 렌더 백업(setTimeout).
+                window.addEventListener('popstate', function () {
+                  requestAnimationFrame(function () { requestAnimationFrame(forceRepaint); });
+                  setTimeout(forceRepaint, 150);
+                });
+                // bfcache 복원(전체 페이지 뒤로가기) 케이스도 함께 커버.
                 window.addEventListener('pageshow', function (e) {
-                  if (!e.persisted) return;
-                  requestAnimationFrame(function () {
-                    var y = window.scrollY || window.pageYOffset || 0;
-                    window.scrollTo(0, y + 1);
-                    window.scrollTo(0, y);
-                    var main = document.querySelector('main');
-                    if (main) {
-                      main.style.transform = 'translateZ(0)';
-                      requestAnimationFrame(function () { main.style.transform = ''; });
-                    }
-                  });
+                  if (e.persisted) requestAnimationFrame(forceRepaint);
                 });
               })();
             `,
