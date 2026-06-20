@@ -533,10 +533,10 @@ export default function GameStatsTab({
         {/* 투수표 전치: 스탯=행 / 투수=열. 투수는 3~6명이라 세로로 두면 16스탯 라벨이
             안 잘리고 폰트도 키울 수 있음(11px). 투수 7+명이면 min-w + overflow로 가로 스크롤. */}
         <div className="overflow-x-auto">
-          <table className="w-full text-[11px] leading-tight border-collapse">
+          <table className="w-full text-[10px] leading-tight border-collapse">
             <thead className="bg-bg-secondary">
               <tr className="text-text-tertiary border-b border-border">
-                <th className="py-1.5 px-1 text-left font-medium min-w-[52px]" />
+                <th className="py-1.5 px-1 text-left font-medium min-w-[40px]" />
                 {data.pitchers.map((p, i) => {
                   const href = getPlayerHref(p.name, team.id);
                   const head = (
@@ -546,7 +546,7 @@ export default function GameStatsTab({
                     </span>
                   );
                   return (
-                    <th key={`phead-${i}-${p.name}`} className="py-1.5 px-1 text-center font-medium min-w-[42px]">
+                    <th key={`phead-${i}-${p.name}`} className="py-1.5 px-0.5 text-center font-medium min-w-[30px]">
                       {href ? (
                         <Link href={href} className="hover:underline">
                           {head}
@@ -557,7 +557,7 @@ export default function GameStatsTab({
                     </th>
                   );
                 })}
-                <th className="py-1.5 px-1 text-center font-semibold text-text-secondary min-w-[42px]">합계</th>
+                <th className="py-1.5 px-0.5 text-center font-semibold text-text-secondary min-w-[30px]">합계</th>
               </tr>
             </thead>
             <tbody>
@@ -575,12 +575,12 @@ export default function GameStatsTab({
                   {data.pitchers.map((p, i) => (
                     <td
                       key={`pval-${i}-${col.key}`}
-                      className="py-1.5 px-1 text-center tabular-nums text-text-secondary"
+                      className="py-1.5 px-0.5 text-center tabular-nums text-text-secondary"
                     >
                       {String(p[col.key] ?? "")}
                     </td>
                   ))}
-                  <td className="py-1.5 px-1 text-center tabular-nums font-semibold text-text-primary">
+                  <td className="py-1.5 px-0.5 text-center tabular-nums font-semibold text-text-primary">
                     {String(pitcherTotals[col.key] ?? "")}
                   </td>
                 </tr>
