@@ -33,6 +33,7 @@ export interface PitcherStat {
   w: number;        // 승리
   l: number;        // 패전
   sv: number;       // 세이브
+  hd: number;       // 홀드
   era: string;      // 평균자책
 }
 
@@ -66,9 +67,9 @@ export const MOCK_GAME_STATS: GameStats = {
       { order: 9, name: "문성주", position: "일", ab: 3, r: 0, h: 0, rbi: 0, hr: 0, bb: 1, so: 2, sb: 0, avg: ".198" },
     ],
     pitchers: [
-      { name: "케이시 켈리", result: "win", ip: "6.0", h: 4, r: 2, er: 2, bb: 2, so: 7, hr: 1, bf: 24, ab: 22, np: 95, g: 1, w: 1, l: 0, sv: 0, era: "3.00" },
-      { name: "고우석",      result: undefined, ip: "2.0", h: 1, r: 0, er: 0, bb: 0, so: 3, hr: 0, bf: 7,  ab: 7,  np: 28, g: 1, w: 0, l: 0, sv: 0, era: "0.00" },
-      { name: "정우영",      result: "save",   ip: "1.0", h: 0, r: 0, er: 0, bb: 1, so: 2, hr: 0, bf: 4,  ab: 3,  np: 18, g: 1, w: 0, l: 0, sv: 1, era: "0.00" },
+      { name: "케이시 켈리", result: "win", ip: "6.0", h: 4, r: 2, er: 2, bb: 2, so: 7, hr: 1, bf: 24, ab: 22, np: 95, g: 1, w: 1, l: 0, sv: 0, hd: 0, era: "3.00" },
+      { name: "고우석",      result: undefined, ip: "2.0", h: 1, r: 0, er: 0, bb: 0, so: 3, hr: 0, bf: 7,  ab: 7,  np: 28, g: 1, w: 0, l: 0, sv: 0, hd: 0, era: "0.00" },
+      { name: "정우영",      result: "save",   ip: "1.0", h: 0, r: 0, er: 0, bb: 1, so: 2, hr: 0, bf: 4,  ab: 3,  np: 18, g: 1, w: 0, l: 0, sv: 1, hd: 0, era: "0.00" },
     ],
   },
   home: {
@@ -85,9 +86,9 @@ export const MOCK_GAME_STATS: GameStats = {
       { order: 9, name: "장승현", position: "포", ab: 3, r: 0, h: 0, rbi: 0, hr: 0, bb: 0, so: 3, sb: 0, avg: ".189" },
     ],
     pitchers: [
-      { name: "곽빈",   result: "loss",    ip: "5.0", h: 7, r: 4, er: 4, bb: 3, so: 4, hr: 1, bf: 23, ab: 20, np: 89, g: 1, w: 0, l: 1, sv: 0, era: "7.20" },
-      { name: "이영하", result: undefined, ip: "2.0", h: 1, r: 1, er: 1, bb: 1, so: 2, hr: 0, bf: 8,  ab: 7,  np: 35, g: 1, w: 0, l: 0, sv: 0, era: "4.50" },
-      { name: "홍건희", result: undefined, ip: "2.0", h: 1, r: 0, er: 0, bb: 1, so: 2, hr: 0, bf: 8,  ab: 5,  np: 32, g: 1, w: 0, l: 0, sv: 0, era: "0.00" },
+      { name: "곽빈",   result: "loss",    ip: "5.0", h: 7, r: 4, er: 4, bb: 3, so: 4, hr: 1, bf: 23, ab: 20, np: 89, g: 1, w: 0, l: 1, sv: 0, hd: 0, era: "7.20" },
+      { name: "이영하", result: undefined, ip: "2.0", h: 1, r: 1, er: 1, bb: 1, so: 2, hr: 0, bf: 8,  ab: 7,  np: 35, g: 1, w: 0, l: 0, sv: 0, hd: 0, era: "4.50" },
+      { name: "홍건희", result: undefined, ip: "2.0", h: 1, r: 0, er: 0, bb: 1, so: 2, hr: 0, bf: 8,  ab: 5,  np: 32, g: 1, w: 0, l: 0, sv: 0, hd: 0, era: "0.00" },
     ],
   },
 };

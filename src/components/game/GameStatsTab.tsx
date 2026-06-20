@@ -76,10 +76,10 @@ const PITCHER_COLUMNS: { key: keyof PitcherStat; label: string; sticky?: boolean
   { key: "bf", label: "타자" },
   { key: "ab", label: "타수" },
   { key: "np", label: "투구수" },
-  { key: "g", label: "경기" },
   { key: "w", label: "승" },
   { key: "l", label: "패" },
   { key: "sv", label: "세이브" },
+  { key: "hd", label: "홀드" },
   { key: "era", label: "평균자책" },
 ];
 
