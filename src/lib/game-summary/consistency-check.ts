@@ -24,11 +24,14 @@ const SENTENCE_SPLIT_RE = /[.!?…\n]+/;
 const NON_SCORING_MANRU_RE = /위기|넘기|넘겼|막아|막았|무실점|실점\s*없|병살|잡아내|틀어막|살리지\s*못|무산|잔루|터지지\s*않/;
 
 // 한 문장에서 홈런의 득점 수(1~4)를 추출. 없으면 null.
-// - "솔로" → 1
+// - 한글 표현: 솔로/원런=1, 투런(포)=2, 쓰리런·스리런(포)=3
 // - "N점 홈런/포/아치" → N
 // - "홈런/포/아치 … N점(을) 추가/득점/뽑/터뜨" → N (예: "홈런으로 단숨에 3점을 추가")
 function homerRunCount(sentence: string): number | null {
-  if (/솔로\s*(?:홈런|포|아치)/.test(sentence)) return 1;
+  // 한글 N런 표현 (KBO 요약에서 "투런포/쓰리런/스리런" 빈출)
+  if (/(?:솔로|원런)\s*(?:홈런|포|아치)/.test(sentence) || /원런/.test(sentence)) return 1;
+  if (/투런/.test(sentence)) return 2;
+  if (/쓰리런|스리런/.test(sentence)) return 3;
 
   const before = sentence.match(/([1-4])\s*점\s*(?:짜리\s*)?(?:홈런|포|아치)/);
   if (before) return parseInt(before[1], 10);
@@ -41,7 +44,9 @@ function homerRunCount(sentence: string): number | null {
 
 // 한 문장에 홈런 언급이 있는지.
 function mentionsHomer(sentence: string): boolean {
-  return /홈런|아치/.test(sentence) || /[1-4]\s*점\s*포/.test(sentence) || /솔로\s*포/.test(sentence);
+  return /홈런|아치|투런|쓰리런|스리런/.test(sentence)
+    || /[1-4]\s*점\s*포/.test(sentence)
+    || /(?:솔로|원런)\s*(?:홈런|포|아치)/.test(sentence);
 }
 
 /**

@@ -140,7 +140,6 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
   const homeStarter = homePitchers[0];
   const result = awayScore === homeScore ? "무승부" : awayScore > homeScore ? `${awayTeam} 승리` : `${homeTeam} 승리`;
   const winnerTeam = awayScore > homeScore ? awayTeam : homeScore > awayScore ? homeTeam : null;
-  const loserTeam = awayScore > homeScore ? homeTeam : homeScore > awayScore ? awayTeam : null;
   const scoreDiff = Math.abs(awayScore - homeScore);
 
   // 경기 성격 힌트 (LLM이 서사 방향을 잡는 데 도움)
