@@ -10,7 +10,7 @@
 - 주루: `/api/stats` batter에 SB/CS 이미 존재.
 
 ## 구현 (단계)
-1. **수비 스크래퍼** `src/app/api/fielding/route.ts` — `/api/stats` 패턴 복제(fetchHtml/parseTable/인메모리 캐시/sort union). 반환: `{ name, team, pos, dInn, e, po, a, dp, fpct, pb, sbAllowed, csAllowed }[]`. 선수가 복수 포지션이면 포지션별 row(주 포지션 = 수비이닝 최다).
+1. **수비 데이터 수집** — ⚠️ *단순 fetch 스크래퍼 불가로 판명*(2026-06-20 검증): `Defense/Basic.aspx`는 `?sort=` 무시 + 포지션 필터가 ASP.NET 포스트백인데, 전체 폼 필드(viewstate/eventvalidation/전 input·select) 복제해 POST해도 **3KB 셸만 반환**(테이블 별도 AJAX 렌더 or 자동화 차단). 포지션 dropdown은 포수(2)/내야수(3,4,5,6)/외야수(7,8,9) 3그룹(각 행에 구체 POS 포함)이라 그룹 3회면 커버 가능하나 *fetch로는 표를 못 받음*. → **해법 = 헤드리스 브라우저(Playwright/Lightpanda ~/lightpanda) 크롤 → static JSON** (기존 "Vercel 서버리스 Playwright 불가 → Mac mini cron 크롤 → static JSON" 패턴과 동일). 산출 `stats-2026-fielding.json`: `{ name, team, pos, dInn, e, po, a, dp, fpct, pb, sbAllowed, csAllowed }[]`(주 포지션=수비이닝 최다). cron은 기존 크롤 파이프라인에 추가.
 2. **WAR 산식 보강** `sabermetrics-calc.ts`:
    - 주루 runs = `SB*0.2 - CS*0.4` (wSB 근사).
    - 포지션 보정(주 포지션, 시즌 환산 ÷ 720수비이닝 비례): C +12.5 / SS +7.5 / 2B,3B,CF +2.5 / LF,RF -7.5 / 1B -12.5 / DH -17.5.
