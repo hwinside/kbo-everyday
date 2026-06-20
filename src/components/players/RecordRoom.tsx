@@ -128,7 +128,7 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
 
   useEffect(() => {
     if (rowsByType[view] !== undefined) return;
-    fetch(`/api/stats?type=${view}&season=2026`)
+    fetch(`/api/stats?type=${view}&season=2026`, { cache: "no-store" })
       .then((r) => r.json())
       .then((data: { stats?: Row[]; updatedAt?: string; source?: string }) => {
         setRowsByType((prev) => ({ ...prev, [view]: data.stats || [] }));
@@ -281,7 +281,7 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
           기록이 아직 없습니다
         </div>
       ) : (
-        <div className="space-y-2 pb-24">
+        <div key={`${view}-${activeStat}-${scopeTeamId ?? "all"}`} className="space-y-2 pb-24">
           {ranked.map((p, i) => {
             const teamId = (typeof p.teamId === "number" ? p.teamId : null) ?? teamIdFromText(p.team) ?? 0;
             const isMyTeam = myTeamId != null && teamId === myTeamId;
