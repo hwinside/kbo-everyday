@@ -25,9 +25,9 @@ export interface HomeNewsItem {
   type: "news";
 }
 
-// v3: link 우선순위가 네이버 뉴스 URL로 바뀌어, 옛 캐시(언론사 originallink 저장분)를
+// v4: non-Naver link 기사를 API에서 노출 제외하도록 바뀌어, 옛 캐시(언론사 link 섞인 v3)를
 // 무효화해야 배포 직후에도 "무조건 네이버" 보장됨
-const NEWS_CACHE_KEY = "kbo-home-news-v3";
+const NEWS_CACHE_KEY = "kbo-home-news-v4";
 const NEWS_CACHE_TTL = 30 * 60 * 1000; // 30분
 
 function toHomeNewsItems(items: NewsItem[], myTeamId: number | null): HomeNewsItem[] {
