@@ -123,18 +123,22 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{
             __html: `
               /* iOS WKWebView 뒤로가기 빈화면 복구: bfcache 복원(persisted) 시
-                 <main> 콘텐츠가 비어 있으면(하단 탭바만 남는 증상) 새로고침으로 재렌더.
-                 정상 복원에는 영향 없음 — 실제로 비었을 때만 reload. */
+                 콘텐츠는 DOM에 있으나 컴포지터가 페인트를 안 해 검은화면이 된다
+                 (사용자가 살짝 스크롤하면 바로 떠짐). DOM이 빈 게 아니라 *페인트 누락*이라
+                 reload가 아니라 강제 리페인트로 해결: 스크롤 1px 넛지 + transform 토글.
+                 정상 복원에는 사실상 무영향(1px 왕복 스크롤·즉시 원복되는 transform). */
               (function () {
                 window.addEventListener('pageshow', function (e) {
                   if (!e.persisted) return;
                   requestAnimationFrame(function () {
-                    requestAnimationFrame(function () {
-                      var main = document.querySelector('main');
-                      if (!main || main.offsetHeight < 16) {
-                        window.location.reload();
-                      }
-                    });
+                    var y = window.scrollY || window.pageYOffset || 0;
+                    window.scrollTo(0, y + 1);
+                    window.scrollTo(0, y);
+                    var main = document.querySelector('main');
+                    if (main) {
+                      main.style.transform = 'translateZ(0)';
+                      requestAnimationFrame(function () { main.style.transform = ''; });
+                    }
                   });
                 });
               })();
