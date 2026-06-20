@@ -5,7 +5,6 @@ import { useParams, useRouter } from "next/navigation";
 import { ChevronLeft, ChevronDown } from "lucide-react";
 import { getTeamBySlug, getTeamBgColor } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
-import RecordRoom from "@/components/players/RecordRoom";
 
 interface RankedTeam {
   slug: string;
@@ -208,7 +207,7 @@ export default function TeamRecordsPage() {
           <ChevronLeft size={24} />
         </button>
         <h1 className="text-lg font-bold text-text-primary">
-          {team.shortName} 기록
+          {team.shortName} 팀 기록
         </h1>
       </header>
 
@@ -278,12 +277,6 @@ export default function TeamRecordsPage() {
             mySlug={teamSlug}
           />
         ))}
-      </section>
-
-      {/* 팀 선수기록실 — RecordRoom을 해당 팀 스코프로 마운트 (스탯 클릭 시 팀 내 정렬) */}
-      <section className="px-5 mt-8">
-        <h2 className="text-sm font-bold text-text-secondary mb-3">선수 기록실</h2>
-        <RecordRoom scopeTeamId={team.id} />
       </section>
     </div>
   );
