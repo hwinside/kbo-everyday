@@ -8,23 +8,50 @@ const LEAGUE = {
   wBB: 0.69, wHBP: 0.72, w1B: 0.89, w2B: 1.27, w3B: 1.62, wHR: 2.10,
 };
 
-// WAR 근사 계산 (Replacement level 기준)
-// 타자 WAR ≈ (Batting Runs + Baserunning Runs + Position Adj + Replacement) / RPW
-// 간이 공식: (wRAA + position_adj + replacement) / 10
-function estimateBatterWAR(woba: number, pa: number): number {
+// 네이버 WAR 대비 최소제곱 캘리브레이션(naver ≈ a*ours + b). scripts/war-benchmark.ts로 주기 재산출.
+// 2026 기준: 타자 MAE 0.29→0.27, 투수 MAE 0.37→0.31(투수 bias -0.20 보정).
+const BATTER_WAR_CAL = { a: 0.909, b: 0.216 };
+const PITCHER_WAR_CAL = { a: 0.998, b: 0.202 };
+
+// 포지션 보정(시즌 ~600PA 기준 runs) — 네이버 position enum 기준
+const POS_ADJ: Record<string, number> = {
+  CATCHER: 12.5, SHORT_STOP: 7.5, SECOND_BASE: 3, THIRD_BASE: 2, CENTER_FIELDER: 2.5,
+  LEFT_FIELDER: -7.5, RIGHT_FIELDER: -7.5, FIRST_BASE: -12.5, DESIGNATED_HITTER: -17.5,
+};
+
+// WAR 근사 계산 (Replacement level 기준) — "예상 WAR"
+// 타자 WAR ≈ (Batting Runs + Baserunning Runs + Position Adj + Defense + Replacement) / RPW
+// 반영: wRAA(타격) + 주루(SB/CS) + 포지션 보정 + 수비 runs(KBO 수비기록 RF-lite) + 대체선수.
+// 수비 runs는 KBO 공식 수비기록(PO/A/E 등) 기반 자체 환산(scripts/lib/defense-runs.mjs).
+// 내부 오차 벤치마크는 네이버 WAR(hitterWar)와 비교해 상시 축소(scripts/war-benchmark.ts).
+function estimateBatterWAR(woba: number, pa: number, brRuns = 0, posRuns = 0, defRuns = 0): number {
   const wRAA = ((woba - 0.330) / 1.15) * pa;
   const replacement = (pa / 600) * 20; // ~20 runs per 600 PA
-  const war = (wRAA + replacement) / 10;
+  const raw = (wRAA + brRuns + posRuns + defRuns + replacement) / 10;
+  const war = BATTER_WAR_CAL.a * raw + BATTER_WAR_CAL.b; // 네이버 기준 캘리브레이션
   return Math.round(Math.max(war, -1) * 10) / 10;
 }
 
-// 투수 WAR ≈ (League ERA - FIP) / 9 * IP / 9 + Replacement
-function estimatePitcherWAR(fip: number, ip: number): number {
+/** KBO 이닝 표기 → 실제 이닝(thirds). "25 2/3"·"25 1/3" 분수 표기, "25.2"(thirds) 소수 표기, number 모두 처리 */
+function parseInnings(ip: string | number): number {
+  if (typeof ip === "string") {
+    const m = ip.trim().match(/^(\d+)\s+(\d)\/3$/);
+    if (m) return parseInt(m[1], 10) + parseInt(m[2], 10) / 3;
+  }
+  const n = typeof ip === "string" ? parseFloat(ip) : ip;
+  if (!isFinite(n)) return 0;
+  const whole = Math.floor(n);
+  const frac = Math.round((n - whole) * 10); // .1=1/3, .2=2/3 (KBO thirds 소수 표기)
+  return whole + (frac === 1 ? 1 / 3 : frac === 2 ? 2 / 3 : 0);
+}
+
+// 투수 WAR ≈ (League ERA - FIP) / 9 * IP / 9 + Replacement (fullIp = 실제 이닝)
+function estimatePitcherWAR(fip: number, fullIp: number): number {
   const leagueEra = 4.50; // KBO 평균 근사
-  const fullIp = Math.floor(ip) + (ip % 1) * 10 / 3;
   const runsAboveAvg = ((leagueEra - fip) / 9) * fullIp;
   const replacement = (fullIp / 200) * 12;
-  const war = (runsAboveAvg + replacement) / 10;
+  const raw = (runsAboveAvg + replacement) / 10;
+  const war = PITCHER_WAR_CAL.a * raw + PITCHER_WAR_CAL.b; // 네이버 기준 캘리브레이션
   return Math.round(Math.max(war, -1) * 10) / 10;
 }
 
@@ -41,14 +68,21 @@ export interface CalcPitcherSaber {
 export function calcBatterSaber(s: {
   avg: string|number; hits: number; hr: number; doubles: number; triples: number;
   ab: number; pa: number; runs: number; rbi: number; sb: number;
-  bb?: number; so?: number; hbp?: number;
+  bb?: number; so?: number; hbp?: number; cs?: number; sf?: number; position?: string; defRuns?: number;
 }): CalcBatterSaber {
   const avg = typeof s.avg === "string" ? parseFloat(s.avg) : s.avg;
+  // 주루 runs 근사(wSB류): 도루 +0.2 / 도루실패 -0.4
+  const brRuns = (s.sb || 0) * 0.2 - (s.cs || 0) * 0.4;
+  // 포지션 보정 runs (시즌 환산: PA/600 비례)
+  const posRuns = ((s.position && POS_ADJ[s.position]) || 0) * ((s.pa || 0) / 600);
+  // 수비 runs (KBO 수비기록 기반 RF-lite, kboId로 주입)
+  const defRuns = s.defRuns || 0;
   const singles = s.hits - s.doubles - s.triples - s.hr;
   const bb = s.bb ?? Math.round((s.pa - s.ab) * 0.75);
   const hbp = s.hbp ?? Math.round((s.pa - s.ab) * 0.1);
   const so = s.so ?? Math.round(s.ab * 0.18);
-  const sf = Math.max(0, s.pa - s.ab - bb - hbp);
+  // BABIP/OBP 분모용 SF — 실제 SF가 오면 그대로(정확), 없으면 잔차 추정(잔차엔 희생번트 SH가 섞여 BABIP 분모가 과대해질 수 있음)
+  const sf = s.sf ?? Math.max(0, s.pa - s.ab - bb - hbp);
   const obp = s.pa > 0 ? (s.hits + bb + hbp) / s.pa : 0;
   const slg = s.ab > 0 ? (singles + s.doubles*2 + s.triples*3 + s.hr*4) / s.ab : 0;
   const ops = obp + slg;
@@ -66,7 +100,7 @@ export function calcBatterSaber(s: {
     SLG: Math.round(slg*1000)/1000, ISO: Math.round(iso*1000)/1000,
     BABIP: Math.round(babip*1000)/1000, BB_pct: Math.round(bbPct*10)/10,
     K_pct: Math.round(kPct*10)/10, wOBA: Math.round(woba*1000)/1000, wRC_plus: wrc,
-    WAR: estimateBatterWAR(woba, s.pa),
+    WAR: estimateBatterWAR(woba, s.pa, brRuns, posRuns, defRuns),
   };
 }
 
@@ -75,9 +109,8 @@ export function calcPitcherSaber(s: {
   hits?: number; games: number; wins: number; losses: number; saves: number;
   whip: string|number;
 }): CalcPitcherSaber {
-  const ip = typeof s.ip === "string" ? parseFloat(s.ip) : s.ip;
   const whip = typeof s.whip === "string" ? parseFloat(s.whip) : s.whip;
-  const fullIp = Math.floor(ip) + (ip % 1) * 10 / 3;
+  const fullIp = parseInnings(s.ip);
   const hitsA = s.hits ?? Math.round(whip * fullIp * 0.7);
   const bb = s.bb ?? Math.max(0, Math.round(whip * fullIp - hitsA));
   const hr = s.hr ?? Math.round(fullIp * 0.08);
@@ -92,6 +125,6 @@ export function calcPitcherSaber(s: {
     FIP: Math.round(fip*100)/100, WHIP: whip,
     K9: Math.round(k9*10)/10, BB9: Math.round(bb9*10)/10, HR9: Math.round(hr9*10)/10,
     K_pct: Math.round(kPct*10)/10, BB_pct: Math.round(bbPct*10)/10,
-    WAR: estimatePitcherWAR(fip, ip),
+    WAR: estimatePitcherWAR(fip, fullIp),
   };
 }

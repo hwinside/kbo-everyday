@@ -4,8 +4,11 @@ import batterStats2025 from "@/lib/constants/stats-2025-batters.json";
 import pitcherStats2025 from "@/lib/constants/stats-2025-pitchers.json";
 import batterStats2026 from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats2026 from "@/lib/constants/stats-2026-pitchers.json";
+import defenseStats2026 from "@/lib/constants/stats-2026-defense.json";
+import statsMeta from "@/lib/constants/stats-2026-meta.json";
 import type { RosterPlayer } from "@/types/api";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
+import { aggregateDefense, type DefenseRow } from "@/lib/utils/defense-aggregate";
 
 const KBO_BASE = "https://www.koreabaseball.com";
 
@@ -236,6 +239,7 @@ interface StatsResult {
   type: string;
   count: number;
   source?: string;
+  updatedAt?: string; // ISO. 라이브(타자/투수)=fetch 시각 / 수비=일일 크롤 시각(meta)
 }
 
 const cache: Record<string, { data: StatsResult; ts: number }> = {};
@@ -267,6 +271,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ stats, type, count: stats.length, season: 2025 });
   }
 
+  // 수비 — 라이브 fetch 불가(KBO 수비페이지 POST 차단) → 정적 크롤 JSON(매일 CI 갱신) 집계
+  if (type === "defense") {
+    const stats = aggregateDefense(defenseStats2026 as unknown as DefenseRow[]) as unknown as PlayerStat[];
+    return NextResponse.json({ stats, type, count: stats.length, season: 2026, source: "static", updatedAt: statsMeta.defenseGeneratedAt });
+  }
+
   // 2026 시즌 + current — 라이브 크롤링 (캐시: 경기시간대 10분 / 평시 1시간)
   const cacheKey = `stats-${type}-${season}`;
   const cached = getCached(cacheKey);
@@ -274,7 +284,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const stats = type === "pitcher" ? await fetchPitcherStats() : await fetchBatterStats();
-    const result: StatsResult = { stats, type, count: stats.length, source: "live" };
+    const result: StatsResult = { stats, type, count: stats.length, source: "live", updatedAt: new Date().toISOString() };
     setCache(cacheKey, result);
     return NextResponse.json(result);
   } catch (e: unknown) {
@@ -283,7 +293,8 @@ export async function GET(req: NextRequest) {
       const fallback = type === "pitcher"
         ? (pitcherStats2026 as unknown as PlayerStat[])
         : (batterStats2026 as unknown as PlayerStat[]);
-      return NextResponse.json({ stats: fallback, type, count: fallback.length, season: 2026, source: "fallback" });
+      const fbAt = type === "pitcher" ? statsMeta.pitchersGeneratedAt : statsMeta.battersGeneratedAt;
+      return NextResponse.json({ stats: fallback, type, count: fallback.length, season: 2026, source: "fallback", updatedAt: fbAt });
     }
     return NextResponse.json({ error: (e as Error).message, stats: [] }, { status: 500 });
   }

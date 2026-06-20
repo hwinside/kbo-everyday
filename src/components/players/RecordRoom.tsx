@@ -10,10 +10,43 @@ import { TEAMS } from "@/lib/constants/teams";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { STAT_DEFS, type StatType } from "@/lib/stats/title-defs";
 import { rankByStat, type RankedRow } from "@/lib/stats/title-rankings";
+import { calcBatterSaber, calcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
+import playerPositions from "@/lib/constants/player-positions.json";
 
-/* 기록실 노출 스탯 (STAT_DEFS 키, type별 큐레이션) */
-const BATTER_STATS = ["hr", "avg", "ops", "obp", "rbi", "runs", "sb", "bb", "doubles", "so_batter", "games_batter"];
-const PITCHER_STATS = ["era", "wins", "saves", "holds", "so_pitcher", "whip", "ip", "games_pitcher"];
+const POSITIONS = playerPositions as Record<string, string>;
+
+/* 기록실 뷰 — 타자/투수/수비. WAR는 STAT_DEFS 밖 특수 처리(자체 산식). */
+type View = StatType | "defense";
+
+/* 기록실 노출 스탯 — "war"·"woba"·"wrc"·"iso"·"babip"는 STAT_DEFS 밖 특수 처리(자체 산식 계산) */
+const BATTER_STATS = ["war", "woba", "wrc", "iso", "babip", "hr", "avg", "ops", "obp", "rbi", "runs", "sb", "bb", "doubles", "so_batter", "games_batter"];
+const PITCHER_STATS = ["war", "era", "wins", "saves", "holds", "so_pitcher", "whip", "ip", "games_pitcher"];
+
+/* 수비 스탯 — STAT_DEFS 밖 로컬 정의(수비기록은 정적 크롤 JSON 집계, /api/stats?type=defense) */
+const DEFENSE_STATS = ["fpct", "poa", "dp", "innings", "e"];
+const DEF_DEFS: Record<string, { label: string; emoji: string; fmt: (v: number) => string; rate?: boolean }> = {
+  fpct: { label: "수비율", emoji: "🧤", fmt: (v) => v.toFixed(3).replace(/^0/, ""), rate: true },
+  poa: { label: "자살+보살", emoji: "🎯", fmt: (v) => String(v) },
+  dp: { label: "병살", emoji: "⚡", fmt: (v) => String(v) },
+  innings: { label: "수비이닝", emoji: "⏱️", fmt: (v) => v.toFixed(0) },
+  e: { label: "실책", emoji: "❌", fmt: (v) => String(v) },
+};
+const FPCT_MIN_INN = 100; // 수비율 리더보드 자격(저이닝 1.000 노이즈 방지)
+
+/* 자체 산식 스탯 — STAT_DEFS 밖. estimate=true는 '예측' 접두 + 추정치 disclaimer 대상.
+ * war는 타자/투수 양쪽, 나머지(woba/wrc/iso/babip)는 타자 전용. */
+const SABER_DEFS: Record<
+  string,
+  { label: string; emoji: string; field: "WAR" | "wOBA" | "wRC_plus" | "ISO" | "BABIP"; fmt: (v: number) => string; estimate: boolean }
+> = {
+  war: { label: "예측 WAR", emoji: "📈", field: "WAR", fmt: (v) => v.toFixed(1), estimate: true },
+  woba: { label: "예측 wOBA", emoji: "🎯", field: "wOBA", fmt: (v) => v.toFixed(3).replace(/^0/, ""), estimate: true },
+  wrc: { label: "예측 wRC+", emoji: "📊", field: "wRC_plus", fmt: (v) => String(Math.round(v)), estimate: true },
+  iso: { label: "IsoP", emoji: "💥", field: "ISO", fmt: (v) => v.toFixed(3).replace(/^0/, ""), estimate: false },
+  babip: { label: "BABIP", emoji: "🍀", field: "BABIP", fmt: (v) => v.toFixed(3).replace(/^0/, ""), estimate: false },
+};
+const SABER_DISCLAIMER =
+  "내부 예측 모델을 바탕으로 산출한 추정치입니다. 공식 WAR 또는 정확한 기록 데이터가 아니며, 실제 값과 차이가 날 수 있습니다.";
 
 type Row = Record<string, unknown> & {
   name: string;
@@ -28,6 +61,42 @@ function teamIdFromText(team?: string): number | null {
   return TEAMS.find((t) => t.shortName === team || t.name === team)?.id ?? null;
 }
 
+/* 자체 타격 세이버메트릭 (예측 WAR·wOBA·wRC+·ISO·BABIP 공통 소스; 타격+주루+포지션, 수비 미반영) */
+function batterSaber(p: Row) {
+  return calcBatterSaber({
+    avg: (p.avg as string | number) ?? 0, hits: Number(p.hits) || 0, hr: Number(p.hr) || 0,
+    doubles: Number(p.doubles) || 0, triples: Number(p.triples) || 0, ab: Number(p.ab) || 0,
+    pa: Number(p.pa) || 0, runs: Number(p.runs) || 0, rbi: Number(p.rbi) || 0,
+    sb: Number(p.sb) || 0, bb: Number(p.bb) || 0, so: Number(p.so) || 0,
+    hbp: Number(p.hbp) || 0, cs: Number(p.cs) || 0,
+    sf: p.sf != null ? Number(p.sf) : undefined, // 실제 SF 전달 → BABIP 분모 정확(없으면 잔차 추정 폴백)
+    position: POSITIONS[String(p.kboId ?? p.playerId ?? "")],
+  });
+}
+
+/* 자체 산식 스탯 값 — war는 타자/투수 양쪽, 나머지는 타자 전용(투수 뷰엔 칩 없음) */
+function computeSaber(p: Row, view: StatType, key: string): number {
+  if (key === "war") {
+    if (view === "batter") return batterSaber(p).WAR;
+    return calcPitcherSaber({
+      era: (p.era as string | number) ?? 0, ip: (p.ip as string | number) ?? 0,
+      so: Number(p.so) || 0, bb: Number(p.bb) || 0, hr: Number(p.hr) || 0, hits: Number(p.h) || 0,
+      games: Number(p.games) || 0, wins: Number(p.wins) || 0, losses: Number(p.losses) || 0,
+      saves: Number(p.saves) || 0, whip: (p.whip as string | number) ?? 0,
+    }).WAR;
+  }
+  const field = SABER_DEFS[key]?.field;
+  return field ? Number(batterSaber(p)[field]) || 0 : 0;
+}
+
+/* ISO → "6/20 21:25" (KST). 파싱 실패 시 null */
+function fmtUpdated(iso?: string): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 function hexToRgba(hex: string, alpha: number): string {
   const c = hex.replace("#", "");
   const full = c.length === 3 ? c.split("").map((x) => x + x).join("") : c;
@@ -40,14 +109,17 @@ function hexToRgba(hex: string, alpha: number): string {
 /**
  * 선수기록실 — 스탯 선택 시 그 순으로 정렬된 랭킹 리스트.
  * scopeTeamId 있으면 해당 팀 내 정렬(팀 페이지), 없으면 리그 전체(선수 탭).
- * 데이터/정렬/자격은 랭킹 페이지와 동일 SSOT(/api/stats + rankByStat) 재사용.
+ * 타자/투수: /api/stats + rankByStat SSOT 재사용. 수비: 정적 크롤 JSON 집계(type=defense).
  */
 export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
-  const [statType, setStatType] = useState<StatType>("batter");
-  const [activeStat, setActiveStat] = useState<string>("hr");
+  const [view, setView] = useState<View>("batter");
+  const [activeStat, setActiveStat] = useState<string>("war");
   const [rowsByType, setRowsByType] = useState<Record<string, Row[]>>({});
+  const [updatedAtByType, setUpdatedAtByType] = useState<Record<string, string>>({});
+  const [sourceByType, setSourceByType] = useState<Record<string, string>>({});
   const [myTeamId, setMyTeamId] = useState<number | null>(null);
-  const loading = rowsByType[statType] === undefined;
+  const loading = rowsByType[view] === undefined;
+  const isDefense = view === "defense";
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -55,78 +127,152 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
   }, []);
 
   useEffect(() => {
-    if (rowsByType[statType] !== undefined) return;
-    fetch(`/api/stats?type=${statType}&season=2026`)
+    if (rowsByType[view] !== undefined) return;
+    fetch(`/api/stats?type=${view}&season=2026`)
       .then((r) => r.json())
-      .then((data: { stats?: Row[] }) =>
-        setRowsByType((prev) => ({ ...prev, [statType]: data.stats || [] }))
-      )
-      .catch(() => setRowsByType((prev) => ({ ...prev, [statType]: [] })));
-  }, [statType, rowsByType]);
+      .then((data: { stats?: Row[]; updatedAt?: string; source?: string }) => {
+        setRowsByType((prev) => ({ ...prev, [view]: data.stats || [] }));
+        if (data.updatedAt) setUpdatedAtByType((prev) => ({ ...prev, [view]: data.updatedAt! }));
+        if (data.source) setSourceByType((prev) => ({ ...prev, [view]: data.source! }));
+      })
+      .catch(() => setRowsByType((prev) => ({ ...prev, [view]: [] })));
+  }, [view, rowsByType]);
 
-  const chips = statType === "batter" ? BATTER_STATS : PITCHER_STATS;
+  const chips = isDefense ? DEFENSE_STATS : view === "batter" ? BATTER_STATS : PITCHER_STATS;
   const def = STAT_DEFS[activeStat];
 
   const ranked = useMemo(() => {
-    const rows = rowsByType[statType] || [];
+    const rows = rowsByType[view] || [];
     const scoped =
       scopeTeamId != null
         ? rows.filter((p) => (p.teamId ?? teamIdFromText(p.team)) === scopeTeamId)
         : rows;
-    return rankByStat(scoped, activeStat) as (RankedRow & Row)[];
-  }, [rowsByType, statType, activeStat, scopeTeamId]);
 
-  function switchType(t: StatType) {
-    if (t === statType) return;
-    setStatType(t);
-    setActiveStat(t === "batter" ? "hr" : "era");
+    if (isDefense) {
+      // 수비: 선택 스탯 내림차순. 수비율(rate)은 최소 이닝 자격 적용.
+      const dd = DEF_DEFS[activeStat] ?? DEF_DEFS.fpct;
+      const pool = dd.rate ? scoped.filter((p) => (Number(p.innings) || 0) >= FPCT_MIN_INN) : scoped;
+      const sorted = [...pool].sort((a, b) => (Number(b[activeStat]) || 0) - (Number(a[activeStat]) || 0));
+      let prevV: number | null = null, prevR = 0;
+      return sorted.map((p, i) => {
+        const v = Number(p[activeStat]) || 0;
+        const r = i > 0 && v === prevV ? prevR : i + 1;
+        prevV = v; prevR = r;
+        return { ...p, rank: r };
+      }) as (RankedRow & Row)[];
+    }
+
+    if (SABER_DEFS[activeStat]) {
+      // 자체 산식 스탯: 계산 → 자격(타자 10경기 / 투수 5경기) → 내림차순 → 공동순위
+      const minG = view === "batter" ? 10 : 5;
+      const withV = scoped
+        .filter((p) => (Number(p.games) || 0) >= minG)
+        .map((p) => ({ ...p, __saber: computeSaber(p, view as StatType, activeStat) }))
+        .sort((a, b) => b.__saber - a.__saber);
+      let prevV: number | null = null, prevR = 0;
+      return withV.map((p, i) => {
+        const r = i > 0 && p.__saber === prevV ? prevR : i + 1;
+        prevV = p.__saber; prevR = r;
+        return { ...p, rank: r };
+      }) as (RankedRow & Row)[];
+    }
+    return rankByStat(scoped, activeStat) as (RankedRow & Row)[];
+  }, [rowsByType, view, activeStat, scopeTeamId, isDefense]);
+
+  function switchView(t: View) {
+    if (t === view) return;
+    setView(t);
+    setActiveStat(t === "defense" ? "fpct" : "war"); // 수비 기본=수비율, 그 외=예상 WAR
   }
 
   const getValue = (p: Row): number => {
+    if (isDefense) return Number(p[activeStat]) || 0;
+    if (SABER_DEFS[activeStat]) return Number((p as Row & { __saber?: number }).__saber) || 0;
     if (!def) return 0;
     if (activeStat === "doubles") return (Number(p.doubles) || 0) + (Number(p.triples) || 0);
     return Number(p[def.key] ?? 0) || 0;
   };
-  const fmt = (v: number) => (def?.format ? def.format(v) : String(v));
+  const fmt = (v: number) => {
+    if (isDefense) return (DEF_DEFS[activeStat] ?? DEF_DEFS.fpct).fmt(v);
+    if (SABER_DEFS[activeStat]) return SABER_DEFS[activeStat].fmt(v);
+    return def?.format ? def.format(v) : String(v);
+  };
 
   return (
     <div>
-      {/* 타자/투수 토글 */}
+      {/* 타자/투수/수비 토글 */}
       <div className="mb-3 flex gap-1 rounded-lg bg-bg-glass/40 p-1">
-        {(["batter", "pitcher"] as StatType[]).map((t) => (
+        {(["batter", "pitcher", "defense"] as View[]).map((t) => (
           <button
             key={t}
-            onClick={() => switchType(t)}
+            onClick={() => switchView(t)}
             className={`flex-1 rounded-md py-2 text-sm font-semibold transition-all ${
-              statType === t ? "bg-accent text-white shadow-sm" : "text-text-tertiary"
+              view === t ? "bg-accent text-white shadow-sm" : "text-text-tertiary"
             }`}
           >
-            {t === "batter" ? "타자" : "투수"}
+            {t === "batter" ? "타자" : t === "pitcher" ? "투수" : "수비"}
           </button>
         ))}
       </div>
 
       {/* 스탯 칩 (선택 시 정렬 기준) */}
-      <div className="mb-4 flex gap-2 overflow-x-auto hide-scrollbar pb-1">
+      <div className="mb-4 flex gap-1.5 overflow-x-auto hide-scrollbar pb-1">
         {chips.map((key) => {
+          if (isDefense) {
+            const d = DEF_DEFS[key];
+            if (!d) return null;
+            return (
+              <button
+                key={key}
+                onClick={() => setActiveStat(key)}
+                className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                  activeStat === key ? "bg-accent text-white" : "bg-bg-secondary/60 text-text-tertiary"
+                }`}
+              >
+                {d.emoji} {d.label}
+              </button>
+            );
+          }
+          const saber = SABER_DEFS[key];
           const d = STAT_DEFS[key];
-          if (!d) return null;
-          const label = d.desc.replace(/\s*랭킹.*$/, "").replace(/\s*\(.*\)\s*$/, "").trim();
+          if (!saber && !d) return null;
+          const label = saber
+            ? saber.label
+            : d!.desc.replace(/\s*랭킹.*$/, "").replace(/\s*\(.*\)\s*$/, "").trim();
+          const emoji = saber ? saber.emoji : d!.emoji;
           return (
             <button
               key={key}
               onClick={() => setActiveStat(key)}
-              className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+              className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${
                 activeStat === key
                   ? "bg-accent text-white"
                   : "bg-bg-secondary/60 text-text-tertiary"
               }`}
             >
-              {d.emoji} {label}
+              {emoji} {label}
             </button>
           );
         })}
       </div>
+
+      {fmtUpdated(updatedAtByType[view]) && (
+        <p className="mb-2 -mt-1 text-[11px] text-text-tertiary">
+          마지막 업데이트: {fmtUpdated(updatedAtByType[view])} {
+            isDefense
+              ? "(수비 기록 일일 갱신)"
+              : sourceByType[view] === "live"
+                ? "(경기 기록 실시간 반영)"
+                : "(최신 집계 기준)"
+          }
+        </p>
+      )}
+
+      {SABER_DEFS[activeStat]?.estimate && (
+        <p className="mb-3 -mt-1 text-[11px] leading-snug text-text-tertiary">
+          ⓘ {SABER_DISCLAIMER}
+        </p>
+      )}
 
       {loading ? (
         <div className="py-16 text-center text-text-tertiary text-sm">로딩 중...</div>
@@ -175,6 +321,9 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
                   <div className="flex-1 min-w-0">
                     <span className="text-sm font-semibold text-text-primary">{p.name}</span>
                     <span className="ml-1.5 text-xs text-text-tertiary">{p.team}</span>
+                    {isDefense && p.position ? (
+                      <span className="ml-1.5 text-xs text-text-tertiary">· {String(p.position)}</span>
+                    ) : null}
                   </div>
                   <span className="text-lg font-bold tabular-nums text-text-primary">{fmt(getValue(p))}</span>
                 </GlassCard>
