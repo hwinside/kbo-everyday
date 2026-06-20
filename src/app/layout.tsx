@@ -147,6 +147,11 @@ export default function RootLayout({
                 window.addEventListener('pageshow', function (e) {
                   if (e.persisted) requestAnimationFrame(forceRepaint);
                 });
+                // 앱 백그라운드→복귀 등 가시성/포커스 복귀 케이스(삼순 제안) — 같은 페인트 누락 가드.
+                document.addEventListener('visibilitychange', function () {
+                  if (document.visibilityState === 'visible') requestAnimationFrame(forceRepaint);
+                });
+                window.addEventListener('focus', function () { requestAnimationFrame(forceRepaint); });
               })();
             `,
           }}
