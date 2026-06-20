@@ -42,6 +42,11 @@ export function teamSlugsForPlayerTags(playerTags: string[] | undefined | null):
   return [...slugs];
 }
 
+/** 선수 kboId → 소속팀 id (로스터 기준). 미등록이면 null. */
+export function teamIdForKboId(kboId: string): number | null {
+  return KBO_TO_TEAM_ID.get(String(kboId)) ?? null;
+}
+
 export interface RosterPlayer {
   name: string;
   kboId: string;

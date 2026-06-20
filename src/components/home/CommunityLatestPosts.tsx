@@ -7,6 +7,7 @@ import { useUnifiedFeed } from "@/lib/supabase/useUnifiedFeed";
 import { getPostDetailPath } from "@/lib/utils/post-share";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
+import { teamIdForKboId } from "@/lib/utils/player-roster";
 import TeamBadge from "@/components/ui/TeamBadge";
 import heroApprovedList from "@/lib/constants/hero-approved-kboids.json";
 import type { Post } from "@/lib/supabase/usePosts";
@@ -32,6 +33,70 @@ function summaryLine(post: Post): string {
   if (title) return title;
   const firstLine = post.content?.trim().split(/\r?\n/).find((l) => l.trim());
   return firstLine?.trim() ?? "";
+}
+
+type Label =
+  | { kind: "player"; teamId: number; name: string }
+  | { kind: "team"; teamId: number }
+  | { kind: "kbo" };
+
+/**
+ * 글 소속 라벨 (하린아빠 스펙) — 작성자(닉네임) 대신 태그 기반으로 표기.
+ *   · 선수 태그 1명          → 팀명 + 선수이름 (예: "LG 김현수")
+ *   · 선수 태그 2명 이상(동팀) → 팀명
+ *   · 팀이 둘 이상            → 크보팬 로고
+ * player_tags("kboId:name")와 team_tags(슬러그)에서 관여 팀 집합을 만들어 분기한다.
+ */
+function resolveLabel(post: Post): Label {
+  const players = (post.player_tags ?? [])
+    .map((tag) => {
+      const parts = String(tag).split(":");
+      return { kboId: parts[0], name: parts.slice(1).join(":").trim() };
+    })
+    .filter((p) => p.kboId);
+
+  const teamIds = new Set<number>();
+  for (const p of players) {
+    const tid = teamIdForKboId(p.kboId);
+    if (tid != null) teamIds.add(tid);
+  }
+  for (const slug of post.team_tags ?? []) {
+    const tid = getTeamBySlug(String(slug))?.id;
+    if (tid != null) teamIds.add(tid);
+  }
+
+  // 관여 팀이 둘 이상이면 특정 팀으로 묶을 수 없음 → 크보팬 로고.
+  if (teamIds.size >= 2) return { kind: "kbo" };
+
+  if (players.length === 1) {
+    const teamId = teamIdForKboId(players[0].kboId) ?? [...teamIds][0];
+    if (teamId != null && players[0].name) return { kind: "player", teamId, name: players[0].name };
+    if (teamId != null) return { kind: "team", teamId };
+  }
+
+  if (teamIds.size === 1) return { kind: "team", teamId: [...teamIds][0] };
+
+  return { kind: "kbo" };
+}
+
+function PostLabel({ post }: { post: Post }) {
+  const label = resolveLabel(post);
+  if (label.kind === "player") {
+    return <TeamBadge teamId={label.teamId} playerName={label.name} size="xs" />;
+  }
+  if (label.kind === "team") {
+    return <TeamBadge teamId={label.teamId} size="xs" />;
+  }
+  // 크보팬 로고 배지 (팀 다수/태그 없음).
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-bg-tertiary py-0.5 pl-0.5 pr-2 text-[10px] font-semibold text-text-secondary whitespace-nowrap shrink-0">
+      <span className="inline-flex shrink-0 items-center justify-center w-4 h-4 rounded-full overflow-hidden">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/icon-192.png" alt="크보팬" className="w-full h-full object-cover" />
+      </span>
+      크보팬
+    </span>
+  );
 }
 
 type Thumb =
@@ -112,9 +177,7 @@ function PostRow({ post }: { post: Post }) {
           {summary || "(내용 없음)"}
         </p>
         <div className="flex items-center gap-1.5 mt-1 text-[11px] leading-[16px] text-text-tertiary">
-          {post.team_id ? <TeamBadge teamId={post.team_id} size="xs" /> : null}
-          <span className="truncate min-w-0">{post.nickname ?? "익명"}</span>
-          <span className="shrink-0">·</span>
+          <PostLabel post={post} />
           <span className="shrink-0">{timeAgo(post.created_at)}</span>
           <span className="shrink-0 flex items-center gap-0.5 ml-auto pl-1">
             <MessageCircle size={12} />
