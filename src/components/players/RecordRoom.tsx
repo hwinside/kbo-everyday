@@ -46,7 +46,7 @@ const SABER_DEFS: Record<
   babip: { label: "BABIP", emoji: "🍀", field: "BABIP", fmt: (v) => v.toFixed(3).replace(/^0/, ""), estimate: false },
 };
 const SABER_DISCLAIMER =
-  "내부 예측 모델을 바탕으로 산출한 추정치입니다. 공식 WAR 또는 정확한 기록 데이터가 아니며, 실제 값과 차이가 날 수 있습니다.";
+  "내부 예측 모델을 바탕으로 산출한 추정치입니다. 공식 기록 데이터가 아니며, 실제 값과 차이가 날 수 있습니다.";
 
 type Row = Record<string, unknown> & {
   name: string;
