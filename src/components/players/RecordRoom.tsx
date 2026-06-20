@@ -69,6 +69,7 @@ function batterSaber(p: Row) {
     pa: Number(p.pa) || 0, runs: Number(p.runs) || 0, rbi: Number(p.rbi) || 0,
     sb: Number(p.sb) || 0, bb: Number(p.bb) || 0, so: Number(p.so) || 0,
     hbp: Number(p.hbp) || 0, cs: Number(p.cs) || 0,
+    sf: p.sf != null ? Number(p.sf) : undefined, // 실제 SF 전달 → BABIP 분모 정확(없으면 잔차 추정 폴백)
     position: POSITIONS[String(p.kboId ?? p.playerId ?? "")],
   });
 }
@@ -213,7 +214,7 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
       </div>
 
       {/* 스탯 칩 (선택 시 정렬 기준) */}
-      <div className="mb-4 flex gap-2 overflow-x-auto hide-scrollbar pb-1">
+      <div className="mb-4 flex gap-1.5 overflow-x-auto hide-scrollbar pb-1">
         {chips.map((key) => {
           if (isDefense) {
             const d = DEF_DEFS[key];
@@ -222,7 +223,7 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
               <button
                 key={key}
                 onClick={() => setActiveStat(key)}
-                className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+                className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${
                   activeStat === key ? "bg-accent text-white" : "bg-bg-secondary/60 text-text-tertiary"
                 }`}
               >
@@ -241,7 +242,7 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
             <button
               key={key}
               onClick={() => setActiveStat(key)}
-              className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+              className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${
                 activeStat === key
                   ? "bg-accent text-white"
                   : "bg-bg-secondary/60 text-text-tertiary"

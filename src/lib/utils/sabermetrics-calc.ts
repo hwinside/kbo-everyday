@@ -68,7 +68,7 @@ export interface CalcPitcherSaber {
 export function calcBatterSaber(s: {
   avg: string|number; hits: number; hr: number; doubles: number; triples: number;
   ab: number; pa: number; runs: number; rbi: number; sb: number;
-  bb?: number; so?: number; hbp?: number; cs?: number; position?: string; defRuns?: number;
+  bb?: number; so?: number; hbp?: number; cs?: number; sf?: number; position?: string; defRuns?: number;
 }): CalcBatterSaber {
   const avg = typeof s.avg === "string" ? parseFloat(s.avg) : s.avg;
   // 주루 runs 근사(wSB류): 도루 +0.2 / 도루실패 -0.4
@@ -81,7 +81,8 @@ export function calcBatterSaber(s: {
   const bb = s.bb ?? Math.round((s.pa - s.ab) * 0.75);
   const hbp = s.hbp ?? Math.round((s.pa - s.ab) * 0.1);
   const so = s.so ?? Math.round(s.ab * 0.18);
-  const sf = Math.max(0, s.pa - s.ab - bb - hbp);
+  // BABIP/OBP 분모용 SF — 실제 SF가 오면 그대로(정확), 없으면 잔차 추정(잔차엔 희생번트 SH가 섞여 BABIP 분모가 과대해질 수 있음)
+  const sf = s.sf ?? Math.max(0, s.pa - s.ab - bb - hbp);
   const obp = s.pa > 0 ? (s.hits + bb + hbp) / s.pa : 0;
   const slg = s.ab > 0 ? (singles + s.doubles*2 + s.triples*3 + s.hr*4) / s.ab : 0;
   const ops = obp + slg;
