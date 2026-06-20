@@ -49,6 +49,17 @@ const SABER_DEFS: Record<
 const saberDisclaimer = (statName: string) =>
   `내부 예측 모델을 바탕으로 산출한 추정치입니다. 공식 ${statName} 또는 정확한 기록 데이터가 아니며, 실제 값과 차이가 날 수 있습니다.`;
 
+/* 선택 스탯에 걸린 최소 자격 필터(랭킹 노출 기준)를 사용자에게 명시.
+ * 임계값 SSOT: rankByStat(비율 타자 30타석/투수 12이닝·카운팅 타자 10경기/투수 5경기),
+ * RecordRoom saber minG(타자 10/투수 5), 수비율 FPCT_MIN_INN(100이닝). 누적 수비는 자격 없음. */
+const RATE_KEYS = new Set(["avg", "obp", "ops", "era", "whip"]);
+function qualNote(view: View, activeStat: string, isDefense: boolean): string | null {
+  if (isDefense) return activeStat === "fpct" ? "수비 100이닝 이상" : null;
+  if (SABER_DEFS[activeStat]) return view === "pitcher" ? "5경기 이상" : "10경기 이상";
+  if (RATE_KEYS.has(activeStat)) return view === "pitcher" ? "12이닝 이상" : "30타석 이상";
+  return view === "pitcher" ? "5경기 이상" : "10경기 이상";
+}
+
 type Row = Record<string, unknown> & {
   name: string;
   team?: string;
@@ -266,6 +277,12 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
                 ? "(경기 기록 실시간 반영)"
                 : "(최신 집계 기준)"
           }
+        </p>
+      )}
+
+      {qualNote(view, activeStat, isDefense) && (
+        <p className="mb-2 -mt-1 text-[11px] text-text-tertiary">
+          ⓘ 자격 기준: {qualNote(view, activeStat, isDefense)} (미달 선수 제외)
         </p>
       )}
 
