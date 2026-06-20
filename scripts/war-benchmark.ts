@@ -60,6 +60,13 @@ function report(title: string, diffs: Diff[], note: string) {
   console.log(`\n=== ${title} (n=${n}) ===`);
   console.log(`평균절대오차(MAE): ${mae.toFixed(2)}  편향(bias, ours-naver): ${bias.toFixed(2)}  상관: ${corr.toFixed(3)}`);
   console.log(`추천 캘리브레이션 a=${a.toFixed(3)} b=${b.toFixed(3)} → 적용시 MAE ${calMae.toFixed(2)}`);
+  // 상대오차(%) — 네이버 절대값 기준(0 근처 분모 왜곡 방지 위해 |naver|>=0.5만)
+  const rel = diffs.filter((x) => Math.abs(x.naver) >= 0.5).map((x) => Math.abs(x.d) / Math.abs(x.naver) * 100);
+  rel.sort((p, q) => p - q);
+  const med = rel.length ? rel[Math.floor(rel.length / 2)] : 0;
+  const mean = rel.length ? rel.reduce((s, v) => s + v, 0) / rel.length : 0;
+  const within = (t: number) => rel.length ? (rel.filter((v) => v <= t).length / rel.length * 100) : 0;
+  console.log(`상대오차(|naver|≥0.5, n=${rel.length}): 중앙 ${med.toFixed(1)}% 평균 ${mean.toFixed(1)}% | ≤3% ${within(3).toFixed(0)}% · ≤5% ${within(5).toFixed(0)}% · ≤10% ${within(10).toFixed(0)}% · ≤20% ${within(20).toFixed(0)}%`);
   console.log(`괴리 큰 선수 top 10 (${note}):`);
   [...diffs].sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 10).forEach((x) =>
     console.log(`  ${x.name}(${x.team})  자체 ${x.ours.toFixed(1)}  네이버 ${x.naver.toFixed(1)}  Δ${x.d > 0 ? "+" : ""}${x.d.toFixed(1)}`));
