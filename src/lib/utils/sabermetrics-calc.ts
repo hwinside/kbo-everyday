@@ -8,13 +8,15 @@ const LEAGUE = {
   wBB: 0.69, wHBP: 0.72, w1B: 0.89, w2B: 1.27, w3B: 1.62, wHR: 2.10,
 };
 
-// WAR 근사 계산 (Replacement level 기준)
-// 타자 WAR ≈ (Batting Runs + Baserunning Runs + Position Adj + Replacement) / RPW
-// 간이 공식: (wRAA + position_adj + replacement) / 10
-function estimateBatterWAR(woba: number, pa: number): number {
+// WAR 근사 계산 (Replacement level 기준) — "예상 WAR"
+// 타자 WAR ≈ (Batting Runs + Baserunning Runs + Position Adj + Defense + Replacement) / RPW
+// 현재 반영: wRAA(타격) + 주루(SB/CS) + 대체선수.
+// 미반영(Vercel-native 소스 확보 전까지 보류 → "예상"): 수비 runs, 정밀 포지션 보정.
+// 내부 오차 벤치마크는 네이버 WAR(hitterWar)와 비교해 상시 축소(scripts/war-benchmark.mjs).
+function estimateBatterWAR(woba: number, pa: number, brRuns = 0): number {
   const wRAA = ((woba - 0.330) / 1.15) * pa;
   const replacement = (pa / 600) * 20; // ~20 runs per 600 PA
-  const war = (wRAA + replacement) / 10;
+  const war = (wRAA + brRuns + replacement) / 10;
   return Math.round(Math.max(war, -1) * 10) / 10;
 }
 
@@ -41,9 +43,11 @@ export interface CalcPitcherSaber {
 export function calcBatterSaber(s: {
   avg: string|number; hits: number; hr: number; doubles: number; triples: number;
   ab: number; pa: number; runs: number; rbi: number; sb: number;
-  bb?: number; so?: number; hbp?: number;
+  bb?: number; so?: number; hbp?: number; cs?: number;
 }): CalcBatterSaber {
   const avg = typeof s.avg === "string" ? parseFloat(s.avg) : s.avg;
+  // 주루 runs 근사(wSB류): 도루 +0.2 / 도루실패 -0.4
+  const brRuns = (s.sb || 0) * 0.2 - (s.cs || 0) * 0.4;
   const singles = s.hits - s.doubles - s.triples - s.hr;
   const bb = s.bb ?? Math.round((s.pa - s.ab) * 0.75);
   const hbp = s.hbp ?? Math.round((s.pa - s.ab) * 0.1);
@@ -66,7 +70,7 @@ export function calcBatterSaber(s: {
     SLG: Math.round(slg*1000)/1000, ISO: Math.round(iso*1000)/1000,
     BABIP: Math.round(babip*1000)/1000, BB_pct: Math.round(bbPct*10)/10,
     K_pct: Math.round(kPct*10)/10, wOBA: Math.round(woba*1000)/1000, wRC_plus: wrc,
-    WAR: estimateBatterWAR(woba, s.pa),
+    WAR: estimateBatterWAR(woba, s.pa, brRuns),
   };
 }
 

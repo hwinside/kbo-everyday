@@ -10,10 +10,11 @@ import { TEAMS } from "@/lib/constants/teams";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { STAT_DEFS, type StatType } from "@/lib/stats/title-defs";
 import { rankByStat, type RankedRow } from "@/lib/stats/title-rankings";
+import { calcBatterSaber, calcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
 
-/* 기록실 노출 스탯 (STAT_DEFS 키, type별 큐레이션) */
-const BATTER_STATS = ["hr", "avg", "ops", "obp", "rbi", "runs", "sb", "bb", "doubles", "so_batter", "games_batter"];
-const PITCHER_STATS = ["era", "wins", "saves", "holds", "so_pitcher", "whip", "ip", "games_pitcher"];
+/* 기록실 노출 스탯 — "war"(예상 WAR)는 STAT_DEFS 밖 특수 처리(자체 산식 계산) */
+const BATTER_STATS = ["war", "hr", "avg", "ops", "obp", "rbi", "runs", "sb", "bb", "doubles", "so_batter", "games_batter"];
+const PITCHER_STATS = ["war", "era", "wins", "saves", "holds", "so_pitcher", "whip", "ip", "games_pitcher"];
 
 type Row = Record<string, unknown> & {
   name: string;
@@ -26,6 +27,25 @@ type Row = Record<string, unknown> & {
 function teamIdFromText(team?: string): number | null {
   if (!team) return null;
   return TEAMS.find((t) => t.shortName === team || t.name === team)?.id ?? null;
+}
+
+/* 자체 "예상 WAR" 계산 (타격+주루+대체선수; 수비/정밀포지션 미반영) */
+function computeWar(p: Row, statType: StatType): number {
+  if (statType === "batter") {
+    return calcBatterSaber({
+      avg: (p.avg as string | number) ?? 0, hits: Number(p.hits) || 0, hr: Number(p.hr) || 0,
+      doubles: Number(p.doubles) || 0, triples: Number(p.triples) || 0, ab: Number(p.ab) || 0,
+      pa: Number(p.pa) || 0, runs: Number(p.runs) || 0, rbi: Number(p.rbi) || 0,
+      sb: Number(p.sb) || 0, bb: Number(p.bb) || 0, so: Number(p.so) || 0,
+      hbp: Number(p.hbp) || 0, cs: Number(p.cs) || 0,
+    }).WAR;
+  }
+  return calcPitcherSaber({
+    era: (p.era as string | number) ?? 0, ip: (p.ip as string | number) ?? 0,
+    so: Number(p.so) || 0, bb: Number(p.bb) || 0, hr: Number(p.hr) || 0, hits: Number(p.h) || 0,
+    games: Number(p.games) || 0, wins: Number(p.wins) || 0, losses: Number(p.losses) || 0,
+    saves: Number(p.saves) || 0, whip: (p.whip as string | number) ?? 0,
+  }).WAR;
 }
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -44,7 +64,7 @@ function hexToRgba(hex: string, alpha: number): string {
  */
 export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
   const [statType, setStatType] = useState<StatType>("batter");
-  const [activeStat, setActiveStat] = useState<string>("hr");
+  const [activeStat, setActiveStat] = useState<string>("war");
   const [rowsByType, setRowsByType] = useState<Record<string, Row[]>>({});
   const [myTeamId, setMyTeamId] = useState<number | null>(null);
   const loading = rowsByType[statType] === undefined;
@@ -73,21 +93,36 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
       scopeTeamId != null
         ? rows.filter((p) => (p.teamId ?? teamIdFromText(p.team)) === scopeTeamId)
         : rows;
+    if (activeStat === "war") {
+      // 예상 WAR: 자체 산식 계산 → 자격(타자 10경기 / 투수 5경기) → 내림차순 → 공동순위
+      const minG = statType === "batter" ? 10 : 5;
+      const withWar = scoped
+        .filter((p) => (Number(p.games) || 0) >= minG)
+        .map((p) => ({ ...p, __war: computeWar(p, statType) }))
+        .sort((a, b) => b.__war - a.__war);
+      let prevV: number | null = null, prevR = 0;
+      return withWar.map((p, i) => {
+        const r = i > 0 && p.__war === prevV ? prevR : i + 1;
+        prevV = p.__war; prevR = r;
+        return { ...p, rank: r };
+      }) as (RankedRow & Row)[];
+    }
     return rankByStat(scoped, activeStat) as (RankedRow & Row)[];
   }, [rowsByType, statType, activeStat, scopeTeamId]);
 
   function switchType(t: StatType) {
     if (t === statType) return;
     setStatType(t);
-    setActiveStat(t === "batter" ? "hr" : "era");
+    setActiveStat("war"); // 예상 WAR은 타자/투수 공통 기본 정렬
   }
 
   const getValue = (p: Row): number => {
+    if (activeStat === "war") return Number((p as Row & { __war?: number }).__war) || 0;
     if (!def) return 0;
     if (activeStat === "doubles") return (Number(p.doubles) || 0) + (Number(p.triples) || 0);
     return Number(p[def.key] ?? 0) || 0;
   };
-  const fmt = (v: number) => (def?.format ? def.format(v) : String(v));
+  const fmt = (v: number) => (activeStat === "war" ? v.toFixed(1) : def?.format ? def.format(v) : String(v));
 
   return (
     <div>
@@ -109,9 +144,13 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
       {/* 스탯 칩 (선택 시 정렬 기준) */}
       <div className="mb-4 flex gap-2 overflow-x-auto hide-scrollbar pb-1">
         {chips.map((key) => {
+          const isWar = key === "war";
           const d = STAT_DEFS[key];
-          if (!d) return null;
-          const label = d.desc.replace(/\s*랭킹.*$/, "").replace(/\s*\(.*\)\s*$/, "").trim();
+          if (!isWar && !d) return null;
+          const label = isWar
+            ? "예상 WAR"
+            : d!.desc.replace(/\s*랭킹.*$/, "").replace(/\s*\(.*\)\s*$/, "").trim();
+          const emoji = isWar ? "📈" : d!.emoji;
           return (
             <button
               key={key}
@@ -122,7 +161,7 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
                   : "bg-bg-secondary/60 text-text-tertiary"
               }`}
             >
-              {d.emoji} {label}
+              {emoji} {label}
             </button>
           );
         })}
