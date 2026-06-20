@@ -24,9 +24,9 @@ export default function TeamMenu({ team }: TeamMenuProps) {
   const stadium = STADIUMS.find((s) => s.teamIds.includes(team.id));
 
   const menuItems = [
-    { label: "선수", icon: Users, href: `/players?mode=team&team=${team.id}` },
+    { label: "팀 기록", icon: BarChart3, href: `/teams/${team.slug}/records` },
+    { label: "선수 기록", icon: Users, href: `/teams/${team.slug}/player-records` },
     { label: "일정", icon: Calendar, href: `/teams/${team.slug}/schedule` },
-    { label: "기록", icon: BarChart3, href: `/teams/${team.slug}/records` },
     { label: "뉴스", icon: Newspaper, href: `/teams/${team.slug}/news` },
     { label: "공식영상", icon: Video, href: `/teams/${team.slug}/videos` },
     { label: "구장", icon: MapPin, href: stadium ? `/community/stadiums/${stadium.id}` : "/community/stadiums" },
