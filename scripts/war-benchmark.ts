@@ -54,8 +54,12 @@ function report(title: string, diffs: Diff[], note: string) {
   let cov = 0, vo = 0, vn = 0;
   for (const x of diffs) { cov += (x.ours - mo) * (x.naver - mn); vo += (x.ours - mo) ** 2; vn += (x.naver - mn) ** 2; }
   const corr = vo && vn ? cov / Math.sqrt(vo * vn) : 0;
+  // 최소제곱 캘리브레이션 제안: naver ≈ a*ours + b
+  const a = vo ? cov / vo : 1, b = mn - a * mo;
+  const calMae = diffs.reduce((s, x) => s + Math.abs((a * x.ours + b) - x.naver), 0) / n;
   console.log(`\n=== ${title} (n=${n}) ===`);
   console.log(`평균절대오차(MAE): ${mae.toFixed(2)}  편향(bias, ours-naver): ${bias.toFixed(2)}  상관: ${corr.toFixed(3)}`);
+  console.log(`추천 캘리브레이션 a=${a.toFixed(3)} b=${b.toFixed(3)} → 적용시 MAE ${calMae.toFixed(2)}`);
   console.log(`괴리 큰 선수 top 10 (${note}):`);
   [...diffs].sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 10).forEach((x) =>
     console.log(`  ${x.name}(${x.team})  자체 ${x.ours.toFixed(1)}  네이버 ${x.naver.toFixed(1)}  Δ${x.d > 0 ? "+" : ""}${x.d.toFixed(1)}`));

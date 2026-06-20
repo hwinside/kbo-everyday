@@ -8,6 +8,11 @@ const LEAGUE = {
   wBB: 0.69, wHBP: 0.72, w1B: 0.89, w2B: 1.27, w3B: 1.62, wHR: 2.10,
 };
 
+// 네이버 WAR 대비 최소제곱 캘리브레이션(naver ≈ a*ours + b). scripts/war-benchmark.ts로 주기 재산출.
+// 2026 기준: 타자 MAE 0.29→0.27, 투수 MAE 0.37→0.31(투수 bias -0.20 보정).
+const BATTER_WAR_CAL = { a: 0.909, b: 0.216 };
+const PITCHER_WAR_CAL = { a: 0.998, b: 0.202 };
+
 // 포지션 보정(시즌 ~600PA 기준 runs) — 네이버 position enum 기준
 const POS_ADJ: Record<string, number> = {
   CATCHER: 12.5, SHORT_STOP: 7.5, SECOND_BASE: 3, THIRD_BASE: 2, CENTER_FIELDER: 2.5,
@@ -22,7 +27,8 @@ const POS_ADJ: Record<string, number> = {
 function estimateBatterWAR(woba: number, pa: number, brRuns = 0, posRuns = 0): number {
   const wRAA = ((woba - 0.330) / 1.15) * pa;
   const replacement = (pa / 600) * 20; // ~20 runs per 600 PA
-  const war = (wRAA + brRuns + posRuns + replacement) / 10;
+  const raw = (wRAA + brRuns + posRuns + replacement) / 10;
+  const war = BATTER_WAR_CAL.a * raw + BATTER_WAR_CAL.b; // 네이버 기준 캘리브레이션
   return Math.round(Math.max(war, -1) * 10) / 10;
 }
 
@@ -32,7 +38,8 @@ function estimatePitcherWAR(fip: number, ip: number): number {
   const fullIp = Math.floor(ip) + (ip % 1) * 10 / 3;
   const runsAboveAvg = ((leagueEra - fip) / 9) * fullIp;
   const replacement = (fullIp / 200) * 12;
-  const war = (runsAboveAvg + replacement) / 10;
+  const raw = (runsAboveAvg + replacement) / 10;
+  const war = PITCHER_WAR_CAL.a * raw + PITCHER_WAR_CAL.b; // 네이버 기준 캘리브레이션
   return Math.round(Math.max(war, -1) * 10) / 10;
 }
 
