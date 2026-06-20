@@ -1,4 +1,4 @@
-import { FOREIGN_NUMERIC_TO_ALPHA } from "@/lib/constants/foreign-id-map";
+import { canonicalKboId } from "@/lib/utils/resolve-player";
 
 /** 전체 엔트리 병합 대상 최소 형태 (라이브/크롤 스탯 공통). */
 export type FullEntryRow = {
@@ -9,11 +9,9 @@ export type FullEntryRow = {
   [k: string]: unknown;
 };
 
-/** 외국인 숫자ID(56251) → canonical 영문ID(FP009). 비외국인/빈값은 그대로. */
-function canonId(id: string | number | undefined): string {
-  const s = String(id ?? "");
-  return FOREIGN_NUMERIC_TO_ALPHA[s] ?? s;
-}
+/** 외국인 숫자ID(56251) → canonical 영문ID(FP009). 비외국인/빈값은 그대로.
+ * (정규화는 resolve-player의 canonicalKboId 경유 — foreign-id-map 직접 import 금지 룰) */
+const canonId = (id: string | number | undefined): string => canonicalKboId(id);
 
 /**
  * 전체 엔트리(full=1): 라이브 리더보드(규정타석/이닝 위주)에 없는 선수를
