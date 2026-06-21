@@ -49,12 +49,16 @@ export const NON_BASEBALL_NEGATIVE = [
 
 // 사진/화보 위주 기사(정보량 적은 포토 기사) 식별 — 사용자 토글(마이페이지)로
 // 홈·팀 뉴스에서 on/off. 제목 substring만 보므로 recall 영향 없이 포토데스크
-// 기사만 정밀하게 거른다. "사진"은 "사진 공개" 등 일반 기사에도 흔히 등장해
-// 오탐이 커서 제외하고, 포토 기사 고유 마커("포토/화보/갤러리")만 쓴다.
+// 기사만 정밀하게 거른다. 바 단어 "사진"은 "사진 공개" 등 일반 기사에도 흔히 등장해
+// 오탐이 커서 안 쓰고, 포토 기사 고유 마커("포토/화보/갤러리")만 substring으로 본다.
 export const PHOTO_ARTICLE_KEYWORDS = ["포토", "화보", "갤러리"];
 
+// 대괄호 안 "사진" 마커("[사진]", "[현장사진]", "[HD사진]" 등)는 포토데스크 고유라
+// "사진 공개" 류 일반기사 오탐 없이 안전하게 포토 기사로 본다.
+const PHOTO_BRACKET_RE = /\[[^\]]*사진[^\]]*\]/;
+
 export function isPhotoArticle(title: string): boolean {
-  return PHOTO_ARTICLE_KEYWORDS.some((kw) => title.includes(kw));
+  return PHOTO_ARTICLE_KEYWORDS.some((kw) => title.includes(kw)) || PHOTO_BRACKET_RE.test(title);
 }
 
 // Naver 뉴스 URL 여부 — 네이버 검색 API `link`는 *등록 기사*만 네이버 뉴스 URL이고,

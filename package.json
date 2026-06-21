@@ -12,6 +12,7 @@
     "qa:resolve-player": "tsx scripts/qa/resolve-player-smoke.ts",
     "qa:war-saber": "tsx scripts/qa/war-saber-smoke.ts",
     "qa:news-naver-url": "tsx scripts/qa/news-naver-url-smoke.ts",
+    "qa:photo-filter": "tsx scripts/qa/photo-article-filter-smoke.ts",
     "qa:gif-collector-matching": "tsx scripts/qa/gif-collector-matching-smoke.ts",
     "qa:gif-collector-slack-parser": "tsx scripts/qa/gif-collector-slack-parser-smoke.ts",
     "qa:gif-collector-inbox-resolver": "tsx scripts/qa/gif-collector-inbox-resolver-smoke.ts",
