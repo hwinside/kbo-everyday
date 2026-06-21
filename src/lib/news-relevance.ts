@@ -88,8 +88,10 @@ function storyTokens(title: string): Set<string> {
 }
 
 // 같은 사건을 다른 매체/제목으로 올린 near-duplicate 기사 판정.
-// 보수적 기준 — 공통 핵심 토큰 ≥3개 AND 짧은 쪽 제목의 70% 이상 겹칠 때만 동일 기사로 본다.
-// (서로 다른 기사가 'LG …홈런'처럼 일부 단어만 겹치는 경우 잘못 합치는 걸 방지)
+// 보수적 기준 — 공통 핵심 토큰 ≥3개 AND 짧은 쪽 제목의 80% 이상 겹칠 때만 동일 기사로 본다.
+// 0.8 임계값 근거: '프로야구 LG 삼성전 승리' vs '…패배'처럼 결과만 정반대인 짧은
+// 헤드라인은 3/4=0.75라 0.7이면 잘못 합쳐짐 → 0.8로 올려 차단(repro 강뉴합창단 쌍은
+// 7/8=0.875라 유지). 서로 다른 기사가 일부 단어만 겹치는 경우의 오합침 방지.
 export function isSameStoryTitle(a: string, b: string): boolean {
   const ta = storyTokens(a);
   const tb = storyTokens(b);
@@ -97,7 +99,7 @@ export function isSameStoryTitle(a: string, b: string): boolean {
   let inter = 0;
   for (const t of ta) if (tb.has(t)) inter++;
   if (inter < 3) return false;
-  return inter / Math.min(ta.size, tb.size) >= 0.7;
+  return inter / Math.min(ta.size, tb.size) >= 0.8;
 }
 
 // near-duplicate 기사 제거 — 입력 순서(최신순 정렬 가정)의 첫 항목을 유지한다.
