@@ -4,6 +4,7 @@ import {
   isPlayerBaseballRelevant,
   isTeamBaseballRelevant,
   isNaverNewsUrl,
+  dedupeNewsByTitle,
 } from "@/lib/news-relevance";
 
 export const runtime = "edge";
@@ -164,7 +165,10 @@ export async function POST(req: NextRequest) {
       (a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime()
     );
 
-    return NextResponse.json({ items: allItems.slice(0, 10) });
+    // 매체만 다른 같은 사건 기사(near-duplicate) 제거 — 최신순이라 첫(최신) 항목 유지
+    const deduped = dedupeNewsByTitle(allItems);
+
+    return NextResponse.json({ items: deduped.slice(0, 10) });
   } catch {
     return NextResponse.json({ items: [] });
   }
