@@ -195,7 +195,7 @@ function PostRow({ post }: { post: Post }) {
             <img
               src={thumb.src}
               alt=""
-              className="w-full h-full object-cover object-top"
+              className="w-full h-full object-contain"
               onError={() => setImgFailed(true)}
             />
           </div>
