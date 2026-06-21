@@ -179,19 +179,10 @@ function PostRow({ post }: { post: Post }) {
     >
       {/* 썸네일 56x56 — 선수 히어로샷/팀 로고는 팀컬러 그라데이션 배경(선수페이지 동일) */}
       <div className="w-14 h-14 shrink-0 rounded-xl overflow-hidden bg-bg-tertiary">
-        {thumb.kind === "none" || imgFailed ? (
+        {thumb.kind === "none" || thumb.kind === "kbo" || imgFailed ? (
+          // 크보팬 라벨(다팀/무팀) 글은 말풍선 아이콘 타일. 크보팬 로고는 라벨과
+          // 중복이고, 본문 미리보기는 우측 텍스트와 중복이라 중립 말풍선 채택(하린아빠 결정).
           <IconTile />
-        ) : thumb.kind === "kbo" ? (
-          <div className="w-full h-full bg-bg-tertiary">
-            {/* 크보팬 로고(앱아이콘) 풀블리드 — 라벨이 "크보팬"이면 썸네일도 동일 */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/icon-192.png"
-              alt="크보팬"
-              className="w-full h-full object-cover"
-              onError={() => setImgFailed(true)}
-            />
-          </div>
         ) : thumb.kind === "logo" ? (
           <div
             className="w-full h-full flex items-center justify-center p-2.5 bg-bg-tertiary"
