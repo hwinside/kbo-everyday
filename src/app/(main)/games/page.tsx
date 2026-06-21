@@ -26,6 +26,8 @@ interface GameData {
   inning?: string;
   awayStarter?: string;
   homeStarter?: string;
+  awayStarterPredicted?: boolean;
+  homeStarterPredicted?: boolean;
   broadcastChannels?: BroadcastChannel[];
 }
 
@@ -97,6 +99,8 @@ export default function GamesPage() {
         setGames(buildPreseasonFallback(date));
       } else {
         setGames(mapped);
+        // 공식 예고가 없는 예정 경기에 로테이션 예측 선발을 채운다(공식값은 절대 덮지 않음).
+        void fillPredictedStarters(date, mapped);
       }
     } catch (e: unknown) {
       const preGames = buildPreseasonFallback(date);
@@ -109,6 +113,30 @@ export default function GamesPage() {
       }
     }
     setLoading(false);
+  }
+
+  // 공식 예고가 없는 예정 경기에 로테이션 예측 선발을 채운다(별도 요청, 실패는 조용히 무시).
+  async function fillPredictedStarters(date: string, baseGames: GameData[]) {
+    const needs = baseGames.some(g => g.status === "scheduled" && !g.awayStarter && !g.homeStarter);
+    if (!needs) return;
+    try {
+      const res = await fetch(`/api/rotation-forecast?date=${formatDate(date)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const preds: Record<string, { awayStarter?: string; homeStarter?: string }> = data.predictions ?? {};
+      if (Object.keys(preds).length === 0) return;
+      // gameId로 머지 — 사용자가 날짜를 바꿨으면 id가 안 맞아 자연히 no-op.
+      setGames(prev => prev.map(g => {
+        const p = preds[g.id];
+        if (!p || g.status !== "scheduled") return g;
+        const next = { ...g };
+        if (!next.awayStarter && p.awayStarter) { next.awayStarter = p.awayStarter; next.awayStarterPredicted = true; }
+        if (!next.homeStarter && p.homeStarter) { next.homeStarter = p.homeStarter; next.homeStarterPredicted = true; }
+        return next;
+      }));
+    } catch {
+      /* 예측 실패는 조용히 무시 */
+    }
   }
 
   useEffect(() => {
@@ -214,6 +242,11 @@ export default function GamesPage() {
                   </motion.div>
                 ))}
               </div>
+              {scheduledGames.some(g => g.awayStarterPredicted || g.homeStarterPredicted) && (
+                <p className="mt-2 text-[11px] leading-snug text-text-tertiary">
+                  ※ <span className="text-accent">예측</span> 선발은 로테이션 추정값으로 실제와 다를 수 있어요. 공식 예고가 나오면 자동 반영됩니다.
+                </p>
+              )}
             </div>
           )}
         </motion.div>

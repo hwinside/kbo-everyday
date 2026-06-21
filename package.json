@@ -14,6 +14,7 @@
     "qa:news-naver-url": "tsx scripts/qa/news-naver-url-smoke.ts",
     "qa:photo-filter": "tsx scripts/qa/photo-article-filter-smoke.ts",
     "qa:news-dedup": "tsx scripts/qa/news-dedup-title-smoke.ts",
+    "qa:rotation": "tsx scripts/qa/rotation-forecast-smoke.ts",
     "qa:gif-collector-matching": "tsx scripts/qa/gif-collector-matching-smoke.ts",
     "qa:gif-collector-slack-parser": "tsx scripts/qa/gif-collector-slack-parser-smoke.ts",
     "qa:gif-collector-inbox-resolver": "tsx scripts/qa/gif-collector-inbox-resolver-smoke.ts",

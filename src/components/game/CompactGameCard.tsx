@@ -22,7 +22,17 @@ interface CompactGameCardProps {
     broadcastChannels?: BroadcastChannel[];
     awayStarter?: string;
     homeStarter?: string;
+    awayStarterPredicted?: boolean;
+    homeStarterPredicted?: boolean;
   };
+}
+
+function StarterLine({ name, predicted }: { name: string; predicted?: boolean }) {
+  return (
+    <span className="text-[11px] leading-tight text-text-tertiary">
+      {predicted ? <span className="text-accent">예측</span> : "선발"} {name}
+    </span>
+  );
 }
 
 export default function CompactGameCard({ game, isPreseason, myTeamId }: CompactGameCardProps) {
@@ -72,7 +82,7 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
                 {away.shortName}
               </span>
               {showStarter && game.awayStarter && (
-                <span className="text-[11px] leading-tight text-text-tertiary">선발 {game.awayStarter}</span>
+                <StarterLine name={game.awayStarter} predicted={game.awayStarterPredicted} />
               )}
             </div>
           </div>
@@ -98,7 +108,7 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
                 {home.shortName}
               </span>
               {showStarter && game.homeStarter && (
-                <span className="text-[11px] leading-tight text-text-tertiary">선발 {game.homeStarter}</span>
+                <StarterLine name={game.homeStarter} predicted={game.homeStarterPredicted} />
               )}
             </div>
           </div>
