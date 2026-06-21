@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { NaverNewsRawItem, NewsItem } from "@/types/api";
-import { isTeamBaseballRelevant, isNaverNewsUrl } from "@/lib/news-relevance";
+import { isTeamBaseballRelevant, isNaverNewsUrl, dedupeNewsByTitle } from "@/lib/news-relevance";
 
 const NAVER_CLIENT_ID = process.env.NAVER_CLIENT_ID || "";
 const NAVER_CLIENT_SECRET = process.env.NAVER_CLIENT_SECRET || "";
@@ -303,6 +303,9 @@ export async function GET(req: NextRequest) {
           : true;
       });
     }
+
+    // 매체만 다른 같은 사건 기사(near-duplicate) 제거 — Naver 결과가 date desc라 최신 항목 유지
+    unique = dedupeNewsByTitle(unique);
 
     // 캐시는 _썸네일 없는 raw items_만 저장.
     cache.set(cacheKey, { data: { items: unique, _q: searchQuery }, ts: Date.now() });

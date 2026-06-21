@@ -75,6 +75,41 @@ export function isNaverNewsUrl(url: string | undefined | null): boolean {
   }
 }
 
+// 제목 토큰화 — 대괄호/따옴표/문장부호 제거 후 2자 이상 토큰만. near-dup 판정용.
+function storyTokens(title: string): Set<string> {
+  return new Set(
+    title
+      .replace(/\[[^\]]*\]/g, " ")
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((t) => t.length >= 2)
+  );
+}
+
+// 같은 사건을 다른 매체/제목으로 올린 near-duplicate 기사 판정.
+// 보수적 기준 — 공통 핵심 토큰 ≥3개 AND 짧은 쪽 제목의 70% 이상 겹칠 때만 동일 기사로 본다.
+// (서로 다른 기사가 'LG …홈런'처럼 일부 단어만 겹치는 경우 잘못 합치는 걸 방지)
+export function isSameStoryTitle(a: string, b: string): boolean {
+  const ta = storyTokens(a);
+  const tb = storyTokens(b);
+  if (ta.size === 0 || tb.size === 0) return false;
+  let inter = 0;
+  for (const t of ta) if (tb.has(t)) inter++;
+  if (inter < 3) return false;
+  return inter / Math.min(ta.size, tb.size) >= 0.7;
+}
+
+// near-duplicate 기사 제거 — 입력 순서(최신순 정렬 가정)의 첫 항목을 유지한다.
+export function dedupeNewsByTitle<T extends { title: string }>(items: T[]): T[] {
+  const kept: T[] = [];
+  for (const item of items) {
+    if (kept.some((k) => isSameStoryTitle(k.title, item.title))) continue;
+    kept.push(item);
+  }
+  return kept;
+}
+
 export function hasBaseballSignal(text: string): boolean {
   return (
     BASEBALL_KEYWORDS.some((kw) => text.includes(kw)) ||
