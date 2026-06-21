@@ -35,5 +35,17 @@ ck("빈 목록 → null", getNextTicketOpen([], now) === null);
 // 5) 이미 지난 경기만 → null
 ck("과거 경기만 → null", getNextTicketOpen([{ date: "20251231", homeTeamId: HOST_HOME }], now) === null);
 
+// 6) 날짜상 뒤 경기이지만 daysBefore가 커서 더 먼저 오픈 — 조기 break 방지 검증
+// SSG(4): daysBefore=5, 롯데(7): daysBefore=14
+// 7/1 SSG 원정 → 오픈 6/26 11:00 / 7/7 롯데 원정 → 오픈 6/23 14:00 (날짜상 뒤이지만 먼저 오픈)
+const HOST_SSG = 4; // daysBefore 5
+const HOST_LOTTE = 7; // daysBefore 14
+const baseNow = new Date(2026, 5, 20, 12, 0, 0); // 2026-06-20 12:00 기준
+const laterDateEarlierOpen = getNextTicketOpen([
+  { date: "20260701", homeTeamId: HOST_SSG,   isAway: true, opponentName: "SSG" },   // 오픈 6/26 11:00
+  { date: "20260707", homeTeamId: HOST_LOTTE,  isAway: true, opponentName: "롯데" },  // 오픈 6/23 14:00
+], baseNow);
+ck("날짜상 뒤 롯데(6/23 오픈)가 SSG(6/26 오픈)보다 먼저 오픈 → 롯데 선택", !!laterDateEarlierOpen && laterDateEarlierOpen.gameDate === "20260707" && laterDateEarlierOpen.provider === TICKET_OPEN_RULES[HOST_LOTTE].provider);
+
 console.log(`\n예매 오픈 스모크: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);

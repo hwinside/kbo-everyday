@@ -33,8 +33,9 @@ export default function TeamNextTicketCard({ team }: Props) {
       const upcoming: Array<{ date: string; time: string; homeTeamId: number; opponentName: string; isAway: boolean; uncertain: boolean }> = [];
       const now = new Date();
 
-      // 현재 예매중 일정을 지나 '다음 예매 오픈 대기(countdown)' 경기를 만날 때까지 수집(홈+원정).
-      // 일정이 길면 캡에 끊겨 countdown 경기를 못 보던 문제 → 조기종료 조건 + 5주/12경기 안전한도.
+      // 홈+원정 중 가장 먼저 오픈되는 경기를 찾기 위해 35일/12경기 안전한도 내 전체 수집.
+      // daysBefore가 구단마다 다르므로(롯데 14일·SSG 5일 등) 날짜상 뒤 경기가 먼저 오픈될 수 있음
+      // → 조기 break 없이 후보 전체 수집 후 getNextTicketOpen이 최단 openAt을 선택.
       for (let i = 0; i < 35 && upcoming.length < 12; i++) {
         const d = new Date(now);
         d.setDate(d.getDate() + i);
@@ -61,9 +62,6 @@ export default function TeamNextTicketCard({ team }: Props) {
             const isAway = g.awayTeamId === team.id;
             const opponentName = (isAway ? g.homeName : g.awayName) ?? "";
             upcoming.push({ date: g.date, time: g.time ?? "", homeTeamId: g.homeTeamId, opponentName, isAway, uncertain: teamGames.length >= 2 });
-            // 예매 오픈이 미래(countdown)인 경기를 찾으면 충분 → 조기 종료(불필요한 추가 fetch 방지)
-            const openAt = ticketOpenAt(g.date, g.homeTeamId);
-            if (openAt && openAt.getTime() > now.getTime()) break;
           }
         } catch {
           /* skip */
