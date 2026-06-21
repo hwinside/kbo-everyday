@@ -15,7 +15,7 @@ import type { Post } from "@/lib/supabase/usePosts";
 
 const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
 
-const HOME_LATEST_COUNT = 5;
+const HOME_LATEST_COUNT = 10;
 
 function timeAgo(dateStr: string): string {
   const mins = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
