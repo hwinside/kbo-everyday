@@ -5,7 +5,7 @@ import Link from "next/link";
 import { MessageCircle, Heart, ChevronRight, MessagesSquare } from "lucide-react";
 import { useUnifiedFeed } from "@/lib/supabase/useUnifiedFeed";
 import { getPostDetailPath } from "@/lib/utils/post-share";
-import { getTeamBySlug } from "@/lib/constants/teams";
+import { getTeamBySlug, getTeamById } from "@/lib/constants/teams";
 import { getTeamColor } from "@/lib/utils/team";
 import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
 import { teamIdForKboId, resolveRosterPlayer } from "@/lib/utils/player-roster";
@@ -37,7 +37,7 @@ function summaryLine(post: Post): string {
 }
 
 type Label =
-  | { kind: "player"; teamId: number; name: string }
+  | { kind: "player"; teamId: number; name: string; kboId: string }
   | { kind: "team"; teamId: number }
   | { kind: "kbo" };
 
@@ -71,7 +71,8 @@ function resolveLabel(post: Post): Label {
 
   if (players.length === 1) {
     const teamId = teamIdForKboId(players[0].kboId) ?? [...teamIds][0];
-    if (teamId != null && players[0].name) return { kind: "player", teamId, name: players[0].name };
+    if (teamId != null && players[0].name)
+      return { kind: "player", teamId, name: players[0].name, kboId: players[0].kboId };
     if (teamId != null) return { kind: "team", teamId };
   }
 
@@ -81,7 +82,8 @@ function resolveLabel(post: Post): Label {
   // (피드 deriveBrandContext와 동일 원칙 — 태그 없는 선수/팀 보드 글이 크보팬으로 떨어지던 회귀 수정)
   if (post.board_type === "player") {
     const rp = resolveRosterPlayer({ name: null, kboId: post.board_id });
-    if (rp?.teamId != null && rp.name) return { kind: "player", teamId: rp.teamId, name: rp.name };
+    if (rp?.teamId != null && rp.name)
+      return { kind: "player", teamId: rp.teamId, name: rp.name, kboId: String(post.board_id) };
     if (rp?.teamId != null) return { kind: "team", teamId: rp.teamId };
   }
   if (post.board_type === "team") {
@@ -117,11 +119,15 @@ type Thumb =
   | { kind: "image"; src: string }
   | { kind: "player"; src: string; teamId: number | null }
   | { kind: "logo"; src: string; teamId: number }
+  | { kind: "kbo" }
   | { kind: "none" };
 
 /**
  * 썸네일 우선순위 (하린아빠 스펙):
- *   사진글 사진 썸네일 > 선수글 히어로샷 > 팀글 팀 로고 > 기본(아이콘 타일).
+ *   사진글 사진 썸네일 > 라벨 분기(선수 히어로샷 / 팀 로고 / 크보팬 로고).
+ * 라벨(resolveLabel)과 동일한 분기를 따라야 한다 — 라벨이 "크보팬"(다팀/무팀)인데
+ * 썸네일만 작성 보드 팀 로고가 뜨던 불일치 수정(하린아빠 #cs 제보). board_id가
+ * 아니라 태그 기반 라벨을 SSOT로 삼는다.
  * 선수 히어로샷·팀 로고는 팀컬러 그라데이션 배경 위에 얹는다(선수페이지 동일).
  * 이미지 로드 실패 시 onError로 아이콘 타일 fallback (320px·깨진 에셋 대비).
  */
@@ -129,19 +135,21 @@ function resolveThumb(post: Post): Thumb {
   const img = post.image_urls?.[0];
   if (img) return { kind: "image", src: img };
 
-  if (post.board_type === "player" && post.board_id) {
-    const hero = HERO_APPROVED.has(post.board_id)
-      ? `/players-hero/${post.board_id}.webp`
-      : getPlayerPhotoByKboId(post.board_id);
-    if (hero) return { kind: "player", src: hero, teamId: teamIdForKboId(post.board_id) };
+  const label = resolveLabel(post);
+  if (label.kind === "player") {
+    const hero = HERO_APPROVED.has(label.kboId)
+      ? `/players-hero/${label.kboId}.webp`
+      : getPlayerPhotoByKboId(label.kboId);
+    if (hero) return { kind: "player", src: hero, teamId: label.teamId };
   }
 
-  if (post.board_type === "team" && post.board_id) {
-    const team = getTeamBySlug(post.board_id);
+  if (label.kind === "team") {
+    const team = getTeamById(label.teamId);
     if (team) return { kind: "logo", src: team.logoPath, teamId: team.id };
   }
 
-  return { kind: "none" };
+  // label.kind === "kbo" (다팀/무팀) → 크보팬 로고 (라벨과 정합)
+  return { kind: "kbo" };
 }
 
 /** 선수페이지(PlayerHero) 동일 팀컬러 그라데이션. teamId 없으면 undefined(중성 배경). */
@@ -173,6 +181,17 @@ function PostRow({ post }: { post: Post }) {
       <div className="w-14 h-14 shrink-0 rounded-xl overflow-hidden bg-bg-tertiary">
         {thumb.kind === "none" || imgFailed ? (
           <IconTile />
+        ) : thumb.kind === "kbo" ? (
+          <div className="w-full h-full bg-bg-tertiary">
+            {/* 크보팬 로고(앱아이콘) 풀블리드 — 라벨이 "크보팬"이면 썸네일도 동일 */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/icon-192.png"
+              alt="크보팬"
+              className="w-full h-full object-cover"
+              onError={() => setImgFailed(true)}
+            />
+          </div>
         ) : thumb.kind === "logo" ? (
           <div
             className="w-full h-full flex items-center justify-center p-2.5 bg-bg-tertiary"
