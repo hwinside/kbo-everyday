@@ -191,14 +191,14 @@ function PostRow({ post }: { post: Post }) {
             className="relative w-full h-full bg-bg-tertiary"
             style={{ background: teamGradient(thumb.teamId) }}
           >
-            {/* 히어로샷(752×944, 인물 상단 ~27%)을 얼굴이 박스 중앙에 오도록 확대 정렬.
-                w-[135%] + top -48% 로 모자~턱이 56px 박스에 적당히 차고 가운데 위치. */}
+            {/* 히어로샷(752×944, 인물 상단 ~27%, 눈 ~58.8% 실측)을 눈이 박스 중앙에 오도록 확대 정렬.
+                w-[135%] + top -50% 로 모자~턱이 56px 박스에 적당히 차고 눈높이가 가운데. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={thumb.src}
               alt=""
               className="absolute left-1/2 w-[135%] max-w-none -translate-x-1/2"
-              style={{ top: "-48%" }}
+              style={{ top: "-50%" }}
               onError={() => setImgFailed(true)}
             />
           </div>
