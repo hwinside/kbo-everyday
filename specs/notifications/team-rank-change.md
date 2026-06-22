@@ -20,9 +20,10 @@ KBO 순위는 경기가 final 될 때만 바뀐다(라이브 중엔 불변). 순
 - 본문: `{팀}의 팀 순위가 {N}단계 {상승|하락}하여 {순위}위가 되었습니다`
 - 딥링크: `/standings`
 
-## 순위 산정
-`fetchStandings()` 결과를 winRate 내림차순 정렬한 위치(index+1) = 순위.
-team-card route(`rank: idx+1`)와 동일 기준이라 사용자가 보는 순위표와 일치.
+## 순위 산정 (4/11 공동순위 핫픽스 001bf82c와 동일)
+- 네이버 API 원본 `ranking`(공동순위 반영)이 있으면 그대로 사용.
+- 없으면 승률 내림차순 competition ranking — 동률은 같은 순위(1,2,2,4…).
+- ⚠️ winRate-sort+index+1 단순 방식은 공동순위를 깨므로 쓰지 않음(삼순 #406 NO-GO 반영).
 
 ## 구현
 - `src/lib/notifications/team-rank-message.ts` — `buildRankChangeMessage()` 순수 함수(문구).

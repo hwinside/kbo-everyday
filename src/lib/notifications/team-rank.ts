@@ -1,15 +1,29 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { sendFcmToUsers } from "@/lib/notifications/fcm";
 import { fansOfTeams } from "@/lib/notifications/game-status";
-import { fetchStandings } from "@/lib/crawler/kbo-api";
+import { fetchStandings, type TeamStanding } from "@/lib/crawler/kbo-api";
 import { TEAMS } from "@/lib/constants/teams";
 import { buildRankChangeMessage } from "@/lib/notifications/team-rank-message";
 
-/** winRate 내림차순 위치 = 순위 (team-card route와 동일 산정). */
-function rankStandings(standings: { teamId: number; teamName: string; winRate: number }[]) {
-  return [...standings]
-    .sort((a, b) => b.winRate - a.winRate)
-    .map((s, i) => ({ teamId: s.teamId, teamName: s.teamName, rank: i + 1 }));
+/**
+ * 순위 산정 — 4/11 공동순위 핫픽스(001bf82c)와 동일 기준:
+ *  - 네이버 API 원본 `ranking`(공동순위 반영)이 있으면 그대로 사용.
+ *  - 없으면(KBO HTML 폴백 등) 승률 내림차순 competition ranking — 동률은 같은 순위(1,2,2,4…).
+ * winRate-sort+index+1 단순 방식은 공동순위를 깨므로 쓰지 않는다(삼순 #406 NO-GO).
+ */
+function rankStandings(standings: TeamStanding[]) {
+  const hasRanking = standings.some((s) => s.ranking != null && s.ranking > 0);
+  if (hasRanking) {
+    return standings
+      .filter((s) => s.teamId)
+      .map((s) => ({ teamId: s.teamId, teamName: s.teamName, rank: s.ranking as number }));
+  }
+  const sorted = [...standings].sort((a, b) => b.winRate - a.winRate);
+  let currentRank = 1;
+  return sorted.map((s, i) => {
+    if (i > 0 && s.winRate !== sorted[i - 1].winRate) currentRank = i + 1;
+    return { teamId: s.teamId, teamName: s.teamName, rank: currentRank };
+  });
 }
 
 /**
