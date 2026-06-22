@@ -388,10 +388,17 @@ function FeedVideo({ url }: { url: string }) {
   );
 }
 
-function MediaElement({ url, isVideo, sizes }: { url: string; isVideo: boolean; sizes?: string }) {
+function MediaElement({ url, isVideo, sizes, active = true }: { url: string; isVideo: boolean; sizes?: string; active?: boolean }) {
   const isGif = !isVideo && url.toLowerCase().endsWith(".gif");
 
   if (isVideo) {
+    // 캐러셀 비활성 슬라이드는 <video>를 아예 언마운트해 디코더를 반납한다. src만 떼는 방식은
+    // React가 controlled src를 다시 동기화해 currentSrc/디코더가 안 풀려서(스와이프 시 2→4→6 누적)
+    // iOS WKWebView 동시 영상 디코딩 한도를 초과 → 보이는 영상이 무한 버퍼링으로 멈춘다.
+    // 활성 슬라이드만 마운트 = 동시 <video> 2개(poster+player)로 제한. 비활성은 placeholder(로드 전 예약과 동일 56vh).
+    if (!active) {
+      return <div className="w-full bg-black" style={{ minHeight: "56vh" }} aria-hidden />;
+    }
     return <FeedVideo url={url} />;
   }
 
@@ -430,6 +437,7 @@ function ZoomableSlide({
   elevationGrace,
   onZoomChange,
   onScale,
+  active = true,
 }: {
   slide: MediaSlide;
   // zoom 종료 직후 dim overlay exit fade(0.24s) 동안 wrapper z-elevation을 유지하기 위한 grace 신호.
@@ -437,6 +445,8 @@ function ZoomableSlide({
   elevationGrace: boolean;
   onZoomChange: (zoomed: boolean) => void;
   onScale: (scale: number) => void;
+  // 캐러셀 현재 슬라이드 여부 — 영상은 비활성 시 언마운트(디코더 반납). 기본 true.
+  active?: boolean;
 }) {
   const wrapperRef = useRef<ReactZoomPanPinchRef>(null);
   const [isZooming, setIsZooming] = useState(false);
@@ -467,7 +477,7 @@ function ZoomableSlide({
   }, []);
 
   if (slide.isVideo) {
-    return <MediaElement url={slide.url} isVideo={slide.isVideo} />;
+    return <MediaElement url={slide.url} isVideo={slide.isVideo} active={active} />;
   }
 
   // 자리 줌(인스타식): 사진을 viewport로 옮기지 않고 인라인 자리에서 그대로 확대.
@@ -693,6 +703,7 @@ export function PhotoCarousel({
           elevationGrace={elevationGrace}
           onZoomChange={(z) => handleZoomChange(0, z)}
           onScale={handleScale}
+          active
         />
       </div>
     );
@@ -726,6 +737,7 @@ export function PhotoCarousel({
                 elevationGrace={elevationGrace}
                 onZoomChange={(z) => handleZoomChange(i, z)}
                 onScale={handleScale}
+                active={i === current}
               />
             </div>
           ))}
