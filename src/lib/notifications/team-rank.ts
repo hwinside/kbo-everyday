@@ -4,17 +4,6 @@ import { fansOfTeams } from "@/lib/notifications/game-status";
 import { fetchStandings } from "@/lib/crawler/kbo-api";
 import { TEAMS } from "@/lib/constants/teams";
 import { buildRankChangeMessage } from "@/lib/notifications/team-rank-message";
-import type { KboRawGame } from "@/types/api";
-
-/** KST 기준 오늘 날짜 (YYYYMMDD — KBO G_DT와 동일 포맷). */
-function kstYmd(): string {
-  return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10).replace(/-/g, "");
-}
-
-/** YYYYMMDD → YYYY-MM-DD (Postgres DATE). */
-function toIsoDate(ymd: string): string {
-  return `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`;
-}
 
 /** winRate 내림차순 위치 = 순위 (team-card route와 동일 산정). */
 function rankStandings(standings: { teamId: number; teamName: string; winRate: number }[]) {
@@ -24,68 +13,65 @@ function rankStandings(standings: { teamId: number; teamName: string; winRate: n
 }
 
 /**
- * 팀 순위 변동 알림 (옵션 B — 그날 경기 전부 종료 후 최종순위 확정 시 전일 대비 1회).
- * warmup cron에서 game 목록과 함께 호출. 다음 조건을 모두 만족할 때만 발화:
- *  - 오늘(KST) 경기가 있고, 전부 종료(GAME_STATE_SC="3") 또는 취소(CANCEL_SC_ID≠"0")
- *  - 오늘 아직 settle 안 함(team_rank_notify_state.settled_date에 오늘 없음 — 중복 방지)
- * 최초 도입/첫 기록 팀은 발송 없이 baseline만 seed(배포 직후 과거 변동 일괄 발송 차단).
+ * 팀 순위 변동 알림 (옵션 A — 순위가 바뀐 순간 즉시 발화, 하린아빠 확정).
+ * KBO 순위는 경기가 final 될 때만 바뀌므로(라이브 중엔 불변), warmup cron이 매분 standings를
+ * 보고 직전 발송 순위와 다르면 즉시 발송한다. "확정된 순간" = 경기 종료로 순위가 실제 바뀐 시점.
+ * 저녁 내내 게임이 하나씩 끝나며 같은 팀이 두 번 바뀌면 두 번 발송될 수 있으나(되돌림), 시즌
+ * 중후반 변동 빈도가 낮아 허용(하린아빠: 유입 drive 목적이라 A가 낫다).
  *
- * ⚠️ v1 한계: standings API가 종료 직후 약간 지연되면 settle 순간 직전 순위를 읽을 수 있음
- *   (date dedup으로 재평가 안 함). 발송 실패 팀도 baseline은 전진(드물게 1회 누락 가능).
+ * dedup/seed:
+ *  - team_rank_notify_state(team_id, rank) = team별 마지막 *발송* 순위.
+ *  - 현재 순위 == 마지막 발송 순위면 무발송(변동 없음).
+ *  - 첫 기록 팀은 발송 없이 baseline만 seed(배포 직후 일괄 발송 차단).
+ *  - 발송 성공 시에만 baseline 전진 — 인프라 실패는 다음 run 재시도(중복 < 누락).
  */
-export async function notifyTeamRankChanges(
-  games: KboRawGame[],
-): Promise<{ changed: number } | { skipped: string }> {
-  const todayYmd = kstYmd();
-  const todayIso = toIsoDate(todayYmd);
-
-  const todays = games.filter((g) => g.G_DT === todayYmd);
-  if (todays.length === 0) return { skipped: "오늘 경기 없음" };
-  const allSettled = todays.every((g) => g.GAME_STATE_SC === "3" || g.CANCEL_SC_ID !== "0");
-  if (!allSettled) return { skipped: "경기 진행 중" };
-
-  const { data: stateRows, error: stateErr } = await supabase
-    .from("team_rank_notify_state")
-    .select("team_id, rank, settled_date");
-  if (stateErr) {
-    console.error("[team-rank] state read failed:", stateErr.message);
-    return { skipped: "state 조회 실패" };
-  }
-  // 오늘 이미 확정 처리됨 → 재발화 방지
-  if ((stateRows ?? []).some((r) => String(r.settled_date) === todayIso)) {
-    return { skipped: "오늘 이미 확정 처리됨" };
-  }
-  const prevByTeam = new Map<number, number>();
-  for (const r of stateRows ?? []) prevByTeam.set(r.team_id as number, r.rank as number);
-
+export async function notifyTeamRankChanges(): Promise<{ changed: number } | { skipped: string }> {
   const standings = await fetchStandings();
   if (standings.length === 0) return { skipped: "순위 조회 실패" };
   const ranked = rankStandings(standings);
 
+  const { data: stateRows, error: stateErr } = await supabase
+    .from("team_rank_notify_state")
+    .select("team_id, rank");
+  if (stateErr) {
+    console.error("[team-rank] state read failed:", stateErr.message);
+    return { skipped: "state 조회 실패" };
+  }
+  const prevByTeam = new Map<number, number>();
+  for (const r of stateRows ?? []) prevByTeam.set(r.team_id as number, r.rank as number);
+
   let changed = 0;
-  const upserts: { team_id: number; rank: number; settled_date: string; updated_at: string }[] = [];
   const now = new Date().toISOString();
+  const advance: { team_id: number; rank: number; updated_at: string }[] = [];
 
   for (const { teamId, teamName, rank } of ranked) {
     if (!teamId) continue;
-    upserts.push({ team_id: teamId, rank, settled_date: todayIso, updated_at: now });
-
     const prevRank = prevByTeam.get(teamId);
-    if (prevRank == null) continue; // 첫 기록 → seed만 (발송 없음)
-    const name = TEAMS.find((t) => t.id === teamId)?.shortName ?? teamName;
-    const msg = buildRankChangeMessage(name, prevRank, rank);
+    if (prevRank === rank) continue; // 변동 없음
+
+    if (prevRank == null) {
+      advance.push({ team_id: teamId, rank, updated_at: now }); // 첫 기록 → seed만 (발송 없음)
+      continue;
+    }
+    const msg = buildRankChangeMessage(TEAMS.find((t) => t.id === teamId)?.shortName ?? teamName, prevRank, rank);
     if (!msg) continue;
 
     const fans = await fansOfTeams([teamId]);
-    if (!fans.ok || fans.ids.length === 0) continue;
+    if (!fans.ok) continue; // 조회 실패 → baseline 유지, 다음 run 재시도
+    if (fans.ids.length === 0) {
+      advance.push({ team_id: teamId, rank, updated_at: now }); // 수신자 없음 → baseline만 전진
+      continue;
+    }
     const res = await sendFcmToUsers(fans.ids, { ...msg, url: "/standings" }, "team_rank_change");
-    if (res.ok) changed += res.sent;
+    if (!res.ok) continue; // 인프라 실패 → baseline 유지, 다음 run 재시도
+    changed += res.sent;
+    advance.push({ team_id: teamId, rank, updated_at: now });
   }
 
-  if (upserts.length > 0) {
+  if (advance.length > 0) {
     const { error: upErr } = await supabase
       .from("team_rank_notify_state")
-      .upsert(upserts, { onConflict: "team_id" });
+      .upsert(advance, { onConflict: "team_id" });
     if (upErr) console.error("[team-rank] state upsert failed:", upErr.message);
   }
 

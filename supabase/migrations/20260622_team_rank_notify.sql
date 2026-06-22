@@ -3,12 +3,10 @@
 ALTER TABLE notification_prefs
   ADD COLUMN IF NOT EXISTS team_rank_change BOOLEAN NOT NULL DEFAULT true;
 
--- 2) 직전(마지막 확정) 순위 저장 — 그날 경기 전부 종료 후 최종순위 확정 시
---    전일 대비 변동을 1회 계산하기 위한 baseline. team_id별 단일 행.
---    settled_date = 그 순위가 확정된 KST 날짜(같은 날 중복 발화 dedup에도 사용).
+-- 2) 마지막 *발송* 순위 저장 — 순위가 바뀐 순간(옵션 A) 즉시 발화하기 위한 baseline.
+--    현재 순위가 이 값과 다르면 발송 후 갱신. team_id별 단일 행.
 CREATE TABLE IF NOT EXISTS team_rank_notify_state (
-  team_id      INTEGER PRIMARY KEY,
-  rank         INTEGER NOT NULL,
-  settled_date DATE NOT NULL,
-  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+  team_id    INTEGER PRIMARY KEY,
+  rank       INTEGER NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
