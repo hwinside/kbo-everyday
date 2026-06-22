@@ -127,7 +127,7 @@ function mergedBody(post: Post): string {
   return `${t}\n${c}`;
 }
 
-interface MediaSlide {
+export interface MediaSlide {
   url: string;
   isVideo: boolean;
 }
@@ -519,7 +519,7 @@ function ZoomableSlide({
   );
 }
 
-function PhotoCarousel({
+export function PhotoCarousel({
   slides,
   onDoubleTap,
   onZoomActiveChange,
@@ -747,7 +747,7 @@ function PhotoCarousel({
 }
 
 /** Heart animation overlay for double-tap */
-function HeartOverlay({ show }: { show: boolean }) {
+export function HeartOverlay({ show }: { show: boolean }) {
   return (
     <AnimatePresence>
       {show && (
