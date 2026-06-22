@@ -125,7 +125,7 @@ async function handlePost(record: Record<string, unknown>): Promise<Dispatch[]> 
       userIds: targets,
       payload: {
         title: `⭐ ${playerName || "최애선수"} 관련 글이 올라왔어요`,
-        body: truncate((record.title as string) || (record.content as string) || ""),
+        body: truncate((record.content as string) || (record.title as string) || ""),
         url: `/community/free/${postId}`,
       },
       prefKey: "fav_player_post",
