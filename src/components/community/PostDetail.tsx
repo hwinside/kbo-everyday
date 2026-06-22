@@ -10,6 +10,7 @@ import { usePostDetail, createComment, toggleLike, toggleCommentLike, updatePost
 import ReportSheet from "@/components/community/ReportSheet";
 import LinkPreview from "@/components/community/LinkPreview";
 import { isShortText, BrandedTextCard, getPostScopeLabel } from "@/components/community/FeedTextCards";
+import { PhotoCarousel, HeartOverlay } from "@/components/community/PhotoFeed";
 import { parseAttribution } from "@/lib/gif-collector/attribution";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
@@ -31,6 +32,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
   const { post, comments, loading, liked, setLiked, setComments } = usePostDetail(postId);
   const [comment, setComment] = useState("");
   const [likeCount, setLikeCount] = useState(0);
+  const [heartShow, setHeartShow] = useState(false);
   const [replyTo, setReplyTo] = useState<{ id: number; nickname: string } | null>(null);
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
@@ -248,6 +250,13 @@ export default function PostDetail({ postId }: PostDetailProps) {
       setLiked(newLiked);
       setLikeCount(prev => newLiked ? prev + 1 : prev - 1);
     } catch {}
+  }
+
+  // 캐러셀 더블탭 → 인스타식 좋아요(이미 좋아요면 취소하지 않고 하트 애니메이션만). 피드(PhotoFeed)와 동일.
+  function handleMediaDoubleTap() {
+    if (user && !liked) void handleLike();
+    setHeartShow(true);
+    setTimeout(() => setHeartShow(false), 800);
   }
 
   async function handleComment() {
@@ -477,28 +486,18 @@ export default function PostDetail({ postId }: PostDetailProps) {
           );
         })()}
 
-        {/* Images */}
-        {post.image_urls.length > 0 && (
-          <div className="mt-4 space-y-2">
-            {post.image_urls.map((url: string, i: number) => (
-              <img key={i} src={url} alt="" className="rounded-xl w-full" />
-            ))}
-          </div>
-        )}
-
-        {/* Videos */}
-        {post.video_urls && post.video_urls.length > 0 && (
-          <div className="mt-4 space-y-2">
-            {post.video_urls.map((url: string, i: number) => (
-              <video
-                key={i}
-                src={url}
-                controls
-                playsInline
-                className="rounded-xl w-full"
-                style={{ backgroundColor: "#000" }}
-              />
-            ))}
+        {/* 미디어 — 피드(PhotoFeed)와 동일한 인스타식 캐러셀(한 장씩 스와이프 + 점 인디케이터 + 더블탭 좋아요).
+            본문은 px-5 패딩 안이라 -mx-5로 full-bleed 처리(피드 카드와 동일한 풀블리드 룩). */}
+        {(post.image_urls.length > 0 || (post.video_urls?.length ?? 0) > 0) && (
+          <div className="relative mt-4 -mx-5">
+            <PhotoCarousel
+              slides={[
+                ...post.image_urls.map((url: string) => ({ url, isVideo: false })),
+                ...(post.video_urls ?? []).map((url: string) => ({ url, isVideo: true })),
+              ]}
+              onDoubleTap={handleMediaDoubleTap}
+            />
+            <HeartOverlay show={heartShow} />
           </div>
         )}
 
