@@ -27,6 +27,7 @@ import { readFileSync, writeFileSync, rmSync, statSync, mkdtempSync } from "fs";
 import { resolve, join, basename } from "path";
 import { tmpdir } from "os";
 import { execFileSync } from "child_process";
+import { createHash } from "crypto";
 
 // ── env (.env.local 수동 파싱, dotenv 의존성 없음 — award-event-badges.mjs 패턴) ──
 try {
@@ -81,12 +82,14 @@ function fmtMB(bytes) {
   return (bytes / 1024 / 1024).toFixed(2) + "MB";
 }
 
-/** 원본 path → 최적화본 path (같은 버킷, transcoded/ 프리픽스, .mp4 강제) */
+/** 원본 path → 최적화본 path (같은 버킷, transcoded/ 프리픽스, .mp4 강제)
+ *  확장자만 다른 동명 파일(same.mp4/same.mov)이 .mp4 로 고정되며 충돌하지 않도록
+ *  원본 path 해시를 파일명에 포함. 같은 원본은 항상 같은 path → upsert 멱등 유지. */
 function optimizedPath(origPath) {
   const name = basename(origPath).replace(/\.[^.]+$/, "");
-  // 같은 원본을 또 처리해도 경로가 안정적이도록 원본 경로 구조 유지
   const dir = origPath.slice(0, origPath.length - basename(origPath).length);
-  return `transcoded/${dir}${name}.mp4`;
+  const h = createHash("sha1").update(origPath).digest("hex").slice(0, 8);
+  return `transcoded/${dir}${name}-${h}.mp4`;
 }
 
 async function downloadTo(url, dest) {
@@ -128,10 +131,12 @@ async function swapVideoUrl(postId, origUrl, newUrl) {
 }
 
 async function markJob(originalUrl, fields) {
-  await supabase
+  // update 에러를 삼키면 상태 기록 실패해도 성공처럼 보이고 다음 실행에서 재처리됨 → throw 로 surface.
+  const { error } = await supabase
     .from("video_transcode_jobs")
     .update({ ...fields, updated_at: new Date().toISOString() })
     .eq("original_url", originalUrl);
+  if (error) throw new Error(`job 상태 기록 실패 (${originalUrl}): ${error.message}`);
 }
 
 // ── 1) 발견: posts.video_urls 중 jobs 에 없는 영상 URL → pending 등록 ──
@@ -227,7 +232,13 @@ async function processJobs() {
       } catch (e) {
         const attempts = job.attempts + 1;
         const status = attempts >= MAX_ATTEMPTS ? "failed" : "pending";
-        await markJob(job.original_url, { status, attempts, error: String(e.message || e).slice(0, 500) });
+        // 실패 경로의 상태 기록까지 throw 하면 전체 루프가 죽으므로 best-effort.
+        // (기록 실패해도 다음 실행에서 재처리되므로 안전 — done 경로 silent 성공만 막으면 됨)
+        try {
+          await markJob(job.original_url, { status, attempts, error: String(e.message || e).slice(0, 500) });
+        } catch (markErr) {
+          console.log(`  ⚠️  job 상태 기록도 실패 (post ${job.post_id}): ${markErr.message}`);
+        }
         console.log(`  ❌ post ${job.post_id} ${status} (${attempts}/${MAX_ATTEMPTS}): ${e.message || e}`);
         failed++;
       } finally {
