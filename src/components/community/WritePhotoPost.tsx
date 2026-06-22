@@ -42,6 +42,8 @@ interface PlayerTag {
   teamId: number;
 }
 
+const MAX_MEDIA_ITEMS = 5;
+
 export default function WritePhotoPost({
   isOpen,
   onClose,
@@ -145,7 +147,7 @@ export default function WritePhotoPost({
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
     if (!files) return;
-    const remaining = 3 - media.length;
+    const remaining = MAX_MEDIA_ITEMS - media.length;
     const selected = Array.from(files).slice(0, remaining);
 
     for (const file of selected) {
@@ -384,7 +386,7 @@ export default function WritePhotoPost({
                     exit={{ opacity: 0, x: 20 }}
                     className="flex-1 flex flex-col space-y-4"
                   >
-                    <p className="text-sm text-text-secondary">사진 · 영상을 선택하세요 (최대 3개, 영상 15초/20MB)</p>
+                    <p className="text-sm text-text-secondary">사진 · 영상을 선택하세요 (최대 {MAX_MEDIA_ITEMS}개, 영상 15초/20MB)</p>
 
                     <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-1">
                       {media.map((item, i) => (
@@ -414,13 +416,13 @@ export default function WritePhotoPost({
                           )}
                         </div>
                       ))}
-                      {media.length < 3 && (
+                      {media.length < MAX_MEDIA_ITEMS && (
                         <button
                           onClick={() => fileInputRef.current?.click()}
                           className="flex-shrink-0 w-28 h-28 rounded-xl bg-bg-tertiary flex flex-col items-center justify-center gap-1 text-text-tertiary hover:text-text-secondary transition-colors"
                         >
                           <Plus size={28} />
-                          <span className="text-xs">{media.length}/3</span>
+                          <span className="text-xs">{media.length}/{MAX_MEDIA_ITEMS}</span>
                         </button>
                       )}
                     </div>
