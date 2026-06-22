@@ -12,6 +12,7 @@ export const PREF_KEYS = [
   "comment_reply",
   "dm",
   "live_activity",
+  "team_rank_change",
 ] as const;
 
 export type PrefKey = (typeof PREF_KEYS)[number];
@@ -28,6 +29,7 @@ export const DEFAULT_PREFS: NotificationPrefs = {
   comment_reply: true,
   dm: true,
   live_activity: true,
+  team_rank_change: true,
 };
 
 /** 마이페이지 토글 UI 라벨 (노출 순서 그대로) */
@@ -42,4 +44,5 @@ export const PREF_LABELS: { key: PrefKey; label: string; desc?: string }[] = [
   { key: "comment_reply", label: "댓글/답글" },
   { key: "dm", label: "쪽지" },
   { key: "live_activity", label: "잠금화면 실시간 중계", desc: "최애팀 경기 득점·이닝을 잠금화면 카드로 실시간 표시 (iOS)" },
+  { key: "team_rank_change", label: "팀 순위 변동", desc: "최애팀 순위가 바뀌면 알림" },
 ];

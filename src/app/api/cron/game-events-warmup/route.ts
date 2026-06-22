@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent } from "@/types/game-events";
 import { notifyGameStatusTransitions } from "@/lib/notifications/game-status";
+import { notifyTeamRankChanges } from "@/lib/notifications/team-rank";
 import { notifyScoreEvents, notifyInningSummaries } from "@/lib/notifications/game-score";
 import { notifyPlayerHighlights } from "@/lib/notifications/player-highlight";
 import { pushLiveActivityUpdates, pushLiveActivityStarts } from "@/lib/notifications/live-activity";
@@ -95,6 +96,16 @@ export async function GET(req: NextRequest) {
     console.error("[warmup] game status notify failed:", (e as Error).message);
   }
 
+  // 팀 순위 변동 푸시 — 그날 경기 전부 종료 후 최종순위 확정 시 전일 대비 1회.
+  // game 목록만으로 settle 여부 판단(별도 cron 불필요). 실패해도 warmup 본연 동작 무영향.
+  let rankNotify: { changed: number } | { skipped: string } | { error: string } = { changed: 0 };
+  try {
+    rankNotify = await notifyTeamRankChanges(games);
+  } catch (e) {
+    rankNotify = { error: (e as Error).message };
+    console.error("[warmup] team rank notify failed:", (e as Error).message);
+  }
+
   // 내 팀 득점 푸시 (push-notifications-v1 S5a) — game-events의 득점 이벤트 기반.
   let scoreNotify: { scored: number } | { error: string } = { scored: 0 };
   try {
@@ -161,6 +172,7 @@ export async function GET(req: NextRequest) {
     polled: liveGameIds.length,
     liveGameIds,
     gameNotify,
+    rankNotify,
     scoreNotify,
     summaryNotify,
     androidWidget,
