@@ -231,7 +231,7 @@ export default function ProfileSetupModal({ isOpen }: Props) {
                 value={inviteCode}
                 onChange={(e) => { setInviteCode(e.target.value.toUpperCase()); setError(""); }}
                 placeholder="KEUBO-XXXXXX"
-                maxLength={10}
+                maxLength={12}
                 className="w-full bg-bg-tertiary border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 text-text-primary placeholder:text-text-tertiary font-mono tracking-wider focus:outline-none focus:border-accent"
               />
               {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
