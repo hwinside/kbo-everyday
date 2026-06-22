@@ -123,12 +123,16 @@ export async function notifyScoreEvents(
   return { scored };
 }
 
+// 안타류(이닝 안타수 집계). at_bat_out/walk/strikeout 제외.
+const INNING_HIT_TYPES = new Set<string>(["at_bat_hit", "at_bat_double", "at_bat_triple", "at_bat_homerun"]);
+
 /**
  * 이닝 득점 요약 알림 (push-notifications-v1 S5 — my_team_score_inning_summary).
  * 이닝(half) 종료 시 그 half에 공격팀이 낸 득점을 *1건으로 묶어* 발송(득점마다 알림과 별개 옵션).
  * 득점량 = inning_end snapshot − 같은 half의 inning_start snapshot(공격팀 점수 델타)이라
  * run_scored·홈런 등 모든 득점 포함. dedup = notified_score_events에 `${inning_end.id}-summary` 선점.
  * 수신자 = 공격팀 팬 중 my_team_score_inning_summary on (sendFcmToUsers가 pref 필터, 디폴트 off).
+ * 문구(하린아빠 확정 2026-06-22): 제목 `⚾ {N}회{초/말} 요약` / 본문 `{N}회{초/말} {안타}안타 {득점}득점.`
  */
 export async function notifyInningSummaries(
   games: KboRawGame[],
@@ -177,11 +181,14 @@ export async function notifyInningSummaries(
       const fans = await fansOfTeams([teamId]);
       if (!fans.ok) { await unclaimEvent(`${ev.id}-summary`); continue; }
 
-      const scoreLine = `${away} ${ev.snapshot.awayScore} : ${ev.snapshot.homeScore} ${home}`;
       const half = ev.isTop ? "초" : "말";
+      // 그 half(inning+isTop)의 안타 수.
+      const hits = events.filter(
+        (e) => e.inning === ev.inning && e.isTop === ev.isTop && INNING_HIT_TYPES.has(e.type),
+      ).length;
       const res = await sendFcmToUsers(
         fans.ids,
-        { title: `⚾ ${scoringTeamName} ${ev.inning}회${half} ${runs}득점`, body: scoreLine, url },
+        { title: `⚾ ${ev.inning}회${half} 요약`, body: `${ev.inning}회${half} ${hits}안타 ${runs}득점.`, url },
         "my_team_score_inning_summary",
       );
       if (!res.ok) { await unclaimEvent(`${ev.id}-summary`); continue; } // 인프라 실패 → 재시도
