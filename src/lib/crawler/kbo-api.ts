@@ -218,6 +218,8 @@ export interface TeamStanding {
   draws: number;
   winRate: number;
   gamesBehind: number;
+  /** 네이버 API 원본 순위(공동순위 반영). 없으면 0/undefined → 승률 기반 fallback. */
+  ranking?: number;
   /** 연승/연패 원본 문자열 (예: "3승", "1패"). 없으면 undefined. */
   continuousGameResult?: string;
 }
