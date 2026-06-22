@@ -15,21 +15,38 @@ import type { GameEvent, GameEventType } from "@/types/game-events";
 //  - dedup = notified_score_events 재사용하되 event_id에 "#fav" suffix —
 //    같은 홈런 이벤트라도 "내 팀 득점"(S5a)과 별개 키라 둘 다 독립 발송.
 //    (대상도 보통 다름: 팀팬 vs 선수팬. 한 유저가 둘 다면 토글로 각각 제어)
-const HIGHLIGHT_TYPES = new Set<GameEventType>(["at_bat_homerun", "at_bat_triple", "at_bat_double"]);
+// 활약 알림 대상 타석 결과. 단타(at_bat_hit)도 포함 — 하린아빠 요청(2026-06-14):
+// 최애선수 안타도 받고 싶음. 장타(2루타~홈런)는 기존 prod 경로.
+const HIGHLIGHT_TYPES = new Set<GameEventType>([
+  "at_bat_homerun",
+  "at_bat_triple",
+  "at_bat_double",
+  "at_bat_hit",
+]);
 
 const HIGHLIGHT_LABEL: Partial<Record<GameEventType, string>> = {
   at_bat_homerun: "홈런",
   at_bat_triple: "3루타",
   at_bat_double: "2루타",
+  at_bat_hit: "안타",
 };
 
-// 삼진 알림 freshness 컷오프 (삼순 #274 NO-GO): fav_player_strikeout은 신규 dedup
-// namespace(#fav-so) + 기본값 on이라, 배포/활성화 직후 warmup이 넘기는 *전체 경기
-// history*의 과거 at_bat_strikeout이 한꺼번에 claim·발송되는 backlog 플러시 위험이
-// 있다. #271(inning-summary)과 동일 패턴으로, 삼진 신규 경로에만 ev.timestamp가
-// FRESH_MS보다 오래된 과거 삼진을 skip한다(매분 cron이 갓 잡힌 삼진을 1~2분 내 처리).
-// 활약(#fav, 기존 prod 경로)은 동작 유지 위해 컷오프 미적용.
-const STRIKEOUT_FRESH_MS = 10 * 60 * 1000;
+// "{라벨}{으로/로} N타점 획득!" 의 조사. 홈런(ㄴ받침)=으로, 루타·안타(받침없음)=로.
+const HIGHLIGHT_PARTICLE: Partial<Record<GameEventType, string>> = {
+  at_bat_homerun: "으로",
+  at_bat_triple: "로",
+  at_bat_double: "로",
+  at_bat_hit: "로",
+};
+
+// freshness 컷오프 (삼순 #274 NO-GO 패턴): 신규 dedup namespace에 진입하는 빈번 이벤트는
+// 배포/활성화 직후 warmup이 넘기는 *전체 경기 history*의 과거분이 한꺼번에 claim·발송되는
+// backlog 플러시 위험이 있다(#271 inning-summary와 동일). 적용 대상:
+//  - at_bat_strikeout(#fav-so, 기본 on)
+//  - at_bat_hit(#fav, 신규 추가 + 단타는 빈번) ← 없으면 배포 즉시 진행 경기의 과거 안타 일괄 발송
+// 매분 cron이 갓 잡힌 이벤트를 1~2분 내 처리하므로 FRESH_MS(10분) 밖은 skip.
+// 기존 장타(at_bat_double/triple/homerun, #fav)는 prod 안전성 유지 위해 컷오프 미적용.
+const FRESH_MS = 10 * 60 * 1000;
 
 export async function notifyPlayerHighlights(
   games: KboRawGame[],
@@ -51,10 +68,11 @@ export async function notifyPlayerHighlights(
       const isStrikeout = ev.type === "at_bat_strikeout";
       if (!HIGHLIGHT_TYPES.has(ev.type) && !isStrikeout) continue;
 
-      // 삼진만: 배포 전/이전 이닝의 과거 삼진은 skip → backlog 일괄 발송 방지(삼순 #274).
-      if (isStrikeout) {
+      // 삼진·단타(신규 dedup 진입 + 빈번): 배포 전/이전 이닝의 과거분 skip → backlog
+      // 일괄 발송 방지(삼순 #274 패턴). 기존 장타는 prod 안전성 위해 컷오프 미적용.
+      if (isStrikeout || ev.type === "at_bat_hit") {
         const evMs = Date.parse(ev.timestamp);
-        if (Number.isFinite(evMs) && Date.now() - evMs > STRIKEOUT_FRESH_MS) continue;
+        if (Number.isFinite(evMs) && Date.now() - evMs > FRESH_MS) continue;
       }
 
       // 대상 선수: 활약=타자(공격팀, isTop이면 원정) / 삼진=투수(수비팀, isTop이면 홈).
@@ -86,9 +104,14 @@ export async function notifyPlayerHighlights(
       const userIds = (fansData ?? []).map((r: { id: string }) => r.id);
       if (userIds.length === 0) continue; // 최애로 둔 유저 없음 — claim 유지(과거 알림 방지)
 
+      // 타점(detail.rbi)이 있으면 "{라벨}{으로/로} N타점 획득!", 0타점이면 "{라벨}!" (하린아빠 확정)
+      const label = HIGHLIGHT_LABEL[ev.type] ?? "활약";
+      const rbi = ev.detail?.rbi ?? 0;
       const title = isStrikeout
         ? `⚾ ${resolved.name} 삼진!`
-        : `⚾ ${resolved.name} ${HIGHLIGHT_LABEL[ev.type] ?? "활약"}!`;
+        : rbi > 0
+          ? `⚾ ${resolved.name} ${label}${HIGHLIGHT_PARTICLE[ev.type] ?? "로"} ${rbi}타점 획득!`
+          : `⚾ ${resolved.name} ${label}!`;
       const res = await sendFcmToUsers(userIds, {
         title,
         body: `${away} vs ${home}`,

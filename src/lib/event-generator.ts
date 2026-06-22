@@ -313,6 +313,15 @@ export function generateEvents(
         const bbDelta = Math.max(0, bCurr.bb - prevBb);
         const soDelta = Math.max(0, bCurr.so - prevSo);
 
+        // Per-at-bat 타점 attribution for 최애선수 활약 알림. BoxScore carries only
+        // cumulative RBI, so we attribute the window's RBI delta to the at-bat ONLY
+        // when this batter has exactly one hit-type event in the window (sole scoring
+        // play). Same conservative pattern 삼순 accepted for at_bat_homerun rbi (#304):
+        // ambiguous multi-event windows omit rbi → label-only "안타!" fallback.
+        const rbiDelta = Math.max(0, bCurr.rbi - (bPrev?.rbi ?? 0));
+        const hitEvents = hrDelta + h3bDelta + h2bDelta + singleDelta;
+        const hitRbi = hitEvents === 1 && rbiDelta > 0 ? { rbi: rbiDelta } : {};
+
         // Order matters within a single batter: HR/3B/2B counted explicitly,
         // remaining hits => 1B (at_bat_hit). dedupe key encodes the
         // 1-based cumulative occurrence index for this stat — same plate
@@ -321,25 +330,25 @@ export function generateEvents(
         for (let i = 0; i < hrDelta; i++) {
           const idx = prevHr + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_homerun", {
-            batter: batterName, pitcher: pitcherName,
+            batter: batterName, pitcher: pitcherName, ...hitRbi,
           }, `${sideKey}-${batterNorm}-${idx}`));
         }
         for (let i = 0; i < h3bDelta; i++) {
           const idx = prevH3b + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_triple", {
-            batter: batterName, pitcher: pitcherName,
+            batter: batterName, pitcher: pitcherName, ...hitRbi,
           }, `${sideKey}-${batterNorm}-${idx}`));
         }
         for (let i = 0; i < h2bDelta; i++) {
           const idx = prevH2b + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_double", {
-            batter: batterName, pitcher: pitcherName,
+            batter: batterName, pitcher: pitcherName, ...hitRbi,
           }, `${sideKey}-${batterNorm}-${idx}`));
         }
         for (let i = 0; i < singleDelta; i++) {
           const idx = prevSingles + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_hit", {
-            batter: batterName, pitcher: pitcherName,
+            batter: batterName, pitcher: pitcherName, ...hitRbi,
           }, `${sideKey}-${batterNorm}-${idx}`));
         }
         for (let i = 0; i < bbDelta; i++) {
