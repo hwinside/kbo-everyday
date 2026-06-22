@@ -176,7 +176,7 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
         if (!fans.ok) { await unclaim(gameId, "start_notified"); continue; } // 조회 실패 → 재시도
         const res = await sendFcmToUsers(fans.ids, {
           title: "⚾ 경기 시작!",
-          body: `${away} vs ${home} 경기가 시작됐어요`,
+          body: `${away} vs ${home} 경기가 시작됐어요. 크보팬에서 자세한 경기 내용을 확인해보세요!`,
           url,
         }, "game_start");
         if (!res.ok) { await unclaim(gameId, "start_notified"); continue; } // 인프라 실패 → 재시도
@@ -227,8 +227,9 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
       const streakSuffix = (id: number | null, expected: "승" | "패"): string => {
         const s = id !== null ? streaks.get(id) : undefined;
         if (!s || s.dir !== expected) return "";
-        return ` · ${s.n}연${s.dir} 중`;
+        return expected === "승" ? ` · ${s.n}연승!🔥` : ` · ${s.n}연패 💦`;
       };
+      const endCta = "자세한 경기 결과를 크보팬에서 확인해보세요.";
 
       // away/home 슬롯을 독립 선점·발송 — 한 슬롯 실패가 다른 슬롯을 중복/누락시키지 않음.
       // 한 유저는 team_id 하나라 두 슬롯 수신자는 서로소.
@@ -252,13 +253,13 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
 
         let res;
         if (tie) {
-          res = await sendFcmToUsers(fans.ids, { title: "🏁 경기 종료", body: scoreLine, url }, "game_end");
+          res = await sendFcmToUsers(fans.ids, { title: "🏁 경기 종료", body: `${scoreLine} ${endCta}`, url }, "game_end");
         } else {
           const won = slot.isAway ? awayWon : !awayWon;
           const name = slot.isAway ? away : home;
           res = won
-            ? await sendFcmToUsers(fans.ids, { title: `🎉 ${name} 승리!`, body: `${scoreLine}${streakSuffix(slot.teamId, "승")}`, url }, "game_end")
-            : await sendFcmToUsers(fans.ids, { title: `🥲 ${name} 아쉬운 패배`, body: `${scoreLine}${streakSuffix(slot.teamId, "패")}`, url }, "game_end");
+            ? await sendFcmToUsers(fans.ids, { title: `🎉 ${name} 승리!`, body: `${scoreLine}${streakSuffix(slot.teamId, "승")} ${endCta}`, url }, "game_end")
+            : await sendFcmToUsers(fans.ids, { title: `🥲 ${name} 아쉬운 패배`, body: `${scoreLine}${streakSuffix(slot.teamId, "패")} ${endCta}`, url }, "game_end");
         }
         if (!res.ok) { await unclaim(gameId, slot.flag); continue; }
         ended += res.sent;
