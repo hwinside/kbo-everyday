@@ -24,7 +24,8 @@ import {
 import { publishQueueItem } from "@/lib/gif-collector/publisher";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+// 미디어 상한 5개(MAX_MEDIA_ITEMS)로 확대 → 순차 다운로드/업로드 시간 여유 확보 위해 60s로 상향.
+export const maxDuration = 60;
 
 const SIGNING_SECRET = process.env.SLACK_GIF_COLLECTOR_SIGNING_SECRET;
 const BOT_TOKEN = process.env.SLACK_GIF_COLLECTOR_BOT_TOKEN;

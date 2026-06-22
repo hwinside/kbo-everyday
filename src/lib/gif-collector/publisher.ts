@@ -32,7 +32,7 @@ const BUCKET = "photos";
 const STORAGE_FOLDER = "gif-collector";
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_MEDIA_BYTES = 30 * 1024 * 1024;
-const MAX_MEDIA_ITEMS = 3;
+const MAX_MEDIA_ITEMS = 5; // 사진게시판 첨부 상한(5, #407)과 정합. 4개+ 영상 mlbpark 글에서 일부 누락되던 문제(#cs 2026-06-22).
 const FETCH_USER_AGENT = "Mozilla/5.0 (compatible; KeubofanGifCollector/1.0; +https://keubo.fan)";
 
 async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
