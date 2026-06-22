@@ -31,6 +31,14 @@ const HIGHLIGHT_LABEL: Partial<Record<GameEventType, string>> = {
   at_bat_hit: "안타",
 };
 
+// "{라벨}{으로/로} N타점 획득!" 의 조사. 홈런(ㄴ받침)=으로, 루타·안타(받침없음)=로.
+const HIGHLIGHT_PARTICLE: Partial<Record<GameEventType, string>> = {
+  at_bat_homerun: "으로",
+  at_bat_triple: "로",
+  at_bat_double: "로",
+  at_bat_hit: "로",
+};
+
 // freshness 컷오프 (삼순 #274 NO-GO 패턴): 신규 dedup namespace에 진입하는 빈번 이벤트는
 // 배포/활성화 직후 warmup이 넘기는 *전체 경기 history*의 과거분이 한꺼번에 claim·발송되는
 // backlog 플러시 위험이 있다(#271 inning-summary와 동일). 적용 대상:
@@ -96,9 +104,14 @@ export async function notifyPlayerHighlights(
       const userIds = (fansData ?? []).map((r: { id: string }) => r.id);
       if (userIds.length === 0) continue; // 최애로 둔 유저 없음 — claim 유지(과거 알림 방지)
 
+      // 타점(detail.rbi)이 있으면 "{라벨}{으로/로} N타점 획득!", 0타점이면 "{라벨}!" (하린아빠 확정)
+      const label = HIGHLIGHT_LABEL[ev.type] ?? "활약";
+      const rbi = ev.detail?.rbi ?? 0;
       const title = isStrikeout
         ? `⚾ ${resolved.name} 삼진!`
-        : `⚾ ${resolved.name} ${HIGHLIGHT_LABEL[ev.type] ?? "활약"}!`;
+        : rbi > 0
+          ? `⚾ ${resolved.name} ${label}${HIGHLIGHT_PARTICLE[ev.type] ?? "로"} ${rbi}타점 획득!`
+          : `⚾ ${resolved.name} ${label}!`;
       const res = await sendFcmToUsers(userIds, {
         title,
         body: `${away} vs ${home}`,
