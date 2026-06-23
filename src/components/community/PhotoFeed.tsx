@@ -253,6 +253,11 @@ function videoPosterSrc(url: string): string {
   return url.includes("#") ? url : `${url}#t=0.001`;
 }
 
+// 1x1 투명 poster. poster 미지정 시 일부 브라우저(안드로이드 WebView/삼성인터넷)가 로딩/일시정지 중
+// 조악한 기본 재생버튼 글리프를 그린다. 투명 poster를 주면 그 글리프 대신 우리 스피너만 보인다.
+const TRANSPARENT_POSTER =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
 function FeedVideo({ url }: { url: string }) {
   const ref = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -339,12 +344,11 @@ function FeedVideo({ url }: { url: string }) {
   }, [muted]);
 
   return (
-    // 로드 전에는 세로 공간을 예약(minHeight)해 둔다. src 없는 video는 높이가 ~0이라 피드가 무너지면
-    // 아래쪽 영상들이 전부 rootMargin 안으로 들어와 한꺼번에 로드돼 lazy-load가 무력화되기 때문.
+    // 로드 전에는 16:9(aspect-video) 박스로 세로 공간을 예약한다. (이전 56vh 고정은 가로 영상보다
+    // 훨씬 커서 캐러셀에서 영상 위아래 회색 레터박스를 유발했다.) 로드 후엔 영상 natural 높이로.
     <div
       ref={containerRef}
-      className="relative w-full bg-black"
-      style={shouldLoad ? undefined : { minHeight: "56vh" }}
+      className={`relative w-full bg-black${shouldLoad ? "" : " aspect-video"}`}
     >
       {/* 포스터 레이어: 첫 프레임만 보여주는 일시정지 영상(재생하지 않음). 플레이어가 버퍼링/일시정지로
           투명일 때 뒤에서 썸네일(첫 프레임)을 항상 노출한다. 일시정지 #t=0.001 프레임은 안정적으로
@@ -352,6 +356,7 @@ function FeedVideo({ url }: { url: string }) {
           src/preload는 lazy-load(shouldLoad) 전까지 비워 둔다. */}
       <video
         src={shouldLoad ? videoPosterSrc(url) : undefined}
+        poster={TRANSPARENT_POSTER}
         muted
         playsInline
         preload={shouldLoad ? "metadata" : "none"}
@@ -364,6 +369,7 @@ function FeedVideo({ url }: { url: string }) {
       <video
         ref={ref}
         src={shouldLoad ? videoPosterSrc(url) : undefined}
+        poster={TRANSPARENT_POSTER}
         muted={muted}
         loop
         playsInline
@@ -397,7 +403,7 @@ function MediaElement({ url, isVideo, sizes, active = true }: { url: string; isV
     // iOS WKWebView 동시 영상 디코딩 한도를 초과 → 보이는 영상이 무한 버퍼링으로 멈춘다.
     // 활성 슬라이드만 마운트 = 동시 <video> 2개(poster+player)로 제한. 비활성은 placeholder(로드 전 예약과 동일 56vh).
     if (!active) {
-      return <div className="w-full bg-black" style={{ minHeight: "56vh" }} aria-hidden />;
+      return <div className="w-full bg-black aspect-video" aria-hidden />;
     }
     return <FeedVideo url={url} />;
   }
