@@ -266,6 +266,24 @@ body {
 }
 
 /*
+ * ===== iOS overscroll wobble fix =====
+ * The page scrolls on body, and the global TabBar is position:fixed bottom:0.
+ * On iOS WebKit the rubber-band overscroll bounce translates the whole
+ * viewport — including fixed elements — so the TabBar visually "꿀렁임".
+ * Disabling vertical overscroll chaining/bounce at the document root stops it;
+ * promoting the TabBar to its own compositor layer keeps it painted
+ * independently of any residual document overscroll.
+ * (-y only: horizontal carousels and inner sheet scrollers are unaffected.)
+ */
+html,
+body {
+  overscroll-behavior-y: none;
+}
+[data-global-tabbar] {
+  transform: translateZ(0);
+}
+
+/*
  * ===== Keyboard-open mode =====
  * Toggled by composer pages when the input gains focus. Hides the global
  * TabBar and drops the main's bottom padding so the in-container composer
