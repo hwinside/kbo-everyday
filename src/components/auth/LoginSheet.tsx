@@ -102,7 +102,7 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
               </div>
 
               <p className="text-sm text-text-secondary mb-4">
-                로그인하면 예측, 채팅, 게시판을 이용할 수 있어요
+                로그인하면 채팅, 게시판을 이용할 수 있어요
               </p>
 
               {/* EULA 동의 게이트 — Apple 1.2: 가입/로그인 전 약관 동의 + 무관용 원칙 명시. */}
