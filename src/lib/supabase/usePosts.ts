@@ -287,6 +287,12 @@ export async function updatePost(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
 
+  // 수정 경로에도 모더레이션 필터 — 깨끗한 글을 부적절 표현으로 수정하는 우회 차단.
+  if (typeof params.title === "string" || typeof params.content === "string") {
+    const filter = checkObjectionableContent({ title: params.title, content: params.content });
+    if (!filter.allowed) throw new Error(filter.issues[0] ?? "부적절한 콘텐츠입니다");
+  }
+
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (typeof params.title === "string") {
     // 제목 필드 제거(⑥) → 빈 제목 허용(제목을 본문으로 흡수하며 비우는 케이스).
@@ -420,6 +426,12 @@ export async function updateComment(commentId: number, content: string) {
 
   const trimmed = content.trim();
   if (!trimmed) throw new Error("빈 댓글");
+
+  // 수정 경로에도 모더레이션 필터(GIF URL 제외) — 깨끗한 댓글의 부적절 표현 수정 우회 차단.
+  if (!/^https?:\/\/\S+$/.test(trimmed)) {
+    const cf = checkObjectionableContent({ content: trimmed });
+    if (!cf.allowed) throw new Error(cf.issues[0] ?? "부적절한 콘텐츠입니다");
+  }
 
   const { error } = await supabase
     .from("comments")
