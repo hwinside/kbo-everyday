@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Users, Flame, ChevronDown, Trash2 } from "lucide-react";
+import { Send, Users, Flame, ChevronDown, Trash2, Flag, Ban, MoreHorizontal } from "lucide-react";
 import { clsx } from "clsx";
 import Image from "next/image";
 import TeamBadge from "@/components/ui/TeamBadge";
@@ -10,6 +10,9 @@ import { getTeamById } from "@/lib/constants/teams";
 import { useChat } from "@/lib/supabase/useChat";
 import { useMoodGauge } from "@/lib/supabase/useMoodGauge";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { useBlockedIds, blockUserById } from "@/lib/supabase/useBlock";
+import { supabase } from "@/lib/supabase/client";
+import ReportSheet from "@/components/community/ReportSheet";
 
 type ChatRoom = "all" | "home" | "away";
 
@@ -65,9 +68,13 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, deleteAnyMessage, cooldown, cooldownReason, isLoggedIn } = useChat(roomId);
   const { homePct } = useMoodGauge(gameId, homeTeamId, awayTeamId);
   const { user, profile, loading: authLoading } = useAuth();
+  const { blockedIds } = useBlockedIds();
   const canModerateChat = profile?.is_operator === true;
   const [input, setInput] = useState("");
   const [showRoomPicker, setShowRoomPicker] = useState(false);
+  const [msgMenuId, setMsgMenuId] = useState<number | null>(null);
+  const [showReport, setShowReport] = useState(false);
+  const [reportTargetId, setReportTargetId] = useState<number | null>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -149,7 +156,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
   // 삭제된 메시지는 화면에서 완전히 숨김(placeholder 미표시).
   // DB는 여전히 soft-delete(content 마스킹 + deleted_at)로 보존됨.
-  const renderedMessages = displayMessages.filter((m) => m.deleted_at == null);
+  // 차단한 유저의 메시지도 즉시 숨김(차단 시 useBlockedIds 브로드캐스트로 갱신).
+  const renderedMessages = displayMessages.filter((m) => m.deleted_at == null && !blockedIds.has(m.user_id));
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -187,11 +195,39 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
   async function handleDelete(messageId: number, isMine: boolean) {
     if (typeof window === "undefined") return;
+    setMsgMenuId(null);
     const ok = window.confirm("이 메시지를 삭제하시겠어요?\n삭제된 메시지는 복구할 수 없습니다.");
     if (!ok) return;
     // 본인 메시지는 본인삭제 RPC, 타인 메시지는 운영자삭제 RPC(서버측 is_operator 확인).
     if (isMine) await deleteMyMessage(messageId);
     else await deleteAnyMessage(messageId);
+  }
+
+  // 채팅 메시지 신고 — ReportSheet(targetType 'chat') 오픈.
+  function openReport(messageId: number) {
+    setMsgMenuId(null);
+    if (!user) return;
+    setReportTargetId(messageId);
+    setShowReport(true);
+  }
+
+  // 채팅 사용자 차단 — ①user_blocks 등록 ②운영팀에 해당 메시지 자동 신고 ③메시지 즉시 숨김(브로드캐스트).
+  async function handleBlock(targetUserId: string, messageId: number) {
+    setMsgMenuId(null);
+    if (!user || targetUserId === user.id) return;
+    if (!window.confirm("이 사용자를 차단할까요?\n차단하면 이 사용자의 메시지·글·댓글이 더 이상 보이지 않으며, 운영팀에 자동으로 신고됩니다.")) return;
+    const ok = await blockUserById(user.id, targetUserId);
+    if (!ok) { window.alert("차단에 실패했어요. 잠시 후 다시 시도해주세요."); return; }
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        await fetch("/api/report", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ targetType: "chat", targetId: messageId, reason: "block", detail: "사용자 차단에 따른 자동 신고" }),
+        });
+      }
+    } catch { /* 신고 실패는 차단을 막지 않음 */ }
   }
 
   function formatTime(dateStr: string) {
@@ -378,16 +414,43 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
                         <span className="text-[10px] text-text-tertiary opacity-0 group-hover:opacity-100 transition-opacity">
                           {formatTime(msg.created_at)}
                         </span>
-                        {(isMe || canModerateChat) && (
+                        {isMe ? (
                           <button
                             type="button"
-                            onClick={() => handleDelete(msg.id, isMe)}
+                            onClick={() => handleDelete(msg.id, true)}
                             aria-label="메시지 삭제"
                             className="text-text-tertiary hover:text-red-400 opacity-50 hover:opacity-100 transition-colors p-1 -m-1"
                           >
                             <Trash2 size={12} />
                           </button>
-                        )}
+                        ) : user ? (
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setMsgMenuId((prev) => (prev === msg.id ? null : msg.id))}
+                              aria-label="메시지 메뉴"
+                              className="text-text-tertiary hover:text-text-primary opacity-50 hover:opacity-100 transition-colors p-1 -m-1"
+                            >
+                              <MoreHorizontal size={12} />
+                            </button>
+                            {msgMenuId === msg.id && (
+                              <>
+                                <div className="fixed inset-0 z-10" onClick={() => setMsgMenuId(null)} />
+                                <div className="absolute right-0 top-5 z-20 min-w-[88px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
+                                  <button onClick={() => openReport(msg.id)} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
+                                    <Flag size={12} /> 신고
+                                  </button>
+                                  <button onClick={() => handleBlock(msg.user_id, msg.id)} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
+                                    <Ban size={12} /> 차단
+                                  </button>
+                                  {canModerateChat && (
+                                    <button onClick={() => handleDelete(msg.id, false)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        ) : null}
                       </div>
                     </motion.div>
                   );
@@ -404,6 +467,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         )}
       </div>
 
+      <ReportSheet isOpen={showReport} onClose={() => setShowReport(false)} targetType="chat" targetId={reportTargetId ?? 0} />
     </div>
   );
 }

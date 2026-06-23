@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { teamSlugsForPlayerTags } from "@/lib/utils/player-roster";
+import { checkObjectionableContent } from "@/lib/moderation/content-filter";
 
 export interface Post {
   id: number;
@@ -223,6 +224,10 @@ export async function createPost(params: {
 }) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
+
+  // 작성 전 모더레이션 필터(욕설/스팸/도배) — 통과해야 게시.
+  const filter = checkObjectionableContent({ title: params.title, content: params.content });
+  if (!filter.allowed) throw new Error(filter.issues[0] ?? "부적절한 콘텐츠입니다");
 
   const row: Record<string, unknown> = {
     author_id: user.id,
@@ -448,6 +453,12 @@ export async function deleteComment(commentId: number, options?: { canDeleteAny?
 export async function createComment(postId: number, content: string, parentId?: number | null) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
+
+  // GIF 댓글(URL)은 필터 제외, 일반 텍스트 댓글은 작성 전 모더레이션 필터 통과 필요.
+  if (!/^https?:\/\/\S+$/.test(content.trim())) {
+    const cf = checkObjectionableContent({ content });
+    if (!cf.allowed) throw new Error(cf.issues[0] ?? "부적절한 콘텐츠입니다");
+  }
 
   const { data, error } = await supabase.from("comments").insert({
     post_id: postId,

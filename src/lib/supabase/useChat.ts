@@ -5,6 +5,7 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
+import { checkObjectionableContent } from "@/lib/moderation/content-filter";
 
 export interface ChatMessage {
   id: number;
@@ -354,6 +355,15 @@ export function useChat(roomId: string) {
       if (recentContentsRef.current.includes(floodKey)) {
         setCooldown(true);
         setCooldownReason("같은 메시지는 반복해서 보낼 수 없어요");
+        setTimeout(() => { setCooldown(false); setCooldownReason(""); }, COOLDOWN_MS);
+        return false;
+      }
+
+      // 모더레이션 필터(욕설/스팸) — 전송 전 차단.
+      const cf = checkObjectionableContent({ content: trimmed });
+      if (!cf.allowed) {
+        setCooldown(true);
+        setCooldownReason(cf.issues[0] ?? "부적절한 표현이 포함되어 있습니다");
         setTimeout(() => { setCooldown(false); setCooldownReason(""); }, COOLDOWN_MS);
         return false;
       }
