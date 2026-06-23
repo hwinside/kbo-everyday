@@ -18,8 +18,9 @@ struct KBOGameAttributes: ActivityAttributes {
 
     // 경기 진행 상태
     enum GameStatus: String, Codable, Hashable {
-        case live   // 진행 중
-        case final  // 종료 (W4: dismissal-date = now + 15m 후 자동 제거)
+        case scheduled  // 경기 전 (시작 30분 전부터 잠금화면에 미리 표시)
+        case live       // 진행 중
+        case final      // 종료 (W4: dismissal-date = now + 15m 후 자동 제거)
     }
 
     /// 매 업데이트마다 바뀌는 동적 상태. dedup은 이 값의 hash로 판단한다(W3).
@@ -45,6 +46,10 @@ struct KBOGameAttributes: ActivityAttributes {
 
         var status: GameStatus
 
+        /// 경기 전(scheduled) 예정 시각 라벨(예: "18:30 경기 예정"). live/final이면 nil.
+        /// 옵셔널+기본 nil — 구버전 스냅샷/기존 ContentState() 호출과 Codable 하위호환.
+        var startTime: String? = nil
+
         // MARK: 표시용 파생값
 
         /// "7회초" / "9회말"
@@ -58,6 +63,7 @@ struct KBOGameAttributes: ActivityAttributes {
         }
 
         var isFinal: Bool { status == .final }
+        var isScheduled: Bool { status == .scheduled }
     }
 
     // MARK: static (Activity 시작 시 1회 확정)
