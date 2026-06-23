@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { supabase } from "@/lib/supabase/client";
@@ -27,6 +27,28 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId }: R
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
+
+  // 시트가 열려 있는 동안 배경(body) 스크롤 잠금 — CommentSheet와 동일 패턴.
+  // (시트 내부는 아래 overflow-y-auto 영역에서만 스크롤되게 한다)
+  useEffect(() => {
+    if (isOpen) {
+      const scrollY = window.scrollY;
+      document.body.style.position = "fixed";
+      document.body.style.top = `-${scrollY}px`;
+      document.body.style.left = "0";
+      document.body.style.right = "0";
+      document.body.style.overflow = "hidden";
+
+      return () => {
+        document.body.style.position = "";
+        document.body.style.top = "";
+        document.body.style.left = "";
+        document.body.style.right = "";
+        document.body.style.overflow = "";
+        window.scrollTo(0, scrollY);
+      };
+    }
+  }, [isOpen]);
 
   async function handleSubmit() {
     if (!user || !selected) return;
@@ -77,13 +99,13 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId }: R
       >
         <div className="absolute inset-0 bg-black/60" onClick={onClose} />
         <motion.div
-          className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl"
+          className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl flex flex-col max-h-[88dvh] overflow-hidden"
           initial={{ y: "100%" }}
           animate={{ y: 0 }}
           exit={{ y: "100%" }}
           transition={{ type: "spring", damping: 25 }}
         >
-          <div className="px-5 py-4 border-b border-border">
+          <div className="shrink-0 px-5 py-4 border-b border-border">
             <h2 className="text-lg font-bold text-text-primary">🚨 신고하기</h2>
             <p className="text-xs text-text-tertiary">신고 3회 누적 시 자동 블라인드 처리됩니다</p>
           </div>
@@ -94,7 +116,7 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId }: R
               <p className="text-sm text-text-primary mt-2">신고가 접수되었습니다</p>
             </div>
           ) : (
-            <div className="px-5 py-4 space-y-3">
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 py-4 space-y-3">
               {REASONS.map(r => (
                 <button
                   key={r.id}
