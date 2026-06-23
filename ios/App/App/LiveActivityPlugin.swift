@@ -164,7 +164,8 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             pitcherName: call.getString("pitcherName") ?? "",
             batterName: call.getString("batterName") ?? "",
             stadium: call.getString("stadium") ?? "",
-            status: status == "final" ? .final : .live
+            status: status == "final" ? .final : (status == "scheduled" ? .scheduled : .live),
+            startTime: call.getString("startTime")
         )
     }
 }

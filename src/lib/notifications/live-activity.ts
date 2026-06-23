@@ -14,7 +14,18 @@ import type { KboRawGame } from "@/types/api";
 // 종료된 경기는 end 푸시 + 토큰 정리. (APNs 미설정 시 전체 no-op)
 
 /** ContentState — KBOGameAttributes.ContentState(Swift Codable) 키와 정확히 일치. */
-function buildContentState(g: KboRawGame, status: "live" | "final"): Record<string, unknown> {
+function buildContentState(g: KboRawGame, status: "live" | "final" | "scheduled"): Record<string, unknown> {
+  // 경기 전(scheduled) — 스코어/이닝/BSO/주자는 아직 없음. 예정 시각만 표시.
+  if (status === "scheduled") {
+    return {
+      awayScore: 0, homeScore: 0, inning: 1, isTopInning: true,
+      balls: 0, strikes: 0, outs: 0,
+      onFirst: false, onSecond: false, onThird: false,
+      pitcherName: "", batterName: "", stadium: g.S_NM ?? "",
+      status: "scheduled",
+      startTime: g.G_TM ? `${g.G_TM} 경기 예정` : "경기 예정",
+    };
+  }
   const players = resolveCurrentPlayers({
     tPlayerName: g.T_P_NM,
     bPlayerName: g.B_P_NM,
@@ -38,10 +49,11 @@ function buildContentState(g: KboRawGame, status: "live" | "final"): Record<stri
   };
 }
 
-function gameStatus(g: KboRawGame): "live" | "final" | "other" {
+function gameStatus(g: KboRawGame): "live" | "final" | "scheduled" | "other" {
   if (g.CANCEL_SC_ID !== "0") return "other";
   if (g.GAME_STATE_SC === "3") return "final";
   if (g.GAME_STATE_SC === "2") return "live";
+  if (g.GAME_STATE_SC === "1") return "scheduled";
   return "other";
 }
 
@@ -259,7 +271,20 @@ export async function pushLiveActivityStarts(
 ): Promise<{ started: number } | { error: string }> {
   if (!apnsConfigured()) return { started: 0 };
 
-  const liveGames = games.filter((g) => gameStatus(g) === "live" && g.G_ID);
+  // 시작 대상 = 라이브 경기 + *경기 30분 전~시작* 윈도우의 예정 경기(미리 잠금화면 표시).
+  const PREGAME_LEAD_MS = 30 * 60 * 1000;
+  const liveGames = games.filter((g) => {
+    if (!g.G_ID) return false;
+    const st = gameStatus(g);
+    if (st === "live") return true;
+    if (st === "scheduled") {
+      const ms = scheduledStartMs(g.G_DT, g.G_TM);
+      if (ms === null) return false;
+      const delta = ms - Date.now(); // 시작까지 남은 시간(양수=아직 전)
+      return delta <= PREGAME_LEAD_MS && delta > -START_WINDOW_MS;
+    }
+    return false;
+  });
   if (liveGames.length === 0) return { started: 0 };
 
   // jwt를 선점(insert) 전에 확보 — 토큰 발급 실패가 게임 선점을 소진(미발송으로 마킹)하지
@@ -295,8 +320,13 @@ export async function pushLiveActivityStarts(
       awayTeamCode: awayCode,
       homeTeamCode: homeCode,
     };
-    const contentState = buildContentState(g, "live");
-    const staleDate = Math.floor(Date.now() / 1000) + 5 * 60;
+    // 라이브면 live 스냅샷, 아직 시작 전이면 scheduled(예정 시각) 카드로 시작.
+    const isLiveNow = gameStatus(g) === "live";
+    const contentState = buildContentState(g, isLiveNow ? "live" : "scheduled");
+    // 예정 카드는 경기 시작+10분까지 신선 유지(그 사이 live update가 인계). 라이브는 기존 5분.
+    const staleDate = (!isLiveNow && startedAt !== null)
+      ? Math.floor(startedAt / 1000) + 10 * 60
+      : Math.floor(Date.now() / 1000) + 5 * 60;
 
     // away/home 슬롯을 각자 그 팀 코드로 강조(myTeamCode) — 수신자별 최애팀 반영.
     const awaySide = await startForTeamSide({

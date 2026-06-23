@@ -306,31 +306,44 @@ struct KBOLockScreenCard: View {
                             .font(notoKR(9, .medium))
                             .foregroundStyle(.white.opacity(0.75))
                     }
-                    HStack(spacing: 8) {
-                        Text("\(state.awayScore)")
-                            .font(montserrat(22, .black)).monospacedDigit()
-                        Text(":").font(montserrat(13, .bold)).foregroundStyle(.white.opacity(0.5))
-                        Text("\(state.homeScore)")
-                            .font(montserrat(22, .black)).monospacedDigit()
-                    }
-                    Group {
-                        if state.isFinal {
-                            Text("경기 종료").font(notoKR(9, .bold))
-                        } else {
-                            // LIVE + 숫자 = Montserrat, 회초/말 = Noto
-                            Text("LIVE ").font(montserrat(9, .bold)) + inningRun(state.inningText, 9, .bold)
+                    if state.isScheduled {
+                        // 경기 전 — 스코어 대신 양팀 약어 vs + 예정 시각.
+                        HStack(spacing: 8) {
+                            Text(attributes.awayTeamCode).font(montserrat(20, .black))
+                            Text("vs").font(montserrat(12, .bold)).foregroundStyle(.white.opacity(0.5))
+                            Text(attributes.homeTeamCode).font(montserrat(20, .black))
                         }
+                        Text(state.startTime ?? "경기 예정")
+                            .font(notoKR(9, .bold))
+                            .padding(.horizontal, 6).padding(.vertical, 1.5)
+                            .background(Capsule().fill(Color.white.opacity(0.2)))
+                    } else {
+                        HStack(spacing: 8) {
+                            Text("\(state.awayScore)")
+                                .font(montserrat(22, .black)).monospacedDigit()
+                            Text(":").font(montserrat(13, .bold)).foregroundStyle(.white.opacity(0.5))
+                            Text("\(state.homeScore)")
+                                .font(montserrat(22, .black)).monospacedDigit()
+                        }
+                        Group {
+                            if state.isFinal {
+                                Text("경기 종료").font(notoKR(9, .bold))
+                            } else {
+                                // LIVE + 숫자 = Montserrat, 회초/말 = Noto
+                                Text("LIVE ").font(montserrat(9, .bold)) + inningRun(state.inningText, 9, .bold)
+                            }
+                        }
+                        .padding(.horizontal, 6).padding(.vertical, 1.5)
+                        .background(
+                            Capsule().fill(state.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
+                        )
                     }
-                    .padding(.horizontal, 6).padding(.vertical, 1.5)
-                    .background(
-                        Capsule().fill(state.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
-                    )
                 }
                 TeamBadge(code: attributes.homeTeamCode)
             }
 
-            // 하단: 아웃카운트(B/S 제거) + 투수/타자(소속) + 다이아몬드 (진행 중에만)
-            if !state.isFinal {
+            // 하단: 아웃카운트(B/S 제거) + 투수/타자(소속) + 다이아몬드 (진행 중에만, 경기 전 제외)
+            if !state.isFinal && !state.isScheduled {
                 HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 4) {
                         // 아웃카운트만 유지
