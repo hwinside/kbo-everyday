@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { X } from "lucide-react";
+import { X, Check } from "lucide-react";
 import { signInWithApple, signInWithGoogle, signInWithKakao, signInWithNaver } from "@/lib/supabase/auth";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { detectInApp } from "@/lib/detect-inapp";
@@ -20,13 +20,19 @@ type Provider = "apple" | "naver" | "kakao" | "google";
 export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
   const { user } = useAuth();
   const [inAppModalOpen, setInAppModalOpen] = useState(false);
+  // EULA(이용약관) 동의 게이트 — Apple 1.2: 가입/로그인 전 약관 동의 필수.
+  const [agreed, setAgreed] = useState(false);
+  const [agreeError, setAgreeError] = useState(false);
   // Remember which provider the user clicked so "계속 시도" in the modal can
   // still fall through to the provider they originally chose.
   const pendingProviderRef = useRef<Provider | null>(null);
 
   useEffect(() => {
     if (!isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setInAppModalOpen(false);
+      setAgreed(false);
+      setAgreeError(false);
       pendingProviderRef.current = null;
     }
   }, [isOpen]);
@@ -46,6 +52,11 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
 
   const handleProviderClick = useCallback(
     (provider: Provider) => {
+      // 약관 미동의 시 로그인 차단(EULA 게이트).
+      if (!agreed) {
+        setAgreeError(true);
+        return;
+      }
       const detection = detectInApp();
       if (detection.isInApp) {
         pendingProviderRef.current = provider;
@@ -54,7 +65,7 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
       }
       runProvider(provider);
     },
-    [runProvider],
+    [agreed, runProvider],
   );
 
   const handleContinueAnyway = useCallback(() => {
@@ -90,11 +101,36 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
                 </button>
               </div>
 
-              <p className="text-sm text-text-secondary mb-6">
+              <p className="text-sm text-text-secondary mb-4">
                 로그인하면 예측, 채팅, 게시판을 이용할 수 있어요
               </p>
 
-              <div className="space-y-3">
+              {/* EULA 동의 게이트 — Apple 1.2: 가입/로그인 전 약관 동의 + 무관용 원칙 명시. */}
+              <div className="mb-5">
+                <div className="flex items-start gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => { setAgreed(v => !v); setAgreeError(false); }}
+                    aria-pressed={agreed}
+                    aria-label="이용약관 및 개인정보처리방침 동의"
+                    className={`mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border transition-colors ${
+                      agreed ? "bg-accent border-accent" : agreeError ? "border-red-500" : "border-text-tertiary"
+                    }`}
+                  >
+                    {agreed && <Check size={14} className="text-white" />}
+                  </button>
+                  <p className="text-[12px] leading-snug text-text-secondary">
+                    (만 14세 이상) <Link href="/terms" className="underline underline-offset-2">이용약관</Link> 및{" "}
+                    <Link href="/privacy" className="underline underline-offset-2">개인정보처리방침</Link>에 동의합니다.
+                    크보팬은 욕설·비방 등 불쾌한 콘텐츠와 악성 이용자에 대해 무관용 원칙을 적용합니다.
+                  </p>
+                </div>
+                {agreeError && (
+                  <p className="mt-1.5 ml-7 text-[11px] text-red-500">약관에 동의해야 로그인할 수 있어요</p>
+                )}
+              </div>
+
+              <div className={`space-y-3 transition-opacity ${agreed ? "" : "opacity-50"}`}>
                 {/* 네이버 로그인 — 검수 승인 완료 (2026-04-17) */}
                 <button
                   onClick={() => handleProviderClick("naver")}
@@ -142,10 +178,6 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
                 </button>
               </div>
 
-              <p className="text-[11px] text-text-tertiary text-center mt-4">
-                시작하면 <Link href="/terms" className="underline underline-offset-2">이용약관</Link> 및{" "}
-                <Link href="/privacy" className="underline underline-offset-2">개인정보처리방침</Link>에 동의하는 것으로 간주합니다.
-              </p>
             </motion.div>
           </>
         )}

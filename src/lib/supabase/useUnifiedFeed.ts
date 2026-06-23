@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
+import { useBlockedIds } from "./useBlock";
 import type { Post } from "./usePosts";
 import { kboIdsForTeamSlug } from "@/lib/utils/player-roster";
 
@@ -49,6 +50,7 @@ function boardKey(board: FeedBoard): string {
  */
 export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
   const { user } = useAuth();
+  const { blockedIds } = useBlockedIds();
   const [posts, setPosts] = useState<Post[]>([]);
   const [likedIds, setLikedIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -188,7 +190,8 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
   }, []);
 
   return {
-    posts,
+    // 차단한 유저의 글은 피드에서 즉시 제외(차단 시 useBlockedIds가 브로드캐스트로 갱신 → 재렌더로 사라짐).
+    posts: blockedIds.size ? posts.filter((p) => !blockedIds.has(p.author_id)) : posts,
     likedIds,
     loading,
     loadingMore,

@@ -12,6 +12,22 @@ interface BlockedUser {
   created_at: string;
 }
 
+// 차단 변경 브로드캐스트 — 한 화면에서 차단하면 다른 화면의 피드/목록(useBlockedIds)이 즉시 갱신되게.
+const BLOCK_CHANGED_EVENT = "kbo:block-changed";
+function emitBlockChanged() {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(BLOCK_CHANGED_EVENT));
+}
+
+// 명령형 차단 — 글/댓글 메뉴 등 hook 밖에서 즉시 호출. 이미 차단(23505)도 성공 취급.
+export async function blockUserById(blockerId: string, blockedId: string): Promise<boolean> {
+  const { error } = await supabase
+    .from("user_blocks")
+    .insert({ blocker_id: blockerId, blocked_id: blockedId });
+  const ok = !error || error.code === "23505";
+  if (ok) emitBlockChanged();
+  return ok;
+}
+
 // 특정 유저 차단/해제
 export function useBlockUser(targetId: string) {
   const { user } = useAuth();
@@ -39,7 +55,7 @@ export function useBlockUser(targetId: string) {
     const { error } = await supabase
       .from("user_blocks")
       .insert({ blocker_id: user.id, blocked_id: targetId });
-    if (!error) setIsBlocked(true);
+    if (!error) { setIsBlocked(true); emitBlockChanged(); }
     return !error;
   }, [user, targetId]);
 
@@ -50,7 +66,7 @@ export function useBlockUser(targetId: string) {
       .delete()
       .eq("blocker_id", user.id)
       .eq("blocked_id", targetId);
-    if (!error) setIsBlocked(false);
+    if (!error) { setIsBlocked(false); emitBlockChanged(); }
     return !error;
   }, [user, targetId]);
 
@@ -126,7 +142,13 @@ export function useBlockedIds() {
     }
   }, [user]);
 
-  useEffect(() => { refresh(); }, [refresh]); // eslint-disable-line react-hooks/set-state-in-effect
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    refresh();
+    if (typeof window === "undefined") return;
+    window.addEventListener(BLOCK_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(BLOCK_CHANGED_EVENT, refresh);
+  }, [refresh]);
 
   return { blockedIds, refresh };
 }
