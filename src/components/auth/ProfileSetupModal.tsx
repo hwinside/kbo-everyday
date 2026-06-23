@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import Image from "next/image";
@@ -67,34 +66,33 @@ export default function ProfileSetupModal({ isOpen }: Props) {
         ? undefined
         : (inviteCode.trim().toUpperCase() || undefined);
 
-      // access token 확보 — getSession은 네이티브에서도 resolve됨(.from() DB 쿼리만 hang)
-      let accessToken: string | undefined;
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        accessToken = session?.access_token;
-      } catch { /* 쿠키 fallback (API route에서 처리) */ }
-
-      // 서버 /api/setup으로 프로필 생성 — 클라이언트 supabase .from() 직접 호출 금지.
-      // 네이티브 OAuth 직후 클라이언트 DB 쿼리가 조용히 hang하면 "생성 중…" 영구 스턱.
-      // (/setup 페이지와 동일 경로) 닉네임 중복·초대코드·파운더 배지 전부 서버 처리.
+      // 서버 /api/setup으로 프로필 생성 — 클라이언트 supabase 직접 호출 일절 금지.
+      // 세션은 @supabase/ssr 쿠키에 저장돼 same-origin fetch에 자동 동봉되므로 getSession() 불필요.
+      // getSession은 네이티브 가입 직후 auth 락 경합으로 hang할 수 있어(#209) 호출 자체를 제거 →
+      // "생성 중…" 영구 스턱 원천 차단. (/setup 페이지와 동일하게 서버에서 인증·닉네임·초대코드 처리)
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15000);
       let res: Response;
       try {
-        res = await fetch("/api/setup", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-          },
-          body: JSON.stringify({
-            nickname: nickname.trim(),
-            team_id: selectedTeam,
-            invite_code: effectiveInviteCode,
-            favorite_players: [],
+        // Promise.race 안전망 — 일부 네이티브 WebView에서 AbortController가 fetch를 못 끊어도
+        // 15초 후 reject되어 loading이 반드시 해제됨(무한 스피너 불가능).
+        res = await Promise.race([
+          fetch("/api/setup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+              nickname: nickname.trim(),
+              team_id: selectedTeam,
+              invite_code: effectiveInviteCode,
+              favorite_players: [],
+            }),
+            signal: controller.signal,
           }),
-          signal: controller.signal,
-        });
+          new Promise<Response>((_, reject) =>
+            setTimeout(() => reject(new DOMException("timeout", "AbortError")), 15000)
+          ),
+        ]);
       } finally {
         clearTimeout(timer);
       }
