@@ -44,10 +44,19 @@ export function rankByStat(rows: StatRow[], statKey: string): RankedRow[] {
   if (!def || !Array.isArray(rows)) return [];
 
   const isRateStat = RATE_STATS.includes(statKey);
+  // 비율 스탯(ERA·타율·출루율·OPS·WHIP)은 KBO 공식 규정이닝/규정타석 충족자만.
+  // API가 qualifiedRate 플래그를 제공하면(현 시즌) 타이틀 화면(PitcherTitleTab/BatterTitleTab)과
+  // 동일하게 그 플래그로 거른다 — 안 그러면 규정 미달 불펜투수(예: 손주영 19⅓이닝)가 ERA 상위로 오표기됨.
+  // 플래그가 없는 데이터(과거 시즌 등)에선 기존 최소 이닝/타석 기준으로 폴백.
+  const hasQualFlag = rows.some(
+    (p) => p["qualifiedRate"] !== undefined && p["qualifiedRate"] !== null
+  );
   const filtered = isRateStat
-    ? def.type === "batter"
-      ? rows.filter((p) => (Number(p["pa"]) || 0) >= 30) // 타자: 최소 30타석
-      : rows.filter((p) => parseIP((p["ip"] as string | number) || 0) >= 12) // 투수: 최소 12이닝
+    ? hasQualFlag
+      ? rows.filter((p) => Number(p["qualifiedRate"]) === 1)
+      : def.type === "batter"
+        ? rows.filter((p) => (Number(p["pa"]) || 0) >= 30) // 폴백: 타자 최소 30타석
+        : rows.filter((p) => parseIP((p["ip"] as string | number) || 0) >= 12) // 폴백: 투수 최소 12이닝
     : def.type === "batter"
       ? rows.filter((p) => (Number(p["games"]) || 0) >= 10)
       : rows.filter((p) => (Number(p["games"]) || 0) >= 5);
