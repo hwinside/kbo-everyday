@@ -67,6 +67,9 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
-	<true/>
+	<false/>
+	<!-- 상태바 다크톤 일체화: 밝은 아이콘(light content) 전역 적용. 배경은 다크 앱 콘텐츠(#0A0A0B)가 비침. -->
+	<key>UIStatusBarStyle</key>
+	<string>UIStatusBarStyleLightContent</string>
 </dict>
 </plist>
