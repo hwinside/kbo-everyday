@@ -13,6 +13,9 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- 상태바 다크톤 일체화: 배경 #0A0A0B + 밝은 아이콘(windowLightStatusBar=false). -->
+        <item name="android:statusBarColor">@color/status_bar</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 
 
