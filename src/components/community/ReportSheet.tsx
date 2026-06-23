@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { supabase } from "@/lib/supabase/client";
@@ -20,35 +21,23 @@ const REASONS = [
   { id: "other", label: "기타", icon: "📝" },
 ];
 
-function useBodyScrollLock(isOpen: boolean) {
+// iOS/WKWebView 대응: body를 position:fixed로 고정하면 시트 내부 overflow 스크롤까지 죽어서(벽돌 현상)
+// body는 건드리지 않고, document touchmove를 "스크롤 영역(data-report-scroll) 밖에서만" 막는다.
+// 내부 스크롤 영역은 네이티브 스크롤(WebkitOverflowScrolling: touch)을 그대로 허용 → 배경은 고정, 시트는 스크롤.
+function useBackgroundTouchLock(isOpen: boolean) {
   useEffect(() => {
     if (!isOpen) return;
 
-    const scrollY = window.scrollY;
-    const { style } = document.body;
-    const previousPosition = style.position;
-    const previousTop = style.top;
-    const previousLeft = style.left;
-    const previousRight = style.right;
-    const previousWidth = style.width;
-    const previousOverflow = style.overflow;
-
-    style.position = "fixed";
-    style.top = `-${scrollY}px`;
-    style.left = "0";
-    style.right = "0";
-    style.width = "100%";
-    style.overflow = "hidden";
-
-    return () => {
-      style.position = previousPosition;
-      style.top = previousTop;
-      style.left = previousLeft;
-      style.right = previousRight;
-      style.width = previousWidth;
-      style.overflow = previousOverflow;
-      window.scrollTo(0, scrollY);
+    const onTouchMove = (e: TouchEvent) => {
+      const target = e.target as Element | null;
+      // 신고 시트 스크롤 영역 안에서의 터치는 네이티브 스크롤 허용
+      if (target && target.closest("[data-report-scroll]")) return;
+      // 그 밖(배경/백드롭)에서의 터치 스크롤은 차단
+      if (e.cancelable) e.preventDefault();
     };
+
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
+    return () => document.removeEventListener("touchmove", onTouchMove);
   }, [isOpen]);
 }
 
@@ -60,7 +49,7 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId }: R
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
 
-  useBodyScrollLock(isOpen);
+  useBackgroundTouchLock(isOpen);
 
   async function handleSubmit() {
     if (!user || !selected) return;
@@ -99,9 +88,10 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId }: R
     setSubmitting(false);
   }
 
-  if (!isOpen) return null;
+  if (!isOpen || typeof document === "undefined") return null;
 
-  return (
+  // 부모의 transform/filter에 fixed가 갇혀 시트가 잘리던 문제(벽돌) 방지 — document.body로 포털(작동하는 CommentSheet와 동일)
+  return createPortal(
     <AnimatePresence>
       <motion.div
         className="fixed inset-0 z-50 flex items-end overscroll-none"
@@ -109,7 +99,7 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId }: R
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div className="absolute inset-0 bg-black/60" onClick={onClose} style={{ touchAction: "none" }} />
+        <div className="absolute inset-0 bg-black/60" onClick={onClose} />
         <motion.div
           className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl max-h-[85dvh] overflow-hidden flex flex-col"
           initial={{ y: "100%" }}
@@ -129,7 +119,11 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId }: R
               <p className="text-sm text-text-primary mt-2">신고가 접수되었습니다</p>
             </div>
           ) : (
-            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 py-4 pb-safe space-y-3">
+            <div
+              data-report-scroll
+              style={{ WebkitOverflowScrolling: "touch" }}
+              className="flex-1 min-h-0 overflow-y-scroll overscroll-contain px-5 py-4 pb-safe space-y-3"
+            >
               {REASONS.map(r => (
                 <button
                   key={r.id}
@@ -165,6 +159,7 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId }: R
           )}
         </motion.div>
       </motion.div>
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 }
