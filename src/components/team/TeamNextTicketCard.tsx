@@ -33,10 +33,11 @@ export default function TeamNextTicketCard({ team }: Props) {
       const upcoming: Array<{ date: string; time: string; homeTeamId: number; opponentName: string; isAway: boolean; uncertain: boolean }> = [];
       const now = new Date();
 
-      // 홈+원정 중 가장 먼저 오픈되는 경기를 찾기 위해 35일/12경기 안전한도 내 전체 수집.
-      // daysBefore가 구단마다 다르므로(롯데 14일·SSG 5일 등) 날짜상 뒤 경기가 먼저 오픈될 수 있음
-      // → 조기 break 없이 후보 전체 수집 후 getNextTicketOpen이 최단 openAt을 선택.
-      for (let i = 0; i < 35 && upcoming.length < 12; i++) {
+      // 홈+원정 중 가장 먼저 오픈되는 경기를 찾기 위해 35일 전체 수집.
+      // daysBefore가 구단마다 다르므로(롯데 14일·SSG 5일 등) 날짜상 뒤 경기가 먼저 오픈될 수 있음.
+      // ex) 13번째 롯데 원정(14일전 오픈)이 1~12번째 SSG 홈경기(5일전 오픈)보다 먼저 오픈될 수 있어
+      // 경기 수로 조기 중단하지 않고 35일 범위 전체를 수집한 뒤 getNextTicketOpen이 최단 openAt 선택.
+      for (let i = 0; i < 35; i++) {
         const d = new Date(now);
         d.setDate(d.getDate() + i);
         const dateStr = d

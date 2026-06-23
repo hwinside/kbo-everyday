@@ -47,5 +47,19 @@ const laterDateEarlierOpen = getNextTicketOpen([
 ], baseNow);
 ck("날짜상 뒤 롯데(6/23 오픈)가 SSG(6/26 오픈)보다 먼저 오픈 → 롯데 선택", !!laterDateEarlierOpen && laterDateEarlierOpen.gameDate === "20260707" && laterDateEarlierOpen.provider === TICKET_OPEN_RULES[HOST_LOTTE].provider);
 
+// 7) 13번째 경기(롯데 원정 7/8, 오픈 6/24)가 1~12번째(SSG 원정 7/10~7/21, 오픈 7/5~7/16)보다 먼저 오픈
+// 컬렉터 12경기 캡이면 롯데를 못 보고 SSG 7/10(7/5 오픈)을 잘못 선택 → 캡 제거 후 롯데 정상 선택
+const baseNow2 = new Date(2026, 5, 1, 12, 0, 0); // 2026-06-01 12:00 기준
+// SSG (daysBefore=5): 7/10~7/21 → 가장 빠른 오픈 7/5 (7/10 경기)
+const twelveSSG = Array.from({ length: 12 }, (_, k) => ({
+  date: `202607${String(k + 10).padStart(2, "0")}`, // 7/10~7/21
+  homeTeamId: HOST_SSG, isAway: true, opponentName: "SSG",
+}));
+// 롯데 (daysBefore=14): 7/8 → 오픈 6/24 ← SSG 최단(7/5)보다 더 빠름
+const thirteenthLotte = { date: "20260708", homeTeamId: HOST_LOTTE, isAway: true, opponentName: "롯데" };
+const capFix = getNextTicketOpen([...twelveSSG, thirteenthLotte], baseNow2);
+ck("13번째 롯데(6/24 오픈)가 1~12번째 SSG(7/5~7/16 오픈)보다 먼저 → 롯데 선택",
+  !!capFix && capFix.gameDate === "20260708");
+
 console.log(`\n예매 오픈 스모크: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);
