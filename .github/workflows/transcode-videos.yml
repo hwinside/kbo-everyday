@@ -9,7 +9,7 @@ name: Transcode Community Videos
 
 on:
   schedule:
-    - cron: '*/10 * * * *' # 10분마다 (GitHub 스케줄은 best-effort, 지연 가능)
+    - cron: '*/30 * * * *' # 30분마다 (GitHub 스케줄은 best-effort, 지연 가능)
   workflow_dispatch: # 수동 실행
 
 # 동시 실행 금지 — 워커는 단일 인스턴스 가정(작업 claim 락 없음)이라
@@ -34,7 +34,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --omit=dev --no-audit --no-fund
 
       - name: Ensure ffmpeg
         run: ffmpeg -version || (sudo apt-get update && sudo apt-get install -y ffmpeg)
