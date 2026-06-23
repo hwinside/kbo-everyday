@@ -9,15 +9,32 @@
  */
 import { App } from "@capacitor/app";
 import { Browser } from "@capacitor/browser";
+import { registerPlugin } from "@capacitor/core";
 import { supabase } from "@/lib/supabase/client";
-import { isNative } from "./platform";
+import { isNative, isAndroid } from "./platform";
 
 let listenerRegistered = false;
 
 /**
+ * Android 전용 Chrome Custom Tab 런처 (네이티브 OAuthBrowserPlugin).
+ * 삼성 인터넷이 기본 브라우저일 때 구글 계정 선택 화면 이메일이 자동 mailto 링크화돼
+ * Gmail 작성으로 튀는 버그(#cs 2026-06-23) 회피 — OAuth만 Chrome Custom Tab으로 강제.
+ */
+interface OAuthBrowserPlugin {
+  open(options: { url: string }): Promise<void>;
+  close(): Promise<void>;
+}
+const OAuthBrowser = registerPlugin<OAuthBrowserPlugin>("OAuthBrowser");
+
+/**
  * 네이티브 앱에서 OAuth URL을 Custom Tabs로 열기
+ * Android = Chrome Custom Tab 강제(OAuthBrowser), iOS = SFSafariViewController(@capacitor/browser)
  */
 export async function openOAuthInBrowser(url: string): Promise<void> {
+  if (isAndroid) {
+    await OAuthBrowser.open({ url });
+    return;
+  }
   await Browser.open({ url, presentationStyle: "fullscreen" });
 }
 
@@ -36,7 +53,12 @@ export function registerDeepLinkListener(): void {
     if (!isKeuboUniversalLink && !isKeuboCustomScheme) return;
 
     try {
-      await Browser.close();
+      // Android는 Chrome Custom Tab(OAuthBrowser)으로 열었으므로 같은 플러그인으로 닫음.
+      if (isAndroid) {
+        await OAuthBrowser.close();
+      } else {
+        await Browser.close();
+      }
     } catch {
       // Browser가 이미 닫혀있을 수 있음
     }

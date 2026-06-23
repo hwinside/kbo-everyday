@@ -2,6 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Android 11+(API 30) package visibility: Custom Tabs provider(Chrome 등)를 조회하려면
+         이 queries 선언이 필요. 없으면 OAuthBrowserPlugin의 CustomTabsClient.getPackageName이
+         null을 반환해 삼성 인터넷 기본 브라우저로 폴백 → Chrome 강제 fix가 무력화됨(삼순 리뷰). -->
+    <queries>
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
