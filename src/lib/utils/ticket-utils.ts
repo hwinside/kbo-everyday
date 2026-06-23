@@ -6,12 +6,14 @@ export interface NextTicketOpen {
   status: TicketOpenStatus;
   /** 예매 오픈 시각 */
   openAt: Date;
-  /** 대상 홈경기 날짜 YYYYMMDD */
+  /** 대상 경기 날짜 YYYYMMDD */
   gameDate: string;
-  /** 대상 홈경기 시작 시각 (HH:MM) — 없으면 빈 문자열 */
+  /** 대상 경기 시작 시각 (HH:MM) — 없으면 빈 문자열 */
   gameTime: string;
-  /** 상대 팀명 (홈경기 기준 원정팀) — 없으면 빈 문자열 */
+  /** 상대 팀명 (홈경기=원정팀, 원정경기=홈팀) — 없으면 빈 문자열 */
   opponentName: string;
+  /** 원정경기 여부 (true=상대 구장, 상대팀 예매처) */
+  isAway: boolean;
   buyUrl: string;
   provider: string;
   /** 오픈까지 남은 ms (countdown only) */
@@ -21,20 +23,20 @@ export interface NextTicketOpen {
 }
 
 /**
- * 팀 + 다가오는 홈경기 목록을 받아 "다음 예매 오픈(대기중)" 경기를 반환.
+ * 다가오는 경기(홈+원정) 목록을 받아 "다음 예매 오픈(대기중)" 경기를 반환.
+ * - 예매 룰은 *경기를 주최하는 홈팀(homeTeamId)* 기준 — 원정경기는 상대(홈)팀의 예매처/오픈룰을 따른다.
  * - 예매처가 오픈 즉시 매진되므로 '지금 예매중' 경기는 노출하지 않음 — *다음 오픈 예정* 경기만 의미 있음.
- * - 이미 오픈됐거나 시작/종료된 경기는 건너뛰고, 가장 가까운 *오픈 대기(countdown)* 경기를 반환.
- * - 대기중 경기가 없으면 null(카드 미노출).
+ * - 홈/원정 통틀어 *가장 먼저 오픈되는* 대기 경기를 반환(없으면 null = 카드 미노출).
  */
 export function getNextTicketOpen(
-  teamId: number,
-  upcomingHomeGames: Array<{ date: string; time?: string; opponentName?: string; uncertain?: boolean }>,
+  upcomingGames: Array<{ date: string; time?: string; homeTeamId: number; opponentName?: string; isAway?: boolean; uncertain?: boolean }>,
   now: Date = new Date()
 ): NextTicketOpen | null {
-  const policy = TICKET_OPEN_RULES[teamId];
-  if (!policy || upcomingHomeGames.length === 0) return null;
+  if (upcomingGames.length === 0) return null;
 
-  const openAtOf = (date: string) => {
+  const openAtOf = (date: string, hostId: number): Date | null => {
+    const policy = TICKET_OPEN_RULES[hostId];
+    if (!policy) return null;
     const y = parseInt(date.slice(0, 4));
     const m = parseInt(date.slice(4, 6)) - 1;
     const d = parseInt(date.slice(6, 8));
@@ -47,19 +49,26 @@ export function getNextTicketOpen(
     return new Date(y, m, d, 23, 59, 59) < now;
   };
 
-  for (const game of upcomingHomeGames) {
+  let best: NextTicketOpen | null = null;
+  for (const game of upcomingGames) {
     if (isPastGame(game.date)) continue;
-    const openAt = openAtOf(game.date);
+    const policy = TICKET_OPEN_RULES[game.homeTeamId];
+    if (!policy) continue; // 주최팀 예매룰 미정의 → 스킵
+    const openAt = openAtOf(game.date, game.homeTeamId);
+    if (!openAt) continue;
     const msUntilOpen = openAt.getTime() - now.getTime();
     // 이미 예매 오픈된 경기는 노출하지 않음(오픈 즉시 매진) → 다음 오픈 대기 경기만
     if (msUntilOpen <= 0) continue;
+    // 홈/원정 중 가장 먼저 오픈되는 경기 선택(호스트별 daysBefore가 달라도 안전)
+    if (best && openAt.getTime() >= best.openAt.getTime()) continue;
 
-    return {
+    best = {
       status: "countdown",
       openAt,
       gameDate: game.date,
       gameTime: game.time ?? "",
       opponentName: game.opponentName ?? "",
+      isAway: !!game.isAway,
       buyUrl: policy.url,
       provider: policy.provider,
       msUntilOpen,
@@ -67,7 +76,7 @@ export function getNextTicketOpen(
     };
   }
 
-  return null;
+  return best;
 }
 
 export function formatCountdown(ms: number): string {
