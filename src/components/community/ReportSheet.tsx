@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { supabase } from "@/lib/supabase/client";
@@ -20,6 +20,38 @@ const REASONS = [
   { id: "other", label: "기타", icon: "📝" },
 ];
 
+function useBodyScrollLock(isOpen: boolean) {
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const scrollY = window.scrollY;
+    const { style } = document.body;
+    const previousPosition = style.position;
+    const previousTop = style.top;
+    const previousLeft = style.left;
+    const previousRight = style.right;
+    const previousWidth = style.width;
+    const previousOverflow = style.overflow;
+
+    style.position = "fixed";
+    style.top = `-${scrollY}px`;
+    style.left = "0";
+    style.right = "0";
+    style.width = "100%";
+    style.overflow = "hidden";
+
+    return () => {
+      style.position = previousPosition;
+      style.top = previousTop;
+      style.left = previousLeft;
+      style.right = previousRight;
+      style.width = previousWidth;
+      style.overflow = previousOverflow;
+      window.scrollTo(0, scrollY);
+    };
+  }, [isOpen]);
+}
+
 export default function ReportSheet({ isOpen, onClose, targetType, targetId }: ReportSheetProps) {
   const { user } = useAuth();
   const [selected, setSelected] = useState<string | null>(null);
@@ -27,6 +59,8 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId }: R
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
+
+  useBodyScrollLock(isOpen);
 
   async function handleSubmit() {
     if (!user || !selected) return;
@@ -70,31 +104,32 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId }: R
   return (
     <AnimatePresence>
       <motion.div
-        className="fixed inset-0 z-50 flex items-end"
+        className="fixed inset-0 z-50 flex items-end overscroll-none"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+        <div className="absolute inset-0 bg-black/60" onClick={onClose} style={{ touchAction: "none" }} />
         <motion.div
-          className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl"
+          className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl max-h-[85dvh] overflow-hidden flex flex-col"
           initial={{ y: "100%" }}
           animate={{ y: 0 }}
           exit={{ y: "100%" }}
           transition={{ type: "spring", damping: 25 }}
+          onClick={(e) => e.stopPropagation()}
         >
-          <div className="px-5 py-4 border-b border-border">
+          <div className="shrink-0 px-5 py-4 border-b border-border">
             <h2 className="text-lg font-bold text-text-primary">🚨 신고하기</h2>
             <p className="text-xs text-text-tertiary">신고 3회 누적 시 자동 블라인드 처리됩니다</p>
           </div>
 
           {done ? (
-            <div className="py-10 text-center">
+            <div className="py-10 text-center overflow-y-auto overscroll-contain">
               <span className="text-4xl">✅</span>
               <p className="text-sm text-text-primary mt-2">신고가 접수되었습니다</p>
             </div>
           ) : (
-            <div className="px-5 py-4 space-y-3">
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 py-4 pb-safe space-y-3">
               {REASONS.map(r => (
                 <button
                   key={r.id}
