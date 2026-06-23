@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, MoreHorizontal, Check, CornerDownRight, X, ImagePlay } from "lucide-react";
+import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, Ban, MoreHorizontal, Check, CornerDownRight, X, ImagePlay } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { usePostDetail, createComment, toggleLike, toggleCommentLike, updatePost, deletePost, updateComment, deleteComment } from "@/lib/supabase/usePosts";
@@ -19,6 +19,8 @@ import DMButton from "@/components/ui/DMButton";
 import GifPicker, { isGifComment } from "@/components/community/GifPicker";
 import LoginSheet from "@/components/auth/LoginSheet";
 import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
+import { useBlockedIds, blockUserById } from "@/lib/supabase/useBlock";
+import { supabase } from "@/lib/supabase/client";
 
 interface PostDetailProps {
   postId: number;
@@ -30,6 +32,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
   const [showReport, setShowReport] = useState(false);
   const [reportTarget, setReportTarget] = useState<{type: "post"|"comment"; id: number}>({type: "post", id: 0});
   const { post, comments, loading, liked, setLiked, setComments } = usePostDetail(postId);
+  const { blockedIds } = useBlockedIds();
   const [comment, setComment] = useState("");
   const [likeCount, setLikeCount] = useState(0);
   const [heartShow, setHeartShow] = useState(false);
@@ -243,6 +246,46 @@ export default function PostDetail({ postId }: PostDetailProps) {
     }
   }
 
+  // 신고 — ReportSheet 오픈(글/댓글 공통).
+  function openReport(target: { type: "post" | "comment"; id: number }) {
+    setPostMenuOpen(false);
+    setCmtMenuOpenId(null);
+    if (!user) { setShowLogin(true); return; }
+    setReportTarget(target);
+    setShowReport(true);
+  }
+
+  // 차단 — ①user_blocks 등록(피드/목록 즉시 반영) ②운영팀에 해당 콘텐츠 자동 신고(개발자 알림)
+  // ③현재 화면에서 즉시 제거. Apple 1.2 "block should notify the developer & remove from feed instantly".
+  async function handleBlockUser(authorId: string | null | undefined, ctx?: { type: "post" | "comment"; id: number }) {
+    setPostMenuOpen(false);
+    setCmtMenuOpenId(null);
+    if (!user) { setShowLogin(true); return; }
+    if (!authorId || authorId === user.id) return;
+    if (!confirm("이 사용자를 차단할까요?\n차단하면 이 사용자의 글과 댓글이 더 이상 보이지 않으며, 운영팀에 자동으로 신고됩니다.")) return;
+    const ok = await blockUserById(user.id, authorId);
+    if (!ok) { alert("차단에 실패했어요. 잠시 후 다시 시도해주세요."); return; }
+    // 개발자(운영팀)에게 해당 콘텐츠 자동 신고 — 실패해도 차단 자체는 유지.
+    if (ctx) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          await fetch("/api/report", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+            body: JSON.stringify({ targetType: ctx.type, targetId: ctx.id, reason: "block", detail: "사용자 차단에 따른 자동 신고" }),
+          });
+        }
+      } catch { /* 신고 실패는 차단을 막지 않음 */ }
+    }
+    // 즉시 화면에서 제거: 글이면 뒤로(피드는 useBlockedIds 브로드캐스트로 필터), 댓글이면 목록에서 제거.
+    if (ctx?.type === "post") {
+      router.back();
+    } else {
+      setComments(prev => prev.filter(c => c.author_id !== authorId));
+    }
+  }
+
   async function handleLike() {
     if (!user) { alert("로그인이 필요합니다"); return; }
     try {
@@ -399,7 +442,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
           <span className="text-xs text-text-tertiary ml-auto">
             {timeAgo(post.created_at)}{(postPatch.updated_at || post.updated_at) ? " · 수정됨" : ""}
           </span>
-          {(isPostMine || canDeleteAnyPost) && !postEditing && (
+          {user && !postEditing && (
             <div className="relative">
               <button
                 onClick={(e) => { e.stopPropagation(); setPostMenuOpen(v => !v); }}
@@ -414,7 +457,17 @@ export default function PostDetail({ postId }: PostDetailProps) {
                   <div className="fixed inset-0 z-10" onClick={() => setPostMenuOpen(false)} />
                   <div className="absolute right-0 top-8 z-20 min-w-[112px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
                     {isPostMine && <button onClick={startPostEdit} className="block w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">수정</button>}
-                    <button onClick={handleDeletePost} className="block w-full px-3 py-2 text-left text-sm text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
+                    {!isPostMine && (
+                      <button onClick={() => openReport({ type: "post", id: post.id })} className="flex items-center gap-2 w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">
+                        <Flag size={14} /> 신고
+                      </button>
+                    )}
+                    {!isPostMine && (
+                      <button onClick={() => handleBlockUser(post.author_id, { type: "post", id: post.id })} className="flex items-center gap-2 w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">
+                        <Ban size={14} /> 차단
+                      </button>
+                    )}
+                    {(isPostMine || canDeleteAnyPost) && <button onClick={handleDeletePost} className="block w-full px-3 py-2 text-left text-sm text-[#FF453A] hover:bg-bg-tertiary">삭제</button>}
                   </div>
                 </>
               )}
@@ -526,10 +579,13 @@ export default function PostDetail({ postId }: PostDetailProps) {
             <p className="text-sm text-text-tertiary text-center py-6">첫 댓글을 남겨보세요 💬</p>
           ) : (
             (() => {
-              // Build comment tree (2-depth)
+              // Build comment tree (2-depth). 차단한 유저의 댓글은 제외.
+              const visibleComments = blockedIds.size
+                ? comments.filter(c => !c.author_id || !blockedIds.has(c.author_id))
+                : comments;
               const roots: (typeof comments[0] & { replies: typeof comments })[] = [];
               const childMap = new Map<number, typeof comments>();
-              for (const c of comments) {
+              for (const c of visibleComments) {
                 if (!c.parent_id) {
                   roots.push({ ...c, replies: [] });
                 } else {
@@ -577,7 +633,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
                         <span className="text-xs text-text-tertiary ml-auto flex-shrink-0">
                           {timeAgo(c.created_at)}{isCmtEdited ? " · 수정됨" : ""}
                         </span>
-                        {canDeleteCmt && !isCmtEditing && (
+                        {user && !isCmtEditing && (
                           <div className="relative flex-shrink-0">
                             <button
                               onClick={(e) => { e.stopPropagation(); setCmtMenuOpenId(prev => prev === c.id ? null : c.id); }}
@@ -593,7 +649,19 @@ export default function PostDetail({ postId }: PostDetailProps) {
                                   {isCmtMine && (
                                     <button onClick={() => startCmtEdit(c)} className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">수정</button>
                                   )}
-                                  <button onClick={() => handleDeleteComment(c.id)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
+                                  {!isCmtMine && (
+                                    <button onClick={() => openReport({ type: "comment", id: c.id })} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
+                                      <Flag size={12} /> 신고
+                                    </button>
+                                  )}
+                                  {!isCmtMine && (
+                                    <button onClick={() => handleBlockUser(c.author_id, { type: "comment", id: c.id })} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
+                                      <Ban size={12} /> 차단
+                                    </button>
+                                  )}
+                                  {canDeleteCmt && (
+                                    <button onClick={() => handleDeleteComment(c.id)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
+                                  )}
                                 </div>
                               </>
                             )}

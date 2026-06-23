@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { teamSlugsForPlayerTags } from "@/lib/utils/player-roster";
+import { checkObjectionableContent } from "@/lib/moderation/content-filter";
 
 export interface Post {
   id: number;
@@ -224,6 +225,10 @@ export async function createPost(params: {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
 
+  // 작성 전 모더레이션 필터(욕설/스팸/도배) — 통과해야 게시.
+  const filter = checkObjectionableContent({ title: params.title, content: params.content });
+  if (!filter.allowed) throw new Error(filter.issues[0] ?? "부적절한 콘텐츠입니다");
+
   const row: Record<string, unknown> = {
     author_id: user.id,
     board_type: params.boardType,
@@ -281,6 +286,12 @@ export async function updatePost(
 ) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
+
+  // 수정 경로에도 모더레이션 필터 — 깨끗한 글을 부적절 표현으로 수정하는 우회 차단.
+  if (typeof params.title === "string" || typeof params.content === "string") {
+    const filter = checkObjectionableContent({ title: params.title, content: params.content });
+    if (!filter.allowed) throw new Error(filter.issues[0] ?? "부적절한 콘텐츠입니다");
+  }
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (typeof params.title === "string") {
@@ -416,6 +427,12 @@ export async function updateComment(commentId: number, content: string) {
   const trimmed = content.trim();
   if (!trimmed) throw new Error("빈 댓글");
 
+  // 수정 경로에도 모더레이션 필터(GIF URL 제외) — 깨끗한 댓글의 부적절 표현 수정 우회 차단.
+  if (!/^https?:\/\/\S+$/.test(trimmed)) {
+    const cf = checkObjectionableContent({ content: trimmed });
+    if (!cf.allowed) throw new Error(cf.issues[0] ?? "부적절한 콘텐츠입니다");
+  }
+
   const { error } = await supabase
     .from("comments")
     .update({ content: trimmed, updated_at: new Date().toISOString() })
@@ -448,6 +465,12 @@ export async function deleteComment(commentId: number, options?: { canDeleteAny?
 export async function createComment(postId: number, content: string, parentId?: number | null) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
+
+  // GIF 댓글(URL)은 필터 제외, 일반 텍스트 댓글은 작성 전 모더레이션 필터 통과 필요.
+  if (!/^https?:\/\/\S+$/.test(content.trim())) {
+    const cf = checkObjectionableContent({ content });
+    if (!cf.allowed) throw new Error(cf.issues[0] ?? "부적절한 콘텐츠입니다");
+  }
 
   const { data, error } = await supabase.from("comments").insert({
     post_id: postId,
