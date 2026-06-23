@@ -476,9 +476,14 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           initial={{ opacity: 0, y: -40 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -40 }}
-          className="fixed top-14 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl bg-bg-secondary border border-black/10 dark:border-white/10 shadow-lg"
+          className="fixed top-14 inset-x-0 z-50 flex justify-center px-4 pointer-events-none"
         >
-          <p className="text-sm font-medium text-text-primary">👋 {profile?.nickname}님 환영합니다!</p>
+          <div className="max-w-[calc(100vw-2rem)] px-5 py-3 rounded-2xl bg-bg-secondary border border-black/10 dark:border-white/10 shadow-lg">
+            <p className="text-sm font-medium text-text-primary text-center break-keep">
+              <span className="whitespace-nowrap">👋 {profile?.nickname}님</span>{" "}
+              <span className="whitespace-nowrap">환영합니다!</span>
+            </p>
+          </div>
         </m.div>
       )}
     </AnimatePresence>
