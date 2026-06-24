@@ -22,3 +22,62 @@ export function isHomerunCoveredRun(ev: GameEvent, allEvents: GameEvent[]): bool
     return Number.isFinite(ht) && Math.abs(ht - t) <= HR_RUN_DEDUPE_WINDOW_MS;
   });
 }
+
+// 홈런 알림(at_bat_homerun)의 표시 점수가 0:0으로 잘못 나가는 사고(고객 #SSLG 2026-06-24)
+// 보강. 홈런은 BoxScore에서 라이브 스코어보다 먼저 잡혀, 그 득점이 점수에 반영되기 *전*에
+// 이벤트가 만들어지면 ev.snapshot이 득점 전(0:0)이다. isHomerunCoveredRun이 중복 득점 푸시는
+// 막지만 생존하는 홈런 알림이 stale 점수를 그대로 보여주는 문제가 남는다.
+//
+// 판정 = "이 홈런의 득점이 점수에 반영됐는가". 신호 두 가지(OR):
+//  (a) 라이브 게임 현재 점수(g.T_SCORE_CN/B_SCORE_CN)의 *공격팀* 점수가 홈런 snapshot보다 높다
+//      → 홈런 이후 점수가 올랐다 = 반영됨.
+//  (b) 같은 half·시간창 안에 매칭 run_scored가 있다(점수가 라이브에 반영돼 generator가 emit).
+// 반영됐으면 가장 최신(현재 g 점수와 매칭 run snapshot 중 큰 쪽)으로 발송.
+// 아직이면(교차폴링 poll N) defer=true로 이번 사이클 발송 보류(claim 안 함) → 다음 폴링 재시도.
+// 단 무한 보류 방지로 waitMs 경과 시 현재 점수로 발송(같은-폴링: 점수가 이미 반영돼 정확,
+// 또는 드물게 득점 보정으로 run이 영영 안 와도 현행 동작으로 degrade).
+export const HR_SCORE_WAIT_MS = 75_000; // ≈1 폴링(매분) — 교차폴링 득점 반영 대기
+
+export interface HomerunScore {
+  defer: boolean;
+  awayScore: number;
+  homeScore: number;
+}
+
+export function resolveHomerunScore(
+  hr: GameEvent,
+  allEvents: GameEvent[],
+  currentAwayScore: number,
+  currentHomeScore: number,
+  nowMs: number,
+  waitMs: number = HR_SCORE_WAIT_MS,
+): HomerunScore {
+  const snapAway = hr.snapshot?.awayScore ?? 0;
+  const snapHome = hr.snapshot?.homeScore ?? 0;
+  // 공격팀(홈런 친 팀): isTop=초=원정(away), 말=홈(home).
+  const battingSnap = hr.isTop ? snapAway : snapHome;
+  const battingCur = hr.isTop ? currentAwayScore : currentHomeScore;
+
+  const ht = Date.parse(hr.timestamp);
+  const matchRun = allEvents.find((e) => {
+    if (e.type !== "run_scored") return false;
+    if (e.isTop !== hr.isTop || e.inning !== hr.inning) return false;
+    const rt = Date.parse(e.timestamp);
+    return Number.isFinite(rt) && Number.isFinite(ht) && Math.abs(rt - ht) <= HR_RUN_DEDUPE_WINDOW_MS;
+  });
+
+  // 가장 신선한 점수 = 현재 g 점수와 매칭 run snapshot 중 큰 쪽(반영이 더 된 쪽).
+  let outAway = currentAwayScore;
+  let outHome = currentHomeScore;
+  if (matchRun) {
+    outAway = Math.max(outAway, matchRun.snapshot?.awayScore ?? outAway);
+    outHome = Math.max(outHome, matchRun.snapshot?.homeScore ?? outHome);
+  }
+
+  const reflected = battingCur > battingSnap || matchRun !== undefined;
+  if (reflected) return { defer: false, awayScore: outAway, homeScore: outHome };
+
+  // 아직 반영 안 됨 — 신선하면 다음 폴링 대기, 오래됐으면 현재 점수로 발송.
+  if (Number.isFinite(ht) && nowMs - ht < waitMs) return { defer: true, awayScore: outAway, homeScore: outHome };
+  return { defer: false, awayScore: outAway, homeScore: outHome };
+}

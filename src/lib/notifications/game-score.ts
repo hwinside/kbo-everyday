@@ -1,7 +1,7 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { sendFcmToUsers } from "@/lib/notifications/fcm";
 import { teamIdByShortName, fansOfTeams } from "@/lib/notifications/game-status";
-import { isHomerunCoveredRun } from "@/lib/notifications/score-dedupe";
+import { isHomerunCoveredRun, resolveHomerunScore } from "@/lib/notifications/score-dedupe";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent } from "@/types/game-events";
 
@@ -73,15 +73,31 @@ export async function notifyScoreEvents(
       const teamId = teamIdByShortName(scoringTeamName);
       if (teamId === null) continue;
 
+      // 표시 점수 결정. 홈런은 BoxScore 선감지로 ev.snapshot이 득점 반영 전(0:0)일 수 있어,
+      // 라이브 현재 점수(g.T_SCORE_CN/B_SCORE_CN)·매칭 run_scored로 보정한다(고객 #SSLG 0:0 사고).
+      // 아직 반영 전이면 defer → claim 전이라 이번 사이클 건너뛰고 다음 폴링에 정확 점수로 발송.
+      const isHr = ev.type === "at_bat_homerun";
+      let aS = ev.snapshot?.awayScore ?? 0;
+      let hS = ev.snapshot?.homeScore ?? 0;
+      if (isHr) {
+        const curAway = Number.parseInt(g.T_SCORE_CN ?? "", 10);
+        const curHome = Number.parseInt(g.B_SCORE_CN ?? "", 10);
+        const r = resolveHomerunScore(
+          ev, events,
+          Number.isFinite(curAway) ? curAway : aS,
+          Number.isFinite(curHome) ? curHome : hS,
+          Date.now(),
+        );
+        if (r.defer) continue; // 득점 반영 대기 (claim 안 함 → 다음 폴링 재시도)
+        aS = r.awayScore; hS = r.homeScore;
+      }
+
       if (!(await claimEvent(ev.id, gameId))) continue; // 이미 발송됨/보류
 
       const fans = await fansOfTeams([teamId]);
       if (!fans.ok) { await unclaimEvent(ev.id); continue; } // 조회 실패 → 재시도
 
-      const aS = ev.snapshot?.awayScore ?? 0;
-      const hS = ev.snapshot?.homeScore ?? 0;
       const scoreLine = `${away} ${aS} : ${hS} ${home}`;
-      const isHr = ev.type === "at_bat_homerun";
       const batter = ev.detail?.batter;
       const title = isHr ? `💥 ${scoringTeamName} 홈런!` : `⚾ ${scoringTeamName} 득점!`;
       const body = isHr && batter ? `${batter} · ${scoreLine}` : scoreLine;
