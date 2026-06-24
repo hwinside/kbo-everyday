@@ -10,6 +10,7 @@
  * 실행: npm run qa:push-score-events
  */
 import { generateEvents, type PrevGameState } from "@/lib/event-generator";
+import { isHomerunCoveredRun } from "@/lib/notifications/score-dedupe";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
 import type { BatterRecord, GameDetailResponse } from "@/app/api/game-detail/route";
 import type { GameEvent } from "@/types/game-events";
@@ -132,6 +133,31 @@ for (const runs of [2, 3, 4]) {
   assert("양팀 동시 득점: run_scored 2개", rs.length === 2, rs.map(e => e.id));
   assert("양팀 동시 득점: scoringSide away+home", JSON.stringify(sides) === JSON.stringify(["away", "home"]), sides);
   assert("양팀 동시 득점: id 충돌 없음(side 포함)", new Set(rs.map(e => e.id)).size === 2, rs.map(e => e.id));
+}
+
+// ── ③ 교차-폴링 홈런 중복 방지 (game-score isHomerunCoveredRun) ──────────
+// 홈런은 BoxScore에서 먼저 감지되고 그 득점은 다음 폴링에 라이브 스코어로 반영되므로,
+// generator의 같은-사이클 suppression이 시차로 놓친다 → 알림 레이어가 누적 이벤트로 막는다.
+function mkGE(o: Partial<GameEvent> & { type: GameEvent["type"]; inning: number; isTop: boolean; timestamp: string }): GameEvent {
+  return {
+    id: `${GAME_ID}-${o.type}-${o.inning}-${o.isTop ? "T" : "B"}`,
+    gameId: GAME_ID, detail: {}, text: "", snapshot: {} as GameEvent["snapshot"], ...o,
+  } as GameEvent;
+}
+{
+  const T = "2026-06-24T10:44:03.000Z";
+  const hr = mkGE({ type: "at_bat_homerun", inning: 4, isTop: false, timestamp: "2026-06-24T10:43:48.000Z", detail: { batter: "오스틴" } });
+  const run = mkGE({ type: "run_scored", inning: 4, isTop: false, timestamp: T, detail: { scoringSide: "home", rbi: 1 } });
+  // 1) 실제 버그 케이스: HR 15초 뒤 run_scored → suppress
+  assert("교차폴링 홈런 득점: 중복 억제(true)", isHomerunCoveredRun(run, [hr, run]) === true);
+  // 2) 홈런 없는 일반 적시타 → 억제 안 함
+  assert("적시타 단독: 억제 안 함(false)", isHomerunCoveredRun(run, [run]) === false);
+  // 3) 같은 이닝이지만 20분 뒤 후속 안타 득점(시간창 밖) → 억제 안 함(큰 이닝 보호)
+  const lateRun = mkGE({ type: "run_scored", inning: 4, isTop: false, timestamp: "2026-06-24T11:04:03.000Z", detail: { scoringSide: "home", rbi: 1 } });
+  assert("큰 이닝 후속 득점(시간창 밖): 억제 안 함(false)", isHomerunCoveredRun(lateRun, [hr, lateRun]) === false);
+  // 4) 반대 half의 홈런과는 매칭 안 됨
+  const awayRun = mkGE({ type: "run_scored", inning: 4, isTop: true, timestamp: T, detail: { scoringSide: "away", rbi: 1 } });
+  assert("반대 half 홈런: 억제 안 함(false)", isHomerunCoveredRun(awayRun, [hr, awayRun]) === false);
 }
 
 console.log(failed === 0 ? "\n✅ ALL PASS" : `\n❌ ${failed} FAILED`);

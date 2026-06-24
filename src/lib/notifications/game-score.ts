@@ -1,6 +1,7 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { sendFcmToUsers } from "@/lib/notifications/fcm";
 import { teamIdByShortName, fansOfTeams } from "@/lib/notifications/game-status";
+import { isHomerunCoveredRun } from "@/lib/notifications/score-dedupe";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent } from "@/types/game-events";
 
@@ -64,6 +65,7 @@ export async function notifyScoreEvents(
       if (ev.type === "run_scored") {
         const side = ev.detail?.scoringSide;
         if (side !== "away" && side !== "home") continue; // scoringSide 없는 구버전 이벤트 방어
+        if (isHomerunCoveredRun(ev, events)) continue; // 홈런 득점 → at_bat_homerun이 이미 푸시 (중복 방지)
         scoringTeamName = side === "away" ? away : home;
       } else {
         scoringTeamName = ev.isTop ? away : home;
