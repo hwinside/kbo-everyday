@@ -230,12 +230,38 @@ async function startForTeamSide(params: {
     for (const r of (activeRows ?? []) as { user_id: string }[]) alreadyActive.add(r.user_id);
   }
 
+  // 발송 대상 = 토큰 보유 & opt-out 아님 & 이미 활성 카드 없음.
+  const eligible = [...tokenByUser.entries()].filter(
+    ([userId]) => !optedOut.has(userId) && !alreadyActive.has(userId),
+  );
+  if (eligible.length === 0) return { sent: 0, failed: false };
+
+  // 유저 단위 1회 선점 — (game_id, user_id) insert(ON CONFLICT DO NOTHING). 이미 발송한
+  // 유저는 충돌로 제외되고 *새로 선점된 유저만* 반환된다. 게임 단위 선점과 달리 윈도우
+  // 도중 늦게 등록된 토큰도 그 시점 cron이 처음 선점 → 발송된다.
+  const claimed: { user_id: string }[] = [];
+  for (let i = 0; i < eligible.length; i += 200) {
+    const chunk = eligible.slice(i, i + 200);
+    const { data, error } = await supabase
+      .from("live_activity_started_users")
+      .upsert(
+        chunk.map(([userId]) => ({ game_id: params.gameId, user_id: userId })),
+        { onConflict: "game_id,user_id", ignoreDuplicates: true },
+      )
+      .select("user_id");
+    if (error) return { sent: 0, failed: true }; // 선점 실패 → 재시도
+    claimed.push(...((data ?? []) as { user_id: string }[]));
+  }
+  if (claimed.length === 0) return { sent: 0, failed: false };
+  const claimedSet = new Set(claimed.map((r) => r.user_id));
+  const toSend = eligible.filter(([userId]) => claimedSet.has(userId));
+
   let sent = 0;
   let transientFail = false;
   const invalid: string[] = [];
+  const releaseRetry: string[] = []; // 일시 실패 → 선점 해제(다음 cron 재시도)
   await Promise.all(
-    [...tokenByUser.entries()].map(async ([userId, token]) => {
-      if (optedOut.has(userId) || alreadyActive.has(userId)) return;
+    toSend.map(async ([userId, token]) => {
       const res = await sendLiveActivityPush(
         {
           pushToken: token,
@@ -249,7 +275,10 @@ async function startForTeamSide(params: {
       );
       if (res.ok) sent += 1;
       else if (res.invalidToken) invalid.push(userId);
-      else transientFail = true; // 일시 APNs 오류(무효 토큰 아님)
+      else {
+        transientFail = true; // 일시 APNs 오류(무효 토큰 아님)
+        releaseRetry.push(userId);
+      }
     }),
   );
 
@@ -257,14 +286,22 @@ async function startForTeamSide(params: {
   for (const u of invalid) {
     await supabase.from("live_activity_start_tokens").delete().eq("user_id", u);
   }
-  // 발송이 전부 일시 실패(0건 도달)면 인프라 실패로 보고 재시도. 일부라도 도달했으면
-  // 재시도 시 도달분 중복 카드라 failed=false(부분 손실 감수, alreadyActive로 차후 보호).
+  // 일시 실패분은 선점 해제 → 다음 cron이 재발송(영구 누락 방지). 도달분은 선점 유지 →
+  // 다음 cron에서 충돌 제외 + alreadyActive(update 토큰)로 이중 보호 → 중복 카드 없음.
+  for (const u of releaseRetry) {
+    await supabase
+      .from("live_activity_started_users")
+      .delete()
+      .eq("game_id", params.gameId)
+      .eq("user_id", u);
+  }
   return { sent, failed: transientFail && sent === 0 };
 }
 
 /**
  * 라이브 경기 → 최애팀 팬의 push-to-start 토큰으로 자동 시작 푸시.
- * 게임 단위 1회 선점(live_activity_started insert)으로 중복 발송 차단.
+ * 유저 단위 1회 선점(live_activity_started_users)으로 중복 발송 차단 —
+ * 윈도우 도중 늦게 등록된 push-to-start 토큰도 그 시점 cron이 픽업한다.
  */
 export async function pushLiveActivityStarts(
   games: KboRawGame[],
@@ -299,13 +336,9 @@ export async function pushLiveActivityStarts(
     const codes = gameId.match(/^\d{8}([A-Z]{2})([A-Z]{2})\d$/);
     if (!codes) continue;
 
-    // 게임 단위 1회 선점 — insert 성공한 호출만 발송(unique violation = 이미 처리됨).
-    const { error: claimErr } = await supabase
-      .from("live_activity_started")
-      .insert({ game_id: gameId });
-    if (claimErr) continue;
-
-    // 윈도우 가드 — 너무 늦은 자동시작은 마킹만(이미 insert)하고 발송 skip.
+    // 늦은 자동시작 가드 — 시작 후 START_WINDOW_MS 지난 경기는 발송 skip. 중복 발송
+    // 차단은 startForTeamSide의 *유저 단위* 선점(live_activity_started_users)이 담당한다.
+    // (게임 단위 선점은 제거 — 윈도우 도중 늦게 등록된 토큰을 영구 누락시켰음.)
     const startedAt = scheduledStartMs(g.G_DT, g.G_TM);
     if (startedAt !== null && Date.now() - startedAt > START_WINDOW_MS) continue;
 
@@ -338,13 +371,8 @@ export async function pushLiveActivityStarts(
       attributes, contentState, staleDate, jwt,
     });
     started += awaySide.sent + homeSide.sent;
-
-    // 인프라 실패(쿼리/발송 오류)면 선점 해제 → 다음 cron 재시도. 경기당 트리거 윈도우가
-    // 한 번뿐이라 일시 장애에 게임을 영구 누락하지 않게 함(삼순 NO-GO ②). 이미 도달한
-    // 유저는 다음 cron에서 alreadyActive(update 토큰 등록분)로 자연 제외 → 중복 최소화.
-    if (awaySide.failed || homeSide.failed) {
-      await supabase.from("live_activity_started").delete().eq("game_id", gameId);
-    }
+    // 일시 실패분은 startForTeamSide에서 유저 단위로 선점 해제됨 → 다음 cron 재시도.
+    // (이미 도달한 유저는 선점 유지 + alreadyActive로 이중 제외 → 중복 카드 없음.)
   }
 
   return { started };
