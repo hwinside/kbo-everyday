@@ -12,9 +12,11 @@ interface Signup {
   created_at: string;
 }
 
-/** 다운로드 안내 쪽지 기본 템플릿 — '(다운로드 링크)'를 실제 링크로 바꿔 발송. */
+// 비공개 테스트 다운로드 링크는 모든 테스터 공통이라 템플릿에 기본 포함(그대로 발송 가능).
+const PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=fan.keubo.app";
+/** 다운로드 안내 쪽지 기본 템플릿 — Play 스토어 링크 기본 포함, 그대로 발송하거나 수정 가능. */
 const DM_TEMPLATE = `안녕하세요, 크보팬 운영팀입니다 🐾 테스터 등록이 완료됐어요! 아래 링크에서 앱을 설치하시면 바로 참여하실 수 있어요.
-👉 (다운로드 링크)
+👉 ${PLAY_STORE_URL}
 설치 후 의견은 마이페이지 '피드백 보내기'(📱안드로이드앱 테스트)로 보내주세요! 사용하시면서 불편하시거나 개선이 필요한 부분, 바라는 점이 있으실 경우 의견 보내주시면 적극적으로 서비스에 반영하겠습니다.
 
 크보팬 드림`;
@@ -187,8 +189,8 @@ export default function AdminTesterSignupsPage() {
                     placeholder="쪽지 내용"
                   />
                   <p className="text-[11px] text-text-tertiary">
-                    <code>(다운로드 링크)</code>를 실제 Play 스토어 링크로 바꿔서 보내세요. 링크는 쪽지에서
-                    클릭하면 바로 열립니다.
+                    Play 스토어 링크가 기본으로 들어가 있어요. 그대로 발송하시면 되고, 쪽지에서 클릭하면 바로
+                    열립니다. (직접 수정도 가능)
                   </p>
                   {warnId === it.id && (
                     <p className="text-[11px] font-medium text-red-400">
