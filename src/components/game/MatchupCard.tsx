@@ -228,6 +228,15 @@ export default function MatchupCard({
           </div>
         )}
       </div>
+
+      {/* 통산 맞대결 (전 시즌 누적) — 네이버 relay 현재 타석 기준 */}
+      {relayMatchup?.careerVsBatter && (
+        <div className="col-span-3 mt-1 pt-1.5 border-t border-white/[0.06] text-center text-[11px] whitespace-nowrap overflow-hidden text-ellipsis">
+          <span className="text-text-tertiary">통산 맞대결</span>
+          <span className="mx-1 text-text-tertiary">·</span>
+          <span className="font-semibold" style={{ color: "var(--matchup-name)" }}>{relayMatchup.careerVsBatter}</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -56,6 +56,11 @@ export interface MatchupStats {
     seasonAvg: number;
     batResult: string;
   };
+  /**
+   * 현재 타석 투수 vs 타자 전 시즌 누적 통산 맞대결 (네이버 relay 원문).
+   * 예: "3타수 1안타 1홈런 .333" / 기록 없으면 "첫 맞대결".
+   */
+  careerVsBatter?: string | null;
 }
 
 export interface RelayBatterStat {
@@ -224,6 +229,7 @@ interface NaverRelayResponse {
       inn: number;
       currentInning: string;
       textRelays: NaverTextRelay[];
+      pitcherVsBatterCareerStats?: string;
       inningScore?: {
         home: Record<string, string>;
         away: Record<string, string>;
@@ -810,6 +816,14 @@ export async function GET(req: NextRequest) {
 
     // Build linescore from naver relay data
     const trd = firstData.result?.textRelayData;
+
+    // 현재 타석 투수↔타자 통산 맞대결 (relay 최상위 스냅샷 — inning 파라미터와 무관하게
+    // 항상 최신 타석 기준). matchup이 없어도 통산값이 있으면 노출되도록 병합.
+    const careerVsBatter = trd?.pitcherVsBatterCareerStats?.trim() || null;
+    const matchupWithCareer: MatchupStats | undefined = careerVsBatter
+      ? { ...(matchup ?? {}), careerVsBatter }
+      : matchup;
+
     let linescore: RelayLinescore | undefined;
     if (trd?.inningScore && trd?.currentGameState) {
       const is = trd.inningScore;
@@ -846,7 +860,7 @@ export async function GET(req: NextRequest) {
       gameId,
       currentInning: maxInning,
       innings,
-      matchup,
+      matchup: matchupWithCareer,
       playerStats,
       linescore,
     };
