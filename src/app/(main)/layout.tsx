@@ -4,6 +4,7 @@ import TabBar from "@/components/ui/TabBar";
 import ProfileSetupWrapper from "@/components/auth/ProfileSetupWrapper";
 import MyTeamCookieSync from "@/components/auth/MyTeamCookieSync";
 import HashSessionRestore from "@/components/auth/HashSessionRestore";
+import PostLoginRedirect from "@/components/auth/PostLoginRedirect";
 
 export default function MainLayout({
   children,
@@ -13,6 +14,7 @@ export default function MainLayout({
   return (
     <div className="min-h-screen bg-bg-primary">
       <HashSessionRestore />
+      <PostLoginRedirect />
       <ProfileSetupWrapper />
       <MyTeamCookieSync />
       <TeamAccent />

@@ -9,6 +9,8 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import { isAndroidWeb } from "@/lib/capacitor/platform";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// 로그인 후 이 페이지로 복귀시키기 위한 의도 경로 키 (PostLoginRedirect가 읽음).
+const LOGIN_REDIRECT_KEY = "kbo-login-redirect";
 
 export default function TesterSignupPage() {
   const router = useRouter();
@@ -22,6 +24,28 @@ export default function TesterSignupPage() {
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+
+  // 로그인 시트를 열 때 복귀 경로 저장 → OAuth가 홈으로 떨궈도 PostLoginRedirect가 여기로 되돌림.
+  const openLogin = useCallback(() => {
+    try {
+      localStorage.setItem(LOGIN_REDIRECT_KEY, "/tester-signup");
+    } catch {
+      /* ignore */
+    }
+    setShowLogin(true);
+  }, []);
+
+  // 로그인 안 하고 시트를 닫으면 의도 경로 제거(이미 로그인된 상태면 그대로 둠).
+  const closeLogin = useCallback(() => {
+    if (!user) {
+      try {
+        localStorage.removeItem(LOGIN_REDIRECT_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+    setShowLogin(false);
+  }, [user]);
 
   // 안드로이드 모바일웹 게이트 — 클라이언트에서만 판정 가능
   useEffect(() => {
@@ -75,7 +99,7 @@ export default function TesterSignupPage() {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
       if (!token) {
-        setShowLogin(true);
+        openLogin();
         return;
       }
       const res = await fetch("/api/tester-signup", {
@@ -100,7 +124,7 @@ export default function TesterSignupPage() {
     } finally {
       setLoading(false);
     }
-  }, [email]);
+  }, [email, openLogin]);
 
   const header = (
     <div className="mb-6 flex items-center gap-3">
@@ -153,13 +177,13 @@ export default function TesterSignupPage() {
         <div className="mt-16 space-y-4 text-center">
           <p className="text-sm text-text-secondary">테스터 신청은 로그인 후 가능해요.</p>
           <button
-            onClick={() => setShowLogin(true)}
+            onClick={openLogin}
             className="rounded-xl bg-accent px-5 py-3 text-sm font-semibold text-white"
           >
             로그인하기
           </button>
         </div>
-        <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
+        <LoginSheet isOpen={showLogin} onClose={closeLogin} />
       </div>
     );
   }
@@ -242,7 +266,7 @@ export default function TesterSignupPage() {
         </p>
       </div>
 
-      <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
+      <LoginSheet isOpen={showLogin} onClose={closeLogin} />
     </div>
   );
 }
