@@ -3,7 +3,7 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 
-const VALID_TYPES = ["bug", "data", "feature", "content", "other"];
+const VALID_TYPES = ["bug", "data", "feature", "content", "other", "android_test"];
 
 export async function POST(req: NextRequest) {
   const verified = await getVerifiedUserFromRequest(req);
