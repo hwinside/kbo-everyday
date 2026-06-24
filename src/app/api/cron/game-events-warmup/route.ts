@@ -7,6 +7,7 @@ import { notifyScoreEvents, notifyInningSummaries } from "@/lib/notifications/ga
 import { notifyPlayerHighlights } from "@/lib/notifications/player-highlight";
 import { pushLiveActivityUpdates, pushLiveActivityStarts } from "@/lib/notifications/live-activity";
 import { pushAndroidWidgetLiveUpdates } from "@/lib/notifications/android-widget-live";
+import { captureMatchups, type CaptureResult } from "@/lib/matchup/capture";
 
 /**
  * Warm up the in-memory prevState cache of /api/game-events for every
@@ -167,10 +168,21 @@ export async function GET(req: NextRequest) {
     console.error("[warmup] live activity start failed:", (e as Error).message);
   }
 
+  // 투타 통산 맞대결 V2 캡처 (Slice 1) — relay 현재 타석 통산값 upsert.
+  // 같은 라이브 게임 목록 재사용. 실패해도 warmup 본연(알림)에 영향 없음.
+  let matchupCapture: CaptureResult | { error: string } = { polled: 0, captured: 0, skipped: 0, failed: 0 };
+  try {
+    matchupCapture = await captureMatchups(liveGameIds);
+  } catch (e) {
+    matchupCapture = { error: (e as Error).message };
+    console.error("[warmup] matchup capture failed:", (e as Error).message);
+  }
+
   return NextResponse.json({
     date,
     polled: liveGameIds.length,
     liveGameIds,
+    matchupCapture,
     gameNotify,
     rankNotify,
     scoreNotify,
