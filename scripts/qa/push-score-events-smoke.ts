@@ -10,6 +10,7 @@
  * 실행: npm run qa:push-score-events
  */
 import { generateEvents, type PrevGameState } from "@/lib/event-generator";
+import { isHomerunCoveredRun, resolveHomerunScore } from "@/lib/notifications/score-dedupe";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
 import type { BatterRecord, GameDetailResponse } from "@/app/api/game-detail/route";
 import type { GameEvent } from "@/types/game-events";
@@ -132,6 +133,78 @@ for (const runs of [2, 3, 4]) {
   assert("양팀 동시 득점: run_scored 2개", rs.length === 2, rs.map(e => e.id));
   assert("양팀 동시 득점: scoringSide away+home", JSON.stringify(sides) === JSON.stringify(["away", "home"]), sides);
   assert("양팀 동시 득점: id 충돌 없음(side 포함)", new Set(rs.map(e => e.id)).size === 2, rs.map(e => e.id));
+}
+
+// ── ③ 교차-폴링 홈런 중복 방지 (game-score isHomerunCoveredRun) ──────────
+// 홈런은 BoxScore에서 먼저 감지되고 그 득점은 다음 폴링에 라이브 스코어로 반영되므로,
+// generator의 같은-사이클 suppression이 시차로 놓친다 → 알림 레이어가 누적 이벤트로 막는다.
+function mkGE(o: Partial<GameEvent> & { type: GameEvent["type"]; inning: number; isTop: boolean; timestamp: string }): GameEvent {
+  return {
+    id: `${GAME_ID}-${o.type}-${o.inning}-${o.isTop ? "T" : "B"}`,
+    gameId: GAME_ID, detail: {}, text: "", snapshot: {} as GameEvent["snapshot"], ...o,
+  } as GameEvent;
+}
+{
+  const T = "2026-06-24T10:44:03.000Z";
+  const hr = mkGE({ type: "at_bat_homerun", inning: 4, isTop: false, timestamp: "2026-06-24T10:43:48.000Z", detail: { batter: "오스틴" } });
+  const run = mkGE({ type: "run_scored", inning: 4, isTop: false, timestamp: T, detail: { scoringSide: "home", rbi: 1 } });
+  // 1) 실제 버그 케이스: HR 15초 뒤 run_scored → suppress
+  assert("교차폴링 홈런 득점: 중복 억제(true)", isHomerunCoveredRun(run, [hr, run]) === true);
+  // 2) 홈런 없는 일반 적시타 → 억제 안 함
+  assert("적시타 단독: 억제 안 함(false)", isHomerunCoveredRun(run, [run]) === false);
+  // 3) 같은 이닝이지만 20분 뒤 후속 안타 득점(시간창 밖) → 억제 안 함(큰 이닝 보호)
+  const lateRun = mkGE({ type: "run_scored", inning: 4, isTop: false, timestamp: "2026-06-24T11:04:03.000Z", detail: { scoringSide: "home", rbi: 1 } });
+  assert("큰 이닝 후속 득점(시간창 밖): 억제 안 함(false)", isHomerunCoveredRun(lateRun, [hr, lateRun]) === false);
+  // 4) 반대 half의 홈런과는 매칭 안 됨
+  const awayRun = mkGE({ type: "run_scored", inning: 4, isTop: true, timestamp: T, detail: { scoringSide: "away", rbi: 1 } });
+  assert("반대 half 홈런: 억제 안 함(false)", isHomerunCoveredRun(awayRun, [hr, awayRun]) === false);
+}
+
+// ── ④ 홈런 알림 표시 점수 보정 (resolveHomerunScore) ─────────────────────
+// 홈런은 BoxScore 선감지로 ev.snapshot이 득점 반영 전(0:0)일 수 있다 → 생존 홈런 알림이
+// 0:0을 그대로 보여주던 사고(고객 #SSLG). 현재 라이브 점수·매칭 run으로 보정, 미반영이면 defer.
+function mkSnap(awayScore: number, homeScore: number): GameEvent["snapshot"] {
+  return { awayScore, homeScore, balls: 0, strikes: 0, outs: 0, runners: { first: null, second: null, third: null }, pitcher: "", batter: "" };
+}
+function mkHr(snapAway: number, snapHome: number, ts = "2026-06-24T10:43:48.000Z"): GameEvent {
+  return mkGE({ type: "at_bat_homerun", inning: 4, isTop: false, timestamp: ts, detail: { batter: "오스틴" }, snapshot: mkSnap(snapAway, snapHome) });
+}
+{
+  const HT = Date.parse("2026-06-24T10:43:48.000Z");
+  const fresh = HT + 10_000;   // 10s — 1폴링 안(신선)
+  const old = HT + 120_000;    // 120s — waitMs(75s) 경과
+  const hr00 = mkHr(0, 0);
+
+  // 1) 교차폴링 poll N: 현재 0:0, run 없음, 신선 → defer(0:0 발송 방지)
+  let r = resolveHomerunScore(hr00, [hr00], 0, 0, fresh);
+  assert("홈런점수: 교차폴링 미반영(신선) → defer", r.defer === true, r);
+
+  // 2) 교차폴링 poll N+1: 라이브 현재 점수 0:1로 상승 → 발송 0:1
+  r = resolveHomerunScore(hr00, [hr00], 0, 1, fresh);
+  assert("홈런점수: 현재 점수 상승 → 발송 0:1", r.defer === false && r.awayScore === 0 && r.homeScore === 1, r);
+
+  // 3) 매칭 run_scored snapshot으로 보정 (g 현재가 아직 stale 0:0이어도)
+  const run = mkGE({ type: "run_scored", inning: 4, isTop: false, timestamp: "2026-06-24T10:44:03.000Z", detail: { scoringSide: "home" }, snapshot: mkSnap(0, 1) });
+  r = resolveHomerunScore(hr00, [hr00, run], 0, 0, fresh);
+  assert("홈런점수: 매칭 run으로 보정 → 0:1", r.defer === false && r.homeScore === 1, r);
+
+  // 4) age-out: 미반영이어도 waitMs 경과 시 발송(무한 보류 방지)
+  r = resolveHomerunScore(hr00, [hr00], 0, 0, old);
+  assert("홈런점수: 미반영 age-out → 발송", r.defer === false, r);
+
+  // 5) 같은-폴링(snapshot 0:1 = 현재 0:1, 점수 이미 반영) age-out → 정확 0:1
+  const hr01 = mkHr(0, 1);
+  r = resolveHomerunScore(hr01, [hr01], 0, 1, old);
+  assert("홈런점수: 같은-폴링 age-out → 0:1 정확", r.defer === false && r.homeScore === 1, r);
+
+  // 6) 선행 득점 후 상승(snapshot 0:3 → 현재 0:4) → 0:4
+  const hr03 = mkHr(0, 3);
+  r = resolveHomerunScore(hr03, [hr03], 0, 4, fresh);
+  assert("홈런점수: 선행득점 후 상승 → 0:4", r.defer === false && r.homeScore === 4, r);
+
+  // 7) 선행 득점 미반영(snapshot 0:3 = 현재 0:3, 신선) → defer (0:3 stale 방지)
+  r = resolveHomerunScore(hr03, [hr03], 0, 3, fresh);
+  assert("홈런점수: 선행득점 미반영(신선) → defer", r.defer === true, r);
 }
 
 console.log(failed === 0 ? "\n✅ ALL PASS" : `\n❌ ${failed} FAILED`);
