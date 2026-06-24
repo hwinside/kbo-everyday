@@ -21,6 +21,7 @@ const TYPE_LABELS: Record<string, string> = {
   data: "데이터 수정",
   feature: "기능 제안",
   content: "콘텐츠",
+  android_test: "안드로이드앱 테스트",
   other: "기타",
 };
 
@@ -29,6 +30,7 @@ const TYPE_COLORS: Record<string, string> = {
   data: "#FFD60A",
   feature: "#6366F1",
   content: "#30D158",
+  android_test: "#0A84FF",
   other: "#8E8E93",
 };
 
@@ -138,6 +140,7 @@ function buildChartData(items: FeedbackItem[]) {
       "데이터 수정": dayItems.filter((it) => it.type === "data").length,
       "기능 제안": dayItems.filter((it) => it.type === "feature").length,
       콘텐츠: dayItems.filter((it) => it.type === "content").length,
+      "안드로이드앱 테스트": dayItems.filter((it) => it.type === "android_test").length,
       기타: dayItems.filter((it) => it.type === "other").length,
     };
   });
@@ -329,6 +332,7 @@ export default function AdminFeedbackPage() {
             <Bar dataKey="데이터 수정" stackId="a" fill="#FFD60A" />
             <Bar dataKey="기능 제안" stackId="a" fill="#6366F1" />
             <Bar dataKey="콘텐츠" stackId="a" fill="#30D158" />
+            <Bar dataKey="안드로이드앱 테스트" stackId="a" fill="#0A84FF" />
             <Bar dataKey="기타" stackId="a" fill="#8E8E93" radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>

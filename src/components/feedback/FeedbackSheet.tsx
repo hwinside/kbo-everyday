@@ -6,7 +6,7 @@ import { X, Send } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { supabase } from "@/lib/supabase/client";
 
-type FeedbackType = "bug" | "data" | "feature" | "other";
+type FeedbackType = "bug" | "data" | "feature" | "android_test" | "other";
 
 interface FeedbackSheetProps {
   isOpen: boolean;
@@ -18,6 +18,7 @@ const TYPES: { value: FeedbackType; label: string }[] = [
   { value: "bug", label: "🐛 버그" },
   { value: "data", label: "📊 데이터" },
   { value: "feature", label: "💡 제안" },
+  { value: "android_test", label: "📱 안드로이드앱 테스트" },
   { value: "other", label: "💬 기타" },
 ];
 
@@ -135,7 +136,7 @@ export default function FeedbackSheet({ isOpen, onClose, defaultType }: Feedback
             ) : (
               <>
                 {/* Type pills */}
-                <div className="flex gap-2 mb-5">
+                <div className="flex flex-wrap gap-2 mb-5">
                   {TYPES.map((t) => (
                     <button
                       key={t.value}

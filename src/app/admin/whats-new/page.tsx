@@ -13,6 +13,7 @@ interface Announcement {
   published_at: string;
   display_until: string | null;
   is_active: boolean;
+  target_platform: string;
   created_at: string;
 }
 
@@ -34,6 +35,7 @@ const EMPTY_FORM = {
   cta_label: "",
   cta_path: "",
   display_until: "",
+  target_platform: "all",
 };
 
 export default function AdminWhatsNewPage() {
@@ -124,6 +126,7 @@ export default function AdminWhatsNewPage() {
       cta_label: item.cta_label || "",
       cta_path: item.cta_path || "",
       display_until: item.display_until?.slice(0, 16) || "",
+      target_platform: item.target_platform || "all",
     });
     setShowForm(true);
     setError("");
@@ -149,6 +152,7 @@ export default function AdminWhatsNewPage() {
       cta_label: form.cta_label || null,
       cta_path: form.cta_path || null,
       display_until: form.display_until ? new Date(form.display_until).toISOString() : null,
+      target_platform: form.target_platform,
     };
     if (editId) payload.id = editId;
 
@@ -292,6 +296,18 @@ export default function AdminWhatsNewPage() {
               />
             </div>
 
+            <div>
+              <label className="block text-xs text-text-secondary mb-1">노출 대상</label>
+              <select
+                value={form.target_platform}
+                onChange={(e) => setForm({ ...form, target_platform: e.target.value })}
+                className="w-full rounded-lg bg-[var(--bg-tertiary)] px-3 py-2 text-sm text-text-primary outline-none"
+              >
+                <option value="all">전체</option>
+                <option value="android_web">안드로이드 모바일웹만 (설치 앱·iOS 제외)</option>
+              </select>
+            </div>
+
             {error && <p className="text-sm text-red-400">{error}</p>}
 
             <div className="flex justify-end gap-2 pt-2">
@@ -337,6 +353,11 @@ export default function AdminWhatsNewPage() {
                       {item.is_active ? "활성" : "비활성"}
                     </span>
                     <span className="text-xs text-text-tertiary">{formatDate(item.published_at)}</span>
+                    {item.target_platform === "android_web" && (
+                      <span className="inline-block rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] font-medium text-blue-400">
+                        안드웹
+                      </span>
+                    )}
                     {item.display_until && (
                       <span className="text-xs text-text-tertiary">~ {formatDate(item.display_until)}</span>
                     )}

@@ -67,7 +67,7 @@ export interface FeedbackItem {
   id: string;
   userId: string;
   userNickname: string | null;
-  type: "bug" | "data" | "feature" | "content" | "other";
+  type: "bug" | "data" | "feature" | "content" | "android_test" | "other";
   title: string;
   body: string | null;
   pageUrl: string | null;

@@ -281,6 +281,7 @@ const feedbackDotColor: Record<FeedbackItem["type"], string> = {
   data: "#FFD60A",
   feature: "#30D158",
   content: "#6366F1",
+  android_test: "#0A84FF",
   other: "#8E8E93",
 };
 

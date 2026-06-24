@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { title, summary, body: content, cta_label, cta_path, display_until } = body;
+  const { title, summary, body: content, cta_label, cta_path, display_until, target_platform } = body;
 
   if (!title || !summary || !content) {
     return NextResponse.json({ error: "title, summary, body are required" }, { status: 400 });
@@ -92,6 +92,7 @@ export async function POST(req: NextRequest) {
       cta_label: cta_label || null,
       cta_path: cta_path || null,
       display_until: display_until || null,
+      target_platform: target_platform === "android_web" ? "android_web" : "all",
     })
     .select()
     .single();

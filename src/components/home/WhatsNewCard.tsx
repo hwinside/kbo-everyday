@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sparkles, ChevronRight } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
+import { isAnnouncementVisible } from "@/lib/announcements/visibility";
 
 interface Announcement {
   id: string;
   title: string;
   summary: string;
   published_at: string;
+  target_platform?: string;
 }
 
 const SEEN_KEY = "whats-new-seen-id";
@@ -22,8 +24,10 @@ export default function WhatsNewCard() {
     fetch("/api/whats-new")
       .then((r) => r.json())
       .then((data: Announcement[]) => {
-        if (data.length === 0) return;
-        const latest = data[0];
+        // 현재 플랫폼에 노출 가능한 공지만 (android_web 공지는 안드 모바일웹에서만)
+        const visible = data.filter((a) => isAnnouncementVisible(a.target_platform));
+        if (visible.length === 0) return;
+        const latest = visible[0];
         const seenId = localStorage.getItem(SEEN_KEY);
         if (seenId !== latest.id) setItem(latest);
       })
