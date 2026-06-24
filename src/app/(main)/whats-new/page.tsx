@@ -8,6 +8,7 @@ import CommentSheet from "@/components/community/CommentSheet";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { supabase } from "@/lib/supabase/client";
 import { toggleLike } from "@/lib/supabase/usePosts";
+import { isAnnouncementVisible } from "@/lib/announcements/visibility";
 
 interface Announcement {
   id: string;
@@ -18,6 +19,7 @@ interface Announcement {
   cta_path: string | null;
   published_at: string;
   post_id: number | null;
+  target_platform?: string;
 }
 
 /** HTML-escape to prevent XSS from admin-authored content */
@@ -109,7 +111,9 @@ export default function WhatsNewPage() {
   useEffect(() => {
     fetch("/api/whats-new")
       .then((r) => r.json())
-      .then(async (data: Announcement[]) => {
+      .then(async (raw: Announcement[]) => {
+        // 현재 플랫폼에 노출 가능한 공지만 (android_web 공지는 안드 모바일웹에서만)
+        const data = raw.filter((a) => isAnnouncementVisible(a.target_platform));
         setItems(data);
         if (data.length > 0) {
           localStorage.setItem("whats-new-seen-id", data[0].id);
