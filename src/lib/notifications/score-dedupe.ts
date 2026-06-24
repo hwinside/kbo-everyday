@@ -19,7 +19,8 @@ export function isHomerunCoveredRun(ev: GameEvent, allEvents: GameEvent[]): bool
     if (e.type !== "at_bat_homerun") return false;
     if (e.isTop !== ev.isTop || e.inning !== ev.inning) return false;
     const ht = Date.parse(e.timestamp);
-    return Number.isFinite(ht) && Math.abs(ht - t) <= HR_RUN_DEDUPE_WINDOW_MS;
+    // 단방향: 홈런(ht) ≤ run_scored(t) 순서만 suppress — 미래 홈런이 이전 run을 억제하지 않도록.
+    return Number.isFinite(ht) && ht <= t && t - ht <= HR_RUN_DEDUPE_WINDOW_MS;
   });
 }
 
@@ -63,7 +64,15 @@ export function resolveHomerunScore(
     if (e.type !== "run_scored") return false;
     if (e.isTop !== hr.isTop || e.inning !== hr.inning) return false;
     const rt = Date.parse(e.timestamp);
-    return Number.isFinite(rt) && Number.isFinite(ht) && Math.abs(rt - ht) <= HR_RUN_DEDUPE_WINDOW_MS;
+    // 단방향: run_scored(rt)는 홈런(ht) 이후여야 매칭 — 이전 run을 "반영됨"으로 오판 방지.
+    // scoringSide 일치(같은 팀 득점)도 추가 검증.
+    return (
+      Number.isFinite(rt) &&
+      Number.isFinite(ht) &&
+      rt >= ht &&
+      rt - ht <= HR_RUN_DEDUPE_WINDOW_MS &&
+      e.scoringSide === hr.scoringSide
+    );
   });
 
   // 가장 신선한 점수 = 현재 g 점수와 매칭 run snapshot 중 큰 쪽(반영이 더 된 쪽).
