@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
+import { notifyTesterSignup } from "@/lib/tester/signup-slack";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -44,6 +45,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // 신규 신청 / 이메일 변경 판별용 — upsert 전 기존 행 조회
+  const { data: prev } = await supabase
+    .from("tester_signups")
+    .select("play_store_email")
+    .eq("user_id", verified.user.id)
+    .maybeSingle();
+
   const { error } = await supabase.from("tester_signups").upsert(
     {
       user_id: verified.user.id,
@@ -55,6 +63,22 @@ export async function POST(req: NextRequest) {
   );
 
   if (error) return supabaseErrorResponse(error);
+
+  // 신규이거나 이메일이 바뀐 경우에만 Slack DM 알림 (동일 재제출 스팸 방지). 비차단.
+  if (!prev || prev.play_store_email !== email) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("nickname")
+      .eq("id", verified.user.id)
+      .maybeSingle();
+    await notifyTesterSignup({
+      playStoreEmail: email,
+      accountEmail: verified.user.email ?? null,
+      nickname: (profile?.nickname as string | null) ?? null,
+      deviceInfo: typeof deviceInfo === "string" ? deviceInfo : null,
+      isUpdate: !!prev,
+    });
+  }
 
   return NextResponse.json({ success: true });
 }

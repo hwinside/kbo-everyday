@@ -10,6 +10,7 @@ import { useBlockUser } from "@/lib/supabase/useBlock";
 import { submitDMReport } from "@/lib/supabase/useBlock";
 import { supabase } from "@/lib/supabase/client";
 import TeamBadge from "@/components/ui/TeamBadge";
+import { linkifyText } from "@/lib/linkify";
 
 const REPORT_CATEGORIES = [
   { id: "spam", label: "스팸" },
@@ -210,7 +211,7 @@ export default function DMChatPage() {
                     }`}
                   >
                     {msg.content ? (
-                      <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                      <p className="whitespace-pre-wrap break-words">{linkifyText(msg.content)}</p>
                     ) : null}
                     {Array.isArray(msg.image_urls) && msg.image_urls.length > 0 && (
                       <div className={`grid gap-2 ${msg.content ? "mt-2" : ""}`}>

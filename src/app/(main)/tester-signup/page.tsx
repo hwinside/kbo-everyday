@@ -172,11 +172,11 @@ export default function TesterSignupPage() {
           <CheckCircle2 size={48} className="text-green-400" />
           <p className="text-base font-semibold text-text-primary">테스터 신청이 완료됐어요!</p>
           <p className="text-sm leading-relaxed text-text-secondary">
-            <span className="font-medium text-text-primary">{email.trim()}</span> 주소로
-            <br />
-            순차적으로 테스터 등록을 진행해드릴게요.
-            <br />
-            등록이 완료되면 플레이스토어에서 크보팬 앱을 설치하실 수 있어요.
+            <span className="font-medium text-text-primary">{email.trim()}</span> 주소로 테스터 등록을 진행해드릴게요.
+          </p>
+          <p className="rounded-xl bg-bg-secondary px-4 py-3 text-sm leading-relaxed text-text-secondary">
+            📩 늦어도 12시간 이내에 안드로이드앱 다운로드가 가능하도록 테스터 등록을 완료해드려요. 완료되면
+            쪽지로 다운로드 안내를 보내드릴게요. 조금만 기다려주세요!
           </p>
           <button
             onClick={() => router.push("/")}
