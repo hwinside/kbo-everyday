@@ -2,6 +2,9 @@
 // 웹훅 URL은 코드 비노출 — Vercel env `TESTER_SIGNUP_SLACK_WEBHOOK`(본인 DM 대상)으로만 관리.
 
 const WEBHOOK_URL = process.env.TESTER_SIGNUP_SLACK_WEBHOOK || "";
+// 신청 알림에서 바로 어드민 처리(Play Console 등록 후 다운로드 링크 쪽지 발송)로 이동.
+const ADMIN_SIGNUPS_URL =
+  (process.env.NEXT_PUBLIC_APP_URL || "https://keubo.fan") + "/admin/tester-signups";
 
 /** Android UA에서 기기모델 추출 (예: "...; SM-S921N Build/...") */
 function deviceModel(ua: string | null | undefined): string {
@@ -30,7 +33,8 @@ export async function notifyTesterSignup(input: TesterSignupNotice): Promise<voi
     `• 플레이스토어 이메일: \`${input.playStoreEmail}\`\n` +
     `• 닉네임: ${input.nickname ?? "-"}\n` +
     `• 가입 계정: ${input.accountEmail ?? "-"}\n` +
-    `• 기기: ${deviceModel(input.deviceInfo)}`;
+    `• 기기: ${deviceModel(input.deviceInfo)}\n` +
+    `→ <${ADMIN_SIGNUPS_URL}|어드민에서 등록 처리 / 다운로드 쪽지 발송>`;
   try {
     await fetch(WEBHOOK_URL, {
       method: "POST",

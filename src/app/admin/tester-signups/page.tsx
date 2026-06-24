@@ -52,6 +52,8 @@ export default function AdminTesterSignupsPage() {
   const [drafts, setDrafts] = useState<Record<number, string>>({});
   const [sendingId, setSendingId] = useState<number | null>(null);
   const [sentIds, setSentIds] = useState<Set<number>>(new Set());
+  // '(다운로드 링크)' placeholder 미교체 상태로 발송 시도 시 경고 표시할 신청 id
+  const [warnId, setWarnId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -85,6 +87,7 @@ export default function AdminTesterSignupsPage() {
   };
 
   const toggleComposer = (it: Signup) => {
+    if (warnId === it.id) setWarnId(null);
     setOpenId((cur) => (cur === it.id ? null : it.id));
     setDrafts((prev) => (prev[it.id] !== undefined ? prev : { ...prev, [it.id]: DM_TEMPLATE }));
   };
@@ -92,6 +95,12 @@ export default function AdminTesterSignupsPage() {
   const sendDM = async (it: Signup) => {
     const content = (drafts[it.id] ?? "").trim();
     if (!content) return;
+    // 발송 전 가드 — '(다운로드 링크)' placeholder를 실제 링크로 안 바꿨으면 차단(실수 방지).
+    if (content.includes("(다운로드 링크)")) {
+      setWarnId(it.id);
+      return;
+    }
+    setWarnId(null);
     setSendingId(it.id);
     try {
       const res = await fetch("/api/admin/messages", {
@@ -169,9 +178,10 @@ export default function AdminTesterSignupsPage() {
                 <div className="mt-3 space-y-2 border-t border-[var(--color-border)] pt-3">
                   <textarea
                     value={drafts[it.id] ?? ""}
-                    onChange={(e) =>
-                      setDrafts((prev) => ({ ...prev, [it.id]: e.target.value }))
-                    }
+                    onChange={(e) => {
+                      setDrafts((prev) => ({ ...prev, [it.id]: e.target.value }));
+                      if (warnId === it.id) setWarnId(null);
+                    }}
                     rows={7}
                     className="w-full resize-y rounded-lg bg-[var(--bg-tertiary)] px-3 py-2 text-sm text-text-primary outline-none"
                     placeholder="쪽지 내용"
@@ -180,6 +190,11 @@ export default function AdminTesterSignupsPage() {
                     <code>(다운로드 링크)</code>를 실제 Play 스토어 링크로 바꿔서 보내세요. 링크는 쪽지에서
                     클릭하면 바로 열립니다.
                   </p>
+                  {warnId === it.id && (
+                    <p className="text-[11px] font-medium text-red-400">
+                      ⚠️ <code>(다운로드 링크)</code>가 그대로 남아 있어요. 실제 Play 스토어 링크로 바꾼 뒤 발송하세요.
+                    </p>
+                  )}
                   <div className="flex justify-end gap-2">
                     <button
                       onClick={() => setOpenId(null)}
