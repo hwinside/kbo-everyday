@@ -55,7 +55,9 @@ export function resolveHomerunScore(
 ): HomerunScore {
   const snapAway = hr.snapshot?.awayScore ?? 0;
   const snapHome = hr.snapshot?.homeScore ?? 0;
-  // 공격팀(홈런 친 팀): isTop=초=원정(away), 말=홈(home).
+  // 공격팀(홈런 친 팀): isTop=초=원정(away), 말=홈(home). 홈런 이벤트엔 detail.scoringSide가
+  // 없으므로 isTop으로 공격팀 side를 직접 계산해 run_scored와 비교한다.
+  const hrSide: "away" | "home" = hr.isTop ? "away" : "home";
   const battingSnap = hr.isTop ? snapAway : snapHome;
   const battingCur = hr.isTop ? currentAwayScore : currentHomeScore;
 
@@ -65,13 +67,13 @@ export function resolveHomerunScore(
     if (e.isTop !== hr.isTop || e.inning !== hr.inning) return false;
     const rt = Date.parse(e.timestamp);
     // 단방향: run_scored(rt)는 홈런(ht) 이후여야 매칭 — 이전 run을 "반영됨"으로 오판 방지.
-    // scoringSide 일치(같은 팀 득점)도 추가 검증.
+    // scoringSide(detail에 위치)가 홈런 공격팀과 일치하는 득점만 매칭.
     return (
       Number.isFinite(rt) &&
       Number.isFinite(ht) &&
       rt >= ht &&
       rt - ht <= HR_RUN_DEDUPE_WINDOW_MS &&
-      e.scoringSide === hr.scoringSide
+      e.detail?.scoringSide === hrSide
     );
   });
 
