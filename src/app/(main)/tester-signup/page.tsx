@@ -6,6 +6,7 @@ import { ArrowLeft, CheckCircle2, Loader2, Smartphone } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { supabase } from "@/lib/supabase/client";
 import LoginSheet from "@/components/auth/LoginSheet";
+import { isAndroidWeb } from "@/lib/capacitor/platform";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -13,6 +14,7 @@ export default function TesterSignupPage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
 
+  const [eligible, setEligible] = useState<boolean | null>(null);
   const [email, setEmail] = useState("");
   const [existing, setExisting] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
@@ -20,6 +22,11 @@ export default function TesterSignupPage() {
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+
+  // 안드로이드 모바일웹 게이트 — 클라이언트에서만 판정 가능
+  useEffect(() => {
+    setEligible(isAndroidWeb());
+  }, []);
 
   // 로그인 유저의 기존 신청 내역 확인 (있으면 이메일 프리필)
   useEffect(() => {
@@ -107,12 +114,33 @@ export default function TesterSignupPage() {
     </div>
   );
 
-  if (authLoading || (user && checking)) {
+  // 플랫폼 판정 전 또는 인증 로딩 중
+  if (eligible === null || authLoading || (user && checking)) {
     return (
       <div className="min-h-screen px-5 pt-4 pb-24">
         {header}
         <div className="mt-20 flex justify-center">
           <Loader2 className="animate-spin text-text-tertiary" size={24} />
+        </div>
+      </div>
+    );
+  }
+
+  // 안드로이드 모바일웹이 아닌 경우 — iOS/데스크톱/앱 접근 차단
+  if (!eligible) {
+    return (
+      <div className="min-h-screen px-5 pt-4 pb-24">
+        {header}
+        <div className="mt-16 flex flex-col items-center gap-3 text-center">
+          <Smartphone size={40} className="text-text-tertiary" />
+          <p className="text-sm font-semibold text-text-primary">
+            안드로이드 모바일에서만 신청 가능해요
+          </p>
+          <p className="text-xs leading-relaxed text-text-secondary">
+            이 페이지는 안드로이드 기기의 모바일 브라우저에서
+            <br />
+            접속하셔야 신청하실 수 있어요.
+          </p>
         </div>
       </div>
     );
