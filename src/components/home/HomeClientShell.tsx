@@ -16,6 +16,7 @@ import { useLiveGame, type LiveGameData } from "@/lib/hooks/useLiveGame";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
 import { useHomeInit, type HomeGame } from "@/hooks/useHomeInit";
+import { useUnreadDMCount } from "@/lib/supabase/useUnreadDMCount";
 import { useHomeSectionsPref, useHomeSectionsOrder } from "@/hooks/useHomeSectionsPref";
 import { useNewsPhotoFilter } from "@/hooks/useNewsPhotoFilter";
 import { isPhotoArticle } from "@/lib/news-relevance";
@@ -167,6 +168,7 @@ interface HomeClientShellProps {
 
 export default function HomeClientShell({ initialGames, initialLiveGames, initialIsPreseason }: HomeClientShellProps) {
   const router = useRouter();
+  const unreadDMCount = useUnreadDMCount();
   const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number; gameId: string} | null>(null);
   const [showLogin, setShowLogin] = useState(false);
   const [nextWidgetGame, setNextWidgetGame] = useState<WidgetGame | null>(null);
@@ -504,6 +506,11 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           {user ? (
             <Link href="/messages" className="relative rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
               <MessageCircle size={22} />
+              {unreadDMCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-500 flex items-center justify-center text-[10px] font-bold text-white leading-none">
+                  {unreadDMCount > 9 ? "9+" : unreadDMCount}
+                </span>
+              )}
             </Link>
           ) : (
             <button
