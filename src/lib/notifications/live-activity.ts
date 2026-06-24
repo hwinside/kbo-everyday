@@ -286,9 +286,11 @@ async function startForTeamSide(params: {
   for (const u of invalid) {
     await supabase.from("live_activity_start_tokens").delete().eq("user_id", u);
   }
-  // 일시 실패분은 선점 해제 → 다음 cron이 재발송(영구 누락 방지). 도달분은 선점 유지 →
-  // 다음 cron에서 충돌 제외 + alreadyActive(update 토큰)로 이중 보호 → 중복 카드 없음.
-  for (const u of releaseRetry) {
+  // 선점 해제 = 일시 실패분 + 무효 토큰분. 일시 실패분은 다음 cron 재발송(영구 누락 방지).
+  // 무효 토큰분도 반드시 해제 — 안 그러면 유저가 새 push-to-start 토큰을 재등록해도
+  // (game_id,user_id) PK 충돌로 그 경기 start가 영구 skip된다(삼순 NO-GO). 도달분은 선점
+  // 유지 → 다음 cron 충돌 제외 + alreadyActive(update 토큰)로 이중 보호 → 중복 카드 없음.
+  for (const u of [...releaseRetry, ...invalid]) {
     await supabase
       .from("live_activity_started_users")
       .delete()
