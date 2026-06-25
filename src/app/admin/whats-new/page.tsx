@@ -137,8 +137,12 @@ export default function AdminWhatsNewPage() {
       setError("제목, 요약, 본문은 필수입니다");
       return;
     }
-    if (form.cta_path && !/^\/[A-Za-z0-9/_?=&%#.-]*$/.test(form.cta_path)) {
-      setError("CTA 경로는 /로 시작하는 내부 경로만 가능합니다");
+    if (
+      form.cta_path &&
+      !/^\/[A-Za-z0-9/_?=&%#.-]*$/.test(form.cta_path) &&
+      !/^https:\/\/[^\s]+$/.test(form.cta_path)
+    ) {
+      setError("CTA 경로는 /로 시작하는 내부 경로 또는 https:// 외부 URL만 가능합니다");
       return;
     }
 
@@ -305,6 +309,7 @@ export default function AdminWhatsNewPage() {
               >
                 <option value="all">전체</option>
                 <option value="android_web">안드로이드 모바일웹만 (설치 앱·iOS 제외)</option>
+                <option value="ios_web">iOS 모바일웹/PWA만 (설치 앱·안드 제외)</option>
               </select>
             </div>
 
@@ -356,6 +361,11 @@ export default function AdminWhatsNewPage() {
                     {item.target_platform === "android_web" && (
                       <span className="inline-block rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] font-medium text-blue-400">
                         안드웹
+                      </span>
+                    )}
+                    {item.target_platform === "ios_web" && (
+                      <span className="inline-block rounded bg-purple-500/20 px-1.5 py-0.5 text-[10px] font-medium text-purple-400">
+                        iOS웹
                       </span>
                     )}
                     {item.display_until && (

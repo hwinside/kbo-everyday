@@ -208,13 +208,26 @@ export default function WhatsNewPage() {
               </h2>
               <div className="space-y-1">{renderBody(item.body)}</div>
               {item.cta_label && item.cta_path && item.cta_path !== pathname && (
-                <button
-                  onClick={() => router.push(item.cta_path!)}
-                  className="mt-4 flex items-center gap-1 rounded-lg bg-white/10 px-4 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-white/15"
-                >
-                  {escapeHtml(item.cta_label)}
-                  <ChevronRight size={16} />
-                </button>
+                item.cta_path.startsWith("https://") ? (
+                  // 외부 링크(앱스토어 등)는 새 탭 앵커로
+                  <a
+                    href={item.cta_path}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-4 inline-flex items-center gap-1 rounded-lg bg-white/10 px-4 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-white/15"
+                  >
+                    {escapeHtml(item.cta_label)}
+                    <ChevronRight size={16} />
+                  </a>
+                ) : (
+                  <button
+                    onClick={() => router.push(item.cta_path!)}
+                    className="mt-4 flex items-center gap-1 rounded-lg bg-white/10 px-4 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-white/15"
+                  >
+                    {escapeHtml(item.cta_label)}
+                    <ChevronRight size={16} />
+                  </button>
+                )
               )}
               {item.post_id !== null && (
                 <div className="mt-4 flex items-center gap-4">
