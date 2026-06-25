@@ -346,7 +346,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
               style={{ fieldSizing: "content" } as React.CSSProperties}
               className={clsx(
                 "w-full min-h-[40px] max-h-[6rem] px-4 py-2 rounded-2xl text-base leading-6",
-                "resize-none overflow-y-auto",
+                "resize-none overflow-y-auto hide-scrollbar",
                 "bg-bg-tertiary text-text-primary placeholder:text-text-tertiary",
                 "border focus:outline-none transition-colors",
                 !canWrite && "opacity-50",
