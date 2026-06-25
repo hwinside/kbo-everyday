@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
+import MiniWeeklyTrend from "@/components/players/MiniWeeklyTrend";
 import GlassCard from "@/components/ui/GlassCard";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
@@ -469,7 +470,12 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
               {showUnqual && (
                 <>
                   {unqualNote && (
-                    <p className="mt-2 mb-2 text-[11px] leading-snug text-text-tertiary">ⓘ {unqualNote}</p>
+                    <p className="mt-2 mb-1 text-[11px] leading-snug text-text-tertiary">ⓘ {unqualNote}</p>
+                  )}
+                  {!isDefense && (
+                    <p className="mb-2 text-[10px] text-text-tertiary">
+                      우측 미니 그래프 = 주간 {view === "pitcher" ? "ERA" : "타율"} 추이 (선수 페이지에서 전체 추이 확인)
+                    </p>
                   )}
                   <div className="space-y-2">
                     {unqualified.map((p, i) => {
@@ -496,6 +502,13 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
                               </div>
                               <span className="text-[11px] text-text-tertiary tabular-nums">{unqualProgress(p)}</span>
                             </div>
+                            {!isDefense && (
+                              <MiniWeeklyTrend
+                                playerId={String(p.kboId ?? p.playerId ?? "")}
+                                isPitcher={view === "pitcher"}
+                                color={TEAMS.find((t) => t.id === teamId)?.colorPrimary || "#9CA3AF"}
+                              />
+                            )}
                             <span className="text-lg font-bold tabular-nums text-text-secondary">{fmt(getValue(p))}</span>
                           </GlassCard>
                         </Link>
