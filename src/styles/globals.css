@@ -270,17 +270,18 @@ body {
  * The page scrolls on body, and the global TabBar is position:fixed bottom:0.
  * On iOS WebKit the rubber-band overscroll bounce translates the whole
  * viewport — including fixed elements — so the TabBar visually "꿀렁임".
- * Disabling vertical overscroll chaining/bounce at the document root stops it;
- * promoting the TabBar to its own compositor layer keeps it painted
- * independently of any residual document overscroll.
+ * Disabling vertical overscroll chaining/bounce at the document root stops it.
  * (-y only: horizontal carousels and inner sheet scrollers are unaffected.)
+ *
+ * ⚠️ Do NOT add `transform`/`will-change: transform` to [data-global-tabbar].
+ * On iOS WKWebView a position:fixed element that carries its own transform is
+ * rendered relative to the document instead of the visual viewport, so it
+ * scrolls away and floats mid-page instead of pinning to the bottom (#420 →
+ * regression). overscroll-behavior-y alone fixes the wobble without it.
  */
 html,
 body {
   overscroll-behavior-y: none;
-}
-[data-global-tabbar] {
-  transform: translateZ(0);
 }
 
 /*
