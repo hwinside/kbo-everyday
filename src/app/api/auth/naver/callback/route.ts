@@ -66,13 +66,17 @@ const IOS_NATIVE_CALLBACK_ORIGIN = "fan.keubo.app://auth/callback";
  */
 export async function GET(request: NextRequest) {
   const CANONICAL_ORIGIN = getOrigin(request);
+  // 실패 응답에도 stale native 쿠키를 정리 — native 로그인 취소/에러로 성공 경로의
+  //   삭제까지 못 갔을 때 다음 web 로그인이 native로 오인되는 것 방지(삼순 리뷰 #449).
+  const failRedirect = (target: string) => {
+    const res = NextResponse.redirect(target);
+    res.cookies.delete("naver_native");
+    return res;
+  };
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const error = url.searchParams.get("error");
-  const nativeParam = url.searchParams.get("native");
-  const isNativeIOS = nativeParam === "ios";
-  const isNativeAndroid = nativeParam === "android";
   const userAgent = request.headers.get("user-agent") || "";
   const referer = request.headers.get("referer") || "";
   // Structured diag log for mobile login triage (2026-04-21)
@@ -89,19 +93,24 @@ export async function GET(request: NextRequest) {
   // 에러 처리
   if (error) {
     console.error("[Naver OAuth] Error:", error, url.searchParams.get("error_description"));
-    return NextResponse.redirect(
+    return failRedirect(
       `${CANONICAL_ORIGIN}?login_error=${encodeURIComponent(error)}`
     );
   }
 
   if (!code) {
-    return NextResponse.redirect(
+    return failRedirect(
       `${CANONICAL_ORIGIN}?login_error=no_code`
     );
   }
 
   // CSRF state 검증
   const cookieStore = await cookies();
+  // native 플랫폼 판별 — redirect_uri query 대신 start route가 심은 쿠키로 판별.
+  //   (네이버 등록 Callback URL과 redirect_uri를 정확히 일치시키기 위해 query를 제거함)
+  const nativePlatform = cookieStore.get("naver_native")?.value;
+  const isNativeIOS = nativePlatform === "ios";
+  const isNativeAndroid = nativePlatform === "android";
   // verifyOtp이 설정할 쿠키를 수집 (redirect 응답에 복사하기 위해)
   const pendingCookies: { name: string; value: string; options: any }[] = [];
   const savedState = cookieStore.get("naver_oauth_state")?.value;
@@ -112,7 +121,7 @@ export async function GET(request: NextRequest) {
       allCookies: cookieStore.getAll().map((c) => c.name),
       isInApp: /Instagram|KAKAOTALK|FBAN|FBAV|Line|NAVER\(inapp/i.test(userAgent),
     });
-    return NextResponse.redirect(
+    return failRedirect(
       `${CANONICAL_ORIGIN}?login_error=state_mismatch`
     );
   }
@@ -377,7 +386,7 @@ export async function GET(request: NextRequest) {
     }
     const response = NextResponse.redirect(redirectUrl);
     response.cookies.delete("naver_oauth_state");
-    response.cookies.delete("naver_native_ios");
+    response.cookies.delete("naver_native");
     // verifyOtp이 설정한 Supabase auth 쿠키를 redirect 응답에 복사
     // (path/sameSite/httpOnly 누락 방지 — Google/Kakao flow와 동일)
     for (const { name, value, options } of pendingCookies) {
@@ -402,7 +411,7 @@ export async function GET(request: NextRequest) {
     return response;
   } catch (err) {
     console.error("[Naver OAuth] Unexpected error:", err);
-    return NextResponse.redirect(
+    return failRedirect(
       `${CANONICAL_ORIGIN}?login_error=unexpected`
     );
   }
