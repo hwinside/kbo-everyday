@@ -89,7 +89,7 @@ type UnqualGate = {
   rowProgress: (p: Row) => string;
   note: string;
 };
-function buildUnqualGate(view: View, activeStat: string, isDefense: boolean, scoped: Row[]): UnqualGate | null {
+function buildUnqualGate(view: View, activeStat: string, isDefense: boolean, scoped: Row[], league: Row[]): UnqualGate | null {
   if (isDefense) {
     if (activeStat !== "fpct") return null; // 누적 수비 = 자격 기준 없음
     return {
@@ -102,25 +102,28 @@ function buildUnqualGate(view: View, activeStat: string, isDefense: boolean, sco
   if (RATE_KEYS.has(activeStat)) {
     // 규정이닝/규정타석은 KBO 공식 qualifiedRate 플래그(소속팀 경기수 기준)라 팀마다 다르다.
     // 리그 단일 숫자로 per-row 비교하면 "261타석인데 미달" 모순이 나므로(팀 경기수 차이),
-    // 행에는 현재값만 표기하고, 근사 기준치(현 자격자 최소값)는 섹션 노트에만 '약 N'으로 둔다.
-    const hasFlag = scoped.some((p) => p.qualifiedRate !== undefined && p.qualifiedRate !== null);
+    // 행에는 현재값만 표기하고, 근사 기준치는 섹션 노트에만 '약 N'으로 둔다.
+    // ⚠️ 근사치는 *리그 전체* 자격자 최소값으로 계산 — 팀 스코프(충족 0명)에서도 30/12 폴백이 안 나오게.
+    //    리그에도 자격자가 없으면(시즌 극초반) 숫자를 아예 생략한다.
+    const hasFlag = league.some((p) => p.qualifiedRate !== undefined && p.qualifiedRate !== null);
+    const teamLabel = "소속팀 경기수 기준";
     if (view === "pitcher") {
-      const qIPs = scoped.filter((p) => Number(p.qualifiedRate) === 1).map((p) => parseIP(p.ip));
-      const reqIP = qIPs.length ? Math.round(Math.min(...qIPs)) : 12;
+      const qIPs = league.filter((p) => Number(p.qualifiedRate) === 1).map((p) => parseIP(p.ip));
+      const reqIP = qIPs.length ? Math.round(Math.min(...qIPs)) : null;
       return {
         qualified: hasFlag ? (p) => Number(p.qualifiedRate) === 1 : (p) => parseIP(p.ip) >= 12,
         hasRecord: (p) => parseIP(p.ip) > 0,
         rowProgress: (p) => `${ipLabel(p.ip)}이닝`,
-        note: `규정이닝(소속팀 경기수 기준, 현재 약 ${reqIP}이닝) 미달 — 도달 시 순위에 자동 노출됩니다`,
+        note: `규정이닝(${teamLabel}${reqIP ? `, 약 ${reqIP}이닝` : ""}) 미달 — 도달 시 순위에 자동 노출됩니다`,
       };
     }
-    const qPAs = scoped.filter((p) => Number(p.qualifiedRate) === 1).map((p) => Number(p.pa) || 0);
-    const reqPA = qPAs.length ? Math.round(Math.min(...qPAs)) : 30;
+    const qPAs = league.filter((p) => Number(p.qualifiedRate) === 1).map((p) => Number(p.pa) || 0);
+    const reqPA = qPAs.length ? Math.round(Math.min(...qPAs)) : null;
     return {
       qualified: hasFlag ? (p) => Number(p.qualifiedRate) === 1 : (p) => (Number(p.pa) || 0) >= 30,
       hasRecord: (p) => (Number(p.pa) || 0) > 0,
       rowProgress: (p) => `${Number(p.pa) || 0}타석`,
-      note: `규정타석(소속팀 경기수 기준, 현재 약 ${reqPA}타석) 미달 — 도달 시 순위에 자동 노출됩니다`,
+      note: `규정타석(${teamLabel}${reqPA ? `, 약 ${reqPA}타석` : ""}) 미달 — 도달 시 순위에 자동 노출됩니다`,
     };
   }
   // 자체 산식(saber) + 카운팅 = 경기수 게이트(타자 10 / 투수 5)
@@ -281,7 +284,7 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
       scopeTeamId != null
         ? rows.filter((p) => (p.teamId ?? teamIdFromText(p.team)) === scopeTeamId)
         : rows;
-    const gate = buildUnqualGate(view, activeStat, isDefense, scoped);
+    const gate = buildUnqualGate(view, activeStat, isDefense, scoped, rows);
     if (!gate) return empty;
     const isSaber = !!SABER_DEFS[activeStat];
     const pool = scoped
