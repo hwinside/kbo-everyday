@@ -554,6 +554,11 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       {/* 섹션 순서: 팀카드 → 뉴스 → 최애선수 → 숏츠 → 다른팀실시간 → 전체경기현황.
           각 섹션은 마이페이지 토글(sections.*)로 on/off. 팀카드는 S3에서 삽입. */}
 
+      {/* What's New Card (토글/순서 대상 아님 — 팀카드 바로 위 고정) */}
+      <Suspense fallback={null}>
+        <WhatsNewCard />
+      </Suspense>
+
       {/* 팀 카드 (필수, 토글 없음) — 경기카드(MyTeamHero)를 안에 종속 임베드(④=B) */}
       {myTeam && (
         <TeamCard
@@ -561,11 +566,6 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           gameSlot={embeddedGame ? <MyTeamHero myTeam={myTeam} myTeamGame={embeddedGame} embedded /> : undefined}
         />
       )}
-
-      {/* What's New Card (토글/순서 대상 아님 — 팀카드 바로 아래 고정) */}
-      <Suspense fallback={null}>
-        <WhatsNewCard />
-      </Suspense>
 
       {/* 순서 조정 가능한 섹션들. sectionOrder(마이페이지 드래그)대로 렌더.
           각 섹션은 토글(sections.*) off면 숨김. LiveGameBanner는 liveOtherTeams로 독립. */}
