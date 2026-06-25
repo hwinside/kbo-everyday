@@ -209,7 +209,7 @@ export default function TrafficPage() {
                     <div className="h-full rounded-full" style={{ width: `${share}%`, background: p.color }} />
                   </div>
                   <span className="text-sm tabular-nums w-14 text-right">{fmt(t.pv)}</span>
-                  <span className="text-xs text-[#8E8E93] tabular-nums w-20 text-right">방문 {fmt(t.uv)}</span>
+                  <span className="text-xs text-[#8E8E93] tabular-nums w-20 text-right">방문자 {fmt(t.uv)}</span>
                 </div>
               );
             })
