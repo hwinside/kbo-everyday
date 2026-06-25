@@ -4,6 +4,15 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { isAdminRequest } from "@/lib/admin/pin";
 
 const SAFE_CTA_PATH = /^\/[A-Za-z0-9/_?=&%#.-]*$/;
+// 외부 CTA는 https URL만 허용(앱스토어 등). javascript:/http: 등은 차단.
+const SAFE_CTA_EXTERNAL = /^https:\/\/[^\s]+$/;
+function isValidCtaPath(p: string): boolean {
+  return SAFE_CTA_PATH.test(p) || SAFE_CTA_EXTERNAL.test(p);
+}
+const ALLOWED_TARGETS = ["all", "android_web", "ios_web"] as const;
+function coerceTarget(t: unknown): string {
+  return typeof t === "string" && (ALLOWED_TARGETS as readonly string[]).includes(t) ? t : "all";
+}
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
 
@@ -78,8 +87,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "title, summary, body are required" }, { status: 400 });
   }
 
-  if (cta_path && !SAFE_CTA_PATH.test(cta_path)) {
-    return NextResponse.json({ error: "cta_path must be a safe internal path" }, { status: 400 });
+  if (cta_path && !isValidCtaPath(cta_path)) {
+    return NextResponse.json({ error: "cta_path must be a safe internal path or https URL" }, { status: 400 });
   }
 
   const supabase = getSupabaseAdmin();
@@ -92,7 +101,7 @@ export async function POST(req: NextRequest) {
       cta_label: cta_label || null,
       cta_path: cta_path || null,
       display_until: display_until || null,
-      target_platform: target_platform === "android_web" ? "android_web" : "all",
+      target_platform: coerceTarget(target_platform),
     })
     .select()
     .single();
@@ -115,8 +124,11 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "id is required" }, { status: 400 });
   }
 
-  if (updates.cta_path && !SAFE_CTA_PATH.test(updates.cta_path)) {
-    return NextResponse.json({ error: "cta_path must be a safe internal path" }, { status: 400 });
+  if (updates.cta_path && !isValidCtaPath(updates.cta_path)) {
+    return NextResponse.json({ error: "cta_path must be a safe internal path or https URL" }, { status: 400 });
+  }
+  if (updates.target_platform !== undefined) {
+    updates.target_platform = coerceTarget(updates.target_platform);
   }
 
   const supabase = getSupabaseAdmin();
