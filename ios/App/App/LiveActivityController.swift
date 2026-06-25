@@ -34,6 +34,9 @@ final class LiveActivityController {
     var onPushToStartToken: ((String) -> Void)?
     /// push-to-start 관찰 중복 설치 방지.
     private var pushToStartObserved = false
+    /// 가장 최근 push-to-start 토큰(디바이스 단위). 네이티브가 update token을 *앱 포그라운드
+    /// 없이* 서버 등록할 때 이 토큰을 신원 증명으로 실어 보낸다(register-device).
+    private var latestPushToStartToken: String?
 
     /// 디바이스 단위 push-to-start 토큰을 관찰(iOS 17.2+). 활성 Activity가 없어도 발급되며,
     /// 서버는 이 토큰으로 최애팀 경기 시작 시 Activity를 원격 시작한다(W3b). 17.2 미만은 no-op.
@@ -44,6 +47,7 @@ final class LiveActivityController {
             Task {
                 for await tokenData in Activity<KBOGameAttributes>.pushToStartTokenUpdates {
                     let hex = tokenData.map { String(format: "%02x", $0) }.joined()
+                    latestPushToStartToken = hex
                     onPushToStartToken?(hex)
                 }
             }
@@ -57,9 +61,31 @@ final class LiveActivityController {
         Task {
             for await tokenData in activity.pushTokenUpdates {
                 let hex = tokenData.map { String(format: "%02x", $0) }.joined()
-                onPushToken?(gameId, hex)
+                onPushToken?(gameId, hex)                                  // 포그라운드 JS 경로
+                registerUpdateTokenNatively(gameId: gameId, pushToken: hex) // 백그라운드 네이티브 경로
             }
         }
+    }
+
+    /// per-activity update token을 *앱 포그라운드 없이* 서버에 등록한다(W3a 백그라운드 경로).
+    /// WebView(JS) `/register`는 앱이 떠 있을 때만 동작 → push-to-start로 앱 닫힌 채 뜬
+    /// 카드는 토큰 미등록으로 갱신이 안 되고 시작 스냅샷에 얼어붙는다. 유저 세션 대신 디바이스의
+    /// push-to-start 토큰을 신원으로 실어 `register-device`에 직접 POST(서버가 user_id 역매핑).
+    /// fire-and-forget — 실패해도 JS 경로가 백업이라 앱에 영향 없음. push-to-start 토큰이 아직
+    /// 없으면(iOS 17.2 미만 등) skip하고 JS 경로에 위임한다.
+    private func registerUpdateTokenNatively(gameId: String, pushToken: String) {
+        guard let startToken = latestPushToStartToken else { return }
+        guard let url = URL(string: "https://keubo.fan/api/live-activity/register-device") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: String] = [
+            "gameId": gameId,
+            "pushToken": pushToken,
+            "pushToStartToken": startToken,
+        ]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        URLSession.shared.dataTask(with: req).resume()
     }
 
     /// push-to-start 관찰 중복 설치 방지.
