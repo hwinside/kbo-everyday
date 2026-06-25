@@ -100,6 +100,9 @@ function buildUnqualGate(view: View, activeStat: string, isDefense: boolean, sco
     };
   }
   if (RATE_KEYS.has(activeStat)) {
+    // 규정이닝/규정타석은 KBO 공식 qualifiedRate 플래그(소속팀 경기수 기준)라 팀마다 다르다.
+    // 리그 단일 숫자로 per-row 비교하면 "261타석인데 미달" 모순이 나므로(팀 경기수 차이),
+    // 행에는 현재값만 표기하고, 근사 기준치(현 자격자 최소값)는 섹션 노트에만 '약 N'으로 둔다.
     const hasFlag = scoped.some((p) => p.qualifiedRate !== undefined && p.qualifiedRate !== null);
     if (view === "pitcher") {
       const qIPs = scoped.filter((p) => Number(p.qualifiedRate) === 1).map((p) => parseIP(p.ip));
@@ -107,8 +110,8 @@ function buildUnqualGate(view: View, activeStat: string, isDefense: boolean, sco
       return {
         qualified: hasFlag ? (p) => Number(p.qualifiedRate) === 1 : (p) => parseIP(p.ip) >= 12,
         hasRecord: (p) => parseIP(p.ip) > 0,
-        rowProgress: (p) => `${ipLabel(p.ip)}이닝 / 규정 ${reqIP}이닝`,
-        note: `규정이닝(약 ${reqIP}이닝, KBO 공식) 미달 — 도달 시 순위에 자동 노출됩니다`,
+        rowProgress: (p) => `${ipLabel(p.ip)}이닝`,
+        note: `규정이닝(소속팀 경기수 기준, 현재 약 ${reqIP}이닝) 미달 — 도달 시 순위에 자동 노출됩니다`,
       };
     }
     const qPAs = scoped.filter((p) => Number(p.qualifiedRate) === 1).map((p) => Number(p.pa) || 0);
@@ -116,8 +119,8 @@ function buildUnqualGate(view: View, activeStat: string, isDefense: boolean, sco
     return {
       qualified: hasFlag ? (p) => Number(p.qualifiedRate) === 1 : (p) => (Number(p.pa) || 0) >= 30,
       hasRecord: (p) => (Number(p.pa) || 0) > 0,
-      rowProgress: (p) => `${Number(p.pa) || 0}타석 / 규정 ${reqPA}타석`,
-      note: `규정타석(약 ${reqPA}타석, KBO 공식) 미달 — 도달 시 순위에 자동 노출됩니다`,
+      rowProgress: (p) => `${Number(p.pa) || 0}타석`,
+      note: `규정타석(소속팀 경기수 기준, 현재 약 ${reqPA}타석) 미달 — 도달 시 순위에 자동 노출됩니다`,
     };
   }
   // 자체 산식(saber) + 카운팅 = 경기수 게이트(타자 10 / 투수 5)
@@ -399,12 +402,17 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
 
       {loading ? (
         <div className="py-16 text-center text-text-tertiary text-sm">로딩 중...</div>
-      ) : ranked.length === 0 ? (
+      ) : ranked.length === 0 && unqualified.length === 0 ? (
         <div className="py-16 text-center text-text-tertiary text-sm">
           기록이 아직 없습니다
         </div>
       ) : (
         <div key={`${view}-${activeStat}-${scopeTeamId ?? "all"}`} className="pb-24">
+          {ranked.length === 0 && (
+            <p className="py-6 text-center text-[13px] text-text-tertiary">
+              아직 규정 충족 선수가 없어요. 미달 선수 기록은 아래에서 확인하세요.
+            </p>
+          )}
           <div className="space-y-2">
           {ranked.map((p, i) => {
             const teamId = (typeof p.teamId === "number" ? p.teamId : null) ?? teamIdFromText(p.team) ?? 0;
@@ -456,18 +464,21 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
           })}
           </div>
 
-          {/* 규정 미달 선수 — 접이식. 리오스처럼 규정이닝/타석 미달이라 순위에서 빠진 선수 확인용 */}
+          {/* 규정 미달 선수 — 접이식. 리오스처럼 규정이닝/타석 미달이라 순위에서 빠진 선수 확인용.
+              규정 충족 선수가 0명이면(예: 팀 스코프 타율) 토글 없이 항상 펼쳐 보여준다. */}
           {unqualified.length > 0 && (
-            <div className="mt-5">
-              <button
-                type="button"
-                onClick={() => setShowUnqual((s) => !s)}
-                className="w-full flex items-center justify-center gap-1 rounded-lg border border-white/10 bg-bg-glass/30 py-2.5 text-xs font-semibold text-text-secondary"
-              >
-                규정 미달 선수 {unqualified.length}명 {showUnqual ? "접기 ▴" : "보기 ▾"}
-              </button>
+            <div className={ranked.length > 0 ? "mt-5" : "mt-1"}>
+              {ranked.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowUnqual((s) => !s)}
+                  className="w-full flex items-center justify-center gap-1 rounded-lg border border-white/10 bg-bg-glass/30 py-2.5 text-xs font-semibold text-text-secondary"
+                >
+                  규정 미달 선수 {unqualified.length}명 {showUnqual ? "접기 ▴" : "보기 ▾"}
+                </button>
+              )}
 
-              {showUnqual && (
+              {(showUnqual || ranked.length === 0) && (
                 <>
                   {unqualNote && (
                     <p className="mt-2 mb-1 text-[11px] leading-snug text-text-tertiary">ⓘ {unqualNote}</p>

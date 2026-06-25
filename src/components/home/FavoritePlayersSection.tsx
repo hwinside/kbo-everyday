@@ -93,10 +93,14 @@ function findPitcher(playerId: string, name: string, teamId: number): PitcherSta
 
 // 정적 스냅샷 기준 투수 분류 (라이브 fetch의 pos 결정 + 표시 블록 선택에 공통 사용).
 // 기존 분류 로직 유지 — 라이브 연동은 "값"만 갱신하고 분류는 바꾸지 않음.
+// 단, 정적 스냅샷에 둘 다 없는 신규 선수(시즌 중 합류 외국인 등, 예: 리오스 FP022)는
+// roster/favorite position으로 폴백 — 안 그러면 투수가 타자로 오분류돼 "시즌 기록 준비 중"으로 빈다.
 function classifyIsPitcher(p: FavoritePlayer): boolean {
   const batter = findBatter(p.playerId, p.name, p.teamId);
   const pitcher = findPitcher(p.playerId, p.name, p.teamId);
-  return pitcher ? (!batter || p.position === "투수") : false;
+  if (pitcher) return !batter || p.position === "투수";
+  if (batter) return false;
+  return (rosterMap.get(p.playerId)?.position ?? p.position) === "투수";
 }
 
 // 라이브 소스(/api/player-stats)는 선수 상세 페이지 히어로와 동일 — 카드/페이지 숫자 일치 보장.
