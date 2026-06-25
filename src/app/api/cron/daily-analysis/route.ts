@@ -16,10 +16,10 @@ import {
   type GameEvent,
   type GameHighlight,
 } from "@/lib/analysis/daily-delta";
+import { geminiGenerateContent, getGeminiKeys } from "@/lib/gemini/client";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+const GEMINI_MODEL = "gemini-2.5-flash";
 const PROMPT_VERSION = 1;
 
 const KBO_BASE = "https://www.koreabaseball.com";
@@ -317,18 +317,17 @@ ${catData}
 // ===== Gemini call =====
 
 async function fetchNewsHeadlines(dateStr: string): Promise<string[]> {
-  if (!GEMINI_API_KEY) return [];
+  if (getGeminiKeys().length === 0) return [];
   try {
-    const res = await fetch(GEMINI_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const res = await geminiGenerateContent(
+      GEMINI_MODEL,
+      {
         contents: [{ parts: [{ text: `${dateStr} KBO 프로야구 주요 뉴스 헤드라인 5개를 알려줘. 제목만 간결하게, 한 줄씩.` }] }],
         tools: [{ google_search: {} }],
         generationConfig: { maxOutputTokens: 500, thinkingConfig: { thinkingBudget: 0 } },
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
+      },
+      { signal: AbortSignal.timeout(15000) }
+    );
     if (!res.ok) return [];
     const data = await res.json();
     const text = data.candidates?.[0]?.content?.parts?.find((p: { text?: string }) => p.text)?.text || "";
@@ -345,18 +344,14 @@ async function callGemini(prompt: string): Promise<string> {
   const MAX_ATTEMPTS = 2;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const res = await fetch(GEMINI_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: attempt === 1 ? 0.7 : 0.3,
-          maxOutputTokens: 2560,
-          responseMimeType: "application/json",
-          thinkingConfig: { thinkingBudget: 0 },
-        },
-      }),
+    const res = await geminiGenerateContent(GEMINI_MODEL, {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: attempt === 1 ? 0.7 : 0.3,
+        maxOutputTokens: 2560,
+        responseMimeType: "application/json",
+        thinkingConfig: { thinkingBudget: 0 },
+      },
     });
 
     if (!res.ok) {
@@ -593,7 +588,7 @@ export async function GET(req: NextRequest) {
         batterCopy = "";
         pitcherCopy = "";
       }
-    } else if (GEMINI_API_KEY) {
+    } else if (getGeminiKeys().length > 0) {
       // 뉴스 헤드라인 가져오기 (Google Search grounding)
       const newsHeadlines = await fetchNewsHeadlines(yesterdayISO);
       console.log(`News headlines (${newsHeadlines.length}):`, newsHeadlines);

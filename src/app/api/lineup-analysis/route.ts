@@ -3,9 +3,9 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { fetchGames, type KboGame } from "@/lib/crawler/kbo-api";
 import { TEAMS } from "@/lib/constants/teams";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
+import { geminiGenerateContent, getGeminiKeys } from "@/lib/gemini/client";
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+const GEMINI_MODEL = "gemini-2.5-flash";
 
 const ANALYSIS_VERSION = 6;
 
@@ -498,7 +498,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!GEMINI_API_KEY) {
+  if (getGeminiKeys().length === 0) {
     return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
   }
 
@@ -560,18 +560,14 @@ export async function POST(req: NextRequest) {
   try {
     const prompt = buildPrompt(diff, body, rotations);
 
-    const geminiRes = await fetch(GEMINI_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 512,
-          responseMimeType: "application/json",
-          thinkingConfig: { thinkingBudget: 0 },
-        },
-      }),
+    const geminiRes = await geminiGenerateContent(GEMINI_MODEL, {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 512,
+        responseMimeType: "application/json",
+        thinkingConfig: { thinkingBudget: 0 },
+      },
     });
 
     if (!geminiRes.ok) {

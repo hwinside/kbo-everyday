@@ -5,9 +5,9 @@ import { fetchStandings } from "@/lib/crawler/kbo-api";
 import { computeSeriesSnapshot, serializeSeriesSnapshot } from "@/lib/series/snapshot";
 import { loserClaimedWin } from "@/lib/game-summary/winner-check";
 import { hasBaseRunnerContradiction } from "@/lib/game-summary/consistency-check";
+import { geminiGenerateContent, getGeminiKeys } from "@/lib/gemini/client";
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+const GEMINI_MODEL = "gemini-2.5-flash";
 const PROMPT_VERSION = 12; // v12: 주자 상황(만루/주자 수/출루 과정) 창작 금지 + 만루홈런 산술 규칙
 
 // ===== Types =====
@@ -353,7 +353,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!GEMINI_API_KEY) {
+  if (getGeminiKeys().length === 0) {
     return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
   }
 
@@ -393,18 +393,14 @@ export async function POST(req: NextRequest) {
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const geminiRes = await fetch(GEMINI_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: attempt === 1 ? 0.7 : 0.3, // 재시도 시 더 보수적으로
-            maxOutputTokens: 2560,
-            responseMimeType: "application/json",
-            thinkingConfig: { thinkingBudget: 0 },
-          },
-        }),
+      const geminiRes = await geminiGenerateContent(GEMINI_MODEL, {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: attempt === 1 ? 0.7 : 0.3, // 재시도 시 더 보수적으로
+          maxOutputTokens: 2560,
+          responseMimeType: "application/json",
+          thinkingConfig: { thinkingBudget: 0 },
+        },
       });
 
       if (!geminiRes.ok) {
