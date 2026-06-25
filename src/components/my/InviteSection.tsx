@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Gift, Share2, Check, UserPlus, Ticket } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { supabase } from "@/lib/supabase/client";
+import { getSafeSession } from "@/lib/supabase/client";
 
 interface Invitation {
   code: string;
@@ -36,7 +36,8 @@ interface InviteData {
 }
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
-  const { data: { session } } = await supabase.auth.getSession();
+  // getSafeSession: 네이티브 auth 락 hang 시에도 타임아웃으로 반환 → 스피너 무한 로딩 방지
+  const session = await getSafeSession();
   const accessToken = session?.access_token;
   return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
 }
