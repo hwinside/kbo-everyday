@@ -14,21 +14,26 @@ export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey);
  * 모든 await에 타임아웃 상한을 강제해 화면이 절대 굳지 않게 한다.
  * 락 경합이 일시적인 경우를 대비해 1회 짧게 재시도한다.
  */
-export async function getSafeSession(timeoutMs = 6000) {
-  const once = () =>
-    Promise.race([
-      supabase.auth.getSession().then(r => r.data.session),
-      new Promise<null>((_, reject) =>
-        setTimeout(() => reject(new Error("getSession timeout")), timeoutMs),
-      ),
-    ]);
-  try {
-    return await once();
-  } catch {
-    try {
-      return await once();
-    } catch {
-      return null;
-    }
-  }
+type SupabaseSession = Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"];
+
+export async function getSafeSession(timeoutMs = 6000): Promise<SupabaseSession> {
+  const once = (): Promise<SupabaseSession> =>
+    new Promise(resolve => {
+      let settled = false;
+      const done = (s: SupabaseSession) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(s);
+      };
+      const timer = setTimeout(() => done(null), timeoutMs);
+      supabase.auth
+        .getSession()
+        .then(r => done(r.data.session))
+        .catch(() => done(null));
+    });
+  const first = await once();
+  if (first) return first;
+  // 락 경합이 일시적인 경우를 대비해 1회 짧게 재시도
+  return await once();
 }
