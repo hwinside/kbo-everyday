@@ -28,14 +28,14 @@ type TodayState = "reflected" | "live" | "pending";
 function TodayStatus({ state }: { state: TodayState | null }) {
   if (state === "reflected") {
     return (
-      <span className="inline-flex items-center" title="오늘 결과 반영됨" aria-label="오늘 결과 반영됨">
+      <span className="inline-flex items-center shrink-0" title="오늘 결과 반영됨" aria-label="오늘 결과 반영됨">
         <Check size={13} strokeWidth={3} className="text-accent-green" />
       </span>
     );
   }
   if (state === "live") {
     return (
-      <span className="relative inline-flex h-2 w-2" title="경기 진행 중 (반영 전)" aria-label="경기 진행 중">
+      <span className="relative inline-flex h-2 w-2 shrink-0" title="경기 진행 중 (반영 전)" aria-label="경기 진행 중">
         <span className="absolute inline-flex h-full w-full rounded-full bg-accent-green opacity-60 animate-ping" />
         <span className="relative inline-flex h-2 w-2 rounded-full bg-accent-green" />
       </span>
@@ -188,6 +188,9 @@ export default function StandingsPage() {
   }, [season]);
 
   const standings = season === 2025 ? STANDINGS_2025 : (realStandings ?? MOCK_STANDINGS);
+  // 오늘 경기가 시작된 팀이 하나라도 있을 때만 '금일경기 반영여부' 안내를 노출.
+  // 00시가 지나 새 날이 시작되면 그날 경기는 전부 '경기 시작 전'(pending) → 안내/아이콘 모두 사라짐.
+  const hasTodayStatus = season === 2026 && Array.from(statusMap.values()).some((s) => s === "reflected" || s === "live");
   const [realBatters, setRealBatters] = useState<RealBatterStat[] | null>(null);
   const [realPitchers, setRealPitchers] = useState<RealPitcherStat[] | null>(null);
 
@@ -266,12 +269,25 @@ export default function StandingsPage() {
           className="glass-card overflow-hidden"
         >
           <table className="w-full text-sm sm:text-base table-fixed">
+            {hasTodayStatus && (
+              <caption className="caption-top px-2 pt-2 pb-1 text-left">
+                <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] sm:text-xs font-normal text-text-tertiary">
+                  <span>금일경기 반영여부</span>
+                  <span className="inline-flex items-center gap-0.5">
+                    <Check size={11} strokeWidth={3} className="text-accent-green" />반영됨
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent-green" />경기중
+                  </span>
+                </span>
+              </caption>
+            )}
             <colgroup>
               <col className="w-6" />
               <col />
-              <col className="w-7 sm:w-10" />
-              <col className="w-7 sm:w-10" />
-              <col className="w-6 sm:w-8" />
+              <col className="w-6 sm:w-10" />
+              <col className="w-6 sm:w-10" />
+              <col className="w-5 sm:w-8" />
               <col className="w-9 sm:w-12" />
               <col className="w-9 sm:w-10" />
               <col className="w-9 sm:w-11" />
@@ -307,12 +323,10 @@ export default function StandingsPage() {
                   >
                     <td className="py-2.5 text-center font-bold text-text-primary">{standing.rank}</td>
                     <td className="py-2.5 pl-2">
-                      <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-                        <TeamLogo team={team} size={24} className="sm:!h-7 sm:!w-7" />
-                        <div className="flex flex-col min-w-0 leading-tight">
-                          <span className="font-medium text-text-primary truncate">{team.shortName}</span>
-                          {season === 2026 && <TodayStatus state={statusMap.get(standing.teamId) ?? null} />}
-                        </div>
+                      <div className="flex items-center gap-1 sm:gap-2 min-w-0">
+                        <TeamLogo team={team} size={20} className="shrink-0 !h-5 !w-5 min-[360px]:!h-6 min-[360px]:!w-6 sm:!h-7 sm:!w-7" />
+                        <span className="font-medium text-text-primary truncate">{team.shortName}</span>
+                        {season === 2026 && <TodayStatus state={statusMap.get(standing.teamId) ?? null} />}
                         {getStreakIcon(standing.streak) && <span className="hidden min-[360px]:inline-block text-sm sm:text-base shrink-0">{getStreakIcon(standing.streak)}</span>}
                       </div>
                     </td>
