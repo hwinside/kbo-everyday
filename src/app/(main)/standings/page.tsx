@@ -28,14 +28,14 @@ type TodayState = "reflected" | "live" | "pending";
 function TodayStatus({ state }: { state: TodayState | null }) {
   if (state === "reflected") {
     return (
-      <span className="inline-flex items-center" title="오늘 결과 반영됨" aria-label="오늘 결과 반영됨">
+      <span className="inline-flex items-center shrink-0" title="오늘 결과 반영됨" aria-label="오늘 결과 반영됨">
         <Check size={13} strokeWidth={3} className="text-accent-green" />
       </span>
     );
   }
   if (state === "live") {
     return (
-      <span className="relative inline-flex h-2 w-2" title="경기 진행 중 (반영 전)" aria-label="경기 진행 중">
+      <span className="relative inline-flex h-2 w-2 shrink-0" title="경기 진행 중 (반영 전)" aria-label="경기 진행 중">
         <span className="absolute inline-flex h-full w-full rounded-full bg-accent-green opacity-60 animate-ping" />
         <span className="relative inline-flex h-2 w-2 rounded-full bg-accent-green" />
       </span>
@@ -188,6 +188,9 @@ export default function StandingsPage() {
   }, [season]);
 
   const standings = season === 2025 ? STANDINGS_2025 : (realStandings ?? MOCK_STANDINGS);
+  // 오늘 경기가 시작된 팀이 하나라도 있을 때만 '금일경기 반영여부' 안내를 노출.
+  // 00시가 지나 새 날이 시작되면 그날 경기는 전부 '경기 시작 전'(pending) → 안내/아이콘 모두 사라짐.
+  const hasTodayStatus = season === 2026 && Array.from(statusMap.values()).some((s) => s === "reflected" || s === "live");
   const [realBatters, setRealBatters] = useState<RealBatterStat[] | null>(null);
   const [realPitchers, setRealPitchers] = useState<RealPitcherStat[] | null>(null);
 
@@ -279,7 +282,12 @@ export default function StandingsPage() {
             <thead>
               <tr className="border-b border-border text-sm sm:text-base font-semibold text-text-tertiary">
                 <th className="py-2 text-center">#</th>
-                <th className="py-2 text-left pl-2">팀</th>
+                <th className="py-2 text-left pl-2">
+                  <span className="inline-flex items-baseline gap-1.5">
+                    팀
+                    {hasTodayStatus && <span className="font-normal text-[10px] sm:text-xs text-text-tertiary">· 금일경기 반영여부</span>}
+                  </span>
+                </th>
                 <th className="py-2 text-right pr-1 sm:pr-2">승</th>
                 <th className="py-2 text-right pr-1 sm:pr-2">패</th>
                 <th className="py-2 text-right pr-1 sm:pr-2">무</th>
@@ -309,10 +317,8 @@ export default function StandingsPage() {
                     <td className="py-2.5 pl-2">
                       <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
                         <TeamLogo team={team} size={24} className="sm:!h-7 sm:!w-7" />
-                        <div className="flex flex-col min-w-0 leading-tight">
-                          <span className="font-medium text-text-primary truncate">{team.shortName}</span>
-                          {season === 2026 && <TodayStatus state={statusMap.get(standing.teamId) ?? null} />}
-                        </div>
+                        <span className="font-medium text-text-primary truncate">{team.shortName}</span>
+                        {season === 2026 && <TodayStatus state={statusMap.get(standing.teamId) ?? null} />}
                         {getStreakIcon(standing.streak) && <span className="hidden min-[360px]:inline-block text-sm sm:text-base shrink-0">{getStreakIcon(standing.streak)}</span>}
                       </div>
                     </td>
