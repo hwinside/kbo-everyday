@@ -8,3 +8,16 @@ ALTER TABLE announcements
 ALTER TABLE announcements
   ADD CONSTRAINT announcements_target_platform_check
   CHECK (target_platform IN ('all', 'android_web', 'ios_web'));
+
+-- cta_path 제약 완화: 기존 컬럼 인라인 CHECK(announcements_cta_path_check, 20260428)는
+-- 내부 경로('/...')만 허용 → App Store 등 외부 https URL insert/update 시 DB에서 거부(500).
+-- 내부 경로 OR https:// 외부 URL 둘 다 허용하도록 교체 (javascript:/http:/// 는 계속 차단).
+ALTER TABLE announcements
+  DROP CONSTRAINT IF EXISTS announcements_cta_path_check;
+ALTER TABLE announcements
+  ADD CONSTRAINT announcements_cta_path_check
+  CHECK (
+    cta_path IS NULL
+    OR cta_path ~ '^/[A-Za-z0-9/_?=&%#.-]*$'
+    OR cta_path ~ '^https://[^[:space:]]+$'
+  );

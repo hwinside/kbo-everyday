@@ -37,10 +37,13 @@ export function isAndroidWeb(): boolean {
  * iOS 정식 출시 공지 타깃팅용 — 이미 앱으로 접속한 유저는 받을 필요 없고,
  * 안드/데스크톱은 앱스토어 대상이 아니므로 제외.
  * 클라이언트에서만 호출(navigator 의존).
- * ⚠️ iPadOS 13+ Safari는 데스크톱 모드에서 UA가 'Macintosh'로 위장 → 그 경우 미노출(V1 한계).
  */
 export function isIosWeb(): boolean {
   if (isNative) return false; // 네이티브 앱(android/ios) 제외
   if (typeof navigator === "undefined") return false; // SSR 가드
-  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+  if (/iphone|ipad|ipod/i.test(navigator.userAgent)) return true;
+  // iPadOS 13+ Safari는 데스크톱 모드에서 UA가 'Macintosh'로 위장 → 터치포인트로 iPad 판별.
+  // (Apple Mac은 터치스크린이 없어 maxTouchPoints=0 → 오탐 없음)
+  if (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1) return true;
+  return false;
 }
