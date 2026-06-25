@@ -70,9 +70,6 @@ export async function GET(request: NextRequest) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const error = url.searchParams.get("error");
-  const nativeParam = url.searchParams.get("native");
-  const isNativeIOS = nativeParam === "ios";
-  const isNativeAndroid = nativeParam === "android";
   const userAgent = request.headers.get("user-agent") || "";
   const referer = request.headers.get("referer") || "";
   // Structured diag log for mobile login triage (2026-04-21)
@@ -102,6 +99,11 @@ export async function GET(request: NextRequest) {
 
   // CSRF state 검증
   const cookieStore = await cookies();
+  // native 플랫폼 판별 — redirect_uri query 대신 start route가 심은 쿠키로 판별.
+  //   (네이버 등록 Callback URL과 redirect_uri를 정확히 일치시키기 위해 query를 제거함)
+  const nativePlatform = cookieStore.get("naver_native")?.value;
+  const isNativeIOS = nativePlatform === "ios";
+  const isNativeAndroid = nativePlatform === "android";
   // verifyOtp이 설정할 쿠키를 수집 (redirect 응답에 복사하기 위해)
   const pendingCookies: { name: string; value: string; options: any }[] = [];
   const savedState = cookieStore.get("naver_oauth_state")?.value;
@@ -377,7 +379,7 @@ export async function GET(request: NextRequest) {
     }
     const response = NextResponse.redirect(redirectUrl);
     response.cookies.delete("naver_oauth_state");
-    response.cookies.delete("naver_native_ios");
+    response.cookies.delete("naver_native");
     // verifyOtp이 설정한 Supabase auth 쿠키를 redirect 응답에 복사
     // (path/sameSite/httpOnly 누락 방지 — Google/Kakao flow와 동일)
     for (const { name, value, options } of pendingCookies) {
