@@ -58,6 +58,10 @@ export async function GET(request: NextRequest) {
 
   // native 플랫폼은 쿠키로 callback에 전달 (redirect_uri query 대체).
   //   callback이 ios/android 여부에 따라 앱으로 세션을 돌려줄 redirect 형태를 결정.
+  // ⚠️ 매 시작마다 먼저 삭제 후 native일 때만 set — 직전 native 로그인이 취소/에러로
+  //   callback의 삭제까지 못 간 경우, 10분 내 web 네이버 로그인이 stale 쿠키로 native로
+  //   오인되는 것 방지(삼순 리뷰 #449).
+  response.cookies.delete("naver_native");
   if (isNative) {
     response.cookies.set("naver_native", nativeParam!, {
       httpOnly: true,

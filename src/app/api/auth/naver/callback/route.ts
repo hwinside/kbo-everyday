@@ -66,6 +66,13 @@ const IOS_NATIVE_CALLBACK_ORIGIN = "fan.keubo.app://auth/callback";
  */
 export async function GET(request: NextRequest) {
   const CANONICAL_ORIGIN = getOrigin(request);
+  // 실패 응답에도 stale native 쿠키를 정리 — native 로그인 취소/에러로 성공 경로의
+  //   삭제까지 못 갔을 때 다음 web 로그인이 native로 오인되는 것 방지(삼순 리뷰 #449).
+  const failRedirect = (target: string) => {
+    const res = NextResponse.redirect(target);
+    res.cookies.delete("naver_native");
+    return res;
+  };
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
@@ -86,13 +93,13 @@ export async function GET(request: NextRequest) {
   // 에러 처리
   if (error) {
     console.error("[Naver OAuth] Error:", error, url.searchParams.get("error_description"));
-    return NextResponse.redirect(
+    return failRedirect(
       `${CANONICAL_ORIGIN}?login_error=${encodeURIComponent(error)}`
     );
   }
 
   if (!code) {
-    return NextResponse.redirect(
+    return failRedirect(
       `${CANONICAL_ORIGIN}?login_error=no_code`
     );
   }
@@ -114,7 +121,7 @@ export async function GET(request: NextRequest) {
       allCookies: cookieStore.getAll().map((c) => c.name),
       isInApp: /Instagram|KAKAOTALK|FBAN|FBAV|Line|NAVER\(inapp/i.test(userAgent),
     });
-    return NextResponse.redirect(
+    return failRedirect(
       `${CANONICAL_ORIGIN}?login_error=state_mismatch`
     );
   }
@@ -404,7 +411,7 @@ export async function GET(request: NextRequest) {
     return response;
   } catch (err) {
     console.error("[Naver OAuth] Unexpected error:", err);
-    return NextResponse.redirect(
+    return failRedirect(
       `${CANONICAL_ORIGIN}?login_error=unexpected`
     );
   }
