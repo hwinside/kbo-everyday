@@ -49,6 +49,11 @@ FRAME_MODE = "legacy"
 SIL_TOP = 70              # silhouette: 정수리 위 여백(px)
 SIL_SHOULDER_F = 1.7      # silhouette: 어깨선 판정 = 머리폭의 이 배수
 SIL_SHOULDER_TARGET = 0.99  # silhouette: 어깨선을 캔버스 높이의 이 지점에 앵커
+# 과크롭 guard: 클로즈업 원본(머리가 프레임 가득)은 crown→어깨 span이 작아
+# scale이 과도하게 커지며 눈/모자 위주로 잘림. scale이 이 상한을 넘으면
+# silhouette를 포기하고 legacy height-fit(머리 전체 보존)으로 폴백한다.
+# (정상 selfie 범위 scale≤1.45 / 과크롭 클로즈업 scale≥1.6 → 1.5에서 분리)
+SIL_SCALE_CAP = 1.5
 ALPHA_MATTING = dict(
     alpha_matting=True,
     alpha_matting_foreground_threshold=240,
@@ -88,7 +93,9 @@ def _place_legacy(cut):
 
 def _place_silhouette(cut):
     """컷아웃 알파에서 정수리·어깨선을 직접 검출 → 어깨선을 캔버스 하단에 앵커.
-    얼굴 크기가 선수 간 통일되고 비율은 원본 그대로(균등 스케일)."""
+    얼굴 크기가 선수 간 통일되고 비율은 원본 그대로(균등 스케일).
+    반환: (big, ox, oy, mode) — mode는 'silhouette' 또는 과크롭 guard 발동 시
+    'legacy-fallback'(클로즈업 원본 → legacy height-fit으로 머리 전체 보존)."""
     op = np.array(cut.split()[3]) > 40
     rows = np.where(op.any(axis=1))[0]
     crown, bottom = int(rows[0]), int(rows[-1])
@@ -102,17 +109,19 @@ def _place_silhouette(cut):
         if widths[y] >= SIL_SHOULDER_F * head_w:
             shoulder_y = y
             break
-    if shoulder_y is None:                       # 어깨 미검출(클로즈업) → 비율 폴백
-        shoulder_y = crown + int(0.62 * Hc)
+    span = max(1, (shoulder_y if shoulder_y is not None else crown + int(0.62 * Hc)) - crown)
+    scale = ((CANVAS_H * SIL_SHOULDER_TARGET) - SIL_TOP) / span
+    # 과크롭 guard: 어깨 미검출이거나 scale이 상한 초과(클로즈업 원본) → legacy 폴백.
+    if shoulder_y is None or scale > SIL_SCALE_CAP:
+        big, ox, oy = _place_legacy(cut)
+        return big, ox, oy, "legacy-fallback"
     cols = np.where(op[crown:crown + head_band].any(axis=0))[0]
     cx = (float(cols[0]) + float(cols[-1])) / 2 if len(cols) else cut.size[0] / 2
-    span = max(1, shoulder_y - crown)
-    scale = ((CANVAS_H * SIL_SHOULDER_TARGET) - SIL_TOP) / span
     nw, nh = round(cut.size[0] * scale), round(cut.size[1] * scale)
     big = _defringe(cut.resize((nw, nh), Image.LANCZOS))
     ox = round(CANVAS_W / 2 - cx * scale)
     oy = round(SIL_TOP - crown * scale)
-    return big, ox, oy
+    return big, ox, oy, "silhouette"
 
 
 def build(kbo_id):
@@ -126,8 +135,11 @@ def build(kbo_id):
         return False, "empty cutout"
     cut = cut.crop(bb)
 
-    place = _place_silhouette if FRAME_MODE == "silhouette" else _place_legacy
-    big, ox, oy = place(cut)
+    if FRAME_MODE == "silhouette":
+        big, ox, oy, mode = _place_silhouette(cut)
+    else:
+        big, ox, oy = _place_legacy(cut)
+        mode = "legacy"
 
     arr = np.array(big)
     a = arr[..., 3]
@@ -140,7 +152,7 @@ def build(kbo_id):
     canvas.alpha_composite(big, (ox, oy))
     os.makedirs(OUT_DIR, exist_ok=True)
     canvas.save(os.path.join(OUT_DIR, f"{kbo_id}.webp"), "WEBP", quality=92, method=6)
-    return True, "ok"
+    return True, mode
 
 
 def roster_ids():
