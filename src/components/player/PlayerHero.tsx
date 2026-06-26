@@ -213,10 +213,10 @@ export default function PlayerHero({
             fill
             sizes="220px"
             className="relative object-contain"
-            // 다음 원본 히어로(정수리 ~7% 지점). 머리를 더 축소(0.84→0.74)해 어깨선이 살짝
-            // 보이게(하린아빠 3차: 어깨 조금 노출) + 상단 여백 유지. transformOrigin top이라 축소 시
-            // 어깨가 위로 올라와 fade zone 위 실제 노출됨.
-            style={{ objectPosition: "center 24px", transform: "scale(0.74)", transformOrigin: "center top" }}
+            // 다음 원본 히어로(정수리 ~7.5%). 축소/오프셋 없이 object-contain으로 박스 높이를 꽉
+            // 채운다 — 인물이 상단(모자 ~14px 여백)부터 하단(어깨/가슴)까지 가득, 하단 fade로
+            // 어깨선 soft out. 축소(scale<1)는 아래 빈 공간을 만들어 떠 보여서 제거(하린아빠 4차).
+            style={{ objectPosition: "center top" }}
             priority
             unoptimized
           />
