@@ -323,7 +323,9 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                     style={{ background: `linear-gradient(160deg, ${teamColor}1F, transparent 72%)` }}
                   >
                     {heroUrl ? (
-                      // 사진을 약 20% 작게 + 상단 헤드룸 확보: 하단 밴드(상단 16px 비움)에 fill
+                      // portrait hero source를 cover로 채우면 머리/목이 잘린다(삼순 NO-GO).
+                      // 상단 16px 헤드룸 밴드에 object-contain object-bottom — 모자·얼굴·목 전체
+                      // 노출, crop 0. 삼순 390px Chrome 렌더 검증값.
                       <div className="absolute inset-x-0 bottom-0 top-[16px]">
                         <Image
                           src={heroUrl}
@@ -331,7 +333,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                           fill
                           unoptimized
                           sizes="108px"
-                          className="object-cover object-bottom"
+                          className="object-contain object-bottom"
                         />
                       </div>
                     ) : (

@@ -201,14 +201,14 @@ function PostRow({ post }: { post: Post }) {
             className="relative w-full h-full bg-bg-tertiary"
             style={{ background: teamGradient(thumb.teamId) }}
           >
-            {/* 히어로샷(752×944, 인물 상단 ~27%, 눈 ~58.8% 실측)을 눈이 박스 중앙에 오도록 확대 정렬.
-                w-[135%] + top -50% 로 모자~턱이 56px 박스에 적당히 차고 눈높이가 가운데. */}
+            {/* 히어로샷(752×944, Daum 소스 실루엣 정규화 후 정수리 ~7.5%·인물 92% 채움).
+                object-cover object-top — 모자 전체 노출 + 얼굴 적정 크기(과대확대 X), 최애선수
+                카드 썸네일과 동일 정렬. 추가 줌(w-118%)은 얼굴이 너무 커서 제거. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={thumb.src}
               alt=""
-              className="absolute left-1/2 w-[135%] max-w-none -translate-x-1/2"
-              style={{ top: "-50%" }}
+              className="absolute inset-0 w-full h-full object-cover object-top"
               onError={() => setImgFailed(true)}
             />
           </div>
