@@ -29,7 +29,8 @@ const rosterByKboId = new Map(
 );
 
 // 현재 사이트에 "적용 중"인 히어로 = 검수 통과(allowlist) 선수 전체.
-// 각 행: KBO 공식 헤드샷(/players/{kboId}.jpg, naverncp middle = 가용 최대) vs 현재 AI 히어로(/players-hero/{kboId}.webp)
+// 각 행: KBO 공식 헤드샷(/players/{kboId}.jpg) vs 적용된 히어로샷
+// (/players-hero/{kboId}.webp — 다음 원본 기반 rembg 컷아웃, #451/#457)
 const ROWS: CompareRow[] = (heroApprovedList as string[])
   .map((kboId) => {
     const r = rosterByKboId.get(kboId);
@@ -80,7 +81,7 @@ function CompareCard({ row }: { row: CompareRow }) {
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={`/players-hero/${row.kboId}.webp`}
-                alt={`${row.name} 현재 히어로`}
+                alt={`${row.name} 적용된 히어로샷`}
                 loading="lazy"
                 className="w-full h-full object-cover"
                 onError={() => setHeroOk(false)}
@@ -89,7 +90,7 @@ function CompareCard({ row }: { row: CompareRow }) {
               <span className="text-[11px] text-[#636366]">히어로 없음</span>
             )}
           </div>
-          <figcaption className="mt-1 text-center text-[11px] text-[#6366F1]">현재 히어로(AI)</figcaption>
+          <figcaption className="mt-1 text-center text-[11px] text-[#6366F1]">적용된 히어로샷</figcaption>
         </figure>
       </div>
     </div>
@@ -109,7 +110,7 @@ export default function HeroComparePage() {
       <div>
         <h1 className="text-2xl font-bold text-white">히어로샷 비교</h1>
         <p className="text-sm text-[#8E8E93] mt-1">
-          선수별 KBO 공식 헤드샷(가용 최대 사이즈) vs 현재 적용 중인 AI 히어로샷. 검수 통과(노출 중) {ROWS.length}명.
+          선수별 KBO 공식 헤드샷 vs 적용된 히어로샷(다음 원본 기반 컷아웃). 검수 통과(노출 중) {ROWS.length}명.
         </p>
       </div>
 
