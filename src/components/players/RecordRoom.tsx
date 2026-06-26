@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
+import MiniWeeklyTrend from "@/components/players/MiniWeeklyTrend";
 import GlassCard from "@/components/ui/GlassCard";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
@@ -56,8 +57,83 @@ const RATE_KEYS = new Set(["avg", "obp", "ops", "era", "whip"]);
 function qualNote(view: View, activeStat: string, isDefense: boolean): string | null {
   if (isDefense) return activeStat === "fpct" ? "수비 100이닝 이상" : null;
   if (SABER_DEFS[activeStat]) return view === "pitcher" ? "5경기 이상" : "10경기 이상";
-  if (RATE_KEYS.has(activeStat)) return view === "pitcher" ? "12이닝 이상" : "30타석 이상";
+  // 비율 스탯 실제 게이트 = KBO 공식 규정이닝/규정타석(qualifiedRate 플래그). 12이닝/30타석은 과거시즌 폴백값.
+  if (RATE_KEYS.has(activeStat)) return view === "pitcher" ? "규정이닝 충족" : "규정타석 충족";
   return view === "pitcher" ? "5경기 이상" : "10경기 이상";
+}
+
+/** "7 1/3" | number → 실이닝 소수. 파싱 실패 0. (title-rankings parseIP와 동일 규칙) */
+function parseIP(ip: unknown): number {
+  if (typeof ip === "number") return ip;
+  const s = String(ip ?? "").trim();
+  const m = s.match(/^(\d+)(?:\s+(\d+)\/(\d+))?$/);
+  if (!m) {
+    const n = Number(s);
+    return isNaN(n) ? 0 : n;
+  }
+  const whole = parseInt(m[1]) || 0;
+  const frac = m[2] && m[3] ? parseInt(m[2]) / parseInt(m[3]) : 0;
+  return whole + frac;
+}
+/** "7 1/3" → "7⅓" 보기 좋게. */
+function ipLabel(ip: unknown): string {
+  return String(ip ?? "0").replace(" 1/3", "⅓").replace(" 2/3", "⅔");
+}
+
+/* 규정 미달(랭킹에서 제외된) 선수 섹션용 게이트.
+ * qualified 판정은 rankByStat·RecordRoom 본문 필터와 동일하게 미러링한다(로직 드리프트 방지).
+ * 비율 스탯의 규정이닝/규정타석 목표치는 현 자격 충족자의 최소값으로 동적 추정(시즌 진행에 따라 증가). */
+type UnqualGate = {
+  qualified: (p: Row) => boolean;
+  hasRecord: (p: Row) => boolean;
+  rowProgress: (p: Row) => string;
+  note: string;
+};
+function buildUnqualGate(view: View, activeStat: string, isDefense: boolean, scoped: Row[], league: Row[]): UnqualGate | null {
+  if (isDefense) {
+    if (activeStat !== "fpct") return null; // 누적 수비 = 자격 기준 없음
+    return {
+      qualified: (p) => (Number(p.innings) || 0) >= FPCT_MIN_INN,
+      hasRecord: (p) => (Number(p.innings) || 0) > 0,
+      rowProgress: (p) => `${(Number(p.innings) || 0).toFixed(0)}이닝 / ${FPCT_MIN_INN}이닝`,
+      note: `수비 ${FPCT_MIN_INN}이닝 미만 — ${FPCT_MIN_INN}이닝부터 순위에 노출됩니다`,
+    };
+  }
+  if (RATE_KEYS.has(activeStat)) {
+    // 규정이닝/규정타석은 KBO 공식 qualifiedRate 플래그(소속팀 경기수 기준)라 팀마다 다르다.
+    // 리그 단일 숫자로 per-row 비교하면 "261타석인데 미달" 모순이 나므로(팀 경기수 차이),
+    // 행에는 현재값만 표기하고, 근사 기준치는 섹션 노트에만 '약 N'으로 둔다.
+    // ⚠️ 근사치는 *리그 전체* 자격자 최소값으로 계산 — 팀 스코프(충족 0명)에서도 30/12 폴백이 안 나오게.
+    //    리그에도 자격자가 없으면(시즌 극초반) 숫자를 아예 생략한다.
+    const hasFlag = league.some((p) => p.qualifiedRate !== undefined && p.qualifiedRate !== null);
+    const teamLabel = "소속팀 경기수 기준";
+    if (view === "pitcher") {
+      const qIPs = league.filter((p) => Number(p.qualifiedRate) === 1).map((p) => parseIP(p.ip));
+      const reqIP = qIPs.length ? Math.round(Math.min(...qIPs)) : null;
+      return {
+        qualified: hasFlag ? (p) => Number(p.qualifiedRate) === 1 : (p) => parseIP(p.ip) >= 12,
+        hasRecord: (p) => parseIP(p.ip) > 0,
+        rowProgress: (p) => `${ipLabel(p.ip)}이닝`,
+        note: `규정이닝(${teamLabel}${reqIP ? `, 약 ${reqIP}이닝` : ""}) 미달 — 도달 시 순위에 자동 노출됩니다`,
+      };
+    }
+    const qPAs = league.filter((p) => Number(p.qualifiedRate) === 1).map((p) => Number(p.pa) || 0);
+    const reqPA = qPAs.length ? Math.round(Math.min(...qPAs)) : null;
+    return {
+      qualified: hasFlag ? (p) => Number(p.qualifiedRate) === 1 : (p) => (Number(p.pa) || 0) >= 30,
+      hasRecord: (p) => (Number(p.pa) || 0) > 0,
+      rowProgress: (p) => `${Number(p.pa) || 0}타석`,
+      note: `규정타석(${teamLabel}${reqPA ? `, 약 ${reqPA}타석` : ""}) 미달 — 도달 시 순위에 자동 노출됩니다`,
+    };
+  }
+  // 자체 산식(saber) + 카운팅 = 경기수 게이트(타자 10 / 투수 5)
+  const minG = view === "pitcher" ? 5 : 10;
+  return {
+    qualified: (p) => (Number(p.games) || 0) >= minG,
+    hasRecord: (p) => (Number(p.games) || 0) > 0,
+    rowProgress: (p) => `${Number(p.games) || 0}경기 / ${minG}경기`,
+    note: `${minG}경기 미만 — ${minG}경기부터 순위에 노출됩니다`,
+  };
 }
 
 type Row = Record<string, unknown> & {
@@ -130,8 +206,15 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
   const [updatedAtByType, setUpdatedAtByType] = useState<Record<string, string>>({});
   const [sourceByType, setSourceByType] = useState<Record<string, string>>({});
   const [favIds, setFavIds] = useState<Set<string>>(new Set());
+  const [showUnqual, setShowUnqual] = useState(false);
   const loading = rowsByType[view] === undefined;
   const isDefense = view === "defense";
+
+  useEffect(() => {
+    // 뷰/스탯/스코프 바뀌면 미달 섹션 접힘으로 초기화
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setShowUnqual(false);
+  }, [view, activeStat, scopeTeamId]);
 
   useEffect(() => {
     // 최애선수(마이페이지 선택)만 하이라이트 — 팀 스코프에선 전원 강조 방지
@@ -191,6 +274,32 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
     }
     return rankByStat(scoped, activeStat) as (RankedRow & Row)[];
   }, [rowsByType, view, activeStat, scopeTeamId, isDefense]);
+
+  // 규정 미달(랭킹 제외) 선수 — 같은 스코프/정렬, 자격 미달 + 출전 기록 있는 선수만.
+  const { unqualified, unqualNote, unqualProgress } = useMemo(() => {
+    const empty = { unqualified: [] as (Row & { __saber?: number })[], unqualNote: null as string | null, unqualProgress: (() => "") as (p: Row) => string };
+    if (loading) return empty;
+    const rows = rowsByType[view] || [];
+    const scoped =
+      scopeTeamId != null
+        ? rows.filter((p) => (p.teamId ?? teamIdFromText(p.team)) === scopeTeamId)
+        : rows;
+    const gate = buildUnqualGate(view, activeStat, isDefense, scoped, rows);
+    if (!gate) return empty;
+    const isSaber = !!SABER_DEFS[activeStat];
+    const pool = scoped
+      .filter((p) => !gate.qualified(p) && gate.hasRecord(p))
+      .map((p) => (isSaber ? { ...p, __saber: computeSaber(p, view as StatType, activeStat) } : p));
+    const valOf = (p: Row & { __saber?: number }): number => {
+      if (isDefense) return Number(p[activeStat]) || 0;
+      if (isSaber) return Number(p.__saber) || 0;
+      if (activeStat === "doubles") return (Number(p.doubles) || 0) + (Number(p.triples) || 0);
+      return Number(p[STAT_DEFS[activeStat]?.key ?? activeStat] ?? 0) || 0;
+    };
+    const higher = isDefense ? true : isSaber ? true : (STAT_DEFS[activeStat]?.higherIsBetter ?? true);
+    const sorted = [...pool].sort((a, b) => (higher ? valOf(b) - valOf(a) : valOf(a) - valOf(b)));
+    return { unqualified: sorted, unqualNote: gate.note, unqualProgress: gate.rowProgress };
+  }, [rowsByType, view, activeStat, scopeTeamId, isDefense, loading]);
 
   function switchView(t: View) {
     if (t === view) return;
@@ -283,7 +392,8 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
 
       {qualNote(view, activeStat, isDefense) && (
         <p className="mb-2 -mt-1 text-[11px] text-text-tertiary">
-          ⓘ 자격 기준: {qualNote(view, activeStat, isDefense)} (미달 선수 제외)
+          ⓘ 자격 기준: {qualNote(view, activeStat, isDefense)}{" "}
+          {!loading && unqualified.length > 0 ? "· 미달 선수는 하단 별도 표시" : "(미달 선수 제외)"}
         </p>
       )}
 
@@ -295,12 +405,18 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
 
       {loading ? (
         <div className="py-16 text-center text-text-tertiary text-sm">로딩 중...</div>
-      ) : ranked.length === 0 ? (
+      ) : ranked.length === 0 && unqualified.length === 0 ? (
         <div className="py-16 text-center text-text-tertiary text-sm">
           기록이 아직 없습니다
         </div>
       ) : (
-        <div key={`${view}-${activeStat}-${scopeTeamId ?? "all"}`} className="space-y-2 pb-24">
+        <div key={`${view}-${activeStat}-${scopeTeamId ?? "all"}`} className="pb-24">
+          {ranked.length === 0 && (
+            <p className="py-6 text-center text-[13px] text-text-tertiary">
+              아직 규정 충족 선수가 없어요. 미달 선수 기록은 아래에서 확인하세요.
+            </p>
+          )}
+          <div className="space-y-2">
           {ranked.map((p, i) => {
             const teamId = (typeof p.teamId === "number" ? p.teamId : null) ?? teamIdFromText(p.team) ?? 0;
             const isFav = favIds.has(String(p.kboId ?? "")) || favIds.has(String(p.playerId ?? ""));
@@ -349,6 +465,74 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
               </Link>
             );
           })}
+          </div>
+
+          {/* 규정 미달 선수 — 접이식. 리오스처럼 규정이닝/타석 미달이라 순위에서 빠진 선수 확인용.
+              규정 충족 선수가 0명이면(예: 팀 스코프 타율) 토글 없이 항상 펼쳐 보여준다. */}
+          {unqualified.length > 0 && (
+            <div className={ranked.length > 0 ? "mt-5" : "mt-1"}>
+              {ranked.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowUnqual((s) => !s)}
+                  className="w-full flex items-center justify-center gap-1 rounded-lg border border-white/10 bg-bg-glass/30 py-2.5 text-xs font-semibold text-text-secondary"
+                >
+                  규정 미달 선수 {unqualified.length}명 {showUnqual ? "접기 ▴" : "보기 ▾"}
+                </button>
+              )}
+
+              {(showUnqual || ranked.length === 0) && (
+                <>
+                  {unqualNote && (
+                    <p className="mt-2 mb-1 text-[11px] leading-snug text-text-tertiary">ⓘ {unqualNote}</p>
+                  )}
+                  {!isDefense && (
+                    <p className="mb-2 text-[10px] text-text-tertiary">
+                      우측 미니 그래프 = 주간 {view === "pitcher" ? "ERA" : "타율"} 추이 (선수 페이지에서 전체 추이 확인)
+                    </p>
+                  )}
+                  <div className="space-y-2">
+                    {unqualified.map((p, i) => {
+                      const teamId = (typeof p.teamId === "number" ? p.teamId : null) ?? teamIdFromText(p.team) ?? 0;
+                      const href =
+                        getCanonicalPlayerHref({ name: p.name, kboId: p.kboId, playerId: p.playerId, teamId }) ??
+                        `/community/players/${p.kboId || p.playerId || p.name}`;
+                      return (
+                        <Link key={p.kboId || p.playerId || `unq-${p.name}-${i}`} href={href}>
+                          <GlassCard pressable className="p-3 flex items-center gap-3 opacity-70">
+                            <span className="flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-semibold flex-shrink-0 bg-bg-tertiary text-text-tertiary">
+                              미달
+                            </span>
+                            <PlayerAvatar
+                              name={p.name}
+                              teamId={teamId}
+                              photoUrl={getPlayerPhotoUrl(p.name, p.kboId || p.playerId, teamId)}
+                              size={44}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="truncate">
+                                <span className="text-sm font-semibold text-text-primary">{p.name}</span>
+                                <span className="ml-1.5 text-xs text-text-tertiary">{p.team}</span>
+                              </div>
+                              <span className="text-[11px] text-text-tertiary tabular-nums">{unqualProgress(p)}</span>
+                            </div>
+                            {!isDefense && (
+                              <MiniWeeklyTrend
+                                playerId={String(p.kboId ?? p.playerId ?? "")}
+                                isPitcher={view === "pitcher"}
+                                color={TEAMS.find((t) => t.id === teamId)?.colorPrimary || "#9CA3AF"}
+                              />
+                            )}
+                            <span className="text-lg font-bold tabular-nums text-text-secondary">{fmt(getValue(p))}</span>
+                          </GlassCard>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
