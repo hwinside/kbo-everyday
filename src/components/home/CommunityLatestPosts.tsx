@@ -168,8 +168,8 @@ function IconTile() {
   return (
     <div className="w-full h-full flex items-center justify-center bg-bg-tertiary">
       <svg
-        width="30"
-        height="30"
+        width="39"
+        height="39"
         viewBox="0 0 48 48"
         fill="none"
         aria-hidden="true"
