@@ -213,7 +213,9 @@ export default function PlayerHero({
             fill
             sizes="220px"
             className="relative object-contain"
-            style={{ objectPosition: "center -30px" }}
+            // 다음 원본 히어로(정수리 ~7% 지점)는 옛 -30px 오프셋이 모자 상단을 잘랐다.
+            // 상단 여백을 항상 확보하고 머리를 살짝 축소(아래로) — 전 선수 일괄.
+            style={{ objectPosition: "center 24px", transform: "scale(0.84)", transformOrigin: "center top" }}
             priority
             unoptimized
           />
