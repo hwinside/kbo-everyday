@@ -18,6 +18,7 @@ type TrafficResp = {
   days: number;
   rows: TrafficRow[];
   totals: Record<string, { pv: number; uv: number }>;
+  devices: Record<string, number>;
 };
 
 // Display order + labels + colors for known platforms. Unknown (pre-tagging
@@ -103,6 +104,22 @@ export default function TrafficPage() {
       .map((day) => ({ day: day.slice(5), ...byDay[day] }));
   }, [resp]);
 
+  // Daily active app devices (DAU): per-day DISTINCT visitor_id from native
+  // shells. admin_traffic_daily already returns daily uv per platform, so iOS
+  // and Android active devices come straight from rows.
+  const appDauData = useMemo(() => {
+    if (!resp) return [];
+    const byDay: Record<string, { ios: number; aos: number }> = {};
+    for (const r of resp.rows) {
+      if (r.platform === "ios_native") (byDay[r.day] ??= { ios: 0, aos: 0 }).ios += Number(r.uv);
+      else if (r.platform === "android_native" || r.platform === "native")
+        (byDay[r.day] ??= { ios: 0, aos: 0 }).aos += Number(r.uv);
+    }
+    return Object.keys(byDay)
+      .sort()
+      .map((day) => ({ day: day.slice(5), ios: byDay[day].ios, aos: byDay[day].aos }));
+  }, [resp]);
+
   const totalPv = useMemo(
     () => Object.values(resp?.totals ?? {}).reduce((s, t) => s + t.pv, 0),
     [resp],
@@ -112,6 +129,12 @@ export default function TrafficPage() {
     return (t.ios_native?.pv ?? 0) + (t.android_native?.pv ?? 0) + (t.native?.pv ?? 0);
   }, [resp]);
   const appShare = totalPv > 0 ? Math.round((appPv / totalPv) * 100) : 0;
+
+  // Cumulative unique app devices (all-time DISTINCT visitor_id from native shells).
+  const dev = resp?.devices ?? {};
+  const iosDevices = dev.ios_native ?? 0;
+  const aosDevices = (dev.android_native ?? 0) + (dev.native ?? 0);
+  const totalDevices = iosDevices + aosDevices;
 
   return (
     <div className="space-y-6">
@@ -157,6 +180,54 @@ export default function TrafficPage() {
             </p>
           </div>
         ))}
+      </div>
+
+      {/* Cumulative unique app devices — installed+opened+logged-in devices,
+          NOT store downloads (undercounts; visitor_id resets on reinstall). */}
+      <div className="glass-card p-4">
+        <div className="flex items-baseline justify-between flex-wrap gap-1">
+          <h2 className="text-sm font-semibold">앱 고유 기기수 (누적)</h2>
+          <p className="text-xs text-[#8E8E93]">앱 실행·로그인 기준 · 스토어 다운로드와 다름</p>
+        </div>
+        <div className="grid grid-cols-3 gap-3 mt-3">
+          <div>
+            <p className="text-xs text-[#8E8E93]">전체</p>
+            <p className="text-2xl font-bold mt-1">{loading ? "—" : fmt(totalDevices)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-[#8E8E93]">iOS 앱</p>
+            <p className="text-2xl font-bold mt-1 text-[#0A84FF]">{loading ? "—" : fmt(iosDevices)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-[#8E8E93]">안드 앱</p>
+            <p className="text-2xl font-bold mt-1 text-[#3DDC84]">{loading ? "—" : fmt(aosDevices)}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Daily active app devices (DAU) — per-day distinct native visitor_id */}
+      <div className="glass-card p-4">
+        <div className="flex items-baseline justify-between flex-wrap gap-1 mb-4">
+          <h2 className="text-sm font-semibold">일별 앱 활성 기기수 (DAU)</h2>
+          <p className="text-xs text-[#8E8E93]">하루 동안 앱을 연 고유 기기수</p>
+        </div>
+        {loading ? (
+          <div className="h-60 flex items-center justify-center text-[#8E8E93] text-sm">불러오는 중…</div>
+        ) : appDauData.length === 0 ? (
+          <div className="h-60 flex items-center justify-center text-[#8E8E93] text-sm">아직 앱 활성 기기가 없어요</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={appDauData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+              <XAxis dataKey="day" stroke="#8E8E93" fontSize={11} />
+              <YAxis stroke="#8E8E93" fontSize={11} allowDecimals={false} />
+              <Tooltip {...tooltipStyle} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="ios" name="iOS 앱" stackId="dau" fill="#0A84FF" />
+              <Bar dataKey="aos" name="안드 앱" stackId="dau" fill="#3DDC84" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
       </div>
 
       {/* Daily PV by platform (stacked) */}
