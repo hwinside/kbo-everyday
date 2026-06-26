@@ -18,6 +18,7 @@ type TrafficResp = {
   days: number;
   rows: TrafficRow[];
   totals: Record<string, { pv: number; uv: number }>;
+  devices: Record<string, number>;
 };
 
 // Display order + labels + colors for known platforms. Unknown (pre-tagging
@@ -113,6 +114,12 @@ export default function TrafficPage() {
   }, [resp]);
   const appShare = totalPv > 0 ? Math.round((appPv / totalPv) * 100) : 0;
 
+  // Cumulative unique app devices (all-time DISTINCT visitor_id from native shells).
+  const dev = resp?.devices ?? {};
+  const iosDevices = dev.ios_native ?? 0;
+  const aosDevices = (dev.android_native ?? 0) + (dev.native ?? 0);
+  const totalDevices = iosDevices + aosDevices;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -157,6 +164,29 @@ export default function TrafficPage() {
             </p>
           </div>
         ))}
+      </div>
+
+      {/* Cumulative unique app devices — installed+opened+logged-in devices,
+          NOT store downloads (undercounts; visitor_id resets on reinstall). */}
+      <div className="glass-card p-4">
+        <div className="flex items-baseline justify-between flex-wrap gap-1">
+          <h2 className="text-sm font-semibold">앱 고유 기기수 (누적)</h2>
+          <p className="text-xs text-[#8E8E93]">앱 실행·로그인 기준 · 스토어 다운로드와 다름</p>
+        </div>
+        <div className="grid grid-cols-3 gap-3 mt-3">
+          <div>
+            <p className="text-xs text-[#8E8E93]">전체</p>
+            <p className="text-2xl font-bold mt-1">{loading ? "—" : fmt(totalDevices)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-[#8E8E93]">iOS 앱</p>
+            <p className="text-2xl font-bold mt-1 text-[#0A84FF]">{loading ? "—" : fmt(iosDevices)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-[#8E8E93]">안드 앱</p>
+            <p className="text-2xl font-bold mt-1 text-[#3DDC84]">{loading ? "—" : fmt(aosDevices)}</p>
+          </div>
+        </div>
       </div>
 
       {/* Daily PV by platform (stacked) */}
