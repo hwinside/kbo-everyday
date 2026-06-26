@@ -29,6 +29,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, skipped: "live_activity_off" });
   }
 
+  // 토큰은 디바이스 단위 — 같은 기기를 다른 계정이 쓰면(로그아웃→재로그인) 이전 유저 row에
+  // 같은 토큰이 남아 register-device의 user_id 역매핑이 모호해진다(삼순 NO-GO). 이 토큰을
+  // *현재 유저가 아닌* row에서 제거 → 토큰=최신 유저에 유일 귀속(DB unique 인덱스와 정합).
+  const { error: cleanupErr } = await supabase
+    .from("live_activity_start_tokens")
+    .delete()
+    .eq("push_to_start_token", pushToStartToken)
+    .neq("user_id", verified.user.id);
+  if (cleanupErr) return supabaseErrorResponse(cleanupErr);
+
   const { error } = await supabase.from("live_activity_start_tokens").upsert(
     {
       user_id: verified.user.id,

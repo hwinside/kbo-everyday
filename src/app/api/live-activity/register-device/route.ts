@@ -24,10 +24,14 @@ export async function POST(req: NextRequest) {
 
   // 디바이스 신원 = push-to-start 토큰(register-start로 이미 등록된 유저-디바이스 매핑).
   // 이 토큰을 아는 주체 = 그 디바이스 + 서버뿐 → user_id 역매핑의 증명으로 사용.
+  // 토큰은 register-start 정리 + DB unique 인덱스로 유저에 유일하지만, 레거시 중복에도
+  // 안전하게 *최신(updated_at) 1개*만 취한다(>1 row여도 에러 없이 최신 소유자 선택).
   const { data: owner, error: lookupErr } = await supabase
     .from("live_activity_start_tokens")
     .select("user_id")
     .eq("push_to_start_token", pushToStartToken)
+    .order("updated_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
   if (lookupErr) return supabaseErrorResponse(lookupErr);
   if (!owner?.user_id) {
