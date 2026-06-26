@@ -199,13 +199,13 @@ export default function PlayerHero({
         {/* Center: cutout */}
         {/* 상단 safe space 6px + 하단 그라데이션 fade(어깨선 자연스럽게 사라짐) */}
         {/* - container: top-[6px] h-[194px] → 상단 여유 6px 확보 (모자 끝이 Hero 상단에 닿는 케이스 방지) */}
-        {/* - mask: 0~84% 완전 노출 → 84~100% fade — 상단 여백(geometry)은 그대로 두고 fade 시작점만
-             내려 목은 살리고 어깨선만 fade(고객 제보: 목이 너무 잘림, 윗공간은 유지). 삼순 390px 검증값. */}
+        {/* - mask: 0~90% 완전 노출 → 90~100% fade — 상단 geometry 불변, fade 시작점을 더 내려
+             목이 더 올라와 보이게(하린아빠 2차: 목 좀 더 노출). 윗공간은 그대로 유지. */}
         <div
           className="pointer-events-none absolute left-1/2 top-[6px] z-0 -translate-x-1/2 h-[194px] w-[200px] overflow-hidden"
           style={{
-            maskImage: "linear-gradient(180deg, #000 0%, #000 84%, transparent 100%)",
-            WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 84%, transparent 100%)",
+            maskImage: "linear-gradient(180deg, #000 0%, #000 90%, transparent 100%)",
+            WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 90%, transparent 100%)",
           }}
         >
           <Image
