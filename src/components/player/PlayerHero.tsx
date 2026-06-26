@@ -199,12 +199,13 @@ export default function PlayerHero({
         {/* Center: cutout */}
         {/* 상단 safe space 6px + 하단 그라데이션 fade(어깨선 자연스럽게 사라짐) */}
         {/* - container: top-[6px] h-[194px] → 상단 여유 6px 확보 (모자 끝이 Hero 상단에 닿는 케이스 방지) */}
-        {/* - mask: 0~92% 완전 노출 → 92~100% fade — 어깨선이 살짝 보이게 fade 더 내림. */}
+        {/* - mask: 0~96% 완전 노출 → 96~100% fade — 어깨선이 더 드러나게 fade를 거의 끝까지 내림
+             (구자욱/박해민처럼 소스 크롭이 타이트한 케이스도 어깨 노출). 하단 4%만 soft out. */}
         <div
           className="pointer-events-none absolute left-1/2 top-[6px] z-0 -translate-x-1/2 h-[194px] w-[200px] overflow-hidden"
           style={{
-            maskImage: "linear-gradient(180deg, #000 0%, #000 92%, transparent 100%)",
-            WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 92%, transparent 100%)",
+            maskImage: "linear-gradient(180deg, #000 0%, #000 96%, transparent 100%)",
+            WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 96%, transparent 100%)",
           }}
         >
           <Image
