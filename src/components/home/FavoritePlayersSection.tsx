@@ -323,16 +323,23 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                     style={{ background: `linear-gradient(160deg, ${teamColor}1F, transparent 72%)` }}
                   >
                     {heroUrl ? (
-                      // Daum 소스 실루엣 정규화 히어로(정수리 ~7.5%)는 상단 정렬해야 모자 전체가
-                      // 보이고 헤드룸이 생긴다. 하단 정렬(object-bottom)은 모자 위가 잘림.
-                      <div className="absolute inset-0">
+                      // Daum 소스 실루엣 정규화 히어로(정수리 ~7.5%). object-cover는 카드 하단에서
+                      // 목/어깨가 바로 잘려(삼순 NO-GO) → object-contain object-top으로 모자·얼굴
+                      // 전체를 자르지 않고, 하단 페이드로 어깨선을 부드럽게 정리(잘림 X).
+                      <div
+                        className="absolute inset-0"
+                        style={{
+                          maskImage: "linear-gradient(180deg, #000 0%, #000 82%, transparent 100%)",
+                          WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 82%, transparent 100%)",
+                        }}
+                      >
                         <Image
                           src={heroUrl}
                           alt={player.name}
                           fill
                           unoptimized
                           sizes="108px"
-                          className="object-cover object-top"
+                          className="object-contain object-top"
                         />
                       </div>
                     ) : (
