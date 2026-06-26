@@ -18,6 +18,7 @@ import {
   Sparkles,
   Smartphone,
   BarChart3,
+  Download,
   Image as ImageIcon,
 } from "lucide-react";
 import { useAdminUnreadDMCount } from "@/lib/admin/useAdminUnreadDMCount";
@@ -26,6 +27,7 @@ const NAV_ITEMS = [
   { href: "/admin", label: "개요", icon: LayoutDashboard },
   { href: "/admin/users", label: "유저", icon: Users },
   { href: "/admin/traffic", label: "트래픽", icon: BarChart3 },
+  { href: "/admin/downloads", label: "다운로드", icon: Download },
   { href: "/admin/retention", label: "리텐션", icon: TrendingUp },
   { href: "/admin/content", label: "콘텐츠", icon: FileText },
   { href: "/admin/jobs", label: "크롤러/배치", icon: Bot },
