@@ -186,6 +186,7 @@ async function startForTeamSide(params: {
   attributes: Record<string, unknown>;
   contentState: Record<string, unknown>;
   staleDate: number;
+  alert?: { title: string; body: string };
   jwt: string;
 }): Promise<{ sent: number; failed: boolean }> {
   if (params.teamId === null) return { sent: 0, failed: false };
@@ -270,6 +271,7 @@ async function startForTeamSide(params: {
           attributes: { ...params.attributes, myTeamCode: params.myTeamCode },
           contentState: params.contentState,
           staleDate: params.staleDate,
+          alert: params.alert,
         },
         params.jwt,
       );
@@ -363,14 +365,24 @@ export async function pushLiveActivityStarts(
       ? Math.floor(startedAt / 1000) + 10 * 60
       : Math.floor(Date.now() / 1000) + 5 * 60;
 
+    // push-to-start에 alert 동봉 — *무음*(alert 없는) push-to-start는 iOS가 잠금화면 카드를
+    // 띄우지 않는다(실기기 확인 2026-06-26: 무음=미표시, alert=표시). 경기 30분 전 예정
+    // 카드가 안 뜨던 직접 원인. alert가 표시 트리거 겸 "내 팀 경기 곧 시작" 배너 역할.
+    const alert = {
+      title: `⚾ ${away} vs ${home}`,
+      body: isLiveNow
+        ? "실시간 중계가 시작됐어요 — 잠금화면에서 확인하세요"
+        : "곧 경기 시작! 잠금화면에서 실시간 중계를 확인하세요",
+    };
+
     // away/home 슬롯을 각자 그 팀 코드로 강조(myTeamCode) — 수신자별 최애팀 반영.
     const awaySide = await startForTeamSide({
       gameId, teamId: teamIdByShortName(away), myTeamCode: awayCode,
-      attributes, contentState, staleDate, jwt,
+      attributes, contentState, staleDate, alert, jwt,
     });
     const homeSide = await startForTeamSide({
       gameId, teamId: teamIdByShortName(home), myTeamCode: homeCode,
-      attributes, contentState, staleDate, jwt,
+      attributes, contentState, staleDate, alert, jwt,
     });
     started += awaySide.sent + homeSide.sent;
     // 일시 실패분은 startForTeamSide에서 유저 단위로 선점 해제됨 → 다음 cron 재시도.
