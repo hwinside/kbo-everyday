@@ -201,14 +201,14 @@ function PostRow({ post }: { post: Post }) {
             className="relative w-full h-full bg-bg-tertiary"
             style={{ background: teamGradient(thumb.teamId) }}
           >
-            {/* 히어로샷(752×944, Daum 소스 실루엣 정규화 후 정수리 ~7.5%·인물 92% 채움).
-                object-cover object-top — 모자 전체 노출 + 얼굴 적정 크기(과대확대 X), 최애선수
-                카드 썸네일과 동일 정렬. 추가 줌(w-118%)은 얼굴이 너무 커서 제거. */}
+            {/* 히어로샷(752×944, Daum 소스 실루엣 정규화). object-cover는 56px 박스에서 턱이
+                잘려(실배포 확인) → object-contain으로 전체 노출, 잘림 0. 측면 여백은 팀 그라데이션
+                bg가 채움. 최애선수 카드(contain)와 동일 처리. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={thumb.src}
               alt=""
-              className="absolute inset-0 w-full h-full object-cover object-top"
+              className="absolute inset-0 w-full h-full object-contain"
               onError={() => setImgFailed(true)}
             />
           </div>
