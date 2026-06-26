@@ -323,15 +323,16 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
                     style={{ background: `linear-gradient(160deg, ${teamColor}1F, transparent 72%)` }}
                   >
                     {heroUrl ? (
-                      // 사진을 약 20% 작게 + 상단 헤드룸 확보: 하단 밴드(상단 16px 비움)에 fill
-                      <div className="absolute inset-x-0 bottom-0 top-[16px]">
+                      // Daum 소스 실루엣 정규화 히어로(정수리 ~7.5%)는 상단 정렬해야 모자 전체가
+                      // 보이고 헤드룸이 생긴다. 하단 정렬(object-bottom)은 모자 위가 잘림.
+                      <div className="absolute inset-0">
                         <Image
                           src={heroUrl}
                           alt={player.name}
                           fill
                           unoptimized
                           sizes="108px"
-                          className="object-cover object-bottom"
+                          className="object-cover object-top"
                         />
                       </div>
                     ) : (
