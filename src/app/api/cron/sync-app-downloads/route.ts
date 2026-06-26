@@ -28,9 +28,12 @@ export async function GET(req: NextRequest) {
 
   try {
     for (let i = 1; i <= LOOKBACK_DAYS; i++) {
-      const date = new Date(
-        new Date(today + "T00:00:00+09:00").getTime() - i * 86400000,
-      ).toISOString().slice(0, 10);
+      // Calendar arithmetic on the KST date string. Anchoring at 00:00 UTC (not
+      // +09:00) keeps toISOString()'s date aligned with the KST day — a +09:00
+      // midnight is 15:00 UTC the *previous* day, which would shift D-1→D-2.
+      const d = new Date(today + "T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() - i);
+      const date = d.toISOString().slice(0, 10);
       const units = await fetchIosDownloads(date);
       if (units === null) {
         skipped.push(date); // report not available yet

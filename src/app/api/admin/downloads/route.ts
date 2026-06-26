@@ -13,9 +13,11 @@ export async function GET(req: NextRequest) {
 
   const daysParam = Number(req.nextUrl.searchParams.get("days") ?? "30");
   const days = Math.min(Math.max(Number.isFinite(daysParam) ? daysParam : 30, 1), 365);
-  const since = new Date(
-    new Date(getKSTToday() + "T00:00:00+09:00").getTime() - (days - 1) * 86400000,
-  ).toISOString().slice(0, 10);
+  // Calendar arithmetic on the KST date (anchor at 00:00 UTC so toISOString's
+  // date stays aligned with the KST day; +09:00 midnight is the prior UTC day).
+  const sinceDate = new Date(getKSTToday() + "T00:00:00Z");
+  sinceDate.setUTCDate(sinceDate.getUTCDate() - (days - 1));
+  const since = sinceDate.toISOString().slice(0, 10);
 
   const { data, error } = await supabase
     .from("app_downloads")
