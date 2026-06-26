@@ -199,12 +199,12 @@ export default function PlayerHero({
         {/* Center: cutout */}
         {/* 상단 safe space 6px + 하단 그라데이션 fade(어깨선 자연스럽게 사라짐) */}
         {/* - container: top-[6px] h-[194px] → 상단 여유 6px 확보 (모자 끝이 Hero 상단에 닿는 케이스 방지) */}
-        {/* - mask: 0~60% 완전 노출 → 60~100% fade (어깨 라인이 점진적으로 fade out) */}
+        {/* - mask: 0~84% 완전 노출 → 84~100% fade (목은 살리고 어깨 라인만 fade out) */}
         <div
           className="pointer-events-none absolute left-1/2 top-[6px] z-0 -translate-x-1/2 h-[194px] w-[200px] overflow-hidden"
           style={{
-            maskImage: "linear-gradient(180deg, #000 0%, #000 60%, transparent 100%)",
-            WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 60%, transparent 100%)",
+            maskImage: "linear-gradient(180deg, #000 0%, #000 84%, transparent 100%)",
+            WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 84%, transparent 100%)",
           }}
         >
           <Image
