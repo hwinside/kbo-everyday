@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { MessageCircle, Heart, ChevronRight, MessagesSquare } from "lucide-react";
+import { MessageCircle, Heart, ChevronRight } from "lucide-react";
 import { useUnifiedFeed } from "@/lib/supabase/useUnifiedFeed";
 import { getPostDetailPath } from "@/lib/utils/post-share";
 import { getTeamBySlug, getTeamById } from "@/lib/constants/teams";
@@ -159,10 +159,56 @@ function teamGradient(teamId: number | null): string | undefined {
   return `linear-gradient(180deg, ${c}40 0%, ${c}1A 40%, #0F0F12 78%, #0A0A0B 100%)`;
 }
 
+/**
+ * 무팀/다팀(크보팬 라벨) 글 썸네일 아이콘.
+ * 크보팬 로고와 동일한 파랑→빨강 말풍선 + 야구공 모티프(하린아빠 C안 확정 2026-06-26).
+ * 단색 lucide 아이콘이 밋밋해 브랜드 컬러를 입힌 인라인 SVG로 교체.
+ */
 function IconTile() {
   return (
     <div className="w-full h-full flex items-center justify-center bg-bg-tertiary">
-      <MessagesSquare size={22} className="text-text-tertiary" />
+      <svg
+        width="30"
+        height="30"
+        viewBox="0 0 48 48"
+        fill="none"
+        aria-hidden="true"
+      >
+        <defs>
+          <linearGradient id="kbo-bubble-grad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#1E5BB8" />
+            <stop offset="0.5" stopColor="#2F57C9" />
+            <stop offset="1" stopColor="#D6353F" />
+          </linearGradient>
+        </defs>
+        {/* 말풍선(꼬리 좌하단) — 크보팬 로고 형태 */}
+        <path
+          d="M13 7 H35 a9 9 0 0 1 9 9 V28 a9 9 0 0 1 -9 9 H23 l-7 7 v-7 H13 a9 9 0 0 1 -9 -9 V16 a9 9 0 0 1 9 -9 Z"
+          fill="url(#kbo-bubble-grad)"
+        />
+        {/* 야구공 */}
+        <g transform="translate(24 22)">
+          <circle r="9" fill="#fff" />
+          <path
+            d="M-6.4 -6.4 A9 9 0 0 0 -6.4 6.4"
+            fill="none"
+            stroke="#C42A35"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
+          <path
+            d="M6.4 -6.4 A9 9 0 0 1 6.4 6.4"
+            fill="none"
+            stroke="#C42A35"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
+          <g stroke="#C42A35" strokeWidth="1.1" strokeLinecap="round">
+            <path d="M-5.2 -4 l1.6 0.5 M-5.7 -1.4 l1.7 0.2 M-5.5 1.6 l1.7 -0.3 M-4.6 4 l1.5 -0.8" />
+            <path d="M5.2 -4 l-1.6 0.5 M5.7 -1.4 l-1.7 0.2 M5.5 1.6 l-1.7 -0.3 M4.6 4 l-1.5 -0.8" />
+          </g>
+        </g>
+      </svg>
     </div>
   );
 }
