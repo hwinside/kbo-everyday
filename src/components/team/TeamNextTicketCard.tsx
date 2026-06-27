@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { getTeamBgColor, type TeamData } from "@/lib/constants/teams";
 import { getNextTicketOpen, formatCountdown, formatOpenAt, formatGameDateTime, type NextTicketOpen } from "@/lib/utils/ticket-utils";
-import { TICKET_OPEN_RULES } from "@/lib/constants/tickets";
 
 interface Props {
   team: TeamData;
@@ -19,57 +18,69 @@ export default function TeamNextTicketCard({ team }: Props) {
   useEffect(() => {
     let aborted = false;
 
-    // 예매룰은 주최(홈)팀 기준 — 원정경기는 상대(홈)팀 정책으로 오픈 시각 계산.
-    const ticketOpenAt = (date: string, hostId: number): Date | null => {
-      const policy = TICKET_OPEN_RULES[hostId];
-      if (!policy) return null;
-      const y = parseInt(date.slice(0, 4));
-      const m = parseInt(date.slice(4, 6)) - 1;
-      const dd = parseInt(date.slice(6, 8));
-      return new Date(y, m, dd - policy.daysBefore, policy.hour, 0, 0);
-    };
-
     async function fetchUpcomingGames() {
-      const upcoming: Array<{ date: string; time: string; homeTeamId: number; opponentName: string; isAway: boolean; uncertain: boolean }> = [];
       const now = new Date();
 
-      // 홈+원정 중 가장 먼저 오픈되는 경기를 찾기 위해 35일 전체 수집.
-      // daysBefore가 구단마다 다르므로(롯데 14일·SSG 5일 등) 날짜상 뒤 경기가 먼저 오픈될 수 있음.
-      // ex) 13번째 롯데 원정(14일전 오픈)이 1~12번째 SSG 홈경기(5일전 오픈)보다 먼저 오픈될 수 있어
-      // 경기 수로 조기 중단하지 않고 35일 범위 전체를 수집한 뒤 getNextTicketOpen이 최단 openAt 선택.
+      // 35일 윈도우가 걸치는 달(YYYY-MM)만 모음 — 보통 1~2개(월 경계 최대 3개).
+      // 예전엔 일자별 /api/games를 35회 *순차* await 해서 카드가 몇 초 늦게 떴음.
+      // 대신 team-schedule(달 단위·캐시 s-maxage=300)로 1~2회만 호출 → 카드 즉시 노출.
+      const monthKeys = new Set<string>();
       for (let i = 0; i < 35; i++) {
         const d = new Date(now);
         d.setDate(d.getDate() + i);
-        const dateStr = d
-          .toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" })
-          .replace(/-/g, "");
-        try {
-          const res = await fetch(`/api/games?date=${dateStr}`);
-          if (!res.ok) continue;
-          const data = await res.json();
-          const games: Array<{ homeTeamId: number; awayTeamId: number; status: string; date: string; time?: string; awayName?: string; homeName?: string }> =
-            data.games ?? data;
-          if (!Array.isArray(games)) continue;
-          // 우천취소/종료 경기 제외 → 일정 변경(취소·연기)은 자동으로 다음 유효 경기로 스킵
-          const teamGames = games.filter(
-            (g) =>
-              (g.homeTeamId === team.id || g.awayTeamId === team.id) &&
-              g.status !== "cancelled" &&
-              g.status !== "final"
-          );
-          const g = teamGames[0];
-          // 같은 날 경기 2건 이상 = 더블헤더/변경 경기 → 예매 일정 확정 불가(별도 확인)
-          if (g && !upcoming.some((u) => u.date === g.date)) {
-            const isAway = g.awayTeamId === team.id;
-            const opponentName = (isAway ? g.homeName : g.awayName) ?? "";
-            upcoming.push({ date: g.date, time: g.time ?? "", homeTeamId: g.homeTeamId, opponentName, isAway, uncertain: teamGames.length >= 2 });
-          }
-        } catch {
-          /* skip */
-        }
+        monthKeys.add(
+          d.toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" }).slice(0, 7)
+        );
       }
 
+      type SchedDay = {
+        date: string;
+        time?: string;
+        home: boolean;
+        status: string;
+        opponent?: { id: number; shortName: string };
+      };
+
+      // 달 단위 호출을 *병렬*로 — 35회 순차 → 1~2회 병렬(캐시 히트 시 즉시).
+      const monthResults = await Promise.all(
+        [...monthKeys].map(async (mk) => {
+          try {
+            const res = await fetch(`/api/team-schedule?team=${team.slug}&month=${mk}`);
+            if (!res.ok) return [] as SchedDay[];
+            const data = await res.json();
+            return (Array.isArray(data.days) ? data.days : []) as SchedDay[];
+          } catch {
+            return [] as SchedDay[];
+          }
+        })
+      );
+
       if (aborted) return;
+
+      // 날짜별 그룹 → 우천취소/종료 제외(일정 변경은 다음 유효 경기로 자동 스킵),
+      // 같은 날 2건↑이면 더블헤더/변경 경기(uncertain) 표기.
+      const byDate = new Map<string, SchedDay[]>();
+      for (const g of monthResults.flat()) {
+        if (g.status === "cancelled" || g.status === "final") continue;
+        const arr = byDate.get(g.date) ?? [];
+        arr.push(g);
+        byDate.set(g.date, arr);
+      }
+
+      // 홈+원정 통틀어 가장 먼저 오픈되는 경기는 getNextTicketOpen이 선택(daysBefore 구단별 상이 안전).
+      const upcoming = [...byDate.values()].map((games) => {
+        const g = games[0];
+        return {
+          date: g.date,
+          time: g.time ?? "",
+          // 예매룰은 주최(홈)팀 기준 — 원정이면 상대(홈)팀 id로 정책 조회.
+          homeTeamId: g.home ? team.id : (g.opponent?.id ?? 0),
+          opponentName: g.opponent?.shortName ?? "",
+          isAway: !g.home,
+          uncertain: games.length >= 2,
+        };
+      });
+
       // 최신 일정으로 재계산 → 오픈 지난 경기는 다음 fetch에서 다음 대기 경기로 자동 보정
       setTicketInfo(getNextTicketOpen(upcoming));
     }
@@ -92,7 +103,7 @@ export default function TeamNextTicketCard({ team }: Props) {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [team.id]);
+  }, [team.id, team.slug]);
 
   useEffect(() => {
     if (!ticketInfo || ticketInfo.status !== "countdown") return;
