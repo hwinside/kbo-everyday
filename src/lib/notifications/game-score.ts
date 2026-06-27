@@ -99,8 +99,9 @@ export async function notifyScoreEvents(
 
       const scoreLine = `${away} ${aS} : ${hS} ${home}`;
       const batter = ev.detail?.batter;
-      // 만루홈런(홈런 4타점) → "그랜드슬램" 강조 (하린아빠 요청 2026-06-27). 홈런 자기 rbi가
-      // 교차폴링으로 0이면 유령 단타에서 물려받아 판정(inheritHitRbi). rbi===4 ⟺ 그랜드슬램.
+      // 만루홈런 → "그랜드슬램" 강조 (하린아빠 요청 2026-06-27, 삼순 확정).
+      // 가드 = isHr(at_bat_homerun) + resolvedRbi===4. 홈런 자기 rbi가 교차폴링으로 0이면
+      // 유령 단타에서 inheritHitRbi로 상속. 비홈런 4타점 오탐은 isHr 가드가 차단한다.
       const isGrandSlam = isHr && inheritHitRbi(ev, events) === 4;
       const title = isGrandSlam
         ? `💥 ${scoringTeamName} 그랜드슬램!`
