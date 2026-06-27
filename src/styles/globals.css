@@ -313,6 +313,22 @@ body.kbd-open .postdetail-chat-container {
   height: 100svh;
 }
 
+/*
+ * PostDetail document scroll-lock.
+ * The chat container is sized to the viewport and scrolls internally
+ * (.overflow-y-auto). Its header lives in document flow, so it stays pinned
+ * only while the document itself never scrolls. On iOS WKWebView a
+ * scrollIntoView (comment focus) or stray tap can scroll the document root,
+ * dragging the header up under the notch/Dynamic Island with no recovery.
+ * Locking the scroller (html) while PostDetail is mounted confines all
+ * scrolling to the inner container. (toggled from PostDetail.tsx)
+ */
+html.postdetail-open,
+html.postdetail-open > body {
+  overflow: hidden;
+  height: 100%;
+}
+
 /* Safe area for notch/dynamic island */
 .pt-safe {
   padding-top: env(safe-area-inset-top, 0px);
