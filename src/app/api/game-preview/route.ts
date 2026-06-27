@@ -7,8 +7,9 @@ import { TEAMS } from "@/lib/constants/teams";
 import { INJURY_BLOCKLIST_KEYS } from "@/lib/constants/injury-blocklist";
 import { fetchStandings, fetchGames, fetchBoxScore, type TeamStanding, type BoxScoreResult, type KboGame } from "@/lib/crawler/kbo-api";
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+import { geminiGenerateContent, getGeminiKeys } from "@/lib/gemini/client";
+
+const GEMINI_MODEL = "gemini-2.5-flash";
 
 const PREVIEW_VERSION = 7; // v7: 부상자 blocklist 차감 (Phase 0 hotfix)
 
@@ -935,7 +936,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!GEMINI_API_KEY) {
+  if (getGeminiKeys().length === 0) {
     return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
   }
 
@@ -981,18 +982,14 @@ export async function POST(req: NextRequest) {
   try {
     const prompt = await buildPreviewPrompt(body);
 
-    const geminiRes = await fetch(GEMINI_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.8,
-          maxOutputTokens: 2048,
-          responseMimeType: "application/json",
-          thinkingConfig: { thinkingBudget: 0 },
-        },
-      }),
+    const geminiRes = await geminiGenerateContent(GEMINI_MODEL, {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.8,
+        maxOutputTokens: 2048,
+        responseMimeType: "application/json",
+        thinkingConfig: { thinkingBudget: 0 },
+      },
     });
 
     if (!geminiRes.ok) {
