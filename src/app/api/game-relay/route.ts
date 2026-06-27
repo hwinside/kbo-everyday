@@ -56,6 +56,11 @@ export interface MatchupStats {
     seasonAvg: number;
     batResult: string;
   };
+  /**
+   * 현재 타석 투수 vs 타자 전 시즌 누적 통산 맞대결 (네이버 relay 원문).
+   * 예: "3타수 1안타 1홈런 .333" / 기록 없으면 "첫 맞대결".
+   */
+  careerVsBatter?: string | null;
 }
 
 export interface RelayBatterStat {
@@ -118,15 +123,32 @@ function toNaverGameId(kboGameId: string): string {
 }
 
 function classifyResult(text: string): PlayEvent["type"] {
+  // Order matters: 확정 결과 키워드 먼저 매칭하고, 모호한 hit 분류는 *마지막*에
+  // 떨어뜨려야 한다. 네이버 상대 결과 텍스트는 "2루타성 타구가 잡혀 아웃" 처럼
+  // hit 키워드와 "아웃"이 동시에 들어가는 case가 있어, hit을 먼저 매칭하면
+  // false-positive at_bat_double 세레머니가 발화한다.
   if (text.includes("홈런")) return "homerun";
-  if (text.includes("1루타") || text.includes("2루타") || text.includes("3루타"))
-    return "hit";
-  if (text.includes("볼넷")) return "walk";
   if (text.includes("삼진")) return "strikeout";
+  if (text.includes("볼넷")) return "walk";
   if (text.includes("몸에 맞는 볼")) return "hbp";
+  // 아웃 키워드가 있으면 hit이 아님 ("N루타성 ... 잡혀 아웃" 차단)
+  if (text.includes("아웃")) {
+    if (text.includes("희생")) return "sacrifice";
+    return "out";
+  }
   if (text.includes("희생")) return "sacrifice";
   if (text.includes("실책")) return "error";
-  if (text.includes("아웃")) return "out";
+  // 아웃 없는 hit 결과: N루타, 내야안타, 평범한 안타 모두 hit으로.
+  // classifyHit이 N루타 substring 없으면 single로 안전 fallback (BoxScore-diff
+  // 경로와 동일 — 거기서도 h2b/h3b/hr delta 없으면 단타 처리).
+  if (
+    text.includes("1루타") ||
+    text.includes("2루타") ||
+    text.includes("3루타") ||
+    text.includes("내야안타") ||
+    text.includes("안타")
+  )
+    return "hit";
   return "other";
 }
 
@@ -207,6 +229,7 @@ interface NaverRelayResponse {
       inn: number;
       currentInning: string;
       textRelays: NaverTextRelay[];
+      pitcherVsBatterCareerStats?: string;
       inningScore?: {
         home: Record<string, string>;
         away: Record<string, string>;
@@ -250,16 +273,25 @@ function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
     // Batter at-bat (titleStyle "8" or others with textOptions)
     if (!current || !relay.textOptions) continue;
 
-    // Extract batter name from title: "3번타자 홍창기"
-    const batterMatch = relay.title.match(/\d+번타자\s+(.+)/);
-    const batterName = batterMatch ? batterMatch[1] : relay.title;
+    // Batter 식별은 *opt.text* parts[0]에서 직접 추출. 과거엔 `relay.title`의
+    // `/\d+번타자\s+(.+)/` 정규식만 신뢰했으나, 대타("대타 문정빈")/대주자
+    // ("대주자 홍창기") 등 비표준 title 변종에서 매칭 실패 → relay 항목 통째
+    // skip → cross-source dedupe 깨지면서 BoxScore-diff fallback이 stale
+    // boxscore에서 hit subtype을 잘못 분류(예: 3루타 → 안타) 발화하는 회귀가
+    // 났었다 (2026-05-27 문정빈 3루타 P0). type=13/23 자체가 "타석 결과" 마커
+    // 라서 opt.text "X : 결과" 포맷이 SSOT — title을 거치지 않아도 batter를
+    // 안전하게 식별할 수 있다. " : " 분리자 없으면 정상 result line이 아니므로
+    // skip.
 
     for (const opt of relay.textOptions) {
       if (opt.type === 13 || opt.type === 23) {
         // At-bat result: "홍창기 : 우익수 앞 1루타"
         // type 13 = 일반 타석 결과, type 23 = 희생플라이/아웃/볼넷 등
         const parts = opt.text.split(" : ");
-        const resultText = parts.length > 1 ? parts.slice(1).join(" : ") : opt.text;
+        if (parts.length < 2) continue;
+        const batterName = parts[0].trim();
+        if (!batterName) continue;
+        const resultText = parts.slice(1).join(" : ");
 
         const play: PlayEvent = {
           batterName,
@@ -623,6 +655,48 @@ function extractPlayerStatsFromRecord(data: NaverRecordResponse | null): RelayPl
 const NAVER_API_BASE =
   "https://api-gw.sports.naver.com/schedule/games";
 
+/**
+ * In-memory response cache (module-level, persists for the lambda warm period
+ * ~5–15min). The relay-bridged celebration path on the client polls at 5s
+ * cadence; without caching, N concurrent viewers of the same game would mean
+ * N upstream Naver fetches every 5s. With a 4s TTL keyed by (naverGameId,
+ * inningHint), warm-lambda viewers share a single upstream call per ~4s
+ * window. Cold-start spawns a fresh instance with empty cache → up to one
+ * Naver call per cold lambda, which is bounded by Vercel concurrency.
+ *
+ * Only successful responses are cached; HTTP/network errors fall through so
+ * the next poll retries fresh.
+ */
+const responseCache = new Map<string, { data: GameRelayResponse; expiresAt: number }>();
+const CACHE_TTL_MS = 4_000;
+
+function combineRelayInningsNewestFirst(inningRelays: NaverTextRelay[][]): NaverTextRelay[] {
+  // Each Naver inning payload is newest-first. parseInningRelays reverses the
+  // full array once, so concatenate inning bundles newest inning first; the
+  // parser then sees 1회 → current inning in chronological order.
+  return [...inningRelays].reverse().flat();
+}
+
+function getCachedResponse(key: string): GameRelayResponse | null {
+  const entry = responseCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    responseCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCachedResponse(key: string, data: GameRelayResponse): void {
+  if (responseCache.size > 100) {
+    const now = Date.now();
+    for (const [k, v] of responseCache) {
+      if (v.expiresAt < now) responseCache.delete(k);
+    }
+  }
+  responseCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+}
+
 export async function GET(req: NextRequest) {
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) {
@@ -636,6 +710,13 @@ export async function GET(req: NextRequest) {
   const inningHint = parseInt(req.nextUrl.searchParams.get("inning") || "0") || 0;
 
   const naverGameId = toNaverGameId(gameId);
+
+  // Cache hit short-circuits Naver upstream entirely.
+  const cacheKey = `${naverGameId}-${inningHint}`;
+  const cached = getCachedResponse(cacheKey);
+  if (cached) {
+    return NextResponse.json(cached);
+  }
 
   try {
     // First, fetch inning 1 to get the current inning number
@@ -718,8 +799,11 @@ export async function GET(req: NextRequest) {
 
     const allTextRelays = allTextRelaysResult;
 
-    // Combine all text relays and parse
-    const combined = allTextRelays.flat();
+    // Combine all text relays with global newest-first ordering. Keeping
+    // inning bundles in ascending order would make parseInningRelays reverse
+    // the whole game into current→1회 order, flipping relay cumIdx for repeat
+    // batter events and breaking cross-source dedupe.
+    const combined = combineRelayInningsNewestFirst(allTextRelays);
     const innings = parseInningRelays(combined);
 
     // Extract current matchup stats from the latest batter entry
@@ -732,6 +816,14 @@ export async function GET(req: NextRequest) {
 
     // Build linescore from naver relay data
     const trd = firstData.result?.textRelayData;
+
+    // 현재 타석 투수↔타자 통산 맞대결 (relay 최상위 스냅샷 — inning 파라미터와 무관하게
+    // 항상 최신 타석 기준). matchup이 없어도 통산값이 있으면 노출되도록 병합.
+    const careerVsBatter = trd?.pitcherVsBatterCareerStats?.trim() || null;
+    const matchupWithCareer: MatchupStats | undefined = careerVsBatter
+      ? { ...(matchup ?? {}), careerVsBatter }
+      : matchup;
+
     let linescore: RelayLinescore | undefined;
     if (trd?.inningScore && trd?.currentGameState) {
       const is = trd.inningScore;
@@ -768,11 +860,12 @@ export async function GET(req: NextRequest) {
       gameId,
       currentInning: maxInning,
       innings,
-      matchup,
+      matchup: matchupWithCareer,
       playerStats,
       linescore,
     };
 
+    setCachedResponse(cacheKey, response);
     return NextResponse.json(response);
   } catch (e) {
     const error = e as Error;

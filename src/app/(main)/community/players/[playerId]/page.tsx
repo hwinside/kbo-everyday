@@ -1,29 +1,28 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowLeft, Heart, MessageCircle, Share2, PenLine } from "lucide-react";
+import { ArrowLeft, Share2, PenLine } from "lucide-react";
 import Link from "next/link";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
-import GlassCard from "@/components/ui/GlassCard";
-import PostList from "@/components/community/PostList";
-import type { Post as PostDTO } from "@/lib/types";
 import NicheStats from "@/components/player/NicheStats";
+import PlayerGameLogs from "@/components/player/PlayerGameLogs";
+import PlayerWeeklyTrend from "@/components/player/PlayerWeeklyTrend";
+import PlayerHomeAway from "@/components/player/PlayerHomeAway";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { getPlayerPhotoUrl, PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
+import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { TEAMS } from "@/lib/constants/teams";
-import { FOREIGN_NUMERIC_TO_ALPHA, FOREIGN_ALPHA_TO_NUMERIC } from "@/lib/constants/foreign-id-map";
-import { usePosts, createPost, toggleLike } from "@/lib/supabase/usePosts";
+import { createPost, toggleLike } from "@/lib/supabase/usePosts";
 import type { Post } from "@/lib/supabase/usePosts";
 import { supabase } from "@/lib/supabase/client";
 import WritePost from "@/components/community/WritePost";
 import WritePhotoPost from "@/components/community/WritePhotoPost";
+import WriteEntrySheet from "@/components/community/WriteEntrySheet";
 import PhotoFeed from "@/components/community/PhotoFeed";
 import { useBadgeCheck } from "@/lib/hooks/useBadgeCheck";
-import BadgeToast from "@/components/ui/BadgeToast";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import CheerSong from "@/components/player/CheerSong";
@@ -33,29 +32,10 @@ import { calcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
 import PlayerRadar from "@/components/player/PlayerRadar";
 import PlayerNews from "@/components/player/PlayerNews";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
+import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
 
-// kboId → name 역매핑 (roster 기반 — 전체 선수 커버)
+// kboId → player 역매핑 (roster 기반 — 전체 선수 커버)
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
-const ID_TO_NAME: Record<string, string> = {};
-for (const p of PLAYERS_ROSTER) {
-  ID_TO_NAME[p.kboId] = p.name;
-}
-// photo map에서도 추가 (혹시 roster에 없는 경우)
-for (const [name, id] of Object.entries(PLAYER_PHOTO_MAP)) {
-  if (!ID_TO_NAME[id]) ID_TO_NAME[id] = name;
-}
-
-// 레거시 pN → kboId 매핑 (기존 링크 호환)
-const LEGACY_MAP: Record<string, string> = {
-  p1: "67430", p2: "77162", p3: "62404", p4: "69650", p5: "68571",
-  p6: "64643", p7: "63905", p8: "61478", p9: "75003", p10: "67100",
-  p11: "55500", p12: "68300", p13: "69200", p14: "67800", p15: "65400",
-};
-
-const TEAM_SHORT_MAP: Record<string, number> = {
-  LG: 1, OB: 2, KT: 3, SK: 4, NC: 5, HT: 6, LT: 7, SS: 8, HH: 9, WO: 10,
-  "두산": 2, SSG: 4, KIA: 6, "롯데": 7, "삼성": 8, "한화": 9, "키움": 10,
-};
 
 interface RawPlayerInfo {
   kboId: string;
@@ -93,73 +73,49 @@ function StatItem({ label, value }: { label: string; value: string | number; col
 export default function PlayerBoardPage() {
   const { playerId } = useParams();
   const rawId = playerId as string;
-  // ID resolve: roster 직접 매치 우선 → 레거시 pN → 외국인 숫자→영문 변환 (roster 충돌 없을 때만)
-  const rosterDirect = PLAYERS_ROSTER.some((p) => p.kboId === rawId);
-  const kboId = rosterDirect
-    ? rawId
-    : LEGACY_MAP[rawId] || FOREIGN_NUMERIC_TO_ALPHA[rawId] || rawId;
-  const numericKboId = FOREIGN_ALPHA_TO_NUMERIC[kboId] || kboId;
-  const playerName = ID_TO_NAME[kboId];
-  // 동명이인 대응: roster에서 kboId로 직접 찾기
+  // ID resolve: 레거시 pN, 외국인 숫자 ID, FP/AQ canonical ID를 단일 resolver로 정규화.
+  const resolvedPlayer = resolvePlayerIdentity(rawId);
+  const kboId = resolvedPlayer?.kboId ?? rawId;
+  const numericKboId = resolvedPlayer?.numericId ?? kboId;
+  const playerName = resolvedPlayer?.name;
+  // 동명이인 대응: roster에서 canonical kboId로 직접 찾기
   const rosterPlayer = PLAYERS_ROSTER.find((p) => p.kboId === kboId);
   
   const [player, setPlayer] = useState<PlayerData | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"stats" | "photo" | "latest" | "hot">("stats");
-  const { posts: livePosts, loading: postsLoading, reload } = usePosts("player", kboId);
-  // Adapt snake_case usePosts rows to the PostDTO shape expected by PostList/PostCard.
-  // Hot tab shares latest ordering for now — sort refinement is out of scope of this fix.
-  const listPosts: PostDTO[] = useMemo(() => livePosts.map((p) => ({
-    id: p.id,
-    boardType: (p.board_type as PostDTO["boardType"]) ?? "player",
-    boardId: p.board_id,
-    authorId: p.author_id,
-    title: p.title,
-    content: p.content,
-    imageUrls: (p.image_urls ?? []) as string[],
-    videoUrls: (p.video_urls ?? []) as string[],
-    likeCount: p.like_count,
-    commentCount: p.comment_count,
-    isReported: false,
-    createdAt: p.created_at,
-    author: {
-      nickname: p.nickname || "익명",
-      avatarUrl: null,
-      myTeamId: p.team_id ?? null,
-      level: 1,
-      title: "",
-      grade: p.grade,
-    },
-  })), [livePosts]);
+  const [activeTab, setActiveTab] = useState<"stats" | "games" | "board">("stats");
+  const [showEntry, setShowEntry] = useState(false);
   const [showWrite, setShowWrite] = useState(false);
-  const [showPhotoWrite, setShowPhotoWrite] = useState(false);
+  const [showPhoto, setShowPhoto] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [statSeason, setStatSeason] = useState<2025 | 2026>(2026);
-  const [photoPosts, setPhotoPosts] = useState<Post[]>([]);
-  const [photoLoading, setPhotoLoading] = useState(true);
+  // 통합 피드: 글·사진 한 스트림 (선수 게시판 직접글 + 다른 게시판에서 이 선수 태그된 글).
+  const [feedPosts, setFeedPosts] = useState<Post[]>([]);
+  const [feedLoading, setFeedLoading] = useState(true);
   const [realStats, setRealStats] = useState<Record<string, string | number> | null>(null);
   const [playerRanks, setPlayerRanks] = useState<PlayerRanks>({});
   const { user } = useAuth();
-  const { newBadges, checkBadges, clearBadges } = useBadgeCheck();
+  const { checkBadges } = useBadgeCheck();
 
-  const loadPhotoPosts = useCallback(async () => {
+  // 통합 피드 로드: 선수 게시판 직접글(글·사진) + 다른 게시판에서 이 선수 태그된 글(글·사진).
+  // content_type 필터 없음 → 글/사진 한 스트림(전체글/팀 통합 피드와 동일 UX).
+  const loadFeed = useCallback(async () => {
     if (!playerName) return;
-    setPhotoLoading(true);
-    const cols = "id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)";
+    setFeedLoading(true);
+    const cols = "id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, author_team_id_snapshot, profiles(nickname, team_id, grade, points)";
 
-    // 1) 선수 게시판 직접 게시물 (사진 게시물만)
+    // 1) 선수 게시판 직접 게시물 (글·사진 모두)
     const boardQuery = supabase
       .from("posts")
       .select(cols)
       .eq("board_type", "player")
       .eq("board_id", kboId)
-      .eq("content_type", "photo")
       .neq("is_hidden", true)
       .order("created_at", { ascending: false })
       .limit(50);
 
-    // 2) 다른 게시판에서 player_tags로 태그된 게시물 (cross-board, 사진 게시물만)
+    // 2) 다른 게시판에서 player_tags로 태그된 게시물 (cross-board, 글·사진 모두)
     const tag = formatPlayerTag(kboId, playerName);
     const tagQuery = supabase
       .from("posts")
@@ -167,7 +123,6 @@ export default function PlayerBoardPage() {
       // player_tags is JSONB. Pass a JSON string so PostgREST sends
       // cs.["69100:구본혁"] instead of the invalid array literal cs.{69100:구본혁}.
       .contains("player_tags", JSON.stringify([tag]))
-      .eq("content_type", "photo")
       .neq("is_hidden", true)
       .neq("board_type", "player") // 선수 게시판 중복 방지
       .order("created_at", { ascending: false })
@@ -186,28 +141,32 @@ export default function PlayerBoardPage() {
     // 시간순 정렬
     merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-    setPhotoPosts(merged.map((p) => ({
-      ...p,
-      content_type: (p.content_type ?? "general") as "general" | "photo",
-      image_urls: (p.image_urls ?? []) as string[],
-      video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
-      nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
-      team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
-      grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
-      points: ((p.profiles as unknown as Record<string, unknown> | null)?.points as number) ?? 0,
-    })));
-    setPhotoLoading(false);
+    setFeedPosts(merged.map((p) => {
+      const prof = p.profiles as unknown as Record<string, unknown> | null;
+      const snap = (p as Record<string, unknown>).author_team_id_snapshot as number | null | undefined;
+      return {
+        ...p,
+        content_type: (p.content_type ?? "general") as "general" | "photo",
+        image_urls: (p.image_urls ?? []) as string[],
+        video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
+        nickname: prof?.nickname as string | undefined,
+        team_id: (snap ?? (prof?.team_id as number | undefined)) as number | undefined,
+        grade: prof?.grade as string | undefined,
+        points: (prof?.points as number) ?? 0,
+      };
+    }));
+    setFeedLoading(false);
   }, [kboId, playerName]);
 
   useEffect(() => {
     let cancelled = false;
     void Promise.resolve().then(() => {
-      if (!cancelled) void loadPhotoPosts();
+      if (!cancelled) void loadFeed();
     });
     return () => { cancelled = true; };
-  }, [loadPhotoPosts]);
+  }, [loadFeed]);
 
-  const handlePhotoLike = async (postId: number) => {
+  const handleFeedLike = async (postId: number) => {
     try { await toggleLike(postId); } catch { /* ignore */ }
   };
 
@@ -399,7 +358,7 @@ export default function PlayerBoardPage() {
           style={{ background: `linear-gradient(135deg, ${teamColor}15, transparent)` }}
         >
           <div className="flex items-center gap-4 px-5 py-4">
-            <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name, kboId)} number={player.number} size={64} />
+            <PlayerAvatar name={player.name} teamId={player.teamId} photoUrl={getPlayerPhotoUrl(player.name, kboId, player.teamId)} number={player.number} size={64} />
             <div className="flex-1">
               <div className="flex items-center gap-3">
                 <h1 className="text-lg font-semibold text-text-primary">{player.name}</h1>
@@ -432,7 +391,7 @@ export default function PlayerBoardPage() {
       {/* Tabs (Hero/fallback 공통) */}
       <div className="border-b border-border">
         <div className="flex">
-          {((["stats", "photo", "latest", "hot"] as const)).map((tab) => (
+          {((["stats", "games", "board"] as const)).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -440,7 +399,7 @@ export default function PlayerBoardPage() {
                 activeTab === tab ? "text-text-primary" : "text-text-tertiary"
               }`}
             >
-              {tab === "stats" ? "⚾ 선수정보" : tab === "photo" ? "📸 사진" : tab === "latest" ? "📝 최신글" : "🔥 인기글"}
+              {tab === "stats" ? "⚾ 선수정보" : tab === "games" ? "📅 경기별" : "📝 게시판"}
               {activeTab === tab && (
                 <motion.div
                   layoutId="board-tab"
@@ -563,7 +522,17 @@ export default function PlayerBoardPage() {
             </div>
           )}
 
-          <NicheStats playerId={rawId} position={player.position} teamColor={teamColor} playerName={player.name} season={statSeason} />
+          {/* 주간 추이 — 시즌기록 ↔ 세이버메트릭스 사이 (game_logs 2026 한정) */}
+          {statSeason === 2026 && (
+            <PlayerWeeklyTrend playerId={kboId} position={player.position} teamColor={teamColor} />
+          )}
+
+          {/* 홈/원정 — V1.5, game_logs 파생 (2026 한정) */}
+          {statSeason === 2026 && (
+            <PlayerHomeAway playerId={kboId} position={player.position} teamColor={teamColor} />
+          )}
+
+          <NicheStats playerId={numericKboId} position={player.position} teamColor={teamColor} playerName={player.name} season={statSeason} />
           
           {/* 관련 기사 */}
           <div className="px-5">
@@ -572,33 +541,33 @@ export default function PlayerBoardPage() {
         </div>
       )}
 
-      {/* 직찍 피드 */}
-      {activeTab === "photo" && (
-        <div className="py-2">
+      {/* 경기별 탭 (선수 스탯 V1 빌드 2) — 2026 시즌 game_logs */}
+      {activeTab === "games" && (
+        <PlayerGameLogs playerId={kboId} position={player.position} teamColor={teamColor} />
+      )}
+
+      {/* 게시판 통합 피드 (글·사진 한 스트림, 최신순 단일) */}
+      {activeTab === "board" && (
+        <div className="py-2 pb-24">
           <PhotoFeed
-            posts={photoPosts}
-            loading={photoLoading}
-            onLike={handlePhotoLike}
+            posts={feedPosts}
+            loading={feedLoading}
+            onLike={handleFeedLike}
             boardType="player"
+            // 이 보드 전체가 해당 선수 글 → 작성자 왼쪽 칩을 [(로고)팀 선수명] 단일 칩으로 통일.
+            playerLabels={
+              player?.teamId && playerName
+                ? Object.fromEntries(feedPosts.map((p) => [p.id, { teamId: player.teamId, playerName }]))
+                : undefined
+            }
           />
         </div>
       )}
 
-      {/* Posts — PostCard-based list so link previews (OG cards) render in the feed too,
-          matching /community/free and /community/all-posts behaviour. */}
-      {activeTab !== "stats" && activeTab !== "photo" && (
-        <div className="px-5 py-4">
-          {postsLoading ? null : (
-            <PostList posts={listPosts} />
-          )}
-        </div>
-      )}
-
-      {/* FAB */}
-
-      {(activeTab === "latest" || activeTab === "hot") && (
+      {/* FAB — 게시판 탭에서만 노출 (글·사진 첨부 통합, 밈 에디터/태그는 S5 통합 컴포저로 이관 예정) */}
+      {activeTab === "board" && (
       <button
-        onClick={() => user ? setShowWrite(true) : setShowLogin(true)}
+        onClick={() => user ? setShowEntry(true) : setShowLogin(true)}
         className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
         style={{ backgroundColor: teamColor }}
       >
@@ -606,36 +575,64 @@ export default function PlayerBoardPage() {
       </button>
       )}
 
-      {activeTab === "photo" && (
-      <button
-        onClick={() => user ? setShowPhotoWrite(true) : setShowLogin(true)}
-        className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
-        style={{ backgroundColor: teamColor }}
-      >
-        <PenLine className="w-9 h-9 text-white" />
-      </button>
-      )}
+      {/* ⑦ 글쓰기 진입: 사진글/일반글 타입 선택 먼저 */}
+      <WriteEntrySheet
+        isOpen={showEntry}
+        onClose={() => setShowEntry(false)}
+        onChoosePhoto={() => { setShowEntry(false); setShowPhoto(true); }}
+        onChooseText={() => { setShowEntry(false); setShowWrite(true); }}
+      />
 
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
       <WritePost
         isOpen={showWrite}
         onClose={() => setShowWrite(false)}
-        onSubmit={async (title, content, imageUrls) => {
-          await createPost({ boardType: "player", boardId: rawId, title, content, imageUrls });
+        enableTags
+        defaultTeamSlugs={(() => {
+          const s = TEAMS.find((t) => t.id === player.teamId)?.slug;
+          return s ? [s] : [];
+        })()}
+        defaultPlayerTag={{ kboId, name: player.name, teamId: player.teamId }}
+        onSubmit={async (title, content, imageUrls, _seatInfo, tags) => {
+          // V3 태그 모델: 선수 글은 player_tags(선수 페이지·cross-board) + team_tags(팀 탭) 둘 다 부여.
+          // 피커 기본값=현재 선수+소속팀. 사용자가 추가/변경하면 그 값 우선.
+          const teamSlug = TEAMS.find((t) => t.id === player.teamId)?.slug;
+          const playerTags = tags?.playerTags?.length
+            ? tags.playerTags
+            : [formatPlayerTag(kboId, player.name)];
+          const teamTags = tags?.teamTags?.length
+            ? tags.teamTags
+            : teamSlug
+              ? [teamSlug]
+              : [];
+          await createPost({
+            boardType: "player",
+            boardId: kboId,
+            title,
+            content,
+            imageUrls,
+            playerTags,
+            ...(teamTags.length ? { teamTags } : {}),
+          });
           setShowWrite(false);
           if (user) checkBadges(user.id);
-          reload();
+          loadFeed();
         }}
         teamName={player.name}
       />
+
       <WritePhotoPost
-        isOpen={showPhotoWrite}
-        onClose={() => setShowPhotoWrite(false)}
+        isOpen={showPhoto}
+        onClose={() => setShowPhoto(false)}
         teamName={player.name}
         boardType="player"
         boardId={kboId}
-        defaultPlayerTag={player ? { kboId, name: player.name, teamId: player.teamId } : undefined}
-        onSuccess={() => loadPhotoPosts()}
+        defaultPlayerTag={{ kboId, name: player.name, teamId: player.teamId }}
+        defaultTeamSlugs={(() => {
+          const s = TEAMS.find((t) => t.id === player.teamId)?.slug;
+          return s ? [s] : undefined;
+        })()}
+        onSuccess={() => { setShowPhoto(false); if (user) checkBadges(user.id); loadFeed(); }}
       />
     </div>
   );

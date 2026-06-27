@@ -54,6 +54,18 @@ jobs:
       - name: Update player photos
         run: node scripts/update-player-photos.mjs
 
+      - name: Validate roster SSOT
+        id: validate_roster
+        continue-on-error: true
+        env:
+          ROSTER_SIZE_CHANGE_ACK: "1"
+        run: node scripts/validate-roster.mjs
+
+      - name: Validate player identity invariant
+        id: validate_identity
+        continue-on-error: true
+        run: node scripts/validate-player-identity.mjs
+
       - name: Check for changes
         id: changes
         run: |
@@ -71,6 +83,7 @@ jobs:
           fi
 
       - name: Create PR
+        id: pr
         if: steps.changes.outputs.changed == 'true'
         run: |
           git config user.name "github-actions[bot]"
@@ -83,7 +96,8 @@ jobs:
 
           - Roster: ${{ steps.changes.outputs.roster_count }}명
           - 타자 스탯: ${{ steps.changes.outputs.batter_count }}명
-          - 투수 스탯: ${{ steps.changes.outputs.pitcher_count }}명"
+          - 투수 스탯: ${{ steps.changes.outputs.pitcher_count }}명
+          - roster-size-change"
 
           git push origin "$BRANCH"
 
@@ -97,11 +111,98 @@ jobs:
           | 타자 스탯 | ${{ steps.changes.outputs.batter_count }}명 |
           | 투수 스탯 | ${{ steps.changes.outputs.pitcher_count }}명 |
 
-          매일 새벽 5시(KST) 자동 크롤링 결과입니다." \
+          roster-size-change
+
+          검증 결과:
+          - Roster SSOT: ${{ steps.validate_roster.outcome }}
+          - Player identity: ${{ steps.validate_identity.outcome }}
+
+          매일 새벽 5시(KST) 자동 크롤링 결과입니다.
+          검증이 failure여도 PR은 생성합니다. 실패 상태를 확인하고 누락 선수/매핑을 보강한 뒤 머지하세요." \
             --base main \
             --head "$BRANCH")
 
-          # CI 통과 시 자동 머지
-          gh pr merge "$PR_URL" --auto --squash
+          echo "PR created: $PR_URL"
+          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Report validation failure after PR creation
+        if: steps.changes.outputs.changed == 'true' && (steps.validate_roster.outcome == 'failure' || steps.validate_identity.outcome == 'failure')
+        run: |
+          {
+            echo "## ❌ 자동 업데이트 검증 실패"
+            echo ""
+            echo "PR: ${{ steps.pr.outputs.pr_url }}"
+            echo "Roster SSOT: ${{ steps.validate_roster.outcome }}"
+            echo "Player identity: ${{ steps.validate_identity.outcome }}"
+            echo ""
+            echo "PR은 생성했으므로 누락 선수/매핑 보강 후 수동 검토하세요."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Wait for Vercel build and report
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          PR_URL="${{ steps.pr.outputs.pr_url }}"
+          if [ -z "$PR_URL" ]; then
+            echo "No PR URL captured"; exit 0
+          fi
+
+          # 운영 원칙 (2026-05-17 사고 이후): roster/stats/photos PR도 자동 머지하지 않는다.
+          # 이 step은 PR 생성 후 *Vercel 빌드 결과만 검증*하고 로그/summary에 남긴다.
+          # merge는 별도 승인 후 수동 트리거에서 처리한다.
+          #
+          # race 방지: `Vercel` context가 등록되고 SUCCESS인지 *명시 확인*한다.
+          # `Vercel Preview Comments`만 올라온 상태는 본 빌드 완료로 간주하지 않는다.
+          MAX_WAIT_MIN=15
+          SLEEP_SECONDS=20
+          ELAPSED=0
+
+          while [ $ELAPSED -lt $((MAX_WAIT_MIN * 60)) ]; do
+            ROLLUP=$(gh pr view "$PR_URL" --json statusCheckRollup --jq '.statusCheckRollup')
+            HAS_VERCEL=$(echo "$ROLLUP" | jq '[.[] | select((.context // .name) == "Vercel")] | length > 0')
+            VERCEL_STATE=$(echo "$ROLLUP" | jq -r '[.[] | select((.context // .name) == "Vercel") | (.state // .conclusion // "PENDING")] | .[0] // "MISSING"')
+            HAS_FAIL=$(echo "$ROLLUP" | jq '[.[] | (.state // .conclusion // .status) | . == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "CANCELLED"] | any')
+            ALL_STATES=$(echo "$ROLLUP" | jq -c '[.[] | {ctx: (.context // .name), state: (.state // .conclusion // .status)}]')
+            echo "checks: $ALL_STATES (vercel=$VERCEL_STATE, elapsed=${ELAPSED}s)"
+
+            if [ "$HAS_FAIL" = "true" ]; then
+              echo "❌ CI failure 감지 — PR을 open으로 남겼으니 수동 검토 부탁합니다: $PR_URL"
+              {
+                echo "## ❌ 자동 업데이트 CI FAIL"
+                echo ""
+                echo "PR: $PR_URL"
+                echo "Vercel: $VERCEL_STATE"
+                echo "States: \`$ALL_STATES\`"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+
+            if [ "$HAS_VERCEL" = "true" ] && [ "$VERCEL_STATE" = "SUCCESS" ]; then
+              echo "✅ Vercel build SUCCESS — PR 수동 머지 대기 상태로 종료합니다: $PR_URL"
+              {
+                echo "## ✅ 자동 업데이트 준비 완료"
+                echo ""
+                echo "PR: $PR_URL"
+                echo "Vercel: SUCCESS — 수동 머지 가능"
+                echo "States: \`$ALL_STATES\`"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+
+            sleep $SLEEP_SECONDS
+            ELAPSED=$((ELAPSED + SLEEP_SECONDS))
+          done
+
+          echo "⏱️  Vercel build timeout (${MAX_WAIT_MIN} min) — PR은 open 상태로 남긴다: $PR_URL"
+          {
+            echo "## ⏱️ 자동 업데이트 timeout"
+            echo ""
+            echo "PR: $PR_URL"
+            echo "Vercel: 15분 이내 종료 안 됨 — 수동 검토 필요"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

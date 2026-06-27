@@ -27,7 +27,7 @@ async function getInitialData(): Promise<{
 
     // 1) 경기 목록
     const gamesData = await fetchGames(yyyymmdd);
-    const games: HomeGame[] = gamesData.map((g: { gameId: string; homeTeamId: number; awayTeamId: number; time: string; stadium: string; homeScore?: number | null; awayScore?: number | null; status: string; inning?: number; isTop?: boolean }) => ({
+    const games: HomeGame[] = gamesData.map((g: { gameId: string; homeTeamId: number; awayTeamId: number; time: string; stadium: string; homeScore?: number | null; awayScore?: number | null; status: string; inning?: number; isTop?: boolean; awayStarterName?: string | null; homeStarterName?: string | null; winPitcher?: string | null; losePitcher?: string | null; broadcastChannels?: HomeGame["broadcastChannels"] }) => ({
       id: g.gameId,
       homeTeamId: g.homeTeamId,
       awayTeamId: g.awayTeamId,
@@ -37,14 +37,24 @@ async function getInitialData(): Promise<{
       awayScore: g.awayScore ?? 0,
       status: g.status as HomeGame["status"],
       inning: g.status === "live" ? `${g.inning}회${g.isTop ? "초" : "말"}` : null,
+      awayStarterName: g.awayStarterName ?? null,
+      homeStarterName: g.homeStarterName ?? null,
+      winPitcher: g.winPitcher ?? null,
+      losePitcher: g.losePitcher ?? null,
+      broadcastChannels: g.broadcastChannels,
     }));
 
     // 2) 라이브 데이터 (KBO GameList — BSO/주자/타자/투수 포함)
     let liveGames: LiveGameData[] = [];
     try {
+      // 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청을 IE 에러 페이지로 막음.
       const res = await fetch("https://www.koreabaseball.com/ws/Main.asmx/GetKboGameList", {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+          "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
+        },
         body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${yyyymmdd}`,
         next: { revalidate: 10 },
       });

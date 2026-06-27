@@ -45,8 +45,11 @@ const MANUAL_PHOTO_URL_BY_KBO_ID = {
   AQ006: 'https://wimg.mk.co.kr/news/cms/202603/02/news-p.v1.20260302.719f505021ce45b1bf90147a0a1dc234_P1.jpg', // 도다 나츠키
   AQ008: 'https://cdn.stnsports.co.kr/news/photo/202512/309575_312284_104.jpg', // 교야마 마사야
   AQ009: 'https://menu.mt.co.kr/cdn-cgi/image/w=1200,h=929,fit=cover,bg=whilte,f=auto,quality=high,sharpen=2,g=face/mobile/osen/data/2026/03/12/202603121615779085_1.jpg', // 다무라 이치로
-  AQ010: 'http://file.osen.co.kr/article_thumb/2026/03/28/202603281810775678_69c79aeabb08c_300x.jpg', // 가나쿠보 유토
+  AQ010: 'https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2026/56348.jpg', // 가나쿠보 유토 (KBO 공식 헤드샷, numericId 56348)
+  AQ011: 'https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2026/54843.jpg', // 시라카와 (KBO 공식 헤드샷, numericId 54843)
   FP005: 'http://file.osen.co.kr/article_thumb/2026/02/20/202602201057771560_6997bf8d5db9d_300x.jpg', // 맷 매닝
+  FP021: 'https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2026/56305.jpg', // 케스턴 히우라 (KBO 공식 헤드샷, numericId 56305)
+  FP022: 'https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2026/56146.jpg', // 약셀 리오스 (KBO 공식 헤드샷, numericId 56146)
 };
 
 // Rate limit helper
@@ -122,54 +125,65 @@ async function extractPhotoFromKboPage(kboId) {
   return null;
 }
 
-function generatePhotosTs(photoMap, photoIdSet) {
+// Sentinel markers in player-photos.ts demarcate auto-generated data blocks.
+// Helpers (getPlayerPhotoUrl, getPlayerPhotoByKboId) live OUTSIDE these blocks
+// and are hand-maintained (see PR #86 SSOT migration). Do NOT regenerate helpers.
+const MAP_BEGIN = '// === GENERATED:PHOTO_MAP:BEGIN ===';
+const MAP_END = '// === GENERATED:PHOTO_MAP:END ===';
+const ID_SET_BEGIN = '// === GENERATED:PHOTO_ID_SET:BEGIN ===';
+const ID_SET_END = '// === GENERATED:PHOTO_ID_SET:END ===';
+
+function renderMapBlock(photoMap) {
   const sortedEntries = Object.entries(photoMap).sort(([a], [b]) => a.localeCompare(b, 'ko'));
-  const sortedIds = [...photoIdSet].sort();
-  
-  let ts = `/**
- * KBO playerId → 선수 사진 URL 매핑
- * 사진 소스: KBO 공식 이미지 서버
- * URL 패턴: /players/{kboPlayerId}.jpg (public/players/)
- * 자동 생성: scripts/update-player-photos.mjs
- * 마지막 업데이트: ${new Date().toISOString().split('T')[0]}
- */
-
-// 선수명 → KBO playerId 매핑
-export const PLAYER_PHOTO_MAP: Record<string, string> = {\n`;
-
+  let out = `${MAP_BEGIN} (scripts/update-player-photos.mjs)\n`;
+  out += `export const PLAYER_PHOTO_MAP: Record<string, string> = {\n`;
   for (const [name, id] of sortedEntries) {
-    ts += `  "${name}": "${id}",\n`;
+    out += `  "${name}": "${id}",\n`;
   }
-  ts += `};\n\n`;
-
-  // ID set
-  ts += `// kboId 기반 사진 존재 여부 빠른 검색용\nexport const PLAYER_PHOTO_ID_SET = new Set([\n`;
-  // Chunk into lines of 10
-  for (let i = 0; i < sortedIds.length; i += 10) {
-    const chunk = sortedIds.slice(i, i + 10);
-    ts += `  ${chunk.map(id => `"${id}"`).join(', ')},\n`;
-  }
-  ts += `]);\n\n`;
-
-  ts += `export function getPlayerPhotoUrl(name: string, kboId?: string): string | null {
-  // kboId가 제공되면 우선 사용 (동명이인 대응)
-  if (kboId && PLAYER_PHOTO_ID_SET.has(kboId)) {
-    return \`/players/\${kboId}.jpg\`;
-  }
-  // kboId가 명시적으로 제공됐지만 사진이 없으면 → null (다른 동명이인 사진 방지)
-  if (kboId) return null;
-  // name 기반 fallback (kboId가 없는 경우만 — 라이브 경기 등)
-  const mappedId = PLAYER_PHOTO_MAP[name];
-  if (!mappedId) return null;
-  return \`/players/\${mappedId}.jpg\`;
+  out += `};\n`;
+  out += MAP_END;
+  return out;
 }
 
-export function getPlayerPhotoByKboId(kboId: string): string | null {
-  if (!PLAYER_PHOTO_ID_SET.has(kboId)) return null;
-  return \`/players/\${kboId}.jpg\`;
-}\n`;
+function renderIdSetBlock(photoIdSet) {
+  const sortedIds = [...photoIdSet].sort();
+  let out = `${ID_SET_BEGIN} (scripts/update-player-photos.mjs)\n`;
+  out += `export const PLAYER_PHOTO_ID_SET = new Set([\n`;
+  for (let i = 0; i < sortedIds.length; i += 10) {
+    const chunk = sortedIds.slice(i, i + 10);
+    out += `  ${chunk.map(id => `"${id}"`).join(', ')},\n`;
+  }
+  out += `]);\n`;
+  out += ID_SET_END;
+  return out;
+}
 
-  return ts;
+function replaceBlock(source, beginMarker, endMarker, replacement, label) {
+  const beginIdx = source.indexOf(beginMarker);
+  const endIdx = source.indexOf(endMarker);
+  if (beginIdx === -1 || endIdx === -1 || endIdx < beginIdx) {
+    throw new Error(
+      `[update-player-photos] sentinel "${label}" not found in player-photos.ts. ` +
+      `Generator refuses to write to avoid clobbering hand-maintained helpers. ` +
+      `Expected markers: "${beginMarker}" ... "${endMarker}".`
+    );
+  }
+  return source.slice(0, beginIdx) + replacement + source.slice(endIdx + endMarker.length);
+}
+
+function generatePhotosTs(photoMap, photoIdSet) {
+  // SSOT-safe: only replace the GENERATED:* sentinel blocks in the existing file.
+  // Helpers (getPlayerPhotoUrl, getPlayerPhotoByKboId, imports) are preserved verbatim.
+  if (!fs.existsSync(PHOTOS_TS_PATH)) {
+    throw new Error(
+      `[update-player-photos] ${PHOTOS_TS_PATH} not found. ` +
+      `Generator requires an existing scaffolded file with sentinel markers (PR #89+).`
+    );
+  }
+  let source = fs.readFileSync(PHOTOS_TS_PATH, 'utf-8');
+  source = replaceBlock(source, MAP_BEGIN, MAP_END, renderMapBlock(photoMap), 'PHOTO_MAP');
+  source = replaceBlock(source, ID_SET_BEGIN, ID_SET_END, renderIdSetBlock(photoIdSet), 'PHOTO_ID_SET');
+  return source;
 }
 
 async function main() {

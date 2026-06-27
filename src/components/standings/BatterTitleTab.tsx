@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
+import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
 import { TEAM_NAME_TO_ID, type RealBatterStat, type TitleLeader } from "@/lib/constants/standings-data";
 import LeaderSection from "./LeaderSection";
 
@@ -26,7 +26,7 @@ export default function BatterTitleTab({ realBatters, myTeamId, favoriteNames, s
     : qualified;
   const toLeader = (b: RealBatterStat, valKey: string): TitleLeader => ({
     rank: b.rank, name: b.name, teamId: TEAM_NAME_TO_ID[b.team] ?? 0,
-    value: String(b[valKey] ?? 0), playerId: (b as Record<string, unknown>).kboId as string || (b as Record<string, unknown>).playerId as string || PLAYER_PHOTO_MAP[b.name],
+    value: String(b[valKey] ?? 0), playerId: resolvePlayerIdentity({ name: b.name, kboId: (b as Record<string, unknown>).kboId as string, playerId: (b as Record<string, unknown>).playerId as string, teamId: TEAM_NAME_TO_ID[b.team] ?? 0 })?.kboId ?? ((b as Record<string, unknown>).kboId as string) ?? ((b as Record<string, unknown>).playerId as string),
   });
   // 공동 순위 적용 (competition ranking)
   const sorted = (key: string, desc = true, pool = qualified) => {

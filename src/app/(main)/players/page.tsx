@@ -130,7 +130,7 @@ function PlayersPageContent() {
     }
 
     return sortPlayers(result, sortMode);
-  }, [filterMode, filterTeam, filterPosition, searchQuery, sortMode]);
+  }, [players, filterMode, filterTeam, filterPosition, searchQuery, sortMode]);
 
   // 동명이인 감지: 이름이 같은 선수가 2명 이상이면 Set에 추가
   const duplicateNames = useMemo(() => {
@@ -203,6 +203,19 @@ function PlayersPageContent() {
           />
         </div>
       </div>
+
+      {/* 선수기록실 진입 (리그 전체 스탯 정렬) */}
+      <Link
+        href="/players/records"
+        className="mb-3 flex items-center gap-3 rounded-xl bg-accent/10 px-4 py-3 active:bg-accent/20 transition-colors"
+      >
+        <span className="text-lg">📊</span>
+        <div className="flex-1 min-w-0">
+          <span className="block text-sm font-semibold text-text-primary">선수기록실</span>
+          <span className="block text-xs text-text-tertiary">홈런·타율·OPS·ERA 등 기록 순으로 정렬</span>
+        </div>
+        <ChevronDown className="h-4 w-4 text-text-tertiary -rotate-90 shrink-0" />
+      </Link>
 
       {/* Level 1: 필터 모드 */}
       <div className="mb-2 flex gap-2">

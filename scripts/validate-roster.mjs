@@ -21,7 +21,7 @@ const FOREIGN_MAP_PATH = path.resolve(__dirname, "../src/lib/constants/foreign-i
 // ============================================================================
 // 기대값 (스펙 §3.1)
 // ============================================================================
-const EXPECTED_COUNT = 791;
+const EXPECTED_COUNT = 820; // 2026-06-11: 약셀 리오스(FP022, LG) 시즌 중 합류 (+크롤러 자동합류분 반영)
 const MIN_PER_TEAM = 30;
 const BACKNO_REGEX = /^(\d{1,3}|-|\?)$/; // 숫자 1~3자리 | "-" | "?"
 const KNOWN_TEAMS = new Set([

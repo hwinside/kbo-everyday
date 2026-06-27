@@ -2,11 +2,9 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
 import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 
 interface Props {
@@ -14,8 +12,7 @@ interface Props {
 }
 
 export default function ProfileSetupModal({ isOpen }: Props) {
-  const { user, refreshProfile } = useAuth();
-  const router = useRouter();
+  const { user } = useAuth();
   const [step, setStep] = useState(1);
   const [nickname, setNickname] = useState(user?.user_metadata?.name || user?.user_metadata?.full_name || "");
   const [selectedTeam, setSelectedTeam] = useState<number | null>(null);
@@ -61,55 +58,50 @@ export default function ProfileSetupModal({ isOpen }: Props) {
   }
 
   async function handleComplete(opts?: { skipInvite?: boolean }) {
-    if (!selectedTeam) return;
+    if (!selectedTeam || loading) return;
     setLoading(true);
+    setError("");
     try {
-      // 초대코드 사전 검증 (있으면). skipInvite=true면 타이핑된 값과 무관하게 건너뜁
-      const normalizedInviteCode = opts?.skipInvite ? "" : inviteCode.trim().toUpperCase();
-      if (normalizedInviteCode) {
-        const { data: invite } = await supabase
-          .from("invitations")
-          .select("id, used_at")
-          .eq("code", normalizedInviteCode)
-          .maybeSingle();
-        if (!invite) { setError("유효하지 않은 초대코드입니다"); setLoading(false); return; }
-        if (invite.used_at) { setError("이미 사용된 초대코드입니다"); setLoading(false); return; }
+      const effectiveInviteCode = opts?.skipInvite
+        ? undefined
+        : (inviteCode.trim().toUpperCase() || undefined);
+
+      // 서버 /api/setup으로 프로필 생성 — 클라이언트 supabase 직접 호출 일절 금지.
+      // 세션은 @supabase/ssr 쿠키에 저장돼 same-origin fetch에 자동 동봉되므로 getSession() 불필요.
+      // getSession은 네이티브 가입 직후 auth 락 경합으로 hang할 수 있어(#209) 호출 자체를 제거 →
+      // "생성 중…" 영구 스턱 원천 차단. (/setup 페이지와 동일하게 서버에서 인증·닉네임·초대코드 처리)
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      let res: Response;
+      try {
+        // Promise.race 안전망 — 일부 네이티브 WebView에서 AbortController가 fetch를 못 끊어도
+        // 15초 후 reject되어 loading이 반드시 해제됨(무한 스피너 불가능).
+        res = await Promise.race([
+          fetch("/api/setup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+              nickname: nickname.trim(),
+              team_id: selectedTeam,
+              invite_code: effectiveInviteCode,
+              favorite_players: [],
+            }),
+            signal: controller.signal,
+          }),
+          new Promise<Response>((_, reject) =>
+            setTimeout(() => reject(new DOMException("timeout", "AbortError")), 15000)
+          ),
+        ]);
+      } finally {
+        clearTimeout(timer);
       }
 
-      const { error: insertError } = await supabase
-        .from("profiles")
-        .insert({
-          id: user!.id,
-          nickname: nickname.trim(),
-          team_id: selectedTeam,
-          favorite_players: [],
-          invited_by: null,
-          is_founder: false,
-          invite_count: 5,
-          joined_at: new Date().toISOString(),
-        });
-      if (insertError) throw insertError;
-
-      // 초대코드 사용 처리 + 파운더 배지
-      if (normalizedInviteCode) {
-        const { data: { session } } = await supabase.auth.getSession();
-        const accessToken = session?.access_token;
-        const inviteRes = await fetch("/api/invite/use", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-          },
-          body: JSON.stringify({ code: normalizedInviteCode }),
-        });
-
-        if (!inviteRes.ok) {
-          const inviteJson = await inviteRes.json().catch(() => ({}));
-          await supabase.from("profiles").delete().eq("id", user!.id);
-          setError(inviteJson.error || "초대코드 등록에 실패했습니다");
-          setLoading(false);
-          return;
-        }
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(result.error || "프로필 생성에 실패했습니다");
+        setLoading(false);
+        return;
       }
 
       // localStorage도 동기화 (홈/커뮤니티가 읽는 canonical key와 일치)
@@ -130,12 +122,14 @@ export default function ProfileSetupModal({ isOpen }: Props) {
 
       // /welcome에서 Google Ads conversion 발화할 수 있도록 플래그 세팅
       try { sessionStorage.setItem("kbo-signup-just-completed", "1"); } catch { /* ignore */ }
-      await refreshProfile();
-      router.push("/welcome");
+      // 하드 내비게이션 — AuthContext를 새로 부트스트랩(신규 프로필 로드)해 SPA refreshProfile의
+      // 네이티브 클라이언트 의존 제거. /setup 페이지와 동일.
+      window.location.href = "/welcome";
       return; // loading 고정 유지
     } catch (e: unknown) {
-      setError((e as Error).message || "프로필 생성에 실패했습니다");
-      setLoading(false); // 에러 시에만 재활성화
+      const aborted = (e as Error)?.name === "AbortError";
+      setError(aborted ? "네트워크가 지연되고 있어요. 잠시 후 다시 시도해주세요" : ((e as Error).message || "프로필 생성에 실패했습니다"));
+      setLoading(false); // 에러 시에만 재활성화 (타임아웃 포함 — 무한 스피너 방지)
     }
   }
 
@@ -235,7 +229,7 @@ export default function ProfileSetupModal({ isOpen }: Props) {
                 value={inviteCode}
                 onChange={(e) => { setInviteCode(e.target.value.toUpperCase()); setError(""); }}
                 placeholder="KEUBO-XXXXXX"
-                maxLength={10}
+                maxLength={12}
                 className="w-full bg-bg-tertiary border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 text-text-primary placeholder:text-text-tertiary font-mono tracking-wider focus:outline-none focus:border-accent"
               />
               {error && <p className="text-red-400 text-xs mt-2">{error}</p>}

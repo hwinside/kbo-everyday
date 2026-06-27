@@ -10,6 +10,50 @@ function getOrigin(request: NextRequest) {
   return request.nextUrl.origin;
 }
 
+/**
+ * naver provider identity를 auth.identities에 upsert.
+ *
+ * Supabase는 네이버를 공식 OAuth provider로 지원하지 않아서
+ * auth.admin 공식 API로 identity 링크 불가 → service_role에게 허용된
+ * auth schema 직접 접근이 필요. 다른 OAuth provider들(kakao/google)이
+ * 자동 생성하는 identity row와 동일한 스키마로 생성한다.
+ *
+ * on_conflict(provider, provider_id): 이미 존재하면 identity_data/updated_at만 갱신.
+ */
+async function upsertNaverIdentity(
+  supabaseAdmin: any,
+  opts: { userId: string; naverId: string; email: string; name: string; avatarUrl: string }
+) {
+  const { userId, naverId, email, name, avatarUrl } = opts;
+  const now = new Date().toISOString();
+  const identity_data = {
+    sub: naverId,
+    iss: "https://nid.naver.com",
+    email,
+    email_verified: true,
+    phone_verified: false,
+    full_name: name,
+    name,
+    provider_id: naverId,
+    avatar_url: avatarUrl,
+  };
+
+  // Supabase PostgREST는 기본적으로 public 스키마만 노출함.
+  // auth 스키마 접근은 raw SQL이 필요 → service_role에 허용된 rpc 함수 경유.
+  // 프로젝트에 `upsert_naver_identity(uuid, text, jsonb)` rpc가 존재한다고 가정 → 없으면 미리 생성 필요.
+  const { data, error } = await (supabaseAdmin as any).rpc("upsert_naver_identity", {
+    p_user_id: userId,
+    p_provider_id: naverId,
+    p_identity_data: identity_data,
+    p_created_at: now,
+  });
+  if (error) {
+    // rpc 미존재하면 에러 날림 → 너기는 상위에서 캐치해 로그 남김
+    throw new Error(`upsert_naver_identity rpc failed: ${error.message}`);
+  }
+  return data;
+}
+
 const IOS_NATIVE_CALLBACK_ORIGIN = "fan.keubo.app://auth/callback";
 
 /**
@@ -22,11 +66,17 @@ const IOS_NATIVE_CALLBACK_ORIGIN = "fan.keubo.app://auth/callback";
  */
 export async function GET(request: NextRequest) {
   const CANONICAL_ORIGIN = getOrigin(request);
+  // 실패 응답에도 stale native 쿠키를 정리 — native 로그인 취소/에러로 성공 경로의
+  //   삭제까지 못 갔을 때 다음 web 로그인이 native로 오인되는 것 방지(삼순 리뷰 #449).
+  const failRedirect = (target: string) => {
+    const res = NextResponse.redirect(target);
+    res.cookies.delete("naver_native");
+    return res;
+  };
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const error = url.searchParams.get("error");
-  const isNativeIOS = url.searchParams.get("native") === "ios";
   const userAgent = request.headers.get("user-agent") || "";
   const referer = request.headers.get("referer") || "";
   // Structured diag log for mobile login triage (2026-04-21)
@@ -43,19 +93,24 @@ export async function GET(request: NextRequest) {
   // 에러 처리
   if (error) {
     console.error("[Naver OAuth] Error:", error, url.searchParams.get("error_description"));
-    return NextResponse.redirect(
+    return failRedirect(
       `${CANONICAL_ORIGIN}?login_error=${encodeURIComponent(error)}`
     );
   }
 
   if (!code) {
-    return NextResponse.redirect(
+    return failRedirect(
       `${CANONICAL_ORIGIN}?login_error=no_code`
     );
   }
 
   // CSRF state 검증
   const cookieStore = await cookies();
+  // native 플랫폼 판별 — redirect_uri query 대신 start route가 심은 쿠키로 판별.
+  //   (네이버 등록 Callback URL과 redirect_uri를 정확히 일치시키기 위해 query를 제거함)
+  const nativePlatform = cookieStore.get("naver_native")?.value;
+  const isNativeIOS = nativePlatform === "ios";
+  const isNativeAndroid = nativePlatform === "android";
   // verifyOtp이 설정할 쿠키를 수집 (redirect 응답에 복사하기 위해)
   const pendingCookies: { name: string; value: string; options: any }[] = [];
   const savedState = cookieStore.get("naver_oauth_state")?.value;
@@ -66,7 +121,7 @@ export async function GET(request: NextRequest) {
       allCookies: cookieStore.getAll().map((c) => c.name),
       isInApp: /Instagram|KAKAOTALK|FBAN|FBAV|Line|NAVER\(inapp/i.test(userAgent),
     });
-    return NextResponse.redirect(
+    return failRedirect(
       `${CANONICAL_ORIGIN}?login_error=state_mismatch`
     );
   }
@@ -203,6 +258,26 @@ export async function GET(request: NextRequest) {
       userId = newUser.user.id;
     }
 
+    // 3.5 naver provider identity upsert (Supabase 공식 OAuth 미지원 → 수동 insert)
+    //     이 단계가 없으면 auth.identities에 email provider만 남아서
+    //     향후 연동/세션 복원 등에서 네이버 provider 식별 불가 (2026-04-21 fryfish 사례)
+    try {
+      await upsertNaverIdentity(supabaseAdmin, {
+        userId,
+        naverId: String(naverId),
+        email,
+        name,
+        avatarUrl: naverProfile.profile_image || "",
+      });
+      console.log("[Naver OAuth][step3.5] identity linked", { userId: userId.slice(0, 8) });
+    } catch (linkErr) {
+      // identity 링크 실패해도 로그인 자체는 진행 (기존 동작 유지)
+      console.error("[Naver OAuth][step3.5] identity link failed", {
+        userId: userId.slice(0, 8),
+        message: (linkErr as any)?.message,
+      });
+    }
+
     // 4. 매직 링크 대신 OTP 없는 세션 생성
     //    admin.generateLink로 magiclink를 만들고 그 토큰으로 세션 생성
     const { data: linkData, error: linkError } =
@@ -296,12 +371,22 @@ export async function GET(request: NextRequest) {
       : "";
 
     // state 쿠키 정리 + verifyOtp 쿠키를 response에 전달
-    const redirectUrl = isNativeIOS && hashParams
-      ? `${IOS_NATIVE_CALLBACK_ORIGIN}?next=${encodeURIComponent(redirectPath || "/")}${hashParams}`
-      : `${CANONICAL_ORIGIN}${redirectPath}${hashParams}`;
+    //  - iOS 네이티브: custom scheme(fan.keubo.app://)으로 세션 토큰 전달
+    //  - Android 네이티브: App Link로 검증된 /auth/callback 경로 + 해시로 전달
+    //    (서버 쿠키는 Custom Tab에만 남아 앱 WebView로 안 넘어옴 → appUrlOpen이 해시를
+    //     가로채 setSession. 중간 /api/auth/naver/callback은 App Link 비대상이라 서버에서 처리됨)
+    //  - web: 서버 쿠키로 세션 유지
+    let redirectUrl: string;
+    if (isNativeIOS && hashParams) {
+      redirectUrl = `${IOS_NATIVE_CALLBACK_ORIGIN}?next=${encodeURIComponent(redirectPath || "/")}${hashParams}`;
+    } else if (isNativeAndroid && hashParams) {
+      redirectUrl = `${CANONICAL_ORIGIN}/auth/callback?next=${encodeURIComponent(redirectPath || "/")}${hashParams}`;
+    } else {
+      redirectUrl = `${CANONICAL_ORIGIN}${redirectPath}${hashParams}`;
+    }
     const response = NextResponse.redirect(redirectUrl);
     response.cookies.delete("naver_oauth_state");
-    response.cookies.delete("naver_native_ios");
+    response.cookies.delete("naver_native");
     // verifyOtp이 설정한 Supabase auth 쿠키를 redirect 응답에 복사
     // (path/sameSite/httpOnly 누락 방지 — Google/Kakao flow와 동일)
     for (const { name, value, options } of pendingCookies) {
@@ -326,7 +411,7 @@ export async function GET(request: NextRequest) {
     return response;
   } catch (err) {
     console.error("[Naver OAuth] Unexpected error:", err);
-    return NextResponse.redirect(
+    return failRedirect(
       `${CANONICAL_ORIGIN}?login_error=unexpected`
     );
   }

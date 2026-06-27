@@ -199,12 +199,13 @@ export default function PlayerHero({
         {/* Center: cutout */}
         {/* 상단 safe space 6px + 하단 그라데이션 fade(어깨선 자연스럽게 사라짐) */}
         {/* - container: top-[6px] h-[194px] → 상단 여유 6px 확보 (모자 끝이 Hero 상단에 닿는 케이스 방지) */}
-        {/* - mask: 0~60% 완전 노출 → 60~100% fade (어깨 라인이 점진적으로 fade out) */}
+        {/* - mask: 0~90% 완전 노출 → 90~100% fade — 상단 geometry 불변, fade 시작점을 더 내려
+             목이 더 올라와 보이게(하린아빠 2차: 목 좀 더 노출). 윗공간은 그대로 유지. */}
         <div
           className="pointer-events-none absolute left-1/2 top-[6px] z-0 -translate-x-1/2 h-[194px] w-[200px] overflow-hidden"
           style={{
-            maskImage: "linear-gradient(180deg, #000 0%, #000 60%, transparent 100%)",
-            WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 60%, transparent 100%)",
+            maskImage: "linear-gradient(180deg, #000 0%, #000 90%, transparent 100%)",
+            WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 90%, transparent 100%)",
           }}
         >
           <Image
@@ -213,7 +214,9 @@ export default function PlayerHero({
             fill
             sizes="220px"
             className="relative object-contain"
-            style={{ objectPosition: "center -30px" }}
+            // 다음 원본 히어로(정수리 ~7% 지점)는 옛 -30px 오프셋이 모자 상단을 잘랐다.
+            // 상단 여백을 항상 확보하고 머리를 살짝 축소(아래로) — 전 선수 일괄.
+            style={{ objectPosition: "center 24px", transform: "scale(0.84)", transformOrigin: "center top" }}
             priority
             unoptimized
           />

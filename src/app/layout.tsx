@@ -4,6 +4,7 @@ import "@/styles/globals.css";
 import { AuthProvider } from "@/lib/supabase/AuthContext";
 import { ThemeProvider, themeScript } from "@/components/ThemeProvider";
 import { AdAttributionMount } from "@/components/AdAttributionMount";
+import { NativePushMount } from "@/components/NativePushMount";
 import { PageViewTracker } from "@/components/PageViewTracker";
 import { Analytics } from "@vercel/analytics/next";
 
@@ -88,17 +89,19 @@ export default function RootLayout({
           crossOrigin="anonymous"
           href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
         />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
           rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Gamja+Flower&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Noto+Sans+KR:wght@400;500;700&family=Gamja+Flower&display=swap"
         />
         <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
         <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
-      <body className="font-pretendard antialiased bg-bg-primary text-text-primary">
+      <body className="font-sans antialiased bg-bg-primary text-text-primary">
         <AdAttributionMount />
+        <NativePushMount />
         <ThemeProvider>
           <AuthProvider>
             <PageViewTracker />
@@ -113,6 +116,43 @@ export default function RootLayout({
                   navigator.serviceWorker.register('/sw.js');
                 });
               }
+            `,
+          }}
+        />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              /* iOS WKWebView 뒤로가기 빈화면 복구.
+                 콘텐츠는 DOM에 있으나 컴포지터가 페인트를 안 해 검은화면(스크롤하면 바로 뜸)=페인트 누락.
+                 핵심: 앱 내 뒤로가기는 Next 클라이언트 라우팅이라 *popstate*가 발화한다(전체 reload/bfcache 아님)
+                 → pageshow 가드(#388/#392)는 발동하지 않았음. popstate에서 라우트 재렌더 후 강제 리페인트.
+                 강제 리페인트 = 스크롤 1px 왕복 넛지 + <main> transform 토글(즉시 원복, 정상 nav엔 무영향). */
+              (function () {
+                function forceRepaint() {
+                  var y = window.scrollY || window.pageYOffset || 0;
+                  window.scrollTo(0, y + 1);
+                  window.scrollTo(0, y);
+                  var main = document.querySelector('main');
+                  if (main) {
+                    main.style.transform = 'translateZ(0)';
+                    requestAnimationFrame(function () { main.style.transform = ''; });
+                  }
+                }
+                // 앱 내 뒤로/앞으로 = popstate. 라우트 재렌더 후(이중 rAF) + 늦은 렌더 백업(setTimeout).
+                window.addEventListener('popstate', function () {
+                  requestAnimationFrame(function () { requestAnimationFrame(forceRepaint); });
+                  setTimeout(forceRepaint, 150);
+                });
+                // bfcache 복원(전체 페이지 뒤로가기) 케이스도 함께 커버.
+                window.addEventListener('pageshow', function (e) {
+                  if (e.persisted) requestAnimationFrame(forceRepaint);
+                });
+                // 앱 백그라운드→복귀 등 가시성/포커스 복귀 케이스(삼순 제안) — 같은 페인트 누락 가드.
+                document.addEventListener('visibilitychange', function () {
+                  if (document.visibilityState === 'visible') requestAnimationFrame(forceRepaint);
+                });
+                window.addEventListener('focus', function () { requestAnimationFrame(forceRepaint); });
+              })();
             `,
           }}
         />

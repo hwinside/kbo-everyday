@@ -207,7 +207,7 @@ export default function TeamRecordsPage() {
           <ChevronLeft size={24} />
         </button>
         <h1 className="text-lg font-bold text-text-primary">
-          {team.shortName} 기록
+          {team.shortName} 팀 기록
         </h1>
       </header>
 

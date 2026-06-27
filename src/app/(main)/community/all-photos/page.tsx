@@ -12,6 +12,10 @@ export default function AllPhotosPage() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortTab, setSortTab] = useState<SortTab>("latest");
+  // hot 필터의 "최근 30일" 기준 시각 — useMemo 안에서 Date.now() 직접 호출은
+  // react-hooks/purity 룰 위반이라 useState lazy init으로 mount 시 한 번만 잡아둔다.
+  // (30일 정밀도라 페이지 오래 열어둬도 무관.)
+  const [nowMs] = useState(() => Date.now());
 
   useEffect(() => {
     let cancelled = false;
@@ -20,7 +24,7 @@ export default function AllPhotosPage() {
       setLoading(true);
       const { data } = await supabase
         .from("posts")
-        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)")
+        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, team_tags, hashtags, author_team_id_snapshot, profiles(nickname, team_id, grade, points)")
         .in("board_type", ["team", "player"])
         .eq("content_type", "photo")
         .neq("is_hidden", true)
@@ -32,13 +36,14 @@ export default function AllPhotosPage() {
       setPosts((data ?? []).map((p) => {
         const profileRaw = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
         const profile = (profileRaw ?? null) as unknown as Record<string, unknown> | null;
+        const snap = (p as Record<string, unknown>).author_team_id_snapshot as number | null | undefined;
         return {
           ...p,
           content_type: (p.content_type ?? "photo") as "general" | "photo",
           image_urls: (p.image_urls ?? []) as string[],
           video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
           nickname: profile?.nickname as string | undefined,
-          team_id: profile?.team_id as number | undefined,
+          team_id: (snap ?? (profile?.team_id as number | undefined)) as number | undefined,
           grade: profile?.grade as string | undefined,
           points: (profile?.points as number) ?? 0,
         };
@@ -53,9 +58,9 @@ export default function AllPhotosPage() {
   const sortedPosts = useMemo(() => {
     if (sortTab === "latest") return posts;
     return [...posts]
-      .filter((p) => Date.now() - new Date(p.created_at).getTime() < 30 * 24 * 60 * 60 * 1000)
+      .filter((p) => nowMs - new Date(p.created_at).getTime() < 30 * 24 * 60 * 60 * 1000)
       .sort((a, b) => b.like_count - a.like_count || new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  }, [posts, sortTab]);
+  }, [posts, sortTab, nowMs]);
 
   const sourceLabels = useMemo(
     () => Object.fromEntries(sortedPosts.map((post) => [post.id, getCommunitySourceLabel(post.board_type, post.board_id)])),

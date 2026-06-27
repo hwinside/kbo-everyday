@@ -2,6 +2,7 @@
 
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { trackFallback } from "@/lib/monitoring/api-fallback-tracker";
+import { decodeBroadcast, type BroadcastChannel } from "@/lib/broadcast-channels";
 
 /** 숫자 kboId로 로스터 조회 — 외국인 숫자→영문 변환 포함 */
 function findPlayerByNumericId(numericId: string): { name: string } | undefined {
@@ -10,6 +11,20 @@ function findPlayerByNumericId(numericId: string): { name: string } | undefined 
 }
 
 const KBO_BASE = "https://www.koreabaseball.com";
+
+// 2026-05-20: KBO 서버가 User-Agent 없는 요청에 IE 분기 에러 페이지를 내려줌 → JSON 파싱 실패.
+// Vercel 서버리스 fetch는 기본 UA가 없으므로 모든 KBO 직접 호출에 브라우저 UA를 강제한다.
+const KBO_BROWSER_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const KBO_JSON_HEADERS = {
+  "Content-Type": "application/json; charset=utf-8",
+  "X-Requested-With": "XMLHttpRequest",
+  "User-Agent": KBO_BROWSER_UA,
+  "Referer": "https://www.koreabaseball.com/Schedule/Schedule.aspx",
+};
+const KBO_HTML_HEADERS = {
+  "User-Agent": KBO_BROWSER_UA,
+  "Referer": "https://www.koreabaseball.com/",
+};
 
 // KBO 팀 코드 → 앱 teamId 매핑
 const TEAM_CODE_MAP: Record<string, number> = {
@@ -48,6 +63,8 @@ export interface KboGame {
   // 순위
   awayRank: number;
   homeRank: number;
+  // 중계방송사(TV/IPTV, 라디오 제외). 없으면 undefined.
+  broadcastChannels?: BroadcastChannel[];
 }
 
 function parseGameStatus(stateCode: string, cancelCode: string): KboGame["status"] {
@@ -87,6 +104,7 @@ interface KboGameRaw {
   T_P_NM: string;
   T_RANK_NO: number;
   B_RANK_NO: number;
+  TV_IF?: string;
 }
 
 function parseGame(raw: KboGameRaw): KboGame {
@@ -123,19 +141,17 @@ function parseGame(raw: KboGameRaw): KboGame {
     currentBatter: isTop ? (raw.T_P_NM?.trim() ?? "") : (raw.B_P_NM?.trim() ?? ""),
     awayRank: raw.T_RANK_NO ?? 0,
     homeRank: raw.B_RANK_NO ?? 0,
+    broadcastChannels: decodeBroadcast(raw.TV_IF),
   };
 }
 
 /** 특정 날짜 경기 목록 조회 */
-export async function fetchGames(date: string): Promise<KboGame[]> {
+export async function fetchGames(date: string, srId = "0,1,3,4,5,7,9"): Promise<KboGame[]> {
   try {
     const res = await fetch(`${KBO_BASE}/ws/Main.asmx/GetKboGameList`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        "X-Requested-With": "XMLHttpRequest",
-      },
-      body: JSON.stringify({ leId: "1", srId: "0,1,3,4,5,7,9", date }),
+      headers: KBO_JSON_HEADERS,
+      body: JSON.stringify({ leId: "1", srId, date }),
       signal: AbortSignal.timeout(10000),
     });
 
@@ -177,10 +193,7 @@ export async function fetchGames(date: string): Promise<KboGame[]> {
 export async function fetchGameDates(date: string): Promise<{ before: string; current: string; after: string }> {
   const res = await fetch(`${KBO_BASE}/ws/Main.asmx/GetKboGameDate`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      "X-Requested-With": "XMLHttpRequest",
-    },
+    headers: KBO_JSON_HEADERS,
     body: JSON.stringify({ leId: "1", srId: "0,1", date }),
   });
 
@@ -205,6 +218,8 @@ export interface TeamStanding {
   draws: number;
   winRate: number;
   gamesBehind: number;
+  /** 네이버 API 원본 순위(공동순위 반영). 없으면 0/undefined → 승률 기반 fallback. */
+  ranking?: number;
   /** 연승/연패 원본 문자열 (예: "3승", "1패"). 없으면 undefined. */
   continuousGameResult?: string;
 }
@@ -263,7 +278,7 @@ export async function fetchStandings(): Promise<TeamStanding[]> {
   }
 
   // Fallback: KBO HTML 크롤링 (느림)
-  const res = await fetch(`${KBO_BASE}/Record/TeamRank/TeamRank.aspx`);
+  const res = await fetch(`${KBO_BASE}/Record/TeamRank/TeamRank.aspx`, { headers: KBO_HTML_HEADERS });
   const html = await res.text();
 
   const rows = html.split("<tr").slice(1).map(r => r.split("</tr>")[0]);
@@ -302,7 +317,9 @@ export async function fetchStandings(): Promise<TeamStanding[]> {
 const KBO_SCHEDULE_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
 const SCHEDULE_HEADERS = {
   "Content-Type": "application/x-www-form-urlencoded",
-  "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+  // 2026-05-20: KBO가 KboEveryday/1.0 같은 식별 UA를 차단하기 시작 → 일반 브라우저 UA로 전환.
+  "User-Agent": KBO_BROWSER_UA,
+  "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
 };
 
 export interface BoxScoreBatterRecord {
@@ -527,7 +544,7 @@ export interface PlayerBattingStat {
 
 /** 타자 기록 (HTML 파싱) */
 export async function fetchBatterStats(): Promise<PlayerBattingStat[]> {
-  const res = await fetch(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx`);
+  const res = await fetch(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx`, { headers: KBO_HTML_HEADERS });
   const html = await res.text();
 
   const rows = html.match(/<tr[^>]*>(.*?)<\/tr>/g) ?? [];

@@ -1,8 +1,27 @@
 "use client";
 
 import { supabase } from "@/lib/supabase/client";
+import { isNative, platform } from "@/lib/capacitor/platform";
 
 const VISITOR_KEY = "kbo_visitor_id";
+
+/** ios_native | android_native | pwa | web — distinguishes the launched app
+ * shells from PWA-installed and plain web traffic. PWA is detected via the
+ * standalone display-mode (iOS Safari exposes navigator.standalone). */
+function getPlatform(): string {
+  if (isNative) {
+    if (platform === "ios") return "ios_native";
+    if (platform === "android") return "android_native";
+    return "native";
+  }
+  if (typeof window !== "undefined") {
+    const standalone =
+      window.matchMedia?.("(display-mode: standalone)")?.matches === true ||
+      (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+    if (standalone) return "pwa";
+  }
+  return "web";
+}
 
 function getVisitorId(): string {
   if (typeof window === "undefined") return "";
@@ -37,6 +56,7 @@ export async function trackPageView(userId?: string) {
     referrer: document.referrer || null,
     user_agent: navigator.userAgent,
     device: getDevice(),
+    platform: getPlatform(),
     user_id: userId || null,
   }).then(({ error }) => {
     if (error) console.warn("[tracker] page view insert failed:", error.message);
@@ -45,7 +65,12 @@ export async function trackPageView(userId?: string) {
 
 /** Temporary: log celebration triggers for monitoring. inning + eventId are
  * recorded so we can trace mis-attribution (e.g. wrong batter) back to the
- * exact event that triggered the celebration. */
+ * exact event that triggered the celebration.
+ *
+ * `source` distinguishes the relay-bridged path from the KBO BoxScore-diff
+ * path so the admin panel can graph relay-vs-kbo gap P50/P90. `eventTimeMs`
+ * records the GameEvent.timestamp at fire time (so server-side gap math
+ * doesn't depend on celebration-trigger ingest latency). */
 export async function trackCelebration(
   type: string,
   gameId: string,
@@ -54,12 +79,15 @@ export async function trackCelebration(
   eventId?: string,
   inning?: number,
   isTop?: boolean,
+  source?: string,
+  eventTimeMs?: number,
 ) {
   const visitorId = getVisitorId();
   if (!visitorId) return;
 
   const body = JSON.stringify({
     visitorId, type, gameId, teamId, playerName, eventId, inning, isTop,
+    source, eventTimeMs, firedAtMs: Date.now(),
   });
   const url = "/api/telemetry/celebration-trigger";
 

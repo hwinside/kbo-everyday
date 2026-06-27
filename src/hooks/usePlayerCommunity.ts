@@ -27,6 +27,7 @@ interface SupabasePostRow {
   comment_count: number;
   created_at: string;
   is_hidden: boolean;
+  author_team_id_snapshot?: number | null;
   profiles?: SupabaseProfileJoin | SupabaseProfileJoin[] | null;
 }
 
@@ -82,7 +83,7 @@ export function usePlayerCommunity(userTeamId?: number) {
 
     let query = supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, author_team_id_snapshot, profiles(nickname, team_id, grade)")
       .eq("board_type", "player")
       .eq("content_type", "general")
       .in("board_id", queryIds)
@@ -120,7 +121,7 @@ export function usePlayerCommunity(userTeamId?: number) {
             author: {
               nickname: prof?.nickname || "익명",
               avatarUrl: null,
-              myTeamId: prof?.team_id || 0,
+              myTeamId: p.author_team_id_snapshot ?? prof?.team_id ?? 0,
               level: 1,
               title: "",
               grade: prof?.grade,
@@ -140,7 +141,7 @@ export function usePlayerCommunity(userTeamId?: number) {
 
     let query = supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, profiles(nickname, team_id, grade)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, author_team_id_snapshot, profiles(nickname, team_id, grade)")
       .eq("board_type", "player")
       .eq("content_type", "photo")
       .in("board_id", queryIds)
@@ -177,7 +178,7 @@ export function usePlayerCommunity(userTeamId?: number) {
             comment_count: p.comment_count,
             created_at: p.created_at,
             nickname: prof?.nickname || "익명",
-            team_id: prof?.team_id,
+            team_id: p.author_team_id_snapshot ?? prof?.team_id,
             grade: prof?.grade,
           };
         })

@@ -12,11 +12,20 @@
  * prev_state combination it let race-window concurrent polls each emit a
  * fresh id for the same logical event, accumulating hundreds of duplicate
  * `🔵 이주형 안타!` rows on KTWO0 8회말 (2026-05-09 incident).
+ *
+ * Extra-base hit counting uses MONOTONIC XBH clamping: effectiveXBH =
+ * max(prev, curr) for HR/H2B/H3B. If a source-switch (KBO/Naver) delivers
+ * a snapshot with stale XBH counts, the derived singles count (hits -
+ * effectiveXBH) absorbs the regression without inflating. Singles emission
+ * is also suppressed entirely when XBH regression is detected, to guard
+ * against a concurrent hits bump being the uncategorized XBH itself
+ * (6 false-positive at_bat_hit events across 3 games on 2026-05-17).
  */
 import type { GameEvent, GameEventType, EventDetail, GameSnapshot } from "@/types/game-events";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
 import type { BatterRecord, GameDetailResponse } from "@/app/api/game-detail/route";
 import { buildEventText } from "@/lib/event-text-builder";
+import { normalizeBatterName } from "@/lib/relay-event-generator";
 
 export interface PrevGameState {
   live: LiveGameData;
@@ -58,6 +67,7 @@ function makeEvent(
     detail,
     text: "", // filled below
     snapshot,
+    source: "kbo_diff",
   };
   event.text = buildEventText(event);
   return event;
@@ -184,6 +194,18 @@ export function generateEvents(
     }, currInningKey));
   }
 
+  // --- Post-game guard ---
+  // game_end early-return (above) only fires on the live→not-live transition.
+  // Subsequent polls where BOTH prev and curr are not-live would fall through
+  // to BoxScore diffs, emitting ghost events from late-arriving stat corrections.
+  // Guard: if the game is no longer live, skip all remaining event generation.
+  if (!currentLive.isLive) {
+    return {
+      events,
+      nextState: { live: currentLive, boxScore: currentBoxScore },
+    };
+  }
+
   // --- Pitcher change (via live data) ---
   if (
     prevLive.currentPitcher &&
@@ -221,56 +243,125 @@ export function generateEvents(
       const sideKey = inningKey(live.inning, isTop);
 
       for (const [batterName, entry] of batterDiffs) {
-        const { prev: bPrev, diff } = entry;
+        // dedupe-key encoding uses the whitespace-normalized name so the relay
+        // path (relay-event-generator.ts) mints an identical id for the same
+        // plate appearance, even when KBO BoxScore and Naver relay disagree on
+        // whitespace (외국인 선수: "엘리엇 어슨" / "엘리엇어슨"). Displayed text
+        // continues to use the raw KBO name (passed via detail.batter below).
+        const batterNorm = normalizeBatterName(batterName);
+        const { prev: bPrev, curr: bCurr } = entry;
         const prevHr = bPrev?.hr ?? 0;
         const prevH3b = bPrev?.h3b ?? 0;
         const prevH2b = bPrev?.h2b ?? 0;
         const prevHits = bPrev?.hits ?? 0;
-        const prevSingles = prevHits - prevHr - prevH3b - prevH2b;
         const prevBb = bPrev?.bb ?? 0;
         const prevSo = bPrev?.so ?? 0;
+
+        // KBO BoxScore is occasionally lag-inconsistent across polls: an
+        // extra-base hit (2B/3B/HR) lands in the per-at-bat cells *before*
+        // the `hits` aggregate increments. The earlier poll observes
+        // `hits=0, hr=1` (intermediate, inconsistent); the later poll
+        // observes `hits=1, hr=1` (stable). A naive `diff.hits - diff.xbh`
+        // 1B count then mints a bogus `at_bat_hit-...-0` 세레머니 right
+        // after the real HR/2B/3B event (16 occurrences across 4 games on
+        // 2026-05-16) — or, after a naive lag-skip guard, a bogus
+        // `at_bat_hit-...-1` on the *next* poll because nextState retains
+        // the inconsistent snapshot.
+        //
+        // Fix: drive singles off CUMULATIVE derived counts on both sides
+        // of the diff. `singlesAt(state) = max(0, hits - hr - h2b - h3b)`
+        // clamps the inconsistent intermediate state to 0; the lag delta
+        // is absorbed naturally without needing to skip or rewrite
+        // nextState. Extra-base / walk / strikeout stats are already
+        // monotonic-by-construction, so cumulative max(0, curr-prev) on
+        // them is just defense-in-depth against upstream stat corrections.
+        // Monotonic XBH: extra-base hit counts should never decrease
+        // between polls. If curr < prev, a source-switch (KBO↔Naver)
+        // delivered a snapshot with stale XBH counts. Using max(prev,
+        // curr) prevents regression from inflating the derived singles
+        // count — closes the at_bat_hit-...-1 false-positive class
+        // (6 occurrences across 3 games on 2026-05-17) that PR #88's
+        // self-consistency clamp couldn't reach.
+        const xbhRegressed =
+          bCurr.hr < prevHr || bCurr.h3b < prevH3b || bCurr.h2b < prevH2b;
+        if (xbhRegressed) {
+          console.warn(
+            `[event-gen] XBH regression for ${batterName} in ${gameId}: ` +
+            `prev(hr=${prevHr},h3b=${prevH3b},h2b=${prevH2b}) → ` +
+            `curr(hr=${bCurr.hr},h3b=${bCurr.h3b},h2b=${bCurr.h2b}) — skipping singles`,
+          );
+        }
+        const effectiveHr = Math.max(prevHr, bCurr.hr);
+        const effectiveH3b = Math.max(prevH3b, bCurr.h3b);
+        const effectiveH2b = Math.max(prevH2b, bCurr.h2b);
+
+        const prevSingles = Math.max(0, prevHits - prevHr - prevH3b - prevH2b);
+        const currSingles = Math.max(
+          0,
+          bCurr.hits - effectiveHr - effectiveH3b - effectiveH2b,
+        );
+
+        const hrDelta = Math.max(0, bCurr.hr - prevHr);
+        const h3bDelta = Math.max(0, bCurr.h3b - prevH3b);
+        const h2bDelta = Math.max(0, bCurr.h2b - prevH2b);
+        // Skip singles during XBH regression: even with monotonic
+        // effective counts, a concurrent hits bump could be the
+        // uncategorized XBH itself. Recovery: next stable poll.
+        const singleDelta = xbhRegressed
+          ? 0
+          : Math.max(0, currSingles - prevSingles);
+        const bbDelta = Math.max(0, bCurr.bb - prevBb);
+        const soDelta = Math.max(0, bCurr.so - prevSo);
+
+        // Per-at-bat 타점 attribution for 최애선수 활약 알림. BoxScore carries only
+        // cumulative RBI, so we attribute the window's RBI delta to the at-bat ONLY
+        // when this batter has exactly one hit-type event in the window (sole scoring
+        // play). Same conservative pattern 삼순 accepted for at_bat_homerun rbi (#304):
+        // ambiguous multi-event windows omit rbi → label-only "안타!" fallback.
+        const rbiDelta = Math.max(0, bCurr.rbi - (bPrev?.rbi ?? 0));
+        const hitEvents = hrDelta + h3bDelta + h2bDelta + singleDelta;
+        const hitRbi = hitEvents === 1 && rbiDelta > 0 ? { rbi: rbiDelta } : {};
 
         // Order matters within a single batter: HR/3B/2B counted explicitly,
         // remaining hits => 1B (at_bat_hit). dedupe key encodes the
         // 1-based cumulative occurrence index for this stat — same plate
         // appearance always lands on the same id regardless of polling
         // instance.
-        for (let i = 0; i < diff.hr; i++) {
+        for (let i = 0; i < hrDelta; i++) {
           const idx = prevHr + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_homerun", {
-            batter: batterName, pitcher: pitcherName,
-          }, `${sideKey}-${batterName}-${idx}`));
+            batter: batterName, pitcher: pitcherName, ...hitRbi,
+          }, `${sideKey}-${batterNorm}-${idx}`));
         }
-        for (let i = 0; i < diff.h3b; i++) {
+        for (let i = 0; i < h3bDelta; i++) {
           const idx = prevH3b + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_triple", {
-            batter: batterName, pitcher: pitcherName,
-          }, `${sideKey}-${batterName}-${idx}`));
+            batter: batterName, pitcher: pitcherName, ...hitRbi,
+          }, `${sideKey}-${batterNorm}-${idx}`));
         }
-        for (let i = 0; i < diff.h2b; i++) {
+        for (let i = 0; i < h2bDelta; i++) {
           const idx = prevH2b + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_double", {
-            batter: batterName, pitcher: pitcherName,
-          }, `${sideKey}-${batterName}-${idx}`));
+            batter: batterName, pitcher: pitcherName, ...hitRbi,
+          }, `${sideKey}-${batterNorm}-${idx}`));
         }
-        const single = diff.hits - diff.hr - diff.h2b - diff.h3b;
-        for (let i = 0; i < single; i++) {
+        for (let i = 0; i < singleDelta; i++) {
           const idx = prevSingles + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_hit", {
-            batter: batterName, pitcher: pitcherName,
-          }, `${sideKey}-${batterName}-${idx}`));
+            batter: batterName, pitcher: pitcherName, ...hitRbi,
+          }, `${sideKey}-${batterNorm}-${idx}`));
         }
-        for (let i = 0; i < diff.bb; i++) {
+        for (let i = 0; i < bbDelta; i++) {
           const idx = prevBb + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_walk", {
             batter: batterName, pitcher: pitcherName,
-          }, `${sideKey}-${batterName}-${idx}`));
+          }, `${sideKey}-${batterNorm}-${idx}`));
         }
-        for (let i = 0; i < diff.so; i++) {
+        for (let i = 0; i < soDelta; i++) {
           const idx = prevSo + i + 1;
           events.push(makeEvent(gameId, live, "at_bat_strikeout", {
             batter: batterName, pitcher: pitcherName,
-          }, `${sideKey}-${batterName}-${idx}`));
+          }, `${sideKey}-${batterNorm}-${idx}`));
         }
       }
     }
@@ -302,21 +393,29 @@ export function generateEvents(
     }
   }
 
-  // --- Score change ---
-  // Score is monotonic per game so the (away,home) pair is itself a stable
-  // dedupe key — two instances seeing the same KBO snapshot mint the same id.
-  const awayDiff = currentLive.awayScore - prevLive.awayScore;
-  const homeDiff = currentLive.homeScore - prevLive.homeScore;
-  const totalScoreDiff = awayDiff + homeDiff;
-
-  if (totalScoreDiff > 0) {
-    const hrEvents = events.filter(e => e.type === "at_bat_homerun").length;
-    const runsToReport = totalScoreDiff - hrEvents;
-    if (runsToReport > 0) {
-      events.push(makeEvent(gameId, currentLive, "run_scored", {
-        rbi: runsToReport,
-      }, `${currentLive.awayScore}-${currentLive.homeScore}`));
-    }
+  // --- Score change (per team) ---
+  // 팀별로 분리해 득점 이벤트를 만든다. 한 polling에 양팀이 모두 득점했어도 각각
+  // 발화하고, detail.scoringSide로 득점팀을 확정한다 — 알림 레이어가 isTop을
+  // 추론(이닝교대 lag/양팀 동시 득점에 취약)하지 않게 (push S5a, 삼순 #213-②).
+  // 같은 팀에 홈런 이벤트가 있으면 그 점수는 at_bat_homerun으로 이미 발화되므로
+  // run_scored를 suppress해 한 득점 상황 2푸시(홈런+득점)를 막는다. BoxScore에
+  // 홈런 타점이 없어 멀티런 홈런을 개수로 차감하면 부정확하므로(2/3점 홈런이면
+  // 잔여 run_scored 발생) 홈런 동반 사이클은 통째 suppress한다 (삼순 #213-①).
+  // score는 게임 내 monotonic이라 (away,home,side)가 안정적 dedupe id.
+  const scoreSides: Array<{ side: "away" | "home"; isTop: boolean; diff: number }> = [
+    { side: "away", isTop: true, diff: currentLive.awayScore - prevLive.awayScore },
+    { side: "home", isTop: false, diff: currentLive.homeScore - prevLive.homeScore },
+  ];
+  for (const s of scoreSides) {
+    if (s.diff <= 0) continue;
+    const teamHr = events.filter(
+      e => e.type === "at_bat_homerun" && e.isTop === s.isTop,
+    ).length;
+    if (teamHr > 0) continue; // 홈런이 이 팀 득점을 설명 — 중복 방지로 run_scored suppress
+    events.push(makeEvent(gameId, currentLive, "run_scored", {
+      rbi: s.diff,
+      scoringSide: s.side,
+    }, `${currentLive.awayScore}-${currentLive.homeScore}-${s.side}`));
   }
 
   // --- Out count change (inferred) ---

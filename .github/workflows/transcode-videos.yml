@@ -1,0 +1,46 @@
+name: Transcode Community Videos
+
+# 커뮤니티 동영상(움짤콜렉터 photos + 유저업로드 videos)을 720p H.264 + faststart 로
+# 재인코딩해 video_urls 를 최적화본으로 스왑하는 워커. 맥미니 디스크 압박 회피 위해
+# GitHub-hosted 러너(ephemeral 디스크, ffmpeg 기본 탑재)에서 주기 실행한다.
+# 백필은 1회성으로 이미 완료됐고, 이 크론은 *신규 업로드 영상 자동 처리*만 담당.
+#
+# 멱등성: video_transcode_jobs(original_url UNIQUE) 큐로 추적. 신규 URL 만 처리.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *' # 30분마다 (GitHub 스케줄은 best-effort, 지연 가능)
+  workflow_dispatch: # 수동 실행
+
+# 동시 실행 금지 — 워커는 단일 인스턴스 가정(작업 claim 락 없음)이라
+# 두 런이 겹치면 같은 영상을 중복 처리할 수 있다. 큐가 비면 즉시 끝나므로 큐잉 비용 작음.
+concurrency:
+  group: transcode-videos
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  transcode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --omit=dev --no-audit --no-fund
+
+      - name: Ensure ffmpeg
+        run: ffmpeg -version || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+
+      - name: Transcode pending videos
+        run: node scripts/transcode-videos.mjs --apply --limit 50
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

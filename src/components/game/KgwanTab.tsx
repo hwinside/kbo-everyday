@@ -7,6 +7,7 @@ import { clsx } from "clsx";
 import Image from "next/image";
 import { getTeamById } from "@/lib/constants/teams";
 import GameChat from "@/components/game/GameChat";
+import ContextualStatsBox from "@/components/game/ContextualStatsBox";
 import { useRouter } from "next/navigation";
 import type { GameEvent } from "@/types/game-events";
 import type { GamePlay } from "@/lib/types";
@@ -454,6 +455,9 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
         </div>
       ) : null}
 
+      {/* Contextual stats box — 문자중계와 채팅 사이 상황별 맞춤 스탯 */}
+      <ContextualStatsBox gameId={gameId} enabled />
+
       {/* Chat */}
       <GameChat gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
     </div>
@@ -760,7 +764,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
                 ].map((phase) => (
                   <div key={phase.label}>
                     <span className="text-[10px] font-bold text-accent/70">{phase.label}</span>
-                    <p className="readable-body mt-0.5">{phase.text}</p>
+                    <p className="text-sm text-text-primary leading-relaxed mt-0.5">{phase.text}</p>
                   </div>
                 ))}
               </div>
@@ -773,7 +777,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
                   <span className="text-xs">🔑</span>
                   <span className="text-[11px] font-semibold text-text-tertiary">승부처</span>
                 </div>
-                <p className="readable-body">{summary.turningPoint}</p>
+                <p className="text-sm text-text-primary leading-relaxed">{summary.turningPoint}</p>
               </div>
             )}
 
@@ -784,7 +788,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
                   <span className="text-xs">⭐</span>
                   <span className="text-[11px] font-semibold text-text-tertiary">오늘의 타자</span>
                 </div>
-                <p className="readable-body">
+                <p className="text-sm text-text-primary leading-relaxed">
                   <span className="font-semibold text-text-primary">{summary.mvpBatterLabel}</span>
                   {summary.mvpBatterReason && (
                     <span className="font-normal" style={{ color: "var(--text-readable)" }}> — {summary.mvpBatterReason}</span>
@@ -800,7 +804,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
                   <span className="text-xs">🔥</span>
                   <span className="text-[11px] font-semibold text-text-tertiary">오늘의 투수</span>
                 </div>
-                <p className="readable-body">
+                <p className="text-sm text-text-primary leading-relaxed">
                   <span className="font-semibold text-text-primary">{summary.pitcherLabel}</span>
                   {summary.pitcherReason && (
                     <span className="font-normal" style={{ color: "var(--text-readable)" }}> — {summary.pitcherReason}</span>
@@ -816,7 +820,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
                   <span className="text-xs">📊</span>
                   <span className="text-[11px] font-semibold text-text-tertiary">경기 분석</span>
                 </div>
-                <p className="readable-body">{summary.insight}</p>
+                <p className="text-sm text-text-primary leading-relaxed">{summary.insight}</p>
               </div>
             )}
 
@@ -829,7 +833,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
                       <span className="text-xs">⚾</span>
                       <span className="text-[11px] font-semibold text-text-tertiary">시리즈</span>
                     </div>
-                    <p className="readable-body">{summary.seriesContext}</p>
+                    <p className="text-sm text-text-primary leading-relaxed">{summary.seriesContext}</p>
                   </div>
                 )}
                 {summary.standingsImpact && (
@@ -838,7 +842,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
                       <span className="text-xs">🏆</span>
                       <span className="text-[11px] font-semibold text-text-tertiary">순위 영향</span>
                     </div>
-                    <p className="readable-body">{summary.standingsImpact}</p>
+                    <p className="text-sm text-text-primary leading-relaxed">{summary.standingsImpact}</p>
                   </div>
                 )}
               </div>

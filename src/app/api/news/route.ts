@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { NaverNewsRawItem, NewsItem } from "@/types/api";
+import { isTeamBaseballRelevant, isNaverNewsUrl, dedupeNewsByTitle } from "@/lib/news-relevance";
 
 const NAVER_CLIENT_ID = process.env.NAVER_CLIENT_ID || "";
 const NAVER_CLIENT_SECRET = process.env.NAVER_CLIENT_SECRET || "";
@@ -92,12 +93,18 @@ async function fetchNaverNews(searchQuery: string, start = 1, display = NEWS_DIS
   );
 
   const data = await res.json();
-  return (data.items || []).map((item: NaverNewsRawItem) => ({
-    title: cleanHtml(item.title),
-    description: cleanHtml(item.description),
-    link: item.originallink || item.link,
-    pubDate: item.pubDate,
-  }));
+  return (data.items || [])
+    .map((item: NaverNewsRawItem) => ({
+      title: cleanHtml(item.title),
+      description: cleanHtml(item.description),
+      // 네이버 뉴스 URL(link) 우선 — 미등록 기사만 언론사 원문(originallink)으로 폴백
+      link: item.link || item.originallink,
+      // 출처 표기용 언론사 원문 URL 보존 (클릭은 link, 출처는 originalLink)
+      originalLink: item.originallink || item.link,
+      pubDate: item.pubDate,
+    }))
+    // '무조건 네이버' 보장 — link가 네이버 뉴스 URL이 아닌(미등록) 기사는 노출 제외
+    .filter((item: NewsItem) => isNaverNewsUrl(item.link));
 }
 
 function isSafeHttpUrl(url: string): boolean {
@@ -217,10 +224,12 @@ async function attachThumbnails(items: NewsItem[]): Promise<NewsItem[]> {
     targetItems,
     THUMBNAIL_CONCURRENCY,
     async (item) => {
-      const cached = getCachedThumbnail(item.link);
+      // 썸네일/OG는 언론사 원문(originalLink) 기준 — 클릭(link)은 네이버, OG 품질은 원문 유지
+      const ogTarget = item.originalLink || item.link;
+      const cached = getCachedThumbnail(ogTarget);
       if (cached !== undefined) return cached;
-      const url = await fetchThumbnailUrl(item.link);
-      setCachedThumbnail(item.link, url);
+      const url = await fetchThumbnailUrl(ogTarget);
+      setCachedThumbnail(ogTarget, url);
       return url;
     },
   );
@@ -283,13 +292,20 @@ export async function GET(req: NextRequest) {
         return isPlayerRelevantNews(item, player, teamTokens);
       }).slice(0, THUMBNAIL_FETCH_LIMIT);
     } else {
+      // 팀 뉴스는 마스코트 게이트 적용, q/기본(KBO 전체) 검색은 그대로 통과.
+      const teamMascot = team ? TEAM_SEARCH[team]?.split(/\s+/).pop() || null : null;
       const items = await fetchNaverNews(searchQuery, 1, NEWS_DISPLAY_LIMIT);
       unique = items.filter((item: NewsItem) => {
         if (seen.has(item.link)) return false;
         seen.add(item.link);
-        return true;
+        return team
+          ? isTeamBaseballRelevant(item.title, item.description, teamMascot)
+          : true;
       });
     }
+
+    // 매체만 다른 같은 사건 기사(near-duplicate) 제거 — Naver 결과가 date desc라 최신 항목 유지
+    unique = dedupeNewsByTitle(unique);
 
     // 캐시는 _썸네일 없는 raw items_만 저장.
     cache.set(cacheKey, { data: { items: unique, _q: searchQuery }, ts: Date.now() });

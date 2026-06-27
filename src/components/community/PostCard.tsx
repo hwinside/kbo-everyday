@@ -1,11 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { Heart, MessageCircle, Play } from "lucide-react";
+import { Heart, MessageCircle, Play, Share2 } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LinkPreview from "@/components/community/LinkPreview";
 import type { Post } from "@/lib/types";
 import type { CommunitySourceLabel } from "@/lib/utils/community-board";
+import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
 
 interface PostCardProps {
   post: Post;
@@ -17,10 +19,28 @@ interface PostCardProps {
 
 export default function PostCard({ post, onPress, playerLabel, sourceLabel }: PostCardProps) {
   const timeAgo = getTimeAgo(post.createdAt);
+  const [shareOpen, setShareOpen] = useState(false);
+
+  function handleShare(e: React.MouseEvent<HTMLButtonElement>) {
+    e.stopPropagation();
+    setShareOpen(true);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (!onPress) return;
+    if (e.currentTarget !== e.target) return;
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    onPress();
+  }
 
   return (
-    <motion.button
-      onTap={onPress}
+    <>
+    <motion.div
+      role="button"
+      tabIndex={0}
+      onClick={onPress}
+      onKeyDown={handleKeyDown}
       className="w-full text-left glass-card p-5 transition-colors hover:bg-bg-glass"
       whileTap={{ scale: 0.98 }}
       transition={{ type: "spring", stiffness: 400, damping: 25 }}
@@ -94,8 +114,34 @@ export default function PostCard({ post, onPress, playerLabel, sourceLabel }: Po
         <span className="flex items-center gap-1">
           <MessageCircle size={20} /> {post.commentCount}
         </span>
+        <button
+          type="button"
+          onClick={handleShare}
+          onKeyDown={(e) => e.stopPropagation()}
+          className="ml-auto flex min-h-[32px] min-w-[32px] items-center justify-center rounded-lg text-text-tertiary active:bg-bg-tertiary"
+          aria-label="게시글 공유"
+        >
+          <Share2 size={20} />
+        </button>
       </div>
-    </motion.button>
+    </motion.div>
+    <ShareSheet
+      isOpen={shareOpen}
+      post={
+        shareOpen
+          ? ({
+              id: post.id,
+              title: post.title,
+              content: post.content,
+              videoUrl: post.videoUrls?.[0] ?? null,
+              board_type: post.boardType,
+              board_id: post.boardId,
+            } satisfies ShareSheetPost)
+          : null
+      }
+      onClose={() => setShareOpen(false)}
+    />
+    </>
   );
 }
 

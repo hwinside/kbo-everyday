@@ -8,13 +8,15 @@ import { motion } from "framer-motion";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { TEAMS, getTeamById } from "@/lib/constants/teams";
-import { getMyTeamId } from "@/lib/store/myteam";
+import { getMyTeamId, setMyTeamId as persistMyTeamId } from "@/lib/store/myteam";
+import { useAuth } from "@/lib/supabase/AuthContext";
 
 const container = { hidden: {}, show: { transition: { staggerChildren: 0.04 } } };
 const item = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0 } };
 
 export default function CommunityTeamsPage() {
   const router = useRouter();
+  const { profile } = useAuth();
   const [myTeamId, setMyTeamId] = useState<number | null>(null);
   const [redirecting, setRedirecting] = useState(false);
 
@@ -44,6 +46,23 @@ export default function CommunityTeamsPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMyTeamId(id);
   }, [myTeamId]);
+
+  // 로그인 유저 폴백: localStorage 최애팀이 없어도(예: 신규 세션·매직링크 로그인)
+  // 프로필 team_id 가 있으면 그 팀 게시판으로 진입시키고 store 에 persist 한다.
+  // → "커뮤니티 진입 디폴트 = 최애팀" 보장 + 이후 진입은 즉시 리다이렉트.
+  useEffect(() => {
+    if (redirecting) return;
+    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("pick")) return;
+    if (getMyTeamId() != null) return; // localStorage 경로(useLayoutEffect)가 이미 처리
+    if (!profile?.team_id) return;
+    const team = getTeamById(profile.team_id);
+    if (!team) return;
+    persistMyTeamId(profile.team_id);
+    // 리다이렉트 직전 가드 — set-state-in-effect 는 이 redirect 패턴에서 의도적.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRedirecting(true);
+    router.replace(`/community/teams/${team.slug}`);
+  }, [profile, redirecting, router]);
 
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
 

@@ -17,9 +17,11 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 const KBO_SCHEDULE = "https://www.koreabaseball.com/ws/Schedule.asmx";
+// 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청에 IE 분기 HTML 에러 페이지 반환.
 const HEADERS = {
   "Content-Type": "application/x-www-form-urlencoded",
   "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+  "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
 };
 
 function safeInt(v: unknown): number {
@@ -60,10 +62,13 @@ function parseBoxScoreMinimal(data: unknown): GameDetailResponse["boxScore"] {
         if (ab === "4구") bb++;
         if (ab.includes("삼진")) so++;
       }
-      const order = safeInt(stripHtml(cells[0]));
+      const rawOrder = safeInt(stripHtml(cells[0]));
       const posRaw = stripHtml(cells[1] || "");
-      const isSubstitute = order === prevOrder || posRaw.startsWith("타") || posRaw.startsWith("주") || posRaw.startsWith("대");
-      prevOrder = order;
+      // game-detail/route.ts와 동일한 substitute 룰. 빈 타순 셀은 직전 row의 타순을
+      // 그대로 이어 베이스 룩업이 안정적이도록 한다.
+      const isSubstitute = rawOrder === 0 || rawOrder === prevOrder || posRaw.startsWith("타") || posRaw.startsWith("주") || posRaw.startsWith("대");
+      const order = isSubstitute && rawOrder === 0 && prevOrder > 0 ? prevOrder : rawOrder;
+      if (order > 0) prevOrder = order;
       return {
         order,
         position: posRaw,

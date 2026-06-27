@@ -19,22 +19,37 @@ export async function GET(req: NextRequest) {
   const type = req.nextUrl.searchParams.get("type") || "all";
 
   // 가장 최근 완전 집계일 (cohort+funnel+gameday 3종 모두 있는 날짜만 인정)
-  const { data: dateRows } = await supabase
-    .from("retention_metrics")
-    .select("date, metric_type")
-    .order("date", { ascending: false })
-    .limit(200);
-
+  // 날짜별 3종 완비 확인 — 최근 5일치 후보만 체크 (limit 초과 방지)
   let latestDate: string | null = null;
-  if (dateRows?.length) {
-    const dateTypes = new Map<string, Set<string>>();
-    for (const r of dateRows) {
-      if (!dateTypes.has(r.date)) dateTypes.set(r.date, new Set());
-      dateTypes.get(r.date)!.add(r.metric_type);
+  {
+    // step 1: 최근 날짜 5개 후보 추출 (metric_type 무관, 역순 정렬)
+    const { data: rawDates } = await supabase
+      .from("retention_metrics")
+      .select("date")
+      .order("date", { ascending: false })
+      .limit(500);
+    const candidates: string[] = [];
+    const seen = new Set<string>();
+    for (const r of rawDates ?? []) {
+      if (!seen.has(r.date)) { seen.add(r.date); candidates.push(r.date); }
+      if (candidates.length >= 5) break;
     }
-    for (const [date, types] of dateTypes) {
-      if (types.has("cohort") && types.has("funnel") && types.has("gameday")) {
-        latestDate = date;
+    // step 2: 각 후보 날짜에 cohort+funnel+gameday 존재 여부 확인
+    // .limit(3) 사용 금지 — 같은 type row만 3개 잡히는 회귀 방지 (삼순이 리뷰 #2)
+    const required = ["cohort", "funnel", "gameday"] as const;
+    for (const candidate of candidates) {
+      const checks = await Promise.all(
+        required.map(async (mt) => {
+          const { count } = await supabase
+            .from("retention_metrics")
+            .select("*", { count: "exact", head: true })
+            .eq("date", candidate)
+            .eq("metric_type", mt);
+          return (count ?? 0) > 0;
+        }),
+      );
+      if (checks.every(Boolean)) {
+        latestDate = candidate;
         break;
       }
     }

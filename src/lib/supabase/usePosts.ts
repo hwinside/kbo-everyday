@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
+import { teamSlugsForPlayerTags } from "@/lib/utils/player-roster";
+import { checkObjectionableContent } from "@/lib/moderation/content-filter";
 
 export interface Post {
   id: number;
@@ -21,6 +23,7 @@ export interface Post {
   // meme editor fields
   game_id?: string | null;
   player_tags?: string[];
+  team_tags?: string[];
   hashtags?: string[];
   seat_info?: { zone: string; block?: string; row?: string; seat?: string } | null;
   // joined
@@ -59,7 +62,7 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
       setLoading(true);
       const { data } = await supabase
         .from("posts")
-        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)")
+        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, author_team_id_snapshot, profiles(nickname, team_id, grade, points)")
         .eq("board_type", boardType)
         .eq("board_id", boardId)
         .eq("content_type", contentType)
@@ -69,16 +72,20 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
 
       if (cancelled) return;
       if (data) {
-        setPosts(data.map((p) => ({
-          ...p,
-          content_type: (p.content_type ?? "general") as "general" | "photo",
-          image_urls: (p.image_urls ?? []) as string[],
-          video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
-          nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
-          team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
-          grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
-          points: ((p.profiles as unknown as Record<string, unknown> | null)?.points as number) ?? 0,
-        })));
+        setPosts(data.map((p) => {
+          const prof = p.profiles as unknown as Record<string, unknown> | null;
+          const snap = (p as Record<string, unknown>).author_team_id_snapshot as number | null | undefined;
+          return {
+            ...p,
+            content_type: (p.content_type ?? "general") as "general" | "photo",
+            image_urls: (p.image_urls ?? []) as string[],
+            video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
+            nickname: prof?.nickname as string | undefined,
+            team_id: (snap ?? (prof?.team_id as number | undefined)) as number | undefined,
+            grade: prof?.grade as string | undefined,
+            points: (prof?.points as number) ?? 0,
+          };
+        }));
       }
       setLoading(false);
     }
@@ -91,7 +98,7 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
     setLoading(true);
     const { data } = await supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, profiles(nickname, team_id, grade, points)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, author_team_id_snapshot, profiles(nickname, team_id, grade, points)")
       .eq("board_type", boardType)
       .eq("board_id", boardId)
       .eq("content_type", contentType)
@@ -100,16 +107,20 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
       .limit(30);
 
     if (data) {
-      setPosts(data.map((p) => ({
-        ...p,
-        content_type: (p.content_type ?? "general") as "general" | "photo",
-        image_urls: (p.image_urls ?? []) as string[],
-        video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
-        nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
-        team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
-        grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
-        points: ((p.profiles as unknown as Record<string, unknown> | null)?.points as number) ?? 0,
-      })));
+      setPosts(data.map((p) => {
+        const prof = p.profiles as unknown as Record<string, unknown> | null;
+        const snap = (p as Record<string, unknown>).author_team_id_snapshot as number | null | undefined;
+        return {
+          ...p,
+          content_type: (p.content_type ?? "general") as "general" | "photo",
+          image_urls: (p.image_urls ?? []) as string[],
+          video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
+          nickname: prof?.nickname as string | undefined,
+          team_id: (snap ?? (prof?.team_id as number | undefined)) as number | undefined,
+          grade: prof?.grade as string | undefined,
+          points: (prof?.points as number) ?? 0,
+        };
+      }));
     }
     setLoading(false);
   }, [boardType, boardId, contentType]);
@@ -135,13 +146,15 @@ export function usePostDetail(postId: number) {
         .single();
 
       if (p) {
+        const prof = p.profiles as unknown as Record<string, unknown> | null;
+        const snap = (p as Record<string, unknown>).author_team_id_snapshot as number | null | undefined;
         setPost({
           ...p,
           image_urls: p.image_urls ?? [],
           video_urls: (p as Record<string, unknown>).video_urls as string[] ?? [],
-          nickname: (p.profiles as unknown as Record<string, unknown> | null)?.nickname as string | undefined,
-          team_id: (p.profiles as unknown as Record<string, unknown> | null)?.team_id as number | undefined,
-          grade: (p.profiles as unknown as Record<string, unknown> | null)?.grade as string | undefined,
+          nickname: prof?.nickname as string | undefined,
+          team_id: (snap ?? (prof?.team_id as number | undefined)) as number | undefined,
+          grade: prof?.grade as string | undefined,
         });
       }
 
@@ -204,12 +217,17 @@ export async function createPost(params: {
   imageHashes?: string[];
   contentType?: "general" | "photo";
   gameId?: string;
+  teamTags?: string[];
   playerTags?: string[];
   hashtags?: string[];
   seatInfo?: { zone: string; block?: string; row?: string; seat?: string };
 }) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
+
+  // 작성 전 모더레이션 필터(욕설/스팸/도배) — 통과해야 게시.
+  const filter = checkObjectionableContent({ title: params.title, content: params.content });
+  if (!filter.allowed) throw new Error(filter.issues[0] ?? "부적절한 콘텐츠입니다");
 
   const row: Record<string, unknown> = {
     author_id: user.id,
@@ -221,6 +239,11 @@ export async function createPost(params: {
     image_urls: params.imageUrls ?? [],
     video_urls: params.videoUrls ?? [],
     image_hashes: params.imageHashes ?? [],
+    // 태그 기반(V3): 팀태그 배열. board_type/board_id는 레거시 호환용으로 계속 채움.
+    // 선수 태그가 달린 글은 그 선수 소속팀도 team_tags 에 union → 팀 피드(team_tags contains)에 노출.
+    team_tags: Array.from(
+      new Set([...(params.teamTags ?? []), ...teamSlugsForPlayerTags(params.playerTags)]),
+    ),
   };
 
   if (params.gameId) row.game_id = params.gameId;
@@ -264,11 +287,16 @@ export async function updatePost(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
 
+  // 수정 경로에도 모더레이션 필터 — 깨끗한 글을 부적절 표현으로 수정하는 우회 차단.
+  if (typeof params.title === "string" || typeof params.content === "string") {
+    const filter = checkObjectionableContent({ title: params.title, content: params.content });
+    if (!filter.allowed) throw new Error(filter.issues[0] ?? "부적절한 콘텐츠입니다");
+  }
+
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (typeof params.title === "string") {
-    const t = params.title.trim();
-    if (!t) throw new Error("제목 필수");
-    patch.title = t;
+    // 제목 필드 제거(⑥) → 빈 제목 허용(제목을 본문으로 흡수하며 비우는 케이스).
+    patch.title = params.title.trim();
   }
   if (typeof params.content === "string") {
     patch.content = params.content; // trim은 UI에서 처리 (사진게시법은 빈 content 허용)
@@ -293,16 +321,22 @@ export async function updatePost(
  *  CASCADE로 comments/likes 자동 삭제.
  *  v1: Storage 이미지/비디오는 고아로 남김 (정리는 별도 cron/v2).
  */
-export async function deletePost(postId: number) {
+export async function deletePost(postId: number, options?: { canDeleteAny?: boolean }) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
 
-  const { error } = await supabase
+  // 운영자(canDeleteAny)는 author_id 필터 생략 → posts "Operators delete any posts" RLS가 허용.
+  // 일반 유저는 본인 글만. 권한 경계는 서버측 RLS가 최종 판정.
+  let query = supabase
     .from("posts")
     .delete()
-    .eq("id", postId)
-    .eq("author_id", user.id);
+    .eq("id", postId);
 
+  if (!options?.canDeleteAny) {
+    query = query.eq("author_id", user.id);
+  }
+
+  const { error } = await query;
   if (error) throw error;
 }
 
@@ -393,6 +427,12 @@ export async function updateComment(commentId: number, content: string) {
   const trimmed = content.trim();
   if (!trimmed) throw new Error("빈 댓글");
 
+  // 수정 경로에도 모더레이션 필터(GIF URL 제외) — 깨끗한 댓글의 부적절 표현 수정 우회 차단.
+  if (!/^https?:\/\/\S+$/.test(trimmed)) {
+    const cf = checkObjectionableContent({ content: trimmed });
+    if (!cf.allowed) throw new Error(cf.issues[0] ?? "부적절한 콘텐츠입니다");
+  }
+
   const { error } = await supabase
     .from("comments")
     .update({ content: trimmed, updated_at: new Date().toISOString() })
@@ -402,16 +442,21 @@ export async function updateComment(commentId: number, content: string) {
   if (error) throw error;
 }
 
-/** 댓글 삭제 (본인만) */
-export async function deleteComment(commentId: number) {
+/** 댓글 삭제 (본인 또는 운영자) */
+export async function deleteComment(commentId: number, options?: { canDeleteAny?: boolean }) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
 
-  const { error } = await supabase
+  let query = supabase
     .from("comments")
     .delete()
-    .eq("id", commentId)
-    .eq("author_id", user.id);
+    .eq("id", commentId);
+
+  if (!options?.canDeleteAny) {
+    query = query.eq("author_id", user.id);
+  }
+
+  const { error } = await query;
 
   if (error) throw error;
 }
@@ -420,6 +465,12 @@ export async function deleteComment(commentId: number) {
 export async function createComment(postId: number, content: string, parentId?: number | null) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("로그인 필요");
+
+  // GIF 댓글(URL)은 필터 제외, 일반 텍스트 댓글은 작성 전 모더레이션 필터 통과 필요.
+  if (!/^https?:\/\/\S+$/.test(content.trim())) {
+    const cf = checkObjectionableContent({ content });
+    if (!cf.allowed) throw new Error(cf.issues[0] ?? "부적절한 콘텐츠입니다");
+  }
 
   const { data, error } = await supabase.from("comments").insert({
     post_id: postId,

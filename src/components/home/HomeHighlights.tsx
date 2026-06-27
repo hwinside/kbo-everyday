@@ -5,6 +5,7 @@ import { Play } from "lucide-react";
 import { getFavoritePlayers } from "@/lib/store/favorites";
 import { TEAMS } from "@/lib/constants/teams";
 import ReelViewer from "@/components/home/ReelViewer";
+import { getShortsVisible, SHORTS_PREF_EVENT } from "@/lib/store/shorts-pref";
 
 /** team shortName lookup by various keys */
 const TEAM_LABEL: Record<string, string> = {};
@@ -27,6 +28,18 @@ interface VideoItem {
   label: string;
 }
 
+// /api/shorts-feed 원본 아이템 (map 입력)
+interface ShortsFeedItem {
+  id: string;
+  title: string;
+  thumbnail: string;
+  channel: string;
+  publishedAt: string;
+  playerIds?: string[];
+  teamId?: string | null;
+  playerName?: string | null;
+}
+
 interface HomeHighlightsProps {
   team: string | null;
 }
@@ -35,6 +48,16 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
   const [reelIndex, setReelIndex] = useState<number | null>(null);
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [shortsVisible, setShortsVisible] = useState(true);
+
+  // 마이페이지 '숏츠 표시' 토글 반영 (기기 로컬 설정, 변경 즉시 반영)
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setShortsVisible(getShortsVisible());
+    const onChange = () => setShortsVisible(getShortsVisible());
+    window.addEventListener(SHORTS_PREF_EVENT, onChange);
+    return () => window.removeEventListener(SHORTS_PREF_EVENT, onChange);
+  }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -49,7 +72,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
     fetch(`/api/shorts-feed?team=${encodeURIComponent(team)}${playerIdsParam}`)
       .then(r => r.json())
       .then((data) => {
-        const items: VideoItem[] = (data.items || []).map((v: any) => {
+        const items: VideoItem[] = ((data.items ?? []) as ShortsFeedItem[]).map((v) => {
           // Label: 최애선수명 > 태깅된 선수명 > 팀명 > 없음
           const matchedPlayer = (v.playerIds ?? []).find((id: string) => favPlayerMap.has(id));
           const teamLabel = v.teamId ? (TEAM_LABEL[v.teamId] ?? null) : null;
@@ -77,7 +100,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
       }).catch(() => setLoading(false));
   }, [team]);
 
-  if (loading || videos.length === 0) return null;
+  if (loading || videos.length === 0 || !shortsVisible) return null;
 
   return (
     <section className="mt-6">

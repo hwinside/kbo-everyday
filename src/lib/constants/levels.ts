@@ -6,37 +6,19 @@ export interface LevelData {
   color: string;
 }
 
+// 8티어 — 실측 분포(활동 240명, 중앙값 3pt/p90 20/p95 49/p99 182/최고 1027)에
+// 백분위로 맞춤. 초반 보상 간격을 좁히고 상위 희소성은 400pt 이후 확보.
+// 임계값=삼순, 티어명=하린아빠 (스펙 specs/level-ranking-v1.md §2.1).
+// 리더보드명("명예의 전당")과 최상위 티어명(GOAT)은 분리.
 export const LEVELS: LevelData[] = [
   { level: 1, title: "루키", requiredPoints: 0, badge: "🟤", color: "#8B6914" },
-  { level: 2, title: "루키", requiredPoints: 30, badge: "🟤", color: "#8B6914" },
-  { level: 3, title: "루키", requiredPoints: 70, badge: "🟤", color: "#8B6914" },
-  { level: 4, title: "루키", requiredPoints: 120, badge: "🟤", color: "#8B6914" },
-  { level: 5, title: "레귤러", requiredPoints: 200, badge: "🔵", color: "#007AFF" },
-  { level: 6, title: "레귤러", requiredPoints: 280, badge: "🔵", color: "#007AFF" },
-  { level: 7, title: "레귤러", requiredPoints: 360, badge: "🔵", color: "#007AFF" },
-  { level: 8, title: "레귤러", requiredPoints: 420, badge: "🔵", color: "#007AFF" },
-  { level: 9, title: "레귤러", requiredPoints: 460, badge: "🔵", color: "#007AFF" },
-  { level: 10, title: "올스타", requiredPoints: 500, badge: "🟣", color: "#AF52DE" },
-  { level: 11, title: "올스타", requiredPoints: 600, badge: "🟣", color: "#AF52DE" },
-  { level: 12, title: "올스타", requiredPoints: 700, badge: "🟣", color: "#AF52DE" },
-  { level: 13, title: "올스타", requiredPoints: 800, badge: "🟣", color: "#AF52DE" },
-  { level: 14, title: "올스타", requiredPoints: 900, badge: "🟣", color: "#AF52DE" },
-  { level: 15, title: "골드글러브", requiredPoints: 1000, badge: "🟡", color: "#FFD60A" },
-  { level: 16, title: "골드글러브", requiredPoints: 1200, badge: "🟡", color: "#FFD60A" },
-  { level: 17, title: "골드글러브", requiredPoints: 1400, badge: "🟡", color: "#FFD60A" },
-  { level: 18, title: "골드글러브", requiredPoints: 1600, badge: "🟡", color: "#FFD60A" },
-  { level: 19, title: "골드글러브", requiredPoints: 1800, badge: "🟡", color: "#FFD60A" },
-  { level: 20, title: "MVP", requiredPoints: 2000, badge: "🔴", color: "#FF453A" },
-  { level: 21, title: "MVP", requiredPoints: 2300, badge: "🔴", color: "#FF453A" },
-  { level: 22, title: "MVP", requiredPoints: 2600, badge: "🔴", color: "#FF453A" },
-  { level: 23, title: "MVP", requiredPoints: 2800, badge: "🔴", color: "#FF453A" },
-  { level: 24, title: "MVP", requiredPoints: 3200, badge: "🔴", color: "#FF453A" },
-  { level: 25, title: "사이영", requiredPoints: 3500, badge: "💎", color: "#64D2FF" },
-  { level: 26, title: "사이영", requiredPoints: 3800, badge: "💎", color: "#64D2FF" },
-  { level: 27, title: "사이영", requiredPoints: 4100, badge: "💎", color: "#64D2FF" },
-  { level: 28, title: "사이영", requiredPoints: 4400, badge: "💎", color: "#64D2FF" },
-  { level: 29, title: "사이영", requiredPoints: 4700, badge: "💎", color: "#64D2FF" },
-  { level: 30, title: "명예의전당", requiredPoints: 5000, badge: "👑", color: "#FFD700" },
+  { level: 2, title: "레귤러", requiredPoints: 5, badge: "🔵", color: "#007AFF" },
+  { level: 3, title: "올스타", requiredPoints: 20, badge: "🟣", color: "#AF52DE" },
+  { level: 4, title: "골든글러브", requiredPoints: 50, badge: "🟡", color: "#FFD60A" },
+  { level: 5, title: "MVP", requiredPoints: 150, badge: "🔴", color: "#FF453A" },
+  { level: 6, title: "영구결번", requiredPoints: 400, badge: "💎", color: "#64D2FF" },
+  { level: 7, title: "레전드", requiredPoints: 800, badge: "🟠", color: "#FF9F0A" },
+  { level: 8, title: "GOAT", requiredPoints: 1500, badge: "👑", color: "#FFD700" },
 ];
 
 export function getLevelForPoints(points: number): LevelData {
@@ -46,4 +28,10 @@ export function getLevelForPoints(points: number): LevelData {
     }
   }
   return LEVELS[0];
+}
+
+// 현재 점수 기준 다음 티어. 최상위(GOAT) 도달 시 null.
+export function getNextLevel(points: number): LevelData | null {
+  const current = getLevelForPoints(points);
+  return LEVELS.find((l) => l.level === current.level + 1) ?? null;
 }

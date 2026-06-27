@@ -6,13 +6,17 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { usePosts, createPost } from "@/lib/supabase/usePosts";
 import WritePost from "@/components/community/WritePost";
+import WritePhotoPost from "@/components/community/WritePhotoPost";
+import WriteEntrySheet from "@/components/community/WriteEntrySheet";
 import PostList from "@/components/community/PostList";
 import type { Post } from "@/lib/types";
 
 export default function FreeBoardPage() {
   const { user } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
+  const [showEntry, setShowEntry] = useState(false);
   const [showWrite, setShowWrite] = useState(false);
+  const [showPhoto, setShowPhoto] = useState(false);
   const { posts: rawPosts, loading, reload } = usePosts("free", "general");
 
   // Transform to shared Post type (same pattern as team/player boards)
@@ -43,7 +47,7 @@ export default function FreeBoardPage() {
       setShowLogin(true);
       return;
     }
-    setShowWrite(true);
+    setShowEntry(true);
   }
 
   return (
@@ -70,15 +74,38 @@ export default function FreeBoardPage() {
       </button>
 
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
+      <WriteEntrySheet
+        isOpen={showEntry}
+        onClose={() => setShowEntry(false)}
+        onChoosePhoto={() => { setShowEntry(false); setShowPhoto(true); }}
+        onChooseText={() => { setShowEntry(false); setShowWrite(true); }}
+      />
       <WritePost
         isOpen={showWrite}
         onClose={() => setShowWrite(false)}
         teamName="자유게시판"
-        onSubmit={async (title, content, imageUrls) => {
-          await createPost({ boardType: "free", boardId: "general", title, content, imageUrls });
+        enableTags
+        onSubmit={async (title, content, imageUrls, _seatInfo, tags) => {
+          await createPost({
+            boardType: "free",
+            boardId: "general",
+            title,
+            content,
+            imageUrls,
+            teamTags: tags?.teamTags,
+            playerTags: tags?.playerTags,
+          });
           reload();
           setShowWrite(false);
         }}
+      />
+      <WritePhotoPost
+        isOpen={showPhoto}
+        onClose={() => setShowPhoto(false)}
+        teamName="자유게시판"
+        boardType="free"
+        boardId="general"
+        onSuccess={() => { setShowPhoto(false); reload(); }}
       />
     </div>
   );

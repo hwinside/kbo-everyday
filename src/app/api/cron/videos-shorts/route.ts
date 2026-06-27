@@ -6,7 +6,7 @@
  *   → videos(15분) 직후 동일 사이클에 실행, 중복 없음
  *
  * 전략:
- *  1. players_roster에서 TOP N 선수 선발 (스탯 기반 — 타자 HR/AVG + 투수 ERA/K)
+ *  1. 스탯 테이블에서 TOP N 선수 선발 (타자 HR/AVG + 투수 SO/W), kbo_id는 스탯 테이블 컬럼 직접 사용
  *  2. 각 선수 "이름 + 팀" 쿼리로 videoDuration=short + order=date 검색
  *  3. quota degrade: 사용률 80% 초과 시 skip
  *
@@ -31,6 +31,10 @@ import {
 } from "@/lib/video/noise-flags";
 import { upsertVideos, type VideoUpsertRow } from "@/lib/video/videos-repo";
 import { isOfficialChannel } from "@/lib/video/team-channels";
+import {
+  hasNonBaseballSignal,
+  isPlayerShortRelevant,
+} from "@/lib/video/shorts-relevance";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
@@ -109,50 +113,34 @@ interface TopPlayer {
   team: string;
 }
 
-/** 스탯 기준 TOP N 선수 추출 (타자 HR DESC + 투수 ERA ASC 혼합) */
+/** 스탯 기준 TOP N 선수 추출 (타자 HR DESC + 투수 SO DESC 혼합) */
 async function getTopPlayers(n: number): Promise<TopPlayer[]> {
   // 타자 TOP (홈런/타율)
   const { data: batters } = await supabaseAdmin
     .from("player_stats_batter")
-    .select("player_name, team, home_run, avg")
-    .gte("home_run", 5)
-    .order("home_run", { ascending: false })
+    .select("kbo_id, name, team, hr, avg")
+    .gte("hr", 5)
+    .order("hr", { ascending: false })
     .limit(Math.ceil(n * 0.7));
 
   // 투수 TOP (탈삼진/승)
   const { data: pitchers } = await supabaseAdmin
     .from("player_stats_pitcher")
-    .select("player_name, team, strike_out, win")
-    .gte("strike_out", 10)
-    .order("strike_out", { ascending: false })
+    .select("kbo_id, name, team, so, wins")
+    .gte("so", 10)
+    .order("so", { ascending: false })
     .limit(Math.ceil(n * 0.3));
 
-  // roster에서 kbo_id 매칭
-  const names = new Set<string>();
-  for (const r of [...(batters || []), ...(pitchers || [])]) {
-    if (r.player_name) names.add(`${r.team}::${r.player_name}`);
-  }
-  if (names.size === 0) return [];
-
-  const teams = Array.from(new Set(Array.from(names).map((k) => k.split("::")[0])));
-  const { data: roster } = await supabaseAdmin
-    .from("players_roster")
-    .select("kbo_id, name, team")
-    .in("team", teams);
-
-  const rosterMap = new Map<string, TopPlayer>();
-  for (const r of roster || []) {
-    rosterMap.set(`${r.team}::${r.name}`, {
-      kbo_id: r.kbo_id,
-      name: r.name,
-      team: r.team,
-    });
-  }
-
+  // kbo_id는 스탯 테이블 컬럼을 직접 사용 (이전엔 deprecated players_roster 조인 →
+  // 0건 → "no top players"로 선수 숏츠 수집이 죽어 있었음). 외국인(FP0xx) 포함 전 선수 커버.
+  const seen = new Set<string>();
   const out: TopPlayer[] = [];
-  for (const key of names) {
-    const p = rosterMap.get(key);
-    if (p) out.push(p);
+  for (const r of [...(batters || []), ...(pitchers || [])]) {
+    if (!r.name || !r.team || !r.kbo_id) continue;
+    const key = `${r.team}::${r.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ kbo_id: String(r.kbo_id), name: r.name, team: r.team });
     if (out.length >= n) break;
   }
   return out;
@@ -160,7 +148,7 @@ async function getTopPlayers(n: number): Promise<TopPlayer[]> {
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
-  if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
+  if (!CRON_SECRET || authHeader !== `Bearer ${CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -219,11 +207,19 @@ export async function GET(req: NextRequest) {
       const items = await searchPlayerShorts(query);
       queriedCount += 1;
 
-      const rows: VideoUpsertRow[] = items.map((it) => {
+      const rows: VideoUpsertRow[] = items.flatMap((it) => {
+        const official = isOfficialChannel(it.channel_id);
+        // 야구 관련성 게이트. 공식 채널은 신뢰하되(하이라이트 제목엔 선수명이
+        // 없을 수 있음) 정치·종교 negative만 안전망으로 차단. 검색 기반
+        // 'player' 결과는 선수명이 제목에 있어야 + negative 없어야 통과 —
+        // 채널명/설명으로만 우연 매칭된 비-야구 영상 차단(2026-06-19 제보).
+        const relevant = official
+          ? !hasNonBaseballSignal(it.title)
+          : isPlayerShortRelevant(it.title, p.name);
+        if (!relevant) return [];
         const noiseFlags = extractNoiseFlags(it.title, it.channel);
         const isShort = isShortCandidate({ title: it.title });
-        const official = isOfficialChannel(it.channel_id);
-        return {
+        return [{
           video_id: it.video_id,
           team_id: p.team,
           player_id: p.kbo_id,
@@ -236,7 +232,7 @@ export async function GET(req: NextRequest) {
           source_type: official ? "official_short" : "player",
           is_short_candidate: isShort,
           noise_flags: noiseFlags,
-        };
+        }];
       });
 
       const { upserted, error } = await upsertVideos(supabaseAdmin, rows);

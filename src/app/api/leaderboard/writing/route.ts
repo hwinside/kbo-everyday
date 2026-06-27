@@ -14,7 +14,9 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
-  const limit = Math.min(Number(searchParams.get('limit') || 100), 500)
+  // limit=abc/음수/소수 같은 값이 NaN·negative 로 Supabase .limit() 까지 가지 않도록 1~500 finite clamp
+  const rawLimit = Number(searchParams.get('limit') ?? 100)
+  const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 500) : 100
 
   const { data, error } = await supabaseAdmin
     .from('v_leaderboard_writing')

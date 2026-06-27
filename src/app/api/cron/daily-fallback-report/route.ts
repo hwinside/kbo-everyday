@@ -7,9 +7,15 @@
  */
 
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function GET() {
+const CRON_SECRET = process.env.CRON_SECRET || "";
+
+export async function GET(req: NextRequest) {
+  const authHeader = req.headers.get("authorization");
+  if (!CRON_SECRET || authHeader !== `Bearer ${CRON_SECRET}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     // 전날 00:00 ~ 23:59 (KST)
     const yesterday = new Date();

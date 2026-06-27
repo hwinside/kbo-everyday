@@ -116,6 +116,7 @@ function relayToGameStats(
       w: 0,
       l: 0,
       sv: 0,
+      hd: 0,
       era: p.seasonEra > 0 ? p.seasonEra.toFixed(2) : "-",
     }));
   }

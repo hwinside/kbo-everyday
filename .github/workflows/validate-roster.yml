@@ -7,14 +7,36 @@ on:
   pull_request:
     paths:
       - "src/lib/constants/players-roster.json"
+      - "scripts/validate-player-identity.mjs"
+      - "src/lib/utils/resolve-player.ts"
+      - "src/lib/utils/player-roster.ts"
+      - "src/lib/constants/stats-2026-pitchers.json"
+      - "src/lib/constants/stats-2026-batters.json"
+      - "src/lib/constants/player-photos.ts"
+      - "src/lib/constants/foreign-id-map.ts"
+      - "src/lib/constants/hero-approved-kboids.json"
+      - "public/players/**"
+      - "public/players-hero/**"
       - "scripts/validate-roster.mjs"
+      - "scripts/qa/foreign-photo-coverage.ts"
       - ".github/workflows/validate-roster.yml"
   push:
     branches:
       - main
     paths:
       - "src/lib/constants/players-roster.json"
+      - "scripts/validate-player-identity.mjs"
+      - "src/lib/utils/resolve-player.ts"
+      - "src/lib/utils/player-roster.ts"
+      - "src/lib/constants/stats-2026-pitchers.json"
+      - "src/lib/constants/stats-2026-batters.json"
+      - "src/lib/constants/player-photos.ts"
+      - "src/lib/constants/foreign-id-map.ts"
+      - "src/lib/constants/hero-approved-kboids.json"
+      - "public/players/**"
+      - "public/players-hero/**"
       - "scripts/validate-roster.mjs"
+      - "scripts/qa/foreign-photo-coverage.ts"
 
 jobs:
   validate:
@@ -27,9 +49,21 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
       - name: Run roster validator
         env:
           # PR body / commit message에 "roster-size-change" 포함 시 선수 수 변경 허용
           PR_BODY: ${{ github.event.pull_request.body }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: node scripts/validate-roster.mjs
+
+      - name: Run player identity validator
+        run: node scripts/validate-player-identity.mjs
+
+      - name: Run foreign player photo coverage gate
+        # specs/roster-ssot-fortress.md §3.2
+        # 외국인 30명 × 5 ID 변형 + hero approved 28명에 대해 resolver/photo/파일 일관성 강제.
+        # 어떤 외국인이라도 1개 변형에서 사진이 안 잡히면 fail → 머지 차단.
+        run: npm run qa:foreign-photo

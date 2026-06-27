@@ -6,6 +6,8 @@ export interface NewsMock {
   title: string;
   source: string;
   sourceUrl: string;
+  /** 썸네일/OG 추출용 언론사 원문 URL (클릭은 sourceUrl=네이버, OG는 이쪽) */
+  ogUrl?: string;
   link?: string;
   pubDate?: string;
   label?: string;

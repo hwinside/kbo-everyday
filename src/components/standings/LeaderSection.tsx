@@ -6,6 +6,7 @@ import { clsx } from "clsx";
 import { TEAMS } from "@/lib/constants/teams";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
+import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
 import { hexToRgba } from "@/lib/utils/standings";
 import type { TitleLeader } from "@/lib/constants/standings-data";
 
@@ -34,7 +35,10 @@ export default function LeaderSection({ title, leaders, myTeamId, favoriteNames 
           return (
           <div
             key={l.rank}
-            onClick={() => l.playerId && router.push(`/community/players/${l.playerId}`)}
+            onClick={() => {
+              const href = getCanonicalPlayerHref({ name: l.name, playerId: l.playerId, teamId: l.teamId });
+              if (href) router.push(href);
+            }}
             className="flex items-center gap-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 rounded-lg transition-colors py-1 px-1"
             style={hlLevel === 0 ? undefined : {
               borderLeft: `${hlLevel === 2 ? 4 : 3}px solid ${hexToRgba(teamColor, hlLevel === 2 ? 1 : 0.8)}`,
@@ -51,12 +55,12 @@ export default function LeaderSection({ title, leaders, myTeamId, favoriteNames 
             )}>
               {l.rank}
             </span>
-            <PlayerAvatar name={l.name} teamId={l.teamId} photoUrl={getPlayerPhotoUrl(l.name, l.playerId)} size={52} />
+            <PlayerAvatar name={l.name} teamId={l.teamId} photoUrl={getPlayerPhotoUrl(l.name, l.playerId, l.teamId)} size={52} />
             <span className="flex-1 text-base text-text-primary">
               {l.name}
               {isFavorite && <span className="ml-1">★</span>}
             </span>
-            <span className="text-base font-bold tabular-nums text-accent">{l.value}</span>
+            <span className="text-2xl font-bold tabular-nums text-accent">{l.value}</span>
           </div>
           );
         })}

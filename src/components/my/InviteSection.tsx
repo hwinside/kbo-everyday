@@ -2,11 +2,10 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import Link from "next/link";
-import { Gift, Share2, Check, UserPlus, Ticket, Trophy, ChevronRight } from "lucide-react";
+import { Gift, Share2, Check, UserPlus, Ticket } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { supabase } from "@/lib/supabase/client";
+import { getSafeSession } from "@/lib/supabase/client";
 
 interface Invitation {
   code: string;
@@ -37,7 +36,8 @@ interface InviteData {
 }
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
-  const { data: { session } } = await supabase.auth.getSession();
+  // getSafeSession: 네이티브 auth 락 hang 시에도 타임아웃으로 반환 → 스피너 무한 로딩 방지
+  const session = await getSafeSession();
   const accessToken = session?.access_token;
   return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
 }
@@ -316,21 +316,6 @@ export default function InviteSection() {
                 <p className="text-xs text-center text-accent font-semibold">개척자 뱃지 획득! 🎉</p>
               )}
             </div>
-
-            {/* 이벤트 바로가기 — 얼리멤버 이벤트 (2026-04-20 ~ 2026-05-31) */}
-            <Link
-              href="/events/invite"
-              className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg bg-gradient-to-r from-yellow-400/10 to-orange-400/10 border border-yellow-400/20 mt-1"
-            >
-              <div className="flex items-center gap-2">
-                <Trophy size={16} className="text-yellow-400" />
-                <div className="flex flex-col">
-                  <span className="text-sm font-semibold leading-tight">얼리멤버 이벤트</span>
-                  <span className="text-[10px] text-text-tertiary leading-tight">초대 · 글쓰기 리더보드</span>
-                </div>
-              </div>
-              <ChevronRight size={16} className="text-text-tertiary" />
-            </Link>
           </>
         )}
       </GlassCard>

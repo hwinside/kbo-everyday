@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchGames } from "@/lib/crawler/kbo-api";
+import type { BroadcastChannel } from "@/lib/broadcast-channels";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { fetchNaverRelayBatterCounts } from "@/lib/naver-relay-counts";
 
@@ -20,6 +21,7 @@ export interface GameDetailResponse {
     startTime: string | null;
     endTime: string | null;
     duration: string | null;
+    broadcastChannels?: BroadcastChannel[];
   } | null;
   linescore: {
     away: { innings: (number | null)[]; R: number; H: number; E: number };
@@ -125,9 +127,11 @@ function positionFullName(abbr: string): string {
 }
 
 const KBO_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
+// 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청에 IE 분기 HTML 에러 페이지 반환 → JSON 파싱 실패.
 const HEADERS = {
   "Content-Type": "application/x-www-form-urlencoded",
   "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+  "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
 };
 
 // ===== Helpers =====
@@ -323,10 +327,14 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
         if (ab.includes("삼진")) so++;
       }
 
-      const order = safeInt(stripHtml(cells[0]));
+      const rawOrder = safeInt(stripHtml(cells[0]));
       const posRaw = stripHtml(cells[1] || "");
-      const isSubstitute = order === prevOrder || posRaw.startsWith("타") || posRaw.startsWith("주") || posRaw.startsWith("대");
-      prevOrder = order;
+      // KBO BoxScore는 대타/대주자 row의 타순 셀을 비우거나(rawOrder=0) 같은 번호로
+      // 반복하는 두 가지 형태를 모두 사용. 둘 다 substitute로 간주하고, 빈 셀이면
+      // 직전 row의 타순을 그대로 이어붙여 베이스 룩업이 가능하도록 한다.
+      const isSubstitute = rawOrder === 0 || rawOrder === prevOrder || posRaw.startsWith("타") || posRaw.startsWith("주") || posRaw.startsWith("대");
+      const order = isSubstitute && rawOrder === 0 && prevOrder > 0 ? prevOrder : rawOrder;
+      if (order > 0) prevOrder = order;
 
       // KBO header order: [타수, 안타, 타점, 득점, 타율]
       return {
@@ -593,7 +601,12 @@ export async function GET(req: NextRequest) {
     try {
       const dateStr = gameId.slice(0, 8);
       const games = await fetchGames(dateStr);
-      liveListStatus = games.find(g => g.gameId === gameId)?.status ?? null;
+      const listGame = games.find(g => g.gameId === gameId);
+      liveListStatus = listGame?.status ?? null;
+      // 중계방송사는 GetKboGameList(TV_IF)에만 있으므로 여기서 meta에 채운다.
+      if (meta && listGame?.broadcastChannels && listGame.broadcastChannels.length > 0) {
+        meta.broadcastChannels = listGame.broadcastChannels;
+      }
     } catch {
       liveListStatus = null;
     }

@@ -12,6 +12,7 @@ import { supabase } from "@/lib/supabase/client";
 import type { Comment } from "@/lib/supabase/usePosts";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import GifPicker, { isGifComment } from "@/components/community/GifPicker";
+import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
 
 interface CommentSheetProps {
   isOpen: boolean;
@@ -39,10 +40,19 @@ function timeAgo(dateStr: string): string {
 
 /** flat 댓글 배열 → 트리 구조 (2depth 제한) */
 function buildCommentTree(comments: Comment[]): Comment[] {
+  // 방어적 dedup: 같은 id가 두 번 들어오면(낙관적 append ↔ 재조회 레이스 등) 댓글이 2번 보일 수 있다.
+  // 트리 빌더는 dup id에 멱등이어야 한다 — 중복 없으면 no-op.
+  const seenIds = new Set<number>();
+  const unique = comments.filter((c) => {
+    if (seenIds.has(c.id)) return false;
+    seenIds.add(c.id);
+    return true;
+  });
+
   const roots: Comment[] = [];
   const childMap = new Map<number, Comment[]>();
 
-  for (const c of comments) {
+  for (const c of unique) {
     if (!c.parent_id) {
       roots.push({ ...c, replies: [] });
     } else {
@@ -83,10 +93,20 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const dragStartX = useRef(0);
   const dragStartY = useRef(0);
   const dragShouldClose = useRef(false);
-  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
-  const [vvTop, setVvTop] = useState(0);
-  const [keyboardInset, setKeyboardInset] = useState(0);
+  const blurCollapseTimer = useRef<number | null>(null);
+  // 인스타 2단계: (b) 아이콘 클릭 → 부분 높이 오픈, (c) 입력창 포커스 → 화면 상단까지 확장.
+  // 확장은 sticky (한 번 입력 시작하면 닫을 때까지 유지) — 인스타 동일.
+  const [expanded, setExpanded] = useState(false);
+  // 닫힘 애니메이션: 부모가 CommentSheet를 조건부 마운트(commentPostId!==null)하므로 onClose를
+  // 곧장 호출하면 컴포넌트(=AnimatePresence 포함)가 즉시 언마운트돼 exit 스프링이 재생되지 않고
+  // "뚝 사라진다". → 스와이프/X/백드롭 모두 일단 closing=true로 시트를 아래로 애니메이션 시키고,
+  // 애니메이션이 끝난 뒤(onAnimationComplete)에야 부모 onClose를 호출한다(올라온 속도와 대칭).
+  const [closing, setClosing] = useState(false);
+  // 키보드 회피용 visualViewport 수치(React state). imperative style 충돌 방지를 위해 단일 style에서만 사용.
+  const [kbInset, setKbInset] = useState(0);
+  const [vvHeight, setVvHeight] = useState<number | null>(null);
   const { user, profile } = useAuth();
+  const canModerateComments = profile?.is_operator === true;
   const shouldRender = isOpen && postId !== null;
 
   // Fetch comments + liked_by_me
@@ -149,63 +169,59 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     }
   }, [shouldRender]);
 
-  // Reset input + replyTo when sheet closes
+  // (b)/(c) 높이는 오직 "사용자 의도"로만 결정한다.
+  //  - 열 때: 항상 (b)부분높이부터 (직전 세션의 (c)확장 상태가 남지 않도록 매 오픈마다 강제 리셋)
+  //  - 입력창 onFocus / GIF 버튼 탭: (c)최상단 확장 (아래 input onFocus에서 setExpanded(true))
+  //  - 닫을 때: 전체 리셋
+  // ⚠️ 과거엔 keyboardInset(>=임계값)으로 키보드를 추론해 (c)확장을 트리거했는데, iOS Safari/인앱브라우저는
+  //    주소창·툴바 때문에 키보드 없이도 phantom inset이 생기고 그 크기가 기기/브라우저마다 달라(임계값 가드가
+  //    통하지 않음) "열자마자 맨 위 고정"이 됐다. viewport 수치 추론을 버리고 명시적 focus로만 확장한다.
   useEffect(() => {
-    if (!shouldRender) {
+    if (shouldRender) {
+      setExpanded(false);
+    } else {
       setInput("");
       setReplyTo(null);
       setShowGifPicker(false);
+      setExpanded(false);
+      if (blurCollapseTimer.current) {
+        clearTimeout(blurCollapseTimer.current);
+        blurCollapseTimer.current = null;
+      }
     }
   }, [shouldRender]);
 
-  // Track visualViewport for iOS keyboard-aware sheet height.
-  // Important: do not drive the sheet with `bottom: keyboardInset`.
-  // iOS Safari/WebView can leave a stale keyboard inset after focus/blur, which
-  // compresses the sheet and exposes the photo feed behind the comment UI.
-  // Instead, pin the sheet to the visual viewport with explicit top + height.
+  // 키보드 회피 — visualViewport 수치를 React state로 끌어와 단일 style에서 적용한다.
+  // iOS Safari/WKWebView는 interactive-widget=resizes-content를 *미지원* → 키보드가 떠도
+  // 레이아웃 뷰포트(innerHeight/dvh)는 그대로다. 그 상태의 position:fixed; bottom:0 시트는
+  // 키보드 높이만큼 화면 밖(위)으로 밀려 댓글 목록이 사라진다(입력창만 키보드 위에 남음).
+  // → 시각 뷰포트(키보드 제외 영역)에 맞춰 (1) 시트 바닥을 키보드 위로 올리고(bottom=kbInset)
+  //   (2) 확장 높이를 시각 뷰포트로 잡는다(height=vvHeight). 목록(flex-1 min-h-0)이 줄어
+  //   컴포저는 키보드 바로 위, 목록은 그 위에 함께 보인다.
+  // ⚠️ 과거 b22f72cd는 동일 계산을 imperative(sheet.style.x)로 박았는데 React 리렌더가 인라인
+  //   style을 덮어써 무효화됐다 → 이번엔 state→단일 style로 적용해 충돌 자체를 제거한다.
+  // resizes-content 지원 브라우저(Android)는 innerHeight도 축소 → kbInset≈0, vvHeight=축소분으로
+  //   동일하게 안전 동작한다.
   useEffect(() => {
     if (!shouldRender) return;
-
-    if (typeof window === "undefined" || !window.visualViewport) {
-      setViewportHeight(window.innerHeight);
-      setVvTop(0);
-      setKeyboardInset(0);
-      return;
-    }
-
     const vv = window.visualViewport;
-    let layoutHeight = Math.max(window.innerHeight, vv.height + Math.max(0, vv.offsetTop));
-    const timers: number[] = [];
-
-    const update = () => {
-      const offsetTop = Math.max(0, vv.offsetTop);
-      layoutHeight = Math.max(layoutHeight, window.innerHeight, vv.height + offsetTop);
-
-      setViewportHeight(vv.height);
-      setVvTop(offsetTop);
-      setKeyboardInset(Math.max(0, layoutHeight - offsetTop - vv.height));
+    if (!vv) return;
+    const apply = () => {
+      setKbInset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop));
+      setVvHeight(vv.height);
     };
-
-    const scheduleUpdate = () => {
-      update();
-      [80, 180, 360].forEach((delay) => {
-        timers.push(window.setTimeout(update, delay));
-      });
-    };
-
-    scheduleUpdate();
-    vv.addEventListener("resize", scheduleUpdate);
-    vv.addEventListener("scroll", scheduleUpdate);
-    window.addEventListener("orientationchange", scheduleUpdate);
-
+    apply();
+    vv.addEventListener("resize", apply);
+    vv.addEventListener("scroll", apply);
     return () => {
-      vv.removeEventListener("resize", scheduleUpdate);
-      vv.removeEventListener("scroll", scheduleUpdate);
-      window.removeEventListener("orientationchange", scheduleUpdate);
-      timers.forEach((timer) => window.clearTimeout(timer));
+      vv.removeEventListener("resize", apply);
+      vv.removeEventListener("scroll", apply);
+      setKbInset(0);
+      setVvHeight(null);
     };
   }, [shouldRender]);
 
+  // 시트가 (b)/(c)로 높이가 바뀐 직후, 목록이 바닥 근처면 자동으로 맨 아래로(최신 댓글) 스냅.
   useEffect(() => {
     if (!shouldRender) return;
     const el = listRef.current;
@@ -216,7 +232,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       el.scrollTop = el.scrollHeight;
     });
     return () => cancelAnimationFrame(id);
-  }, [shouldRender, viewportHeight, comments.length]);
+  }, [shouldRender, expanded, comments.length]);
 
   // 댓글 목록 DB 재조회
   const refetchComments = useCallback(async (pid: number) => {
@@ -271,8 +287,9 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       return;
     }
 
-    // 동일 댓글 차단: 최근 5건 내 같은 내용
-    if (recentContentsRef.current.includes(trimmed)) {
+    // 동일/변형 도배 차단: 정규화 키 기준 최근 5건 내 같은 내용
+    const floodKey = normalizeForFloodKey(trimmed);
+    if (recentContentsRef.current.includes(floodKey)) {
       setCooldown(true);
       setCooldownReason("같은 댓글은 반복해서 달 수 없어요");
       setTimeout(() => { setCooldown(false); setCooldownReason(""); }, COOLDOWN_MS);
@@ -281,7 +298,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
 
     lastSentRef.current = now;
     sentTimestampsRef.current.push(now);
-    recentContentsRef.current = [...recentContentsRef.current.slice(-4), trimmed];
+    recentContentsRef.current = [...recentContentsRef.current.slice(-4), floodKey];
     setCooldown(true);
     setCooldownReason("");
     setTimeout(() => setCooldown(false), COOLDOWN_MS);
@@ -429,13 +446,13 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     if (!confirm("이 댓글을 삭제할까요?")) return;
 
     try {
-      await deleteComment(commentId);
+      await deleteComment(commentId, { canDeleteAny: canModerateComments });
       setComments((prev) => prev.filter((c) => c.id !== commentId && c.parent_id !== commentId));
       if (postId) onCommentDeleted?.(postId);
     } catch {
       alert("댓글 삭제에 실패했어요");
     }
-  }, [postId, onCommentDeleted]);
+  }, [postId, onCommentDeleted, canModerateComments]);
 
   const handleLike = useCallback(async (commentId: number) => {
     if (!user) { setShowLogin(true); return; }
@@ -481,6 +498,11 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     };
   }, [menuOpenId]);
 
+  // 닫기 요청 — 즉시 onClose 하지 않고 아래로 미끄러지는 애니메이션을 먼저 재생한다.
+  const requestClose = useCallback(() => {
+    setClosing(true);
+  }, []);
+
   const handleSheetTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
     if (e.touches.length !== 1) return;
     dragStartX.current = e.touches[0].clientX;
@@ -515,8 +537,8 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     const shouldClose = dragShouldClose.current && deltaY > 80 && deltaY > deltaX * 1.2;
     dragShouldClose.current = false;
 
-    if (shouldClose) onClose();
-  }, [onClose]);
+    if (shouldClose) requestClose();
+  }, [requestClose]);
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
@@ -529,6 +551,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     const avatarPath = getAvatarPath((comment as Comment & { avatar_url?: string }).avatar_url ?? null);
     const commentTeam = comment.team_id ? getTeamById(comment.team_id) : undefined;
     const isMine = !!user && comment.author_id === user.id;
+    const canDelete = isMine || canModerateComments;
     const isEditing = editingId === comment.id;
     const isEdited = !!comment.updated_at;
     const likeCount = comment.like_count ?? 0;
@@ -563,7 +586,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             <span className="text-[11px] text-text-tertiary ml-auto flex-shrink-0">
               {timeAgo(comment.created_at)}{isEdited ? " · 수정됨" : ""}
             </span>
-            {isMine && !isEditing && (
+            {canDelete && !isEditing && (
               <div className="relative flex-shrink-0">
                 <button
                   onClick={(e) => {
@@ -580,12 +603,14 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                     className="absolute right-0 top-6 z-10 min-w-[96px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <button
-                      onClick={() => startEdit(comment)}
-                      className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary"
-                    >
-                      수정
-                    </button>
+                    {isMine && (
+                      <button
+                        onClick={() => startEdit(comment)}
+                        className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary"
+                      >
+                        수정
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDelete(comment.id)}
                       className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary"
@@ -673,43 +698,51 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   return (<>
     {createPortal(
     <AnimatePresence>
+      {/* Backdrop — 뒤 피드 스크롤 전파 차단(터치/오버스크롤) */}
       {shouldRender && (
-        <>
-          {/* Backdrop */}
-          <motion.div
-            className="fixed inset-0 bg-black/60"
-            style={{ zIndex: 9998 }}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            onClick={onClose}
-          />
+        <motion.div
+          key="comment-backdrop"
+          className="fixed inset-0 bg-black/60"
+          style={{ zIndex: 9998, touchAction: "none", overscrollBehavior: "none" }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: closing ? 0 : 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          onClick={requestClose}
+          onTouchMove={(e) => { if (e.cancelable) e.preventDefault(); }}
+        />
+      )}
 
-          {/* Sheet */}
+      {/* Sheet — AnimatePresence 직속 keyed child. (과거: backdrop+sheet를 <>fragment로 묶어
+          AnimatePresence 자식이 1개의 fragment가 됐고, fragment엔 exit 추적이 안 걸려
+          닫힘(스와이프/X) 시 exit 스프링이 *발화하지 않고* 즉시 언마운트됐다. transition만
+          몇 번 바꿔도 변화 없던 근본 원인. backdrop/sheet를 각각 keyed 직속 child로 분리.) */}
+      {shouldRender && (
           <motion.div
+            key="comment-sheet"
             ref={sheetRef}
             className="fixed inset-x-0 flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
             style={{
               zIndex: 9999,
-              ...(() => {
-                const topOffset = viewportHeight ? Math.max(24, viewportHeight * 0.08) : null;
-                return viewportHeight && topOffset !== null
-                  ? {
-                      top: `${vvTop + topOffset}px`,
-                      height: `${Math.max(320, viewportHeight - topOffset)}px`,
-                    }
-                  : {
-                      top: "8vh",
-                      height: "92dvh",
-                    };
-              })(),
-              transition: "height 120ms ease-out, top 120ms ease-out",
+              // 시트 바닥은 항상 키보드 위(bottom=kbInset). 키보드 없으면 kbInset=0 → 화면 바닥.
+              // (c) 확장: 높이=시각 뷰포트(vvHeight) → 키보드 열려도 목록+컴포저가 키보드 위에 함께 보임.
+              // (b) 부분: 60dvh(단 시각 뷰포트보다 크지 않게 캡) — 뒤 피드 보이는 중간 높이.
+              // vvHeight는 visualViewport 리스너가 state로 공급(위 effect). imperative style 미사용.
+              bottom: kbInset,
+              ...(expanded
+                ? { height: vvHeight != null ? `${vvHeight}px` : "100dvh" }
+                : { height: vvHeight != null ? `min(60dvh, ${vvHeight}px)` : "60dvh" }),
             }}
             initial={{ y: "100%" }}
-            animate={{ y: 0 }}
+            // 닫힘(closing)이면 아래로 슬라이드. 부모가 컴포넌트를 통째로 언마운트하므로
+            // AnimatePresence exit가 안 먹는다 → animate 타깃을 직접 내리고, 내려간 뒤
+            // onAnimationComplete에서 진짜 onClose를 호출(=그제서야 언마운트).
+            animate={{ y: closing ? "100%" : 0 }}
+            // ③ 닫힘 = 열릴 때 올라오는 것과 동일한 스프링으로 내려가게(속도/감속 대칭).
+            //    이전 0.28s ease-in 트윈은 시작이 느려 "가만있다 뚝 사라지는" 느낌이라 폐기.
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 28, stiffness: 300 }}
+            onAnimationComplete={() => { if (closing) onClose(); }}
             onTouchStart={handleSheetTouchStart}
             onTouchMove={handleSheetTouchMove}
             onTouchEnd={handleSheetTouchEnd}
@@ -725,7 +758,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             <div className="relative px-4 pb-3 border-b border-border">
               <h3 className="text-base font-semibold text-text-primary text-center">댓글</h3>
               <button
-                onClick={onClose}
+                onClick={requestClose}
                 className="absolute right-4 top-0 p-1 text-text-tertiary hover:text-text-primary transition-colors"
               >
                 <X size={20} />
@@ -733,7 +766,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             </div>
 
             {/* Comment list */}
-            <div ref={listRef} data-comment-scroll="true" className="flex-1 overflow-y-auto overscroll-contain px-4 py-3 space-y-4">
+            <div ref={listRef} data-comment-scroll="true" className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-3 space-y-4">
               {loading ? (
                 <div className="space-y-4">
                   {[...Array(4)].map((_, i) => (
@@ -776,7 +809,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             )}
 
             {/* Input area + GIF Picker overlay */}
-            <div className="flex-none relative border-t border-border px-4 py-3" style={{ paddingBottom: keyboardInset > 0 ? "0.75rem" : "calc(0.75rem + env(safe-area-inset-bottom))" }}>
+            <div className="flex-none relative border-t border-border px-4 py-3" style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}>
               {/* GIF Picker — pure overlay above input, no layout shift */}
               <AnimatePresence>
                 {showGifPicker && (
@@ -799,7 +832,11 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                 {user ? (
                   <>
                     <button
-                      onClick={() => setShowGifPicker((v) => !v)}
+                      onClick={() => {
+                        if (blurCollapseTimer.current) { clearTimeout(blurCollapseTimer.current); blurCollapseTimer.current = null; }
+                        setExpanded(true);
+                        setShowGifPicker((v) => !v);
+                      }}
                       className={`flex items-center justify-center w-9 h-9 rounded-full transition-colors ${showGifPicker ? "bg-accent/20 text-accent" : "text-text-tertiary hover:text-text-primary"}`}
                       aria-label="GIF"
                     >
@@ -811,12 +848,27 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onFocus={() => {
+                        if (blurCollapseTimer.current) {
+                          clearTimeout(blurCollapseTimer.current);
+                          blurCollapseTimer.current = null;
+                        }
                         setShowGifPicker(false);
+                        setExpanded(true);
                         const scrollToBottom = () => {
                           if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
                         };
                         requestAnimationFrame(scrollToBottom);
                         [120, 300, 600].forEach((ms) => setTimeout(scrollToBottom, ms));
+                      }}
+                      onBlur={() => {
+                        // 키보드가 내려가면 (c)확장 → (b)중간 높이로 복귀. 전송/GIF 버튼 탭으로 잠깐
+                        // 포커스를 잃는 경우는 곧 다시 포커스가 돌아오므로, 짧게 지연 후에도 여전히
+                        // input이 비포커스일 때만 접는다.
+                        if (blurCollapseTimer.current) clearTimeout(blurCollapseTimer.current);
+                        blurCollapseTimer.current = window.setTimeout(() => {
+                          if (document.activeElement !== inputRef.current) setExpanded(false);
+                          blurCollapseTimer.current = null;
+                        }, 120);
                       }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.nativeEvent.isComposing) {
@@ -838,6 +890,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                   </button>
                 )}
                 <button
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={handleSubmit}
                   disabled={!input.trim() || submitting || cooldown || !user}
                   className="flex items-center justify-center w-9 h-9 rounded-full text-white disabled:opacity-50 transition-opacity"
@@ -848,7 +901,6 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
               </div>
             </div>
           </motion.div>
-        </>
       )}
     </AnimatePresence>,
     document.body

@@ -39,14 +39,15 @@ function getDatesInMonth(month: string): string[] {
  * Fetches and caches all completed/live games for a given month (YYYY-MM).
  * Fails soft: if individual dates error, they're skipped; returns partial data.
  */
-export async function getMonthGames(month: string): Promise<KboGame[]> {
-  const cached = monthCache.get(month);
+export async function getMonthGames(month: string, srId = "0,1,3,4,5,7,9"): Promise<KboGame[]> {
+  const cacheKey = `${month}::${srId}`;
+  const cached = monthCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.data;
   }
 
   const dates = getDatesInMonth(month);
-  const results = await Promise.allSettled(dates.map((d) => fetchGames(d)));
+  const results = await Promise.allSettled(dates.map((d) => fetchGames(d, srId)));
 
   const games: KboGame[] = [];
   for (const r of results) {
@@ -56,7 +57,7 @@ export async function getMonthGames(month: string): Promise<KboGame[]> {
     // silently skip rejected dates
   }
 
-  monthCache.set(month, { data: games, expiresAt: Date.now() + getTtlMs() });
+  monthCache.set(cacheKey, { data: games, expiresAt: Date.now() + getTtlMs() });
   return games;
 }
 
@@ -64,7 +65,7 @@ export async function getMonthGames(month: string): Promise<KboGame[]> {
  * Returns completed games for all months from season start (March) through
  * the current month. Used by matchups to aggregate season-to-date H2H records.
  */
-export async function getSeasonGames(season: number): Promise<KboGame[]> {
+export async function getSeasonGames(season: number, srId = "0,1,3,4,5,7,9"): Promise<KboGame[]> {
   const today = new Date().toLocaleDateString("sv-SE", {
     timeZone: "Asia/Seoul",
   });
@@ -78,6 +79,6 @@ export async function getSeasonGames(season: number): Promise<KboGame[]> {
     months.push(`${season}-${String(m).padStart(2, "0")}`);
   }
 
-  const monthResults = await Promise.all(months.map((m) => getMonthGames(m)));
+  const monthResults = await Promise.all(months.map((m) => getMonthGames(m, srId)));
   return monthResults.flat();
 }

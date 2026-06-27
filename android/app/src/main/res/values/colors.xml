@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="splash_background">#012452</color>
+    <!-- 앱 다크톤과 일체화된 상태바 배경(시계·배터리 영역). 앱 배경 #0A0A0B와 동일. -->
+    <color name="status_bar">#0A0A0B</color>
+</resources>

@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
 import GlassCard from "@/components/ui/GlassCard";
+import PlayerSplitTable from "@/components/player/PlayerSplitTable";
 import { calcBatterSaber, calcPitcherSaber, type CalcBatterSaber, type CalcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
 import {
   BATTER_ADVANCED, PITCHER_ADVANCED,
@@ -68,7 +69,7 @@ function BatterStats({ data, teamColor }: { data: BatterAdvanced; teamColor: str
           <StatBox label="wRC+" value={String(data.wRC)} desc="득점 생산" />
           <StatBox label="OPS" value={data.OPS.toFixed(3)} desc="출루+장타" />
           <StatBox label="wOBA" value={data.wOBA.toFixed(3)} desc="가중 출루" />
-          <StatBox label="WAR" value={data.WAR.toFixed(1)} desc="대체 선수 대비" />
+          <StatBox label="WAR" value={data.WAR.toFixed(2)} desc="대체 선수 대비" />
           <StatBox label="ISO" value={data.ISO.toFixed(3)} desc="순수 장타력" />
           <StatBox label="BABIP" value={data.BABIP.toFixed(3)} desc="인플레이 타율" />
           <StatBox label="BB%" value={`${data.BB_pct}%`} desc="볼넷 비율" />
@@ -134,7 +135,7 @@ function PitcherStats({ data, teamColor }: { data: PitcherAdvanced; teamColor: s
         <div className="grid grid-cols-4 gap-3">
           <StatBox label="FIP" value={data.FIP.toFixed(2)} desc="순수 투구력" />
           <StatBox label="xFIP" value={data.xFIP.toFixed(2)} desc="보정 FIP" />
-          <StatBox label="WAR" value={data.WAR.toFixed(1)} desc="대체 선수 대비" />
+          <StatBox label="WAR" value={data.WAR.toFixed(2)} desc="대체 선수 대비" />
           <StatBox label="WHIP" value={data.WHIP.toFixed(2)} desc="출루 허용" />
           <StatBox label="K/9" value={data.K9.toFixed(1)} desc="9이닝 삼진" />
           <StatBox label="BB/9" value={data.BB9.toFixed(1)} desc="9이닝 볼넷" />
@@ -240,6 +241,7 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
       const ps = realSaber as CalcPitcherSaber;
       return (
         <div className="space-y-4">
+          <PlayerSplitTable playerId={playerId} position={position} teamColor={teamColor} />
           <GlassCard className="p-4">
             <h3 className="text-sm font-bold text-text-primary mb-3">📊 세이버메트릭스 (실데이터 기반)</h3>
             <div className="grid grid-cols-4 gap-3">
@@ -247,7 +249,7 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
               <StatBox label="WHIP" value={typeof ps.WHIP === "number" ? ps.WHIP.toFixed(2) : ps.WHIP} desc="출루 허용" />
               <StatBox label="K/9" value={ps.K9.toFixed(1)} desc="9이닝 삼진" />
               <StatBox label="BB/9" value={ps.BB9.toFixed(1)} desc="9이닝 볼넷" />
-              <StatBox label="WAR" value={ps.WAR.toFixed(1)} desc="대체 선수 대비" />
+              <StatBox label="WAR" value={ps.WAR.toFixed(2)} desc="대체 선수 대비" />
               <StatBox label="HR/9" value={ps.HR9.toFixed(1)} desc="9이닝 피홈런" />
               <StatBox label="K%" value={`${ps.K_pct}%`} desc="삼진 비율" />
               <StatBox label="BB%" value={`${ps.BB_pct}%`} desc="볼넷 비율" />
@@ -261,6 +263,7 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
     const bs = realSaber as CalcBatterSaber;
     return (
       <div className="space-y-4">
+        <PlayerSplitTable playerId={playerId} position={position} teamColor={teamColor} />
         <GlassCard className="p-4">
           <h3 className="text-sm font-bold text-text-primary mb-3">📊 세이버메트릭스 (실데이터 기반)</h3>
           <div className="grid grid-cols-4 gap-3">
@@ -272,7 +275,7 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
             <StatBox label="BB%" value={`${bs.BB_pct}%`} desc="볼넷 비율" />
             <StatBox label="K%" value={`${bs.K_pct}%`} desc="삼진 비율" />
             <StatBox label="OBP" value={bs.OBP.toFixed(3)} desc="출루율" />
-            <StatBox label="WAR" value={bs.WAR.toFixed(1)} desc="대체 선수 대비 (추정)" />
+            <StatBox label="WAR" value={bs.WAR.toFixed(2)} desc="대체 선수 대비 (추정)" />
           </div>
           <p className="text-[10px] text-text-tertiary mt-3 text-center">※ KBO 공식 기록 기반 계산값 (WAR는 근사치, 핫존/구종별은 Statiz 연동 예정)</p>
         </GlassCard>

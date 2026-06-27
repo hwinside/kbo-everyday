@@ -3,33 +3,43 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, MoreHorizontal, Check, CornerDownRight, X, ImagePlay } from "lucide-react";
+import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, Ban, MoreHorizontal, Check, CornerDownRight, X, ImagePlay } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { usePostDetail, createComment, toggleLike, toggleCommentLike, updatePost, deletePost, updateComment, deleteComment } from "@/lib/supabase/usePosts";
 import ReportSheet from "@/components/community/ReportSheet";
 import LinkPreview from "@/components/community/LinkPreview";
+import { isShortText, BrandedTextCard, getPostScopeLabel } from "@/components/community/FeedTextCards";
+import { PhotoCarousel, HeartOverlay } from "@/components/community/PhotoFeed";
+import { parseAttribution } from "@/lib/gif-collector/attribution";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import DMButton from "@/components/ui/DMButton";
 import GifPicker, { isGifComment } from "@/components/community/GifPicker";
+import LoginSheet from "@/components/auth/LoginSheet";
+import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
+import { useBlockedIds, blockUserById } from "@/lib/supabase/useBlock";
+import { supabase } from "@/lib/supabase/client";
 
 interface PostDetailProps {
   postId: number;
-  headerTitle: string;
 }
 
-export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
+export default function PostDetail({ postId }: PostDetailProps) {
   const router = useRouter();
   const { user, profile } = useAuth();
   const [showReport, setShowReport] = useState(false);
   const [reportTarget, setReportTarget] = useState<{type: "post"|"comment"; id: number}>({type: "post", id: 0});
   const { post, comments, loading, liked, setLiked, setComments } = usePostDetail(postId);
+  const { blockedIds } = useBlockedIds();
   const [comment, setComment] = useState("");
   const [likeCount, setLikeCount] = useState(0);
+  const [heartShow, setHeartShow] = useState(false);
   const [replyTo, setReplyTo] = useState<{ id: number; nickname: string } | null>(null);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   // Chat-layout keyboard handling:
   // 1) Toggle body.kbd-open based on composer focus (TabBar hidden via CSS).
@@ -139,10 +149,18 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
     };
   }, []);
 
+  // Lock the document scroll while PostDetail is mounted so the document-flow
+  // header can't be dragged under the notch/Dynamic Island by scrollIntoView or
+  // a stray tap on iOS WKWebView. All scrolling stays in the inner container.
+  useEffect(() => {
+    const html = document.documentElement;
+    html.classList.add("postdetail-open");
+    return () => html.classList.remove("postdetail-open");
+  }, []);
+
   // 게시글 메뉴/편집 상태
   const [postMenuOpen, setPostMenuOpen] = useState(false);
   const [postEditing, setPostEditing] = useState(false);
-  const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
   const [savingPost, setSavingPost] = useState(false);
   const [deletingPost, setDeletingPost] = useState(false);
@@ -158,11 +176,13 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   if (!post) return <div className="flex items-center justify-center h-screen text-text-secondary">게시글을 찾을 수 없습니다</div>;
 
   const isPostMine = !!user && post.author_id === user.id;
+  const canModerateComments = profile?.is_operator === true;
+  const canDeleteAnyPost = profile?.is_operator === true;
 
   function startPostEdit() {
     setPostMenuOpen(false);
-    setEditTitle(post!.title);
-    setEditContent(post!.content);
+    // 제목 필드 제거(⑥) — 기존 제목은 본문 앞에 합쳐 한 본문으로 편집. 저장 시 title은 비움.
+    setEditContent(mergeTitleBody(post!.title, post!.content));
     setPostEditing(true);
   }
 
@@ -172,12 +192,12 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
 
   async function savePostEdit() {
     if (savingPost) return;
-    const t = editTitle.trim();
-    if (!t) { alert("제목을 입력해주세요"); return; }
+    const c = editContent.trim();
+    if (!c) { alert("내용을 입력해주세요"); return; }
     setSavingPost(true);
     try {
-      await updatePost(post!.id, { title: t, content: editContent });
-      setPostPatch({ title: t, content: editContent, updated_at: new Date().toISOString() });
+      await updatePost(post!.id, { title: "", content: editContent });
+      setPostPatch({ title: "", content: editContent, updated_at: new Date().toISOString() });
       setPostEditing(false);
     } catch {
       alert("게시글 수정에 실패했어요");
@@ -191,7 +211,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
     if (!confirm("이 게시글을 삭제할까요? 댓글/좋아요도 함께 삭제됩니다.")) return;
     setDeletingPost(true);
     try {
-      await deletePost(post!.id);
+      await deletePost(post!.id, { canDeleteAny: canDeleteAnyPost });
       router.back();
     } catch {
       alert("게시글 삭제에 실패했어요");
@@ -228,10 +248,50 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
     setCmtMenuOpenId(null);
     if (!confirm("이 댓글을 삭제할까요?")) return;
     try {
-      await deleteComment(id);
+      await deleteComment(id, { canDeleteAny: canModerateComments });
       setComments(prev => prev.filter(c => c.id !== id));
     } catch {
       alert("댓글 삭제에 실패했어요");
+    }
+  }
+
+  // 신고 — ReportSheet 오픈(글/댓글 공통).
+  function openReport(target: { type: "post" | "comment"; id: number }) {
+    setPostMenuOpen(false);
+    setCmtMenuOpenId(null);
+    if (!user) { setShowLogin(true); return; }
+    setReportTarget(target);
+    setShowReport(true);
+  }
+
+  // 차단 — ①user_blocks 등록(피드/목록 즉시 반영) ②운영팀에 해당 콘텐츠 자동 신고(개발자 알림)
+  // ③현재 화면에서 즉시 제거. Apple 1.2 "block should notify the developer & remove from feed instantly".
+  async function handleBlockUser(authorId: string | null | undefined, ctx?: { type: "post" | "comment"; id: number }) {
+    setPostMenuOpen(false);
+    setCmtMenuOpenId(null);
+    if (!user) { setShowLogin(true); return; }
+    if (!authorId || authorId === user.id) return;
+    if (!confirm("이 사용자를 차단할까요?\n차단하면 이 사용자의 글과 댓글이 더 이상 보이지 않으며, 운영팀에 자동으로 신고됩니다.")) return;
+    const ok = await blockUserById(user.id, authorId);
+    if (!ok) { alert("차단에 실패했어요. 잠시 후 다시 시도해주세요."); return; }
+    // 개발자(운영팀)에게 해당 콘텐츠 자동 신고 — 실패해도 차단 자체는 유지.
+    if (ctx) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          await fetch("/api/report", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+            body: JSON.stringify({ targetType: ctx.type, targetId: ctx.id, reason: "block", detail: "사용자 차단에 따른 자동 신고" }),
+          });
+        }
+      } catch { /* 신고 실패는 차단을 막지 않음 */ }
+    }
+    // 즉시 화면에서 제거: 글이면 뒤로(피드는 useBlockedIds 브로드캐스트로 필터), 댓글이면 목록에서 제거.
+    if (ctx?.type === "post") {
+      router.back();
+    } else {
+      setComments(prev => prev.filter(c => c.author_id !== authorId));
     }
   }
 
@@ -244,8 +304,15 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
     } catch {}
   }
 
+  // 캐러셀 더블탭 → 인스타식 좋아요(이미 좋아요면 취소하지 않고 하트 애니메이션만). 피드(PhotoFeed)와 동일.
+  function handleMediaDoubleTap() {
+    if (user && !liked) void handleLike();
+    setHeartShow(true);
+    setTimeout(() => setHeartShow(false), 800);
+  }
+
   async function handleComment() {
-    if (!user) { alert("로그인이 필요합니다"); return; }
+    if (!user) { setShowLogin(true); return; }
     if (!comment.trim()) return;
     try {
       const result = await createComment(post!.id, comment.trim(), replyTo?.id);
@@ -272,7 +339,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
   }
 
   async function handleGifSelect(gifUrl: string) {
-    if (!user) { alert("로그인이 필요합니다"); return; }
+    if (!user) { setShowLogin(true); return; }
     setShowGifPicker(false);
     try {
       const result = await createComment(post!.id, gifUrl, replyTo?.id);
@@ -355,11 +422,13 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           <button onClick={() => router.back()}>
             <ChevronLeft size={24} className="text-text-secondary" />
           </button>
-          <span className="text-lg font-semibold text-text-primary flex-1">{headerTitle}</span>
-          <button onClick={async () => {
-            if (navigator.share) await navigator.share({ title: post.title, url: window.location.href });
-            else { await navigator.clipboard.writeText(window.location.href); alert("링크 복사됨!"); }
-          }}>
+          <span className="text-lg font-semibold text-text-primary flex-1">{(() => {
+            // 헤더 = 태그 기반 브레드크럼(홈 최신글 라벨과 동일 원칙).
+            // 선수1명→"커뮤니티 > 팀 선수" / 선수2+·팀단일→"커뮤니티 > 팀" / 다팀·없음→"커뮤니티".
+            const scope = getPostScopeLabel(post);
+            return scope ? `커뮤니티 > ${scope}` : "커뮤니티";
+          })()}</span>
+          <button onClick={() => setShareOpen(true)} aria-label="게시글 공유">
             <Share2 size={20} className="text-text-tertiary" />
           </button>
         </div>
@@ -382,7 +451,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
           <span className="text-xs text-text-tertiary ml-auto">
             {timeAgo(post.created_at)}{(postPatch.updated_at || post.updated_at) ? " · 수정됨" : ""}
           </span>
-          {isPostMine && !postEditing && (
+          {user && !postEditing && (
             <div className="relative">
               <button
                 onClick={(e) => { e.stopPropagation(); setPostMenuOpen(v => !v); }}
@@ -396,8 +465,18 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setPostMenuOpen(false)} />
                   <div className="absolute right-0 top-8 z-20 min-w-[112px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
-                    <button onClick={startPostEdit} className="block w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">수정</button>
-                    <button onClick={handleDeletePost} className="block w-full px-3 py-2 text-left text-sm text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
+                    {isPostMine && <button onClick={startPostEdit} className="block w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">수정</button>}
+                    {!isPostMine && (
+                      <button onClick={() => openReport({ type: "post", id: post.id })} className="flex items-center gap-2 w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">
+                        <Flag size={14} /> 신고
+                      </button>
+                    )}
+                    {!isPostMine && (
+                      <button onClick={() => handleBlockUser(post.author_id, { type: "post", id: post.id })} className="flex items-center gap-2 w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">
+                        <Ban size={14} /> 차단
+                      </button>
+                    )}
+                    {(isPostMine || canDeleteAnyPost) && <button onClick={handleDeletePost} className="block w-full px-3 py-2 text-left text-sm text-[#FF453A] hover:bg-bg-tertiary">삭제</button>}
                   </div>
                 </>
               )}
@@ -407,13 +486,6 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
 
         {postEditing ? (
           <div className="space-y-2 mb-3">
-            <input
-              type="text"
-              value={editTitle}
-              onChange={e => setEditTitle(e.target.value)}
-              placeholder="제목"
-              className="w-full bg-bg-secondary rounded-lg px-3 py-2 text-base text-text-primary outline-none border border-border"
-            />
             <textarea
               value={editContent}
               onChange={e => setEditContent(e.target.value)}
@@ -424,7 +496,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
             <div className="flex items-center gap-2">
               <button
                 onClick={savePostEdit}
-                disabled={savingPost || !editTitle.trim()}
+                disabled={savingPost || !editContent.trim()}
                 className="px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
                 style={{ backgroundColor: post.team_id ? (() => { const t = getTeamById(post.team_id); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}
               >
@@ -434,37 +506,60 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
             </div>
           </div>
         ) : (
-          <>
-            <h1 className="text-lg font-bold text-text-primary mb-3">{postPatch.title ?? post.title}</h1>
-            <p className="readable-body whitespace-pre-line">{stripUrls(postPatch.content ?? post.content)}</p>
-          </>
+          // 제목 필드 제거(⑥) → 기존 글의 title은 본문 앞에 합쳐 렌더(피드 mergedBody와 동일 형식, 데이터 보존).
+          // 움짤콜렉터 자동 출처 "(출처: …)\n{url}"는 분리해 원문 하이퍼링크로 렌더.
+          (() => {
+            const merged = mergeTitleBody(postPatch.title ?? post.title, postPatch.content ?? post.content);
+            const hasMedia = post.image_urls.length > 0 || (post.video_urls?.length ?? 0) > 0;
+            // 미디어 없는 짧은 글은 피드(PhotoFeed)의 BrandedTextCard와 동일하게 렌더.
+            // BrandedTextCard가 내부적으로 LinkPreview를 처리하므로 아래 별도 LinkPreview는 생략(중복 방지).
+            if (!hasMedia && merged.trim() && isShortText(merged)) {
+              return <BrandedTextCard post={post} body={merged} />;
+            }
+            const attr = parseAttribution(merged);
+            return (
+              <p className="readable-body whitespace-pre-line">
+                {stripUrls(attr ? attr.body : merged)}
+                {attr && (
+                  <>
+                    {`${attr.body ? "\n\n" : ""}(출처: ${attr.handle ? attr.label + " " : ""}`}
+                    <a href={attr.url} target="_blank" rel="noopener noreferrer" className="text-accent">
+                      {attr.handle ? `@${attr.handle}` : attr.label}
+                    </a>
+                    {")"}
+                  </>
+                )}
+              </p>
+            );
+          })()
         )}
 
-        {/* Link previews (수정된 content 반영) */}
-        <LinkPreview text={postPatch.content ?? post.content} maxPreviews={3} />
+        {/* Link previews (수정된 content 반영) — 자동 출처 URL은 위 하이퍼링크로 대체되므로 제외.
+            미디어 없는 짧은 글(BrandedTextCard 분기)은 카드가 LinkPreview를 내부 처리하므로 여기선 생략. */}
+        {(() => {
+          const merged = mergeTitleBody(postPatch.title ?? post.title, postPatch.content ?? post.content);
+          const hasMedia = post.image_urls.length > 0 || (post.video_urls?.length ?? 0) > 0;
+          if (!postEditing && !hasMedia && merged.trim() && isShortText(merged)) return null;
+          return (
+            <LinkPreview
+              text={parseAttribution(merged)?.body ?? (postPatch.content ?? post.content)}
+              maxPreviews={3}
+            />
+          );
+        })()}
 
-        {/* Images */}
-        {post.image_urls.length > 0 && (
-          <div className="mt-4 space-y-2">
-            {post.image_urls.map((url: string, i: number) => (
-              <img key={i} src={url} alt="" className="rounded-xl w-full" />
-            ))}
-          </div>
-        )}
-
-        {/* Videos */}
-        {post.video_urls && post.video_urls.length > 0 && (
-          <div className="mt-4 space-y-2">
-            {post.video_urls.map((url: string, i: number) => (
-              <video
-                key={i}
-                src={url}
-                controls
-                playsInline
-                className="rounded-xl w-full"
-                style={{ backgroundColor: "#000" }}
-              />
-            ))}
+        {/* 미디어 — 피드(PhotoFeed)와 동일한 인스타식 캐러셀(한 장씩 스와이프 + 점 인디케이터 + 더블탭 좋아요).
+            본문은 px-5 패딩 안이라 -mx-5로 full-bleed 처리(피드 카드와 동일한 풀블리드 룩). */}
+        {(post.image_urls.length > 0 || (post.video_urls?.length ?? 0) > 0) && (
+          <div className="relative mt-4 -mx-5">
+            <PhotoCarousel
+              slides={[
+                ...post.image_urls.map((url: string) => ({ url, isVideo: false })),
+                ...(post.video_urls ?? []).map((url: string) => ({ url, isVideo: true })),
+              ]}
+              onDoubleTap={handleMediaDoubleTap}
+            />
+            <HeartOverlay show={heartShow} />
           </div>
         )}
 
@@ -493,10 +588,13 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
             <p className="text-sm text-text-tertiary text-center py-6">첫 댓글을 남겨보세요 💬</p>
           ) : (
             (() => {
-              // Build comment tree (2-depth)
+              // Build comment tree (2-depth). 차단한 유저의 댓글은 제외.
+              const visibleComments = blockedIds.size
+                ? comments.filter(c => !c.author_id || !blockedIds.has(c.author_id))
+                : comments;
               const roots: (typeof comments[0] & { replies: typeof comments })[] = [];
               const childMap = new Map<number, typeof comments>();
-              for (const c of comments) {
+              for (const c of visibleComments) {
                 if (!c.parent_id) {
                   roots.push({ ...c, replies: [] });
                 } else {
@@ -511,6 +609,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                 const avatarPath = getAvatarPath(c.avatar_url ?? null);
                 const cmtTeam = c.team_id ? getTeamById(c.team_id) : undefined;
                 const isCmtMine = !!user && c.author_id === user.id;
+                const canDeleteCmt = isCmtMine || canModerateComments;
                 const isCmtEditing = cmtEditingId === c.id;
                 const isCmtEdited = !!c.updated_at;
                 const cmtLikeCount = c.like_count ?? 0;
@@ -543,7 +642,7 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                         <span className="text-xs text-text-tertiary ml-auto flex-shrink-0">
                           {timeAgo(c.created_at)}{isCmtEdited ? " · 수정됨" : ""}
                         </span>
-                        {isCmtMine && !isCmtEditing && (
+                        {user && !isCmtEditing && (
                           <div className="relative flex-shrink-0">
                             <button
                               onClick={(e) => { e.stopPropagation(); setCmtMenuOpenId(prev => prev === c.id ? null : c.id); }}
@@ -556,8 +655,22 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                               <>
                                 <div className="fixed inset-0 z-10" onClick={() => setCmtMenuOpenId(null)} />
                                 <div className="absolute right-0 top-6 z-20 min-w-[96px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
-                                  <button onClick={() => startCmtEdit(c)} className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">수정</button>
-                                  <button onClick={() => handleDeleteComment(c.id)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
+                                  {isCmtMine && (
+                                    <button onClick={() => startCmtEdit(c)} className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">수정</button>
+                                  )}
+                                  {!isCmtMine && (
+                                    <button onClick={() => openReport({ type: "comment", id: c.id })} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
+                                      <Flag size={12} /> 신고
+                                    </button>
+                                  )}
+                                  {!isCmtMine && (
+                                    <button onClick={() => handleBlockUser(c.author_id, { type: "comment", id: c.id })} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
+                                      <Ban size={12} /> 차단
+                                    </button>
+                                  )}
+                                  {canDeleteCmt && (
+                                    <button onClick={() => handleDeleteComment(c.id)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
+                                  )}
                                 </div>
                               </>
                             )}
@@ -717,18 +830,28 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
                   <ImagePlay size={20} />
                 </button>
               )}
-              <input
-                type="text"
-                value={comment}
-                onChange={e => setComment(e.target.value)}
-                placeholder={user ? (replyTo ? `${replyTo.nickname}에게 답글...` : "댓글을 입력하세요") : "로그인 후 댓글 작성 가능"}
-                disabled={!user}
-                className="flex-1 bg-bg-secondary rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none border"
-                style={{ borderColor: teamColor ? `${teamColor}80` : 'rgba(255,255,255,0.15)' }}
-                onFocus={() => { setShowGifPicker(false); document.body.classList.add("kbd-open"); }}
-                onBlur={() => document.body.classList.remove("kbd-open")}
-                onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); handleComment(); } }}
-              />
+              {user ? (
+                <input
+                  type="text"
+                  value={comment}
+                  onChange={e => setComment(e.target.value)}
+                  placeholder={replyTo ? `${replyTo.nickname}에게 답글...` : "댓글을 입력하세요"}
+                  className="flex-1 bg-bg-secondary rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none border"
+                  style={{ borderColor: teamColor ? `${teamColor}80` : 'rgba(255,255,255,0.15)' }}
+                  onFocus={() => { setShowGifPicker(false); document.body.classList.add("kbd-open"); }}
+                  onBlur={() => document.body.classList.remove("kbd-open")}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); handleComment(); } }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowLogin(true)}
+                  className="flex-1 bg-bg-secondary rounded-xl px-4 py-2.5 text-left text-sm text-text-secondary border"
+                  style={{ borderColor: teamColor ? `${teamColor}80` : 'rgba(255,255,255,0.15)' }}
+                >
+                  로그인 후 댓글 작성 가능
+                </button>
+              )}
               <button onClick={handleComment} disabled={!comment.trim() || !user} className="w-9 h-9 rounded-full flex items-center justify-center text-white disabled:opacity-50 transition-opacity" style={{ backgroundColor: post.team_id ? (() => { const t = getTeamById(post.team_id); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}>
                 <Send size={16} />
               </button>
@@ -737,8 +860,36 @@ export default function PostDetail({ postId, headerTitle }: PostDetailProps) {
         })()}
       </div>
       <ReportSheet isOpen={showReport} onClose={() => setShowReport(false)} targetType={reportTarget.type} targetId={reportTarget.id} />
+      {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
+      <ShareSheet
+        isOpen={shareOpen}
+        post={
+          shareOpen
+            ? ({
+                id: post.id,
+                title: post.title,
+                content: post.content,
+                videoUrl: post.video_urls?.[0] ?? null,
+                board_type: post.board_type,
+                board_id: post.board_id,
+              } satisfies ShareSheetPost)
+            : null
+        }
+        onClose={() => setShareOpen(false)}
+      />
     </div>
   );
+}
+
+/** 기존 글 title을 본문 앞에 합침(피드 mergedBody와 동일). 신규 글은 title="" → content만.
+ *  움짤콜렉터 등 title===content(또는 본문이 제목으로 시작)인 글은 중복 방지(③). */
+function mergeTitleBody(title: string | null | undefined, content: string | null | undefined): string {
+  const t = (title ?? "").trim();
+  const c = (content ?? "").trim();
+  if (!t) return c;
+  if (!c) return t;
+  if (c === t || c.startsWith(t)) return c;
+  return `${t}\n${c}`;
 }
 
 /** Strip URLs from text (OG cards handle link display). Trims leftover blank lines. */

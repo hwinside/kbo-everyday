@@ -3,10 +3,12 @@
 import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
 import { ChevronLeft, ChevronRight, ExternalLink, Loader2 } from "lucide-react";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import type { Stadium } from "@/lib/constants/stadiums";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { useTheme } from "@/components/ThemeProvider";
 import GlassCard from "@/components/ui/GlassCard";
+import { TICKET_OPEN_RULES } from "@/lib/constants/tickets";
 
 interface StadiumGame {
   gameId: string;
@@ -25,28 +27,7 @@ interface StadiumCalendarProps {
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
-/** 구단별 예매 오픈 정보 (구조화) */
-interface TicketOpenRule {
-  daysBefore: number; // 경기 며칠 전
-  hour: number;       // 오픈 시각 (24h)
-  maxTickets: number;
-  label: string;      // 표시용 텍스트
-  provider: string;   // 예매처 이름
-  url: string;        // 예매 링크
-}
-
-const TICKET_OPEN_RULES: Record<number, TicketOpenRule> = {
-  1:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
-  2:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)", provider: "인터파크", url: "https://ticket.interpark.com" },
-  3:  { daysBefore: 7,  hour: 16, maxTickets: 8,  label: "경기 7일 전 오후 4시 (최대 8매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
-  4:  { daysBefore: 5,  hour: 11, maxTickets: 6,  label: "경기 5일 전 오전 11시 (최대 6매)", provider: "SSG닷컴", url: "https://www.ssg.com" },
-  5:  { daysBefore: 6,  hour: 11, maxTickets: 10, label: "경기 6일 전 오전 11시 (최대 10매)", provider: "NC 다이노스", url: "https://www.ncdinos.com" },
-  6:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
-  7:  { daysBefore: 14, hour: 14, maxTickets: 8,  label: "경기 14일 전 오후 2시 (최대 8매)", provider: "롯데 자이언츠", url: "https://www.giantsclub.com" },
-  8:  { daysBefore: 7,  hour: 11, maxTickets: 6,  label: "경기 7일 전 오전 11시 (최대 6매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
-  9:  { daysBefore: 7,  hour: 11, maxTickets: 4,  label: "경기 7일 전 오전 11시 (최대 4매)", provider: "티켓링크", url: "https://www.ticketlink.co.kr" },
-  10: { daysBefore: 7,  hour: 14, maxTickets: 4,  label: "경기 7일 전 오후 2시 (최대 4매)", provider: "놀티켓", url: "https://ticket.interpark.com" },
-};
+// 구단별 예매 오픈 룰 — 공용 SSOT (tickets.ts). TeamNextTicketCard와 동일 규칙 공유.
 
 /** 경기 날짜 + 구단 오픈 룰 → 예매 오픈 일시 계산 */
 function getTicketOpenDate(gameDate: string, teamId: number): Date | null {
@@ -82,10 +63,17 @@ function getMonthKey(date: Date): string {
 
 export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
   const { profile } = useAuth();
+  const { resolvedTheme } = useTheme();
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [games, setGames] = useState<StadiumGame[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  // SSR 하이드레이션 mismatch 방지: 마운트 전엔 다크 기준(앱 강제 다크), 마운트 후 실제 테마로 스왑 (TeamBadge와 동일 패턴)
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  const theme: "dark" | "light" = mounted ? resolvedTheme : "dark";
 
   const monthKey = getMonthKey(currentDate);
   const year = currentDate.getFullYear();
@@ -201,9 +189,13 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
           {sortedTeamIds.map((teamId) => {
             const team = getTeamById(teamId);
             if (!team) return null;
+            const legendColor = getTeamBgColor(team, theme);
             return (
               <div key={teamId} className="flex items-center gap-1.5">
-                <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: `${team.colorPrimary}40` }} />
+                <div
+                  className="w-3 h-3 rounded-sm"
+                  style={{ backgroundColor: `${legendColor}40`, border: `1.5px solid ${legendColor}` }}
+                />
                 <span className="text-xs text-text-secondary">{team.shortName} 홈</span>
               </div>
             );
@@ -252,18 +244,19 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
             const isToday = dateStr === todayStr;
             const isSelected = dateStr === selectedDate;
             const dayOfWeek = (firstDay + day - 1) % 7;
-            // 멀티팀 구장: 홈팀 컬러로 배경 구분
+            // 멀티팀 구장: 홈팀 컬러로 배경 구분 (테마 인식 + 테두리 stroke로 색약/저시각/프라이버시 모드 대응)
             const homeTeam = hasGame && dayGames ? getTeamById(dayGames[0].homeTeamId) : null;
             const hasMultipleTeams = stadium.teamIds.length > 1;
-            const cellBg = hasGame && hasMultipleTeams && homeTeam
-              ? `${homeTeam.colorPrimary}25`
+            const homeColor = hasGame && hasMultipleTeams && homeTeam
+              ? getTeamBgColor(homeTeam, theme)
               : undefined;
+            const cellBg = homeColor ? `${homeColor}25` : undefined;
 
             return (
               <button
                 key={dateStr}
                 onClick={() => hasGame ? setSelectedDate(isSelected ? null : dateStr) : undefined}
-                style={cellBg && !isSelected ? { backgroundColor: cellBg } : undefined}
+                style={cellBg && !isSelected ? { backgroundColor: cellBg, border: `1.5px solid ${homeColor}` } : undefined}
                 className={`relative aspect-square rounded-lg flex flex-col items-center justify-center gap-0.5 transition-colors ${
                   isSelected
                     ? "bg-accent/20 ring-1 ring-accent"

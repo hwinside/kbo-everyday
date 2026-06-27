@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { X, Share, Plus } from "lucide-react";
+import { isNative } from "@/lib/capacitor/platform";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -21,6 +22,8 @@ export default function PWAInstallBanner() {
   const [isNonSafariiOS, setIsNonSafariiOS] = useState(false);
 
   useEffect(() => {
+    // 네이티브 앱(iOS/Android)에선 PWA 설치 배너 불필요 — 숨김
+    if (isNative) return;
     // 이미 PWA로 실행 중이면 숨김
     if (window.matchMedia("(display-mode: standalone)").matches) return;
     if ((window.navigator as NavigatorStandalone).standalone) return;

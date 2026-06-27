@@ -3,6 +3,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { getTeamById } from "@/lib/constants/teams";
+import type { BroadcastChannel } from "@/lib/broadcast-channels";
+import BroadcastBadges from "@/components/game/BroadcastBadges";
 
 interface CompactGameCardProps {
   isPreseason?: boolean;
@@ -17,6 +19,9 @@ interface CompactGameCardProps {
     inning?: string;
     time: string;
     stadium: string;
+    broadcastChannels?: BroadcastChannel[];
+    awayStarter?: string;
+    homeStarter?: string;
   };
 }
 
@@ -28,6 +33,9 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
   const isCancelled = game.status === "cancelled";
   const awayWin = isFinal && (game.awayScore ?? 0) > (game.homeScore ?? 0);
   const homeWin = isFinal && (game.homeScore ?? 0) > (game.awayScore ?? 0);
+  // 예고 선발은 경기 시작 전(예정)·진행 중에만 의미가 있다. KBO가 보통 전날 저녁에 공시하므로
+  // 먼 경기는 비어 있을 수 있어, 이름이 있을 때만 노출한다.
+  const showStarter = game.status === "scheduled" || game.status === "live";
 
   return (
     <Link href={`/games/${game.id}`}>
@@ -47,7 +55,10 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
               <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-500">시범경기</span>
             )}
           </div>
-          <span className="text-xs text-text-tertiary">{game.stadium}</span>
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+            {game.status === "scheduled" && <BroadcastBadges channels={game.broadcastChannels} />}
+            <span className="truncate text-xs text-text-tertiary">{game.stadium}</span>
+          </div>
         </div>
 
         {/* Away team row */}
@@ -56,9 +67,14 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
             <div className="w-9 h-9 rounded-full bg-gray-100 dark:bg-white p-1 flex items-center justify-center">
               <Image src={away.logoPath} alt="" width={24} height={24} unoptimized className="object-contain" />
             </div>
-            <span className={`text-sm font-semibold ${awayWin ? "text-text-primary" : "text-text-secondary"}`}>
-              {away.shortName}
-            </span>
+            <div className="flex flex-col">
+              <span className={`text-sm font-semibold ${awayWin ? "text-text-primary" : "text-text-secondary"}`}>
+                {away.shortName}
+              </span>
+              {showStarter && game.awayStarter && (
+                <span className="text-[11px] leading-tight text-text-tertiary">선발 {game.awayStarter}</span>
+              )}
+            </div>
           </div>
           {game.status === "scheduled" ? (
             <span className="text-xs font-medium text-accent">예정</span>
@@ -77,9 +93,14 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
             <div className="w-9 h-9 rounded-full bg-gray-100 dark:bg-white p-1 flex items-center justify-center">
               <Image src={home.logoPath} alt="" width={24} height={24} unoptimized className="object-contain" />
             </div>
-            <span className={`text-sm font-semibold ${homeWin ? "text-text-primary" : "text-text-secondary"}`}>
-              {home.shortName}
-            </span>
+            <div className="flex flex-col">
+              <span className={`text-sm font-semibold ${homeWin ? "text-text-primary" : "text-text-secondary"}`}>
+                {home.shortName}
+              </span>
+              {showStarter && game.homeStarter && (
+                <span className="text-[11px] leading-tight text-text-tertiary">선발 {game.homeStarter}</span>
+              )}
+            </div>
           </div>
           {game.status === "scheduled" ? (
             <span className="text-xs font-medium text-accent">예정</span>

@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { supabase } from "@/lib/supabase/client";
 
 interface ReportSheetProps {
   isOpen: boolean;
@@ -19,6 +21,26 @@ const REASONS = [
   { id: "other", label: "기타", icon: "📝" },
 ];
 
+// iOS/WKWebView 대응: body를 position:fixed로 고정하면 시트 내부 overflow 스크롤까지 죽어서(벽돌 현상)
+// body는 건드리지 않고, document touchmove를 "스크롤 영역(data-report-scroll) 밖에서만" 막는다.
+// 내부 스크롤 영역은 네이티브 스크롤(WebkitOverflowScrolling: touch)을 그대로 허용 → 배경은 고정, 시트는 스크롤.
+function useBackgroundTouchLock(isOpen: boolean) {
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const onTouchMove = (e: TouchEvent) => {
+      const target = e.target as Element | null;
+      // 신고 시트 스크롤 영역 안에서의 터치는 네이티브 스크롤 허용
+      if (target && target.closest("[data-report-scroll]")) return;
+      // 그 밖(배경/백드롭)에서의 터치 스크롤은 차단
+      if (e.cancelable) e.preventDefault();
+    };
+
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
+    return () => document.removeEventListener("touchmove", onTouchMove);
+  }, [isOpen]);
+}
+
 export default function ReportSheet({ isOpen, onClose, targetType, targetId }: ReportSheetProps) {
   const { user } = useAuth();
   const [selected, setSelected] = useState<string | null>(null);
@@ -27,16 +49,28 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId }: R
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
 
+  useBackgroundTouchLock(isOpen);
+
   async function handleSubmit() {
     if (!user || !selected) return;
     setSubmitting(true);
     setError("");
 
+    const { data: { session } } = await supabase.auth.getSession();
+    const accessToken = session?.access_token;
+    if (!accessToken) {
+      setError("로그인이 필요합니다");
+      setSubmitting(false);
+      return;
+    }
+
     const res = await fetch("/api/report", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
       body: JSON.stringify({
-        reporterId: user.id,
         targetType,
         targetId,
         reason: selected,
@@ -54,36 +88,42 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId }: R
     setSubmitting(false);
   }
 
-  if (!isOpen) return null;
+  if (!isOpen || typeof document === "undefined") return null;
 
-  return (
+  // 부모의 transform/filter에 fixed가 갇혀 시트가 잘리던 문제(벽돌) 방지 — document.body로 포털(작동하는 CommentSheet와 동일)
+  return createPortal(
     <AnimatePresence>
       <motion.div
-        className="fixed inset-0 z-50 flex items-end"
+        className="fixed inset-0 z-50 flex items-end overscroll-none"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
         <div className="absolute inset-0 bg-black/60" onClick={onClose} />
         <motion.div
-          className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl"
+          className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl max-h-[85dvh] overflow-hidden flex flex-col"
           initial={{ y: "100%" }}
           animate={{ y: 0 }}
           exit={{ y: "100%" }}
           transition={{ type: "spring", damping: 25 }}
+          onClick={(e) => e.stopPropagation()}
         >
-          <div className="px-5 py-4 border-b border-border">
+          <div className="shrink-0 px-5 py-4 border-b border-border">
             <h2 className="text-lg font-bold text-text-primary">🚨 신고하기</h2>
             <p className="text-xs text-text-tertiary">신고 3회 누적 시 자동 블라인드 처리됩니다</p>
           </div>
 
           {done ? (
-            <div className="py-10 text-center">
+            <div className="py-10 text-center overflow-y-auto overscroll-contain">
               <span className="text-4xl">✅</span>
               <p className="text-sm text-text-primary mt-2">신고가 접수되었습니다</p>
             </div>
           ) : (
-            <div className="px-5 py-4 space-y-3">
+            <div
+              data-report-scroll
+              style={{ WebkitOverflowScrolling: "touch" }}
+              className="flex-1 min-h-0 overflow-y-scroll overscroll-contain px-5 py-4 pb-safe space-y-3"
+            >
               {REASONS.map(r => (
                 <button
                   key={r.id}
@@ -119,6 +159,7 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId }: R
           )}
         </motion.div>
       </motion.div>
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 }

@@ -21,6 +21,8 @@
     { "path": "/api/cron/daily-analysis", "schedule": "0 16 * * *" },
     { "path": "/api/cron/retention", "schedule": "30 0 * * *" },
     { "path": "/api/cron/prewarm-summaries", "schedule": "15 8,9,10,11,12,13,14 * * *" },
-    { "path": "/api/cron/game-events-warmup", "schedule": "* 5-14 * * *" }
+    { "path": "/api/cron/game-events-warmup", "schedule": "* 5-14 * * *" },
+    { "path": "/api/cron/game-logs", "schedule": "0 14,15,16 * * *" },
+    { "path": "/api/cron/sync-app-downloads", "schedule": "30 19 * * *" }
   ]
 }

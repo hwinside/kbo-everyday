@@ -18,9 +18,12 @@ import type { GameStats, BatterStat, PitcherStat } from "@/lib/constants/game-st
 import type { GameDetailResponse } from "@/app/api/game-detail/route";
 import { getPreseasonGameById } from "@/lib/constants/preseason-schedule";
 import { useLiveGame } from "@/lib/hooks/useLiveGame";
+import { startLiveActivity } from "@/lib/native-live-activity";
+import { updateGameWidget, setWidgetMyTeam } from "@/lib/capacitor/game-notification";
 import { useGameDetail } from "@/lib/hooks/useGameDetail";
 import { useGameEvents } from "@/lib/hooks/useGameEvents";
 import { generateEvents, type PrevGameState } from "@/lib/event-generator";
+import { generateRelayEvents } from "@/lib/relay-event-generator";
 import type { LineupEntry } from "@/lib/hooks/useGameDetail";
 import { deriveGameState } from "@/lib/utils/game-derived";
 import GameDetailHeader from "@/components/game/GameDetailHeader";
@@ -95,6 +98,7 @@ function boxScoreToGameStats(
       w: DECISION_MAP[p.decision] === "win" ? 1 : 0,
       l: DECISION_MAP[p.decision] === "loss" ? 1 : 0,
       sv: DECISION_MAP[p.decision] === "save" ? 1 : 0,
+      hd: DECISION_MAP[p.decision] === "hold" ? 1 : 0,
       era: p.era,
     }));
   }
@@ -111,6 +115,11 @@ const KBO_CODE_TO_ID: Record<string, number> = {
   LG: 1, OB: 2, KT: 3, SK: 4, NC: 5,
   HT: 6, LT: 7, SS: 8, HH: 9, WO: 10,
 };
+
+/* 팀 id → KBO 2자 코드 역매핑 (Live Activity 최애팀 강조용). */
+const ID_TO_KBO_CODE: Record<number, string> = Object.fromEntries(
+  Object.entries(KBO_CODE_TO_ID).map(([code, id]) => [id, code]),
+);
 
 function parseKboGameId(gameId: string) {
   // Format: YYYYMMDD + 2-char away + 2-char home + game#
@@ -135,17 +144,6 @@ function parseKboGameId(gameId: string) {
   };
 }
 
-function CancelledTabCard() {
-  return (
-    <div className="px-5 py-6">
-      <div className="glass-card p-5 text-center space-y-3">
-        <p className="text-base font-bold text-text-primary">경기가 취소되었습니다</p>
-        <p className="text-sm text-text-tertiary">우천 등 경기 운영 사유로 취소된 경기입니다.</p>
-      </div>
-    </div>
-  );
-}
-
 export default function GameDetailPage() {
   const params = useParams();
   const gameId = params.gameId as string;
@@ -157,7 +155,12 @@ export default function GameDetailPage() {
   // Keep game-events polling through the live → final transition so game_end/victory can be emitted.
   const shouldPollGameEvents = (liveGame?.isLive ?? false) || liveIsFinal;
   const { events: gameEvents } = useGameEvents(gameId, shouldPollGameEvents, 15000);
-  const { data: gameRelay } = useGameRelay(gameId, liveGame?.isLive ?? false, 30000, liveGame?.inning ?? 0, liveIsFinal);
+  // Relay polls 5s while live (celebration trigger source), 30s otherwise
+  // (display-only). The 5s cadence keeps the relay-bridged celebration path
+  // within ~6s of the actual KBO play; the route caches Naver responses for
+  // 4s in-memory so KBO upstream load stays bounded across concurrent viewers.
+  const relayPollInterval = liveGame?.isLive ? 5000 : 30000;
+  const { data: gameRelay } = useGameRelay(gameId, liveGame?.isLive ?? false, relayPollInterval, liveGame?.inning ?? 0, liveIsFinal);
   const clientEventStateRef = useRef<PrevGameState | null>(null);
 
   // Compute game early (non-hook) so celebration hook can reference team IDs
@@ -166,16 +169,91 @@ export default function GameDetailPage() {
   // Celebration overlay for homerun events
   const myTeamIdForCelebration = getMyTeamId();
   const { celebration, processEvents, dismiss } = useCelebration({
+    gameId,
     myTeamId: myTeamIdForCelebration,
     homeTeamId: game?.homeTeamId ?? 0,
     awayTeamId: game?.awayTeamId ?? 0,
   });
+
+  // 잠금화면 Live Activity (W2): 경기룸에서 라이브 경기일 때 실데이터로 카드를
+  // 시작/갱신한다. iOS 네이티브에서만 동작(웹/Android no-op). 같은 gameId
+  // 재호출은 네이티브가 update로 처리(중복 방지). 경기룸을 나가도 카드는 유지
+  // (스펙 §5-3 잠금화면 목적, 종료는 W4). 팀 코드는 G_ID에서 파싱(로고/컬러는 후속).
+  useEffect(() => {
+    if (!liveGame || !liveGame.isLive) return;
+    const m = gameId.match(/^(\d{8})([A-Z]{2})([A-Z]{2})(\d)$/);
+    // 최애팀 id → KBO 2자 코드 역매핑(강조/컬러용). 미설정/비참여면 "".
+    const myTeamId = getMyTeamId();
+    const myTeamCode = myTeamId
+      ? ID_TO_KBO_CODE[myTeamId] ?? ""
+      : "";
+    void startLiveActivity({
+      gameId,
+      awayTeam: liveGame.awayName,
+      homeTeam: liveGame.homeName,
+      awayTeamCode: m?.[2] ?? "",
+      homeTeamCode: m?.[3] ?? "",
+      myTeamCode,
+      awayScore: liveGame.awayScore,
+      homeScore: liveGame.homeScore,
+      inning: liveGame.inning,
+      isTopInning: liveGame.isTop,
+      balls: liveGame.balls,
+      strikes: liveGame.strikes,
+      outs: liveGame.outs,
+      onFirst: liveGame.runner1b,
+      onSecond: liveGame.runner2b,
+      onThird: liveGame.runner3b,
+      pitcherName: liveGame.currentPitcher ?? "",
+      batterName: liveGame.currentBatter ?? "",
+      stadium: liveGame.stadium ?? "",
+      status: "live",
+    });
+
+    // Android 홈/잠금화면 위젯(GameScoreWidget) — *최애팀 경기*일 때만 풀 데이터로 갱신.
+    // iOS Live Activity와 동일 데이터(주자/투수/타자 포함). 디바이스 최애팀도 기록해
+    // 빈 상태 위젯 배경색까지 최애팀으로 맞춘다. (iOS는 no-op.)
+    const awayCode = m?.[2] ?? "";
+    const homeCode = m?.[3] ?? "";
+    if (myTeamCode) void setWidgetMyTeam(myTeamCode);
+    if (myTeamCode && (myTeamCode === awayCode || myTeamCode === homeCode)) {
+      // 공격팀(타자) = isTop ? away : home, 수비팀(투수) = 반대.
+      const batterTeam = liveGame.isTop ? awayCode : homeCode;
+      const pitcherTeam = liveGame.isTop ? homeCode : awayCode;
+      void updateGameWidget({
+        myTeam: myTeamCode,
+        away: awayCode,
+        home: homeCode,
+        awayScore: String(liveGame.awayScore),
+        homeScore: String(liveGame.homeScore),
+        status: `LIVE ${liveGame.inning}`,
+        pitcher: liveGame.currentPitcher ?? "",
+        pitcherTeam: liveGame.currentPitcher ? pitcherTeam : "",
+        batter: liveGame.currentBatter ?? "",
+        batterTeam: liveGame.currentBatter ? batterTeam : "",
+        outs: String(Math.min(Math.max(liveGame.outs ?? 0, 0), 2)),
+        diamond: `${liveGame.runner1b ? 1 : 0}${liveGame.runner2b ? 1 : 0}${liveGame.runner3b ? 1 : 0}`,
+      });
+    }
+  }, [liveGame, gameId]);
+
+  // 잠금화면 ongoing notification 카드는 *오직 최애팀 경기*에만 노출하며, 생성·갱신·제거를
+  // 전부 *푸시*(C2 game_live/game_end)가 소유한다. 비-최애팀 경기는 카드를 아예 띄우지 않는다.
+  // 따라서 경기룸(page)은 카드 생명주기에 일절 관여하지 않는다 — start/removeGameNotification
+  // 호출 없음. (이전엔 비-최애팀을 경기룸이 소유했으나 2026-06-12 "오직 최애팀만" 방침으로 제거.)
 
   // Client-side diff for celebration triggers.
   // Server events (gameEvents) are only used for text relay (KgwanTab), not celebrations,
   // because server event IDs are unstable across Vercel cold starts and cause replay on re-entry.
   const skipNextDiffRef = useRef(false);
 
+  // Merge KBO BoxScore-diff events with Naver-relay events in a SINGLE
+  // processEvents batch. Splitting into two useEffects would baseline-seed
+  // only the first source that fires; the second source's first response
+  // would then replay every historical play as a fresh celebration. The
+  // module-level displayedEventIds set inside useCelebration dedupes
+  // identical ids across sources, so whichever source observes a play first
+  // wins — the relay path typically arrives 10–20s before BoxScore.
   useEffect(() => {
     if (!liveGame || !shouldPollGameEvents) return;
 
@@ -194,10 +272,15 @@ export default function GameDetailPage() {
     );
     clientEventStateRef.current = nextState;
 
-    if (clientEvents.length > 0) {
-      processEvents(clientEvents);
+    const relayEvents = generateRelayEvents(gameId, gameRelay?.innings, liveGame);
+
+    const merged = relayEvents.length > 0 || clientEvents.length > 0
+      ? [...relayEvents, ...clientEvents]
+      : [];
+    if (merged.length > 0) {
+      processEvents(merged);
     }
-  }, [gameId, liveGame, gameDetail?.boxScore, shouldPollGameEvents, processEvents]);
+  }, [gameId, liveGame, gameDetail?.boxScore, gameRelay?.innings, shouldPollGameEvents, processEvents]);
 
   // Reset baseline on gameId change
   useEffect(() => {
@@ -262,6 +345,7 @@ export default function GameDetailPage() {
         status={d.derivedStatus}
         time={gameDetail?.meta?.startTime || liveGame?.time || game.time}
         stadium={gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium}
+        broadcastChannels={gameDetail?.meta?.broadcastChannels}
       />
 
       {d.derivedStatus === "cancelled" ? (
@@ -374,61 +458,61 @@ export default function GameDetailPage() {
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="flex border-b border-border mx-4">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={clsx(
-              "flex-1 py-2.5 text-sm font-medium transition-colors relative",
-              activeTab === tab.id ? "text-text-primary font-semibold" : "text-text-tertiary"
-            )}
-          >
-            {tab.label}
-            {activeTab === tab.id && (
-              <motion.div
-                layoutId="tab-indicator"
-                className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full"
-                style={{ backgroundColor: tabIndicatorTeam.colorLight }}
-                transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              />
-            )}
-          </button>
-        ))}
-      </div>
+      {d.derivedStatus !== "cancelled" && (
+        <>
+          {/* Tabs */}
+          <div className="flex border-b border-border mx-4">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={clsx(
+                  "flex-1 py-2.5 text-sm font-medium transition-colors relative",
+                  activeTab === tab.id ? "text-text-primary font-semibold" : "text-text-tertiary"
+                )}
+              >
+                {tab.label}
+                {activeTab === tab.id && (
+                  <motion.div
+                    layoutId="tab-indicator"
+                    className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full"
+                    style={{ backgroundColor: tabIndicatorTeam.colorLight }}
+                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                  />
+                )}
+              </button>
+            ))}
+          </div>
 
-      {/* Tab content */}
-      <div className="flex-1">
-        <AnimatePresence mode="wait">
-          {activeTab === "kgwan" && (
-            <motion.div key="kgwan" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-              <KgwanTab
-                gameId={gameId}
-                homeTeamId={game.homeTeamId}
-                awayTeamId={game.awayTeamId}
-                gameDate={game.date}
-                gameStartTime={gameDetail?.meta?.startTime || liveGame?.time || game.time}
-                status={d.derivedStatus}
-                gameEvents={gameEvents}
-                plays={plays}
-                teamColor={battingTeamColor}
-                boxScore={gameDetail?.boxScore ?? null}
-                linescore={gameDetail?.linescore ?? gameRelay?.linescore ?? null}
-                starterNames={{
-                  away: liveGame?.awayStarterName || (gameDetail?.boxScore?.awayPitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.awayPitchers[0].name) ? gameDetail.boxScore.awayPitchers[0].name : ""),
-                  home: liveGame?.homeStarterName || (gameDetail?.boxScore?.homePitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.homePitchers[0].name) ? gameDetail.boxScore.homePitchers[0].name : ""),
-                }}
-                lineupConfirmed={!!d.detailLineup && d.detailLineup.isToday === true}
-                gameRelay={gameRelay}
-              />
-            </motion.div>
-          )}
+          {/* Tab content */}
+          <div className="flex-1">
+            <AnimatePresence mode="wait">
+              {activeTab === "kgwan" && (
+                <motion.div key="kgwan" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
+                  <KgwanTab
+                    gameId={gameId}
+                    homeTeamId={game.homeTeamId}
+                    awayTeamId={game.awayTeamId}
+                    gameDate={game.date}
+                    gameStartTime={gameDetail?.meta?.startTime || liveGame?.time || game.time}
+                    status={d.derivedStatus}
+                    gameEvents={gameEvents}
+                    plays={plays}
+                    teamColor={battingTeamColor}
+                    boxScore={gameDetail?.boxScore ?? null}
+                    linescore={gameDetail?.linescore ?? gameRelay?.linescore ?? null}
+                    starterNames={{
+                      away: liveGame?.awayStarterName || (gameDetail?.boxScore?.awayPitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.awayPitchers[0].name) ? gameDetail.boxScore.awayPitchers[0].name : ""),
+                      home: liveGame?.homeStarterName || (gameDetail?.boxScore?.homePitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.homePitchers[0].name) ? gameDetail.boxScore.homePitchers[0].name : ""),
+                    }}
+                    lineupConfirmed={!!d.detailLineup && d.detailLineup.isToday === true}
+                    gameRelay={gameRelay}
+                  />
+                </motion.div>
+              )}
           {activeTab === "lineup" && (
             <motion.div key="lineup" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              {d.derivedStatus === "cancelled" ? (
-                <CancelledTabCard />
-              ) : (d.detailLineup && d.detailLineup.isToday === true) ? (
+              {(d.detailLineup && d.detailLineup.isToday === true) ? (
                 <LineupTab
                   gameId={gameId}
                   lineup={{
@@ -480,9 +564,7 @@ export default function GameDetailPage() {
           )}
           {activeTab === "stats" && (
             <motion.div key="stats" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              {d.derivedStatus === "cancelled" ? (
-                <CancelledTabCard />
-              ) : gameStats ? (
+              {gameStats ? (
                 <GameStatsTab stats={gameStats} awayTeam={awayTeam} homeTeam={homeTeam} relay={gameRelay} />
               ) : liveGame?.isLive && gameRelay && gameRelay.innings.length > 0 ? (
                 <LiveStatsTab
@@ -521,6 +603,8 @@ export default function GameDetailPage() {
           )}
         </AnimatePresence>
       </div>
+        </>
+      )}
       {/* Celebration overlay (homerun etc.) */}
       <CelebrationOverlay event={celebration} onDone={dismiss} />
     </PullToRefresh>

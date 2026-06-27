@@ -111,6 +111,8 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip, 
   };
 
   const toggle = (player: PlayerInfo) => {
+    // 선수가 새로 추가되는 경우(제거/한도초과 아님)에만 검색어 초기화
+    const willAdd = !selected.has(player.id) && selected.size < maxPlayers;
     setSelected(prev => {
       const next = new Set(prev);
       if (next.has(player.id)) next.delete(player.id);
@@ -118,6 +120,11 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip, 
       else if (!user) { setShowLogin(true); return prev; }
       return next;
     });
+    // 검색 후 선택하면 검색창을 비워 바로 다음 선수를 검색할 수 있게 함
+    if (willAdd && search) {
+      setSearch("");
+      setVisibleCount(30);
+    }
   };
 
   // 브라우저 뒤로가기 시 about:blank 방지: history 엔트리 push + popstate로 모달 닫기
@@ -146,8 +153,9 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip, 
   const handleComplete = () => {
     closingRef.current = true;
     history.back();
-    const favs: FavoritePlayer[] = allPlayers
-      .filter(p => selected.has(p.id))
+    // 저장 순서 = 화면 슬롯 순서(선택 순서). allPlayers.filter는 로스터 원본 순서로
+    // 뒤바뀌어 DB에 저장돼, 재조회 시 사용자가 지정한 순서가 사라지는 회귀가 있었음.
+    const favs: FavoritePlayer[] = selectedPlayersArr
       .map(p => ({
         playerId: p.id,
         name: p.name,

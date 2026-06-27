@@ -18,6 +18,7 @@ interface Profile {
   grade: string;
   avatar_url: string | null;
   invited_by: string | null;
+  is_operator?: boolean | null;
 }
 
 interface AuthContextType {
@@ -220,13 +221,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profile,
       loading,
       signOut: async () => {
-        try { await supabase.auth.signOut(); } catch { /* ignore */ }
+        // 네이티브 auth 락이 멈추면 signOut()이 영구 hang → 이후 정리/이동이 안 돼
+        // 로그아웃 버튼이 "안 먹는" 것처럼 보인다. 타임아웃을 걸어 락 hang과 무관하게
+        // 항상 로컬 정리 + 홈 이동이 실행되도록 보장한다. (#209/#419 네이티브 hang 패턴)
+        try {
+          await Promise.race([
+            supabase.auth.signOut(),
+            new Promise(resolve => setTimeout(resolve, 2500)),
+          ]);
+        } catch { /* ignore */ }
         // 계정 전환 시 이전 계정 localStorage 잔존 방지
         try {
           const keysToRemove = ['kbo-my-team', 'kbo-onboarding-status', 'favorite_players'];
           keysToRemove.forEach(k => localStorage.removeItem(k));
           // welcome toast / gads conversion 등 session 키도 정리
           sessionStorage.clear();
+          // signOut()이 락 hang으로 세션 토큰을 못 지웠을 수 있어 supabase auth 쿠키를 직접 만료.
+          // (sb-<ref>-auth-token 형식 — 안 지우면 로그아웃 후에도 로그인 상태로 남음)
+          document.cookie.split(";").forEach(c => {
+            const name = c.split("=")[0].trim();
+            if (name.startsWith("sb-")) {
+              document.cookie = `${name}=; Max-Age=0; path=/`;
+            }
+          });
         } catch { /* SSR safety */ }
         window.location.href = "/";
       },

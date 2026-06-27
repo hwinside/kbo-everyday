@@ -177,13 +177,16 @@
   --color-team-kiwoom: var(--team-kiwoom);
 
   --font-pretendard: "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+  /* Global UI stack: Latin/numbers -> Montserrat, Korean falls back to Noto Sans KR (Montserrat has no Hangul glyphs) */
+  --font-sans: "Montserrat", "Noto Sans KR", -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
 }
 
 /* ===== Base Styles ===== */
 body {
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: var(--font-pretendard);
+  font-family: var(--font-sans);
+  letter-spacing: -0.02em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -263,6 +266,25 @@ body {
 }
 
 /*
+ * ===== iOS overscroll wobble fix =====
+ * The page scrolls on body, and the global TabBar is position:fixed bottom:0.
+ * On iOS WebKit the rubber-band overscroll bounce translates the whole
+ * viewport — including fixed elements — so the TabBar visually "꿀렁임".
+ * Disabling vertical overscroll chaining/bounce at the document root stops it.
+ * (-y only: horizontal carousels and inner sheet scrollers are unaffected.)
+ *
+ * ⚠️ Do NOT add `transform`/`will-change: transform` to [data-global-tabbar].
+ * On iOS WKWebView a position:fixed element that carries its own transform is
+ * rendered relative to the document instead of the visual viewport, so it
+ * scrolls away and floats mid-page instead of pinning to the bottom (#420 →
+ * regression). overscroll-behavior-y alone fixes the wobble without it.
+ */
+html,
+body {
+  overscroll-behavior-y: none;
+}
+
+/*
  * ===== Keyboard-open mode =====
  * Toggled by composer pages when the input gains focus. Hides the global
  * TabBar and drops the main's bottom padding so the in-container composer
@@ -289,6 +311,22 @@ body.kbd-open main.pb-tab-bar {
 }
 body.kbd-open .postdetail-chat-container {
   height: 100svh;
+}
+
+/*
+ * PostDetail document scroll-lock.
+ * The chat container is sized to the viewport and scrolls internally
+ * (.overflow-y-auto). Its header lives in document flow, so it stays pinned
+ * only while the document itself never scrolls. On iOS WKWebView a
+ * scrollIntoView (comment focus) or stray tap can scroll the document root,
+ * dragging the header up under the notch/Dynamic Island with no recovery.
+ * Locking the scroller (html) while PostDetail is mounted confines all
+ * scrolling to the inner container. (toggled from PostDetail.tsx)
+ */
+html.postdetail-open,
+html.postdetail-open > body {
+  overflow: hidden;
+  height: 100%;
 }
 
 /* Safe area for notch/dynamic island */

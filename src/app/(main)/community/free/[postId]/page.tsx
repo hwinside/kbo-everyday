@@ -6,5 +6,5 @@ import PostDetail from "@/components/community/PostDetail";
 export default function FreePostDetailPage() {
   const { postId } = useParams();
 
-  return <PostDetail postId={Number(postId)} headerTitle="자유게시판" />;
+  return <PostDetail postId={Number(postId)} />;
 }

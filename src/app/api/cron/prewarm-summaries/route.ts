@@ -4,7 +4,7 @@ import { fetchGames, fetchBoxScore } from "@/lib/crawler/kbo-api";
 import { TEAMS } from "@/lib/constants/teams";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
-const PROMPT_VERSION = 11; // must match game-summary route
+const PROMPT_VERSION = 12; // must match game-summary route
 
 // ===== Helpers =====
 
@@ -78,7 +78,7 @@ async function fetchLinescore(gameId: string): Promise<{ away: LinescoreSide; ho
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization") ?? "";
-  if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
+  if (!CRON_SECRET || authHeader !== `Bearer ${CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

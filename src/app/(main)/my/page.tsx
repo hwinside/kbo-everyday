@@ -11,6 +11,7 @@ import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getTeamById } from "@/lib/constants/teams";
 import { getMyTeamId, setMyTeamId } from "@/lib/store/myteam";
+import { isNative } from "@/lib/capacitor/platform";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { usePushNotification } from "@/lib/hooks/usePushNotification";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -24,8 +25,11 @@ import ProfileCard from "@/components/my/ProfileCard";
 import InviteSection from "@/components/my/InviteSection";
 import FavoritePlayersCard from "@/components/my/FavoritePlayersCard";
 import NotificationCard from "@/components/my/NotificationCard";
+import NotificationPrefsCard from "@/components/my/NotificationPrefsCard";
 import MenuSection from "@/components/my/MenuSection";
 import ThemeToggleCard from "@/components/my/ThemeToggleCard";
+import HomeSectionsCard from "@/components/my/HomeSectionsCard";
+import NewsPrefsCard from "@/components/my/NewsPrefsCard";
 import PwaGuideModal from "@/components/my/PwaGuideModal";
 import DeleteAccountSheet from "@/components/my/DeleteAccountSheet";
 
@@ -50,6 +54,7 @@ export default function MyPage() {
   const [showNicknameEdit, setShowNicknameEdit] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
+  const [writingPoints, setWritingPoints] = useState<number | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -84,6 +89,36 @@ export default function MyPage() {
 
     loadNicknameStatus();
   }, [user, profile?.nickname]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadWritingPoints() {
+      // 유저 변경/로딩 시작 → null(확인 중)로 초기화. 이전 유저 점수 잔존·0 확정 방지.
+      setWritingPoints(null);
+      if (!user) return;
+
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) return; // 토큰 없음 → null 유지(0 확정 X)
+
+      try {
+        const res = await fetch("/api/leaderboard/my-rank?track=writing", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return; // 실패 → null 유지(0 확정 X)
+
+        const json = await res.json();
+        if (cancelled) return; // 유저 전환 race 방지
+        // 성공 시에만 확정: score 숫자면 그 값, rank null(집계 0건)이면 0pt(루키)
+        setWritingPoints(typeof json.score === "number" ? json.score : 0);
+      } catch {
+        // 네트워크 reject / json parse 실패 → null 유지(0 확정 X), 콘솔 unhandled 방지
+      }
+    }
+
+    loadWritingPoints();
+    return () => { cancelled = true; };
+  }, [user]);
 
   const team = teamId ? getTeamById(teamId) ?? null : null;
 
@@ -124,7 +159,7 @@ export default function MyPage() {
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
           <GlassCard className="flex flex-col items-center gap-4 py-6">
             <p className="text-base font-semibold text-text-primary">크보팬에 가입하고 더 많은 기능을 이용하세요</p>
-            <p className="text-sm text-text-tertiary">승부예측, 커뮤니티, 쪽지 등 회원 전용 기능</p>
+            <p className="text-sm text-text-tertiary">커뮤니티, 쪽지 등 회원 전용 기능</p>
             <button onClick={() => setShowLogin(true)} className="w-full max-w-[240px] rounded-full bg-accent px-8 py-3 text-sm font-semibold text-white transition-transform active:scale-95">
               회원가입 / 로그인
             </button>
@@ -138,9 +173,11 @@ export default function MyPage() {
           user={user}
           profile={profile}
           team={team}
+          points={writingPoints}
           onAvatarClick={() => user && setShowAvatarSelect(true)}
           onNicknameClick={() => user && setShowNicknameEdit(true)}
           onViewProfile={() => user && router.push(`/profile/${user.id}`)}
+          onHallOfFame={() => user && router.push("/my/hall-of-fame")}
         />
       </motion.div>
 
@@ -168,8 +205,8 @@ export default function MyPage() {
         </GlassCard>
       </motion.div>
 
-      {/* 앱 설치 */}
-      {typeof window !== "undefined" && !window.matchMedia("(display-mode: standalone)").matches && (
+      {/* 앱 설치 — 네이티브 앱에선 불필요 */}
+      {typeof window !== "undefined" && !isNative && !window.matchMedia("(display-mode: standalone)").matches && (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="mt-3">
           <GlassCard
             pressable
@@ -198,9 +235,26 @@ export default function MyPage() {
         <FavoritePlayersCard favPlayers={favPlayers} onEdit={() => setShowPlayerSelect(true)} />
       </motion.div>
 
-      {/* 알림 설정 */}
+      {/* 알림 설정 — 실제 알림 트리거(경기시작·득점) 구현+QA 완료 전까지 숨김. NEXT_PUBLIC_ENABLE_PUSH=true 로 노출 */}
+      {process.env.NEXT_PUBLIC_ENABLE_PUSH === "true" && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.13 }} className="mt-3">
+          <NotificationCard permission={permission} subscription={subscription} subscribe={subscribe} unsubscribe={unsubscribe} onShowPwaGuide={() => setShowPwaGuide(true)} />
+        </motion.div>
+      )}
+
+      {/* 알림 종류별 설정 (네이티브 앱 전용 — 컴포넌트 내부 isNative 가드) */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.13 }} className="mt-3">
-        <NotificationCard permission={permission} subscription={subscription} subscribe={subscribe} unsubscribe={unsubscribe} onShowPwaGuide={() => setShowPwaGuide(true)} />
+        <NotificationPrefsCard />
+      </motion.div>
+
+      {/* 홈 화면 섹션 구성 (기기 로컬) — 숏츠 포함 6섹션 on/off */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.135 }} className="mt-3">
+        <HomeSectionsCard />
+      </motion.div>
+
+      {/* 뉴스 설정 (기기 로컬) — 사진기사 숨김 토글 */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.137 }} className="mt-3">
+        <NewsPrefsCard />
       </motion.div>
 
       {/* 테마 설정 */}

@@ -16,17 +16,26 @@ import {
   Lock,
   TrendingUp,
   Sparkles,
+  Smartphone,
+  BarChart3,
+  Download,
+  Image as ImageIcon,
 } from "lucide-react";
+import { useAdminUnreadDMCount } from "@/lib/admin/useAdminUnreadDMCount";
 
 const NAV_ITEMS = [
   { href: "/admin", label: "개요", icon: LayoutDashboard },
   { href: "/admin/users", label: "유저", icon: Users },
+  { href: "/admin/traffic", label: "트래픽", icon: BarChart3 },
+  { href: "/admin/downloads", label: "다운로드", icon: Download },
   { href: "/admin/retention", label: "리텐션", icon: TrendingUp },
   { href: "/admin/content", label: "콘텐츠", icon: FileText },
   { href: "/admin/jobs", label: "크롤러/배치", icon: Bot },
   { href: "/admin/messages", label: "쪽지함", icon: Mail },
   { href: "/admin/feedback", label: "건의함", icon: MessageSquare },
   { href: "/admin/whats-new", label: "새 소식", icon: Sparkles },
+  { href: "/admin/tester-signups", label: "테스터 신청", icon: Smartphone },
+  { href: "/admin/hero-compare", label: "히어로샷 비교", icon: ImageIcon },
   { href: "/admin/system", label: "시스템", icon: Activity },
 ] as const;
 
@@ -80,7 +89,7 @@ function PinGate({ onAuth }: { onAuth: () => void }) {
   );
 }
 
-function Sidebar({ mobile, onClose }: { mobile?: boolean; onClose?: () => void }) {
+function Sidebar({ mobile, onClose, unreadDM }: { mobile?: boolean; onClose?: () => void; unreadDM: number }) {
   const pathname = usePathname();
 
   return (
@@ -127,6 +136,11 @@ function Sidebar({ mobile, onClose }: { mobile?: boolean; onClose?: () => void }
               >
                 <Icon className="w-4.5 h-4.5" />
                 {label}
+                {href === "/admin/messages" && unreadDM > 0 && (
+                  <span className="ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 flex items-center justify-center text-[10px] font-bold text-white leading-none">
+                    {unreadDM > 99 ? "99+" : unreadDM}
+                  </span>
+                )}
               </Link>
             );
           })}
@@ -143,6 +157,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
   const [authed, setAuthed] = useState(false);
   const [checking, setChecking] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const unreadDM = useAdminUnreadDMCount(30000, authed);
 
   useEffect(() => {
     const pin = sessionStorage.getItem("admin_pin");
@@ -175,8 +190,8 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen" style={{ background: "#0A0A0B" }}>
-      <Sidebar />
-      {mobileOpen && <Sidebar mobile onClose={() => setMobileOpen(false)} />}
+      <Sidebar unreadDM={unreadDM} />
+      {mobileOpen && <Sidebar mobile onClose={() => setMobileOpen(false)} unreadDM={unreadDM} />}
       <main className="flex-1 min-w-0">
         <header className="sticky top-0 z-40 flex items-center gap-4 px-6 py-4 border-b border-white/8 backdrop-blur-xl bg-[#0A0A0B]/80 lg:hidden">
           <button onClick={() => setMobileOpen(true)} className="p-2 -ml-2">

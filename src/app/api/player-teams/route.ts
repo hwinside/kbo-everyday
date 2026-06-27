@@ -22,11 +22,18 @@ interface PlayerTeamInfo {
 let cache: { data: PlayerTeamInfo[]; ts: number } | null = null;
 const CACHE_TTL = 60 * 60 * 1000;
 
+// 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청에 IE 분기 HTML 반환 → Referer 필수.
+const KBO_SEARCH_HEADERS = {
+  "Content-Type": "application/x-www-form-urlencoded",
+  "User-Agent": "Mozilla/5.0",
+  "Referer": "https://www.koreabaseball.com/Player/Search.aspx",
+};
+
 async function searchPlayer(name: string): Promise<PlayerTeamInfo | null> {
   try {
     const res = await fetch(KBO_SEARCH, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "Mozilla/5.0" },
+      headers: KBO_SEARCH_HEADERS,
       body: `name=${encodeURIComponent(name)}`,
     });
     const data = await res.json();
@@ -36,7 +43,7 @@ async function searchPlayer(name: string): Promise<PlayerTeamInfo | null> {
       const firstName = name.split(" ")[0];
       const res2 = await fetch(KBO_SEARCH, {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "Mozilla/5.0" },
+        headers: KBO_SEARCH_HEADERS,
         body: `name=${encodeURIComponent(firstName)}`,
       });
       const data2 = await res2.json();

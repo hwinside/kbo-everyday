@@ -5,6 +5,7 @@ import { getFavoritePlayers } from "@/lib/store/favorites";
 interface NewsItem {
   title: string;
   link: string;
+  originalLink?: string;
   pubDate: string;
   _label?: string;
 }
@@ -17,13 +18,16 @@ export interface HomeNewsItem {
   label: string;
   source: string;
   sourceUrl: string;
+  ogUrl: string;
   thumbnailUrl: null;
   timeAgo: string;
   teamId: number | null;
   type: "news";
 }
 
-const NEWS_CACHE_KEY = "kbo-home-news-v2";
+// v4: non-Naver link 기사를 API에서 노출 제외하도록 바뀌어, 옛 캐시(언론사 link 섞인 v3)를
+// 무효화해야 배포 직후에도 "무조건 네이버" 보장됨
+const NEWS_CACHE_KEY = "kbo-home-news-v4";
 const NEWS_CACHE_TTL = 30 * 60 * 1000; // 30분
 
 function toHomeNewsItems(items: NewsItem[], myTeamId: number | null): HomeNewsItem[] {
@@ -34,10 +38,14 @@ function toHomeNewsItems(items: NewsItem[], myTeamId: number | null): HomeNewsIt
     pubDate: item.pubDate,
     label: item._label || "",
     source: (() => {
-      try { return new URL(item.link).hostname.replace("www.", "").replace("m.", ""); }
+      // 출처 표기는 언론사 원문(originalLink) host 기준 — 계산만, 클릭은 네이버
+      try { return new URL(item.originalLink || item.link).hostname.replace("www.", "").replace("m.", ""); }
       catch { return "뉴스"; }
     })(),
+    // 클릭 타깃은 네이버 뉴스 URL(link) — '무조건 네이버' 보장
     sourceUrl: item.link,
+    // 썸네일/OG 추출은 언론사 원문(originalLink) 기준 — 네이버보다 OG 이미지 품질 안정적
+    ogUrl: item.originalLink || item.link,
     timeAgo: (() => {
       const diff = Date.now() - new Date(item.pubDate).getTime();
       const hours = Math.floor(diff / (1000 * 60 * 60));

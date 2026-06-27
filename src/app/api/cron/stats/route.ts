@@ -141,7 +141,7 @@ async function fetchPitcherStats(roster: RosterPlayer[]): Promise<PlayerStat[]> 
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
-  if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
+  if (!CRON_SECRET || authHeader !== `Bearer ${CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

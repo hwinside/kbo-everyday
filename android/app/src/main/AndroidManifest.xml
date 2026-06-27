@@ -1,5 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Android 11+(API 30) package visibility: Custom Tabs provider(Chrome 등)를 조회하려면
+         이 queries 선언이 필요. 없으면 OAuthBrowserPlugin의 CustomTabsClient.getPackageName이
+         null을 반환해 삼성 인터넷 기본 브라우저로 폴백 → Chrome 강제 fix가 무력화됨(삼순 리뷰). -->
+    <queries>
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+    </queries>
 
     <application
         android:allowBackup="true"
@@ -22,12 +32,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Deep Links: Android App Links for OAuth callback -->
+            <!-- Deep Links: Android App Links for OAuth callback.
+                 /auth/callback 경로로 한정 — keubo.fan 전체를 잡으면 네이버 중간 콜백
+                 (/api/auth/naver/callback?code=)까지 앱이 가로채 서버 토큰 교환이 안 돌고
+                 네이버 code를 Supabase PKCE로 잘못 교환해 로그인 실패함. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="keubo.fan" />
+                <data android:scheme="https" android:host="keubo.fan" android:pathPrefix="/auth/callback" />
             </intent-filter>
 
         </activity>
@@ -41,6 +54,36 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- 홈 화면 App Widget — 실시간 경기 스코어 (A4 B3) -->
+        <receiver
+            android:name=".GameScoreWidget"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/game_score_widget_info" />
+        </receiver>
+
+        <!-- FCM 수신 서비스 — capawesome MessagingService를 확장(앱 꺼져도 라이브 푸시 →
+             잠금화면 ongoing notification + 위젯). 플러그인 기본 서비스는 제거하고 이걸로 대체. -->
+        <service
+            android:name=".KboMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <service
+            android:name="io.capawesome.capacitorjs.plugins.firebase.messaging.MessagingService"
+            tools:node="remove" />
+
+        <!-- FCM notification 페이로드 푸시도 모노크롬 small icon 사용(흰 사각형 방지). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_kbo" />
     </application>
 
     <!-- Permissions -->

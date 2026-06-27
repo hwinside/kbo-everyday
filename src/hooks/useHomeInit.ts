@@ -6,6 +6,7 @@ import { getOnboardingStatus, setOnboardingStatus } from "@/lib/store/onboarding
 import { updateProfile } from "@/lib/supabase/auth";
 import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
+import type { BroadcastChannel } from "@/lib/broadcast-channels";
 
 interface RawGameData {
   gameId: string;
@@ -18,6 +19,7 @@ interface RawGameData {
   status: "scheduled" | "live" | "final" | "cancelled";
   inning?: string;
   isTop?: boolean;
+  broadcastChannels?: BroadcastChannel[];
 }
 
 export interface HomeGame {
@@ -30,6 +32,13 @@ export interface HomeGame {
   awayScore: number;
   status: "scheduled" | "live" | "final" | "cancelled";
   inning: string | null;
+  // 팀카드 경기카드 모드용 (예정=예고선발 / 종료=승·패투수). 없으면 미표시.
+  awayStarterName?: string | null;
+  homeStarterName?: string | null;
+  winPitcher?: string | null;
+  losePitcher?: string | null;
+  // 중계방송사(TV/IPTV). 없으면 미표시.
+  broadcastChannels?: BroadcastChannel[];
 }
 
 interface UseHomeInitOptions {
@@ -98,6 +107,7 @@ export function useHomeInit(options?: UseHomeInitOptions) {
           awayScore: g.awayScore ?? 0,
           status: g.status,
           inning: g.status === "live" ? `${g.inning}회${g.isTop ? "초" : "말"}` : null,
+          broadcastChannels: g.broadcastChannels,
         }));
         if (games.length > 0) {
           setTodayGames(games);
@@ -139,6 +149,20 @@ export function useHomeInit(options?: UseHomeInitOptions) {
     if (loading) return;
     startTransition(() => {
       setShowPlayerSetupCTA(false);
+
+      // 온보딩 진행 중(팀 선택 → 선수 선택 사이)이면 어떤 분기도 온보딩을 끊지 않는다.
+      // 푸시 권한 다이얼로그 등으로 앱이 inactive↔active 전환되며 이 effect가
+      // 재실행될 때 profile 분기가 status를 skipped로 덮어쓰고 온보딩을 숨기던
+      // 회귀 방지 (PR #205 리뷰 blocker 1).
+      if (getOnboardingStatus() === "team_selected") {
+        const savedTeam = getMyTeamId();
+        if (savedTeam) {
+          setMyTeam(savedTeam);
+          setFavPlayers(getFavoritePlayers());
+          setShowOnboarding(true);
+          return;
+        }
+      }
 
       if (profile && profile.team_id) {
         const dbFavs = Array.isArray(profile.favorite_players) ? profile.favorite_players : [];

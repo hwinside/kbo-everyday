@@ -26,10 +26,10 @@ export default function ScoreBoard({
   awayScore,
   homeScore,
   currentInning,
-  awayHits = 7,
-  homeHits = 5,
-  awayErrors = 0,
-  homeErrors = 1,
+  awayHits,
+  homeHits,
+  awayErrors,
+  homeErrors,
 }: ScoreBoardProps) {
   const maxInning = 9;
   const currentInningNum = currentInning
@@ -109,8 +109,8 @@ export default function ScoreBoard({
               );
             })}
             <td className="py-1.5 font-bold text-text-primary">{awayScore}</td>
-            <td className="py-1.5 text-text-secondary">{awayHits}</td>
-            <td className="py-1.5 text-text-secondary">{awayErrors}</td>
+            <td className="py-1.5 text-text-secondary">{awayHits ?? "-"}</td>
+            <td className="py-1.5 text-text-secondary">{awayErrors ?? "-"}</td>
           </tr>
           {/* Home team */}
           <tr>
@@ -150,8 +150,8 @@ export default function ScoreBoard({
               );
             })}
             <td className="py-1.5 font-bold text-text-primary">{homeScore}</td>
-            <td className="py-1.5 text-text-secondary">{homeHits}</td>
-            <td className="py-1.5 text-text-secondary">{homeErrors}</td>
+            <td className="py-1.5 text-text-secondary">{homeHits ?? "-"}</td>
+            <td className="py-1.5 text-text-secondary">{homeErrors ?? "-"}</td>
           </tr>
         </tbody>
       </table>

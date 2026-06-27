@@ -12,6 +12,7 @@ import { getMyTeamId } from "@/lib/store/myteam";
 import DateSelector from "@/components/game/DateSelector";
 import CompactGameCard from "@/components/game/CompactGameCard";
 import EmptyGameState from "@/components/game/EmptyGameState";
+import type { BroadcastChannel } from "@/lib/broadcast-channels";
 
 interface GameData {
   id: string;
@@ -25,6 +26,7 @@ interface GameData {
   inning?: string;
   awayStarter?: string;
   homeStarter?: string;
+  broadcastChannels?: BroadcastChannel[];
 }
 
 const container = { hidden: {}, show: { transition: { staggerChildren: 0.05 } } };
@@ -76,7 +78,7 @@ export default function GamesPage() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      const mapped: GameData[] = (data.games ?? []).map((g: { gameId: string; awayTeamId: number; homeTeamId: number; awayScore: number | null; homeScore: number | null; status: "scheduled" | "live" | "final" | "cancelled"; time: string; stadium: string; inning?: string; isTop?: boolean; awayStarterName?: string; homeStarterName?: string }) => ({
+      const mapped: GameData[] = (data.games ?? []).map((g: { gameId: string; awayTeamId: number; homeTeamId: number; awayScore: number | null; homeScore: number | null; status: "scheduled" | "live" | "final" | "cancelled"; time: string; stadium: string; inning?: string; isTop?: boolean; awayStarterName?: string; homeStarterName?: string; broadcastChannels?: BroadcastChannel[] }) => ({
         id: g.gameId,
         awayTeamId: g.awayTeamId,
         homeTeamId: g.homeTeamId,
@@ -88,6 +90,7 @@ export default function GamesPage() {
         inning: g.status === "live" ? `${g.inning}회${g.isTop ? "초" : "말"}` : undefined,
         awayStarter: g.awayStarterName,
         homeStarter: g.homeStarterName,
+        broadcastChannels: g.broadcastChannels,
       }));
 
       if (mapped.length === 0) {

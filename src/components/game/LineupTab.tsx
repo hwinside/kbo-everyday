@@ -7,18 +7,11 @@ import { type TeamData } from "@/lib/constants/teams";
 import type { GameLineup } from "@/lib/constants/games";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
-import playersRoster from "@/lib/constants/players-roster.json";
+import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
 
-// 선수 kboId 해살 (SSOT: /community/players/[kboId] 단일 라우트)
-// 라인업 데이터에 kboId가 없어도 roster에서 name→kboId 매핑으로 kboId 확보.
-// 정 안 되면(신규 외국인 등 드물 상황) name fallback 유지.
+// 선수 링크 SSOT: 레거시/숫자 외국인 ID/짧은이름을 canonical player로 정규화.
 function resolvePlayerHref(batter: { name: string; kboId?: string; teamId?: number }): string {
-  if (batter.kboId) return `/community/players/${batter.kboId}`;
-  const rosterHit = (playersRoster as { name: string; kboId: string; teamId: number }[]).find(
-    (p) => p.name === batter.name && (batter.teamId == null || p.teamId === batter.teamId)
-  );
-  if (rosterHit) return `/community/players/${rosterHit.kboId}`;
-  return `/community/players/${encodeURIComponent(batter.name)}`;
+  return getCanonicalPlayerHref(batter) ?? `/community/players/${encodeURIComponent(batter.name)}`;
 }
 
 /** 0.333 → .333, 1.000 → 1.000 */
@@ -64,7 +57,7 @@ function PitcherCard({
       <PlayerAvatar
         name={name}
         teamId={teamId}
-        photoUrl={getPlayerPhotoUrl(name, kboId)}
+        photoUrl={getPlayerPhotoUrl(name, kboId, teamId)}
         size={56}
         showTeamBadge={true}
       />
@@ -164,7 +157,7 @@ function AiLineupAnalysisCard({
     }
 
     load();
-  }, [gameId, awayTeamId, homeTeamId, lineup]);
+  }, [gameId, awayTeamId, homeTeamId, lineup, isLineupConfirmed]);
 
   if (!loading && !analysis) return null;
 
@@ -313,7 +306,7 @@ export default function LineupTab({
                       <PlayerAvatar
                         name={away.name}
                         teamId={away.teamId}
-                        photoUrl={getPlayerPhotoUrl(away.name, away.kboId)}
+                        photoUrl={getPlayerPhotoUrl(away.name, away.kboId, awayTeam.id)}
                         size={36}
                         showTeamBadge={false}
                       />
@@ -353,7 +346,7 @@ export default function LineupTab({
                       <PlayerAvatar
                         name={home.name}
                         teamId={home.teamId}
-                        photoUrl={getPlayerPhotoUrl(home.name, home.kboId)}
+                        photoUrl={getPlayerPhotoUrl(home.name, home.kboId, homeTeam.id)}
                         size={36}
                         showTeamBadge={false}
                       />

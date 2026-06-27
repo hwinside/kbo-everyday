@@ -2,14 +2,18 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ExternalLink, ChevronLeft } from "lucide-react";
+import { ExternalLink, ChevronLeft, Images } from "lucide-react";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import GlassCard from "@/components/ui/GlassCard";
+import { useNewsPhotoFilter } from "@/hooks/useNewsPhotoFilter";
+import { setPhotoFilterEnabled } from "@/lib/store/news-pref";
+import { isPhotoArticle } from "@/lib/news-relevance";
 
 interface NewsItem {
   title: string;
   description: string;
   link: string;
+  originalLink?: string;
   pubDate: string;
   thumbnailUrl?: string | null;
 }
@@ -21,6 +25,10 @@ export default function TeamNewsPage() {
   const team = getTeamBySlug(teamSlug);
   const [news, setNews] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const photoFilterOn = useNewsPhotoFilter();
+  const visibleNews = photoFilterOn
+    ? news.filter((item) => !isPhotoArticle(item.title))
+    : news;
 
   useEffect(() => {
     if (!team) return;
@@ -56,6 +64,18 @@ export default function TeamNewsPage() {
         <h1 className="text-lg font-bold text-text-primary">
           {team.shortName} 뉴스
         </h1>
+        {/* 사진기사 숨김 토글 — 마이페이지 '뉴스 설정'과 동일 상태 공유 (발견성 보강) */}
+        <button
+          onClick={() => setPhotoFilterEnabled(!photoFilterOn)}
+          className={`ml-auto flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+            photoFilterOn ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
+          }`}
+          aria-pressed={photoFilterOn}
+          aria-label={`사진기사 ${photoFilterOn ? "표시" : "숨기기"}`}
+        >
+          <Images size={14} />
+          사진기사 {photoFilterOn ? "숨김" : "표시"}
+        </button>
       </header>
 
       <div className="px-5">
@@ -63,14 +83,15 @@ export default function TeamNewsPage() {
           <div className="py-20 text-center text-sm text-text-tertiary">
             로딩 중...
           </div>
-        ) : news.length === 0 ? (
+        ) : visibleNews.length === 0 ? (
           <div className="py-20 text-center text-sm text-text-tertiary">
             관련 기사가 없습니다
           </div>
         ) : (
           <div className="space-y-3">
-            {news.map((item, i) => {
-              const source = item.link.match(/\/\/(?:www\.)?([^/]+)/)?.[1]?.replace(/\.com$|\.co\.kr$|\.kr$/, "") ?? "";
+            {visibleNews.map((item, i) => {
+              // 출처 표기는 언론사 원문(originalLink) host 기준 — 클릭만 네이버
+              const source = (item.originalLink || item.link).match(/\/\/(?:www\.)?([^/]+)/)?.[1]?.replace(/\.com$|\.co\.kr$|\.kr$/, "") ?? "";
               return (
                 <a key={i} href={item.link} target="_blank" rel="noopener noreferrer">
                   <GlassCard pressable className="overflow-hidden p-0">

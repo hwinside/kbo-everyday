@@ -2,14 +2,17 @@
 
 import { useRouter } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
+import type { BroadcastChannel } from "@/lib/broadcast-channels";
+import BroadcastBadges from "@/components/game/BroadcastBadges";
 
 interface GameDetailHeaderProps {
   status: string;
   time: string;
   stadium: string;
+  broadcastChannels?: BroadcastChannel[];
 }
 
-export default function GameDetailHeader({ status, time, stadium }: GameDetailHeaderProps) {
+export default function GameDetailHeader({ status, time, stadium, broadcastChannels }: GameDetailHeaderProps) {
   const router = useRouter();
 
   const titleText =
@@ -37,7 +40,10 @@ export default function GameDetailHeader({ status, time, stadium }: GameDetailHe
           </span>
         )}
       </div>
-      <span className="text-[13px] text-text-tertiary">{stadium}</span>
+      <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+        {status === "scheduled" && <BroadcastBadges channels={broadcastChannels} />}
+        <span className="truncate text-[13px] text-text-tertiary">{stadium}</span>
+      </div>
     </div>
   );
 }
