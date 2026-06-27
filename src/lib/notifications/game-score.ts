@@ -1,7 +1,7 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { sendFcmToUsers } from "@/lib/notifications/fcm";
 import { teamIdByShortName, fansOfTeams } from "@/lib/notifications/game-status";
-import { isHomerunCoveredRun, resolveHomerunScore } from "@/lib/notifications/score-dedupe";
+import { isHomerunCoveredRun, resolveHomerunScore, inheritHitRbi } from "@/lib/notifications/score-dedupe";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent } from "@/types/game-events";
 
@@ -99,7 +99,15 @@ export async function notifyScoreEvents(
 
       const scoreLine = `${away} ${aS} : ${hS} ${home}`;
       const batter = ev.detail?.batter;
-      const title = isHr ? `💥 ${scoringTeamName} 홈런!` : `⚾ ${scoringTeamName} 득점!`;
+      // 만루홈런 → "그랜드슬램" 강조 (하린아빠 요청 2026-06-27, 삼순 확정).
+      // 가드 = isHr(at_bat_homerun) + resolvedRbi===4. 홈런 자기 rbi가 교차폴링으로 0이면
+      // 유령 단타에서 inheritHitRbi로 상속. 비홈런 4타점 오탐은 isHr 가드가 차단한다.
+      const isGrandSlam = isHr && inheritHitRbi(ev, events) === 4;
+      const title = isGrandSlam
+        ? `💥 ${scoringTeamName} 그랜드슬램!`
+        : isHr
+          ? `💥 ${scoringTeamName} 홈런!`
+          : `⚾ ${scoringTeamName} 득점!`;
       const body = isHr && batter ? `${batter} · ${scoreLine}` : scoreLine;
 
       const res = await sendFcmToUsers(fans.ids, { title, body, url }, "my_team_score");
