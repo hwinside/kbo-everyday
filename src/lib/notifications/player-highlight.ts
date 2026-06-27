@@ -119,11 +119,16 @@ export async function notifyPlayerHighlights(
       const label = HIGHLIGHT_LABEL[ev.type] ?? "활약";
       // 홈런/장타가 교차폴링으로 자기 rbi 0이면 유령 단타의 타점을 물려받아 "홈런으로 N타점"으로 합침.
       const rbi = ev.type === "at_bat_hit" ? (ev.detail?.rbi ?? 0) : inheritHitRbi(ev, events);
+      // 만루홈런(홈런 4타점) → "그랜드슬램" 강조 표기 (하린아빠 요청 2026-06-27). 홈런 rbi는
+      // 최대 4(만루)라 rbi===4 ⟺ 그랜드슬램 (단타 최대 3타점이라 inheritHitRbi 오귀속 불가).
+      const isGrandSlam = ev.type === "at_bat_homerun" && rbi === 4;
       const title = isStrikeout
         ? `⚾ ${resolved.name} 삼진!`
-        : rbi > 0
-          ? `⚾ ${resolved.name} ${label}${HIGHLIGHT_PARTICLE[ev.type] ?? "로"} ${rbi}타점 획득!`
-          : `⚾ ${resolved.name} ${label}!`;
+        : isGrandSlam
+          ? `⚾ ${resolved.name} 그랜드슬램! 💥 (4타점)`
+          : rbi > 0
+            ? `⚾ ${resolved.name} ${label}${HIGHLIGHT_PARTICLE[ev.type] ?? "로"} ${rbi}타점 획득!`
+            : `⚾ ${resolved.name} ${label}!`;
       const res = await sendFcmToUsers(userIds, {
         title,
         body: `${away} vs ${home}`,

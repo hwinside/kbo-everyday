@@ -260,5 +260,23 @@ function mkHit(o: { type: GameEvent["type"]; batter: string; inning: number; isT
   assert("타점상속: 다른 타자 단타 → 0", inheritHitRbi(hrLate, [otherSingle, hrLate]) === 0);
 }
 
+// ── ⑥ 그랜드슬램(만루홈런 4타점) 표기 감지 (하린아빠 2026-06-27) ─────────────
+// 만루홈런 = 홈런 4타점. 홈런 rbi 최대 4(만루), 적시 단타 rbi 최대 3(주자 만루 시 3명만 득점,
+// 타자는 1루) → rbi===4 ⟺ 그랜드슬램. player-highlight·game-score가 inheritHitRbi(홈런)===4로
+// "그랜드슬램" 표기를 판정한다. 교차폴링으로 홈런 자기 rbi가 0이어도 유령 단타에서 상속해 유지.
+{
+  const T = "2026-06-27T11:10:00.000Z";
+  // 1) 만루홈런 같은-폴링(자기 rbi 4) → inheritHitRbi 4 = 그랜드슬램
+  const grandSlam = mkHit({ type: "at_bat_homerun", batter: "오스틴", inning: 7, isTop: false, ts: T, rbi: 4 });
+  assert("그랜드슬램: 홈런 자기 rbi4 → 4(그랜드슬램)", inheritHitRbi(grandSlam, [grandSlam]) === 4);
+  // 2) 교차폴링 만루홈런(자기 rbi0 + 유령 단타 rbi4) → 4 상속 = 그랜드슬램 판정 유지(#473 시나리오)
+  const gsHrLate = mkHit({ type: "at_bat_homerun", batter: "오스틴", inning: 7, isTop: false, ts: "2026-06-27T11:11:00.000Z", rbi: 0 });
+  const gsSingle4 = mkHit({ type: "at_bat_hit", batter: "오스틴", inning: 7, isTop: false, ts: T, rbi: 4 });
+  assert("그랜드슬램: 교차폴링 홈런 rbi0 + 유령단타4 → 4", inheritHitRbi(gsHrLate, [gsSingle4, gsHrLate]) === 4);
+  // 3) 3타점 홈런(만루 아님) → 4 아님 = 일반 "홈런으로 3타점"
+  const hr3 = mkHit({ type: "at_bat_homerun", batter: "오스틴", inning: 7, isTop: false, ts: T, rbi: 3 });
+  assert("그랜드슬램 아님: 3타점 홈런 → 3(일반 홈런)", inheritHitRbi(hr3, [hr3]) === 3);
+}
+
 console.log(failed === 0 ? "\n✅ ALL PASS" : `\n❌ ${failed} FAILED`);
 process.exit(failed === 0 ? 0 : 1);
