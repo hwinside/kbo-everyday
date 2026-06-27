@@ -1,36 +1,40 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { motion } from "framer-motion";
 import Image from "next/image";
-import { Heart, MessageCircle, Share2, ChevronUp, Volume2, VolumeX } from "lucide-react";
+import { Heart, Volume2, VolumeX, ExternalLink } from "lucide-react";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { HIGHLIGHTS, rankHighlights, type Highlight } from "@/lib/constants/highlights";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { getFavoritePlayers } from "@/lib/store/favorites";
 
+/**
+ * YouTube ToS III.C.1 / III.I.4 compliance:
+ * - Native controls visible (controls=1) — YouTube logo/link not obscured.
+ * - NOTHING is rendered in front of the embedded iframe. All app chrome
+ *   (title, like, mute, outlink) lives in flex siblings OUTSIDE the player.
+ */
 function ReelSlide({
   reel,
   isActive,
   muted,
   liked,
   onLike,
-  onMute,
+  onToggleMute,
 }: {
   reel: Highlight;
   isActive: boolean;
   muted: boolean;
   liked: boolean;
   onLike: () => void;
-  onMute: () => void;
+  onToggleMute: () => void;
 }) {
   const t = reel.teamId ? getTeamById(reel.teamId) : null;
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [loaded, setLoaded] = useState(false);
 
-  // iframe src — mute=1 필수 (모바일 autoplay 정책)
+  // iframe src — mute=1 필수 (모바일 autoplay 정책), controls=1 (ToS 준수)
   const src = isActive
-    ? `https://www.youtube.com/embed/${reel.youtubeId}?autoplay=1&mute=${muted ? 1 : 0}&controls=0&modestbranding=1&rel=0&playsinline=1&loop=1&playlist=${reel.youtubeId}&enablejsapi=1`
+    ? `https://www.youtube.com/embed/${reel.youtubeId}?autoplay=1&mute=${muted ? 1 : 0}&controls=1&rel=0&playsinline=1&loop=1&playlist=${reel.youtubeId}&enablejsapi=1`
     : undefined;
 
   // postMessage로 play/pause 제어
@@ -44,75 +48,82 @@ function ReelSlide({
     } catch {}
   }, [isActive]);
 
+  const handleMute = () => {
+    const cw = iframeRef.current?.contentWindow;
+    if (cw) {
+      try {
+        cw.postMessage(
+          JSON.stringify({ event: "command", func: muted ? "unMute" : "mute", args: [] }),
+          "*",
+        );
+      } catch {}
+    }
+    onToggleMute();
+  };
+
   return (
-    <div className="relative h-full w-full snap-start snap-always flex items-center justify-center bg-black">
-      {/* Thumbnail (always visible as background) */}
-      <img
-        src={reel.thumbnail}
-        alt=""
-        className="absolute inset-0 w-full h-full object-cover"
-      />
-
-      {/* YouTube iframe (only when active) */}
-      {isActive && (
-        <iframe
-          ref={iframeRef}
-          key={reel.id}
-          src={src}
-          title={reel.title}
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowFullScreen
-          onLoad={() => setLoaded(true)}
-          className="absolute inset-0 w-full h-full z-[1]"
-          style={{ border: "none" }}
-        />
-      )}
-
-      {/* Gradients */}
-      <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/60 to-transparent pointer-events-none z-[2]" />
-      <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/80 to-transparent pointer-events-none z-[2]" />
-
-      {/* Right actions */}
-      <div className="absolute right-3 bottom-32 flex flex-col items-center gap-5 z-[3]">
-        {t && (
-          <div className="w-10 h-10 rounded-full bg-white p-1 flex items-center justify-center shadow-lg">
-            <Image src={t.logoPath} alt="" width={28} height={28} unoptimized className="object-contain" />
-          </div>
+    <div className="relative h-full w-full snap-start snap-always flex flex-col bg-black">
+      {/* Player region — no overlays on the iframe (YouTube ToS III.C.1) */}
+      <div className="flex-1 min-h-0 flex items-center justify-center bg-black">
+        {isActive ? (
+          <iframe
+            ref={iframeRef}
+            key={reel.id}
+            src={src}
+            title={reel.title}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            className="w-full h-full"
+            style={{ border: "none" }}
+          />
+        ) : (
+          <img
+            src={reel.thumbnail}
+            alt=""
+            className="max-h-full max-w-full object-contain"
+          />
         )}
-        <button onClick={onLike} className="flex flex-col items-center gap-1">
-          <Heart size={28} fill={liked ? "#FF3B5C" : "none"} className={liked ? "text-[#FF3B5C]" : "text-white"} />
-          <span className="text-xs text-white font-medium">좋아요</span>
-        </button>
-        <button className="flex flex-col items-center gap-1">
-          <MessageCircle size={28} className="text-white" />
-          <span className="text-xs text-white font-medium">댓글</span>
-        </button>
-        <button className="flex flex-col items-center gap-1">
-          <Share2 size={28} className="text-white" />
-          <span className="text-xs text-white font-medium">공유</span>
-        </button>
-        <button 
-          className="flex flex-col items-center gap-1"
-          onClick={() => window.open(`https://www.youtube.com/watch?v=${reel.youtubeId}`, "_blank")}
-        >
-          <Volume2 size={28} className="text-white" />
-          <span className="text-xs text-white font-medium">소리</span>
-        </button>
-        
       </div>
 
-      {/* Bottom info */}
-      <div className="absolute left-4 right-16 bottom-24 z-[3]">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-sm font-bold text-white">{reel.channel}</span>
+      {/* Info + actions — OUTSIDE the player */}
+      <div className="shrink-0 bg-black px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)]">
+        <div className="flex items-center gap-2 mb-1">
           {t && (
-            <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: `${getTeamBgColor(t)}60`, color: t.colorLight }}>
+            <span className="w-6 h-6 rounded-full bg-white p-0.5 flex items-center justify-center shrink-0">
+              <Image src={t.logoPath} alt="" width={18} height={18} unoptimized className="object-contain" />
+            </span>
+          )}
+          <span className="text-sm font-bold text-white truncate">{reel.channel}</span>
+          {t && (
+            <span
+              className="text-xs px-1.5 py-0.5 rounded-full font-medium shrink-0"
+              style={{ backgroundColor: `${getTeamBgColor(t)}60`, color: t.colorLight }}
+            >
               {t.shortName}
             </span>
           )}
+          <span className="ml-auto text-xs text-white/40 shrink-0">{reel.timeAgo}</span>
         </div>
-        <p className="text-sm text-white/90 leading-snug line-clamp-2">{reel.title}</p>
-        <p className="mt-1 text-xs text-white/50">{reel.timeAgo}</p>
+        <p className="text-sm text-white/90 leading-snug line-clamp-2 mb-3">{reel.title}</p>
+        <div className="flex items-center gap-5">
+          <button onClick={onLike} className="flex items-center gap-1.5 active:scale-95 transition-transform">
+            <Heart size={22} fill={liked ? "#FF3B5C" : "none"} className={liked ? "text-[#FF3B5C]" : "text-white"} />
+            <span className="text-xs text-white font-medium">좋아요</span>
+          </button>
+          <button onClick={handleMute} className="flex items-center gap-1.5 active:scale-95 transition-transform">
+            {muted ? <VolumeX size={22} className="text-white" /> : <Volume2 size={22} className="text-white" />}
+            <span className="text-xs text-white font-medium">{muted ? "소리 켜기" : "소리 끄기"}</span>
+          </button>
+          <a
+            href={`https://www.youtube.com/watch?v=${reel.youtubeId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto flex items-center gap-1.5 active:scale-95 transition-transform"
+          >
+            <ExternalLink size={20} className="text-white" />
+            <span className="text-xs text-white font-medium">유튜브</span>
+          </a>
+        </div>
       </div>
     </div>
   );
@@ -133,7 +144,7 @@ export default function HighlightsPage() {
       .then(r => r.json())
       .then(d => {
         if (d.items?.length) {
-          const ytHighlights: Highlight[] = d.items.map((item: { id: string; title: string; publishedAt: string }, i: number) => ({
+          const ytHighlights: Highlight[] = d.items.map((item: { id: string; title: string; publishedAt: string }) => ({
             id: `yt-${item.id}`,
             youtubeId: item.id,
             title: item.title,
@@ -169,20 +180,20 @@ export default function HighlightsPage() {
   if (!feed.length) return null;
 
   return (
-    <div className="fixed inset-0 z-40 bg-black">
-      {/* Header */}
-      <div className="absolute top-0 left-0 right-0 z-10 pt-safe">
+    <div className="fixed inset-0 z-40 bg-black flex flex-col">
+      {/* Header (outside the scroll/player area) */}
+      <div className="shrink-0 pt-safe">
         <div className="flex items-center justify-between px-4 py-3">
-          <h1 className="text-lg font-bold text-white drop-shadow-lg">영상</h1>
+          <h1 className="text-lg font-bold text-white">영상</h1>
           <span className="text-xs text-white/50 tabular-nums">{currentIdx + 1} / {feed.length}</span>
         </div>
       </div>
 
-      {/* Vertical snap scroll */}
+      {/* Vertical snap scroll — swipe between videos still works */}
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className="h-full w-full overflow-y-auto snap-y snap-mandatory hide-scrollbar"
+        className="flex-1 min-h-0 w-full overflow-y-auto snap-y snap-mandatory hide-scrollbar"
       >
         {feed.map((reel, idx) => (
           <ReelSlide
@@ -192,23 +203,10 @@ export default function HighlightsPage() {
             muted={muted}
             liked={liked.has(reel.id)}
             onLike={() => toggleLike(reel.id)}
-            onMute={() => setMuted(!muted)}
+            onToggleMute={() => setMuted(m => !m)}
           />
         ))}
       </div>
-
-      {/* First slide hint */}
-      {currentIdx === 0 && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 2 }}
-          className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center text-white/40 z-10 pointer-events-none"
-        >
-          <ChevronUp size={20} className="animate-bounce" />
-          <span className="text-xs">위로 스와이프</span>
-        </motion.div>
-      )}
     </div>
   );
 }
