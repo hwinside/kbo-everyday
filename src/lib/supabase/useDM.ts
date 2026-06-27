@@ -221,8 +221,11 @@ export function useDMChat(conversationId: string) {
 
   // 메시지 전송 (차단 체크)
   const sendMessage = useCallback(
-    async (content: string) => {
-      if (!user || !content.trim()) return false;
+    async (content: string, imageUrls?: string[]) => {
+      const trimmed = content.trim();
+      const images = (imageUrls ?? []).filter((u) => typeof u === "string" && u.length > 0);
+      // 텍스트 또는 사진 중 하나는 있어야 전송
+      if (!user || (!trimmed && images.length === 0)) return false;
 
       // 차단 여부 체크
       const { data: conv } = await supabase
@@ -250,14 +253,16 @@ export function useDMChat(conversationId: string) {
       const { error } = await supabase.from("dm_messages").insert({
         conversation_id: conversationId,
         sender_id: user.id,
-        content: content.trim(),
+        content: trimmed,
+        ...(images.length > 0 ? { image_urls: images } : {}),
       });
 
       if (!error) {
-        // last_message 업데이트
+        // last_message 업데이트 (사진만 보낸 경우 "[사진]" 표기)
+        const preview = trimmed || (images.length > 0 ? "[사진]" : "");
         await supabase
           .from("dm_conversations")
-          .update({ last_message: content.trim(), last_message_at: new Date().toISOString() })
+          .update({ last_message: preview, last_message_at: new Date().toISOString() })
           .eq("id", conversationId);
       }
 
