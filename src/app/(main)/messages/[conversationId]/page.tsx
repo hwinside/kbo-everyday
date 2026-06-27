@@ -9,7 +9,6 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { useBlockUser } from "@/lib/supabase/useBlock";
 import { submitDMReport } from "@/lib/supabase/useBlock";
 import { supabase } from "@/lib/supabase/client";
-import { uploadImages } from "@/lib/supabase/storage";
 import { OPERATOR_USER_ID } from "@/lib/constants/operator";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { linkifyText } from "@/lib/linkify";
@@ -106,11 +105,27 @@ export default function DMChatPage() {
 
     setUploading(true);
     const remaining = MAX_DM_IMAGES - images.length;
-    const urls = await uploadImages(files.slice(0, remaining), "dm");
-    if (urls.length > 0) {
-      setImages((prev) =>
-        [...prev, ...urls.map((url, i) => ({ url, name: files[i]?.name ?? "image" }))].slice(0, MAX_DM_IMAGES)
-      );
+    const next: { url: string; name: string }[] = [];
+    // 클라 직접 업로드는 photos/dm/* Storage RLS에 막히므로 서버 route 경유(쿠키 인증 + service role).
+    for (const file of files.slice(0, remaining)) {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("conversationId", conversationId);
+      try {
+        const res = await fetch("/api/dm/upload", {
+          method: "POST",
+          credentials: "include",
+          body: formData,
+        });
+        if (!res.ok) continue;
+        const json = await res.json();
+        if (typeof json.url === "string") next.push({ url: json.url, name: file.name });
+      } catch {
+        /* ignore */
+      }
+    }
+    if (next.length > 0) {
+      setImages((prev) => [...prev, ...next].slice(0, MAX_DM_IMAGES));
     }
     setUploading(false);
   };

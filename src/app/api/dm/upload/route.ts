@@ -1,0 +1,96 @@
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
+import { NextRequest, NextResponse } from "next/server";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { OPERATOR_USER_ID } from "@/lib/constants/operator";
+
+const BUCKET = "photos";
+const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+const EXT_BY_TYPE: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+
+// 유저→운영자 쪽지 이미지 업로드.
+// 클라 직접 업로드는 photos/dm/* Storage RLS(403)에 막히므로, 로그인 유저(쿠키 세션)를
+// 검증한 뒤 service role로 photos/dm/ 경로에 저장하고 공개 URL을 반환한다.
+// 첨부는 운영팀과의 대화에서만 허용(유저↔유저 DM은 범위 외)이라, conversationId 상대가
+// 운영팀(OPERATOR_USER_ID)인지 서버에서 한 번 더 확인한다.
+export async function POST(req: NextRequest) {
+  const cookieStore = await cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll() {
+          /* read-only: 업로드 요청에서 세션 갱신 불필요 */
+        },
+      },
+    }
+  );
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const formData = await req.formData();
+  const file = formData.get("file");
+  const conversationId = formData.get("conversationId");
+  if (!(file instanceof File)) {
+    return NextResponse.json({ error: "No file" }, { status: 400 });
+  }
+  if (typeof conversationId !== "string" || !conversationId) {
+    return NextResponse.json({ error: "No conversation" }, { status: 400 });
+  }
+
+  const ext = EXT_BY_TYPE[file.type];
+  if (!ext) {
+    return NextResponse.json(
+      { error: "이미지 파일(jpg/png/webp/gif)만 가능합니다" },
+      { status: 400 }
+    );
+  }
+  if (file.size > MAX_SIZE) {
+    return NextResponse.json({ error: "파일이 너무 큽니다 (최대 5MB)" }, { status: 400 });
+  }
+
+  const admin = getSupabaseAdmin();
+
+  // 대화 참가자 검증: 요청 유저가 이 대화의 구성원이고, 상대가 운영팀인지 확인.
+  const { data: conv } = await admin
+    .from("dm_conversations")
+    .select("user1_id, user2_id")
+    .eq("id", conversationId)
+    .single();
+  if (!conv) {
+    return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+  }
+  const members = [conv.user1_id, conv.user2_id];
+  if (!members.includes(user.id) || !members.includes(OPERATOR_USER_ID)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const path = `dm/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  const buffer = Buffer.from(await file.arrayBuffer());
+
+  const { error: uploadError } = await admin.storage.from(BUCKET).upload(path, buffer, {
+    cacheControl: "31536000",
+    upsert: false,
+    contentType: file.type,
+  });
+  if (uploadError) {
+    return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+  }
+
+  const { data } = admin.storage.from(BUCKET).getPublicUrl(path);
+  return NextResponse.json({ url: data.publicUrl });
+}
