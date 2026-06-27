@@ -149,6 +149,15 @@ export default function PostDetail({ postId }: PostDetailProps) {
     };
   }, []);
 
+  // Lock the document scroll while PostDetail is mounted so the document-flow
+  // header can't be dragged under the notch/Dynamic Island by scrollIntoView or
+  // a stray tap on iOS WKWebView. All scrolling stays in the inner container.
+  useEffect(() => {
+    const html = document.documentElement;
+    html.classList.add("postdetail-open");
+    return () => html.classList.remove("postdetail-open");
+  }, []);
+
   // 게시글 메뉴/편집 상태
   const [postMenuOpen, setPostMenuOpen] = useState(false);
   const [postEditing, setPostEditing] = useState(false);
