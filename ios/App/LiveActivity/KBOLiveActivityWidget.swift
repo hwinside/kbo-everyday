@@ -189,9 +189,11 @@ struct KBOLiveActivityWidget: Widget {
                     DITeam(code: context.attributes.homeTeamCode, score: context.state.homeScore)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    // 가운데에 N회초/말. 숫자=Montserrat, 회초/말=Noto.
+                    // 가운데에 N회초/말. 숫자=Montserrat, 회초/말=Noto. (경기 전엔 이닝 대신 예정 시각)
                     Group {
-                        if context.state.isFinal {
+                        if context.state.isScheduled {
+                            Text(context.state.startTime ?? "경기 예정").font(notoKR(12, .bold))
+                        } else if context.state.isFinal {
                             Text("경기 종료").font(notoKR(13, .bold))
                         } else {
                             inningRun(context.state.inningText, 13, .bold)
@@ -218,7 +220,7 @@ struct KBOLiveActivityWidget: Widget {
             } compactTrailing: {
                 // 노치 바로 우측에 N회초/말(센터 인접) + 점수 + 약어 + 로고.
                 HStack(spacing: 2) {
-                    if !context.state.isFinal && !context.state.inningText.isEmpty {
+                    if !context.state.isFinal && !context.state.isScheduled && !context.state.inningText.isEmpty {
                         inningRun(context.state.inningText, 10, .semibold)
                             .foregroundStyle(.white.opacity(0.85))
                             .lineLimit(1)
@@ -307,11 +309,11 @@ struct KBOLockScreenCard: View {
                             .foregroundStyle(.white.opacity(0.75))
                     }
                     if state.isScheduled {
-                        // 경기 전 — 스코어 대신 양팀 약어 vs + 예정 시각.
+                        // 경기 전 — 스코어 대신 양팀 약어 vs + 예정 시각. (원본 코드 LT 대신 shortName 롯데)
                         HStack(spacing: 8) {
-                            Text(attributes.awayTeamCode).font(montserrat(20, .black))
+                            teamShortText(attributes.awayTeamCode, 20, .black)
                             Text("vs").font(montserrat(12, .bold)).foregroundStyle(.white.opacity(0.5))
-                            Text(attributes.homeTeamCode).font(montserrat(20, .black))
+                            teamShortText(attributes.homeTeamCode, 20, .black)
                         }
                         Text(state.startTime ?? "경기 예정")
                             .font(notoKR(9, .bold))
