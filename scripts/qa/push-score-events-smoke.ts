@@ -10,7 +10,7 @@
  * 실행: npm run qa:push-score-events
  */
 import { generateEvents, type PrevGameState } from "@/lib/event-generator";
-import { isHomerunCoveredRun, resolveHomerunScore } from "@/lib/notifications/score-dedupe";
+import { isHomerunCoveredRun, resolveHomerunScore, resolvePhantomSingle, inheritHitRbi, PHANTOM_SINGLE_WAIT_MS } from "@/lib/notifications/score-dedupe";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
 import type { BatterRecord, GameDetailResponse } from "@/app/api/game-detail/route";
 import type { GameEvent } from "@/types/game-events";
@@ -205,6 +205,59 @@ function mkHr(snapAway: number, snapHome: number, ts = "2026-06-24T10:43:48.000Z
   // 7) 선행 득점 미반영(snapshot 0:3 = 현재 0:3, 신선) → defer (0:3 stale 방지)
   r = resolveHomerunScore(hr03, [hr03], 0, 3, fresh);
   assert("홈런점수: 선행득점 미반영(신선) → defer", r.defer === true, r);
+}
+
+// ── ⑤ 교차-폴링 유령 단타 (resolvePhantomSingle / inheritHitRbi) ────────────
+// BoxScore H(안타)가 홈런/장타 카운트보다 먼저 갱신돼, 같은 타석 홈런이 "안타로 N타점"으로
+// 먼저 발송되는 사고(고객 2026-06-27 오스틴 만루홈런). 적시 단타를 한 폴링 확인 → 같은 타자
+// 장타/홈런이 잡히면 단타 억제 + 장타/홈런이 타점 물려받아 "홈런으로 N타점" 한 건으로 합침.
+function mkHit(o: { type: GameEvent["type"]; batter: string; inning: number; isTop: boolean; ts: string; rbi?: number }): GameEvent {
+  return mkGE({
+    type: o.type, inning: o.inning, isTop: o.isTop, timestamp: o.ts,
+    detail: o.rbi !== undefined ? { batter: o.batter, rbi: o.rbi } : { batter: o.batter },
+  });
+}
+{
+  const ST = "2026-06-27T10:43:00.000Z";
+  const sMs = Date.parse(ST);
+  const fresh = sMs + 10_000;                       // 10s — 확인창 안(신선)
+  const stale = sMs + PHANTOM_SINGLE_WAIT_MS + 5_000; // 확인창 경과
+
+  const single4 = mkHit({ type: "at_bat_hit", batter: "오스틴", inning: 4, isTop: false, ts: ST, rbi: 4 });
+  const single0 = mkHit({ type: "at_bat_hit", batter: "오스틴", inning: 4, isTop: false, ts: ST, rbi: 0 });
+  // 단타 ~60s 뒤 따라잡힌 홈런(자기 rbi 0 = 타점이 단타에 먼저 귀속됨)
+  const hrLate = mkHit({ type: "at_bat_homerun", batter: "오스틴", inning: 4, isTop: false, ts: "2026-06-27T10:44:00.000Z", rbi: 0 });
+
+  // 1) 0타점 단타 → 즉시 발송(유령 후보 아님)
+  assert("유령단타: 0타점 단타 → send", resolvePhantomSingle(single0, [single0], fresh) === "send");
+  // 2) 적시 단타, 장타 미확인, 신선 → defer(다음 폴링 확인)
+  assert("유령단타: 적시 단타 신선 → defer", resolvePhantomSingle(single4, [single4], fresh) === "defer");
+  // 3) 적시 단타, 장타 미확인, 확인창 경과 → send(진짜 적시타)
+  assert("유령단타: 적시 단타 stale → send", resolvePhantomSingle(single4, [single4], stale) === "send");
+  // 4) 같은 타자 홈런이 직후 잡힘 → suppress(유령)
+  assert("유령단타: 직후 홈런 → suppress", resolvePhantomSingle(single4, [single4, hrLate], fresh) === "suppress");
+  // 5) 다른 타자 홈런 → 억제 안 함(신선이라 defer)
+  const otherHr = mkHit({ type: "at_bat_homerun", batter: "박동원", inning: 4, isTop: false, ts: "2026-06-27T10:44:00.000Z", rbi: 0 });
+  assert("유령단타: 다른 타자 홈런 → defer(억제X)", resolvePhantomSingle(single4, [single4, otherHr], fresh) === "defer");
+  // 6) 반대 half 홈런 → 억제 안 함
+  const topHr = mkHit({ type: "at_bat_homerun", batter: "오스틴", inning: 4, isTop: true, ts: "2026-06-27T10:44:00.000Z", rbi: 0 });
+  assert("유령단타: 반대 half 홈런 → defer(억제X)", resolvePhantomSingle(single4, [single4, topHr], fresh) === "defer");
+  // 7) 홈런이 단타보다 *먼저*(et<st) → 억제 안 함(이전 타석 홈런 보호)
+  const hrBefore = mkHit({ type: "at_bat_homerun", batter: "오스틴", inning: 4, isTop: false, ts: "2026-06-27T10:40:00.000Z", rbi: 1 });
+  assert("유령단타: 이전 홈런(et<st) → defer(억제X)", resolvePhantomSingle(single4, [single4, hrBefore], fresh) === "defer");
+
+  // inheritHitRbi: 홈런이 유령 단타 타점을 물려받음
+  // 8) 홈런 rbi 0 + 직전 유령 단타 rbi 4 → 4 물려받음
+  assert("타점상속: 홈런 rbi0 + 유령단타 rbi4 → 4", inheritHitRbi(hrLate, [single4, hrLate]) === 4, inheritHitRbi(hrLate, [single4, hrLate]));
+  // 9) 홈런이 자기 rbi 보유(같은-폴링 정상) → 자기 값
+  const hrOwn = mkHit({ type: "at_bat_homerun", batter: "오스틴", inning: 4, isTop: false, ts: "2026-06-27T10:44:00.000Z", rbi: 3 });
+  assert("타점상속: 홈런 자기 rbi3 → 3", inheritHitRbi(hrOwn, [hrOwn]) === 3);
+  // 10) 단타가 홈런보다 뒤(et>ht) → 상속 안 함(0)
+  const lateSingle = mkHit({ type: "at_bat_hit", batter: "오스틴", inning: 4, isTop: false, ts: "2026-06-27T10:45:00.000Z", rbi: 2 });
+  assert("타점상속: 단타가 홈런 뒤 → 0", inheritHitRbi(hrLate, [hrLate, lateSingle]) === 0);
+  // 11) 다른 타자 단타 → 상속 안 함(0)
+  const otherSingle = mkHit({ type: "at_bat_hit", batter: "박동원", inning: 4, isTop: false, ts: ST, rbi: 4 });
+  assert("타점상속: 다른 타자 단타 → 0", inheritHitRbi(hrLate, [otherSingle, hrLate]) === 0);
 }
 
 console.log(failed === 0 ? "\n✅ ALL PASS" : `\n❌ ${failed} FAILED`);

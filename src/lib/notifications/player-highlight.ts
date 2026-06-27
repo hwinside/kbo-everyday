@@ -2,6 +2,7 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { sendFcmToUsers } from "@/lib/notifications/fcm";
 import { teamIdByShortName } from "@/lib/notifications/game-status";
 import { claimEvent, unclaimEvent } from "@/lib/notifications/game-score";
+import { resolvePhantomSingle, inheritHitRbi } from "@/lib/notifications/score-dedupe";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent, GameEventType } from "@/types/game-events";
@@ -75,6 +76,15 @@ export async function notifyPlayerHighlights(
         if (Number.isFinite(evMs) && Date.now() - evMs > FRESH_MS) continue;
       }
 
+      // 교차-폴링 유령 단타: 적시(rbi>0) 단타는 H 카운트 선반영으로 생긴 홈런/장타일 수 있어
+      // 한 폴링 확인한다(고객 2026-06-27 오스틴 만루홈런 "안타로 4타점" 오발송).
+      //  - defer: 신선 + 아직 장타/홈런 미확인 → 다음 폴링 재확인(claim 안 함).
+      //  - suppress: 같은 타자 장타/홈런이 잡힘 → 그 알림이 타점 물려받아 대체(claim 후 미발송).
+      const phantom = ev.type === "at_bat_hit"
+        ? resolvePhantomSingle(ev, events, Date.now())
+        : "send";
+      if (phantom === "defer") continue;
+
       // 대상 선수: 활약=타자(공격팀, isTop이면 원정) / 삼진=투수(수비팀, isTop이면 홈).
       // 동명이인 27그룹 → teamId로 구분(SSOT resolve-player). at_bat_strikeout의
       // detail.pitcher = 삼진 잡은 투수.
@@ -94,6 +104,7 @@ export async function notifyPlayerHighlights(
       // 활약/삼진은 별개 타입이라 suffix로 키 분리.
       const dedupId = isStrikeout ? `${ev.id}#fav-so` : `${ev.id}#fav`;
       if (!(await claimEvent(dedupId, gameId))) continue; // 이미 발송됨/보류
+      if (phantom === "suppress") continue; // 유령 단타 — 같은 타석 홈런/장타 알림이 대체(claim으로 종결)
 
       // 이 선수를 최애선수로 둔 유저 (favorite_players: [{playerId: kboId}])
       const { data: fansData, error } = await supabase
@@ -106,7 +117,8 @@ export async function notifyPlayerHighlights(
 
       // 타점(detail.rbi)이 있으면 "{라벨}{으로/로} N타점 획득!", 0타점이면 "{라벨}!" (하린아빠 확정)
       const label = HIGHLIGHT_LABEL[ev.type] ?? "활약";
-      const rbi = ev.detail?.rbi ?? 0;
+      // 홈런/장타가 교차폴링으로 자기 rbi 0이면 유령 단타의 타점을 물려받아 "홈런으로 N타점"으로 합침.
+      const rbi = ev.type === "at_bat_hit" ? (ev.detail?.rbi ?? 0) : inheritHitRbi(ev, events);
       const title = isStrikeout
         ? `⚾ ${resolved.name} 삼진!`
         : rbi > 0

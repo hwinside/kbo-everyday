@@ -92,3 +92,69 @@ export function resolveHomerunScore(
   if (Number.isFinite(ht) && nowMs - ht < waitMs) return { defer: true, awayScore: outAway, homeScore: outHome };
   return { defer: false, awayScore: outAway, homeScore: outHome };
 }
+
+// 교차-폴링 "유령 단타" 처리 — 최애선수 활약 알림(player-highlight)에서 홈런/장타가
+// "안타로 N타점 획득!"으로 잘못 발송되는 사고(고객 2026-06-27 오스틴 만루홈런) 보강.
+//
+// BoxScore의 안타 수(H)는 홈런을 포함한다. H 카운트가 홈런(hr)·장타(2b/3b) 카운트보다
+// *먼저* 갱신되는 폴링이 있으면, event-generator가 그 타석을 단타(at_bat_hit)로 파생하고
+// 그 윈도우의 타점까지 단타에 귀속한다(currSingles = hits - hr - h3b - h2b). 다음 폴링에
+// hr 카운트가 따라잡히면 at_bat_homerun이 rbi 0으로 별도 emit → "안타로 4타점" + "홈런!"
+// 두 알림이 나간다.
+//
+// 적시(rbi>0) 단타만 한 폴링 확인 대기(defer)한다. 그 사이 같은 타자·같은 half의 장타/홈런이
+// 잡히면 그 단타는 유령(suppress) — 장타/홈런 알림이 inheritHitRbi로 타점을 물려받아
+// "홈런으로 N타점 획득!" 한 건으로 합친다. 0타점 단타는 득점 동반 장타/홈런의 유령일 수 없어
+// (홈런/적시장타는 최소 1타점) 즉시 발송(지연 없음).
+export const PHANTOM_SINGLE_WAIT_MS = 45_000; // < 1폴링(매분) — 다음 폴링에 stale → 발송. 1폴링 지연 홈런은 absorber로 흡수.
+
+const XBH_TYPES = new Set<GameEvent["type"]>(["at_bat_homerun", "at_bat_triple", "at_bat_double"]);
+
+export type PhantomSingleAction = "send" | "defer" | "suppress";
+
+export function resolvePhantomSingle(
+  single: GameEvent,
+  allEvents: GameEvent[],
+  nowMs: number,
+  waitMs: number = PHANTOM_SINGLE_WAIT_MS,
+): PhantomSingleAction {
+  if (single.type !== "at_bat_hit") return "send";
+  const rbi = single.detail?.rbi ?? 0;
+  if (rbi <= 0) return "send"; // 0타점 단타는 유령 후보 아님 — 즉시 발송
+  const st = Date.parse(single.timestamp);
+  // 같은 타자·같은 half·단타 이후 짧은 창에 장타/홈런이 잡히면 그 단타는 사실 그 장타다.
+  const absorbed = allEvents.some((e) => {
+    if (!XBH_TYPES.has(e.type)) return false;
+    if (e.detail?.batter !== single.detail?.batter) return false;
+    if (e.isTop !== single.isTop || e.inning !== single.inning) return false;
+    const et = Date.parse(e.timestamp);
+    // 단방향: 장타(et)는 단타(st) 이후여야 매칭 — 이전 장타가 무관한 후속 단타를 억제하지 않도록.
+    return Number.isFinite(et) && Number.isFinite(st) && et >= st && et - st <= HR_RUN_DEDUPE_WINDOW_MS;
+  });
+  if (absorbed) return "suppress";
+  // 아직 장타/홈런이 안 잡혔지만 신선하면 한 폴링 확인 대기 — 유령일 수 있다.
+  if (Number.isFinite(st) && nowMs - st < waitMs) return "defer";
+  return "send"; // 확인창 경과 + 장타 없음 → 진짜 적시 단타
+}
+
+// 장타/홈런 알림이 자기 rbi가 0이면(교차폴링으로 타점이 유령 단타에 먼저 귀속됐을 때),
+// 같은 타자·같은 half·직전 창의 유령 단타 rbi를 물려받는다 → "홈런으로 N타점 획득!"으로 합침.
+// rbi가 이미 있으면(같은-폴링 정상 케이스) 자기 값을 그대로 쓴다.
+export function inheritHitRbi(hit: GameEvent, allEvents: GameEvent[]): number {
+  const own = hit.detail?.rbi ?? 0;
+  if (own > 0) return own;
+  if (!XBH_TYPES.has(hit.type)) return own;
+  const ht = Date.parse(hit.timestamp);
+  let best = 0;
+  for (const e of allEvents) {
+    if (e.type !== "at_bat_hit") continue;
+    if (e.detail?.batter !== hit.detail?.batter) continue;
+    if (e.isTop !== hit.isTop || e.inning !== hit.inning) continue;
+    const et = Date.parse(e.timestamp);
+    // 유령 단타는 장타(ht)보다 *먼저* 잡힌다(et <= ht).
+    if (Number.isFinite(et) && Number.isFinite(ht) && et <= ht && ht - et <= HR_RUN_DEDUPE_WINDOW_MS) {
+      best = Math.max(best, e.detail?.rbi ?? 0);
+    }
+  }
+  return best;
+}
