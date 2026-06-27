@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { X, ChevronUp, ChevronDown, Volume2, VolumeX, Play, ExternalLink } from "lucide-react";
+import { X, ChevronUp, ChevronDown, Volume2, VolumeX, ExternalLink } from "lucide-react";
 
 interface ReelVideo {
   thumbnail?: string;
@@ -23,11 +23,11 @@ interface ReelViewerProps {
  *   container-level touch handlers; the cross-origin iframe captures its own
  *   touches, so the player surface is never covered by an overlay element.
  *   App chrome (header, title, mute, nav) sits in flex siblings outside it.
+ * - Opens with muted autoplay (mobile policy allows autoplay only when muted).
  */
 export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerProps) {
   const [current, setCurrent] = useState(startIndex);
-  const [muted, setMuted] = useState(true); // 뮤트로 시작
-  const [started, setStarted] = useState(false);
+  const [muted, setMuted] = useState(true); // 뮤트로 시작 (muted여야 autoplay 허용)
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const touchStartY = useRef(0);
   const touchMoved = useRef(false);
@@ -72,8 +72,6 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
     else if (diff < -60) goPrev();
   };
 
-  const handleStart = () => setStarted(true);
-
   useEffect(() => {
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = ""; };
@@ -81,14 +79,13 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
 
   // 영상 변경 시 loadVideoById (단일 iframe 재사용)
   useEffect(() => {
-    if (!started) return;
     if (video.id === prevVideoId.current) return;
     prevVideoId.current = video.id;
     postCmd("loadVideoById", [video.id]);
     if (muted) {
       setTimeout(() => postCmd("mute"), 300);
     }
-  }, [video.id, started, muted, postCmd]);
+  }, [video.id, muted, postCmd]);
 
   return (
     <div
@@ -110,41 +107,26 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
         </div>
       </div>
 
-      {/* Player region — no overlays on the iframe (YouTube ToS III.C.1) */}
+      {/* Player region — no overlays on the iframe (YouTube ToS III.C.1). Muted autoplay on open. */}
       <div className="flex-1 min-h-0 flex items-center justify-center bg-black">
-        {started ? (
-          <iframe
-            ref={iframeRef}
-            src={`https://www.youtube.com/embed/${videos[startIndex].id}?autoplay=1&mute=1&controls=1&rel=0&playsinline=1&enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`}
-            className="w-full h-full"
-            style={{ border: "none" }}
-            allow="autoplay; encrypted-media"
-            allowFullScreen
-          />
-        ) : (
-          <button onClick={handleStart} className="relative w-full h-full flex items-center justify-center" aria-label="재생">
-            <img
-              src={video.thumbnail || `https://img.youtube.com/vi/${video.id}/hqdefault.jpg`}
-              alt=""
-              className="max-h-full max-w-full object-contain"
-            />
-            <span className="absolute w-20 h-20 rounded-full bg-white/90 flex items-center justify-center shadow-2xl">
-              <Play size={36} className="text-black ml-1.5" fill="black" />
-            </span>
-          </button>
-        )}
+        <iframe
+          ref={iframeRef}
+          src={`https://www.youtube.com/embed/${videos[startIndex].id}?autoplay=1&mute=1&controls=1&rel=0&playsinline=1&enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`}
+          className="w-full h-full"
+          style={{ border: "none" }}
+          allow="autoplay; encrypted-media"
+          allowFullScreen
+        />
       </div>
 
       {/* Title + actions + nav — outside player */}
       <div className="shrink-0 bg-black px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)]">
         <p className="text-white text-sm font-medium line-clamp-2 mb-3">{video.title}</p>
         <div className="flex items-center gap-5">
-          {started && (
-            <button onClick={toggleMute} className="flex items-center gap-1.5 active:scale-95 transition-transform">
-              {muted ? <VolumeX size={22} className="text-white" /> : <Volume2 size={22} className="text-white" />}
-              <span className="text-xs text-white font-medium">{muted ? "소리 켜기" : "소리 끄기"}</span>
-            </button>
-          )}
+          <button onClick={toggleMute} className="flex items-center gap-1.5 active:scale-95 transition-transform">
+            {muted ? <VolumeX size={22} className="text-white" /> : <Volume2 size={22} className="text-white" />}
+            <span className="text-xs text-white font-medium">{muted ? "소리 켜기" : "소리 끄기"}</span>
+          </button>
           <a
             href={`https://www.youtube.com/watch?v=${video.id}`}
             target="_blank"
