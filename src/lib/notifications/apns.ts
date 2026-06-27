@@ -124,8 +124,16 @@ async function sendToHost(
       authorization: `bearer ${token}`,
       "apns-topic": LIVE_ACTIVITY_TOPIC,
       "apns-push-type": "liveactivity",
-      "apns-priority": input.event === "end" ? "5" : "10",
-      "apns-expiration": "0",
+      // end도 priority 10 — priority 5는 APNs가 배터리 위해 지연시키는데, expiration 0과
+      // 겹치면 "지연 → 즉시배달 실패 → 폐기"로 '경기 종료' 전환 푸시가 유실됐다(서버는 200
+      // 받아 토큰을 지워버려 영영 재발송 안 됨). end는 경기당 1회뿐이라 빈도 budget 무관.
+      "apns-priority": "10",
+      // end는 만료를 미래(종료 카드 dismissal 시각)로 둬 APNs가 저장·재시도하게 한다.
+      // update는 즉시성이 중요하고 다음 폴링이 곧 덮으므로 0(1회 시도) 유지.
+      "apns-expiration":
+        input.event === "end"
+          ? String(input.dismissalDate ?? Math.floor(Date.now() / 1000) + 3600)
+          : "0",
       "content-type": "application/json",
     });
     let status = 0;
