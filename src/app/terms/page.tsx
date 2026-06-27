@@ -30,6 +30,14 @@ const sections = [
     ],
   },
   {
+    title: "제3조의2 (외부 서비스 약관 동의)",
+    body: [
+      "서비스는 KBO 관련 영상 콘텐츠를 제공하기 위해 YouTube API Services를 사용합니다. 회원은 본 약관에 동의함으로써 YouTube의 이용약관(https://www.youtube.com/t/terms)에도 함께 동의하는 것으로 간주됩니다.",
+      "YouTube API Services를 통해 제공되는 영상 메타데이터·썸네일·재생 기능의 저작권과 라이선스는 YouTube 및 원 저작자에게 귀속되며, 회원은 해당 콘텐츠를 YouTube 이용약관 및 관련 법령이 허용하는 범위 내에서만 이용할 수 있습니다.",
+      "회원이 YouTube에서 제공하는 인증 또는 로그인 기능을 사용할 경우, Google의 개인정보 처리방침(https://policies.google.com/privacy)도 함께 적용됩니다.",
+    ],
+  },
+  {
     title: "제4조 (회원가입 및 탈퇴)",
     body: [
       "회원가입은 서비스가 제공하는 소셜 로그인 절차와 약관 동의를 완료함으로써 성립합니다.",
@@ -106,7 +114,7 @@ const sections = [
 
 export default function TermsPage() {
   return (
-    <LegalPageLayout title="크보팬 이용약관" effectiveDate="2026-04-10" updatedAt="2026-04-10">
+    <LegalPageLayout title="크보팬 이용약관" effectiveDate="2026-04-10" updatedAt="2026-05-14">
       <p className="text-sm leading-7 text-text-secondary sm:text-base">
         본 약관은 크보팬 서비스 이용에 관한 기본적인 사항을 안내합니다. 서비스 이용 전 아래 내용을 확인해 주세요.
       </p>

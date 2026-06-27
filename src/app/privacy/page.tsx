@@ -27,7 +27,7 @@ const purposes = [
 const processors = [
   "Supabase (미국): 데이터베이스, 인증, 스토리지 운영",
   "Vercel (미국): 웹 애플리케이션 호스팅 및 로그 처리",
-  "Google (미국): OAuth 로그인 및 일부 분석 도구 제공",
+  "Google (미국): OAuth 로그인, YouTube API Services를 통한 KBO 관련 영상 콘텐츠 제공, 일부 분석 도구 제공",
 ];
 
 const rights = [
@@ -39,7 +39,7 @@ const rights = [
 
 export default function PrivacyPage() {
   return (
-    <LegalPageLayout title="크보팬 개인정보처리방침" effectiveDate="2026-04-10" updatedAt="2026-04-10">
+    <LegalPageLayout title="크보팬 개인정보처리방침" effectiveDate="2026-04-10" updatedAt="2026-05-14">
       <p className="text-sm leading-7 text-text-secondary sm:text-base">
         크보팬은 회원의 개인정보를 소중하게 생각하며, 관련 법령을 준수하기 위해 노력합니다. 본 방침은 서비스가 어떤 정보를 수집하고 어떻게 이용·보관·파기하는지 설명합니다.
       </p>
@@ -118,6 +118,40 @@ export default function PrivacyPage() {
           <li>서비스는 로그인 상태 유지, 기능 제공, 통계 분석을 위해 쿠키 또는 유사 기술을 사용할 수 있습니다.</li>
           <li>Google Analytics, Vercel Analytics 등 비식별 또는 최소한의 분석 도구를 사용할 수 있습니다.</li>
           <li>브라우저 설정을 통해 쿠키 저장을 거부할 수 있으나, 일부 기능 이용이 제한될 수 있습니다.</li>
+        </ul>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-xl font-bold text-text-primary">7의2. YouTube API Services 사용 고지</h2>
+        <p className="text-sm leading-7 text-text-secondary sm:text-base">
+          크보팬은 KBO 관련 영상 콘텐츠(하이라이트, 숏츠, 인터뷰 등)를 제공하기 위해 YouTube API Services를 사용합니다. YouTube API Services가 제공하는 영상 콘텐츠와 메타데이터에는 YouTube 이용약관 및 Google 개인정보 처리방침이 함께 적용됩니다.
+        </p>
+        <ul className="list-disc space-y-2 pl-5 text-sm leading-7 text-text-secondary sm:text-base">
+          <li>
+            YouTube의 이용약관:{" "}
+            <a
+              href="https://www.youtube.com/t/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent underline"
+            >
+              https://www.youtube.com/t/terms
+            </a>
+          </li>
+          <li>
+            Google 개인정보 처리방침:{" "}
+            <a
+              href="https://policies.google.com/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent underline"
+            >
+              https://policies.google.com/privacy
+            </a>
+          </li>
+          <li>YouTube API Services를 통해 수신한 공개 영상 메타데이터(영상 ID, 제목, 채널, 게시 시각, 썸네일 URL 등)는 서비스 운영에 필요한 범위에서 임시로 저장되며, YouTube Developer Policies가 정한 캐시 기한 내에서 주기적으로 갱신 또는 삭제됩니다.</li>
+          <li>회원은 크보팬이 보유한 본인의 개인정보 및 서비스 이용정보에 대한 접근·정정·삭제를 요청할 수 있으며, 요청은 아래 문의처(privacy@keubo.fan)로 접수할 수 있습니다.</li>
+          <li>현재 크보팬의 YouTube API Services 기능은 회원의 YouTube 계정 권한 또는 YouTube Authorized Data를 요청하지 않습니다. Google OAuth 로그인 등으로 본 서비스에 부여한 접근 권한은 Google 보안 설정 페이지(<a href="https://security.google.com/settings/security/permissions" target="_blank" rel="noopener noreferrer" className="text-accent underline">https://security.google.com/settings/security/permissions</a>)에서 철회할 수 있습니다.</li>
         </ul>
       </section>
 

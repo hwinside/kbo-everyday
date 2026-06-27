@@ -1,3 +1,4 @@
+import Link from "next/link";
 import TeamAccent from "@/components/ui/TeamAccent";
 import TabBar from "@/components/ui/TabBar";
 
@@ -18,7 +19,18 @@ export default function MainLayout({
       <ProfileSetupWrapper />
       <MyTeamCookieSync />
       <TeamAccent />
-      <main className="pb-tab-bar pt-safe">{children}</main>
+      <main className="pb-tab-bar pt-safe">
+        {children}
+        <footer className="mx-auto max-w-lg px-5 pb-8 pt-6 text-center text-xs leading-6 text-text-tertiary">
+          <Link href="/terms" className="underline-offset-2 hover:text-text-secondary hover:underline">
+            이용약관
+          </Link>
+          <span className="mx-2 text-border">|</span>
+          <Link href="/privacy" className="underline-offset-2 hover:text-text-secondary hover:underline">
+            개인정보처리방침
+          </Link>
+        </footer>
+      </main>
       <TabBar />
     </div>
   );
