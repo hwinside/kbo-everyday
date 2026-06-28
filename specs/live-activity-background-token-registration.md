@@ -47,9 +47,14 @@
 ### 3.7 백그라운드 실행시간
 - `register-device` POST를 `beginBackgroundTask`로 감싸 백그라운드 launch에서 곧 suspend 되기 전에 완료 보장.
 
+### 3.8 skip된 update token pending flush (삼순 조건부 GO blocker)
+- **레이스**: 백그라운드 launch에서 `observeAllActivities`의 기존 `Activity.activities` enumerate가 update token을 먼저 yield → 이 시점에 `observePushToStartToken`의 push-to-start persist가 *아직 안 됐으면* `registerUpdateTokenNatively`가 start token 없음으로 skip. 특히 **1.0.1→1.0.2 업데이트 후 앱 미오픈** 유저는 App Group 토큰이 비어 있어 실제 재현 가능 → update token 유실 → 카드 프리즈.
+- **수정**: skip 대신 `(gameId, pushToken)`을 `pendingUpdateTokens`(gameId 키 dict, 최신 토큰만) 큐에 보관. `observePushToStartToken`이 토큰 persist 직후 `flushPendingUpdateTokens()` 호출 → 큐 비우고 각 항목 `register-device` 재시도(persist된 start token으로 진행, 재큐잉/무한루프 없음). **절대 유실 금지.**
+- 동시 접근(`pushTokenUpdates` Task ↔ `pushToStartTokenUpdates` Task)이라 `NSLock`(`pendingLock`)으로 직렬화. 로깅은 gameId·pending 카운트만(토큰값 미로깅, 조건5 유지).
+
 ## 4. 변경 파일 (실제)
 - `ios/App/App/AppDelegate.swift` — didFinishLaunching `startObservers()`, willEnterForeground `resyncPushToStartTokenOnForeground()`.
-- `ios/App/App/LiveActivityController.swift` — App Group persist getter/setter, enumerate, rotate 감지, register-device 로깅+bgTask, `startObservers`/`resync` 메서드, `import UIKit`.
+- `ios/App/App/LiveActivityController.swift` — App Group persist getter/setter, enumerate, rotate 감지, register-device 로깅+bgTask, `startObservers`/`resync` 메서드, `import UIKit`, **skip된 update token pending 큐(`pendingUpdateTokens`/`pendingLock`)+`flushPendingUpdateTokens`(삼순 blocker)**.
 - `ios/App/App/LiveActivityPlugin.swift` — load에서 observer 시작 제거, JS multicast 콜백만.
 - 서버(`register-device`/`register`/`register-start`/`apns.ts`/`live-activity.ts`)·JS: **무변경**(register-device·register-start 기존 그대로).
 

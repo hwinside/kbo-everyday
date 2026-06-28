@@ -49,6 +49,17 @@ final class LiveActivityController {
         }
     }
 
+    /// blocker fix(삼순 조건부 GO) — push-to-start 토큰이 아직 persist되지 않은 시점에 update
+    /// token이 먼저 yield되면 register-device가 skip된다. 백그라운드 launch에서 update token
+    /// 관찰(`observeAllActivities`/`Activity.activities` enumerate)이 push-to-start persist
+    /// (`observePushToStartToken`)보다 먼저 도는 실제 레이스 — 특히 1.0.1→1.0.2 업데이트 후
+    /// 앱을 아직 안 연 유저는 App Group 토큰이 비어 있다. skip된 `(gameId, pushToken)`을 큐에
+    /// 보관했다가 push-to-start 토큰 persist 직후 flush해서 *절대 유실되지 않게* 한다.
+    /// gameId 키 dict — 같은 경기 최신 토큰만 유지(중복 register·무한 증가 방지). 서로 다른
+    /// Task(pushTokenUpdates ↔ pushToStartTokenUpdates)에서 접근하므로 락으로 직렬화한다.
+    private let pendingLock = NSLock()
+    private var pendingUpdateTokens: [String: String] = [:]   // gameId → 최신 pushToken
+
     /// 디바이스 단위 push-to-start 토큰을 관찰(iOS 17.2+). 활성 Activity가 없어도 발급되며,
     /// 서버는 이 토큰으로 최애팀 경기 시작 시 Activity를 원격 시작한다(W3b). 17.2 미만은 no-op.
     func observePushToStartToken() {
@@ -60,6 +71,7 @@ final class LiveActivityController {
                     let hex = tokenData.map { String(format: "%02x", $0) }.joined()
                     let rotated = latestPushToStartToken != nil && latestPushToStartToken != hex
                     latestPushToStartToken = hex   // 조건1·2: App Group 즉시 persist
+                    flushPendingUpdateTokens()     // blocker fix: start token 없어서 큐잉된 update token 재등록(유실 금지)
                     onPushToStartToken?(hex)       // 조건2: JS multicast → 포그라운드 register-start 재등록
                     if rotated {
                         NSLog("[LiveActivity] push-to-start token rotated → persisted; JS re-register requested")
@@ -90,8 +102,13 @@ final class LiveActivityController {
     /// 없으면(iOS 17.2 미만 등) skip하고 JS 경로에 위임한다.
     private func registerUpdateTokenNatively(gameId: String, pushToken: String) {
         guard let startToken = latestPushToStartToken else {
-            // 조건5: 토큰값 미로깅 — skip 사유만. push-to-start 토큰이 아직 persist 안 됨.
-            NSLog("[LiveActivity] register-device skip: no persisted push-to-start token (game=\(gameId))")
+            // blocker fix: skip하지 않고 큐에 보관 → push-to-start persist 직후 flush(유실 금지).
+            pendingLock.lock()
+            pendingUpdateTokens[gameId] = pushToken   // 같은 경기 최신 토큰만
+            let count = pendingUpdateTokens.count
+            pendingLock.unlock()
+            // 조건5: 토큰값 미로깅 — gameId/대기 카운트만.
+            NSLog("[LiveActivity] register-device deferred: no push-to-start token yet, queued (game=\(gameId), pending=\(count))")
             return
         }
         guard let url = URL(string: "https://keubo.fan/api/live-activity/register-device") else { return }
@@ -119,6 +136,22 @@ final class LiveActivityController {
             }
             if bgTask != .invalid { app.endBackgroundTask(bgTask); bgTask = .invalid }
         }.resume()
+    }
+
+    /// blocker fix(삼순) — push-to-start 토큰 persist 직후 호출. start token 부재로 큐잉됐던
+    /// update token을 register-device로 재시도한다(절대 유실 금지). 큐를 먼저 비우고 락 밖에서
+    /// 재전송 — 이때 latestPushToStartToken은 방금 채워졌으므로 재큐잉되지 않는다(무한루프 없음).
+    private func flushPendingUpdateTokens() {
+        guard latestPushToStartToken != nil else { return }
+        pendingLock.lock()
+        let pending = pendingUpdateTokens
+        pendingUpdateTokens.removeAll()
+        pendingLock.unlock()
+        guard !pending.isEmpty else { return }
+        NSLog("[LiveActivity] flushing \(pending.count) deferred update token(s) after push-to-start persist")
+        for (gameId, pushToken) in pending {
+            registerUpdateTokenNatively(gameId: gameId, pushToken: pushToken)
+        }
     }
 
     /// push-to-start 관찰 중복 설치 방지.
