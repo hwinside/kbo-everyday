@@ -9,6 +9,26 @@ interface Video {
   title: string;
   thumbnail: string;
   publishedAt: string;
+  durationSeconds?: number;
+}
+
+/** 초 → "3:24" / 1시간 이상은 "1:02:30" */
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  const ss = String(s).padStart(2, "0");
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${ss}`;
+  return `${m}:${ss}`;
+}
+
+function DurationBadge({ seconds }: { seconds?: number }) {
+  if (!seconds || seconds <= 0) return null;
+  return (
+    <div className="absolute bottom-1.5 right-1.5 rounded bg-black/80 px-1.5 py-0.5 text-[11px] font-medium leading-none text-white">
+      {formatDuration(seconds)}
+    </div>
+  );
 }
 
 export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
@@ -53,8 +73,11 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
                       <Play size={18} className="text-black ml-0.5" fill="black" />
                     </div>
                   </div>
+                  <DurationBadge seconds={v.durationSeconds} />
                 </div>
-                {/* 타이틀 제거 — 썸네일만 표시 */}
+                <p className="mt-1.5 text-sm text-text-primary line-clamp-2 leading-snug">
+                  {v.title}
+                </p>
               </a>
             ))}
           </div>
@@ -83,6 +106,7 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
                       <Play size={12} className="text-black ml-0.5" fill="black" />
                     </div>
                   </div>
+                  <DurationBadge seconds={v.durationSeconds} />
                 </div>
                 <p className="mt-1.5 text-[11px] text-text-secondary line-clamp-2 leading-snug text-left">
                   {v.title}
