@@ -161,9 +161,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   // 차단한 유저의 메시지도 즉시 숨김(차단 시 useBlockedIds 브로드캐스트로 갱신).
   const visibleMessages = displayMessages.filter((m) => m.deleted_at == null && !blockedIds.has(m.user_id));
 
-  // 1-depth 답글 그룹핑: 루트 메시지(최신순) + 각 루트의 답글(오래된→최신).
+  // 1-depth 답글 그룹핑: 원글 + 각 원글의 답글(오래된→최신).
   // 답글은 타임라인에 흩어지지 않고 원글 아래로 묶여 전부 노출된다(접기 없음).
   // 원글이 삭제/차단으로 숨겨진 답글은 그룹이 없어 자연히 미표시.
+  // 그룹 정렬은 max(원글, 최신답글) 기준 최신순 — 오래된 원글에 새 답글이 달리면
+  // 그룹이 상단으로 올라와 묻히지 않는다(크관 최신순 유지).
   const repliesByParent = new Map<number, ChatMessage[]>();
   for (const m of visibleMessages) {
     if (m.reply_to_id != null) {
@@ -174,12 +176,15 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   }
   const rootGroups = visibleMessages
     .filter((m) => m.reply_to_id == null)
-    .map((root) => ({
-      root,
-      replies: (repliesByParent.get(root.id) ?? [])
+    .map((root) => {
+      const replies = (repliesByParent.get(root.id) ?? [])
         .slice()
-        .sort((a, b) => a.created_at.localeCompare(b.created_at)),
-    }));
+        .sort((a, b) => a.created_at.localeCompare(b.created_at));
+      const lastReplyAt = replies.length ? replies[replies.length - 1].created_at : "";
+      const lastActivity = lastReplyAt > root.created_at ? lastReplyAt : root.created_at;
+      return { root, replies, lastActivity };
+    })
+    .sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;

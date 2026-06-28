@@ -31,13 +31,15 @@ BEGIN
     IF NEW.reply_to_id = NEW.id THEN
       RAISE EXCEPTION 'chat reply cannot reference itself' USING ERRCODE = '23514';
     END IF;
-    -- 대상이 존재하고 루트여야 함 (1-depth)
+    -- 대상이 존재하고, 루트(1-depth)이며, 같은 방(room)이어야 함.
+    -- room_id 검증: 우회 insert로 다른 경기/팬방 원글을 현재 방에 붙이는 것을 차단.
     IF NOT EXISTS (
       SELECT 1 FROM chat_messages p
        WHERE p.id = NEW.reply_to_id
          AND p.reply_to_id IS NULL
+         AND p.room_id = NEW.room_id
     ) THEN
-      RAISE EXCEPTION 'chat reply target must be a root message (1-depth only)'
+      RAISE EXCEPTION 'chat reply target must be a root message in the same room (1-depth, same room)'
         USING ERRCODE = '23514';
     END IF;
   END IF;
@@ -57,5 +59,6 @@ CREATE TRIGGER trg_chat_reply_one_depth
 -- ✅ #2 루트 메시지에 답글 insert 성공 (reply_to_id = 루트 id)
 -- ✅ #3 답글에 답글 insert → 23514 에러 (2-depth 차단)
 -- ✅ #4 존재하지 않는 id 참조 insert → 23514 에러
--- ✅ #5 기존 SELECT/INSERT RLS 영향 없음 (reply_to_id는 데이터 컬럼)
+-- ✅ #5 다른 room의 원글 참조 insert → 23514 에러 (cross-room 차단)
+-- ✅ #6 기존 SELECT/INSERT RLS 영향 없음 (reply_to_id는 데이터 컬럼)
 -- ============================================================

@@ -308,6 +308,7 @@ export function useChat(roomId: string) {
       const { data, error } = await supabase
         .from("chat_messages")
         .select("*, profiles!user_id(nickname, team_id, grade)")
+        .eq("room_id", roomId) // cross-room 원글 보충 차단 — 현재 방 원글만 렌더
         .in("id", missing);
       if (cancelled || error || !data) return;
       const fetched = (data as ChatRow[]).map(mapRow);
