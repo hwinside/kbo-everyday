@@ -7,7 +7,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // Live Activity observer를 *네이티브 부팅 시점*에 시작(웹뷰/Capacitor 플러그인 의존 제거).
+        // push-to-start로 앱이 백그라운드 launch될 때도 update/push-to-start 토큰을 잡아
+        // register-device로 등록 → 앱을 한 번도 열지 않아도 카드가 갱신된다. (본 fix 핵심)
+        if #available(iOS 16.1, *) {
+            LiveActivityController.shared.startObservers()
+        }
         return true
     }
 
@@ -22,7 +27,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func applicationWillEnterForeground(_ application: UIApplication) {
-        // Called as part of the transition from the background to the active state; here you can undo many of the changes made on entering the background.
+        // 조건2 보강 — 포그라운드 복귀 시 persist된 push-to-start 토큰을 register-start로 재등록
+        // (백그라운드 rotate분 서버 매핑 최신화). 자세한 내용은 LiveActivityController 참조.
+        if #available(iOS 16.1, *) {
+            LiveActivityController.shared.resyncPushToStartTokenOnForeground()
+        }
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {

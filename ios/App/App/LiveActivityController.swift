@@ -11,6 +11,7 @@
 
 import Foundation
 import WidgetKit
+import UIKit
 
 #if canImport(ActivityKit)
 import ActivityKit
@@ -36,7 +37,17 @@ final class LiveActivityController {
     private var pushToStartObserved = false
     /// 가장 최근 push-to-start 토큰(디바이스 단위). 네이티브가 update token을 *앱 포그라운드
     /// 없이* 서버 등록할 때 이 토큰을 신원 증명으로 실어 보낸다(register-device).
-    private var latestPushToStartToken: String?
+    /// 조건1: App Group(UserDefaults)에 persist — 메모리 fallback 금지. 백그라운드 launch
+    /// (웹뷰 미기동·프로세스 신규)에서도 register-device 신원으로 읽혀야 하므로 영속화한다.
+    private static let pushToStartTokenKey = "kbo_push_to_start_token"
+    private var latestPushToStartToken: String? {
+        get { UserDefaults(suiteName: WidgetSnapshotStore.appGroupId)?.string(forKey: Self.pushToStartTokenKey) }
+        set {
+            guard let ud = UserDefaults(suiteName: WidgetSnapshotStore.appGroupId) else { return }
+            if let v = newValue { ud.set(v, forKey: Self.pushToStartTokenKey) }
+            else { ud.removeObject(forKey: Self.pushToStartTokenKey) }
+        }
+    }
 
     /// 디바이스 단위 push-to-start 토큰을 관찰(iOS 17.2+). 활성 Activity가 없어도 발급되며,
     /// 서버는 이 토큰으로 최애팀 경기 시작 시 Activity를 원격 시작한다(W3b). 17.2 미만은 no-op.
@@ -47,8 +58,12 @@ final class LiveActivityController {
             Task {
                 for await tokenData in Activity<KBOGameAttributes>.pushToStartTokenUpdates {
                     let hex = tokenData.map { String(format: "%02x", $0) }.joined()
-                    latestPushToStartToken = hex
-                    onPushToStartToken?(hex)
+                    let rotated = latestPushToStartToken != nil && latestPushToStartToken != hex
+                    latestPushToStartToken = hex   // 조건1·2: App Group 즉시 persist
+                    onPushToStartToken?(hex)       // 조건2: JS multicast → 포그라운드 register-start 재등록
+                    if rotated {
+                        NSLog("[LiveActivity] push-to-start token rotated → persisted; JS re-register requested")
+                    }
                 }
             }
         }
@@ -74,7 +89,11 @@ final class LiveActivityController {
     /// fire-and-forget — 실패해도 JS 경로가 백업이라 앱에 영향 없음. push-to-start 토큰이 아직
     /// 없으면(iOS 17.2 미만 등) skip하고 JS 경로에 위임한다.
     private func registerUpdateTokenNatively(gameId: String, pushToken: String) {
-        guard let startToken = latestPushToStartToken else { return }
+        guard let startToken = latestPushToStartToken else {
+            // 조건5: 토큰값 미로깅 — skip 사유만. push-to-start 토큰이 아직 persist 안 됨.
+            NSLog("[LiveActivity] register-device skip: no persisted push-to-start token (game=\(gameId))")
+            return
+        }
         guard let url = URL(string: "https://keubo.fan/api/live-activity/register-device") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -85,7 +104,21 @@ final class LiveActivityController {
             "pushToStartToken": startToken,
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        URLSession.shared.dataTask(with: req).resume()
+        // 백그라운드 launch에서 POST 완료까지 잠깐 실행시간 확보(곧 suspend 방지).
+        let app = UIApplication.shared
+        var bgTask = UIBackgroundTaskIdentifier.invalid
+        bgTask = app.beginBackgroundTask(withName: "la-register-device") {
+            if bgTask != .invalid { app.endBackgroundTask(bgTask); bgTask = .invalid }
+        }
+        URLSession.shared.dataTask(with: req) { _, resp, err in
+            // 조건5: 토큰값 미로깅 — 상태코드/에러 사유만.
+            if let err = err {
+                NSLog("[LiveActivity] register-device error: \(err.localizedDescription)")
+            } else if let http = resp as? HTTPURLResponse {
+                NSLog("[LiveActivity] register-device status=\(http.statusCode) (game=\(gameId))")
+            }
+            if bgTask != .invalid { app.endBackgroundTask(bgTask); bgTask = .invalid }
+        }.resume()
     }
 
     /// push-to-start 관찰 중복 설치 방지.
@@ -99,12 +132,36 @@ final class LiveActivityController {
         guard !activityUpdatesObserved else { return }
         if #available(iOS 16.2, *) {
             activityUpdatesObserved = true
+            // 조건3: 구독 전에 이미 떠 있는(원격 push-to-start 생성) Activity를 즉시 enumerate.
+            // activityUpdates는 *구독 이후 신규*만 yield → 백그라운드 launch 시 이미 존재하는
+            // 카드의 update 토큰을 놓칠 수 있다(observePushToken 중복가드로 이중 구독 무해).
+            for activity in Activity<KBOGameAttributes>.activities {
+                observePushToken(activity, gameId: activity.attributes.gameId)
+            }
             Task {
                 for await activity in Activity<KBOGameAttributes>.activityUpdates {
                     observePushToken(activity, gameId: activity.attributes.gameId)
                 }
             }
         }
+    }
+
+    /// AppDelegate didFinishLaunching에서 호출 — 네이티브 부팅 시점에 observer attach.
+    /// (기존엔 Capacitor 플러그인 load에서만 시작 → 웹뷰 의존이라 백그라운드 push-to-start
+    /// 깨우기 때 미동작 = "앱 안 열면 카드 프리즈"의 근본 원인. 본 fix 핵심.)
+    func startObservers() {
+        observePushToStartToken()
+        observeAllActivities()
+    }
+
+    /// 조건2 보강 — 앱이 포그라운드로 돌아올 때, App Group에 persist된 현재 push-to-start
+    /// 토큰을 JS multicast로 재방출 → 포그라운드 JS가 `/register-start`로 재등록한다.
+    /// pushToStartTokenUpdates는 *변경 시에만* yield하므로, 백그라운드에서 토큰이 rotate된 경우
+    /// (네이티브가 persist는 했지만 register-start 재등록은 Bearer가 없어 못 함) 다음 포그라운드에
+    /// 서버 매핑을 최신화한다. 값 동일해도 upsert라 무해.
+    func resyncPushToStartTokenOnForeground() {
+        guard let token = latestPushToStartToken else { return }
+        onPushToStartToken?(token)
     }
 
     /// Live Activity 사용 가능 여부(설정에서 꺼져 있을 수 있음).
@@ -290,6 +347,8 @@ final class LiveActivityController {
     #else
     var isEnabled: Bool { false }
     @discardableResult func startDummyActivity() -> Bool { false }
+    func startObservers() {}
+    func resyncPushToStartTokenOnForeground() {}
     #endif
 }
 
