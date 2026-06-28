@@ -4,4 +4,8 @@
     <string name="title_activity_main">크보팬</string>
     <string name="package_name">fan.keubo.app</string>
     <string name="custom_url_scheme">fan.keubo.app</string>
+    <string name="facebook_app_id">1733469141437762</string>
+    <string name="facebook_display_name">크보팬</string>
+    <string name="fb_login_protocol_scheme">fb1733469141437762</string>
+    <string name="facebook_client_token">d5c2dd1feeeb4ddb12e76ae8138c31b9</string>
 </resources>
