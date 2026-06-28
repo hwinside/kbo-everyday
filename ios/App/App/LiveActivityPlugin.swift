@@ -24,23 +24,20 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "writeWidgetSnapshot", returnType: CAPPluginReturnPromise),
     ]
 
-    /// 브리지 로드 시 — Activity push token 발급 콜백을 JS 이벤트로 연결 (W3 APNs 등록).
+    /// 브리지 로드 시 — *포그라운드 JS 멀티캐스트* 콜백만 연결한다(조건4).
+    /// observer 시작(observePushToStartToken/observeAllActivities)은 AppDelegate(네이티브 부팅)로
+    /// 이동 → 백그라운드 push-to-start 깨우기(웹뷰 미기동)에서도 토큰을 잡게 했다. 네이티브
+    /// register-device 등록 경로는 컨트롤러가 *항상 직접* 호출하므로, 여기 JS notify는 optional.
     public override func load() {
         if #available(iOS 16.1, *) {
             LiveActivityController.shared.onPushToken = { [weak self] gameId, token in
                 // retainUntilConsumed: JS 리스너가 아직 안 붙었어도 이벤트를 버퍼링했다가
-                // 부착 시 전달 → push token 유실로 서버 등록이 누락되는 race 방지(삼순 W3a NO-GO).
+                // 부착 시 전달 → push token 유실로 (포그라운드) 서버 등록 누락 race 방지.
                 self?.notifyListeners("liveActivityPushToken", data: ["gameId": gameId, "token": token], retainUntilConsumed: true)
             }
-            // W3b — push-to-start 토큰(iOS 17.2+). 앱 부팅 즉시 관찰 시작해 디바이스 토큰을
-            // JS로 전달 → 서버 등록. retainUntilConsumed로 리스너 부착 전 발급분도 버퍼링.
             LiveActivityController.shared.onPushToStartToken = { [weak self] token in
                 self?.notifyListeners("liveActivityPushToStartToken", data: ["token": token], retainUntilConsumed: true)
             }
-            LiveActivityController.shared.observePushToStartToken()
-            // W3b — 원격(push-to-start) 생성 Activity도 per-activity update 토큰을 등록하도록
-            // 모든 Activity 생성을 관찰. 없으면 자동시작 카드가 갱신 안 됨(삼순 NO-GO ①).
-            LiveActivityController.shared.observeAllActivities()
         }
     }
 
