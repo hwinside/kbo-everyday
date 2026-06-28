@@ -29,6 +29,13 @@ interface TrackOptions {
   /** false면 GA4 기본 발화 스킵 (Ads-only / Meta-only 분리용, 기본 true) */
   ga4?: boolean;
   /**
+   * true면 trackEvent 내부의 *네이티브* Meta App Event(fire-and-forget) 발화를 스킵.
+   * Capacitor(웹 원격 로드)에서 가입 직후 hard navigation이 비동기 브릿지 호출을
+   * 끊는 레이스를 피하려면, 호출부가 flushNativeMetaForSignup()을 await 한 뒤 이동한다.
+   * (웹 Meta Pixel fbq 발화는 그대로 유지)
+   */
+  skipNative?: boolean;
+  /**
    * Google Ads 향상된 전환(Enhanced Conversions)용 유저 이메일.
    * 제공 시 SHA-256 해싱 후 gtag('set', 'user_data') 호출하여
    * 전환 매칭률 향상. gads: true일 때만 사용됨.
@@ -170,12 +177,9 @@ export function trackEvent(event: string, properties?: Record<string, unknown>, 
     }
   }
 
-  if (options?.meta) {
-    const nativeMetaEventMap: Record<string, string> = {
-      [OnboardingEvents.ONBOARDING_COMPLETE]: "fb_mobile_complete_registration",
-      [OnboardingEvents.TEAM_SELECTED]: "Subscribe",
-    };
-    const nativeMetaEvent = nativeMetaEventMap[event];
+  // 네이티브 Meta App Event (fire-and-forget). skipNative면 호출부가 await로 직접 처리.
+  if (options?.meta && !options?.skipNative) {
+    const nativeMetaEvent = NATIVE_META_EVENT_MAP[event];
     if (nativeMetaEvent) {
       import("@/lib/native-meta-app-events")
         .then(({ logNativeMetaEvent }) => logNativeMetaEvent(nativeMetaEvent, payload.properties))
@@ -206,6 +210,33 @@ export const OnboardingEvents = {
   // 가입 시 skip → 나중에 플레이어 선택으로 업그레이드
   ONBOARDING_PLAYER_UPGRADED: "onboarding_player_upgraded",
 } as const;
+
+// 네이티브 Meta App Event 이름 매핑 (가입 전환용).
+// Subscribe = 최애팀 선택, fb_mobile_complete_registration = 회원가입 완료.
+const NATIVE_META_EVENT_MAP: Record<string, string> = {
+  [OnboardingEvents.ONBOARDING_COMPLETE]: "fb_mobile_complete_registration",
+  [OnboardingEvents.TEAM_SELECTED]: "Subscribe",
+};
+
+/**
+ * 가입 전환 네이티브 Meta App Event를 *await 가능하게* 발화한다.
+ * Capacitor(웹 원격 로드)에서 가입 직후 `window.location.href` hard navigation이
+ * 비동기 브릿지 호출을 끊어 Subscribe/CompleteRegistration이 유실되던 문제를 막기 위해,
+ * 호출부는 이 함수를 await 한 뒤 화면을 이동시킨다. 웹에서는 no-op(논네이티브 early-return).
+ */
+export async function flushNativeMetaForSignup(
+  event: string,
+  properties?: Record<string, unknown>,
+): Promise<void> {
+  const name = NATIVE_META_EVENT_MAP[event];
+  if (!name) return;
+  try {
+    const { logNativeMetaEvent } = await import("@/lib/native-meta-app-events");
+    await logNativeMetaEvent(name, properties);
+  } catch (error) {
+    console.warn("[analytics] flushNativeMetaForSignup failed", error);
+  }
+}
 
 // 홈/예측 이벤트 (Day 2)
 export const HomeEvents = {

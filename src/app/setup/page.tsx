@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { trackEvent, OnboardingEvents } from "@/lib/analytics";
+import { trackEvent, OnboardingEvents, flushNativeMetaForSignup } from "@/lib/analytics";
 import { getFavoritePlayers } from "@/lib/store/favorites";
 
 export default function SetupPage() {
@@ -212,16 +212,19 @@ export default function SetupPage() {
       }
 
       // Meta Pixel: Subscribe(팀선택) — CompleteRegistration은 ONBOARDING_COMPLETE 호출에 포함됨
-      trackEvent(OnboardingEvents.TEAM_SELECTED, { team_id: selectedTeam }, { meta: true });
+      // skipNative: 네이티브 발화는 아래 flushNativeMetaForSignup으로 await 처리(hard nav 레이스 방지)
+      const completePayload = { nickname: nickname.trim(), team_id: selectedTeam, source: "setup_page" };
+      trackEvent(OnboardingEvents.TEAM_SELECTED, { team_id: selectedTeam }, { meta: true, skipNative: true });
 
       // 회원가입 완료 — GA4 + Meta Pixel 발화
       // Google Ads conversion은 /welcome 페이지에서 직접 gtag 호출로 단순화 (2026-04-27)
       // /setup에서 gads 발화 시 event_callback race + beacon 유실 이슈가 있었음
-      trackEvent(
-        OnboardingEvents.ONBOARDING_COMPLETE,
-        { nickname: nickname.trim(), team_id: selectedTeam, source: "setup_page" },
-        { meta: true }
-      );
+      trackEvent(OnboardingEvents.ONBOARDING_COMPLETE, completePayload, { meta: true, skipNative: true });
+
+      // 네이티브 Meta App Event(Subscribe/CompleteRegistration)는 hard nav 전에 await로 전송 완료.
+      // Capacitor 웹 원격 로드에서 화면 전환이 비동기 브릿지 호출을 끊던 유실 버그 방지.
+      await flushNativeMetaForSignup(OnboardingEvents.TEAM_SELECTED, { team_id: selectedTeam });
+      await flushNativeMetaForSignup(OnboardingEvents.ONBOARDING_COMPLETE, completePayload);
 
       // /welcome에서 Google Ads conversion 발화할 수 있도록 플래그 세팅
       try { sessionStorage.setItem("kbo-signup-just-completed", "1"); } catch { /* ignore */ }
