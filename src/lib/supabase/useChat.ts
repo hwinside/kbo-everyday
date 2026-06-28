@@ -15,6 +15,8 @@ export interface ChatMessage {
   created_at: string;
   deleted_at?: string | null;
   deleted_by?: string | null;
+  // 1-depth 답글: 가리키는 원글(루트) id. null이면 루트 메시지.
+  reply_to_id?: number | null;
   // joined from profiles
   nickname?: string;
   team_id?: number;
@@ -35,6 +37,7 @@ function mapRow(r: ChatRow): ChatMessage {
     created_at: r.created_at,
     deleted_at: r.deleted_at ?? null,
     deleted_by: r.deleted_by ?? null,
+    reply_to_id: r.reply_to_id ?? null,
     nickname: r.profiles?.nickname,
     team_id: r.profiles?.team_id,
     grade: r.profiles?.grade,
@@ -58,6 +61,8 @@ export function useChat(roomId: string) {
   const latestCreatedAtRef = useRef<string | null>(null);
   // loadMore 동시 호출 가드 (IntersectionObserver가 다중 fire할 수 있음)
   const loadingMoreRef = useRef(false);
+  // 이미 fetch 시도한 (로드 안 된) 부모 메시지 id — 중복/무한 fetch 방지. 방 전환 시 리셋.
+  const fetchedParentsRef = useRef<Set<number>>(new Set());
 
   // 최근 메시지 로드
   useEffect(() => {
@@ -67,6 +72,7 @@ export function useChat(roomId: string) {
     setHasMore(true);
     oldestCursorRef.current = null;
     latestCreatedAtRef.current = null;
+    fetchedParentsRef.current = new Set();
 
     async function load() {
       try {
@@ -281,6 +287,45 @@ export function useChat(roomId: string) {
     };
   }, [roomId]);
 
+  // 답글의 원글(루트)이 아직 로드되지 않은 경우(루트가 더 오래된 페이지에 있을 때)
+  // 해당 루트를 보충 fetch한다. 그래야 답글이 원글 아래로 그룹핑되어 노출된다.
+  // fetchedParentsRef로 같은 id 재요청을 막아 무한 루프를 방지(없는 id도 1회만 시도).
+  useEffect(() => {
+    if (!roomId) return;
+    const loadedIds = new Set(messages.map((m) => m.id));
+    const missing = Array.from(
+      new Set(
+        messages
+          .filter((m) => m.reply_to_id != null && !loadedIds.has(m.reply_to_id))
+          .map((m) => m.reply_to_id as number)
+      )
+    ).filter((pid) => !fetchedParentsRef.current.has(pid));
+    if (missing.length === 0) return;
+    missing.forEach((pid) => fetchedParentsRef.current.add(pid));
+
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .select("*, profiles!user_id(nickname, team_id, grade)")
+        .in("id", missing);
+      if (cancelled || error || !data) return;
+      const fetched = (data as ChatRow[]).map(mapRow);
+      setMessages((prev) => {
+        const existing = new Set(prev.map((m) => m.id));
+        const added = fetched.filter((m) => !existing.has(m.id));
+        if (added.length === 0) return prev;
+        // created_at 오름차순 불변식 유지 (loadMore=prepend, append=push 전제).
+        return [...prev, ...added].sort((a, b) =>
+          a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0
+        );
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, roomId]);
+
   // 이전(더 오래된) 메시지 페이지 로드. cursor=oldestCursorRef.current 미만의 50개.
   const loadMore = useCallback(async () => {
     if (!roomId) return;
@@ -327,7 +372,7 @@ export function useChat(roomId: string) {
 
   // 메시지 전송 (주 경로: insert 결과 즉시 local append)
   const sendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, replyToId?: number | null) => {
       if (!user || !content.trim() || content.trim().length > 120) return false;
 
       const now = Date.now();
@@ -381,6 +426,7 @@ export function useChat(roomId: string) {
           room_id: roomId,
           user_id: user.id,
           content: content.trim(),
+          ...(replyToId != null ? { reply_to_id: replyToId } : {}),
         })
         .select("*, profiles!user_id(nickname, team_id, grade)")
         .single();
@@ -397,6 +443,7 @@ export function useChat(roomId: string) {
         user_id: row.user_id,
         content: row.content,
         created_at: row.created_at,
+        reply_to_id: row.reply_to_id ?? null,
         nickname: row.profiles?.nickname ?? profile?.nickname ?? "익명",
         team_id: row.profiles?.team_id ?? (profile?.team_id != null ? Number(profile.team_id) : undefined),
         grade: row.profiles?.grade ?? profile?.grade,

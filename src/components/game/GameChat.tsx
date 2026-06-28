@@ -2,12 +2,12 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Users, Flame, ChevronDown, Trash2, Flag, Ban, MoreHorizontal } from "lucide-react";
+import { Send, Users, Flame, ChevronDown, Trash2, Flag, Ban, MoreHorizontal, Reply, X } from "lucide-react";
 import { clsx } from "clsx";
 import Image from "next/image";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getTeamById } from "@/lib/constants/teams";
-import { useChat } from "@/lib/supabase/useChat";
+import { useChat, type ChatMessage } from "@/lib/supabase/useChat";
 import { useMoodGauge } from "@/lib/supabase/useMoodGauge";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { useBlockedIds, blockUserById } from "@/lib/supabase/useBlock";
@@ -73,6 +73,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const [input, setInput] = useState("");
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const [msgMenuId, setMsgMenuId] = useState<number | null>(null);
+  // 답글 대상 원글(루트). null이면 일반 메시지 전송.
+  const [replyTo, setReplyTo] = useState<{ id: number; nickname: string } | null>(null);
   const [showReport, setShowReport] = useState(false);
   const [reportTargetId, setReportTargetId] = useState<number | null>(null);
   const composerRef = useRef<HTMLDivElement>(null);
@@ -157,7 +159,27 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   // 삭제된 메시지는 화면에서 완전히 숨김(placeholder 미표시).
   // DB는 여전히 soft-delete(content 마스킹 + deleted_at)로 보존됨.
   // 차단한 유저의 메시지도 즉시 숨김(차단 시 useBlockedIds 브로드캐스트로 갱신).
-  const renderedMessages = displayMessages.filter((m) => m.deleted_at == null && !blockedIds.has(m.user_id));
+  const visibleMessages = displayMessages.filter((m) => m.deleted_at == null && !blockedIds.has(m.user_id));
+
+  // 1-depth 답글 그룹핑: 루트 메시지(최신순) + 각 루트의 답글(오래된→최신).
+  // 답글은 타임라인에 흩어지지 않고 원글 아래로 묶여 전부 노출된다(접기 없음).
+  // 원글이 삭제/차단으로 숨겨진 답글은 그룹이 없어 자연히 미표시.
+  const repliesByParent = new Map<number, ChatMessage[]>();
+  for (const m of visibleMessages) {
+    if (m.reply_to_id != null) {
+      const arr = repliesByParent.get(m.reply_to_id);
+      if (arr) arr.push(m);
+      else repliesByParent.set(m.reply_to_id, [m]);
+    }
+  }
+  const rootGroups = visibleMessages
+    .filter((m) => m.reply_to_id == null)
+    .map((root) => ({
+      root,
+      replies: (repliesByParent.get(root.id) ?? [])
+        .slice()
+        .sort((a, b) => a.created_at.localeCompare(b.created_at)),
+    }));
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -189,8 +211,18 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   async function handleSend() {
     if (qaKeyboardInputEnabled) return;
     if (!input.trim() || !canWrite) return;
-    const ok = await sendMessage(input.trim());
-    if (ok) setInput("");
+    const ok = await sendMessage(input.trim(), replyTo?.id ?? null);
+    if (ok) {
+      setInput("");
+      setReplyTo(null);
+    }
+  }
+
+  // 답글 작성 시작 — 입력창에 대상 칩 표시 + textarea 포커스. (루트 메시지에만)
+  function startReply(msg: ChatMessage) {
+    setMsgMenuId(null);
+    setReplyTo({ id: msg.id, nickname: msg.nickname || "익명" });
+    setTimeout(() => textareaRef.current?.focus(), 0);
   }
 
   async function handleDelete(messageId: number, isMine: boolean) {
@@ -235,6 +267,83 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
   }
 
+  // 메시지 본문(닉네임 + 내용) — 루트/답글 공용.
+  function renderMsgBody(msg: ChatMessage) {
+    const isMe = user?.id === msg.user_id;
+    return (
+      <div className="min-w-0 flex-1">
+        <span className="inline">
+          <span
+            className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")}
+            onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}
+          >
+            {msg.nickname || "익명"}
+          </span>
+          <span className="text-sm text-text-primary">{msg.content}</span>
+        </span>
+      </div>
+    );
+  }
+
+  // 메시지 액션(시간 + 답글[루트만] + 삭제/신고/차단/운영자삭제) — 루트/답글 공용.
+  function renderMsgActions(msg: ChatMessage, opts: { canReply: boolean }) {
+    const isMe = user?.id === msg.user_id;
+    return (
+      <div className="flex items-center gap-1 shrink-0 mt-0.5">
+        <span className="text-[10px] text-text-tertiary opacity-0 group-hover:opacity-100 transition-opacity">
+          {formatTime(msg.created_at)}
+        </span>
+        {opts.canReply && canWrite && (
+          <button
+            type="button"
+            onClick={() => startReply(msg)}
+            aria-label="답글"
+            className="text-text-tertiary hover:text-accent opacity-50 hover:opacity-100 transition-colors p-1 -m-1"
+          >
+            <Reply size={12} />
+          </button>
+        )}
+        {isMe ? (
+          <button
+            type="button"
+            onClick={() => handleDelete(msg.id, true)}
+            aria-label="메시지 삭제"
+            className="text-text-tertiary hover:text-red-400 opacity-50 hover:opacity-100 transition-colors p-1 -m-1"
+          >
+            <Trash2 size={12} />
+          </button>
+        ) : user ? (
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setMsgMenuId((prev) => (prev === msg.id ? null : msg.id))}
+              aria-label="메시지 메뉴"
+              className="text-text-tertiary hover:text-text-primary opacity-50 hover:opacity-100 transition-colors p-1 -m-1"
+            >
+              <MoreHorizontal size={12} />
+            </button>
+            {msgMenuId === msg.id && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setMsgMenuId(null)} />
+                <div className="absolute right-0 top-5 z-20 min-w-[88px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
+                  <button onClick={() => openReport(msg.id)} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
+                    <Flag size={12} /> 신고
+                  </button>
+                  <button onClick={() => handleBlock(msg.user_id, msg.id)} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
+                    <Ban size={12} /> 차단
+                  </button>
+                  {canModerateChat && (
+                    <button onClick={() => handleDelete(msg.id, false)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   const roomLabels: Record<ChatRoom, string> = {
     all: "전체 채팅",
     home: `${homeTeam.shortName} 팬방`,
@@ -267,7 +376,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
                 return (
                   <button
                     key={r}
-                    onClick={() => { setRoom(r); setShowRoomPicker(false); }}
+                    onClick={() => { setRoom(r); setShowRoomPicker(false); setReplyTo(null); }}
                     className={clsx(
                       "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors",
                       room === r ? "bg-accent/10" : "hover:bg-bg-tertiary"
@@ -314,6 +423,24 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         className="border-b border-border bg-bg-secondary/95"
         style={{ backdropFilter: "blur(12px)" }}
       >
+        {replyTo && (
+          <div className="max-w-[640px] mx-auto px-3 pt-2">
+            <div className="flex items-center gap-1.5 rounded-lg bg-bg-tertiary/70 px-2.5 py-1.5 text-xs text-text-tertiary">
+              <Reply size={12} className="shrink-0 text-accent" />
+              <span className="min-w-0 truncate">
+                <span className="font-medium text-accent">{replyTo.nickname}</span>님에게 답글
+              </span>
+              <button
+                type="button"
+                onClick={() => setReplyTo(null)}
+                aria-label="답글 취소"
+                className="ml-auto -m-0.5 p-0.5 hover:text-text-primary"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          </div>
+        )}
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-end gap-2">
           <div className="relative flex-1">
             <textarea
@@ -333,7 +460,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
                   handleSend();
                 }
               }}
-              placeholder={cooldown ? (cooldownReason || "잠시 후 다시 입력하세요...") : canWrite ? (room === "all" ? "메시지 입력..." : `${roomLabels[room]}에 메시지...`) : writeBlockedReason}
+              placeholder={cooldown ? (cooldownReason || "잠시 후 다시 입력하세요...") : !canWrite ? writeBlockedReason : replyTo ? `${replyTo.nickname}님에게 답글...` : room === "all" ? "메시지 입력..." : `${roomLabels[room]}에 메시지...`}
               disabled={!canWrite}
               autoComplete="off"
               autoCorrect="off"
@@ -388,73 +515,33 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
         ) : (
           <div className="space-y-0.5">
             <AnimatePresence initial={false}>
-                {renderedMessages.map((msg) => {
-                  const isMe = user?.id === msg.user_id;
-                  return (
-                    <motion.div
-                      key={msg.id}
-                      data-chat-msg
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.15 }}
-                      className="flex items-start gap-2 py-0.5 group"
-                    >
-                      {msg.team_id && <TeamBadge teamId={msg.team_id} size="xs" className="shrink-0" />}
-                      <div className="min-w-0 flex-1">
-                        <span className="inline">
-                          <span className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")} onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}>
-                            {msg.nickname || "익명"}
-                          </span>
-                          <span className="text-sm text-text-primary">
-                            {msg.content}
-                          </span>
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0 mt-0.5">
-                        <span className="text-[10px] text-text-tertiary opacity-0 group-hover:opacity-100 transition-opacity">
-                          {formatTime(msg.created_at)}
-                        </span>
-                        {isMe ? (
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(msg.id, true)}
-                            aria-label="메시지 삭제"
-                            className="text-text-tertiary hover:text-red-400 opacity-50 hover:opacity-100 transition-colors p-1 -m-1"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        ) : user ? (
-                          <div className="relative">
-                            <button
-                              type="button"
-                              onClick={() => setMsgMenuId((prev) => (prev === msg.id ? null : msg.id))}
-                              aria-label="메시지 메뉴"
-                              className="text-text-tertiary hover:text-text-primary opacity-50 hover:opacity-100 transition-colors p-1 -m-1"
-                            >
-                              <MoreHorizontal size={12} />
-                            </button>
-                            {msgMenuId === msg.id && (
-                              <>
-                                <div className="fixed inset-0 z-10" onClick={() => setMsgMenuId(null)} />
-                                <div className="absolute right-0 top-5 z-20 min-w-[88px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
-                                  <button onClick={() => openReport(msg.id)} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
-                                    <Flag size={12} /> 신고
-                                  </button>
-                                  <button onClick={() => handleBlock(msg.user_id, msg.id)} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
-                                    <Ban size={12} /> 차단
-                                  </button>
-                                  {canModerateChat && (
-                                    <button onClick={() => handleDelete(msg.id, false)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
-                                  )}
-                                </div>
-                              </>
-                            )}
+                {rootGroups.map(({ root, replies }) => (
+                  <motion.div
+                    key={root.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.15 }}
+                  >
+                    {/* 원글(루트) */}
+                    <div data-chat-msg className="flex items-start gap-2 py-0.5 group">
+                      {root.team_id && <TeamBadge teamId={root.team_id} size="xs" className="shrink-0" />}
+                      {renderMsgBody(root)}
+                      {renderMsgActions(root, { canReply: true })}
+                    </div>
+                    {/* 1-depth 답글 — 원글 아래 묶어서 전부 노출(접기 없음) */}
+                    {replies.length > 0 && (
+                      <div className="ml-5 mt-0.5 space-y-0.5 border-l-2 border-border/50 pl-2.5">
+                        {replies.map((reply) => (
+                          <div key={reply.id} data-chat-msg className="flex items-start gap-2 py-0.5 group">
+                            {reply.team_id && <TeamBadge teamId={reply.team_id} size="xs" className="shrink-0" />}
+                            {renderMsgBody(reply)}
+                            {renderMsgActions(reply, { canReply: false })}
                           </div>
-                        ) : null}
+                        ))}
                       </div>
-                    </motion.div>
-                  );
-                })}
+                    )}
+                  </motion.div>
+                ))}
             </AnimatePresence>
             {hasMore ? (
               <div ref={sentinelRef} className="py-3 text-center text-[11px] text-text-tertiary">
