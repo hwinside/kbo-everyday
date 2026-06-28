@@ -10,6 +10,7 @@ interface TeamVideoItem {
   title: string;
   thumbnail: string | undefined;
   publishedAt: string;
+  durationSeconds: number;
 }
 
 interface TeamVideoResult {
@@ -119,6 +120,7 @@ export async function GET(req: NextRequest) {
         title: decodeHtml(item.snippet.title),
         thumbnail: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url,
         publishedAt: item.snippet.publishedAt,
+        durationSeconds: detailMap.get(item.id.videoId)?.durationSeconds ?? 0,
       }));
 
     if (items.length === 0) return fallback(team.shortName, type);
@@ -155,6 +157,7 @@ async function fallback(teamShortName: string, type: string) {
           title: v.title,
           thumbnail: v.thumbnail,
           publishedAt: v.published_at,
+          durationSeconds: 0,
         })),
       });
     }
