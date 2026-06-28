@@ -170,6 +170,19 @@ export function trackEvent(event: string, properties?: Record<string, unknown>, 
     }
   }
 
+  if (options?.meta) {
+    const nativeMetaEventMap: Record<string, string> = {
+      [OnboardingEvents.ONBOARDING_COMPLETE]: "fb_mobile_complete_registration",
+      [OnboardingEvents.TEAM_SELECTED]: "Subscribe",
+    };
+    const nativeMetaEvent = nativeMetaEventMap[event];
+    if (nativeMetaEvent) {
+      import("@/lib/native-meta-app-events")
+        .then(({ logNativeMetaEvent }) => logNativeMetaEvent(nativeMetaEvent, payload.properties))
+        .catch((error) => console.warn("[analytics] Native Meta App Event import failed", error));
+    }
+  }
+
   // Phase 2: development logging via GA4 debug mode
 }
 
