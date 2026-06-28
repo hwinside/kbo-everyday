@@ -15,6 +15,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // 앱 타깃 커스텀 플러그인은 super.onCreate() 전에 등록해야 브리지가 인식.
         registerPlugin(GameNotificationPlugin.class);
+        registerPlugin(MetaAppEventsPlugin.class);
         registerPlugin(OAuthBrowserPlugin.class);
         super.onCreate(savedInstanceState);
         // 잠금화면 카드 탭으로 (콜드 스타트) 진입 시 해당 경기룸으로 바로 이동(②).

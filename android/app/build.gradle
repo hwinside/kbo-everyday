@@ -64,6 +64,7 @@ dependencies {
     // OAuthBrowserPlugin이 Chrome Custom Tab(androidx.browser)을 직접 사용하므로 앱 컴파일
     // 클래스패스에 필요(capacitor-browser 플러그인은 implementation이라 transitive 노출 안 됨).
     implementation "androidx.browser:browser:1.8.0"
+    implementation "com.facebook.android:facebook-android-sdk:18.3.0"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

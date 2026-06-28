@@ -30,7 +30,19 @@
 				<string>fan.keubo.app</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>fb1733469141437762</string>
+			</array>
+		</dict>
 	</array>
+	<key>FacebookAppID</key>
+	<string>1733469141437762</string>
+	<key>FacebookDisplayName</key>
+	<string>크보팬</string>
+	<key>FacebookClientToken</key>
+	<string>d5c2dd1feeeb4ddb12e76ae8138c31b9</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
