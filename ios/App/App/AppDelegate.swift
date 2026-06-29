@@ -39,19 +39,21 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        AppEvents.shared.activateApp()
-        // ATT 권한 상태에 맞춰 Meta SDK의 advertiserTrackingEnabled를 동기화한다.
-        // (미결정이면 프롬프트를 띄우고, 이미 결정됐으면 플래그만 갱신 — 프롬프트 재노출 없음)
+        // ATT 권한 상태를 Meta SDK(advertiserTrackingEnabled)에 *먼저* 반영한 뒤
+        // App Activate 이벤트를 보낸다. Meta ATE는 이벤트 전 상태 반영이 원칙이므로,
+        // activateApp() 호출은 syncAdvertiserTracking 내부에서 ATE 반영 직후 수행한다.
         syncAdvertiserTracking()
     }
 
-    /// App Tracking Transparency 상태를 Meta SDK에 반영.
+    /// App Tracking Transparency 상태를 Meta SDK에 반영한 뒤 App Activate 이벤트를 전송.
     /// - iOS 14+: ATT 권한이 .notDetermined면 앱이 active일 때 프롬프트를 띄우고(약간의 지연으로 UI 표시 보장),
-    ///   결정 결과를 `Settings.shared.isAdvertiserTrackingEnabled`에 반영한다.
+    ///   결정 결과를 `Settings.shared.isAdvertiserTrackingEnabled`에 반영한 *직후* activateApp()을 호출한다.
+    /// - 이미 결정된 상태면 ATE 플래그를 갱신한 뒤 곧바로 activateApp()을 호출한다(프롬프트 재노출 없음).
     /// - 권한 거부/제한 시에도 SKAdNetwork/AEM(앱 취합 이벤트 측정)은 동작하므로 설치 캠페인 측정은 유지된다.
     private func syncAdvertiserTracking() {
         guard #available(iOS 14, *) else {
             Settings.shared.isAdvertiserTrackingEnabled = true
+            AppEvents.shared.activateApp()
             return
         }
         let status = ATTrackingManager.trackingAuthorizationStatus
@@ -60,10 +62,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 ATTrackingManager.requestTrackingAuthorization { newStatus in
                     Settings.shared.isAdvertiserTrackingEnabled = (newStatus == .authorized)
+                    // ATE 상태를 반영한 직후 App Activate 이벤트 전송.
+                    AppEvents.shared.activateApp()
                 }
             }
         } else {
             Settings.shared.isAdvertiserTrackingEnabled = (status == .authorized)
+            AppEvents.shared.activateApp()
         }
     }
 
