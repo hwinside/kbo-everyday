@@ -199,13 +199,13 @@ export default function PlayerHero({
         {/* Center: cutout */}
         {/* 상단 safe space 6px + 하단 그라데이션 fade(어깨선 자연스럽게 사라짐) */}
         {/* - container: top-[6px] h-[194px] → 상단 여유 6px 확보 (모자 끝이 Hero 상단에 닿는 케이스 방지) */}
-        {/* - mask: 0~90% 완전 노출 → 90~100% fade — 상단 geometry 불변, fade 시작점을 더 내려
-             목이 더 올라와 보이게(하린아빠 2차: 목 좀 더 노출). 윗공간은 그대로 유지. */}
+        {/* - mask: 0~96% 완전 노출 → 96~100% fade — 어깨선이 더 드러나게 fade를 거의 끝까지 내림
+             (구자욱/박해민처럼 소스 크롭이 타이트한 케이스도 어깨 노출). 하단 4%만 soft out. */}
         <div
           className="pointer-events-none absolute left-1/2 top-[6px] z-0 -translate-x-1/2 h-[194px] w-[200px] overflow-hidden"
           style={{
-            maskImage: "linear-gradient(180deg, #000 0%, #000 90%, transparent 100%)",
-            WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 90%, transparent 100%)",
+            maskImage: "linear-gradient(180deg, #000 0%, #000 96%, transparent 100%)",
+            WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 96%, transparent 100%)",
           }}
         >
           <Image
@@ -214,9 +214,12 @@ export default function PlayerHero({
             fill
             sizes="220px"
             className="relative object-contain"
-            // 다음 원본 히어로(정수리 ~7% 지점)는 옛 -30px 오프셋이 모자 상단을 잘랐다.
-            // 상단 여백을 항상 확보하고 머리를 살짝 축소(아래로) — 전 선수 일괄.
-            style={{ objectPosition: "center 24px", transform: "scale(0.84)", transformOrigin: "center top" }}
+            // 다음 원본 히어로(정수리 ~7.5%). object-contain 풀필 + 상향.
+            // origin top에서 scale은 하단부(어깨)를 오히려 아래로 밀므로(삼순 NO-GO #464),
+            // scale은 1.04 고정(얼굴 과확대 없음)하고 translateY를 -4→-8px로 키워 인물 전체를
+            // ~3px 위로 끌어올려 어깨선이 실제로 노출되게 함. scale 1.04가 하단 박스를 넘겨
+            // 빈 공간 0 유지(하단 fade로 soft out), 모자 상단 여유 ~13px 유지(잘림 없음).
+            style={{ objectPosition: "center top", transform: "scale(1.04) translateY(-8px)", transformOrigin: "center top" }}
             priority
             unoptimized
           />
