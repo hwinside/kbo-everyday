@@ -1,6 +1,7 @@
 import UIKit
 import Capacitor
 import FBSDKCoreKit
+import AppTrackingTransparency
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -39,6 +40,31 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func applicationDidBecomeActive(_ application: UIApplication) {
         AppEvents.shared.activateApp()
+        // ATT 권한 상태에 맞춰 Meta SDK의 advertiserTrackingEnabled를 동기화한다.
+        // (미결정이면 프롬프트를 띄우고, 이미 결정됐으면 플래그만 갱신 — 프롬프트 재노출 없음)
+        syncAdvertiserTracking()
+    }
+
+    /// App Tracking Transparency 상태를 Meta SDK에 반영.
+    /// - iOS 14+: ATT 권한이 .notDetermined면 앱이 active일 때 프롬프트를 띄우고(약간의 지연으로 UI 표시 보장),
+    ///   결정 결과를 `Settings.shared.isAdvertiserTrackingEnabled`에 반영한다.
+    /// - 권한 거부/제한 시에도 SKAdNetwork/AEM(앱 취합 이벤트 측정)은 동작하므로 설치 캠페인 측정은 유지된다.
+    private func syncAdvertiserTracking() {
+        guard #available(iOS 14, *) else {
+            Settings.shared.isAdvertiserTrackingEnabled = true
+            return
+        }
+        let status = ATTrackingManager.trackingAuthorizationStatus
+        if status == .notDetermined {
+            // 프롬프트는 앱이 foreground active일 때만 표시된다. 첫 프레임이 그려진 뒤 띄우기 위해 잠깐 지연.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                ATTrackingManager.requestTrackingAuthorization { newStatus in
+                    Settings.shared.isAdvertiserTrackingEnabled = (newStatus == .authorized)
+                }
+            }
+        } else {
+            Settings.shared.isAdvertiserTrackingEnabled = (status == .authorized)
+        }
     }
 
     func applicationWillTerminate(_ application: UIApplication) {
