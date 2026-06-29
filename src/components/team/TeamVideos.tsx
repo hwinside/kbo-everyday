@@ -31,7 +31,7 @@ function DurationBadge({ seconds }: { seconds?: number }) {
   );
 }
 
-/** 업로드 시점 → 하루 안 "n시간 전"(1시간 미만은 "n분 전"/"방금 전") · 하루~일주일 "n일 전" · 일주일↑ "6월 21일"(KST) */
+/** 업로드 시점 → 하루 안 "n시간 전"(1시간 미만은 "n분 전"/"방금 전") · 하루~일주일 "n일 전" · 일주일↑ "6월 21일"(KST). 미래/빈/invalid는 미표시 */
 function formatUploadedAgo(publishedAt?: string): string | null {
   if (!publishedAt) return null;
   const date = new Date(publishedAt);
@@ -39,6 +39,7 @@ function formatUploadedAgo(publishedAt?: string): string | null {
   if (Number.isNaN(ms)) return null;
 
   const diff = Date.now() - ms;
+  if (diff < 0) return null; // 미래 시각(잘못된 데이터)은 미표시
   const minute = 60 * 1000;
   const hour = 60 * minute;
   const day = 24 * hour;
@@ -107,7 +108,7 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
                   {v.title}
                 </p>
                 {uploadedAgo && (
-                  <p className="mt-0.5 text-xs text-text-secondary">{uploadedAgo}</p>
+                  <p className="mt-0.5 text-xs text-text-tertiary">{uploadedAgo}</p>
                 )}
               </a>
               );
