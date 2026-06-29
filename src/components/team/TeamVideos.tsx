@@ -31,6 +31,33 @@ function DurationBadge({ seconds }: { seconds?: number }) {
   );
 }
 
+/** 업로드 시점 → 하루 안 "n시간 전"(1시간 미만은 "n분 전"/"방금 전") · 하루~일주일 "n일 전" · 일주일↑ "6월 21일"(KST). 미래/빈/invalid는 미표시 */
+function formatUploadedAgo(publishedAt?: string): string | null {
+  if (!publishedAt) return null;
+  const date = new Date(publishedAt);
+  const ms = date.getTime();
+  if (Number.isNaN(ms)) return null;
+
+  const diff = Date.now() - ms;
+  if (diff < 0) return null; // 미래 시각(잘못된 데이터)은 미표시
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+
+  if (diff < hour) {
+    const minutes = Math.floor(diff / minute);
+    return minutes < 1 ? "방금 전" : `${minutes}분 전`;
+  }
+  if (diff < day) return `${Math.floor(diff / hour)}시간 전`;
+  if (diff < 7 * day) return `${Math.floor(diff / day)}일 전`;
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    month: "long",
+    day: "numeric",
+  }).format(date);
+}
+
 export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
   const [longVideos, setLongVideos] = useState<Video[]>([]);
   const [shortVideos, setShortVideos] = useState<Video[]>([]);
@@ -54,7 +81,9 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
       {longVideos.length > 0 && (
         <section className="mb-6">
           <div className="space-y-3">
-            {longVideos.map((v) => (
+            {longVideos.map((v) => {
+              const uploadedAgo = formatUploadedAgo(v.publishedAt);
+              return (
               <a
                 key={v.id}
                 href={`https://www.youtube.com/watch?v=${v.id}`}
@@ -78,8 +107,12 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
                 <p className="mt-1.5 text-sm text-text-primary line-clamp-2 leading-snug">
                   {v.title}
                 </p>
+                {uploadedAgo && (
+                  <p className="mt-0.5 text-xs text-text-tertiary">{uploadedAgo}</p>
+                )}
               </a>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}
@@ -89,7 +122,9 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
         <section className="mb-6">
           <h2 className="text-base font-bold text-text-primary mb-3">📱 숏츠</h2>
           <div className="flex gap-2.5 overflow-x-auto hide-scrollbar pb-2">
-            {shortVideos.map((v, i) => (
+            {shortVideos.map((v, i) => {
+              const uploadedAgo = formatUploadedAgo(v.publishedAt);
+              return (
               <button
                 key={v.id}
                 onClick={() => setReelIndex(i)}
@@ -111,8 +146,12 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
                 <p className="mt-1.5 text-[11px] text-text-secondary line-clamp-2 leading-snug text-left">
                   {v.title}
                 </p>
+                {uploadedAgo && (
+                  <p className="mt-0.5 text-[10px] text-text-tertiary text-left">{uploadedAgo}</p>
+                )}
               </button>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}
