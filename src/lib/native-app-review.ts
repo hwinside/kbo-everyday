@@ -61,21 +61,26 @@ export async function detectNativeRuntime(): Promise<boolean> {
  * 인앱 스토어 리뷰 요청. 네이티브에서만 동작(웹은 no-op).
  * 1) npm core 프록시 시도 → 실패 시 2) 주입 브릿지 직접 호출(원격 로드 dual-instance 우회).
  * 실제 노출 여부/빈도는 OS(Apple·Play)가 자체 제한한다.
+ * @returns 네이티브 호출이 실제로 invoke됐으면 true. 미등록/UNIMPLEMENTED 등 양쪽 경로 모두
+ *   실패하면 false → 호출 측이 "요청함" 플래그를 찍지 않게 해서 영구 스킵을 방지한다(삼순 리뷰).
  */
-export async function requestAppReview(): Promise<void> {
-  if (!(await detectNativeRuntime())) return;
+export async function requestAppReview(): Promise<boolean> {
+  if (!(await detectNativeRuntime())) return false;
   try {
     await AppReview.requestReview();
+    return true;
   } catch (coreErr) {
     const nativePlugin = getInjectedCapacitor()?.Plugins?.AppReview;
     if (nativePlugin?.requestReview) {
       try {
         await nativePlugin.requestReview();
+        return true;
       } catch (winErr) {
         console.warn("[app-review] native requestReview failed (both paths)", coreErr, winErr);
+        return false;
       }
-    } else {
-      console.warn("[app-review] native requestReview failed", coreErr);
     }
+    console.warn("[app-review] native requestReview failed", coreErr);
+    return false;
   }
 }

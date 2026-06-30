@@ -46,9 +46,12 @@ export default function AppReviewTrigger() {
         const count = parseInt(localStorage.getItem(LAUNCH_COUNT_KEY) || "0", 10) || 0;
         if (count < LAUNCH_THRESHOLD) return;
         if (!(await detectNativeRuntime()) || cancelled) return;
-        // 표시 시도 전에 마킹 — OS가 실제로 안 띄워도 재요청하지 않음(1회성).
-        localStorage.setItem(REVIEW_PROMPTED_KEY, "1");
-        await requestAppReview();
+        // 네이티브 호출이 실제로 invoke된 경우(=플러그인 등록됨)에만 1회성 마킹.
+        // 미등록/UNIMPLEMENTED로 실패하면 마킹 안 함 → 다음 홈 진입에 재시도(삼순 NO-GO 반영).
+        const invoked = await requestAppReview();
+        if (invoked && !cancelled) {
+          localStorage.setItem(REVIEW_PROMPTED_KEY, "1");
+        }
       } catch {
         /* 무시 */
       }
