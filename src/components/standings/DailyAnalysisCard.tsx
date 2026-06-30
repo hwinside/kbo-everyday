@@ -15,15 +15,24 @@ interface DailyAnalysisCardProps {
   loading?: boolean;
 }
 
+const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
+
 function formatReferenceDate(date: string | null, entry: AnalysisEntry | undefined): string {
+  // lastUpdated가 있으면 그 값이 실제 마지막 경기일(휴식일 보정 완료).
+  // 없으면 분석 날짜(=표시일)의 하루 전이 경기일.
   const source = entry?.lastUpdated || date;
   if (!source) return "";
-  const d = new Date(source);
+  const d = new Date(`${source}T12:00:00`);
   if (isNaN(d.getTime())) return "";
   if (!entry?.lastUpdated && date) {
     d.setDate(d.getDate() - 1);
   }
-  return `${d.getMonth() + 1}/${d.getDate()} 경기 기준`;
+  return `${d.getMonth() + 1}/${d.getDate()}(${WEEKDAYS[d.getDay()]}) 경기 기준`;
+}
+
+// 본문 도입부에 남은 시점 부사(어제/오늘)는 표시 단계에서 제거 (과거 생성분 대비).
+function stripTemporalLede(copy: string): string {
+  return copy.replace(/^\s*(어제|오늘)(의)?\s+/, "");
 }
 
 export default function DailyAnalysisCard({ type, date, analysis, loading }: DailyAnalysisCardProps) {
@@ -48,7 +57,8 @@ export default function DailyAnalysisCard({ type, date, analysis, loading }: Dai
   if (!entry?.copy) return null;
 
   const refDate = formatReferenceDate(date, entry);
-  const isLong = entry.copy.length > 150;
+  const displayCopy = stripTemporalLede(entry.copy);
+  const isLong = displayCopy.length > 150;
 
   return (
     <motion.div
@@ -66,7 +76,7 @@ export default function DailyAnalysisCard({ type, date, analysis, loading }: Dai
       </div>
       <div className={!expanded && isLong ? "line-clamp-3" : undefined}>
         <p className="text-sm text-text-primary leading-relaxed whitespace-pre-line">
-          {entry.copy}
+          {displayCopy}
         </p>
       </div>
       {isLong && (

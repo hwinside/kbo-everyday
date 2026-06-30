@@ -36,6 +36,13 @@ function toKboDate(isoDate: string): string {
   return isoDate.replace(/-/g, ""); // YYYYMMDD
 }
 
+// 임의 ISO 날짜에 일수 가감 (UTC 기준, tz drift 방지)
+function isoAddDays(isoDate: string, days: number): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 // ===== HTML fetch helpers (from cron/stats pattern) =====
 
 async function fetchHtml(url: string): Promise<string> {
@@ -215,18 +222,18 @@ function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNa
   }).join("\n");
 
   return `당신은 KBO 프로야구 전문 데이터 분석 기자입니다.
-아래 데이터를 바탕으로 어제 경기 기준 순위 동향을 기사체 반말(~다)로 작성하세요.
+아래 데이터를 바탕으로 최근 경기 기준 순위 동향을 기사체 반말(~다)로 작성하세요.
 
 ## 핵심 원칙
 0. 존댓말(~습니다/~합니다) 절대 금지. 기사체 반말(~했다/~됐다/~있다)로만 작성하세요.
 1. 제공된 데이터 외의 정보를 사용하지 마세요.
-2. 시점 표현 규칙: "오늘" 절대 금지. 경기는 모두 어제 치러진 것이므로 시점이 필요하면 "어제"만 사용하세요. "4월 17일" 등 구체적 날짜도 금지.
-2-1. 금지 도입부 예시 (절대 쓰지 말 것): "오늘 KBO에서는~", "오늘 경기에서는~", "오늘의 순위는~". 도입부가 필요하면 "어제"로 시작하거나 아예 사건부터 시작하세요.
+2. 시점 표현 규칙: "오늘", "어제" 등 시점 부사를 본문에 절대 쓰지 마세요. 경기 날짜는 화면에 별도로 표기되므로 본문에는 시점어 없이 사건만 서술하세요. "4월 17일" 등 구체적 날짜도 금지.
+2-1. 금지 도입부 예시 (절대 쓰지 말 것): "어제 KBO리그는~", "오늘 KBO에서는~", "어제 경기에서는~", "오늘의 순위는~". 도입부는 시점어 없이 바로 사건부터 시작하세요. 예: "KT가 키움을 5대0으로 완파하며 3연승을 달렸다".
 3. 마크다운/HTML 문법 금지. ##, **, *, - 등 서식 없이 순수 텍스트로만 작성.
 4. 승률은 언급하지 마세요.
 5. 3연승/3연패 미만의 streak는 언급하지 마세요.
 6. 상위권/중위권/하위권으로 나누지 말고, 순위 변동 팀 중심으로 서술. 변동 없는 팀은 생략.
-7. "순위표 해설"이 아니라 "어제 KBO에서 무슨 일이 있었는지" 요약하는 느낌으로.
+7. "순위표 해설"이 아니라 "KBO에서 무슨 일이 있었는지" 요약하는 느낌으로.
 8. 총론/도입부 없이 바로 핵심 사건부터 시작하는 것이 가장 좋습니다. 예: "KT가 키움을 5대0으로 완파하며 3연승을 달렸다" 처럼 바로 사건부터.
 9. 언급 팀은 최대 3~4팀으로 제한. 나머지는 과감히 생략.
 10. 순위 변동 정확성 필수: 데이터에 X위→Y위로 명시되어 있으니 반드시 그대로 사용. 올랐다/떨어졌다는 실제 순위 변동이 있을 때만. 변동없음이면 X위를 유지했다로 쓰세요.
@@ -239,14 +246,14 @@ function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNa
 14. 이벤트가 없으면 순위 변동만으로 서술.
 15. 동률 처리 필수: 데이터에 "공동 N위"로 표기된 팀은 반드시 "공동 N위"로 서술하세요. 순서만 나열해서 단독 N위처럼 만들지 마세요. 예: "공동 2위 LG, 공동 2위 KIA" → "LG와 KIA가 공동 2위를 다투고 있다" 형태로 묶거나, 다르게 언급할 때도 반드시 "공동" 접두어 유지.
 
-## 어제 경기 결과
+## 경기 결과
 ${eventLines || "경기 없음"}
 
 ## 현재 순위 (변동 포함)
 ${teamDeltas}
 
-${highlights.length > 0 ? `## 어제의 주요 이벤트\n${highlights.map((h) => `- ${h.team} ${h.text}`).join("\n")}\n\n` : ""}${newsHeadlines.length > 0 ? `## 어제 뉴스 헤드라인 (맥락 보강용, 팩트는 위 데이터 기준)\n${newsHeadlines.map((h) => `- ${h}`).join("\n")}\n\n` : ""}## 출력 형식 (JSON 객체 하나만 출력)
-{ "content": "어제 KBO 전체 조망 요약 (순위 변동팀 중심, 150~250자, 마크다운/날짜 금지)" }`;
+${highlights.length > 0 ? `## 주요 이벤트\n${highlights.map((h) => `- ${h.team} ${h.text}`).join("\n")}\n\n` : ""}${newsHeadlines.length > 0 ? `## 뉴스 헤드라인 (맥락 보강용, 팩트는 위 데이터 기준)\n${newsHeadlines.map((h) => `- ${h}`).join("\n")}\n\n` : ""}## 출력 형식 (JSON 객체 하나만 출력)
+{ "content": "KBO 전체 조망 요약 (시점어 없이, 순위 변동팀 중심, 150~250자, 마크다운/날짜 금지)" }`;
 }
 
 function buildTitlePrompt(
@@ -290,28 +297,28 @@ function buildTitlePrompt(
     }).join("\n\n");
 
   return `당신은 KBO 프로야구 전문 데이터 분석 기자입니다.
-아래 데이터를 바탕으로 어제 경기 기준 ${label} 변동을 기사체 반말(~다)로 작성하세요.
+아래 데이터를 바탕으로 최근 경기 기준 ${label} 변동을 기사체 반말(~다)로 작성하세요.
 
 ## 핵심 원칙
 0. 존댓말(~습니다/~합니다) 절대 금지. 기사체 반말(~했다/~됐다/~있다)로만 작성하세요.
 1. 제공된 데이터 외의 정보를 사용하지 마세요.
-2. 시점 표현 규칙: "오늘" 절대 금지. 경기는 모두 어제 치러진 것이므로 시점이 필요하면 "어제"만 사용하세요. "4월 17일" 등 구체적 날짜도 금지.
-2-1. 금지 도입부 예시: "오늘 타자 타이틀은~", "오늘 투수 타이틀은~". 필요하면 "어제" 또는 아예 없이 사건부터 시작하세요.
+2. 시점 표현 규칙: "오늘", "어제" 등 시점 부사를 본문에 절대 쓰지 마세요. 경기 날짜는 화면에 별도로 표기되므로 본문에는 시점어 없이 사건만 서술하세요. "4월 17일" 등 구체적 날짜도 금지.
+2-1. 금지 도입부 예시: "어제 타자 타이틀은~", "오늘 투수 타이틀은~". 도입부는 시점어 없이 바로 사건부터 시작하세요.
 3. 마크다운/HTML 문법 금지. ##, **, *, - 등 서식 없이 순수 텍스트로만 작성하세요.
 4. 각 카테고리별 변동을 서술하되, 1위 교체가 있으면 중점적으로 다루세요.
-5. 어제 경기 결과와 연결해서 왜 수치가 변했는지 설명하세요.
+5. 경기 결과와 연결해서 왜 수치가 변했는지 설명하세요.
 6. 구체적 수치를 자연스럽게 녹여 서술하세요.
 7. 동률 처리 필수: 데이터에 순위가 명시되어 있으므로 그대로 따르세요. 같은 순위(예: 1위 여러 명)는 반드시 "공동 1위"로 묶어서 한 문장으로 서술하고, 절대 1위/2위/3위로 임의 서열화하지 마세요. 예: 홈런 5개 공동 1위 3명 → "오스틴, 장성우, 레이예스가 나란히 홈런 5개로 공동 1위에 올랐다".
 8. 공동 N위가 여러 카테고리에 걸쳐 나오면 각각 동일 규칙 적용. 순위 숫자 앞에 "공동"을 반드시 붙이세요.
 
-## 어제 경기 결과
+## 경기 결과
 ${eventLines || "경기 없음"}
 
 ## ${label} 변동
 ${catData}
 
 ## 출력 형식 (JSON 객체 하나만 출력)
-{ "content": "${label} 변동 기사 본문 (150~250자, 마크다운 금지, 날짜 언급 금지)" }`;
+{ "content": "${label} 변동 기사 본문 (시점어 없이, 150~250자, 마크다운 금지, 날짜 언급 금지)" }`;
 }
 
 // ===== Gemini call =====
@@ -397,35 +404,28 @@ async function callGemini(prompt: string): Promise<string> {
 }
 
 // ===== Post-process sanitizer =====
-// LLM이 아무리 강화된 프롬프트에도 가끔 "오늘~" 도입부를 생성함.
-// 저장/반환 전 마지막 안전장치로 문자열 후처리를 수행한다.
-// 전략: 첫 문장(첫 마침표 전까지)에서 금지 도입구만 "어제"로 치환.
-// 그래도 잔류 시 도입구 통째로 제거.
+// 경기 날짜는 화면 배지가 책임지므로 본문에는 시점 부사(어제/오늘)를 두지 않는다.
+// LLM이 강화된 프롬프트에도 가끔 시점 도입부를 생성하고, 과거 생성분도 "어제"로
+// 시작할 수 있으므로 저장/반환 전 마지막 안전장치로 도입부 시점어를 제거한다.
 function sanitizeCopy(copy: string): string {
   if (!copy) return copy;
   let out = copy.trimStart();
 
-  // 1. 가장 흔한 패턴: 도입구 "오늘 X" → "어제 X"
-  //    단, 첫 문장에서만 치환 (본문 중간의 "오늘"은 다른 맥락일 수 있음 — 실제로는 거의 없지만)
+  // 1. 도입부 시점 부사 제거: "어제 ", "오늘 ", "어제의 ", "오늘의 "
+  out = out.replace(/^(어제|오늘)(의)?\s+/, "");
+
+  // 2. 첫 문장 안에 남은 시점 부사도 1회 제거 (과교정 방지 위해 첫 문장만)
   const firstPeriod = out.indexOf("다.");
   const firstSentenceEnd = firstPeriod >= 0 ? firstPeriod + 2 : out.length;
   let firstSentence = out.slice(0, firstSentenceEnd);
   const rest = out.slice(firstSentenceEnd);
-
-  // 2. "오늘 KBO에서는", "오늘 경기에서는", "오늘 타자 타이틀", "오늘 투수 타이틀", "오늘의 순위는" 등
-  //    일관되게 "어제"로 시작하도록 치환 (문장 서두만)
-  firstSentence = firstSentence.replace(/^오늘\s+/, "어제 ");
-  firstSentence = firstSentence.replace(/^오늘의\s+/, "어제 ");
-
-  // 3. 첫 문장 안에 "오늘"이 또 남아있으면 한 번 더 "어제"로 치환 (과교정 방지 위해 1회만)
-  firstSentence = firstSentence.replace(/\s오늘\s+/, " 어제 ");
-
+  firstSentence = firstSentence.replace(/(^|\s)(어제|오늘)(의)?\s+/, "$1");
   out = firstSentence + rest;
 
-  // 4. 본문 중 "오늘의 경기" 류 잔류 케이스도 치환 (문맥상 과거형 경기 의미)
-  out = out.replace(/오늘의\s+경기/g, "어제 경기");
+  // 3. 잔류 "오늘의 경기"/"어제 경기" 류 → 시점어 제거
+  out = out.replace(/(어제|오늘)의?\s+경기/g, "경기");
 
-  return out;
+  return out.trimStart();
 }
 
 // ===== Main route =====
@@ -576,18 +576,24 @@ export async function GET(req: NextRequest) {
         .eq("date", yesterdayISO);
 
       if (lastAnalysis?.length) {
-        // 어제 분석을 오늘 날짜로 복사 + 업데이트 일자 표시
+        // 직전 분석을 오늘 날짜로 복사 (시점어 제거) + 실제 마지막 경기일 표시
         const lastMap = new Map(lastAnalysis.map((r: { type: string; generated_copy: string; delta_json: unknown }) => [r.type, r]));
         const lastStandings = lastMap.get("standings");
         const lastBatter = lastMap.get("batter_titles");
         const lastPitcher = lastMap.get("pitcher_titles");
-        standingsCopy = lastStandings?.generated_copy ?? "";
-        batterCopy = lastBatter?.generated_copy ?? "";
-        pitcherCopy = lastPitcher?.generated_copy ?? "";
-        // delta_json에 경기 없음 표시 추가
-        Object.assign(standingsDelta, { noGames: true, lastUpdated: yesterdayISO });
-        Object.assign(batterDelta, { noGames: true, lastUpdated: yesterdayISO });
-        Object.assign(pitcherDelta, { noGames: true, lastUpdated: yesterdayISO });
+        standingsCopy = sanitizeCopy(lastStandings?.generated_copy ?? "");
+        batterCopy = sanitizeCopy(lastBatter?.generated_copy ?? "");
+        pitcherCopy = sanitizeCopy(lastPitcher?.generated_copy ?? "");
+        // 실제 마지막 경기일 = 직전 분석의 경기일.
+        // 직전 행이 이미 복사본(lastUpdated 보유)이면 그 값을, 아니면 직전 행 날짜의 하루 전(=직전 경기일).
+        const srcDelta = (lastStandings?.delta_json ?? lastBatter?.delta_json ?? lastPitcher?.delta_json) as Record<string, unknown> | null;
+        const sourceGameDate =
+          (typeof srcDelta?.lastUpdated === "string" ? srcDelta.lastUpdated : null) ??
+          isoAddDays(yesterdayISO, -1);
+        // delta_json에 경기 없음 + 실제 마지막 경기일 표시
+        Object.assign(standingsDelta, { noGames: true, lastUpdated: sourceGameDate });
+        Object.assign(batterDelta, { noGames: true, lastUpdated: sourceGameDate });
+        Object.assign(pitcherDelta, { noGames: true, lastUpdated: sourceGameDate });
       } else {
         standingsCopy = "";
         batterCopy = "";
@@ -610,7 +616,7 @@ export async function GET(req: NextRequest) {
         ? callGemini(buildTitlePrompt(pitcherDelta, gameEvents, "pitcher"))
         : Promise.resolve(""));
       const [rawStandings, rawBatter, rawPitcher] = await Promise.all(promises);
-      // Post-process 가드: LLM이 "오늘~" 도입부를 만들어도 저장 전에 "어제~"로 강제 치환
+      // Post-process 가드: LLM이 "어제/오늘~" 시점 도입부를 만들어도 저장 전에 제거
       standingsCopy = sanitizeCopy(rawStandings);
       batterCopy = sanitizeCopy(rawBatter);
       pitcherCopy = sanitizeCopy(rawPitcher);
