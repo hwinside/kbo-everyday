@@ -183,10 +183,10 @@ struct KBOLiveActivityWidget: Widget {
             DynamicIsland {
                 // 확장 — 양팀 로고 + 약어 + 점수 + 이닝 (다이아몬드는 공간상 잠금화면만)
                 DynamicIslandExpandedRegion(.leading) {
-                    DITeam(code: context.attributes.awayTeamCode, score: context.state.awayScore)
+                    DITeam(code: context.attributes.awayTeamCode, score: context.state.awayScore, isScheduled: context.state.isScheduled)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    DITeam(code: context.attributes.homeTeamCode, score: context.state.homeScore)
+                    DITeam(code: context.attributes.homeTeamCode, score: context.state.homeScore, isScheduled: context.state.isScheduled)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     // 가운데에 N회초/말. 숫자=Montserrat, 회초/말=Noto. (경기 전엔 이닝 대신 예정 시각)
@@ -210,12 +210,15 @@ struct KBOLiveActivityWidget: Widget {
                     }
                 }
             } compactLeading: {
-                // 로고 + 약어(라틴=Montserrat) + 점수(Montserrat) — B안
+                // 로고 + 약어(라틴=Montserrat) + 점수(Montserrat) — B안.
+                // 경기 전(scheduled)엔 점수(0)를 숨긴다 — 시작도 안 한 경기에 0:0 노출 방지.
                 HStack(spacing: 2) {
                     TeamLogo(code: context.attributes.awayTeamCode, size: 18)
                     teamShortText(context.attributes.awayTeamCode, 11, .semibold).lineLimit(1)
-                    Text("\(context.state.awayScore)")
-                        .font(montserrat(14, .bold)).monospacedDigit()
+                    if !context.state.isScheduled {
+                        Text("\(context.state.awayScore)")
+                            .font(montserrat(14, .bold)).monospacedDigit()
+                    }
                 }
             } compactTrailing: {
                 // 노치 바로 우측에 N회초/말(센터 인접) + 점수 + 약어 + 로고.
@@ -225,14 +228,21 @@ struct KBOLiveActivityWidget: Widget {
                             .foregroundStyle(.white.opacity(0.85))
                             .lineLimit(1)
                     }
-                    Text("\(context.state.homeScore)")
-                        .font(montserrat(14, .bold)).monospacedDigit()
+                    if !context.state.isScheduled {
+                        Text("\(context.state.homeScore)")
+                            .font(montserrat(14, .bold)).monospacedDigit()
+                    }
                     teamShortText(context.attributes.homeTeamCode, 11, .semibold).lineLimit(1)
                     TeamLogo(code: context.attributes.homeTeamCode, size: 18)
                 }
             } minimal: {
-                Text("\(context.state.awayScore):\(context.state.homeScore)")
-                    .font(montserrat(13, .bold)).monospacedDigit()
+                // 경기 전엔 0:0 대신 시계 아이콘(시작 안 한 경기에 점수 노출 방지).
+                if context.state.isScheduled {
+                    Image(systemName: "clock").font(.system(size: 12, weight: .bold))
+                } else {
+                    Text("\(context.state.awayScore):\(context.state.homeScore)")
+                        .font(montserrat(13, .bold)).monospacedDigit()
+                }
             }
         }
     }
@@ -245,10 +255,16 @@ struct KBOLiveActivityWidget: Widget {
 struct DITeam: View {
     let code: String
     let score: Int
+    var isScheduled: Bool = false
     var body: some View {
         HStack(spacing: 5) {
             TeamLogo(code: code, size: 30)
-            Text("\(score)").font(montserrat(20, .bold)).monospacedDigit()
+            // 경기 전엔 점수(0) 대신 팀 약어 — 가운데 예정 시각이 매치업을 보완.
+            if isScheduled {
+                teamShortText(code, 18, .bold)
+            } else {
+                Text("\(score)").font(montserrat(20, .bold)).monospacedDigit()
+            }
         }
     }
 }
