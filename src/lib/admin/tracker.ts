@@ -69,14 +69,24 @@ export async function trackPageView(userId?: string) {
 // don't fire `beforeunload`, so visibilitychange + pagehide drive the flush and
 // sendBeacon survives the unload. One page visit may emit several events (one
 // per visible interval); they sum back together server-side per session.
+//
+// Population is pinned to logged-in users (same as page-view tracking): we only
+// send when we hold an auth token, and the server derives user_id from the
+// verified JWT rather than trusting any client-claimed id.
 
 const MAX_DWELL_MS = 30 * 60 * 1000; // cap a single visible interval (idle guard)
 const MIN_DWELL_MS = 1000; // skip sub-second noise
 
 let dwellPath: string | null = null;
-let dwellUserId: string | undefined;
+let dwellToken: string | null = null;
 let dwellActiveMs = 0;
 let dwellResumeAt: number | null = null;
+
+/** Supply the current access token (logged in) or null (logged out → no
+ * tracking). Set by DwellTracker on auth/route changes. */
+export function dwellSetAuth(token: string | null) {
+  dwellToken = token;
+}
 
 function settleDwell() {
   if (dwellResumeAt != null) {
@@ -89,17 +99,15 @@ function emitDwell() {
   settleDwell();
   const ms = Math.min(dwellActiveMs, MAX_DWELL_MS);
   const path = dwellPath;
-  const userId = dwellUserId;
   dwellActiveMs = 0;
   if (!path || ms < MIN_DWELL_MS) return;
-  sendPageDwell(path, ms, userId);
+  sendPageDwell(path, ms);
 }
 
 /** Finalize the page being left, then begin timing the new one. */
-export function dwellStartPage(path: string, userId?: string) {
+export function dwellStartPage(path: string) {
   emitDwell();
   dwellPath = path;
-  dwellUserId = userId;
   dwellActiveMs = 0;
   dwellResumeAt =
     typeof document === "undefined" || document.visibilityState === "visible"
@@ -123,7 +131,9 @@ export function dwellResume() {
   }
 }
 
-function sendPageDwell(path: string, dwellMs: number, userId?: string) {
+function sendPageDwell(path: string, dwellMs: number) {
+  const token = dwellToken;
+  if (!token) return; // logged-out / no session → not tracked
   const visitorId = getVisitorId();
   if (!visitorId) return;
 
@@ -132,7 +142,7 @@ function sendPageDwell(path: string, dwellMs: number, userId?: string) {
     path,
     platform: getPlatform(),
     dwellMs: Math.round(dwellMs),
-    userId: userId ?? null,
+    accessToken: token,
   });
   const url = "/api/telemetry/page-dwell";
 

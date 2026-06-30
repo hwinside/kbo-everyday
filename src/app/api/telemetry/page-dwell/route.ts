@@ -6,7 +6,9 @@ interface DwellPayload {
   path?: string;
   platform?: string;
   dwellMs?: number;
-  userId?: string | null;
+  /** Caller's Supabase access token. user_id is derived from the verified JWT,
+   * never from a client-claimed id. */
+  accessToken?: string;
 }
 
 // Sub-second hits are noise; cap a single interval to guard against an
@@ -30,14 +32,26 @@ export async function POST(req: NextRequest) {
     typeof payload.dwellMs === "number" && Number.isFinite(payload.dwellMs)
       ? Math.round(payload.dwellMs)
       : NaN;
+  const accessToken =
+    typeof payload.accessToken === "string" && payload.accessToken
+      ? payload.accessToken
+      : null;
 
   // Quietly drop noise/garbage so beacons never surface as client errors.
-  if (!visitorId || !Number.isFinite(dwellMs) || dwellMs < MIN_DWELL_MS) {
+  if (!visitorId || !accessToken || !Number.isFinite(dwellMs) || dwellMs < MIN_DWELL_MS) {
     return NextResponse.json({ ok: true, skipped: true });
   }
 
-  const userId =
-    typeof payload.userId === "string" && payload.userId ? payload.userId : null;
+  // Pin the population to logged-in users: verify the JWT and derive user_id
+  // server-side. An invalid/expired token is silently dropped (telemetry).
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser(accessToken);
+  if (authError || !user) {
+    return NextResponse.json({ ok: true, skipped: true });
+  }
+
   const platform =
     typeof payload.platform === "string" && payload.platform
       ? payload.platform.slice(0, 32)
@@ -49,7 +63,7 @@ export async function POST(req: NextRequest) {
 
   const { error } = await supabase.from("admin_page_dwell").insert({
     visitor_id: visitorId,
-    user_id: userId,
+    user_id: user.id,
     path,
     platform,
     dwell_ms: Math.min(dwellMs, MAX_DWELL_MS),
