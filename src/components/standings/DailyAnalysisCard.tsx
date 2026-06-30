@@ -30,9 +30,11 @@ function formatReferenceDate(date: string | null, entry: AnalysisEntry | undefin
   return `${d.getMonth() + 1}/${d.getDate()}(${WEEKDAYS[d.getDay()]}) 경기 기준`;
 }
 
-// 본문 도입부에 남은 시점 부사(어제/오늘)는 표시 단계에서 제거 (과거 생성분 대비).
-function stripTemporalLede(copy: string): string {
-  return copy.replace(/^\s*(어제|오늘)(의)?\s+/, "");
+// 본문에 남은 시점 부사(어제/오늘)는 표시 단계에서 제거 (과거 생성분/휴식일 복사 대비).
+// 경기 날짜는 배지가 책임지므로 도입부뿐 아니라 본문 전체에서 제거한다.
+// 단어 경계로 토큰만 제거하므로 "오늘날" 등 합성어는 보존된다.
+function stripTemporal(copy: string): string {
+  return copy.replace(/(^|\s)(어제|오늘)(의)?\s+/g, "$1").trimStart();
 }
 
 export default function DailyAnalysisCard({ type, date, analysis, loading }: DailyAnalysisCardProps) {
@@ -57,7 +59,7 @@ export default function DailyAnalysisCard({ type, date, analysis, loading }: Dai
   if (!entry?.copy) return null;
 
   const refDate = formatReferenceDate(date, entry);
-  const displayCopy = stripTemporalLede(entry.copy);
+  const displayCopy = stripTemporal(entry.copy);
   const isLong = displayCopy.length > 150;
 
   return (
