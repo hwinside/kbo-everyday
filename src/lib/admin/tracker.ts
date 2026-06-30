@@ -41,6 +41,29 @@ function getDevice(): string {
   return "desktop";
 }
 
+// Native app version+build (e.g. "1.0.3 (6)") for the admin version-share card.
+// Cached for the session (it never changes); null on web/PWA or if unavailable.
+// undefined = not yet resolved.
+let cachedAppVersion: string | null | undefined;
+
+async function getAppVersion(): Promise<string | null> {
+  if (cachedAppVersion !== undefined) return cachedAppVersion;
+  if (!isNative) {
+    cachedAppVersion = null;
+    return null;
+  }
+  try {
+    const { App } = await import("@capacitor/app");
+    const info = await App.getInfo();
+    cachedAppVersion = info?.version
+      ? `${info.version}${info.build ? ` (${info.build})` : ""}`
+      : null;
+  } catch {
+    cachedAppVersion = null;
+  }
+  return cachedAppVersion;
+}
+
 export async function trackPageView(userId?: string) {
   if (!userId) return;
 
@@ -50,6 +73,8 @@ export async function trackPageView(userId?: string) {
   const visitorId = getVisitorId();
   if (!visitorId) return;
 
+  const appVersion = await getAppVersion();
+
   await supabase.from("admin_page_views").insert({
     visitor_id: visitorId,
     path: window.location.pathname,
@@ -57,6 +82,7 @@ export async function trackPageView(userId?: string) {
     user_agent: navigator.userAgent,
     device: getDevice(),
     platform: getPlatform(),
+    app_version: appVersion,
     user_id: userId || null,
   }).then(({ error }) => {
     if (error) console.warn("[tracker] page view insert failed:", error.message);

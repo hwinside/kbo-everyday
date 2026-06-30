@@ -22,16 +22,18 @@ export async function GET(req: NextRequest) {
   // Daily rows feed the per-day chart; totals give true window-DISTINCT UV
   // (summing daily uv would double-count multi-day visitors). appDevices is the
   // all-time DISTINCT visitor_id from native shells (unique app devices).
-  const [daily, windowTotals, appDevices, dwell] = await Promise.all([
+  const [daily, windowTotals, appDevices, dwell, versions] = await Promise.all([
     supabase.rpc("admin_traffic_daily", { p_since: since }),
     supabase.rpc("admin_traffic_totals", { p_since: since }),
     supabase.rpc("admin_app_device_totals"),
     supabase.rpc("admin_dwell_by_platform", { p_since: since }),
+    supabase.rpc("admin_app_version_share", { p_since: since }),
   ]);
   if (daily.error) return supabaseErrorResponse(daily.error);
   if (windowTotals.error) return supabaseErrorResponse(windowTotals.error);
   if (appDevices.error) return supabaseErrorResponse(appDevices.error);
   if (dwell.error) return supabaseErrorResponse(dwell.error);
+  if (versions.error) return supabaseErrorResponse(versions.error);
 
   const rows = (daily.data ?? []) as TrafficRow[];
   const totalsRows = (windowTotals.data ?? []) as Omit<TrafficRow, "day">[];
@@ -65,5 +67,27 @@ export async function GET(req: NextRequest) {
     };
   }
 
-  return NextResponse.json({ since, days, rows, totals, devices, dwell: dwellByPlatform });
+  // App version share per native platform (active distinct devices per version).
+  // Forward-only: rows without app_version roll up as '미상'.
+  const versionShare: Record<string, { version: string; devices: number }[]> = {};
+  for (const r of (versions.data ?? []) as {
+    platform: string;
+    app_version: string;
+    devices: number;
+  }[]) {
+    (versionShare[r.platform] ??= []).push({
+      version: r.app_version,
+      devices: Number(r.devices),
+    });
+  }
+
+  return NextResponse.json({
+    since,
+    days,
+    rows,
+    totals,
+    devices,
+    dwell: dwellByPlatform,
+    versions: versionShare,
+  });
 }
