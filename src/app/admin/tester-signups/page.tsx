@@ -10,6 +10,7 @@ interface Signup {
   play_store_email: string;
   device_info: string | null;
   created_at: string;
+  dm_sent_at: string | null;
 }
 
 // 비공개 테스트 다운로드 링크는 모든 테스터 공통이라 템플릿에 기본 포함(그대로 발송 가능).
@@ -65,7 +66,10 @@ export default function AdminTesterSignupsPage() {
       });
       if (res.ok) {
         const j = await res.json();
-        setItems(j.data ?? []);
+        const data: Signup[] = j.data ?? [];
+        setItems(data);
+        // 발송 완료(dm_sent_at) 신청은 재진입 후에도 '발송됨'으로 유지.
+        setSentIds(new Set(data.filter((d) => d.dm_sent_at).map((d) => d.id)));
       }
     } catch {
       /* noop */
@@ -113,6 +117,12 @@ export default function AdminTesterSignupsPage() {
       if (res.ok) {
         setSentIds((prev) => new Set(prev).add(it.id));
         setOpenId(null);
+        // 발송 사실을 DB에 기록 — 페이지 재진입 후에도 '발송됨' 유지.
+        fetch("/api/admin/tester-signups", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", "x-admin-pin": getPin() },
+          body: JSON.stringify({ id: it.id }),
+        }).catch(() => {});
       }
     } catch {
       /* noop */
