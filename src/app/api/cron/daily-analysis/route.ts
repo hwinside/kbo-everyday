@@ -616,7 +616,7 @@ export async function GET(req: NextRequest) {
         ? callGemini(buildTitlePrompt(pitcherDelta, gameEvents, "pitcher"))
         : Promise.resolve(""));
       const [rawStandings, rawBatter, rawPitcher] = await Promise.all(promises);
-      // Post-process 가드: LLM이 "오늘~" 도입부를 만들어도 저장 전에 "어제~"로 강제 치환
+      // Post-process 가드: LLM이 "어제/오늘~" 시점 도입부를 만들어도 저장 전에 제거
       standingsCopy = sanitizeCopy(rawStandings);
       batterCopy = sanitizeCopy(rawBatter);
       pitcherCopy = sanitizeCopy(rawPitcher);
