@@ -214,12 +214,6 @@ export default function PlayerHero({
             fill
             sizes="220px"
             className="relative object-contain"
-            // 다음 원본 히어로(정수리 ~7.5%). object-contain 풀필 + 상향.
-            // origin top에서 scale은 하단부(어깨)를 오히려 아래로 밀므로(삼순 NO-GO #464),
-            // scale은 1.04 고정(얼굴 과확대 없음)하고 translateY를 -4→-8px로 키워 인물 전체를
-            // ~3px 위로 끌어올려 어깨선이 실제로 노출되게 함. scale 1.04가 하단 박스를 넘겨
-            // 빈 공간 0 유지(하단 fade로 soft out), 모자 상단 여유 ~13px 유지(잘림 없음).
-            style={{ objectPosition: "center top", transform: "scale(1.04) translateY(-8px)", transformOrigin: "center top" }}
             priority
             unoptimized
           />

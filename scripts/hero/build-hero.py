@@ -39,16 +39,16 @@ APPROVED = os.path.join(REPO, "src", "lib", "constants", "hero-approved-kboids.j
 CANVAS_W, CANVAS_H = 752, 944
 TOP = 233                 # legacy headroom; subject top anchored here
 SCALE = 1.265             # legacy: 1.15 (#294) * 1.10 (#295) over height-fit
-ERODE_PX = 3
+ERODE_PX = 4
 FEATHER = 1.2
 
 # Framing mode. "legacy" = height-fit + fixed SCALE (KBO 공홈 저해상도 소스용).
 # "silhouette" = 컷아웃 알파에서 정수리·어깨선을 직접 잡아 얼굴 크기를 선수 간
 # 통일하고 어깨선을 캔버스 하단에 걸치는 히어로 구도(고해상도 다음 원본용).
 FRAME_MODE = "legacy"
-SIL_TOP = 70              # silhouette: 정수리 위 여백(px)
-SIL_SHOULDER_F = 1.7      # silhouette: 어깨선 판정 = 머리폭의 이 배수
-SIL_SHOULDER_TARGET = 0.99  # silhouette: 어깨선을 캔버스 높이의 이 지점에 앵커
+SIL_TOP = 96              # silhouette: 정수리 위 여백(px) — 프로토 검증값
+SIL_SHOULDER_F = 1.6      # silhouette: 어깨선 판정 = 머리폭의 이 배수
+SIL_SHOULDER_TARGET = 0.80  # silhouette: 어깨선을 캔버스 높이의 이 지점에 앵커
 # 과크롭 guard: 클로즈업 원본(머리가 프레임 가득)은 crown→어깨 span이 작아
 # scale이 과도하게 커지며 눈/모자 위주로 잘림. scale이 이 상한을 넘으면
 # silhouette를 포기하고 legacy height-fit(머리 전체 보존)으로 폴백한다.
