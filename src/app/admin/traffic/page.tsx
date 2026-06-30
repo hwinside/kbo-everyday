@@ -20,6 +20,7 @@ type TrafficResp = {
   totals: Record<string, { pv: number; uv: number }>;
   devices: Record<string, number>;
   dwell: Record<string, { sessions: number; avgMs: number; medianMs: number }>;
+  versions: Record<string, { version: string; devices: number }[]>;
 };
 
 // Display order + labels + colors for known platforms. Unknown (pre-tagging
@@ -129,6 +130,21 @@ export default function TrafficPage() {
       .map((day) => ({ day: day.slice(5), ios: byDay[day].ios, aos: byDay[day].aos }));
   }, [resp]);
 
+  // App version share per native app (active distinct devices per version).
+  // Android merges the legacy 'native' bucket; each list sorted by device count.
+  const versionsByApp = useMemo(() => {
+    const v = resp?.versions ?? {};
+    const ios = [...(v.ios_native ?? [])].sort((a, b) => b.devices - a.devices);
+    const aosMap: Record<string, number> = {};
+    for (const r of [...(v.android_native ?? []), ...(v.native ?? [])]) {
+      aosMap[r.version] = (aosMap[r.version] ?? 0) + r.devices;
+    }
+    const aos = Object.entries(aosMap)
+      .map(([version, devices]) => ({ version, devices }))
+      .sort((a, b) => b.devices - a.devices);
+    return { ios, aos };
+  }, [resp]);
+
   const totalPv = useMemo(
     () => Object.values(resp?.totals ?? {}).reduce((s, t) => s + t.pv, 0),
     [resp],
@@ -212,6 +228,57 @@ export default function TrafficPage() {
             <p className="text-2xl font-bold mt-1 text-[#3DDC84]">{loading ? "—" : fmt(aosDevices)}</p>
           </div>
         </div>
+      </div>
+
+      {/* App version share per native app (active distinct devices). Forward-
+          only: populates as devices re-open the app on a build that reports it. */}
+      <div className="glass-card p-4">
+        <div className="flex items-baseline justify-between flex-wrap gap-1 mb-3">
+          <h2 className="text-sm font-semibold">앱 버전 비중</h2>
+          <p className="text-xs text-[#8E8E93]">활성 기기 기준 · 배포 후 앱 재실행부터 집계</p>
+        </div>
+        {loading ? (
+          <p className="text-sm text-[#8E8E93]">불러오는 중…</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {[
+              { label: "iOS 앱", color: "#0A84FF", rows: versionsByApp.ios },
+              { label: "안드 앱", color: "#3DDC84", rows: versionsByApp.aos },
+            ].map((app) => {
+              const total = app.rows.reduce((s, v) => s + v.devices, 0);
+              return (
+                <div key={app.label}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: app.color }} />
+                    <span className="text-sm font-medium">{app.label}</span>
+                    <span className="text-xs text-[#8E8E93]">기기 {fmt(total)}</span>
+                  </div>
+                  {app.rows.length === 0 ? (
+                    <p className="text-xs text-[#8E8E93]">아직 데이터 없음</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {app.rows.map((v) => {
+                        const share = total > 0 ? Math.round((v.devices / total) * 100) : 0;
+                        return (
+                          <div key={v.version} className="flex items-center gap-2">
+                            <span className="text-xs tabular-nums w-24 shrink-0 truncate" title={v.version}>
+                              {v.version}
+                            </span>
+                            <div className="flex-1 h-2 rounded-full bg-white/5 overflow-hidden">
+                              <div className="h-full rounded-full" style={{ width: `${share}%`, background: app.color }} />
+                            </div>
+                            <span className="text-xs tabular-nums w-9 text-right">{share}%</span>
+                            <span className="text-[11px] text-[#8E8E93] tabular-nums w-12 text-right">{fmt(v.devices)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Daily active app devices (DAU) — per-day distinct native visitor_id */}
