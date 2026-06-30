@@ -63,6 +63,105 @@ export async function trackPageView(userId?: string) {
   });
 }
 
+// ---- Accurate per-page active dwell time (platform 체류시간 v2) ----
+// We measure foreground active time on each page (paused while the tab is
+// hidden) and beacon it on page leave / tab hide / route change. Mobile shells
+// don't fire `beforeunload`, so visibilitychange + pagehide drive the flush and
+// sendBeacon survives the unload. One page visit may emit several events (one
+// per visible interval); they sum back together server-side per session.
+//
+// Population is pinned to logged-in users (same as page-view tracking): we only
+// send when we hold an auth token, and the server derives user_id from the
+// verified JWT rather than trusting any client-claimed id.
+
+const MAX_DWELL_MS = 30 * 60 * 1000; // cap a single visible interval (idle guard)
+const MIN_DWELL_MS = 1000; // skip sub-second noise
+
+let dwellPath: string | null = null;
+let dwellToken: string | null = null;
+let dwellActiveMs = 0;
+let dwellResumeAt: number | null = null;
+
+/** Supply the current access token (logged in) or null (logged out → no
+ * tracking). Set by DwellTracker on auth/route changes. */
+export function dwellSetAuth(token: string | null) {
+  dwellToken = token;
+}
+
+function settleDwell() {
+  if (dwellResumeAt != null) {
+    dwellActiveMs += Date.now() - dwellResumeAt;
+    dwellResumeAt = null;
+  }
+}
+
+function emitDwell() {
+  settleDwell();
+  const ms = Math.min(dwellActiveMs, MAX_DWELL_MS);
+  const path = dwellPath;
+  dwellActiveMs = 0;
+  if (!path || ms < MIN_DWELL_MS) return;
+  sendPageDwell(path, ms);
+}
+
+/** Finalize the page being left, then begin timing the new one. */
+export function dwellStartPage(path: string) {
+  emitDwell();
+  dwellPath = path;
+  dwellActiveMs = 0;
+  dwellResumeAt =
+    typeof document === "undefined" || document.visibilityState === "visible"
+      ? Date.now()
+      : null;
+}
+
+/** Tab hidden / page hide: flush what we've accumulated so far. */
+export function dwellPause() {
+  emitDwell();
+}
+
+/** Tab visible again: resume timing the same page. */
+export function dwellResume() {
+  if (
+    dwellPath &&
+    dwellResumeAt == null &&
+    (typeof document === "undefined" || document.visibilityState === "visible")
+  ) {
+    dwellResumeAt = Date.now();
+  }
+}
+
+function sendPageDwell(path: string, dwellMs: number) {
+  const token = dwellToken;
+  if (!token) return; // logged-out / no session → not tracked
+  const visitorId = getVisitorId();
+  if (!visitorId) return;
+
+  const body = JSON.stringify({
+    visitorId,
+    path,
+    platform: getPlatform(),
+    dwellMs: Math.round(dwellMs),
+    accessToken: token,
+  });
+  const url = "/api/telemetry/page-dwell";
+
+  try {
+    if (navigator.sendBeacon) {
+      const blob = new Blob([body], { type: "application/json" });
+      if (navigator.sendBeacon(url, blob)) return;
+    }
+    void fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      keepalive: true,
+    });
+  } catch (error) {
+    console.warn("[tracker] dwell send failed:", error);
+  }
+}
+
 /** Temporary: log celebration triggers for monitoring. inning + eventId are
  * recorded so we can trace mis-attribution (e.g. wrong batter) back to the
  * exact event that triggered the celebration.

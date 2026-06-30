@@ -6,6 +6,7 @@ import { ThemeProvider, themeScript } from "@/components/ThemeProvider";
 import { AdAttributionMount } from "@/components/AdAttributionMount";
 import { NativePushMount } from "@/components/NativePushMount";
 import { PageViewTracker } from "@/components/PageViewTracker";
+import { DwellTracker } from "@/components/DwellTracker";
 import { Analytics } from "@vercel/analytics/next";
 
 const GA_ID = "G-C0TE4TFLZ4";
@@ -105,6 +106,7 @@ export default function RootLayout({
         <ThemeProvider>
           <AuthProvider>
             <PageViewTracker />
+            <DwellTracker />
             {children}
           </AuthProvider>
         </ThemeProvider>

@@ -22,14 +22,16 @@ export async function GET(req: NextRequest) {
   // Daily rows feed the per-day chart; totals give true window-DISTINCT UV
   // (summing daily uv would double-count multi-day visitors). appDevices is the
   // all-time DISTINCT visitor_id from native shells (unique app devices).
-  const [daily, windowTotals, appDevices] = await Promise.all([
+  const [daily, windowTotals, appDevices, dwell] = await Promise.all([
     supabase.rpc("admin_traffic_daily", { p_since: since }),
     supabase.rpc("admin_traffic_totals", { p_since: since }),
     supabase.rpc("admin_app_device_totals"),
+    supabase.rpc("admin_dwell_by_platform", { p_since: since }),
   ]);
   if (daily.error) return supabaseErrorResponse(daily.error);
   if (windowTotals.error) return supabaseErrorResponse(windowTotals.error);
   if (appDevices.error) return supabaseErrorResponse(appDevices.error);
+  if (dwell.error) return supabaseErrorResponse(dwell.error);
 
   const rows = (daily.data ?? []) as TrafficRow[];
   const totalsRows = (windowTotals.data ?? []) as Omit<TrafficRow, "day">[];
@@ -44,5 +46,24 @@ export async function GET(req: NextRequest) {
     devices[r.platform] = Number(r.devices);
   }
 
-  return NextResponse.json({ since, days, rows, totals, devices });
+  // Per-platform session dwell (active time-on-site). avg is skewed high by
+  // idle-but-visible tails, so the UI leans on median.
+  const dwellByPlatform: Record<
+    string,
+    { sessions: number; avgMs: number; medianMs: number }
+  > = {};
+  for (const r of (dwell.data ?? []) as {
+    platform: string;
+    sessions: number;
+    avg_ms: number;
+    median_ms: number;
+  }[]) {
+    dwellByPlatform[r.platform] = {
+      sessions: Number(r.sessions),
+      avgMs: Number(r.avg_ms),
+      medianMs: Number(r.median_ms),
+    };
+  }
+
+  return NextResponse.json({ since, days, rows, totals, devices, dwell: dwellByPlatform });
 }

@@ -19,6 +19,7 @@ type TrafficResp = {
   rows: TrafficRow[];
   totals: Record<string, { pv: number; uv: number }>;
   devices: Record<string, number>;
+  dwell: Record<string, { sessions: number; avgMs: number; medianMs: number }>;
 };
 
 // Display order + labels + colors for known platforms. Unknown (pre-tagging
@@ -54,6 +55,14 @@ const tooltipStyle = {
 
 function fmt(n: number): string {
   return n.toLocaleString("ko-KR");
+}
+
+function fmtDur(ms: number): string {
+  if (!ms || ms < 1000) return "0초";
+  const s = Math.round(ms / 1000);
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return m > 0 ? `${m}분 ${sec}초` : `${sec}초`;
 }
 
 export default function TrafficPage() {
@@ -227,6 +236,43 @@ export default function TrafficPage() {
               <Bar dataKey="aos" name="안드 앱" stackId="dau" fill="#3DDC84" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* Per-platform active dwell time (session time-on-site). Median is the
+          headline (avg is skewed by idle-but-visible tails). Populates after
+          this build deploys and dwell beacons start landing. */}
+      <div className="glass-card p-4">
+        <div className="flex items-baseline justify-between flex-wrap gap-1 mb-3">
+          <h2 className="text-sm font-semibold">플랫폼별 체류시간</h2>
+          <p className="text-xs text-[#8E8E93]">방문당 활성 체류시간 · 중앙값 기준</p>
+        </div>
+        {loading ? (
+          <p className="text-sm text-[#8E8E93]">불러오는 중…</p>
+        ) : activePlatforms.length === 0 ? (
+          <p className="text-sm text-[#8E8E93]">데이터 없음</p>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {activePlatforms.map((p) => {
+              const d = resp?.dwell?.[p.key];
+              return (
+                <div key={p.key} className="rounded-xl bg-white/5 p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: p.color }} />
+                    <span className="text-xs text-[#8E8E93]">{p.label}</span>
+                  </div>
+                  <p className="text-xl font-bold mt-1" style={{ color: p.color }}>
+                    {d && d.sessions > 0 ? fmtDur(d.medianMs) : "—"}
+                  </p>
+                  <p className="text-[11px] text-[#8E8E93] mt-0.5">
+                    {d && d.sessions > 0
+                      ? `평균 ${fmtDur(d.avgMs)} · ${fmt(d.sessions)}세션`
+                      : "아직 데이터 없음"}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
 
