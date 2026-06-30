@@ -10,6 +10,8 @@ interface Signup {
   play_store_email: string;
   device_info: string | null;
   created_at: string;
+  dm_sent_at: string | null;
+  dm_conversation_id: string | null;
 }
 
 // 비공개 테스트 다운로드 링크는 모든 테스터 공통이라 템플릿에 기본 포함(그대로 발송 가능).
@@ -53,7 +55,6 @@ export default function AdminTesterSignupsPage() {
   const [openId, setOpenId] = useState<number | null>(null);
   const [drafts, setDrafts] = useState<Record<number, string>>({});
   const [sendingId, setSendingId] = useState<number | null>(null);
-  const [sentIds, setSentIds] = useState<Set<number>>(new Set());
   // '(다운로드 링크)' placeholder 미교체 상태로 발송 시도 시 경고 표시할 신청 id
   const [warnId, setWarnId] = useState<number | null>(null);
 
@@ -89,6 +90,7 @@ export default function AdminTesterSignupsPage() {
   };
 
   const toggleComposer = (it: Signup) => {
+    if (it.dm_sent_at) return;
     if (warnId === it.id) setWarnId(null);
     setOpenId((cur) => (cur === it.id ? null : it.id));
     setDrafts((prev) => (prev[it.id] !== undefined ? prev : { ...prev, [it.id]: DM_TEMPLATE }));
@@ -105,13 +107,24 @@ export default function AdminTesterSignupsPage() {
     setWarnId(null);
     setSendingId(it.id);
     try {
-      const res = await fetch("/api/admin/messages", {
+      const res = await fetch("/api/admin/tester-signups", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-admin-pin": getPin() },
-        body: JSON.stringify({ action: "send_to_user", userId: it.user_id, content }),
+        body: JSON.stringify({ action: "send_dm", id: it.id, content }),
       });
       if (res.ok) {
-        setSentIds((prev) => new Set(prev).add(it.id));
+        const j = await res.json();
+        setItems((prev) =>
+          prev.map((item) =>
+            item.id === it.id
+              ? {
+                  ...item,
+                  dm_sent_at: j.sentAt ?? item.dm_sent_at ?? new Date().toISOString(),
+                  dm_conversation_id: j.conversationId ?? item.dm_conversation_id,
+                }
+              : item
+          )
+        );
         setOpenId(null);
       }
     } catch {
@@ -149,78 +162,86 @@ export default function AdminTesterSignupsPage() {
         <div className="py-12 text-center text-sm text-text-tertiary">아직 신청자가 없습니다</div>
       ) : (
         <div className="space-y-2">
-          {items.map((it) => (
-            <div
-              key={it.id}
-              className="rounded-xl border border-[var(--color-border)] bg-[var(--bg-secondary)] p-4"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="break-all text-sm font-semibold text-text-primary">
-                    {it.play_store_email}
-                  </p>
-                  <p className="mt-0.5 break-all text-xs text-text-tertiary">
-                    가입 계정: {it.account_email || "-"}
-                  </p>
-                  <p className="mt-0.5 text-xs text-text-tertiary">기기: {deviceModel(it.device_info)}</p>
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-2">
-                  <span className="text-xs text-text-tertiary">{formatDate(it.created_at)}</span>
-                  <button
-                    onClick={() => toggleComposer(it)}
-                    className="flex items-center gap-1 rounded-lg bg-green-600 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-green-500"
-                  >
-                    {sentIds.has(it.id) ? <Check size={13} /> : <MessageSquare size={13} />}
-                    {sentIds.has(it.id) ? "발송됨" : "쪽지 보내기"}
-                  </button>
-                </div>
-              </div>
-
-              {openId === it.id && (
-                <div className="mt-3 space-y-2 border-t border-[var(--color-border)] pt-3">
-                  <textarea
-                    value={drafts[it.id] ?? ""}
-                    onChange={(e) => {
-                      setDrafts((prev) => ({ ...prev, [it.id]: e.target.value }));
-                      if (warnId === it.id) setWarnId(null);
-                    }}
-                    rows={7}
-                    className="w-full resize-y rounded-lg bg-[var(--bg-tertiary)] px-3 py-2 text-sm text-text-primary outline-none"
-                    placeholder="쪽지 내용"
-                  />
-                  <p className="text-[11px] text-text-tertiary">
-                    Play 스토어 링크가 기본으로 들어가 있어요. 그대로 발송하시면 되고, 쪽지에서 클릭하면 바로
-                    열립니다. (직접 수정도 가능)
-                  </p>
-                  {warnId === it.id && (
-                    <p className="text-[11px] font-medium text-red-400">
-                      ⚠️ <code>(다운로드 링크)</code>가 그대로 남아 있어요. 실제 Play 스토어 링크로 바꾼 뒤 발송하세요.
+          {items.map((it) => {
+            const isSent = Boolean(it.dm_sent_at);
+            return (
+              <div
+                key={it.id}
+                className="rounded-xl border border-[var(--color-border)] bg-[var(--bg-secondary)] p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="break-all text-sm font-semibold text-text-primary">
+                      {it.play_store_email}
                     </p>
-                  )}
-                  <div className="flex justify-end gap-2">
+                    <p className="mt-0.5 break-all text-xs text-text-tertiary">
+                      가입 계정: {it.account_email || "-"}
+                    </p>
+                    <p className="mt-0.5 text-xs text-text-tertiary">기기: {deviceModel(it.device_info)}</p>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-2">
+                    <span className="text-xs text-text-tertiary">{formatDate(it.created_at)}</span>
                     <button
-                      onClick={() => setOpenId(null)}
-                      className="rounded-lg px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary"
+                      onClick={() => toggleComposer(it)}
+                      disabled={isSent || sendingId === it.id}
+                      className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                        isSent
+                          ? "cursor-default bg-zinc-700 text-zinc-300"
+                          : "bg-green-600 text-white hover:bg-green-500 disabled:opacity-40"
+                      }`}
                     >
-                      취소
-                    </button>
-                    <button
-                      onClick={() => sendDM(it)}
-                      disabled={sendingId === it.id || !(drafts[it.id]?.trim())}
-                      className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-green-500 disabled:opacity-40"
-                    >
-                      {sendingId === it.id ? (
-                        <Loader2 size={13} className="animate-spin" />
-                      ) : (
-                        <Send size={13} />
-                      )}
-                      쪽지 발송
+                      {isSent ? <Check size={13} /> : <MessageSquare size={13} />}
+                      {isSent ? "발송됨" : "쪽지 보내기"}
                     </button>
                   </div>
                 </div>
-              )}
-            </div>
-          ))}
+
+                {openId === it.id && (
+                  <div className="mt-3 space-y-2 border-t border-[var(--color-border)] pt-3">
+                    <textarea
+                      value={drafts[it.id] ?? ""}
+                      onChange={(e) => {
+                        setDrafts((prev) => ({ ...prev, [it.id]: e.target.value }));
+                        if (warnId === it.id) setWarnId(null);
+                      }}
+                      rows={7}
+                      className="w-full resize-y rounded-lg bg-[var(--bg-tertiary)] px-3 py-2 text-sm text-text-primary outline-none"
+                      placeholder="쪽지 내용"
+                    />
+                    <p className="text-[11px] text-text-tertiary">
+                      Play 스토어 링크가 기본으로 들어가 있어요. 그대로 발송하시면 되고, 쪽지에서 클릭하면 바로
+                      열립니다. (직접 수정도 가능)
+                    </p>
+                    {warnId === it.id && (
+                      <p className="text-[11px] font-medium text-red-400">
+                        ⚠️ <code>(다운로드 링크)</code>가 그대로 남아 있어요. 실제 Play 스토어 링크로 바꾼 뒤 발송하세요.
+                      </p>
+                    )}
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => setOpenId(null)}
+                        className="rounded-lg px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary"
+                      >
+                        취소
+                      </button>
+                      <button
+                        onClick={() => sendDM(it)}
+                        disabled={sendingId === it.id || !(drafts[it.id]?.trim())}
+                        className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-green-500 disabled:opacity-40"
+                      >
+                        {sendingId === it.id ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <Send size={13} />
+                        )}
+                        쪽지 발송
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
