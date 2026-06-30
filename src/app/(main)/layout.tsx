@@ -6,6 +6,7 @@ import ProfileSetupWrapper from "@/components/auth/ProfileSetupWrapper";
 import MyTeamCookieSync from "@/components/auth/MyTeamCookieSync";
 import HashSessionRestore from "@/components/auth/HashSessionRestore";
 import PostLoginRedirect from "@/components/auth/PostLoginRedirect";
+import AppReviewTrigger from "@/components/app/AppReviewTrigger";
 
 export default function MainLayout({
   children,
@@ -16,6 +17,7 @@ export default function MainLayout({
     <div className="min-h-screen bg-bg-primary">
       <HashSessionRestore />
       <PostLoginRedirect />
+      <AppReviewTrigger />
       <ProfileSetupWrapper />
       <MyTeamCookieSync />
       <TeamAccent />
