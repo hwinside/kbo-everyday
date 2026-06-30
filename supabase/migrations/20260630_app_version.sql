@@ -15,13 +15,23 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
+  -- Count each device once, by its *latest* page view in the window. Grouping
+  -- raw rows by (platform, app_version) would double-count a device that
+  -- updated mid-window or logged a NULL ('미상') row before a versioned one,
+  -- inflating the device total and the % denominator.
+  WITH latest AS (
+    SELECT DISTINCT ON (platform, visitor_id)
+           platform, visitor_id, app_version
+    FROM admin_page_views
+    WHERE platform IN ('ios_native', 'android_native', 'native')
+      AND NOT starts_with(path, '/_celeb')
+      AND created_at >= ((p_since::text || 'T00:00:00+09:00')::timestamptz)
+    ORDER BY platform, visitor_id, created_at DESC
+  )
   SELECT platform,
-         COALESCE(app_version, '미상')        AS app_version,
-         count(DISTINCT visitor_id)           AS devices
-  FROM admin_page_views
-  WHERE platform IN ('ios_native', 'android_native', 'native')
-    AND NOT starts_with(path, '/_celeb')
-    AND created_at >= ((p_since::text || 'T00:00:00+09:00')::timestamptz)
+         COALESCE(app_version, '미상')  AS app_version,
+         count(*)                       AS devices
+  FROM latest
   GROUP BY platform, COALESCE(app_version, '미상')
   ORDER BY platform, devices DESC;
 $$;
