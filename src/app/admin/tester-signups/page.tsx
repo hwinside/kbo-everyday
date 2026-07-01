@@ -10,6 +10,7 @@ interface Signup {
   play_store_email: string;
   device_info: string | null;
   created_at: string;
+  dm_sent_at: string | null;
 }
 
 // 비공개 테스트 다운로드 링크는 모든 테스터 공통이라 템플릿에 기본 포함(그대로 발송 가능).
@@ -56,6 +57,8 @@ export default function AdminTesterSignupsPage() {
   const [sentIds, setSentIds] = useState<Set<number>>(new Set());
   // '(다운로드 링크)' placeholder 미교체 상태로 발송 시도 시 경고 표시할 신청 id
   const [warnId, setWarnId] = useState<number | null>(null);
+  // PATCH(dm_sent_at 기록) 실패 시 에러 표시할 신청 id
+  const [patchErrorId, setPatchErrorId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -65,7 +68,10 @@ export default function AdminTesterSignupsPage() {
       });
       if (res.ok) {
         const j = await res.json();
-        setItems(j.data ?? []);
+        const data: Signup[] = j.data ?? [];
+        setItems(data);
+        // 발송 완료(dm_sent_at) 신청은 재진입 후에도 '발송됨'으로 유지.
+        setSentIds(new Set(data.filter((d) => d.dm_sent_at).map((d) => d.id)));
       }
     } catch {
       /* noop */
@@ -89,6 +95,7 @@ export default function AdminTesterSignupsPage() {
   };
 
   const toggleComposer = (it: Signup) => {
+    if (sentIds.has(it.id)) return; // 발송 완료 row는 컴포저 열지 않음
     if (warnId === it.id) setWarnId(null);
     setOpenId((cur) => (cur === it.id ? null : it.id));
     setDrafts((prev) => (prev[it.id] !== undefined ? prev : { ...prev, [it.id]: DM_TEMPLATE }));
@@ -111,8 +118,20 @@ export default function AdminTesterSignupsPage() {
         body: JSON.stringify({ action: "send_to_user", userId: it.user_id, content }),
       });
       if (res.ok) {
-        setSentIds((prev) => new Set(prev).add(it.id));
-        setOpenId(null);
+        // 발송 사실을 DB에 기록 — PATCH 성공 확인 후 '발송됨' 마킹 (fire-and-forget 방지).
+        const patchRes = await fetch("/api/admin/tester-signups", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", "x-admin-pin": getPin() },
+          body: JSON.stringify({ id: it.id }),
+        }).catch(() => null);
+        if (patchRes?.ok) {
+          setSentIds((prev) => new Set(prev).add(it.id));
+          setOpenId(null);
+          setPatchErrorId(null);
+        } else {
+          // 쪽지는 발송됐지만 DB 기록 실패 — 운영자에게 에러 표시
+          setPatchErrorId(it.id);
+        }
       }
     } catch {
       /* noop */
@@ -168,7 +187,8 @@ export default function AdminTesterSignupsPage() {
                   <span className="text-xs text-text-tertiary">{formatDate(it.created_at)}</span>
                   <button
                     onClick={() => toggleComposer(it)}
-                    className="flex items-center gap-1 rounded-lg bg-green-600 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-green-500"
+                    disabled={sentIds.has(it.id)}
+                    className="flex items-center gap-1 rounded-lg bg-green-600 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-green-500 disabled:cursor-default disabled:opacity-60"
                   >
                     {sentIds.has(it.id) ? <Check size={13} /> : <MessageSquare size={13} />}
                     {sentIds.has(it.id) ? "발송됨" : "쪽지 보내기"}
@@ -195,6 +215,11 @@ export default function AdminTesterSignupsPage() {
                   {warnId === it.id && (
                     <p className="text-[11px] font-medium text-red-400">
                       ⚠️ <code>(다운로드 링크)</code>가 그대로 남아 있어요. 실제 Play 스토어 링크로 바꾼 뒤 발송하세요.
+                    </p>
+                  )}
+                  {patchErrorId === it.id && (
+                    <p className="text-[11px] font-medium text-amber-400">
+                      ⚠️ 쪽지는 발송됐지만 &apos;발송됨&apos; 기록에 실패했습니다. 페이지를 새로고침해 상태를 확인해 주세요.
                     </p>
                   )}
                   <div className="flex justify-end gap-2">
