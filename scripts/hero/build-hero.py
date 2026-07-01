@@ -49,6 +49,12 @@ FRAME_MODE = "legacy"
 SIL_TOP = 96              # silhouette: 정수리 위 여백(px) — 프로토 검증값
 SIL_SHOULDER_F = 1.6      # silhouette: 어깨선 판정 = 머리폭의 이 배수
 SIL_SHOULDER_TARGET = 0.80  # silhouette: 어깨선을 캔버스 높이의 이 지점에 앵커
+# 얼굴폭 상한: 정사각(1500²) 프레이밍 소스는 어깨선이 목/턱 부근에서 오검출되어
+# crown→어깨 span이 작게 잡히며 얼굴이 과확대(눈·모자만 크롭)된다. 확대 후 정수리
+# 밴드 머리 폭이 캔버스 폭의 이 비율을 넘지 않도록 scale에 상한을 건다. 정상 선수는
+# 이미 이 값 부근/아래라 min이 무영향, 과확대분(정수리밴드 0.6~0.76)만 여기로 정규화
+# 되어 어깨가 프레임 안으로 들어온다. (fleet 정상 정수리밴드 폭 ≈ 이 값)
+SIL_HEAD_W_MAX = 0.40
 # 과크롭 guard: 클로즈업 원본(머리가 프레임 가득)은 crown→어깨 span이 작아
 # scale이 과도하게 커지며 눈/모자 위주로 잘림. scale이 이 상한을 넘으면
 # silhouette를 포기하고 legacy height-fit(머리 전체 보존)으로 폴백한다.
@@ -111,6 +117,11 @@ def _place_silhouette(cut):
             break
     span = max(1, (shoulder_y if shoulder_y is not None else crown + int(0.62 * Hc)) - crown)
     scale = ((CANVAS_H * SIL_SHOULDER_TARGET) - SIL_TOP) / span
+    # 얼굴폭 상한: 확대 후 머리 폭이 캔버스 폭 * SIL_HEAD_W_MAX를 넘으면 그만큼 축소.
+    # 어깨선 오검출(목/턱)로 span이 과소 → scale 과대 → 눈만 크롭되는 케이스를 막고
+    # 어깨를 프레임 안으로 끌어들인다. 정상 케이스는 이미 상한 아래라 min이 무영향.
+    if head_w > 0:
+        scale = min(scale, (CANVAS_W * SIL_HEAD_W_MAX) / head_w)
     # 과크롭 guard: 어깨 미검출이거나 scale이 상한 초과(클로즈업 원본) → legacy 폴백.
     if shoulder_y is None or scale > SIL_SCALE_CAP:
         big, ox, oy = _place_legacy(cut)
