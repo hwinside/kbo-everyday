@@ -1,8 +1,8 @@
 {
   "generated_total": 819,
   "daum_built": 786,
-  "silhouette": 765,
-  "legacy_fallback": 21,
+  "silhouette": 771,
+  "legacy_fallback": 15,
   "miss_fetch_keep_kbo": [
     "AQ001",
     "AQ002",
@@ -41,8 +41,6 @@
   "fallback_ids": [
     "50726",
     "50820",
-    "51003",
-    "51058",
     "51230",
     "51948",
     "52008",
@@ -53,13 +51,21 @@
     "55563",
     "55903",
     "56966",
-    "64004",
     "64007",
     "65048",
-    "66706",
-    "69205",
-    "77318",
-    "79402"
+    "69205"
   ],
-  "fail": []
+  "fail": [],
+  "facewidth_cap_pass": {
+    "note": "SIL_HEAD_W_MAX=0.40 얼굴폭 상한 도입 후 얼굴 과대 26명 재생성 (정사각 소스 과확대 정규화)",
+    "rebuilt": 26,
+    "fallback_flipped_to_silhouette": [
+      "51003",
+      "51058",
+      "64004",
+      "66706",
+      "77318",
+      "79402"
+    ]
+  }
 }
