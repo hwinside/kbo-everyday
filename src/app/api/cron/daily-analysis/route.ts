@@ -410,12 +410,14 @@ async function callGemini(prompt: string): Promise<string> {
 // 단어 경계로 토큰 단위만 제거하므로 "오늘날", "어제오늘" 같은 합성어는 보존된다.
 function sanitizeCopy(copy: string): string {
   if (!copy) return copy;
-  // 도입부 + 본문 전체의 시점 부사 제거: "어제 ", "오늘 ", "어제의 ", "오늘의 "
-  // ("어제의 경기" → "경기"처럼 조사·명사 앞 케이스도 동일하게 정리됨)
-  const out = copy
+  // 도입부 + 본문 전체의 시점 부사 제거.
+  // 조사(의/는/도)·문장부호(,)가 붙은 형태도 함께 제거.
+  // "오늘날", "어제오늘" 같은 합성어는 뒤에 [의|는|도|,|\s|$] 외 글자가 이어지므로 매칭 안 됨 → 보존.
+  return copy
     .trimStart()
-    .replace(/(^|\s)(어제|오늘)(의)?\s+/g, "$1");
-  return out.trimStart();
+    .replace(/(^|\s)(어제|오늘)(의|는|도|,)?(\s+|$)/g, "$1")
+    .replace(/\s{2,}/g, " ")
+    .trimEnd();
 }
 
 // ===== Main route =====
