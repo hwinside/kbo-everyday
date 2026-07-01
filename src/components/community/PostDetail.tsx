@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, Ban, MoreHorizontal, Check, CornerDownRight, X, ImagePlay } from "lucide-react";
@@ -41,111 +41,41 @@ export default function PostDetail({ postId }: PostDetailProps) {
   const [showLogin, setShowLogin] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
 
-  // Chat-layout keyboard handling:
-  // 1) Toggle body.kbd-open based on composer focus (TabBar hidden via CSS).
-  // 2) Track visualViewport to place composer precisely above the iOS accessory
-  //    bar (⌃⌄✓). vv.height bottom = top of accessory bar, so setting composer
-  //    `bottom: hiddenPx` snaps it flush.
-  // 3) On keyboard open, scroll the anchor (last comment or post end) flush to
-  //    the composer top so the user sees context while typing.
+  // Keyboard handling — delegated to the global `interactive-widget=
+  // resizes-content` viewport (layout.tsx), exactly like GameChat. On focus iOS
+  // shrinks the layout viewport by the keyboard height and the native form-
+  // assistant pushes the accessory bar (⌃⌄✓) above the input, so the fixed
+  // composer (bottom:0 via body.kbd-open, see globals.css) docks flush above the
+  // keyboard with NO JS viewport math. We only toggle body.kbd-open (hides the
+  // TabBar + snaps the composer/overlays to the bottom).
   //
-  // focusLockRef: while composer is focused, block update() from calling close().
-  // iOS fires the 50ms timer before the keyboard animation starts, which would
-  // otherwise reset TabBar visibility mid-focus.
-  const [keyboardInset, setKeyboardInset] = useState(0);
-  const focusLockRef = useRef(false);
-  const scrolledForFocusRef = useRef(false);
-  const postBodyEndRef = useRef<HTMLDivElement | null>(null);
-  const commentsListEndRef = useRef<HTMLDivElement | null>(null);
-  const commentsCountRef = useRef(0);
-  commentsCountRef.current = comments.length;
-
-  // Scroll anchor into view so it sits just above the composer.
-  // Called once per focus session when the keyboard is fully up.
-  const scrollAnchorIntoView = () => {
-    const target = commentsCountRef.current > 0
-      ? commentsListEndRef.current
-      : postBodyEndRef.current;
-    if (target) {
-      // block:"end" aligns target's bottom edge with scroll container's bottom
-      // (which is padded by composerHeight + keyboardInset), so the anchor
-      // ends up just above the composer.
-      target.scrollIntoView({ block: "end", behavior: "auto" });
-    }
-  };
-
+  // The previous visualViewport/keyboardInset scheme was written for keyboard
+  // OVERLAY mode; under resizes-content its `innerHeight - vv.height` collapsed
+  // to ~0, floating the composer mid-screen and dragging the header up.
   useEffect(() => {
-    if (typeof window === "undefined" || !window.visualViewport) return;
-    const vv = window.visualViewport;
-    const open = () => document.body.classList.add("kbd-open");
-    const close = () => document.body.classList.remove("kbd-open");
-    const update = () => {
-      // hidden = keyboard height + accessory bar height (everything below vv).
-      // window.innerHeight is layout viewport; vv.height is visible viewport.
-      const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-      // <40px → treat as closed (browser chrome flicker).
-      if (hidden > 40) {
-        setKeyboardInset(hidden);
-        open();
-        // First time keyboard is fully up for this focus session → scroll anchor.
-        if (focusLockRef.current && !scrolledForFocusRef.current) {
-          scrolledForFocusRef.current = true;
-          // Let composer `bottom: hidden` settle, then scroll.
-          requestAnimationFrame(() => scrollAnchorIntoView());
-        }
-      } else {
-        // Block close() while focused — prevents premature TabBar reappear
-        // when the 50ms poll fires before iOS keyboard animation starts.
-        if (focusLockRef.current) return;
-        setKeyboardInset(0);
-        close();
-      }
+    if (typeof window === "undefined") return;
+    const isComposer = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA")) return false;
+      return Boolean(el.closest('[data-composer="postdetail"]'));
     };
-    // CRITICAL: always reset on mount. SPA navigation may leave stale kbd-open
-    // from a previous page (e.g. community list → PostDetail transitions where
-    // the unmount cleanup of the previous instance is racy).
-    close();
-    setKeyboardInset(0);
-    update();
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
-    // iOS Safari: first focus often fires before vv.resize reports keyboard.
-    // The "first tap shows nothing, second tap works" symptom is caused by this.
-    // We poll update() at multiple offsets after every focusin to catch the
-    // keyboard animation regardless of vv event timing.
     const onFocusIn = (e: FocusEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
-      // Only composer input should trigger keyboard layout. Post-edit inputs
-      // live in the scroll area and don't need the fixed composer treatment.
-      if (!t.closest("[data-composer]")) return;
-      focusLockRef.current = true;
-      scrolledForFocusRef.current = false;
-      // Optimistic: assume keyboard will open. Mark open immediately so the
-      // TabBar hides before first paint, even if vv hasn't fired yet.
-      open();
-      [50, 150, 300, 600, 1000].forEach((ms) => setTimeout(update, ms));
+      if (!isComposer(e.target)) return;
+      document.body.classList.add("kbd-open");
     };
     const onFocusOut = (e: FocusEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
-      if (!t.closest("[data-composer]")) return;
-      focusLockRef.current = false;
-      scrolledForFocusRef.current = false;
-      // When composer loses focus, keyboard will dismiss. Force reset so the
-      // TabBar reappears and container reclaims original height.
-      setTimeout(update, 50);
-      setTimeout(update, 300);
+      if (!isComposer(e.target)) return;
+      // settle: absorb brief blur→refocus from Korean IME toggles.
+      setTimeout(() => {
+        if (!isComposer(document.activeElement)) document.body.classList.remove("kbd-open");
+      }, 100);
     };
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
     return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
-      focusLockRef.current = false;
-      close();
+      document.body.classList.remove("kbd-open");
     };
   }, []);
 
@@ -404,16 +334,8 @@ export default function PostDetail({ postId }: PostDetailProps) {
   };
 
   // Chat-style layout: container matches viewport, inner scroll holds post+comments.
-  // Composer is position:fixed and placed at `bottom: keyboardInset` so it docks
-  // flush above the iOS accessory bar (or the TabBar when keyboard is closed).
-  // TabBar is hidden via body.kbd-open (see globals.css).
-  //
-  // Reserve bottom padding on the scroll area = composer height (~64px) + inset,
-  // so post/comments never hide beneath the composer.
-  const composerHeight = 64; // approximate; matches py-3 + input height
-  const scrollPaddingBottom = keyboardInset > 0
-    ? `${composerHeight + keyboardInset}px`
-    : `calc(${composerHeight}px + 4rem + env(safe-area-inset-bottom, 0px))`; // + TabBar when idle
+  // Composer is position:fixed; its bottom offset + the scroll area's reserved
+  // padding are driven by CSS off body.kbd-open (see globals.css) — no JS math.
   return (
     <div className="postdetail-chat-container flex flex-col bg-bg-primary">
       {/* Header (flex-none, stays at top) */}
@@ -434,8 +356,8 @@ export default function PostDetail({ postId }: PostDetailProps) {
         </div>
       </div>
 
-      {/* Scrollable body: post + comments. Bottom padding reserves composer height + kbd inset. */}
-      <div className="flex-1 overflow-y-auto overscroll-contain" style={{ paddingBottom: scrollPaddingBottom }}>
+      {/* Scrollable body: post + comments. Bottom padding (CSS) reserves composer height. */}
+      <div data-postdetail-scroll className="flex-1 overflow-y-auto overscroll-contain">
 
       {/* Post */}
       <div className="px-5 py-4">
@@ -574,8 +496,6 @@ export default function PostDetail({ postId }: PostDetailProps) {
             <span className="text-sm text-text-secondary">{comments.length}</span>
           </div>
         </div>
-        {/* Scroll anchor: end of post body. Used when there are no comments. */}
-        <div ref={postBodyEndRef} aria-hidden="true" />
       </div>
 
       {/* Comments */}
@@ -750,30 +670,21 @@ export default function PostDetail({ postId }: PostDetailProps) {
               ));
             })()
           )}
-          {/* Scroll anchor: end of comments list. Used when there is >=1 comment. */}
-          <div ref={commentsListEndRef} aria-hidden="true" />
         </div>
       </div>
 
       </div> {/* end scrollable body */}
 
       {/*
-        Comment Input — fixed to viewport bottom, offset by visualViewport to
-        sit flush above iOS keyboard + accessory bar. When keyboard is closed,
-        bottom=0 means "above TabBar" since TabBar is visible and has its own
-        z-index (composer z-40 stays under TabBar z-50 visually because the
-        layout container is shorter than 100svh in idle state).
+        Comment Input — fixed to viewport bottom. Bottom offset is CSS-driven off
+        body.kbd-open (see globals.css): idle it clears the TabBar (4rem+safe),
+        focused it snaps to bottom:0 which — under interactive-widget=resizes-
+        content — sits flush above the keyboard. Reply chip + GIF picker ride
+        just above it. No JS viewport math.
       */}
       {/* Reply indicator */}
       {replyTo && (
-        <div className="fixed left-0 right-0 bg-bg-tertiary/80 border-t border-border px-4 py-2 flex items-center gap-2 z-40"
-          style={{
-            bottom: keyboardInset > 0
-              ? `${keyboardInset + 60}px`
-              : `calc(4rem + env(safe-area-inset-bottom, 0px) + 3.75rem)`,
-            transition: "bottom 80ms ease-out",
-          }}
-        >
+        <div data-postdetail-reply className="fixed left-0 right-0 bg-bg-tertiary/80 border-t border-border px-4 py-2 flex items-center gap-2 z-40">
           <CornerDownRight size={12} className="text-text-tertiary" />
           <span className="text-xs text-text-secondary">{replyTo.nickname}에게 답글</span>
           <button onClick={() => setReplyTo(null)} className="ml-auto text-text-tertiary hover:text-text-primary">
@@ -785,13 +696,9 @@ export default function PostDetail({ postId }: PostDetailProps) {
       <AnimatePresence>
         {showGifPicker && (
           <motion.div
+            data-postdetail-gif
             className="fixed left-0 right-0 bg-bg-secondary border-t border-border z-40"
-            style={{
-              height: 280,
-              bottom: keyboardInset > 0
-                ? `${keyboardInset + 60}px`
-                : `calc(4rem + env(safe-area-inset-bottom, 0px) + 3.75rem)`,
-            }}
+            style={{ height: 280 }}
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
@@ -807,15 +714,6 @@ export default function PostDetail({ postId }: PostDetailProps) {
       <div
         data-composer="postdetail"
         className="fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40"
-        style={{
-          bottom: keyboardInset > 0
-            ? `${keyboardInset}px`
-            : `calc(4rem + env(safe-area-inset-bottom, 0px))`,
-          paddingBottom: keyboardInset > 0
-            ? undefined
-            : "0.75rem",
-          transition: "bottom 80ms ease-out",
-        }}
       >
         {(() => {
           const teamColor = post.team_id ? getTeamById(post.team_id)?.colorPrimary : undefined;
@@ -824,7 +722,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
               {user && (
                 <button
                   onClick={() => setShowGifPicker((v) => !v)}
-                  className={`flex items-center justify-center w-9 h-9 rounded-full transition-colors ${showGifPicker ? "bg-accent/20 text-accent" : "text-text-tertiary hover:text-text-primary"}`}
+                  className={`flex items-center justify-center w-9 h-9 shrink-0 rounded-full transition-colors ${showGifPicker ? "bg-accent/20 text-accent" : "text-text-tertiary hover:text-text-primary"}`}
                   aria-label="GIF"
                 >
                   <ImagePlay size={20} />
@@ -836,23 +734,22 @@ export default function PostDetail({ postId }: PostDetailProps) {
                   value={comment}
                   onChange={e => setComment(e.target.value)}
                   placeholder={replyTo ? `${replyTo.nickname}에게 답글...` : "댓글을 입력하세요"}
-                  className="flex-1 bg-bg-secondary rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none border"
+                  className="flex-1 min-w-0 bg-bg-secondary rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none border"
                   style={{ borderColor: teamColor ? `${teamColor}80` : 'rgba(255,255,255,0.15)' }}
-                  onFocus={() => { setShowGifPicker(false); document.body.classList.add("kbd-open"); }}
-                  onBlur={() => document.body.classList.remove("kbd-open")}
+                  onFocus={() => setShowGifPicker(false)}
                   onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); handleComment(); } }}
                 />
               ) : (
                 <button
                   type="button"
                   onClick={() => setShowLogin(true)}
-                  className="flex-1 bg-bg-secondary rounded-xl px-4 py-2.5 text-left text-sm text-text-secondary border"
+                  className="flex-1 min-w-0 bg-bg-secondary rounded-xl px-4 py-2.5 text-left text-sm text-text-secondary border"
                   style={{ borderColor: teamColor ? `${teamColor}80` : 'rgba(255,255,255,0.15)' }}
                 >
                   로그인 후 댓글 작성 가능
                 </button>
               )}
-              <button onClick={handleComment} disabled={!comment.trim() || !user} className="w-9 h-9 rounded-full flex items-center justify-center text-white disabled:opacity-50 transition-opacity" style={{ backgroundColor: post.team_id ? (() => { const t = getTeamById(post.team_id); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}>
+              <button onClick={handleComment} disabled={!comment.trim() || !user} className="w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-white disabled:opacity-50 transition-opacity" style={{ backgroundColor: post.team_id ? (() => { const t = getTeamById(post.team_id); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}>
                 <Send size={16} />
               </button>
             </>
