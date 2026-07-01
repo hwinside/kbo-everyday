@@ -38,6 +38,9 @@ function scheduledStartMs(gDt: string | undefined, gTm: string | undefined): num
 // 경기 시작 30분 전부터 잠금화면/홈위젯에 '경기 예정' 카드를 미리 띄운다.
 // iOS Live Activity push-to-start(PREGAME_LEAD_MS 동일 30분)와 리드타임을 맞춘 것.
 const PREGAME_LEAD_MS = 30 * 60 * 1000;
+// 지연 경기(우천 등으로 KBO feed가 예정 상태로 남아 시작시각이 지난 경우) 커버 — iOS
+// pushLiveActivityStarts와 동일하게 시작 후 90분까지 예정 카드를 계속 밀어 parity 유지.
+const START_WINDOW_MS = 90 * 60 * 1000;
 
 /**
  * Android 홈 위젯/잠금 알림 카드 신선화 + 경기 전 미리 표시.
@@ -63,13 +66,14 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise
     if (!g.G_ID || g.CANCEL_SC_ID !== "0") continue;
 
     const isLive = g.GAME_STATE_SC === "2";
-    // 예정 경기는 '시작 30분 전 ~ 시작 시각' 윈도우일 때만 미리 표시(그 밖엔 skip).
+    // 예정 경기는 '시작 30분 전 ~ 시작 후 90분(지연 경기)' 윈도우일 때만 미리 표시(그 밖엔 skip).
+    // iOS pushLiveActivityStarts와 동일 조건: delta <= PREGAME_LEAD_MS && delta > -START_WINDOW_MS.
     let isPregame = false;
     if (!isLive && g.GAME_STATE_SC === "1") {
       const startMs = scheduledStartMs(g.G_DT, g.G_TM);
       if (startMs !== null) {
         const untilStart = startMs - Date.now();
-        isPregame = untilStart > 0 && untilStart <= PREGAME_LEAD_MS;
+        isPregame = untilStart <= PREGAME_LEAD_MS && untilStart > -START_WINDOW_MS;
       }
     }
     if (!isLive && !isPregame) continue;
