@@ -57,12 +57,12 @@ function gameStatus(g: KboRawGame): "live" | "final" | "scheduled" | "other" {
   return "other";
 }
 
-// 라이브 카드 staleDate 창(초). 이보다 오래 갱신 푸시가 안 닿으면 iOS가 "outdated"로
-// 판단해 잠금화면/다이나믹 아일랜드에 시스템 스피너를 얹는다. update는 1분 cron으로 매 틱
-// 발송(변경 없어도 재전송)되지만 apns-expiration:0(1회 시도)이라 기기가 잠깐 unreachable이면
-// 그 틱 유실 → 몇 틱 연속 유실 시 5분 창을 넘겨 스피너 노출. 창을 넉넉히 둬 일시적 전달 갭에
-// 스피너가 뜨지 않게 한다(정상 라이브는 매분 갱신되므로 실제로 15분 침묵하는 건 피드 死일 때뿐).
-const LIVE_STALE_SEC = 15 * 60;
+// ⚠️ staleDate는 의도적으로 보내지 않는다(하린아빠 요구: "어떤 경우에도 스피너 금지").
+// iOS는 stale-date를 지난 Live Activity에 시스템 스피너("outdated" 인디케이터)를 얹는데,
+// update가 1분 cron·apns-expiration:0(못 꽂히면 폐기)이라 기기가 잠깐 unreachable이면 몇 틱
+// 유실 → staleDate 초과 → 스피너. stale-date를 아예 안 실으면 iOS가 stale 판정할 근거가
+// 없어 스피너가 원천 차단된다(네이버 라이브 액티비티와 동일 정책). 트레이드오프 = 서버 갱신이
+// 완전히 죽으면 카드가 스피너 없이 옛 값으로 남음. 단 정상 종료는 별도 end 푸시로 처리됨.
 
 interface TokenRow {
   user_id: string;
@@ -134,7 +134,7 @@ export async function pushLiveActivityUpdates(
           event: isEnd ? "end" : "update",
           contentState: buildContentState(g, status),
           dismissalDate: isEnd ? nowSec + 15 * 60 : undefined,
-          staleDate: nowSec + LIVE_STALE_SEC,
+          // staleDate 미전송 — 위 주석 참조(스피너 원천 차단).
         },
         jwt,
       );
@@ -192,7 +192,6 @@ async function startForTeamSide(params: {
   myTeamCode: string;
   attributes: Record<string, unknown>;
   contentState: Record<string, unknown>;
-  staleDate: number;
   alert?: { title: string; body: string };
   jwt: string;
 }): Promise<{ sent: number; failed: boolean }> {
@@ -277,7 +276,7 @@ async function startForTeamSide(params: {
           attributesType: "KBOGameAttributes",
           attributes: { ...params.attributes, myTeamCode: params.myTeamCode },
           contentState: params.contentState,
-          staleDate: params.staleDate,
+          // staleDate 미전송 — 스피너 원천 차단(파일 상단 주석 참조).
           alert: params.alert,
         },
         params.jwt,
@@ -367,10 +366,6 @@ export async function pushLiveActivityStarts(
     // 라이브면 live 스냅샷, 아직 시작 전이면 scheduled(예정 시각) 카드로 시작.
     const isLiveNow = gameStatus(g) === "live";
     const contentState = buildContentState(g, isLiveNow ? "live" : "scheduled");
-    // 예정 카드는 경기 시작+10분까지 신선 유지(그 사이 live update가 인계). 라이브는 기존 5분.
-    const staleDate = (!isLiveNow && startedAt !== null)
-      ? Math.floor(startedAt / 1000) + 10 * 60
-      : Math.floor(Date.now() / 1000) + LIVE_STALE_SEC;
 
     // push-to-start에 alert 동봉 — *무음*(alert 없는) push-to-start는 iOS가 잠금화면 카드를
     // 띄우지 않는다(실기기 확인 2026-06-26: 무음=미표시, alert=표시). 경기 30분 전 예정
@@ -385,11 +380,11 @@ export async function pushLiveActivityStarts(
     // away/home 슬롯을 각자 그 팀 코드로 강조(myTeamCode) — 수신자별 최애팀 반영.
     const awaySide = await startForTeamSide({
       gameId, teamId: teamIdByShortName(away), myTeamCode: awayCode,
-      attributes, contentState, staleDate, alert, jwt,
+      attributes, contentState, alert, jwt,
     });
     const homeSide = await startForTeamSide({
       gameId, teamId: teamIdByShortName(home), myTeamCode: homeCode,
-      attributes, contentState, staleDate, alert, jwt,
+      attributes, contentState, alert, jwt,
     });
     started += awaySide.sent + homeSide.sent;
     // 일시 실패분은 startForTeamSide에서 유저 단위로 선점 해제됨 → 다음 cron 재시도.
