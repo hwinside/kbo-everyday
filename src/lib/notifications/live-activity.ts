@@ -57,6 +57,13 @@ function gameStatus(g: KboRawGame): "live" | "final" | "scheduled" | "other" {
   return "other";
 }
 
+// 라이브 카드 staleDate 창(초). 이보다 오래 갱신 푸시가 안 닿으면 iOS가 "outdated"로
+// 판단해 잠금화면/다이나믹 아일랜드에 시스템 스피너를 얹는다. update는 1분 cron으로 매 틱
+// 발송(변경 없어도 재전송)되지만 apns-expiration:0(1회 시도)이라 기기가 잠깐 unreachable이면
+// 그 틱 유실 → 몇 틱 연속 유실 시 5분 창을 넘겨 스피너 노출. 창을 넉넉히 둬 일시적 전달 갭에
+// 스피너가 뜨지 않게 한다(정상 라이브는 매분 갱신되므로 실제로 15분 침묵하는 건 피드 死일 때뿐).
+const LIVE_STALE_SEC = 15 * 60;
+
 interface TokenRow {
   user_id: string;
   game_id: string;
@@ -127,7 +134,7 @@ export async function pushLiveActivityUpdates(
           event: isEnd ? "end" : "update",
           contentState: buildContentState(g, status),
           dismissalDate: isEnd ? nowSec + 15 * 60 : undefined,
-          staleDate: nowSec + 5 * 60,
+          staleDate: nowSec + LIVE_STALE_SEC,
         },
         jwt,
       );
@@ -363,7 +370,7 @@ export async function pushLiveActivityStarts(
     // 예정 카드는 경기 시작+10분까지 신선 유지(그 사이 live update가 인계). 라이브는 기존 5분.
     const staleDate = (!isLiveNow && startedAt !== null)
       ? Math.floor(startedAt / 1000) + 10 * 60
-      : Math.floor(Date.now() / 1000) + 5 * 60;
+      : Math.floor(Date.now() / 1000) + LIVE_STALE_SEC;
 
     // push-to-start에 alert 동봉 — *무음*(alert 없는) push-to-start는 iOS가 잠금화면 카드를
     // 띄우지 않는다(실기기 확인 2026-06-26: 무음=미표시, alert=표시). 경기 30분 전 예정
