@@ -56,6 +56,12 @@ export interface LiveActivityPushInput {
   attributes?: Record<string, unknown>;
   /** event=start 전용 — 잠금화면 배너 alert(선택). 미지정 시 무음 시작. */
   alert?: { title: string; body: string };
+  /**
+   * APNs collapse id(선택). 같은 값의 이전 푸시를 APNs가 최신 1건으로 덮어씀.
+   * update/end에 경기 id를 넘겨 (1) 저장 중인 update를 최신으로만 유지 (2) end가 대기 중
+   * update를 대체(종료 후 stale update 재생 방지)하게 한다.
+   */
+  collapseId?: string;
 }
 
 export interface ApnsResult {
@@ -65,6 +71,11 @@ export interface ApnsResult {
   invalidToken: boolean;
   reason?: string;
 }
+
+// update 푸시 store-and-forward 창(초). expiration:0(즉시 폐기) 대신 짧게 둬, 기기가 잠깐
+// unreachable이었다가 이 창 안에 깨어나면 APNs가 보관하던 최신 update를 전달한다(collapse-id로
+// 최신 1건만 유지되므로 backlog·역순 재생 없음). 카드가 갱신 갭에 옛 값으로 멈춘 채 남는 것을 줄임.
+const UPDATE_STORE_FORWARD_SEC = 5 * 60;
 
 /**
  * 단일 Live Activity 푸시 전송. APNs는 HTTP/2 필수라 node:http2로 직접 연결한다.
@@ -118,7 +129,7 @@ async function sendToHost(
     client.on("error", (e) =>
       done({ ok: false, status: 0, invalidToken: false, reason: e.message }),
     );
-    const req = client.request({
+    const reqHeaders: Record<string, string> = {
       ":method": "POST",
       ":path": `/3/device/${input.pushToken}`,
       authorization: `bearer ${token}`,
@@ -128,14 +139,20 @@ async function sendToHost(
       // 겹치면 "지연 → 즉시배달 실패 → 폐기"로 '경기 종료' 전환 푸시가 유실됐다(서버는 200
       // 받아 토큰을 지워버려 영영 재발송 안 됨). end는 경기당 1회뿐이라 빈도 budget 무관.
       "apns-priority": "10",
-      // end는 만료를 미래(종료 카드 dismissal 시각)로 둬 APNs가 저장·재시도하게 한다.
-      // update는 즉시성이 중요하고 다음 폴링이 곧 덮으므로 0(1회 시도) 유지.
+      // end = 미래(종료 카드 dismissal 시각)로 둬 APNs가 저장·재시도.
+      // update = store-and-forward 창(collapse-id로 최신 1건만 보관 → 기기 깨어날 때 갱신).
+      // start = 즉시성 우선 + 시점 지나면 무의미하므로 0(1회 시도) 유지.
       "apns-expiration":
         input.event === "end"
           ? String(input.dismissalDate ?? Math.floor(Date.now() / 1000) + 3600)
-          : "0",
+          : input.event === "update"
+            ? String(Math.floor(Date.now() / 1000) + UPDATE_STORE_FORWARD_SEC)
+            : "0",
       "content-type": "application/json",
-    });
+    };
+    // collapse-id: 같은 경기의 이전 update를 최신으로만 유지 + end가 대기 update를 대체.
+    if (input.collapseId) reqHeaders["apns-collapse-id"] = input.collapseId;
+    const req = client.request(reqHeaders);
     let status = 0;
     let data = "";
     req.on("response", (headers) => {
