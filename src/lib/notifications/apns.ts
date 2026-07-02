@@ -77,6 +77,12 @@ export interface ApnsResult {
 // 최신 1건만 유지되므로 backlog·역순 재생 없음). 카드가 갱신 갭에 옛 값으로 멈춘 채 남는 것을 줄임.
 const UPDATE_STORE_FORWARD_SEC = 5 * 60;
 
+// end 푸시 store-and-forward 창(초). 경기 종료 시 기기가 오프라인이면 그 시점의 end가 유실돼
+// 카드가 종료 후에도 마지막 라이브 상태로 몇 시간 남는다(앱스토어 리뷰 "경기 끝나고 5시간 8회").
+// 보관창을 iOS Live Activity 기본 수명(~8h)에 맞춰 길게 둬, 기기가 이 안에 재접속하면 end를 받아
+// 카드가 정리되게 한다. dismissal-date는 여전히 종료 시각+15분이라, 늦게 받으면(과거 시각) 즉시 dismiss.
+const END_RETENTION_SEC = 8 * 60 * 60;
+
 /**
  * 단일 Live Activity 푸시 전송. APNs는 HTTP/2 필수라 node:http2로 직접 연결한다.
  * 토큰별로 연결을 새로 여는 단순 구현(배치는 호출부에서 Promise.all).
@@ -139,12 +145,13 @@ async function sendToHost(
       // 겹치면 "지연 → 즉시배달 실패 → 폐기"로 '경기 종료' 전환 푸시가 유실됐다(서버는 200
       // 받아 토큰을 지워버려 영영 재발송 안 됨). end는 경기당 1회뿐이라 빈도 budget 무관.
       "apns-priority": "10",
-      // end = 미래(종료 카드 dismissal 시각)로 둬 APNs가 저장·재시도.
+      // end = 긴 store-and-forward 창(~8h). 종료 시 오프라인이던 기기가 재접속하면 end를 받아
+      //       카드가 정리됨(dismissal-date는 종료+15분이라 늦게 받으면 즉시 dismiss). zombie 카드 방지.
       // update = store-and-forward 창(collapse-id로 최신 1건만 보관 → 기기 깨어날 때 갱신).
       // start = 즉시성 우선 + 시점 지나면 무의미하므로 0(1회 시도) 유지.
       "apns-expiration":
         input.event === "end"
-          ? String(input.dismissalDate ?? Math.floor(Date.now() / 1000) + 3600)
+          ? String(Math.floor(Date.now() / 1000) + END_RETENTION_SEC)
           : input.event === "update"
             ? String(Math.floor(Date.now() / 1000) + UPDATE_STORE_FORWARD_SEC)
             : "0",
