@@ -139,7 +139,7 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise
           w_home: codes.home,
           w_as: "0",
           w_hs: "0",
-          w_status: `SCHEDULED|${g.G_TM ?? ""}|`,
+          w_status: `SCHEDULED|${g.G_TM ?? ""}`,
           w_pitcher: "",
           w_pteam: "",
           w_batter: "",
