@@ -135,6 +135,9 @@ export async function pushLiveActivityUpdates(
           contentState: buildContentState(g, status),
           dismissalDate: isEnd ? nowSec + 15 * 60 : undefined,
           // staleDate 미전송 — 위 주석 참조(스피너 원천 차단).
+          // collapse-id = 경기 id: update는 최신 1건만 보관(store-and-forward)되고, end가
+          // 대기 중 update를 대체(종료 후 stale update 재생 방지).
+          collapseId: t.game_id,
         },
         jwt,
       );
