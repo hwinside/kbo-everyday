@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { X, ChevronUp, ChevronDown, ChevronsUpDown, Volume2, VolumeX, ExternalLink } from "lucide-react";
+import { X, ChevronUp, ChevronDown, Volume2, VolumeX, ExternalLink } from "lucide-react";
 
 interface ReelVideo {
   thumbnail?: string;
@@ -19,17 +19,15 @@ interface ReelViewerProps {
 /**
  * YouTube ToS III.C.1 / III.I.4 compliance:
  * - controls=1 (native controls + YouTube link visible).
- * - No element is rendered in front of the iframe. The iframe is sized to its
- *   real 16:9 box, so the black bands above/below belong to the container and
- *   receive the swipe gesture (container-level touch handlers). The swipe hint
- *   sits in the bottom band (not over the player) and is pointer-events-none.
+ * - No element is rendered in front of the iframe. Swipe is handled by
+ *   container-level touch handlers; the cross-origin iframe captures its own
+ *   touches, so the player surface is never covered by an overlay element.
  *   App chrome (header, title, mute, nav) sits in flex siblings outside it.
  * - Opens with muted autoplay (mobile policy allows autoplay only when muted).
  */
 export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerProps) {
   const [current, setCurrent] = useState(startIndex);
   const [muted, setMuted] = useState(true); // 뮤트로 시작 (muted여야 autoplay 허용)
-  const [showHint, setShowHint] = useState(videos.length > 1); // 스와이프 힌트 (열릴 때 잠깐)
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const touchStartY = useRef(0);
   const touchMoved = useRef(false);
@@ -79,12 +77,6 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
     return () => { document.body.style.overflow = ""; };
   }, []);
 
-  // 스와이프 힌트 3초 뒤 페이드아웃
-  useEffect(() => {
-    const t = setTimeout(() => setShowHint(false), 3000);
-    return () => clearTimeout(t);
-  }, []);
-
   // 영상 변경 시 loadVideoById (단일 iframe 재사용)
   useEffect(() => {
     if (video.id === prevVideoId.current) return;
@@ -115,27 +107,16 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
         </div>
       </div>
 
-      {/* Player region — iframe sized to its real 16:9 box (no overlay, ToS III.C.1).
-          The black bands above/below belong to this container, so the root swipe
-          handlers receive touches there → up/down swipe restored without any overlay. */}
-      <div className="relative flex-1 min-h-0 flex items-center justify-center bg-black">
+      {/* Player region — no overlays on the iframe (YouTube ToS III.C.1). Muted autoplay on open. */}
+      <div className="flex-1 min-h-0 flex items-center justify-center bg-black">
         <iframe
           ref={iframeRef}
           src={`https://www.youtube.com/embed/${videos[startIndex].id}?autoplay=1&mute=1&controls=1&rel=0&playsinline=1&enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`}
-          className="w-full aspect-video max-h-full"
+          className="w-full h-full"
           style={{ border: "none" }}
           allow="autoplay; encrypted-media"
           allowFullScreen
         />
-        {/* 스와이프 힌트 — 영상 아래 검은 여백(스와이프 영역)에만 표시. 플레이어 위 오버레이 아님(ToS III.C.1), pointer-events-none로 스와이프 방해 0 */}
-        {videos.length > 1 && (
-          <div className={`pointer-events-none absolute inset-x-0 bottom-3 flex justify-center transition-opacity duration-700 ${showHint ? "opacity-100" : "opacity-0"}`}>
-            <span className="flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-xs font-medium text-white/90 backdrop-blur-sm">
-              <ChevronsUpDown size={14} className="animate-bounce" />
-              위아래로 밀어서 다음 영상
-            </span>
-          </div>
-        )}
       </div>
 
       {/* Title + actions + nav — outside player */}
