@@ -5,7 +5,7 @@ import { notifyGameStatusTransitions } from "@/lib/notifications/game-status";
 import { notifyTeamRankChanges } from "@/lib/notifications/team-rank";
 import { notifyScoreEvents, notifyInningSummaries } from "@/lib/notifications/game-score";
 import { notifyPlayerHighlights } from "@/lib/notifications/player-highlight";
-import { pushLiveActivityUpdates, pushLiveActivityStarts } from "@/lib/notifications/live-activity";
+import { pushLiveActivityUpdates, pushLiveActivityStarts, pushLiveActivitySilentWakes } from "@/lib/notifications/live-activity";
 import { pushAndroidWidgetLiveUpdates } from "@/lib/notifications/android-widget-live";
 
 /**
@@ -167,6 +167,18 @@ export async function GET(req: NextRequest) {
     console.error("[warmup] live activity start failed:", (e as Error).message);
   }
 
+  // 잠금화면 Live Activity 무음 wake (Layer 2) — 카드는 떴는데 update 토큰이 없는 유저의
+  // iOS 기기를 무음 푸시로 깨워 토큰 등록 유도(앱 안 열어도 갱신). FCM 무음이라 APNs와 무관.
+  let liveActivityWake:
+    | { woke: number; failed: number; skipped: number; cleaned: number; ok: boolean }
+    | { error: string } = { woke: 0, failed: 0, skipped: 0, cleaned: 0, ok: true };
+  try {
+    liveActivityWake = await pushLiveActivitySilentWakes(games);
+  } catch (e) {
+    liveActivityWake = { error: (e as Error).message };
+    console.error("[warmup] live activity wake failed:", (e as Error).message);
+  }
+
   return NextResponse.json({
     date,
     polled: liveGameIds.length,
@@ -179,6 +191,7 @@ export async function GET(req: NextRequest) {
     highlightNotify,
     liveActivity,
     liveActivityStart,
+    liveActivityWake,
     results: results.map(r =>
       r.status === "fulfilled"
         ? { gameId: r.value.gameId, ok: r.value.ok, status: r.value.status, eventCount: r.value.eventCount }

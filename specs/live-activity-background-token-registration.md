@@ -82,6 +82,13 @@ Layer 1 수정(본 PR, 앱-side, 인프라 무변경):
 - `LiveActivityController.rescanActiveActivities()` 신설 — 살아있는 Activity 전부 재-enumerate해 `observePushToken`(observedActivityIds 중복가드) 등록. `observeAllActivities`의 초기 enumerate도 이 메서드로 통일(DRY).
 - `AppDelegate.applicationWillEnterForeground` → `rescanActiveActivities()` 호출. **앱 열 때마다 확실히 토큰 확보** = 하린아빠처럼 자주 여는 패턴에서 프리즈 소멸.
 
-Layer 2/3 (별도 슬라이스 — "앱을 아예 안 여는" 꼬리 케이스, 실기기 검증 필수):
-- Layer 2: `UIBackgroundModes: remote-notification` capability + push-to-start 발송 시 무음 데이터 FCM(content-available) 동반 → 앱 백그라운드 wake → rescan → 토큰 등록. ⚠️ Apple이 silent push를 throttle하고 강제종료 시 미전달 → best-effort.
-- Layer 3(가장 견고, "네이버 수준"): iOS 18 broadcast push channel — 기기별 토큰 불필요 → update 토큰 미등록 갭 자체가 소멸. 최대 변경.
+## 9. Layer 2 — 무음 wake 푸시 (구현됨, 1.0.5 동봉)
+"앱을 아예 안 여는" 케이스: 카드는 떴는데(started_users) update 토큰이 없는(live_activity_tokens 없음) 유저를 서버가 무음 푸시로 깨워 토큰을 잡는다.
+- `ios/App/App/Info.plist` — `UIBackgroundModes: [remote-notification]` 추가(그동안 없어서 무음 푸시가 앱을 못 깨우던 근본 통로). `NSSupportsLiveActivitiesFrequentUpdates`는 이미 true.
+- `ios/App/App/AppDelegate.swift` — `didReceiveRemoteNotification`에서 `rescanActiveActivities()`+`resyncPushToStartTokenOnForeground()` 호출(멱등, completionHandler 미접촉).
+- `src/lib/notifications/fcm.ts` — `apnsBackground` 플래그(iOS `content-available:1`+`apns-push-type:background`) + `platform` 필터(iOS 기기만).
+- `src/lib/notifications/live-activity.ts` — `pushLiveActivitySilentWakes()`: 토큰 미등록 갭 유저 iOS 기기에 무음 wake(옵트아웃 제외). wake 창은 *예정시각이 아니라 실제 live 전환 시각* 기준(삼순 #514 blocker) — `game_notify_state.start_notified/updated_at`(warmup에서 notifyGameStatusTransitions가 먼저 세팅)에서 20분 이내. 우천/지연 경기도 정확 커버. warmup cron 매 사이클 호출(등록되면 갭에서 빠짐). 응답에 woke/failed/skipped/cleaned/ok 노출(관측용).
+- ⚠️ Apple이 무음 푸시를 throttle + 강제종료(스와이프 kill)면 미전달 → best-effort. 실기기 TestFlight 1회 검증 필수(테스트폰 없어 코드로 100% 장담 불가).
+
+## 10. Layer 3 — iOS 18 broadcast channel (보류, "패치 0" 리스크로 미채택)
+가장 견고("네이버 수준", 기기별 토큰 불필요 → 갭 원천 소멸)하나 iOS 18 전용 + 서버 채널관리 대공사 → 검증 안 된 대형 신규 시스템이 오히려 1.0.6를 부를 위험. Layer 1+2로 부족 판명 시에만.

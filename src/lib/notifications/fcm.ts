@@ -28,6 +28,13 @@ export interface PushPayload {
   dataOnly?: boolean;
   /** data 블록에 추가로 실을 키 (예: { kind: "game_live" }). */
   data?: Record<string, string>;
+  /**
+   * iOS 무음(백그라운드) 푸시 — APNs `content-available:1` + `apns-push-type:background`.
+   * 알림 배너 없이 앱을 백그라운드로 깨우기만 한다(Live Activity update 토큰 등록용, Layer 2).
+   * 반드시 `dataOnly`와 함께 쓴다(notification 블록이 있으면 무음이 아님). iOS 전용 헤더라
+   * Android엔 무영향. Apple이 무음 푸시를 throttle하므로 best-effort.
+   */
+  apnsBackground?: boolean;
 }
 
 /**
@@ -49,10 +56,11 @@ export async function sendFcmToUsers(
   userIds: string[],
   payload: PushPayload,
   prefKey?: PrefKey,
+  platform?: "ios" | "android",
 ): Promise<SendResult> {
   if (userIds.length === 0) return { sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: true };
   try {
-    return await sendFcmToUsersInner(userIds, payload, prefKey);
+    return await sendFcmToUsersInner(userIds, payload, prefKey, platform);
   } catch (e) {
     // getFcm()의 JSON parse/init 또는 sendEachForMulticast throw 등 —
     // ok:false로 호출자(game-status unclaim)가 재시도하게 함 (삼순 #210 재리뷰 NO-GO)
@@ -65,6 +73,7 @@ async function sendFcmToUsersInner(
   userIds: string[],
   payload: PushPayload,
   prefKey?: PrefKey,
+  platform?: "ios" | "android",
 ): Promise<SendResult> {
   const fcm = getFcm();
   if (!fcm) return { sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false }; // env 미설정 = 인프라 실패
@@ -102,10 +111,13 @@ async function sendFcmToUsersInner(
   const tokens: string[] = [];
   for (let i = 0; i < targets.length; i += IN_CHUNK) {
     const slice = targets.slice(i, i + IN_CHUNK);
-    const { data: rows, error: tokenErr } = await supabase
+    let tokenQuery = supabase
       .from("device_push_tokens")
       .select("fcm_token")
       .in("user_id", slice);
+    // platform 지정 시 해당 OS 토큰만(무음 wake 푸시는 iOS 전용).
+    if (platform) tokenQuery = tokenQuery.eq("platform", platform);
+    const { data: rows, error: tokenErr } = await tokenQuery;
     if (tokenErr) {
       console.error("[fcm] token query failed:", tokenErr.message);
       return { sent: 0, failed: 0, cleaned: 0, skipped, ok: false };
@@ -133,6 +145,16 @@ async function sendFcmToUsersInner(
       ...(payload.dataOnly ? {} : { notification: { title: payload.title, body: payload.body } }),
       ...(Object.keys(dataBlock).length ? { data: dataBlock } : {}),
       ...(payload.dataOnly ? { android: { priority: "high" as const } } : {}),
+      // iOS 무음 백그라운드 푸시(Layer 2) — 배너 없이 앱을 깨워 LA 토큰 등록. content-available:1
+      // + apns-push-type:background + priority 5(무음 필수). Android엔 apns 블록 무영향.
+      ...(payload.apnsBackground
+        ? {
+            apns: {
+              headers: { "apns-push-type": "background", "apns-priority": "5" },
+              payload: { aps: { "content-available": 1 } },
+            },
+          }
+        : {}),
     });
     sent += res.successCount;
     failed += res.failureCount;

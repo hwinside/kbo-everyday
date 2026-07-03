@@ -110,6 +110,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        // Layer 2 — 무음(content-available)/일반 원격 알림으로 앱이 백그라운드에서 깨어난
+        // 순간, 살아있는 Live Activity를 재-enumerate해 update 토큰을 등록한다(register-device).
+        // push-to-start로 카드만 뜨고 앱이 안 열린 유저의 토큰 미등록 갭을 "앱을 열지 않고"
+        // 메운다 — 서버가 경기 시작/진행 중 무음 wake 푸시를 보내면 이 경로가 토큰을 잡는다.
+        // 멱등(observedActivityIds 중복가드) — 매 푸시마다 호출해도 이중 등록 없음.
+        // completionHandler는 건드리지 않는다(Capacitor/Firebase 메시징 플러그인이 호출).
+        if #available(iOS 16.1, *) {
+            LiveActivityController.shared.rescanActiveActivities()
+            LiveActivityController.shared.resyncPushToStartTokenOnForeground()
+        }
         NotificationCenter.default.post(name: Notification.Name.init("didReceiveRemoteNotification"), object: completionHandler, userInfo: userInfo)
     }
 
