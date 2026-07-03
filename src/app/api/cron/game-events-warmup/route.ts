@@ -169,7 +169,9 @@ export async function GET(req: NextRequest) {
 
   // 잠금화면 Live Activity 무음 wake (Layer 2) — 카드는 떴는데 update 토큰이 없는 유저의
   // iOS 기기를 무음 푸시로 깨워 토큰 등록 유도(앱 안 열어도 갱신). FCM 무음이라 APNs와 무관.
-  let liveActivityWake: { woke: number } | { error: string } = { woke: 0 };
+  let liveActivityWake:
+    | { woke: number; failed: number; skipped: number; cleaned: number; ok: boolean }
+    | { error: string } = { woke: 0, failed: 0, skipped: 0, cleaned: 0, ok: true };
   try {
     liveActivityWake = await pushLiveActivitySilentWakes(games);
   } catch (e) {
