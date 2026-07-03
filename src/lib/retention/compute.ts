@@ -1,5 +1,5 @@
 import { SupabaseClient } from "@supabase/supabase-js";
-import { toKSTDateString } from "@/lib/utils/date-kst";
+import { toKSTDateString, addKSTDays } from "@/lib/utils/date-kst";
 
 interface MetricRow {
   date: string;
@@ -23,10 +23,14 @@ function isoWeek(dateStr: string): string {
   return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
 }
 
-/** W16 이전 코호트는 집계 제외 (본격 오픈 이전) */
-const MIN_COHORT = "2026-W16";
-/** 일별 코호트 시작일 */
-const MIN_DAILY_COHORT = "2026-04-16";
+/**
+ * page_view(방문) 적재가 RLS 수정(#446)으로 복구된 6/26부터만 broad 리텐션이
+ * 일관되게 집계됨. 그 전 코호트는 눈팅 방문이 누락돼 과소집계되므로 제외한다.
+ * (6/25는 마이그레이션이 낮에 배포돼 반나절만 잡힌 부분치라 함께 제외)
+ */
+const MIN_DAILY_COHORT = "2026-06-26";
+/** 주간 코호트도 page_view 계측이 온전한 주부터. W26은 6/25(미계측일)를 포함하므로 W27부터. */
+const MIN_COHORT = "2026-W27";
 
 /**
  * Paginated fetch to bypass Supabase 1000-row default limit.
@@ -111,8 +115,8 @@ export async function computeCohortRetention(
   // 2) 같은 기간 활동 데이터 수집
   const visitDays = await collectActivityDays(supabase, sixtyDaysAgo);
 
-  // 3) 코호트별 D-N 잔존율 계산
-  const dayOffsets = [1, 2, 3, 4, 5, 6, 7, 14, 30];
+  // 3) 코호트별 D-N 잔존율 계산 (D0 = 가입 당일 활동)
+  const dayOffsets = [0, 1, 2, 3, 4, 5, 6, 7, 14, 30];
   const cohorts = new Map<string, { users: { id: string; signupDate: string }[] }>();
 
   for (const p of profiles) {
@@ -131,9 +135,7 @@ export async function computeCohortRetention(
       let returned = 0;
       let eligible = 0;
       for (const u of users) {
-        const targetDay = new Date(
-          new Date(u.signupDate + "T00:00:00+09:00").getTime() + dN * 86400000,
-        ).toISOString().slice(0, 10);
+        const targetDay = addKSTDays(u.signupDate, dN);
         // 아직 D-N이 지나지 않은 유저는 eligible에서 제외
         if (targetDay > targetDate) continue;
         eligible++;
@@ -175,7 +177,7 @@ export async function computeDailyCohortRetention(
 
   const visitDays = await collectActivityDays(supabase, sixtyDaysAgo);
 
-  const dayOffsets = [1, 2, 3, 4, 5, 6, 7, 14, 30];
+  const dayOffsets = [0, 1, 2, 3, 4, 5, 6, 7, 14, 30];
   const cohorts = new Map<string, { id: string; signupDate: string }[]>();
 
   for (const p of profiles) {
@@ -191,9 +193,7 @@ export async function computeDailyCohortRetention(
       let returned = 0;
       let eligible = 0;
       for (const u of users) {
-        const targetDay = new Date(
-          new Date(u.signupDate + "T00:00:00+09:00").getTime() + dN * 86400000,
-        ).toISOString().slice(0, 10);
+        const targetDay = addKSTDays(u.signupDate, dN);
         if (targetDay > targetDate) continue;
         eligible++;
         if (visitDays.get(u.id)?.has(targetDay)) returned++;
