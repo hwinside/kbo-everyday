@@ -6,6 +6,7 @@ import {
   sendLiveActivityPush,
 } from "@/lib/notifications/apns";
 import { teamIdByShortName, fansOfTeams } from "@/lib/notifications/game-status";
+import { sendFcmToUsers } from "@/lib/notifications/fcm";
 import type { KboRawGame } from "@/types/api";
 
 // Live Activity W3a — 백그라운드 실시간 갱신.
@@ -395,4 +396,76 @@ export async function pushLiveActivityStarts(
   }
 
   return { started };
+}
+
+// ── Layer 2 — 무음 백그라운드 wake 푸시 ──────────────────────────────────────
+// push-to-start로 카드는 떴지만(started_users 있음) update 토큰이 아직 없는
+// (live_activity_tokens 없음) 유저의 iOS 기기로 *무음*(content-available) 푸시를 보내
+// 앱을 백그라운드로 깨운다 → AppDelegate.didReceiveRemoteNotification이
+// rescanActiveActivities() → register-device로 토큰을 등록한다. 앱을 열지 않아도 카드가
+// live로 갱신되는 "네이버 수준" 경로. Apple이 무음 푸시를 throttle하므로 best-effort.
+// (강제종료(스와이프 kill) 기기는 iOS가 안 깨움 → 구조적 한계, iOS 18 broadcast가 상위해법.)
+
+/** 무음 wake는 라이브 전환 직후 창에서만(스팸/throttle 방지). 이 창 지나 미등록이면 강제종료 등. */
+const WAKE_WINDOW_MS = 20 * 60 * 1000;
+
+/**
+ * 토큰 미등록 갭 유저의 iOS 기기를 무음 푸시로 깨워 update 토큰 등록을 유도한다.
+ * 라이브 전환 후 WAKE_WINDOW_MS 이내 경기만 대상(그 이후 미등록은 강제종료 등 unwakeable).
+ * FCM만 사용 → APNs 미설정과 무관. 매 warmup 사이클 호출(등록되면 다음 사이클 갭에서 빠짐).
+ */
+export async function pushLiveActivitySilentWakes(
+  games: KboRawGame[],
+): Promise<{ woke: number } | { error: string }> {
+  const recentLiveGameIds = games
+    .filter((g) => {
+      if (gameStatus(g) !== "live" || !g.G_ID) return false;
+      const startedAt = scheduledStartMs(g.G_DT, g.G_TM);
+      // 시작 시각 파싱 실패 시 포함(안전), 있으면 라이브 전환 후 20분 이내만.
+      return startedAt === null || Date.now() - startedAt <= WAKE_WINDOW_MS;
+    })
+    .map((g) => g.G_ID as string);
+  if (recentLiveGameIds.length === 0) return { woke: 0 };
+
+  // 갭 = started_users(카드 생성) − live_activity_tokens(update 토큰 등록).
+  const [startedRes, tokenRes] = await Promise.all([
+    supabase.from("live_activity_started_users").select("user_id, game_id").in("game_id", recentLiveGameIds),
+    supabase.from("live_activity_tokens").select("user_id, game_id").in("game_id", recentLiveGameIds),
+  ]);
+  if (startedRes.error) return { error: startedRes.error.message };
+  if (tokenRes.error) return { error: tokenRes.error.message };
+  const started = (startedRes.data ?? []) as { user_id: string; game_id: string }[];
+  if (started.length === 0) return { woke: 0 };
+  const tokened = new Set(
+    ((tokenRes.data ?? []) as { user_id: string; game_id: string }[]).map((r) => `${r.user_id}|${r.game_id}`),
+  );
+  // 갭 유저 = (user,game) 토큰 없음. wake는 기기 단위라 user로 중복 제거.
+  const gapUsers = [
+    ...new Set(started.filter((r) => !tokened.has(`${r.user_id}|${r.game_id}`)).map((r) => r.user_id)),
+  ];
+  if (gapUsers.length === 0) return { woke: 0 };
+
+  // 옵트아웃(live_activity=false) 제외 — 깨워도 register-device가 skip. .in() 200 청크.
+  const optedOut = new Set<string>();
+  for (let i = 0; i < gapUsers.length; i += 200) {
+    const { data: prefRows, error } = await supabase
+      .from("notification_prefs")
+      .select("user_id, live_activity")
+      .in("user_id", gapUsers.slice(i, i + 200));
+    if (error) return { error: error.message };
+    for (const r of (prefRows ?? []) as { user_id: string; live_activity: boolean | null }[]) {
+      if (r.live_activity === false) optedOut.add(r.user_id);
+    }
+  }
+  const targets = gapUsers.filter((u) => !optedOut.has(u));
+  if (targets.length === 0) return { woke: 0 };
+
+  // iOS 기기로만 무음 wake(dataOnly + content-available). Android는 platform 필터로 제외.
+  const res = await sendFcmToUsers(
+    targets,
+    { title: "", body: "", dataOnly: true, apnsBackground: true, data: { kind: "la_wake" } },
+    undefined,
+    "ios",
+  );
+  return { woke: res.sent };
 }
