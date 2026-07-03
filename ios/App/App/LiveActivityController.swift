@@ -168,13 +168,28 @@ final class LiveActivityController {
             // 조건3: 구독 전에 이미 떠 있는(원격 push-to-start 생성) Activity를 즉시 enumerate.
             // activityUpdates는 *구독 이후 신규*만 yield → 백그라운드 launch 시 이미 존재하는
             // 카드의 update 토큰을 놓칠 수 있다(observePushToken 중복가드로 이중 구독 무해).
-            for activity in Activity<KBOGameAttributes>.activities {
-                observePushToken(activity, gameId: activity.attributes.gameId)
-            }
+            rescanActiveActivities()
             Task {
                 for await activity in Activity<KBOGameAttributes>.activityUpdates {
                     observePushToken(activity, gameId: activity.attributes.gameId)
                 }
+            }
+        }
+    }
+
+    /// 현재 살아있는 모든 Activity를 다시 enumerate해서 update 토큰 등록을 보장한다.
+    /// `activityUpdates`는 *구독 이후 신규*만 yield하고, 앱이 백그라운드 suspend된 사이
+    /// push-to-start로 생성된 카드(경기 30분 전 예정 카드)는 그 스트림에서 놓칠 수 있다 —
+    /// 그러면 다음 포그라운드까지 update 토큰이 미등록되어 카드가 시작 스냅샷에 얼어붙는다.
+    /// (하린아빠 실사례: 카드 18:00 생성, 토큰은 앱을 연 19:16에야 등록 → 그 사이 프리즈.
+    /// 하루에 여러 번 앱을 열어도 매 포그라운드에서 재-enumerate를 안 해 늦게 잡혔다.)
+    /// AppDelegate가 매 포그라운드 진입 시 호출 → "앱 열 때마다 확실히 토큰 확보"를 보장한다.
+    /// observePushToken의 observedActivityIds 중복가드로 이미 관찰 중인 Activity는 무시된다
+    /// (이중 구독/중복 등록 없음). iOS 16.2+.
+    func rescanActiveActivities() {
+        if #available(iOS 16.2, *) {
+            for activity in Activity<KBOGameAttributes>.activities {
+                observePushToken(activity, gameId: activity.attributes.gameId)
             }
         }
     }
