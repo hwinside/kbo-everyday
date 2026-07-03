@@ -87,7 +87,7 @@ Layer 1 수정(본 PR, 앱-side, 인프라 무변경):
 - `ios/App/App/Info.plist` — `UIBackgroundModes: [remote-notification]` 추가(그동안 없어서 무음 푸시가 앱을 못 깨우던 근본 통로). `NSSupportsLiveActivitiesFrequentUpdates`는 이미 true.
 - `ios/App/App/AppDelegate.swift` — `didReceiveRemoteNotification`에서 `rescanActiveActivities()`+`resyncPushToStartTokenOnForeground()` 호출(멱등, completionHandler 미접촉).
 - `src/lib/notifications/fcm.ts` — `apnsBackground` 플래그(iOS `content-available:1`+`apns-push-type:background`) + `platform` 필터(iOS 기기만).
-- `src/lib/notifications/live-activity.ts` — `pushLiveActivitySilentWakes()`: 라이브 전환 후 20분 이내 경기의 토큰 미등록 갭 유저 iOS 기기에 무음 wake(옵트아웃 제외). warmup cron 매 사이클 호출(등록되면 갭에서 빠짐).
+- `src/lib/notifications/live-activity.ts` — `pushLiveActivitySilentWakes()`: 토큰 미등록 갭 유저 iOS 기기에 무음 wake(옵트아웃 제외). wake 창은 *예정시각이 아니라 실제 live 전환 시각* 기준(삼순 #514 blocker) — `game_notify_state.start_notified/updated_at`(warmup에서 notifyGameStatusTransitions가 먼저 세팅)에서 20분 이내. 우천/지연 경기도 정확 커버. warmup cron 매 사이클 호출(등록되면 갭에서 빠짐). 응답에 woke/failed/skipped/cleaned/ok 노출(관측용).
 - ⚠️ Apple이 무음 푸시를 throttle + 강제종료(스와이프 kill)면 미전달 → best-effort. 실기기 TestFlight 1회 검증 필수(테스트폰 없어 코드로 100% 장담 불가).
 
 ## 10. Layer 3 — iOS 18 broadcast channel (보류, "패치 0" 리스크로 미채택)

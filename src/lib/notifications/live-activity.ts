@@ -406,36 +406,55 @@ export async function pushLiveActivityStarts(
 // live로 갱신되는 "네이버 수준" 경로. Apple이 무음 푸시를 throttle하므로 best-effort.
 // (강제종료(스와이프 kill) 기기는 iOS가 안 깨움 → 구조적 한계, iOS 18 broadcast가 상위해법.)
 
-/** 무음 wake는 라이브 전환 직후 창에서만(스팸/throttle 방지). 이 창 지나 미등록이면 강제종료 등. */
+/** 무음 wake는 *실제 live 전환* 직후 창에서만(스팸/throttle 방지). 이 창 지나 미등록이면 강제종료 등. */
 const WAKE_WINDOW_MS = 20 * 60 * 1000;
+
+interface WakeResult { woke: number; failed: number; skipped: number; cleaned: number; ok: boolean }
+const EMPTY_WAKE: WakeResult = { woke: 0, failed: 0, skipped: 0, cleaned: 0, ok: true };
 
 /**
  * 토큰 미등록 갭 유저의 iOS 기기를 무음 푸시로 깨워 update 토큰 등록을 유도한다.
- * 라이브 전환 후 WAKE_WINDOW_MS 이내 경기만 대상(그 이후 미등록은 강제종료 등 unwakeable).
+ * wake 창은 *예정시각이 아니라 실제 live 전환 시각* 기준(삼순 #514 blocker): warmup에서
+ * notifyGameStatusTransitions()가 먼저 돌아 game_notify_state.start_notified/updated_at을
+ * 세팅하므로, 그 updated_at(=live 전환 근사시각)에서 WAKE_WINDOW_MS 이내 경기만 대상.
+ * → 우천/지연으로 예정시각+20분을 한참 넘겨 live 전환된 경기도 정확히 커버(예정시각 기준이면
+ * 스킵됐음). start_notified row가 아직 없으면(막 전환/알림 경로 이슈) 안전하게 포함.
  * FCM만 사용 → APNs 미설정과 무관. 매 warmup 사이클 호출(등록되면 다음 사이클 갭에서 빠짐).
  */
 export async function pushLiveActivitySilentWakes(
   games: KboRawGame[],
-): Promise<{ woke: number } | { error: string }> {
-  const recentLiveGameIds = games
-    .filter((g) => {
-      if (gameStatus(g) !== "live" || !g.G_ID) return false;
-      const startedAt = scheduledStartMs(g.G_DT, g.G_TM);
-      // 시작 시각 파싱 실패 시 포함(안전), 있으면 라이브 전환 후 20분 이내만.
-      return startedAt === null || Date.now() - startedAt <= WAKE_WINDOW_MS;
-    })
+): Promise<WakeResult | { error: string }> {
+  const liveGameIds = games
+    .filter((g) => gameStatus(g) === "live" && g.G_ID)
     .map((g) => g.G_ID as string);
-  if (recentLiveGameIds.length === 0) return { woke: 0 };
+  if (liveGameIds.length === 0) return EMPTY_WAKE;
+
+  // 실제 live 전환 시각 = game_notify_state.updated_at(start_notified=true). 이 기준 20분 이내만.
+  const { data: nsRows, error: nsErr } = await supabase
+    .from("game_notify_state")
+    .select("game_id, start_notified, updated_at")
+    .in("game_id", liveGameIds);
+  if (nsErr) return { error: nsErr.message };
+  const liveSince = new Map<string, number>();
+  for (const r of (nsRows ?? []) as { game_id: string; start_notified: boolean | null; updated_at: string | null }[]) {
+    if (r.start_notified && r.updated_at) liveSince.set(r.game_id, new Date(r.updated_at).getTime());
+  }
+  // wake 대상 = live 전환 후 WAKE_WINDOW_MS 이내. start_notified row 없으면(막 전환 등) 포함(안전).
+  const wakeGameIds = liveGameIds.filter((id) => {
+    const since = liveSince.get(id);
+    return since === undefined || Date.now() - since <= WAKE_WINDOW_MS;
+  });
+  if (wakeGameIds.length === 0) return EMPTY_WAKE;
 
   // 갭 = started_users(카드 생성) − live_activity_tokens(update 토큰 등록).
   const [startedRes, tokenRes] = await Promise.all([
-    supabase.from("live_activity_started_users").select("user_id, game_id").in("game_id", recentLiveGameIds),
-    supabase.from("live_activity_tokens").select("user_id, game_id").in("game_id", recentLiveGameIds),
+    supabase.from("live_activity_started_users").select("user_id, game_id").in("game_id", wakeGameIds),
+    supabase.from("live_activity_tokens").select("user_id, game_id").in("game_id", wakeGameIds),
   ]);
   if (startedRes.error) return { error: startedRes.error.message };
   if (tokenRes.error) return { error: tokenRes.error.message };
   const started = (startedRes.data ?? []) as { user_id: string; game_id: string }[];
-  if (started.length === 0) return { woke: 0 };
+  if (started.length === 0) return EMPTY_WAKE;
   const tokened = new Set(
     ((tokenRes.data ?? []) as { user_id: string; game_id: string }[]).map((r) => `${r.user_id}|${r.game_id}`),
   );
@@ -443,7 +462,7 @@ export async function pushLiveActivitySilentWakes(
   const gapUsers = [
     ...new Set(started.filter((r) => !tokened.has(`${r.user_id}|${r.game_id}`)).map((r) => r.user_id)),
   ];
-  if (gapUsers.length === 0) return { woke: 0 };
+  if (gapUsers.length === 0) return EMPTY_WAKE;
 
   // 옵트아웃(live_activity=false) 제외 — 깨워도 register-device가 skip. .in() 200 청크.
   const optedOut = new Set<string>();
@@ -458,7 +477,7 @@ export async function pushLiveActivitySilentWakes(
     }
   }
   const targets = gapUsers.filter((u) => !optedOut.has(u));
-  if (targets.length === 0) return { woke: 0 };
+  if (targets.length === 0) return EMPTY_WAKE;
 
   // iOS 기기로만 무음 wake(dataOnly + content-available). Android는 platform 필터로 제외.
   const res = await sendFcmToUsers(
@@ -467,5 +486,6 @@ export async function pushLiveActivitySilentWakes(
     undefined,
     "ios",
   );
-  return { woke: res.sent };
+  // 운영 관측용 전체 통계 노출(삼순 비블로커) — woke=성공 발송 기기수.
+  return { woke: res.sent, failed: res.failed, skipped: res.skipped, cleaned: res.cleaned, ok: res.ok };
 }
