@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
-import { Heart, Volume2, VolumeX, ExternalLink } from "lucide-react";
+import { Heart, Volume2, VolumeX, ExternalLink, ChevronsUpDown } from "lucide-react";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { HIGHLIGHTS, rankHighlights, type Highlight } from "@/lib/constants/highlights";
 import { getMyTeamId } from "@/lib/store/myteam";
@@ -19,6 +19,7 @@ function ReelSlide({
   isActive,
   muted,
   liked,
+  showHint,
   onLike,
   onToggleMute,
 }: {
@@ -26,6 +27,7 @@ function ReelSlide({
   isActive: boolean;
   muted: boolean;
   liked: boolean;
+  showHint: boolean;
   onLike: () => void;
   onToggleMute: () => void;
 }) {
@@ -66,7 +68,7 @@ function ReelSlide({
       {/* Player region — iframe sized to its real 16:9 box (no overlay, ToS III.C.1).
           The black bands above/below belong to the snap container, so the native
           scroll-snap swipe still starts there → up/down swipe restored. */}
-      <div className="flex-1 min-h-0 flex items-center justify-center bg-black">
+      <div className="relative flex-1 min-h-0 flex items-center justify-center bg-black">
         {isActive ? (
           <iframe
             ref={iframeRef}
@@ -84,6 +86,15 @@ function ReelSlide({
             alt=""
             className="max-h-full max-w-full object-contain"
           />
+        )}
+        {/* 스와이프 힌트 — 영상 아래 검은 여백(스와이프 영역)에만. 플레이어 위 오버레이 아님(ToS III.C.1), pointer-events-none */}
+        {isActive && (
+          <div className={`pointer-events-none absolute inset-x-0 bottom-3 flex justify-center transition-opacity duration-700 ${showHint ? "opacity-100" : "opacity-0"}`}>
+            <span className="flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-xs font-medium text-white/90 backdrop-blur-sm">
+              <ChevronsUpDown size={14} className="animate-bounce" />
+              위아래로 밀어서 다음 영상
+            </span>
+          </div>
         )}
       </div>
 
@@ -136,6 +147,7 @@ export default function HighlightsPage() {
   const [currentIdx, setCurrentIdx] = useState(0);
   const [liked, setLiked] = useState<Set<string>>(new Set());
   const [muted, setMuted] = useState(true);
+  const [showHint, setShowHint] = useState(false); // 스와이프 힌트 (진입 시 잠깐)
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -163,6 +175,15 @@ export default function HighlightsPage() {
         setFeed(rankHighlights(HIGHLIGHTS, teamId, favNames));
       });
   }, []);
+
+  // 피드 로드되면 스와이프 힌트 3초 노출 후 페이드아웃
+  useEffect(() => {
+    if (feed.length <= 1) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setShowHint(true);
+    const t = setTimeout(() => setShowHint(false), 3000);
+    return () => clearTimeout(t);
+  }, [feed.length]);
 
   const handleScroll = useCallback(() => {
     const el = containerRef.current;
@@ -204,6 +225,7 @@ export default function HighlightsPage() {
             isActive={idx === currentIdx}
             muted={muted}
             liked={liked.has(reel.id)}
+            showHint={showHint && feed.length > 1}
             onLike={() => toggleLike(reel.id)}
             onToggleMute={() => setMuted(m => !m)}
           />
