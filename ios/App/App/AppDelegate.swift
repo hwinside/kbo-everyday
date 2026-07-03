@@ -35,6 +35,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // (백그라운드 rotate분 서버 매핑 최신화). 자세한 내용은 LiveActivityController 참조.
         if #available(iOS 16.1, *) {
             LiveActivityController.shared.resyncPushToStartTokenOnForeground()
+            // 앱 열 때마다 살아있는 카드를 재-enumerate해 update 토큰을 확보한다. 백그라운드
+            // suspend 중 뜬 push-to-start 카드(예정 30분 전)를 다음 포그라운드에 반드시 잡아
+            // "하루에 여러 번 앱을 여는데도 카드가 얼어붙는" 프리즈를 없앤다(하린아빠 사례).
+            LiveActivityController.shared.rescanActiveActivities()
         }
     }
 

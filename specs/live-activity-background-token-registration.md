@@ -72,3 +72,16 @@
 - 강제종료 상태: iOS 구조적 한계(코드로 못 넘김).
 - iOS 18 broadcast(channel): 16.1+ 커버리지 위해 미채택.
 - 멀티 디바이스: v1 비범위(디바이스당 최신 1개).
+
+## 8. 후속 fix — 포그라운드 재-enumerate (하린아빠 2026-07-03 프리즈 재발)
+증상: 1.0.4에서도 경기 시작 20분+ 뒤까지 잠금화면 카드가 "경기 예정"에 프리즈. 실데이터(yoonyeonryul/LG): 카드 생성 18:00 → 경기 18:30 → 스샷 프리즈 18:53 → update 토큰 등록 19:16(=앱 연 시점). 갱신 크론은 그동안 매분 정상 푸시(132/0 실패) → **토큰만 있었으면 즉시 갱신**. 즉 원인은 푸시가 아니라 update 토큰 등록이 앱 연 순간에야 됨.
+
+근본 원인(§3의 gap): `observeAllActivities()`의 `Activity.activities` enumerate는 **부팅 1회(didFinishLaunching)만** 돈다. `activityUpdates` 스트림은 *구독 이후 신규*만 yield하는데, 앱이 백그라운드 suspend된 사이 push-to-start로 생성된 카드는 이 스트림에서 놓칠 수 있다. `applicationWillEnterForeground`는 push-to-start 토큰 resync만 했고 **활성 Activity 재-enumerate를 안 함** → 하루에 여러 번 앱을 열어도 update 토큰이 늦게 잡힘.
+
+Layer 1 수정(본 PR, 앱-side, 인프라 무변경):
+- `LiveActivityController.rescanActiveActivities()` 신설 — 살아있는 Activity 전부 재-enumerate해 `observePushToken`(observedActivityIds 중복가드) 등록. `observeAllActivities`의 초기 enumerate도 이 메서드로 통일(DRY).
+- `AppDelegate.applicationWillEnterForeground` → `rescanActiveActivities()` 호출. **앱 열 때마다 확실히 토큰 확보** = 하린아빠처럼 자주 여는 패턴에서 프리즈 소멸.
+
+Layer 2/3 (별도 슬라이스 — "앱을 아예 안 여는" 꼬리 케이스, 실기기 검증 필수):
+- Layer 2: `UIBackgroundModes: remote-notification` capability + push-to-start 발송 시 무음 데이터 FCM(content-available) 동반 → 앱 백그라운드 wake → rescan → 토큰 등록. ⚠️ Apple이 silent push를 throttle하고 강제종료 시 미전달 → best-effort.
+- Layer 3(가장 견고, "네이버 수준"): iOS 18 broadcast push channel — 기기별 토큰 불필요 → update 토큰 미등록 갭 자체가 소멸. 최대 변경.
