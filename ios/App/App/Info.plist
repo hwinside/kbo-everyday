@@ -72,6 +72,14 @@
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
 	<true/>
+	<!-- 무음(content-available) 원격 알림으로 앱을 백그라운드로 깨워 Live Activity update
+	     토큰을 등록하기 위한 백그라운드 모드. push-to-start로 카드만 뜨고 앱이 안 열린
+	     경우, 서버가 보내는 무음 wake 푸시가 이 모드로 didReceiveRemoteNotification을
+	     깨워 rescanActiveActivities()→register-device로 토큰을 잡는다(Layer 2). -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
