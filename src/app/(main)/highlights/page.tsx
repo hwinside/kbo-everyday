@@ -63,7 +63,9 @@ function ReelSlide({
 
   return (
     <div className="relative h-full w-full snap-start snap-always flex flex-col bg-black">
-      {/* Player region — no overlays on the iframe (YouTube ToS III.C.1) */}
+      {/* Player region — iframe sized to its real 16:9 box (no overlay, ToS III.C.1).
+          The black bands above/below belong to the snap container, so the native
+          scroll-snap swipe still starts there → up/down swipe restored. */}
       <div className="flex-1 min-h-0 flex items-center justify-center bg-black">
         {isActive ? (
           <iframe
@@ -73,7 +75,7 @@ function ReelSlide({
             title={reel.title}
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
-            className="w-full h-full"
+            className="w-full aspect-video max-h-full"
             style={{ border: "none" }}
           />
         ) : (

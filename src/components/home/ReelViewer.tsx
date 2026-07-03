@@ -107,12 +107,14 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
         </div>
       </div>
 
-      {/* Player region — no overlays on the iframe (YouTube ToS III.C.1). Muted autoplay on open. */}
+      {/* Player region — iframe sized to its real 16:9 box (no overlay, ToS III.C.1).
+          The black bands above/below belong to this container, so the root swipe
+          handlers receive touches there → up/down swipe restored without any overlay. */}
       <div className="flex-1 min-h-0 flex items-center justify-center bg-black">
         <iframe
           ref={iframeRef}
           src={`https://www.youtube.com/embed/${videos[startIndex].id}?autoplay=1&mute=1&controls=1&rel=0&playsinline=1&enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`}
-          className="w-full h-full"
+          className="w-full aspect-video max-h-full"
           style={{ border: "none" }}
           allow="autoplay; encrypted-media"
           allowFullScreen
