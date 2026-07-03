@@ -33,6 +33,17 @@ export function toKSTDateString(utcTimestamp: string): string {
   return kst.toISOString().slice(0, 10);
 }
 
+/**
+ * Add N days to a KST date string (YYYY-MM-DD), returning a KST date string.
+ * Must round-trip through KST — calling `.toISOString().slice(0,10)` (UTC) on a
+ * KST-midnight instant shifts the result back one day (KST midnight = 15:00 UTC
+ * the previous day), which silently mislabels day offsets (D1 → signup day).
+ */
+export function addKSTDays(dateStr: string, days: number): string {
+  const ms = new Date(dateStr + "T00:00:00+09:00").getTime() + days * 86400000;
+  return toKSTDateString(new Date(ms).toISOString());
+}
+
 /** Yesterday in KST as YYYY-MM-DD */
 export function getKSTYesterday(): string {
   const now = new Date();

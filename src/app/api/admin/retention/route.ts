@@ -11,6 +11,11 @@ const FUNNEL_LABELS: Record<string, string> = {
   first_chat: "첫 채팅",
 };
 
+// page_view 계측이 온전한 코호트만 노출 (그 전은 눈팅 방문 누락으로 과소집계).
+// compute.ts에서도 동일하게 게이팅하지만, 재집계 전 stale 스냅샷 방어용으로 표시단에서도 필터.
+const MIN_DAILY_COHORT_KEY = "2026-06-26";
+const MIN_WEEKLY_COHORT_KEY = "2026-W27";
+
 export async function GET(req: NextRequest) {
   if (!isAdminRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -67,6 +72,7 @@ export async function GET(req: NextRequest) {
       .select("*")
       .eq("date", latestDate)
       .eq("metric_type", "cohort")
+      .gte("cohort_key", MIN_WEEKLY_COHORT_KEY)
       .order("cohort_key", { ascending: true });
 
     const grouped = new Map<string, CohortHeatmapRow>();
@@ -75,7 +81,7 @@ export async function GET(req: NextRequest) {
         grouped.set(row.cohort_key, {
           cohortKey: row.cohort_key,
           cohortSize: row.total,
-          d1: 0, d2: 0, d3: 0, d4: 0, d5: 0, d6: 0, d7: 0, d14: 0, d30: 0,
+          d0: 0, d1: 0, d2: 0, d3: 0, d4: 0, d5: 0, d6: 0, d7: 0, d14: 0, d30: 0,
         });
       }
       const entry = grouped.get(row.cohort_key)!;
@@ -96,6 +102,7 @@ export async function GET(req: NextRequest) {
       .select("*")
       .eq("date", latestDate)
       .eq("metric_type", "daily_cohort")
+      .gte("cohort_key", MIN_DAILY_COHORT_KEY)
       .order("cohort_key", { ascending: true });
 
     const grouped = new Map<string, CohortHeatmapRow>();
@@ -104,7 +111,7 @@ export async function GET(req: NextRequest) {
         grouped.set(row.cohort_key, {
           cohortKey: row.cohort_key,
           cohortSize: row.total,
-          d1: 0, d2: 0, d3: 0, d4: 0, d5: 0, d6: 0, d7: 0, d14: 0, d30: 0,
+          d0: 0, d1: 0, d2: 0, d3: 0, d4: 0, d5: 0, d6: 0, d7: 0, d14: 0, d30: 0,
         });
       }
       const entry = grouped.get(row.cohort_key)!;
@@ -150,6 +157,7 @@ export async function GET(req: NextRequest) {
       .select("*")
       .eq("date", latestDate)
       .eq("metric_type", "gameday")
+      .gte("cohort_key", MIN_WEEKLY_COHORT_KEY)
       .order("cohort_key", { ascending: true });
 
     const grouped = new Map<string, GamedayRetention>();

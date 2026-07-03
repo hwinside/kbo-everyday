@@ -14,6 +14,7 @@ import {
   Cell,
 } from "recharts";
 import type { CohortHeatmapRow, FunnelStep, GamedayRetention, VisitDistBucket } from "@/lib/admin/types";
+import { addKSTDays } from "@/lib/utils/date-kst";
 
 function getPin(): string {
   if (typeof window === "undefined") return "";
@@ -56,14 +57,30 @@ function rateBg(rate: number): string {
 const FUNNEL_COLORS = ["#6366F1", "#8B5CF6", "#A855F7", "#D946EF", "#EC4899"];
 
 const D_OFFSETS: Record<string, number> = {
-  d1: 1, d2: 2, d3: 3, d4: 4, d5: 5, d6: 6, d7: 7, d14: 14, d30: 30,
+  d0: 0, d1: 1, d2: 2, d3: 3, d4: 4, d5: 5, d6: 6, d7: 7, d14: 14, d30: 30,
 };
+
+/** 히트맵 열 순서 (D0 = 가입 당일) */
+const D_KEYS = ["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d14", "d30"] as const;
 
 function isDayNotYet(cohortDate: string, dKey: string, targetDate: string): boolean {
   const offset = D_OFFSETS[dKey] ?? 0;
-  const cohortMs = new Date(cohortDate + "T00:00:00+09:00").getTime();
-  const dayStr = new Date(cohortMs + offset * 86400000).toISOString().slice(0, 10);
-  return dayStr > targetDate;
+  return addKSTDays(cohortDate, offset) > targetDate;
+}
+
+/** 가장 최근 코호트 중 해당 D-N이 실제로 경과한 값 (헤드라인 카드용). 없으면 null. */
+function latestElapsedRate(
+  rows: CohortHeatmapRow[],
+  key: keyof CohortHeatmapRow,
+  notYetFn: (cohortKey: string, dKey: string, targetDate: string) => boolean,
+  targetDate: string,
+): number | null {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (!notYetFn(rows[i].cohortKey, key as string, targetDate)) {
+      return rows[i][key] as number;
+    }
+  }
+  return null;
 }
 
 /** ISO week string (e.g. "2026-W16") → 해당 주 월요일 YYYY-MM-DD */
@@ -115,8 +132,8 @@ export default function RetentionPage() {
     );
   }
 
-  const latestCohort = data.cohort.at(-1);
-  const d7Rate = latestCohort?.d7 ?? 0;
+  // D7은 '가장 최근 코호트'가 아직 D7 미도달일 수 있으므로, D7이 실제 경과한 최신 코호트 값 사용
+  const d7Val = latestElapsedRate(data.dailyCohort, "d7", isDayNotYet, data.date);
   const activationComplete = data.funnel.at(-1);
   const activationRate = activationComplete?.rate ?? 0;
   const latestGd = data.gameday.at(-1);
@@ -134,8 +151,8 @@ export default function RetentionPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="glass-card p-5">
           <p className="text-xs text-gray-400 mb-1">최근 코호트 D7 리텐션</p>
-          <p className="text-2xl font-bold tabular-nums" style={{ color: rateColor(d7Rate) }}>
-            {(d7Rate * 100).toFixed(1)}%
+          <p className="text-2xl font-bold tabular-nums" style={{ color: rateColor(d7Val ?? 0) }}>
+            {d7Val === null ? "—" : `${(d7Val * 100).toFixed(1)}%`}
           </p>
         </div>
         <div className="glass-card p-5">
@@ -153,7 +170,8 @@ export default function RetentionPage() {
       </div>
 
       <div className="glass-card p-5">
-        <h2 className="text-sm font-semibold mb-4">코호트 리텐션 히트맵</h2>
+        <h2 className="text-sm font-semibold mb-1">주간 코호트 리텐션 히트맵</h2>
+        <p className="text-[11px] text-gray-500 mb-4">D0 = 가입 당일 활동. page_view 계측이 온전한 6/26 이후(2026-W27~) 코호트만 표시.</p>
         {data.cohort.length === 0 ? (
           <p className="text-gray-500 text-sm">데이터 없음</p>
         ) : (
@@ -163,7 +181,7 @@ export default function RetentionPage() {
                 <tr className="text-gray-400 text-xs">
                   <th className="text-left py-2 pr-4">코호트</th>
                   <th className="text-right py-2 px-3">인원</th>
-                  {(["d1","d2","d3","d4","d5","d6","d7","d14","d30"] as const).map((k) => (
+                  {(D_KEYS).map((k) => (
                     <th key={k} className="text-center py-2 px-2">{k.toUpperCase()}</th>
                   ))}
                 </tr>
@@ -177,7 +195,7 @@ export default function RetentionPage() {
                     <td className="py-2 px-3 text-right tabular-nums text-gray-400">
                       {row.cohortSize}
                     </td>
-                    {(["d1","d2","d3","d4","d5","d6","d7","d14","d30"] as const).map((key) => {
+                    {(D_KEYS).map((key) => {
                       const notYet = isWeekNotYet(row.cohortKey, key, data.date!);
                       return (
                         <td
@@ -201,7 +219,8 @@ export default function RetentionPage() {
       </div>
 
       <div className="glass-card p-5">
-        <h2 className="text-sm font-semibold mb-4">일별 코호트 리텐션 (4/16~)</h2>
+        <h2 className="text-sm font-semibold mb-1">일별 코호트 리텐션</h2>
+        <p className="text-[11px] text-gray-500 mb-4">D0 = 가입 당일 활동. page_view 계측이 온전한 6/26 이후 코호트만 (그 전은 눈팅 방문 누락으로 과소집계).</p>
         {data.dailyCohort.length === 0 ? (
           <p className="text-gray-500 text-sm">데이터 없음</p>
         ) : (
@@ -211,7 +230,7 @@ export default function RetentionPage() {
                 <tr className="text-gray-400 text-xs">
                   <th className="text-left py-2 pr-4">가입일</th>
                   <th className="text-right py-2 px-3">인원</th>
-                  {(["d1","d2","d3","d4","d5","d6","d7","d14","d30"] as const).map((k) => (
+                  {(D_KEYS).map((k) => (
                     <th key={k} className="text-center py-2 px-2">{k.toUpperCase()}</th>
                   ))}
                 </tr>
@@ -225,7 +244,7 @@ export default function RetentionPage() {
                     <td className="py-2 px-3 text-right tabular-nums text-gray-400">
                       {row.cohortSize}
                     </td>
-                    {(["d1","d2","d3","d4","d5","d6","d7","d14","d30"] as const).map((key) => {
+                    {(D_KEYS).map((key) => {
                       const notYet = isDayNotYet(row.cohortKey, key, data.date!);
                       return (
                         <td

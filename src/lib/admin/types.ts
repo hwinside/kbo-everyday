@@ -102,10 +102,11 @@ export interface RetentionMetric {
   rate: number;
 }
 
-/** 코호트 히트맵 행: 한 주차의 D1~D7/D14/D30 잔존율 */
+/** 코호트 히트맵 행: D0(가입 당일)~D7/D14/D30 활동율 */
 export interface CohortHeatmapRow {
   cohortKey: string;
   cohortSize: number;
+  d0: number;
   d1: number;
   d2: number;
   d3: number;
