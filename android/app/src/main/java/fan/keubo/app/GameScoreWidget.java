@@ -290,6 +290,8 @@ public class GameScoreWidget extends AppWidgetProvider {
         String as = p.getString(KEY_AS, "0");
         String hs = p.getString(KEY_HS, "0");
         String status = p.getString(KEY_STATUS, "");
+        String astarter = p.getString(KEY_ASTARTER, "");
+        String hstarter = p.getString(KEY_HSTARTER, "");
 
         RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget_game_score_small);
 
@@ -323,6 +325,10 @@ public class GameScoreWidget extends AppWidgetProvider {
         if (awayLogo != 0) v.setImageViewResource(R.id.widget_small_away_logo, awayLogo);
         if (homeLogo != 0) v.setImageViewResource(R.id.widget_small_home_logo, homeLogo);
 
+        // 팀 약어 라벨(로고 밑) — 목업 기준 항상 표시
+        v.setImageViewBitmap(R.id.widget_small_away_name, textBitmap(context, shortName(away), 13f, 0xFFF2F2F5));
+        v.setImageViewBitmap(R.id.widget_small_home_name, textBitmap(context, shortName(home), 13f, 0xFFF2F2F5));
+
         boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
         boolean isFinal = status != null && status.startsWith("FINAL");
         String schedTime = "";
@@ -331,19 +337,37 @@ public class GameScoreWidget extends AppWidgetProvider {
             int bar = sched.indexOf('|');
             schedTime = bar >= 0 ? sched.substring(0, bar) : sched;
         }
-        // 가운데: 라이브/종료=점수(Mont), 예정=VS
+        // 가운데 VS는 항상 표시. 라이브/종료는 팀 약어 밑에 점수, 예정은 점수 숨김.
+        v.setImageViewBitmap(R.id.widget_small_vs, textBitmap(context, "VS", 14f, 0xB3FFFFFF));
         if (isScheduled) {
-            v.setImageViewBitmap(R.id.widget_small_vs, textBitmap(context, "VS", 15f, 0xB3FFFFFF));
+            v.setViewVisibility(R.id.widget_small_away_score, View.GONE);
+            v.setViewVisibility(R.id.widget_small_home_score, View.GONE);
         } else {
-            v.setImageViewBitmap(R.id.widget_small_vs, textBitmap(context, as + " : " + hs, 22f, 0xFFF5F5F7));
+            v.setViewVisibility(R.id.widget_small_away_score, View.VISIBLE);
+            v.setViewVisibility(R.id.widget_small_home_score, View.VISIBLE);
+            v.setImageViewBitmap(R.id.widget_small_away_score, textBitmap(context, as, 22f, 0xFFF5F5F7));
+            v.setImageViewBitmap(R.id.widget_small_home_score, textBitmap(context, hs, 22f, 0xFFF5F5F7));
         }
-        // 상태 pill
+        // 상태 pill — 예정 "{시각} 경기 예정", 라이브 "● {status}", 종료 "경기 종료"
         if (status.isEmpty() || "SCHEDULED|".equals(status)) {
             v.setViewVisibility(R.id.widget_small_status, View.GONE);
         } else {
             v.setViewVisibility(R.id.widget_small_status, View.VISIBLE);
-            String pill = isScheduled ? schedTime : isFinal ? "경기 종료" : "● " + status;
+            String pill = isScheduled ? schedTime + " 경기 예정" : isFinal ? "경기 종료" : "● " + status;
             v.setImageViewBitmap(R.id.widget_small_status_img, textBitmap(context, pill, 11f, 0xFFFF6B7A));
+        }
+        // 예고선발 라인 — 예정 경기에서만("선발 {원정} vs {홈}", 미확정 "미정")
+        if (isScheduled) {
+            String a = astarter == null || astarter.trim().isEmpty() ? "미정" : astarter.trim();
+            String h = hstarter == null || hstarter.trim().isEmpty() ? "미정" : hstarter.trim();
+            v.setViewVisibility(R.id.widget_small_starter, View.VISIBLE);
+            // 2줄: "선발"(옅은 라벨) 위, "{원정} vs {홈}"(밝게) 아래.
+            v.setImageViewBitmap(R.id.widget_small_starter_label,
+                textBitmap(context, "선발", 10f, 0xFFA8A8AE));
+            v.setImageViewBitmap(R.id.widget_small_starter_matchup,
+                textBitmap(context, a + " vs " + h, 11.5f, 0xFFF0F0F3));
+        } else {
+            v.setViewVisibility(R.id.widget_small_starter, View.GONE);
         }
         return v;
     }
