@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 스몰(2x2) 홈 위젯 — iOS systemSmall(HomeWidgetSmallCard) 등가. 컴팩트: MY TEAM + 양팀 로고/
+     점수 + 상태 pill. RemoteViews 제약상 FrameLayout/LinearLayout/ImageView/TextView만 사용
+     (기본 android.view.View 금지). 텍스트는 폰트 적용 위해 비트맵 렌더(GameScoreWidget.textBitmap). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_small_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg_lg">
+
+    <!-- 배경 워터마크(우상단) -->
+    <ImageView
+        android:id="@+id/widget_small_wm"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="6dp"
+        android:layout_marginEnd="6dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/widget_wm_lg"
+        android:contentDescription="@null" />
+
+    <!-- 빈 상태 -->
+    <TextView
+        android:id="@+id/widget_small_empty"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:fontFamily="@font/notosanskr"
+        android:letterSpacing="-0.04"
+        android:textColor="#A1A1AA"
+        android:textSize="12sp"
+        android:visibility="gone"
+        android:text="경기 정보가 없어요" />
+
+    <!-- 본문 -->
+    <LinearLayout
+        android:id="@+id/widget_small_content"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="10dp">
+
+        <!-- MY TEAM 헤더 -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="6dp">
+            <ImageView
+                android:id="@+id/widget_small_myteam_logo"
+                android:layout_width="15dp"
+                android:layout_height="15dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/teamlogo_lg"
+                android:contentDescription="@null" />
+            <ImageView
+                android:id="@+id/widget_small_myteam_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="5dp"
+                android:adjustViewBounds="true"
+                android:contentDescription="@null" />
+        </LinearLayout>
+
+        <!-- 로고 행: away 로고 · 콜론 · home 로고 -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+            <ImageView
+                android:id="@+id/widget_small_away_logo"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/teamlogo_sk"
+                android:contentDescription="@null" />
+            <ImageView
+                android:id="@+id/widget_small_vs"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="8dp"
+                android:adjustViewBounds="true"
+                android:contentDescription="@null" />
+            <ImageView
+                android:id="@+id/widget_small_home_logo"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/teamlogo_lg"
+                android:contentDescription="@null" />
+        </LinearLayout>
+
+        <!-- 상태 pill: LIVE N회초 / 경기 종료 / 시각 -->
+        <LinearLayout
+            android:id="@+id/widget_small_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:paddingStart="9dp"
+            android:paddingEnd="9dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp"
+            android:background="@drawable/widget_status_pill"
+            android:orientation="horizontal"
+            android:gravity="center">
+            <ImageView
+                android:id="@+id/widget_small_status_img"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:adjustViewBounds="true"
+                android:contentDescription="@null" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

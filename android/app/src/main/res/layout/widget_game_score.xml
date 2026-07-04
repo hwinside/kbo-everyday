@@ -207,20 +207,34 @@
             android:layout_marginTop="8dp"
             android:orientation="horizontal"
             android:visibility="gone">
-            <ImageView
-                android:id="@+id/widget_away_starter"
+            <!-- 각 예고선발을 weight-1 컨테이너 안에서 가운데 정렬(양팀 컬럼 축과 일치).
+                 비트맵 ImageView는 wrap_content + adjustViewBounds(이 파일 다른 비트맵과 동일 패턴). -->
+            <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:scaleType="center"
-                android:contentDescription="@null" />
-            <ImageView
-                android:id="@+id/widget_home_starter"
+                android:orientation="horizontal"
+                android:gravity="center">
+                <ImageView
+                    android:id="@+id/widget_away_starter"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:adjustViewBounds="true"
+                    android:contentDescription="@null" />
+            </LinearLayout>
+            <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:scaleType="center"
-                android:contentDescription="@null" />
+                android:orientation="horizontal"
+                android:gravity="center">
+                <ImageView
+                    android:id="@+id/widget_home_starter"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:adjustViewBounds="true"
+                    android:contentDescription="@null" />
+            </LinearLayout>
         </LinearLayout>
 
         <!-- 하단: (OUT + 투수/타자 소속표기) + 다이아몬드 — SSOT lockscreen-card-approved -->

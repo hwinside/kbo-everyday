@@ -279,6 +279,75 @@ public class GameScoreWidget extends AppWidgetProvider {
         return v;
     }
 
+    /** 스몰(2x2) 위젯 카드 — iOS systemSmall(HomeWidgetSmallCard) 등가. 같은 prefs 공유, 렌더만 컴팩트.
+     *  가운데=라이브/종료 점수 or 예정 VS, 하단 pill=LIVE 이닝/경기 종료/시각. 경기 없으면 빈 상태. */
+    static RemoteViews buildSmallCard(Context context) {
+        SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        boolean hasGame = p.getBoolean(KEY_HAS_GAME, false);
+        String myTeam = p.getString(KEY_MY_TEAM, "");
+        String away = p.getString(KEY_AWAY, "");
+        String home = p.getString(KEY_HOME, "");
+        String as = p.getString(KEY_AS, "0");
+        String hs = p.getString(KEY_HS, "0");
+        String status = p.getString(KEY_STATUS, "");
+
+        RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget_game_score_small);
+
+        if (!hasGame || away.isEmpty() || home.isEmpty()) {
+            v.setViewVisibility(R.id.widget_small_content, View.GONE);
+            v.setViewVisibility(R.id.widget_small_empty, View.VISIBLE);
+            v.setViewVisibility(R.id.widget_small_wm, View.GONE);
+            v.setInt(R.id.widget_small_root, "setBackgroundResource", R.drawable.widget_bg_lg);
+            return v;
+        }
+        v.setViewVisibility(R.id.widget_small_content, View.VISIBLE);
+        v.setViewVisibility(R.id.widget_small_empty, View.GONE);
+
+        String bgTeam = !myTeam.isEmpty() ? myTeam : home;
+        int bgRes = draw(context, "widget_bg_" + bgTeam.toLowerCase());
+        v.setInt(R.id.widget_small_root, "setBackgroundResource", bgRes != 0 ? bgRes : R.drawable.widget_bg_lg);
+        int wmRes = draw(context, "widget_wm_" + bgTeam.toLowerCase());
+        if (wmRes != 0) {
+            v.setViewVisibility(R.id.widget_small_wm, View.VISIBLE);
+            v.setImageViewResource(R.id.widget_small_wm, wmRes);
+        } else {
+            v.setViewVisibility(R.id.widget_small_wm, View.GONE);
+        }
+
+        int myLogo = draw(context, "teamlogo_" + bgTeam.toLowerCase());
+        if (myLogo != 0) v.setImageViewResource(R.id.widget_small_myteam_logo, myLogo);
+        v.setImageViewBitmap(R.id.widget_small_myteam_label, textBitmap(context, "MY TEAM", 11f, 0xFFE0506A));
+
+        int awayLogo = draw(context, "teamlogo_" + away.toLowerCase());
+        int homeLogo = draw(context, "teamlogo_" + home.toLowerCase());
+        if (awayLogo != 0) v.setImageViewResource(R.id.widget_small_away_logo, awayLogo);
+        if (homeLogo != 0) v.setImageViewResource(R.id.widget_small_home_logo, homeLogo);
+
+        boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
+        boolean isFinal = status != null && status.startsWith("FINAL");
+        String schedTime = "";
+        if (isScheduled) {
+            String sched = status.substring("SCHEDULED|".length());
+            int bar = sched.indexOf('|');
+            schedTime = bar >= 0 ? sched.substring(0, bar) : sched;
+        }
+        // 가운데: 라이브/종료=점수(Mont), 예정=VS
+        if (isScheduled) {
+            v.setImageViewBitmap(R.id.widget_small_vs, textBitmap(context, "VS", 15f, 0xB3FFFFFF));
+        } else {
+            v.setImageViewBitmap(R.id.widget_small_vs, textBitmap(context, as + " : " + hs, 22f, 0xFFF5F5F7));
+        }
+        // 상태 pill
+        if (status.isEmpty() || "SCHEDULED|".equals(status)) {
+            v.setViewVisibility(R.id.widget_small_status, View.GONE);
+        } else {
+            v.setViewVisibility(R.id.widget_small_status, View.VISIBLE);
+            String pill = isScheduled ? schedTime : isFinal ? "경기 종료" : "● " + status;
+            v.setImageViewBitmap(R.id.widget_small_status_img, textBitmap(context, pill, 11f, 0xFFFF6B7A));
+        }
+        return v;
+    }
+
     // ── 텍스트 비트맵 렌더 ──────────────────────────────────────────────
     // RemoteViews(홈 위젯)는 런처 프로세스에서 inflate되며 커스텀 fontFamily를 무시한다
     // (삼성 런처 등). 그래서 Montserrat이 시스템 폰트로 폴백돼 안 보였다. 텍스트를 Paint로
@@ -463,12 +532,16 @@ public class GameScoreWidget extends AppWidgetProvider {
         refresh(ctx);
     }
 
-    /** 현재 prefs로 배치된 모든 위젯 재렌더. */
+    /** 현재 prefs로 배치된 모든 위젯 재렌더 (미디엄 4x2 + 스몰 2x2 둘 다). */
     static void refresh(Context ctx) {
         AppWidgetManager mgr = AppWidgetManager.getInstance(ctx);
         int[] ids = mgr.getAppWidgetIds(new ComponentName(ctx, GameScoreWidget.class));
         if (ids != null && ids.length > 0) {
             new GameScoreWidget().onUpdate(ctx, mgr, ids);
+        }
+        int[] smallIds = mgr.getAppWidgetIds(new ComponentName(ctx, GameScoreWidgetSmall.class));
+        if (smallIds != null && smallIds.length > 0) {
+            new GameScoreWidgetSmall().onUpdate(ctx, mgr, smallIds);
         }
     }
 }
