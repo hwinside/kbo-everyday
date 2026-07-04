@@ -386,8 +386,10 @@ final class LiveActivityController {
             "batterName": state.batterName,
             "stadium": state.stadium,
             "isFinal": state.isFinal,
-            "status": state.isFinal ? "final" : "live",
-            "startText": "",
+            // 홈위젯 스냅샷은 scheduled 상태도 보존해야 예정 카드(경기 예정/시각)가 뜬다.
+            // 기존엔 live/final만 기록 + startText 빈값이라 예정 LA 활성 시 홈위젯이 깨진 라이브로 렌더됐음.
+            "status": state.isScheduled ? "scheduled" : (state.isFinal ? "final" : "live"),
+            "startText": state.startTime ?? "",
             "dateText": "",
             "awayStarter": state.awayStarter ?? "",
             "homeStarter": state.homeStarter ?? "",

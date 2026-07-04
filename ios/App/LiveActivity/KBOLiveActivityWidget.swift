@@ -198,7 +198,8 @@ struct KBOLiveActivityWidget: Widget {
                     // 가운데에 N회초/말. 숫자=Montserrat, 회초/말=Noto. (경기 전엔 이닝 대신 예정 시각)
                     Group {
                         if context.state.isScheduled {
-                            Text(context.state.startTime ?? "경기 예정").font(notoKR(12, .bold))
+                            // startTime은 시각만(예: "18:00"). 비어 있으면 "경기 예정" 폴백.
+                            Text(context.state.startTime.flatMap { $0.isEmpty ? nil : $0 } ?? "경기 예정").font(notoKR(12, .bold))
                         } else if context.state.isFinal {
                             Text("경기 종료").font(notoKR(13, .bold))
                         } else {

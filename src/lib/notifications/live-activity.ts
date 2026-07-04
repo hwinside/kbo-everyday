@@ -25,7 +25,8 @@ function buildContentState(g: KboRawGame, status: "live" | "final" | "scheduled"
       onFirst: false, onSecond: false, onThird: false,
       pitcherName: "", batterName: "", stadium: g.S_NM ?? "",
       status: "scheduled",
-      startTime: g.G_TM ? `${g.G_TM} 경기 예정` : "경기 예정",
+      // 시각만 전달(예: "18:00"). "경기 예정" 라벨은 카드/DI 뷰가 별도로 그린다(중복 방지).
+      startTime: g.G_TM ?? "",
       awayStarter: g.T_PIT_P_NM?.trim() ?? "",
       homeStarter: g.B_PIT_P_NM?.trim() ?? "",
     };
