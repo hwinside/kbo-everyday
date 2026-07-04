@@ -336,16 +336,18 @@ struct KBOLockScreenCard: View {
                             .foregroundStyle(.white.opacity(0.75))
                     }
                     if state.isScheduled {
-                        // 경기 전 — 스코어 대신 양팀 약어 vs + 예정 시각. (원본 코드 LT 대신 shortName 롯데)
-                        HStack(spacing: 8) {
-                            teamShortText(attributes.awayTeamCode, 20, .black)
-                            Text("vs").font(montserrat(12, .bold)).foregroundStyle(.white.opacity(0.5))
-                            teamShortText(attributes.homeTeamCode, 20, .black)
+                        // 경기 전 — 안드 승인본 언어와 동일: "경기 예정"(크게) + 예정 시각 pill.
+                        // 양팀은 좌우 TeamBadge에, 구장은 위(stadium)에 이미 표기. 하단엔 예고선발.
+                        Text("경기 예정")
+                            .font(notoKR(15, .heavy))
+                            .foregroundStyle(.white)
+                        if let t = state.startTime, !t.isEmpty {
+                            Text(t)
+                                .font(notoKR(11, .heavy))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 10).padding(.vertical, 2)
+                                .background(Capsule().fill(Color.black.opacity(0.28)))
                         }
-                        Text(state.startTime ?? "경기 예정")
-                            .font(notoKR(9, .bold))
-                            .padding(.horizontal, 6).padding(.vertical, 1.5)
-                            .background(Capsule().fill(Color.white.opacity(0.2)))
                     } else {
                         HStack(spacing: 8) {
                             Text("\(state.awayScore)")

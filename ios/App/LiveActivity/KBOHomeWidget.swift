@@ -289,13 +289,6 @@ struct HomeWidgetScheduledCard: View {
         (snap.myTeamCode == snap.awayTeamCode || snap.myTeamCode == snap.homeTeamCode)
     }
 
-    /// 가운데 라벨: 취소면 "경기 취소", 예정이면 시각(없으면 "경기 예정").
-    private var centerLabel: String {
-        if isCancelled { return "경기 취소" }
-        let t = snap.startText ?? ""
-        return t.isEmpty ? "경기 예정" : t
-    }
-
     /// small pill 문구 — 안드 확정과 동일하게 "{시각} 경기 예정"(시각+상태 결합).
     private var scheduledPill: String {
         if isCancelled { return "경기 취소" }
@@ -315,23 +308,39 @@ struct HomeWidgetScheduledCard: View {
                 .foregroundStyle(.white.opacity(0.9))
             }
 
-            // 매치업(로고 + 이름). medium은 가운데 VS+시각 pill, small은 로고 사이 VS만(시각은 아래 그룹).
-            HStack(spacing: compact ? 10 : 14) {
+            // 매치업(로고 + 이름). small은 로고 사이 VS만(시각은 아래 그룹). medium은 가운데 컬럼에
+            // 안드 승인본과 동일하게 날짜/구장/"경기 예정"(큰 글씨)/시각 pill을 세로로 쌓는다.
+            HStack(alignment: compact ? .center : .top, spacing: compact ? 10 : 14) {
                 teamColumn(code: snap.awayTeamCode, starter: snap.awayStarter)
                 if compact {
                     Text(isCancelled ? "✕" : "VS")
                         .font(montserrat(13, .heavy))
                         .foregroundStyle(.white.opacity(0.6))
                 } else {
-                    VStack(spacing: 3) {
-                        Text(isCancelled ? "✕" : "VS")
-                            .font(montserrat(16, .heavy))
-                            .foregroundStyle(.white.opacity(0.7))
-                        Text(centerLabel)
-                            .font(notoKR(11, .bold))
+                    // medium 가운데 — 안드 승인본: 날짜 / 구장 / "경기 예정"(큰 글씨) / 시각 pill.
+                    VStack(spacing: 0) {
+                        if let d = snap.dateText, !d.isEmpty {
+                            mixedScriptText(d, 12, .bold)
+                                .foregroundStyle(.white)
+                        }
+                        if !snap.stadium.isEmpty {
+                            Text(snap.stadium)
+                                .font(notoKR(11, .medium))
+                                .foregroundStyle(.white.opacity(0.8))
+                                .padding(.top, 8)
+                        }
+                        Text(isCancelled ? "경기 취소" : "경기 예정")
+                            .font(notoKR(19, .heavy))
                             .foregroundStyle(.white)
-                            .padding(.horizontal, 9).padding(.vertical, 2)
-                            .background(Capsule().fill(Color.white.opacity(0.18)))
+                            .padding(.top, 9)
+                        if let t = snap.startText, !t.isEmpty, !isCancelled {
+                            Text(t)
+                                .font(notoKR(13, .heavy))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 13).padding(.vertical, 5)
+                                .background(Capsule().fill(Color.black.opacity(0.28)))
+                                .padding(.top, 11)
+                        }
                     }
                 }
                 teamColumn(code: snap.homeTeamCode, starter: snap.homeStarter)
@@ -347,18 +356,8 @@ struct HomeWidgetScheduledCard: View {
                         .background(Capsule().fill(Color.white.opacity(0.16)))
                     if !isCancelled { starterBlockSmall }
                 }
-            } else {
-                // medium — 날짜('6월 7일 (토)') + 구장. 예고선발은 각 팀 풀네임 아래(teamColumn)로 이동.
-                if let d = snap.dateText, !d.isEmpty {
-                    mixedScriptText(d, 11, .semibold)
-                        .foregroundStyle(.white.opacity(0.85))
-                }
-                if !snap.stadium.isEmpty {
-                    Text(snap.stadium)
-                        .font(notoKR(11, .medium))
-                        .foregroundStyle(.white.opacity(0.8))
-                }
             }
+            // medium 날짜/구장/"경기 예정"/시각은 위 가운데 컬럼으로 이동(안드 승인본과 동일).
         }
         .foregroundStyle(.white)
         // MY TEAM 상단정렬 + 상단 여백을 좌우보다 작게(안드 확정: "MY TEAM 좀 더 위로").
