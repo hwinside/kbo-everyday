@@ -354,11 +354,15 @@ export async function pushLiveActivityStarts(
     const codes = gameId.match(/^\d{8}([A-Z]{2})([A-Z]{2})\d$/);
     if (!codes) continue;
 
-    // 늦은 자동시작 가드 — 시작 후 START_WINDOW_MS 지난 경기는 발송 skip. 중복 발송
-    // 차단은 startForTeamSide의 *유저 단위* 선점(live_activity_started_users)이 담당한다.
-    // (게임 단위 선점은 제거 — 윈도우 도중 늦게 등록된 토큰을 영구 누락시켰음.)
-    const startedAt = scheduledStartMs(g.G_DT, g.G_TM);
-    if (startedAt !== null && Date.now() - startedAt > START_WINDOW_MS) continue;
+    // 늦은 자동시작 가드 — *예정(pregame) 경기만* 시작+윈도우 지나면 skip(뒷북 차단).
+    // 진행 중(live) 경기는 경기가 끝날 때까지 언제든 자동시작 허용 — 경기 도중 앱을 새로
+    // 설치·로그인한 유저도 잠금화면 카드를 받게 한다(하린아빠 기준: "경기중이면 언제든").
+    // 중복 발송 차단은 startForTeamSide의 *유저 단위* 선점(live_activity_started_users)+
+    // alreadyActive(활성 카드 토큰)가 담당하므로 윈도우를 열어도 중복 카드는 없다.
+    if (gameStatus(g) !== "live") {
+      const startedAt = scheduledStartMs(g.G_DT, g.G_TM);
+      if (startedAt !== null && Date.now() - startedAt > START_WINDOW_MS) continue;
+    }
 
     const away = g.AWAY_NM ?? "";
     const home = g.HOME_NM ?? "";
