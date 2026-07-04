@@ -85,6 +85,10 @@ type Ga4Rows = {
   rows?: { dimensionValues: { value: string }[]; metricValues: { value: string }[] }[];
 };
 
+// 누적(런칭 이후) 시작일 — 롤링 윈도우가 아닌 고정 시작일이라야 초기 런칭
+// 구간이 시간이 지나도 빠지지 않는다. env로 실제 GA4 데이터 시작일 override 가능.
+const GA4_LAUNCH_DATE = process.env.GA4_LAUNCH_DATE ?? "2026-01-01";
+
 export async function GET(req: NextRequest) {
   if (!verifyPin(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -169,10 +173,10 @@ export async function GET(req: NextRequest) {
       }
 
       if (period === "cumulative") {
-        // 395daysAgo comfortably predates launch and stays within GA4 retention,
-        // so the running sum equals launch-to-date totals.
+        // Fixed launch date (not a rolling window) so the running sum stays
+        // true "launch-to-date" even as time passes.
         const response = (await ga4Report(accessToken, {
-          dateRanges: [{ startDate: "395daysAgo", endDate: "today" }],
+          dateRanges: [{ startDate: GA4_LAUNCH_DATE, endDate: "today" }],
           dimensions: [{ name: "date" }],
           metrics: [{ name: "newUsers" }, { name: "screenPageViews" }],
           orderBys: [{ dimension: { dimensionName: "date" } }],
@@ -187,8 +191,8 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ period, series, cumulative: true });
       }
 
-      // 7d / 30d daily
-      const startDate = period === "30d" ? "30daysAgo" : "7daysAgo";
+      // 7d / 30d daily — GA4 DateRange는 inclusive라 N일 = (N-1)daysAgo~today
+      const startDate = period === "30d" ? "29daysAgo" : "6daysAgo";
       const response = (await ga4Report(accessToken, {
         dateRanges: [{ startDate, endDate: "today" }],
         dimensions: [{ name: "date" }],
