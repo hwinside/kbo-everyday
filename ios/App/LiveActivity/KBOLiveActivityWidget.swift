@@ -402,13 +402,22 @@ struct KBOLockScreenCard: View {
                 }
             }
 
-            // 경기 전 — 예고선발(원정/홈). 구분선 아래 양팀 컬럼 정렬(로고·팀명 축과 일치). 미확정이면 "미정".
+            // 경기 전 — 예고선발 한 줄: "{원정선발}  선발투수  {홈선발}"(승인 목업). 미확정이면 "미정".
+            // 구분선 아래 가운데 정렬. 이름=양쪽 안쪽 정렬, 가운데 라벨은 옅게.
             if state.isScheduled {
-                HStack(spacing: 4) {
-                    scheduledStarter(state.awayStarter)
-                    scheduledStarter(state.homeStarter)
+                HStack(spacing: 8) {
+                    Text(starterDisplayName(state.awayStarter))
+                        .font(notoKR(12, .bold)).foregroundColor(.white)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    Text("선발투수")
+                        .font(notoKR(10, .medium)).foregroundColor(.white.opacity(0.6))
+                    Text(starterDisplayName(state.homeStarter))
+                        .font(notoKR(12, .bold)).foregroundColor(.white)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.top, 6)
+                .padding(.top, 9)
                 .overlay(alignment: .top) {
                     Rectangle().fill(.white.opacity(0.12)).frame(height: 1)
                 }
@@ -450,14 +459,6 @@ struct KBOLockScreenCard: View {
         Circle()
             .fill(i < state.outs ? Color(hex: 0xFF4D4D) : Color.white.opacity(0.2))
             .frame(width: 7, height: 7)
-    }
-
-    // 예고선발 엔트리 — "선발 {이름}"(미확정=미정). 팀 컬럼 아래 가운데 정렬. 라벨=옅은 Noto, 이름=Noto bold.
-    private func scheduledStarter(_ name: String?) -> some View {
-        (Text("선발 ").font(notoKR(10, .medium)).foregroundColor(.white.opacity(0.6))
-         + Text(starterDisplayName(name)).font(notoKR(12, .bold)).foregroundColor(.white.opacity(0.95)))
-            .lineLimit(1).minimumScaleFactor(0.7)
-            .frame(maxWidth: .infinity)
     }
 
     // 투수/타자 행 — "투수 (LG) 웰스". 라벨/괄호/이름=Noto, 라틴 약어(LG/SSG)=Montserrat.
