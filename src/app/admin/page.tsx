@@ -145,6 +145,133 @@ function KpiCard({ label, value, icon, onClick }: KpiDef & { onClick?: () => voi
   );
 }
 
+/* ── DAU / PV trend card (self-contained period toggle) ── */
+
+type TrendPeriod = "today" | "7d" | "30d" | "cumulative";
+
+const TREND_TABS: { key: TrendPeriod; label: string }[] = [
+  { key: "today", label: "당일" },
+  { key: "7d", label: "7일" },
+  { key: "30d", label: "30일" },
+  { key: "cumulative", label: "누적" },
+];
+
+interface TrendResponse {
+  period: string;
+  series: { label: string; users: number; pv: number }[];
+  cumulative: boolean;
+}
+
+function TrafficTrendCard({ metric }: { metric: "dau" | "pv" }) {
+  const [period, setPeriod] = useState<TrendPeriod>("7d");
+  const title = metric === "dau" ? "DAU 추이" : "PV 추이";
+
+  return (
+    <div className="glass-card p-5">
+      <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
+        <h2 className="text-lg font-semibold">{title}</h2>
+        <div className="flex gap-1 p-1 rounded-xl bg-white/5">
+          {TREND_TABS.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setPeriod(t.key)}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                period === t.key ? "bg-[#6366F1] text-white" : "text-[#8E8E93] hover:text-white"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {/* keyed by period → remounts on switch, so loading resets without a
+          synchronous setState inside the effect */}
+      <TrendChartBody key={period} metric={metric} period={period} />
+    </div>
+  );
+}
+
+function TrendChartBody({ metric, period }: { metric: "dau" | "pv"; period: TrendPeriod }) {
+  const [series, setSeries] = useState<TrendResponse["series"] | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    apiFetch<TrendResponse>(`/api/admin/analytics?type=trend&period=${period}`)
+      .then((r) => {
+        if (alive) setSeries(r.series);
+      })
+      .catch(() => {
+        if (alive) setSeries([]);
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [period]);
+
+  const isDau = metric === "dau";
+  const isCumulative = period === "cumulative";
+  const color = isDau ? "#6366F1" : "#30D158";
+  const lineName = isDau ? (isCumulative ? "누적 방문자" : "DAU") : isCumulative ? "누적 PV" : "PV";
+  const caption = isCumulative
+    ? isDau
+      ? "런칭 이후 누적 순 방문자 (중복 제외)"
+      : "런칭 이후 누적 페이지뷰"
+    : period === "today"
+      ? isDau
+        ? "오늘 시간대별 활성 사용자"
+        : "오늘 시간대별 페이지뷰"
+      : isDau
+        ? "일별 활성 사용자 (DAU)"
+        : "일별 페이지뷰";
+
+  const chartData = (series ?? []).map((s) => ({
+    label: s.label,
+    value: isDau ? s.users : s.pv,
+  }));
+
+  return (
+    <>
+      <p className="text-xs text-[#8E8E93] mb-4">{caption}</p>
+      {loading ? (
+        <div className="flex justify-center py-16">
+          <Loader2 className="w-5 h-5 animate-spin text-[#636366]" />
+        </div>
+      ) : chartData.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 gap-3 text-[#636366]">
+          <BarChart3 className="w-10 h-10" />
+          <p className="text-sm">데이터 수집 전</p>
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={280}>
+          <LineChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+            <XAxis
+              dataKey="label"
+              stroke="#636366"
+              fontSize={12}
+              minTickGap={isCumulative ? 28 : 8}
+            />
+            <YAxis stroke="#636366" fontSize={12} width={44} />
+            <Tooltip {...chartTooltipStyle} />
+            <Line
+              type="monotone"
+              dataKey="value"
+              name={lineName}
+              stroke={color}
+              strokeWidth={2}
+              dot={false}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      )}
+    </>
+  );
+}
+
 /* ── Detail Modal ─────────────────────────────────────── */
 
 interface DetailItem {
@@ -285,13 +412,6 @@ const feedbackDotColor: Record<FeedbackItem["type"], string> = {
   other: "#8E8E93",
 };
 
-/* ── date formatting helper ──────────────────────────── */
-
-function formatGaDate(d: string) {
-  // GA4 returns "20260405" format
-  if (d.length === 8) return `${d.slice(4, 6)}/${d.slice(6)}`;
-  return d.slice(5);
-}
 
 /* ── page component ──────────────────────────────────── */
 
@@ -370,14 +490,6 @@ export default function AdminOverviewPage() {
   // 크롤러 실패: API에서 오늘 KST 기준 에러만 반환
   const crawlerErrors = data?.jobs?.data?.length ?? 0;
 
-  /* ── GA4 data ── */
-  const ga4Daily = data?.ga4Dau?.daily ?? [];
-  const ga4ChartData = ga4Daily.map((d) => ({
-    date: formatGaDate(d.date),
-    DAU: d.activeUsers,
-    PV: d.pageViews,
-  }));
-
   /* ── traffic chart data (fallback to admin_daily_stats if no GA4) ── */
   const statsData = data?.stats?.data ?? [];
   const fallbackChartData = statsData.map((s) => ({
@@ -385,8 +497,6 @@ export default function AdminOverviewPage() {
     UV: s.uv,
     PV: s.pv,
   }));
-
-  const hasGA4 = ga4ChartData.length > 0;
 
   /* ── recent feedback (3) ── */
   const recentFeedback = (data?.feedback?.data ?? []).slice(0, 3);
@@ -445,42 +555,35 @@ export default function AdminOverviewPage() {
         </div>
       )}
 
-      {/* Traffic Chart — GA4 or fallback */}
-      <div className="glass-card p-5">
-        <h2 className="text-lg font-semibold mb-4">
-          {hasGA4 ? "일별 DAU · PV (GA4, 30일)" : "일별 트래픽 추이 (30일)"}
-        </h2>
-        {(hasGA4 ? ga4ChartData : fallbackChartData).length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 gap-3 text-[#636366]">
-            <BarChart3 className="w-10 h-10" />
-            <p className="text-sm">데이터 수집 전</p>
-          </div>
-        ) : hasGA4 ? (
-          <ResponsiveContainer width="100%" height={320}>
-            <LineChart data={ga4ChartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-              <XAxis dataKey="date" stroke="#636366" fontSize={12} />
-              <YAxis stroke="#636366" fontSize={12} />
-              <Tooltip {...chartTooltipStyle} />
-              <Legend />
-              <Line type="monotone" dataKey="DAU" stroke="#6366F1" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="PV" stroke="#30D158" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        ) : (
-          <ResponsiveContainer width="100%" height={320}>
-            <LineChart data={fallbackChartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-              <XAxis dataKey="date" stroke="#636366" fontSize={12} />
-              <YAxis stroke="#636366" fontSize={12} />
-              <Tooltip {...chartTooltipStyle} />
-              <Legend />
-              <Line type="monotone" dataKey="UV" stroke="#6366F1" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="PV" stroke="#30D158" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        )}
-      </div>
+      {/* DAU / PV trend — separate cards, each with its own period toggle + Y축 */}
+      {data?.ga4Dau ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <TrafficTrendCard metric="dau" />
+          <TrafficTrendCard metric="pv" />
+        </div>
+      ) : (
+        <div className="glass-card p-5">
+          <h2 className="text-lg font-semibold mb-4">일별 트래픽 추이 (30일)</h2>
+          {fallbackChartData.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-3 text-[#636366]">
+              <BarChart3 className="w-10 h-10" />
+              <p className="text-sm">데이터 수집 전</p>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={320}>
+              <LineChart data={fallbackChartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                <XAxis dataKey="date" stroke="#636366" fontSize={12} />
+                <YAxis stroke="#636366" fontSize={12} />
+                <Tooltip {...chartTooltipStyle} />
+                <Legend />
+                <Line type="monotone" dataKey="UV" stroke="#6366F1" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="PV" stroke="#30D158" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      )}
 
       {/* Popular Pages + Cohort row */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
