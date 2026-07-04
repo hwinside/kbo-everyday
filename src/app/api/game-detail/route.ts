@@ -577,20 +577,29 @@ export async function GET(req: NextRequest) {
     let boxScore = parseBoxScore(boxScoreRes);
     let linescore = kboLinescore;
 
+    // 이닝별 셀이 하나라도 채워졌는지. 경기 종료 전환 순간 KBO 스코어보드가
+    // R/H/E 합계만 먼저 주고 이닝 셀은 비워 내려주는 타이밍 창이 있어,
+    // linescore 객체는 있어도 이닝별 값이 전부 null일 수 있다.
+    const hasInningBreakdown = (ls: GameDetailResponse["linescore"]) =>
+      !!ls && (ls.away.innings.some(v => v !== null) || ls.home.innings.some(v => v !== null));
+
     // ScoreBoard가 scheduled인데 BoxScore에 실데이터가 있으면 → 종료된 경기
     const hasRealBoxScore = boxScore &&
       (boxScore.awayBatters.some(b => b.atBats > 0) || boxScore.homeBatters.some(b => b.atBats > 0));
 
-    // KBO BoxScore가 비어있으면 네이버 record API fallback
-    if (!hasRealBoxScore) {
+    // KBO BoxScore가 비어있거나, KBO linescore에 이닝별 값이 없으면 네이버 record API fallback
+    if (!hasRealBoxScore || !hasInningBreakdown(linescore)) {
       const naver = await fetchNaverRecord(gameId);
-      if (naver?.boxScore) {
+      // 박스스코어는 KBO가 비어있을 때만 네이버로 교체
+      if (!hasRealBoxScore && naver?.boxScore) {
         const naverHasData = naver.boxScore.awayBatters.some(b => b.atBats > 0)
           || naver.boxScore.homeBatters.some(b => b.atBats > 0);
-        if (naverHasData) {
-          boxScore = naver.boxScore;
-          if (!linescore && naver.linescore) linescore = naver.linescore;
-        }
+        if (naverHasData) boxScore = naver.boxScore;
+      }
+      // KBO linescore가 없거나 이닝별 값이 비어있으면 네이버 이닝 스코어로 폴백
+      const naverLs = naver?.linescore ?? null;
+      if (!hasInningBreakdown(linescore) && hasInningBreakdown(naverLs)) {
+        linescore = naverLs;
       }
     }
 
