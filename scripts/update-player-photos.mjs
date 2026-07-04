@@ -50,6 +50,7 @@ const MANUAL_PHOTO_URL_BY_KBO_ID = {
   FP005: 'http://file.osen.co.kr/article_thumb/2026/02/20/202602201057771560_6997bf8d5db9d_300x.jpg', // 맷 매닝
   FP021: 'https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2026/56305.jpg', // 케스턴 히우라 (KBO 공식 헤드샷, numericId 56305)
   FP022: 'https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2026/56146.jpg', // 약셀 리오스 (KBO 공식 헤드샷, numericId 56146)
+  FP023: 'https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2026/56950.jpg', // 블레인 (NC, KBO 공식 헤드샷, numericId 56950)
 };
 
 // Rate limit helper
