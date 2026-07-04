@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 스몰(2x2) 홈 위젯 — iOS systemSmall(HomeWidgetSmallCard) 등가. 목업(Small 2x2 승인본) 기준:
+     MY TEAM 헤더 + 워터마크 + [away 로고/약어/점수] VS [home 로고/약어/점수] + 상태 pill + 예고선발 라인.
+     RemoteViews 제약상 FrameLayout/LinearLayout/ImageView/TextView만 사용(기본 android.view.View 금지).
+     텍스트는 폰트 적용 위해 비트맵 렌더(GameScoreWidget.textBitmap). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_small_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg_lg">
+
+    <!-- 배경 워터마크(우상단) -->
+    <ImageView
+        android:id="@+id/widget_small_wm"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="6dp"
+        android:layout_marginEnd="6dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/widget_wm_lg"
+        android:contentDescription="@null" />
+
+    <!-- 빈 상태 -->
+    <TextView
+        android:id="@+id/widget_small_empty"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:fontFamily="@font/notosanskr"
+        android:letterSpacing="-0.04"
+        android:textColor="#A1A1AA"
+        android:textSize="12sp"
+        android:visibility="gone"
+        android:text="경기 정보가 없어요" />
+
+    <!-- 본문 -->
+    <LinearLayout
+        android:id="@+id/widget_small_content"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center_horizontal|top"
+        android:paddingLeft="12dp"
+        android:paddingRight="12dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="12dp">
+
+        <!-- MY TEAM 헤더 — 목업 기준 좌측 상단 정렬(워터마크는 우상단) -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="start"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="13dp">
+            <ImageView
+                android:id="@+id/widget_small_myteam_logo"
+                android:layout_width="15dp"
+                android:layout_height="15dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/teamlogo_lg"
+                android:contentDescription="@null" />
+            <ImageView
+                android:id="@+id/widget_small_myteam_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="5dp"
+                android:adjustViewBounds="true"
+                android:contentDescription="@null" />
+        </LinearLayout>
+
+        <!-- 매치업 행: [away 로고/약어/점수] VS [home 로고/약어/점수] -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center">
+
+            <!-- away 컬럼 -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+                <ImageView
+                    android:id="@+id/widget_small_away_logo"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/teamlogo_sk"
+                    android:contentDescription="@null" />
+                <ImageView
+                    android:id="@+id/widget_small_away_name"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:adjustViewBounds="true"
+                    android:contentDescription="@null" />
+                <ImageView
+                    android:id="@+id/widget_small_away_score"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:adjustViewBounds="true"
+                    android:visibility="gone"
+                    android:contentDescription="@null" />
+            </LinearLayout>
+
+            <!-- VS (로고 행 높이에 정렬) -->
+            <ImageView
+                android:id="@+id/widget_small_vs"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_marginEnd="4dp"
+                android:layout_marginBottom="9dp"
+                android:adjustViewBounds="true"
+                android:contentDescription="@null" />
+
+            <!-- home 컬럼 -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+                <ImageView
+                    android:id="@+id/widget_small_home_logo"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/teamlogo_lg"
+                    android:contentDescription="@null" />
+                <ImageView
+                    android:id="@+id/widget_small_home_name"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:adjustViewBounds="true"
+                    android:contentDescription="@null" />
+                <ImageView
+                    android:id="@+id/widget_small_home_score"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:adjustViewBounds="true"
+                    android:visibility="gone"
+                    android:contentDescription="@null" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 상태 pill: {시각} 경기 예정 / ● LIVE N회초 / 경기 종료.
+             pill/선발/매치업 폰트 크기 동일(12sp) 위해 TextView로 통일. 배경·패딩 축소(과대 방지). -->
+        <LinearLayout
+            android:id="@+id/widget_small_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="15dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="1dp"
+            android:paddingBottom="1dp"
+            android:background="@drawable/widget_status_pill"
+            android:orientation="horizontal"
+            android:gravity="center">
+            <TextView
+                android:id="@+id/widget_small_status_img"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/notosanskr"
+                android:letterSpacing="-0.03"
+                android:textColor="#FF6B7A"
+                android:textSize="12sp"
+                android:maxLines="1"
+                android:text="" />
+        </LinearLayout>
+
+        <!-- 예고선발 — 예정 경기에서만. 2줄: "선발"(옅은 라벨) / "{원정} vs {홈}"(미확정 "미정"). 라이브/종료 숨김. -->
+        <LinearLayout
+            android:id="@+id/widget_small_starter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="15dp"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:visibility="gone">
+            <!-- 비트맵 대신 TextView — RemoteViews 공간 부족 시 ImageView가 비트맵을 축소(미세 렌더)하는
+                 문제 회피. 폰트 크기 고정 보장(미디엄 투수/타자 라벨과 동일 방식). -->
+            <TextView
+                android:id="@+id/widget_small_starter_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/notosanskr"
+                android:letterSpacing="-0.03"
+                android:textColor="#B8B8BE"
+                android:textSize="12sp"
+                android:maxLines="1"
+                android:text="선발" />
+            <TextView
+                android:id="@+id/widget_small_starter_matchup"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:fontFamily="@font/notosanskr"
+                android:letterSpacing="-0.03"
+                android:textColor="#F2F2F5"
+                android:textSize="12sp"
+                android:maxLines="1"
+                android:text="" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

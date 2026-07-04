@@ -34,6 +34,12 @@ func teamColorHex(_ code: String) -> UInt32 {
 @available(iOS 16.1, *)
 func teamColor(_ code: String) -> Color { Color(hex: teamColorHex(code)) }
 
+// 예고선발 표시명 — 공백 제거 후 비었으면 "미정"(선발 미확정 폴백).
+func starterDisplayName(_ name: String?) -> String {
+    let n = (name ?? "").trimmingCharacters(in: .whitespaces)
+    return n.isEmpty ? "미정" : n
+}
+
 // 두 hex 컬러를 t:1-t 비율로 섞는다(t = a의 비율). 그라데이션 톤 계산용.
 func mixHex(_ a: UInt32, _ b: UInt32, _ t: Double) -> UInt32 {
     func ch(_ x: UInt32, _ s: UInt32) -> Double { Double((x >> s) & 0xFF) }
@@ -192,7 +198,8 @@ struct KBOLiveActivityWidget: Widget {
                     // 가운데에 N회초/말. 숫자=Montserrat, 회초/말=Noto. (경기 전엔 이닝 대신 예정 시각)
                     Group {
                         if context.state.isScheduled {
-                            Text(context.state.startTime ?? "경기 예정").font(notoKR(12, .bold))
+                            // startTime은 시각만(예: "18:00"). 비어 있으면 "경기 예정" 폴백.
+                            Text(context.state.startTime.flatMap { $0.isEmpty ? nil : $0 } ?? "경기 예정").font(notoKR(12, .bold))
                         } else if context.state.isFinal {
                             Text("경기 종료").font(notoKR(13, .bold))
                         } else {
@@ -203,7 +210,12 @@ struct KBOLiveActivityWidget: Widget {
                     .lineLimit(1).minimumScaleFactor(0.7)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    if !context.state.isFinal && !context.state.pitcherName.isEmpty {
+                    if context.state.isScheduled {
+                        // 경기 전 — 예고선발 매치업(미확정이면 "미정").
+                        Text("선발 \(starterDisplayName(context.state.awayStarter)) vs \(starterDisplayName(context.state.homeStarter))")
+                            .font(.caption2).lineLimit(1)
+                            .foregroundStyle(.secondary)
+                    } else if !context.state.isFinal && !context.state.pitcherName.isEmpty {
                         Text("\(context.state.pitcherName) → \(context.state.batterName)")
                             .font(.caption2).lineLimit(1)
                             .foregroundStyle(.secondary)
@@ -325,16 +337,18 @@ struct KBOLockScreenCard: View {
                             .foregroundStyle(.white.opacity(0.75))
                     }
                     if state.isScheduled {
-                        // 경기 전 — 스코어 대신 양팀 약어 vs + 예정 시각. (원본 코드 LT 대신 shortName 롯데)
-                        HStack(spacing: 8) {
-                            teamShortText(attributes.awayTeamCode, 20, .black)
-                            Text("vs").font(montserrat(12, .bold)).foregroundStyle(.white.opacity(0.5))
-                            teamShortText(attributes.homeTeamCode, 20, .black)
+                        // 경기 전 — 안드 승인본 언어와 동일: "경기 예정"(크게) + 예정 시각 pill.
+                        // 양팀은 좌우 TeamBadge에, 구장은 위(stadium)에 이미 표기. 하단엔 예고선발.
+                        Text("경기 예정")
+                            .font(notoKR(15, .heavy))
+                            .foregroundStyle(.white)
+                        if let t = state.startTime, !t.isEmpty {
+                            Text(t)
+                                .font(notoKR(11, .heavy))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 10).padding(.vertical, 2)
+                                .background(Capsule().fill(Color.black.opacity(0.28)))
                         }
-                        Text(state.startTime ?? "경기 예정")
-                            .font(notoKR(9, .bold))
-                            .padding(.horizontal, 6).padding(.vertical, 1.5)
-                            .background(Capsule().fill(Color.white.opacity(0.2)))
                     } else {
                         HStack(spacing: 8) {
                             Text("\(state.awayScore)")
@@ -389,13 +403,38 @@ struct KBOLockScreenCard: View {
                 }
             }
 
+            // 경기 전 — 예고선발 한 줄: "{원정선발}  선발투수  {홈선발}"(승인 목업). 미확정이면 "미정".
+            // 구분선 아래 가운데 정렬. 이름=양쪽 안쪽 정렬, 가운데 라벨은 옅게.
+            if state.isScheduled {
+                HStack(spacing: 8) {
+                    Text(starterDisplayName(state.awayStarter))
+                        .font(notoKR(12, .bold)).foregroundColor(.white)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    Text("선발투수")
+                        .font(notoKR(10, .medium)).foregroundColor(.white.opacity(0.6))
+                    Text(starterDisplayName(state.homeStarter))
+                        .font(notoKR(12, .bold)).foregroundColor(.white)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.top, 9)
+                .overlay(alignment: .top) {
+                    Rectangle().fill(.white.opacity(0.12)).frame(height: 1)
+                }
+            }
+
             // 종료 상태에서만 트레일링 Spacer로 점수를 세로 중앙에. 라이브는 미적용(자연 상단정렬).
             if fillHeight && state.isFinal { Spacer(minLength: 0) }
         }
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 14)
-        .padding(.vertical, 7)
+        // 홈위젯 medium/large(fillHeight)는 HomeWidgetScheduledCard와 동일하게 상단 여백을 좌우보다
+        // 작게(MY TEAM 위로) + 하단 여백 확보(삼순 의견 반영). 잠금화면 LA(fillHeight=false)는
+        // 시스템이 높이를 콘텐츠에 맞추므로 상하 대칭 13pt 유지.
+        .padding(.top, fillHeight ? 10 : 13)
+        .padding(.bottom, fillHeight ? 16 : 13)
         // medium 위젯: 카드가 위젯 높이를 꽉 채워 배경 seam(윗쪽 어두운 띠) 제거. 콘텐츠는 *상단* 정렬
         // 기본 — 라이브는 자연 상단정렬 그대로, 종료는 위 Spacer 2개로 점수가 세로 중앙에 온다.
         // 잠금화면 LA(fillHeight=false)는 콘텐츠 높이 그대로.
@@ -406,7 +445,7 @@ struct KBOLockScreenCard: View {
                 // 배경 팀 로고 watermark (앱 MyTeamHero: absolute right-3 top-3 opacity-[0.08])
                 if hasMyTeam {
                     TeamLogo(code: attributes.myTeamCode, size: 64)
-                        .opacity(0.13)
+                        .opacity(0.10)
                         .padding(.top, 10)
                         .padding(.trailing, 12)
                 }

@@ -39,9 +39,12 @@
         android:id="@+id/widget_content"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="center_vertical"
+        android:layout_gravity="top"
         android:orientation="vertical"
-        android:padding="14dp">
+        android:paddingLeft="14dp"
+        android:paddingRight="14dp"
+        android:paddingTop="9dp"
+        android:paddingBottom="14dp">
 
         <!-- MY TEAM 헤더 -->
         <LinearLayout
@@ -94,6 +97,19 @@
                     android:layout_marginTop="3dp"
                     android:adjustViewBounds="true"
                     android:contentDescription="@null" />
+                <!-- 예고선발 투수 이름(풀네임 아래) — 예정 경기만. 미확정 "미정". -->
+                <TextView
+                    android:id="@+id/widget_away_starter_col"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:fontFamily="@font/notosanskr"
+                    android:letterSpacing="-0.03"
+                    android:textColor="#C6AAB2"
+                    android:textSize="12sp"
+                    android:maxLines="1"
+                    android:visibility="gone"
+                    android:text="" />
             </LinearLayout>
 
             <!-- 가운데: 점수 + 상태 pill -->
@@ -185,8 +201,22 @@
                     android:layout_marginTop="3dp"
                     android:adjustViewBounds="true"
                     android:contentDescription="@null" />
+                <!-- 예고선발 투수 이름(풀네임 아래) — 예정 경기만. 미확정 "미정". -->
+                <TextView
+                    android:id="@+id/widget_home_starter_col"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:fontFamily="@font/notosanskr"
+                    android:letterSpacing="-0.03"
+                    android:textColor="#C6AAB2"
+                    android:textSize="12sp"
+                    android:maxLines="1"
+                    android:visibility="gone"
+                    android:text="" />
             </LinearLayout>
         </LinearLayout>
+
 
         <!-- 하단: (OUT + 투수/타자 소속표기) + 다이아몬드 — SSOT lockscreen-card-approved -->
         <LinearLayout

@@ -431,6 +431,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       outs: hideLive ? "" : (widgetGame.outs === undefined ? "" : String(Math.min(Math.max(widgetGame.outs, 0), 2))),
       diamond: hideLive ? "000" : `${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}`,
       stadium: widgetGame.stadium ?? "",
+      // 예고선발 — 예정 경기에서만 표기(라이브/종료는 실투수를 라이브 행에 표시).
+      awayStarter: isScheduled ? (widgetGame.awayStarterName ?? "") : "",
+      homeStarter: isScheduled ? (widgetGame.homeStarterName ?? "") : "",
     });
   }, [myTeamId, widgetGame]);
 
@@ -438,7 +441,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   // 라이브 경기가 없을 때 *다음 예정 경기*가 위젯에 뜨게 하는 핵심 fallback 경로.
   // (네이티브 iOS 외엔 no-op.) 스코어/이닝/주자 등 변할 때만 재기록되도록 signature로 dep.
   const widgetSig = widgetGame
-    ? `${widgetGame.id}|${widgetGame.status}|${widgetGame.awayScore}|${widgetGame.homeScore}|${widgetGame.inning ?? ""}|${widgetGame.outs ?? ""}|${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}|${widgetGame.currentPitcher ?? ""}|${widgetGame.currentBatter ?? ""}`
+    ? `${widgetGame.id}|${widgetGame.status}|${widgetGame.awayScore}|${widgetGame.homeScore}|${widgetGame.inning ?? ""}|${widgetGame.outs ?? ""}|${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}|${widgetGame.currentPitcher ?? ""}|${widgetGame.currentBatter ?? ""}|${widgetGame.awayStarterName ?? ""}|${widgetGame.homeStarterName ?? ""}`
     : "";
   useEffect(() => {
     if (!widgetGame) return;
@@ -464,6 +467,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         widgetGame.status === "scheduled"
           ? formatKoreanDate(widgetGame.dateISO ?? formatKSTDateOffset(0))
           : "",
+      awayStarter: widgetGame.status === "scheduled" ? (widgetGame.awayStarterName ?? "") : "",
+      homeStarter: widgetGame.status === "scheduled" ? (widgetGame.homeStarterName ?? "") : "",
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myTeamId, widgetSig]);

@@ -50,6 +50,9 @@ struct WidgetGameSnapshot: Codable {
     var startText: String? = nil
     /// 예정 경기 날짜 라벨(예: "6월 7일 (토)"). 구장 위에 표시. scheduled에서만.
     var dateText: String? = nil
+    /// 예고선발 투수명(원정/홈). scheduled에서만. 미확정이면 nil/빈 문자열 → "선발 미정".
+    var awayStarter: String? = nil
+    var homeStarter: String? = nil
 
     /// 렌더 분기용 정규화 상태.
     var resolvedStatus: String {
@@ -286,15 +289,15 @@ struct HomeWidgetScheduledCard: View {
         (snap.myTeamCode == snap.awayTeamCode || snap.myTeamCode == snap.homeTeamCode)
     }
 
-    /// 가운데 라벨: 취소면 "경기 취소", 예정이면 시각(없으면 "경기 예정").
-    private var centerLabel: String {
+    /// small pill 문구 — 안드 확정과 동일하게 "{시각} 경기 예정"(시각+상태 결합).
+    private var scheduledPill: String {
         if isCancelled { return "경기 취소" }
         let t = snap.startText ?? ""
-        return t.isEmpty ? "경기 예정" : t
+        return t.isEmpty ? "경기 예정" : "\(t) 경기 예정"
     }
 
     var body: some View {
-        VStack(spacing: compact ? 7 : 11) {
+        VStack(spacing: compact ? 8 : 10) {
             if hasMyTeam {
                 HStack(spacing: 4) {
                     TeamLogo(code: snap.myTeamCode, size: compact ? 13 : 16)
@@ -305,40 +308,78 @@ struct HomeWidgetScheduledCard: View {
                 .foregroundStyle(.white.opacity(0.9))
             }
 
-            HStack(spacing: compact ? 8 : 14) {
-                teamColumn(code: snap.awayTeamCode)
-                VStack(spacing: 3) {
+            // 매치업(로고 + 이름). small은 로고 사이 VS만(시각은 아래 그룹). medium은 가운데 컬럼에
+            // 안드 승인본과 동일하게 날짜/구장/"경기 예정"(큰 글씨)/시각 pill을 세로로 쌓는다.
+            HStack(alignment: compact ? .center : .top, spacing: compact ? 10 : 14) {
+                teamColumn(code: snap.awayTeamCode, starter: snap.awayStarter)
+                if compact {
                     Text(isCancelled ? "✕" : "VS")
-                        .font(montserrat(compact ? 13 : 16, .heavy))
-                        .foregroundStyle(.white.opacity(0.7))
-                    Text(centerLabel)
-                        .font(notoKR(compact ? 9 : 11, .bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, compact ? 7 : 9).padding(.vertical, 2)
-                        .background(Capsule().fill(Color.white.opacity(0.18)))
+                        .font(montserrat(13, .heavy))
+                        .foregroundStyle(.white.opacity(0.6))
+                } else {
+                    // medium 가운데 — 안드 승인본: 날짜 / 구장 / "경기 예정"(큰 글씨) / 시각 pill.
+                    VStack(spacing: 0) {
+                        if let d = snap.dateText, !d.isEmpty {
+                            mixedScriptText(d, 12, .bold)
+                                .foregroundStyle(.white)
+                        }
+                        if !snap.stadium.isEmpty {
+                            Text(snap.stadium)
+                                .font(notoKR(11, .medium))
+                                .foregroundStyle(.white.opacity(0.8))
+                                .padding(.top, 8)
+                        }
+                        Text(isCancelled ? "경기 취소" : "경기 예정")
+                            .font(notoKR(19, .heavy))
+                            .foregroundStyle(.white)
+                            .padding(.top, 9)
+                        if let t = snap.startText, !t.isEmpty, !isCancelled {
+                            Text(t)
+                                .font(notoKR(13, .heavy))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 13).padding(.vertical, 5)
+                                .background(Capsule().fill(Color.black.opacity(0.28)))
+                                .padding(.top, 11)
+                        }
+                    }
                 }
-                teamColumn(code: snap.homeTeamCode)
+                teamColumn(code: snap.homeTeamCode, starter: snap.homeStarter)
             }
 
-            // medium에서만 날짜('6월 7일 (토)') + 구장 표기. 날짜 숫자=Montserrat 분리.
-            if !compact {
-                if let d = snap.dateText, !d.isEmpty {
-                    mixedScriptText(d, 11, .semibold)
-                        .foregroundStyle(.white.opacity(0.85))
-                }
-                if !snap.stadium.isEmpty {
-                    Text(snap.stadium)
-                        .font(notoKR(11, .medium))
-                        .foregroundStyle(.white.opacity(0.8))
+            if compact {
+                // small — 안드 확정: pill "{시각} 경기 예정"(핑크) + 선발 2줄. pill·선발·매치업 폰트 통일(11).
+                VStack(spacing: 15) {
+                    Text(scheduledPill)
+                        .font(notoKR(11, .bold))
+                        .foregroundColor(Color(hex: 0xFF6B7A))
+                        .padding(.horizontal, 8).padding(.vertical, 2)
+                        .background(Capsule().fill(Color.white.opacity(0.16)))
+                    if !isCancelled { starterBlockSmall }
                 }
             }
+            // medium 날짜/구장/"경기 예정"/시각은 위 가운데 컬럼으로 이동(안드 승인본과 동일).
         }
         .foregroundStyle(.white)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(compact ? 10 : 18)
+        // MY TEAM 상단정렬 + 상단 여백을 좌우보다 작게(안드 확정: "MY TEAM 좀 더 위로").
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.horizontal, compact ? 12 : 16)
+        .padding(.top, compact ? 8 : 10)
+        .padding(.bottom, compact ? 12 : 16)
     }
 
-    private func teamColumn(code: String) -> some View {
+    // 예고선발 라인(small) — 2줄: "선발"(옅은 라벨) / "A vs B". 안드 확정과 동일(폰트 통일).
+    private var starterBlockSmall: some View {
+        VStack(spacing: 1) {
+            Text("선발")
+                .font(notoKR(11, .medium)).foregroundColor(.white.opacity(0.65))
+            (Text(starterDisplayName(snap.awayStarter)).font(notoKR(11, .semibold)).foregroundColor(.white.opacity(0.95))
+             + Text(" vs ").font(montserrat(10, .semibold)).foregroundColor(.white.opacity(0.5))
+             + Text(starterDisplayName(snap.homeStarter)).font(notoKR(11, .semibold)).foregroundColor(.white.opacity(0.95)))
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+    }
+
+    private func teamColumn(code: String, starter: String? = nil) -> some View {
         // medium: 풀네임(롯데 자이언츠/LG 트윈스) + 로고·팀명 25%↑(하린아빠 요청). 라틴=Montserrat,
         // 한글=Noto 글자단위 분리. compact(small 위젯)는 공간 제약상 약어 유지.
         // ⚠️ 풀네임은 한 줄에 안 들어가 minimumScaleFactor로 쪼그라들면 오히려 작아진다 →
@@ -357,6 +398,14 @@ struct HomeWidgetScheduledCard: View {
                 .lineLimit(compact ? 1 : 2)
                 .minimumScaleFactor(compact ? 0.7 : 0.85)
                 .fixedSize(horizontal: false, vertical: true)
+            // medium: 각 팀 풀네임 아래 예고선발 투수 이름(안드 확정). 미확정이면 "미정".
+            if !compact {
+                Text(starterDisplayName(starter))
+                    .font(notoKR(12, .semibold))
+                    .foregroundColor(.white.opacity(0.72))
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .padding(.top, 1)
+            }
         }
         .frame(maxWidth: .infinity)
     }
