@@ -190,12 +190,15 @@
 
         <!-- 예고선발 행 — 예정 경기에서만 표시(양팀 예고선발, 미확정이면 "선발 미정").
              혼합(한글+영문) 이름이라 비트맵 렌더(widget_away_starter/widget_home_starter). -->
-        <View
+        <!-- 구분선 — RemoteViews는 기본 android.view.View 클래스를 허용하지 않으므로
+             (인플레이트 시 "Class not allowed" 예외 → 위젯 추가 실패), 높이 1dp LinearLayout로 렌더. -->
+        <LinearLayout
             android:id="@+id/widget_starter_divider"
             android:layout_width="match_parent"
             android:layout_height="1dp"
             android:layout_marginTop="10dp"
             android:background="#22FFFFFF"
+            android:orientation="horizontal"
             android:visibility="gone" />
         <LinearLayout
             android:id="@+id/widget_starter_row"
