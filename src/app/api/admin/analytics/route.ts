@@ -76,6 +76,15 @@ async function ga4Report(
 
 const PROPERTY_ID = () => process.env.GA4_PROPERTY_ID;
 
+// GA4 "20260405" → "04/05"
+function fmtGa4Date(d: string): string {
+  return d.length === 8 ? `${d.slice(4, 6)}/${d.slice(6)}` : d;
+}
+
+type Ga4Rows = {
+  rows?: { dimensionValues: { value: string }[]; metricValues: { value: string }[] }[];
+};
+
 export async function GET(req: NextRequest) {
   if (!verifyPin(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -134,6 +143,64 @@ export async function GET(req: NextRequest) {
       const mau = Number(mauRows[0]?.metricValues?.[0]?.value ?? 0);
 
       return NextResponse.json({ daily, dau: todayDau, wau, mau });
+    }
+
+    if (type === "trend") {
+      // DAU/PV trend series with selectable period.
+      // - today: hourly buckets (시간대별)
+      // - 7d / 30d: daily buckets
+      // - cumulative: launch-to-date running totals (DAU = cumulative unique
+      //   visitors via newUsers running sum, so revisits aren't double-counted)
+      const period = req.nextUrl.searchParams.get("period") ?? "7d";
+
+      if (period === "today") {
+        const response = (await ga4Report(accessToken, {
+          dateRanges: [{ startDate: "today", endDate: "today" }],
+          dimensions: [{ name: "dateHour" }], // YYYYMMDDHH in property timezone (KST)
+          metrics: [{ name: "activeUsers" }, { name: "screenPageViews" }],
+          orderBys: [{ dimension: { dimensionName: "dateHour" } }],
+        })) as Ga4Rows;
+        const series = (response.rows ?? []).map((r) => ({
+          label: `${Number(r.dimensionValues[0].value.slice(8, 10))}시`,
+          users: Number(r.metricValues[0].value),
+          pv: Number(r.metricValues[1].value),
+        }));
+        return NextResponse.json({ period, series, cumulative: false });
+      }
+
+      if (period === "cumulative") {
+        // 395daysAgo comfortably predates launch and stays within GA4 retention,
+        // so the running sum equals launch-to-date totals.
+        const response = (await ga4Report(accessToken, {
+          dateRanges: [{ startDate: "395daysAgo", endDate: "today" }],
+          dimensions: [{ name: "date" }],
+          metrics: [{ name: "newUsers" }, { name: "screenPageViews" }],
+          orderBys: [{ dimension: { dimensionName: "date" } }],
+        })) as Ga4Rows;
+        let cumUsers = 0;
+        let cumPv = 0;
+        const series = (response.rows ?? []).map((r) => {
+          cumUsers += Number(r.metricValues[0].value);
+          cumPv += Number(r.metricValues[1].value);
+          return { label: fmtGa4Date(r.dimensionValues[0].value), users: cumUsers, pv: cumPv };
+        });
+        return NextResponse.json({ period, series, cumulative: true });
+      }
+
+      // 7d / 30d daily
+      const startDate = period === "30d" ? "30daysAgo" : "7daysAgo";
+      const response = (await ga4Report(accessToken, {
+        dateRanges: [{ startDate, endDate: "today" }],
+        dimensions: [{ name: "date" }],
+        metrics: [{ name: "activeUsers" }, { name: "screenPageViews" }],
+        orderBys: [{ dimension: { dimensionName: "date" } }],
+      })) as Ga4Rows;
+      const series = (response.rows ?? []).map((r) => ({
+        label: fmtGa4Date(r.dimensionValues[0].value),
+        users: Number(r.metricValues[0].value),
+        pv: Number(r.metricValues[1].value),
+      }));
+      return NextResponse.json({ period, series, cumulative: false });
     }
 
     if (type === "pages") {
