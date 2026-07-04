@@ -174,9 +174,10 @@ export async function GET(req: NextRequest) {
 
       if (period === "cumulative") {
         // Fixed launch date (not a rolling window) so the running sum stays
-        // true "launch-to-date" even as time passes.
+        // true "launch-to-date" even as time passes. endDate=yesterday so the
+        // partial current day doesn't blunt the curve.
         const response = (await ga4Report(accessToken, {
-          dateRanges: [{ startDate: GA4_LAUNCH_DATE, endDate: "today" }],
+          dateRanges: [{ startDate: GA4_LAUNCH_DATE, endDate: "yesterday" }],
           dimensions: [{ name: "date" }],
           metrics: [{ name: "newUsers" }, { name: "screenPageViews" }],
           orderBys: [{ dimension: { dimensionName: "date" } }],
@@ -191,10 +192,11 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ period, series, cumulative: true });
       }
 
-      // 7d / 30d daily — GA4 DateRange는 inclusive라 N일 = (N-1)daysAgo~today
-      const startDate = period === "30d" ? "29daysAgo" : "6daysAgo";
+      // 7d / 30d daily — 조회 당일(미완성)은 제외하고 완료된 N일만.
+      // endDate=yesterday, GA4 inclusive라 N일 = NdaysAgo~yesterday(1daysAgo).
+      const startDate = period === "30d" ? "30daysAgo" : "7daysAgo";
       const response = (await ga4Report(accessToken, {
-        dateRanges: [{ startDate, endDate: "today" }],
+        dateRanges: [{ startDate, endDate: "yesterday" }],
         dimensions: [{ name: "date" }],
         metrics: [{ name: "activeUsers" }, { name: "screenPageViews" }],
         orderBys: [{ dimension: { dimensionName: "date" } }],
