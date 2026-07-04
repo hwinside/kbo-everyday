@@ -296,6 +296,13 @@ struct HomeWidgetScheduledCard: View {
         return t.isEmpty ? "경기 예정" : t
     }
 
+    /// small pill 문구 — 안드 확정과 동일하게 "{시각} 경기 예정"(시각+상태 결합).
+    private var scheduledPill: String {
+        if isCancelled { return "경기 취소" }
+        let t = snap.startText ?? ""
+        return t.isEmpty ? "경기 예정" : "\(t) 경기 예정"
+    }
+
     var body: some View {
         VStack(spacing: compact ? 8 : 10) {
             if hasMyTeam {
@@ -310,7 +317,7 @@ struct HomeWidgetScheduledCard: View {
 
             // 매치업(로고 + 이름). medium은 가운데 VS+시각 pill, small은 로고 사이 VS만(시각은 아래 그룹).
             HStack(spacing: compact ? 10 : 14) {
-                teamColumn(code: snap.awayTeamCode)
+                teamColumn(code: snap.awayTeamCode, starter: snap.awayStarter)
                 if compact {
                     Text(isCancelled ? "✕" : "VS")
                         .font(montserrat(13, .heavy))
@@ -327,21 +334,21 @@ struct HomeWidgetScheduledCard: View {
                             .background(Capsule().fill(Color.white.opacity(0.18)))
                     }
                 }
-                teamColumn(code: snap.homeTeamCode)
+                teamColumn(code: snap.homeTeamCode, starter: snap.homeStarter)
             }
 
             if compact {
-                // small — 시각 pill + 예고선발 라인을 한 그룹으로 묶어 간격 8px(과공백 방지, 승인 msg14).
-                VStack(spacing: 8) {
-                    Text(centerLabel)
-                        .font(notoKR(9, .bold))
-                        .foregroundStyle(.white)
+                // small — 안드 확정: pill "{시각} 경기 예정"(핑크) + 선발 2줄. pill·선발·매치업 폰트 통일(11).
+                VStack(spacing: 15) {
+                    Text(scheduledPill)
+                        .font(notoKR(11, .bold))
+                        .foregroundColor(Color(hex: 0xFF6B7A))
                         .padding(.horizontal, 8).padding(.vertical, 2)
-                        .background(Capsule().fill(Color.white.opacity(0.18)))
-                    if !isCancelled { starterLineSmall }
+                        .background(Capsule().fill(Color.white.opacity(0.16)))
+                    if !isCancelled { starterBlockSmall }
                 }
             } else {
-                // medium — 날짜('6월 7일 (토)') + 구장 + 구분선 아래 양팀 예고선발(하단 빈공간 채움).
+                // medium — 날짜('6월 7일 (토)') + 구장. 예고선발은 각 팀 풀네임 아래(teamColumn)로 이동.
                 if let d = snap.dateText, !d.isEmpty {
                     mixedScriptText(d, 11, .semibold)
                         .foregroundStyle(.white.opacity(0.85))
@@ -351,43 +358,29 @@ struct HomeWidgetScheduledCard: View {
                         .font(notoKR(11, .medium))
                         .foregroundStyle(.white.opacity(0.8))
                 }
-                if !isCancelled { starterRowMedium }
             }
         }
         .foregroundStyle(.white)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(compact ? 12 : 16)
+        // MY TEAM 상단정렬 + 상단 여백을 좌우보다 작게(안드 확정: "MY TEAM 좀 더 위로").
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.horizontal, compact ? 12 : 16)
+        .padding(.top, compact ? 8 : 10)
+        .padding(.bottom, compact ? 12 : 16)
     }
 
-    // 예고선발 행(medium) — 양팀 컬럼 아래 정렬, 구분선 위. 미확정이면 "미정".
-    private var starterRowMedium: some View {
-        HStack(spacing: 8) {
-            starterEntry(snap.awayStarter, size: 13)
-            starterEntry(snap.homeStarter, size: 13)
+    // 예고선발 라인(small) — 2줄: "선발"(옅은 라벨) / "A vs B". 안드 확정과 동일(폰트 통일).
+    private var starterBlockSmall: some View {
+        VStack(spacing: 1) {
+            Text("선발")
+                .font(notoKR(11, .medium)).foregroundColor(.white.opacity(0.65))
+            (Text(starterDisplayName(snap.awayStarter)).font(notoKR(11, .semibold)).foregroundColor(.white.opacity(0.95))
+             + Text(" vs ").font(montserrat(10, .semibold)).foregroundColor(.white.opacity(0.5))
+             + Text(starterDisplayName(snap.homeStarter)).font(notoKR(11, .semibold)).foregroundColor(.white.opacity(0.95)))
+                .lineLimit(1).minimumScaleFactor(0.7)
         }
-        .padding(.top, 8)
-        .overlay(alignment: .top) {
-            Rectangle().fill(.white.opacity(0.12)).frame(height: 1)
-        }
     }
 
-    // 예고선발 라인(small) — "선발 A vs B" 한 줄. 미확정이면 "미정".
-    private var starterLineSmall: some View {
-        (Text("선발 ").font(notoKR(9, .medium)).foregroundColor(.white.opacity(0.6))
-         + Text(starterDisplayName(snap.awayStarter)).font(notoKR(10, .bold)).foregroundColor(.white.opacity(0.95))
-         + Text(" vs ").font(montserrat(9, .semibold)).foregroundColor(.white.opacity(0.5))
-         + Text(starterDisplayName(snap.homeStarter)).font(notoKR(10, .bold)).foregroundColor(.white.opacity(0.95)))
-            .lineLimit(1).minimumScaleFactor(0.65)
-    }
-
-    private func starterEntry(_ name: String?, size: CGFloat) -> some View {
-        (Text("선발 ").font(notoKR(size - 3, .medium)).foregroundColor(.white.opacity(0.6))
-         + Text(starterDisplayName(name)).font(notoKR(size, .bold)).foregroundColor(.white.opacity(0.95)))
-            .lineLimit(1).minimumScaleFactor(0.7)
-            .frame(maxWidth: .infinity)
-    }
-
-    private func teamColumn(code: String) -> some View {
+    private func teamColumn(code: String, starter: String? = nil) -> some View {
         // medium: 풀네임(롯데 자이언츠/LG 트윈스) + 로고·팀명 25%↑(하린아빠 요청). 라틴=Montserrat,
         // 한글=Noto 글자단위 분리. compact(small 위젯)는 공간 제약상 약어 유지.
         // ⚠️ 풀네임은 한 줄에 안 들어가 minimumScaleFactor로 쪼그라들면 오히려 작아진다 →
@@ -406,6 +399,14 @@ struct HomeWidgetScheduledCard: View {
                 .lineLimit(compact ? 1 : 2)
                 .minimumScaleFactor(compact ? 0.7 : 0.85)
                 .fixedSize(horizontal: false, vertical: true)
+            // medium: 각 팀 풀네임 아래 예고선발 투수 이름(안드 확정). 미확정이면 "미정".
+            if !compact {
+                Text(starterDisplayName(starter))
+                    .font(notoKR(12, .semibold))
+                    .foregroundColor(.white.opacity(0.72))
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .padding(.top, 1)
+            }
         }
         .frame(maxWidth: .infinity)
     }

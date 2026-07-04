@@ -221,16 +221,18 @@ public class GameScoreWidget extends AppWidgetProvider {
             v.setImageViewBitmap(R.id.widget_status_img, textBitmap(context, pill, 12f, 0xFFFF6B7A));
         }
 
-        // 예고선발 행 — 예정 경기에서만(양팀 예고선발, 미확정이면 "선발 미정"). 라이브/종료는 숨김.
-        // 혼합(한글+영문 이름) 대응 위해 textBitmap 렌더(RemoteViews 폰트 미적용 회피).
+        // 예고선발 투수 이름 — 각 팀 풀네임 아래(예정 경기만, 미확정 "미정"). 라이브/종료는 숨김
+        // (라이브/종료는 하단 live_row의 현재 투수/타자가 표시됨). TextView라 폰트 크기 고정.
         if (isScheduled) {
-            v.setViewVisibility(R.id.widget_starter_divider, View.VISIBLE);
-            v.setViewVisibility(R.id.widget_starter_row, View.VISIBLE);
-            v.setImageViewBitmap(R.id.widget_away_starter, textBitmap(context, starterLabel(astarter), 13f, 0xFFEDEDF0));
-            v.setImageViewBitmap(R.id.widget_home_starter, textBitmap(context, starterLabel(hstarter), 13f, 0xFFEDEDF0));
+            String acol = astarter == null || astarter.trim().isEmpty() ? "미정" : astarter.trim();
+            String hcol = hstarter == null || hstarter.trim().isEmpty() ? "미정" : hstarter.trim();
+            v.setViewVisibility(R.id.widget_away_starter_col, View.VISIBLE);
+            v.setViewVisibility(R.id.widget_home_starter_col, View.VISIBLE);
+            v.setTextViewText(R.id.widget_away_starter_col, acol);
+            v.setTextViewText(R.id.widget_home_starter_col, hcol);
         } else {
-            v.setViewVisibility(R.id.widget_starter_divider, View.GONE);
-            v.setViewVisibility(R.id.widget_starter_row, View.GONE);
+            v.setViewVisibility(R.id.widget_away_starter_col, View.GONE);
+            v.setViewVisibility(R.id.widget_home_starter_col, View.GONE);
         }
 
         // 하단: OUT + 투수/타자 소속표기 + 다이아몬드 (라이브 정보 없으면 행 숨김)
@@ -354,18 +356,17 @@ public class GameScoreWidget extends AppWidgetProvider {
         } else {
             v.setViewVisibility(R.id.widget_small_status, View.VISIBLE);
             String pill = isScheduled ? schedTime + " 경기 예정" : isFinal ? "경기 종료" : "● " + status;
-            v.setImageViewBitmap(R.id.widget_small_status_img, textBitmap(context, pill, 11f, 0xFFFF6B7A));
+            // TextView(비트맵 아님) — pill/선발/매치업 12sp 동일 렌더.
+            v.setTextViewText(R.id.widget_small_status_img, pill);
         }
         // 예고선발 라인 — 예정 경기에서만("선발 {원정} vs {홈}", 미확정 "미정")
         if (isScheduled) {
             String a = astarter == null || astarter.trim().isEmpty() ? "미정" : astarter.trim();
             String h = hstarter == null || hstarter.trim().isEmpty() ? "미정" : hstarter.trim();
             v.setViewVisibility(R.id.widget_small_starter, View.VISIBLE);
-            // 2줄: "선발"(옅은 라벨) 위, "{원정} vs {홈}"(밝게) 아래.
-            v.setImageViewBitmap(R.id.widget_small_starter_label,
-                textBitmap(context, "선발", 10f, 0xFFA8A8AE));
-            v.setImageViewBitmap(R.id.widget_small_starter_matchup,
-                textBitmap(context, a + " vs " + h, 11.5f, 0xFFF0F0F3));
+            // 2줄 TextView(라벨 "선발"은 XML 정적) — pill/선발/매치업 폰트 13sp 동일, 색만 구분.
+            // 비트맵 아님: 공간 부족 시 ImageView가 축소 렌더되던 문제 회피(크기 보장).
+            v.setTextViewText(R.id.widget_small_starter_matchup, a + " vs " + h);
         } else {
             v.setViewVisibility(R.id.widget_small_starter, View.GONE);
         }
