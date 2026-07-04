@@ -429,9 +429,11 @@ struct KBOLockScreenCard: View {
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 14)
-        // 상하 패딩 7 → 13pt: 카드가 위아래로 답답하던 문제 해소(승인 목업 기준, 삼순 12~14pt).
-        // 잠금화면 LA·홈위젯 medium·large 공유 컴포넌트라 한 번에 3상태 전부 여유로워진다.
-        .padding(.vertical, 13)
+        // 홈위젯 medium/large(fillHeight)는 HomeWidgetScheduledCard와 동일하게 상단 여백을 좌우보다
+        // 작게(MY TEAM 위로) + 하단 여백 확보(삼순 의견 반영). 잠금화면 LA(fillHeight=false)는
+        // 시스템이 높이를 콘텐츠에 맞추므로 상하 대칭 13pt 유지.
+        .padding(.top, fillHeight ? 10 : 13)
+        .padding(.bottom, fillHeight ? 16 : 13)
         // medium 위젯: 카드가 위젯 높이를 꽉 채워 배경 seam(윗쪽 어두운 띠) 제거. 콘텐츠는 *상단* 정렬
         // 기본 — 라이브는 자연 상단정렬 그대로, 종료는 위 Spacer 2개로 점수가 세로 중앙에 온다.
         // 잠금화면 LA(fillHeight=false)는 콘텐츠 높이 그대로.
