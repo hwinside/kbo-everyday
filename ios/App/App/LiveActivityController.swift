@@ -389,6 +389,8 @@ final class LiveActivityController {
             "status": state.isFinal ? "final" : "live",
             "startText": "",
             "dateText": "",
+            "awayStarter": state.awayStarter ?? "",
+            "homeStarter": state.homeStarter ?? "",
         ]
         WidgetSnapshotStore.write(dict)
     }

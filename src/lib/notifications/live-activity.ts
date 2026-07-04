@@ -18,6 +18,7 @@ import type { KboRawGame } from "@/types/api";
 function buildContentState(g: KboRawGame, status: "live" | "final" | "scheduled"): Record<string, unknown> {
   // 경기 전(scheduled) — 스코어/이닝/BSO/주자는 아직 없음. 예정 시각만 표시.
   if (status === "scheduled") {
+    // 예고선발(T_PIT_P_NM=원정, B_PIT_P_NM=홈). 미확정이면 빈 문자열 → 카드가 "선발 미정" 폴백.
     return {
       awayScore: 0, homeScore: 0, inning: 1, isTopInning: true,
       balls: 0, strikes: 0, outs: 0,
@@ -25,6 +26,8 @@ function buildContentState(g: KboRawGame, status: "live" | "final" | "scheduled"
       pitcherName: "", batterName: "", stadium: g.S_NM ?? "",
       status: "scheduled",
       startTime: g.G_TM ? `${g.G_TM} 경기 예정` : "경기 예정",
+      awayStarter: g.T_PIT_P_NM?.trim() ?? "",
+      homeStarter: g.B_PIT_P_NM?.trim() ?? "",
     };
   }
   const players = resolveCurrentPlayers({

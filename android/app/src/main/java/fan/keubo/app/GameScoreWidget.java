@@ -51,6 +51,8 @@ public class GameScoreWidget extends AppWidgetProvider {
     static final String KEY_OUTS = "outs";
     static final String KEY_DIAMOND = "diamond";
     static final String KEY_STADIUM = "stadium"; // 경기장명(잠실 등) — 점수 위 별도 표시
+    static final String KEY_ASTARTER = "astarter"; // 예고선발(원정) — 예정 경기에서만
+    static final String KEY_HSTARTER = "hstarter"; // 예고선발(홈)
     // legacy(알림 호환) — 위젯 렌더에는 미사용
     static final String KEY_TITLE = "title";
     static final String KEY_SUB = "sub";
@@ -80,6 +82,12 @@ public class GameScoreWidget extends AppWidgetProvider {
         if (code == null) return "";
         String s = FULL.get(code.toUpperCase());
         return s != null ? s : shortName(code);
+    }
+
+    /** 예고선발 표시 라벨 — "선발 {이름}", 미확정(빈값)이면 "선발 미정". */
+    private static String starterLabel(String name) {
+        String n = name == null ? "" : name.trim();
+        return "선발 " + (n.isEmpty() ? "미정" : n);
     }
 
     /** drawable 리소스 id 해석 (없으면 0). drawable-nodpi PNG도 "drawable" 타입. */
@@ -122,6 +130,8 @@ public class GameScoreWidget extends AppWidgetProvider {
         String outs = p.getString(KEY_OUTS, "");
         String diamond = p.getString(KEY_DIAMOND, "000");
         String stadium = p.getString(KEY_STADIUM, "");
+        String astarter = p.getString(KEY_ASTARTER, "");
+        String hstarter = p.getString(KEY_HSTARTER, "");
 
         RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget_game_score);
 
@@ -209,6 +219,18 @@ public class GameScoreWidget extends AppWidgetProvider {
             v.setViewVisibility(R.id.widget_status, View.VISIBLE);
             String pill = isScheduled ? schedTime : isFinal ? "경기 종료" : "● " + status;
             v.setImageViewBitmap(R.id.widget_status_img, textBitmap(context, pill, 12f, 0xFFFF6B7A));
+        }
+
+        // 예고선발 행 — 예정 경기에서만(양팀 예고선발, 미확정이면 "선발 미정"). 라이브/종료는 숨김.
+        // 혼합(한글+영문 이름) 대응 위해 textBitmap 렌더(RemoteViews 폰트 미적용 회피).
+        if (isScheduled) {
+            v.setViewVisibility(R.id.widget_starter_divider, View.VISIBLE);
+            v.setViewVisibility(R.id.widget_starter_row, View.VISIBLE);
+            v.setImageViewBitmap(R.id.widget_away_starter, textBitmap(context, starterLabel(astarter), 13f, 0xFFEDEDF0));
+            v.setImageViewBitmap(R.id.widget_home_starter, textBitmap(context, starterLabel(hstarter), 13f, 0xFFEDEDF0));
+        } else {
+            v.setViewVisibility(R.id.widget_starter_divider, View.GONE);
+            v.setViewVisibility(R.id.widget_starter_row, View.GONE);
         }
 
         // 하단: OUT + 투수/타자 소속표기 + 다이아몬드 (라이브 정보 없으면 행 숨김)
@@ -403,11 +425,13 @@ public class GameScoreWidget extends AppWidgetProvider {
     static void writeAndRefresh(Context ctx, String myTeam, String away, String home,
                                 String as, String hs, String status, String pitcher, String pteam,
                                 String batter, String bteam, String outs, String diamond,
-                                String stadium) {
+                                String stadium, String astarter, String hstarter) {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         SharedPreferences.Editor e = p.edit();
         e.putBoolean(KEY_HAS_GAME, true);
         e.putString(KEY_STADIUM, stadium == null ? "" : stadium);
+        e.putString(KEY_ASTARTER, astarter == null ? "" : astarter);
+        e.putString(KEY_HSTARTER, hstarter == null ? "" : hstarter);
         if (myTeam != null && !myTeam.isEmpty()) e.putString(KEY_MY_TEAM, myTeam);
         e.putString(KEY_AWAY, away == null ? "" : away);
         e.putString(KEY_HOME, home == null ? "" : home);

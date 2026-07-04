@@ -71,6 +71,9 @@ export interface WidgetSnapshotInput {
   startText?: string;
   /** 예정 경기 날짜 라벨(예: "6월 7일 (토)"). 구장 위에 표시. scheduled에서만. */
   dateText?: string;
+  /** 예고선발 투수명(원정/홈). scheduled에서만. 미확정이면 빈 문자열("선발 미정" 폴백). */
+  awayStarter?: string;
+  homeStarter?: string;
 }
 
 /** teamId(1-10) → KBO 2자 코드 (gameId·공식 코드 기준). */
@@ -101,6 +104,9 @@ export interface HomeWidgetGame {
   time: string;
   /** "6월 7일 (토)" 형태 날짜 라벨(예정 경기, 구장 위 표시). */
   dateText?: string;
+  /** 예고선발 투수명(원정/홈). 예정 경기에서만 사용. 미확정이면 null → "선발 미정". */
+  awayStarter?: string | null;
+  homeStarter?: string | null;
 }
 
 const LiveActivity = registerPlugin<LiveActivityPlugin>("LiveActivity");
@@ -293,5 +299,7 @@ export async function writeHomeWidgetSnapshot(
     stadium: game.stadium,
     startText: game.status === "scheduled" ? game.time : "",
     dateText: game.status === "scheduled" ? (game.dateText ?? "") : "",
+    awayStarter: game.status === "scheduled" ? (game.awayStarter ?? "") : "",
+    homeStarter: game.status === "scheduled" ? (game.homeStarter ?? "") : "",
   });
 }

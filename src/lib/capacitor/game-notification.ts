@@ -20,6 +20,8 @@ interface WidgetData {
   outs: string;
   diamond: string;
   stadium?: string; // 경기장(잠실 등) — 위젯에서 점수 위 별도 표시
+  awayStarter?: string; // 예고선발(원정) — 예정 경기에서만. 미확정이면 빈 문자열
+  homeStarter?: string; // 예고선발(홈)
 }
 
 interface GameNotificationPlugin {

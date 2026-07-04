@@ -50,6 +50,11 @@ struct KBOGameAttributes: ActivityAttributes {
         /// 옵셔널+기본 nil — 구버전 스냅샷/기존 ContentState() 호출과 Codable 하위호환.
         var startTime: String? = nil
 
+        /// 예고선발 투수명(원정/홈) — scheduled 카드에서만 표기. 미확정/live/final이면 nil.
+        /// 옵셔널+기본 nil로 Codable 하위호환(구버전 페이로드에 없어도 디코드 성공).
+        var awayStarter: String? = nil
+        var homeStarter: String? = nil
+
         // MARK: 표시용 파생값
 
         /// "7회초" / "9회말"

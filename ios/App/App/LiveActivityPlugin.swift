@@ -139,6 +139,8 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             "status": status,
             "startText": call.getString("startText") ?? "",
             "dateText": call.getString("dateText") ?? "",
+            "awayStarter": call.getString("awayStarter") ?? "",
+            "homeStarter": call.getString("homeStarter") ?? "",
         ]
         WidgetSnapshotStore.write(dict)
         call.resolve()
@@ -162,7 +164,9 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             batterName: call.getString("batterName") ?? "",
             stadium: call.getString("stadium") ?? "",
             status: status == "final" ? .final : (status == "scheduled" ? .scheduled : .live),
-            startTime: call.getString("startTime")
+            startTime: call.getString("startTime"),
+            awayStarter: call.getString("awayStarter"),
+            homeStarter: call.getString("homeStarter")
         )
     }
 }

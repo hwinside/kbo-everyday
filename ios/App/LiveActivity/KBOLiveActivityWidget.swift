@@ -34,6 +34,12 @@ func teamColorHex(_ code: String) -> UInt32 {
 @available(iOS 16.1, *)
 func teamColor(_ code: String) -> Color { Color(hex: teamColorHex(code)) }
 
+// 예고선발 표시명 — 공백 제거 후 비었으면 "미정"(선발 미확정 폴백).
+func starterDisplayName(_ name: String?) -> String {
+    let n = (name ?? "").trimmingCharacters(in: .whitespaces)
+    return n.isEmpty ? "미정" : n
+}
+
 // 두 hex 컬러를 t:1-t 비율로 섞는다(t = a의 비율). 그라데이션 톤 계산용.
 func mixHex(_ a: UInt32, _ b: UInt32, _ t: Double) -> UInt32 {
     func ch(_ x: UInt32, _ s: UInt32) -> Double { Double((x >> s) & 0xFF) }
@@ -203,7 +209,12 @@ struct KBOLiveActivityWidget: Widget {
                     .lineLimit(1).minimumScaleFactor(0.7)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    if !context.state.isFinal && !context.state.pitcherName.isEmpty {
+                    if context.state.isScheduled {
+                        // 경기 전 — 예고선발 매치업(미확정이면 "미정").
+                        Text("선발 \(starterDisplayName(context.state.awayStarter)) vs \(starterDisplayName(context.state.homeStarter))")
+                            .font(.caption2).lineLimit(1)
+                            .foregroundStyle(.secondary)
+                    } else if !context.state.isFinal && !context.state.pitcherName.isEmpty {
                         Text("\(context.state.pitcherName) → \(context.state.batterName)")
                             .font(.caption2).lineLimit(1)
                             .foregroundStyle(.secondary)
@@ -389,13 +400,27 @@ struct KBOLockScreenCard: View {
                 }
             }
 
+            // 경기 전 — 예고선발(원정/홈). 구분선 아래 양팀 컬럼 정렬(로고·팀명 축과 일치). 미확정이면 "미정".
+            if state.isScheduled {
+                HStack(spacing: 4) {
+                    scheduledStarter(state.awayStarter)
+                    scheduledStarter(state.homeStarter)
+                }
+                .padding(.top, 6)
+                .overlay(alignment: .top) {
+                    Rectangle().fill(.white.opacity(0.12)).frame(height: 1)
+                }
+            }
+
             // 종료 상태에서만 트레일링 Spacer로 점수를 세로 중앙에. 라이브는 미적용(자연 상단정렬).
             if fillHeight && state.isFinal { Spacer(minLength: 0) }
         }
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 14)
-        .padding(.vertical, 7)
+        // 상하 패딩 7 → 13pt: 카드가 위아래로 답답하던 문제 해소(승인 목업 기준, 삼순 12~14pt).
+        // 잠금화면 LA·홈위젯 medium·large 공유 컴포넌트라 한 번에 3상태 전부 여유로워진다.
+        .padding(.vertical, 13)
         // medium 위젯: 카드가 위젯 높이를 꽉 채워 배경 seam(윗쪽 어두운 띠) 제거. 콘텐츠는 *상단* 정렬
         // 기본 — 라이브는 자연 상단정렬 그대로, 종료는 위 Spacer 2개로 점수가 세로 중앙에 온다.
         // 잠금화면 LA(fillHeight=false)는 콘텐츠 높이 그대로.
@@ -406,7 +431,7 @@ struct KBOLockScreenCard: View {
                 // 배경 팀 로고 watermark (앱 MyTeamHero: absolute right-3 top-3 opacity-[0.08])
                 if hasMyTeam {
                     TeamLogo(code: attributes.myTeamCode, size: 64)
-                        .opacity(0.13)
+                        .opacity(0.10)
                         .padding(.top, 10)
                         .padding(.trailing, 12)
                 }
@@ -423,6 +448,14 @@ struct KBOLockScreenCard: View {
         Circle()
             .fill(i < state.outs ? Color(hex: 0xFF4D4D) : Color.white.opacity(0.2))
             .frame(width: 7, height: 7)
+    }
+
+    // 예고선발 엔트리 — "선발 {이름}"(미확정=미정). 팀 컬럼 아래 가운데 정렬. 라벨=옅은 Noto, 이름=Noto bold.
+    private func scheduledStarter(_ name: String?) -> some View {
+        (Text("선발 ").font(notoKR(10, .medium)).foregroundColor(.white.opacity(0.6))
+         + Text(starterDisplayName(name)).font(notoKR(12, .bold)).foregroundColor(.white.opacity(0.95)))
+            .lineLimit(1).minimumScaleFactor(0.7)
+            .frame(maxWidth: .infinity)
     }
 
     // 투수/타자 행 — "투수 (LG) 웰스". 라벨/괄호/이름=Noto, 라틴 약어(LG/SSG)=Montserrat.
