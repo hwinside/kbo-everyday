@@ -15,7 +15,11 @@ interface MetricRow {
  * ISO week string (e.g. '2026-W15') from a YYYY-MM-DD date.
  */
 function isoWeek(dateStr: string): string {
-  const d = new Date(dateStr + "T00:00:00+09:00");
+  // KST 캘린더 날짜(YYYY-MM-DD) 자체를 UTC 자정으로 잡아 요일 계산.
+  // (이전엔 dateStr+"+09:00" instant의 getUTCDay를 읽어 KST 월요일이 전날 UTC 일요일로
+  //  밀려 주 경계가 표시단 weekToMonday와 어긋났음 — 예: 06-29가 W26으로 오분류.)
+  const [y, m, day] = dateStr.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1, day));
   const dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
