@@ -38,11 +38,12 @@ function scheduledStartMs(gDt: string | undefined, gTm: string | undefined): num
 // 경기 시작 30분 전부터 잠금화면/홈위젯에 '경기 예정' 카드를 미리 띄운다.
 // iOS Live Activity push-to-start(PREGAME_LEAD_MS 동일 30분)와 리드타임을 맞춘 것.
 const PREGAME_LEAD_MS = 30 * 60 * 1000;
-// 지연 경기(우천 등으로 KBO feed가 예정 상태로 남아 시작시각이 지난 경우) 커버 — iOS
+// 지연 경기(KBO feed가 예정 상태로 남아 시작시각이 지난 경우) 커버 — iOS
 // pushLiveActivityStarts와 동일하게 시작 후 90분까지 예정 카드를 계속 밀어 parity 유지.
 const START_WINDOW_MS = 90 * 60 * 1000;
 // 취소 카드 유지 창 — 예정시각 이후 이 시간까지 '경기 취소'를 밀어 저녁 내내 위젯을 갱신한다
-// (그 후엔 네이티브 readEff의 익일 06:00 롤오버가 다음 경기로 전환). 지연 후 늦은 취소도 커버.
+// (그 후 앱 오픈/캐시 기기는 네이티브 readEff의 익일 06:00 롤오버로 다음 경기 전환,
+//  push-only 기기는 다음 pregame push로 복구). 지연 후 늦은 취소도 커버.
 const CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 /**
