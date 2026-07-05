@@ -12,7 +12,6 @@ import android.widget.RemoteViews;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 
-import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
@@ -136,36 +135,23 @@ public class GameNotificationPlugin extends Plugin {
     /** 경기룸(포그라운드)에서 풀 라이브 데이터로 위젯 갱신 (OUT/주자/투수·타자 소속 포함). */
     @PluginMethod
     public void updateWidget(PluginCall call) {
-        String myTeam = call.getString("myTeam", "");
-        String away = call.getString("away", "");
-        String home = call.getString("home", "");
-        String as = call.getString("awayScore", "0");
-        String hs = call.getString("homeScore", "0");
-        String status = call.getString("status", "");
-        String pitcher = call.getString("pitcher", "");
-        String pteam = call.getString("pitcherTeam", "");
-        String batter = call.getString("batter", "");
-        String bteam = call.getString("batterTeam", "");
-        String outs = call.getString("outs", "");
-        String diamond = call.getString("diamond", "000");
-        String stadium = call.getString("stadium", "");
-        String astarter = call.getString("awayStarter", "");
-        String hstarter = call.getString("homeStarter", "");
-        String gameId = call.getString("gameId", "");
-        JSObject next = call.getObject("next");
-        if (next != null) {
-            GameScoreWidget.writeAndRefreshWithNext(
-                getContext(), myTeam, away, home, as, hs, status, pitcher, pteam,
-                batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId,
-                next.optString("away", ""), next.optString("home", ""),
-                next.optString("stadium", ""), next.optString("time", ""),
-                next.optString("date", ""), next.optString("astarter", ""),
-                next.optString("hstarter", ""));
-        } else {
-            GameScoreWidget.writeAndRefresh(
-                getContext(), myTeam, away, home, as, hs, status, pitcher, pteam,
-                batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId);
-        }
+        GameScoreWidget.writeAndRefresh(
+            getContext(),
+            call.getString("myTeam", ""),
+            call.getString("away", ""),
+            call.getString("home", ""),
+            call.getString("awayScore", "0"),
+            call.getString("homeScore", "0"),
+            call.getString("status", ""),
+            call.getString("pitcher", ""),
+            call.getString("pitcherTeam", ""),
+            call.getString("batter", ""),
+            call.getString("batterTeam", ""),
+            call.getString("outs", ""),
+            call.getString("diamond", "000"),
+            call.getString("stadium", ""),
+            call.getString("awayStarter", ""),
+            call.getString("homeStarter", ""));
         call.resolve();
     }
 
