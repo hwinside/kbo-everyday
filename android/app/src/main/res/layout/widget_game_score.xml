@@ -339,10 +339,32 @@
             android:orientation="horizontal"
             android:gravity="center_vertical"
             android:visibility="gone">
+            <!-- 라이브 점 — ViewFlipper로 자동 pulse(프레임1=빨강, 프레임2=dim빨강, 650ms).
+                 런처가 flip 안 하면 프레임1(빨강 점) 정적 표시 → static fallback 자연 확보. -->
+            <ViewFlipper
+                android:id="@+id/widget_relay_dot"
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:layout_marginEnd="7dp"
+                android:autoStart="true"
+                android:flipInterval="650"
+                android:measureAllChildren="true">
+                <ImageView
+                    android:layout_width="6dp"
+                    android:layout_height="6dp"
+                    android:src="@drawable/relay_dot_on"
+                    android:contentDescription="@null" />
+                <ImageView
+                    android:layout_width="6dp"
+                    android:layout_height="6dp"
+                    android:src="@drawable/relay_dot_off"
+                    android:contentDescription="@null" />
+            </ViewFlipper>
             <TextView
                 android:id="@+id/widget_relay_text"
-                android:layout_width="match_parent"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_weight="1"
                 android:fontFamily="@font/notosanskr"
                 android:letterSpacing="-0.04"
                 android:textColor="#EAEAEC"

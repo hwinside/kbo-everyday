@@ -164,7 +164,7 @@ public class GameNotificationPlugin extends Plugin {
         } else {
             GameScoreWidget.writeAndRefresh(
                 getContext(), myTeam, away, home, as, hs, status, pitcher, pteam,
-                batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId, "");
+                batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId, null);
         }
         call.resolve();
     }

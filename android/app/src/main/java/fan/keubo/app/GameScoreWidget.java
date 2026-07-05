@@ -11,10 +11,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Typeface;
-import android.text.Spannable;
-import android.text.SpannableString;
 import android.text.TextUtils;
-import android.text.style.ForegroundColorSpan;
 import android.view.View;
 import android.widget.RemoteViews;
 
@@ -365,9 +362,8 @@ public class GameScoreWidget extends AppWidgetProvider {
         boolean isLiveStatus = !isScheduled && !isFinal && !isCancelled && !status.isEmpty();
         if (isLiveStatus && !TextUtils.isEmpty(lastPlay)) {
             v.setViewVisibility(R.id.widget_relay_row, View.VISIBLE);
-            SpannableString sp = new SpannableString("● " + lastPlay);
-            sp.setSpan(new ForegroundColorSpan(0xFFFF5A5A), 0, 1, Spannable.SPAN_INCLUSIVE_EXCLUSIVE);
-            v.setTextViewText(R.id.widget_relay_text, sp);
+            // 라이브 점은 XML ViewFlipper(widget_relay_dot)가 자동 pulse — 서버 토글 아닌 클라 렌더.
+            v.setTextViewText(R.id.widget_relay_text, lastPlay);
         } else {
             v.setViewVisibility(R.id.widget_relay_row, View.GONE);
         }
@@ -631,7 +627,7 @@ public class GameScoreWidget extends AppWidgetProvider {
                                 String nDate, String nAStarter, String nHStarter) {
         writeInternal(ctx, myTeam, away, home, as, hs, status, pitcher, pteam,
             batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId,
-            true, nAway, nHome, nStadium, nTime, nDate, nAStarter, nHStarter, "");
+            true, nAway, nHome, nStadium, nTime, nDate, nAStarter, nHStarter, null);
     }
 
     private static void writeInternal(Context ctx, String myTeam, String away, String home,
@@ -661,7 +657,9 @@ public class GameScoreWidget extends AppWidgetProvider {
         e.putString(KEY_OUTS, outs == null ? "" : outs);
         e.putString(KEY_DIAMOND, (diamond == null || diamond.isEmpty()) ? "000" : diamond);
         e.putString(KEY_GAME_ID, gameId == null ? "" : gameId);
-        e.putString(KEY_LAST_PLAY, lastPlay == null ? "" : lastPlay);
+        // lastPlay: null=기존값 보존(JS updateWidget 경로 — 앱/경기룸 10초 폴링이 FCM 중계를
+        // 덮어쓰지 않게). 비-null(""/텍스트)=set/clear(FCM 경로 전용). 삼순 조건부 GO blocker 반영.
+        if (lastPlay != null) e.putString(KEY_LAST_PLAY, lastPlay);
         if (hasNext) {
             e.putBoolean(KEY_NEXT_HAS, true);
             e.putString(KEY_NEXT_AWAY, nAway == null ? "" : nAway);
@@ -674,6 +672,9 @@ public class GameScoreWidget extends AppWidgetProvider {
         } else if (gameId == null || !gameId.equals(prevGameId)) {
             // 다른 경기로 바뀌면(FCM 라이브 등) 이전 경기의 stale next 제거 → 오탐 롤오버 방지.
             e.putBoolean(KEY_NEXT_HAS, false);
+            // 새 경기엔 이전 경기 중계 이월 금지(JS 경로 stale-flash 방지). FCM이 명시값(비-null)
+            // 준 경우는 위에서 이미 세팅됐고, JS 경로(null)만 여기서 "" clear.
+            if (lastPlay == null) e.putString(KEY_LAST_PLAY, "");
         }
         e.apply();
         refresh(ctx);
