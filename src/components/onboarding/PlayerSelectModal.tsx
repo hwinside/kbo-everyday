@@ -173,9 +173,12 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip, 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-bg-primary"
+      className="fixed inset-0 z-[100] overflow-y-auto bg-bg-primary"
     >
-      <div className="w-full max-w-lg px-6 pt-10">
+      {/* 콘텐츠가 화면보다 길면 전체가 스크롤되도록(중앙정렬 고정 시 상/하단이 잘려
+          맨 아래 "나중에 할게요"가 네비바 뒤로 밀려 닿지 않던 문제). 하단은 safe-area +
+          여유 패딩으로 시스템 네비바 위로 띄운다. */}
+      <div className="w-full max-w-lg mx-auto px-6 pt-10 pb-[calc(env(safe-area-inset-bottom,0px)+24px)]">
         <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} className="text-center mb-4">
           <div className="flex items-center justify-center gap-2 mb-2">
             <Image src={team.logoPath} alt="" width={32} height={32} unoptimized className="object-contain" />
