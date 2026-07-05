@@ -149,6 +149,11 @@ export default function RetentionPage() {
   const latestGd = data.gameday.at(-1);
   const gd1Rate = latestGd?.gd1 ?? 0;
 
+  // 완료된 관측이 하나도 없는 주(전 셀 blank, 예: 갓 시작한 주)는 행 자체를 숨긴다.
+  const visibleWeekly = data.cohort.filter((row) =>
+    D_KEYS.some((k) => !isWeekNotYet(row.cohortKey, k, data.date!) && Number(row[k]) > 0),
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -183,8 +188,8 @@ export default function RetentionPage() {
       <div className="glass-card p-5">
         <h2 className="text-sm font-semibold mb-1">주간 코호트 리텐션 히트맵</h2>
         <p className="text-[11px] text-gray-500 mb-4">D0 = 가입 당일 활동. page_view 계측이 온전한 6/26 이후(2026-W27~) 코호트만 표시. 각 셀은 완료된 날 관측만 집계(진행 중인 오늘은 제외)해 최근 주도 왜곡 없이 표시.</p>
-        {data.cohort.length === 0 ? (
-          <p className="text-gray-500 text-sm">데이터 없음</p>
+        {visibleWeekly.length === 0 ? (
+          <p className="text-gray-500 text-sm">완료된 관측이 있는 주가 아직 없습니다. 진행 중인 주는 완료되는 대로 표시됩니다.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -198,7 +203,7 @@ export default function RetentionPage() {
                 </tr>
               </thead>
               <tbody>
-                {data.cohort.map((row) => (
+                {visibleWeekly.map((row) => (
                   <tr key={row.cohortKey} className="border-t border-white/5">
                     <td className="py-2 pr-4 text-gray-300 font-mono text-xs">
                       {row.cohortKey}
