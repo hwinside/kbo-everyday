@@ -287,7 +287,8 @@ export default function RetentionPage() {
       </div>
 
       <div className="glass-card p-5">
-        <h2 className="text-sm font-semibold mb-4">Activation Funnel</h2>
+        <h2 className="text-sm font-semibold mb-1">Activation Funnel</h2>
+        <p className="text-[11px] text-gray-500 mb-4">6/26 이후 가입 코호트 기준 (그 전 초기 유저 제외). 상단 Activation 완료율 = 첫 채팅 도달률.</p>
         {data.funnel.length === 0 ? (
           <p className="text-gray-500 text-sm">데이터 없음</p>
         ) : (
