@@ -68,6 +68,12 @@ function isDayNotYet(cohortDate: string, dKey: string, targetDate: string): bool
   return addKSTDays(cohortDate, offset) > targetDate;
 }
 
+/** KBO는 월요일 경기 없음 → 해당일이 타깃이면 리텐션이 자연 저조. targetDay(YYYY-MM-DD)가 월요일인지. */
+function isNoGameMonday(dateStr: string): boolean {
+  // UTC 정오 기준으로 요일 판정 — 런타임 타임존과 무관하게 캘린더 날짜의 요일 확정
+  return new Date(dateStr + "T12:00:00Z").getUTCDay() === 1;
+}
+
 /** 가장 최근 코호트 중 해당 D-N이 실제로 경과한 값 (헤드라인 카드용). 없으면 null. */
 function latestElapsedRate(
   rows: CohortHeatmapRow[],
@@ -220,7 +226,7 @@ export default function RetentionPage() {
 
       <div className="glass-card p-5">
         <h2 className="text-sm font-semibold mb-1">일별 코호트 리텐션</h2>
-        <p className="text-[11px] text-gray-500 mb-4">D0 = 가입 당일 활동. page_view 계측이 온전한 6/26 이후 코호트만 (그 전은 눈팅 방문 누락으로 과소집계).</p>
+        <p className="text-[11px] text-gray-500 mb-4">D0 = 가입 당일 활동. page_view 계측이 온전한 6/26 이후 코호트만 (그 전은 눈팅 방문 누락으로 과소집계). 진행 중인 당일은 제외, <span className="text-[#EF4444]">빨간 테두리</span>는 경기 없는 월요일(자연 저조).</p>
         {data.dailyCohort.length === 0 ? (
           <p className="text-gray-500 text-sm">데이터 없음</p>
         ) : (
@@ -245,15 +251,22 @@ export default function RetentionPage() {
                       {row.cohortSize}
                     </td>
                     {(D_KEYS).map((key) => {
-                      const notYet = isDayNotYet(row.cohortKey, key, data.date!);
+                      const offset = D_OFFSETS[key] ?? 0;
+                      const targetDay = addKSTDays(row.cohortKey, offset);
+                      // 진행 중인 당일(+미래)은 숨김 — 미완료일이라 값이 자연히 낮게 찍혀 오해 유발
+                      const notYet = targetDay >= data.date!;
+                      // 경기 없는 월요일 타깃일은 빨간 테두리로 표시 (D0=가입일은 리텐션 아님이라 제외)
+                      const noGameMonday = !notYet && offset > 0 && isNoGameMonday(targetDay);
                       return (
                         <td
                           key={key}
                           className="py-2 px-2 text-center tabular-nums font-medium text-xs"
-                          style={notYet
-                            ? { color: "#3A3A3C", background: "rgba(255,255,255,0.03)" }
-                            : { color: rateColor(row[key]), background: rateBg(row[key]) }
-                          }
+                          style={{
+                            ...(notYet
+                              ? { color: "#3A3A3C", background: "rgba(255,255,255,0.03)" }
+                              : { color: rateColor(row[key]), background: rateBg(row[key]) }),
+                            ...(noGameMonday ? { boxShadow: "inset 0 0 0 1.5px #EF4444" } : {}),
+                          }}
                         >
                           {notYet ? "" : row[key] > 0 ? `${(row[key] * 100).toFixed(1)}%` : "—"}
                         </td>
