@@ -176,47 +176,55 @@ export default function GameDetailPage() {
   });
 
   // 잠금화면 Live Activity (W2): 경기룸에서 라이브 경기일 때 실데이터로 카드를
-  // 시작/갱신한다. iOS 네이티브에서만 동작(웹/Android no-op). 같은 gameId
-  // 재호출은 네이티브가 update로 처리(중복 방지). 경기룸을 나가도 카드는 유지
-  // (스펙 §5-3 잠금화면 목적, 종료는 W4). 팀 코드는 G_ID에서 파싱(로고/컬러는 후속).
+  // 시작/갱신한다. *오직 최애팀 경기*일 때만 시작 — 방문한 경기(비-최애팀)는 카드를
+  // 띄우지 않는다(홈위젯/푸시 카드와 동일하게 최애팀 기준으로 통일, 방문 경기 dependency 제거).
+  // iOS 네이티브에서만 동작(웹/Android no-op). 같은 gameId 재호출은 네이티브가 update로
+  // 처리(중복 방지). 경기룸을 나가도 카드는 유지(스펙 §5-3 잠금화면 목적, 종료는 W4).
   useEffect(() => {
     if (!liveGame || !liveGame.isLive) return;
     const m = gameId.match(/^(\d{8})([A-Z]{2})([A-Z]{2})(\d)$/);
-    // 최애팀 id → KBO 2자 코드 역매핑(강조/컬러용). 미설정/비참여면 "".
+    // 최애팀 id → KBO 2자 코드 역매핑(강조/컬러 + 최애팀 게이트). 미설정/비참여면 "".
     const myTeamId = getMyTeamId();
     const myTeamCode = myTeamId
       ? ID_TO_KBO_CODE[myTeamId] ?? ""
       : "";
-    void startLiveActivity({
-      gameId,
-      awayTeam: liveGame.awayName,
-      homeTeam: liveGame.homeName,
-      awayTeamCode: m?.[2] ?? "",
-      homeTeamCode: m?.[3] ?? "",
-      myTeamCode,
-      awayScore: liveGame.awayScore,
-      homeScore: liveGame.homeScore,
-      inning: liveGame.inning,
-      isTopInning: liveGame.isTop,
-      balls: liveGame.balls,
-      strikes: liveGame.strikes,
-      outs: liveGame.outs,
-      onFirst: liveGame.runner1b,
-      onSecond: liveGame.runner2b,
-      onThird: liveGame.runner3b,
-      pitcherName: liveGame.currentPitcher ?? "",
-      batterName: liveGame.currentBatter ?? "",
-      stadium: liveGame.stadium ?? "",
-      status: "live",
-    });
+    const awayCode = m?.[2] ?? "";
+    const homeCode = m?.[3] ?? "";
+    const isMyTeamGame =
+      !!myTeamCode && (myTeamCode === awayCode || myTeamCode === homeCode);
+
+    // 방문한 경기가 최애팀 경기일 때만 Live Activity를 시작한다. 비-최애팀 경기룸을
+    // 열어도 잠금화면 카드는 생기지 않으며, 서버 푸시로 시작된 최애팀 카드도 밀어내지 않는다.
+    if (isMyTeamGame) {
+      void startLiveActivity({
+        gameId,
+        awayTeam: liveGame.awayName,
+        homeTeam: liveGame.homeName,
+        awayTeamCode: awayCode,
+        homeTeamCode: homeCode,
+        myTeamCode,
+        awayScore: liveGame.awayScore,
+        homeScore: liveGame.homeScore,
+        inning: liveGame.inning,
+        isTopInning: liveGame.isTop,
+        balls: liveGame.balls,
+        strikes: liveGame.strikes,
+        outs: liveGame.outs,
+        onFirst: liveGame.runner1b,
+        onSecond: liveGame.runner2b,
+        onThird: liveGame.runner3b,
+        pitcherName: liveGame.currentPitcher ?? "",
+        batterName: liveGame.currentBatter ?? "",
+        stadium: liveGame.stadium ?? "",
+        status: "live",
+      });
+    }
 
     // Android 홈/잠금화면 위젯(GameScoreWidget) — *최애팀 경기*일 때만 풀 데이터로 갱신.
     // iOS Live Activity와 동일 데이터(주자/투수/타자 포함). 디바이스 최애팀도 기록해
     // 빈 상태 위젯 배경색까지 최애팀으로 맞춘다. (iOS는 no-op.)
-    const awayCode = m?.[2] ?? "";
-    const homeCode = m?.[3] ?? "";
     if (myTeamCode) void setWidgetMyTeam(myTeamCode);
-    if (myTeamCode && (myTeamCode === awayCode || myTeamCode === homeCode)) {
+    if (isMyTeamGame) {
       // 공격팀(타자) = isTop ? away : home, 수비팀(투수) = 반대.
       const batterTeam = liveGame.isTop ? awayCode : homeCode;
       const pitcherTeam = liveGame.isTop ? homeCode : awayCode;
