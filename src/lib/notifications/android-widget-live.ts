@@ -70,9 +70,11 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise
 
     const isLive = g.GAME_STATE_SC === "2";
     const isCancelled = g.CANCEL_SC_ID !== "0";
-    // 취소(우천 등): 예정시각 −30분 ~ +CANCEL_WINDOW_MS 창이면 '경기 취소' 카드를 밀어 앱 미오픈
-    // 상태에서도 안드 위젯을 갱신(iOS 홈위젯은 백그라운드 갱신 불가라 안드 전용 이점). 창 밖/후엔
-    // 위젯이 마지막 상태 유지 → 네이티브 readEff의 익일 06:00 롤오버로 다음 경기 전환.
+    // 취소: 예정시각 −30분 ~ +CANCEL_WINDOW_MS 창이면 '경기 취소' 카드를 밀어 앱 미오픈
+    // 상태에서도 안드 위젯을 갱신(iOS 홈위젯은 백그라운드 갱신 불가라 안드 전용 이점). 창 후엔
+    // 위젯이 마지막 상태 유지 → 앱 오픈으로 next 캐시된 기기는 익일 06:00 롤오버로 다음 경기
+    // 전환, push-only 기기는 다음 경기 pregame push가 덮어써 자연 복구(서버는 양팀 팬 공용
+    // 브로드캐스트라 per-기기 next를 실을 수 없음).
     let isCancelWindow = false;
     if (isCancelled) {
       const startMs = scheduledStartMs(g.G_DT, g.G_TM);
