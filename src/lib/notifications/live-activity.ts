@@ -415,7 +415,7 @@ export async function pushLiveActivityStarts(
 // live로 갱신되는 "네이버 수준" 경로. Apple이 무음 푸시를 throttle하므로 best-effort.
 // (강제종료(스와이프 kill) 기기는 iOS가 안 깨움 → 구조적 한계, iOS 18 broadcast가 상위해법.)
 
-/** 무음 wake는 *실제 live 전환* 직후 창에서만(스팸/throttle 방지). 이 창 지나 미등록이면 강제종료 등. */
+/** 무음 wake는 *live 전환/취소 확정* 직후 창에서만(스팸/throttle 방지). 이 창 지나 미등록이면 강제종료 등. */
 const WAKE_WINDOW_MS = 20 * 60 * 1000;
 
 interface WakeResult { woke: number; failed: number; skipped: number; cleaned: number; ok: boolean }
@@ -428,6 +428,8 @@ const EMPTY_WAKE: WakeResult = { woke: 0, failed: 0, skipped: 0, cleaned: 0, ok:
  * 세팅하므로, 그 updated_at(=live 전환 근사시각)에서 WAKE_WINDOW_MS 이내 경기만 대상.
  * → 우천/지연으로 예정시각+20분을 한참 넘겨 live 전환된 경기도 정확히 커버(예정시각 기준이면
  * 스킵됐음). start_notified row가 아직 없으면(막 전환/알림 경로 이슈) 안전하게 포함.
+ * 취소(우천 등) 경기도 동일하게 커버(cancel_notified 시각 기준 창) — 토큰 미등록 gap 카드를 깨워
+ * 등록 유도 → pushLiveActivityUpdates(cancelled→end)가 정리. (이미 오래된 취소는 창 밖=자동만료.)
  * FCM만 사용 → APNs 미설정과 무관. 매 warmup 사이클 호출(등록되면 다음 사이클 갭에서 빠짐).
  */
 export async function pushLiveActivitySilentWakes(
@@ -436,21 +438,30 @@ export async function pushLiveActivitySilentWakes(
   const liveGameIds = games
     .filter((g) => gameStatus(g) === "live" && g.G_ID)
     .map((g) => g.G_ID as string);
-  if (liveGameIds.length === 0) return EMPTY_WAKE;
+  // 취소(우천 등) 경기도 wake 대상 — push-to-start로 뜬 카드가 update 토큰 미등록(gap)이면
+  // #529의 end 경로가 못 닿아 "경기 예정"으로 얼어붙는다. 무음 wake로 토큰 등록을 유도하면
+  // 다음 warmup의 pushLiveActivityUpdates(cancelled→end)가 그 토큰으로 카드를 정리한다.
+  const cancelledGameIds = games
+    .filter((g) => g.CANCEL_SC_ID !== "0" && g.G_ID)
+    .map((g) => g.G_ID as string);
+  const candidateGameIds = [...new Set([...liveGameIds, ...cancelledGameIds])];
+  if (candidateGameIds.length === 0) return EMPTY_WAKE;
 
-  // 실제 live 전환 시각 = game_notify_state.updated_at(start_notified=true). 이 기준 20분 이내만.
+  // 이벤트 시각 = game_notify_state.updated_at: live는 start_notified, 취소는 cancel_notified 기준
+  // (둘 다 notifyGameStatusTransitions가 먼저 세팅). 이 시각에서 WAKE_WINDOW_MS 이내만(스팸/throttle
+  // 방지). 이미 오래된 취소(예: 취소 30분+ 경과)는 창 밖이라 제외 — 앱 오픈/iOS 자동만료(~8h)로 소멸.
   const { data: nsRows, error: nsErr } = await supabase
     .from("game_notify_state")
-    .select("game_id, start_notified, updated_at")
-    .in("game_id", liveGameIds);
+    .select("game_id, start_notified, cancel_notified, updated_at")
+    .in("game_id", candidateGameIds);
   if (nsErr) return { error: nsErr.message };
-  const liveSince = new Map<string, number>();
-  for (const r of (nsRows ?? []) as { game_id: string; start_notified: boolean | null; updated_at: string | null }[]) {
-    if (r.start_notified && r.updated_at) liveSince.set(r.game_id, new Date(r.updated_at).getTime());
+  const eventSince = new Map<string, number>();
+  for (const r of (nsRows ?? []) as { game_id: string; start_notified: boolean | null; cancel_notified: boolean | null; updated_at: string | null }[]) {
+    if ((r.start_notified || r.cancel_notified) && r.updated_at) eventSince.set(r.game_id, new Date(r.updated_at).getTime());
   }
-  // wake 대상 = live 전환 후 WAKE_WINDOW_MS 이내. start_notified row 없으면(막 전환 등) 포함(안전).
-  const wakeGameIds = liveGameIds.filter((id) => {
-    const since = liveSince.get(id);
+  // wake 대상 = 이벤트(live 전환/취소 확정) 후 WAKE_WINDOW_MS 이내. row 없으면(막 발생 등) 포함(안전).
+  const wakeGameIds = candidateGameIds.filter((id) => {
+    const since = eventSince.get(id);
     return since === undefined || Date.now() - since <= WAKE_WINDOW_MS;
   });
   if (wakeGameIds.length === 0) return EMPTY_WAKE;
