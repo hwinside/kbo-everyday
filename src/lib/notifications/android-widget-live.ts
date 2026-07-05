@@ -109,8 +109,13 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise
 
     let payload: PushPayload;
     if (isCancelWindow) {
-      // 경기 취소 — 점수/라이브 없음. 네이티브 buildCard가 w_status "CANCELLED"를 받으면
-      // 점수를 숨기고 "경기 취소"를 그린다. dataOnly라 알림은 안 뜨고 위젯만 조용히 갱신
+      // 경기 취소 — kind:"game_cancel"로 보낸다(game_live 아님). 네이티브는 이 kind를 받으면
+      // 홈위젯 prefs만 "경기 취소"(CANCELLED)로 갱신하고, 잠금화면 진행중 알림은 post하지
+      // 않고 clear한다(정책: 잠금화면은 정리, 홈위젯은 유지 — 삼순 blocker②).
+      // writeAndRefresh는 next를 건드리지 않아(같은 gameId) 앱 오픈으로 캐시된 next가 있으면
+      // 06:00 롤오버가 유지되고, push-only 기기는 다음 경기 pregame push가 위젯을 덮어써
+      // 자연 복구된다(서버 브로드캐스트는 양팀 팬 공용이라 per-기기 next를 실을 수 없음 — 삼순
+      // blocker③). dataOnly라 시스템 알림은 안 뜨고 위젯만 조용히 갱신
       // (사용자向 ⚾ 경기 취소 알림은 game-status.ts가 별도 발송).
       payload = {
         title: `⚾ ${away} vs ${home}`,
@@ -118,7 +123,7 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise
         url: `/games/${g.G_ID}`,
         dataOnly: true,
         data: {
-          kind: "game_live",
+          kind: "game_cancel",
           w_away: codes.away,
           w_home: codes.home,
           w_as: "0",
