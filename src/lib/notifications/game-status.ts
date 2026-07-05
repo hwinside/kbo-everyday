@@ -159,6 +159,16 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
         }, "game_start");
         if (!res.ok) { await unclaim(gameId, "cancel_notified"); continue; } // 인프라 실패 → 재시도
         cancelled += res.sent;
+        // 30분 전 pregame push(android-widget-live)가 올린 '경기 예정' 카드가 취소 후 잠금화면/
+        // 위젯에 잔존하지 않게 clear — data-only game_end로 KboMessagingService가 카드+위젯 제거.
+        // cancel_notified 선점 안에서 1회만 발송. 카드 없던 유저에겐 no-op이라 안전. fire-and-forget.
+        await sendFcmToUsers(fans.ids, {
+          title: "",
+          body: "",
+          url,
+          dataOnly: true,
+          data: { kind: "game_end" },
+        }, "game_start");
       }
       continue;
     }
