@@ -41,6 +41,9 @@ const PREGAME_LEAD_MS = 30 * 60 * 1000;
 // 지연 경기(우천 등으로 KBO feed가 예정 상태로 남아 시작시각이 지난 경우) 커버 — iOS
 // pushLiveActivityStarts와 동일하게 시작 후 90분까지 예정 카드를 계속 밀어 parity 유지.
 const START_WINDOW_MS = 90 * 60 * 1000;
+// 취소 카드 유지 창 — 예정시각 이후 이 시간까지 '우천취소'를 밀어 저녁 내내 위젯을 갱신한다
+// (그 후엔 네이티브 readEff의 익일 06:00 롤오버가 다음 경기로 전환). 지연 후 늦은 취소도 커버.
+const CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 /**
  * Android 홈 위젯/잠금 알림 카드 신선화 + 경기 전 미리 표시.
@@ -63,20 +66,32 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise
   let skipped = 0;
 
   for (const g of games) {
-    if (!g.G_ID || g.CANCEL_SC_ID !== "0") continue;
+    if (!g.G_ID) continue;
 
     const isLive = g.GAME_STATE_SC === "2";
+    const isCancelled = g.CANCEL_SC_ID !== "0";
+    // 취소(우천 등): 예정시각 −30분 ~ +CANCEL_WINDOW_MS 창이면 '우천취소' 카드를 밀어 앱 미오픈
+    // 상태에서도 안드 위젯을 갱신(iOS 홈위젯은 백그라운드 갱신 불가라 안드 전용 이점). 창 밖/후엔
+    // 위젯이 마지막 상태 유지 → 네이티브 readEff의 익일 06:00 롤오버로 다음 경기 전환.
+    let isCancelWindow = false;
+    if (isCancelled) {
+      const startMs = scheduledStartMs(g.G_DT, g.G_TM);
+      if (startMs !== null) {
+        const since = Date.now() - startMs;
+        isCancelWindow = since > -PREGAME_LEAD_MS && since <= CANCEL_WINDOW_MS;
+      }
+    }
     // 예정 경기는 '시작 30분 전 ~ 시작 후 90분(지연 경기)' 윈도우일 때만 미리 표시(그 밖엔 skip).
     // iOS pushLiveActivityStarts와 동일 조건: delta <= PREGAME_LEAD_MS && delta > -START_WINDOW_MS.
     let isPregame = false;
-    if (!isLive && g.GAME_STATE_SC === "1") {
+    if (!isLive && !isCancelled && g.GAME_STATE_SC === "1") {
       const startMs = scheduledStartMs(g.G_DT, g.G_TM);
       if (startMs !== null) {
         const untilStart = startMs - Date.now();
         isPregame = untilStart <= PREGAME_LEAD_MS && untilStart > -START_WINDOW_MS;
       }
     }
-    if (!isLive && !isPregame) continue;
+    if (!isLive && !isPregame && !isCancelWindow) continue;
 
     const codes = parseTeamCodes(g.G_ID);
     if (!codes) continue;
@@ -93,7 +108,32 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise
     }
 
     let payload: PushPayload;
-    if (isLive) {
+    if (isCancelWindow) {
+      // 우천취소 — 점수/라이브 없음. 네이티브 buildCard가 w_status "CANCELLED"를 받으면
+      // 점수를 숨기고 "우천취소"를 그린다. dataOnly라 알림은 안 뜨고 위젯만 조용히 갱신
+      // (사용자向 🌧️ 경기 취소 알림은 game-status.ts가 별도 발송).
+      payload = {
+        title: `⚾ ${away} vs ${home}`,
+        body: "오늘 경기가 취소됐어요",
+        url: `/games/${g.G_ID}`,
+        dataOnly: true,
+        data: {
+          kind: "game_live",
+          w_away: codes.away,
+          w_home: codes.home,
+          w_as: "0",
+          w_hs: "0",
+          w_status: "CANCELLED",
+          w_pitcher: "",
+          w_pteam: "",
+          w_batter: "",
+          w_bteam: "",
+          w_outs: "",
+          w_diamond: "000",
+          w_stadium: g.S_NM ?? "",
+        },
+      };
+    } else if (isLive) {
       const awayScore = safeInt(g.T_SCORE_CN);
       const homeScore = safeInt(g.B_SCORE_CN);
       const status = inningLabel(g);
