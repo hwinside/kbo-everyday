@@ -359,7 +359,7 @@ struct HomeWidgetScheduledCard: View {
 
     /// small pill 문구 — 안드 확정과 동일하게 "{시각} 경기 예정"(시각+상태 결합).
     private var scheduledPill: String {
-        if isCancelled { return "우천취소" }
+        if isCancelled { return "경기 취소" }
         let t = snap.startText ?? ""
         return t.isEmpty ? "경기 예정" : "\(t) 경기 예정"
     }
@@ -397,7 +397,7 @@ struct HomeWidgetScheduledCard: View {
                                 .foregroundStyle(.white.opacity(0.8))
                                 .padding(.top, 8)
                         }
-                        Text(isCancelled ? "우천취소" : "경기 예정")
+                        Text(isCancelled ? "경기 취소" : "경기 예정")
                             .font(notoKR(19, .heavy))
                             .foregroundStyle(.white)
                             .padding(.top, 9)

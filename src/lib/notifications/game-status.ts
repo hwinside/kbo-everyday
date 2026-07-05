@@ -153,7 +153,7 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
         const fans = await fansOfTeams(teamIds);
         if (!fans.ok) { await unclaim(gameId, "cancel_notified"); continue; } // 조회 실패 → 재시도
         const res = await sendFcmToUsers(fans.ids, {
-          title: "🌧️ 경기 취소",
+          title: "⚾ 경기 취소",
           body: `${away} vs ${home} 경기가 취소됐어요. 변경된 일정은 크보팬에서 확인해 보세요`,
           url,
         }, "game_start");
