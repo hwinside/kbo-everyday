@@ -130,7 +130,7 @@ export async function GET(req: NextRequest) {
     | { games: number; sent: number; failed: number; cleaned: number; skipped: number }
     | { error: string } = { games: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0 };
   try {
-    androidWidget = await pushAndroidWidgetLiveUpdates(games);
+    androidWidget = await pushAndroidWidgetLiveUpdates(games, baseUrl);
   } catch (e) {
     androidWidget = { error: (e as Error).message };
     console.error("[warmup] android widget live update failed:", (e as Error).message);

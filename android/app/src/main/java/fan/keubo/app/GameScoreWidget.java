@@ -11,7 +11,10 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Typeface;
+import android.text.Spannable;
+import android.text.SpannableString;
 import android.text.TextUtils;
+import android.text.style.ForegroundColorSpan;
 import android.view.View;
 import android.widget.RemoteViews;
 
@@ -53,6 +56,7 @@ public class GameScoreWidget extends AppWidgetProvider {
     static final String KEY_STADIUM = "stadium"; // 경기장명(잠실 등) — 점수 위 별도 표시
     static final String KEY_ASTARTER = "astarter"; // 예고선발(원정) — 예정 경기에서만
     static final String KEY_HSTARTER = "hstarter"; // 예고선발(홈)
+    static final String KEY_LAST_PLAY = "last_play"; // 문자중계 최근 플레이 한 줄(라이브만)
     // gameId(YYYYMMDD… ) — 06:00 롤오버 기준일 계산용. 다음 예정 경기(next_*) 자동 전환.
     static final String KEY_GAME_ID = "game_id";
     static final String KEY_NEXT_HAS = "next_has";       // 다음 예정 경기 존재(결과/라이브일 때만)
@@ -127,6 +131,7 @@ public class GameScoreWidget extends AppWidgetProvider {
         String myTeam = "", away = "", home = "", as = "0", hs = "0", status = "";
         String pitcher = "", pteam = "", batter = "", bteam = "", outs = "", diamond = "000";
         String stadium = "", astarter = "", hstarter = "";
+        String lastPlay = "";
     }
 
     /** prefs 읽기 + 홈 팀카드 06:00 규칙 적용(경기일 다음날 06:00 지나면 다음 예정 경기로 전환).
@@ -150,6 +155,7 @@ public class GameScoreWidget extends AppWidgetProvider {
         e.stadium = p.getString(KEY_STADIUM, "");
         e.astarter = p.getString(KEY_ASTARTER, "");
         e.hstarter = p.getString(KEY_HSTARTER, "");
+        e.lastPlay = p.getString(KEY_LAST_PLAY, "");
 
         // 상태 무관(예정 포함) — 경기일 다음날 06:00을 지났고 다음 예정 경기가 있으면 전환.
         // 미래 예정 경기(gameId가 미래)면 pastRollover=false라 그대로 유지된다.
@@ -205,6 +211,7 @@ public class GameScoreWidget extends AppWidgetProvider {
         String stadium = e.stadium;
         String astarter = e.astarter;
         String hstarter = e.hstarter;
+        String lastPlay = e.lastPlay;
 
         RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget_game_score);
 
@@ -351,6 +358,18 @@ public class GameScoreWidget extends AppWidgetProvider {
             if (diaRes != 0) v.setImageViewResource(R.id.widget_diamond, diaRes);
         } else {
             v.setViewVisibility(R.id.widget_live_row, View.GONE);
+        }
+
+        // 문자중계 최근 플레이 한 줄 — 라이브 + 텍스트 있을 때만. 그레이 틱커 바 + 라이브 점(●, 빨강 span).
+        // 이닝은 상단 LIVE pill과 중복이라 서버 문구에서 제외(타자+결과만). iOS 잠금 LA 카드와 통일.
+        boolean isLiveStatus = !isScheduled && !isFinal && !isCancelled && !status.isEmpty();
+        if (isLiveStatus && !TextUtils.isEmpty(lastPlay)) {
+            v.setViewVisibility(R.id.widget_relay_row, View.VISIBLE);
+            SpannableString sp = new SpannableString("● " + lastPlay);
+            sp.setSpan(new ForegroundColorSpan(0xFFFF5A5A), 0, 1, Spannable.SPAN_INCLUSIVE_EXCLUSIVE);
+            v.setTextViewText(R.id.widget_relay_text, sp);
+        } else {
+            v.setViewVisibility(R.id.widget_relay_row, View.GONE);
         }
 
         return v;
@@ -596,10 +615,11 @@ public class GameScoreWidget extends AppWidgetProvider {
     static void writeAndRefresh(Context ctx, String myTeam, String away, String home,
                                 String as, String hs, String status, String pitcher, String pteam,
                                 String batter, String bteam, String outs, String diamond,
-                                String stadium, String astarter, String hstarter, String gameId) {
+                                String stadium, String astarter, String hstarter, String gameId,
+                                String lastPlay) {
         writeInternal(ctx, myTeam, away, home, as, hs, status, pitcher, pteam,
             batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId,
-            false, "", "", "", "", "", "", "");
+            false, "", "", "", "", "", "", "", lastPlay);
     }
 
     /** 앱(홈) 경로 — 결과/라이브 경기와 함께 '다음 예정 경기'를 실어 위젯 06:00 자동 전환을 준비. */
@@ -611,7 +631,7 @@ public class GameScoreWidget extends AppWidgetProvider {
                                 String nDate, String nAStarter, String nHStarter) {
         writeInternal(ctx, myTeam, away, home, as, hs, status, pitcher, pteam,
             batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId,
-            true, nAway, nHome, nStadium, nTime, nDate, nAStarter, nHStarter);
+            true, nAway, nHome, nStadium, nTime, nDate, nAStarter, nHStarter, "");
     }
 
     private static void writeInternal(Context ctx, String myTeam, String away, String home,
@@ -619,7 +639,8 @@ public class GameScoreWidget extends AppWidgetProvider {
                                 String batter, String bteam, String outs, String diamond,
                                 String stadium, String astarter, String hstarter, String gameId,
                                 boolean hasNext, String nAway, String nHome, String nStadium,
-                                String nTime, String nDate, String nAStarter, String nHStarter) {
+                                String nTime, String nDate, String nAStarter, String nHStarter,
+                                String lastPlay) {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         String prevGameId = p.getString(KEY_GAME_ID, "");
         SharedPreferences.Editor e = p.edit();
@@ -640,6 +661,7 @@ public class GameScoreWidget extends AppWidgetProvider {
         e.putString(KEY_OUTS, outs == null ? "" : outs);
         e.putString(KEY_DIAMOND, (diamond == null || diamond.isEmpty()) ? "000" : diamond);
         e.putString(KEY_GAME_ID, gameId == null ? "" : gameId);
+        e.putString(KEY_LAST_PLAY, lastPlay == null ? "" : lastPlay);
         if (hasNext) {
             e.putBoolean(KEY_NEXT_HAS, true);
             e.putString(KEY_NEXT_AWAY, nAway == null ? "" : nAway);
