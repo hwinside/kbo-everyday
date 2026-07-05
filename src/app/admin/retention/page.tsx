@@ -100,11 +100,9 @@ function weekToMonday(weekStr: string): string {
 }
 
 function isWeekNotYet(weekStr: string, dKey: string, targetDate: string): boolean {
-  // 주간 코호트는 유저별 '가입일+N일' 기준이라, 주 후반 가입자의 미성숙 관측이 섞이면
-  // 최근 주 D-N이 낮게 왜곡됨. 그 주 마지막 가입 가능일(일요일)+N일이 완료돼야 셀 노출
-  // → 진행 중인 주는 통째로 숨고, 주가 끝난 뒤 D0부터 하루씩 순차 공개.
-  const weekSunday = addKSTDays(weekToMonday(weekStr), 6);
-  return isDayIncomplete(weekSunday, dKey, targetDate);
+  // 집계(computeCohortRetention)가 '오늘(미완료일)'을 eligible에서 제외해 오늘 row를 안 만든다.
+  // 표시단도 동일 기준(>=)으로 오늘·미완료 칸을 blank 처리 → route 기본값 0이 '—'로 뜨는 것 방지.
+  return isDayIncomplete(weekToMonday(weekStr), dKey, targetDate);
 }
 
 interface RetentionData {
@@ -150,6 +148,11 @@ export default function RetentionPage() {
   const latestGd = data.gameday.at(-1);
   const gd1Rate = latestGd?.gd1 ?? 0;
 
+  // 완료된 관측이 하나도 없는 주(전 셀 blank, 예: 갓 시작한 주)는 행 자체를 숨긴다.
+  const visibleWeekly = data.cohort.filter((row) =>
+    D_KEYS.some((k) => !isWeekNotYet(row.cohortKey, k, data.date!) && Number(row[k]) > 0),
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -171,6 +174,7 @@ export default function RetentionPage() {
           <p className="text-2xl font-bold tabular-nums" style={{ color: rateColor(activationRate) }}>
             {(activationRate * 100).toFixed(1)}%
           </p>
+          <p className="text-[10px] text-gray-500 mt-1">최애팀 + 최애선수 5명 + 경기 3개+ 방문</p>
         </div>
         <div className="glass-card p-5">
           <p className="text-xs text-gray-400 mb-1">첫 경기일 복귀율</p>
@@ -182,9 +186,9 @@ export default function RetentionPage() {
 
       <div className="glass-card p-5">
         <h2 className="text-sm font-semibold mb-1">주간 코호트 리텐션 히트맵</h2>
-        <p className="text-[11px] text-gray-500 mb-4">D0 = 가입 당일 활동. page_view 계측이 온전한 6/26 이후(2026-W27~) 코호트만 표시. 진행 중인 주는 완료 후 D0부터 하루씩 순차 공개(미성숙 관측 왜곡 방지).</p>
-        {data.cohort.length === 0 ? (
-          <p className="text-gray-500 text-sm">데이터 없음</p>
+        <p className="text-[11px] text-gray-500 mb-4">D0 = 가입 당일 활동. page_view 계측이 온전한 6/26 이후(2026-W27~) 코호트만 표시. 각 셀은 완료된 날 관측만 집계(진행 중인 오늘은 제외)해 최근 주도 왜곡 없이 표시.</p>
+        {visibleWeekly.length === 0 ? (
+          <p className="text-gray-500 text-sm">완료된 관측이 있는 주가 아직 없습니다. 진행 중인 주는 완료되는 대로 표시됩니다.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -198,7 +202,7 @@ export default function RetentionPage() {
                 </tr>
               </thead>
               <tbody>
-                {data.cohort.map((row) => (
+                {visibleWeekly.map((row) => (
                   <tr key={row.cohortKey} className="border-t border-white/5">
                     <td className="py-2 pr-4 text-gray-300 font-mono text-xs">
                       {row.cohortKey}
@@ -287,7 +291,7 @@ export default function RetentionPage() {
 
       <div className="glass-card p-5">
         <h2 className="text-sm font-semibold mb-1">Activation Funnel</h2>
-        <p className="text-[11px] text-gray-500 mb-4">6/26 이후 가입 코호트 기준 (그 전 초기 유저 제외). 상단 Activation 완료율 = 첫 채팅 도달률.</p>
+        <p className="text-[11px] text-gray-500 mb-4">6/26 이후 가입 코호트 기준. <span className="text-gray-300">활성화 완료 = ①최애팀 지정 + ②최애선수 5명 이상 + ③서로 다른 경기 3개 이상 방문 (3조건 모두 충족)</span>. 상단 Activation 완료율 = 이 완료 비율.</p>
         {data.funnel.length === 0 ? (
           <p className="text-gray-500 text-sm">데이터 없음</p>
         ) : (
