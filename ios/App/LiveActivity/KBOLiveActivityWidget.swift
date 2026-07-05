@@ -403,6 +403,19 @@ struct KBOLockScreenCard: View {
                 }
             }
 
+            // 문자중계 최근 플레이 한 줄 (진행 중에만). 예: "7회초 안재석 삼진 아웃".
+            // 좁은 카드라 한 줄 고정 + 축소 폴백 + 말줄임. 없으면(경기 초반 등) 미표시.
+            if !state.isFinal && !state.isScheduled, let lp = state.lastPlay, !lp.isEmpty {
+                Text(lp)
+                    .font(notoKR(11, .medium))
+                    .foregroundStyle(.white.opacity(0.82))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 3)
+            }
+
             // 경기 전 — 예고선발 한 줄: "{원정선발}  선발투수  {홈선발}"(승인 목업). 미확정이면 "미정".
             // 구분선 아래 가운데 정렬. 이름=양쪽 안쪽 정렬, 가운데 라벨은 옅게.
             if state.isScheduled {

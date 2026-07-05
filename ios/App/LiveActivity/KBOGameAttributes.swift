@@ -55,6 +55,10 @@ struct KBOGameAttributes: ActivityAttributes {
         var awayStarter: String? = nil
         var homeStarter: String? = nil
 
+        /// 진행 중(live) 문자중계 최근 플레이 한 줄(예: "7회초 안재석 삼진 아웃"). scheduled/final이면 nil.
+        /// 옵셔널+기본 nil로 Codable 하위호환(구버전 페이로드에 없어도 디코드 성공).
+        var lastPlay: String? = nil
+
         // MARK: 표시용 파생값
 
         /// "7회초" / "9회말"

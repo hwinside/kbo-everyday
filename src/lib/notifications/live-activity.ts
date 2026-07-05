@@ -15,7 +15,11 @@ import type { KboRawGame } from "@/types/api";
 // 종료된 경기는 end 푸시 + 토큰 정리. (APNs 미설정 시 전체 no-op)
 
 /** ContentState — KBOGameAttributes.ContentState(Swift Codable) 키와 정확히 일치. */
-function buildContentState(g: KboRawGame, status: "live" | "final" | "scheduled"): Record<string, unknown> {
+function buildContentState(
+  g: KboRawGame,
+  status: "live" | "final" | "scheduled",
+  lastPlay?: string,
+): Record<string, unknown> {
   // 경기 전(scheduled) — 스코어/이닝/BSO/주자는 아직 없음. 예정 시각만 표시.
   if (status === "scheduled") {
     // 예고선발(T_PIT_P_NM=원정, B_PIT_P_NM=홈). 미확정이면 빈 문자열 → 카드가 "선발 미정" 폴백.
@@ -51,6 +55,9 @@ function buildContentState(g: KboRawGame, status: "live" | "final" | "scheduled"
     batterName: players.currentBatter ?? "",
     stadium: g.S_NM ?? "",
     status,
+    // 문자중계 최근 플레이 한 줄 — live일 때만, 값 있을 때만 실어보낸다(옵셔널 키:
+    // 구버전 앱/파싱 실패 시 그냥 카드에 안 뜸. Swift ContentState.lastPlay와 키 일치).
+    ...(status === "live" && lastPlay ? { lastPlay } : {}),
   };
 }
 
@@ -81,6 +88,7 @@ interface TokenRow {
  */
 export async function pushLiveActivityUpdates(
   games: KboRawGame[],
+  lastPlayByGame?: Map<string, string>,
 ): Promise<{ pushed: number; ended: number; cleaned: number } | { error: string }> {
   if (!apnsConfigured()) return { pushed: 0, ended: 0, cleaned: 0 };
 
@@ -137,7 +145,7 @@ export async function pushLiveActivityUpdates(
         {
           pushToken: t.push_token,
           event: isEnd ? "end" : "update",
-          contentState: buildContentState(g, status),
+          contentState: buildContentState(g, status, lastPlayByGame?.get(t.game_id)),
           dismissalDate: isEnd ? nowSec + 15 * 60 : undefined,
           // staleDate 미전송 — 위 주석 참조(스피너 원천 차단).
           // collapse-id = 경기 id: update는 최신 1건만 보관(store-and-forward)되고, end가
