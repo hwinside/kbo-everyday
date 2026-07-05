@@ -74,6 +74,12 @@ function isNoGameMonday(dateStr: string): boolean {
   return new Date(dateStr + "T12:00:00Z").getUTCDay() === 1;
 }
 
+/** 미완료일 판정: 미래 + 진행 중인 당일(오늘). 당일은 하루가 안 끝나 값이 과소집계됨. */
+function isDayIncomplete(cohortDate: string, dKey: string, targetDate: string): boolean {
+  const offset = D_OFFSETS[dKey] ?? 0;
+  return addKSTDays(cohortDate, offset) >= targetDate;
+}
+
 /** 가장 최근 코호트 중 해당 D-N이 실제로 경과한 값 (헤드라인 카드용). 없으면 null. */
 function latestElapsedRate(
   rows: CohortHeatmapRow[],
@@ -138,8 +144,8 @@ export default function RetentionPage() {
     );
   }
 
-  // D7은 '가장 최근 코호트'가 아직 D7 미도달일 수 있으므로, D7이 실제 경과한 최신 코호트 값 사용
-  const d7Val = latestElapsedRate(data.dailyCohort, "d7", isDayNotYet, data.date);
+  // D7은 최신 코호트가 아직 D7 미도달 or 당일(미완료)일 수 있으므로, D7이 완전히 경과한(당일 제외) 최신 코호트 값 사용
+  const d7Val = latestElapsedRate(data.dailyCohort, "d7", isDayIncomplete, data.date);
   const activationComplete = data.funnel.at(-1);
   const activationRate = activationComplete?.rate ?? 0;
   const latestGd = data.gameday.at(-1);
