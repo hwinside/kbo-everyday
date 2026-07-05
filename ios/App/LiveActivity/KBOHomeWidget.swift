@@ -398,15 +398,17 @@ struct HomeWidgetScheduledCard: View {
                                 .padding(.top, 8)
                         }
                         Text(isCancelled ? "경기 취소" : "경기 예정")
-                            .font(notoKR(19, .heavy))
+                            .font(notoKR(15, .bold))
                             .foregroundStyle(.white)
                             .padding(.top, 9)
                         if let t = snap.startText, !t.isEmpty, !isCancelled {
+                            // 시각 pill — 안드 승인본과 색상 통일: 코랄 텍스트(0xFF6B7A) +
+                            // 반투명 다크레드 배경(안드 widget_status_pill #33E03545). 기존 검정 pill 교체.
                             Text(t)
-                                .font(notoKR(13, .heavy))
-                                .foregroundStyle(.white)
+                                .font(notoKR(12, .bold))
+                                .foregroundStyle(Color(hex: 0xFF6B7A))
                                 .padding(.horizontal, 13).padding(.vertical, 5)
-                                .background(Capsule().fill(Color.black.opacity(0.28)))
+                                .background(Capsule().fill(Color(hex: 0xE03545).opacity(0.2)))
                                 .padding(.top, 11)
                         }
                     }
@@ -451,10 +453,10 @@ struct HomeWidgetScheduledCard: View {
         // medium: 풀네임(롯데 자이언츠/LG 트윈스) + 로고·팀명 25%↑(하린아빠 요청). 라틴=Montserrat,
         // 한글=Noto 글자단위 분리. compact(small 위젯)는 공간 제약상 약어 유지.
         // ⚠️ 풀네임은 한 줄에 안 들어가 minimumScaleFactor로 쪼그라들면 오히려 작아진다 →
-        //    medium은 2줄 허용(롯데/자이언츠)으로 16pt 폰트 유지(하린아빠 "텍스트 더 작아짐" 수정).
+        //    medium은 2줄 허용(롯데/자이언츠). 안드 승인본(14sp)에 맞춰 14pt로 축소(하린아빠 "너무 큼").
         let name: Text = compact
             ? Text(teamShortName(code)).font(montserrat(11, .heavy))
-            : mixedScriptText(teamFullName(code), 16, .heavy)
+            : mixedScriptText(teamFullName(code), 14, .heavy)
         return VStack(spacing: 3) {
             ZStack {
                 Circle().fill(.white)
