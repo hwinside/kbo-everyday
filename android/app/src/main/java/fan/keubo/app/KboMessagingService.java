@@ -38,6 +38,12 @@ public class KboMessagingService extends MessagingService {
             // 팀/점수/이닝은 서버가 gameId에서 파싱한 2자 코드로 실어 보냄. 최애팀(w_my)은 보통
             // 비어 있어 디바이스 저장값(앱이 기록)을 유지. 주자/투수/타자는 푸시엔 없어 비움
             // (경기룸 포그라운드 진입 시 풀 데이터로 채워짐).
+            // gameId = url("/games/{gameId}") 마지막 세그먼트 → 06:00 롤오버 기준일.
+            String gameId = "";
+            if (path != null) {
+                int slash = path.lastIndexOf('/');
+                gameId = slash >= 0 ? path.substring(slash + 1) : path;
+            }
             GameScoreWidget.writeAndRefresh(
                 this,
                 data.get("w_my"),
@@ -54,7 +60,8 @@ public class KboMessagingService extends MessagingService {
                 data.get("w_diamond"),
                 data.get("w_stadium"),
                 data.get("w_astarter"),
-                data.get("w_hstarter"));
+                data.get("w_hstarter"),
+                gameId);
             // 그 다음 잠금화면 알림 카드 게시(prefs 기반 RemoteViews).
             GameNotificationPlugin.post(
                 this,
@@ -62,8 +69,11 @@ public class KboMessagingService extends MessagingService {
                 body == null ? "" : body,
                 path == null ? "" : path);
         } else if ("game_end".equals(kind)) {
+            // 잠금화면 진행중 알림은 내리되, 홈 위젯은 비우지 않고 종료 상태로 남긴다
+            // (스코어·gameId·next 보존) → 앱 미실행 상태에서도 다음날 06:00에 다음 예정
+            // 경기로 자동 롤오버(readEff). 통째 clear하면 hasGame=false라 롤오버가 무력화됨.
             GameNotificationPlugin.clear(this);
-            GameScoreWidget.clear(this);
+            GameScoreWidget.markFinal(this);
         }
     }
 }
