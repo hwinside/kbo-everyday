@@ -100,10 +100,9 @@ function weekToMonday(weekStr: string): string {
 }
 
 function isWeekNotYet(weekStr: string, dKey: string, targetDate: string): boolean {
-  // 집계(computeCohortRetention)가 '오늘(미완료일)'을 eligible에서 제외하므로 각 셀은
-  // 완료된 날 관측만 담는다. 표시단은 주 시작(월)+N일이 아직 안 온 미래 칸만 비운다.
-  const offset = D_OFFSETS[dKey] ?? 0;
-  return addKSTDays(weekToMonday(weekStr), offset) > targetDate;
+  // 집계(computeCohortRetention)가 '오늘(미완료일)'을 eligible에서 제외해 오늘 row를 안 만든다.
+  // 표시단도 동일 기준(>=)으로 오늘·미완료 칸을 blank 처리 → route 기본값 0이 '—'로 뜨는 것 방지.
+  return isDayIncomplete(weekToMonday(weekStr), dKey, targetDate);
 }
 
 interface RetentionData {
