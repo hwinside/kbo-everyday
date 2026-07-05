@@ -84,11 +84,14 @@ export async function pushLiveActivityUpdates(
 ): Promise<{ pushed: number; ended: number; cleaned: number } | { error: string }> {
   if (!apnsConfigured()) return { pushed: 0, ended: 0, cleaned: 0 };
 
-  // 푸시 대상 = 라이브 + 종료 경기. 종료는 토큰 있을 때만 end(반복 방지).
-  const stateByGame = new Map<string, "live" | "final">();
+  // 푸시 대상 = 라이브 + 종료 + 취소 경기. 종료/취소는 토큰 있을 때만 end(반복 방지).
+  // 취소(우천 등)는 라이브 전환 없이 끝나므로, end를 안 보내면 "경기 예정" 카드가 잠금화면에
+  // 영구히 얼어붙는다(staleDate 미전송이라 iOS가 옛 값 그대로 둠) — final과 동일하게 정리한다.
+  const stateByGame = new Map<string, "live" | "final" | "cancelled">();
   for (const g of games) {
     const s = gameStatus(g);
     if (s === "live" || s === "final") stateByGame.set(g.G_ID, s);
+    else if (g.CANCEL_SC_ID !== "0" && g.G_ID) stateByGame.set(g.G_ID, "cancelled");
   }
   if (stateByGame.size === 0) return { pushed: 0, ended: 0, cleaned: 0 };
 
@@ -130,15 +133,17 @@ export async function pushLiveActivityUpdates(
       const g = gameById.get(t.game_id);
       const status = stateByGame.get(t.game_id);
       if (!g || !status) return;
-      const isEnd = status === "final";
+      const isEnd = status === "final" || status === "cancelled";
       // 토글 off 유저: 실시간 update는 건너뛰고, end(카드/토큰 정리)만 진행.
       if (optedOut.has(t.user_id) && !isEnd) return;
       const res = await sendLiveActivityPush(
         {
           pushToken: t.push_token,
           event: isEnd ? "end" : "update",
-          contentState: buildContentState(g, status),
-          dismissalDate: isEnd ? nowSec + 15 * 60 : undefined,
+          // 취소 경기는 스코어가 없으니 예정(경기 전) 프레임을 마지막으로 실어 즉시 해제.
+          contentState: buildContentState(g, status === "cancelled" ? "scheduled" : status),
+          // 종료는 15분 잔상 후 제거(리뷰 시간), 취소는 보여줄 게 없으니 즉시 해제.
+          dismissalDate: isEnd ? (status === "cancelled" ? nowSec : nowSec + 15 * 60) : undefined,
           // staleDate 미전송 — 위 주석 참조(스피너 원천 차단).
           // collapse-id = 경기 id: update는 최신 1건만 보관(store-and-forward)되고, end가
           // 대기 중 update를 대체(종료 후 stale update 재생 방지).
