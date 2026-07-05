@@ -53,6 +53,16 @@ public class GameScoreWidget extends AppWidgetProvider {
     static final String KEY_STADIUM = "stadium"; // 경기장명(잠실 등) — 점수 위 별도 표시
     static final String KEY_ASTARTER = "astarter"; // 예고선발(원정) — 예정 경기에서만
     static final String KEY_HSTARTER = "hstarter"; // 예고선발(홈)
+    // gameId(YYYYMMDD… ) — 06:00 롤오버 기준일 계산용. 다음 예정 경기(next_*) 자동 전환.
+    static final String KEY_GAME_ID = "game_id";
+    static final String KEY_NEXT_HAS = "next_has";       // 다음 예정 경기 존재(결과/라이브일 때만)
+    static final String KEY_NEXT_AWAY = "next_away";
+    static final String KEY_NEXT_HOME = "next_home";
+    static final String KEY_NEXT_STADIUM = "next_stadium";
+    static final String KEY_NEXT_TIME = "next_time";     // "18:30"
+    static final String KEY_NEXT_DATE = "next_date";     // "7월 5일 (일)"
+    static final String KEY_NEXT_ASTARTER = "next_astarter";
+    static final String KEY_NEXT_HSTARTER = "next_hstarter";
     // legacy(알림 호환) — 위젯 렌더에는 미사용
     static final String KEY_TITLE = "title";
     static final String KEY_SUB = "sub";
@@ -111,27 +121,90 @@ public class GameScoreWidget extends AppWidgetProvider {
         }
     }
 
+    /** prefs에서 읽은 '유효' 위젯 상태 — 06:00 롤오버 적용 후 값. 세 렌더 경로 공용. */
+    static class Eff {
+        boolean hasGame;
+        String myTeam = "", away = "", home = "", as = "0", hs = "0", status = "";
+        String pitcher = "", pteam = "", batter = "", bteam = "", outs = "", diamond = "000";
+        String stadium = "", astarter = "", hstarter = "";
+    }
+
+    /** prefs 읽기 + 홈 팀카드 06:00 규칙 적용(경기일 다음날 06:00 지나면 다음 예정 경기로 전환).
+     *  앱이 백그라운드라 prefs 재기록이 안 돼도 위젯이 스스로 '경기 예정'으로 넘어가게 한다. */
+    static Eff readEff(Context context) {
+        SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        Eff e = new Eff();
+        e.hasGame = p.getBoolean(KEY_HAS_GAME, false);
+        e.myTeam = p.getString(KEY_MY_TEAM, "");
+        e.away = p.getString(KEY_AWAY, "");
+        e.home = p.getString(KEY_HOME, "");
+        e.as = p.getString(KEY_AS, "0");
+        e.hs = p.getString(KEY_HS, "0");
+        e.status = p.getString(KEY_STATUS, "");
+        e.pitcher = p.getString(KEY_PITCHER, "");
+        e.pteam = p.getString(KEY_PTEAM, "");
+        e.batter = p.getString(KEY_BATTER, "");
+        e.bteam = p.getString(KEY_BTEAM, "");
+        e.outs = p.getString(KEY_OUTS, "");
+        e.diamond = p.getString(KEY_DIAMOND, "000");
+        e.stadium = p.getString(KEY_STADIUM, "");
+        e.astarter = p.getString(KEY_ASTARTER, "");
+        e.hstarter = p.getString(KEY_HSTARTER, "");
+
+        // 상태 무관(예정 포함) — 경기일 다음날 06:00을 지났고 다음 예정 경기가 있으면 전환.
+        // 미래 예정 경기(gameId가 미래)면 pastRollover=false라 그대로 유지된다.
+        if (e.hasGame && p.getBoolean(KEY_NEXT_HAS, false)
+                && pastRollover(p.getString(KEY_GAME_ID, ""))) {
+            e.away = p.getString(KEY_NEXT_AWAY, e.away);
+            e.home = p.getString(KEY_NEXT_HOME, e.home);
+            e.as = "0"; e.hs = "0";
+            e.stadium = p.getString(KEY_NEXT_STADIUM, "");
+            e.astarter = p.getString(KEY_NEXT_ASTARTER, "");
+            e.hstarter = p.getString(KEY_NEXT_HSTARTER, "");
+            e.pitcher = ""; e.pteam = ""; e.batter = ""; e.bteam = ""; e.outs = ""; e.diamond = "000";
+            e.status = "SCHEDULED|" + p.getString(KEY_NEXT_TIME, "") + "|" + p.getString(KEY_NEXT_DATE, "");
+        }
+        return e;
+    }
+
+    /** 결과 스냅샷을 다음 예정 경기로 넘길 시각(경기일 다음날 06:00 KST)을 지났는가. */
+    static boolean pastRollover(String gameId) {
+        if (gameId == null || gameId.length() < 8) return false;
+        try {
+            int y = Integer.parseInt(gameId.substring(0, 4));
+            int mo = Integer.parseInt(gameId.substring(4, 6));
+            int d = Integer.parseInt(gameId.substring(6, 8));
+            java.util.Calendar cal =
+                java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("Asia/Seoul"));
+            cal.clear();
+            cal.set(y, mo - 1, d, 6, 0, 0);
+            cal.add(java.util.Calendar.DAY_OF_MONTH, 1); // 경기일 다음날 06:00
+            return System.currentTimeMillis() >= cal.getTimeInMillis();
+        } catch (NumberFormatException ex) {
+            return false;
+        }
+    }
+
     /** 현재 prefs로 카드 RemoteViews 생성 — 위젯 + 잠금화면 알림 카드 공용.
      *  경기 없으면 빈 상태("경기 정보가 없어요"). */
     static RemoteViews buildCard(Context context) {
-        SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        boolean hasGame = p.getBoolean(KEY_HAS_GAME, false);
-
-        String myTeam = p.getString(KEY_MY_TEAM, "");
-        String away = p.getString(KEY_AWAY, "");
-        String home = p.getString(KEY_HOME, "");
-        String as = p.getString(KEY_AS, "0");
-        String hs = p.getString(KEY_HS, "0");
-        String status = p.getString(KEY_STATUS, "");
-        String pitcher = p.getString(KEY_PITCHER, "");
-        String pteam = p.getString(KEY_PTEAM, "");
-        String batter = p.getString(KEY_BATTER, "");
-        String bteam = p.getString(KEY_BTEAM, "");
-        String outs = p.getString(KEY_OUTS, "");
-        String diamond = p.getString(KEY_DIAMOND, "000");
-        String stadium = p.getString(KEY_STADIUM, "");
-        String astarter = p.getString(KEY_ASTARTER, "");
-        String hstarter = p.getString(KEY_HSTARTER, "");
+        Eff e = readEff(context);
+        boolean hasGame = e.hasGame;
+        String myTeam = e.myTeam;
+        String away = e.away;
+        String home = e.home;
+        String as = e.as;
+        String hs = e.hs;
+        String status = e.status;
+        String pitcher = e.pitcher;
+        String pteam = e.pteam;
+        String batter = e.batter;
+        String bteam = e.bteam;
+        String outs = e.outs;
+        String diamond = e.diamond;
+        String stadium = e.stadium;
+        String astarter = e.astarter;
+        String hstarter = e.hstarter;
 
         RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget_game_score);
 
@@ -284,16 +357,16 @@ public class GameScoreWidget extends AppWidgetProvider {
     /** 스몰(2x2) 위젯 카드 — iOS systemSmall(HomeWidgetSmallCard) 등가. 같은 prefs 공유, 렌더만 컴팩트.
      *  가운데=라이브/종료 점수 or 예정 VS, 하단 pill=LIVE 이닝/경기 종료/시각. 경기 없으면 빈 상태. */
     static RemoteViews buildSmallCard(Context context) {
-        SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        boolean hasGame = p.getBoolean(KEY_HAS_GAME, false);
-        String myTeam = p.getString(KEY_MY_TEAM, "");
-        String away = p.getString(KEY_AWAY, "");
-        String home = p.getString(KEY_HOME, "");
-        String as = p.getString(KEY_AS, "0");
-        String hs = p.getString(KEY_HS, "0");
-        String status = p.getString(KEY_STATUS, "");
-        String astarter = p.getString(KEY_ASTARTER, "");
-        String hstarter = p.getString(KEY_HSTARTER, "");
+        Eff e = readEff(context);
+        boolean hasGame = e.hasGame;
+        String myTeam = e.myTeam;
+        String away = e.away;
+        String home = e.home;
+        String as = e.as;
+        String hs = e.hs;
+        String status = e.status;
+        String astarter = e.astarter;
+        String hstarter = e.hstarter;
 
         RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget_game_score_small);
 
@@ -466,12 +539,12 @@ public class GameScoreWidget extends AppWidgetProvider {
 
     /** 알림 접힌 뷰용 컴팩트 카드(점수 한 줄). 경기 없으면 null. */
     static RemoteViews buildCompactCard(Context context) {
-        SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        String away = p.getString(KEY_AWAY, "");
-        String home = p.getString(KEY_HOME, "");
-        if (!p.getBoolean(KEY_HAS_GAME, false) || away.isEmpty() || home.isEmpty()) return null;
+        Eff e = readEff(context);
+        String away = e.away;
+        String home = e.home;
+        if (!e.hasGame || away.isEmpty() || home.isEmpty()) return null;
 
-        String myTeam = p.getString(KEY_MY_TEAM, "");
+        String myTeam = e.myTeam;
         String bgTeam = !myTeam.isEmpty() ? myTeam : home;
         RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.notif_card_compact);
         int bgRes = draw(context, "widget_bg_" + bgTeam.toLowerCase());
@@ -483,7 +556,7 @@ public class GameScoreWidget extends AppWidgetProvider {
         if (homeLogo != 0) v.setImageViewResource(R.id.ncc_home_logo, homeLogo);
         v.setTextViewText(R.id.ncc_away_name, shortName(away));
         v.setTextViewText(R.id.ncc_home_name, shortName(home));
-        String status = p.getString(KEY_STATUS, "");
+        String status = e.status;
         boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
         if (isScheduled) {
             v.setViewVisibility(R.id.ncc_score, View.GONE);
@@ -492,7 +565,7 @@ public class GameScoreWidget extends AppWidgetProvider {
         } else {
             v.setViewVisibility(R.id.ncc_score, View.VISIBLE);
             v.setViewVisibility(R.id.ncc_score_scheduled, View.GONE);
-            v.setTextViewText(R.id.ncc_score, p.getString(KEY_AS, "0") + " : " + p.getString(KEY_HS, "0"));
+            v.setTextViewText(R.id.ncc_score, e.as + " : " + e.hs);
         }
 
         if (status.isEmpty()) {
@@ -516,11 +589,36 @@ public class GameScoreWidget extends AppWidgetProvider {
 
     /** 구조화 데이터 기록 후 배치된 위젯 즉시 갱신.
      *  myTeam==null/빈값 → 기존 최애팀 값 유지(푸시는 디바이스 최애팀을 모름). */
+    /** FCM 라이브 갱신 경로(다음 예정 경기 없음). gameId만 함께 기록해 06:00 롤오버 기준일 유지. */
     static void writeAndRefresh(Context ctx, String myTeam, String away, String home,
                                 String as, String hs, String status, String pitcher, String pteam,
                                 String batter, String bteam, String outs, String diamond,
-                                String stadium, String astarter, String hstarter) {
+                                String stadium, String astarter, String hstarter, String gameId) {
+        writeInternal(ctx, myTeam, away, home, as, hs, status, pitcher, pteam,
+            batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId,
+            false, "", "", "", "", "", "", "");
+    }
+
+    /** 앱(홈) 경로 — 결과/라이브 경기와 함께 '다음 예정 경기'를 실어 위젯 06:00 자동 전환을 준비. */
+    static void writeAndRefreshWithNext(Context ctx, String myTeam, String away, String home,
+                                String as, String hs, String status, String pitcher, String pteam,
+                                String batter, String bteam, String outs, String diamond,
+                                String stadium, String astarter, String hstarter, String gameId,
+                                String nAway, String nHome, String nStadium, String nTime,
+                                String nDate, String nAStarter, String nHStarter) {
+        writeInternal(ctx, myTeam, away, home, as, hs, status, pitcher, pteam,
+            batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId,
+            true, nAway, nHome, nStadium, nTime, nDate, nAStarter, nHStarter);
+    }
+
+    private static void writeInternal(Context ctx, String myTeam, String away, String home,
+                                String as, String hs, String status, String pitcher, String pteam,
+                                String batter, String bteam, String outs, String diamond,
+                                String stadium, String astarter, String hstarter, String gameId,
+                                boolean hasNext, String nAway, String nHome, String nStadium,
+                                String nTime, String nDate, String nAStarter, String nHStarter) {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String prevGameId = p.getString(KEY_GAME_ID, "");
         SharedPreferences.Editor e = p.edit();
         e.putBoolean(KEY_HAS_GAME, true);
         e.putString(KEY_STADIUM, stadium == null ? "" : stadium);
@@ -538,6 +636,20 @@ public class GameScoreWidget extends AppWidgetProvider {
         e.putString(KEY_BTEAM, bteam == null ? "" : bteam);
         e.putString(KEY_OUTS, outs == null ? "" : outs);
         e.putString(KEY_DIAMOND, (diamond == null || diamond.isEmpty()) ? "000" : diamond);
+        e.putString(KEY_GAME_ID, gameId == null ? "" : gameId);
+        if (hasNext) {
+            e.putBoolean(KEY_NEXT_HAS, true);
+            e.putString(KEY_NEXT_AWAY, nAway == null ? "" : nAway);
+            e.putString(KEY_NEXT_HOME, nHome == null ? "" : nHome);
+            e.putString(KEY_NEXT_STADIUM, nStadium == null ? "" : nStadium);
+            e.putString(KEY_NEXT_TIME, nTime == null ? "" : nTime);
+            e.putString(KEY_NEXT_DATE, nDate == null ? "" : nDate);
+            e.putString(KEY_NEXT_ASTARTER, nAStarter == null ? "" : nAStarter);
+            e.putString(KEY_NEXT_HSTARTER, nHStarter == null ? "" : nHStarter);
+        } else if (gameId == null || !gameId.equals(prevGameId)) {
+            // 다른 경기로 바뀌면(FCM 라이브 등) 이전 경기의 stale next 제거 → 오탐 롤오버 방지.
+            e.putBoolean(KEY_NEXT_HAS, false);
+        }
         e.apply();
         refresh(ctx);
     }
@@ -546,6 +658,16 @@ public class GameScoreWidget extends AppWidgetProvider {
     static void clear(Context ctx) {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         p.edit().putBoolean(KEY_HAS_GAME, false).apply();
+        refresh(ctx);
+    }
+
+    /** 경기 종료 처리 — 홈 위젯은 비우지 않고 종료 상태로 남긴다(스코어·gameId·next 보존).
+     *  이렇게 해야 앱 미실행 상태에서도 readEff의 06:00 롤오버가 다음 예정 경기로 전환된다.
+     *  잠금화면 진행중 알림은 별도로 GameNotificationPlugin.clear()가 내린다(game_end 경로). */
+    static void markFinal(Context ctx) {
+        SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        if (!p.getBoolean(KEY_HAS_GAME, false)) return;
+        p.edit().putString(KEY_STATUS, "FINAL").apply();
         refresh(ctx);
     }
 
