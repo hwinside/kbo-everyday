@@ -30,7 +30,7 @@ function getKSTDateStr(): string {
 
 // 잠금화면 Live Activity "중계 한 줄" 소스 — /api/game-relay 응답에서 최근 플레이 1줄 추출.
 // innings는 시간순 오름차순(parseInningRelays), plays도 오름차순 → 마지막 non-empty 이닝의
-// 마지막 play = 최신. 예: "7회초 안재석 삼진 아웃". 파싱 실패/데이터 없으면 null(카드 무영향).
+// 마지막 play = 최신. 예: "안재석 삼진 아웃"(이닝은 상단 LIVE 표기와 중복이라 제외). 실패 시 null(카드 무영향).
 type RelayLite = { innings?: { inning: number; half: string; plays?: { batterName: string; result: string }[] }[] };
 function latestRelayLine(relay: unknown): string | null {
   const innings = (relay as RelayLite)?.innings;
@@ -44,8 +44,8 @@ function latestRelayLine(relay: unknown): string | null {
     }
   }
   if (!lastInn || !lastPlay || !lastPlay.batterName || !lastPlay.result) return null;
-  const half = lastInn.half === "top" ? "초" : "말";
-  const line = `${lastInn.inning}회${half} ${lastPlay.batterName} ${lastPlay.result}`;
+  // 이닝(N회초/말)은 카드 상단 LIVE 표기와 중복 → 타자 + 결과만 (하린아빠 승인 목업).
+  const line = `${lastPlay.batterName} ${lastPlay.result}`;
   return line.length > 40 ? line.slice(0, 39) + "…" : line;
 }
 
