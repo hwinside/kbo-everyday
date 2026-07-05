@@ -63,11 +63,6 @@ const D_OFFSETS: Record<string, number> = {
 /** 히트맵 열 순서 (D0 = 가입 당일) */
 const D_KEYS = ["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d14", "d30"] as const;
 
-function isDayNotYet(cohortDate: string, dKey: string, targetDate: string): boolean {
-  const offset = D_OFFSETS[dKey] ?? 0;
-  return addKSTDays(cohortDate, offset) > targetDate;
-}
-
 /** KBO는 월요일 경기 없음 → 해당일이 타깃이면 리텐션이 자연 저조. targetDay(YYYY-MM-DD)가 월요일인지. */
 function isNoGameMonday(dateStr: string): boolean {
   // UTC 정오 기준으로 요일 판정 — 런타임 타임존과 무관하게 캘린더 날짜의 요일 확정
@@ -105,7 +100,11 @@ function weekToMonday(weekStr: string): string {
 }
 
 function isWeekNotYet(weekStr: string, dKey: string, targetDate: string): boolean {
-  return isDayNotYet(weekToMonday(weekStr), dKey, targetDate);
+  // 주간 코호트는 유저별 '가입일+N일' 기준이라, 주 후반 가입자의 미성숙 관측이 섞이면
+  // 최근 주 D-N이 낮게 왜곡됨. 그 주 마지막 가입 가능일(일요일)+N일이 완료돼야 셀 노출
+  // → 진행 중인 주는 통째로 숨고, 주가 끝난 뒤 D0부터 하루씩 순차 공개.
+  const weekSunday = addKSTDays(weekToMonday(weekStr), 6);
+  return isDayIncomplete(weekSunday, dKey, targetDate);
 }
 
 interface RetentionData {
@@ -183,7 +182,7 @@ export default function RetentionPage() {
 
       <div className="glass-card p-5">
         <h2 className="text-sm font-semibold mb-1">주간 코호트 리텐션 히트맵</h2>
-        <p className="text-[11px] text-gray-500 mb-4">D0 = 가입 당일 활동. page_view 계측이 온전한 6/26 이후(2026-W27~) 코호트만 표시.</p>
+        <p className="text-[11px] text-gray-500 mb-4">D0 = 가입 당일 활동. page_view 계측이 온전한 6/26 이후(2026-W27~) 코호트만 표시. 진행 중인 주는 완료 후 D0부터 하루씩 순차 공개(미성숙 관측 왜곡 방지).</p>
         {data.cohort.length === 0 ? (
           <p className="text-gray-500 text-sm">데이터 없음</p>
         ) : (
@@ -287,7 +286,8 @@ export default function RetentionPage() {
       </div>
 
       <div className="glass-card p-5">
-        <h2 className="text-sm font-semibold mb-4">Activation Funnel</h2>
+        <h2 className="text-sm font-semibold mb-1">Activation Funnel</h2>
+        <p className="text-[11px] text-gray-500 mb-4">6/26 이후 가입 코호트 기준 (그 전 초기 유저 제외). 상단 Activation 완료율 = 첫 채팅 도달률.</p>
         {data.funnel.length === 0 ? (
           <p className="text-gray-500 text-sm">데이터 없음</p>
         ) : (

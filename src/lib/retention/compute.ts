@@ -216,48 +216,49 @@ export async function computeDailyCohortRetention(
 
 /**
  * Activation Funnel 집계: 가입→팀선택→첫글쓰기→첫댓글→첫채팅.
- * 전체 가입자 중 각 단계 도달 비율.
+ * MIN_DAILY_COHORT(데이터 온전 시점) 이후 가입 코호트 기준 각 단계 도달 비율.
  */
 export async function computeActivationFunnel(
   supabase: SupabaseClient,
   targetDate: string,
 ): Promise<MetricRow[]> {
-  // 전체 가입자 수
-  const { count: totalSignups } = await supabase
-    .from("profiles")
-    .select("*", { count: "exact", head: true })
-    .lte("created_at", targetDate + "T23:59:59+09:00");
+  // "데이터 제대로 쌓인" 시점(MIN_DAILY_COHORT) 이후 가입 코호트만 — 초기 눈팅/성장기 유저 제외.
+  // 분자·분모 모두 이 코호트 기준으로 통일 (일별 리텐션 표와 동일 창).
+  const cohortProfiles = await fetchAllPages<{ id: string; team_id: string | null }>(
+    () => supabase.from("profiles").select("id, team_id")
+      .gte("created_at", MIN_DAILY_COHORT + "T00:00:00+09:00")
+      .lte("created_at", targetDate + "T23:59:59+09:00")
+      .order("created_at", { ascending: true }),
+  );
+  const cohortIds = new Set(cohortProfiles.map((p) => p.id));
+  const totalSignups = cohortIds.size;
 
   if (!totalSignups) return [];
 
-  // 팀 선택 완료 (team_id not null)
-  const { count: teamSelected } = await supabase
-    .from("profiles")
-    .select("*", { count: "exact", head: true })
-    .lte("created_at", targetDate + "T23:59:59+09:00")
-    .not("team_id", "is", null);
+  // 팀 선택 완료 (team_id not null) — 코호트 내
+  const teamSelected = cohortProfiles.filter((p) => p.team_id != null).length;
 
-  // 첫 글쓰기
+  // 첫 글쓰기 (코호트 유저만)
   const postUsers = await fetchAllPages<{ author_id: string }>(
     () => supabase.from("posts").select("author_id").lte("created_at", targetDate + "T23:59:59+09:00").order("created_at", { ascending: true }),
   );
-  const uniquePostUsers = new Set(postUsers.map((r) => r.author_id)).size;
+  const uniquePostUsers = new Set(postUsers.map((r) => r.author_id).filter((id) => cohortIds.has(id))).size;
 
-  // 첫 댓글
+  // 첫 댓글 (코호트 유저만)
   const commentUsers = await fetchAllPages<{ author_id: string }>(
     () => supabase.from("comments").select("author_id").lte("created_at", targetDate + "T23:59:59+09:00").order("created_at", { ascending: true }),
   );
-  const uniqueCommentUsers = new Set(commentUsers.map((r) => r.author_id)).size;
+  const uniqueCommentUsers = new Set(commentUsers.map((r) => r.author_id).filter((id) => cohortIds.has(id))).size;
 
-  // 첫 채팅
+  // 첫 채팅 (코호트 유저만)
   const chatUsers = await fetchAllPages<{ user_id: string }>(
     () => supabase.from("chat_messages").select("user_id").lte("created_at", targetDate + "T23:59:59+09:00").order("created_at", { ascending: true }),
   );
-  const uniqueChatUsers = new Set(chatUsers.map((r) => r.user_id)).size;
+  const uniqueChatUsers = new Set(chatUsers.map((r) => r.user_id).filter((id) => cohortIds.has(id))).size;
 
   const steps = [
     { key: "signup", value: totalSignups },
-    { key: "team_select", value: teamSelected ?? 0 },
+    { key: "team_select", value: teamSelected },
     { key: "first_post", value: uniquePostUsers },
     { key: "first_comment", value: uniqueCommentUsers },
     { key: "first_chat", value: uniqueChatUsers },
