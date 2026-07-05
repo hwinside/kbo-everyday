@@ -164,7 +164,13 @@ export async function pushLiveActivityUpdates(
     }),
   );
 
-  // 무효 토큰 + 종료 경기 토큰 정리.
+  // 무효 토큰 + 종료/취소 경기 토큰 정리 + started_users close.
+  // ⚠️ started_users도 함께 닫는다(삼순 #530 blocker): 안 하면 같은 warmup 틱에서 이 함수가
+  // 토큰을 지운 뒤 pushLiveActivitySilentWakes가 gap(=started_users − tokens)을 계산할 때,
+  // 이미 end된(토큰만 사라진) 사용자가 다시 gap으로 잡혀 매 틱 반복 wake된다. 카드가 end됐거나
+  // (final/cancelled) 토큰이 무효면 started도 닫아 gap에서 빠지게 한다. 이후 wake로 토큰이 재등록된
+  // 사용자도 다음 틱 end 성공 시 started까지 제거돼 반복 wake가 멎는다. (final/cancelled 재start는
+  // start 윈도우 밖이라 close해도 재생성 안 됨.)
   const toDelete = [...invalidTokenIds, ...endedTokenIds];
   let cleaned = 0;
   for (const d of toDelete) {
@@ -174,6 +180,11 @@ export async function pushLiveActivityUpdates(
       .eq("user_id", d.user_id)
       .eq("game_id", d.game_id);
     if (!delErr) cleaned += 1;
+    await supabase
+      .from("live_activity_started_users")
+      .delete()
+      .eq("user_id", d.user_id)
+      .eq("game_id", d.game_id);
   }
 
   return { pushed, ended, cleaned };
