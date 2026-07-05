@@ -249,6 +249,7 @@ public class GameScoreWidget extends AppWidgetProvider {
         v.setImageViewBitmap(R.id.widget_home_name, textBitmap(context, fullName(home), 14f, 0xFFE8B0BC));
         boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
         boolean isFinal = status != null && status.startsWith("FINAL");
+        boolean isCancelled = "CANCELLED".equals(status);
         // 예정 status = "SCHEDULED|<시간>|<날짜라벨>" (날짜라벨은 선택)
         String schedTime = "";
         String dateLabel = "";
@@ -258,10 +259,11 @@ public class GameScoreWidget extends AppWidgetProvider {
             schedTime = bar >= 0 ? sched.substring(0, bar) : sched;
             dateLabel = bar >= 0 ? sched.substring(bar + 1) : "";
         }
-        if (isScheduled) {
+        // 예정/취소는 점수 숨기고 가운데 문구(예정="경기 예정", 취소="경기 취소"). 라이브/종료는 점수.
+        if (isScheduled || isCancelled) {
             v.setViewVisibility(R.id.widget_score, View.GONE);
             v.setViewVisibility(R.id.widget_score_scheduled, View.VISIBLE);
-            v.setTextViewText(R.id.widget_score_scheduled, "경기 예정");
+            v.setTextViewText(R.id.widget_score_scheduled, isCancelled ? "경기 취소" : "경기 예정");
         } else {
             // 라이브/종료 둘 다 점수 표시 (종료=결과). Montserrat 숫자 비트맵.
             v.setViewVisibility(R.id.widget_score, View.VISIBLE);
@@ -290,7 +292,7 @@ public class GameScoreWidget extends AppWidgetProvider {
             v.setViewVisibility(R.id.widget_status, View.GONE);
         } else {
             v.setViewVisibility(R.id.widget_status, View.VISIBLE);
-            String pill = isScheduled ? schedTime : isFinal ? "경기 종료" : "● " + status;
+            String pill = isCancelled ? "경기 취소" : isScheduled ? schedTime : isFinal ? "경기 종료" : "● " + status;
             v.setImageViewBitmap(R.id.widget_status_img, textBitmap(context, pill, 12f, 0xFFFF6B7A));
         }
 
@@ -406,15 +408,16 @@ public class GameScoreWidget extends AppWidgetProvider {
 
         boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
         boolean isFinal = status != null && status.startsWith("FINAL");
+        boolean isCancelled = "CANCELLED".equals(status);
         String schedTime = "";
         if (isScheduled) {
             String sched = status.substring("SCHEDULED|".length());
             int bar = sched.indexOf('|');
             schedTime = bar >= 0 ? sched.substring(0, bar) : sched;
         }
-        // 가운데 VS는 항상 표시. 라이브/종료는 팀 약어 밑에 점수, 예정은 점수 숨김.
-        v.setImageViewBitmap(R.id.widget_small_vs, textBitmap(context, "VS", 14f, 0xB3FFFFFF));
-        if (isScheduled) {
+        // 가운데 VS는 항상 표시(취소는 ✕). 라이브/종료는 팀 약어 밑에 점수, 예정/취소는 점수 숨김.
+        v.setImageViewBitmap(R.id.widget_small_vs, textBitmap(context, isCancelled ? "✕" : "VS", 14f, 0xB3FFFFFF));
+        if (isScheduled || isCancelled) {
             v.setViewVisibility(R.id.widget_small_away_score, View.GONE);
             v.setViewVisibility(R.id.widget_small_home_score, View.GONE);
         } else {
@@ -428,7 +431,7 @@ public class GameScoreWidget extends AppWidgetProvider {
             v.setViewVisibility(R.id.widget_small_status, View.GONE);
         } else {
             v.setViewVisibility(R.id.widget_small_status, View.VISIBLE);
-            String pill = isScheduled ? schedTime + " 경기 예정" : isFinal ? "경기 종료" : "● " + status;
+            String pill = isCancelled ? "경기 취소" : isScheduled ? schedTime + " 경기 예정" : isFinal ? "경기 종료" : "● " + status;
             // TextView(비트맵 아님) — pill/선발/매치업 12sp 동일 렌더.
             v.setTextViewText(R.id.widget_small_status_img, pill);
         }
