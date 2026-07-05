@@ -118,7 +118,7 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
         let status = call.getString("status") ?? "scheduled"
-        let dict: [String: Any] = [
+        var dict: [String: Any] = [
             "hasGame": true,
             "gameId": gameId,
             "awayTeamCode": awayTeamCode,
@@ -142,6 +142,23 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             "awayStarter": call.getString("awayStarter") ?? "",
             "homeStarter": call.getString("homeStarter") ?? "",
         ]
+        // 다음 예정 경기(위젯 06:00 자동 전환 타깃) — live/final일 때만 JS가 실어 보낸다.
+        if let next = call.getObject("next"),
+           let nextGameId = next["gameId"] as? String,
+           let nextAway = next["awayTeamCode"] as? String,
+           let nextHome = next["homeTeamCode"] as? String {
+            dict["next"] = [
+                "gameId": nextGameId,
+                "awayTeamCode": nextAway,
+                "homeTeamCode": nextHome,
+                "myTeamCode": (next["myTeamCode"] as? String) ?? "",
+                "stadium": (next["stadium"] as? String) ?? "",
+                "startText": (next["startText"] as? String) ?? "",
+                "dateText": (next["dateText"] as? String) ?? "",
+                "awayStarter": (next["awayStarter"] as? String) ?? "",
+                "homeStarter": (next["homeStarter"] as? String) ?? "",
+            ]
+        }
         WidgetSnapshotStore.write(dict)
         call.resolve()
     }

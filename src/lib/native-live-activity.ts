@@ -74,6 +74,22 @@ export interface WidgetSnapshotInput {
   /** 예고선발 투수명(원정/홈). scheduled에서만. 미확정이면 빈 문자열("선발 미정" 폴백). */
   awayStarter?: string;
   homeStarter?: string;
+  /** 다음 예정 경기 — live/final 스냅샷일 때만. 위젯이 '경기일 다음날 06:00'에 앱 실행 없이
+   *  이 경기로 자동 전환한다(홈 팀카드 06시 규칙). 예정 카드 렌더에 필요한 필드만. */
+  next?: WidgetNextGame;
+}
+
+/** 다음 예정 경기(라이트) — 위젯 06:00 롤오버 타깃. */
+export interface WidgetNextGame {
+  gameId: string;
+  awayTeamCode: string;
+  homeTeamCode: string;
+  myTeamCode: string;
+  stadium: string;
+  startText: string;
+  dateText: string;
+  awayStarter?: string;
+  homeStarter?: string;
 }
 
 /** teamId(1-10) → KBO 2자 코드 (gameId·공식 코드 기준). */
@@ -277,9 +293,26 @@ export async function writeWidgetSnapshot(input: WidgetSnapshotInput): Promise<v
 export async function writeHomeWidgetSnapshot(
   myTeamId: number | null,
   game: HomeWidgetGame,
+  nextGame?: HomeWidgetGame | null,
 ): Promise<void> {
   if (!isNativeIOS()) return;
   const inningNum = game.inning ? parseInt(game.inning, 10) || 1 : 1;
+  const myTeamCode = myTeamId ? ID_TO_KBO_CODE[myTeamId] ?? "" : "";
+  // 결과/라이브 경기일 때만 다음 예정 경기를 함께 실어 위젯 06:00 자동 전환을 준비한다.
+  const next: WidgetNextGame | undefined =
+    (game.status === "live" || game.status === "final") && nextGame
+      ? {
+          gameId: nextGame.gameId,
+          awayTeamCode: ID_TO_KBO_CODE[nextGame.awayTeamId] ?? "",
+          homeTeamCode: ID_TO_KBO_CODE[nextGame.homeTeamId] ?? "",
+          myTeamCode,
+          stadium: nextGame.stadium,
+          startText: nextGame.time,
+          dateText: nextGame.dateText ?? "",
+          awayStarter: nextGame.awayStarter ?? "",
+          homeStarter: nextGame.homeStarter ?? "",
+        }
+      : undefined;
   await writeWidgetSnapshot({
     gameId: game.gameId,
     awayTeamCode: ID_TO_KBO_CODE[game.awayTeamId] ?? "",
@@ -301,5 +334,6 @@ export async function writeHomeWidgetSnapshot(
     dateText: game.status === "scheduled" ? (game.dateText ?? "") : "",
     awayStarter: game.status === "scheduled" ? (game.awayStarter ?? "") : "",
     homeStarter: game.status === "scheduled" ? (game.homeStarter ?? "") : "",
+    next,
   });
 }

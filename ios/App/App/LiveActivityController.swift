@@ -416,7 +416,19 @@ enum WidgetSnapshotStore {
 
     static func write(_ dict: [String: Any]) {
         guard let ud = UserDefaults(suiteName: appGroupId) else { return }
-        if let data = try? JSONSerialization.data(withJSONObject: dict) {
+        var out = dict
+        // 다음 예정 경기(위젯 06:00 자동 전환용)가 이번 쓰기에 없으면, 같은 경기의 기존
+        // 스냅샷에서 보존한다. 라이브/종료 갱신이 JS 브리지와 네이티브 LA 라이프사이클 양쪽에서
+        // 오므로, next 없는 경로가 덮어써 롤오버 데이터가 유실되는 걸 막는다(같은 gameId 한정).
+        if out["next"] == nil,
+           let data = ud.data(forKey: key),
+           let prev = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let prevGameId = prev["gameId"] as? String,
+           (out["gameId"] as? String) == prevGameId,
+           let prevNext = prev["next"] {
+            out["next"] = prevNext
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: out) {
             ud.set(data, forKey: key)
         }
         WidgetCenter.shared.reloadAllTimelines()

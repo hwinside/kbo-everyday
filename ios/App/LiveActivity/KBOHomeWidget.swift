@@ -53,11 +53,40 @@ struct WidgetGameSnapshot: Codable {
     /// 예고선발 투수명(원정/홈). scheduled에서만. 미확정이면 nil/빈 문자열 → "선발 미정".
     var awayStarter: String? = nil
     var homeStarter: String? = nil
+    /// 다음 예정 경기 — 결과(final)/라이브 스냅샷일 때만 채워짐. 홈 팀카드 06시 규칙대로
+    /// 위젯이 앱 실행 없이 '경기일 다음날 06:00'에 이 경기로 자동 전환(getTimeline).
+    var next: NextGameSnapshot? = nil
 
     /// 렌더 분기용 정규화 상태.
     var resolvedStatus: String {
         if let s = status, !s.isEmpty { return s }
         return isFinal ? "final" : "live"
+    }
+}
+
+/// 다음 예정 경기(라이트). WidgetGameSnapshot를 재귀 저장하면 값 타입 무한크기라 불가 →
+/// 예정 카드 렌더에 필요한 필드만 담고, asSnapshot()으로 scheduled 스냅샷으로 승격한다.
+struct NextGameSnapshot: Codable {
+    var gameId: String
+    var awayTeamCode: String
+    var homeTeamCode: String
+    var myTeamCode: String
+    var stadium: String
+    var startText: String
+    var dateText: String
+    var awayStarter: String? = nil
+    var homeStarter: String? = nil
+
+    func asSnapshot() -> WidgetGameSnapshot {
+        WidgetGameSnapshot(
+            hasGame: true, gameId: gameId,
+            awayTeamCode: awayTeamCode, homeTeamCode: homeTeamCode, myTeamCode: myTeamCode,
+            awayScore: 0, homeScore: 0, inning: 1, isTopInning: true, outs: 0,
+            onFirst: false, onSecond: false, onThird: false,
+            pitcherName: "", batterName: "", stadium: stadium, isFinal: false,
+            status: "scheduled", startText: startText, dateText: dateText,
+            awayStarter: awayStarter, homeStarter: homeStarter
+        )
     }
 }
 
@@ -97,10 +126,48 @@ struct GameWidgetProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<GameWidgetEntry>) -> Void) {
-        let entry = GameWidgetEntry(date: Date(), snapshot: loadSnapshot())
+        let snap = loadSnapshot()
+        let now = Date()
+        var entries: [GameWidgetEntry] = []
+
+        // 홈 팀카드 06시 규칙 이식: 결과/라이브 스냅샷 + 다음 예정 경기가 캐시돼 있으면,
+        // '경기일 다음날 06:00' 시점 엔트리를 추가해 앱 실행 없이도 위젯이 '경기 예정'으로
+        // 스스로 전환한다. iOS 홈 위젯은 서버 푸시 갱신이 불가하므로 타임라인으로 처리.
+        if let snap, let nextRaw = snap.next,
+           snap.resolvedStatus == "final" || snap.resolvedStatus == "live",
+           let rollover = Self.rollover6amKST(gameId: snap.gameId) {
+            let nextSnap = nextRaw.asSnapshot()
+            if now >= rollover {
+                // 이미 전환 시각을 지남 → 지금 바로 예정 경기 표시(앱 미실행 폴백).
+                entries.append(GameWidgetEntry(date: now, snapshot: nextSnap))
+            } else {
+                // 전환 전 → 지금은 결과, rollover 시점에 예정 경기로 자동 전환.
+                entries.append(GameWidgetEntry(date: now, snapshot: snap))
+                entries.append(GameWidgetEntry(date: rollover, snapshot: nextSnap))
+            }
+        } else {
+            entries.append(GameWidgetEntry(date: now, snapshot: snap))
+        }
+
         // 앱이 reloadAllTimelines()로 즉시 갱신하지만, 백그라운드 폴백으로 15분마다 재요청.
-        let next = Date().addingTimeInterval(15 * 60)
-        completion(Timeline(entries: [entry], policy: .after(next)))
+        let refresh = now.addingTimeInterval(15 * 60)
+        completion(Timeline(entries: entries, policy: .after(refresh)))
+    }
+
+    /// 결과 스냅샷을 다음 예정 경기로 넘길 시각 = 경기일(gameId 앞 8자리 YYYYMMDD) 다음날 06:00 KST.
+    static func rollover6amKST(gameId: String) -> Date? {
+        guard gameId.count >= 8 else { return nil }
+        let p = gameId.prefix(8)
+        guard let y = Int(p.prefix(4)),
+              let mo = Int(p.dropFirst(4).prefix(2)),
+              let d = Int(p.dropFirst(6).prefix(2)),
+              let tz = TimeZone(identifier: "Asia/Seoul") else { return nil }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = tz
+        var comp = DateComponents()
+        comp.year = y; comp.month = mo; comp.day = d; comp.hour = 6; comp.minute = 0
+        guard let gameDay6am = cal.date(from: comp) else { return nil }
+        return cal.date(byAdding: .day, value: 1, to: gameDay6am)
     }
 }
 

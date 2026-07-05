@@ -22,7 +22,7 @@ import { useNewsPhotoFilter } from "@/hooks/useNewsPhotoFilter";
 import { isPhotoArticle } from "@/lib/news-relevance";
 import type { HomeSectionKey } from "@/lib/store/home-sections-pref";
 import { setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
-import { writeHomeWidgetSnapshot } from "@/lib/native-live-activity";
+import { writeHomeWidgetSnapshot, type HomeWidgetGame } from "@/lib/native-live-activity";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
 import MyTeamHero from "@/components/home/MyTeamHero";
 import TeamCard from "@/components/home/TeamCard";
@@ -172,6 +172,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   const [aiGame, setAiGame] = useState<{awayTeamId: number; homeTeamId: number; gameId: string} | null>(null);
   const [showLogin, setShowLogin] = useState(false);
   const [nextWidgetGame, setNextWidgetGame] = useState<WidgetGame | null>(null);
+  // iOS 홈 위젯 06:00 자동 전환 타깃 — 현재 위젯 경기가 종료/라이브일 때의 다음 예정 경기.
+  const [rolloverNextGame, setRolloverNextGame] = useState<WidgetGame | null>(null);
   // 자정~06:00 동안 노출할 전날 경기(종료). 야구 '하루'=06시 경계.
   const [overnightGame, setOvernightGame] = useState<WidgetGame | null>(null);
   const lastRefreshAtRef = useRef(0);
@@ -437,14 +439,75 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     });
   }, [myTeamId, widgetGame]);
 
+  // 홈 위젯 06:00 자동 전환 타깃 로드 — 현재 위젯 경기가 종료/라이브일 때 다음 예정 경기를
+  // 미리 캐시해 위젯 스냅샷에 함께 실어 보낸다(앱 미실행 상태에서도 06:00에 '경기 예정'으로 전환).
+  useEffect(() => {
+    if (!myTeamId || !widgetGame || widgetGame.status === "scheduled") {
+      setRolloverNextGame(null);
+      return;
+    }
+    const teamId = myTeamId;
+    let cancelled = false;
+    (async () => {
+      for (let offset = 1; offset <= 14; offset += 1) {
+        const date = formatKSTDateOffset(offset);
+        try {
+          const res = await fetch(`/api/games?date=${formatApiDate(date)}`);
+          if (!res.ok) continue;
+          const data = await res.json();
+          const games = ((data.games ?? []) as ApiGameData[]).map(mapApiGame);
+          const candidate = findWidgetGame(games, teamId);
+          if (candidate) {
+            if (!cancelled) setRolloverNextGame({ ...candidate, dateISO: date });
+            return;
+          }
+        } catch {
+          /* 다음 경기 조회 실패는 무시 — 롤오버 폴백만 비활성 */
+        }
+      }
+      if (!cancelled) setRolloverNextGame(null);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myTeamId, widgetGame?.status, widgetGame?.id]);
+
   // iOS 홈 화면 위젯 — 최애팀 경기(라이브/예정/종료)를 App Group에 기록해 위젯에 표시한다.
   // 라이브 경기가 없을 때 *다음 예정 경기*가 위젯에 뜨게 하는 핵심 fallback 경로.
   // (네이티브 iOS 외엔 no-op.) 스코어/이닝/주자 등 변할 때만 재기록되도록 signature로 dep.
   const widgetSig = widgetGame
     ? `${widgetGame.id}|${widgetGame.status}|${widgetGame.awayScore}|${widgetGame.homeScore}|${widgetGame.inning ?? ""}|${widgetGame.outs ?? ""}|${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}|${widgetGame.currentPitcher ?? ""}|${widgetGame.currentBatter ?? ""}|${widgetGame.awayStarterName ?? ""}|${widgetGame.homeStarterName ?? ""}`
     : "";
+  const rolloverSig =
+    rolloverNextGame && (widgetGame?.status === "live" || widgetGame?.status === "final")
+      ? `${rolloverNextGame.id}|${rolloverNextGame.dateISO ?? ""}|${rolloverNextGame.time}|${rolloverNextGame.awayStarterName ?? ""}|${rolloverNextGame.homeStarterName ?? ""}`
+      : "";
   useEffect(() => {
     if (!widgetGame) return;
+    // 종료/라이브 스냅샷일 때만 다음 예정 경기를 함께 실어 위젯 06:00 자동 전환을 준비.
+    const rolloverNext: HomeWidgetGame | null =
+      rolloverNextGame && (widgetGame.status === "live" || widgetGame.status === "final")
+        ? {
+            gameId: rolloverNextGame.id,
+            awayTeamId: rolloverNextGame.awayTeamId,
+            homeTeamId: rolloverNextGame.homeTeamId,
+            status: "scheduled",
+            awayScore: 0,
+            homeScore: 0,
+            inning: null,
+            isTop: true,
+            outs: 0,
+            runner1b: false,
+            runner2b: false,
+            runner3b: false,
+            currentPitcher: null,
+            currentBatter: null,
+            stadium: rolloverNextGame.stadium,
+            time: rolloverNextGame.time,
+            dateText: formatKoreanDate(rolloverNextGame.dateISO ?? formatKSTDateOffset(1)),
+            awayStarter: rolloverNextGame.awayStarterName ?? null,
+            homeStarter: rolloverNextGame.homeStarterName ?? null,
+          }
+        : null;
     void writeHomeWidgetSnapshot(myTeamId, {
       gameId: widgetGame.id,
       awayTeamId: widgetGame.awayTeamId,
@@ -469,9 +532,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           : "",
       awayStarter: widgetGame.status === "scheduled" ? (widgetGame.awayStarterName ?? "") : "",
       homeStarter: widgetGame.status === "scheduled" ? (widgetGame.homeStarterName ?? "") : "",
-    });
+    }, rolloverNext);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myTeamId, widgetSig]);
+  }, [myTeamId, widgetSig, rolloverSig]);
 
   return (
     <PullToRefresh onRefresh={handleRefresh}>
