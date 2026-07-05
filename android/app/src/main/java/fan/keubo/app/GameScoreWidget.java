@@ -151,8 +151,9 @@ public class GameScoreWidget extends AppWidgetProvider {
         e.astarter = p.getString(KEY_ASTARTER, "");
         e.hstarter = p.getString(KEY_HSTARTER, "");
 
-        boolean curScheduled = e.status != null && e.status.startsWith("SCHEDULED|");
-        if (e.hasGame && !curScheduled && p.getBoolean(KEY_NEXT_HAS, false)
+        // 상태 무관(예정 포함) — 경기일 다음날 06:00을 지났고 다음 예정 경기가 있으면 전환.
+        // 미래 예정 경기(gameId가 미래)면 pastRollover=false라 그대로 유지된다.
+        if (e.hasGame && p.getBoolean(KEY_NEXT_HAS, false)
                 && pastRollover(p.getString(KEY_GAME_ID, ""))) {
             e.away = p.getString(KEY_NEXT_AWAY, e.away);
             e.home = p.getString(KEY_NEXT_HOME, e.home);

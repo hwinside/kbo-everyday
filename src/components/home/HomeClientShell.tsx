@@ -281,13 +281,6 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       } : {}),
     };
   }, [myTeamGameBase, myTeamLive]);
-  const widgetGame = useMemo<WidgetGame | undefined>(() => {
-    // 오늘 최애팀 경기가 있으면 상태 무관(라이브/예정/종료) 우선 표시 —
-    // 종료 경기는 결과(스코어)를 보여주고, 미래 예정 경기로 건너뛰지 않는다.
-    if (myTeamGame) return myTeamGame;
-    return nextWidgetGame ?? undefined;
-  }, [myTeamGame, nextWidgetGame]);
-
   // 1분마다 현재 시각 갱신 → 홈을 켜둔 채 06:00을 넘겨도 경기카드가 자동 전환됨.
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
@@ -295,6 +288,16 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     return () => clearInterval(id);
   }, []);
   const isOvernight = ((new Date(nowMs).getUTCHours() + 9) % 24) < 6;
+
+  // 위젯 write 소스 = 홈 팀카드(embeddedGame)와 *동일한 06시-resolved 경기 선택자*:
+  //  · 자정~06:00(isOvernight): 전날 종료 경기 유지(overnightGame)
+  //  · 06:00~: 오늘 경기(종료 당일=결과) 우선, 없으면 다음 예정경기
+  // 라이브 디테일(투수/타자/주자)은 그대로 유지 — embeddedGame과 달리 coerce하지 않는다.
+  const widgetGame = useMemo<WidgetGame | undefined>(() => {
+    if (isOvernight && overnightGame) return overnightGame;
+    if (myTeamGame) return myTeamGame;
+    return nextWidgetGame ?? undefined;
+  }, [myTeamGame, nextWidgetGame, overnightGame, isOvernight]);
 
   // 팀카드 임베드 경기카드용 — 06시 경계.
   //  · 자정~06:00(isOvernight): 전날 종료 경기 유지(overnightGame)
@@ -417,9 +420,11 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
 
     const batterTeam = widgetGame.isTop ? awayCode : homeCode;
     const pitcherTeam = widgetGame.isTop ? homeCode : awayCode;
-    // 안드 위젯 06:00 자동 전환 타깃 — 결과/라이브일 때만 다음 예정 경기 첨부.
+    // 안드 위젯 06:00 자동 전환 타깃 — 오늘 경기/전날 결과를 쓸 때(=rolloverNextGame 세팅됨)
+    // 상태 무관(예정 포함) 다음 예정 경기 첨부. 예정 경기가 백그라운드서 종료로 바뀌어도
+    // same-gameId next 보존으로 06:00 롤오버가 유지된다(삼순 ①).
     const androidNext =
-      rolloverNextGame && (widgetGame.status === "live" || widgetGame.status === "final")
+      rolloverNextGame
         ? {
             away: ID_TO_KBO_CODE[rolloverNextGame.awayTeamId] ?? "",
             home: ID_TO_KBO_CODE[rolloverNextGame.homeTeamId] ?? "",
@@ -454,24 +459,33 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     });
   }, [myTeamId, widgetGame, rolloverNextGame]);
 
-  // 홈 위젯 06:00 자동 전환 타깃 로드 — 현재 위젯 경기가 종료/라이브일 때 다음 예정 경기를
-  // 미리 캐시해 위젯 스냅샷에 함께 실어 보낸다(앱 미실행 상태에서도 06:00에 '경기 예정'으로 전환).
+  // 홈 위젯 06:00 자동 전환 타깃 로드 — 현재 위젯이 '오늘 경기' 또는 '자정~06시 전날 결과'를
+  // 보여줄 때(=rolloverBase), 그 경기의 *다음 예정 경기*를 미리 캐시해 스냅샷에 함께 싣는다.
+  // 예정(경기 전) 상태에서 앱을 마지막으로 열고 백그라운드에 둔 흔한 경로에서도 next가 저장돼,
+  // 그 경기가 백그라운드에서 종료로 바뀐 뒤 다음날 06:00에 다음 경기로 자동 전환된다(삼순 ①).
+  // 위젯이 이미 미래 예정 경기를 보여주는 중이면(rolloverBase 없음) 롤오버 불필요.
+  const rolloverBase = (isOvernight && overnightGame) ? overnightGame : myTeamGame;
   useEffect(() => {
-    if (!myTeamId || !widgetGame || widgetGame.status === "scheduled") {
+    if (!myTeamId || !rolloverBase) {
       setRolloverNextGame(null);
       return;
     }
     const teamId = myTeamId;
+    const excludeId = rolloverBase.id;
     let cancelled = false;
     (async () => {
-      for (let offset = 1; offset <= 14; offset += 1) {
+      // offset 0(오늘)부터 스캔 — 전날 결과(overnight) 표시 중엔 오늘 경기가 곧 다음 예정이다.
+      for (let offset = 0; offset <= 14; offset += 1) {
         const date = formatKSTDateOffset(offset);
         try {
           const res = await fetch(`/api/games?date=${formatApiDate(date)}`);
           if (!res.ok) continue;
           const data = await res.json();
           const games = ((data.games ?? []) as ApiGameData[]).map(mapApiGame);
-          const candidate = findWidgetGame(games, teamId);
+          const candidate = games.find(
+            (g) => (g.homeTeamId === teamId || g.awayTeamId === teamId) &&
+              g.status === "scheduled" && g.id !== excludeId,
+          );
           if (candidate) {
             if (!cancelled) setRolloverNextGame({ ...candidate, dateISO: date });
             return;
@@ -484,7 +498,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myTeamId, widgetGame?.status, widgetGame?.id]);
+  }, [myTeamId, rolloverBase?.id]);
 
   // iOS 홈 화면 위젯 — 최애팀 경기(라이브/예정/종료)를 App Group에 기록해 위젯에 표시한다.
   // 라이브 경기가 없을 때 *다음 예정 경기*가 위젯에 뜨게 하는 핵심 fallback 경로.
@@ -492,15 +506,15 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   const widgetSig = widgetGame
     ? `${widgetGame.id}|${widgetGame.status}|${widgetGame.awayScore}|${widgetGame.homeScore}|${widgetGame.inning ?? ""}|${widgetGame.outs ?? ""}|${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}|${widgetGame.currentPitcher ?? ""}|${widgetGame.currentBatter ?? ""}|${widgetGame.awayStarterName ?? ""}|${widgetGame.homeStarterName ?? ""}`
     : "";
-  const rolloverSig =
-    rolloverNextGame && (widgetGame?.status === "live" || widgetGame?.status === "final")
-      ? `${rolloverNextGame.id}|${rolloverNextGame.dateISO ?? ""}|${rolloverNextGame.time}|${rolloverNextGame.awayStarterName ?? ""}|${rolloverNextGame.homeStarterName ?? ""}`
-      : "";
+  const rolloverSig = rolloverNextGame
+    ? `${rolloverNextGame.id}|${rolloverNextGame.dateISO ?? ""}|${rolloverNextGame.time}|${rolloverNextGame.awayStarterName ?? ""}|${rolloverNextGame.homeStarterName ?? ""}`
+    : "";
   useEffect(() => {
     if (!widgetGame) return;
-    // 종료/라이브 스냅샷일 때만 다음 예정 경기를 함께 실어 위젯 06:00 자동 전환을 준비.
+    // 오늘 경기/전날 결과를 쓸 때(rolloverNextGame 세팅됨) 상태 무관 다음 예정 경기를 함께 실어
+    // 위젯 06:00 자동 전환을 준비. 예정 스냅샷이 백그라운드서 종료로 바뀌어도 next 보존됨(삼순 ①).
     const rolloverNext: HomeWidgetGame | null =
-      rolloverNextGame && (widgetGame.status === "live" || widgetGame.status === "final")
+      rolloverNextGame
         ? {
             gameId: rolloverNextGame.id,
             awayTeamId: rolloverNextGame.awayTeamId,

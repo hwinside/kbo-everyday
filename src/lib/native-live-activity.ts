@@ -298,9 +298,11 @@ export async function writeHomeWidgetSnapshot(
   if (!isNativeIOS()) return;
   const inningNum = game.inning ? parseInt(game.inning, 10) || 1 : 1;
   const myTeamCode = myTeamId ? ID_TO_KBO_CODE[myTeamId] ?? "" : "";
-  // 결과/라이브 경기일 때만 다음 예정 경기를 함께 실어 위젯 06:00 자동 전환을 준비한다.
+  // 다음 예정 경기(nextGame)가 주어지면 상태 무관(예정 포함) 함께 실어 위젯 06:00 자동 전환을
+  // 준비한다. 예정 스냅샷이 백그라운드서 종료로 바뀌어도 WidgetSnapshotStore가 same-gameId
+  // next를 보존하므로 롤오버 타깃이 유지된다(삼순 ①).
   const next: WidgetNextGame | undefined =
-    (game.status === "live" || game.status === "final") && nextGame
+    nextGame
       ? {
           gameId: nextGame.gameId,
           awayTeamCode: ID_TO_KBO_CODE[nextGame.awayTeamId] ?? "",

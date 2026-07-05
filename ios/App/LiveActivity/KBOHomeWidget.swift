@@ -130,11 +130,12 @@ struct GameWidgetProvider: TimelineProvider {
         let now = Date()
         var entries: [GameWidgetEntry] = []
 
-        // 홈 팀카드 06시 규칙 이식: 결과/라이브 스냅샷 + 다음 예정 경기가 캐시돼 있으면,
-        // '경기일 다음날 06:00' 시점 엔트리를 추가해 앱 실행 없이도 위젯이 '경기 예정'으로
-        // 스스로 전환한다. iOS 홈 위젯은 서버 푸시 갱신이 불가하므로 타임라인으로 처리.
+        // 홈 팀카드 06시 규칙 이식: 스냅샷에 다음 예정 경기가 캐시돼 있으면 '경기일 다음날
+        // 06:00' 시점 엔트리를 추가해 앱 실행 없이도 위젯이 '경기 예정'으로 스스로 전환한다.
+        // 상태 무관(예정 포함) — 예정 경기가 백그라운드서 종료로 안 바뀌어도(LA 미발동) 그날이
+        // 지나면 다음 경기로 넘어가야 하고, rollover 시각이 미래면 아래서 현재 스냅샷을 유지한다.
+        // iOS 홈 위젯은 서버 푸시 갱신이 불가하므로 타임라인으로 처리.
         if let snap, let nextRaw = snap.next,
-           snap.resolvedStatus == "final" || snap.resolvedStatus == "live",
            let rollover = Self.rollover6amKST(gameId: snap.gameId) {
             let nextSnap = nextRaw.asSnapshot()
             if now >= rollover {
