@@ -5,10 +5,10 @@ import type { CohortHeatmapRow, FunnelStep, GamedayRetention, VisitDistBucket } 
 
 const FUNNEL_LABELS: Record<string, string> = {
   signup: "가입",
-  team_select: "팀 선택",
-  first_post: "첫 글쓰기",
-  first_comment: "첫 댓글",
-  first_chat: "첫 채팅",
+  fav_team: "최애팀 지정",
+  fav_players_5: "최애선수 5명+",
+  games_3plus: "경기 3개+ 방문",
+  activated: "활성화 완료",
 };
 
 // page_view 계측이 온전한 코호트만 노출 (그 전은 눈팅 방문 누락으로 과소집계).
@@ -134,7 +134,7 @@ export async function GET(req: NextRequest) {
       .eq("metric_type", "funnel")
       .eq("cohort_key", "all");
 
-    const stepOrder = ["signup", "team_select", "first_post", "first_comment", "first_chat"];
+    const stepOrder = ["signup", "fav_team", "fav_players_5", "games_3plus", "activated"];
     const stepMap = new Map<string, { count: number; rate: number }>();
     for (const row of data ?? []) {
       stepMap.set(row.metric_key, { count: row.value, rate: row.rate });
