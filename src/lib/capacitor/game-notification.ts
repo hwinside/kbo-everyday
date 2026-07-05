@@ -22,6 +22,19 @@ interface WidgetData {
   stadium?: string; // 경기장(잠실 등) — 위젯에서 점수 위 별도 표시
   awayStarter?: string; // 예고선발(원정) — 예정 경기에서만. 미확정이면 빈 문자열
   homeStarter?: string; // 예고선발(홈)
+  gameId?: string; // 경기 id(YYYYMMDD…) — 위젯 06:00 롤오버 기준일
+  next?: WidgetNextGame; // 다음 예정 경기 — live/final일 때만. 06:00 자동 전환 타깃
+}
+
+/** 안드 위젯 06:00 롤오버 타깃(다음 예정 경기, 라이트). */
+export interface WidgetNextGame {
+  away: string;
+  home: string;
+  stadium: string;
+  time: string;
+  date: string;
+  astarter?: string;
+  hstarter?: string;
 }
 
 interface GameNotificationPlugin {

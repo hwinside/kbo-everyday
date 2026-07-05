@@ -417,6 +417,19 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
 
     const batterTeam = widgetGame.isTop ? awayCode : homeCode;
     const pitcherTeam = widgetGame.isTop ? homeCode : awayCode;
+    // 안드 위젯 06:00 자동 전환 타깃 — 결과/라이브일 때만 다음 예정 경기 첨부.
+    const androidNext =
+      rolloverNextGame && (widgetGame.status === "live" || widgetGame.status === "final")
+        ? {
+            away: ID_TO_KBO_CODE[rolloverNextGame.awayTeamId] ?? "",
+            home: ID_TO_KBO_CODE[rolloverNextGame.homeTeamId] ?? "",
+            stadium: rolloverNextGame.stadium ?? "",
+            time: rolloverNextGame.time,
+            date: formatKoreanDate(rolloverNextGame.dateISO ?? formatKSTDateOffset(1)),
+            astarter: rolloverNextGame.awayStarterName ?? "",
+            hstarter: rolloverNextGame.homeStarterName ?? "",
+          }
+        : undefined;
     void updateGameWidget({
       myTeam: myTeamCode,
       away: awayCode,
@@ -424,6 +437,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       awayScore: String(widgetGame.awayScore ?? 0),
       homeScore: String(widgetGame.homeScore ?? 0),
       status,
+      gameId: widgetGame.id,
+      next: androidNext,
       // 예정/종료 경기는 라이브 정보가 없으므로 전부 비워 라이브 행 자체를 숨긴다
       // (빈 다이아몬드 + "O ○○○"가 미시작/종료 경기에 떠서 완성도 떨어져 보이던 문제).
       pitcher: hideLive ? "" : (widgetGame.currentPitcher ?? ""),
@@ -437,7 +452,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       awayStarter: isScheduled ? (widgetGame.awayStarterName ?? "") : "",
       homeStarter: isScheduled ? (widgetGame.homeStarterName ?? "") : "",
     });
-  }, [myTeamId, widgetGame]);
+  }, [myTeamId, widgetGame, rolloverNextGame]);
 
   // 홈 위젯 06:00 자동 전환 타깃 로드 — 현재 위젯 경기가 종료/라이브일 때 다음 예정 경기를
   // 미리 캐시해 위젯 스냅샷에 함께 실어 보낸다(앱 미실행 상태에서도 06:00에 '경기 예정'으로 전환).
