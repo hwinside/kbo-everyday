@@ -224,7 +224,7 @@ export async function computeDailyCohortRetention(
 
 /**
  * Activation Funnel 집계 (활성화 완료 기준 = 3조건 AND):
- *   ① 최애팀 지정  ② 최애선수 5명 이상 지정  ③ 서로 다른 경기 3개 이상 방문
+ *   ① 최애팀 지정  ② 최애선수 1명 이상 지정  ③ 서로 다른 경기 1개 이상 방문
  * MIN_DAILY_COHORT(데이터 온전 시점) 이후 가입 코호트 기준. 완료율 카드 = 마지막 스텝(activated).
  */
 export async function computeActivationFunnel(
@@ -248,14 +248,14 @@ export async function computeActivationFunnel(
   // ① 최애팀 지정 (team_id not null)
   const teamSet = new Set(cohortProfiles.filter((p) => p.team_id != null).map((p) => p.id));
 
-  // ② 최애선수 5명 이상 (favorite_players jsonb 배열 길이 >= 5)
-  const players5Set = new Set(
+  // ② 최애선수 1명 이상 (favorite_players jsonb 배열 길이 >= 1)
+  const players1Set = new Set(
     cohortProfiles
-      .filter((p) => Array.isArray(p.favorite_players) && p.favorite_players.length >= 5)
+      .filter((p) => Array.isArray(p.favorite_players) && p.favorite_players.length >= 1)
       .map((p) => p.id),
   );
 
-  // ③ 서로 다른 경기 3개 이상 방문 (admin_page_views의 /games/{gameId} 상세 방문, 코호트 유저만)
+  // ③ 서로 다른 경기 1개 이상 방문 (admin_page_views의 /games/{gameId} 상세 방문, 코호트 유저만)
   const gameViews = await fetchAllPages<{ user_id: string; path: string }>(
     () => supabase.from("admin_page_views").select("user_id, path")
       .not("user_id", "is", null)
@@ -271,21 +271,21 @@ export async function computeActivationFunnel(
     if (!gamesByUser.has(v.user_id)) gamesByUser.set(v.user_id, new Set());
     gamesByUser.get(v.user_id)!.add(m[1]);
   }
-  const games3Set = new Set(
-    [...gamesByUser.entries()].filter(([, games]) => games.size >= 3).map(([uid]) => uid),
+  const games1Set = new Set(
+    [...gamesByUser.entries()].filter(([, games]) => games.size >= 1).map(([uid]) => uid),
   );
 
   // 활성화 완료 = ①②③ 모두 충족
   let activated = 0;
   for (const id of cohortIds) {
-    if (teamSet.has(id) && players5Set.has(id) && games3Set.has(id)) activated++;
+    if (teamSet.has(id) && players1Set.has(id) && games1Set.has(id)) activated++;
   }
 
   const steps = [
     { key: "signup", value: totalSignups },
     { key: "fav_team", value: teamSet.size },
-    { key: "fav_players_5", value: players5Set.size },
-    { key: "games_3plus", value: games3Set.size },
+    { key: "fav_players_1", value: players1Set.size },
+    { key: "games_1plus", value: games1Set.size },
     { key: "activated", value: activated },
   ];
 
