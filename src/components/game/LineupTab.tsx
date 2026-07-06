@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useState, useEffect, useRef } from "react";
 
 import { clsx } from "clsx";
-import { type TeamData } from "@/lib/constants/teams";
+import { type TeamData, isAllStarGame } from "@/lib/constants/teams";
 import type { GameLineup } from "@/lib/constants/games";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
@@ -93,6 +93,12 @@ function AiLineupAnalysisCard({
   const fetchedGameId = useRef<string | null>(null);
 
   useEffect(() => {
+    // 올스타전은 팀기반 AI 분석 대상이 아니므로 스킵(API 호출·렌더 안 함).
+    if (isAllStarGame(awayTeamId, homeTeamId)) {
+      setLoading(false);
+      setAnalysis(null);
+      return;
+    }
     // 같은 gameId + 같은 라인업이면 재요청 방지
     const lineupKey = `${gameId}:${lineup.away.startingPitcher.name}:${lineup.home.startingPitcher.name}`;
     if (fetchedGameId.current === lineupKey) return;

@@ -188,6 +188,22 @@ export function allstarTeamIdByName(name: string | null | undefined): number | u
   return undefined;
 }
 
+export function isAllStarTeamId(id: number): boolean {
+  return id === ALLSTAR_NANUM_ID || id === ALLSTAR_DREAM_ID;
+}
+
+/** 올스타전 경기 여부(팀 id 기반). AI 분석·승부예측 등 팀기반 기능 게이팅용. */
+export function isAllStarGame(awayTeamId: number, homeTeamId: number): boolean {
+  return isAllStarTeamId(awayTeamId) || isAllStarTeamId(homeTeamId);
+}
+
+/** KBO gameId("…WEEA0")의 2자 팀 코드로 올스타전 판정. teamId 해석 전 단계용. */
+export function isAllStarGameId(gameId: string): boolean {
+  const m = gameId.match(/^\d{8}([A-Z]{2})([A-Z]{2})\d$/);
+  if (!m) return false;
+  return ALLSTAR_CODE_TO_ID[m[1]] !== undefined || ALLSTAR_CODE_TO_ID[m[2]] !== undefined;
+}
+
 export function getTeamById(id: number): TeamData | undefined {
   return TEAMS.find((t) => t.id === id) ?? ALLSTAR_TEAMS.find((t) => t.id === id);
 }
