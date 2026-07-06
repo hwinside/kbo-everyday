@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { clsx } from "clsx";
 import Image from "next/image";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, isAllStarGame } from "@/lib/constants/teams";
 import GameChat from "@/components/game/GameChat";
 import ContextualStatsBox from "@/components/game/ContextualStatsBox";
 import { useRouter } from "next/navigation";
@@ -73,6 +73,8 @@ function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
   const homeTeam = getTeamById(homeTeamId)!;
 
   useEffect(() => {
+    // 올스타전은 팀기반 AI 예측/승부예측 대상 아님 — API 호출·렌더 안 함.
+    if (isAllStarGame(awayTeamId, homeTeamId)) { setLoading(false); return; }
     if (fetchedRef.current) return;
     fetchedRef.current = true;
 
@@ -121,6 +123,9 @@ function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
 
     fetchPreview();
   }, [gameId, awayTeamId, homeTeamId, starterNames]);
+
+  // 올스타전은 팀기반 AI 예측/승부예측 미제공 — 카드 자체를 숨긴다.
+  if (isAllStarGame(awayTeamId, homeTeamId)) return null;
 
   if (loading) {
     return (

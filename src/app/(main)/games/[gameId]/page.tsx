@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx } from "clsx";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, ALLSTAR_CODE_TO_ID } from "@/lib/constants/teams";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { useCelebration } from "@/lib/hooks/useCelebration";
 import CelebrationOverlay from "@/components/game/CelebrationOverlay";
@@ -114,6 +114,7 @@ function boxScoreToGameStats(
 const KBO_CODE_TO_ID: Record<string, number> = {
   LG: 1, OB: 2, KT: 3, SK: 4, NC: 5,
   HT: 6, LT: 7, SS: 8, HH: 9, WO: 10,
+  ...ALLSTAR_CODE_TO_ID, // 올스타 코드(WE/EA) → 나눔/드림. 없으면 parseKboGameId가 undefined 반환해 "경기를 찾을 수 없습니다"로 뜸.
 };
 
 /* 팀 id → KBO 2자 코드 역매핑 (Live Activity 최애팀 강조용). */
@@ -232,6 +233,7 @@ export default function GameDetailPage() {
         myTeam: myTeamCode,
         away: awayCode,
         home: homeCode,
+        gameId, // 삼순 재리뷰: 경기룸도 gameId 전달 → 네이티브가 실제 경기전환만 last_play clear(빈 gameId 오clear 방지)
         awayScore: String(liveGame.awayScore),
         homeScore: String(liveGame.homeScore),
         status: `LIVE ${liveGame.inning}`,

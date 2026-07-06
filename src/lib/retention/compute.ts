@@ -15,7 +15,11 @@ interface MetricRow {
  * ISO week string (e.g. '2026-W15') from a YYYY-MM-DD date.
  */
 function isoWeek(dateStr: string): string {
-  const d = new Date(dateStr + "T00:00:00+09:00");
+  // KST 캘린더 날짜(YYYY-MM-DD) 자체를 UTC 자정으로 잡아 요일 계산.
+  // (이전엔 dateStr+"+09:00" instant의 getUTCDay를 읽어 KST 월요일이 전날 UTC 일요일로
+  //  밀려 주 경계가 표시단 weekToMonday와 어긋났음 — 예: 06-29가 W26으로 오분류.)
+  const [y, m, day] = dateStr.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1, day));
   const dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
@@ -136,10 +140,13 @@ export async function computeCohortRetention(
       let eligible = 0;
       for (const u of users) {
         const targetDay = addKSTDays(u.signupDate, dN);
-        // 아직 D-N이 지나지 않은 유저는 eligible에서 제외
-        if (targetDay > targetDate) continue;
+        // D-N이 아직 안 지났거나 '오늘'(진행 중, 미완료)인 유저는 eligible 제외 →
+        // 완료된 날 관측만 집계해 최근 주 D-N이 낮게 왜곡되는 것 방지.
+        if (targetDay >= targetDate) continue;
         eligible++;
-        if (visitDays.get(u.id)?.has(targetDay)) returned++;
+        // D0(가입일)은 가입 자체를 활동으로 인정 → 기준선 100% 고정(표준 코호트 앵커).
+        // 실제 재방문율은 D1부터. (가입만 하고 활동 로그 없는 유저가 D0를 깎던 것 방지)
+        if (dN === 0 || visitDays.get(u.id)?.has(targetDay)) returned++;
       }
       if (eligible > 0) {
         rows.push({
@@ -196,7 +203,8 @@ export async function computeDailyCohortRetention(
         const targetDay = addKSTDays(u.signupDate, dN);
         if (targetDay > targetDate) continue;
         eligible++;
-        if (visitDays.get(u.id)?.has(targetDay)) returned++;
+        // D0(가입일)은 가입 자체를 활동으로 인정 → 기준선 100% 고정(주간 코호트와 동일).
+        if (dN === 0 || visitDays.get(u.id)?.has(targetDay)) returned++;
       }
       if (eligible > 0) {
         rows.push({
@@ -215,52 +223,70 @@ export async function computeDailyCohortRetention(
 }
 
 /**
- * Activation Funnel 집계: 가입→팀선택→첫글쓰기→첫댓글→첫채팅.
- * 전체 가입자 중 각 단계 도달 비율.
+ * Activation Funnel 집계 (활성화 완료 기준 = 3조건 AND):
+ *   ① 최애팀 지정  ② 최애선수 1명 이상 지정  ③ 서로 다른 경기 1개 이상 방문
+ * MIN_DAILY_COHORT(데이터 온전 시점) 이후 가입 코호트 기준. 완료율 카드 = 마지막 스텝(activated).
  */
 export async function computeActivationFunnel(
   supabase: SupabaseClient,
   targetDate: string,
 ): Promise<MetricRow[]> {
-  // 전체 가입자 수
-  const { count: totalSignups } = await supabase
-    .from("profiles")
-    .select("*", { count: "exact", head: true })
-    .lte("created_at", targetDate + "T23:59:59+09:00");
+  const until = targetDate + "T23:59:59+09:00";
+
+  // "데이터 제대로 쌓인" 시점(MIN_DAILY_COHORT) 이후 가입 코호트만.
+  const cohortProfiles = await fetchAllPages<{ id: string; team_id: number | null; favorite_players: unknown }>(
+    () => supabase.from("profiles").select("id, team_id, favorite_players")
+      .gte("created_at", MIN_DAILY_COHORT + "T00:00:00+09:00")
+      .lte("created_at", until)
+      .order("created_at", { ascending: true }),
+  );
+  const cohortIds = new Set(cohortProfiles.map((p) => p.id));
+  const totalSignups = cohortIds.size;
 
   if (!totalSignups) return [];
 
-  // 팀 선택 완료 (team_id not null)
-  const { count: teamSelected } = await supabase
-    .from("profiles")
-    .select("*", { count: "exact", head: true })
-    .lte("created_at", targetDate + "T23:59:59+09:00")
-    .not("team_id", "is", null);
+  // ① 최애팀 지정 (team_id not null)
+  const teamSet = new Set(cohortProfiles.filter((p) => p.team_id != null).map((p) => p.id));
 
-  // 첫 글쓰기
-  const postUsers = await fetchAllPages<{ author_id: string }>(
-    () => supabase.from("posts").select("author_id").lte("created_at", targetDate + "T23:59:59+09:00").order("created_at", { ascending: true }),
+  // ② 최애선수 1명 이상 (favorite_players jsonb 배열 길이 >= 1)
+  const players1Set = new Set(
+    cohortProfiles
+      .filter((p) => Array.isArray(p.favorite_players) && p.favorite_players.length >= 1)
+      .map((p) => p.id),
   );
-  const uniquePostUsers = new Set(postUsers.map((r) => r.author_id)).size;
 
-  // 첫 댓글
-  const commentUsers = await fetchAllPages<{ author_id: string }>(
-    () => supabase.from("comments").select("author_id").lte("created_at", targetDate + "T23:59:59+09:00").order("created_at", { ascending: true }),
+  // ③ 서로 다른 경기 1개 이상 방문 (admin_page_views의 /games/{gameId} 상세 방문, 코호트 유저만)
+  const gameViews = await fetchAllPages<{ user_id: string; path: string }>(
+    () => supabase.from("admin_page_views").select("user_id, path")
+      .not("user_id", "is", null)
+      .like("path", "/games/2%")
+      .lte("created_at", until)
+      .order("created_at", { ascending: true }),
   );
-  const uniqueCommentUsers = new Set(commentUsers.map((r) => r.author_id)).size;
+  const gamesByUser = new Map<string, Set<string>>();
+  for (const v of gameViews) {
+    if (!cohortIds.has(v.user_id)) continue;
+    const m = v.path.match(/^\/games\/([0-9]{8}[A-Za-z0-9]+)/);
+    if (!m) continue;
+    if (!gamesByUser.has(v.user_id)) gamesByUser.set(v.user_id, new Set());
+    gamesByUser.get(v.user_id)!.add(m[1]);
+  }
+  const games1Set = new Set(
+    [...gamesByUser.entries()].filter(([, games]) => games.size >= 1).map(([uid]) => uid),
+  );
 
-  // 첫 채팅
-  const chatUsers = await fetchAllPages<{ user_id: string }>(
-    () => supabase.from("chat_messages").select("user_id").lte("created_at", targetDate + "T23:59:59+09:00").order("created_at", { ascending: true }),
-  );
-  const uniqueChatUsers = new Set(chatUsers.map((r) => r.user_id)).size;
+  // 활성화 완료 = ①②③ 모두 충족
+  let activated = 0;
+  for (const id of cohortIds) {
+    if (teamSet.has(id) && players1Set.has(id) && games1Set.has(id)) activated++;
+  }
 
   const steps = [
     { key: "signup", value: totalSignups },
-    { key: "team_select", value: teamSelected ?? 0 },
-    { key: "first_post", value: uniquePostUsers },
-    { key: "first_comment", value: uniqueCommentUsers },
-    { key: "first_chat", value: uniqueChatUsers },
+    { key: "fav_team", value: teamSet.size },
+    { key: "fav_players_1", value: players1Set.size },
+    { key: "games_1plus", value: games1Set.size },
+    { key: "activated", value: activated },
   ];
 
   return steps.map((s) => ({

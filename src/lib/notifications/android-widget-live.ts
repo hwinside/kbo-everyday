@@ -1,6 +1,7 @@
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
 import { sendFcmToUsers, type PushPayload } from "@/lib/notifications/fcm";
 import { fansOfTeams, teamIdByShortName } from "@/lib/notifications/game-status";
+import { latestRelayLine } from "@/lib/notifications/relay-line";
 import type { KboRawGame } from "@/types/api";
 
 function safeInt(v: unknown): number {
@@ -38,9 +39,13 @@ function scheduledStartMs(gDt: string | undefined, gTm: string | undefined): num
 // 경기 시작 30분 전부터 잠금화면/홈위젯에 '경기 예정' 카드를 미리 띄운다.
 // iOS Live Activity push-to-start(PREGAME_LEAD_MS 동일 30분)와 리드타임을 맞춘 것.
 const PREGAME_LEAD_MS = 30 * 60 * 1000;
-// 지연 경기(우천 등으로 KBO feed가 예정 상태로 남아 시작시각이 지난 경우) 커버 — iOS
+// 지연 경기(KBO feed가 예정 상태로 남아 시작시각이 지난 경우) 커버 — iOS
 // pushLiveActivityStarts와 동일하게 시작 후 90분까지 예정 카드를 계속 밀어 parity 유지.
 const START_WINDOW_MS = 90 * 60 * 1000;
+// 취소 카드 유지 창 — 예정시각 이후 이 시간까지 '경기 취소'를 밀어 저녁 내내 위젯을 갱신한다
+// (그 후 앱 오픈/캐시 기기는 네이티브 readEff의 익일 06:00 롤오버로 다음 경기 전환,
+//  push-only 기기는 다음 pregame push로 복구). 지연 후 늦은 취소도 커버.
+const CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 /**
  * Android 홈 위젯/잠금 알림 카드 신선화 + 경기 전 미리 표시.
@@ -49,7 +54,7 @@ const START_WINDOW_MS = 90 * 60 * 1000;
  *  - 예정(GAME_STATE_SC="1")이고 시작 30분 전 이내: '경기 예정' 매치업 카드를 미리 띄운다(iOS 패리티).
  * 네이티브 알림은 setOnlyAlertOnce라 같은 카드를 매분 갱신해도 재알림 없이 조용히 갱신된다.
  */
-export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise<{
+export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl: string): Promise<{
   games: number;
   sent: number;
   failed: number;
@@ -62,21 +67,61 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise
   let cleaned = 0;
   let skipped = 0;
 
+  // 라이브 경기 문자중계 최근 플레이 한 줄 — game-relay self-fetch(공개 도메인 baseUrl, 병렬,
+  // 실패 격리). iOS 잠금 LA와 동일 소스/문구(relay-line.ts). 실패·누락 시 위젯에 줄만 안 뜸.
+  const lastPlayByGame = new Map<string, string>();
+  const liveIds = games
+    .filter((g) => g.G_ID && g.GAME_STATE_SC === "2")
+    .map((g) => g.G_ID as string);
+  if (liveIds.length > 0) {
+    const relays = await Promise.allSettled(
+      liveIds.map(async (gameId) => {
+        const r = await fetch(`${baseUrl}/api/game-relay?gameId=${gameId}`, {
+          cache: "no-store",
+          headers: { "User-Agent": "kbo-everyday-widget/1.0" },
+        });
+        if (!r.ok) return null;
+        const j = await r.json().catch(() => null);
+        const line = latestRelayLine(j);
+        return line ? { gameId, line } : null;
+      }),
+    );
+    for (const res of relays) {
+      if (res.status === "fulfilled" && res.value) {
+        lastPlayByGame.set(res.value.gameId, res.value.line);
+      }
+    }
+  }
+
   for (const g of games) {
-    if (!g.G_ID || g.CANCEL_SC_ID !== "0") continue;
+    if (!g.G_ID) continue;
 
     const isLive = g.GAME_STATE_SC === "2";
+    const isCancelled = g.CANCEL_SC_ID !== "0";
+    // 취소: 예정시각 −30분 ~ +CANCEL_WINDOW_MS 창이면 '경기 취소' 카드를 밀어 앱 미오픈
+    // 상태에서도 안드 위젯을 갱신(iOS 홈위젯은 백그라운드 갱신 불가라 안드 전용 이점). 창 후엔
+    // 위젯이 마지막 상태 유지 → 앱 오픈으로 next 캐시된 기기는 익일 06:00 롤오버로 다음 경기
+    // 전환, push-only 기기는 다음 경기 pregame push가 덮어써 자연 복구(서버는 양팀 팬 공용
+    // 브로드캐스트라 per-기기 next를 실을 수 없음).
+    let isCancelWindow = false;
+    if (isCancelled) {
+      const startMs = scheduledStartMs(g.G_DT, g.G_TM);
+      if (startMs !== null) {
+        const since = Date.now() - startMs;
+        isCancelWindow = since > -PREGAME_LEAD_MS && since <= CANCEL_WINDOW_MS;
+      }
+    }
     // 예정 경기는 '시작 30분 전 ~ 시작 후 90분(지연 경기)' 윈도우일 때만 미리 표시(그 밖엔 skip).
     // iOS pushLiveActivityStarts와 동일 조건: delta <= PREGAME_LEAD_MS && delta > -START_WINDOW_MS.
     let isPregame = false;
-    if (!isLive && g.GAME_STATE_SC === "1") {
+    if (!isLive && !isCancelled && g.GAME_STATE_SC === "1") {
       const startMs = scheduledStartMs(g.G_DT, g.G_TM);
       if (startMs !== null) {
         const untilStart = startMs - Date.now();
         isPregame = untilStart <= PREGAME_LEAD_MS && untilStart > -START_WINDOW_MS;
       }
     }
-    if (!isLive && !isPregame) continue;
+    if (!isLive && !isPregame && !isCancelWindow) continue;
 
     const codes = parseTeamCodes(g.G_ID);
     if (!codes) continue;
@@ -93,7 +138,37 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise
     }
 
     let payload: PushPayload;
-    if (isLive) {
+    if (isCancelWindow) {
+      // 경기 취소 — kind:"game_cancel"로 보낸다(game_live 아님). 네이티브는 이 kind를 받으면
+      // 홈위젯 prefs만 "경기 취소"(CANCELLED)로 갱신하고, 잠금화면 진행중 알림은 post하지
+      // 않고 clear한다(정책: 잠금화면은 정리, 홈위젯은 유지 — 삼순 blocker②).
+      // writeAndRefresh는 next를 건드리지 않아(같은 gameId) 앱 오픈으로 캐시된 next가 있으면
+      // 06:00 롤오버가 유지되고, push-only 기기는 다음 경기 pregame push가 위젯을 덮어써
+      // 자연 복구된다(서버 브로드캐스트는 양팀 팬 공용이라 per-기기 next를 실을 수 없음 — 삼순
+      // blocker③). dataOnly라 시스템 알림은 안 뜨고 위젯만 조용히 갱신
+      // (사용자向 ⚾ 경기 취소 알림은 game-status.ts가 별도 발송).
+      payload = {
+        title: `⚾ ${away} vs ${home}`,
+        body: "오늘 경기가 취소됐어요",
+        url: `/games/${g.G_ID}`,
+        dataOnly: true,
+        data: {
+          kind: "game_cancel",
+          w_away: codes.away,
+          w_home: codes.home,
+          w_as: "0",
+          w_hs: "0",
+          w_status: "CANCELLED",
+          w_pitcher: "",
+          w_pteam: "",
+          w_batter: "",
+          w_bteam: "",
+          w_outs: "",
+          w_diamond: "000",
+          w_stadium: g.S_NM ?? "",
+        },
+      };
+    } else if (isLive) {
       const awayScore = safeInt(g.T_SCORE_CN);
       const homeScore = safeInt(g.B_SCORE_CN);
       const status = inningLabel(g);
@@ -122,6 +197,7 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise
           w_outs: clampOuts(g.OUT_CN),
           w_diamond: diamond(g),
           w_stadium: g.S_NM ?? "",
+          w_lastplay: lastPlayByGame.get(g.G_ID) ?? "",
         },
       };
     } else {

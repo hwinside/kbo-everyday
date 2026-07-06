@@ -141,8 +141,71 @@ export const TEAMS: TeamData[] = [
   },
 ];
 
+/** 올스타전(나눔/드림) 팀. 정규 10구단 목록(TEAMS)과 의도적으로 분리한다 —
+ *  팀 선택·순위표 등 TEAMS를 순회하는 UI에 올스타가 섞이면 안 되므로,
+ *  id 조회(getTeamById)에서만 해석되도록 별도 레지스트리로 둔다. */
+export const ALLSTAR_NANUM_ID = 101;
+export const ALLSTAR_DREAM_ID = 102;
+
+const ALLSTAR_TEAMS: TeamData[] = [
+  {
+    id: ALLSTAR_NANUM_ID,
+    name: "나눔 올스타",
+    shortName: "나눔",
+    slug: "allstar-nanum",
+    colorPrimary: "#002539",
+    colorLight: "#5E8CB8",
+    colorSecondary: "#1D1D1B",
+    logoPath: "/logos/allstar-nanum.svg",
+    youtubeChannelId: "",
+  },
+  {
+    id: ALLSTAR_DREAM_ID,
+    name: "드림 올스타",
+    shortName: "드림",
+    slug: "allstar-dream",
+    colorPrimary: "#2E86C9",
+    colorLight: "#98C5E3",
+    colorSecondary: "#1D1D1B",
+    logoPath: "/logos/allstar-dream.svg",
+    youtubeChannelId: "",
+  },
+];
+
+/** KBO 올스타 팀 코드 → id. gameId·스케줄 코드가 정규 팀맵에 없을 때 사용.
+ *  (2026 올스타 gameId "…WEEA0" 기준 WE=나눔 / EA=드림) */
+export const ALLSTAR_CODE_TO_ID: Record<string, number> = {
+  WE: ALLSTAR_NANUM_ID,
+  EA: ALLSTAR_DREAM_ID,
+};
+
+/** 팀명(나눔/드림)으로 올스타 id 해석. 2자 코드가 시즌마다 바뀌어도
+ *  팀명은 안정적이라 크롤러 폴백으로 쓴다. */
+export function allstarTeamIdByName(name: string | null | undefined): number | undefined {
+  if (!name) return undefined;
+  if (name.includes("나눔")) return ALLSTAR_NANUM_ID;
+  if (name.includes("드림")) return ALLSTAR_DREAM_ID;
+  return undefined;
+}
+
+export function isAllStarTeamId(id: number): boolean {
+  return id === ALLSTAR_NANUM_ID || id === ALLSTAR_DREAM_ID;
+}
+
+/** 올스타전 경기 여부(팀 id 기반). AI 분석·승부예측 등 팀기반 기능 게이팅용. */
+export function isAllStarGame(awayTeamId: number, homeTeamId: number): boolean {
+  return isAllStarTeamId(awayTeamId) || isAllStarTeamId(homeTeamId);
+}
+
+/** KBO gameId("…WEEA0")의 2자 팀 코드로 올스타전 판정. teamId 해석 전 단계용. */
+export function isAllStarGameId(gameId: string): boolean {
+  const m = gameId.match(/^\d{8}([A-Z]{2})([A-Z]{2})\d$/);
+  if (!m) return false;
+  return ALLSTAR_CODE_TO_ID[m[1]] !== undefined || ALLSTAR_CODE_TO_ID[m[2]] !== undefined;
+}
+
 export function getTeamById(id: number): TeamData | undefined {
-  return TEAMS.find((t) => t.id === id);
+  return TEAMS.find((t) => t.id === id) ?? ALLSTAR_TEAMS.find((t) => t.id === id);
 }
 
 export function getTeamBySlug(slug: string): TeamData | undefined {

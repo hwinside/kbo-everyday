@@ -3,7 +3,7 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import playersRoster from "@/lib/constants/players-roster.json";
 import batterStats from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
-import { TEAMS } from "@/lib/constants/teams";
+import { TEAMS, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
 import { INJURY_BLOCKLIST_KEYS } from "@/lib/constants/injury-blocklist";
 import { fetchStandings, fetchGames, fetchBoxScore, type TeamStanding, type BoxScoreResult, type KboGame } from "@/lib/crawler/kbo-api";
 
@@ -911,6 +911,7 @@ async function saveCache(gameId: string, summary: Record<string, unknown>) {
 export async function GET(req: NextRequest) {
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) return NextResponse.json({ error: "gameId required" }, { status: 400 });
+  if (isAllStarGameId(gameId)) return NextResponse.json({ preview: null, source: "allstar" });
 
   const status = await getGameStatus(gameId);
   if (status === "cancelled") {
@@ -935,13 +936,15 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!GEMINI_API_KEY) {
-    return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
-  }
-
   const body: PreviewRequest = await req.json();
   if (!body.gameId || !body.awayTeamId || !body.homeTeamId) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+  }
+  if (isAllStarGameId(body.gameId) || isAllStarGame(body.awayTeamId, body.homeTeamId)) {
+    return NextResponse.json({ preview: null, source: "allstar" });
+  }
+  if (!GEMINI_API_KEY) {
+    return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
   }
 
   const status = await getGameStatus(body.gameId);

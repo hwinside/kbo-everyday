@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 라이브 점(꺼짐/dim) — 은은한 pulse용(완전 투명 대신 dim해서 부드럽게). ViewFlipper 프레임2. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="#4DFF5A5A" />
+    <size android:width="6dp" android:height="6dp" />
+</shape>

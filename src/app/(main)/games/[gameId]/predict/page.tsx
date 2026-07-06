@@ -6,7 +6,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, Users, Trophy } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, isAllStarGameId } from "@/lib/constants/teams";
 import { MOCK_PREDICTIONS } from "@/lib/constants/predictions";
 import GlassCard from "@/components/ui/GlassCard";
 import AIAnalysis from "@/components/game/AIAnalysis";
@@ -17,6 +17,11 @@ export default function GamePredictPage() {
   const gameId = params.gameId as string;
   const [aiOpen, setAiOpen] = useState(false);
   const [voted, setVoted] = useState<"away" | "home" | null>(null);
+
+  // 올스타전은 승부예측 미제공(팀기반 예측이 나눔/드림에 무의미).
+  if (isAllStarGameId(gameId)) {
+    return <div className="p-8 text-center text-text-tertiary">올스타전은 승부예측을 제공하지 않습니다</div>;
+  }
 
   const pred = MOCK_PREDICTIONS.find((p) => p.gameId === gameId);
   if (!pred) return <div className="p-8 text-center text-text-tertiary">예측 정보가 없습니다</div>;

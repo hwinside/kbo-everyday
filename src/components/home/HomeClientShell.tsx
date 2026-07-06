@@ -394,8 +394,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
 
     const isScheduled = widgetGame.status === "scheduled";
     const isFinal = widgetGame.status === "final";
-    // 라이브 행(투수/타자/아웃/주자)은 라이브 경기에만 표시. 예정/종료는 숨김.
-    const hideLive = isScheduled || isFinal;
+    const isCancelled = widgetGame.status === "cancelled";
+    // 라이브 행(투수/타자/아웃/주자)은 라이브 경기에만 표시. 예정/종료/취소는 숨김.
+    const hideLive = isScheduled || isFinal || isCancelled;
     // 이닝 라벨 항상 "N회초/말"로 재구성 — inning이 숫자(라이브 폴 갭 시 base 게임의
     // 원시 숫자로 떨어짐)거나 "회" 없는 문자열일 때 bare "LIVE 3"으로 새던 버그 차단.
     const inn = widgetGame.inning;
@@ -415,7 +416,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         ? `LIVE ${inningLabel}`.trim()
         : isFinal
           ? "FINAL"
-          : "";
+          : widgetGame.status === "cancelled"
+            ? "CANCELLED"
+            : "";
     if (!status) return;
 
     const batterTeam = widgetGame.isTop ? awayCode : homeCode;
