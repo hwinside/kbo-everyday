@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { fetchGames, type KboGame } from "@/lib/crawler/kbo-api";
-import { TEAMS } from "@/lib/constants/teams";
+import { TEAMS, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -489,6 +489,7 @@ async function saveCache(gameId: string, summary: Record<string, unknown>) {
 export async function GET(req: NextRequest) {
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) return NextResponse.json({ error: "gameId required" }, { status: 400 });
+  if (isAllStarGameId(gameId)) return NextResponse.json({ analysis: null, source: "allstar" });
 
   const cached = await getCached(gameId);
   if (cached && !cached.outdated) {
@@ -498,13 +499,15 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!GEMINI_API_KEY) {
-    return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
-  }
-
   const body: LineupRequest = await req.json();
   if (!body.gameId || !body.awayTeamId || !body.homeTeamId || !body.lineup) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+  }
+  if (isAllStarGameId(body.gameId) || isAllStarGame(body.awayTeamId, body.homeTeamId)) {
+    return NextResponse.json({ analysis: null, source: "allstar" });
+  }
+  if (!GEMINI_API_KEY) {
+    return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
   }
 
   if (!body.lineup.away.batters.length || !body.lineup.home.batters.length) {
