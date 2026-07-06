@@ -3,6 +3,7 @@
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { trackFallback } from "@/lib/monitoring/api-fallback-tracker";
 import { decodeBroadcast, type BroadcastChannel } from "@/lib/broadcast-channels";
+import { ALLSTAR_CODE_TO_ID, allstarTeamIdByName } from "@/lib/constants/teams";
 
 /** 숫자 kboId로 로스터 조회 — 외국인 숫자→영문 변환 포함 */
 function findPlayerByNumericId(numericId: string): { name: string } | undefined {
@@ -31,6 +32,12 @@ const TEAM_CODE_MAP: Record<string, number> = {
   LG: 1, OB: 2, KT: 3, SK: 4, NC: 5,
   HT: 6, LT: 7, SS: 8, HH: 9, WO: 10,
 };
+
+/** KBO 팀 코드 → 앱 teamId. 정규 10구단에 없으면 올스타(코드 → 팀명 순)로 해석,
+ *  그래도 없으면 0. 올스타는 코드가 팀맵에 없어 예전엔 0으로 뭉개져 렌더가 터졌다. */
+function resolveTeamId(code: string, name: string): number {
+  return TEAM_CODE_MAP[code] ?? ALLSTAR_CODE_TO_ID[code] ?? allstarTeamIdByName(name) ?? 0;
+}
 
 export interface KboGame {
   gameId: string;
@@ -115,8 +122,8 @@ function parseGame(raw: KboGameRaw): KboGame {
     date: raw.G_DT,
     time: raw.G_TM,
     stadium: raw.S_NM,
-    awayTeamId: TEAM_CODE_MAP[raw.AWAY_ID] ?? 0,
-    homeTeamId: TEAM_CODE_MAP[raw.HOME_ID] ?? 0,
+    awayTeamId: resolveTeamId(raw.AWAY_ID, raw.AWAY_NM),
+    homeTeamId: resolveTeamId(raw.HOME_ID, raw.HOME_NM),
     awayName: raw.AWAY_NM,
     homeName: raw.HOME_NM,
     awayScore: status !== "scheduled" ? parseInt(raw.T_SCORE_CN) || 0 : null,
