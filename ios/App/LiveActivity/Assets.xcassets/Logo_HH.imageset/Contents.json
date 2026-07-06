@@ -1,15 +1,12 @@
 {
-  "images" : [
+  "images": [
     {
-      "idiom" : "universal",
-      "filename" : "hanwha.svg"
+      "idiom": "universal",
+      "filename": "hanwha.png"
     }
   ],
-  "info" : {
-    "version" : 1,
-    "author" : "xcode"
-  },
-  "properties" : {
-    "preserves-vector-representation" : true
+  "info": {
+    "version": 1,
+    "author": "xcode"
   }
 }
