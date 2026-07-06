@@ -32,10 +32,10 @@ function formatReferenceDate(date: string | null, entry: AnalysisEntry | undefin
 
 // 본문에 남은 시점 부사(어제/오늘)는 표시 단계에서 제거 (과거 생성분/휴식일 복사 대비).
 // 경기 날짜는 배지가 책임지므로 도입부뿐 아니라 본문 전체에서 제거한다.
-// 조사(의/는/도)·문장부호(,)가 붙은 형태도 제거. "오늘날", "어제오늘" 합성어는 보존.
+// 조사(은/는/이/가/의/도/만)·문장부호(,)가 붙은 형태도 제거. "오늘날", "어제오늘" 합성어는 보존.
 function stripTemporal(copy: string): string {
   return copy
-    .replace(/(^|\s)(어제|오늘)(의|는|도|,)?(\s+|$)/g, "$1")
+    .replace(/(^|\s)(어제|오늘)(은|는|이|가|의|도|만|,)?(\s+|$)/g, "$1")
     .replace(/\s{2,}/g, " ")
     .trimStart();
 }
