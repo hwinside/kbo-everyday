@@ -6,8 +6,8 @@ import type { CohortHeatmapRow, FunnelStep, GamedayRetention, VisitDistBucket } 
 const FUNNEL_LABELS: Record<string, string> = {
   signup: "가입",
   fav_team: "최애팀 지정",
-  fav_players_5: "최애선수 5명+",
-  games_3plus: "경기 3개+ 방문",
+  fav_players_1: "최애선수 1명+",
+  games_1plus: "경기 1개+ 방문",
   activated: "활성화 완료",
 };
 
@@ -134,7 +134,7 @@ export async function GET(req: NextRequest) {
       .eq("metric_type", "funnel")
       .eq("cohort_key", "all");
 
-    const stepOrder = ["signup", "fav_team", "fav_players_5", "games_3plus", "activated"];
+    const stepOrder = ["signup", "fav_team", "fav_players_1", "games_1plus", "activated"];
     const stepMap = new Map<string, { count: number; rate: number }>();
     for (const row of data ?? []) {
       stepMap.set(row.metric_key, { count: row.value, rate: row.rate });

@@ -174,7 +174,7 @@ export default function RetentionPage() {
           <p className="text-2xl font-bold tabular-nums" style={{ color: rateColor(activationRate) }}>
             {(activationRate * 100).toFixed(1)}%
           </p>
-          <p className="text-[10px] text-gray-500 mt-1">최애팀 + 최애선수 5명 + 경기 3개+ 방문</p>
+          <p className="text-[10px] text-gray-500 mt-1">최애팀 + 최애선수 1명 + 경기 1개+ 방문</p>
         </div>
         <div className="glass-card p-5">
           <p className="text-xs text-gray-400 mb-1">첫 경기일 복귀율</p>
@@ -291,7 +291,7 @@ export default function RetentionPage() {
 
       <div className="glass-card p-5">
         <h2 className="text-sm font-semibold mb-1">Activation Funnel</h2>
-        <p className="text-[11px] text-gray-500 mb-4">6/26 이후 가입 코호트 기준. <span className="text-gray-300">활성화 완료 = ①최애팀 지정 + ②최애선수 5명 이상 + ③서로 다른 경기 3개 이상 방문 (3조건 모두 충족)</span>. 상단 Activation 완료율 = 이 완료 비율.</p>
+        <p className="text-[11px] text-gray-500 mb-4">6/26 이후 가입 코호트 기준. <span className="text-gray-300">활성화 완료 = ①최애팀 지정 + ②최애선수 1명 이상 + ③서로 다른 경기 1개 이상 방문 (3조건 모두 충족)</span>. 상단 Activation 완료율 = 이 완료 비율.</p>
         {data.funnel.length === 0 ? (
           <p className="text-gray-500 text-sm">데이터 없음</p>
         ) : (
