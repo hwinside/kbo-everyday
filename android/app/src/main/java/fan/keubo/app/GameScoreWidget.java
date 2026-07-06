@@ -188,9 +188,19 @@ public class GameScoreWidget extends AppWidgetProvider {
         }
     }
 
-    /** 현재 prefs로 카드 RemoteViews 생성 — 위젯 + 잠금화면 알림 카드 공용.
+    /** 현재 prefs로 카드 RemoteViews 생성 — 홈 위젯용(widget_game_score).
      *  경기 없으면 빈 상태("경기 정보가 없어요"). */
     static RemoteViews buildCard(Context context) {
+        return buildCard(context, R.layout.widget_game_score);
+    }
+
+    /** 잠금화면 알림 "펼친 뷰"용 풀카드 — 디자인 동일, 수직 여백만 축소한 클론 레이아웃.
+     *  (One UI 알림 확장 높이 캡 안에 중계 틱커까지 온전히 표시) */
+    static RemoteViews buildNotifFullCard(Context context) {
+        return buildCard(context, R.layout.notif_card_full);
+    }
+
+    private static RemoteViews buildCard(Context context, int layoutRes) {
         Eff e = readEff(context);
         boolean hasGame = e.hasGame;
         String myTeam = e.myTeam;
@@ -210,7 +220,7 @@ public class GameScoreWidget extends AppWidgetProvider {
         String hstarter = e.hstarter;
         String lastPlay = e.lastPlay;
 
-        RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget_game_score);
+        RemoteViews v = new RemoteViews(context.getPackageName(), layoutRes);
 
         if (!hasGame || away.isEmpty() || home.isEmpty()) {
             // 빈 상태
@@ -538,24 +548,9 @@ public class GameScoreWidget extends AppWidgetProvider {
         return bmp;
     }
 
-    /** 상태 pill 텍스트를 영문/숫자(main=Montserrat)와 한글(suf=Noto Sans KR)로 분리해 두 TextView에 세팅.
-     *  (notif 컴팩트 카드 전용 — 홈 위젯은 textBitmap 사용.) */
-    private static void setStatusPill(RemoteViews v, int mainId, int sufId, String text) {
-        if (text == null) text = "";
-        int idx = -1;
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (c >= '가' && c <= '힣') { idx = i; break; }
-        }
-        String main = (idx < 0 ? text : text.substring(0, idx)).trim();
-        String suf = (idx < 0 ? "" : text.substring(idx)).trim();
-        v.setTextViewText(mainId, main);
-        v.setTextViewText(sufId, suf);
-        v.setViewVisibility(sufId, suf.isEmpty() ? View.GONE : View.VISIBLE);
-        v.setViewVisibility(mainId, main.isEmpty() ? View.GONE : View.VISIBLE);
-    }
-
-    /** 알림 접힌 뷰용 컴팩트 카드(점수 한 줄). 경기 없으면 null. */
+    /** 알림 접힌 뷰용 컴팩트 카드 — 홈위젯과 디자인·스펙 동일(비트맵 타이포/상태 문구/중계 틱커).
+     *  1행: 로고/약어/점수(or 예정·취소 문구) + 상태 pill, 2행(라이브만): 문자중계 최근 플레이.
+     *  경기 없으면 null. */
     static RemoteViews buildCompactCard(Context context) {
         Eff e = readEff(context);
         String away = e.away;
@@ -572,27 +567,49 @@ public class GameScoreWidget extends AppWidgetProvider {
         int homeLogo = draw(context, "teamlogo_" + home.toLowerCase());
         if (awayLogo != 0) v.setImageViewResource(R.id.ncc_away_logo, awayLogo);
         if (homeLogo != 0) v.setImageViewResource(R.id.ncc_home_logo, homeLogo);
-        v.setTextViewText(R.id.ncc_away_name, shortName(away));
-        v.setTextViewText(R.id.ncc_home_name, shortName(home));
+        // 약어 — SystemUI(알림)도 런처처럼 커스텀 fontFamily를 무시하므로 홈위젯과 동일 비트맵 렌더.
+        v.setImageViewBitmap(R.id.ncc_away_name, textBitmap(context, shortName(away), 14f, 0xFFE8B0BC));
+        v.setImageViewBitmap(R.id.ncc_home_name, textBitmap(context, shortName(home), 14f, 0xFFE8B0BC));
+
         String status = e.status;
         boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
+        boolean isFinal = status != null && status.startsWith("FINAL");
+        boolean isCancelled = "CANCELLED".equals(status);
+        // 예정 status = "SCHEDULED|<시간>|<날짜라벨>" — pill엔 시간만(날짜라벨 제외, 홈위젯과 동일 파싱).
+        String schedTime = "";
         if (isScheduled) {
+            String sched = status.substring("SCHEDULED|".length());
+            int bar = sched.indexOf('|');
+            schedTime = bar >= 0 ? sched.substring(0, bar) : sched;
+        }
+        // 예정/취소 = 점수 숨기고 가운데 문구, 라이브/종료 = 점수 (홈위젯과 동일 규칙).
+        if (isScheduled || isCancelled) {
             v.setViewVisibility(R.id.ncc_score, View.GONE);
             v.setViewVisibility(R.id.ncc_score_scheduled, View.VISIBLE);
-            v.setTextViewText(R.id.ncc_score_scheduled, "경기 예정");
+            v.setImageViewBitmap(R.id.ncc_score_scheduled,
+                textBitmap(context, isCancelled ? "경기 취소" : "경기 예정", 16f, 0xFFF5F5F7));
         } else {
             v.setViewVisibility(R.id.ncc_score, View.VISIBLE);
             v.setViewVisibility(R.id.ncc_score_scheduled, View.GONE);
-            v.setTextViewText(R.id.ncc_score, e.as + " : " + e.hs);
+            v.setImageViewBitmap(R.id.ncc_score, textBitmap(context, e.as + " : " + e.hs, 20f, 0xFFF5F5F7));
         }
 
-        if (status.isEmpty()) {
+        // 상태 pill — 홈위젯과 동일 문구: 예정=시각, 종료="경기 종료", 취소="경기 취소", 라이브="● N회초".
+        if (status.isEmpty() || "SCHEDULED|".equals(status)) {
             v.setViewVisibility(R.id.ncc_status, View.GONE);
         } else {
             v.setViewVisibility(R.id.ncc_status, View.VISIBLE);
-            setStatusPill(v, R.id.ncc_status_main, R.id.ncc_status_suf, isScheduled
-                ? status.substring("SCHEDULED|".length())
-                : status);
+            String pill = isCancelled ? "경기 취소" : isScheduled ? schedTime : isFinal ? "경기 종료" : "● " + status;
+            v.setImageViewBitmap(R.id.ncc_status_img, textBitmap(context, pill, 11f, 0xFFFF6B7A));
+        }
+
+        // 문자중계 최근 플레이 — 홈위젯과 동일(라이브 + 텍스트 있을 때만). 점(●)은 XML ViewFlipper pulse.
+        boolean isLiveStatus = !isScheduled && !isFinal && !isCancelled && !status.isEmpty();
+        if (isLiveStatus && !TextUtils.isEmpty(e.lastPlay)) {
+            v.setViewVisibility(R.id.ncc_relay_row, View.VISIBLE);
+            v.setTextViewText(R.id.ncc_relay_text, e.lastPlay);
+        } else {
+            v.setViewVisibility(R.id.ncc_relay_row, View.GONE);
         }
         return v;
     }

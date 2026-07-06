@@ -87,7 +87,7 @@ public class GameNotificationPlugin extends Plugin {
         // 접힌 뷰(잠금화면 기본) = 점수 한 줄 컴팩트 카드, 펼친 뷰 = 전체 카드.
         if (GameScoreWidget.hasGame(context)) {
             RemoteViews compact = GameScoreWidget.buildCompactCard(context);
-            RemoteViews full = GameScoreWidget.buildCard(context);
+            RemoteViews full = GameScoreWidget.buildNotifFullCard(context);
             full.setOnClickPendingIntent(R.id.widget_root, pi);
             b.setStyle(new NotificationCompat.DecoratedCustomViewStyle())
                 .setCustomContentView(compact != null ? compact : full)
