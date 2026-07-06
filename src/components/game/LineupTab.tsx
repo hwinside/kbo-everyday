@@ -259,8 +259,8 @@ export default function LineupTab({
         />
       </div>
 
-      {/* AI Lineup Analysis — 라인업 확정 시에만 표시 */}
-      {!isLineupPartial && isLineupConfirmed && (
+      {/* AI Lineup Analysis — 라인업 확정 + 정규전(올스타 제외) 시에만 표시 */}
+      {!isLineupPartial && isLineupConfirmed && !isAllStarGame(awayTeam.id, homeTeam.id) && (
         <AiLineupAnalysisCard
           gameId={gameId}
           awayTeamId={awayTeam.id}

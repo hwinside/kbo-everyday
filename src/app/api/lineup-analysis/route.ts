@@ -499,16 +499,15 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!GEMINI_API_KEY) {
-    return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
-  }
-
   const body: LineupRequest = await req.json();
   if (!body.gameId || !body.awayTeamId || !body.homeTeamId || !body.lineup) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
   if (isAllStarGameId(body.gameId) || isAllStarGame(body.awayTeamId, body.homeTeamId)) {
     return NextResponse.json({ analysis: null, source: "allstar" });
+  }
+  if (!GEMINI_API_KEY) {
+    return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
   }
 
   if (!body.lineup.away.batters.length || !body.lineup.home.batters.length) {

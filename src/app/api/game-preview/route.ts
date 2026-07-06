@@ -936,16 +936,15 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!GEMINI_API_KEY) {
-    return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
-  }
-
   const body: PreviewRequest = await req.json();
   if (!body.gameId || !body.awayTeamId || !body.homeTeamId) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
   if (isAllStarGameId(body.gameId) || isAllStarGame(body.awayTeamId, body.homeTeamId)) {
     return NextResponse.json({ preview: null, source: "allstar" });
+  }
+  if (!GEMINI_API_KEY) {
+    return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
   }
 
   const status = await getGameStatus(body.gameId);
