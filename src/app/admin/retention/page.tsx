@@ -186,7 +186,7 @@ export default function RetentionPage() {
 
       <div className="glass-card p-5">
         <h2 className="text-sm font-semibold mb-1">주간 코호트 리텐션 히트맵</h2>
-        <p className="text-[11px] text-gray-500 mb-4">D0 = 가입 당일 활동. page_view 계측이 온전한 6/26 이후(2026-W27~) 코호트만 표시. 각 셀은 완료된 날 관측만 집계(진행 중인 오늘은 제외)해 최근 주도 왜곡 없이 표시.</p>
+        <p className="text-[11px] text-gray-500 mb-4">D0 = 가입일 기준선(100%), D1~ = 재방문율. page_view 계측이 온전한 6/26 이후(2026-W27~) 코호트만 표시. 각 셀은 완료된 날 관측만 집계(진행 중인 오늘은 제외)해 최근 주도 왜곡 없이 표시.</p>
         {visibleWeekly.length === 0 ? (
           <p className="text-gray-500 text-sm">완료된 관측이 있는 주가 아직 없습니다. 진행 중인 주는 완료되는 대로 표시됩니다.</p>
         ) : (
@@ -235,7 +235,7 @@ export default function RetentionPage() {
 
       <div className="glass-card p-5">
         <h2 className="text-sm font-semibold mb-1">일별 코호트 리텐션</h2>
-        <p className="text-[11px] text-gray-500 mb-4">D0 = 가입 당일 활동. page_view 계측이 온전한 6/26 이후 코호트만 (그 전은 눈팅 방문 누락으로 과소집계). 진행 중인 당일은 제외, <span className="text-[#EF4444]">빨간 테두리</span>는 경기 없는 월요일(자연 저조).</p>
+        <p className="text-[11px] text-gray-500 mb-4">D0 = 가입일 기준선(100%), D1~ = 재방문율. page_view 계측이 온전한 6/26 이후 코호트만 (그 전은 눈팅 방문 누락으로 과소집계). 진행 중인 당일은 제외, <span className="text-[#EF4444]">빨간 테두리</span>는 경기 없는 월요일(자연 저조).</p>
         {data.dailyCohort.length === 0 ? (
           <p className="text-gray-500 text-sm">데이터 없음</p>
         ) : (

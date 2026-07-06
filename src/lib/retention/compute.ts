@@ -144,7 +144,9 @@ export async function computeCohortRetention(
         // 완료된 날 관측만 집계해 최근 주 D-N이 낮게 왜곡되는 것 방지.
         if (targetDay >= targetDate) continue;
         eligible++;
-        if (visitDays.get(u.id)?.has(targetDay)) returned++;
+        // D0(가입일)은 가입 자체를 활동으로 인정 → 기준선 100% 고정(표준 코호트 앵커).
+        // 실제 재방문율은 D1부터. (가입만 하고 활동 로그 없는 유저가 D0를 깎던 것 방지)
+        if (dN === 0 || visitDays.get(u.id)?.has(targetDay)) returned++;
       }
       if (eligible > 0) {
         rows.push({
@@ -201,7 +203,8 @@ export async function computeDailyCohortRetention(
         const targetDay = addKSTDays(u.signupDate, dN);
         if (targetDay > targetDate) continue;
         eligible++;
-        if (visitDays.get(u.id)?.has(targetDay)) returned++;
+        // D0(가입일)은 가입 자체를 활동으로 인정 → 기준선 100% 고정(주간 코호트와 동일).
+        if (dN === 0 || visitDays.get(u.id)?.has(targetDay)) returned++;
       }
       if (eligible > 0) {
         rows.push({
