@@ -1,0 +1,377 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 잠금화면 알림 "펼친 뷰" 전용 카드 — widget_game_score.xml의 클론.
+     디자인·스펙(폰트/크기/색/구성) 동일, 수직 여백만 소폭 축소 — One UI 알림 확장 뷰
+     높이 캡에 문자중계 틱커까지 온전히 들어가게. 홈위젯 레이아웃 수정 시 이 파일도 함께 반영할 것.
+     (view id는 widget_game_score와 동일 — GameScoreWidget.buildCard가 공용으로 채운다) -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg_lg">
+
+    <!-- 배경 반투명 팀 로고 워터마크 (우상단) -->
+    <ImageView
+        android:id="@+id/widget_wm"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="8dp"
+        android:layout_marginEnd="10dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/widget_wm_lg"
+        android:contentDescription="@null" />
+
+    <!-- 빈 상태 (경기 없음) -->
+    <TextView
+        android:id="@+id/widget_empty"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:fontFamily="@font/notosanskr"
+        android:letterSpacing="-0.04"
+        android:textColor="#A1A1AA"
+        android:textSize="13sp"
+        android:visibility="gone"
+        android:text="경기 정보가 없어요" />
+
+    <!-- 카드 본문 -->
+    <LinearLayout
+        android:id="@+id/widget_content"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:orientation="vertical"
+        android:paddingLeft="14dp"
+        android:paddingRight="14dp"
+        android:paddingTop="7dp"
+        android:paddingBottom="7dp">
+
+        <!-- MY TEAM 헤더 -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+            <ImageView
+                android:id="@+id/widget_myteam_logo"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/teamlogo_lg"
+                android:contentDescription="@null" />
+            <ImageView
+                android:id="@+id/widget_myteam_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:adjustViewBounds="true"
+                android:contentDescription="@null" />
+        </LinearLayout>
+
+        <!-- 스코어 행 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <!-- away 컬럼 -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+                <ImageView
+                    android:id="@+id/widget_away_logo"
+                    android:layout_width="34dp"
+                    android:layout_height="34dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/teamlogo_sk"
+                    android:contentDescription="@null" />
+                <ImageView
+                    android:id="@+id/widget_away_name"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:adjustViewBounds="true"
+                    android:contentDescription="@null" />
+                <!-- 예고선발 투수 이름(풀네임 아래) — 예정 경기만. 미확정 "미정". -->
+                <TextView
+                    android:id="@+id/widget_away_starter_col"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:fontFamily="@font/notosanskr"
+                    android:letterSpacing="-0.03"
+                    android:textColor="#C6AAB2"
+                    android:textSize="12sp"
+                    android:maxLines="1"
+                    android:visibility="gone"
+                    android:text="" />
+            </LinearLayout>
+
+            <!-- 가운데: 점수 + 상태 pill -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center">
+                <!-- 경기 날짜('6월 7일 (토)') — 예정 경기일 때 표시. 숫자(Montserrat)+한글(Noto)
+                     혼합이라 RemoteViews에서 폰트가 안 먹어 비트맵으로 렌더(widget_date). -->
+                <ImageView
+                    android:id="@+id/widget_date"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="1dp"
+                    android:adjustViewBounds="true"
+                    android:visibility="gone"
+                    android:contentDescription="@null" />
+                <!-- 경기장(잠실) — 가운데 점수 위 별도 표시 -->
+                <TextView
+                    android:id="@+id/widget_stadium"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="1dp"
+                    android:fontFamily="@font/notosanskr"
+                    android:letterSpacing="-0.04"
+                    android:textColor="#AEAEB4"
+                    android:textSize="11sp"
+                    android:visibility="gone"
+                    android:text="잠실" />
+                <!-- 스코어 — Montserrat 숫자, RemoteViews 폰트 미적용 회피 위해 비트맵 렌더 -->
+                <ImageView
+                    android:id="@+id/widget_score"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:adjustViewBounds="true"
+                    android:contentDescription="@null" />
+                <TextView
+                    android:id="@+id/widget_score_scheduled"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/notosanskr"
+                    android:letterSpacing="-0.04"
+                    android:textColor="#F5F5F7"
+                    android:textStyle="bold"
+                    android:textSize="22sp"
+                    android:visibility="gone"
+                    android:text="경기 예정" />
+<!-- 상태 pill — LIVE N회초/시각/경기 종료. 숫자(Montserrat)+한글(Noto) 혼합이라 비트맵 렌더 -->
+                <LinearLayout
+                    android:id="@+id/widget_status"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:paddingTop="2dp"
+                    android:paddingBottom="2dp"
+                    android:background="@drawable/widget_status_pill"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+                    <ImageView
+                        android:id="@+id/widget_status_img"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:adjustViewBounds="true"
+                        android:contentDescription="@null" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- home 컬럼 -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+                <ImageView
+                    android:id="@+id/widget_home_logo"
+                    android:layout_width="34dp"
+                    android:layout_height="34dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/teamlogo_lg"
+                    android:contentDescription="@null" />
+                <ImageView
+                    android:id="@+id/widget_home_name"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:adjustViewBounds="true"
+                    android:contentDescription="@null" />
+                <!-- 예고선발 투수 이름(풀네임 아래) — 예정 경기만. 미확정 "미정". -->
+                <TextView
+                    android:id="@+id/widget_home_starter_col"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:fontFamily="@font/notosanskr"
+                    android:letterSpacing="-0.03"
+                    android:textColor="#C6AAB2"
+                    android:textSize="12sp"
+                    android:maxLines="1"
+                    android:visibility="gone"
+                    android:text="" />
+            </LinearLayout>
+        </LinearLayout>
+
+
+        <!-- 하단: (OUT + 투수/타자 소속표기) + 다이아몬드 — SSOT lockscreen-card-approved -->
+        <LinearLayout
+            android:id="@+id/widget_live_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:paddingTop="5dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <!-- 좌측: OUT 카운트 + 투수/타자 2줄 -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <!-- 아웃카운트 (B/S 제거, OUT만) -->
+                <ImageView
+                    android:id="@+id/widget_out"
+                    android:layout_width="74dp"
+                    android:layout_height="20dp"
+                    android:layout_marginBottom="4dp"
+                    android:scaleType="fitStart"
+                    android:src="@drawable/out_0"
+                    android:contentDescription="@null" />
+
+                <!-- 투수 (소속) 이름 -->
+                <LinearLayout
+                    android:id="@+id/widget_pitcher_row"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+                    <TextView
+                        android:id="@+id/widget_pitcher_label"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/notosanskr"
+                        android:letterSpacing="-0.04"
+                        android:textColor="#AEAEB4"
+                        android:textStyle="bold"
+                        android:textSize="15sp"
+                        android:text="투수" />
+                    <TextView
+                        android:id="@+id/widget_pitcher_name"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:fontFamily="@font/notosanskr"
+                        android:letterSpacing="-0.04"
+                        android:textColor="#F2F2F5"
+                        android:textStyle="bold"
+                        android:textSize="15sp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="" />
+                </LinearLayout>
+
+                <!-- 타자 (소속) 이름 -->
+                <LinearLayout
+                    android:id="@+id/widget_batter_row"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+                    <TextView
+                        android:id="@+id/widget_batter_label"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/notosanskr"
+                        android:letterSpacing="-0.04"
+                        android:textColor="#AEAEB4"
+                        android:textStyle="bold"
+                        android:textSize="15sp"
+                        android:text="타자" />
+                    <TextView
+                        android:id="@+id/widget_batter_name"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:fontFamily="@font/notosanskr"
+                        android:letterSpacing="-0.04"
+                        android:textColor="#F2F2F5"
+                        android:textStyle="bold"
+                        android:textSize="15sp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <ImageView
+                android:id="@+id/widget_diamond"
+                android:layout_width="52dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:paddingStart="2dp"
+                android:paddingEnd="2dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/diamond_000"
+                android:contentDescription="@null" />
+        </LinearLayout>
+
+        <!-- 문자중계 최근 플레이 한 줄 — 그레이 틱커 바(라이브만, buildCard가 visibility 제어).
+             RemoteViews 제약상 바 <View> 금지 → LinearLayout+TextView. 라이브 점(●)은
+             widget_relay_text 앞에 ForegroundColorSpan(빨강)으로 그린다. iOS 잠금 LA와 통일. -->
+        <LinearLayout
+            android:id="@+id/widget_relay_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:paddingLeft="9dp"
+            android:paddingRight="9dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:background="@drawable/widget_relay_bg"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:visibility="gone">
+            <!-- 라이브 점 — ViewFlipper로 자동 pulse(프레임1=빨강, 프레임2=dim빨강, 650ms).
+                 런처가 flip 안 하면 프레임1(빨강 점) 정적 표시 → static fallback 자연 확보. -->
+            <ViewFlipper
+                android:id="@+id/widget_relay_dot"
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:layout_marginEnd="7dp"
+                android:autoStart="true"
+                android:flipInterval="650"
+                android:measureAllChildren="true">
+                <ImageView
+                    android:layout_width="6dp"
+                    android:layout_height="6dp"
+                    android:src="@drawable/relay_dot_on"
+                    android:contentDescription="@null" />
+                <ImageView
+                    android:layout_width="6dp"
+                    android:layout_height="6dp"
+                    android:src="@drawable/relay_dot_off"
+                    android:contentDescription="@null" />
+            </ViewFlipper>
+            <TextView
+                android:id="@+id/widget_relay_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFamily="@font/notosanskr"
+                android:letterSpacing="-0.04"
+                android:textColor="#EAEAEC"
+                android:textSize="12sp"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:text="" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

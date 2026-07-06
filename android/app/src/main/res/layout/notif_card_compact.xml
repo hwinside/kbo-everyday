@@ -1,114 +1,136 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 잠금화면 알림 접힌 뷰 — 점수 한 줄 (팀컬러 배경). 펼치면 widget_game_score 전체 카드.
-     알림 접힌 높이(~64dp) 제약상 핵심(양팀 로고/약어/점수/이닝)만. -->
+<!-- 잠금화면 알림 접힌 뷰 — 홈위젯과 디자인·스펙 동일(팀컬러 배경 + 비트맵 타이포 + 중계 틱커).
+     1행: 양팀 로고/약어/점수(or 경기 예정·취소) + 상태 pill. 2행(라이브만): 문자중계 최근 플레이.
+     펼치면 widget_game_score 전체 카드. 텍스트는 전부 비트맵(ImageView) — SystemUI(알림)도
+     런처처럼 커스텀 fontFamily를 무시하므로 홈위젯과 같은 textBitmap 렌더로 폰트를 보장한다.
+     중계 문구(한글 TextView)만 위젯 relay row와 동일하게 TextView 유지. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/ncc_root"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="horizontal"
-    android:gravity="center_vertical"
+    android:orientation="vertical"
     android:background="@drawable/widget_bg_lg"
     android:paddingStart="14dp"
     android:paddingEnd="14dp"
-    android:paddingTop="10dp"
-    android:paddingBottom="10dp">
+    android:paddingTop="5dp"
+    android:paddingBottom="5dp">
 
-    <ImageView
-        android:id="@+id/ncc_away_logo"
-        android:layout_width="30dp"
-        android:layout_height="30dp"
-        android:scaleType="fitCenter"
-        android:src="@drawable/teamlogo_sk"
-        android:contentDescription="@null" />
-    <TextView
-        android:id="@+id/ncc_away_name"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="6dp"
-        android:fontFamily="@font/notosanskr"
-        android:letterSpacing="-0.04"
-        android:textColor="#E8B0BC"
-        android:textStyle="bold"
-        android:textSize="14sp"
-        android:text="SSG" />
-
-    <TextView
-        android:id="@+id/ncc_score"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_weight="1"
-        android:gravity="center"
-        android:fontFamily="@font/montserrat"
-        android:letterSpacing="-0.02"
-        android:textColor="#F5F5F7"
-        android:textStyle="bold"
-        android:textSize="20sp"
-        android:text="2 : 1" />
-    <TextView
-        android:id="@+id/ncc_score_scheduled"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_weight="1"
-        android:gravity="center"
-        android:fontFamily="@font/notosanskr"
-        android:letterSpacing="-0.04"
-        android:textColor="#F5F5F7"
-        android:textStyle="bold"
-        android:textSize="16sp"
-        android:visibility="gone"
-        android:text="경기 예정" />
-
-    <TextView
-        android:id="@+id/ncc_home_name"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginEnd="6dp"
-        android:fontFamily="@font/notosanskr"
-        android:letterSpacing="-0.04"
-        android:textColor="#E8B0BC"
-        android:textStyle="bold"
-        android:textSize="14sp"
-        android:text="LG" />
-    <ImageView
-        android:id="@+id/ncc_home_logo"
-        android:layout_width="30dp"
-        android:layout_height="30dp"
-        android:scaleType="fitCenter"
-        android:src="@drawable/teamlogo_lg"
-        android:contentDescription="@null" />
-
-<!-- 상태 pill — 영문/숫자=Montserrat, 한글=Noto Sans KR 분리 -->
+    <!-- 문자중계 최근 플레이 한 줄 — 홈위젯 relay row와 동일 스펙(그레이 틱커 바 + 라이브 점).
+         라이브 + 텍스트 있을 때만 buildCompactCard가 visibility 제어. -->
     <LinearLayout
-        android:id="@+id/ncc_status"
-        android:layout_width="wrap_content"
+        android:id="@+id/ncc_relay_row"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginStart="10dp"
-        android:paddingStart="9dp"
-        android:paddingEnd="9dp"
-        android:paddingTop="2dp"
-        android:paddingBottom="2dp"
-        android:background="@drawable/widget_status_pill"
+        android:layout_marginTop="4dp"
+        android:paddingLeft="9dp"
+        android:paddingRight="9dp"
+        android:paddingTop="3dp"
+        android:paddingBottom="3dp"
+        android:background="@drawable/widget_relay_bg"
         android:orientation="horizontal"
-        android:gravity="center_vertical">
+        android:gravity="center_vertical"
+        android:visibility="gone">
+        <!-- 접힌 뷰는 static 라이브 점 — One UI 접힌 알림 행에서 ViewFlipper 애니메이션 배제
+             (펼친 뷰/홈위젯은 ViewFlipper pulse 유지) -->
+        <ImageView
+            android:id="@+id/ncc_relay_dot"
+            android:layout_width="6dp"
+            android:layout_height="6dp"
+            android:layout_marginEnd="7dp"
+            android:src="@drawable/relay_dot_on"
+            android:contentDescription="@null" />
         <TextView
-            android:id="@+id/ncc_status_main"
-            android:layout_width="wrap_content"
+            android:id="@+id/ncc_relay_text"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:fontFamily="@font/montserrat"
-            android:letterSpacing="-0.02"
-            android:textColor="#FF6B7A"
-            android:textStyle="bold"
-            android:textSize="11sp"
-            android:text="● LIVE 2" />
-        <TextView
-            android:id="@+id/ncc_status_suf"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_weight="1"
             android:fontFamily="@font/notosanskr"
             android:letterSpacing="-0.04"
-            android:textColor="#FF6B7A"
-            android:textStyle="bold"
+            android:textColor="#EAEAEC"
             android:textSize="11sp"
-            android:text="회초" />
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="" />
     </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <ImageView
+            android:id="@+id/ncc_away_logo"
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/teamlogo_sk"
+            android:contentDescription="@null" />
+        <ImageView
+            android:id="@+id/ncc_away_name"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:adjustViewBounds="true"
+            android:contentDescription="@null" />
+
+        <!-- 가운데: 점수(라이브/종료) or 경기 예정·취소 문구 — 비트맵이라 wrap 컨테이너로 중앙 정렬 -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:gravity="center">
+            <ImageView
+                android:id="@+id/ncc_score"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:adjustViewBounds="true"
+                android:contentDescription="@null" />
+            <ImageView
+                android:id="@+id/ncc_score_scheduled"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:adjustViewBounds="true"
+                android:visibility="gone"
+                android:contentDescription="@null" />
+        </LinearLayout>
+
+        <ImageView
+            android:id="@+id/ncc_home_name"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp"
+            android:adjustViewBounds="true"
+            android:contentDescription="@null" />
+        <ImageView
+            android:id="@+id/ncc_home_logo"
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/teamlogo_lg"
+            android:contentDescription="@null" />
+
+        <!-- 상태 pill — 홈위젯과 동일: 비트맵 1장(예정=시각, 라이브=● N회초, 종료/취소=문구) -->
+        <LinearLayout
+            android:id="@+id/ncc_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:paddingStart="9dp"
+            android:paddingEnd="9dp"
+            android:paddingTop="3dp"
+            android:paddingBottom="3dp"
+            android:background="@drawable/widget_status_pill"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+            <ImageView
+                android:id="@+id/ncc_status_img"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:adjustViewBounds="true"
+                android:contentDescription="@null" />
+        </LinearLayout>
+    </LinearLayout>
+
 </LinearLayout>
