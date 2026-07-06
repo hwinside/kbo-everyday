@@ -405,27 +405,20 @@ async function callGemini(prompt: string): Promise<string> {
 
 // ===== Post-process sanitizer =====
 // 경기 날짜는 화면 배지가 책임지므로 본문에는 시점 부사(어제/오늘)를 두지 않는다.
-// LLM이 강화된 프롬프트에도 가끔 시점 도입부를 생성하고, 과거 생성분도 "어제"로
-// 시작할 수 있으므로 저장/반환 전 마지막 안전장치로 도입부 시점어를 제거한다.
+// LLM이 강화된 프롬프트에도 가끔 시점어를 생성하고, 과거 생성분(휴식일 복사 포함)도
+// 본문 곳곳에 "어제"가 남아 있을 수 있으므로 저장/반환 전 본문 전체에서 제거한다.
+// 단어 경계로 토큰 단위만 제거하므로 "오늘날", "어제오늘" 같은 합성어는 보존된다.
 function sanitizeCopy(copy: string): string {
   if (!copy) return copy;
-  let out = copy.trimStart();
-
-  // 1. 도입부 시점 부사 제거: "어제 ", "오늘 ", "어제의 ", "오늘의 "
-  out = out.replace(/^(어제|오늘)(의)?\s+/, "");
-
-  // 2. 첫 문장 안에 남은 시점 부사도 1회 제거 (과교정 방지 위해 첫 문장만)
-  const firstPeriod = out.indexOf("다.");
-  const firstSentenceEnd = firstPeriod >= 0 ? firstPeriod + 2 : out.length;
-  let firstSentence = out.slice(0, firstSentenceEnd);
-  const rest = out.slice(firstSentenceEnd);
-  firstSentence = firstSentence.replace(/(^|\s)(어제|오늘)(의)?\s+/, "$1");
-  out = firstSentence + rest;
-
-  // 3. 잔류 "오늘의 경기"/"어제 경기" 류 → 시점어 제거
-  out = out.replace(/(어제|오늘)의?\s+경기/g, "경기");
-
-  return out.trimStart();
+  // 도입부 + 본문 전체의 시점 부사 제거.
+  // 조사(은/는/이/가/의/도/만)·문장부호(,)가 붙은 형태도 함께 제거.
+  // "오늘날", "어제오늘" 같은 합성어는 뒤에 [은|는|이|가|의|도|만|,|\s|$] 외 글자가 이어지므로 매칭 안 됨 → 보존.
+  // 뒤 공백은 소비하지 않아 "어제도 오늘은"처럼 연속된 시점어도 모두 제거한다.
+  return copy
+    .trimStart()
+    .replace(/(^|\s)(어제|오늘)(은|는|이|가|의|도|만)?(,)?(?=\s|$)/g, "$1")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 // ===== Main route =====
@@ -616,7 +609,7 @@ export async function GET(req: NextRequest) {
         ? callGemini(buildTitlePrompt(pitcherDelta, gameEvents, "pitcher"))
         : Promise.resolve(""));
       const [rawStandings, rawBatter, rawPitcher] = await Promise.all(promises);
-      // Post-process 가드: LLM이 "어제/오늘~" 시점 도입부를 만들어도 저장 전에 제거
+      // Post-process 가드: LLM이 "어제/오늘" 시점어를 만들어도 저장 전에 본문 전체에서 제거
       standingsCopy = sanitizeCopy(rawStandings);
       batterCopy = sanitizeCopy(rawBatter);
       pitcherCopy = sanitizeCopy(rawPitcher);
