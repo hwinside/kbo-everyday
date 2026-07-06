@@ -657,9 +657,17 @@ public class GameScoreWidget extends AppWidgetProvider {
         e.putString(KEY_OUTS, outs == null ? "" : outs);
         e.putString(KEY_DIAMOND, (diamond == null || diamond.isEmpty()) ? "000" : diamond);
         e.putString(KEY_GAME_ID, gameId == null ? "" : gameId);
-        // lastPlay: null=기존값 보존(JS updateWidget 경로 — 앱/경기룸 10초 폴링이 FCM 중계를
-        // 덮어쓰지 않게). 비-null(""/텍스트)=set/clear(FCM 경로 전용). 삼순 조건부 GO blocker 반영.
-        if (lastPlay != null) e.putString(KEY_LAST_PLAY, lastPlay);
+        // last_play 갱신 규칙 (삼순 재리뷰 반영):
+        //  - FCM 경로(lastPlay 비-null: ""/텍스트) = 그대로 set/clear
+        //  - JS 경로(lastPlay==null) = 기본 보존. 단 *실제* 경기 전환(gameChanged)일 때만 "" clear
+        //  - 빈 gameId(경기룸이 gameId 미전달)는 "모름"으로 보고 gameChanged=false → 보존
+        //    (경기룸 진입/10초 폴링이 FCM 중계를 지우지 않게). hasNext와 독립.
+        boolean gameChanged = !TextUtils.isEmpty(gameId) && !gameId.equals(prevGameId);
+        if (lastPlay != null) {
+            e.putString(KEY_LAST_PLAY, lastPlay);
+        } else if (gameChanged) {
+            e.putString(KEY_LAST_PLAY, "");
+        }
         if (hasNext) {
             e.putBoolean(KEY_NEXT_HAS, true);
             e.putString(KEY_NEXT_AWAY, nAway == null ? "" : nAway);
@@ -672,9 +680,6 @@ public class GameScoreWidget extends AppWidgetProvider {
         } else if (gameId == null || !gameId.equals(prevGameId)) {
             // 다른 경기로 바뀌면(FCM 라이브 등) 이전 경기의 stale next 제거 → 오탐 롤오버 방지.
             e.putBoolean(KEY_NEXT_HAS, false);
-            // 새 경기엔 이전 경기 중계 이월 금지(JS 경로 stale-flash 방지). FCM이 명시값(비-null)
-            // 준 경우는 위에서 이미 세팅됐고, JS 경로(null)만 여기서 "" clear.
-            if (lastPlay == null) e.putString(KEY_LAST_PLAY, "");
         }
         e.apply();
         refresh(ctx);
