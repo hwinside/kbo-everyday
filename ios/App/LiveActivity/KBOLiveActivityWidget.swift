@@ -403,6 +403,32 @@ struct KBOLockScreenCard: View {
                 }
             }
 
+            // 문자중계 최근 플레이 한 줄 (진행 중에만). 예: "오스틴 우중간 적시 2루타".
+            // 이닝은 상단 LIVE 표기와 중복이라 서버 문구에서 제외(타자+결과만). 현장감 위해
+            // 그레이 틱커 바 + 라이브 점(빨강). 좁은 카드라 한 줄 고정 + 축소 폴백 + 말줄임. 없으면 미표시.
+            if !state.isFinal && !state.isScheduled, let lp = state.lastPlay, !lp.isEmpty {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Color(hex: 0xFF5A5A))
+                        .frame(width: 5, height: 5)
+                    Text(lp)
+                        .font(notoKR(11, .medium))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color.white.opacity(0.11))
+                )
+                .padding(.top, 4)
+            }
+
             // 경기 전 — 예고선발 한 줄: "{원정선발}  선발투수  {홈선발}"(승인 목업). 미확정이면 "미정".
             // 구분선 아래 가운데 정렬. 이름=양쪽 안쪽 정렬, 가운데 라벨은 옅게.
             if state.isScheduled {

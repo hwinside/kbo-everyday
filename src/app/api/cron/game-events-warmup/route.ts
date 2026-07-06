@@ -28,6 +28,27 @@ function getKSTDateStr(): string {
   return kst.toISOString().slice(0, 10).replace(/-/g, "");
 }
 
+// 잠금화면 Live Activity "중계 한 줄" 소스 — /api/game-relay 응답에서 최근 플레이 1줄 추출.
+// innings는 시간순 오름차순(parseInningRelays), plays도 오름차순 → 마지막 non-empty 이닝의
+// 마지막 play = 최신. 예: "안재석 삼진 아웃"(이닝은 상단 LIVE 표기와 중복이라 제외). 실패 시 null(카드 무영향).
+type RelayLite = { innings?: { inning: number; half: string; plays?: { batterName: string; result: string }[] }[] };
+function latestRelayLine(relay: unknown): string | null {
+  const innings = (relay as RelayLite)?.innings;
+  if (!Array.isArray(innings)) return null;
+  let lastInn: { inning: number; half: string } | null = null;
+  let lastPlay: { batterName: string; result: string } | null = null;
+  for (const inn of innings) {
+    if (inn?.plays && inn.plays.length > 0) {
+      lastInn = inn;
+      lastPlay = inn.plays[inn.plays.length - 1];
+    }
+  }
+  if (!lastInn || !lastPlay || !lastPlay.batterName || !lastPlay.result) return null;
+  // 이닝(N회초/말)은 카드 상단 LIVE 표기와 중복 → 타자 + 결과만 (하린아빠 승인 목업).
+  const line = `${lastPlay.batterName} ${lastPlay.result}`;
+  return line.length > 40 ? line.slice(0, 39) + "…" : line;
+}
+
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   if (!CRON_SECRET || authHeader !== `Bearer ${CRON_SECRET}`) {
@@ -145,13 +166,37 @@ export async function GET(req: NextRequest) {
     console.error("[warmup] highlight notify failed:", (e as Error).message);
   }
 
+  // 잠금화면 Live Activity "중계 한 줄" 소스 — 라이브 경기의 네이버 문자중계 최근 플레이.
+  // game-events self-fetch와 동일 패턴(공개 도메인 baseUrl, 병렬, 실패 격리). game-relay는
+  // 서버 캐시가 있어 클라 폴링으로 대체로 warm. 실패/누락 시 그냥 생략 → 카드에 줄만 안 뜸.
+  const lastPlayByGame = new Map<string, string>();
+  try {
+    const relayResults = await Promise.allSettled(
+      liveGameIds.map(async (gameId) => {
+        const r = await fetch(`${baseUrl}/api/game-relay?gameId=${gameId}`, {
+          cache: "no-store",
+          headers: { "User-Agent": "kbo-everyday-warmup/1.0" },
+        });
+        if (!r.ok) return null;
+        const j = await r.json().catch(() => null);
+        const line = latestRelayLine(j);
+        return line ? { gameId, line } : null;
+      }),
+    );
+    for (const r of relayResults) {
+      if (r.status === "fulfilled" && r.value) lastPlayByGame.set(r.value.gameId, r.value.line);
+    }
+  } catch (e) {
+    console.error("[warmup] relay lastPlay fetch failed:", (e as Error).message);
+  }
+
   // 잠금화면 Live Activity 백그라운드 갱신 (W3a) — 같은 게임 목록 재사용.
   // APNs 직접 푸시. 미설정(APNS env 없음) 시 no-op. 실패해도 warmup 본연에 영향 없음.
   let liveActivity:
     | { pushed: number; ended: number; cleaned: number }
     | { error: string } = { pushed: 0, ended: 0, cleaned: 0 };
   try {
-    liveActivity = await pushLiveActivityUpdates(games);
+    liveActivity = await pushLiveActivityUpdates(games, lastPlayByGame);
   } catch (e) {
     liveActivity = { error: (e as Error).message };
     console.error("[warmup] live activity push failed:", (e as Error).message);
@@ -192,6 +237,7 @@ export async function GET(req: NextRequest) {
     liveActivity,
     liveActivityStart,
     liveActivityWake,
+    lastPlays: Object.fromEntries(lastPlayByGame),
     results: results.map(r =>
       r.status === "fulfilled"
         ? { gameId: r.value.gameId, ok: r.value.ok, status: r.value.status, eventCount: r.value.eventCount }
