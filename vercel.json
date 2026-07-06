@@ -1,5 +1,6 @@
 {
   "regions": ["icn1"],
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- . ':(exclude)ios' ':(exclude)android' ':(exclude)docs'",
   "buildCommand": "npm run build",
   "framework": "nextjs",
   "headers": [
