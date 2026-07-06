@@ -1528,6 +1528,14 @@
     "team": "LG"
   },
   {
+    "name": "김현준",
+    "kboId": "51417",
+    "teamId": 8,
+    "position": "외야수",
+    "backNo": "44",
+    "team": "삼성"
+  },
+  {
     "name": "김형준",
     "kboId": "68912",
     "teamId": 5,
@@ -1974,6 +1982,14 @@
     "position": "투수",
     "backNo": "46",
     "team": "KT"
+  },
+  {
+    "name": "박건우",
+    "kboId": "55509",
+    "teamId": 7,
+    "position": "포수",
+    "backNo": "69",
+    "team": "롯데"
   },
   {
     "name": "박계범",
@@ -2718,6 +2734,14 @@
     "position": "내야수",
     "backNo": "29",
     "team": "KIA"
+  },
+  {
+    "name": "블레인",
+    "kboId": "FP023",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "50",
+    "team": "NC"
   },
   {
     "name": "샘 힐리어드",
@@ -5168,6 +5192,14 @@
     "team": "키움"
   },
   {
+    "name": "정민규",
+    "kboId": "51764",
+    "teamId": 9,
+    "position": "야수",
+    "backNo": "2",
+    "team": "한화"
+  },
+  {
     "name": "정보근",
     "kboId": "68518",
     "teamId": 7,
@@ -6630,37 +6662,5 @@
     "position": "야수",
     "backNo": "22",
     "team": "키움"
-  },
-  {
-    "name": "김현준",
-    "kboId": "51417",
-    "teamId": 8,
-    "position": "외야수",
-    "backNo": "44",
-    "team": "삼성"
-  },
-  {
-    "name": "박건우",
-    "kboId": "55509",
-    "teamId": 7,
-    "position": "포수",
-    "backNo": "69",
-    "team": "롯데"
-  },
-  {
-    "name": "정민규",
-    "kboId": "51764",
-    "teamId": 9,
-    "position": "야수",
-    "backNo": "2",
-    "team": "한화"
-  },
-  {
-    "name": "블레인",
-    "kboId": "FP023",
-    "teamId": 5,
-    "position": "내야수",
-    "backNo": "50",
-    "team": "NC"
   }
 ]
