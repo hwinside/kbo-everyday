@@ -232,6 +232,7 @@ export default function GameDetailPage() {
         myTeam: myTeamCode,
         away: awayCode,
         home: homeCode,
+        gameId, // 삼순 재리뷰: 경기룸도 gameId 전달 → 네이티브가 실제 경기전환만 last_play clear(빈 gameId 오clear 방지)
         awayScore: String(liveGame.awayScore),
         homeScore: String(liveGame.homeScore),
         status: `LIVE ${liveGame.inning}`,

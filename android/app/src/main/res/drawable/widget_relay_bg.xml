@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 문자중계 틱커 바 배경 — 반투명 그레이(카드 위에서 회색 바로 읽힘). iOS 잠금 LA(흰 11%)와 통일. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#26FFFFFF" />
+    <corners android:radius="7dp" />
+</shape>

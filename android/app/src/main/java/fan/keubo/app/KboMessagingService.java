@@ -61,7 +61,8 @@ public class KboMessagingService extends MessagingService {
                 data.get("w_stadium"),
                 data.get("w_astarter"),
                 data.get("w_hstarter"),
-                gameId);
+                gameId,
+                data.get("w_lastplay"));
             // 그 다음 잠금화면 알림 카드 게시(prefs 기반 RemoteViews).
             GameNotificationPlugin.post(
                 this,
@@ -98,7 +99,8 @@ public class KboMessagingService extends MessagingService {
                 data.get("w_stadium"),
                 data.get("w_astarter"),
                 data.get("w_hstarter"),
-                gameId);
+                gameId,
+                "");
             // 잠금화면 진행중 알림 제거(post 아님) — 취소 시 잠금화면은 비운다.
             GameNotificationPlugin.clear(this);
         } else if ("game_end".equals(kind)) {

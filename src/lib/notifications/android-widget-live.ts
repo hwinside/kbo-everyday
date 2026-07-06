@@ -1,6 +1,7 @@
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
 import { sendFcmToUsers, type PushPayload } from "@/lib/notifications/fcm";
 import { fansOfTeams, teamIdByShortName } from "@/lib/notifications/game-status";
+import { latestRelayLine } from "@/lib/notifications/relay-line";
 import type { KboRawGame } from "@/types/api";
 
 function safeInt(v: unknown): number {
@@ -53,7 +54,7 @@ const CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
  *  - 예정(GAME_STATE_SC="1")이고 시작 30분 전 이내: '경기 예정' 매치업 카드를 미리 띄운다(iOS 패리티).
  * 네이티브 알림은 setOnlyAlertOnce라 같은 카드를 매분 갱신해도 재알림 없이 조용히 갱신된다.
  */
-export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise<{
+export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl: string): Promise<{
   games: number;
   sent: number;
   failed: number;
@@ -65,6 +66,32 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise
   let failed = 0;
   let cleaned = 0;
   let skipped = 0;
+
+  // 라이브 경기 문자중계 최근 플레이 한 줄 — game-relay self-fetch(공개 도메인 baseUrl, 병렬,
+  // 실패 격리). iOS 잠금 LA와 동일 소스/문구(relay-line.ts). 실패·누락 시 위젯에 줄만 안 뜸.
+  const lastPlayByGame = new Map<string, string>();
+  const liveIds = games
+    .filter((g) => g.G_ID && g.GAME_STATE_SC === "2")
+    .map((g) => g.G_ID as string);
+  if (liveIds.length > 0) {
+    const relays = await Promise.allSettled(
+      liveIds.map(async (gameId) => {
+        const r = await fetch(`${baseUrl}/api/game-relay?gameId=${gameId}`, {
+          cache: "no-store",
+          headers: { "User-Agent": "kbo-everyday-widget/1.0" },
+        });
+        if (!r.ok) return null;
+        const j = await r.json().catch(() => null);
+        const line = latestRelayLine(j);
+        return line ? { gameId, line } : null;
+      }),
+    );
+    for (const res of relays) {
+      if (res.status === "fulfilled" && res.value) {
+        lastPlayByGame.set(res.value.gameId, res.value.line);
+      }
+    }
+  }
 
   for (const g of games) {
     if (!g.G_ID) continue;
@@ -170,6 +197,7 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[]): Promise
           w_outs: clampOuts(g.OUT_CN),
           w_diamond: diamond(g),
           w_stadium: g.S_NM ?? "",
+          w_lastplay: lastPlayByGame.get(g.G_ID) ?? "",
         },
       };
     } else {

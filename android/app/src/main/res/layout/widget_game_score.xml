@@ -322,5 +322,56 @@
                 android:src="@drawable/diamond_000"
                 android:contentDescription="@null" />
         </LinearLayout>
+
+        <!-- 문자중계 최근 플레이 한 줄 — 그레이 틱커 바(라이브만, buildCard가 visibility 제어).
+             RemoteViews 제약상 바 <View> 금지 → LinearLayout+TextView. 라이브 점(●)은
+             widget_relay_text 앞에 ForegroundColorSpan(빨강)으로 그린다. iOS 잠금 LA와 통일. -->
+        <LinearLayout
+            android:id="@+id/widget_relay_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:paddingLeft="9dp"
+            android:paddingRight="9dp"
+            android:paddingTop="5dp"
+            android:paddingBottom="5dp"
+            android:background="@drawable/widget_relay_bg"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:visibility="gone">
+            <!-- 라이브 점 — ViewFlipper로 자동 pulse(프레임1=빨강, 프레임2=dim빨강, 650ms).
+                 런처가 flip 안 하면 프레임1(빨강 점) 정적 표시 → static fallback 자연 확보. -->
+            <ViewFlipper
+                android:id="@+id/widget_relay_dot"
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:layout_marginEnd="7dp"
+                android:autoStart="true"
+                android:flipInterval="650"
+                android:measureAllChildren="true">
+                <ImageView
+                    android:layout_width="6dp"
+                    android:layout_height="6dp"
+                    android:src="@drawable/relay_dot_on"
+                    android:contentDescription="@null" />
+                <ImageView
+                    android:layout_width="6dp"
+                    android:layout_height="6dp"
+                    android:src="@drawable/relay_dot_off"
+                    android:contentDescription="@null" />
+            </ViewFlipper>
+            <TextView
+                android:id="@+id/widget_relay_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFamily="@font/notosanskr"
+                android:letterSpacing="-0.04"
+                android:textColor="#EAEAEC"
+                android:textSize="12sp"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:text="" />
+        </LinearLayout>
     </LinearLayout>
 </FrameLayout>
