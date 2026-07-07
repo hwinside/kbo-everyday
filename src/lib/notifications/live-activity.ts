@@ -400,9 +400,13 @@ export async function pushLiveActivityStarts(
       awayTeamCode: awayCode,
       homeTeamCode: homeCode,
     };
-    // 라이브면 live 스냅샷, 아직 시작 전이면 scheduled(예정 시각) 카드로 시작.
     const isLiveNow = gameStatus(g) === "live";
-    const contentState = buildContentState(g, isLiveNow ? "live" : "scheduled");
+    // 🚨 인시던트 픽스(2026-07-07): start는 *항상 scheduled 프레임*으로 태어나게 한다.
+    // 라이브 프레임을 초기 콘텐츠로 실은 push-to-start는 iOS가 카드를 표시하지 않는 현상을
+    // 실기기 3연속 재현(생성·토큰 등록은 되나 미표시). scheduled로 태어난 카드는 정상 표시되고,
+    // 라이브 경기는 다음 warmup 틱(≤1분)의 update가 곧바로 live 프레임으로 전환한다.
+    // 근본(라이브-start 렌더)은 네이티브에서 조사 후 원복.
+    const contentState = buildContentState(g, "scheduled");
 
     // push-to-start에 alert 동봉 — *무음*(alert 없는) push-to-start는 iOS가 잠금화면 카드를
     // 띄우지 않는다(실기기 확인 2026-06-26: 무음=미표시, alert=표시). 경기 30분 전 예정
