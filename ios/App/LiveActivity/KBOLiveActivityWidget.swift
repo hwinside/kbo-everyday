@@ -118,6 +118,10 @@ func notoKR(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
     Font.system(size: size, weight: weight)
 }
 
+/// 한글 자간 — 기존 Noto Sans KR 룩과 맞추기 위해 시스템 한글에 좁은 자간을 적용(하린아빠
+/// 요청 2026-07-07). Text 전용 modifier라 한글 run에 개별 적용한다. 실기기 육안으로 미세조정.
+let kKoreanTracking: CGFloat = -0.3
+
 // 혼합 문자열을 글자 종류별 폰트로 — 영숫자(LIVE/점수/LG·SSG 약어)=Montserrat, 한글=Noto.
 // SwiftUI Text 연결로 per-run 폰트를 지정한다.
 
@@ -126,7 +130,9 @@ func notoKR(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
 func teamShortText(_ code: String, _ size: CGFloat, _ weight: Font.Weight) -> Text {
     let s = teamShortName(code)
     let isLatin = s.allSatisfy { $0.isASCII }
-    return Text(s).font(isLatin ? montserrat(size, weight) : notoKR(size, weight))
+    return isLatin
+        ? Text(s).font(montserrat(size, weight))
+        : Text(s).font(notoKR(size, weight)).tracking(kKoreanTracking)
 }
 
 // "2회초" → "2"(Montserrat) + "회초"(Noto). 숫자 접두부와 한글 접미부를 분리.
@@ -136,7 +142,7 @@ func inningRun(_ inning: String, _ size: CGFloat, _ weight: Font.Weight) -> Text
     let suffix = inning.dropFirst(num.count)
     var t = Text("")
     if !num.isEmpty { t = t + Text(String(num)).font(montserrat(size, weight)) }
-    if !suffix.isEmpty { t = t + Text(String(suffix)).font(notoKR(size, weight)) }
+    if !suffix.isEmpty { t = t + Text(String(suffix)).font(notoKR(size, weight)).tracking(kKoreanTracking) }
     return t
 }
 
@@ -150,7 +156,9 @@ func mixedScriptText(_ s: String, _ size: CGFloat, _ weight: Font.Weight) -> Tex
     func isLatin(_ ch: Character) -> Bool { ch.isASCII && (ch.isLetter || ch.isNumber) }
     func flush() {
         guard !buf.isEmpty else { return }
-        out = out + Text(buf).font(bufIsLatin ? montserrat(size, weight) : notoKR(size, weight))
+        out = out + (bufIsLatin
+            ? Text(buf).font(montserrat(size, weight))
+            : Text(buf).font(notoKR(size, weight)).tracking(kKoreanTracking))
         buf = ""
     }
     for ch in s {
@@ -328,14 +336,14 @@ struct KBOLockScreenCard: View {
                     // 경기장(구장) — 가운데 점수 위에 표기 (하린아빠 요청)
                     if !state.stadium.isEmpty {
                         Text(state.stadium)
-                            .font(notoKR(9, .medium))
+                            .font(notoKR(9, .medium)).tracking(kKoreanTracking)
                             .foregroundStyle(.white.opacity(0.75))
                     }
                     if state.isScheduled {
                         // 경기 전 — 안드 승인본 언어와 동일: "경기 예정"(크게) + 예정 시각 pill.
                         // 양팀은 좌우 TeamBadge에, 구장은 위(stadium)에 이미 표기. 하단엔 예고선발.
                         Text("경기 예정")
-                            .font(notoKR(15, .heavy))
+                            .font(notoKR(15, .heavy)).tracking(kKoreanTracking)
                             .foregroundStyle(.white)
                         if let t = state.startTime, !t.isEmpty {
                             Text(t)
@@ -405,7 +413,7 @@ struct KBOLockScreenCard: View {
                         .fill(Color(hex: 0xFF5A5A))
                         .frame(width: 5, height: 5)
                     Text(lp)
-                        .font(notoKR(11, .medium))
+                        .font(notoKR(11, .medium)).tracking(kKoreanTracking)
                         .foregroundStyle(.white.opacity(0.92))
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
@@ -427,13 +435,13 @@ struct KBOLockScreenCard: View {
             if state.isScheduled {
                 HStack(spacing: 8) {
                     Text(starterDisplayName(state.awayStarter))
-                        .font(notoKR(12, .bold)).foregroundColor(.white)
+                        .font(notoKR(12, .bold)).tracking(kKoreanTracking).foregroundColor(.white)
                         .lineLimit(1).minimumScaleFactor(0.7)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                     Text("선발투수")
-                        .font(notoKR(10, .medium)).foregroundColor(.white.opacity(0.6))
+                        .font(notoKR(10, .medium)).tracking(kKoreanTracking).foregroundColor(.white.opacity(0.6))
                     Text(starterDisplayName(state.homeStarter))
-                        .font(notoKR(12, .bold)).foregroundColor(.white)
+                        .font(notoKR(12, .bold)).tracking(kKoreanTracking).foregroundColor(.white)
                         .lineLimit(1).minimumScaleFactor(0.7)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -490,6 +498,7 @@ struct KBOLockScreenCard: View {
             if !pitcher.isEmpty {
                 (Text("투수 ").font(notoKR(10, .medium)).foregroundColor(.white.opacity(0.6))
                  + Text(pitcher).font(notoKR(12, .bold)).foregroundColor(.white))
+                    .tracking(kKoreanTracking)
             }
             if !pitcher.isEmpty && !batter.isEmpty {
                 Text("·").font(notoKR(10, .medium)).foregroundColor(.white.opacity(0.4))
@@ -497,6 +506,7 @@ struct KBOLockScreenCard: View {
             if !batter.isEmpty {
                 (Text("타자 ").font(notoKR(10, .medium)).foregroundColor(.white.opacity(0.6))
                  + Text(batter).font(notoKR(12, .bold)).foregroundColor(.white))
+                    .tracking(kKoreanTracking)
             }
         }
         .lineLimit(1).minimumScaleFactor(0.7)

@@ -20,6 +20,8 @@ export interface LiveActivityState {
   batterName: string;
   stadium: string;
   status: "live" | "final";
+  /** 문자중계 최근 플레이 한 줄(1.0.7+, 옵셔널) — 잠금 카드/홈위젯 large 렌더. */
+  lastPlay?: string;
 }
 
 export interface LiveActivityStartData extends LiveActivityState {
@@ -74,6 +76,8 @@ export interface WidgetSnapshotInput {
   /** 예고선발 투수명(원정/홈). scheduled에서만. 미확정이면 빈 문자열("선발 미정" 폴백). */
   awayStarter?: string;
   homeStarter?: string;
+  /** 문자중계 최근 플레이 한 줄(1.0.7+, 옵셔널) — live에서만. 홈위젯 large 카드 렌더. */
+  lastPlay?: string;
   /** 다음 예정 경기 — live/final 스냅샷일 때만. 위젯이 '경기일 다음날 06:00'에 앱 실행 없이
    *  이 경기로 자동 전환한다(홈 팀카드 06시 규칙). 예정 카드 렌더에 필요한 필드만. */
   next?: WidgetNextGame;
@@ -123,6 +127,8 @@ export interface HomeWidgetGame {
   /** 예고선발 투수명(원정/홈). 예정 경기에서만 사용. 미확정이면 null → "선발 미정". */
   awayStarter?: string | null;
   homeStarter?: string | null;
+  /** 문자중계 최근 플레이 한 줄(1.0.7+, 옵셔널) — live에서만. */
+  lastPlay?: string | null;
 }
 
 const LiveActivity = registerPlugin<LiveActivityPlugin>("LiveActivity");
@@ -357,6 +363,7 @@ export async function writeHomeWidgetSnapshot(
     startText: game.status === "scheduled" ? game.time : "",
     dateText: game.status === "scheduled" ? (game.dateText ?? "") : "",
     awayStarter: game.status === "scheduled" ? (game.awayStarter ?? "") : "",
+    lastPlay: game.status === "live" ? (game.lastPlay ?? "") : "",
     homeStarter: game.status === "scheduled" ? (game.homeStarter ?? "") : "",
     next,
   });

@@ -23,6 +23,7 @@ import { isPhotoArticle } from "@/lib/news-relevance";
 import type { HomeSectionKey } from "@/lib/store/home-sections-pref";
 import { setWidgetFavPlayers, setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
 import { writeHomeWidgetSnapshot, type HomeWidgetGame } from "@/lib/native-live-activity";
+import { latestRelayLine } from "@/lib/notifications/relay-line";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
 import MyTeamHero from "@/components/home/MyTeamHero";
 import TeamCard from "@/components/home/TeamCard";
@@ -519,6 +520,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     : "";
   useEffect(() => {
     if (!widgetGame) return;
+    let cancelled = false;
     // 오늘 경기/전날 결과를 쓸 때(rolloverNextGame 세팅됨) 상태 무관 다음 예정 경기를 함께 실어
     // 위젯 06:00 자동 전환을 준비. 예정 스냅샷이 백그라운드서 종료로 바뀌어도 next 보존됨(삼순 ①).
     const rolloverNext: HomeWidgetGame | null =
@@ -545,7 +547,22 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
             homeStarter: rolloverNextGame.homeStarterName ?? null,
           }
         : null;
-    void writeHomeWidgetSnapshot(myTeamId, {
+    // 라이브면 문자중계 최근 플레이 한 줄을 붙여 기록(1.0.7+ 홈위젯 large 카드).
+    // 잠금 LA·안드 위젯과 동일 소스(latestRelayLine, /api/game-relay). 실패/비라이브면 생략.
+    void (async () => {
+      let lastPlay = "";
+      if (widgetGame.status === "live") {
+        try {
+          const relay = await fetch(`/api/game-relay?gameId=${widgetGame.id}`).then((r) =>
+            r.ok ? r.json() : null,
+          );
+          lastPlay = latestRelayLine(relay) ?? "";
+        } catch {
+          /* 위젯 부가 정보 — 실패해도 스냅샷 기록은 진행 */
+        }
+      }
+      if (cancelled) return;
+      void writeHomeWidgetSnapshot(myTeamId, {
       gameId: widgetGame.id,
       awayTeamId: widgetGame.awayTeamId,
       homeTeamId: widgetGame.homeTeamId,
@@ -569,7 +586,10 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           : "",
       awayStarter: widgetGame.status === "scheduled" ? (widgetGame.awayStarterName ?? "") : "",
       homeStarter: widgetGame.status === "scheduled" ? (widgetGame.homeStarterName ?? "") : "",
+      lastPlay,
     }, rolloverNext);
+    })();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myTeamId, widgetSig, rolloverSig]);
 
