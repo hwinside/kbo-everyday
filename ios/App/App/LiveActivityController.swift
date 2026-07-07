@@ -391,6 +391,8 @@ final class LiveActivityController {
             "batterName": state.batterName,
             "stadium": state.stadium,
             "isFinal": state.isFinal,
+            // 문자중계 한 줄(1.0.7) — 잠금 LA와 동일 값을 홈위젯 large 카드에도 전달.
+            "lastPlay": state.lastPlay ?? "",
             // 홈위젯 스냅샷은 scheduled 상태도 보존해야 예정 카드(경기 예정/시각)가 뜬다.
             // 기존엔 live/final만 기록 + startText 빈값이라 예정 LA 활성 시 홈위젯이 깨진 라이브로 렌더됐음.
             "status": state.isScheduled ? "scheduled" : (state.isFinal ? "final" : "live"),

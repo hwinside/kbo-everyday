@@ -133,6 +133,7 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             "onSecond": call.getBool("onSecond") ?? false,
             "onThird": call.getBool("onThird") ?? false,
             "pitcherName": call.getString("pitcherName") ?? "",
+            "lastPlay": call.getString("lastPlay") ?? "",
             "batterName": call.getString("batterName") ?? "",
             "stadium": call.getString("stadium") ?? "",
             "isFinal": status == "final",

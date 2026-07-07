@@ -46,6 +46,8 @@ struct WidgetGameSnapshot: Codable {
     /// "live" | "final" | "scheduled" | "cancelled". 구버전 스냅샷엔 없을 수 있어 옵셔널(기본 nil).
     /// 없으면 isFinal로 live/final을 추론(하위호환). "scheduled"/"cancelled"면 다음 경기 카드.
     var status: String? = nil
+    /// 문자중계 최근 플레이 한 줄(1.0.7, 옵셔널) — 잠금 카드와 동일 소스/렌더. 구버전 스냅샷 nil 안전.
+    var lastPlay: String? = nil
     /// 예정/취소 경기 표시용 시각 문구(예: "18:30"). live/final이면 빈 문자열.
     var startText: String? = nil
     /// 예정 경기 날짜 라벨(예: "6월 7일 (토)"). 구장 위에 표시. scheduled에서만.
@@ -263,7 +265,8 @@ struct KBOHomeWidgetEntryView: View {
             pitcherName: s.pitcherName,
             batterName: s.batterName,
             stadium: s.stadium,
-            status: s.isFinal ? .final : .live
+            status: s.isFinal ? .final : .live,
+            lastPlay: s.lastPlay
         )
     }
 
