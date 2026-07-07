@@ -22,6 +22,7 @@
     "qa:gif-collector-inbox-resolver": "tsx scripts/qa/gif-collector-inbox-resolver-smoke.ts",
     "qa:gif-collector-publisher": "tsx scripts/qa/gif-collector-publisher-smoke.ts",
     "qa:push-score-events": "tsx scripts/qa/push-score-events-smoke.ts",
+    "qa:concede-pitcher": "tsx scripts/qa/concede-pitcher-attribution-smoke.ts",
     "qa:team-rank": "tsx scripts/qa/team-rank-smoke.ts",
     "qa:contextual-split-inline": "tsx scripts/qa/contextual-stats-split-inline-smoke.ts",
     "qa:celebration-hit-overcount": "tsx scripts/qa/celebration-hit-overcount-smoke.ts",

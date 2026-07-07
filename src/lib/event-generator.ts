@@ -412,9 +412,21 @@ export function generateEvents(
       e => e.type === "at_bat_homerun" && e.isTop === s.isTop,
     ).length;
     if (teamHr > 0) continue; // 홈런이 이 팀 득점을 설명 — 중복 방지로 run_scored suppress
+    // 실점 투수 — *실점 기준* 귀속 (하린아빠 2026-07-07, 자책 판정 아님). 수비팀
+    // BoxScore 투수별 R(실점) 델타로 이번 폴링에 실점이 오른 투수를 특정한다.
+    // 마운드 투수 스냅샷과 달리 승계주자 홈인도 KBO 기록 그대로 앞 투수에게
+    // 귀속. score 반영과 boxScore 반영이 폴링 어긋나면 빈값 → 알림 레이어가
+    // snapshot.pitcher(마운드 투수)로 폴백한다 (game-score.ts concede body).
+    const defPrev = s.side === "away" ? prev.boxScore?.homePitchers : prev.boxScore?.awayPitchers;
+    const defCurr = s.side === "away" ? currentBoxScore?.homePitchers : currentBoxScore?.awayPitchers;
+    const prevRunsByName = new Map((defPrev ?? []).map(p => [p.name, p.runs]));
+    const charged = (defCurr ?? [])
+      .filter(p => p.runs > (prevRunsByName.get(p.name) ?? 0))
+      .map(p => p.name);
     events.push(makeEvent(gameId, currentLive, "run_scored", {
       rbi: s.diff,
       scoringSide: s.side,
+      ...(charged.length > 0 ? { pitcher: charged.join(", ") } : {}),
     }, `${currentLive.awayScore}-${currentLive.homeScore}-${s.side}`));
   }
 

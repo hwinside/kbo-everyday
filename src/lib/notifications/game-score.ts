@@ -107,9 +107,11 @@ export async function notifyScoreEvents(
         if (!cFans.ok) {
           await unclaimEvent(`${ev.id}-concede`); // 조회 실패 → 재시도
         } else {
-          // 실점 투수 (하린아빠 요청 2026-07-07). 홈런은 detail.pitcher(타석 시점 확정),
-          // run_scored는 detail에 없어 snapshot.pitcher(diff 시점 마운드 투수) 폴백.
-          // 이닝교대 lag 시 공백/오귀속 가능성은 기존 batter 표기와 동일 수준 — 없으면 생략.
+          // 실점 투수 (하린아빠 요청 2026-07-07, *실점 기준* — 자책 판정 아님).
+          // 홈런 = detail.pitcher(홈런 맞은 투수 = 실점 귀속 일치). run_scored =
+          // detail.pitcher(수비팀 boxScore R델타로 귀속된 투수 — 승계주자도 KBO 기록
+          // 그대로 앞 투수, event-generator). 델타 미반영 폴링이면 snapshot.pitcher
+          // (마운드 투수) 폴백, 그마저 없으면 생략.
           const cPitcher = ev.detail?.pitcher || ev.snapshot?.pitcher || "";
           const cTitle = isHr ? `💥 ${concedeTeamName} 홈런 허용` : `⚾ ${concedeTeamName} 실점`;
           const cBody = [
