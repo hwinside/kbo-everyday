@@ -9,8 +9,12 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.LinearGradient;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.RectF;
+import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
@@ -228,8 +232,23 @@ public class TeamRankWidget extends AppWidgetProvider {
         Canvas cv = new Canvas(bmp);
 
         Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        RectF card = new RectF(0, 0, W, H);
         fill.setColor(C_BG);
-        cv.drawRoundRect(new RectF(0, 0, W, H), 16 * d, 16 * d, fill);
+        cv.drawRoundRect(card, 16 * d, 16 * d, fill);
+
+        // 최애팀 컬러 그라데이션 배경 — 선수카드 위젯 히어로 패널과 동일 톤(좌상단→투명).
+        // 하이라이트 행은 아래에서 보색으로 분리(하린아빠 지시: 블랙 단색 배경 탈피).
+        if (myTeamId >= 1 && myTeamId <= 10) {
+            cv.save();
+            Path clip = new Path();
+            clip.addRoundRect(card, 16 * d, 16 * d, Path.Direction.CW);
+            cv.clipPath(clip);
+            Paint grad = new Paint(Paint.ANTI_ALIAS_FLAG);
+            grad.setShader(new LinearGradient(0, 0, W * 0.9f, H * 0.9f,
+                (HL_BY_ID[myTeamId] & 0x00FFFFFF) | 0x33000000, 0x00000000, Shader.TileMode.CLAMP));
+            cv.drawRect(0, 0, W, H, grad);
+            cv.restore();
+        }
 
         float k = Math.min(1f, wDp / 340f);  // 좁은 위젯 비례 축소
         float u = d * k;                     // 스케일 적용 dp→px 단위
@@ -277,10 +296,10 @@ public class TeamRankWidget extends AppWidgetProvider {
             int teamId = s.optInt("teamId", 0);
             String code = teamId >= 1 && teamId <= 10 ? CODE_BY_ID[teamId] : "";
 
-            // 최애팀 하이라이트 — 앱과 동일(bg 팀컬러 α0x18 + 좌측 3dp 바)
+            // 최애팀 하이라이트 — 팀컬러 그라데이션 배경 위에서 눈에 띄도록 팀컬러 보색(HSV 180°)
             if (teamId != 0 && teamId == myTeamId) {
-                int hl = HL_BY_ID[teamId];
-                fill.setColor((hl & 0x00FFFFFF) | 0x18000000);
+                int hl = complementary(HL_BY_ID[teamId]);
+                fill.setColor((hl & 0x00FFFFFF) | 0x26000000);
                 cv.drawRect(0, top, W, top + rowH, fill);
                 fill.setColor(hl);
                 cv.drawRect(0, top, 3 * d, top + rowH, fill);
@@ -320,6 +339,14 @@ public class TeamRankWidget extends AppWidgetProvider {
                 streak.isEmpty() ? C_TEXT_SECONDARY : C_TEXT, ALIGN_RIGHT, mont, noto);
         }
         return bmp;
+    }
+
+    /** 팀컬러 보색(HSV 색상환 180° 회전, 채도/명도 유지) — 그라데이션 배경 대비 하이라이트용. */
+    private static int complementary(int color) {
+        float[] hsv = new float[3];
+        Color.colorToHSV(color, hsv);
+        hsv[0] = (hsv[0] + 180f) % 360f;
+        return Color.HSVToColor(hsv);
     }
 
     /** 앱 표기와 동일: 승률 ".622"(1 이상이면 "1.000"). */
