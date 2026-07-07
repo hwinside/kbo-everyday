@@ -417,7 +417,7 @@ struct KBOLockScreenCard: View {
                         .fill(Color(hex: 0xFF5A5A))
                         .frame(width: 6, height: 6)
                     Text(lp)
-                        .font(notoKR(14, .medium)).tracking(kKoreanTracking)
+                        .font(notoKR(15, .medium)).tracking(kKoreanTracking)
                         .foregroundStyle(.white.opacity(0.92))
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
@@ -530,7 +530,7 @@ struct TeamBadge: View {
             }
             .frame(width: 31, height: 31)
             // 풀네임(롯데 자이언츠 / LG 트윈스) — 라틴=Montserrat, 한글=Noto. 좁으면 축소.
-            mixedScriptText(teamFullName(code), 16, .heavy)
+            mixedScriptText(teamFullName(code), 15, .heavy)
                 .lineLimit(1).minimumScaleFactor(0.55)
         }
         .frame(maxWidth: .infinity)
