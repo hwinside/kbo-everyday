@@ -24,7 +24,6 @@
 	<key>UIAppFonts</key>
 	<array>
 		<string>Montserrat-VF.ttf</string>
-		<string>NotoSansKR-VF.ttf</string>
 	</array>
 </dict>
 </plist>

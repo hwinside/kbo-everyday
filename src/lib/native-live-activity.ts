@@ -20,6 +20,8 @@ export interface LiveActivityState {
   batterName: string;
   stadium: string;
   status: "live" | "final";
+  /** 문자중계 최근 플레이 한 줄(1.0.7+, 옵셔널) — 잠금 카드/홈위젯 large 렌더. */
+  lastPlay?: string;
 }
 
 export interface LiveActivityStartData extends LiveActivityState {
@@ -74,6 +76,8 @@ export interface WidgetSnapshotInput {
   /** 예고선발 투수명(원정/홈). scheduled에서만. 미확정이면 빈 문자열("선발 미정" 폴백). */
   awayStarter?: string;
   homeStarter?: string;
+  /** 문자중계 최근 플레이 한 줄(1.0.7+, 옵셔널) — live에서만. 홈위젯 large 카드 렌더. */
+  lastPlay?: string;
   /** 다음 예정 경기 — live/final 스냅샷일 때만. 위젯이 '경기일 다음날 06:00'에 앱 실행 없이
    *  이 경기로 자동 전환한다(홈 팀카드 06시 규칙). 예정 카드 렌더에 필요한 필드만. */
   next?: WidgetNextGame;
@@ -123,6 +127,8 @@ export interface HomeWidgetGame {
   /** 예고선발 투수명(원정/홈). 예정 경기에서만 사용. 미확정이면 null → "선발 미정". */
   awayStarter?: string | null;
   homeStarter?: string | null;
+  /** 문자중계 최근 플레이 한 줄(1.0.7+, 옵셔널) — live에서만. */
+  lastPlay?: string | null;
 }
 
 const LiveActivity = registerPlugin<LiveActivityPlugin>("LiveActivity");
@@ -168,18 +174,40 @@ export function setLiveActivityEnabledCache(enabled: boolean): void {
 // warmup cron이 그 토큰으로 백그라운드 갱신 푸시를 보낸다. 리스너는 1회만 설치.
 let tokenListenerReady = false;
 
+// 앱 빌드 번호(CFBundleVersion) — 서버가 빌드별 LA payload(풀/슬림)를 분기하는 태그.
+// 원격 로드 앱이라 npm core 판정이 아닌 window.Capacitor 주입 브릿지의 App 플러그인을
+// 우선 사용(레퍼런스: capacitor_remote_load_isnative_false). 실패 시 null(=서버 슬림 폴백).
+let appBuildCache: number | null | undefined;
+async function getAppBuild(): Promise<number | null> {
+  if (appBuildCache !== undefined) return appBuildCache;
+  try {
+    type AppInfoPlugin = { getInfo: () => Promise<{ build?: string }> };
+    const w = window as unknown as {
+      Capacitor?: { Plugins?: { App?: AppInfoPlugin } };
+    };
+    const appPlugin = w.Capacitor?.Plugins?.App;
+    const info = await appPlugin?.getInfo();
+    const n = info?.build ? parseInt(info.build, 10) : NaN;
+    appBuildCache = Number.isFinite(n) ? n : null;
+  } catch {
+    appBuildCache = null;
+  }
+  return appBuildCache;
+}
+
 async function registerLiveActivityToken(gameId: string, token: string): Promise<void> {
   try {
     const { data: { session } } = await supabase.auth.getSession();
     const accessToken = session?.access_token;
     if (!accessToken) return;
+    const appBuild = await getAppBuild();
     await fetch("/api/live-activity/register", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({ gameId, pushToken: token }),
+      body: JSON.stringify({ gameId, pushToken: token, ...(appBuild != null ? { appBuild } : {}) }),
     });
   } catch {
     /* silent — 등록 실패가 앱에 영향 주지 않게 */
@@ -239,6 +267,18 @@ export function reregisterPushToStartToken(): void {
   void registerPushToStartToken(lastPushToStartToken);
 }
 
+// 풀 카드 최소 빌드 — 서버(live-activity.ts FULL_CARD_MIN_BUILD)와 동일 게이트.
+// 웹은 원격 로드라 이 코드가 1.0.6 이하 기기에서도 실행된다 → 포그라운드 start/update
+// 경로도 구빌드에선 투수/타자·lastPlay를 비워 보낸다(풀 라이브 프레임 렌더가 스피너 유발,
+// 2026-07-07 인시던트). 빌드 확인 실패(null)도 슬림으로 안전 폴백.
+const FULL_CARD_MIN_BUILD = 11;
+
+async function slimForOldBuilds<T extends LiveActivityState>(state: T): Promise<T> {
+  const build = await getAppBuild();
+  if (build != null && build >= FULL_CARD_MIN_BUILD) return state;
+  return { ...state, pitcherName: "", batterName: "", lastPlay: "" };
+}
+
 /** 경기룸 진입 시 호출. 같은 gameId 재호출은 네이티브에서 update로 처리(중복 방지). */
 export async function startLiveActivity(data: LiveActivityStartData): Promise<boolean> {
   if (!isNativeIOS()) return false;
@@ -246,7 +286,7 @@ export async function startLiveActivity(data: LiveActivityStartData): Promise<bo
   if (!(await isLiveActivityEnabled())) return false;
   await ensureTokenListener();
   try {
-    const res = await LiveActivity.start(data);
+    const res = await LiveActivity.start(await slimForOldBuilds(data));
     return res?.started ?? false;
   } catch (e) {
     console.warn("[live-activity] start failed", e);
@@ -260,7 +300,7 @@ export async function updateLiveActivity(state: LiveActivityState): Promise<void
   // W3c: 토글 off면 갱신도 건너뛴다(캐시 기준 — start가 이미 fetch/세팅, 토글이 즉시 갱신).
   if (liveActivityPrefCache === false) return;
   try {
-    await LiveActivity.update(state);
+    await LiveActivity.update(await slimForOldBuilds(state));
   } catch {
     /* silent — 카드 갱신 실패가 앱에 영향 주지 않게 */
   }
@@ -335,6 +375,7 @@ export async function writeHomeWidgetSnapshot(
     startText: game.status === "scheduled" ? game.time : "",
     dateText: game.status === "scheduled" ? (game.dateText ?? "") : "",
     awayStarter: game.status === "scheduled" ? (game.awayStarter ?? "") : "",
+    lastPlay: game.status === "live" ? (game.lastPlay ?? "") : "",
     homeStarter: game.status === "scheduled" ? (game.homeStarter ?? "") : "",
     next,
   });

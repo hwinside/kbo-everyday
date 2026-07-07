@@ -133,6 +133,7 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             "onSecond": call.getBool("onSecond") ?? false,
             "onThird": call.getBool("onThird") ?? false,
             "pitcherName": call.getString("pitcherName") ?? "",
+            "lastPlay": call.getString("lastPlay") ?? "",
             "batterName": call.getString("batterName") ?? "",
             "stadium": call.getString("stadium") ?? "",
             "isFinal": status == "final",
@@ -183,7 +184,9 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             status: status == "final" ? .final : (status == "scheduled" ? .scheduled : .live),
             startTime: call.getString("startTime"),
             awayStarter: call.getString("awayStarter"),
-            homeStarter: call.getString("homeStarter")
+            homeStarter: call.getString("homeStarter"),
+            // 문자중계 한 줄(1.0.7) — 빈 문자열이면 nil로 정규화(카드 행 미렌더).
+            lastPlay: (call.getString("lastPlay")?.isEmpty ?? true) ? nil : call.getString("lastPlay")
         )
     }
 }

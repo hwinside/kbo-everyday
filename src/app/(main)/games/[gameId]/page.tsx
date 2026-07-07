@@ -24,6 +24,7 @@ import { useGameDetail } from "@/lib/hooks/useGameDetail";
 import { useGameEvents } from "@/lib/hooks/useGameEvents";
 import { generateEvents, type PrevGameState } from "@/lib/event-generator";
 import { generateRelayEvents } from "@/lib/relay-event-generator";
+import { latestRelayLine } from "@/lib/notifications/relay-line";
 import type { LineupEntry } from "@/lib/hooks/useGameDetail";
 import { deriveGameState } from "@/lib/utils/game-derived";
 import GameDetailHeader from "@/components/game/GameDetailHeader";
@@ -218,6 +219,9 @@ export default function GameDetailPage() {
         batterName: liveGame.currentBatter ?? "",
         stadium: liveGame.stadium ?? "",
         status: "live",
+        // 문자중계 최근 플레이 한 줄(1.0.7+) — 서버 relay-line과 동일 추출(단일 소스).
+        // 5s 폴링 gameRelay가 아직 없으면 생략(다음 스코어 변화 때 채워짐).
+        lastPlay: latestRelayLine(gameRelay) ?? "",
       });
     }
 
@@ -245,6 +249,9 @@ export default function GameDetailPage() {
         diamond: `${liveGame.runner1b ? 1 : 0}${liveGame.runner2b ? 1 : 0}${liveGame.runner3b ? 1 : 0}`,
       });
     }
+    // gameRelay는 의도적 제외 — liveGame(볼카운트 포함) 변화로 이미 자주 재실행되어
+    // lastPlay가 그때마다 최신으로 실림. 5s 폴링마다 start 재호출할 이유 없음.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveGame, gameId]);
 
   // 잠금화면 ongoing notification 카드는 *오직 최애팀 경기*에만 노출하며, 생성·갱신·제거를
