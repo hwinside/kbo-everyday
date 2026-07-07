@@ -12,6 +12,7 @@ import {
   type WeeklyTrendRow,
 } from "@/lib/stats/weekly-trend";
 import { getPlayerTitles } from "@/lib/stats/title-rankings";
+import { getTeamById } from "@/lib/constants/teams";
 import type { PlayerTodayGameResponse } from "@/app/api/player-today-game/route";
 
 export const dynamic = "force-dynamic";
@@ -57,6 +58,34 @@ async function getJson<T>(path: string): Promise<T | null> {
   }
 }
 
+// 최근 경기 채움 줄 — 오늘 경기 활약이 없는 날 카드 중앙 공백 대신 표시(위젯 네이티브는 그리기만)
+interface GameLogRow extends WeeklyTrendRow {
+  opponent_team_id?: number;
+  k?: number;
+  hr?: number;
+  rbi?: number;
+}
+
+function recentGameLines(rows: GameLogRow[], isPitcher: boolean) {
+  return rows
+    .filter((r) => (isPitcher ? r.ip_outs > 0 : r.ab > 0)) // 대주자/볼넷만 경기 등 "0타수" 줄 제외
+    .slice(-3)
+    .reverse()
+    .map((r) => {
+      const [, m, d] = r.game_date.split("-").map(Number);
+      const opp = r.opponent_team_id ? getTeamById(r.opponent_team_id)?.shortName : null;
+      let line: string;
+      if (isPitcher) {
+        line = `${outsToInnings(r.ip_outs)}이닝${r.k ? ` ${r.k}K` : ""} ${r.er}자책`;
+      } else {
+        line = `${r.ab}타수 ${r.h}안타`;
+        if (r.hr) line += ` ${r.hr}홈런`;
+        else if (r.rbi) line += ` ${r.rbi}타점`;
+      }
+      return { date: `${m}/${d}`, opponent: opp ? `vs ${opp}` : "", line };
+    });
+}
+
 // 앱 카드와 동일한 오늘 경기 강조칩 규칙 (FavoritePlayersSection batterTodayChips/pitcherTodayChips)
 function todayChips(today: PlayerTodayGameResponse): string[] {
   if (today.type === "batter" && today.batter) {
@@ -94,7 +123,7 @@ export async function GET(req: NextRequest) {
     getJson<{ stats: StatLike | null }>(`/api/player-stats?id=${idQ}&pos=${posQ}`).then(
       (d) => d?.stats ?? null,
     ),
-    getJson<{ rows: WeeklyTrendRow[] }>(`/api/player-game-logs?id=${idQ}&pos=${posQ}`).then(
+    getJson<{ rows: GameLogRow[] }>(`/api/player-game-logs?id=${idQ}&pos=${posQ}`).then(
       (d) => (Array.isArray(d?.rows) ? d.rows : []),
     ),
     getJson<{ stats: StatLike[] }>(`/api/stats?type=${isPitcher ? "pitcher" : "batter"}&season=2026`).then(
@@ -158,6 +187,7 @@ export async function GET(req: NextRequest) {
       weekly,
       seasonLine: seasonMain ? `시즌 ${seasonMain}${seasonSub ? ` · ${seasonSub}` : ""}` : null,
       titles,
+      recentGames: recentGameLines(logsRes, isPitcher),
       today:
         today && today.show
           ? {

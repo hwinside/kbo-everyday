@@ -6,8 +6,8 @@
     android:minHeight="240dp"
     android:targetCellWidth="4"
     android:targetCellHeight="4"
+    android:previewImage="@drawable/widget_preview_team_rank"
     android:updatePeriodMillis="1800000"
     android:initialLayout="@layout/widget_team_rank"
-    android:previewLayout="@layout/widget_team_rank"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen|keyguard" />

@@ -43,8 +43,8 @@
         android:gravity="center_horizontal|top"
         android:paddingLeft="12dp"
         android:paddingRight="12dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="12dp">
+        android:paddingTop="6dp"
+        android:paddingBottom="8dp">
 
         <!-- MY TEAM 헤더 — 목업 기준 좌측 상단 정렬(워터마크는 우상단) -->
         <LinearLayout
@@ -53,7 +53,7 @@
             android:layout_gravity="start"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:layout_marginBottom="13dp">
+            android:layout_marginBottom="6dp">
             <ImageView
                 android:id="@+id/widget_small_myteam_logo"
                 android:layout_width="15dp"
@@ -86,8 +86,8 @@
                 android:gravity="center">
                 <ImageView
                     android:id="@+id/widget_small_away_logo"
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
                     android:scaleType="fitCenter"
                     android:src="@drawable/teamlogo_sk"
                     android:contentDescription="@null" />
@@ -128,8 +128,8 @@
                 android:gravity="center">
                 <ImageView
                     android:id="@+id/widget_small_home_logo"
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
                     android:scaleType="fitCenter"
                     android:src="@drawable/teamlogo_lg"
                     android:contentDescription="@null" />
@@ -157,7 +157,7 @@
             android:id="@+id/widget_small_status"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="15dp"
+            android:layout_marginTop="8dp"
             android:paddingStart="8dp"
             android:paddingEnd="8dp"
             android:paddingTop="1dp"
@@ -182,7 +182,7 @@
             android:id="@+id/widget_small_starter"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="15dp"
+            android:layout_marginTop="8dp"
             android:orientation="vertical"
             android:gravity="center"
             android:visibility="gone">
