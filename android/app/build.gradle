@@ -15,8 +15,8 @@ android {
         applicationId "fan.keubo.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 7
-        versionName "1.0.7"
+        versionCode 8
+        versionName "1.0.8"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -43,6 +43,29 @@ android {
                 signingConfig signingConfigs.release
             }
         }
+    }
+}
+
+def releaseCapacitorConfigFile = file("src/main/assets/capacitor.config.json")
+
+tasks.register("validateReleaseCapacitorConfig") {
+    inputs.file(releaseCapacitorConfigFile)
+    doLast {
+        if (!releaseCapacitorConfigFile.exists()) {
+            throw new GradleException("Missing Android Capacitor config: ${releaseCapacitorConfigFile}. Run npx cap sync android before release.")
+        }
+
+        def capacitorConfig = new groovy.json.JsonSlurper().parse(releaseCapacitorConfigFile)
+        def serverUrl = capacitorConfig.server?.url
+        if (serverUrl != "https://keubo.fan") {
+            throw new GradleException("Invalid Android release server.url '${serverUrl}'. Expected https://keubo.fan, not localhost.")
+        }
+    }
+}
+
+afterEvaluate {
+    tasks.named("preReleaseBuild").configure {
+        dependsOn(tasks.named("validateReleaseCapacitorConfig"))
     }
 }
 
