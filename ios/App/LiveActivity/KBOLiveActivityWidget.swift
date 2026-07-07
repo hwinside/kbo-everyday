@@ -315,9 +315,9 @@ struct KBOLockScreenCard: View {
             // 너무 상단에 쏠리지 않게 한다(하린아빠 요청). 잠금화면 LA는 위 여백 0(기존 유지).
             if hasMyTeam {
                 HStack(spacing: 6) {
-                    TeamLogo(code: attributes.myTeamCode, size: 18)
+                    TeamLogo(code: attributes.myTeamCode, size: 16)
                     Text("MY TEAM")
-                        .font(montserrat(13, .heavy)).tracking(1.0)
+                        .font(montserrat(11, .heavy)).tracking(1.0)
                     Spacer()
                 }
                 .padding(.top, fillHeight ? 5 : 0)
@@ -336,18 +336,18 @@ struct KBOLockScreenCard: View {
                     // 경기장(구장) — 가운데 점수 위에 표기 (하린아빠 요청)
                     if !state.stadium.isEmpty {
                         Text(state.stadium)
-                            .font(notoKR(10, .medium)).tracking(kKoreanTracking)
+                            .font(notoKR(11, .medium)).tracking(kKoreanTracking)
                             .foregroundStyle(.white.opacity(0.75))
                     }
                     if state.isScheduled {
                         // 경기 전 — 안드 승인본 언어와 동일: "경기 예정"(크게) + 예정 시각 pill.
                         // 양팀은 좌우 TeamBadge에, 구장은 위(stadium)에 이미 표기. 하단엔 예고선발.
                         Text("경기 예정")
-                            .font(notoKR(16, .heavy)).tracking(kKoreanTracking)
+                            .font(notoKR(18, .heavy)).tracking(kKoreanTracking)
                             .foregroundStyle(.white)
                         if let t = state.startTime, !t.isEmpty {
                             Text(t)
-                                .font(notoKR(12, .heavy))
+                                .font(notoKR(13, .heavy))
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 10).padding(.vertical, 2)
                                 .background(Capsule().fill(Color.black.opacity(0.28)))
@@ -355,20 +355,20 @@ struct KBOLockScreenCard: View {
                     } else {
                         HStack(spacing: 8) {
                             Text("\(state.awayScore)")
-                                .font(montserrat(24, .black)).monospacedDigit()
-                            Text(":").font(montserrat(14, .bold)).foregroundStyle(.white.opacity(0.5))
+                                .font(montserrat(28, .black)).monospacedDigit()
+                            Text(":").font(montserrat(16, .bold)).foregroundStyle(.white.opacity(0.5))
                             Text("\(state.homeScore)")
-                                .font(montserrat(24, .black)).monospacedDigit()
+                                .font(montserrat(28, .black)).monospacedDigit()
                         }
                         Group {
                             if state.isFinal {
-                                Text("경기 종료").font(notoKR(10, .bold))
+                                Text("경기 종료").font(notoKR(11, .bold))
                             } else {
                                 // LIVE + 숫자 = Montserrat, 회초/말 = Noto
-                                Text("LIVE ").font(montserrat(10, .bold)) + inningRun(state.inningText, 10, .bold)
+                                Text("LIVE ").font(montserrat(11, .bold)) + inningRun(state.inningText, 11, .bold)
                             }
                         }
-                        .padding(.horizontal, 6).padding(.vertical, 1.5)
+                        .padding(.horizontal, 7).padding(.vertical, 1)
                         .background(
                             Capsule().fill(state.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
                         )
@@ -380,11 +380,11 @@ struct KBOLockScreenCard: View {
             // 하단: 아웃카운트(B/S 제거) + 투수/타자(소속) + 다이아몬드 (진행 중에만, 경기 전 제외)
             if !state.isFinal && !state.isScheduled {
                 HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 3) {
                         // 아웃카운트만 유지
                         HStack(spacing: 5) {
                             Text("O")
-                                .font(montserrat(12, .semibold))
+                                .font(montserrat(13, .semibold))
                                 .foregroundStyle(.white.opacity(0.7))
                             HStack(spacing: 4) { outDot(0); outDot(1); outDot(2) }
                         }
@@ -402,7 +402,7 @@ struct KBOLockScreenCard: View {
                         // 높이로 폰트 확대(+1~2pt)를 상쇄해 잠금 LA 높이 한도 내 유지.
                         .frame(width: 40, height: 32)
                 }
-                .padding(.top, 2)
+                .padding(.top, 1)
                 .overlay(alignment: .top) {
                     Rectangle().fill(.white.opacity(0.12)).frame(height: 1)
                 }
@@ -415,9 +415,9 @@ struct KBOLockScreenCard: View {
                 HStack(spacing: 6) {
                     Circle()
                         .fill(Color(hex: 0xFF5A5A))
-                        .frame(width: 5, height: 5)
+                        .frame(width: 6, height: 6)
                     Text(lp)
-                        .font(notoKR(12, .medium)).tracking(kKoreanTracking)
+                        .font(notoKR(14, .medium)).tracking(kKoreanTracking)
                         .foregroundStyle(.white.opacity(0.92))
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
@@ -425,13 +425,13 @@ struct KBOLockScreenCard: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 9)
-                .padding(.vertical, 3)   // 5→3 (1.0.7 높이 다이어트)
+                .padding(.vertical, 2)   // 5→3→2 (폰트 2차 확대 상쇄)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 7)
                         .fill(Color.white.opacity(0.11))
                 )
-                .padding(.top, 3)        // 4→3 (동일)
+                .padding(.top, 2)        // 4→3→2 (동일)
             }
 
             // 경기 전 — 예고선발 한 줄: "{원정선발}  선발투수  {홈선발}"(승인 목업). 미확정이면 "미정".
@@ -439,17 +439,17 @@ struct KBOLockScreenCard: View {
             if state.isScheduled {
                 HStack(spacing: 8) {
                     Text(starterDisplayName(state.awayStarter))
-                        .font(notoKR(13, .bold)).tracking(kKoreanTracking).foregroundColor(.white)
+                        .font(notoKR(15, .bold)).tracking(kKoreanTracking).foregroundColor(.white)
                         .lineLimit(1).minimumScaleFactor(0.7)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                     Text("선발투수")
-                        .font(notoKR(11, .medium)).tracking(kKoreanTracking).foregroundColor(.white.opacity(0.6))
+                        .font(notoKR(12, .medium)).tracking(kKoreanTracking).foregroundColor(.white.opacity(0.6))
                     Text(starterDisplayName(state.homeStarter))
-                        .font(notoKR(13, .bold)).tracking(kKoreanTracking).foregroundColor(.white)
+                        .font(notoKR(15, .bold)).tracking(kKoreanTracking).foregroundColor(.white)
                         .lineLimit(1).minimumScaleFactor(0.7)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.top, 9)
+                .padding(.top, 8)
                 .overlay(alignment: .top) {
                     Rectangle().fill(.white.opacity(0.12)).frame(height: 1)
                 }
@@ -465,8 +465,8 @@ struct KBOLockScreenCard: View {
         // 작게(MY TEAM 위로) + 하단 여백 확보(삼순 의견 반영). 잠금화면 LA(fillHeight=false)는
         // 상하 대칭 10pt — #517의 13pt에서 축소(1.0.7 높이 다이어트: 투수/타자+lastPlay 포함
         // 풀 라이브 카드가 잠금 LA 높이 한도를 넘겨 상하 잘림 → 여백·행 병합으로 한도 내 복원).
-        .padding(.top, fillHeight ? 10 : 10)
-        .padding(.bottom, fillHeight ? 16 : 10)
+        .padding(.top, fillHeight ? 10 : 8)
+        .padding(.bottom, fillHeight ? 16 : 8)
         // medium 위젯: 카드가 위젯 높이를 꽉 채워 배경 seam(윗쪽 어두운 띠) 제거. 콘텐츠는 *상단* 정렬
         // 기본 — 라이브는 자연 상단정렬 그대로, 종료는 위 Spacer 2개로 점수가 세로 중앙에 온다.
         // 잠금화면 LA(fillHeight=false)는 콘텐츠 높이 그대로.
@@ -493,23 +493,23 @@ struct KBOLockScreenCard: View {
     private func outDot(_ i: Int) -> some View {
         Circle()
             .fill(i < state.outs ? Color(hex: 0xFF4D4D) : Color.white.opacity(0.2))
-            .frame(width: 7, height: 7)
+            .frame(width: 8, height: 8)
     }
 
     // 투수/타자 한 줄 — "투수 김윤식 · 타자 구자욱" (1.0.7: 기존 소속 포함 2줄에서 병합).
     private func playersLine(pitcher: String, batter: String) -> some View {
         HStack(spacing: 5) {
             if !pitcher.isEmpty {
-                (Text("투수 ").font(notoKR(11, .medium)).foregroundColor(.white.opacity(0.6))
-                 + Text(pitcher).font(notoKR(13, .bold)).foregroundColor(.white))
+                (Text("투수 ").font(notoKR(12, .medium)).foregroundColor(.white.opacity(0.6))
+                 + Text(pitcher).font(notoKR(15, .bold)).foregroundColor(.white))
                     .tracking(kKoreanTracking)
             }
             if !pitcher.isEmpty && !batter.isEmpty {
-                Text("·").font(notoKR(11, .medium)).foregroundColor(.white.opacity(0.4))
+                Text("·").font(notoKR(12, .medium)).foregroundColor(.white.opacity(0.4))
             }
             if !batter.isEmpty {
-                (Text("타자 ").font(notoKR(11, .medium)).foregroundColor(.white.opacity(0.6))
-                 + Text(batter).font(notoKR(13, .bold)).foregroundColor(.white))
+                (Text("타자 ").font(notoKR(12, .medium)).foregroundColor(.white.opacity(0.6))
+                 + Text(batter).font(notoKR(15, .bold)).foregroundColor(.white))
                     .tracking(kKoreanTracking)
             }
         }
@@ -526,11 +526,11 @@ struct TeamBadge: View {
         VStack(spacing: 2) {
             ZStack {
                 Circle().fill(.white)
-                TeamLogo(code: code, size: 19)
+                TeamLogo(code: code, size: 21)
             }
-            .frame(width: 28, height: 28)
+            .frame(width: 31, height: 31)
             // 풀네임(롯데 자이언츠 / LG 트윈스) — 라틴=Montserrat, 한글=Noto. 좁으면 축소.
-            mixedScriptText(teamFullName(code), 14, .heavy)
+            mixedScriptText(teamFullName(code), 16, .heavy)
                 .lineLimit(1).minimumScaleFactor(0.55)
         }
         .frame(maxWidth: .infinity)
