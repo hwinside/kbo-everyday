@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 팀 순위표 홈 위젯 — 표 전체를 TeamRankWidget이 Canvas 비트맵 한 장으로 렌더해
+     ImageView에 세팅(앱 순위표와 동일 디자인 + 최애팀 하이라이트). RemoteViews 제약상
+     FrameLayout/ImageView/TextView만 사용(기본 android.view.View 금지). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_rank_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background">
+
+    <ImageView
+        android:id="@+id/widget_rank_img"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitCenter"
+        android:contentDescription="@null" />
+
+    <!-- 빈 상태 (첫 fetch 전/실패) -->
+    <TextView
+        android:id="@+id/widget_rank_empty"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:fontFamily="@font/notosanskr"
+        android:letterSpacing="-0.04"
+        android:textColor="#A1A1AA"
+        android:textSize="12sp"
+        android:visibility="gone"
+        android:text="순위 정보를 불러오는 중이에요" />
+</FrameLayout>

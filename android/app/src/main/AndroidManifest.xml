@@ -79,6 +79,18 @@
                 android:resource="@xml/game_score_widget_small_info" />
         </receiver>
 
+        <!-- 팀 순위표 위젯(4x4) — 앱 순위표 동일 디자인 + 최애팀 하이라이트. 자체 fetch + 캐시. -->
+        <receiver
+            android:name=".TeamRankWidget"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/team_rank_widget_info" />
+        </receiver>
+
         <!-- FCM 수신 서비스 — capawesome MessagingService를 확장(앱 꺼져도 라이브 푸시 →
              잠금화면 ongoing notification + 위젯). 플러그인 기본 서비스는 제거하고 이걸로 대체. -->
         <service

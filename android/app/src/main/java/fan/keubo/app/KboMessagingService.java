@@ -109,6 +109,8 @@ public class KboMessagingService extends MessagingService {
             // 경기로 자동 롤오버(readEff). 통째 clear하면 hasGame=false라 롤오버가 무력화됨.
             GameNotificationPlugin.clear(this);
             GameScoreWidget.markFinal(this);
+            // 순위 위젯 — 경기 종료 직후 순위가 갱신되므로 최신 순위 재조회(위젯 미배치면 no-op).
+            TeamRankWidget.fetchAndRefresh(this);
         }
     }
 }

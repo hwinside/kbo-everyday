@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 팀 순위표 위젯 — 4x4 기본(세로 리사이즈 허용, 10개 구단 전체 표).
+     순위는 하루 단위 변동이라 30분 주기 갱신(+ 경기 종료 FCM 시 즉시 재조회). -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="240dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="4"
+    android:updatePeriodMillis="1800000"
+    android:initialLayout="@layout/widget_team_rank"
+    android:previewLayout="@layout/widget_team_rank"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen|keyguard" />
