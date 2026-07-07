@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { PostgrestError } from "@supabase/supabase-js";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { isAdminRequest } from "@/lib/admin/pin";
@@ -6,6 +7,21 @@ import { getKSTToday, toKSTDateString } from "@/lib/utils/date-kst";
 
 function verifyPin(req: NextRequest): boolean {
   return isAdminRequest(req);
+}
+
+// Supabase는 쿼리당 최대 1000행만 반환 → 초과분은 range 페이지네이션으로 수집
+const PAGE_SIZE = 1000;
+
+async function fetchAllRows<T>(
+  makePage: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: PostgrestError | null }>,
+): Promise<{ data: T[]; error: PostgrestError | null }> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await makePage(from, from + PAGE_SIZE - 1);
+    if (error) return { data: rows, error };
+    rows.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) return { data: rows, error: null };
+  }
 }
 
 export async function GET(req: NextRequest) {
@@ -19,36 +35,52 @@ export async function GET(req: NextRequest) {
   const since = sinceDate.toISOString().slice(0, 10);
 
   // Posts
-  const { data: posts, error: postsError } = await supabase
-    .from("posts")
-    .select("created_at, content_type, board_id, author_id")
-    .neq("board_type", "announcement") // 새소식 댓글용 브리지 포스트 제외
-    .gte("created_at", since);
+  const { data: posts, error: postsError } = await fetchAllRows((from, to) =>
+    supabase
+      .from("posts")
+      .select("created_at, content_type, board_id, author_id")
+      .neq("board_type", "announcement") // 새소식 댓글용 브리지 포스트 제외
+      .gte("created_at", since)
+      .order("created_at", { ascending: true })
+      .range(from, to),
+  );
 
   if (postsError) return supabaseErrorResponse(postsError);
 
   // Comments
-  const { data: comments, error: commentsError } = await supabase
-    .from("comments")
-    .select("created_at, author_id")
-    .gte("created_at", since);
+  const { data: comments, error: commentsError } = await fetchAllRows((from, to) =>
+    supabase
+      .from("comments")
+      .select("created_at, author_id")
+      .gte("created_at", since)
+      .order("created_at", { ascending: true })
+      .range(from, to),
+  );
 
   if (commentsError) return supabaseErrorResponse(commentsError);
 
   // 크관(경기 중계) 채팅: room_id LIKE 'game:%'
-  const { data: chats, error: chatsError } = await supabase
-    .from("chat_messages")
-    .select("created_at, user_id")
-    .like("room_id", "game:%")
-    .gte("created_at", since);
+  const { data: chats, error: chatsError } = await fetchAllRows((from, to) =>
+    supabase
+      .from("chat_messages")
+      .select("created_at, user_id")
+      .like("room_id", "game:%")
+      .gte("created_at", since)
+      .order("created_at", { ascending: true })
+      .range(from, to),
+  );
 
   if (chatsError) return supabaseErrorResponse(chatsError);
 
   // 게시글 좋아요
-  const { data: likes, error: likesError } = await supabase
-    .from("likes")
-    .select("created_at, user_id")
-    .gte("created_at", since);
+  const { data: likes, error: likesError } = await fetchAllRows((from, to) =>
+    supabase
+      .from("likes")
+      .select("created_at, user_id")
+      .gte("created_at", since)
+      .order("created_at", { ascending: true })
+      .range(from, to),
+  );
 
   if (likesError) return supabaseErrorResponse(likesError);
 
@@ -114,6 +146,16 @@ export async function GET(req: NextRequest) {
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
+  // Engaged Users: 글/댓글/크관 채팅 중 1건+ 작성한 유저 (전 기간, RPC 집계).
+  // 마이그레이션 미적용 등으로 RPC가 실패해도 다른 차트는 살리기 위해
+  // 이 항목만 빈 배열로 강등한다 (카드는 "데이터 수집 전" 표시).
+  const { data: engagedRows, error: engagedError } = await supabase.rpc(
+    "admin_engaged_users_daily",
+  );
+  if (engagedError) console.error("[admin/content] engaged RPC:", engagedError.message);
+  const engagedDaily = ((engagedRows ?? []) as { day: string; engaged: number; first_engaged: number }[])
+    .map((r) => ({ date: r.day, engaged: Number(r.engaged), firstEngaged: Number(r.first_engaged) }));
+
   // Popular posts top 10
   const { data: popularPosts, error: popularError } = await supabase
     .from("posts")
@@ -138,5 +180,6 @@ export async function GET(req: NextRequest) {
     dailyPosts,
     popularPosts,
     teamActivity,
+    engagedDaily,
   });
 }
