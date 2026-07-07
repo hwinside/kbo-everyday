@@ -196,7 +196,10 @@ export async function GET(req: NextRequest) {
     | { pushed: number; ended: number; cleaned: number }
     | { error: string } = { pushed: 0, ended: 0, cleaned: 0 };
   try {
-    liveActivity = await pushLiveActivityUpdates(games, lastPlayByGame);
+    // 🚨 인시던트 핫픽스(2026-07-07): lastPlay(문자중계 한 줄)를 iOS LA update에서 제외.
+    // #528 추가 후 첫 실경기에서 잠금 카드가 높이 한도를 넘겨 상하 잘림/프리즈 — 줄 제거로
+    // 7/5까지 검증된 카드로 롤백. 네이티브에서 카드 높이 확보 후 재도입.
+    liveActivity = await pushLiveActivityUpdates(games);
   } catch (e) {
     liveActivity = { error: (e as Error).message };
     console.error("[warmup] live activity push failed:", (e as Error).message);
