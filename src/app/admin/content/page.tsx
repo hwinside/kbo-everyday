@@ -52,10 +52,17 @@ interface TeamActivity {
   count: number;
 }
 
+interface EngagedDay {
+  date: string;
+  engaged: number;
+  firstEngaged: number;
+}
+
 interface ContentData {
   dailyPosts: DailyPost[];
   popularPosts: PopularPost[];
   teamActivity: TeamActivity[];
+  engagedDaily: EngagedDay[];
 }
 
 function getPin(): string | null {
@@ -94,6 +101,96 @@ function postLabel(p: PopularPost): string {
   const prefix = isTeam ? "🏟️ " : "";
   const dt = p.created_at?.slice(0, 16).replace("T", " ").replace(/-/g, ".") ?? "";
   return `${prefix}${name} · ${dt}`;
+}
+
+/* ── Engaged User trend card (7일/30일/누적 토글) ── */
+
+type EngagedPeriod = "7d" | "30d" | "cumulative";
+
+const ENGAGED_TABS: { key: EngagedPeriod; label: string }[] = [
+  { key: "7d", label: "7일" },
+  { key: "30d", label: "30일" },
+  { key: "cumulative", label: "누적" },
+];
+
+// KST 기준 오늘부터 거꾸로 N일 창을 채운다 (작성 0명인 날도 0으로 표시)
+function fillDailyWindow(rows: EngagedDay[], days: number): { label: string; value: number }[] {
+  const byDate = new Map(rows.map((r) => [r.date, r.engaged]));
+  const todayKST = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const end = new Date(todayKST + "T00:00:00Z").getTime();
+  const out: { label: string; value: number }[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const date = new Date(end - i * 86400_000).toISOString().slice(0, 10);
+    out.push({ label: date.slice(5), value: byDate.get(date) ?? 0 });
+  }
+  return out;
+}
+
+function EngagedUsersCard({ rows }: { rows: EngagedDay[] }) {
+  const [period, setPeriod] = useState<EngagedPeriod>("7d");
+  const isCumulative = period === "cumulative";
+
+  let chartData: { label: string; value: number }[];
+  if (isCumulative) {
+    let running = 0;
+    chartData = rows.map((r) => {
+      running += r.firstEngaged;
+      return { label: r.date.slice(5), value: running };
+    });
+  } else {
+    chartData = fillDailyWindow(rows, period === "30d" ? 30 : 7);
+  }
+
+  const caption = isCumulative
+    ? "런칭 이후 누적 참여 유저 (중복 제외)"
+    : "글/댓글/크관 채팅/사진 중 하나 이상 작성한 유저 수 (일별)";
+
+  return (
+    <div className="glass-card p-5">
+      <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
+        <h2 className="text-lg font-semibold">Engaged User 추이</h2>
+        <div className="flex gap-1 p-1 rounded-xl bg-white/5">
+          {ENGAGED_TABS.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setPeriod(t.key)}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                period === t.key ? "bg-[#6366F1] text-white" : "text-[#8E8E93] hover:text-white"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="text-xs text-[#8E8E93] mb-4">{caption}</p>
+      {rows.length === 0 ? (
+        <div className="flex items-center justify-center h-[260px] text-[#8E8E93]">
+          <p>데이터 수집 전</p>
+        </div>
+      ) : isCumulative ? (
+        <ResponsiveContainer width="100%" height={260}>
+          <LineChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+            <XAxis dataKey="label" stroke="#636366" fontSize={12} minTickGap={28} />
+            <YAxis stroke="#636366" fontSize={12} />
+            <Tooltip {...tooltipStyle} />
+            <Line type="monotone" dataKey="value" name="누적 참여 유저" stroke="#64D2FF" strokeWidth={2} dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      ) : (
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+            <XAxis dataKey="label" stroke="#636366" fontSize={12} />
+            <YAxis stroke="#636366" fontSize={12} />
+            <Tooltip {...tooltipStyle} />
+            <Bar dataKey="value" name="참여 유저" fill="#64D2FF" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
 }
 
 function DedupPhotosSection() {
@@ -232,6 +329,9 @@ export default function AdminContentPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">콘텐츠 분석</h1>
+
+      {/* Engaged Users */}
+      <EngagedUsersCard rows={data?.engagedDaily ?? []} />
 
       {/* Post + Comment daily */}
       <div className="glass-card p-5">

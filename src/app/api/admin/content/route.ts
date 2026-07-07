@@ -146,6 +146,16 @@ export async function GET(req: NextRequest) {
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
+  // Engaged Users: 글/댓글/크관 채팅 중 1건+ 작성한 유저 (전 기간, RPC 집계).
+  // 마이그레이션 미적용 등으로 RPC가 실패해도 다른 차트는 살리기 위해
+  // 이 항목만 빈 배열로 강등한다 (카드는 "데이터 수집 전" 표시).
+  const { data: engagedRows, error: engagedError } = await supabase.rpc(
+    "admin_engaged_users_daily",
+  );
+  if (engagedError) console.error("[admin/content] engaged RPC:", engagedError.message);
+  const engagedDaily = ((engagedRows ?? []) as { day: string; engaged: number; first_engaged: number }[])
+    .map((r) => ({ date: r.day, engaged: Number(r.engaged), firstEngaged: Number(r.first_engaged) }));
+
   // Popular posts top 10
   const { data: popularPosts, error: popularError } = await supabase
     .from("posts")
@@ -170,5 +180,6 @@ export async function GET(req: NextRequest) {
     dailyPosts,
     popularPosts,
     teamActivity,
+    engagedDaily,
   });
 }
