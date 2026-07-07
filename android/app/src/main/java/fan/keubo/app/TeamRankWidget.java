@@ -81,6 +81,19 @@ public class TeamRankWidget extends AppWidgetProvider {
 
     @Override
     public void onUpdate(Context context, AppWidgetManager mgr, int[] appWidgetIds) {
+        renderIds(context, mgr, appWidgetIds);
+
+        // 캐시가 오래됐으면 백그라운드 fetch 후 재렌더 (BroadcastReceiver 수명 연장).
+        // goAsync()는 실제 receiver 콜백에서만 유효 — 수동 갱신은 renderAllFromCache 사용.
+        SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        long age = System.currentTimeMillis() - p.getLong(KEY_UPDATED, 0);
+        if (age > FRESH_MS) {
+            final PendingResult pr = goAsync();
+            fetchAsync(context.getApplicationContext(), pr);
+        }
+    }
+
+    private static void renderIds(Context context, AppWidgetManager mgr, int[] appWidgetIds) {
         Intent launch = context.getPackageManager()
             .getLaunchIntentForPackage(context.getPackageName());
         PendingIntent pi = PendingIntent.getActivity(
@@ -91,14 +104,6 @@ public class TeamRankWidget extends AppWidgetProvider {
             RemoteViews v = buildViews(context, mgr, id);
             v.setOnClickPendingIntent(R.id.widget_rank_root, pi);
             mgr.updateAppWidget(id, v);
-        }
-
-        // 캐시가 오래됐으면 백그라운드 fetch 후 재렌더 (BroadcastReceiver 수명 연장)
-        SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        long age = System.currentTimeMillis() - p.getLong(KEY_UPDATED, 0);
-        if (age > FRESH_MS) {
-            final PendingResult pr = goAsync();
-            fetchAsync(context.getApplicationContext(), pr);
         }
     }
 
@@ -114,12 +119,13 @@ public class TeamRankWidget extends AppWidgetProvider {
         mgr.updateAppWidget(appWidgetId, v);
     }
 
-    /** 배치된 모든 순위 위젯을 현재 캐시로 재렌더 (최애팀 변경 등). */
-    static void refresh(Context ctx) {
+    /** 배치된 모든 순위 위젯을 현재 캐시로 재렌더 (최애팀 변경 등) — fetch 없음.
+     *  수동 갱신 경로 전용: 실제 receiver가 아니라 goAsync() 불가. */
+    static void renderAllFromCache(Context ctx) {
         AppWidgetManager mgr = AppWidgetManager.getInstance(ctx);
         int[] ids = mgr.getAppWidgetIds(new ComponentName(ctx, TeamRankWidget.class));
         if (ids == null || ids.length == 0) return;
-        new TeamRankWidget().onUpdate(ctx, mgr, ids);
+        renderIds(ctx, mgr, ids);
     }
 
     /** 최신 순위를 강제 재조회 후 재렌더 — 경기 종료 FCM(game_end) 수신 시 호출.
@@ -131,14 +137,14 @@ public class TeamRankWidget extends AppWidgetProvider {
         final Context app = ctx.getApplicationContext();
         new Thread(() -> {
             fetchAndStore(app);
-            refresh(app);
+            renderAllFromCache(app);
         }).start();
     }
 
     private static void fetchAsync(final Context app, final PendingResult pr) {
         new Thread(() -> {
             try {
-                if (fetchAndStore(app)) refresh(app);
+                if (fetchAndStore(app)) renderAllFromCache(app);
             } finally {
                 pr.finish();
             }

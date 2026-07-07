@@ -181,7 +181,7 @@ public class GameNotificationPlugin extends Plugin {
     public void setMyTeam(PluginCall call) {
         GameScoreWidget.setMyTeam(getContext(), call.getString("code", ""));
         // 순위 위젯은 최애팀 행 하이라이트가 바뀌므로 캐시로 즉시 재렌더
-        TeamRankWidget.refresh(getContext());
+        TeamRankWidget.renderAllFromCache(getContext());
         call.resolve();
     }
 }
