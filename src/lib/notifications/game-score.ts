@@ -37,15 +37,16 @@ export async function unclaimEvent(eventId: string): Promise<void> {
 }
 
 /**
- * 게임별 득점 이벤트를 보고 "내 팀 득점" 알림 발송.
+ * 게임별 득점 이벤트를 보고 "내 팀 득점" + "내 팀 실점"(옵트인) 알림 발송.
  * warmup cron이 self-fetch한 game-events의 events 배열을 gameId별로 넘긴다.
  * 발송 실패해도 warmup 본연의 동작에 영향 없음(cron에서 try/catch).
  */
 export async function notifyScoreEvents(
   games: KboRawGame[],
   eventsByGame: Map<string, GameEvent[]>,
-): Promise<{ scored: number }> {
+): Promise<{ scored: number; conceded: number }> {
   let scored = 0;
+  let conceded = 0;
   const gameById = new Map(games.map((g) => [g.G_ID, g]));
 
   for (const [gameId, events] of eventsByGame) {
@@ -92,13 +93,41 @@ export async function notifyScoreEvents(
         aS = r.awayScore; hS = r.homeScore;
       }
 
+      const scoreLine = `${away} ${aS} : ${hS} ${home}`;
+      const batter = ev.detail?.batter;
+
+      // 내 팀 실점 알림 (my_team_concede, 옵트인 — 고객 제안 2026-07-07). 같은 득점
+      // 이벤트를 실점팀 팬 관점으로 발송. dedupe는 득점 알림과 별도 키(`-concede`)로
+      // 선점해 양쪽 재시도가 독립되게 한다 — 득점팀 claim(아래) 뒤에 두면 이미 발송된
+      // 이벤트의 실점 측 재시도가 continue에 막혀 영구 유실된다.
+      const concedeTeamName = scoringTeamName === away ? home : away;
+      const concedeTeamId = teamIdByShortName(concedeTeamName);
+      if (concedeTeamId !== null && (await claimEvent(`${ev.id}-concede`, gameId))) {
+        const cFans = await fansOfTeams([concedeTeamId]);
+        if (!cFans.ok) {
+          await unclaimEvent(`${ev.id}-concede`); // 조회 실패 → 재시도
+        } else {
+          // 실점 투수 (하린아빠 요청 2026-07-07). 홈런은 detail.pitcher(타석 시점 확정),
+          // run_scored는 detail에 없어 snapshot.pitcher(diff 시점 마운드 투수) 폴백.
+          // 이닝교대 lag 시 공백/오귀속 가능성은 기존 batter 표기와 동일 수준 — 없으면 생략.
+          const cPitcher = ev.detail?.pitcher || ev.snapshot?.pitcher || "";
+          const cTitle = isHr ? `💥 ${concedeTeamName} 홈런 허용` : `⚾ ${concedeTeamName} 실점`;
+          const cBody = [
+            ...(isHr && batter ? [batter] : []),
+            ...(cPitcher ? [`투수 ${cPitcher}`] : []),
+            scoreLine,
+          ].join(" · ");
+          const cRes = await sendFcmToUsers(cFans.ids, { title: cTitle, body: cBody, url }, "my_team_concede");
+          if (!cRes.ok) await unclaimEvent(`${ev.id}-concede`); // 인프라 실패 → 재시도
+          else conceded += cRes.sent;
+        }
+      }
+
       if (!(await claimEvent(ev.id, gameId))) continue; // 이미 발송됨/보류
 
       const fans = await fansOfTeams([teamId]);
       if (!fans.ok) { await unclaimEvent(ev.id); continue; } // 조회 실패 → 재시도
 
-      const scoreLine = `${away} ${aS} : ${hS} ${home}`;
-      const batter = ev.detail?.batter;
       // 만루홈런 → "그랜드슬램" 강조 (하린아빠 요청 2026-06-27, 삼순 확정).
       // 가드 = isHr(at_bat_homerun) + resolvedRbi===4. 홈런 자기 rbi가 교차폴링으로 0이면
       // 유령 단타에서 inheritHitRbi로 상속. 비홈런 4타점 오탐은 isHr 가드가 차단한다.
@@ -146,7 +175,7 @@ export async function notifyScoreEvents(
     }
   }
 
-  return { scored };
+  return { scored, conceded };
 }
 
 // 안타류(이닝 안타수 집계). at_bat_out/walk/strikeout 제외.

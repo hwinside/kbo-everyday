@@ -128,7 +128,7 @@ export async function GET(req: NextRequest) {
   }
 
   // 내 팀 득점 푸시 (push-notifications-v1 S5a) — game-events의 득점 이벤트 기반.
-  let scoreNotify: { scored: number } | { error: string } = { scored: 0 };
+  let scoreNotify: { scored: number; conceded: number } | { error: string } = { scored: 0, conceded: 0 };
   try {
     scoreNotify = await notifyScoreEvents(games, eventsByGame);
   } catch (e) {
