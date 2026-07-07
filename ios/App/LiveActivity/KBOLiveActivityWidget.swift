@@ -353,7 +353,7 @@ struct KBOLockScreenCard: View {
                                 .background(Capsule().fill(Color.black.opacity(0.28)))
                         }
                     } else {
-                        HStack(spacing: 8) {
+                        HStack(spacing: 6) {
                             Text("\(state.awayScore)")
                                 .font(montserrat(28, .black)).monospacedDigit()
                             Text(":").font(montserrat(16, .bold)).foregroundStyle(.white.opacity(0.5))
@@ -460,7 +460,7 @@ struct KBOLockScreenCard: View {
         }
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
         // 홈위젯 medium/large(fillHeight)는 HomeWidgetScheduledCard와 동일하게 상단 여백을 좌우보다
         // 작게(MY TEAM 위로) + 하단 여백 확보(삼순 의견 반영). 잠금화면 LA(fillHeight=false)는
         // 상하 대칭 10pt — #517의 13pt에서 축소(1.0.7 높이 다이어트: 투수/타자+lastPlay 포함
@@ -531,7 +531,7 @@ struct TeamBadge: View {
             .frame(width: 31, height: 31)
             // 풀네임(롯데 자이언츠 / LG 트윈스) — 라틴=Montserrat, 한글=Noto. 좁으면 축소.
             mixedScriptText(teamFullName(code), 15, .heavy)
-                .lineLimit(1).minimumScaleFactor(0.55)
+                .lineLimit(1).minimumScaleFactor(0.95)
         }
         .frame(maxWidth: .infinity)
     }
