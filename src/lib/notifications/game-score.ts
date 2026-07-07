@@ -107,8 +107,16 @@ export async function notifyScoreEvents(
         if (!cFans.ok) {
           await unclaimEvent(`${ev.id}-concede`); // 조회 실패 → 재시도
         } else {
+          // 실점 투수 (하린아빠 요청 2026-07-07). 홈런은 detail.pitcher(타석 시점 확정),
+          // run_scored는 detail에 없어 snapshot.pitcher(diff 시점 마운드 투수) 폴백.
+          // 이닝교대 lag 시 공백/오귀속 가능성은 기존 batter 표기와 동일 수준 — 없으면 생략.
+          const cPitcher = ev.detail?.pitcher || ev.snapshot?.pitcher || "";
           const cTitle = isHr ? `💥 ${concedeTeamName} 홈런 허용` : `⚾ ${concedeTeamName} 실점`;
-          const cBody = isHr && batter ? `${batter} · ${scoreLine}` : scoreLine;
+          const cBody = [
+            ...(isHr && batter ? [batter] : []),
+            ...(cPitcher ? [`투수 ${cPitcher}`] : []),
+            scoreLine,
+          ].join(" · ");
           const cRes = await sendFcmToUsers(cFans.ids, { title: cTitle, body: cBody, url }, "my_team_concede");
           if (!cRes.ok) await unclaimEvent(`${ev.id}-concede`); // 인프라 실패 → 재시도
           else conceded += cRes.sent;
