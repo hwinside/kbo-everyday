@@ -38,8 +38,9 @@ export default function TabBar() {
   }
 
   return (
-    <nav data-global-tabbar className="fixed bottom-0 left-0 right-0 z-50 rounded-none border-t border-border bg-[rgba(248,248,250,0.85)] dark:bg-[rgba(10,10,11,0.85)] backdrop-blur-xl">
-      <div className="mx-auto flex max-w-lg items-center justify-around pb-[env(safe-area-inset-bottom,0px)]">
+    <nav data-global-tabbar className="fixed bottom-0 left-0 right-0 z-50 rounded-none border-t border-border bg-[rgba(248,248,250,0.85)] dark:bg-[rgba(10,10,11,0.85)] backdrop-blur-xl pb-[env(safe-area-inset-bottom,0px)]">
+      {/* h-[50px] + nav 1px top border = --global-tabbar-h(51px) in globals.css — keep in sync */}
+      <div className="mx-auto flex h-[50px] max-w-lg items-center justify-around">
         {tabs.map((tab) => {
           const active = isActive(tab.href);
           const Icon = tab.icon;

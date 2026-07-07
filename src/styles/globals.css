@@ -300,6 +300,16 @@ body.kbd-open main.pb-tab-bar {
 }
 
 /*
+ * Global TabBar box height above the safe-area inset: 50px content
+ * (pinned via h-[50px] in TabBar.tsx) + 1px top border. The PostDetail
+ * composer/container offsets below must clear exactly this much or a
+ * see-through band opens between the composer and the TabBar.
+ */
+:root {
+  --global-tabbar-h: 51px;
+}
+
+/*
  * PostDetail chat-style container.
  * Default: shrink by global TabBar height + safe-area so the composer sits
  * exactly above the TabBar (which is fixed bottom:0 with backdrop).
@@ -308,7 +318,7 @@ body.kbd-open main.pb-tab-bar {
  * keeping the composer docked flush above the keyboard.
  */
 .postdetail-chat-container {
-  height: calc(100svh - 4rem - env(safe-area-inset-bottom, 0px));
+  height: calc(100svh - var(--global-tabbar-h) - env(safe-area-inset-bottom, 0px));
 }
 body.kbd-open .postdetail-chat-container {
   height: 100dvh;
@@ -318,21 +328,22 @@ body.kbd-open .postdetail-chat-container {
  * PostDetail composer docking (resizes-content model).
  * The global interactive-widget=resizes-content shrinks the layout viewport by
  * the keyboard height, so a fixed bottom:0 element sits flush above the keyboard
- * with no JS. Idle: clear the global TabBar (4rem + safe-area). On body.kbd-open
- * (composer focused): TabBar hides and everything snaps to the viewport bottom.
+ * with no JS. Idle: clear the global TabBar (--global-tabbar-h + safe-area).
+ * On body.kbd-open (composer focused): TabBar hides and everything snaps to
+ * the viewport bottom.
  * The reply chip + GIF picker ride 3.75rem (~composer height) above the input.
  */
 [data-composer="postdetail"] {
-  bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+  bottom: calc(var(--global-tabbar-h) + env(safe-area-inset-bottom, 0px));
   transition: bottom 80ms ease-out;
 }
 [data-postdetail-reply],
 [data-postdetail-gif] {
-  bottom: calc(4rem + env(safe-area-inset-bottom, 0px) + 3.75rem);
+  bottom: calc(var(--global-tabbar-h) + env(safe-area-inset-bottom, 0px) + 3.75rem);
   transition: bottom 80ms ease-out;
 }
 [data-postdetail-scroll] {
-  padding-bottom: calc(64px + 4rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(64px + var(--global-tabbar-h) + env(safe-area-inset-bottom, 0px));
 }
 body.kbd-open [data-composer="postdetail"] {
   bottom: 0;
