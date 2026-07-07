@@ -44,6 +44,7 @@ interface GameNotificationPlugin {
   updateWidget(opts: WidgetData): Promise<void>;
   clearWidget(): Promise<void>;
   setMyTeam(opts: { code: string }): Promise<void>;
+  setFavPlayers(opts: { json: string }): Promise<void>;
 }
 
 const GameNotification = registerPlugin<GameNotificationPlugin>("GameNotification");
@@ -103,6 +104,16 @@ export async function setWidgetMyTeam(code: string): Promise<void> {
   if (!isAndroid || !code) return;
   try {
     await GameNotification.setMyTeam({ code });
+  } catch {
+    // silent
+  }
+}
+
+/** 최애선수 목록 동기화 — 선수 카드 위젯 config(선수 선택 목록)용. */
+export async function setWidgetFavPlayers(players: unknown[]): Promise<void> {
+  if (!isAndroid) return;
+  try {
+    await GameNotification.setFavPlayers({ json: JSON.stringify(players ?? []) });
   } catch {
     // silent
   }

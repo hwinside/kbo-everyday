@@ -21,7 +21,7 @@ import { useHomeSectionsPref, useHomeSectionsOrder } from "@/hooks/useHomeSectio
 import { useNewsPhotoFilter } from "@/hooks/useNewsPhotoFilter";
 import { isPhotoArticle } from "@/lib/news-relevance";
 import type { HomeSectionKey } from "@/lib/store/home-sections-pref";
-import { setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
+import { setWidgetFavPlayers, setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
 import { writeHomeWidgetSnapshot, type HomeWidgetGame } from "@/lib/native-live-activity";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
 import MyTeamHero from "@/components/home/MyTeamHero";
@@ -379,6 +379,11 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       window.clearInterval(interval);
     };
   }, [myTeamId, todayGames]);
+
+  // 최애선수 목록 → 네이티브 prefs 동기화(선수 카드 위젯 config 선택 목록)
+  useEffect(() => {
+    void setWidgetFavPlayers(favPlayers);
+  }, [favPlayers]);
 
   useEffect(() => {
     if (!myTeamId) return;

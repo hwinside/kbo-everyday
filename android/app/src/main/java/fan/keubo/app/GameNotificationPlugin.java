@@ -184,4 +184,15 @@ public class GameNotificationPlugin extends Plugin {
         TeamRankWidget.renderAllFromCache(getContext());
         call.resolve();
     }
+
+    /** 최애선수 목록 동기화 — 선수 카드 위젯 config(선수 선택 목록)가 읽는다.
+     *  json = [{playerId,name,teamId,position,number}] (FavoritePlayer 직렬화). */
+    @PluginMethod
+    public void setFavPlayers(PluginCall call) {
+        String json = call.getString("json", "");
+        getContext().getSharedPreferences(PlayerCardWidget.PREFS, Context.MODE_PRIVATE).edit()
+            .putString(PlayerCardWidget.KEY_FAV_PLAYERS, json == null ? "" : json)
+            .apply();
+        call.resolve();
+    }
 }

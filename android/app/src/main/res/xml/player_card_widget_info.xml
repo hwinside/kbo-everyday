@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 최애선수 스탯 카드 위젯 — 4x3 기본(세로 리사이즈 허용). 추가 시 config에서 선수 선택.
+     30분 주기 갱신 + game_live 틱 편승(라이브 활약) + game_end 즉시 재조회. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="180dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="3"
+    android:updatePeriodMillis="1800000"
+    android:configure="fan.keubo.app.PlayerCardWidgetConfigure"
+    android:initialLayout="@layout/widget_player_card"
+    android:previewLayout="@layout/widget_player_card"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />

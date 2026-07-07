@@ -91,6 +91,25 @@
                 android:resource="@xml/team_rank_widget_info" />
         </receiver>
 
+        <!-- 최애선수 스탯 카드 위젯(4x3) — 홈 최애선수 카드 동일 디자인, config에서 선수 선택. -->
+        <receiver
+            android:name=".PlayerCardWidget"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/player_card_widget_info" />
+        </receiver>
+        <activity
+            android:name=".PlayerCardWidgetConfigure"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
         <!-- FCM 수신 서비스 — capawesome MessagingService를 확장(앱 꺼져도 라이브 푸시 →
              잠금화면 ongoing notification + 위젯). 플러그인 기본 서비스는 제거하고 이걸로 대체. -->
         <service
