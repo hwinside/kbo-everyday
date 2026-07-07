@@ -1,5 +1,5 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
-import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
+// (초경량 모드 동안 미사용 — 원복 시 복구) import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
 import {
   apnsConfigured,
   getProviderTokenSafe,
@@ -35,11 +35,7 @@ function buildContentState(
       homeStarter: g.B_PIT_P_NM?.trim() ?? "",
     };
   }
-  const players = resolveCurrentPlayers({
-    tPlayerName: g.T_P_NM,
-    bPlayerName: g.B_P_NM,
-    gameTbSc: g.GAME_TB_SC,
-  });
+  // (초경량 모드 동안 resolveCurrentPlayers 호출 불필요 — 원복 시 players 복구)
   return {
     awayScore: parseInt(g.T_SCORE_CN) || 0,
     homeScore: parseInt(g.B_SCORE_CN) || 0,
@@ -51,8 +47,12 @@ function buildContentState(
     onFirst: (g.B1_BAT_ORDER_NO ?? 0) > 0,
     onSecond: (g.B2_BAT_ORDER_NO ?? 0) > 0,
     onThird: (g.B3_BAT_ORDER_NO ?? 0) > 0,
-    pitcherName: players.currentPitcher ?? "",
-    batterName: players.currentBatter ?? "",
+    // 🚨 인시던트 초경량 모드(2026-07-07): 투수/타자 행을 서버에서 비운다(빈값이면 카드가
+    // 그 행을 아예 안 그림). 실기기 A/B — 투수/타자 포함 풀 프레임 update는 익스텐션 렌더가
+    // 간헐 실패(옛 프레임+스피너), 빈값 슬림 update는 2/2 정상 렌더. 네이티브에서 렌더 부하
+    // 원인(행+로고+폰트) 잡은 뒤 원복.
+    pitcherName: "",
+    batterName: "",
     stadium: g.S_NM ?? "",
     status,
     // 문자중계 최근 플레이 한 줄 — live일 때만, 값 있을 때만 실어보낸다(옵셔널 키:
