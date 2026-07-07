@@ -448,8 +448,8 @@ public class GameScoreWidget extends AppWidgetProvider {
         } else {
             v.setViewVisibility(R.id.widget_small_away_score, View.VISIBLE);
             v.setViewVisibility(R.id.widget_small_home_score, View.VISIBLE);
-            v.setImageViewBitmap(R.id.widget_small_away_score, textBitmap(context, as, 22f, 0xFFF5F5F7));
-            v.setImageViewBitmap(R.id.widget_small_home_score, textBitmap(context, hs, 22f, 0xFFF5F5F7));
+            v.setImageViewBitmap(R.id.widget_small_away_score, textBitmap(context, as, 19f, 0xFFF5F5F7));
+            v.setImageViewBitmap(R.id.widget_small_home_score, textBitmap(context, hs, 19f, 0xFFF5F5F7));
         }
         // 상태 pill — 예정 "{시각} 경기 예정", 라이브 "● {status}", 종료 "경기 종료"
         if (status.isEmpty() || "SCHEDULED|".equals(status)) {

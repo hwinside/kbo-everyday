@@ -268,8 +268,10 @@ public class PlayerCardWidget extends AppWidgetProvider {
 
         Bundle opt = mgr.getAppWidgetOptions(widgetId);
         int wDp = opt.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0);
+        int hDp = opt.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0);
         if (wDp <= 0) wDp = 320;
         wDp = Math.max(250, Math.min(wDp, 500));
+        if (hDp > 0) hDp = Math.max(180, Math.min(hDp, 500));
 
         Bitmap hero = null;
         try {
@@ -277,7 +279,7 @@ public class PlayerCardWidget extends AppWidgetProvider {
             if (f.exists()) hero = BitmapFactory.decodeFile(f.getAbsolutePath());
         } catch (Exception ignored) { }
 
-        v.setImageViewBitmap(R.id.widget_player_img, renderCard(ctx, data, hero, wDp));
+        v.setImageViewBitmap(R.id.widget_player_img, renderCard(ctx, data, hero, wDp, hDp));
         return v;
     }
 
@@ -285,7 +287,7 @@ public class PlayerCardWidget extends AppWidgetProvider {
      * 카드 렌더 — 디자인 기준폭 340dp의 균일 스케일(목업 비율 고정). 높이는 내용에서 유도되고
      * ImageView fitCenter가 셀에 맞춘다. 폰트: 숫자/영문=Montserrat, 한글=Noto Sans KR.
      */
-    static Bitmap renderCard(Context ctx, JSONObject data, Bitmap hero, int wDp) {
+    static Bitmap renderCard(Context ctx, JSONObject data, Bitmap hero, int wDp, int hDp) {
         float d = ctx.getResources().getDisplayMetrics().density;
         while (wDp * d > 1500f && d > 1f) d -= 0.5f; // 비트맵 폭 가드
         float u = d * Math.min(1f, wDp / 340f);
@@ -323,11 +325,21 @@ public class PlayerCardWidget extends AppWidgetProvider {
             if (!row.isEmpty()) badgeRows.add(row);
         }
 
+        // 셀 높이 채우기(fill-height): 셀이 카드 자연 높이보다 크면 여분을 헤더 확장(히어로 확대,
+        // 정보 블록 수직 센터링)과 뱃지 위 공백으로 분배 — 위아래 레터박스 여백 제거.
         float headerH = 120 * u;
+        float infoShift = 0;
         float todayH = showToday ? 59 * u : 0;
         float badgesH = badgeRows.isEmpty() ? 0 : (20 * u + 6 * u) * badgeRows.size() - 6 * u + 20 * u;
-        int H = (int) (headerH + d + todayH + badgesH);
-        if (H < 130 * u) H = (int) (130 * u);
+        float naturalH = Math.max(headerH + d + todayH + badgesH, 130 * u);
+        int H = (int) naturalH;
+        if (hDp > 0 && hDp * d > naturalH) {
+            float extra = hDp * d - naturalH;
+            float headerExtra = Math.min(extra * 0.6f, 70 * u); // 헤더 과대 확장 방지
+            headerH += headerExtra;
+            infoShift = headerExtra / 2;
+            H = (int) (hDp * d);
+        }
 
         Bitmap bmp = Bitmap.createBitmap((int) W, H, Bitmap.Config.ARGB_8888);
         Canvas cv = new Canvas(bmp);
@@ -377,21 +389,21 @@ public class PlayerCardWidget extends AppWidgetProvider {
         String name = player != null ? player.optString("name", "") : "";
         int number = player != null ? player.optInt("number", 0) : 0;
         String position = player != null ? player.optString("position", "") : "";
-        drawMixed(cv, name, ix, 27 * u, 16 * u, C_TEXT, 0, mont, noto, true);
+        drawMixed(cv, name, ix, 27 * u + infoShift, 16 * u, C_TEXT, 0, mont, noto, true);
         drawMixed(cv, (number > 0 ? "#" + number + " " : "") + position,
-            ix, 45 * u, 12 * u, C_TERTIARY, 0, mont, noto, false);
+            ix, 45 * u + infoShift, 12 * u, C_TERTIARY, 0, mont, noto, false);
 
         if (headline != null) {
             String dir = headline.optString("direction", "stable");
             boolean hasArrow = "improving".equals(dir) || "declining".equals(dir);
             float tri = 9 * u;
             float valRight = hasArrow ? rx - tri - 4 * u : rx;
-            drawMixed(cv, headline.optString("label", ""), rx, 22 * u, 11 * u, C_TERTIARY, 1, mont, noto, false);
-            drawMixed(cv, headline.optString("value", ""), valRight, 45 * u, 22 * u, C_TEXT, 1, mont, noto, true);
+            drawMixed(cv, headline.optString("label", ""), rx, 22 * u + infoShift, 11 * u, C_TERTIARY, 1, mont, noto, false);
+            drawMixed(cv, headline.optString("value", ""), valRight, 45 * u + infoShift, 22 * u, C_TEXT, 1, mont, noto, true);
             if (hasArrow) {
                 boolean up = "improving".equals(dir);
                 Path tp = new Path();
-                float ty = up ? 45 * u - 1 * u : 45 * u - 7 * u;
+                float ty = (up ? 45 * u - 1 * u : 45 * u - 7 * u) + infoShift;
                 if (up) {
                     tp.moveTo(rx - tri / 2, ty - tri * 0.8f);
                     tp.lineTo(rx - tri, ty);
@@ -412,12 +424,12 @@ public class PlayerCardWidget extends AppWidgetProvider {
         boolean isPitcher = player != null && player.optBoolean("isPitcher", false);
         if (weekly.length >= 2) {
             drawMixed(cv, "시즌 주간 페이스 · " + (isPitcher ? "ERA" : "타율"),
-                ix, 62 * u, 10 * u, C_TERTIARY, 0, mont, noto, false);
+                ix, 62 * u + infoShift, 10 * u, C_TERTIARY, 0, mont, noto, false);
             float vmin = Float.MAX_VALUE, vmax = -Float.MAX_VALUE;
             for (float f : weekly) { vmin = Math.min(vmin, f); vmax = Math.max(vmax, f); }
             float pad = Math.max((vmax - vmin) * 0.15f, isPitcher ? 0.3f : 0.01f);
             vmin -= pad; vmax += pad;
-            float sy0 = 67 * u, sy1 = 91 * u;
+            float sy0 = 67 * u + infoShift, sy1 = 91 * u + infoShift;
             Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
             line.setStyle(Paint.Style.STROKE);
             line.setStrokeWidth(2 * u);
@@ -434,10 +446,10 @@ public class PlayerCardWidget extends AppWidgetProvider {
         }
         String seasonLine = data.optString("seasonLine", "");
         if (!seasonLine.isEmpty() && !"null".equals(seasonLine)) {
-            drawMixed(cv, seasonLine, ix, 106 * u, 10 * u, C_TERTIARY, 0, mont, noto, false);
+            drawMixed(cv, seasonLine, ix, 106 * u + infoShift, 10 * u, C_TERTIARY, 0, mont, noto, false);
         } else if (headline == null) {
             // 시즌 기록 없는 선수(신인 등) — 앱 카드와 동일 안내
-            drawMixed(cv, "2026 시즌 기록 준비 중", ix, 68 * u, 12 * u, C_TERTIARY, 0, mont, noto, false);
+            drawMixed(cv, "2026 시즌 기록 준비 중", ix, 68 * u + infoShift, 12 * u, C_TERTIARY, 0, mont, noto, false);
         }
 
         float y = headerH;
@@ -496,8 +508,9 @@ public class PlayerCardWidget extends AppWidgetProvider {
             cv.drawRect(padH, y, W - padH, y + d, fill);
         }
 
-        // ── 부문 타이틀 뱃지
-        float by = y + 10 * u;
+        // ── 부문 타이틀 뱃지 — 하단 고정(fill 시 여분 공백은 위 섹션과 뱃지 사이로)
+        float by = badgeRows.isEmpty() ? y + 10 * u
+            : Math.max(y + 10 * u, H - (badgeRows.size() * 26 * u - 6 * u) - 12 * u);
         for (List<String> row : badgeRows) {
             float bx = padH;
             float bh = 20 * u;
