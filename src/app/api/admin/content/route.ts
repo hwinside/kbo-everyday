@@ -156,6 +156,21 @@ export async function GET(req: NextRequest) {
   const engagedDaily = ((engagedRows ?? []) as { day: string; engaged: number; first_engaged: number }[])
     .map((r) => ({ date: r.day, engaged: Number(r.engaged), firstEngaged: Number(r.first_engaged) }));
 
+  // 콘텐츠 일별 카운트 (전 기간, RPC 집계) — 차트 7일/30일/누적 토글용.
+  // dailyPosts(윈도우 row 집계)는 대시보드 KPI(likes/유저수)와 팀별 활성도가
+  // 계속 쓰므로 유지하고, 차트는 이 필드로 옮긴다. RPC 실패 시 빈 배열 강등.
+  const { data: contentRows, error: contentError } = await supabase.rpc("admin_content_daily");
+  if (contentError) console.error("[admin/content] content RPC:", contentError.message);
+  const contentDaily = ((contentRows ?? []) as {
+    day: string; posts: number; comments: number; photos: number; chats: number;
+  }[]).map((r) => ({
+    date: r.day,
+    posts: Number(r.posts),
+    comments: Number(r.comments),
+    photos: Number(r.photos),
+    chats: Number(r.chats),
+  }));
+
   // Popular posts top 10
   const { data: popularPosts, error: popularError } = await supabase
     .from("posts")
@@ -181,5 +196,6 @@ export async function GET(req: NextRequest) {
     popularPosts,
     teamActivity,
     engagedDaily,
+    contentDaily,
   });
 }

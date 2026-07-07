@@ -28,7 +28,7 @@ const tooltipStyle = {
   labelStyle: { color: "#8E8E93" },
 };
 
-interface DailyPost {
+interface ContentDay {
   date: string;
   posts: number;
   comments: number;
@@ -59,10 +59,10 @@ interface EngagedDay {
 }
 
 interface ContentData {
-  dailyPosts: DailyPost[];
   popularPosts: PopularPost[];
   teamActivity: TeamActivity[];
   engagedDaily: EngagedDay[];
+  contentDaily: ContentDay[];
 }
 
 function getPin(): string | null {
@@ -103,31 +103,143 @@ function postLabel(p: PopularPost): string {
   return `${prefix}${name} · ${dt}`;
 }
 
-/* ── Engaged User trend card (7일/30일/누적 토글) ── */
+/* ── 기간 토글 (7일/30일/누적) 공용 ── */
 
-type EngagedPeriod = "7d" | "30d" | "cumulative";
+type TrendPeriod = "7d" | "30d" | "cumulative";
 
-const ENGAGED_TABS: { key: EngagedPeriod; label: string }[] = [
+const PERIOD_TABS: { key: TrendPeriod; label: string }[] = [
   { key: "7d", label: "7일" },
   { key: "30d", label: "30일" },
   { key: "cumulative", label: "누적" },
 ];
 
-// KST 기준 오늘부터 거꾸로 N일 창을 채운다 (작성 0명인 날도 0으로 표시)
-function fillDailyWindow(rows: EngagedDay[], days: number): { label: string; value: number }[] {
-  const byDate = new Map(rows.map((r) => [r.date, r.engaged]));
+function PeriodTabs({ period, onChange }: { period: TrendPeriod; onChange: (p: TrendPeriod) => void }) {
+  return (
+    <div className="flex gap-1 p-1 rounded-xl bg-white/5">
+      {PERIOD_TABS.map((t) => (
+        <button
+          key={t.key}
+          onClick={() => onChange(t.key)}
+          className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+            period === t.key ? "bg-[#6366F1] text-white" : "text-[#8E8E93] hover:text-white"
+          }`}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// KST 기준 오늘까지 최근 N일 날짜 목록 (데이터 없는 날도 0으로 채우기 위함)
+function kstWindowDates(days: number): string[] {
   const todayKST = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
   const end = new Date(todayKST + "T00:00:00Z").getTime();
-  const out: { label: string; value: number }[] = [];
+  const out: string[] = [];
   for (let i = days - 1; i >= 0; i--) {
-    const date = new Date(end - i * 86400_000).toISOString().slice(0, 10);
-    out.push({ label: date.slice(5), value: byDate.get(date) ?? 0 });
+    out.push(new Date(end - i * 86400_000).toISOString().slice(0, 10));
   }
   return out;
 }
 
+// 콘텐츠 일별 카운트 차트 카드: 7일/30일(일별) / 누적(running sum 라인)
+function ContentTrendCard({
+  title,
+  rows,
+  series,
+  dailyKind,
+  height,
+}: {
+  title: string;
+  rows: ContentDay[];
+  series: { key: "posts" | "comments" | "photos" | "chats"; label: string; color: string }[];
+  dailyKind: "bar" | "line";
+  height: number;
+}) {
+  const [period, setPeriod] = useState<TrendPeriod>("7d");
+  const isCumulative = period === "cumulative";
+
+  let chartData: Record<string, string | number>[];
+  if (isCumulative) {
+    const running: Record<string, number> = {};
+    chartData = rows.map((r) => {
+      const point: Record<string, string | number> = { label: r.date.slice(5) };
+      for (const s of series) {
+        running[s.key] = (running[s.key] ?? 0) + r[s.key];
+        point[s.label] = running[s.key];
+      }
+      return point;
+    });
+  } else {
+    const byDate = new Map(rows.map((r) => [r.date, r]));
+    chartData = kstWindowDates(period === "30d" ? 30 : 7).map((date) => {
+      const row = byDate.get(date);
+      const point: Record<string, string | number> = { label: date.slice(5) };
+      for (const s of series) point[s.label] = row?.[s.key] ?? 0;
+      return point;
+    });
+  }
+
+  return (
+    <div className="glass-card p-5">
+      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+        <h2 className="text-lg font-semibold">{title}</h2>
+        <PeriodTabs period={period} onChange={setPeriod} />
+      </div>
+      {rows.length === 0 ? (
+        <div className="flex items-center justify-center text-[#8E8E93]" style={{ height }}>
+          <p>아직 데이터 없음</p>
+        </div>
+      ) : isCumulative || dailyKind === "line" ? (
+        <ResponsiveContainer width="100%" height={height}>
+          <LineChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+            <XAxis dataKey="label" stroke="#636366" fontSize={12} minTickGap={isCumulative ? 28 : 8} />
+            <YAxis stroke="#636366" fontSize={12} />
+            <Tooltip {...tooltipStyle} />
+            {series.length > 1 && <Legend />}
+            {series.map((s) => (
+              <Line key={s.key} type="monotone" dataKey={s.label} stroke={s.color} strokeWidth={2} dot={false} />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      ) : (
+        <ResponsiveContainer width="100%" height={height}>
+          <BarChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+            <XAxis dataKey="label" stroke="#636366" fontSize={12} />
+            <YAxis stroke="#636366" fontSize={12} />
+            <Tooltip {...tooltipStyle} />
+            {series.length > 1 && <Legend />}
+            {series.map((s, i) => (
+              <Bar
+                key={s.key}
+                dataKey={s.label}
+                stackId="a"
+                fill={s.color}
+                radius={i === series.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+              />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
+/* ── Engaged User trend card (7일/30일/누적 토글) ── */
+
+// KST 기준 오늘부터 거꾸로 N일 창을 채운다 (작성 0명인 날도 0으로 표시)
+function fillDailyWindow(rows: EngagedDay[], days: number): { label: string; value: number }[] {
+  const byDate = new Map(rows.map((r) => [r.date, r.engaged]));
+  return kstWindowDates(days).map((date) => ({
+    label: date.slice(5),
+    value: byDate.get(date) ?? 0,
+  }));
+}
+
 function EngagedUsersCard({ rows }: { rows: EngagedDay[] }) {
-  const [period, setPeriod] = useState<EngagedPeriod>("7d");
+  const [period, setPeriod] = useState<TrendPeriod>("7d");
   const isCumulative = period === "cumulative";
 
   let chartData: { label: string; value: number }[];
@@ -149,19 +261,7 @@ function EngagedUsersCard({ rows }: { rows: EngagedDay[] }) {
     <div className="glass-card p-5">
       <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
         <h2 className="text-lg font-semibold">Engaged User 추이</h2>
-        <div className="flex gap-1 p-1 rounded-xl bg-white/5">
-          {ENGAGED_TABS.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setPeriod(t.key)}
-              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
-                period === t.key ? "bg-[#6366F1] text-white" : "text-[#8E8E93] hover:text-white"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <PeriodTabs period={period} onChange={setPeriod} />
       </div>
       <p className="text-xs text-[#8E8E93] mb-4">{caption}</p>
       {rows.length === 0 ? (
@@ -298,25 +398,9 @@ export default function AdminContentPage() {
     );
   }
 
-  const dailyPosts = data?.dailyPosts ?? [];
   const popularPosts = data?.popularPosts ?? [];
   const teamActivity = data?.teamActivity ?? [];
-
-  const postCommentData = dailyPosts.map((s) => ({
-    date: s.date.slice(5),
-    게시글: s.posts,
-    댓글: s.comments,
-  }));
-
-  const chatData = dailyPosts.map((s) => ({
-    date: s.date.slice(5),
-    채팅: s.chats,
-  }));
-
-  const photoData = dailyPosts.map((s) => ({
-    date: s.date.slice(5),
-    사진: s.photos,
-  }));
+  const contentDaily = data?.contentDaily ?? [];
 
   const teamActivityData = teamActivity
     .filter((t) => TEAMS.some((team) => team.slug === t.board_id || String(team.id) === t.board_id))
@@ -333,67 +417,35 @@ export default function AdminContentPage() {
       {/* Engaged Users */}
       <EngagedUsersCard rows={data?.engagedDaily ?? []} />
 
-      {/* Post + Comment daily */}
-      <div className="glass-card p-5">
-        <h2 className="text-lg font-semibold mb-4">게시글 / 댓글 일별 추이</h2>
-        {dailyPosts.length === 0 ? (
-          <div className="flex items-center justify-center h-[300px] text-[#8E8E93]">
-            <p>아직 데이터 없음</p>
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={postCommentData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-              <XAxis dataKey="date" stroke="#636366" fontSize={12} />
-              <YAxis stroke="#636366" fontSize={12} />
-              <Tooltip {...tooltipStyle} />
-              <Legend />
-              <Bar dataKey="게시글" stackId="a" fill="#6366F1" radius={[0, 0, 0, 0]} />
-              <Bar dataKey="댓글" stackId="a" fill="#30D158" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        )}
-      </div>
+      {/* Post + Comment trend */}
+      <ContentTrendCard
+        title="게시글 / 댓글 추이"
+        rows={contentDaily}
+        series={[
+          { key: "posts", label: "게시글", color: "#6366F1" },
+          { key: "comments", label: "댓글", color: "#30D158" },
+        ]}
+        dailyKind="bar"
+        height={300}
+      />
 
-      {/* Chat daily trend */}
-      <div className="glass-card p-5">
-        <h2 className="text-lg font-semibold mb-4">크관 채팅 일별 추이</h2>
-        {dailyPosts.length === 0 ? (
-          <div className="flex items-center justify-center h-[240px] text-[#8E8E93]">
-            <p>아직 데이터 없음</p>
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={chatData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-              <XAxis dataKey="date" stroke="#636366" fontSize={12} />
-              <YAxis stroke="#636366" fontSize={12} />
-              <Tooltip {...tooltipStyle} />
-              <Bar dataKey="채팅" fill="#FF9F0A" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        )}
-      </div>
+      {/* Chat trend */}
+      <ContentTrendCard
+        title="크관 채팅 추이"
+        rows={contentDaily}
+        series={[{ key: "chats", label: "채팅", color: "#FF9F0A" }]}
+        dailyKind="bar"
+        height={240}
+      />
 
       {/* Photo upload trend */}
-      <div className="glass-card p-5">
-        <h2 className="text-lg font-semibold mb-4">사진 업로드 추이</h2>
-        {dailyPosts.length === 0 ? (
-          <div className="flex items-center justify-center h-[240px] text-[#8E8E93]">
-            <p>아직 데이터 없음</p>
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={photoData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-              <XAxis dataKey="date" stroke="#636366" fontSize={12} />
-              <YAxis stroke="#636366" fontSize={12} />
-              <Tooltip {...tooltipStyle} />
-              <Line type="monotone" dataKey="사진" stroke="#FFD60A" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        )}
-      </div>
+      <ContentTrendCard
+        title="사진 업로드 추이"
+        rows={contentDaily}
+        series={[{ key: "photos", label: "사진", color: "#FFD60A" }]}
+        dailyKind="line"
+        height={240}
+      />
 
       {/* Team Activity Bar Chart */}
       <div className="glass-card p-5">
