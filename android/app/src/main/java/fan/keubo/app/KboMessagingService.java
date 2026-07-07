@@ -69,6 +69,8 @@ public class KboMessagingService extends MessagingService {
                 title == null || title.isEmpty() ? "크보팬" : title,
                 body == null ? "" : body,
                 path == null ? "" : path);
+            // 선수 카드 위젯 — 라이브 틱 편승 재조회(55초 스로틀, 미배치면 no-op)
+            PlayerCardWidget.onLiveTick(this);
         } else if ("game_cancel".equals(kind)) {
             // 경기 취소 — 홈위젯은 "경기 취소"(CANCELLED)로 갱신하되, 잠금화면 진행중 알림은
             // post하지 않고 내린다(정책: 잠금화면은 정리, 홈위젯은 유지). game_live처럼 post()를
@@ -111,6 +113,8 @@ public class KboMessagingService extends MessagingService {
             GameScoreWidget.markFinal(this);
             // 순위 위젯 — 경기 종료 직후 순위가 갱신되므로 최신 순위 재조회(위젯 미배치면 no-op).
             TeamRankWidget.fetchAndRefresh(this);
+            // 선수 카드 위젯 — 종료 직후 오늘 경기 라인/최근 3경기 갱신(미배치면 no-op).
+            PlayerCardWidget.fetchAndRefresh(this);
         }
     }
 }
