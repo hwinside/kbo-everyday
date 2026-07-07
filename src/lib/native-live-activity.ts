@@ -267,6 +267,18 @@ export function reregisterPushToStartToken(): void {
   void registerPushToStartToken(lastPushToStartToken);
 }
 
+// 풀 카드 최소 빌드 — 서버(live-activity.ts FULL_CARD_MIN_BUILD)와 동일 게이트.
+// 웹은 원격 로드라 이 코드가 1.0.6 이하 기기에서도 실행된다 → 포그라운드 start/update
+// 경로도 구빌드에선 투수/타자·lastPlay를 비워 보낸다(풀 라이브 프레임 렌더가 스피너 유발,
+// 2026-07-07 인시던트). 빌드 확인 실패(null)도 슬림으로 안전 폴백.
+const FULL_CARD_MIN_BUILD = 11;
+
+async function slimForOldBuilds<T extends LiveActivityState>(state: T): Promise<T> {
+  const build = await getAppBuild();
+  if (build != null && build >= FULL_CARD_MIN_BUILD) return state;
+  return { ...state, pitcherName: "", batterName: "", lastPlay: "" };
+}
+
 /** 경기룸 진입 시 호출. 같은 gameId 재호출은 네이티브에서 update로 처리(중복 방지). */
 export async function startLiveActivity(data: LiveActivityStartData): Promise<boolean> {
   if (!isNativeIOS()) return false;
@@ -274,7 +286,7 @@ export async function startLiveActivity(data: LiveActivityStartData): Promise<bo
   if (!(await isLiveActivityEnabled())) return false;
   await ensureTokenListener();
   try {
-    const res = await LiveActivity.start(data);
+    const res = await LiveActivity.start(await slimForOldBuilds(data));
     return res?.started ?? false;
   } catch (e) {
     console.warn("[live-activity] start failed", e);
@@ -288,7 +300,7 @@ export async function updateLiveActivity(state: LiveActivityState): Promise<void
   // W3c: 토글 off면 갱신도 건너뛴다(캐시 기준 — start가 이미 fetch/세팅, 토글이 즉시 갱신).
   if (liveActivityPrefCache === false) return;
   try {
-    await LiveActivity.update(state);
+    await LiveActivity.update(await slimForOldBuilds(state));
   } catch {
     /* silent — 카드 갱신 실패가 앱에 영향 주지 않게 */
   }
