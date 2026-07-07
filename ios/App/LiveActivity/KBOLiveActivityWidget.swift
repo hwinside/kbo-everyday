@@ -513,7 +513,7 @@ struct KBOLockScreenCard: View {
                     .tracking(kKoreanTracking)
             }
         }
-        .lineLimit(1).minimumScaleFactor(0.7)
+        .lineLimit(1).minimumScaleFactor(0.95)
     }
 }
 
