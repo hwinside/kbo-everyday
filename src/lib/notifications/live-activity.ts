@@ -1,5 +1,5 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
-// (초경량 모드 동안 미사용 — 원복 시 복구) import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
+import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
 import {
   apnsConfigured,
   getProviderTokenSafe,
@@ -15,10 +15,16 @@ import type { KboRawGame } from "@/types/api";
 // 종료된 경기는 end 푸시 + 토큰 정리. (APNs 미설정 시 전체 no-op)
 
 /** ContentState — KBOGameAttributes.ContentState(Swift Codable) 키와 정확히 일치. */
+// 풀 카드 최소 빌드 — 1.0.7(11)+ 익스텐션만 투수/타자·lastPlay 포함 풀 payload를 받는다.
+// 그 미만(1.0.6 이하/미태깅 토큰)은 슬림 payload 유지: 구버전 익스텐션은 풀 라이브 프레임
+// 렌더가 예산 초과로 간헐 실패(2026-07-07 인시던트, 옛 프레임+스피너)하기 때문.
+export const FULL_CARD_MIN_BUILD = 11;
+
 function buildContentState(
   g: KboRawGame,
   status: "live" | "final" | "scheduled",
   lastPlay?: string,
+  full = false,
 ): Record<string, unknown> {
   // 경기 전(scheduled) — 스코어/이닝/BSO/주자는 아직 없음. 예정 시각만 표시.
   if (status === "scheduled") {
@@ -35,7 +41,14 @@ function buildContentState(
       homeStarter: g.B_PIT_P_NM?.trim() ?? "",
     };
   }
-  // (초경량 모드 동안 resolveCurrentPlayers 호출 불필요 — 원복 시 players 복구)
+  // full(1.0.7+)일 때만 투수/타자를 실는다 — 슬림은 빈값(카드가 행을 안 그림).
+  const players = full
+    ? resolveCurrentPlayers({
+        tPlayerName: g.T_P_NM,
+        bPlayerName: g.B_P_NM,
+        gameTbSc: g.GAME_TB_SC,
+      })
+    : null;
   return {
     awayScore: parseInt(g.T_SCORE_CN) || 0,
     homeScore: parseInt(g.B_SCORE_CN) || 0,
@@ -47,17 +60,13 @@ function buildContentState(
     onFirst: (g.B1_BAT_ORDER_NO ?? 0) > 0,
     onSecond: (g.B2_BAT_ORDER_NO ?? 0) > 0,
     onThird: (g.B3_BAT_ORDER_NO ?? 0) > 0,
-    // 🚨 인시던트 초경량 모드(2026-07-07): 투수/타자 행을 서버에서 비운다(빈값이면 카드가
-    // 그 행을 아예 안 그림). 실기기 A/B — 투수/타자 포함 풀 프레임 update는 익스텐션 렌더가
-    // 간헐 실패(옛 프레임+스피너), 빈값 슬림 update는 2/2 정상 렌더. 네이티브에서 렌더 부하
-    // 원인(행+로고+폰트) 잡은 뒤 원복.
-    pitcherName: "",
-    batterName: "",
+    pitcherName: players?.currentPitcher ?? "",
+    batterName: players?.currentBatter ?? "",
     stadium: g.S_NM ?? "",
     status,
-    // 문자중계 최근 플레이 한 줄 — live일 때만, 값 있을 때만 실어보낸다(옵셔널 키:
-    // 구버전 앱/파싱 실패 시 그냥 카드에 안 뜸. Swift ContentState.lastPlay와 키 일치).
-    ...(status === "live" && lastPlay ? { lastPlay } : {}),
+    // 문자중계 최근 플레이 한 줄 — full(1.0.7+) + live + 값 있을 때만(옵셔널 키:
+    // 빈 카드는 행을 안 그림. Swift ContentState.lastPlay와 키 일치).
+    ...(full && status === "live" && lastPlay ? { lastPlay } : {}),
   };
 }
 
@@ -80,6 +89,7 @@ interface TokenRow {
   user_id: string;
   game_id: string;
   push_token: string;
+  app_build: number | null;
 }
 
 /**
@@ -106,7 +116,7 @@ export async function pushLiveActivityUpdates(
   const gameIds = [...stateByGame.keys()];
   const { data: tokens, error } = await supabase
     .from("live_activity_tokens")
-    .select("user_id, game_id, push_token")
+    .select("user_id, game_id, push_token, app_build")
     .in("game_id", gameIds);
   if (error) return { error: error.message };
   if (!tokens || tokens.length === 0) return { pushed: 0, ended: 0, cleaned: 0 };
@@ -149,11 +159,12 @@ export async function pushLiveActivityUpdates(
           pushToken: t.push_token,
           event: isEnd ? "end" : "update",
           // 취소 경기는 스코어가 없으니 예정(경기 전) 프레임을 마지막으로 실어 즉시 해제.
-          // lastPlay(문자중계 한 줄)는 live 프레임에만 부착.
+          // 풀/슬림은 토큰의 app_build로 분기(FULL_CARD_MIN_BUILD 주석 참조).
           contentState: buildContentState(
             g,
             status === "cancelled" ? "scheduled" : status,
             status === "live" ? lastPlayByGame?.get(t.game_id) : undefined,
+            (t.app_build ?? 0) >= FULL_CARD_MIN_BUILD,
           ),
           // 종료는 15분 잔상 후 제거(리뷰 시간), 취소는 보여줄 게 없으니 즉시 해제.
           dismissalDate: isEnd ? (status === "cancelled" ? nowSec : nowSec + 15 * 60) : undefined,

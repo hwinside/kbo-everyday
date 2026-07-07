@@ -10,7 +10,7 @@ import { supabaseErrorResponse } from "@/lib/supabase/error";
 // 없이* update token을 등록할 수 있게 한다 — 유저 세션 대신 디바이스의 push-to-start
 // 토큰을 신원 증명으로 써서 user_id를 역매핑한다(그 토큰은 이미 register-start로 등록됨).
 export async function POST(req: NextRequest) {
-  const { gameId, pushToken, pushToStartToken } = await req.json();
+  const { gameId, pushToken, pushToStartToken, appBuild } = await req.json();
   if (
     !gameId || typeof gameId !== "string" ||
     !pushToken || typeof pushToken !== "string" ||
@@ -55,6 +55,9 @@ export async function POST(req: NextRequest) {
       user_id: owner.user_id,
       game_id: gameId,
       push_token: pushToken,
+      // 앱 빌드 태그(선택) — /register와 동일하게 payload 분기용. 비정상 값은 null(슬림).
+      app_build:
+        typeof appBuild === "number" && Number.isFinite(appBuild) ? Math.floor(appBuild) : null,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "user_id,game_id" },

@@ -115,11 +115,16 @@ final class LiveActivityController {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: String] = [
+        var body: [String: Any] = [
             "gameId": gameId,
             "pushToken": pushToken,
             "pushToStartToken": startToken,
         ]
+        // 앱 빌드 번호(CFBundleVersion) — 서버가 빌드별 LA payload(풀/슬림)를 분기하는 태그.
+        if let buildStr = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+           let build = Int(buildStr) {
+            body["appBuild"] = build
+        }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         // 백그라운드 launch에서 POST 완료까지 잠깐 실행시간 확보(곧 suspend 방지).
         let app = UIApplication.shared

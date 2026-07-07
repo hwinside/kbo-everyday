@@ -13,10 +13,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { gameId, pushToken } = await req.json();
+  const { gameId, pushToken, appBuild } = await req.json();
   if (!gameId || !pushToken || typeof gameId !== "string" || typeof pushToken !== "string") {
     return NextResponse.json({ error: "gameId and pushToken required" }, { status: 400 });
   }
+  // 앱 빌드 번호(선택) — 서버가 빌드별로 LA payload를 분기(풀/슬림)하기 위한 태그.
+  // 숫자 아닌 값/누락은 null(=슬림)로 안전 폴백.
+  const build = typeof appBuild === "number" && Number.isFinite(appBuild) ? Math.floor(appBuild) : null;
 
   // W3c 토글: "잠금화면 실시간 중계"를 끈 유저는 토큰을 저장하지 않는다(스펙: 클라/서버
   // 둘 다 off 유저 제외). row 없음/null = 디폴트 on. 명시적으로 false일 때만 skip.
@@ -34,6 +37,7 @@ export async function POST(req: NextRequest) {
       user_id: verified.user.id,
       game_id: gameId,
       push_token: pushToken,
+      app_build: build,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "user_id,game_id" },

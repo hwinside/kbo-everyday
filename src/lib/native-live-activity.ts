@@ -168,18 +168,40 @@ export function setLiveActivityEnabledCache(enabled: boolean): void {
 // warmup cron이 그 토큰으로 백그라운드 갱신 푸시를 보낸다. 리스너는 1회만 설치.
 let tokenListenerReady = false;
 
+// 앱 빌드 번호(CFBundleVersion) — 서버가 빌드별 LA payload(풀/슬림)를 분기하는 태그.
+// 원격 로드 앱이라 npm core 판정이 아닌 window.Capacitor 주입 브릿지의 App 플러그인을
+// 우선 사용(레퍼런스: capacitor_remote_load_isnative_false). 실패 시 null(=서버 슬림 폴백).
+let appBuildCache: number | null | undefined;
+async function getAppBuild(): Promise<number | null> {
+  if (appBuildCache !== undefined) return appBuildCache;
+  try {
+    type AppInfoPlugin = { getInfo: () => Promise<{ build?: string }> };
+    const w = window as unknown as {
+      Capacitor?: { Plugins?: { App?: AppInfoPlugin } };
+    };
+    const appPlugin = w.Capacitor?.Plugins?.App;
+    const info = await appPlugin?.getInfo();
+    const n = info?.build ? parseInt(info.build, 10) : NaN;
+    appBuildCache = Number.isFinite(n) ? n : null;
+  } catch {
+    appBuildCache = null;
+  }
+  return appBuildCache;
+}
+
 async function registerLiveActivityToken(gameId: string, token: string): Promise<void> {
   try {
     const { data: { session } } = await supabase.auth.getSession();
     const accessToken = session?.access_token;
     if (!accessToken) return;
+    const appBuild = await getAppBuild();
     await fetch("/api/live-activity/register", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({ gameId, pushToken: token }),
+      body: JSON.stringify({ gameId, pushToken: token, ...(appBuild != null ? { appBuild } : {}) }),
     });
   } catch {
     /* silent — 등록 실패가 앱에 영향 주지 않게 */

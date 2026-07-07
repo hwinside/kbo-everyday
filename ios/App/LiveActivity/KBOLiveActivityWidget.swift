@@ -101,10 +101,12 @@ func teamFullName(_ code: String) -> String {
     }
 }
 
-// MARK: - 폰트 (숫자·영어 = Montserrat / 한글 = Noto Sans KR).
-// 가변 폰트(.ttf) 2종을 Extension 번들에 포함 + Info.plist UIAppFonts 등록.
-// 가변축 wght 기본값이 Thin이라 아래 helper는 항상 .weight()를 적용해 굵기 축을 지정한다.
-// 등록 실패 시에도 시스템 폰트로 graceful fallback.
+// MARK: - 폰트 (숫자·영어 = Montserrat / 한글 = 시스템 폰트).
+// 1.0.7(11) 렌더 예산 다이어트: NotoSansKR-VF(10.4MB 가변폰트)를 익스텐션에서 제거하고
+// 한글은 시스템 폰트(Apple SD Gothic Neo 계열)로 그린다 — 위젯 익스텐션 30MB 한도에서
+// 대형 한글 VF의 굵기 인스턴스 생성이 라이브 프레임 렌더 간헐 실패(스피너)의 주 소비자로
+// 지목됨(2026-07-07 인시던트). 숫자/영문 브랜드 룩(Montserrat 745KB)은 유지.
+// helper 시그니처는 유지 — 호출부(잠금 카드·홈 위젯) 무변경.
 
 @available(iOS 16.1, *)
 func montserrat(_ size: CGFloat, _ weight: Font.Weight = .bold) -> Font {
@@ -113,7 +115,7 @@ func montserrat(_ size: CGFloat, _ weight: Font.Weight = .bold) -> Font {
 
 @available(iOS 16.1, *)
 func notoKR(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-    Font.custom("Noto Sans KR", size: size).weight(weight)
+    Font.system(size: size, weight: weight)
 }
 
 // 혼합 문자열을 글자 종류별 폰트로 — 영숫자(LIVE/점수/LG·SSG 약어)=Montserrat, 한글=Noto.
@@ -298,16 +300,9 @@ struct KBOLockScreenCard: View {
         (attributes.myTeamCode == attributes.awayTeamCode ||
          attributes.myTeamCode == attributes.homeTeamCode)
     }
-    // 투수/타자 소속 — 초(top)면 홈팀 투수·원정팀 타자, 말이면 반대.
-    private var pitcherTeamCode: String {
-        state.isTopInning ? attributes.homeTeamCode : attributes.awayTeamCode
-    }
-    private var batterTeamCode: String {
-        state.isTopInning ? attributes.awayTeamCode : attributes.homeTeamCode
-    }
-
     var body: some View {
-        VStack(spacing: 4) {
+        // spacing 4→3 (1.0.7 높이 다이어트 — lastPlay 줄 복원 여유 확보, 아래 padding 주석 참조)
+        VStack(spacing: 3) {
             // 헤더: MY TEAM — 살짝 키우고(로고 14→18, 텍스트 10→13) medium에선 위 여백을 줘
             // 너무 상단에 쏠리지 않게 한다(하린아빠 요청). 잠금화면 LA는 위 여백 0(기존 유지).
             if hasMyTeam {
@@ -385,17 +380,15 @@ struct KBOLockScreenCard: View {
                                 .foregroundStyle(.white.opacity(0.7))
                             HStack(spacing: 4) { outDot(0); outDot(1); outDot(2) }
                         }
-                        // 투수/타자 — 소속 표기
-                        if !state.pitcherName.isEmpty {
-                            playerLine(label: "투수", team: pitcherTeamCode, name: state.pitcherName)
-                        }
-                        if !state.batterName.isEmpty {
-                            playerLine(label: "타자", team: batterTeamCode, name: state.batterName)
+                        // 투수/타자 — 한 줄 병합(1.0.7 높이 다이어트: 두 줄 → 한 줄로
+                        // lastPlay(문자중계) 줄 복원 여유 확보. 팀 소속 괄호는 폭 관계로 생략).
+                        if !state.pitcherName.isEmpty || !state.batterName.isEmpty {
+                            playersLine(pitcher: state.pitcherName, batter: state.batterName)
                         }
                     }
                     Spacer()
                     DiamondView(onFirst: state.onFirst, onSecond: state.onSecond, onThird: state.onThird)
-                        .scaleEffect(0.82)
+                        .scaleEffect(0.72)  // 0.82→0.72 (1.0.7 높이 다이어트)
                 }
                 .padding(.top, 2)
                 .overlay(alignment: .top) {
@@ -420,13 +413,13 @@ struct KBOLockScreenCard: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 9)
-                .padding(.vertical, 5)
+                .padding(.vertical, 3)   // 5→3 (1.0.7 높이 다이어트)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 7)
                         .fill(Color.white.opacity(0.11))
                 )
-                .padding(.top, 4)
+                .padding(.top, 3)        // 4→3 (동일)
             }
 
             // 경기 전 — 예고선발 한 줄: "{원정선발}  선발투수  {홈선발}"(승인 목업). 미확정이면 "미정".
@@ -458,9 +451,10 @@ struct KBOLockScreenCard: View {
         .padding(.horizontal, 14)
         // 홈위젯 medium/large(fillHeight)는 HomeWidgetScheduledCard와 동일하게 상단 여백을 좌우보다
         // 작게(MY TEAM 위로) + 하단 여백 확보(삼순 의견 반영). 잠금화면 LA(fillHeight=false)는
-        // 시스템이 높이를 콘텐츠에 맞추므로 상하 대칭 13pt 유지.
-        .padding(.top, fillHeight ? 10 : 13)
-        .padding(.bottom, fillHeight ? 16 : 13)
+        // 상하 대칭 10pt — #517의 13pt에서 축소(1.0.7 높이 다이어트: 투수/타자+lastPlay 포함
+        // 풀 라이브 카드가 잠금 LA 높이 한도를 넘겨 상하 잘림 → 여백·행 병합으로 한도 내 복원).
+        .padding(.top, fillHeight ? 10 : 10)
+        .padding(.bottom, fillHeight ? 16 : 10)
         // medium 위젯: 카드가 위젯 높이를 꽉 채워 배경 seam(윗쪽 어두운 띠) 제거. 콘텐츠는 *상단* 정렬
         // 기본 — 라이브는 자연 상단정렬 그대로, 종료는 위 Spacer 2개로 점수가 세로 중앙에 온다.
         // 잠금화면 LA(fillHeight=false)는 콘텐츠 높이 그대로.
@@ -490,17 +484,22 @@ struct KBOLockScreenCard: View {
             .frame(width: 7, height: 7)
     }
 
-    // 투수/타자 행 — "투수 (LG) 웰스". 라벨/괄호/이름=Noto, 라틴 약어(LG/SSG)=Montserrat.
-    private func playerLine(label: String, team: String, name: String) -> some View {
+    // 투수/타자 한 줄 — "투수 김윤식 · 타자 구자욱" (1.0.7: 기존 소속 포함 2줄에서 병합).
+    private func playersLine(pitcher: String, batter: String) -> some View {
         HStack(spacing: 5) {
-            (Text("\(label) (").font(notoKR(11, .medium))
-             + teamShortText(team, 11, .medium)
-             + Text(")").font(notoKR(11, .medium)))
-                .foregroundStyle(.white.opacity(0.72))
-            Text(name)
-                .font(notoKR(13, .bold))
+            if !pitcher.isEmpty {
+                (Text("투수 ").font(notoKR(10, .medium)).foregroundColor(.white.opacity(0.6))
+                 + Text(pitcher).font(notoKR(12, .bold)).foregroundColor(.white))
+            }
+            if !pitcher.isEmpty && !batter.isEmpty {
+                Text("·").font(notoKR(10, .medium)).foregroundColor(.white.opacity(0.4))
+            }
+            if !batter.isEmpty {
+                (Text("타자 ").font(notoKR(10, .medium)).foregroundColor(.white.opacity(0.6))
+                 + Text(batter).font(notoKR(12, .bold)).foregroundColor(.white))
+            }
         }
-        .lineLimit(1).minimumScaleFactor(0.8)
+        .lineLimit(1).minimumScaleFactor(0.7)
     }
 }
 
