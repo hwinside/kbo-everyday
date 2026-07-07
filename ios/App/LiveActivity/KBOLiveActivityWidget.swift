@@ -336,18 +336,18 @@ struct KBOLockScreenCard: View {
                     // 경기장(구장) — 가운데 점수 위에 표기 (하린아빠 요청)
                     if !state.stadium.isEmpty {
                         Text(state.stadium)
-                            .font(notoKR(9, .medium)).tracking(kKoreanTracking)
+                            .font(notoKR(10, .medium)).tracking(kKoreanTracking)
                             .foregroundStyle(.white.opacity(0.75))
                     }
                     if state.isScheduled {
                         // 경기 전 — 안드 승인본 언어와 동일: "경기 예정"(크게) + 예정 시각 pill.
                         // 양팀은 좌우 TeamBadge에, 구장은 위(stadium)에 이미 표기. 하단엔 예고선발.
                         Text("경기 예정")
-                            .font(notoKR(15, .heavy)).tracking(kKoreanTracking)
+                            .font(notoKR(16, .heavy)).tracking(kKoreanTracking)
                             .foregroundStyle(.white)
                         if let t = state.startTime, !t.isEmpty {
                             Text(t)
-                                .font(notoKR(11, .heavy))
+                                .font(notoKR(12, .heavy))
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 10).padding(.vertical, 2)
                                 .background(Capsule().fill(Color.black.opacity(0.28)))
@@ -355,17 +355,17 @@ struct KBOLockScreenCard: View {
                     } else {
                         HStack(spacing: 8) {
                             Text("\(state.awayScore)")
-                                .font(montserrat(22, .black)).monospacedDigit()
-                            Text(":").font(montserrat(13, .bold)).foregroundStyle(.white.opacity(0.5))
+                                .font(montserrat(24, .black)).monospacedDigit()
+                            Text(":").font(montserrat(14, .bold)).foregroundStyle(.white.opacity(0.5))
                             Text("\(state.homeScore)")
-                                .font(montserrat(22, .black)).monospacedDigit()
+                                .font(montserrat(24, .black)).monospacedDigit()
                         }
                         Group {
                             if state.isFinal {
-                                Text("경기 종료").font(notoKR(9, .bold))
+                                Text("경기 종료").font(notoKR(10, .bold))
                             } else {
                                 // LIVE + 숫자 = Montserrat, 회초/말 = Noto
-                                Text("LIVE ").font(montserrat(9, .bold)) + inningRun(state.inningText, 9, .bold)
+                                Text("LIVE ").font(montserrat(10, .bold)) + inningRun(state.inningText, 10, .bold)
                             }
                         }
                         .padding(.horizontal, 6).padding(.vertical, 1.5)
@@ -384,7 +384,7 @@ struct KBOLockScreenCard: View {
                         // 아웃카운트만 유지
                         HStack(spacing: 5) {
                             Text("O")
-                                .font(montserrat(11, .semibold))
+                                .font(montserrat(12, .semibold))
                                 .foregroundStyle(.white.opacity(0.7))
                             HStack(spacing: 4) { outDot(0); outDot(1); outDot(2) }
                         }
@@ -397,6 +397,10 @@ struct KBOLockScreenCard: View {
                     Spacer()
                     DiamondView(onFirst: state.onFirst, onSecond: state.onSecond, onThird: state.onThird)
                         .scaleEffect(0.72)  // 0.82→0.72 (1.0.7 높이 다이어트)
+                        // scaleEffect는 시각만 줄이고 레이아웃 박스(52x40)는 그대로라 이 행 높이를
+                        // 다이아가 지배했다. 시각 크기(~37x29)에 맞춰 박스를 clamp — 여기서 아낀
+                        // 높이로 폰트 확대(+1~2pt)를 상쇄해 잠금 LA 높이 한도 내 유지.
+                        .frame(width: 40, height: 32)
                 }
                 .padding(.top, 2)
                 .overlay(alignment: .top) {
@@ -413,7 +417,7 @@ struct KBOLockScreenCard: View {
                         .fill(Color(hex: 0xFF5A5A))
                         .frame(width: 5, height: 5)
                     Text(lp)
-                        .font(notoKR(11, .medium)).tracking(kKoreanTracking)
+                        .font(notoKR(12, .medium)).tracking(kKoreanTracking)
                         .foregroundStyle(.white.opacity(0.92))
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
@@ -435,13 +439,13 @@ struct KBOLockScreenCard: View {
             if state.isScheduled {
                 HStack(spacing: 8) {
                     Text(starterDisplayName(state.awayStarter))
-                        .font(notoKR(12, .bold)).tracking(kKoreanTracking).foregroundColor(.white)
+                        .font(notoKR(13, .bold)).tracking(kKoreanTracking).foregroundColor(.white)
                         .lineLimit(1).minimumScaleFactor(0.7)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                     Text("선발투수")
-                        .font(notoKR(10, .medium)).tracking(kKoreanTracking).foregroundColor(.white.opacity(0.6))
+                        .font(notoKR(11, .medium)).tracking(kKoreanTracking).foregroundColor(.white.opacity(0.6))
                     Text(starterDisplayName(state.homeStarter))
-                        .font(notoKR(12, .bold)).tracking(kKoreanTracking).foregroundColor(.white)
+                        .font(notoKR(13, .bold)).tracking(kKoreanTracking).foregroundColor(.white)
                         .lineLimit(1).minimumScaleFactor(0.7)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -496,16 +500,16 @@ struct KBOLockScreenCard: View {
     private func playersLine(pitcher: String, batter: String) -> some View {
         HStack(spacing: 5) {
             if !pitcher.isEmpty {
-                (Text("투수 ").font(notoKR(10, .medium)).foregroundColor(.white.opacity(0.6))
-                 + Text(pitcher).font(notoKR(12, .bold)).foregroundColor(.white))
+                (Text("투수 ").font(notoKR(11, .medium)).foregroundColor(.white.opacity(0.6))
+                 + Text(pitcher).font(notoKR(13, .bold)).foregroundColor(.white))
                     .tracking(kKoreanTracking)
             }
             if !pitcher.isEmpty && !batter.isEmpty {
-                Text("·").font(notoKR(10, .medium)).foregroundColor(.white.opacity(0.4))
+                Text("·").font(notoKR(11, .medium)).foregroundColor(.white.opacity(0.4))
             }
             if !batter.isEmpty {
-                (Text("타자 ").font(notoKR(10, .medium)).foregroundColor(.white.opacity(0.6))
-                 + Text(batter).font(notoKR(12, .bold)).foregroundColor(.white))
+                (Text("타자 ").font(notoKR(11, .medium)).foregroundColor(.white.opacity(0.6))
+                 + Text(batter).font(notoKR(13, .bold)).foregroundColor(.white))
                     .tracking(kKoreanTracking)
             }
         }
@@ -526,7 +530,7 @@ struct TeamBadge: View {
             }
             .frame(width: 28, height: 28)
             // 풀네임(롯데 자이언츠 / LG 트윈스) — 라틴=Montserrat, 한글=Noto. 좁으면 축소.
-            mixedScriptText(teamFullName(code), 13, .heavy)
+            mixedScriptText(teamFullName(code), 14, .heavy)
                 .lineLimit(1).minimumScaleFactor(0.55)
         }
         .frame(maxWidth: .infinity)
