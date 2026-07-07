@@ -261,7 +261,7 @@ public class TeamRankWidget extends AppWidgetProvider {
         line.setColor(C_HEADER_LINE);
         cv.drawRect(padH, padV + headerH - d, W - padH, padV + headerH, line);
 
-        float fs = 13.5f * u;   // 본문 text-sm~base
+        float fs = Math.min(13.5f * u, rowH / 1.25f);   // 본문 text-sm~base, 행 높이 상한(4x3 등 낮은 높이서 세로 겹침 방지)
         float logo = Math.min(20 * u, rowH - 6 * d);
         for (int i = 0; i < rows.length(); i++) {
             JSONObject s = rows.optJSONObject(i);
