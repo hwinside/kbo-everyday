@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { isNative } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
-import { syncNativePushToken, listenForTokenRefresh, listenForNotificationTap } from "@/lib/native-push";
+import { syncNativePushToken, listenForTokenRefresh, listenForForegroundNotifications, listenForNotificationTap } from "@/lib/native-push";
 import { bootstrapLiveActivityPushToStart, reregisterPushToStartToken } from "@/lib/native-live-activity";
 
 /**
@@ -21,6 +21,7 @@ export function NativePushMount() {
     if (!isNative) return;
     void syncNativePushToken();
     void listenForTokenRefresh();
+    void listenForForegroundNotifications();
     void listenForNotificationTap();
     // W3b — 잠금화면 Live Activity 자동 시작용 push-to-start 토큰 등록(iOS 17.2+, 그 외 no-op).
     void bootstrapLiveActivityPushToStart();
