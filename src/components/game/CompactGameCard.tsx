@@ -4,11 +4,14 @@ import Image from "next/image";
 import Link from "next/link";
 import { getTeamById } from "@/lib/constants/teams";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
+import type { GameWeather } from "@/lib/weather/stadium-weather";
 import BroadcastBadges from "@/components/game/BroadcastBadges";
 
 interface CompactGameCardProps {
   isPreseason?: boolean;
   myTeamId?: number | null;
+  /** 경기 시간 기준 구장 날씨 (예정=예보, 라이브=실시간). null/undefined면 미노출 */
+  weather?: GameWeather | null;
   game: {
     id: string;
     awayTeamId: number;
@@ -25,7 +28,7 @@ interface CompactGameCardProps {
   };
 }
 
-export default function CompactGameCard({ game, isPreseason, myTeamId }: CompactGameCardProps) {
+export default function CompactGameCard({ game, isPreseason, myTeamId, weather }: CompactGameCardProps) {
   const away = getTeamById(game.awayTeamId)!;
   const home = getTeamById(game.homeTeamId)!;
   const isLive = game.status === "live";
@@ -53,6 +56,18 @@ export default function CompactGameCard({ game, isPreseason, myTeamId }: Compact
             </span>
             {isPreseason && (
               <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-500">시범경기</span>
+            )}
+            {(game.status === "scheduled" || isLive) && weather && (
+              <span
+                className={`whitespace-nowrap text-[11px] ${
+                  weather.pop !== null && weather.pop >= 60 ? "font-medium text-amber-400" : "text-text-tertiary"
+                }`}
+                title={isLive ? "실시간 구장 날씨" : "경기 시간 기준 예보"}
+              >
+                {weather.emoji}
+                {weather.temp !== null && ` ${weather.temp}°`}
+                {weather.indoor ? " · 돔" : weather.pop !== null ? ` · 강수 ${weather.pop}%` : ""}
+              </span>
             )}
           </div>
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">

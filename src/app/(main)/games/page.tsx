@@ -13,6 +13,7 @@ import DateSelector from "@/components/game/DateSelector";
 import CompactGameCard from "@/components/game/CompactGameCard";
 import EmptyGameState from "@/components/game/EmptyGameState";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
+import { pickGameWeather, type StadiumWeatherMap } from "@/lib/weather/stadium-weather";
 
 interface GameData {
   id: string;
@@ -65,6 +66,8 @@ export default function GamesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [myTeamId, setMyTeamId] = useState<number | null>(null);
+  // 구장 날씨 — key(날짜|구장세트)로 캐시해 날짜 전환 레이스에 이전 데이터가 붙지 않게 한다
+  const [weather, setWeather] = useState<{ key: string; map: StadiumWeatherMap } | null>(null);
 
   useEffect(() => {
     setMyTeamId(getMyTeamId());
@@ -115,6 +118,27 @@ export default function GamesPage() {
     loadGames(selectedDate);
   }, [selectedDate]);
 
+  // 예정/라이브 경기 구장의 날씨 로드 (날씨는 부가 정보 — 실패해도 조용히 무시)
+  useEffect(() => {
+    // 날짜 전환 직후엔 games가 아직 이전 날짜 것일 수 있다 — 목록 로드가 끝나
+    // games와 selectedDate가 정합일 때만 fetch (이전 구장 세트로 캐시가 잠기는 것 방지)
+    if (loading) return;
+    const stadiums = [...new Set(
+      games.filter(g => g.status === "scheduled" || g.status === "live").map(g => g.stadium)
+    )].sort();
+    if (stadiums.length === 0) return;
+    const key = `${selectedDate}|${stadiums.join(",")}`;
+    if (weather?.key === key) return;
+    let stale = false;
+    fetch(`/api/weather?date=${formatDate(selectedDate)}&stadiums=${encodeURIComponent(stadiums.join(","))}`)
+      .then(res => res.json())
+      .then(data => {
+        if (!stale && data?.stadiums) setWeather({ key, map: data.stadiums });
+      })
+      .catch(() => {});
+    return () => { stale = true; };
+  }, [games, selectedDate, weather, loading]);
+
   // 라이브 경기 있으면 30초마다 자동 새로고침
   useEffect(() => {
     const hasLive = games.some(g => g.status === "live");
@@ -122,6 +146,9 @@ export default function GamesPage() {
     const interval = setInterval(() => loadGames(selectedDate), 30000);
     return () => clearInterval(interval);
   }, [games, selectedDate]);
+
+  const gameWeather = (g: GameData) =>
+    weather?.key.startsWith(`${selectedDate}|`) ? pickGameWeather(weather.map[g.stadium], g, selectedDate) : null;
 
   const liveGames = games.filter(g => g.status === "live");
   const finalGames = games.filter(g => g.status === "final");
@@ -171,7 +198,7 @@ export default function GamesPage() {
               <div className="space-y-2">
                 {liveGames.map(g => (
                   <motion.div key={g.id} variants={item}>
-                    <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} />
+                    <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} weather={gameWeather(g)} />
                   </motion.div>
                 ))}
               </div>
@@ -210,7 +237,7 @@ export default function GamesPage() {
               <div className="space-y-2">
                 {scheduledGames.map(g => (
                   <motion.div key={g.id} variants={item}>
-                    <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} />
+                    <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} weather={gameWeather(g)} />
                   </motion.div>
                 ))}
               </div>
