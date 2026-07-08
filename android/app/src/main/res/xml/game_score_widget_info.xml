@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- widgetCategory="home_screen|keyguard" → 홈 화면 + 삼성 잠금화면 위젯 피커 양쪽 노출.
-     리치 카드라 최소 높이 상향(2셀). -->
+     리치 카드라 최소 높이 상향(2셀).
+     previewImage = 익명 더미(수달스/돌고래스) 사전 렌더 PNG — previewLayout은 XML 기본값
+     (실팀 로고)을 피커에 노출해 교체(iOS 피커 익명화와 동일 정책, Android 12+는
+     previewLayout이 previewImage보다 우선이라 previewLayout 제거 필수). -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:minWidth="250dp"
     android:minHeight="110dp"
@@ -8,6 +11,6 @@
     android:targetCellHeight="2"
     android:updatePeriodMillis="1800000"
     android:initialLayout="@layout/widget_game_score"
-    android:previewLayout="@layout/widget_game_score"
+    android:previewImage="@drawable/widget_preview_game_score"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen|keyguard" />
