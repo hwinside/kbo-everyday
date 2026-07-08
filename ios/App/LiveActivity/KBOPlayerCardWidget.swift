@@ -463,7 +463,10 @@ struct PlayerCard: View {
                 topRow
                 Spacer(minLength: 2)
                 middle
-                if isLarge && !showToday, let recent = data.recentGames, !recent.isEmpty {
+                // Large는 라이브(오늘 경기) 중에도 최근 경기로 세로 공간을 채운다
+                // (2026-07-08 QA: 라이브 시 Large 카드 중앙이 비어 보임)
+                if isLarge, let recent = data.recentGames, !recent.isEmpty {
+                    Spacer(minLength: 2)
                     recentSection(recent)
                 }
                 Spacer(minLength: 2)
@@ -477,27 +480,38 @@ struct PlayerCard: View {
     }
 
     // ── 히어로 패널 (팀컬러 그라데이션 + 컷아웃 하단 정렬, 비율 유지)
+    // 실기기에서 aspectRatio(.fit)+무한 frame 조합이 사진을 패널 밖(위젯 왼쪽 바깥)으로
+    // 밀어내는 렌더 이탈 확인(2026-07-08 QA) → 안드 renderCard처럼 min(폭비,높이비)
+    // 균일 스케일을 직접 계산해 패널 하단 중앙에 고정한다.
     private var heroPanel: some View {
-        ZStack(alignment: .bottom) {
-            LinearGradient(colors: [accent.opacity(0.0), accent.opacity(0.30)],
-                           startPoint: .top, endPoint: .bottom)
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)   // 사진 가로세로 비율 절대 유지
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.top, 10)
-                    .clipShape(isCutout ? AnyShape(Rectangle()) : AnyShape(Circle()))
-            } else {
-                // 익명 실루엣(미리보기/이미지 없음)
-                Image(systemName: "person.fill")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .foregroundStyle(.white.opacity(0.16))
-                    .padding(.horizontal, 24)
-                    .padding(.top, 18)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        GeometryReader { geo in
+            let pw = geo.size.width
+            let ph = geo.size.height
+            ZStack {
+                LinearGradient(colors: [accent.opacity(0.0), accent.opacity(0.30)],
+                               startPoint: .top, endPoint: .bottom)
+                if let image, image.size.width > 0, image.size.height > 0 {
+                    let availH = max(ph - 10, 1)   // 상단 여백 10pt
+                    let scale = min(pw / image.size.width, availH / image.size.height)
+                    let w = image.size.width * scale
+                    let h = image.size.height * scale
+                    Image(uiImage: image)
+                        .resizable()
+                        .frame(width: w, height: h)
+                        .clipShape(isCutout ? AnyShape(Rectangle()) : AnyShape(Circle()))
+                        .position(x: pw / 2, y: ph - h / 2)   // 하단 중앙 고정
+                } else {
+                    // 익명 실루엣(미리보기/이미지 없음)
+                    Image(systemName: "person.fill")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .foregroundStyle(.white.opacity(0.16))
+                        .frame(width: max(pw - 48, 10))
+                        .position(x: pw / 2, y: ph * 0.64)
+                }
             }
+            .frame(width: pw, height: ph)
+            .clipped()
         }
     }
 
@@ -631,23 +645,30 @@ struct PlayerCard: View {
         }
     }
 
-    // ── 부문 타이틀 뱃지 (한 줄, 초과분 클립)
+    // ── 부문 타이틀 뱃지 (한 줄 — 안 들어가면 개수를 줄여 중간 잘림 방지, 2026-07-08 QA)
     @ViewBuilder
     private var badges: some View {
         if let titles = data.titles, !titles.isEmpty {
-            HStack(spacing: 6) {
-                ForEach(Array(titles.enumerated()), id: \.offset) { i, t in
-                    let label = (i == 0 ? "🏆 " : "") + t
-                    Text(label)
-                        .font(notoKR(11, .semibold))
-                        .foregroundStyle(accent)
-                        .padding(.horizontal, 7).padding(.vertical, 3)
-                        .background(Capsule().fill(accent.opacity(0.12)))
-                        .lineLimit(1).fixedSize()
+            ViewThatFits(in: .horizontal) {
+                ForEach(Array(stride(from: titles.count, through: 1, by: -1)), id: \.self) { n in
+                    badgeRow(Array(titles.prefix(n)))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .clipped()
+        }
+    }
+
+    private func badgeRow(_ titles: [String]) -> some View {
+        HStack(spacing: 6) {
+            ForEach(Array(titles.enumerated()), id: \.offset) { i, t in
+                let label = (i == 0 ? "🏆 " : "") + t
+                Text(label)
+                    .font(notoKR(11, .semibold))
+                    .foregroundStyle(accent)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(Capsule().fill(accent.opacity(0.12)))
+                    .lineLimit(1).fixedSize()
+            }
         }
     }
 
