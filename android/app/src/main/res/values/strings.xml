@@ -8,4 +8,13 @@
     <string name="facebook_display_name">크보팬</string>
     <string name="fb_login_protocol_scheme">fb1733469141437762</string>
     <string name="facebook_client_token">d5c2dd1feeeb4ddb12e76ae8138c31b9</string>
+    <!-- 위젯 피커 이름/설명 — iOS 위젯 갤러리 표시명과 정합 (팀 순위 / 최애선수 카드) -->
+    <string name="widget_game_score_label">경기 중계</string>
+    <string name="widget_game_score_desc">최애팀 경기 스코어·다이아몬드·실시간 중계 한 줄</string>
+    <string name="widget_game_score_small_label">경기 중계 (스몰)</string>
+    <string name="widget_game_score_small_desc">경기 스코어 요약 · 2x2 컴팩트</string>
+    <string name="widget_team_rank_label">팀 순위</string>
+    <string name="widget_team_rank_desc">10개 구단 전체 순위표 · 최애팀 하이라이트</string>
+    <string name="widget_player_card_label">최애선수 카드</string>
+    <string name="widget_player_card_desc">최애선수 오늘 활약과 최근 경기 흐름</string>
 </resources>

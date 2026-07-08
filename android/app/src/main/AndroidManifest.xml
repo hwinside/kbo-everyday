@@ -58,6 +58,7 @@
         <!-- 홈 화면 App Widget — 실시간 경기 스코어 (A4 B3) -->
         <receiver
             android:name=".GameScoreWidget"
+            android:label="@string/widget_game_score_label"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -70,6 +71,7 @@
         <!-- 스몰(2x2) 위젯 — iOS systemSmall 등가. GameScoreWidget과 prefs 공유, 렌더만 컴팩트. -->
         <receiver
             android:name=".GameScoreWidgetSmall"
+            android:label="@string/widget_game_score_small_label"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -82,6 +84,7 @@
         <!-- 팀 순위표 위젯(4x4) — 앱 순위표 동일 디자인 + 최애팀 하이라이트. 자체 fetch + 캐시. -->
         <receiver
             android:name=".TeamRankWidget"
+            android:label="@string/widget_team_rank_label"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -94,6 +97,7 @@
         <!-- 최애선수 스탯 카드 위젯(4x3) — 홈 최애선수 카드 동일 디자인, config에서 선수 선택. -->
         <receiver
             android:name=".PlayerCardWidget"
+            android:label="@string/widget_player_card_label"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
