@@ -71,6 +71,11 @@ public class PlayerCardWidget extends AppWidgetProvider {
         0xFFEA0029, 0xFF6BC4E8, 0xFF074CA1, 0xFFFF6600, 0xFFC97088,
     };
 
+    // teamId → 로고 drawable suffix (TeamRankWidget과 동일 순서)
+    private static final String[] TEAM_CODE = {
+        "", "lg", "ob", "kt", "sk", "nc", "ht", "lt", "ss", "hh", "wo",
+    };
+
     // 다크 테마 토큰(globals.css .dark)
     private static final int C_CARD = 0xFF141416;          // --bg-secondary
     private static final int C_BORDER = 0x14FFFFFF;        // --border(white 8%)
@@ -401,9 +406,29 @@ public class PlayerCardWidget extends AppWidgetProvider {
         String name = player != null ? player.optString("name", "") : "";
         int number = player != null ? player.optInt("number", 0) : 0;
         String position = player != null ? player.optString("position", "") : "";
-        drawMixed(cv, name, ix, 27 * u + infoShift, 16 * u, C_TEXT, 0, mont, noto, true);
+        // 팀 로고 뱃지 — 홈 화면 단독 배치라 어느 팀 선수인지 identity 필요(2026-07-08 하린아빠).
+        // 이름/등번호 두 줄 좌측에 흰 원+로고, 텍스트는 로고 폭만큼 우측 시프트.
+        float nameShift = 0;
+        if (teamId >= 1 && teamId <= 10) {
+            int logoRes = ctx.getResources().getIdentifier(
+                "teamlogo_" + TEAM_CODE[teamId], "drawable", ctx.getPackageName());
+            Bitmap logo = logoRes != 0
+                ? BitmapFactory.decodeResource(ctx.getResources(), logoRes) : null;
+            if (logo != null) {
+                float lcx = ix + 12 * u, lcy = 33 * u + infoShift, lr = 12 * u;
+                fill.setColor(0xFFFFFFFF);
+                cv.drawCircle(lcx, lcy, lr, fill);
+                float fitS = Math.min(17 * u / logo.getWidth(), 17 * u / logo.getHeight());
+                float lw = logo.getWidth() * fitS, lh = logo.getHeight() * fitS;
+                Paint lp = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+                cv.drawBitmap(logo, null,
+                    new RectF(lcx - lw / 2, lcy - lh / 2, lcx + lw / 2, lcy + lh / 2), lp);
+                nameShift = 30 * u;
+            }
+        }
+        drawMixed(cv, name, ix + nameShift, 27 * u + infoShift, 16 * u, C_TEXT, 0, mont, noto, true);
         drawMixed(cv, (number > 0 ? "#" + number + " " : "") + position,
-            ix, 45 * u + infoShift, 12 * u, C_TERTIARY, 0, mont, noto, false);
+            ix + nameShift, 45 * u + infoShift, 12 * u, C_TERTIARY, 0, mont, noto, false);
 
         if (headline != null) {
             String dir = headline.optString("direction", "stable");

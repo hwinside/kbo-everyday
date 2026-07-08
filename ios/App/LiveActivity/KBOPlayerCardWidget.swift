@@ -518,6 +518,15 @@ struct PlayerCard: View {
     // ── 이름/등번호 + 헤드라인
     private var topRow: some View {
         HStack(alignment: .top, spacing: 6) {
+            // 팀 로고 뱃지 — 홈 화면 단독 배치라 어느 팀 선수인지 identity 필요(2026-07-08 하린아빠)
+            if (1...10).contains(player.teamId) {
+                ZStack {
+                    Circle().fill(.white)
+                    TeamLogo(code: rankTeamCode(player.teamId), size: 17)
+                }
+                .frame(width: 25, height: 25)
+                .padding(.top, 2)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 mixedScriptText(player.name, 16, .bold)
                     .foregroundStyle(PCColor.text)
