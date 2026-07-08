@@ -16,7 +16,17 @@ interface GameRow {
 
 interface LaStatus {
   pushToStart: { total: number; fresh24h: number; fresh7d: number };
-  summary: { cards: number; updatable: number; gap: number; updateTokens: number; residualRows: number; residualGameCount: number };
+  summary: {
+    cards: number;
+    updatable: number;
+    gap: number;
+    updateTokens: number;
+    residualRows: number;
+    residualGameCount: number;
+    kboStatusAvailable: boolean;
+    unknownActiveCount: number;
+    rowsTruncated: boolean;
+  };
   games: GameRow[];
   generatedAt: string;
 }
@@ -27,7 +37,7 @@ const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
   scheduled: { text: "예정", cls: "bg-blue-900/30 text-blue-400" },
   cancelled: { text: "취소", cls: "bg-orange-900/30 text-orange-400" },
   stale: { text: "과거 잔존", cls: "bg-red-900/40 text-red-300 border border-red-700" },
-  unknown: { text: "미상", cls: "bg-gray-800 text-gray-500" },
+  unknown: { text: "미상(활성 fallback)", cls: "bg-yellow-900/30 text-yellow-400" },
 };
 
 function getPin(): string {
@@ -94,17 +104,35 @@ export default function LiveActivityMonitorPage() {
           </div>
         )}
 
+        {s && !s.kboStatusAvailable && (
+          <div className="mb-4 p-3 bg-yellow-900/20 border border-yellow-700 rounded-lg text-yellow-400 text-sm">
+            ⚠️ KBO 일정 조회 실패 — 오늘 경기 상태를 확인할 수 없어 상태 미상(unknown) 경기도 활성으로 fallback 집계 중입니다.
+          </div>
+        )}
+        {s && s.kboStatusAvailable && s.unknownActiveCount > 0 && (
+          <div className="mb-4 p-3 bg-yellow-900/20 border border-yellow-700 rounded-lg text-yellow-400 text-sm">
+            ⚠️ 오늘 game_id {s.unknownActiveCount}건이 KBO 목록에서 상태 미상 — 활성으로 fallback 집계했습니다.
+          </div>
+        )}
+        {s && s.rowsTruncated && (
+          <div className="mb-4 p-3 bg-orange-900/20 border border-orange-700 rounded-lg text-orange-400 text-sm">
+            ⚠️ 잔존 기록 행이 페이지 상한에 도달해 일부가 집계에서 잘렸습니다(과거 잔존 통계만 영향, 오늘 활성 수치는 정렬상 항상 우선 포함).
+          </div>
+        )}
+
         {s && p2s && (
           <div className="mb-6 grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="bg-gray-800/50 rounded-lg p-4">
               <div className="text-sm text-gray-400 mb-1">떠있는 잠금화면 카드</div>
               <div className="text-3xl font-bold">{s.cards}</div>
-              <div className="text-xs text-gray-500 mt-1">진행중·예정 경기 push-to-start 발급</div>
+              <div className="text-xs text-gray-500 mt-1">진행중·예정(+상태 미상 fallback) push-to-start 발급</div>
             </div>
             <div className="bg-gray-800/50 rounded-lg p-4">
-              <div className="text-sm text-gray-400 mb-1">갱신 수신 중</div>
+              <div className="text-sm text-gray-400 mb-1">자동발급 카드 중 갱신 수신</div>
               <div className="text-3xl font-bold text-green-400">{s.updatable}</div>
-              <div className="text-xs text-gray-500 mt-1">update 토큰 등록 완료</div>
+              <div className="text-xs text-gray-500 mt-1">
+                update 토큰 등록 완료 · 경기룸 방문 등 전체 갱신 토큰은 {s.updateTokens}건
+              </div>
             </div>
             <div className="bg-gray-800/50 rounded-lg p-4">
               <div className="text-sm text-gray-400 mb-1">갱신 불가 (gap)</div>
@@ -162,7 +190,7 @@ export default function LiveActivityMonitorPage() {
                       <td className="py-3 px-4 text-right text-gray-400">{g.tokens}</td>
                       <td className="py-3 px-4 text-right text-green-400">{g.updatable}</td>
                       <td className="py-3 px-4 text-right">
-                        {g.status === "live" || g.status === "scheduled" ? (
+                        {g.status === "live" || g.status === "scheduled" || g.status === "unknown" ? (
                           <span className={g.gap > 0 ? "text-red-400 font-medium" : "text-gray-500"}>{g.gap}</span>
                         ) : g.tokens > 0 ? (
                           <span className="text-orange-400 text-xs">end 미처리 의심</span>
@@ -182,6 +210,8 @@ export default function LiveActivityMonitorPage() {
           <div>• <span className="text-gray-300">카드</span> = 서버 push-to-start로 잠금화면에 뜬 Live Activity (started_users). 경기룸 방문으로 포그라운드에서 뜬 카드는 update 토큰에만 잡힌다.</div>
           <div>• <span className="text-gray-300">갱신 불가(gap)</span> = 카드는 떴는데 update 토큰 미등록 → 점수 갱신·종료 정리를 못 받는 상태. 발급/종료 후 20분 창의 무음 wake가 자동 구제하고, 그래도 남으면 앱 오픈 시 등록된다.</div>
           <div>• <span className="text-gray-300">과거 잔존</span> = 오늘 경기 목록에 없는 지난 game_id의 발급 기록 행. iOS가 카드를 ~8시간 내 자동 만료시키므로 실제 좀비 카드가 아니라 서버 기록 잔재{s ? ` (현재 ${s.residualRows}행 / ${s.residualGameCount}경기)` : ""}.</div>
+          <div>• <span className="text-gray-300">미상(활성 fallback)</span> = 오늘 game_id인데 KBO 일정 조회 실패나 목록 누락으로 상태를 확정 못한 경우. 요약에는 활성으로 포함해 집계 누락을 막는다.</div>
+          <div>• <span className="text-gray-300">자동발급 카드 중 갱신 수신</span>은 push-to-start로 뜬 카드가 update 토큰까지 등록된 경우만 센다. 경기룸 방문 등 포그라운드에서만 뜬 LA는 여기 안 잡히고 전체 갱신 토큰 수치에만 포함된다.</div>
           <div>• 종료/취소 경기는 end 푸시 후 update 토큰이 정상 삭제된다. 종료 경기에 토큰이 남아 있으면 <span className="text-orange-400">end 미처리 의심</span>으로 표시.</div>
         </div>
 

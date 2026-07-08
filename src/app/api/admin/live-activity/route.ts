@@ -24,7 +24,9 @@ function gameStatus(g: KboRawGame): "live" | "final" | "scheduled" | "cancelled"
   return "other";
 }
 
-async function fetchTodayGames(): Promise<KboRawGame[]> {
+// ok=false는 fetch 자체가 실패(네트워크/non-200/파싱 오류)했음을 뜻한다 — 이때는
+// 오늘 경기 상태를 KBO에서 확인할 수 없으므로 호출부가 "미상" 폴백을 적용해야 한다.
+async function fetchTodayGames(): Promise<{ games: KboRawGame[]; ok: boolean }> {
   // 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청을 IE 에러 페이지로 막음.
   const res = await fetch(`${KBO_MAIN}/GetKboGameList`, {
     method: "POST",
@@ -36,7 +38,8 @@ async function fetchTodayGames(): Promise<KboRawGame[]> {
     body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${getKSTDateStr()}`,
     cache: "no-store",
   }).then(r => (r.ok ? r.json() : null)).catch(() => null);
-  return (res?.game ?? []) as KboRawGame[];
+  if (res === null) return { games: [], ok: false };
+  return { games: (res.game ?? []) as KboRawGame[], ok: true };
 }
 
 interface CardRow {
@@ -45,21 +48,26 @@ interface CardRow {
 }
 
 // Supabase는 요청당 기본 1000행 캡이 있어(무제한 select가 조용히 잘림 — #560 사고)
-// 반드시 range 페이지네이션으로 전량을 모은다. 두 테이블 모두 종료 경기 정리 cron이
-// 돌아 수천 행 이내라 10페이지(1만 행)면 충분한 상한.
-async function fetchAllRows(table: string): Promise<CardRow[]> {
+// 반드시 range 페이지네이션으로 전량을 모은다. game_id 내림차순(오늘 날짜가 접두라
+// 최신이 먼저 옴)으로 정렬해서, 상한에 걸려도 과거 잔존행부터 잘리고 오늘 활성
+// 경기 행은 항상 먼저 채워지도록 보장한다. 상한 도달 시 truncated=true로 알린다.
+async function fetchAllRows(table: string): Promise<{ rows: CardRow[]; truncated: boolean }> {
   const PAGE = 1000;
+  const MAX_PAGES = 30; // 현재 실측 ~1,900행 대비 15배 여유(3만 행)
   const rows: CardRow[] = [];
-  for (let page = 0; page < 10; page++) {
+  let truncated = false;
+  for (let page = 0; page < MAX_PAGES; page++) {
     const { data, error } = await supabase
       .from(table)
       .select("game_id, user_id")
+      .order("game_id", { ascending: false })
       .range(page * PAGE, page * PAGE + PAGE - 1);
     if (error) throw new Error(`${table}: ${error.message}`);
     rows.push(...((data ?? []) as CardRow[]));
     if (!data || data.length < PAGE) break;
+    if (page === MAX_PAGES - 1) truncated = true;
   }
-  return rows;
+  return { rows, truncated };
 }
 
 export async function GET(req: NextRequest) {
@@ -71,7 +79,7 @@ export async function GET(req: NextRequest) {
     const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    const [p2sTotal, p2sFresh24h, p2sFresh7d, startedRows, tokenRows, games] = await Promise.all([
+    const [p2sTotal, p2sFresh24h, p2sFresh7d, startedResult, tokenResult, gamesResult] = await Promise.all([
       supabase.from("live_activity_start_tokens").select("*", { count: "exact", head: true }),
       supabase.from("live_activity_start_tokens").select("*", { count: "exact", head: true }).gte("updated_at", since24h),
       supabase.from("live_activity_start_tokens").select("*", { count: "exact", head: true }).gte("updated_at", since7d),
@@ -79,6 +87,11 @@ export async function GET(req: NextRequest) {
       fetchAllRows("live_activity_tokens"),
       fetchTodayGames(),
     ]);
+
+    const startedRows = startedResult.rows;
+    const tokenRows = tokenResult.rows;
+    const rowsTruncated = startedResult.truncated || tokenResult.truncated;
+    const { games, ok: kboStatusAvailable } = gamesResult;
 
     const gameMeta = new Map<string, { label: string; status: string }>();
     for (const g of games) {
@@ -130,10 +143,15 @@ export async function GET(req: NextRequest) {
     // 요약은 *활성 경기(진행중/예정)*만 집계한다. 종료 경기는 end 푸시 후 서버가
     // update 토큰을 정상 삭제하므로 gap이 커 보이는 게 당연하고(고장 아님), 과거
     // started_users 행은 삭제 없이 잔존하는 기록 잔재라 섞으면 수치가 오독된다.
-    const active = gamesOut.filter(g => g.status === "live" || g.status === "scheduled");
+    // "unknown"(오늘 날짜 game_id인데 KBO fetch 실패/meta 누락)은 활성으로 간주해
+    // fallback 포함한다 — KBO가 흔들릴 때야말로 관제가 필요한데, 이 경우를 제외하면
+    // 활성 카드가 있어도 요약이 0으로 보여 정반대로 오독된다.
+    const isActiveStatus = (status: string) => status === "live" || status === "scheduled" || status === "unknown";
+    const active = gamesOut.filter(g => isActiveStatus(g.status));
+    const unknownActive = active.filter(g => g.status === "unknown");
     const cards = active.reduce((s, g) => s + g.started, 0);
     const updatable = active.reduce((s, g) => s + g.updatable, 0);
-    const residualGames = gamesOut.filter(g => !(g.status === "live" || g.status === "scheduled"));
+    const residualGames = gamesOut.filter(g => !isActiveStatus(g.status));
 
     return NextResponse.json({
       pushToStart: {
@@ -148,6 +166,9 @@ export async function GET(req: NextRequest) {
         updateTokens: active.reduce((s, g) => s + g.tokens, 0),
         residualRows: residualGames.reduce((s, g) => s + g.started + g.tokens, 0),
         residualGameCount: residualGames.length,
+        kboStatusAvailable,
+        unknownActiveCount: unknownActive.length,
+        rowsTruncated,
       },
       games: gamesOut,
       generatedAt: new Date().toISOString(),
