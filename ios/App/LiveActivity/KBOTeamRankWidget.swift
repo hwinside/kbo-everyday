@@ -400,6 +400,8 @@ struct KBOTeamRankWidgetEntryView: View {
     private func numCell(_ t: String, _ w: CGFloat, _ color: Color, _ weight: Font.Weight) -> some View {
         Text(t).font(montserrat(13, weight)).monospacedDigit()
             .foregroundStyle(color)
+            // "10.5" 같은 값이 열 폭을 넘으면 말줄임("10…") 대신 축소 (2026-07-08 QA)
+            .lineLimit(1).minimumScaleFactor(0.65)
             .frame(width: w, alignment: .trailing)
     }
 
