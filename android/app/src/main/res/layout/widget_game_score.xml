@@ -15,7 +15,7 @@
         android:layout_width="64dp"
         android:layout_height="64dp"
         android:layout_gravity="top|end"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="5dp"
         android:layout_marginEnd="10dp"
         android:scaleType="fitCenter"
         android:src="@drawable/widget_wm_lg"
@@ -23,6 +23,7 @@
 
     <!-- 빈 상태 (경기 없음) -->
     <TextView
+                    android:includeFontPadding="false"
         android:id="@+id/widget_empty"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
@@ -43,8 +44,8 @@
         android:orientation="vertical"
         android:paddingLeft="14dp"
         android:paddingRight="14dp"
-        android:paddingTop="9dp"
-        android:paddingBottom="14dp">
+        android:paddingTop="6dp"
+        android:paddingBottom="5dp">
 
         <!-- MY TEAM 헤더 -->
         <LinearLayout
@@ -72,7 +73,7 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="5dp"
             android:orientation="horizontal"
             android:gravity="center_vertical">
 
@@ -85,8 +86,8 @@
                 android:gravity="center">
                 <ImageView
                     android:id="@+id/widget_away_logo"
-                    android:layout_width="34dp"
-                    android:layout_height="34dp"
+                    android:layout_width="30dp"
+                    android:layout_height="30dp"
                     android:scaleType="fitCenter"
                     android:src="@drawable/teamlogo_sk"
                     android:contentDescription="@null" />
@@ -94,15 +95,16 @@
                     android:id="@+id/widget_away_name"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
+                    android:layout_marginTop="2dp"
                     android:adjustViewBounds="true"
                     android:contentDescription="@null" />
                 <!-- 예고선발 투수 이름(풀네임 아래) — 예정 경기만. 미확정 "미정". -->
                 <TextView
+                    android:includeFontPadding="false"
                     android:id="@+id/widget_away_starter_col"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
+                    android:layout_marginTop="2dp"
                     android:fontFamily="@font/notosanskr"
                     android:letterSpacing="-0.03"
                     android:textColor="#C6AAB2"
@@ -130,6 +132,7 @@
                     android:contentDescription="@null" />
                 <!-- 경기장(잠실) — 가운데 점수 위 별도 표시 -->
                 <TextView
+                    android:includeFontPadding="false"
                     android:id="@+id/widget_stadium"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -148,6 +151,7 @@
                     android:adjustViewBounds="true"
                     android:contentDescription="@null" />
                 <TextView
+                    android:includeFontPadding="false"
                     android:id="@+id/widget_score_scheduled"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -163,11 +167,11 @@
                     android:id="@+id/widget_status"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
+                    android:layout_marginTop="1dp"
                     android:paddingStart="10dp"
                     android:paddingEnd="10dp"
-                    android:paddingTop="2dp"
-                    android:paddingBottom="2dp"
+                    android:paddingTop="1dp"
+                    android:paddingBottom="1dp"
                     android:background="@drawable/widget_status_pill"
                     android:orientation="horizontal"
                     android:gravity="center_vertical">
@@ -189,8 +193,8 @@
                 android:gravity="center">
                 <ImageView
                     android:id="@+id/widget_home_logo"
-                    android:layout_width="34dp"
-                    android:layout_height="34dp"
+                    android:layout_width="30dp"
+                    android:layout_height="30dp"
                     android:scaleType="fitCenter"
                     android:src="@drawable/teamlogo_lg"
                     android:contentDescription="@null" />
@@ -198,15 +202,16 @@
                     android:id="@+id/widget_home_name"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
+                    android:layout_marginTop="2dp"
                     android:adjustViewBounds="true"
                     android:contentDescription="@null" />
                 <!-- 예고선발 투수 이름(풀네임 아래) — 예정 경기만. 미확정 "미정". -->
                 <TextView
+                    android:includeFontPadding="false"
                     android:id="@+id/widget_home_starter_col"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
+                    android:layout_marginTop="2dp"
                     android:fontFamily="@font/notosanskr"
                     android:letterSpacing="-0.03"
                     android:textColor="#C6AAB2"
@@ -223,8 +228,8 @@
             android:id="@+id/widget_live_row"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:paddingTop="8dp"
+            android:layout_marginTop="4dp"
+            android:paddingTop="4dp"
             android:orientation="horizontal"
             android:gravity="center_vertical">
 
@@ -239,8 +244,8 @@
                 <ImageView
                     android:id="@+id/widget_out"
                     android:layout_width="74dp"
-                    android:layout_height="20dp"
-                    android:layout_marginBottom="6dp"
+                    android:layout_height="16dp"
+                    android:layout_marginBottom="2dp"
                     android:scaleType="fitStart"
                     android:src="@drawable/out_0"
                     android:contentDescription="@null" />
@@ -253,6 +258,7 @@
                     android:orientation="horizontal"
                     android:gravity="center_vertical">
                     <TextView
+                    android:includeFontPadding="false"
                         android:id="@+id/widget_pitcher_label"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -260,9 +266,10 @@
                         android:letterSpacing="-0.04"
                         android:textColor="#AEAEB4"
                         android:textStyle="bold"
-                        android:textSize="15sp"
+                        android:textSize="14sp"
                         android:text="투수" />
                     <TextView
+                    android:includeFontPadding="false"
                         android:id="@+id/widget_pitcher_name"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -271,7 +278,7 @@
                         android:letterSpacing="-0.04"
                         android:textColor="#F2F2F5"
                         android:textStyle="bold"
-                        android:textSize="15sp"
+                        android:textSize="14sp"
                         android:maxLines="1"
                         android:ellipsize="end"
                         android:text="" />
@@ -286,6 +293,7 @@
                     android:orientation="horizontal"
                     android:gravity="center_vertical">
                     <TextView
+                    android:includeFontPadding="false"
                         android:id="@+id/widget_batter_label"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -293,9 +301,10 @@
                         android:letterSpacing="-0.04"
                         android:textColor="#AEAEB4"
                         android:textStyle="bold"
-                        android:textSize="15sp"
+                        android:textSize="14sp"
                         android:text="타자" />
                     <TextView
+                    android:includeFontPadding="false"
                         android:id="@+id/widget_batter_name"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -304,7 +313,7 @@
                         android:letterSpacing="-0.04"
                         android:textColor="#F2F2F5"
                         android:textStyle="bold"
-                        android:textSize="15sp"
+                        android:textSize="14sp"
                         android:maxLines="1"
                         android:ellipsize="end"
                         android:text="" />
@@ -314,7 +323,7 @@
             <ImageView
                 android:id="@+id/widget_diamond"
                 android:layout_width="52dp"
-                android:layout_height="44dp"
+                android:layout_height="38dp"
                 android:layout_marginStart="8dp"
                 android:paddingStart="2dp"
                 android:paddingEnd="2dp"
@@ -330,11 +339,11 @@
             android:id="@+id/widget_relay_row"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="5dp"
             android:paddingLeft="9dp"
             android:paddingRight="9dp"
-            android:paddingTop="5dp"
-            android:paddingBottom="5dp"
+            android:paddingTop="3dp"
+            android:paddingBottom="3dp"
             android:background="@drawable/widget_relay_bg"
             android:orientation="horizontal"
             android:gravity="center_vertical"
@@ -361,6 +370,7 @@
                     android:contentDescription="@null" />
             </ViewFlipper>
             <TextView
+                    android:includeFontPadding="false"
                 android:id="@+id/widget_relay_text"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"

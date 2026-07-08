@@ -282,7 +282,7 @@ public class GameScoreWidget extends AppWidgetProvider {
             // 라이브/종료 둘 다 점수 표시 (종료=결과). Montserrat 숫자 비트맵.
             v.setViewVisibility(R.id.widget_score, View.VISIBLE);
             v.setViewVisibility(R.id.widget_score_scheduled, View.GONE);
-            v.setImageViewBitmap(R.id.widget_score, textBitmap(context, as + " : " + hs, 30f, 0xFFF5F5F7));
+            v.setImageViewBitmap(R.id.widget_score, textBitmap(context, as + " : " + hs, 27f, 0xFFF5F5F7));
         }
 
         // 경기 날짜('6월 7일 (토)') — 예정 경기일 때만 경기장 위 표시. 숫자(Mont)+한글(Noto) 비트맵.
@@ -342,23 +342,21 @@ public class GameScoreWidget extends AppWidgetProvider {
                 v.setViewVisibility(R.id.widget_out, View.GONE);
             }
 
-            // 투수 (소속) 이름
-            if (hasPitcher) {
+            // 투수/타자 한 줄 병합 — iOS 잠금 LA 카드(#557)와 동일. 두 줄이던 것을 합쳐
+            // 4x2 셀(217dp)에 중계 줄까지 세로로 들어가게 한다(소속 표기는 공간상 생략).
+            if (hasPitcher || hasBatter) {
                 v.setViewVisibility(R.id.widget_pitcher_row, View.VISIBLE);
-                String pl = pteam.isEmpty() ? "투수" : "투수 (" + shortName(pteam) + ")";
-                v.setTextViewText(R.id.widget_pitcher_label, pl);
-                v.setTextViewText(R.id.widget_pitcher_name, pitcher);
+                v.setViewVisibility(R.id.widget_batter_row, View.GONE);
+                StringBuilder line = new StringBuilder();
+                if (hasPitcher) line.append(pitcher);
+                if (hasBatter) {
+                    if (hasPitcher) line.append(" · 타자 ");
+                    line.append(batter);
+                }
+                v.setTextViewText(R.id.widget_pitcher_label, hasPitcher ? "투수" : "타자");
+                v.setTextViewText(R.id.widget_pitcher_name, line.toString());
             } else {
                 v.setViewVisibility(R.id.widget_pitcher_row, View.GONE);
-            }
-
-            // 타자 (소속) 이름
-            if (hasBatter) {
-                v.setViewVisibility(R.id.widget_batter_row, View.VISIBLE);
-                String bl = bteam.isEmpty() ? "타자" : "타자 (" + shortName(bteam) + ")";
-                v.setTextViewText(R.id.widget_batter_label, bl);
-                v.setTextViewText(R.id.widget_batter_name, batter);
-            } else {
                 v.setViewVisibility(R.id.widget_batter_row, View.GONE);
             }
 
@@ -532,8 +530,11 @@ public class GameScoreWidget extends AppWidgetProvider {
         for (int i = 0; i < runs.size(); i++) w += (runHangul.get(i) ? pn : pm).measureText(runs.get(i));
         Paint.FontMetrics fm = pm.getFontMetrics();
         Paint.FontMetrics fn = pn.getFontMetrics();
-        float top = Math.min(fm.top, fn.top);
-        float bottom = Math.max(fm.bottom, fn.bottom);
+        // top/bottom(폰트 파일 전체 바운드) 대신 ascent/descent(실 글리프 라인) — Noto CJK의
+        // 거대한 top/bottom 메트릭이 모든 텍스트 비트맵에 ~0.5em 유령 여백을 넣어, 4x2 셀
+        // (실측 401x217dp)에서 라이브/중계 행이 통째로 잘리던 원인(2026-07-08 하린아빠 제보).
+        float top = Math.min(fm.ascent, fn.ascent);
+        float bottom = Math.max(fm.descent, fn.descent);
         int bw = Math.max(1, (int) Math.ceil(w) + 2);
         int bh = Math.max(1, (int) Math.ceil(bottom - top) + 2);
         Bitmap bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
