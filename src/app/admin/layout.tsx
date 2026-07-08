@@ -19,6 +19,7 @@ import {
   Smartphone,
   BarChart3,
   Download,
+  RadioTower,
   Image as ImageIcon,
 } from "lucide-react";
 import { useAdminUnreadDMCount } from "@/lib/admin/useAdminUnreadDMCount";
@@ -36,6 +37,7 @@ const NAV_ITEMS = [
   { href: "/admin/whats-new", label: "새 소식", icon: Sparkles },
   { href: "/admin/tester-signups", label: "테스터 신청", icon: Smartphone },
   { href: "/admin/hero-compare", label: "히어로샷 비교", icon: ImageIcon },
+  { href: "/admin/live-activity", label: "잠금화면 LA", icon: RadioTower },
   { href: "/admin/system", label: "시스템", icon: Activity },
 ] as const;
 
