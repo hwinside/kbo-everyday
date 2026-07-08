@@ -608,15 +608,24 @@ struct PlayerCard: View {
             }
             HStack(spacing: 6) {
                 if let line = today.line, !line.isEmpty {
+                    // 활약 줄은 절대 말줄임하지 않는다 — 칩이 밀려나는 쪽 (안드 renderCard 동일, 2026-07-08 QA "2타수 1…")
                     mixedScriptText(line, 15, .bold).foregroundStyle(PCColor.text)
-                        .lineLimit(1).minimumScaleFactor(0.8)
+                        .lineLimit(1).fixedSize()
+                        .layoutPriority(1)
                 }
                 if let dec = today.decision, !dec.isEmpty, dec != "null" {
                     chip(dec, filled: true)
                 }
-                if let chips = today.chips {
-                    ForEach(Array(chips.prefix(3).enumerated()), id: \.offset) { _, c in
-                        if !c.isEmpty { chip(c, filled: false) }
+                let chipList = (today.chips ?? []).prefix(3).filter { !$0.isEmpty }
+                if !chipList.isEmpty {
+                    ViewThatFits(in: .horizontal) {
+                        ForEach(Array(stride(from: chipList.count, through: 0, by: -1)), id: \.self) { n in
+                            HStack(spacing: 6) {
+                                ForEach(Array(chipList.prefix(n).enumerated()), id: \.offset) { _, c in
+                                    chip(c, filled: false)
+                                }
+                            }
+                        }
                     }
                 }
                 Spacer(minLength: 0)
