@@ -1,7 +1,8 @@
 "use client";
 
 import { registerPlugin } from "@capacitor/core";
-import { isAndroid } from "./platform";
+import { isAndroid, isIOS } from "./platform";
+import { syncIosWidgetFavPlayers, syncIosWidgetMyTeam } from "../native-live-activity";
 
 // 잠금화면 실시간 스코어 = ongoing notification (안드로이드 전용, A4).
 // 네이티브 GameNotificationPlugin(@CapacitorPlugin name="GameNotification")과 페어.
@@ -101,7 +102,13 @@ export async function clearGameWidget(): Promise<void> {
 
 /** 디바이스 최애팀 코드 기록 (위젯 배경/워터마크 색 결정). */
 export async function setWidgetMyTeam(code: string): Promise<void> {
-  if (!isAndroid || !code) return;
+  if (!code) return;
+  if (isIOS) {
+    // iOS는 GameNotification(안드 전용) 대신 LiveActivity 플러그인으로 App Group에 기록.
+    await syncIosWidgetMyTeam(code);
+    return;
+  }
+  if (!isAndroid) return;
   try {
     await GameNotification.setMyTeam({ code });
   } catch {
@@ -111,6 +118,11 @@ export async function setWidgetMyTeam(code: string): Promise<void> {
 
 /** 최애선수 목록 동기화 — 선수 카드 위젯 config(선수 선택 목록)용. */
 export async function setWidgetFavPlayers(players: unknown[]): Promise<void> {
+  if (isIOS) {
+    // iOS는 GameNotification(안드 전용) 대신 LiveActivity 플러그인으로 App Group에 기록.
+    await syncIosWidgetFavPlayers(players);
+    return;
+  }
   if (!isAndroid) return;
   try {
     await GameNotification.setFavPlayers({ json: JSON.stringify(players ?? []) });

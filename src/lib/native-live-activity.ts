@@ -40,6 +40,8 @@ interface LiveActivityPlugin {
   end(state?: LiveActivityState): Promise<void>;
   isEnabled(): Promise<{ enabled: boolean }>;
   writeWidgetSnapshot(input: WidgetSnapshotInput): Promise<void>;
+  setFavPlayers(opts: { json: string }): Promise<void>;
+  setMyTeam(opts: { code: string }): Promise<void>;
   addListener(
     eventName: "liveActivityPushToken",
     listenerFunc: (data: { gameId: string; token: string }) => void,
@@ -324,6 +326,29 @@ export async function writeWidgetSnapshot(input: WidgetSnapshotInput): Promise<v
     await LiveActivity.writeWidgetSnapshot(input);
   } catch {
     /* silent — 위젯 갱신 실패가 앱에 영향 주지 않게 */
+  }
+}
+
+/** 최애선수 목록을 iOS 위젯 App Group(fav_players)에 동기화 — 선수 카드 위젯 선택 목록용.
+ *  안드는 GameNotification.setFavPlayers를 쓰므로, 이 경로는 iOS 네이티브 전용(그 외 no-op). */
+export async function syncIosWidgetFavPlayers(players: unknown[]): Promise<void> {
+  if (!isNativeIOS()) return;
+  try {
+    await LiveActivity.setFavPlayers({ json: JSON.stringify(players ?? []) });
+  } catch {
+    /* silent — 부가 기능 */
+  }
+}
+
+/** 최애팀 코드를 iOS 위젯 App Group(my_team)에 직접 동기화 — 팀순위 위젯 하이라이트용.
+ *  스냅샷(myTeamCode)은 경기/다음경기 흐름에서만 갱신되어 오프데이·팀변경 직후 stale일 수
+ *  있어, 최애팀 변경 시점에 곧장 기록하는 별도 경로. 안드는 GameNotification.setMyTeam 사용. */
+export async function syncIosWidgetMyTeam(code: string): Promise<void> {
+  if (!isNativeIOS() || !code) return;
+  try {
+    await LiveActivity.setMyTeam({ code });
+  } catch {
+    /* silent — 부가 기능 */
   }
 }
 
