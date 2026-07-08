@@ -11,6 +11,7 @@
 
 import Foundation
 import Capacitor
+import WidgetKit
 
 @objc(LiveActivityPlugin)
 public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
@@ -22,6 +23,7 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "end", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "isEnabled", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "writeWidgetSnapshot", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setFavPlayers", returnType: CAPPluginReturnPromise),
     ]
 
     /// 브리지 로드 시 — *포그라운드 JS 멀티캐스트* 콜백만 연결한다(조건4).
@@ -161,6 +163,19 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             ]
         }
         WidgetSnapshotStore.write(dict)
+        call.resolve()
+    }
+
+    /// 최애선수 목록을 App Group(fav_players)에 기록 — 선수 카드 위젯 config(선수 선택 목록)용.
+    /// JS setWidgetFavPlayers가 HomeClientShell에서 favPlayers 변경 시 호출한다. 위젯은 이 목록을
+    /// DynamicOptions(FavPlayerQuery)로 읽어 선택지를 만든다(안드 setFavPlayers 이식). WidgetKit
+    /// reloadAllTimelines은 iOS 14+ — 잠금화면 LA와 무관, 홈 위젯 타임라인만 갱신하므로 안전하다.
+    @objc func setFavPlayers(_ call: CAPPluginCall) {
+        let json = call.getString("json") ?? "[]"
+        UserDefaults(suiteName: WidgetSnapshotStore.appGroupId)?.set(json, forKey: "fav_players")
+        if #available(iOS 14.0, *) {
+            WidgetCenter.shared.reloadAllTimelines()
+        }
         call.resolve()
     }
 

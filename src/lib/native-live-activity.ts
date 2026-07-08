@@ -40,6 +40,7 @@ interface LiveActivityPlugin {
   end(state?: LiveActivityState): Promise<void>;
   isEnabled(): Promise<{ enabled: boolean }>;
   writeWidgetSnapshot(input: WidgetSnapshotInput): Promise<void>;
+  setFavPlayers(opts: { json: string }): Promise<void>;
   addListener(
     eventName: "liveActivityPushToken",
     listenerFunc: (data: { gameId: string; token: string }) => void,
@@ -324,6 +325,17 @@ export async function writeWidgetSnapshot(input: WidgetSnapshotInput): Promise<v
     await LiveActivity.writeWidgetSnapshot(input);
   } catch {
     /* silent — 위젯 갱신 실패가 앱에 영향 주지 않게 */
+  }
+}
+
+/** 최애선수 목록을 iOS 위젯 App Group(fav_players)에 동기화 — 선수 카드 위젯 선택 목록용.
+ *  안드는 GameNotification.setFavPlayers를 쓰므로, 이 경로는 iOS 네이티브 전용(그 외 no-op). */
+export async function syncIosWidgetFavPlayers(players: unknown[]): Promise<void> {
+  if (!isNativeIOS()) return;
+  try {
+    await LiveActivity.setFavPlayers({ json: JSON.stringify(players ?? []) });
+  } catch {
+    /* silent — 부가 기능 */
   }
 }
 
