@@ -454,7 +454,7 @@ export async function pushLiveActivityStarts(
 // live로 갱신되는 "네이버 수준" 경로. Apple이 무음 푸시를 throttle하므로 best-effort.
 // (강제종료(스와이프 kill) 기기는 iOS가 안 깨움 → 구조적 한계, iOS 18 broadcast가 상위해법.)
 
-/** 무음 wake는 *live 전환/취소 확정* 직후 창에서만(스팸/throttle 방지). 이 창 지나 미등록이면 강제종료 등. */
+/** 무음 wake는 *이벤트(카드 발급/live 전환/취소·종료 확정)* 직후 창에서만(스팸/throttle 방지). 이 창 지나 미등록이면 강제종료 등. */
 const WAKE_WINDOW_MS = 20 * 60 * 1000;
 
 interface WakeResult { woke: number; failed: number; skipped: number; cleaned: number; ok: boolean }
@@ -469,6 +469,12 @@ const EMPTY_WAKE: WakeResult = { woke: 0, failed: 0, skipped: 0, cleaned: 0, ok:
  * 스킵됐음). start_notified row가 아직 없으면(막 전환/알림 경로 이슈) 안전하게 포함.
  * 취소(우천 등) 경기도 동일하게 커버(cancel_notified 시각 기준 창) — 토큰 미등록 gap 카드를 깨워
  * 등록 유도 → pushLiveActivityUpdates(cancelled→end)가 정리. (이미 오래된 취소는 창 밖=자동만료.)
+ * 종료(final) 경기도 동일하게 커버(end_notified 시각 기준 창) — gap 유저는 end 푸시가 못 닿아
+ * 패배 스코어 좀비 카드가 잠금화면에 반영구 잔존(2026-07-08 #cs 제보: 7/7 KIA 2-10 카드).
+ * wake → 토큰 등록 → 다음 warmup의 pushLiveActivityUpdates(final→end)가 15분 잔상 후 제거.
+ * 예정(scheduled) 카드도 커버 — 단 game_notify_state 이벤트가 아직 없으므로 창은 *유저별
+ * started_users.created_at*(=push-to-start 발급 시각, 경기 30분 전) 기준. live 전환 *전에*
+ * 토큰을 선등록해 전환 직후 첫 update부터 즉시 반영("경기 예정" 프리즈 완화).
  * FCM만 사용 → APNs 미설정과 무관. 매 warmup 사이클 호출(등록되면 다음 사이클 갭에서 빠짐).
  */
 export async function pushLiveActivitySilentWakes(
@@ -483,43 +489,72 @@ export async function pushLiveActivitySilentWakes(
   const cancelledGameIds = games
     .filter((g) => g.CANCEL_SC_ID !== "0" && g.G_ID)
     .map((g) => g.G_ID as string);
-  const candidateGameIds = [...new Set([...liveGameIds, ...cancelledGameIds])];
+  // 종료(final) 경기 — end 푸시는 토큰 보유자에게만 가므로 gap 유저의 카드는 좀비로 잔존.
+  // end 이벤트 후 WAKE_WINDOW_MS 창에서 깨워 토큰 등록 → 다음 틱 end 경로가 정리.
+  const finalGameIds = games
+    .filter((g) => gameStatus(g) === "final" && g.CANCEL_SC_ID === "0" && g.G_ID)
+    .map((g) => g.G_ID as string);
+  // 예정(scheduled) 경기 — 30분 전 push-to-start 카드가 발급된 직후부터 토큰 선등록 유도.
+  // 게임 단위 이벤트가 없으므로 아래에서 *유저별 started_users.created_at* 기준으로 창 적용.
+  const scheduledGameIds = games
+    .filter((g) => gameStatus(g) === "scheduled" && g.CANCEL_SC_ID === "0" && g.G_ID)
+    .map((g) => g.G_ID as string);
+  const eventGameIds = [...new Set([...liveGameIds, ...cancelledGameIds, ...finalGameIds])];
+  const candidateGameIds = [...new Set([...eventGameIds, ...scheduledGameIds])];
   if (candidateGameIds.length === 0) return EMPTY_WAKE;
 
-  // 이벤트 시각 = game_notify_state.updated_at: live는 start_notified, 취소는 cancel_notified 기준
-  // (둘 다 notifyGameStatusTransitions가 먼저 세팅). 이 시각에서 WAKE_WINDOW_MS 이내만(스팸/throttle
-  // 방지). 이미 오래된 취소(예: 취소 30분+ 경과)는 창 밖이라 제외 — 앱 오픈/iOS 자동만료(~8h)로 소멸.
-  const { data: nsRows, error: nsErr } = await supabase
-    .from("game_notify_state")
-    .select("game_id, start_notified, cancel_notified, updated_at")
-    .in("game_id", candidateGameIds);
-  if (nsErr) return { error: nsErr.message };
+  // 이벤트 시각 = game_notify_state.updated_at: live는 start_notified, 취소는 cancel_notified,
+  // 종료는 end_notified 기준(모두 notifyGameStatusTransitions가 먼저 세팅 → updated_at이 해당
+  // 전환의 근사시각). 이 시각에서 WAKE_WINDOW_MS 이내만(스팸/throttle 방지). 이미 오래된
+  // 취소/종료(예: 30분+ 경과)는 창 밖이라 제외 — 앱 오픈/iOS 자동만료(~8h)로 소멸.
   const eventSince = new Map<string, number>();
-  for (const r of (nsRows ?? []) as { game_id: string; start_notified: boolean | null; cancel_notified: boolean | null; updated_at: string | null }[]) {
-    if ((r.start_notified || r.cancel_notified) && r.updated_at) eventSince.set(r.game_id, new Date(r.updated_at).getTime());
+  if (eventGameIds.length > 0) {
+    const { data: nsRows, error: nsErr } = await supabase
+      .from("game_notify_state")
+      .select("game_id, start_notified, cancel_notified, end_notified, updated_at")
+      .in("game_id", eventGameIds);
+    if (nsErr) return { error: nsErr.message };
+    for (const r of (nsRows ?? []) as { game_id: string; start_notified: boolean | null; cancel_notified: boolean | null; end_notified: boolean | null; updated_at: string | null }[]) {
+      if ((r.start_notified || r.cancel_notified || r.end_notified) && r.updated_at) eventSince.set(r.game_id, new Date(r.updated_at).getTime());
+    }
   }
-  // wake 대상 = 이벤트(live 전환/취소 확정) 후 WAKE_WINDOW_MS 이내. row 없으면(막 발생 등) 포함(안전).
-  const wakeGameIds = candidateGameIds.filter((id) => {
-    const since = eventSince.get(id);
-    return since === undefined || Date.now() - since <= WAKE_WINDOW_MS;
-  });
+  // wake 대상 = 이벤트(live 전환/취소·종료 확정) 후 WAKE_WINDOW_MS 이내. row 없으면(막 발생 등) 포함(안전).
+  // 예정 경기는 게임 단위 창 없이 통과 — 유저별 created_at 창으로 아래에서 거른다.
+  const wakeGameIds = [
+    ...eventGameIds.filter((id) => {
+      const since = eventSince.get(id);
+      return since === undefined || Date.now() - since <= WAKE_WINDOW_MS;
+    }),
+    ...scheduledGameIds,
+  ];
   if (wakeGameIds.length === 0) return EMPTY_WAKE;
 
   // 갭 = started_users(카드 생성) − live_activity_tokens(update 토큰 등록).
   const [startedRes, tokenRes] = await Promise.all([
-    supabase.from("live_activity_started_users").select("user_id, game_id").in("game_id", wakeGameIds),
+    supabase.from("live_activity_started_users").select("user_id, game_id, created_at").in("game_id", wakeGameIds),
     supabase.from("live_activity_tokens").select("user_id, game_id").in("game_id", wakeGameIds),
   ]);
   if (startedRes.error) return { error: startedRes.error.message };
   if (tokenRes.error) return { error: tokenRes.error.message };
-  const started = (startedRes.data ?? []) as { user_id: string; game_id: string }[];
+  const started = (startedRes.data ?? []) as { user_id: string; game_id: string; created_at: string | null }[];
   if (started.length === 0) return EMPTY_WAKE;
   const tokened = new Set(
     ((tokenRes.data ?? []) as { user_id: string; game_id: string }[]).map((r) => `${r.user_id}|${r.game_id}`),
   );
   // 갭 유저 = (user,game) 토큰 없음. wake는 기기 단위라 user로 중복 제거.
+  // 예정 경기 row는 카드 발급(created_at) 후 WAKE_WINDOW_MS 이내만 — 그 뒤는 live 전환 창이 백스톱.
+  const scheduledSet = new Set(scheduledGameIds);
   const gapUsers = [
-    ...new Set(started.filter((r) => !tokened.has(`${r.user_id}|${r.game_id}`)).map((r) => r.user_id)),
+    ...new Set(
+      started
+        .filter((r) => !tokened.has(`${r.user_id}|${r.game_id}`))
+        .filter(
+          (r) =>
+            !scheduledSet.has(r.game_id) ||
+            (r.created_at !== null && Date.now() - new Date(r.created_at).getTime() <= WAKE_WINDOW_MS),
+        )
+        .map((r) => r.user_id),
+    ),
   ];
   if (gapUsers.length === 0) return EMPTY_WAKE;
 
