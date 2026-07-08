@@ -705,7 +705,8 @@ struct KBOPlayerCardWidget: Widget {
         }
         .configurationDisplayName("최애선수 카드")
         .description("최애선수의 스탯과 오늘 경기 활약을 홈 화면에서 확인하세요.")
-        .supportedFamilies([.systemMedium, .systemLarge])
+        // Large는 세로 여백 과다로 미제공 (iOS 위젯 높이는 고정 규격이라 축소 불가 — 2026-07-08 하린아빠 QA)
+        .supportedFamilies([.systemMedium])
         .contentMarginsDisabled()
     }
 }
