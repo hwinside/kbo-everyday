@@ -102,12 +102,13 @@ private func loadSnapshot() -> WidgetGameSnapshot? {
     return snap
 }
 
-// 미리보기/플레이스홀더용 더미 경기
+// 미리보기/플레이스홀더용 더미 경기 — 실팀/실선수 노출 금지(익명화, 안드 피커 미리보기와
+// 동일 정책 2026-07-08). XA/XH는 더미 전용 코드(수달스/돌고래스, teamShortName 참조).
 private let sampleSnapshot = WidgetGameSnapshot(
-    hasGame: true, gameId: "SAMPLE", awayTeamCode: "SK", homeTeamCode: "LG",
-    myTeamCode: "LG", awayScore: 3, homeScore: 5, inning: 7, isTopInning: false,
+    hasGame: true, gameId: "SAMPLE", awayTeamCode: "XA", homeTeamCode: "XH",
+    myTeamCode: "XH", awayScore: 3, homeScore: 5, inning: 7, isTopInning: false,
     outs: 1, onFirst: true, onSecond: false, onThird: true,
-    pitcherName: "웰스", batterName: "오스틴", stadium: "잠실", isFinal: false
+    pitcherName: "수달", batterName: "돌고래", stadium: "크보파크", isFinal: false
 )
 
 // MARK: - Timeline

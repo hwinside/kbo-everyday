@@ -27,6 +27,7 @@ func teamColorHex(_ code: String) -> UInt32 {
     case "SS": return 0x074CA1  // 삼성
     case "HH": return 0xFF6600  // 한화
     case "WO": return 0x820024  // 키움
+    case "XH": return 0xE85050  // 미리보기 더미(돌고래스) — 팀순위 위젯 하이라이트와 동일 코랄
     default:   return 0x222222
     }
 }
@@ -80,6 +81,8 @@ func teamShortName(_ code: String) -> String {
     case "SS": return "삼성"
     case "HH": return "한화"
     case "WO": return "키움"
+    case "XA": return "수달스"   // 위젯 피커 미리보기 전용 더미(실팀 익명화)
+    case "XH": return "돌고래스"
     default:   return code
     }
 }
@@ -97,6 +100,8 @@ func teamFullName(_ code: String) -> String {
     case "SS": return "삼성 라이온즈"
     case "HH": return "한화 이글스"
     case "WO": return "키움 히어로즈"
+    case "XA": return "수달스"   // 미리보기 더미 — 풀네임 없음
+    case "XH": return "돌고래스"
     default:   return code
     }
 }
@@ -579,9 +584,19 @@ struct TeamLogo: View {
     let size: CGFloat
 
     var body: some View {
-        Image("Logo_\(code)")
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-            .frame(width: size, height: size)
+        // 미리보기 더미 코드(XA/XH 등)는 로고 에셋이 없다 — 발자국 심볼로 대체(익명화).
+        if UIImage(named: "Logo_\(code)") != nil {
+            Image("Logo_\(code)")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size, height: size)
+        } else {
+            Image(systemName: "pawprint.fill")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .foregroundStyle(Color(hex: 0x555555))
+                .frame(width: size * 0.72, height: size * 0.72)
+                .frame(width: size, height: size)
+        }
     }
 }
