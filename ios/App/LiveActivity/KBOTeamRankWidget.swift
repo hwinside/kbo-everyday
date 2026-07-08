@@ -155,12 +155,19 @@ private func gbLabel(_ gb: Double) -> String {
     return String(format: "%.1f", gb)
 }
 
-// MARK: - 최애팀 코드 로드 (홈 위젯 스냅샷 재사용)
+// MARK: - 최애팀 코드 로드 ("my_team" 직접 기록 우선, 없으면 홈 위젯 스냅샷 폴백)
 
+private let kMyTeamDirectKey = "my_team"
+
+/// LiveActivityPlugin.setMyTeam이 팀 변경 시 직접 기록하는 값을 최우선으로 읽는다.
+/// 오프데이/경기데이터 없음/팀변경 직후엔 스냅샷이 stale일 수 있어 direct write가 SSOT.
 @available(iOS 16.1, *)
 private func loadMyTeamCode() -> String {
-    guard let ud = UserDefaults(suiteName: kRankAppGroup),
-          let data = ud.data(forKey: kSnapshotKeyForRank),
+    guard let ud = UserDefaults(suiteName: kRankAppGroup) else { return "" }
+    if let direct = ud.string(forKey: kMyTeamDirectKey), !direct.isEmpty {
+        return direct
+    }
+    guard let data = ud.data(forKey: kSnapshotKeyForRank),
           let snap = try? JSONDecoder().decode(WidgetGameSnapshot.self, from: data) else {
         return ""
     }
@@ -203,13 +210,15 @@ private func fetchStandings(completion: @escaping ([RankRow]) -> Void) {
 }
 
 /// RankRow(API/캐시) → 렌더용 RankDisplayRow(로고 코드 + 최애팀 하이라이트 해석).
+/// `ranking`이 0(HTML fallback 응답 등 미제공)이면 index+1로 대체 — 안드
+/// TeamRankWidget.java의 `s.optInt("ranking", i + 1)`과 동일한 폴백.
 @available(iOS 16.1, *)
 private func resolveRows(_ rows: [RankRow], myTeamId: Int) -> [RankDisplayRow] {
-    rows.map { r in
+    rows.enumerated().map { i, r in
         let hl: UInt32? = (r.teamId == myTeamId && myTeamId >= 1 && myTeamId <= 10)
             ? rankHighlightHex(r.teamId) : nil
         return RankDisplayRow(
-            rank: r.ranking, code: rankTeamCode(r.teamId), name: r.teamName,
+            rank: r.ranking > 0 ? r.ranking : i + 1, code: rankTeamCode(r.teamId), name: r.teamName,
             wins: r.wins, losses: r.losses, draws: r.draws,
             winRate: r.winRate, gamesBehind: r.gamesBehind,
             streak: r.continuousGameResult.trimmingCharacters(in: .whitespaces),
