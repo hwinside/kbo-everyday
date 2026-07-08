@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ChevronLeft, Heart, MessageCircle, Settings } from "lucide-react";
+import { ChevronLeft, Heart, MessageCircle } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById } from "@/lib/constants/teams";
@@ -159,11 +159,6 @@ export default function ProfilePage() {
             <ChevronLeft size={24} />
           </button>
           <span className="text-lg font-semibold leading-[26px] text-text-primary flex-1">프로필</span>
-          {isOwn && (
-            <button onClick={() => {}} className="rounded-full p-1 text-text-tertiary hover:bg-bg-tertiary transition-colors">
-              <Settings size={20} />
-            </button>
-          )}
         </div>
       </div>
 
