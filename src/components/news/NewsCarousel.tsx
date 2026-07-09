@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
+import { readableTextColor } from "@/lib/utils/team";
 import type { NewsMock } from "@/lib/constants/news";
 
 interface NewsCarouselProps {
@@ -126,6 +127,8 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
               : "linear-gradient(135deg, #2a2a3d 0%, #1a1a1d 100%)";
             // 라이트 카드 포인트색: 팀 원색(흰 카드 위 대비 확보). 무팀 뉴스는 앱 accent.
             const accent = team?.colorPrimary ?? "var(--accent)";
+            // pill 글자색은 팀색 대비 최대로(밝은 팀색=한화는 흰 글씨 2.94:1이라 어둡게). 삼순 리뷰.
+            const pillText = team ? readableTextColor(team.colorPrimary) : "#FFFFFF";
             const bgLightCard = team
               ? `color-mix(in srgb, ${team.colorPrimary} 6%, #FFFFFF)`
               : "#FFFFFF";
@@ -226,8 +229,8 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                     <div className={`absolute inset-x-0 bottom-0 pb-9 pr-4 ${hasThumb ? "pl-[47%]" : "px-4"}`}>
                       {item.label && (
                         <span
-                          className="inline-block px-2 py-0.5 mb-1 rounded-full text-xs font-semibold text-white"
-                          style={{ background: accent }}
+                          className="inline-block px-2 py-0.5 mb-1 rounded-full text-xs font-semibold"
+                          style={{ background: accent, color: pillText }}
                         >
                           {item.label}
                         </span>
