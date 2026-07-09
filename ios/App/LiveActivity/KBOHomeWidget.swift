@@ -67,8 +67,11 @@ struct WidgetGameSnapshot: Codable {
     /// 스냅샷 기록 시각(epoch초, 앱 LiveActivityController가 매 기록 시 찍음). live 스냅샷이 이
     /// 시각+5h를 넘도록 갱신 안 되면 stale로 본다(B안). 구버전 스냅샷엔 없을 수 있어 옵셔널.
     var savedAt: Double? = nil
-    /// getTimeline이 stale 판정 시 세팅하는 렌더 전용 플래그(스냅샷 저장 경로엔 안 쓰임, 기본 false).
-    var isStale: Bool = false
+    /// getTimeline이 stale 판정 시 세팅하는 렌더 전용 플래그. 스냅샷 JSON엔 저장 안 됨 →
+    /// 반드시 optional로 둔다. 비-optional+기본값은 Swift 합성 Codable이 기본값을 디코딩에 쓰지
+    /// 않아, 키 부재 시 keyNotFound throw → 위젯이 스냅샷을 통째로 못 읽는다(삼순 리뷰 #593,
+    /// 실측 확인). 렌더는 `== true`로 판정.
+    var isStale: Bool? = nil
 
     /// 렌더 분기용 정규화 상태.
     var resolvedStatus: String {
@@ -262,7 +265,7 @@ struct KBOHomeWidgetEntryView: View {
                     KBOLockScreenCard(attributes: attributes(from: snap),
                                       state: state(from: snap),
                                       fillHeight: true,
-                                      isStale: snap.isStale)
+                                      isStale: snap.isStale == true)
                         .widgetContainerBackground { smallBackground(snap) }
                 }
             default:
@@ -273,7 +276,7 @@ struct KBOHomeWidgetEntryView: View {
                     // large — 세로 여유가 충분해 잠금화면 카드를 그대로 재사용 (디자인 동일)
                     KBOLockScreenCard(attributes: attributes(from: snap),
                                       state: state(from: snap),
-                                      isStale: snap.isStale)
+                                      isStale: snap.isStale == true)
                         .padding(8)
                         .widgetContainerBackground { Color(hex: 0x0A0A0B) }
                 }
@@ -356,7 +359,7 @@ struct HomeWidgetSmallCard: View {
             }
 
             Group {
-                if snap.isStale {
+                if snap.isStale == true {
                     // B안 — 5h 넘게 갱신 안 된 live 스냅샷: LIVE 떼고 중립 표기('경기 종료' 단정 X,
                     // 스코어가 최종 아닐 수 있음). 앱을 열면 최신화된다.
                     Text("업데이트 필요").font(notoKR(9, .bold))
@@ -370,7 +373,7 @@ struct HomeWidgetSmallCard: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 7).padding(.vertical, 2)
             .background(
-                Capsule().fill((snap.isStale || snap.isFinal) ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
+                Capsule().fill((snap.isStale == true || snap.isFinal) ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
             )
         }
         .foregroundStyle(.white)
