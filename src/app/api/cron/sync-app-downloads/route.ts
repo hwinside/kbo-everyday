@@ -9,9 +9,25 @@ const CRON_SECRET = process.env.CRON_SECRET || "";
 
 export const maxDuration = 60;
 
-// Apple/Google install reports lag ~1–2 days and late-arriving rows can revise
-// a day, so re-pull a small trailing window each run and upsert.
-const LOOKBACK_DAYS = 5;
+// Apple sales reports lag ~1–2 days and late-arriving rows can revise a day,
+// so re-pull a small trailing window each run and upsert.
+const IOS_LOOKBACK_DAYS = 5;
+
+// Google's Play stats CSVs are published 3–7 days after the fact (per-day
+// rows can appear well after a 5-day window), so Android needs a longer
+// trailing window than iOS or late-published days are silently dropped forever.
+// https://support.google.com/googleplay/android-developer/answer/6135870
+const ANDROID_LOOKBACK_DAYS = 10;
+
+function trailingKstDates(today: string, days: number): string[] {
+  const dates: string[] = [];
+  for (let i = 1; i <= days; i++) {
+    const d = new Date(today + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() - i);
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  return dates;
+}
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -27,19 +43,14 @@ export async function GET(req: NextRequest) {
   const rows: { platform: string; date: string; units: number }[] = [];
   const skipped: string[] = [];
 
-  // Trailing window of KST dates (D-1 … D-LOOKBACK). Anchoring at 00:00 UTC
-  // (not +09:00) keeps toISOString()'s date aligned with the KST day — a
-  // +09:00 midnight is 15:00 UTC the *previous* day, which would shift D-1→D-2.
-  const dates: string[] = [];
-  for (let i = 1; i <= LOOKBACK_DAYS; i++) {
-    const d = new Date(today + "T00:00:00Z");
-    d.setUTCDate(d.getUTCDate() - i);
-    dates.push(d.toISOString().slice(0, 10));
-  }
+  // Trailing windows of KST dates (D-1 … D-LOOKBACK, platform-specific — see
+  // lookback constants above). Anchoring at 00:00 UTC (not +09:00) keeps
+  // toISOString()'s date aligned with the KST day — a +09:00 midnight is
+  // 15:00 UTC the *previous* day, which would shift D-1→D-2.
 
   try {
     if (ascConfigured()) {
-      for (const date of dates) {
+      for (const date of trailingKstDates(today, IOS_LOOKBACK_DAYS)) {
         const units = await fetchIosDownloads(date);
         if (units === null) {
           skipped.push(`ios:${date}`); // report not available yet
@@ -50,8 +61,9 @@ export async function GET(req: NextRequest) {
     }
 
     if (playStatsConfigured()) {
-      const android = await fetchAndroidDownloads(dates);
-      for (const date of dates) {
+      const androidDates = trailingKstDates(today, ANDROID_LOOKBACK_DAYS);
+      const android = await fetchAndroidDownloads(androidDates);
+      for (const date of androidDates) {
         const units = android.get(date);
         if (units === undefined) {
           skipped.push(`android:${date}`); // report not available yet

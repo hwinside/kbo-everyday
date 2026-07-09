@@ -51,7 +51,9 @@ function decodeCsv(buf: Buffer): string {
 /**
  * Fetch daily user-install counts for the given dates (YYYY-MM-DD). Reads each
  * month's installs overview CSV once; dates missing from the reports (Google
- * lags ~1–2 days) are simply absent from the result so callers can skip them.
+ * publishes these CSVs 3–7 days after the fact) are simply absent from the
+ * result so callers can skip them — callers should request a lookback window
+ * wide enough to cover that lag or late-published days are dropped forever.
  */
 export async function fetchAndroidDownloads(dates: string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
