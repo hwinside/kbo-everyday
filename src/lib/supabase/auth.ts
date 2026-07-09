@@ -7,10 +7,15 @@ import { openOAuthInBrowser } from "@/lib/capacitor/auth";
 // opens in SFSafariViewController which won't return to the PWA context.
 // Hardcoding ensures we always land on keubo.fan.
 const CALLBACK_URL = "https://keubo.fan/auth/callback";
-const NATIVE_IOS_CALLBACK_URL = "fan.keubo.app://auth/callback";
+const NATIVE_APP_CALLBACK_URL = "fan.keubo.app://auth/callback";
 
+// 네이티브(iOS·Android)는 모두 커스텀 스킴 콜백을 쓴다.
+// Android가 https App Link(/auth/callback)로 콜백을 되받으면, 기기의 App Link 검증이
+// 안 잡힌 상태에선 콜백이 앱이 아닌 Chrome에서 처리돼 세션 쿠키가 Chrome에만 남는다
+// (= "크롬만 로그인 / 앱은 로그아웃", #cs 2026-07-09). 커스텀 스킴은 App Link 검증에
+// 의존하지 않아 appUrlOpen이 항상 가로챈다 — iOS가 이미 이 방식으로 안정 동작 중.
 function getOAuthCallbackUrl() {
-  return isIOS ? NATIVE_IOS_CALLBACK_URL : CALLBACK_URL;
+  return isNative ? NATIVE_APP_CALLBACK_URL : CALLBACK_URL;
 }
 
 /** 구글 로그인 — 네이티브: Custom Tabs, 웹: 동일 탭 OAuth */

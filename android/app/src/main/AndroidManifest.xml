@@ -43,6 +43,18 @@
                 <data android:scheme="https" android:host="keubo.fan" android:pathPrefix="/auth/callback" />
             </intent-filter>
 
+            <!-- Custom scheme deep link for OAuth callback (iOS 커스텀 스킴과 동일).
+                 위 https App Link는 기기 App Link 검증에 의존 — 미검증 기기에선 콜백이 앱 대신
+                 Chrome에서 처리돼 세션이 Chrome에만 남는다(크롬만 로그인/앱 로그아웃, #cs 2026-07-09).
+                 커스텀 스킴은 검증이 필요 없어 항상 앱으로 전달되므로 이걸 OAuth 콜백 기본 경로로 쓴다.
+                 appUrlOpen(capacitor/auth.ts)이 fan.keubo.app:// 를 이미 가로채 code/token 교환함. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="fan.keubo.app" android:host="auth" android:pathPrefix="/callback" />
+            </intent-filter>
+
         </activity>
 
         <provider
