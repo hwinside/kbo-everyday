@@ -714,7 +714,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
             return sections.communityLatest ? (
               <div key={key} className="mb-3">
                 <Suspense fallback={null}>
-                  <CommunityLatestPosts />
+                  <CommunityLatestPosts myTeamId={myTeamId} />
                 </Suspense>
               </div>
             ) : null;

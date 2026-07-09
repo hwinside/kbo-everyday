@@ -15,7 +15,7 @@ import { getCommunitySourceLabel, type CommunitySourceLabel } from "@/lib/utils/
 export default function AllPostsPage() {
   const { posts, likedIds, loading, loadingMore, hasMore, loadMore, setPostLiked, reload } =
     useUnifiedFeed({ kind: "all" });
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
 
   const [showLogin, setShowLogin] = useState(false);
   const [showEntry, setShowEntry] = useState(false);
@@ -55,6 +55,21 @@ export default function AllPostsPage() {
     io.observe(el);
     return () => io.disconnect();
   }, [loadMore]);
+
+  // 홈 '새 글 올리기' CTA(?write=1) 진입 시 글쓰기 시트 자동 오픈(FAB 탭과 동일 분기).
+  // 인증 확정 후 1회만 실행하고, 쿼리는 정리해 뒤로가기/새로고침 재오픈을 막는다.
+  const writeTriggered = useRef(false);
+  useEffect(() => {
+    if (authLoading || writeTriggered.current) return;
+    if (typeof window === "undefined") return;
+    if (new URLSearchParams(window.location.search).get("write") !== "1") return;
+    writeTriggered.current = true;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("write");
+    window.history.replaceState(null, "", url.pathname + url.search);
+    // 다음 틱에 시트 오픈 — 이펙트 내 동기 setState(cascading render) 회피.
+    setTimeout(() => (user ? setShowEntry(true) : setShowLogin(true)), 0);
+  }, [authLoading, user]);
 
   return (
     <div className="mx-auto max-w-lg pb-24">
