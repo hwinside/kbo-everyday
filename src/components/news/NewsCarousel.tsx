@@ -118,9 +118,14 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
         >
           {slides.map((item, i) => {
             const team = item.teamId ? getTeamById(item.teamId) : null;
-            const bg = team
+            // 다크: 기존 다크 히어로 그대로. 라이트: 미드톤 팀컬러 히어로(흰 글씨 유지, 하린아빠 A안).
+            // globals.css `.dark [style*="--news-bg-light"]`가 다크에서 --news-bg-dark로 뒤집는다.
+            const bgDark = team
               ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 35%, #1a1a1d) 0%, #1a1a1d 100%)`
               : "linear-gradient(135deg, #2a2a3d 0%, #1a1a1d 100%)";
+            const bgLight = team
+              ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 62%, #34353f) 0%, color-mix(in srgb, ${getTeamBgColor(team)} 42%, #26272f) 100%)`
+              : "linear-gradient(135deg, #3d3e4a 0%, #2b2c36 100%)";
             // 썸네일이 있고 로드 실패하지 않았으면 왼쪽 사진 + 제목 우측. 없으면 현행 그대로.
             const thumbUrl = item.thumbnailUrl ?? ogThumbs[item.id] ?? null;
             const hasThumb = Boolean(thumbUrl) && !failedThumbs.has(item.id);
@@ -138,7 +143,13 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
               >
                 <div
                   className="relative h-[172px] w-full overflow-hidden"
-                  style={{ background: bg }}
+                  style={
+                    {
+                      "--news-bg-light": bgLight,
+                      "--news-bg-dark": bgDark,
+                      background: "var(--news-bg-light)",
+                    } as React.CSSProperties
+                  }
                 >
                   {team && (
                     <div className="absolute right-4 top-4 opacity-20">
@@ -166,7 +177,9 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                       />
                     </div>
                   )}
-                  <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#1a1a1d] to-transparent" />
+                  {/* 흰 글씨 스크림. 다크: 기존 #1a1a1d 유지. 라이트: 미드톤 히어로 위 반투명 검정
+                      (near-black 슬랩이 다시 검은 섬처럼 보이지 않게). */}
+                  <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-black/40 dark:from-[#1a1a1d] to-transparent" />
                   <div className={`absolute inset-x-0 bottom-0 pb-10 pr-4 ${hasThumb ? "pl-[47%]" : "px-4"}`}>
                     {item.label && (
                       <span className="inline-block px-2 py-0.5 mb-1 rounded-full bg-accent/80 text-xs font-semibold text-white">

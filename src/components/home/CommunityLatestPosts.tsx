@@ -158,7 +158,10 @@ function resolveThumb(post: Post): Thumb {
 function teamGradient(teamId: number | null): string | undefined {
   if (teamId == null) return undefined;
   const c = getTeamColor(teamId);
-  return `linear-gradient(180deg, ${c}40 0%, ${c}1A 40%, #0F0F12 78%, #0A0A0B 100%)`;
+  // 팀컬러 → 투명 페이드. 하단은 타일의 bg-bg-tertiary(테마 토큰: 라이트 #E5E5EA / 다크 #1C1C1F)가
+  // 채워 라이트·다크 모두 자연스럽게 처리한다. 다크용 #0F0F12/#0A0A0B 하드코딩 제거로
+  // 화이트 테마에서 썸네일 하단이 시커멓게 겉돌던 문제 해소(하린아빠 #cs 제보).
+  return `linear-gradient(180deg, ${c}40 0%, ${c}1A 45%, transparent 85%)`;
 }
 
 /**
