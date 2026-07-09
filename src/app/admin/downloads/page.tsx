@@ -161,7 +161,7 @@ export default function DownloadsPage() {
           </ResponsiveContainer>
         )}
         <p className="text-xs text-[#8E8E93] mt-3">
-          iOS는 App Store Connect 판매 리포트 기준(약 1–2일 지연). 안드로이드는 연동 후 합류합니다.
+          iOS는 App Store Connect 판매 리포트, 안드로이드는 Google Play 설치 통계(일별 사용자 설치) 기준. 둘 다 약 1–2일 지연.
         </p>
       </div>
     </div>
