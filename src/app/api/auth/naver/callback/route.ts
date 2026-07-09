@@ -54,7 +54,7 @@ async function upsertNaverIdentity(
   return data;
 }
 
-const IOS_NATIVE_CALLBACK_ORIGIN = "fan.keubo.app://auth/callback";
+const NATIVE_CALLBACK_ORIGIN = "fan.keubo.app://auth/callback";
 
 /**
  * 네이버 OAuth 콜백 핸들러
@@ -371,16 +371,16 @@ export async function GET(request: NextRequest) {
       : "";
 
     // state 쿠키 정리 + verifyOtp 쿠키를 response에 전달
-    //  - iOS 네이티브: custom scheme(fan.keubo.app://)으로 세션 토큰 전달
-    //  - Android 네이티브: App Link로 검증된 /auth/callback 경로 + 해시로 전달
-    //    (서버 쿠키는 Custom Tab에만 남아 앱 WebView로 안 넘어옴 → appUrlOpen이 해시를
-    //     가로채 setSession. 중간 /api/auth/naver/callback은 App Link 비대상이라 서버에서 처리됨)
+    //  - iOS·Android 네이티브: custom scheme(fan.keubo.app://)으로 세션 토큰 전달.
+    //    (Android도 커스텀 스킴을 쓴다 — https /auth/callback로 되받으면 기기 App Link
+    //     미검증 시 콜백이 Chrome에서 처리돼 세션이 앱이 아닌 Chrome에만 남는다
+    //     = "크롬만 로그인 / 앱 로그아웃"(#cs 2026-07-09). 커스텀 스킴은 검증에 의존하지 않아
+    //     appUrlOpen이 항상 가로채 setSession. 중간 /api/auth/naver/callback은
+    //     App Link/딥링크 비대상이라 서버에서 처리됨.)
     //  - web: 서버 쿠키로 세션 유지
     let redirectUrl: string;
-    if (isNativeIOS && hashParams) {
-      redirectUrl = `${IOS_NATIVE_CALLBACK_ORIGIN}?next=${encodeURIComponent(redirectPath || "/")}${hashParams}`;
-    } else if (isNativeAndroid && hashParams) {
-      redirectUrl = `${CANONICAL_ORIGIN}/auth/callback?next=${encodeURIComponent(redirectPath || "/")}${hashParams}`;
+    if ((isNativeIOS || isNativeAndroid) && hashParams) {
+      redirectUrl = `${NATIVE_CALLBACK_ORIGIN}?next=${encodeURIComponent(redirectPath || "/")}${hashParams}`;
     } else {
       redirectUrl = `${CANONICAL_ORIGIN}${redirectPath}${hashParams}`;
     }
