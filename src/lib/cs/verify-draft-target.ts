@@ -12,7 +12,7 @@ export async function verifyDraftTarget(
   kind: "feedback" | "dm",
   userId: string,
   conversationId: string | null,
-  feedbackId: number | null,
+  feedbackId: string | null,
   systemUserId: string,
 ): Promise<boolean> {
   if (kind === "feedback") {

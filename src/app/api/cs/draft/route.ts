@@ -23,9 +23,10 @@ export async function POST(request: NextRequest) {
   const userId = typeof body?.userId === "string" ? body.userId.trim() : "";
   const content = typeof body?.body === "string" ? body.body.trimEnd() : "";
   const conversationId = typeof body?.conversationId === "string" ? body.conversationId : null;
+  // feedback.id 는 uuid(text). 숫자 아님.
   const feedbackId =
-    typeof body?.feedbackId === "number" && Number.isFinite(body.feedbackId)
-      ? Math.trunc(body.feedbackId)
+    typeof body?.feedbackId === "string" && body.feedbackId.trim()
+      ? body.feedbackId.trim()
       : null;
 
   if (!csId || !kind || !userId || !content.trim()) {

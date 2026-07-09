@@ -8,7 +8,7 @@ create table if not exists public.cs_reply_drafts (
   kind text not null check (kind in ('feedback', 'dm')),
   user_id uuid not null,                      -- 수신 유저
   conversation_id uuid,                       -- dm 건의 대화 id (nullable)
-  feedback_id bigint,                         -- feedback 건의 id (nullable)
+  feedback_id uuid,                           -- feedback 건의 id (uuid, nullable)
   body text not null,                         -- 발송할 초안 본문
   status text not null default 'pending' check (status in ('pending', 'sent', 'canceled')),
   created_at timestamptz not null default now(),
