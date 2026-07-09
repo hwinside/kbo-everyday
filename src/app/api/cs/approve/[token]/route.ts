@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
+import { verifyDraftTarget } from "@/lib/cs/verify-draft-target";
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -125,6 +126,25 @@ export async function POST(
   if (!claimed) {
     // 이미 처리됐거나 만료/무효
     return page("처리됨", `<h1 class="warn">이미 처리됐거나 만료된 회신이에요</h1><div class="card">중복 발송은 되지 않습니다.</div>`);
+  }
+
+  // 발송 직전 재검증(defense in depth). draft 생성 단계에서 이미 막히지만,
+  // cron/호출부 버그로 잘못된 draft가 만들어졌을 가능성에 대비해 한 번 더 확인한다.
+  const isValidTarget = await verifyDraftTarget(
+    admin,
+    claimed.kind,
+    claimed.user_id,
+    claimed.conversation_id,
+    claimed.feedback_id,
+    systemUserId,
+  );
+  if (!isValidTarget) {
+    // 선점 롤백 후 발송 차단
+    await admin
+      .from("cs_reply_drafts")
+      .update({ status: "pending", sent_at: null })
+      .eq("token", token);
+    return page("발송 실패", `<h1 class="err">회신 대상 검증에 실패했어요</h1><div class="card">잠시 후 다시 시도해주세요.</div>`);
   }
 
   const res = await sendOpsMessageToUser(admin, systemUserId, claimed.user_id, claimed.body);

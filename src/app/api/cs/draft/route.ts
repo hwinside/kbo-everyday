@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { isAdminRequest } from "@/lib/admin/pin";
+import { verifyDraftTarget } from "@/lib/cs/verify-draft-target";
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 
@@ -11,7 +12,8 @@ export async function POST(request: NextRequest) {
   if (!isAdminRequest(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  const systemUserId = process.env.SYSTEM_USER_ID;
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY || !systemUserId) {
     return NextResponse.json({ error: "missing_config" }, { status: 500 });
   }
 
@@ -31,6 +33,14 @@ export async function POST(request: NextRequest) {
   }
 
   const admin = getSupabaseAdmin();
+
+  // 원본 CS 건(feedback 소유자 / dm 대화 참여자)과 userId가 실제로 일치하는지 검증.
+  // 이게 없으면 잘못된 payload 하나로 "A 유저에게 발송 + B feedback resolved" 상태가 생길 수 있다.
+  const isValidTarget = await verifyDraftTarget(admin, kind, userId, conversationId, feedbackId, systemUserId);
+  if (!isValidTarget) {
+    return NextResponse.json({ error: "target_mismatch" }, { status: 400 });
+  }
+
   const token = randomBytes(24).toString("base64url");
 
   const { data, error } = await admin
