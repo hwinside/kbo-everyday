@@ -54,6 +54,8 @@ type Draft = {
   body: string;
   status: string;
   expires_at: string;
+  escalate_requested_at: string | null;
+  escalated_at: string | null;
 };
 
 export async function GET(
@@ -78,6 +80,9 @@ export async function GET(
   }
   if (draft.status === "canceled" || new Date(draft.expires_at) < new Date()) {
     return page("링크 만료", `<h1 class="warn">만료되었거나 취소된 회신이에요</h1><div class="card"><pre>${esc(draft.body)}</pre></div>`);
+  }
+  if (draft.escalate_requested_at || draft.escalated_at) {
+    return page("이관됨", `<h1 class="warn">이 건은 #cs로 이관됐어요</h1><div class="card">#cs 스레드에서 논의 중이라 여기서는 발송하지 않습니다.</div>`);
   }
 
   // 수신자 닉네임(있으면 표기)
@@ -112,13 +117,15 @@ export async function POST(
   const admin = getSupabaseAdmin();
   const now = new Date().toISOString();
 
-  // 원자적 선점: pending + 미만료인 경우에만 sent 로 전이(중복 발송/더블클릭 방지).
+  // 원자적 선점: pending + 미만료 + 이관 안 된 건만 sent 로 전이(중복 발송/더블클릭 + 이관건 발송 방지).
   const { data: claimedRow } = await admin
     .from("cs_reply_drafts")
     .update({ status: "sent", sent_at: now })
     .eq("token", token)
     .eq("status", "pending")
     .gte("expires_at", now)
+    .is("escalate_requested_at", null)
+    .is("escalated_at", null)
     .select("*")
     .maybeSingle();
   const claimed = claimedRow as Draft | null;

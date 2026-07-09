@@ -46,6 +46,8 @@ type Draft = {
   token: string;
   title: string | null;
   cs_content: string | null;
+  status: string;
+  expires_at: string;
   escalate_requested_at: string | null;
   escalated_at: string | null;
 };
@@ -58,7 +60,7 @@ export async function GET(
   const admin = getSupabaseAdmin();
   const { data } = await admin
     .from("cs_reply_drafts")
-    .select("token, title, cs_content, escalate_requested_at, escalated_at")
+    .select("token, title, cs_content, status, expires_at, escalate_requested_at, escalated_at")
     .eq("token", token)
     .maybeSingle();
   const draft = data as Draft | null;
@@ -68,6 +70,12 @@ export async function GET(
   }
   if (draft.escalated_at) {
     return page("이관 완료", `<h1 class="ok">이미 #cs로 이관됐어요 ✅</h1><div class="card">#cs 채널 스레드에서 이어서 논의하실 수 있어요.</div>`);
+  }
+  if (draft.status === "sent") {
+    return page("이관 불가", `<h1 class="warn">이미 유저에게 발송된 회신이에요</h1><div class="card">이 건은 '그대로 발송'으로 처리돼 이관할 수 없습니다.</div>`);
+  }
+  if (draft.status === "canceled" || new Date(draft.expires_at) < new Date()) {
+    return page("링크 만료", `<h1 class="warn">만료되었거나 취소된 항목이에요</h1><div class="card">이 이관 링크는 더 이상 유효하지 않습니다.</div>`);
   }
   if (draft.escalate_requested_at) {
     return page("이관 요청됨", `<h1 class="warn">이관이 요청됐어요</h1><div class="card">곧(최대 5분 내) #cs 채널에 스레드가 생성됩니다.</div>`);
@@ -101,13 +109,16 @@ export async function POST(
   const admin = getSupabaseAdmin();
   const now = new Date().toISOString();
 
-  // 원자적 선점: 아직 이관 요청 전인 draft만 escalate_requested_at 을 찍는다(중복 요청 방지).
-  // title/cs_content 가 있어야 cron 이 게시할 수 있으므로 함께 조건.
+  // 원자적 선점: 아직 이관 요청 전 + pending + 미만료 + 발송/이관 안 된 draft만 escalate_requested_at 을 찍는다.
+  // (발송된 건 이관 금지 = 발송/이관 상호배타. title/cs_content 가 있어야 cron 이 게시 가능.)
   const { data: claimedRow } = await admin
     .from("cs_reply_drafts")
     .update({ escalate_requested_at: now })
     .eq("token", token)
+    .eq("status", "pending")
+    .gte("expires_at", now)
     .is("escalate_requested_at", null)
+    .is("escalated_at", null)
     .not("title", "is", null)
     .not("cs_content", "is", null)
     .select("token")
