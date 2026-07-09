@@ -190,14 +190,19 @@ extension Color {
     }
 }
 
-@available(iOS 16.1, *)
+// ⚠️ iOS 18.0 게이트(기존 16.1) — 애플워치 Smart Stack 전용 레이아웃(supplementalActivityFamilies)이
+// iOS 18+/watchOS 11+ API인데, WidgetBundleBuilder가 #available의 else 분기를 지원하지 않아
+// 16.1용 레거시 등록과 병행이 컴파일 불가(같은 Attributes에 이중 등록도 미정의 동작).
+// iOS 16.1~17.x 기기는 이 빌드부터 Live Activity만 제외되고(홈 위젯·푸시는 유지),
+// 앱 쪽(LiveActivityController.isEnabled)도 동일 게이트라 유령 activity가 생기지 않는다.
+@available(iOS 18.0, *)
 struct KBOLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: KBOGameAttributes.self) { context in
             // 잠금화면 / 배너 표시. activityBackgroundTint는 그라데이션 하단과 같은 "어두운 베이스"로
             // 깔아, 시스템 기본 배경이 가장자리에 비치지 않게 하면서도 카드의 어두운 그라데이션이
             // 단색으로 뭉개지지 않게 한다(이전엔 팀 컬러 솔리드를 깔아 그라데이션이 발산됨).
-            KBOLockScreenCard(attributes: context.attributes, state: context.state)
+            KBOActivityCard(attributes: context.attributes, state: context.state)
                 .activityBackgroundTint(Color(hex: kCardDarkBase))
                 .activitySystemActionForegroundColor(Color.white)
         } dynamicIsland: { context in
@@ -272,6 +277,114 @@ struct KBOLiveActivityWidget: Widget {
                 }
             }
         }
+        // 애플워치 Smart Stack 노출 opt-in — .small 패밀리를 추가하면 워치에서 DI compact 축소판
+        // 대신 KBOActivityCard의 워치 전용 레이아웃(KBOWatchSmallCard)이 렌더된다.
+        .supplementalActivityFamilies([.small])
+    }
+}
+
+// MARK: - 패밀리 라우터 — 같은 콘텐츠 클로저가 잠금화면(.medium)과 워치 Smart Stack(.small)
+// 양쪽에 쓰이므로, activityFamily 환경값으로 레이아웃을 분기한다. 분기 없이 opt-in만 하면
+// 워치가 폰 잠금 카드를 그대로 욱여넣어 깨진다.
+
+@available(iOS 18.0, *)
+struct KBOActivityCard: View {
+    @Environment(\.activityFamily) private var family
+    let attributes: KBOGameAttributes
+    let state: KBOGameAttributes.ContentState
+
+    var body: some View {
+        switch family {
+        case .small:
+            KBOWatchSmallCard(attributes: attributes, state: state)
+        case .medium:
+            KBOLockScreenCard(attributes: attributes, state: state)
+        @unknown default:
+            KBOLockScreenCard(attributes: attributes, state: state)
+        }
+    }
+}
+
+// MARK: - 워치 Smart Stack 소형 카드 (ActivityFamily.small, iOS 18+/watchOS 11+)
+//
+// 폭·높이가 좁아 2단 구성: [로고+약어 | 점수:점수(또는 예정 시각) | 약어+로고] + 상태 한 줄.
+// 잠금 카드의 다이아몬드·투수/타자·문자중계·예고선발은 생략한다(글랜서블 우선).
+// 배경은 잠금 카드와 동일한 최애팀 그라데이션 — 손목에서도 팀 identity 유지.
+
+@available(iOS 18.0, *)
+struct KBOWatchSmallCard: View {
+    let attributes: KBOGameAttributes
+    let state: KBOGameAttributes.ContentState
+
+    private var hasMyTeam: Bool {
+        !attributes.myTeamCode.isEmpty &&
+        (attributes.myTeamCode == attributes.awayTeamCode ||
+         attributes.myTeamCode == attributes.homeTeamCode)
+    }
+
+    var body: some View {
+        VStack(spacing: 3) {
+            HStack(spacing: 3) {
+                HStack(spacing: 3) {
+                    TeamLogo(code: attributes.awayTeamCode, size: 16)
+                    teamShortText(attributes.awayTeamCode, 12, .bold).lineLimit(1)
+                }
+                Spacer(minLength: 2)
+                if state.isScheduled {
+                    // 경기 전 — 점수(0:0) 대신 예정 시각.
+                    Text(state.startTime.flatMap { $0.isEmpty ? nil : $0 } ?? "예정")
+                        .font(montserrat(16, .bold)).monospacedDigit()
+                } else {
+                    HStack(spacing: 3) {
+                        Text("\(state.awayScore)")
+                            .font(montserrat(19, .black)).monospacedDigit()
+                        Text(":").font(montserrat(12, .bold)).foregroundStyle(.white.opacity(0.5))
+                        Text("\(state.homeScore)")
+                            .font(montserrat(19, .black)).monospacedDigit()
+                    }
+                }
+                Spacer(minLength: 2)
+                HStack(spacing: 3) {
+                    teamShortText(attributes.homeTeamCode, 12, .bold).lineLimit(1)
+                    TeamLogo(code: attributes.homeTeamCode, size: 16)
+                }
+            }
+            // 상태 한 줄: 예정="경기 예정"(+구장) / 진행=LIVE 이닝 pill + 아웃카운트 / 종료="경기 종료"
+            HStack(spacing: 5) {
+                if state.isScheduled {
+                    Text(state.stadium.isEmpty ? "경기 예정" : "경기 예정 · \(state.stadium)")
+                        .font(notoKR(11, .bold)).tracking(kKoreanTracking)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .lineLimit(1)
+                } else if state.isFinal {
+                    Text("경기 종료")
+                        .font(notoKR(11, .bold)).tracking(kKoreanTracking)
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(Capsule().fill(Color.white.opacity(0.18)))
+                } else {
+                    (Text("LIVE ").font(montserrat(10, .bold)) + inningRun(state.inningText, 10, .bold))
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(Capsule().fill(Color.red.opacity(0.85)))
+                        .lineLimit(1)
+                    HStack(spacing: 3) {
+                        Text("O").font(montserrat(10, .semibold)).foregroundStyle(.white.opacity(0.7))
+                        HStack(spacing: 3) {
+                            ForEach(0..<3, id: \.self) { i in
+                                Circle()
+                                    .fill(i < state.outs ? Color(hex: 0xFF4D4D) : Color.white.opacity(0.2))
+                                    .frame(width: 6, height: 6)
+                            }
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .background(cardGradient(attributes.myTeamCode, hasMyTeam: hasMyTeam).ignoresSafeArea())
     }
 }
 

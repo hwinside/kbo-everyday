@@ -16,12 +16,16 @@ import WidgetKit
 struct KBOWidgetBundle: WidgetBundle {
     var body: some Widget {
         if #available(iOS 16.1, *) {
-            KBOLiveActivityWidget()
             KBOHomeWidget()
             KBOTeamRankWidget()
         }
         if #available(iOS 17.0, *) {
             KBOPlayerCardWidget()
+        }
+        // LA는 iOS 18.0 게이트 — 워치 Smart Stack(supplementalActivityFamilies) 지원.
+        // 사유·트레이드오프는 KBOLiveActivityWidget 선언부 주석 참조.
+        if #available(iOS 18.0, *) {
+            KBOLiveActivityWidget()
         }
     }
 }
