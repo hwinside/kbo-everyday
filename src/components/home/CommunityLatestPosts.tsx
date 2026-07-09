@@ -4,12 +4,14 @@ import { useState } from "react";
 import Link from "next/link";
 import { MessageCircle, Heart, ChevronRight, PenSquare } from "lucide-react";
 import { useUnifiedFeed } from "@/lib/supabase/useUnifiedFeed";
+import { useAuth } from "@/lib/supabase/AuthContext";
 import { getPostDetailPath } from "@/lib/utils/post-share";
 import { getTeamBySlug, getTeamById } from "@/lib/constants/teams";
 import { getTeamColor, getTeamBgColorById } from "@/lib/utils/team";
 import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
 import { teamIdForKboId, resolveRosterPlayer } from "@/lib/utils/player-roster";
 import TeamBadge from "@/components/ui/TeamBadge";
+import CommunityWriteFlow, { type WriteFlowMode } from "@/components/community/CommunityWriteFlow";
 import heroApprovedList from "@/lib/constants/hero-approved-kboids.json";
 import type { Post } from "@/lib/supabase/usePosts";
 
@@ -297,7 +299,9 @@ function PostRow({ post }: { post: Post }) {
  * 신규 API·테이블 없이 useUnifiedFeed를 재사용한다.
  */
 export default function CommunityLatestPosts({ myTeamId }: { myTeamId: number | null }) {
-  const { posts, loading } = useUnifiedFeed({ kind: "all" }, HOME_LATEST_COUNT);
+  const { posts, loading, reload } = useUnifiedFeed({ kind: "all" }, HOME_LATEST_COUNT);
+  const { user } = useAuth();
+  const [writeMode, setWriteMode] = useState<WriteFlowMode>(null);
 
   // 로딩 중이거나 글이 없으면 섹션 자체를 숨김(빈 박스 방지) — 뉴스 섹션과 동일 패턴.
   if (loading || posts.length === 0) return null;
@@ -322,15 +326,16 @@ export default function CommunityLatestPosts({ myTeamId }: { myTeamId: number | 
         ))}
       </div>
 
-      {/* '새 글 올리기' CTA — 내 팀 컬러 배경(미선택 시 앱 액센트). 탭 시 전체글 진입 후
-          글쓰기 시트 자동 오픈(?write=1). 커뮤니티 더보기 바로 위(하린아빠 스펙). */}
-      <Link
-        href="/community/all-posts?write=1"
+      {/* '새 글 올리기' CTA — 내 팀 컬러 배경(미선택 시 앱 액센트). 커뮤니티로 이동하지 않고
+          그 자리에서 글쓰기 모달을 연다(배경 전환 어색함 제거, 하린아빠 스펙). 더보기 바로 위. */}
+      <button
+        type="button"
+        onClick={() => setWriteMode(user ? "entry" : "login")}
         className="mt-2 flex items-center justify-center gap-1.5 w-full py-3 rounded-xl bg-accent text-[14px] font-semibold text-white active:scale-[0.99] transition-transform"
         style={myTeamId ? { background: getTeamBgColorById(myTeamId) } : undefined}
       >
         <PenSquare size={16} /> 새 글 올리기
-      </Link>
+      </button>
 
       <Link
         href="/community/all-posts"
@@ -338,6 +343,9 @@ export default function CommunityLatestPosts({ myTeamId }: { myTeamId: number | 
       >
         커뮤니티 더보기 <ChevronRight size={15} />
       </Link>
+
+      {/* 페이지 이동 없이 그 자리에서 뜨는 글쓰기 플로우. 작성 성공 시 홈 최신글 즉시 갱신. */}
+      <CommunityWriteFlow mode={writeMode} onClose={() => setWriteMode(null)} onPosted={reload} />
     </section>
   );
 }
