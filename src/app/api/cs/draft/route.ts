@@ -28,6 +28,12 @@ export async function POST(request: NextRequest) {
     typeof body?.feedbackId === "string" && body.feedbackId.trim()
       ? body.feedbackId.trim()
       : null;
+  // 이관(escalate)용: #cs 톱레벨 제목 + 스레드에 붙일 CS 원문. 둘 다 옵셔널(없으면 이관 불가).
+  // 빈 문자열은 null 로 정규화 — 이관 POST가 not-null만 보므로 빈값이 통과하면 안 됨.
+  const titleTrimmed = typeof body?.title === "string" ? body.title.trim().slice(0, 200) : "";
+  const title = titleTrimmed || null;
+  const csContentTrimmed = typeof body?.csContent === "string" ? body.csContent.trimEnd() : "";
+  const csContent = csContentTrimmed.trim() ? csContentTrimmed : null;
 
   if (!csId || !kind || !userId || !content.trim()) {
     return NextResponse.json({ error: "missing_params" }, { status: 400 });
@@ -54,6 +60,8 @@ export async function POST(request: NextRequest) {
       conversation_id: conversationId,
       feedback_id: feedbackId,
       body: content,
+      title,
+      cs_content: csContent,
     })
     .select("id, token")
     .single();
@@ -68,5 +76,6 @@ export async function POST(request: NextRequest) {
     draftId: data.id,
     token: data.token,
     url: `${base}/api/cs/approve/${data.token}`,
+    escalateUrl: `${base}/api/cs/escalate/${data.token}`,
   });
 }
