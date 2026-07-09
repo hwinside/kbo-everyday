@@ -50,7 +50,7 @@ type Draft = {
   kind: "feedback" | "dm";
   user_id: string;
   conversation_id: string | null;
-  feedback_id: number | null;
+  feedback_id: string | null;
   body: string;
   status: string;
   expires_at: string;
