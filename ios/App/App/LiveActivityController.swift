@@ -443,9 +443,39 @@ enum WidgetSnapshotStore {
            let prevNext = prev["next"] {
             out["next"] = prevNext
         }
+        // B안(위젯 stale 가드) 지원 — 마지막 기록 시각(epoch초)을 항상 새로 찍는다. 위젯
+        // getTimeline이 live 스냅샷이 이 시각+5h를 넘도록 갱신 안 되면 LIVE를 떼고 '업데이트
+        // 필요'로 표시한다(앱 미실행 + 무음 wake 유실 대비 백스톱).
+        out["savedAt"] = Date().timeIntervalSince1970
         if let data = try? JSONSerialization.data(withJSONObject: out) {
             ud.set(data, forKey: key)
         }
         WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    /// 경기 종료 무음 push 수신 시(A안) 홈위젯 스냅샷을 최종 스코어로 종료 처리한다.
+    /// 현재 위젯이 이 경기(gameId)를 표시 중이고 아직 종료 전일 때만 갱신 — 다른/다음 경기
+    /// 스냅샷을 덮어쓰지 않는다. next(06:00 롤오버)는 write()가 보존하며 멱등(이미 final이면 skip).
+    static func markFinal(gameId: String, awayScore: Int, homeScore: Int) {
+        guard let ud = UserDefaults(suiteName: appGroupId),
+              let data = ud.data(forKey: key),
+              let obj = try? JSONSerialization.jsonObject(with: data),
+              var dict = obj as? [String: Any],
+              (dict["hasGame"] as? Bool) == true,
+              (dict["gameId"] as? String) == gameId else { return }
+        if (dict["isFinal"] as? Bool) == true || (dict["status"] as? String) == "final" { return }
+        dict["awayScore"] = awayScore
+        dict["homeScore"] = homeScore
+        dict["isFinal"] = true
+        dict["status"] = "final"
+        // 프리즈됐던 라이브 전용 값 정리(종료 카드엔 아웃/주자/투수·타자/문자중계 미표시).
+        dict["outs"] = 0
+        dict["onFirst"] = false
+        dict["onSecond"] = false
+        dict["onThird"] = false
+        dict["pitcherName"] = ""
+        dict["batterName"] = ""
+        dict["lastPlay"] = ""
+        write(dict)
     }
 }

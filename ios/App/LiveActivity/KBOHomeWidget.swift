@@ -25,6 +25,12 @@ import WidgetKit
 private let kAppGroup = "group.fan.keubo.app"
 private let kSnapshotKey = "kbo_widget_snapshot"
 
+/// B안 — 홈위젯 live 스냅샷 stale 판정 임계(초). iOS 홈위젯은 서버 푸시로 직접 갱신되지 않아
+/// 앱을 닫으면 마지막 LIVE 스냅샷에 얼어붙는다. A안(무음 wake) 유실 시 백스톱으로, live 스냅샷이
+/// 기록 후 이 시간을 넘도록 갱신 안 되면 LIVE를 떼고 '업데이트 필요'로 표시한다. 우천 중단 등
+/// 장시간 진행 케이스를 감안해 4h가 아닌 5h(하린아빠).
+private let kStaleLiveSeconds: TimeInterval = 5 * 60 * 60
+
 struct WidgetGameSnapshot: Codable {
     var hasGame: Bool
     var gameId: String
@@ -58,6 +64,11 @@ struct WidgetGameSnapshot: Codable {
     /// 다음 예정 경기 — 결과(final)/라이브 스냅샷일 때만 채워짐. 홈 팀카드 06시 규칙대로
     /// 위젯이 앱 실행 없이 '경기일 다음날 06:00'에 이 경기로 자동 전환(getTimeline).
     var next: NextGameSnapshot? = nil
+    /// 스냅샷 기록 시각(epoch초, 앱 LiveActivityController가 매 기록 시 찍음). live 스냅샷이 이
+    /// 시각+5h를 넘도록 갱신 안 되면 stale로 본다(B안). 구버전 스냅샷엔 없을 수 있어 옵셔널.
+    var savedAt: Double? = nil
+    /// getTimeline이 stale 판정 시 세팅하는 렌더 전용 플래그(스냅샷 저장 경로엔 안 쓰임, 기본 false).
+    var isStale: Bool = false
 
     /// 렌더 분기용 정규화 상태.
     var resolvedStatus: String {
@@ -133,6 +144,38 @@ struct GameWidgetProvider: TimelineProvider {
         let now = Date()
         var entries: [GameWidgetEntry] = []
 
+        // B안 stale 가드 — live 스냅샷이 기록 후 kStaleLiveSeconds(5h)를 넘도록 갱신 안 되면
+        // (앱 미실행 + A안 무음 wake 유실) LIVE를 떼고 stale 변형으로 전환한다. savedAt 없는
+        // 구버전 스냅샷/비-live 상태는 대상 아님(staleAt = nil).
+        let staleAt: Date? = {
+            guard let s = snap, s.resolvedStatus == "live", let ts = s.savedAt else { return nil }
+            return Date(timeIntervalSince1970: ts).addingTimeInterval(kStaleLiveSeconds)
+        }()
+        func staleVariant(_ s: WidgetGameSnapshot) -> WidgetGameSnapshot {
+            var c = s; c.isStale = true; return c
+        }
+        // 현재 스냅샷을 now에 추가하되, live면 staleAt 도달 시 stale 변형으로 전환한다.
+        // 이미 stale 지났으면 지금 stale, 아직이면 지금 live + staleAt에 전환 엔트리 예약
+        // (rollover 이전으로 한정 — cutoff). live가 아니면 staleAt=nil이라 그냥 현재 스냅샷.
+        func appendCurrent(before cutoff: Date?) {
+            guard let s = snap else {
+                entries.append(GameWidgetEntry(date: now, snapshot: nil))
+                return
+            }
+            guard let staleAt else {
+                entries.append(GameWidgetEntry(date: now, snapshot: s))
+                return
+            }
+            if now >= staleAt {
+                entries.append(GameWidgetEntry(date: now, snapshot: staleVariant(s)))
+            } else {
+                entries.append(GameWidgetEntry(date: now, snapshot: s))
+                if cutoff == nil || staleAt < cutoff! {
+                    entries.append(GameWidgetEntry(date: staleAt, snapshot: staleVariant(s)))
+                }
+            }
+        }
+
         // 홈 팀카드 06시 규칙 이식: 스냅샷에 다음 예정 경기가 캐시돼 있으면 '경기일 다음날
         // 06:00' 시점 엔트리를 추가해 앱 실행 없이도 위젯이 '경기 예정'으로 스스로 전환한다.
         // 상태 무관(예정 포함) — 예정 경기가 백그라운드서 종료로 안 바뀌어도(LA 미발동) 그날이
@@ -145,12 +188,12 @@ struct GameWidgetProvider: TimelineProvider {
                 // 이미 전환 시각을 지남 → 지금 바로 예정 경기 표시(앱 미실행 폴백).
                 entries.append(GameWidgetEntry(date: now, snapshot: nextSnap))
             } else {
-                // 전환 전 → 지금은 결과, rollover 시점에 예정 경기로 자동 전환.
-                entries.append(GameWidgetEntry(date: now, snapshot: snap))
+                // 전환 전 → 지금은 결과(live면 5h 후 stale), rollover 시점에 예정 경기로 자동 전환.
+                appendCurrent(before: rollover)
                 entries.append(GameWidgetEntry(date: rollover, snapshot: nextSnap))
             }
         } else {
-            entries.append(GameWidgetEntry(date: now, snapshot: snap))
+            appendCurrent(before: nil)
         }
 
         // 앱이 reloadAllTimelines()로 즉시 갱신하지만, 백그라운드 폴백으로 15분마다 재요청.
@@ -218,7 +261,8 @@ struct KBOHomeWidgetEntryView: View {
                     // #278에서 카드를 충분히 컴팩트화해 medium 높이에 수용.
                     KBOLockScreenCard(attributes: attributes(from: snap),
                                       state: state(from: snap),
-                                      fillHeight: true)
+                                      fillHeight: true,
+                                      isStale: snap.isStale)
                         .widgetContainerBackground { smallBackground(snap) }
                 }
             default:
@@ -228,7 +272,8 @@ struct KBOHomeWidgetEntryView: View {
                 } else {
                     // large — 세로 여유가 충분해 잠금화면 카드를 그대로 재사용 (디자인 동일)
                     KBOLockScreenCard(attributes: attributes(from: snap),
-                                      state: state(from: snap))
+                                      state: state(from: snap),
+                                      isStale: snap.isStale)
                         .padding(8)
                         .widgetContainerBackground { Color(hex: 0x0A0A0B) }
                 }
@@ -311,7 +356,11 @@ struct HomeWidgetSmallCard: View {
             }
 
             Group {
-                if snap.isFinal {
+                if snap.isStale {
+                    // B안 — 5h 넘게 갱신 안 된 live 스냅샷: LIVE 떼고 중립 표기('경기 종료' 단정 X,
+                    // 스코어가 최종 아닐 수 있음). 앱을 열면 최신화된다.
+                    Text("업데이트 필요").font(notoKR(9, .bold))
+                } else if snap.isFinal {
                     Text("경기 종료").font(notoKR(9, .bold))
                 } else {
                     Text("LIVE ").font(montserrat(9, .bold))
@@ -321,7 +370,7 @@ struct HomeWidgetSmallCard: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 7).padding(.vertical, 2)
             .background(
-                Capsule().fill(snap.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
+                Capsule().fill((snap.isStale || snap.isFinal) ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
             )
         }
         .foregroundStyle(.white)
