@@ -70,7 +70,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "insert_failed", detail: error?.message }, { status: 500 });
   }
 
-  const base = (process.env.NEXT_PUBLIC_APP_URL || "https://keubo.fan").replace(/\/$/, "");
+  // CS 운영 링크는 앱이 Universal Link로 안 잡는 호스트여야 iOS에서 브라우저로 열린다.
+  // keubo.fan은 앱이 잡아(applinks:keubo.fan) Apple CDN AASA 전파 전까지 앱으로 열림 → 별도 호스트 사용.
+  // 기본값=프로덕션 vercel.app(앱이 미클레임). 추후 cs.keubo.fan 등으로 CS_LINK_BASE 오버라이드 가능.
+  const base = (process.env.CS_LINK_BASE || "https://kbo-everyday.vercel.app").replace(/\/$/, "");
   return NextResponse.json({
     ok: true,
     draftId: data.id,
