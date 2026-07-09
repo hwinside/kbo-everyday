@@ -421,6 +421,11 @@ struct KBOLockScreenCard: View {
     /// 윗쪽 어두운 띠(seam)가 보였다.
     var fillHeight: Bool = false
 
+    /// 홈위젯 stale 가드(B안) — live 스냅샷이 5h 넘게 갱신 안 됐을 때 true. LIVE 뱃지를 떼고
+    /// '업데이트 필요'로 표기하며, 프리즈된 라이브 상세(아웃/주자/투수·타자/문자중계)는 숨긴다.
+    /// '경기 종료' 단정은 피한다(스코어가 최종이 아닐 수 있음 — 삼순 조건). 잠금화면 LA는 기본 false.
+    var isStale: Bool = false
+
     private var hasMyTeam: Bool {
         !attributes.myTeamCode.isEmpty &&
         (attributes.myTeamCode == attributes.awayTeamCode ||
@@ -445,7 +450,7 @@ struct KBOLockScreenCard: View {
             // medium(fillHeight) *종료(isFinal)* 상태에서만: 헤더 아래 점수를 남은 공간 세로 중앙으로
             // 분산해 아래 빈공간 어색함 해소. 라이브는 콘텐츠가 길어 자연 상단정렬 그대로(하린아빠:
             // "라이브는 그대로, 종료만"). 잠금화면 LA(fillHeight=false)도 영향 없음.
-            if fillHeight && state.isFinal { Spacer(minLength: 0) }
+            if fillHeight && (state.isFinal || isStale) { Spacer(minLength: 0) }
 
             // 스코어 행: 원정[로고+풀네임] | 점수:점수 + LIVE이닝 | 홈[로고+풀네임]
             HStack(spacing: 4) {
@@ -481,6 +486,9 @@ struct KBOLockScreenCard: View {
                         Group {
                             if state.isFinal {
                                 Text("경기 종료").font(notoKR(11, .bold))
+                            } else if isStale {
+                                // B안 — LIVE 떼고 중립 표기('경기 종료' 단정 X, 스코어 최종 아닐 수 있음).
+                                Text("업데이트 필요").font(notoKR(11, .bold))
                             } else {
                                 // LIVE + 숫자 = Montserrat, 회초/말 = Noto
                                 Text("LIVE ").font(montserrat(11, .bold)) + inningRun(state.inningText, 11, .bold)
@@ -488,15 +496,16 @@ struct KBOLockScreenCard: View {
                         }
                         .padding(.horizontal, 7).padding(.vertical, 1)
                         .background(
-                            Capsule().fill(state.isFinal ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
+                            Capsule().fill((state.isFinal || isStale) ? Color.white.opacity(0.18) : Color.red.opacity(0.85))
                         )
                     }
                 }
                 TeamBadge(code: attributes.homeTeamCode)
             }
 
-            // 하단: 아웃카운트(B/S 제거) + 투수/타자(소속) + 다이아몬드 (진행 중에만, 경기 전 제외)
-            if !state.isFinal && !state.isScheduled {
+            // 하단: 아웃카운트(B/S 제거) + 투수/타자(소속) + 다이아몬드 (진행 중에만, 경기 전 제외).
+            // stale(5h+ 미갱신)이면 프리즈된 라이브 상세가 오히려 오해를 줘 숨긴다(B안).
+            if !state.isFinal && !state.isScheduled && !isStale {
                 HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 3) {
                         // 아웃카운트만 유지
@@ -529,7 +538,7 @@ struct KBOLockScreenCard: View {
             // 문자중계 최근 플레이 한 줄 (진행 중에만). 예: "오스틴 우중간 적시 2루타".
             // 이닝은 상단 LIVE 표기와 중복이라 서버 문구에서 제외(타자+결과만). 현장감 위해
             // 그레이 틱커 바 + 라이브 점(빨강). 좁은 카드라 한 줄 고정 + 축소 폴백 + 말줄임. 없으면 미표시.
-            if !state.isFinal && !state.isScheduled, let lp = state.lastPlay, !lp.isEmpty {
+            if !state.isFinal && !state.isScheduled && !isStale, let lp = state.lastPlay, !lp.isEmpty {
                 HStack(spacing: 6) {
                     Circle()
                         .fill(Color(hex: 0xFF5A5A))
@@ -574,7 +583,7 @@ struct KBOLockScreenCard: View {
             }
 
             // 종료 상태에서만 트레일링 Spacer로 점수를 세로 중앙에. 라이브는 미적용(자연 상단정렬).
-            if fillHeight && state.isFinal { Spacer(minLength: 0) }
+            if fillHeight && (state.isFinal || isStale) { Spacer(minLength: 0) }
         }
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity)
