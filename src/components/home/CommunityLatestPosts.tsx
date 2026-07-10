@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { MessageCircle, Heart, ChevronRight, PenSquare } from "lucide-react";
 import { useUnifiedFeed } from "@/lib/supabase/useUnifiedFeed";
@@ -18,6 +18,10 @@ import type { Post } from "@/lib/supabase/usePosts";
 const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
 
 const HOME_LATEST_COUNT = 15;
+
+// 홈 최신글에서 글을 열었다는 표식(sessionStorage). 뒤로가기로 홈에 돌아왔을 때
+// 홈 최상단이 아니라 이 섹션으로 다시 포커스하기 위한 1회용 플래그(하린아빠 스펙).
+const HOME_FOCUS_KEY = "kbo:home-focus-community";
 
 function timeAgo(dateStr: string): string {
   const mins = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
@@ -226,6 +230,10 @@ function PostRow({ post }: { post: Post }) {
   return (
     <Link
       href={getPostDetailPath(post)}
+      onClick={() => {
+        // 홈 최신글에서 연 글 → 뒤로 나오면 이 섹션으로 포커스 복귀시키도록 표식.
+        try { sessionStorage.setItem(HOME_FOCUS_KEY, "1"); } catch { /* private mode 무시 */ }
+      }}
       className="flex items-center gap-3 py-2.5 active:opacity-70 transition-opacity"
     >
       {/* 썸네일 56x56 — 선수 히어로샷/팀 로고는 팀컬러 그라데이션 배경(선수페이지 동일) */}
@@ -305,6 +313,45 @@ export default function CommunityLatestPosts({ myTeamId }: { myTeamId: number | 
   const { posts, loading, reload } = useUnifiedFeed({ kind: "all" }, HOME_LATEST_COUNT);
   const { user } = useAuth();
   const [writeMode, setWriteMode] = useState<WriteFlowMode>(null);
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const didFocusRef = useRef(false);
+
+  const showList = !loading && posts.length > 0;
+
+  // 홈 최신글에서 글을 열고 뒤로 나온 경우에 한해, 홈 최상단 대신 이 섹션으로 스크롤 복귀.
+  // router.back() 직후엔 뉴스/숏츠 등 상단 섹션이 뒤늦게 로드되며 위치가 아래로 밀리므로,
+  // 유저가 직접 스크롤(휠/터치/키)하기 전까지 짧은 창(≤1s) 동안 섹션을 뷰포트 상단에 재고정한다.
+  useEffect(() => {
+    if (!showList || didFocusRef.current || typeof window === "undefined") return;
+    let flagged = false;
+    try { flagged = sessionStorage.getItem(HOME_FOCUS_KEY) === "1"; } catch { /* 무시 */ }
+    if (!flagged) return;
+    didFocusRef.current = true;
+    try { sessionStorage.removeItem(HOME_FOCUS_KEY); } catch { /* 무시 */ }
+
+    let cancelled = false;
+    const cancel = () => { cancelled = true; };
+    window.addEventListener("wheel", cancel, { passive: true, once: true });
+    window.addEventListener("touchstart", cancel, { passive: true, once: true });
+    window.addEventListener("keydown", cancel, { once: true });
+
+    const start = Date.now();
+    let raf = 0;
+    const pin = () => {
+      if (cancelled) return;
+      sectionRef.current?.scrollIntoView({ block: "start" });
+      if (Date.now() - start < 1000) raf = requestAnimationFrame(pin);
+    };
+    raf = requestAnimationFrame(pin);
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      window.removeEventListener("wheel", cancel);
+      window.removeEventListener("touchstart", cancel);
+      window.removeEventListener("keydown", cancel);
+    };
+  }, [showList]);
 
   // 로딩 중이거나 글이 없으면 섹션 자체를 숨김(빈 박스 방지) — 뉴스 섹션과 동일 패턴.
   if (loading || posts.length === 0) return null;
@@ -312,7 +359,7 @@ export default function CommunityLatestPosts({ myTeamId }: { myTeamId: number | 
   const latest = posts.slice(0, HOME_LATEST_COUNT);
 
   return (
-    <section>
+    <section ref={sectionRef} className="scroll-mt-4">
       <div className="flex items-center justify-between mb-1">
         <h2 className="text-lg font-semibold leading-[26px] text-text-primary">💬 커뮤니티 최신글</h2>
         <Link
