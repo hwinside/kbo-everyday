@@ -921,6 +921,19 @@ function CancelledView() {
   );
 }
 
+/* 올스타전 안내 — 잠금화면/위젯 실시간 중계 미지원 고지(네이티브 미대응). 크관 상단 상시 노출. */
+function AllStarKgwanNotice() {
+  return (
+    <div className="glass-card p-3 mb-3 flex items-start gap-2">
+      <span className="text-base leading-none mt-0.5">ℹ️</span>
+      <p className="text-xs leading-relaxed text-text-secondary">
+        올스타전은 <span className="font-medium text-text-primary">잠금화면·위젯 실시간 중계</span>를 지원하지 않아요.
+        실시간 중계는 이곳 크관에서 확인해 주세요.
+      </p>
+    </div>
+  );
+}
+
 /* ===== Main KgwanTab ===== */
 export default function KgwanTab({
   gameId,
@@ -938,18 +951,42 @@ export default function KgwanTab({
   lineupConfirmed,
   gameRelay,
 }: KgwanTabProps) {
+  // 올스타전은 잠금/위젯 실시간 중계 미지원(네이티브 미대응) → 크관 상단 상시 안내.
+  // 정규경기는 null이라 프래그먼트 출력이 기존과 동일(회귀 없음).
+  const allStarNotice = isAllStarGame(awayTeamId, homeTeamId) ? <AllStarKgwanNotice /> : null;
+
   if (status === "scheduled") {
-    return <ScheduledView gameId={gameId} awayTeamId={awayTeamId} homeTeamId={homeTeamId} gameDate={gameDate} gameStartTime={gameStartTime} starterNames={starterNames} lineupConfirmed={lineupConfirmed} />;
+    return (
+      <>
+        {allStarNotice}
+        <ScheduledView gameId={gameId} awayTeamId={awayTeamId} homeTeamId={homeTeamId} gameDate={gameDate} gameStartTime={gameStartTime} starterNames={starterNames} lineupConfirmed={lineupConfirmed} />
+      </>
+    );
   }
 
   if (status === "live") {
-    return <LiveView gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} gameEvents={gameEvents} gameRelay={gameRelay} />;
+    return (
+      <>
+        {allStarNotice}
+        <LiveView gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} gameEvents={gameEvents} gameRelay={gameRelay} />
+      </>
+    );
   }
 
   if (status === "cancelled") {
-    return <CancelledView />;
+    return (
+      <>
+        {allStarNotice}
+        <CancelledView />
+      </>
+    );
   }
 
   // final
-  return <FinalView gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} boxScore={boxScore} linescore={linescore} />;
+  return (
+    <>
+      {allStarNotice}
+      <FinalView gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} boxScore={boxScore} linescore={linescore} />
+    </>
+  );
 }
