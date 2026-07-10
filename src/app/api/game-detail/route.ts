@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchGames } from "@/lib/crawler/kbo-api";
+import { isAllStarGameId } from "@/lib/constants/teams";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { fetchNaverRelayBatterCounts } from "@/lib/naver-relay-counts";
@@ -417,8 +418,10 @@ const NAVER_API = "https://api-gw.sports.naver.com/schedule/games";
 
 function naverGameId(kboGameId: string): string {
   // KBO gameId: 20260405LGWO0 → Naver: 20260405LGWO02026
+  // 올스타는 네이버가 앞 4자리 연도를 9999로 서비스: 20260711WEEA0 → 99990711WEEA02026
   const year = kboGameId.slice(0, 4);
-  return `${kboGameId}${year}`;
+  const base = isAllStarGameId(kboGameId) ? `9999${kboGameId.slice(4)}` : kboGameId;
+  return `${base}${year}`;
 }
 
 const POS_SHORT_TO_FULL: Record<string, string> = {
