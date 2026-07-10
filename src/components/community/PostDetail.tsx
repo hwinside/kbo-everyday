@@ -406,6 +406,21 @@ export default function PostDetail({ postId }: PostDetailProps) {
           )}
         </div>
 
+        {/* 미디어 — 사진 → 글 순서(피드 PhotoFeed와 동일). 인스타식 캐러셀(스와이프+점+더블탭 좋아요).
+            본문 px-5 패딩 밖으로 -mx-5 full-bleed. mb-4로 아래 본문과 간격(위 간격은 작성자행 mb-3). */}
+        {(post.image_urls.length > 0 || (post.video_urls?.length ?? 0) > 0) && (
+          <div className="relative mb-4 -mx-5">
+            <PhotoCarousel
+              slides={[
+                ...post.image_urls.map((url: string) => ({ url, isVideo: false })),
+                ...(post.video_urls ?? []).map((url: string) => ({ url, isVideo: true })),
+              ]}
+              onDoubleTap={handleMediaDoubleTap}
+            />
+            <HeartOverlay show={heartShow} />
+          </div>
+        )}
+
         {postEditing ? (
           <div className="space-y-2 mb-3">
             <textarea
@@ -439,9 +454,12 @@ export default function PostDetail({ postId }: PostDetailProps) {
               return <BrandedTextCard post={post} body={merged} />;
             }
             const attr = parseAttribution(merged);
+            const body = stripUrls(attr ? attr.body : merged);
+            // 사진 → 글 순서로 미디어가 위에 오므로, 캡션 없는 사진 글은 빈 문단을 렌더하지 않음.
+            if (hasMedia && !body && !attr) return null;
             return (
               <p className="readable-body whitespace-pre-line">
-                {stripUrls(attr ? attr.body : merged)}
+                {body}
                 {attr && (
                   <>
                     {`${attr.body ? "\n\n" : ""}(출처: ${attr.handle ? attr.label + " " : ""}`}
@@ -469,21 +487,6 @@ export default function PostDetail({ postId }: PostDetailProps) {
             />
           );
         })()}
-
-        {/* 미디어 — 피드(PhotoFeed)와 동일한 인스타식 캐러셀(한 장씩 스와이프 + 점 인디케이터 + 더블탭 좋아요).
-            본문은 px-5 패딩 안이라 -mx-5로 full-bleed 처리(피드 카드와 동일한 풀블리드 룩). */}
-        {(post.image_urls.length > 0 || (post.video_urls?.length ?? 0) > 0) && (
-          <div className="relative mt-4 -mx-5">
-            <PhotoCarousel
-              slides={[
-                ...post.image_urls.map((url: string) => ({ url, isVideo: false })),
-                ...(post.video_urls ?? []).map((url: string) => ({ url, isVideo: true })),
-              ]}
-              onDoubleTap={handleMediaDoubleTap}
-            />
-            <HeartOverlay show={heartShow} />
-          </div>
-        )}
 
         {/* Actions */}
         <div className="flex items-center gap-4 mt-4 pt-3 border-t border-border">
