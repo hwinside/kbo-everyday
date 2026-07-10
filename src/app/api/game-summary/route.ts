@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
-import { TEAMS } from "@/lib/constants/teams";
+import { TEAMS, isAllStarGameId } from "@/lib/constants/teams";
 import { fetchStandings } from "@/lib/crawler/kbo-api";
 import { computeSeriesSnapshot, serializeSeriesSnapshot } from "@/lib/series/snapshot";
 import { loserClaimedWin } from "@/lib/game-summary/winner-check";
@@ -340,6 +340,8 @@ function normalizeSummary(s: Record<string, unknown>): Record<string, unknown> {
 export async function GET(req: NextRequest) {
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) return NextResponse.json({ error: "gameId required" }, { status: 400 });
+  // 올스타전은 AI 경기 요약 미제공(팀 기반 분석 무의미 — 승부예측/라인업분석 #544와 일관).
+  if (isAllStarGameId(gameId)) return NextResponse.json({ summary: null, source: "allstar" });
 
   const cached = await getCached(gameId);
   if (cached) {
@@ -361,6 +363,8 @@ export async function POST(req: NextRequest) {
   if (!body.gameId || !body.awayTeam || !body.homeTeam) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
+  // 올스타전은 AI 경기 요약 생성 안 함 (#544 AI 비활성화와 일관).
+  if (isAllStarGameId(body.gameId)) return NextResponse.json({ summary: null, source: "allstar" });
 
   // Sanity check
   const allBatters = [...(body.awayBatters || []), ...(body.homeBatters || [])];
