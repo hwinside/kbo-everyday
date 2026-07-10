@@ -50,6 +50,15 @@ const HIGHLIGHT_PARTICLE: Partial<Record<GameEventType, string>> = {
 // 기존 장타(at_bat_double/triple/homerun, #fav)는 prod 안전성 유지 위해 컷오프 미적용.
 const FRESH_MS = 10 * 60 * 1000;
 
+// 2026 올스타 참가선수 중 우리 로스터에 동명이인이 있어 이름만으로 특정 불가한 선수 →
+// 발표 명단(KBO 크보라이브 2026-06-29)의 소속팀 기준 kboId를 확정해 정확 발송.
+// (이름 유일 매칭만으론 이 2명은 skip돼 알림 누락.) 나머지 참가자는 유일 매칭으로 커버.
+//   이승민: 삼성(50464)  [SSG 54806 아님] / 최원준: KT(66606)  [두산 67263 아님]
+const ALLSTAR_2026_DUP_KBOID: Record<string, string> = {
+  이승민: "50464",
+  최원준: "66606",
+};
+
 export async function notifyPlayerHighlights(
   games: KboRawGame[],
   eventsByGame: Map<string, GameEvent[]>,
@@ -94,14 +103,16 @@ export async function notifyPlayerHighlights(
       const playerName = isStrikeout ? ev.detail?.pitcher : ev.detail?.batter;
       if (!playerName) continue;
       // 올스타전은 게임 팀이 나눔/드림(101/102)이라 teamId로 선수 특정 불가 →
-      // 이름 유일 매칭만 발송(동명이인 2+·미등록 0이면 skip)해 오발송 방지.
-      // 정규경기는 기존대로 공격/수비팀 teamId로 동명이인 분리.
+      // ① 동명이인 참가선수는 발표명단 기준 override로 정확 발송, ② 그 외는 이름 유일
+      // 매칭(동명이인 2+·미등록 0이면 skip)해 오발송 방지. 정규경기는 기존 teamId 경로.
       const teamId = isAllStar
         ? null
         : teamIdByShortName(isStrikeout ? (ev.isTop ? home : away) : (ev.isTop ? away : home));
       if (!isAllStar && teamId === null) continue;
       const resolved = isAllStar
-        ? resolveUniquePlayerByName(playerName)
+        ? (ALLSTAR_2026_DUP_KBOID[playerName]
+            ? resolvePlayer({ kboId: ALLSTAR_2026_DUP_KBOID[playerName] })
+            : resolveUniquePlayerByName(playerName))
         : resolvePlayer(
             { name: playerName, teamId: teamId as number },
             undefined,
