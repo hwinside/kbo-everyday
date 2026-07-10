@@ -125,6 +125,21 @@ export function resolvePlayer(
   return result;
 }
 
+/**
+ * 이름이 로스터에 *정확히 하나*일 때만 resolve. 동명이인(2+)·미등록(0)이면 null.
+ * 팀으로 동명이인을 분리할 수 없는 경로(예: 올스타전 — 게임 팀이 나눔/드림이라
+ * 선수의 실제 소속으로 좁힐 수 없음) 전용. 오매칭(엉뚱한 동명이인) 방지가 목적.
+ */
+export function resolveUniquePlayerByName(
+  name: string,
+  roster: RosterPlayer[] = DEFAULT_ROSTER,
+): ResolvedPlayer | null {
+  const q = name?.trim();
+  if (!q) return null;
+  const matches = roster.filter((p) => p.name === q);
+  return matches.length === 1 ? toResolved(matches[0]) : null;
+}
+
 function resolveInternal(
   query: PlayerQuery,
   roster: RosterPlayer[]
