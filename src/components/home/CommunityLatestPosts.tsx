@@ -19,9 +19,26 @@ const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
 
 const HOME_LATEST_COUNT = 15;
 
-// 홈 최신글에서 글을 열었다는 표식(sessionStorage). 뒤로가기로 홈에 돌아왔을 때
-// 홈 최상단이 아니라 이 섹션으로 다시 포커스하기 위한 1회용 플래그(하린아빠 스펙).
-const HOME_FOCUS_KEY = "kbo:home-focus-community";
+// 홈 최신글에서 글을 열었다는 표식(sessionStorage, pending). 클릭 시점엔 아직
+// "뒤로가기로 돌아왔는지" 알 수 없으므로 대기 상태로만 남긴다.
+const HOME_FOCUS_PENDING_KEY = "kbo:home-focus-pending";
+// 실제 popstate(브라우저/제스처 뒤로가기)가 발생했을 때만 pending→confirmed로 승격되는 플래그.
+// 홈이 마운트될 때 이 플래그만 소비한다 — 탭바 홈 이동 등 push 네비게이션은 popstate가 없어
+// confirmed가 세팅되지 않으므로 스크롤이 발동하지 않는다(삼순 리뷰 반영, PR #597).
+const HOME_FOCUS_CONFIRMED_KEY = "kbo:home-focus-confirmed";
+
+// 모듈은 SPA 수명 동안 1회만 평가되는 싱글턴이라(Next.js 클라이언트 라우팅은 전체 리로드 없이
+// 같은 JS 컨텍스트를 유지) 여기서 등록한 popstate 리스너는 라우트 전환과 무관하게 항상 살아있다.
+if (typeof window !== "undefined") {
+  window.addEventListener("popstate", () => {
+    try {
+      if (sessionStorage.getItem(HOME_FOCUS_PENDING_KEY) === "1") {
+        sessionStorage.setItem(HOME_FOCUS_CONFIRMED_KEY, "1");
+        sessionStorage.removeItem(HOME_FOCUS_PENDING_KEY);
+      }
+    } catch { /* private mode 무시 */ }
+  });
+}
 
 function timeAgo(dateStr: string): string {
   const mins = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
@@ -231,8 +248,9 @@ function PostRow({ post }: { post: Post }) {
     <Link
       href={getPostDetailPath(post)}
       onClick={() => {
-        // 홈 최신글에서 연 글 → 뒤로 나오면 이 섹션으로 포커스 복귀시키도록 표식.
-        try { sessionStorage.setItem(HOME_FOCUS_KEY, "1"); } catch { /* private mode 무시 */ }
+        // 홈 최신글에서 연 글 → 실제 뒤로가기(popstate)로 나올 때만 이 섹션으로 포커스
+        // 복귀시키도록 대기 표식만 남긴다(확정은 popstate 리스너가 담당).
+        try { sessionStorage.setItem(HOME_FOCUS_PENDING_KEY, "1"); } catch { /* private mode 무시 */ }
       }}
       className="flex items-center gap-3 py-2.5 active:opacity-70 transition-opacity"
     >
@@ -323,11 +341,14 @@ export default function CommunityLatestPosts({ myTeamId }: { myTeamId: number | 
   // 유저가 직접 스크롤(휠/터치/키)하기 전까지 짧은 창(≤1s) 동안 섹션을 뷰포트 상단에 재고정한다.
   useEffect(() => {
     if (!showList || didFocusRef.current || typeof window === "undefined") return;
-    let flagged = false;
-    try { flagged = sessionStorage.getItem(HOME_FOCUS_KEY) === "1"; } catch { /* 무시 */ }
-    if (!flagged) return;
+    let confirmed = false;
+    try { confirmed = sessionStorage.getItem(HOME_FOCUS_CONFIRMED_KEY) === "1"; } catch { /* 무시 */ }
+    // 이 시점까지 confirmed가 안 세팅됐다면 popstate 없이(탭바 홈 등) 도착한 것 — pending이
+    // 남아있으면 이후 무관한 popstate에서 오탐하지 않도록 정리한다.
+    try { sessionStorage.removeItem(HOME_FOCUS_PENDING_KEY); } catch { /* 무시 */ }
+    if (!confirmed) return;
     didFocusRef.current = true;
-    try { sessionStorage.removeItem(HOME_FOCUS_KEY); } catch { /* 무시 */ }
+    try { sessionStorage.removeItem(HOME_FOCUS_CONFIRMED_KEY); } catch { /* 무시 */ }
 
     let cancelled = false;
     const cancel = () => { cancelled = true; };
