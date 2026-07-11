@@ -39,6 +39,17 @@ export async function POST(req: NextRequest) {
     .neq("user_id", verified.user.id);
   if (cleanupErr) return supabaseErrorResponse(cleanupErr);
 
+  // 새 기기/재설치 감지 — 이전 토큰과 다른 토큰이 등록되면(앱 재설치 = 새 push-to-start
+  // 토큰) 이 유저의 자동시작 선점 기록을 비워, 진행 중인 경기에 대해 새 카드를 다시 받게 한다.
+  // (선점은 중복 발송 dedup용일 뿐 — 지운 뒤에도 alreadyActive[활성 카드 토큰]가 중복을 막는다.
+  //  같은 기기 재부팅은 토큰이 동일 → 아무것도 지우지 않으므로 정상 세션엔 영향 없음.)
+  const { data: prevRow } = await supabase
+    .from("live_activity_start_tokens")
+    .select("push_to_start_token")
+    .eq("user_id", verified.user.id)
+    .maybeSingle();
+  const isFreshDevice = prevRow?.push_to_start_token !== pushToStartToken;
+
   const { error } = await supabase.from("live_activity_start_tokens").upsert(
     {
       user_id: verified.user.id,
@@ -49,5 +60,13 @@ export async function POST(req: NextRequest) {
   );
 
   if (error) return supabaseErrorResponse(error);
+
+  if (isFreshDevice) {
+    await supabase
+      .from("live_activity_started_users")
+      .delete()
+      .eq("user_id", verified.user.id);
+  }
+
   return NextResponse.json({ success: true });
 }
