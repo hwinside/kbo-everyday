@@ -11,7 +11,7 @@ import OnboardingFlow from "@/components/onboarding/OnboardingFlow";
 import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
 import LoginSheet from "@/components/auth/LoginSheet";
 import PWAInstallBanner from "@/components/ui/PWAInstallBanner";
-import { TEAMS, getTeamById } from "@/lib/constants/teams";
+import { TEAMS, getTeamById, isAllStarGameId } from "@/lib/constants/teams";
 import { useLiveGame, type LiveGameData } from "@/lib/hooks/useLiveGame";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
@@ -26,6 +26,7 @@ import { writeHomeWidgetSnapshot, type HomeWidgetGame } from "@/lib/native-live-
 import { latestRelayLine } from "@/lib/notifications/relay-line";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
 import MyTeamHero from "@/components/home/MyTeamHero";
+import AllStarGameBanner from "@/components/home/AllStarGameBanner";
 import TeamCard from "@/components/home/TeamCard";
 import FavoritePlayersSection from "@/components/home/FavoritePlayersSection";
 import TodayGamesSection from "@/components/home/TodayGamesSection";
@@ -683,6 +684,12 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       <Suspense fallback={null}>
         <WhatsNewCard />
       </Suspense>
+
+      {/* 올스타전 크관 연결 배너 — 경기 2시간 전부터 팀카드 위 노출 (2026-07-11 하린아빠) */}
+      {(() => {
+        const allStarGame = todayGames.find((g) => isAllStarGameId(g.id));
+        return allStarGame ? <AllStarGameBanner game={allStarGame} /> : null;
+      })()}
 
       {/* 팀 카드 (필수, 토글 없음) — 경기카드(MyTeamHero)를 안에 종속 임베드(④=B) */}
       {myTeam && (
