@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { TEAMS } from "@/lib/constants/teams";
+import { NEWS_CLIPPER_BY_TEAM, NEWS_CLIPPER_IDS } from "@/lib/constants/news-clippers";
 import { buildTeamClipping, kstDateString } from "@/lib/news-clipping";
 import { mapWithConcurrency } from "@/lib/naver-news";
 import type { NewsClippingPayload } from "@/types/news-clipping";
 
 // 팀별 뉴스클리핑 발송 cron — 매일 07:00 KST(UTC 22시, vercel.json).
 // 어제 팀 기사 상위 5개(중복 제외 + Gemini 3줄 요약)를 최애팀 팬 전원에게 쪽지로.
+// - 발신자는 팀별 전용 계정 "{팀} 뉴스클리퍼"(NEWS_CLIPPER_BY_TEAM) — 운영팀 쪽지함/CS
+//   릴레이와 완전 분리해 클리핑 답장이 CS 인입함을 오염시키지 않게 한다
 // - 수신 토글(notification_prefs.news_clipping, 기본 ON) OFF 유저는 쪽지 생성 자체를 스킵
 // - (clip_date, user_id) 선점(news_clipping_sends)으로 재실행에도 유저당 1일 1회 보장
 // - 기사 0개(휴식일 등) 또는 요약 가능 기사 0개인 팀은 미발송 (빈 클리핑 금지)
-// - 푸시는 dm_messages INSERT 트리거 → 디스패처가 payload.type 보고 전용 문구로 발송
+// - 푸시는 dm_messages INSERT 트리거 → 디스패처가 클리퍼 발신+payload.type 보고 전용 문구 발송
 
 export const maxDuration = 300; // 팀 10개 × (네이버 2p + Gemini + OG 5) + 쪽지 bulk insert
 
@@ -32,27 +35,27 @@ function clippingContent(teamName: string): string {
   return `📰 오늘의 ${teamName} 뉴스클리핑`;
 }
 
-/** 운영팀 계정의 전체 대화를 페이지네이션으로 로드 → 상대 userId → conversationId 맵 */
-async function loadConversationMap(admin: Admin, systemUserId: string): Promise<Map<string, string>> {
+/** 발신 계정(클리퍼)의 전체 대화를 페이지네이션으로 로드 → 상대 userId → conversationId 맵 */
+async function loadConversationMap(admin: Admin, senderId: string): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await admin
       .from("dm_conversations")
       .select("id, user1_id, user2_id")
-      .or(`user1_id.eq.${systemUserId},user2_id.eq.${systemUserId}`)
+      .or(`user1_id.eq.${senderId},user2_id.eq.${senderId}`)
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(`conversations load failed: ${error.message}`);
     if (!data || data.length === 0) break;
     for (const c of data) {
-      const other = c.user1_id === systemUserId ? c.user2_id : c.user1_id;
-      if (other && other !== systemUserId) map.set(other as string, c.id as string);
+      const other = c.user1_id === senderId ? c.user2_id : c.user1_id;
+      if (other && other !== senderId) map.set(other as string, c.id as string);
     }
     if (data.length < PAGE_SIZE) break;
   }
   return map;
 }
 
-/** 특정 팀 팬 전원 (운영팀 제외, 1000행 캡 회피 페이지네이션) */
+/** 특정 팀 팬 전원 (운영팀·클리퍼 계정 제외, 1000행 캡 회피 페이지네이션) */
 async function fetchTeamFans(admin: Admin, teamId: number, systemUserId: string): Promise<string[]> {
   const ids: string[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
@@ -67,7 +70,8 @@ async function fetchTeamFans(admin: Admin, teamId: number, systemUserId: string)
     ids.push(...data.map((r: { id: string }) => r.id));
     if (data.length < PAGE_SIZE) break;
   }
-  return ids;
+  // 클리퍼 계정도 team_id를 가진 profiles라 자기 자신(및 타 클리퍼) 제외
+  return ids.filter((id) => !NEWS_CLIPPER_IDS.has(id));
 }
 
 /** 수신 토글 필터 — row 없음 = 기본 ON, 명시적으로 끈 유저만 제외 */
@@ -112,10 +116,10 @@ async function claimUsers(
   return claimed;
 }
 
-/** 대화가 없는 유저에게 운영팀 대화 생성 (bulk) — 맵에 추가 */
+/** 대화가 없는 유저에게 발신 계정과의 대화 생성 (bulk) — 맵에 추가 */
 async function ensureConversations(
   admin: Admin,
-  systemUserId: string,
+  senderId: string,
   convMap: Map<string, string>,
   userIds: string[],
   preview: string,
@@ -125,7 +129,7 @@ async function ensureConversations(
   for (let i = 0; i < missing.length; i += INSERT_CHUNK) {
     const slice = missing.slice(i, i + INSERT_CHUNK);
     const rows = slice.map((userId) => {
-      const [u1, u2] = [systemUserId, userId].sort();
+      const [u1, u2] = [senderId, userId].sort();
       return { user1_id: u1, user2_id: u2, last_message: preview, last_message_at: nowIso };
     });
     const { data, error } = await admin
@@ -134,7 +138,7 @@ async function ensureConversations(
       .select("id, user1_id, user2_id");
     if (error) throw new Error(`conv create failed: ${error.message}`);
     for (const c of data ?? []) {
-      const other = c.user1_id === systemUserId ? c.user2_id : c.user1_id;
+      const other = c.user1_id === senderId ? c.user2_id : c.user1_id;
       convMap.set(other as string, c.id as string);
     }
   }
@@ -152,8 +156,8 @@ interface TeamSendResult {
 
 async function sendTeamClipping(
   admin: Admin,
+  senderId: string,
   systemUserId: string,
-  convMap: Map<string, string>,
   clipDate: string,
   teamId: number,
   teamShort: string,
@@ -165,7 +169,8 @@ async function sendTeamClipping(
   const optedIn = await filterByClippingPref(admin, fans);
   const claimed = await claimUsers(admin, clipDate, teamId, optedIn);
 
-  await ensureConversations(admin, systemUserId, convMap, claimed, content);
+  const convMap = await loadConversationMap(admin, senderId);
+  await ensureConversations(admin, senderId, convMap, claimed, content);
 
   const nowIso = new Date().toISOString();
   let sent = 0;
@@ -177,7 +182,7 @@ async function sendTeamClipping(
       .filter((convId): convId is string => Boolean(convId))
       .map((convId) => ({
         conversation_id: convId,
-        sender_id: systemUserId,
+        sender_id: senderId,
         content,
         payload,
       }));
@@ -233,14 +238,7 @@ export async function GET(req: NextRequest) {
     }
   });
 
-  // 2) 발송 — 대화 맵은 1회 로드 후 팀 간 공유
-  let convMap: Map<string, string>;
-  try {
-    convMap = await loadConversationMap(admin, systemUserId);
-  } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
-  }
-
+  // 2) 발송 — 팀별 전용 클리퍼 계정에서
   const results: TeamSendResult[] = [];
   for (let i = 0; i < TEAMS.length; i++) {
     const payload = clippings[i];
@@ -249,9 +247,17 @@ export async function GET(req: NextRequest) {
       results.push({ team: team.shortName, articles: 0, targets: 0, sent: 0, skippedPref: 0, alreadySent: 0 });
       continue;
     }
+    const senderId = NEWS_CLIPPER_BY_TEAM[team.id];
+    if (!senderId) {
+      results.push({
+        team: team.shortName, articles: payload.articles.length, targets: 0, sent: 0,
+        skippedPref: 0, alreadySent: 0, error: "clipper account missing",
+      });
+      continue;
+    }
     try {
       results.push(
-        await sendTeamClipping(admin, systemUserId, convMap, clipDate, team.id, team.shortName, payload),
+        await sendTeamClipping(admin, senderId, systemUserId, clipDate, team.id, team.shortName, payload),
       );
     } catch (e) {
       console.error(`[news-clipping] send failed (${team.shortName}):`, (e as Error).message);
@@ -271,8 +277,7 @@ export async function POST(req: NextRequest) {
   if (!authorized(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const systemUserId = process.env.SYSTEM_USER_ID;
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY || !systemUserId) {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return NextResponse.json({ error: "missing_config" }, { status: 500 });
   }
 
@@ -298,6 +303,10 @@ export async function POST(req: NextRequest) {
   if (!team) {
     return NextResponse.json({ error: "team not found (최애팀 미설정)" }, { status: 400 });
   }
+  const senderId = NEWS_CLIPPER_BY_TEAM[team.id];
+  if (!senderId) {
+    return NextResponse.json({ error: "clipper account missing" }, { status: 500 });
+  }
 
   const payload = await buildTeamClipping(team.id, team.shortName, team.name);
   if (!payload) {
@@ -310,11 +319,11 @@ export async function POST(req: NextRequest) {
     .from("dm_conversations")
     .select("id, user1_id, user2_id")
     .or(
-      `and(user1_id.eq.${systemUserId},user2_id.eq.${userId}),and(user1_id.eq.${userId},user2_id.eq.${systemUserId})`,
+      `and(user1_id.eq.${senderId},user2_id.eq.${userId}),and(user1_id.eq.${userId},user2_id.eq.${senderId})`,
     )
     .maybeSingle();
   if (existing) convMap.set(userId, existing.id as string);
-  await ensureConversations(admin, systemUserId, convMap, [userId], content);
+  await ensureConversations(admin, senderId, convMap, [userId], content);
 
   const convId = convMap.get(userId);
   if (!convId) {
@@ -322,7 +331,7 @@ export async function POST(req: NextRequest) {
   }
   const { error: msgError } = await admin.from("dm_messages").insert({
     conversation_id: convId,
-    sender_id: systemUserId,
+    sender_id: senderId,
     content,
     payload,
   });
@@ -338,6 +347,7 @@ export async function POST(req: NextRequest) {
     ok: true,
     sample: true,
     conversationId: convId,
+    sender: `${team.shortName} 뉴스클리퍼`,
     team: team.shortName,
     articles: payload.articles.length,
     overview: payload.overview,

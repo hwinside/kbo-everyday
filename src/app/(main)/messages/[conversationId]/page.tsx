@@ -10,6 +10,7 @@ import { useBlockUser } from "@/lib/supabase/useBlock";
 import { submitDMReport } from "@/lib/supabase/useBlock";
 import { supabase } from "@/lib/supabase/client";
 import { OPERATOR_USER_ID } from "@/lib/constants/operator";
+import { NEWS_CLIPPER_IDS } from "@/lib/constants/news-clippers";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { linkifyText } from "@/lib/linkify";
 import NewsClippingCard from "@/components/dm/NewsClippingCard";
@@ -78,6 +79,8 @@ export default function DMChatPage() {
   // 사진 첨부는 운영팀과의 대화에서만 허용 (유저↔유저 DM은 범위 외).
   // 닉네임 위조 방지를 위해 운영팀 user_id로 판정.
   const isOperatorConv = otherId === OPERATOR_USER_ID;
+  // 뉴스클리퍼 대화 — 자동 발송 전용, 답장 시 자동응답만 옴 (안내 배너 노출)
+  const isClipperConv = otherId != null && NEWS_CLIPPER_IDS.has(otherId);
 
   // UI states
   const [showMenu, setShowMenu] = useState(false);
@@ -186,7 +189,7 @@ export default function DMChatPage() {
             ) : null}
             <h1 className="text-base font-bold text-text-primary truncate">{otherName}</h1>
           </div>
-          <p className="text-[10px] text-text-tertiary">1:1 쪽지</p>
+          <p className="text-[10px] text-text-tertiary">{isClipperConv ? "자동 발송 전용" : "1:1 쪽지"}</p>
         </div>
         <div className="relative">
           <button onClick={() => setShowMenu(!showMenu)} className="p-1.5 rounded-full hover:bg-bg-tertiary transition-colors">
@@ -227,10 +230,14 @@ export default function DMChatPage() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-        {/* Safety Banner */}
+        {/* Safety Banner — 클리퍼 대화는 자동 발송 전용 안내로 대체 */}
         <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-yellow-500/10 text-yellow-500 text-xs">
           <AlertTriangle size={14} className="flex-shrink-0" />
-          <span>쪽지는 개인 간 대화입니다. 금전 거래 시 사기에 주의하세요.</span>
+          <span>
+            {isClipperConv
+              ? "자동 발송 전용 계정입니다. 답장을 확인하지 않아요 — 문의는 '피드백 보내기'를 이용해주세요."
+              : "쪽지는 개인 간 대화입니다. 금전 거래 시 사기에 주의하세요."}
+          </span>
         </div>
 
         {loading ? (
@@ -242,8 +249,9 @@ export default function DMChatPage() {
         ) : (
           messages.map((msg) => {
             const isMe = msg.sender_id === user?.id;
-            // 클리핑 카드는 운영팀 발신만 신뢰 — 일반 유저가 payload를 흉내내도 텍스트로 렌더 (PR #619 리뷰 blocker 2)
-            const clipping = msg.sender_id === OPERATOR_USER_ID && isNewsClippingPayload(msg.payload) ? msg.payload : null;
+            // 클리핑 카드는 클리퍼/운영팀 발신만 신뢰 — 일반 유저가 payload를 흉내내도 텍스트로 렌더 (PR #619 리뷰 blocker 2)
+            const trustedSender = NEWS_CLIPPER_IDS.has(msg.sender_id) || msg.sender_id === OPERATOR_USER_ID;
+            const clipping = trustedSender && isNewsClippingPayload(msg.payload) ? msg.payload : null;
             return (
               <motion.div
                 key={msg.id}
@@ -312,6 +320,11 @@ export default function DMChatPage() {
         </div>
       ) : (
         <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe">
+          {isClipperConv && (
+            <p className="mb-1.5 text-center text-[10px] text-text-tertiary">
+              자동 발송 전용 계정 · 답장 시 안내 자동응답만 발송됩니다
+            </p>
+          )}
           {isOperatorConv && images.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-2">
               {images.map((image, index) => (
