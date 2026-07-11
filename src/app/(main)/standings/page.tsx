@@ -285,12 +285,12 @@ export default function StandingsPage() {
             <colgroup>
               <col className="w-6" />
               <col />
-              <col className="w-6 sm:w-10" />
-              <col className="w-6 sm:w-10" />
-              <col className="w-5 sm:w-8" />
-              <col className="w-9 sm:w-12" />
+              <col className="w-6 min-[360px]:w-7 sm:w-10" />
+              <col className="w-6 min-[360px]:w-7 sm:w-10" />
+              <col className="w-5 min-[360px]:w-6 sm:w-8" />
+              <col className="w-9 min-[360px]:w-10 sm:w-12" />
               <col className="w-9 sm:w-10" />
-              <col className="w-9 sm:w-11" />
+              <col className="w-9 min-[360px]:w-10 sm:w-11" />
             </colgroup>
             <thead>
               <tr className="border-b border-border text-sm sm:text-base font-semibold text-text-tertiary">
