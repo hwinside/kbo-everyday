@@ -31,6 +31,7 @@ interface HomeGame {
   winPitcher?: string | null;
   losePitcher?: string | null;
   broadcastChannels?: BroadcastChannel[];
+  dateLabel?: string | null; // 예정 경기 날짜 라벨 ('7월 12일 (일)') — 시간 pill에 병기
 }
 
 export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { myTeam: TeamData; myTeamGame: HomeGame; embedded?: boolean }) {
@@ -94,7 +95,7 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
                 myTeamGame.status === "final" ? "bg-text-tertiary/20 text-text-tertiary" :
                 "bg-accent/20 text-accent"
               }`}>
-                {myTeamGame.status === "live" ? `LIVE ${myTeamGame.inning}` : myTeamGame.status === "cancelled" ? "경기 취소" : myTeamGame.status === "final" ? "경기 종료" : myTeamGame.time}
+                {myTeamGame.status === "live" ? `LIVE ${myTeamGame.inning}` : myTeamGame.status === "cancelled" ? "경기 취소" : myTeamGame.status === "final" ? "경기 종료" : myTeamGame.dateLabel ? `${myTeamGame.dateLabel} ${myTeamGame.time}` : myTeamGame.time}
               </span>
             </div>
             <div className="flex flex-col items-center gap-1.5 flex-1">
