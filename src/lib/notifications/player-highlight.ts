@@ -3,7 +3,8 @@ import { sendFcmToUsers } from "@/lib/notifications/fcm";
 import { teamIdByShortName } from "@/lib/notifications/game-status";
 import { claimEvent, unclaimEvent } from "@/lib/notifications/game-score";
 import { resolvePhantomSingle, inheritHitRbi } from "@/lib/notifications/score-dedupe";
-import { resolvePlayer } from "@/lib/utils/resolve-player";
+import { resolvePlayer, resolveUniquePlayerByName } from "@/lib/utils/resolve-player";
+import { isAllStarGameId } from "@/lib/constants/teams";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent, GameEventType } from "@/types/game-events";
 
@@ -49,6 +50,15 @@ const HIGHLIGHT_PARTICLE: Partial<Record<GameEventType, string>> = {
 // 기존 장타(at_bat_double/triple/homerun, #fav)는 prod 안전성 유지 위해 컷오프 미적용.
 const FRESH_MS = 10 * 60 * 1000;
 
+// 2026 올스타 참가선수 중 우리 로스터에 동명이인이 있어 이름만으로 특정 불가한 선수 →
+// 발표 명단(KBO 크보라이브 2026-06-29)의 소속팀 기준 kboId를 확정해 정확 발송.
+// (이름 유일 매칭만으론 이 2명은 skip돼 알림 누락.) 나머지 참가자는 유일 매칭으로 커버.
+//   이승민: 삼성(50464)  [SSG 54806 아님] / 최원준: KT(66606)  [두산 67263 아님]
+const ALLSTAR_2026_DUP_KBOID: Record<string, string> = {
+  이승민: "50464",
+  최원준: "66606",
+};
+
 export async function notifyPlayerHighlights(
   games: KboRawGame[],
   eventsByGame: Map<string, GameEvent[]>,
@@ -62,6 +72,8 @@ export async function notifyPlayerHighlights(
     const away = g.AWAY_NM ?? "";
     const home = g.HOME_NM ?? "";
     const url = `/games/${gameId}`;
+    // 올스타전 여부 — 선수 resolve 방식(이름 유일 매칭)과 [올스타전] 알림 태그에 사용.
+    const isAllStar = isAllStarGameId(gameId);
 
     for (const ev of events) {
       // 타자 장타/홈런 → 활약 알림(타자 최애 팬, fav_player_highlight) /
@@ -90,13 +102,22 @@ export async function notifyPlayerHighlights(
       // detail.pitcher = 삼진 잡은 투수.
       const playerName = isStrikeout ? ev.detail?.pitcher : ev.detail?.batter;
       if (!playerName) continue;
-      const teamId = teamIdByShortName(isStrikeout ? (ev.isTop ? home : away) : (ev.isTop ? away : home));
-      if (teamId === null) continue;
-      const resolved = resolvePlayer(
-        { name: playerName, teamId },
-        undefined,
-        { context: isStrikeout ? "push:fav-strikeout" : "push:fav-highlight" },
-      );
+      // 올스타전은 게임 팀이 나눔/드림(101/102)이라 teamId로 선수 특정 불가 →
+      // ① 동명이인 참가선수는 발표명단 기준 override로 정확 발송, ② 그 외는 이름 유일
+      // 매칭(동명이인 2+·미등록 0이면 skip)해 오발송 방지. 정규경기는 기존 teamId 경로.
+      const teamId = isAllStar
+        ? null
+        : teamIdByShortName(isStrikeout ? (ev.isTop ? home : away) : (ev.isTop ? away : home));
+      if (!isAllStar && teamId === null) continue;
+      const resolved = isAllStar
+        ? (ALLSTAR_2026_DUP_KBOID[playerName]
+            ? resolvePlayer({ kboId: ALLSTAR_2026_DUP_KBOID[playerName] })
+            : resolveUniquePlayerByName(playerName))
+        : resolvePlayer(
+            { name: playerName, teamId: teamId as number },
+            undefined,
+            { context: isStrikeout ? "push:fav-strikeout" : "push:fav-highlight" },
+          );
       if (!resolved) continue;
 
       // dedup 키 선점을 팬 조회 *전*에 먼저 — 이벤트 발생 당시 기준으로 마킹해야
@@ -123,13 +144,15 @@ export async function notifyPlayerHighlights(
       // 가드 = at_bat_homerun 타입 + rbi===4. 홈런 rbi 최대 4(만루)라 홈런에선 4 ⟺ 그랜드슬램.
       // 4타점 단독으로 판정 안 함 — 비홈런 4타점(예: 만루 적시 장타) 오탐은 타입 가드가 차단한다.
       const isGrandSlam = ev.type === "at_bat_homerun" && rbi === 4;
-      const title = isStrikeout
+      const baseTitle = isStrikeout
         ? `⚾ ${resolved.name} 삼진!`
         : isGrandSlam
           ? `⚾ ${resolved.name} 그랜드슬램! 💥 (4타점)`
           : rbi > 0
             ? `⚾ ${resolved.name} ${label}${HIGHLIGHT_PARTICLE[ev.type] ?? "로"} ${rbi}타점 획득!`
             : `⚾ ${resolved.name} ${label}!`;
+      // 올스타전 알림은 [올스타전] 태그 prefix (하린아빠 지시 2026-07-11).
+      const title = isAllStar ? `[올스타전] ${baseTitle}` : baseTitle;
       const res = await sendFcmToUsers(userIds, {
         title,
         body: `${away} vs ${home}`,
