@@ -242,7 +242,7 @@ export default function MyPage() {
         </motion.div>
       )}
 
-      {/* 알림 종류별 설정 (네이티브 앱 전용 — 컴포넌트 내부 isNative 가드) */}
+      {/* 알림 종류별 설정 (네이티브=전체 토글 / 웹·PWA=뉴스클리핑 토글만 — 컴포넌트 내부 가드) */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.13 }} className="mt-3">
         <NotificationPrefsCard />
       </motion.div>

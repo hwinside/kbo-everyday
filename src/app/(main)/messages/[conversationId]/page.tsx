@@ -242,7 +242,8 @@ export default function DMChatPage() {
         ) : (
           messages.map((msg) => {
             const isMe = msg.sender_id === user?.id;
-            const clipping = isNewsClippingPayload(msg.payload) ? msg.payload : null;
+            // 클리핑 카드는 운영팀 발신만 신뢰 — 일반 유저가 payload를 흉내내도 텍스트로 렌더 (PR #619 리뷰 blocker 2)
+            const clipping = msg.sender_id === OPERATOR_USER_ID && isNewsClippingPayload(msg.payload) ? msg.payload : null;
             return (
               <motion.div
                 key={msg.id}

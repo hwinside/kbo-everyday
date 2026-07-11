@@ -84,9 +84,12 @@ async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
   const receiver = conv.user1_id === senderId ? conv.user2_id : conv.user1_id;
   if (!receiver || receiver === senderId) return [];
 
-  // 뉴스클리핑 쪽지 — 일반 쪽지 알림과 분리된 전용 문구 + 전용 prefKey (스펙 확정 문구)
+  // 뉴스클리핑 쪽지 — 일반 쪽지 알림과 분리된 전용 문구 + 전용 prefKey (스펙 확정 문구).
+  // payload는 클라 insert로도 채울 수 있으므로 운영팀 발신일 때만 신뢰 — 아니면 일반 쪽지로
+  // 처리해 위조 payload가 클리핑 문구/prefKey를 타지 못하게 한다 (PR #619 리뷰 blocker 2).
+  const systemUserId = process.env.SYSTEM_USER_ID;
   const clipping = record.payload as { type?: string; team_name?: string; overview?: string } | null;
-  if (clipping?.type === "news_clipping") {
+  if (systemUserId && senderId === systemUserId && clipping?.type === "news_clipping") {
     return [{
       userIds: [receiver as string],
       payload: {
