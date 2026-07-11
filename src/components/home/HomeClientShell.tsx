@@ -26,7 +26,7 @@ import { writeHomeWidgetSnapshot, type HomeWidgetGame } from "@/lib/native-live-
 import { latestRelayLine } from "@/lib/notifications/relay-line";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
 import MyTeamHero from "@/components/home/MyTeamHero";
-import AllStarGameBanner from "@/components/home/AllStarGameBanner";
+import AllStarGameCard from "@/components/home/AllStarGameCard";
 import TeamCard from "@/components/home/TeamCard";
 import FavoritePlayersSection from "@/components/home/FavoritePlayersSection";
 import TodayGamesSection from "@/components/home/TodayGamesSection";
@@ -685,10 +685,12 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         <WhatsNewCard />
       </Suspense>
 
-      {/* 올스타전 크관 연결 배너 — 경기 2시간 전부터 팀카드 위 노출 (2026-07-11 하린아빠) */}
+      {/* 올스타전 크관 연결 경기카드 — 배포 즉시~경기 종료 전까지 팀카드 위 노출 (목업 v2 승인, 2026-07-11) */}
       {(() => {
         const allStarGame = todayGames.find((g) => isAllStarGameId(g.id));
-        return allStarGame ? <AllStarGameBanner game={allStarGame} /> : null;
+        if (!allStarGame) return null;
+        const allStarLive = allLiveData.find((g) => g.gameId === allStarGame.id);
+        return <AllStarGameCard game={allStarGame} live={allStarLive} />;
       })()}
 
       {/* 팀 카드 (필수, 토글 없음) — 경기카드(MyTeamHero)를 안에 종속 임베드(④=B) */}

@@ -1,0 +1,107 @@
+"use client";
+import Link from "next/link";
+import Image from "next/image";
+import { getTeamById, ALLSTAR_NANUM_ID, ALLSTAR_DREAM_ID } from "@/lib/constants/teams";
+import { getTeamLogo, getTeamShortName } from "@/lib/utils/team";
+
+// 2026 올스타 리그 구성 (KBO 발표명단 기준). 팀명 아래 소속 구단 미니 로고로 노출 —
+// 유저가 자기 팀이 어느 올스타팀인지 바로 인지(하린아빠 2026-07-11).
+const NANUM_MEMBER_TEAM_IDS = [1, 6, 9, 5, 10]; // LG·KIA·한화·NC·키움
+const DREAM_MEMBER_TEAM_IDS = [2, 8, 4, 3, 7]; // 두산·삼성·SSG·KT·롯데
+
+interface AllStarGameCardProps {
+  game: { id: string; time: string; stadium: string; status: "scheduled" | "live" | "final" | "cancelled" };
+  live?: { awayScore: number; homeScore: number; currentInning: string; status?: "scheduled" | "live" | "final" | "cancelled"; isLive: boolean };
+}
+
+function MemberLogos({ teamIds }: { teamIds: number[] }) {
+  return (
+    <div className="flex gap-[3px] mt-px">
+      {teamIds.map((id) => (
+        <div key={id} className="w-4 h-4 rounded-full bg-white flex items-center justify-center">
+          <Image src={getTeamLogo(id)} alt={getTeamShortName(id)} width={11} height={11} unoptimized className="object-contain" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * 홈 팀카드 위 올스타전 크관 연결 경기카드 (목업 v2 승인, 2026-07-11).
+ * 노출 = 배포 즉시 ~ 경기 종료 전까지 (final/cancelled 숨김). 시간 게이트 없음.
+ */
+export default function AllStarGameCard({ game, live }: AllStarGameCardProps) {
+  // 라이브 폴링이 status를 앞서 알면 그걸 우선 (홈 myTeamGame과 동일 규칙).
+  const effStatus = live?.status ?? (live?.isLive ? "live" : game.status);
+  if (effStatus === "final" || effStatus === "cancelled") return null;
+  const isLive = effStatus === "live";
+
+  const nanum = getTeamById(ALLSTAR_NANUM_ID)!;
+  const dream = getTeamById(ALLSTAR_DREAM_ID)!;
+  const awayScore = live?.awayScore ?? 0;
+  const homeScore = live?.homeScore ?? 0;
+
+  return (
+    <Link
+      href={`/games/${game.id}`}
+      className="relative block rounded-2xl p-3.5 overflow-hidden"
+      style={{
+        // 알파를 높게(90%/72%) — 라이트 테마에서도 카드가 자체 네이비 배경을 유지해
+        // 흰 글자 대비가 깨지지 않게 (다크/라이트 공용, 목업 v2 톤 유지).
+        background: `linear-gradient(100deg, ${nanum.colorPrimary}E6, ${dream.colorPrimary}B8)`,
+        border: `1px solid ${dream.colorPrimary}59`,
+      }}
+    >
+      <span aria-hidden className="absolute -right-1.5 -top-2 text-[64px] leading-none opacity-[0.07]">⭐</span>
+
+      <div className="flex items-center justify-between mb-2.5">
+        <span className="text-[12.5px] font-extrabold tracking-wide" style={{ color: dream.colorLight }}>
+          ⭐ 2026 올스타전
+        </span>
+        <span className="text-[10.5px] text-white/55">🏟 {game.stadium}</span>
+      </div>
+
+      <div className="flex items-start justify-between">
+        <div className="flex flex-col items-center gap-1.5 flex-1">
+          <div className="w-[34px] h-[34px] rounded-full bg-white flex items-center justify-center">
+            <Image src={nanum.logoPath} alt={nanum.shortName} width={22} height={22} unoptimized className="object-contain" />
+          </div>
+          <span className="text-[13.5px] font-bold text-white">{nanum.shortName}</span>
+          <MemberLogos teamIds={NANUM_MEMBER_TEAM_IDS} />
+        </div>
+
+        <div className="flex flex-col items-center gap-1.5 flex-1 pt-1">
+          {isLive ? (
+            <>
+              <span className="text-[22px] font-extrabold tracking-[2px] text-white">
+                {awayScore} : {homeScore}
+              </span>
+              <span className="px-3.5 py-1 rounded-full bg-[#FF3B30] text-white text-[13px] font-extrabold tracking-wide">
+                LIVE {live?.currentInning ?? ""}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="px-3.5 py-1 rounded-full bg-white/10 text-[13px] font-semibold text-white">
+                오늘 {game.time}
+              </span>
+              <span className="text-[10.5px] text-white/55">경기 예정</span>
+            </>
+          )}
+        </div>
+
+        <div className="flex flex-col items-center gap-1.5 flex-1">
+          <div className="w-[34px] h-[34px] rounded-full bg-white flex items-center justify-center">
+            <Image src={dream.logoPath} alt={dream.shortName} width={22} height={22} unoptimized className="object-contain" />
+          </div>
+          <span className="text-[13.5px] font-bold text-white">{dream.shortName}</span>
+          <MemberLogos teamIds={DREAM_MEMBER_TEAM_IDS} />
+        </div>
+      </div>
+
+      <div className="mt-2.5 text-center text-xs font-semibold" style={{ color: dream.colorLight }}>
+        {isLive ? "크관에서 실시간 중계 보기 ›" : "크관에서 함께 보기 ›"}
+      </div>
+    </Link>
+  );
+}
