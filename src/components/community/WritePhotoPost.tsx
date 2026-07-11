@@ -113,7 +113,7 @@ export default function WritePhotoPost({
   const TEAM_STADIUMS: Record<number, string> = {
     1: "잠실야구장", 2: "잠실야구장", 3: "수원KT위즈파크",
     4: "인천SSG랜더스필드", 5: "창원NC파크", 6: "광주기아챔피언스필드",
-    7: "사직야구장", 8: "대구삼성라이온즈파크", 9: "대전 한화생명 볼파크", 10: "고척스카이돔",
+    7: "사직야구장", 8: "대구삼성라이온즈파크", 9: "대전한화생명볼파크", 10: "고척스카이돔",
   };
 
   // Auto-generated hashtag suggestions (team context-aware)

@@ -112,7 +112,7 @@ export const STADIUMS: Stadium[] = [
     name: "대전 한화생명 볼파크",
     city: "대전 중구",
     teamIds: [9],
-    capacity: "20,007",
+    capacity: "17,000",
     image: "🏟️",
     parking: { fee: "구장 지하(B1)·지상 주차장 (입장시간 1시간 전부터 입차)", tips: "경기일 조기 만차 잦음. 대중교통 강력 권장, 인근 공영주차장 병행" },
     transit: { subway: "대전1호선 중구청역 하차 후 택시 10분(1.6km) 또는 513번 버스 환승", bus: "52, 513, 604, 급행4번. KTX 대전역에서 급행4·802번" },
