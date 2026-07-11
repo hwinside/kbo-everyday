@@ -94,13 +94,16 @@ export default function NotificationPrefsCard() {
     }
   }, [prefs, authHeader]);
 
-  // 네이티브 앱 + 로그인 유저에게만 — 비로그인에게 계정 설정 카드/권한 요청 노출 금지
-  // (PR #206 리뷰 blocker 1)
-  if (!isNative || !user) return null;
+  // 로그인 유저에게만 — 비로그인에게 계정 설정 카드/권한 요청 노출 금지 (PR #206 리뷰 blocker 1)
+  // 비네이티브(웹/PWA)는 뉴스클리핑 토글만 노출 — 이 토글은 푸시가 아니라 쪽지 생성 자체를
+  // 제어하므로 전체 유저가 끌 수 있어야 함(PR #619 리뷰 blocker 1). 나머지 푸시 토글과
+  // OS 권한 배너는 네이티브 전용 유지.
+  if (!user) return null;
+  const visibleLabels = isNative ? PREF_LABELS : PREF_LABELS.filter(({ key }) => key === "news_clipping");
 
   return (
     <GlassCard className="p-5">
-      {permissionDenied && (
+      {isNative && permissionDenied && (
         <button
           onClick={() => void enablePush()}
           className="w-full mb-4 flex items-center justify-between rounded-xl bg-accent/15 border border-accent/30 px-4 py-3"
@@ -110,14 +113,16 @@ export default function NotificationPrefsCard() {
         </button>
       )}
       <button className="w-full flex items-center justify-between" onClick={async () => {
-        if (!expanded) void requestNativePushPermission(); // 미허용 상태로 진입 시 권한 요청 기회
+        if (!expanded && isNative) void requestNativePushPermission(); // 미허용 상태로 진입 시 권한 요청 기회
         setExpanded(!expanded);
       }}>
         <div className="flex items-center gap-4">
           <Bell size={22} className="text-text-secondary" />
           <div className="text-left">
             <span className="text-base text-text-primary">알림 설정</span>
-            <p className="text-xs text-text-tertiary mt-0.5">경기·최애선수·댓글·쪽지 알림을 종류별로 켜고 끄세요</p>
+            <p className="text-xs text-text-tertiary mt-0.5">
+              {isNative ? "경기·최애선수·댓글·쪽지 알림을 종류별로 켜고 끄세요" : "팀 뉴스클리핑 쪽지 수신을 켜고 끄세요"}
+            </p>
           </div>
         </div>
         {expanded ? <ChevronUp size={20} className="text-text-tertiary" /> : <ChevronDown size={20} className="text-text-tertiary" />}
@@ -125,7 +130,7 @@ export default function NotificationPrefsCard() {
 
       {expanded && (
         <div className="mt-4 flex flex-col divide-y divide-white/10">
-          {PREF_LABELS.map(({ key, label, desc }) => (
+          {visibleLabels.map(({ key, label, desc }) => (
             <div key={key} className="flex items-center justify-between py-3">
               <div>
                 <span className="text-sm text-text-primary">{label}</span>

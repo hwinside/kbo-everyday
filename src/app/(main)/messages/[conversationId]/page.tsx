@@ -12,6 +12,8 @@ import { supabase } from "@/lib/supabase/client";
 import { OPERATOR_USER_ID } from "@/lib/constants/operator";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { linkifyText } from "@/lib/linkify";
+import NewsClippingCard from "@/components/dm/NewsClippingCard";
+import { isNewsClippingPayload } from "@/types/news-clipping";
 
 const REPORT_CATEGORIES = [
   { id: "spam", label: "스팸" },
@@ -240,6 +242,8 @@ export default function DMChatPage() {
         ) : (
           messages.map((msg) => {
             const isMe = msg.sender_id === user?.id;
+            // 클리핑 카드는 운영팀 발신만 신뢰 — 일반 유저가 payload를 흉내내도 텍스트로 렌더 (PR #619 리뷰 blocker 2)
+            const clipping = msg.sender_id === OPERATOR_USER_ID && isNewsClippingPayload(msg.payload) ? msg.payload : null;
             return (
               <motion.div
                 key={msg.id}
@@ -247,13 +251,16 @@ export default function DMChatPage() {
                 animate={{ opacity: 1, y: 0 }}
                 className={`flex ${isMe ? "justify-end" : "justify-start"}`}
               >
-                <div className={`max-w-[75%] ${isMe ? "order-2" : ""}`}>
+                <div className={`${clipping ? "max-w-[88%] min-w-[70%]" : "max-w-[75%]"} ${isMe ? "order-2" : ""}`}>
                   {!isMe && (
                     <div className="flex items-center gap-1.5 mb-1">
                       {msg.sender_team_id && <TeamBadge teamId={msg.sender_team_id} size="xs" />}
                       <span className="text-xs font-semibold text-text-secondary">{msg.sender_nickname}</span>
                     </div>
                   )}
+                  {clipping ? (
+                    <NewsClippingCard payload={clipping} />
+                  ) : (
                   <div
                     className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
                       isMe
@@ -285,6 +292,7 @@ export default function DMChatPage() {
                       </div>
                     )}
                   </div>
+                  )}
                   <div className={`text-[10px] text-text-tertiary mt-1 ${isMe ? "text-right" : ""}`}>
                     {new Date(msg.created_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}
                     {isMe && msg.is_read && " ✓"}

@@ -14,6 +14,7 @@ export const PREF_KEYS = [
   "dm",
   "live_activity",
   "team_rank_change",
+  "news_clipping",
 ] as const;
 
 export type PrefKey = (typeof PREF_KEYS)[number];
@@ -32,6 +33,7 @@ export const DEFAULT_PREFS: NotificationPrefs = {
   dm: true,
   live_activity: true,
   team_rank_change: true,
+  news_clipping: true,
 };
 
 /** 마이페이지 토글 UI 라벨 (노출 순서 그대로) */
@@ -48,4 +50,5 @@ export const PREF_LABELS: { key: PrefKey; label: string; desc?: string }[] = [
   { key: "dm", label: "쪽지" },
   { key: "live_activity", label: "잠금화면 실시간 중계", desc: "최애팀 경기 득점·이닝을 잠금화면 카드로 실시간 표시 (iOS)" },
   { key: "team_rank_change", label: "팀 순위 변동", desc: "최애팀 순위가 바뀌면 알림" },
+  { key: "news_clipping", label: "팀 뉴스클리핑", desc: "매일 아침 7시, 어제의 내 팀 주요 뉴스 5개를 쪽지로" },
 ];

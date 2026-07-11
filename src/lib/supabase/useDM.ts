@@ -22,6 +22,8 @@ export interface DMMessage {
   sender_id: string;
   content: string;
   image_urls?: string[] | null;
+  /** 구조화 쪽지 (뉴스클리핑 등) — payload->>'type'으로 렌더 분기 */
+  payload?: unknown;
   is_read: boolean;
   created_at: string;
   sender_nickname?: string;
