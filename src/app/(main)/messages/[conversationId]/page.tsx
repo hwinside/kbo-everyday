@@ -37,6 +37,7 @@ export default function DMChatPage() {
   const [images, setImages] = useState<{ url: string; name: string }[]>([]);
   const [uploading, setUploading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const lastMsgRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -92,8 +93,14 @@ export default function DMChatPage() {
   const [reportDone, setReportDone] = useState(false);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+    // 클리퍼 대화방은 최신 클리핑 카드가 세로로 길어 하단 착지 시 다시 올려 봐야 함
+    // → 최신 메시지의 '상단'(인트로/헤더)에 포커스 (하린아빠 제보 7/12)
+    if (isClipperConv && lastMsgRef.current) {
+      lastMsgRef.current.scrollIntoView({ block: "start" });
+    } else {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages.length, isClipperConv]);
 
   // 입력창 내용 길이에 맞춰 세로 자동 확장 (최대 max-h-32 = 128px)
   useEffect(() => {
@@ -250,7 +257,7 @@ export default function DMChatPage() {
             첫 쪽지를 보내보세요!
           </div>
         ) : (
-          messages.map((msg) => {
+          messages.map((msg, i) => {
             const isMe = msg.sender_id === user?.id;
             // 클리핑 카드는 클리퍼/운영팀 발신만 신뢰 — 일반 유저가 payload를 흉내내도 텍스트로 렌더 (PR #619 리뷰 blocker 2)
             const trustedSender = NEWS_CLIPPER_IDS.has(msg.sender_id) || msg.sender_id === OPERATOR_USER_ID;
@@ -258,6 +265,7 @@ export default function DMChatPage() {
             return (
               <motion.div
                 key={msg.id}
+                ref={i === messages.length - 1 ? lastMsgRef : undefined}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 className={`flex ${isMe ? "justify-end" : "justify-start"}`}
