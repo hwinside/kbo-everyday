@@ -140,6 +140,9 @@ export default function DMChatPage() {
   };
 
   const handleSend = async () => {
+    // 상대 미확정(프로필 로드 전/실패)·클리퍼 대화방은 전송 금지 — 초기 렌더 레이스에
+    // 입력창이 잠깐 떠도 실제 전송은 막는다 (PR #622 삼순 가드)
+    if (!otherId || isClipperConv) return;
     // 사진은 운영팀 대화에서만 전송 (유저↔유저는 텍스트만)
     const sendImages = isOperatorConv ? images : [];
     if ((!input.trim() && sendImages.length === 0) || sending || uploading) return;
@@ -313,8 +316,9 @@ export default function DMChatPage() {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input — 클리퍼 대화방은 입력창 비활성화 (자동 발송 전용, 하린아빠 확정) */}
-      {isClipperConv ? (
+      {/* Input — 클리퍼 대화방은 입력창 비활성화 (자동 발송 전용, 하린아빠 확정).
+          상대 확정 전에는 composer 미렌더 — 클리퍼 판정 전 일반 입력창이 잠깐 뜨는 레이스 차단 */}
+      {!otherId ? null : isClipperConv ? (
         <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe text-center text-sm text-text-tertiary">
           뉴스클리핑 전용 계정입니다. 문의는 &apos;피드백 보내기&apos;를 이용해주세요.
         </div>
