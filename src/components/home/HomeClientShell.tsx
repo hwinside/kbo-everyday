@@ -209,7 +209,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
 
   // 라이브 데이터: 경기시간대만 폴링, 비경기시간은 서버 초기 데이터만 사용
   const gameTime = isGameTimeKST();
-  const { liveGames: polledLiveGames } = useLiveGame(
+  const { games: polledGames, liveGames: polledLiveGames } = useLiveGame(
     undefined,
     gameTime ? 10000 : 0 // 0이면 폴링 안 함
   );
@@ -259,7 +259,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
 
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
   const myTeamGameBase = todayGames.find(g => g.homeTeamId === myTeamId || g.awayTeamId === myTeamId);
-  const allLiveData = polledLiveGames.length > 0 ? polledLiveGames :
+  const allLiveData = polledGames.length > 0 ? polledGames :
     (initialLiveGames as LiveGameData[]);
   const myTeamLive = myTeamGameBase ? allLiveData.find(g => g.gameId === myTeamGameBase.id) : undefined;
   const myTeamGame = useMemo<MyTeamHeroGame | undefined>(() => {

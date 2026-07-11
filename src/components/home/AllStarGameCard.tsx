@@ -44,7 +44,7 @@ export default function AllStarGameCard({ game, live }: AllStarGameCardProps) {
   return (
     <Link
       href={`/games/${game.id}`}
-      className="relative block rounded-2xl p-3.5 overflow-hidden"
+      className="relative block rounded-2xl p-3.5 overflow-hidden mb-3"
       style={{
         // 알파를 높게(90%/72%) — 라이트 테마에서도 카드가 자체 네이비 배경을 유지해
         // 흰 글자 대비가 깨지지 않게 (다크/라이트 공용, 목업 v2 톤 유지).
