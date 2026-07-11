@@ -72,7 +72,7 @@ export default function AllStarEntryRoster() {
     <div className="px-4 py-4 space-y-4">
       <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
         <span className="text-yellow-400 text-sm">⚠️</span>
-        <span className="text-sm text-yellow-400/90">선발 타순은 확정 시 자동 반영됩니다. 아래는 확정 엔트리 명단이에요.</span>
+        <span className="text-sm text-yellow-400/90">엔트리는 확정됐어요. 선발 타순은 발표 전 — 발표되면 자동 반영됩니다.</span>
       </div>
       <SideRoster allstarTeamId={ALLSTAR_NANUM_ID} entries={ALLSTAR_2026_NANUM_ENTRY} />
       <SideRoster allstarTeamId={ALLSTAR_DREAM_ID} entries={ALLSTAR_2026_DREAM_ENTRY} />

@@ -81,3 +81,16 @@ const BY_NAME = new Map<string, AllStarEntry>(
 export function findAllStarEntryByName(name: string): AllStarEntry | undefined {
   return BY_NAME.get(name.trim());
 }
+
+// 2026 올스타 리그 구성 — 정규 구단 teamId → 올스타 사이드. 팬 분위기 게이지 등
+// "이 유저(구단 팬)는 나눔/드림 어느 쪽인가" 판정용 (홈 경기카드 소속로고와 동일 구성).
+const NANUM_MEMBER_TEAM_IDS = new Set([1, 6, 9, 5, 10]); // LG·KIA·한화·NC·키움
+const DREAM_MEMBER_TEAM_IDS = new Set([2, 8, 4, 3, 7]); // 두산·삼성·SSG·KT·롯데
+
+/** 정규 구단 teamId → 소속 올스타 teamId(나눔 101/드림 102). 매핑 밖(null/올스타 id 등)은 undefined. */
+export function allStarSideOfTeam(teamId: number | null | undefined): number | undefined {
+  if (teamId == null) return undefined;
+  if (NANUM_MEMBER_TEAM_IDS.has(teamId)) return 101;
+  if (DREAM_MEMBER_TEAM_IDS.has(teamId)) return 102;
+  return undefined;
+}
