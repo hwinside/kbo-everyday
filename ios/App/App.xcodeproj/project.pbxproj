@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		ABCD00000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000001 /* Assets.xcassets */; };
 		14E7C38D5BA9CC0CEC7862B3 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F06E9AC42A08D1703EE84F9F /* Foundation.framework */; };
 		159F3DC71D6824E95E816E8B /* WatchRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7126F38454FC2B4048E1334A /* WatchRootView.swift */; };
 		1FB9D552D369B5999B046BE8 /* WatchSyncManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4FEDC2677B7A4BC4CC855E7 /* WatchSyncManager.swift */; };
@@ -104,6 +105,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		ABCD00000000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		198724C510A9660087E15A76 /* KBOWatchGameComplication.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KBOWatchGameComplication.swift; sourceTree = "<group>"; };
 		29CED23CA64E9C79C383BE57 /* KBOWatchWidgetBundle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KBOWatchWidgetBundle.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
@@ -218,6 +220,7 @@
 			children = (
 				6FBBDC194F2455C929D15867 /* KBOWatchApp.swift */,
 				7126F38454FC2B4048E1334A /* WatchRootView.swift */,
+				ABCD00000000000000000001 /* Assets.xcassets */,
 			);
 			name = KBOWatch;
 			path = KBOWatch;
@@ -471,6 +474,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				ABCD00000000000000000002 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
