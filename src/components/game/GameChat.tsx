@@ -6,7 +6,8 @@ import { Send, Users, Flame, ChevronDown, Trash2, Flag, Ban, MoreHorizontal, Rep
 import { clsx } from "clsx";
 import Image from "next/image";
 import TeamBadge from "@/components/ui/TeamBadge";
-import { getTeamById } from "@/lib/constants/teams";
+import { getTeamById, isAllStarGame } from "@/lib/constants/teams";
+import { allStarSideOfTeam } from "@/lib/constants/allstar-2026";
 import { useChat, type ChatMessage } from "@/lib/supabase/useChat";
 import { useMoodGauge } from "@/lib/supabase/useMoodGauge";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -185,6 +186,22 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       return { root, replies, lastActivity };
     })
     .sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));
+
+  // 올스타 크관 한정: 유저 팀 라벨 왼쪽에 최애팀 소속 사이드(나눔/드림) 표기
+  // (하린아빠 2026-07-11). 매핑은 팬 분위기와 동일(allStarSideOfTeam).
+  const isAllStar = isAllStarGame(awayTeamId, homeTeamId);
+  function renderSideLabel(teamId: number | null | undefined) {
+    if (!isAllStar) return null;
+    const sideId = allStarSideOfTeam(teamId);
+    if (!sideId) return null;
+    const side = getTeamById(sideId);
+    if (!side) return null;
+    return (
+      <span className="text-[10px] font-bold shrink-0 mt-0.5" style={{ color: side.colorLight }}>
+        {side.shortName}
+      </span>
+    );
+  }
 
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -529,6 +546,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
                   >
                     {/* 원글(루트) */}
                     <div data-chat-msg className="flex items-start gap-2 py-0.5 group">
+                      {renderSideLabel(root.team_id)}
                       {root.team_id && <TeamBadge teamId={root.team_id} size="xs" className="shrink-0" />}
                       {renderMsgBody(root)}
                       {renderMsgActions(root, { canReply: true })}
@@ -538,6 +556,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
                       <div className="ml-5 mt-0.5 space-y-0.5 border-l-2 border-border/50 pl-2.5">
                         {replies.map((reply) => (
                           <div key={reply.id} data-chat-msg className="flex items-start gap-2 py-0.5 group">
+                            {renderSideLabel(reply.team_id)}
                             {reply.team_id && <TeamBadge teamId={reply.team_id} size="xs" className="shrink-0" />}
                             {renderMsgBody(reply)}
                             {renderMsgActions(reply, { canReply: false })}
