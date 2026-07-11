@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, MessageCircle, MoreHorizontal, Share2, Volume2, VolumeX } from "lucide-react";
+import { Loader2, Maximize, MessageCircle, Minimize, MoreHorizontal, Share2, Volume2, VolumeX } from "lucide-react";
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
@@ -258,6 +258,22 @@ function videoPosterSrc(url: string): string {
 const TRANSPARENT_POSTER =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
+// iPhone Safari/WKWebView는 임의 엘리먼트 requestFullscreen 미지원(document.fullscreenEnabled=false).
+// 대신 <video>.webkitEnterFullscreen()으로 네이티브 플레이어(회전·컨트롤·닫기 내장)를 띄운다.
+type WebkitFullscreenVideo = HTMLVideoElement & { webkitEnterFullscreen?: () => void };
+type LockableOrientation = ScreenOrientation & {
+  lock?: (orientation: string) => Promise<void>;
+  unlock?: () => void;
+};
+
+function unlockOrientation() {
+  try {
+    (screen.orientation as LockableOrientation | undefined)?.unlock?.();
+  } catch {
+    // 데스크톱 등 unlock 미지원 환경 무시
+  }
+}
+
 function FeedVideo({ url }: { url: string }) {
   const ref = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -269,6 +285,67 @@ function FeedVideo({ url }: { url: string }) {
   // lazy-load: 뷰포트(+아래 ~0.8화면)에 가까워질 때까지 src/preload를 비워 둔다. 위→아래 순서 로딩 +
   // 화면 밖 아래쪽 영상 선로딩 1~2개 제한 (포스터+플레이어 2레이어 디코더/네트워크 부담 완화).
   const [shouldLoad, setShouldLoad] = useState(false);
+  // 컨테이너 Fullscreen API 경로(안드/웹)에서만 true. iOS 네이티브 플레이어 경로는 자체 UI라 관여 안 함.
+  const [fullscreen, setFullscreen] = useState(false);
+
+  const enterFullscreen = useCallback(async () => {
+    const container = containerRef.current;
+    const el = ref.current as WebkitFullscreenVideo | null;
+    if (!el || document.fullscreenElement) return;
+    if (container && document.fullscreenEnabled) {
+      try {
+        await container.requestFullscreen();
+      } catch {
+        return; // (비제스처 호출 등) 거부되면 조용히 무시
+      }
+      // 가로 영상만 landscape 잠금 — 세로(9:16) 영상에 강제하면 정반대로 망가진다(#510 교훈).
+      if (el.videoWidth > el.videoHeight) {
+        try {
+          await (screen.orientation as LockableOrientation | undefined)?.lock?.("landscape");
+        } catch {
+          // 데스크톱/미지원 환경은 잠금 없이 전체화면만
+        }
+      }
+    } else if (el.webkitEnterFullscreen) {
+      try {
+        el.webkitEnterFullscreen();
+      } catch {
+        // iOS는 사용자 제스처 밖 호출을 거부할 수 있음 (자동 진입 한계)
+      }
+    }
+  }, []);
+
+  const exitFullscreen = useCallback(() => {
+    unlockOrientation();
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  }, []);
+
+  // 전체화면 상태 동기화: ESC/뒤로가기 등 브라우저 주도 이탈도 여기서 잡아 orientation 잠금을 푼다.
+  useEffect(() => {
+    const onFsChange = () => {
+      const container = containerRef.current;
+      const active = !!document.fullscreenElement && !!container && (document.fullscreenElement === container || container.contains(document.fullscreenElement));
+      setFullscreen(active);
+      if (!active) unlockOrientation();
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
+
+  // 폰을 눕히면(landscape 회전) 재생 중인 영상만 자동 전체화면 진입. 재생 대상은 항상 1개뿐이라
+  // (videoRegistry 포커스) 여러 영상이 동시에 진입을 다투지 않는다. iOS는 회전 이벤트가 user gesture가
+  // 아니라 webkitEnterFullscreen이 거부될 수 있음 — 그 경우 오버레이 버튼(제스처)으로 진입.
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mql = window.matchMedia("(orientation: landscape)");
+    const onChange = () => {
+      const el = ref.current;
+      if (!mql.matches || !el || el.paused || document.fullscreenElement) return;
+      void enterFullscreen();
+    };
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, [enterFullscreen]);
 
   useEffect(() => {
     if (shouldLoad) return;
@@ -348,7 +425,7 @@ function FeedVideo({ url }: { url: string }) {
     // 훨씬 커서 캐러셀에서 영상 위아래 회색 레터박스를 유발했다.) 로드 후엔 영상 natural 높이로.
     <div
       ref={containerRef}
-      className={`relative w-full bg-black${shouldLoad ? "" : " aspect-video"}`}
+      className={`relative w-full bg-black${shouldLoad ? "" : " aspect-video"}${fullscreen ? " flex items-center justify-center" : ""}`}
     >
       {/* 포스터 레이어: 첫 프레임만 보여주는 일시정지 영상(재생하지 않음). 플레이어가 버퍼링/일시정지로
           투명일 때 뒤에서 썸네일(첫 프레임)을 항상 노출한다. 일시정지 #t=0.001 프레임은 안정적으로
@@ -374,8 +451,8 @@ function FeedVideo({ url }: { url: string }) {
         loop
         playsInline
         preload={shouldLoad ? "metadata" : "none"}
-        className="relative w-full object-contain pointer-events-none select-none"
-        style={{ maxHeight: "80vh", opacity: playing ? 1 : 0, transition: "opacity 120ms ease", WebkitTouchCallout: "none" } as React.CSSProperties}
+        className={`relative w-full object-contain pointer-events-none select-none${fullscreen ? " h-full" : ""}`}
+        style={{ maxHeight: fullscreen ? "100vh" : "80vh", opacity: playing ? 1 : 0, transition: "opacity 120ms ease", WebkitTouchCallout: "none" } as React.CSSProperties}
       />
       {loading && (
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
@@ -389,6 +466,18 @@ function FeedVideo({ url }: { url: string }) {
         aria-label={muted ? "소리 켜기" : "소리 끄기"}
       >
         {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (fullscreen) exitFullscreen();
+          else void enterFullscreen();
+        }}
+        className="absolute bottom-2 right-12 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm pointer-events-auto"
+        aria-label={fullscreen ? "전체화면 종료" : "전체화면"}
+      >
+        {fullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
       </button>
     </div>
   );
