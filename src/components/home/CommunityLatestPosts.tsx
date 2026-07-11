@@ -17,7 +17,7 @@ import type { Post } from "@/lib/supabase/usePosts";
 
 const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
 
-const HOME_LATEST_COUNT = 15;
+const HOME_LATEST_COUNT = 20;
 
 // 홈 최신글에서 글을 열었다는 표식(sessionStorage, pending). 클릭 시점엔 아직
 // "뒤로가기로 돌아왔는지" 알 수 없으므로 대기 상태로만 남긴다.
@@ -324,7 +324,7 @@ function PostRow({ post }: { post: Post }) {
 
 /**
  * 홈 '커뮤니티 최신글' 섹션 — 커뮤니티 유입 레버.
- * 전체 통합피드(자유+팀+선수) 최신 5개를 세로 compact 리스트로 노출.
+ * 전체 통합피드(자유+팀+선수) 최신 HOME_LATEST_COUNT개를 세로 compact 리스트로 노출.
  * 신규 API·테이블 없이 useUnifiedFeed를 재사용한다.
  */
 export default function CommunityLatestPosts({ myTeamId }: { myTeamId: number | null }) {
