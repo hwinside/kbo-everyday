@@ -1,0 +1,224 @@
+// 팀별 뉴스클리핑 빌더 — 어제(KST) 팀 기사 수집 → 뉴스카드와 동일한 관련성
+// 가드/중복 제거 → Gemini가 주요 5개 선정 + 기사당 3줄 요약 + 데일리 총평.
+// 소비자: /api/cron/news-clipping (매일 07:00 KST 쪽지 발송).
+//
+// 요약 입력은 네이버 제목+description 스니펫만 사용 (기사 풀본문 크롤은 언론사
+// 약관 리스크로 v1 제외 — 스니펫만으로 실질 요약이 안 나오는 기사는 Gemini가
+// 선정하지 않도록 프롬프트로 게이트, 삼순 조건).
+
+import type { NewsItem } from "@/types/api";
+import type { NewsClippingPayload, NewsClippingArticle } from "@/types/news-clipping";
+import {
+  TEAM_SEARCH,
+  fetchNaverNews,
+  fetchThumbnailUrl,
+  mapWithConcurrency,
+} from "@/lib/naver-news";
+import {
+  isTeamBaseballRelevant,
+  isPhotoArticle,
+  dedupeNewsByTitle,
+} from "@/lib/news-relevance";
+
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+const MAX_PICKS = 5;
+// Gemini 입력 후보 상한 — 프롬프트 길이/비용 억제. 하루 팀 기사가 이보다 많으면
+// 최신순 상위만 후보로 쓴다 (Naver 결과가 date desc).
+const MAX_CANDIDATES = 25;
+const OG_CONCURRENCY = 4;
+
+/** KST 기준 YYYY-MM-DD (offsetDays: -1 = 어제) */
+export function kstDateString(offsetDays = 0): string {
+  const kst = new Date(Date.now() + 9 * 60 * 60 * 1000 + offsetDays * 24 * 60 * 60 * 1000);
+  return kst.toISOString().slice(0, 10);
+}
+
+function pubDateToKstDate(pubDate: string): string | null {
+  const t = Date.parse(pubDate);
+  if (Number.isNaN(t)) return null;
+  return new Date(t + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+/** 어제(KST) 보도된 팀 관련 기사 후보 수집 — 뉴스카드와 동일 가드 + 사진기사 제외 */
+async function collectYesterdayCandidates(teamShort: string, yesterday: string): Promise<NewsItem[]> {
+  const fullName = TEAM_SEARCH[teamShort] || teamShort;
+  const mascot = fullName.split(/\s+/).pop() || null;
+  const query = `프로야구 ${fullName}`;
+
+  // 하루치 커버리지 확보 — display 최대(100) × 2페이지. 어제보다 오래된 기사가
+  // 나오기 시작하면(date desc 정렬) 그 페이지에서 수집 종료.
+  const pages: NewsItem[][] = [];
+  for (const start of [1, 101]) {
+    const items = await fetchNaverNews(query, start, 100);
+    pages.push(items);
+    const last = items[items.length - 1];
+    if (!last || (pubDateToKstDate(last.pubDate) ?? "") < yesterday) break;
+  }
+
+  const seen = new Set<string>();
+  const candidates = pages.flat().filter((item) => {
+    if (seen.has(item.link)) return false;
+    seen.add(item.link);
+    if (pubDateToKstDate(item.pubDate) !== yesterday) return false;
+    if (isPhotoArticle(item.title)) return false;
+    return isTeamBaseballRelevant(item.title, item.description, mascot);
+  });
+
+  return dedupeNewsByTitle(candidates).slice(0, MAX_CANDIDATES);
+}
+
+interface GeminiPick {
+  index: number;
+  summary: string[];
+}
+
+interface GeminiSelection {
+  overview: string;
+  picks: GeminiPick[];
+}
+
+function buildPrompt(teamName: string, yesterday: string, candidates: NewsItem[]): string {
+  const list = candidates
+    .map((c, i) => `${i + 1}. ${c.title}\n   ${c.description}`)
+    .join("\n");
+
+  return `당신은 KBO 프로야구 "${teamName}" 팬을 위한 아침 뉴스클리핑 에디터입니다.
+아래는 어제(${yesterday}) 보도된 ${teamName} 관련 기사 목록입니다 (번호. 제목 / 요약문).
+
+${list}
+
+이 중 팬에게 중요한 순서로 최대 ${MAX_PICKS}개를 선정하고, 각 기사를 3줄로 요약하세요.
+
+규칙:
+- 같은 사건을 다룬 기사는 1개만 선정
+- 각 줄은 완결된 한 문장, 간결한 뉴스체("~했다")
+- 3줄 구성: ① 무슨 일이 있었는지 ② 구체적인 내용·수치 ③ 팀/팬 관점에서 갖는 의미
+- 링크를 열지 않아도 기사 내용을 파악할 수 있어야 함
+- 제공된 제목/요약문에 있는 사실만 사용 — 추측, 과장, 루머의 확정 표현 금지
+- 제목 재작성이나 요약문 복사가 아니라 실질적인 내용 요약이어야 함
+- 제공된 정보만으로 3줄 요약이 불가능한 기사는 선정하지 말 것
+- overview: 어제 ${teamName} 주요 이슈를 팬에게 브리핑하는 한 문장
+
+JSON으로만 응답:
+{"overview": "...", "picks": [{"index": 기사번호, "summary": ["1줄", "2줄", "3줄"]}]}`;
+}
+
+function parseSelection(text: string, candidateCount: number): GeminiSelection | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as { overview?: unknown; picks?: unknown };
+  if (!Array.isArray(obj.picks)) return null;
+
+  const seen = new Set<number>();
+  const picks: GeminiPick[] = [];
+  for (const p of obj.picks) {
+    if (!p || typeof p !== "object") continue;
+    const { index, summary } = p as { index?: unknown; summary?: unknown };
+    const idx = typeof index === "number" ? Math.floor(index) : NaN;
+    if (Number.isNaN(idx) || idx < 1 || idx > candidateCount || seen.has(idx)) continue;
+    if (!Array.isArray(summary)) continue;
+    const lines = summary.filter((l): l is string => typeof l === "string" && l.trim().length > 0).map((l) => l.trim());
+    // 3줄 요약 필수 스펙 — 못 만든 기사는 클리핑에서 제외 (삼순 조건)
+    if (lines.length < 3) continue;
+    seen.add(idx);
+    picks.push({ index: idx, summary: lines.slice(0, 3) });
+    if (picks.length >= MAX_PICKS) break;
+  }
+  if (picks.length === 0) return null;
+
+  return {
+    overview: typeof obj.overview === "string" ? obj.overview.trim() : "",
+    picks,
+  };
+}
+
+async function selectAndSummarize(
+  teamName: string,
+  yesterday: string,
+  candidates: NewsItem[],
+): Promise<GeminiSelection | null> {
+  if (!GEMINI_API_KEY) {
+    console.error("[news-clipping] GEMINI_API_KEY missing");
+    return null;
+  }
+  const prompt = buildPrompt(teamName, yesterday, candidates);
+
+  const MAX_ATTEMPTS = 2;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(GEMINI_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: attempt === 1 ? 0.4 : 0.2,
+            maxOutputTokens: 3000,
+            responseMimeType: "application/json",
+            thinkingConfig: { thinkingBudget: 0 },
+          },
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!res.ok) {
+        console.error(`[news-clipping] Gemini ${res.status} (attempt ${attempt})`);
+        continue;
+      }
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.find((p: { text?: string }) => p.text)?.text || "";
+      const parsed = parseSelection(text, candidates.length);
+      if (parsed) return parsed;
+      console.error(`[news-clipping] Gemini parse failed (attempt ${attempt})`);
+    } catch (e) {
+      console.error(`[news-clipping] Gemini call failed (attempt ${attempt}):`, (e as Error).message);
+    }
+  }
+  return null;
+}
+
+/**
+ * 팀 하나의 클리핑 payload 생성.
+ * 어제 기사 0개 또는 요약 가능 기사 0개면 null — 그 팀은 발송하지 않는다(빈 클리핑 금지).
+ */
+export async function buildTeamClipping(
+  teamId: number,
+  teamShort: string,
+  teamName: string,
+): Promise<NewsClippingPayload | null> {
+  const yesterday = kstDateString(-1);
+
+  const candidates = await collectYesterdayCandidates(teamShort, yesterday);
+  if (candidates.length === 0) return null;
+
+  const selection = await selectAndSummarize(teamName, yesterday, candidates);
+  if (!selection) return null;
+
+  // 선정된 기사에만 OG 썸네일 부착 (언론사 원문 기준 — /api/news와 동일)
+  const picked = selection.picks.map((p) => ({ pick: p, item: candidates[p.index - 1] }));
+  const thumbnails = await mapWithConcurrency(picked, OG_CONCURRENCY, ({ item }) =>
+    fetchThumbnailUrl(item.originalLink || item.link),
+  );
+
+  const articles: NewsClippingArticle[] = picked.map(({ pick, item }, i) => ({
+    title: item.title,
+    link: item.link,
+    thumbnail_url: thumbnails[i] ?? null,
+    summary: pick.summary,
+  }));
+
+  return {
+    type: "news_clipping",
+    team_id: teamId,
+    team_name: teamName,
+    date: yesterday,
+    overview: selection.overview,
+    articles,
+  };
+}

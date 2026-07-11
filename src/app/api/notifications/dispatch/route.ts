@@ -84,6 +84,20 @@ async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
   const receiver = conv.user1_id === senderId ? conv.user2_id : conv.user1_id;
   if (!receiver || receiver === senderId) return [];
 
+  // 뉴스클리핑 쪽지 — 일반 쪽지 알림과 분리된 전용 문구 + 전용 prefKey (스펙 확정 문구)
+  const clipping = record.payload as { type?: string; team_name?: string; overview?: string } | null;
+  if (clipping?.type === "news_clipping") {
+    return [{
+      userIds: [receiver as string],
+      payload: {
+        title: `📰 오늘의 ${clipping.team_name || "내 팀"} 뉴스클리핑이 쪽지로 도착했습니다`,
+        body: truncate(clipping.overview || "어제의 주요 뉴스를 확인해보세요"),
+        url: `/messages/${conversationId}`,
+      },
+      prefKey: "news_clipping",
+    }];
+  }
+
   const sender = await nickname(senderId);
   return [{
     userIds: [receiver as string],
