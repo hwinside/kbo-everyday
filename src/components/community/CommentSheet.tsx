@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, X, MoreHorizontal, Check, Heart, CornerDownRight, ImagePlay } from "lucide-react";
@@ -106,6 +107,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const [kbInset, setKbInset] = useState(0);
   const [vvHeight, setVvHeight] = useState<number | null>(null);
   const { user, profile } = useAuth();
+  const router = useRouter();
   const canModerateComments = profile?.is_operator === true;
   const shouldRender = isOpen && postId !== null;
 
@@ -555,24 +557,31 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     const isEditing = editingId === comment.id;
     const isEdited = !!comment.updated_at;
     const likeCount = comment.like_count ?? 0;
+    const goProfile = () => {
+      if (comment.author_id) router.push(`/profile/${comment.author_id}`);
+    };
 
     return (
       <div key={comment.id} className={`flex gap-2 ${isReply ? "pl-10" : ""}`}>
         {avatarPath ? (
-          <div className={`${isReply ? "w-6 h-6" : "w-8 h-8"} rounded-full overflow-hidden flex-shrink-0 bg-bg-tertiary`}>
+          <div className={`${isReply ? "w-6 h-6" : "w-8 h-8"} rounded-full overflow-hidden flex-shrink-0 bg-bg-tertiary cursor-pointer`} onClick={goProfile}>
             <img src={avatarPath} alt="" className="w-full h-full" />
           </div>
         ) : (
           <div
-            className={`${isReply ? "w-6 h-6 text-[10px]" : "w-8 h-8 text-xs"} rounded-full flex items-center justify-center font-bold text-white flex-shrink-0`}
+            className={`${isReply ? "w-6 h-6 text-[10px]" : "w-8 h-8 text-xs"} rounded-full flex items-center justify-center font-bold text-white flex-shrink-0 cursor-pointer`}
             style={{ backgroundColor: commentTeam ? getTeamBgColor(commentTeam) : '#6B7280' }}
+            onClick={goProfile}
           >
             {(comment.nickname || "익")[0]}
           </div>
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className={`${isReply ? "text-xs" : "text-sm"} font-semibold text-text-primary`}>
+            <span
+              className={`${isReply ? "text-xs" : "text-sm"} font-semibold text-text-primary cursor-pointer hover:text-accent`}
+              onClick={goProfile}
+            >
               {comment.nickname || "익명"}
             </span>
             {commentTeam && (
