@@ -235,7 +235,7 @@ export default function DMChatPage() {
           <AlertTriangle size={14} className="flex-shrink-0" />
           <span>
             {isClipperConv
-              ? "자동 발송 전용 계정입니다. 답장을 확인하지 않아요 — 문의는 '피드백 보내기'를 이용해주세요."
+              ? "뉴스클리핑 전용 계정입니다. 문의는 '피드백 보내기'를 이용해주세요."
               : "쪽지는 개인 간 대화입니다. 금전 거래 시 사기에 주의하세요."}
           </span>
         </div>
@@ -313,18 +313,17 @@ export default function DMChatPage() {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
-      {isBlocked ? (
+      {/* Input — 클리퍼 대화방은 입력창 비활성화 (자동 발송 전용, 하린아빠 확정) */}
+      {isClipperConv ? (
+        <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe text-center text-sm text-text-tertiary">
+          뉴스클리핑 전용 계정입니다. 문의는 &apos;피드백 보내기&apos;를 이용해주세요.
+        </div>
+      ) : isBlocked ? (
         <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe text-center text-sm text-text-tertiary">
           차단된 사용자에게 쪽지를 보낼 수 없습니다.
         </div>
       ) : (
         <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe">
-          {isClipperConv && (
-            <p className="mb-1.5 text-center text-[10px] text-text-tertiary">
-              자동 발송 전용 계정 · 답장 시 안내 자동응답만 발송됩니다
-            </p>
-          )}
           {isOperatorConv && images.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-2">
               {images.map((image, index) => (
