@@ -8,7 +8,7 @@ const VISITOR_KEY = "kbo_visitor_id";
 /** ios_native | android_native | pwa | web — distinguishes the launched app
  * shells from PWA-installed and plain web traffic. PWA is detected via the
  * standalone display-mode (iOS Safari exposes navigator.standalone). */
-function getPlatform(): string {
+export function getPlatform(): string {
   if (isNative) {
     if (platform === "ios") return "ios_native";
     if (platform === "android") return "android_native";
@@ -23,7 +23,7 @@ function getPlatform(): string {
   return "web";
 }
 
-function getVisitorId(): string {
+export function getVisitorId(): string {
   if (typeof window === "undefined") return "";
   let id = localStorage.getItem(VISITOR_KEY);
   if (!id) {
@@ -46,7 +46,7 @@ function getDevice(): string {
 // undefined = not yet resolved.
 let cachedAppVersion: string | null | undefined;
 
-async function getAppVersion(): Promise<string | null> {
+export async function getAppVersion(): Promise<string | null> {
   if (cachedAppVersion !== undefined) return cachedAppVersion;
   if (!isNative) {
     cachedAppVersion = null;

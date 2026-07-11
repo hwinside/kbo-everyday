@@ -1,6 +1,9 @@
-const CACHE_NAME = "kbo-everyday-v18";
+const CACHE_NAME = "kbo-everyday-v19";
 
-const PRECACHE_ASSETS = ["/offline"];
+// NOTE: /offline 라우트는 존재하지 않는다(404). 이를 precache하면 cache.addAll이
+// reject → SW install 자체가 실패해 업데이트가 막힌다. 오프라인 전용 페이지를
+// 만들기 전까지 precache는 비워둔다.
+const PRECACHE_ASSETS = [];
 
 const CACHEABLE_EXTENSIONS = [
   ".js", ".css", ".woff2", ".woff",
