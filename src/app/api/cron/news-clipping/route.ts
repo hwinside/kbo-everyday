@@ -37,7 +37,8 @@ function clippingContent(teamName: string): string {
 
 /** 유저별 최초 수신 클리핑 인트로 (삼순 다듬은 문구 — 하린아빠 채택. 오늘 첫 발송 전원 + 이후 신규 가입 유저 커버) */
 function firstIntro(teamName: string, nickname: string): string {
-  return `크보팬은 회원님이 등록해주신 최애팀을 기준으로, 하루에 한 번 아침 7시에 뉴스클리핑을 보내드려요.
+  return `아침에 갑작스러운 쪽지로 놀라시진 않으셨나요?
+크보팬은 회원님이 등록해주신 최애팀을 기준으로, 하루에 한 번 아침 7시에 뉴스클리핑을 보내드려요.
 앞으로 ${teamName}의 소식을 ${nickname}님께 매일 전해드릴게요.
 
 혹시 수신을 원치 않으시면 마이페이지에서 뉴스클리핑 설정을 OFF로 바꾸실 수 있습니다.
