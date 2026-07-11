@@ -17,6 +17,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         if #available(iOS 16.1, *) {
             LiveActivityController.shared.startObservers()
         }
+        // 애플워치 최애팀 동기화 — 활성화 완료 시 저장된 my_team을 1회 push.
+        WatchSyncManager.shared.activate()
         return true
     }
 

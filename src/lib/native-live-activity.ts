@@ -99,7 +99,7 @@ export interface WidgetNextGame {
 }
 
 /** teamId(1-10) → KBO 2자 코드 (gameId·공식 코드 기준). */
-const ID_TO_KBO_CODE: Record<number, string> = {
+export const ID_TO_KBO_CODE: Record<number, string> = {
   1: "LG", 2: "OB", 3: "KT", 4: "SK", 5: "NC",
   6: "HT", 7: "LT", 8: "SS", 9: "HH", 10: "WO",
 };

@@ -7,27 +7,50 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		14E7C38D5BA9CC0CEC7862B3 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F06E9AC42A08D1703EE84F9F /* Foundation.framework */; };
+		159F3DC71D6824E95E816E8B /* WatchRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7126F38454FC2B4048E1334A /* WatchRootView.swift */; };
+		1FB9D552D369B5999B046BE8 /* WatchSyncManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4FEDC2677B7A4BC4CC855E7 /* WatchSyncManager.swift */; };
+		206D03F84C70706ACF3DD4F0 /* KBOWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FBBDC194F2455C929D15867 /* KBOWatchApp.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
+		3ADAA3BF6F65FD5778BD7F42 /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B46A02D327CA9B0549D48B9B /* WatchConnectivity.framework */; };
+		41BA079B59A6DC4FC6B41BD6 /* KBOWatchWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29CED23CA64E9C79C383BE57 /* KBOWatchWidgetBundle.swift */; };
 		479C3F312FDA9E300044837B /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 479C3F302FDA9E300044837B /* WidgetKit.framework */; };
 		479C3F332FDA9E300044837B /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 479C3F322FDA9E300044837B /* SwiftUI.framework */; };
 		479C3F442FDA9E310044837B /* LiveActivityExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 479C3F2E2FDA9E300044837B /* LiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		47B1AA062FDADA7700271DE5 /* LiveActivityPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47B1AA052FDADA7700271DE5 /* LiveActivityPlugin.swift */; };
 		47B1AA0B2FDADA7700271DE5 /* MainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47B1AA0A2FDADA7700271DE5 /* MainViewController.swift */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
-		A1B2C3D42FE000000000001 /* MetaAppEventsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D42FE000000000002 /* MetaAppEventsPlugin.swift */; };
-		AAEE11D52FE000000000001 /* AppReviewPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAEE11D52FE000000000002 /* AppReviewPlugin.swift */; };
-		A1B2C3D42FE000000000003 /* FacebookCore in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D42FE000000000004 /* FacebookCore */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
+		5D1C7C30ED44720BA355429A /* KBOWatchGameComplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 198724C510A9660087E15A76 /* KBOWatchGameComplication.swift */; };
+		8339B66B68FB116D589CBCE8 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FE5559A886229C1AB2118F2F /* WidgetKit.framework */; };
 		8C0B1A9A2FDB001000000001 /* LiveActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C0B1A992FDB001000000001 /* LiveActivityController.swift */; };
+		97154CD7F967F8AAA3F1849D /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5B5C68575F21538F2C5E1B13 /* SwiftUI.framework */; };
+		A1B2C3D42FE000000000001 /* MetaAppEventsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D42FE000000000002 /* MetaAppEventsPlugin.swift */; };
+		A1B2C3D42FE000000000003 /* FacebookCore in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D42FE000000000004 /* FacebookCore */; };
+		AAEE11D52FE000000000001 /* AppReviewPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAEE11D52FE000000000002 /* AppReviewPlugin.swift */; };
+		B9C9CA25150B8EEF9F62ACB0 /* WatchData.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4C1D752B8E5F1912873A2F0 /* WatchData.swift */; };
+		BAE5770A86811C4BB4ED5DF5 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5B5C68575F21538F2C5E1B13 /* SwiftUI.framework */; };
+		C09CE651EBDDF7AB323A2D4B /* WatchData.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4C1D752B8E5F1912873A2F0 /* WatchData.swift */; };
+		E13A2991E212C01AC10FBC57 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F06E9AC42A08D1703EE84F9F /* Foundation.framework */; };
+		E144DB38339E72334B4753FC /* KBOWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = AEB8F65459C635243ED9DD36 /* KBOWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		E8629F36D6A7701538AF304F /* KBOWatchWidget.appex in Embed Watch Widget */ = {isa = PBXBuildFile; fileRef = 7363C7ECDC2BD672797D7FB4 /* KBOWatchWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		F724AF0F22860E90696AA042 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FE5559A886229C1AB2118F2F /* WidgetKit.framework */; };
 		FBA5E7710A1B2C3D4E5F6071 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = FBA5E7720A1B2C3D4E5F6072 /* GoogleService-Info.plist */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		2A521C7D0C5332AFF2699530 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3072575141B7DF245FAF1A1A;
+			remoteInfo = KBOWatchWidget;
+		};
 		479C3F422FDA9E310044837B /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
@@ -35,9 +58,27 @@
 			remoteGlobalIDString = 479C3F2D2FDA9E300044837B;
 			remoteInfo = LiveActivityExtension;
 		};
+		A845DE3FB4A3BDA7DDDA2767 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E99C99F16F898269DEA5B202;
+			remoteInfo = KBOWatch;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		016C5769D4D3C34941D1E84F /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				E144DB38339E72334B4753FC /* KBOWatch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		479C3F452FDA9E310044837B /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -49,17 +90,28 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BC4411C532CB1768540B3A3D /* Embed Watch Widget */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				E8629F36D6A7701538AF304F /* KBOWatchWidget.appex in Embed Watch Widget */,
+			);
+			name = "Embed Watch Widget";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		198724C510A9660087E15A76 /* KBOWatchGameComplication.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KBOWatchGameComplication.swift; sourceTree = "<group>"; };
+		29CED23CA64E9C79C383BE57 /* KBOWatchWidgetBundle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KBOWatchWidgetBundle.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		479C3F2E2FDA9E300044837B /* LiveActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		479C3F302FDA9E300044837B /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		479C3F322FDA9E300044837B /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		47B1AA052FDADA7700271DE5 /* LiveActivityPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityPlugin.swift; sourceTree = "<group>"; };
 		47B1AA0A2FDADA7700271DE5 /* MainViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewController.swift; sourceTree = "<group>"; };
-		A1B2C3D42FE000000000002 /* MetaAppEventsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetaAppEventsPlugin.swift; sourceTree = "<group>"; };
-		AAEE11D52FE000000000002 /* AppReviewPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppReviewPlugin.swift; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		504EC3071FED79650016851F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -68,20 +120,32 @@
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
+		5B5C68575F21538F2C5E1B13 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS26.0.sdk/System/Library/Frameworks/SwiftUI.framework; sourceTree = DEVELOPER_DIR; };
+		6FBBDC194F2455C929D15867 /* KBOWatchApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KBOWatchApp.swift; sourceTree = "<group>"; };
+		7126F38454FC2B4048E1334A /* WatchRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchRootView.swift; sourceTree = "<group>"; };
+		7363C7ECDC2BD672797D7FB4 /* KBOWatchWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KBOWatchWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		8C0B1A992FDB001000000001 /* LiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityController.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
+		A1B2C3D42FE000000000002 /* MetaAppEventsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetaAppEventsPlugin.swift; sourceTree = "<group>"; };
+		A4C1D752B8E5F1912873A2F0 /* WatchData.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchData.swift; sourceTree = "<group>"; };
+		AAEE11D52FE000000000002 /* AppReviewPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppReviewPlugin.swift; sourceTree = "<group>"; };
+		AEB8F65459C635243ED9DD36 /* KBOWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KBOWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B46A02D327CA9B0549D48B9B /* WatchConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WatchConnectivity.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS26.0.sdk/System/Library/Frameworks/WatchConnectivity.framework; sourceTree = DEVELOPER_DIR; };
+		D4FEDC2677B7A4BC4CC855E7 /* WatchSyncManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchSyncManager.swift; sourceTree = "<group>"; };
+		F06E9AC42A08D1703EE84F9F /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		FBA5E7720A1B2C3D4E5F6072 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
+		FE5559A886229C1AB2118F2F /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS26.0.sdk/System/Library/Frameworks/WidgetKit.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		479C3F482FDA9E310044837B /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+		479C3F482FDA9E310044837B /* Exceptions for "LiveActivity" folder in "LiveActivityExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
 			target = 479C3F2D2FDA9E300044837B /* LiveActivityExtension */;
 		};
-		479C3F552FDAA2AD0044837B /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+		479C3F552FDAA2AD0044837B /* Exceptions for "LiveActivity" folder in "App" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				KBOGameAttributes.swift,
@@ -91,10 +155,33 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		479C3F342FDA9E300044837B /* LiveActivity */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (479C3F552FDAA2AD0044837B /* PBXFileSystemSynchronizedBuildFileExceptionSet */, 479C3F482FDA9E310044837B /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = LiveActivity; sourceTree = "<group>"; };
+		479C3F342FDA9E300044837B /* LiveActivity */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				479C3F552FDAA2AD0044837B /* Exceptions for "LiveActivity" folder in "App" target */,
+				479C3F482FDA9E310044837B /* Exceptions for "LiveActivity" folder in "LiveActivityExtension" target */,
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = LiveActivity;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		07542C9EBA09BCC2A4CFD501 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				14E7C38D5BA9CC0CEC7862B3 /* Foundation.framework in Frameworks */,
+				97154CD7F967F8AAA3F1849D /* SwiftUI.framework in Frameworks */,
+				8339B66B68FB116D589CBCE8 /* WidgetKit.framework in Frameworks */,
+				3ADAA3BF6F65FD5778BD7F42 /* WatchConnectivity.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		479C3F2B2FDA9E300044837B /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -113,14 +200,46 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		887DED6EC82804BB9A25480F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E13A2991E212C01AC10FBC57 /* Foundation.framework in Frameworks */,
+				F724AF0F22860E90696AA042 /* WidgetKit.framework in Frameworks */,
+				BAE5770A86811C4BB4ED5DF5 /* SwiftUI.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		356CA59BE994675551AC4FBF /* KBOWatch */ = {
+			isa = PBXGroup;
+			children = (
+				6FBBDC194F2455C929D15867 /* KBOWatchApp.swift */,
+				7126F38454FC2B4048E1334A /* WatchRootView.swift */,
+			);
+			name = KBOWatch;
+			path = KBOWatch;
+			sourceTree = "<group>";
+		};
+		457386AD44087AD71C8BB09F /* watchOS */ = {
+			isa = PBXGroup;
+			children = (
+				F06E9AC42A08D1703EE84F9F /* Foundation.framework */,
+				FE5559A886229C1AB2118F2F /* WidgetKit.framework */,
+				5B5C68575F21538F2C5E1B13 /* SwiftUI.framework */,
+				B46A02D327CA9B0549D48B9B /* WatchConnectivity.framework */,
+			);
+			name = watchOS;
+			sourceTree = "<group>";
+		};
 		479C3F2F2FDA9E300044837B /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
 				479C3F302FDA9E300044837B /* WidgetKit.framework */,
 				479C3F322FDA9E300044837B /* SwiftUI.framework */,
+				457386AD44087AD71C8BB09F /* watchOS */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -133,6 +252,9 @@
 				479C3F342FDA9E300044837B /* LiveActivity */,
 				479C3F2F2FDA9E300044837B /* Frameworks */,
 				504EC3051FED79650016851F /* Products */,
+				356CA59BE994675551AC4FBF /* KBOWatch */,
+				984D1E0DD70F799AA1FBB362 /* KBOWatchWidget */,
+				96053875ECF998B13FC4704F /* KBOWatchShared */,
 			);
 			sourceTree = "<group>";
 		};
@@ -141,6 +263,8 @@
 			children = (
 				504EC3041FED79650016851F /* App.app */,
 				479C3F2E2FDA9E300044837B /* LiveActivityExtension.appex */,
+				AEB8F65459C635243ED9DD36 /* KBOWatch.app */,
+				7363C7ECDC2BD672797D7FB4 /* KBOWatchWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -162,13 +286,50 @@
 				504EC3131FED79650016851F /* Info.plist */,
 				2FAD9762203C412B000D30F8 /* config.xml */,
 				50B271D01FEDC1A000F3C39B /* public */,
+				D4FEDC2677B7A4BC4CC855E7 /* WatchSyncManager.swift */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		96053875ECF998B13FC4704F /* KBOWatchShared */ = {
+			isa = PBXGroup;
+			children = (
+				A4C1D752B8E5F1912873A2F0 /* WatchData.swift */,
+			);
+			name = KBOWatchShared;
+			path = KBOWatchShared;
+			sourceTree = "<group>";
+		};
+		984D1E0DD70F799AA1FBB362 /* KBOWatchWidget */ = {
+			isa = PBXGroup;
+			children = (
+				29CED23CA64E9C79C383BE57 /* KBOWatchWidgetBundle.swift */,
+				198724C510A9660087E15A76 /* KBOWatchGameComplication.swift */,
+			);
+			name = KBOWatchWidget;
+			path = KBOWatchWidget;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		3072575141B7DF245FAF1A1A /* KBOWatchWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 79B8C6A07DEC8F91E5EBDDD7 /* Build configuration list for PBXNativeTarget "KBOWatchWidget" */;
+			buildPhases = (
+				CFBC354FF0E19998E1958916 /* Sources */,
+				887DED6EC82804BB9A25480F /* Frameworks */,
+				44FDA9E74945634D0392340A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = KBOWatchWidget;
+			productName = KBOWatchWidget;
+			productReference = 7363C7ECDC2BD672797D7FB4 /* KBOWatchWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		479C3F2D2FDA9E300044837B /* LiveActivityExtension */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 479C3F492FDA9E310044837B /* Build configuration list for PBXNativeTarget "LiveActivityExtension" */;
@@ -185,8 +346,6 @@
 				479C3F342FDA9E300044837B /* LiveActivity */,
 			);
 			name = LiveActivityExtension;
-			packageProductDependencies = (
-			);
 			productName = LiveActivityExtension;
 			productReference = 479C3F2E2FDA9E300044837B /* LiveActivityExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
@@ -199,11 +358,13 @@
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
 				479C3F452FDA9E310044837B /* Embed Foundation Extensions */,
+				016C5769D4D3C34941D1E84F /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				479C3F432FDA9E310044837B /* PBXTargetDependency */,
+				C8174B4992ABD3210428BE34 /* PBXTargetDependency */,
 			);
 			name = App;
 			packageProductDependencies = (
@@ -212,6 +373,25 @@
 			);
 			productName = App;
 			productReference = 504EC3041FED79650016851F /* App.app */;
+			productType = "com.apple.product-type.application";
+		};
+		E99C99F16F898269DEA5B202 /* KBOWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0E287A827F748A02B295B9B8 /* Build configuration list for PBXNativeTarget "KBOWatch" */;
+			buildPhases = (
+				2DB38C872B9C6974F4798297 /* Sources */,
+				07542C9EBA09BCC2A4CFD501 /* Frameworks */,
+				84B0901BE1D74C22934FB1AF /* Resources */,
+				BC4411C532CB1768540B3A3D /* Embed Watch Widget */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				4A9CBE0097A68CD8012942DE /* PBXTargetDependency */,
+			);
+			name = KBOWatch;
+			productName = KBOWatch;
+			productReference = AEB8F65459C635243ED9DD36 /* KBOWatch.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -252,11 +432,20 @@
 			targets = (
 				504EC3031FED79650016851F /* App */,
 				479C3F2D2FDA9E300044837B /* LiveActivityExtension */,
+				E99C99F16F898269DEA5B202 /* KBOWatch */,
+				3072575141B7DF245FAF1A1A /* KBOWatchWidget */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		44FDA9E74945634D0392340A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		479C3F2C2FDA9E300044837B /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -278,9 +467,26 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		84B0901BE1D74C22934FB1AF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		2DB38C872B9C6974F4798297 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				206D03F84C70706ACF3DD4F0 /* KBOWatchApp.swift in Sources */,
+				159F3DC71D6824E95E816E8B /* WatchRootView.swift in Sources */,
+				B9C9CA25150B8EEF9F62ACB0 /* WatchData.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		479C3F2A2FDA9E300044837B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -298,6 +504,17 @@
 				47B1AA0B2FDADA7700271DE5 /* MainViewController.swift in Sources */,
 				A1B2C3D42FE000000000001 /* MetaAppEventsPlugin.swift in Sources */,
 				AAEE11D52FE000000000001 /* AppReviewPlugin.swift in Sources */,
+				1FB9D552D369B5999B046BE8 /* WatchSyncManager.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CFBC354FF0E19998E1958916 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				41BA079B59A6DC4FC6B41BD6 /* KBOWatchWidgetBundle.swift in Sources */,
+				5D1C7C30ED44720BA355429A /* KBOWatchGameComplication.swift in Sources */,
+				C09CE651EBDDF7AB323A2D4B /* WatchData.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -308,6 +525,18 @@
 			isa = PBXTargetDependency;
 			target = 479C3F2D2FDA9E300044837B /* LiveActivityExtension */;
 			targetProxy = 479C3F422FDA9E310044837B /* PBXContainerItemProxy */;
+		};
+		4A9CBE0097A68CD8012942DE /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = KBOWatchWidget;
+			target = 3072575141B7DF245FAF1A1A /* KBOWatchWidget */;
+			targetProxy = 2A521C7D0C5332AFF2699530 /* PBXContainerItemProxy */;
+		};
+		C8174B4992ABD3210428BE34 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = KBOWatch;
+			target = E99C99F16F898269DEA5B202 /* KBOWatch */;
+			targetProxy = A845DE3FB4A3BDA7DDDA2767 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -331,6 +560,30 @@
 /* End PBXVariantGroup section */
 
 /* Begin XCBuildConfiguration section */
+		19BD4BBFB9ED7B400EFC1983 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = KBOWatch/KBOWatch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 11;
+				DEVELOPMENT_TEAM = HRSVQZ27F9;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = KBOWatch/Info.plist;
+				MARKETING_VERSION = 1.0.7;
+				PRODUCT_BUNDLE_IDENTIFIER = fan.keubo.app.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
 		479C3F462FDA9E310044837B /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -574,9 +827,84 @@
 			};
 			name = Release;
 		};
+		8BF0D87CFE600830DA2DD2A6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = KBOWatch/KBOWatch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 11;
+				DEVELOPMENT_TEAM = HRSVQZ27F9;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = KBOWatch/Info.plist;
+				MARKETING_VERSION = 1.0.7;
+				PRODUCT_BUNDLE_IDENTIFIER = fan.keubo.app.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
+		A102790CFA596729B451C518 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = KBOWatchWidget/KBOWatchWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 11;
+				DEVELOPMENT_TEAM = HRSVQZ27F9;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = KBOWatchWidget/Info.plist;
+				MARKETING_VERSION = 1.0.7;
+				PRODUCT_BUNDLE_IDENTIFIER = fan.keubo.app.watchkitapp.KBOWatchWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
+		B103DFFEDD48800438CC16BF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = KBOWatchWidget/KBOWatchWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 11;
+				DEVELOPMENT_TEAM = HRSVQZ27F9;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = KBOWatchWidget/Info.plist;
+				MARKETING_VERSION = 1.0.7;
+				PRODUCT_BUNDLE_IDENTIFIER = fan.keubo.app.watchkitapp.KBOWatchWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		0E287A827F748A02B295B9B8 /* Build configuration list for PBXNativeTarget "KBOWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8BF0D87CFE600830DA2DD2A6 /* Release */,
+				19BD4BBFB9ED7B400EFC1983 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		479C3F492FDA9E310044837B /* Build configuration list for PBXNativeTarget "LiveActivityExtension" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -600,6 +928,15 @@
 			buildConfigurations = (
 				504EC3171FED79650016851F /* Debug */,
 				504EC3181FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		79B8C6A07DEC8F91E5EBDDD7 /* Build configuration list for PBXNativeTarget "KBOWatchWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A102790CFA596729B451C518 /* Release */,
+				B103DFFEDD48800438CC16BF /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
