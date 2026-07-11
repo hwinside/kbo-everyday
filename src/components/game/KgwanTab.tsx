@@ -230,7 +230,8 @@ function ScheduledView({ gameId, awayTeamId, homeTeamId, gameDate, gameStartTime
   const [nowMs, setNowMs] = useState(() => Date.now());
   const gameStartAt = useMemo(() => getGameStartAtKst(gameId, gameDate, gameStartTime), [gameId, gameDate, gameStartTime]);
   const chatOpensAt = gameStartAt ? new Date(gameStartAt.getTime() - GAME_CHAT_OPEN_LEAD_MS) : null;
-  const isChatOpen = chatOpensAt ? nowMs >= chatOpensAt.getTime() : false;
+  // 올스타전은 2시간 게이트 없이 즉시 오픈 — 이벤트 특성상 미리 모여 떠들 수 있게 (하린아빠 2026-07-11).
+  const isChatOpen = isAllStarGame(awayTeamId, homeTeamId) || (chatOpensAt ? nowMs >= chatOpensAt.getTime() : false);
 
   useEffect(() => {
     if (isChatOpen) return;
