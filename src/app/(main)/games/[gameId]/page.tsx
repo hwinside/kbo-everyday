@@ -530,7 +530,11 @@ export default function GameDetailPage() {
               )}
           {activeTab === "lineup" && (
             <motion.div key="lineup" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              {(d.detailLineup && d.detailLineup.isToday === true) ? (
+              {/* 올스타전은 KBO가 LINEUP_CK를 false로 내려 isToday 게이트에 걸림(어제 라인업
+                  오표시 방지용 플래그가 올스타엔 미설정). 타순 9+9가 실재하면 표시 —
+                  올스타 gameId 조회라 과거 경기 stale 라인업 리스크 없음. */}
+              {(d.detailLineup && (d.detailLineup.isToday === true ||
+                (isAllStarGameId(gameId) && d.detailLineup.away.length >= 9 && d.detailLineup.home.length >= 9))) ? (
                 <LineupTab
                   gameId={gameId}
                   lineup={{
