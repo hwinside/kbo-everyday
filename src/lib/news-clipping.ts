@@ -41,6 +41,25 @@ function pubDateToKstDate(pubDate: string): string | null {
   return new Date(t + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
+/**
+ * 제목이 다른 팀 중심인 기사 판정 — 제목에 다른 팀 식별자(약칭/마스코트)만 있고 내 팀
+ * 식별자가 없으면 관련성 가드(본문 언급)를 통과해도 팬 입장에선 남의 팀 기사로 보인다
+ * (7/12 하린아빠 제보: LG 클리핑에 "한화 허인서…" 제목 기사 선정). 프롬프트 규칙만으론
+ * Gemini가 안 따르는 케이스가 실측돼 코드 레벨 사전 필터로 차단. "LG, 한화 꺾고…"처럼
+ * 내 팀이 함께 등장하는 맞대결 기사는 유지된다.
+ */
+function isOtherTeamTitle(title: string, teamShort: string): boolean {
+  const fullName = TEAM_SEARCH[teamShort] || teamShort;
+  const targetTokens = [teamShort, ...fullName.split(/\s+/)];
+  if (targetTokens.some((t) => t && title.includes(t))) return false;
+  for (const [short, full] of Object.entries(TEAM_SEARCH)) {
+    if (short === teamShort) continue;
+    const mascot = full.split(/\s+/).pop() || "";
+    if (title.includes(short) || (mascot && title.includes(mascot))) return true;
+  }
+  return false;
+}
+
 /** 어제(KST) 보도된 팀 관련 기사 후보 수집 — 뉴스카드와 동일 가드 + 사진기사 제외 */
 async function collectYesterdayCandidates(teamShort: string, yesterday: string): Promise<NewsItem[]> {
   const fullName = TEAM_SEARCH[teamShort] || teamShort;
@@ -63,6 +82,7 @@ async function collectYesterdayCandidates(teamShort: string, yesterday: string):
     seen.add(item.link);
     if (pubDateToKstDate(item.pubDate) !== yesterday) return false;
     if (isPhotoArticle(item.title)) return false;
+    if (isOtherTeamTitle(item.title, teamShort)) return false;
     return isTeamBaseballRelevant(item.title, item.description, mascot);
   });
 
@@ -93,6 +113,7 @@ ${list}
 
 규칙:
 - 같은 사건을 다룬 기사는 1개만 선정
+- 제목의 주인공이 ${teamName}이 아닌 다른 팀이나 다른 팀 선수인 기사는 본문에 ${teamName}이 언급되더라도 선정하지 말 것 — 제목만 봐도 ${teamName} 팬을 위한 기사여야 함
 - 각 줄은 완결된 한 문장, 간결한 뉴스체("~했다")
 - 3줄 구성: ① 무슨 일이 있었는지 ② 구체적인 내용·수치 ③ 팀/팬 관점에서 갖는 의미
 - 링크를 열지 않아도 기사 내용을 파악할 수 있어야 함
