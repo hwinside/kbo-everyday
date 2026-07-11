@@ -19,6 +19,8 @@ export interface NewsClippingPayload {
   date: string;
   /** 데일리 총평 한 줄 */
   overview: string;
+  /** 유저별 최초 수신 클리핑에만 포함되는 서비스 소개 인트로 (닉네임/팀명 치환, 하린아빠 지정 문구) */
+  intro?: string;
   articles: NewsClippingArticle[];
 }
 

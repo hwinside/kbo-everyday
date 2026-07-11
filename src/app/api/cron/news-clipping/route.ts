@@ -35,6 +35,50 @@ function clippingContent(teamName: string): string {
   return `📰 오늘의 ${teamName} 뉴스클리핑`;
 }
 
+/** 유저별 최초 수신 클리핑 인트로 (삼순 다듬은 문구 — 하린아빠 채택. 오늘 첫 발송 전원 + 이후 신규 가입 유저 커버) */
+function firstIntro(teamName: string, nickname: string): string {
+  return `아침에 갑작스러운 쪽지로 놀라시진 않으셨나요?
+크보팬은 회원님이 등록해주신 최애팀을 기준으로, 하루에 한 번 아침 7시에 뉴스클리핑을 보내드려요.
+앞으로 ${teamName}의 소식을 ${nickname}님께 매일 전해드릴게요.
+
+혹시 수신을 원치 않으시면 마이페이지에서 뉴스클리핑 설정을 OFF로 바꾸실 수 있습니다.
+팀과 관련된 중요한 소식을 놓치지 않으시도록, 매일 정성껏 모으고 요약해서 보내드릴게요.`;
+}
+
+/** 오늘 이전에 클리핑을 받아본 적 있는 유저 집합 (없으면 = 최초 수신 → 인트로 대상) */
+async function fetchPriorRecipients(admin: Admin, userIds: string[], clipDate: string): Promise<Set<string>> {
+  const prior = new Set<string>();
+  for (let i = 0; i < userIds.length; i += IN_CHUNK) {
+    const slice = userIds.slice(i, i + IN_CHUNK);
+    // 유저당 이력 row가 누적되므로 1000행 캡 회피 페이지네이션
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const { data, error } = await admin
+        .from("news_clipping_sends")
+        .select("user_id")
+        .in("user_id", slice)
+        .lt("clip_date", clipDate)
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) throw new Error(`prior sends query failed: ${error.message}`);
+      if (!data || data.length === 0) break;
+      for (const r of data) prior.add((r as { user_id: string }).user_id);
+      if (data.length < PAGE_SIZE) break;
+    }
+  }
+  return prior;
+}
+
+/** 닉네임 batch fetch (인트로 치환용) */
+async function fetchNicknames(admin: Admin, userIds: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  for (let i = 0; i < userIds.length; i += IN_CHUNK) {
+    const slice = userIds.slice(i, i + IN_CHUNK);
+    const { data, error } = await admin.from("profiles").select("id, nickname").in("id", slice);
+    if (error) throw new Error(`nickname query failed: ${error.message}`);
+    for (const r of data ?? []) map.set((r as { id: string }).id, (r as { nickname: string }).nickname);
+  }
+  return map;
+}
+
 /** 발신 계정(클리퍼)의 전체 대화를 페이지네이션으로 로드 → 상대 userId → conversationId 맵 */
 async function loadConversationMap(admin: Admin, senderId: string): Promise<Map<string, string>> {
   const map = new Map<string, string>();
@@ -151,6 +195,7 @@ interface TeamSendResult {
   sent: number;
   skippedPref: number;
   alreadySent: number;
+  firstIntro?: number;
   error?: string;
 }
 
@@ -172,19 +217,26 @@ async function sendTeamClipping(
   const convMap = await loadConversationMap(admin, senderId);
   await ensureConversations(admin, senderId, convMap, claimed, content);
 
+  // 최초 수신 유저에게만 인트로 포함 payload (닉네임 치환)
+  const prior = await fetchPriorRecipients(admin, claimed, clipDate);
+  const firstTimers = claimed.filter((id) => !prior.has(id));
+  const nicknames = await fetchNicknames(admin, firstTimers);
+
   const nowIso = new Date().toISOString();
   let sent = 0;
   const sentConvIds: string[] = [];
   for (let i = 0; i < claimed.length; i += INSERT_CHUNK) {
     const slice = claimed.slice(i, i + INSERT_CHUNK);
     const rows = slice
-      .map((userId) => convMap.get(userId))
-      .filter((convId): convId is string => Boolean(convId))
-      .map((convId) => ({
+      .map((userId) => ({ userId, convId: convMap.get(userId) }))
+      .filter((r): r is { userId: string; convId: string } => Boolean(r.convId))
+      .map(({ userId, convId }) => ({
         conversation_id: convId,
         sender_id: senderId,
         content,
-        payload,
+        payload: prior.has(userId)
+          ? payload
+          : { ...payload, intro: firstIntro(payload.team_name, nicknames.get(userId) ?? "팬") },
       }));
     if (rows.length === 0) continue;
     const { error } = await admin.from("dm_messages").insert(rows);
@@ -213,6 +265,7 @@ async function sendTeamClipping(
     sent,
     skippedPref: fans.length - optedIn.length,
     alreadySent: optedIn.length - claimed.length,
+    firstIntro: firstTimers.length,
   };
 }
 
@@ -312,6 +365,10 @@ export async function POST(req: NextRequest) {
   if (!payload) {
     return NextResponse.json({ error: "no articles for yesterday" }, { status: 404 });
   }
+
+  // 샘플은 항상 인트로 포함 (최초 수신 쪽지 포맷 검수용)
+  const nicknames = await fetchNicknames(admin, [userId]);
+  payload.intro = firstIntro(payload.team_name, nicknames.get(userId) ?? "팬");
 
   const content = clippingContent(payload.team_name);
   const convMap = new Map<string, string>();

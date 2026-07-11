@@ -20,6 +20,11 @@ export default function NewsClippingCard({ payload }: { payload: NewsClippingPay
         <p className="text-[10px] text-text-tertiary mt-0.5">
           {formatDateLabel(payload.date)} 주요 뉴스 {payload.articles.length}건
         </p>
+        {payload.intro && (
+          <p className="mt-2 whitespace-pre-line rounded-lg bg-bg-secondary px-2.5 py-2 text-xs leading-relaxed text-text-secondary">
+            {payload.intro}
+          </p>
+        )}
         {payload.overview && (
           <p className="text-xs text-text-secondary mt-1.5 leading-relaxed">{payload.overview}</p>
         )}
