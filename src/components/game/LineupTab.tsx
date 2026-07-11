@@ -3,7 +3,8 @@ import Link from "next/link";
 import { useState, useEffect, useRef } from "react";
 
 import { clsx } from "clsx";
-import { type TeamData, isAllStarGame } from "@/lib/constants/teams";
+import { type TeamData, isAllStarGame, getTeamById } from "@/lib/constants/teams";
+import { findAllStarEntryByName } from "@/lib/constants/allstar-2026";
 import type { GameLineup } from "@/lib/constants/games";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
@@ -43,6 +44,7 @@ function PitcherCard({
   teamId,
   kboId,
   label,
+  subLabel,
 }: {
   name: string;
   era: string;
@@ -50,6 +52,8 @@ function PitcherCard({
   teamId: number;
   kboId?: string;
   label: string;
+  /** 올스타전: 선수 원소속 팀명 병기 */
+  subLabel?: { text: string; color: string };
 }) {
   return (
     <div className="text-center flex flex-col items-center">
@@ -68,6 +72,9 @@ function PitcherCard({
         <span>SP</span>
         <span>{name}</span>
       </div>
+      {subLabel && (
+        <div className="text-xs font-semibold mt-1" style={{ color: subLabel.color }}>{subLabel.text}</div>
+      )}
       <div className="text-sm text-text-secondary mt-1 tabular-nums">
         ERA {era}
       </div>
@@ -226,6 +233,20 @@ export default function LineupTab({
   const hasBatters = lineup.away.batters.length > 0 && lineup.home.batters.length > 0;
   const isLineupPartial = !awaySp || !homeSp || !hasBatters;
 
+  // 올스타전: 게임 팀이 나눔/드림이라 선수의 원소속 팀 정보가 lineup에 없음 →
+  // 확정 엔트리(allstar-2026)로 이름 → 원소속 teamId/kboId 해석해 팀명 병기 +
+  // 아바타/프로필 링크 보정 (하린아빠 2026-07-11 예외처리 지시).
+  const isAllStar = isAllStarGame(awayTeam.id, homeTeam.id);
+  const allStarInfo = (name: string) => {
+    if (!isAllStar) return undefined;
+    const entry = findAllStarEntryByName(name);
+    if (!entry) return undefined;
+    const team = getTeamById(entry.teamId);
+    return team ? { teamId: entry.teamId, kboId: entry.kboId, shortName: team.shortName, color: team.colorLight } : undefined;
+  };
+  const awaySpInfo = allStarInfo(awaySp);
+  const homeSpInfo = allStarInfo(homeSp);
+
   return (
     <div className="px-4 py-4 space-y-5 overflow-y-auto">
       {/* Lineup not fully confirmed notice */}
@@ -244,18 +265,20 @@ export default function LineupTab({
           name={lineup.away.startingPitcher.name}
           era={lineup.away.startingPitcher.era}
           teamColor={awayTeam.colorPrimary}
-          teamId={awayTeam.id}
-          kboId={lineup.away.startingPitcher.kboId}
+          teamId={awaySpInfo?.teamId ?? awayTeam.id}
+          kboId={lineup.away.startingPitcher.kboId ?? awaySpInfo?.kboId}
           label={awayTeam.shortName}
+          subLabel={awaySpInfo ? { text: awaySpInfo.shortName, color: awaySpInfo.color } : undefined}
         />
         <div className="text-text-tertiary text-base mt-8">VS</div>
         <PitcherCard
           name={lineup.home.startingPitcher.name}
           era={lineup.home.startingPitcher.era}
           teamColor={homeTeam.colorPrimary}
-          teamId={homeTeam.id}
-          kboId={lineup.home.startingPitcher.kboId}
+          teamId={homeSpInfo?.teamId ?? homeTeam.id}
+          kboId={lineup.home.startingPitcher.kboId ?? homeSpInfo?.kboId}
           label={homeTeam.shortName}
+          subLabel={homeSpInfo ? { text: homeSpInfo.shortName, color: homeSpInfo.color } : undefined}
         />
       </div>
 
@@ -294,8 +317,12 @@ export default function LineupTab({
             {Array.from({ length: 9 }, (_, i) => {
               const away = lineup.away.batters[i];
               const home = lineup.home.batters[i];
-              const awayHref = resolvePlayerHref(away);
-              const homeHref = resolvePlayerHref(home);
+              // 방어: 9명 미만 라인업(비정상 데이터)에서 undefined 접근 크래시 방지.
+              if (!away || !home) return null;
+              const awayInfo = allStarInfo(away.name);
+              const homeInfo = allStarInfo(home.name);
+              const awayHref = resolvePlayerHref(awayInfo ? { ...away, ...awayInfo } : away);
+              const homeHref = resolvePlayerHref(homeInfo ? { ...home, ...homeInfo } : home);
               return (
                 <tr
                   key={i}
@@ -311,8 +338,8 @@ export default function LineupTab({
                     <Link href={awayHref} className="flex items-center gap-1.5 hover:opacity-80">
                       <PlayerAvatar
                         name={away.name}
-                        teamId={away.teamId}
-                        photoUrl={getPlayerPhotoUrl(away.name, away.kboId, awayTeam.id)}
+                        teamId={awayInfo?.teamId ?? away.teamId}
+                        photoUrl={getPlayerPhotoUrl(away.name, away.kboId ?? awayInfo?.kboId, awayInfo?.teamId ?? awayTeam.id)}
                         size={36}
                         showTeamBadge={false}
                       />
@@ -322,6 +349,11 @@ export default function LineupTab({
                       <div className="flex flex-col">
                         <span className="text-sm text-text-primary font-medium whitespace-nowrap">
                           {away.name}
+                          {awayInfo && (
+                            <span className="ml-1 text-[10px] font-semibold align-middle" style={{ color: awayInfo.color }}>
+                              {awayInfo.shortName}
+                            </span>
+                          )}
                         </span>
                         {away.avg && away.avg !== "-" && (
                           <span className="text-xs text-text-secondary tabular-nums leading-tight">
@@ -338,6 +370,11 @@ export default function LineupTab({
                     <Link href={homeHref} className="flex items-center justify-end gap-1.5 hover:opacity-80">
                       <div className="flex flex-col items-end">
                         <span className="text-sm text-text-primary font-medium whitespace-nowrap">
+                          {homeInfo && (
+                            <span className="mr-1 text-[10px] font-semibold align-middle" style={{ color: homeInfo.color }}>
+                              {homeInfo.shortName}
+                            </span>
+                          )}
                           {home.name}
                         </span>
                         {home.avg && home.avg !== "-" && (
@@ -351,8 +388,8 @@ export default function LineupTab({
                       </span>
                       <PlayerAvatar
                         name={home.name}
-                        teamId={home.teamId}
-                        photoUrl={getPlayerPhotoUrl(home.name, home.kboId, homeTeam.id)}
+                        teamId={homeInfo?.teamId ?? home.teamId}
+                        photoUrl={getPlayerPhotoUrl(home.name, home.kboId ?? homeInfo?.kboId, homeInfo?.teamId ?? homeTeam.id)}
                         size={36}
                         showTeamBadge={false}
                       />

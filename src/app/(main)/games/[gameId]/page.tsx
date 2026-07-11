@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx } from "clsx";
-import { getTeamById, ALLSTAR_CODE_TO_ID } from "@/lib/constants/teams";
+import { getTeamById, ALLSTAR_CODE_TO_ID, isAllStarGameId } from "@/lib/constants/teams";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { useCelebration } from "@/lib/hooks/useCelebration";
 import CelebrationOverlay from "@/components/game/CelebrationOverlay";
@@ -38,6 +38,7 @@ import { ChevronUp, ChevronDown } from "lucide-react";
 import ScoreBoard from "@/components/game/ScoreBoard";
 import KgwanTab from "@/components/game/KgwanTab";
 import LineupTab from "@/components/game/LineupTab";
+import AllStarEntryRoster from "@/components/game/AllStarEntryRoster";
 import GameStatsTab from "@/components/game/GameStatsTab";
 import LiveStatsTab from "@/components/game/LiveStatsTab";
 import { useGameRelay } from "@/lib/hooks/useGameRelay";
@@ -567,6 +568,9 @@ export default function GameDetailPage() {
                   homeTeam={homeTeam}
                   isLineupConfirmed={true}
                 />
+              ) : isAllStarGameId(gameId) ? (
+                /* 올스타전: 타순 게시 전엔 확정 엔트리 50명 명단(원소속 팀명 병기) 노출 (2026-07-11 하린아빠) */
+                <AllStarEntryRoster />
               ) : (
                 <div className="flex flex-col items-center justify-center h-32 gap-2">
                   <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
