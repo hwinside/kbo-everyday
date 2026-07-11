@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { clsx } from "clsx";
 import Image from "next/image";
-import { getTeamById, isAllStarGame } from "@/lib/constants/teams";
+import { getTeamById, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
 import GameChat from "@/components/game/GameChat";
 import ContextualStatsBox from "@/components/game/ContextualStatsBox";
 import { useRouter } from "next/navigation";
@@ -482,6 +482,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
 }) {
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
+  const isAllStar = isAllStarGameId(gameId);
 
   // LLM 요약 상태
   const [llmSummary, setLlmSummary] = useState<{
@@ -507,7 +508,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
   // LLM 요약 fetch — 캐시는 항상 확인, 생성은 boxScore 있을 때만
   // 30초 타임아웃 + 실패 시 에러 상태 유지 (자동 fallback 복귀 절대 금지)
   useEffect(() => {
-    if (llmSummary) return;
+    if (isAllStar || llmSummary) return;
 
     const TIMEOUT_MS = 30_000;
     const controller = new AbortController();
@@ -653,12 +654,12 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
       clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [hasRealBoxScore, boxScore, gameId, llmSummary, awayTeam, homeTeam, linescore, retryNonce]);
+  }, [isAllStar, hasRealBoxScore, boxScore, gameId, llmSummary, awayTeam, homeTeam, linescore, retryNonce]);
 
   // 최초 생성이 30초를 넘기거나 일시 실패해도 서버 쪽 생성이 뒤늦게 캐시에 저장될 수 있다.
   // 이 경우 사용자에게 에러 카드로 고정하지 않고 잠시 캐시를 자동 확인한다.
   useEffect(() => {
-    if (!llmError || llmSummary || !hasRealBoxScore) {
+    if (isAllStar || !llmError || llmSummary || !hasRealBoxScore) {
       cachePollStartedAtRef.current = null;
       return;
     }
@@ -698,7 +699,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [llmError, llmSummary, hasRealBoxScore, gameId]);
+  }, [isAllStar, llmError, llmSummary, hasRealBoxScore, gameId]);
 
 
   // LLM 요약만 사용 (fallback/숏버전 폐기)
@@ -744,7 +745,11 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
     <div className="flex flex-col h-full">
       {/* AI Summary Cards */}
       <div className="px-4 py-4">
-        {summary ? (
+        {isAllStar ? (
+          <div className="glass-card p-5 text-center">
+            <p className="text-sm text-text-tertiary">올스타전은 AI 경기 요약을 제공하지 않습니다</p>
+          </div>
+        ) : summary ? (
           <div className="glass-card p-5 space-y-4">
             {/* AI 라벨 */}
             <div className="flex items-center gap-1.5">
