@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect } from "react";
-import { isChunkLoadError, reportClientError } from "@/lib/client-error-report";
+import {
+  maybeReloadForChunkError,
+  reportClientError,
+} from "@/lib/client-error-report";
 
 // global-error replaces the root layout entirely, so globals.css/Tailwind are
 // not available here — styles must be inline. Keeps to the forced-dark base
@@ -18,17 +21,7 @@ export default function GlobalError({
       source: "global-error-boundary",
       digest: error.digest,
     });
-    if (isChunkLoadError(error.message || "")) {
-      try {
-        const last = Number(sessionStorage.getItem("kbo_chunk_reload_at") || 0);
-        if (Date.now() - last >= 60 * 1000) {
-          sessionStorage.setItem("kbo_chunk_reload_at", String(Date.now()));
-          window.location.reload();
-        }
-      } catch {
-        /* ignore */
-      }
-    }
+    maybeReloadForChunkError(error.message || "");
   }, [error]);
 
   return (
