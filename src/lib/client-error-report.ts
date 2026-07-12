@@ -4,11 +4,38 @@ import { getPlatform, getVisitorId, getAppVersion } from "@/lib/admin/tracker";
 
 /** Chunk/asset load failures are a deploy-skew symptom (stale client asking
  * for a purged build's chunk after a new deploy), not an app bug — callers
- * use this to auto-recover with a reload instead of showing an error page. */
+ * use this to auto-recover with a reload instead of showing an error page.
+ *
+ * Covers both webpack ("Loading chunk N failed" / ChunkLoadError) and Turbopack
+ * ("Failed to load chunk <url> from module N" / "Failed to load script: <src>"),
+ * which is the default bundler on Next 16 and the format we actually see in
+ * production telemetry. Missing the Turbopack wording left the self-heal dead. */
 export function isChunkLoadError(message: string): boolean {
-  return /ChunkLoadError|Loading chunk .* failed|Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(
+  return /ChunkLoadError|Loading chunk .* failed|Failed to load chunk|Failed to load script|Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(
     message,
   );
+}
+
+// One auto-reload per window guards against a reload loop when the fresh build
+// itself crashes; sessionStorage survives the reload we trigger.
+const CHUNK_RELOAD_FLAG = "kbo_chunk_reload_at";
+const CHUNK_RELOAD_WINDOW_MS = 60 * 1000;
+
+/** If `message` is a chunk/asset load failure (deploy skew), trigger at most
+ * one guarded full reload per 60s to self-recover onto the fresh build.
+ * Returns true when a reload was initiated. No-op on the server. */
+export function maybeReloadForChunkError(message: string): boolean {
+  if (typeof window === "undefined") return false;
+  if (!isChunkLoadError(message)) return false;
+  try {
+    const last = Number(sessionStorage.getItem(CHUNK_RELOAD_FLAG) || 0);
+    if (Date.now() - last < CHUNK_RELOAD_WINDOW_MS) return false;
+    sessionStorage.setItem(CHUNK_RELOAD_FLAG, String(Date.now()));
+  } catch {
+    return false;
+  }
+  window.location.reload();
+  return true;
 }
 
 export type ClientErrorSource =

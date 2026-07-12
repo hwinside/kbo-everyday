@@ -1,25 +1,10 @@
 "use client";
 
 import { useEffect } from "react";
-import { isChunkLoadError, reportClientError } from "@/lib/client-error-report";
-
-// One auto-reload per window guards against a reload loop when the fresh
-// build itself crashes; sessionStorage survives the reload we trigger.
-const RELOAD_FLAG = "kbo_chunk_reload_at";
-const RELOAD_WINDOW_MS = 60 * 1000;
-
-function tryChunkErrorReload(message: string): boolean {
-  if (!isChunkLoadError(message)) return false;
-  try {
-    const last = Number(sessionStorage.getItem(RELOAD_FLAG) || 0);
-    if (Date.now() - last < RELOAD_WINDOW_MS) return false;
-    sessionStorage.setItem(RELOAD_FLAG, String(Date.now()));
-  } catch {
-    return false;
-  }
-  window.location.reload();
-  return true;
-}
+import {
+  maybeReloadForChunkError,
+  reportClientError,
+} from "@/lib/client-error-report";
 
 export default function Error({
   error,
@@ -35,7 +20,7 @@ export default function Error({
       source: "error-boundary",
       digest: error.digest,
     });
-    tryChunkErrorReload(error.message || "");
+    maybeReloadForChunkError(error.message || "");
   }, [error]);
 
   return (
