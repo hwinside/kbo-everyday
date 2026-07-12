@@ -49,7 +49,7 @@ async function fetchPlayerStats(playerId: string, position: string) {
     };
   } else {
     // Table 0: 팀, AVG, G, PA, AB, R, H, 2B, 3B, HR, TB, RBI, SB, CS, SAC, SF
-    // Table 1: BB, IBB, HBP, SO, GDP, SLG, OBP, OPS, MH, RISP, PH-BA
+    // Table 1: BB, IBB, HBP, SO, GDP, SLG, OBP, E, SB%, MH, OPS, RISP, PH-BA
     const t0 = tables[0]?.[0];
     const t1 = tables[1]?.[0];
     if (!t0 || t0[0] === "기록이 없습니다.") return null;
@@ -60,6 +60,7 @@ async function fetchPlayerStats(playerId: string, position: string) {
       doubles: parseInt(t0[7]) || 0, triples: parseInt(t0[8]) || 0,
       hr: parseInt(t0[9]) || 0, tb: parseInt(t0[10]) || 0,
       rbi: parseInt(t0[11]) || 0, sb: parseInt(t0[12]) || 0,
+      cs: parseInt(t0[13]) || 0, sac: parseInt(t0[14]) || 0, sf: parseInt(t0[15]) || 0,
       bb: parseInt(t1?.[0]) || 0, hbp: parseInt(t1?.[2]) || 0,
       so: parseInt(t1?.[3]) || 0,
       slg: t1?.[5] || ".000", obp: t1?.[6] || ".000", ops: t1?.[10] || ".000",
@@ -79,7 +80,7 @@ interface BatterDetailStats {
   team: string; avg: string; games: number;
   pa: number; ab: number; runs: number; hits: number;
   doubles: number; triples: number; hr: number; tb: number;
-  rbi: number; sb: number; bb: number; hbp: number;
+  rbi: number; sb: number; cs: number; sac: number; sf: number; bb: number; hbp: number;
   so: number; slg: string; obp: string; ops: string;
 }
 
