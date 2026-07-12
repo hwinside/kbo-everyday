@@ -328,17 +328,17 @@ export default function StadiumDetailPage() {
                           </span>
                           {post.seat_info.block && (
                             <span className="inline-block px-2 py-0.5 rounded-full bg-bg-tertiary text-text-secondary text-xs">
-                              {post.seat_info.block}블록
+                              {post.seat_info.block}{post.seat_info.block.endsWith("블록") ? "" : "블록"}
                             </span>
                           )}
                           {post.seat_info.row && (
                             <span className="inline-block px-2 py-0.5 rounded-full bg-bg-tertiary text-text-secondary text-xs">
-                              {post.seat_info.row}열
+                              {post.seat_info.row}{post.seat_info.row.endsWith("열") ? "" : "열"}
                             </span>
                           )}
                           {post.seat_info.seat && (
                             <span className="inline-block px-2 py-0.5 rounded-full bg-bg-tertiary text-text-secondary text-xs">
-                              {post.seat_info.seat}번
+                              {post.seat_info.seat}{post.seat_info.seat.endsWith("번") ? "" : "번"}
                             </span>
                           )}
                         </div>
