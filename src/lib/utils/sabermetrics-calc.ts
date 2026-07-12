@@ -65,10 +65,19 @@ export interface CalcPitcherSaber {
   K_pct: number; BB_pct: number; WAR: number;
 }
 
+/** KBO 공식 비율 스탯 파싱 — ".356"/"0.356"/number 모두 처리, 0 이하·비수치는 null(계산 폴백) */
+function parseOfficialRate(v: string | number | undefined): number | null {
+  if (v == null) return null;
+  const n = typeof v === "string" ? parseFloat(v) : v;
+  return isFinite(n) && n > 0 ? n : null;
+}
+
 export function calcBatterSaber(s: {
   avg: string|number; hits: number; hr: number; doubles: number; triples: number;
   ab: number; pa: number; runs: number; rbi: number; sb: number;
   bb?: number; so?: number; hbp?: number; cs?: number; sf?: number; position?: string; defRuns?: number;
+  // KBO 공식 발표값 — 있으면 SSOT로 우선 사용(재계산 근사식과의 불일치 방지)
+  obp?: string|number; slg?: string|number; ops?: string|number;
 }): CalcBatterSaber {
   const avg = typeof s.avg === "string" ? parseFloat(s.avg) : s.avg;
   // 주루 runs 근사(wSB류): 도루 +0.2 / 도루실패 -0.4
@@ -83,9 +92,12 @@ export function calcBatterSaber(s: {
   const so = s.so ?? Math.round(s.ab * 0.18);
   // BABIP/OBP 분모용 SF — 실제 SF가 오면 그대로(정확), 없으면 잔차 추정(잔차엔 희생번트 SH가 섞여 BABIP 분모가 과대해질 수 있음)
   const sf = s.sf ?? Math.max(0, s.pa - s.ab - bb - hbp);
-  const obp = s.pa > 0 ? (s.hits + bb + hbp) / s.pa : 0;
-  const slg = s.ab > 0 ? (singles + s.doubles*2 + s.triples*3 + s.hr*4) / s.ab : 0;
-  const ops = obp + slg;
+  // OBP/SLG/OPS: KBO 공식값이 오면 그대로(SSOT), 없을 때만 공식 분모로 계산.
+  // OBP denominator = AB + BB + HBP + SF. PA에는 SH 등이 섞여 있어 쓰면 낮게 나온다.
+  const obpDen = s.ab + bb + hbp + sf;
+  const obp = parseOfficialRate(s.obp) ?? (obpDen > 0 ? (s.hits + bb + hbp) / obpDen : 0);
+  const slg = parseOfficialRate(s.slg) ?? (s.ab > 0 ? (singles + s.doubles*2 + s.triples*3 + s.hr*4) / s.ab : 0);
+  const ops = parseOfficialRate(s.ops) ?? (obp + slg);
   const iso = slg - avg;
   const bd = s.ab - so - s.hr + sf;
   const babip = bd > 0 ? (s.hits - s.hr) / bd : 0;
