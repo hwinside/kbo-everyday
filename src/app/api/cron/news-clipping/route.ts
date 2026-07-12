@@ -6,7 +6,7 @@ import { buildTeamClipping, kstDateString } from "@/lib/news-clipping";
 import { mapWithConcurrency } from "@/lib/naver-news";
 import type { NewsClippingPayload } from "@/types/news-clipping";
 
-// 팀별 뉴스클리핑 발송 cron — 매일 07:00 KST(UTC 22시, vercel.json).
+// 팀별 뉴스클리핑 발송 cron — 매일 09:00 KST(UTC 0시, vercel.json).
 // 어제 팀 기사 상위 5개(중복 제외 + Gemini 3줄 요약)를 최애팀 팬 전원에게 쪽지로.
 // - 발신자는 팀별 전용 계정 "{팀} 뉴스클리퍼"(NEWS_CLIPPER_BY_TEAM) — 운영팀 쪽지함/CS
 //   릴레이와 완전 분리해 클리핑 답장이 CS 인입함을 오염시키지 않게 한다
@@ -38,7 +38,7 @@ function clippingContent(teamName: string): string {
 /** 유저별 최초 수신 클리핑 인트로 (삼순 다듬은 문구 — 하린아빠 채택. 오늘 첫 발송 전원 + 이후 신규 가입 유저 커버) */
 function firstIntro(teamName: string, nickname: string): string {
   return `아침에 갑작스러운 쪽지로 놀라시진 않으셨나요?
-크보팬은 회원님이 등록해주신 최애팀을 기준으로, 하루에 한 번 아침 7시에 뉴스클리핑을 보내드려요.
+크보팬은 회원님이 등록해주신 최애팀을 기준으로, 하루에 한 번 아침 9시에 뉴스클리핑을 보내드려요.
 앞으로 ${teamName}의 소식을 ${nickname}님께 매일 전해드릴게요.
 
 혹시 수신을 원치 않으시면 마이페이지에서 뉴스클리핑 설정을 OFF로 바꾸실 수 있습니다.

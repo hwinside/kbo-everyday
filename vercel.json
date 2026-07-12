@@ -25,6 +25,6 @@
     { "path": "/api/cron/game-events-warmup", "schedule": "* 5-14 * * *" },
     { "path": "/api/cron/game-logs", "schedule": "0 14,15,16 * * *" },
     { "path": "/api/cron/sync-app-downloads", "schedule": "30 19 * * *" },
-    { "path": "/api/cron/news-clipping", "schedule": "0 22 * * *" }
+    { "path": "/api/cron/news-clipping", "schedule": "0 0 * * *" }
   ]
 }
