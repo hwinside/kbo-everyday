@@ -5,6 +5,7 @@ import { isNative } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
 import { syncNativePushToken, listenForTokenRefresh, listenForForegroundNotifications, listenForNotificationTap } from "@/lib/native-push";
 import { bootstrapLiveActivityPushToStart, reregisterPushToStartToken } from "@/lib/native-live-activity";
+import { listenForAndroidBackButton } from "@/lib/native-back-button";
 
 /**
  * 네이티브 앱(iOS/Android) FCM 토큰 동기화용 얇은 클라이언트 마운트.
@@ -18,6 +19,9 @@ import { bootstrapLiveActivityPushToStart, reregisterPushToStartToken } from "@/
  */
 export function NativePushMount() {
   useEffect(() => {
+    // Android 뒤로가기 처리 — 자체적으로 Android 네이티브를 판정(주입 브릿지 폴백 포함)하므로
+    // 원격 로드 시 npm core의 isNative 오판(web) 케이스에도 동작하도록 게이트 앞에서 호출.
+    void listenForAndroidBackButton();
     if (!isNative) return;
     void syncNativePushToken();
     void listenForTokenRefresh();
