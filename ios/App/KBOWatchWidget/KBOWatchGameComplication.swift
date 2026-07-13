@@ -112,10 +112,15 @@ struct KBOWatchComplicationView: View {
                     .font(.system(size: 14, weight: .bold))
             }
 
-            Text(snap.kind == "noTeam" ? "앱에서 팀 선택" : snap.line)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(snap.isLive ? Color(red: 1.0, green: 0.42, blue: 0.48) : .secondary)
-                .lineLimit(1).minimumScaleFactor(0.75)
+            HStack(spacing: 4) {
+                Text(snap.kind == "noTeam" ? "앱에서 팀 선택" : snap.line)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(snap.isLive ? Color(red: 1.0, green: 0.42, blue: 0.48) : .secondary)
+                    .lineLimit(1).minimumScaleFactor(0.75)
+                if snap.isLive, let b = snap.bases, b.any {
+                    BaseDiamond(bases: b, size: 13)
+                }
+            }
 
             if !snap.rankLine.isEmpty {
                 Text(snap.rankLine)
@@ -151,6 +156,8 @@ struct KBOWatchComplicationView: View {
                         .lineLimit(1).minimumScaleFactor(0.6)
                     Text(WatchFetcher.circularScheduleLabel(startAt: snap.startAt, ref: entry.date))
                         .font(.system(size: 13, weight: .black)).monospacedDigit()
+                        .foregroundStyle(WatchFetcher.isCountdownImminent(startAt: snap.startAt, ref: entry.date)
+                                         ? Color(red: 1.0, green: 0.58, blue: 0.0) : Color.primary)
                         .lineLimit(1).minimumScaleFactor(0.6)
                 } else {
                     Text(snap.myTeamCode.isEmpty ? "KBO" : displayName(snap.myTeamCode))

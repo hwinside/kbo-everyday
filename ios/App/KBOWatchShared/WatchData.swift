@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import SwiftUI
 
 // MARK: - 팀 메타 (폰 위젯 rankTeamCode/rankHighlightHex와 동일 매핑 — 워치 타깃은
 // LiveActivity 익스텐션 소스를 공유하지 않아 자체 보유)
@@ -83,6 +84,25 @@ enum WatchStore {
 
 // MARK: - 서버 응답 모델 (null/누락 방어 커스텀 디코딩 — 폰 RankRow 패턴)
 
+// 잔루 상태(1·2·3루 점유) — /api/games `runnersOn`. 라이브 카드 다이아몬드 표시용.
+struct WatchBases: Codable {
+    var first: Bool
+    var second: Bool
+    var third: Bool
+    var any: Bool { first || second || third }
+
+    enum CodingKeys: String, CodingKey { case first, second, third }
+    init(first: Bool, second: Bool, third: Bool) {
+        self.first = first; self.second = second; self.third = third
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        first = (try? c.decodeIfPresent(Bool.self, forKey: .first)) ?? false
+        second = (try? c.decodeIfPresent(Bool.self, forKey: .second)) ?? false
+        third = (try? c.decodeIfPresent(Bool.self, forKey: .third)) ?? false
+    }
+}
+
 struct WatchGame: Codable {
     var time: String
     var awayTeamId: Int
@@ -93,9 +113,10 @@ struct WatchGame: Codable {
     var isTop: Bool
     var status: String   // "scheduled" | "live" | "final" | "cancelled"
     var outs: Int
+    var runnersOn: WatchBases?
 
     enum CodingKeys: String, CodingKey {
-        case time, awayTeamId, homeTeamId, awayScore, homeScore, inning, isTop, status, outs
+        case time, awayTeamId, homeTeamId, awayScore, homeScore, inning, isTop, status, outs, runnersOn
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -108,6 +129,7 @@ struct WatchGame: Codable {
         isTop = (try? c.decodeIfPresent(Bool.self, forKey: .isTop)) ?? true
         status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "scheduled"
         outs = (try? c.decodeIfPresent(Int.self, forKey: .outs)) ?? 0
+        runnersOn = try? c.decodeIfPresent(WatchBases.self, forKey: .runnersOn)
     }
 }
 
@@ -168,6 +190,7 @@ struct WatchSnapshot: Codable {
     var rankLine: String    // "2위 · 1.5G" (순위 미확보 시 "")
     var updatedAt: Date
     var startAt: Date?      // 예정 경기 시작 시각(KST) — 원형 컴플리케이션 카운트다운용. scheduled 외엔 nil
+    var bases: WatchBases?  // 잔루(1·2·3루) — 라이브 다이아몬드 표시용. live 외엔 nil
 
     var isLive: Bool { kind == "live" }
     var hasScore: Bool { kind == "live" || kind == "final" }
@@ -175,7 +198,8 @@ struct WatchSnapshot: Codable {
     static func noTeam() -> WatchSnapshot {
         WatchSnapshot(kind: "noTeam", myTeamCode: "", awayCode: "", homeCode: "",
                       awayScore: 0, homeScore: 0,
-                      line: "크보팬 앱에서 최애팀을 선택하세요", rankLine: "", updatedAt: Date(), startAt: nil)
+                      line: "크보팬 앱에서 최애팀을 선택하세요", rankLine: "", updatedAt: Date(),
+                      startAt: nil, bases: nil)
     }
 
     /// 위젯 갤러리/스냅샷용 익명 더미(실팀 노출 금지 — 폰 위젯 미리보기 폴리시와 동일).
@@ -183,7 +207,8 @@ struct WatchSnapshot: Codable {
         WatchSnapshot(kind: "live", myTeamCode: "", awayCode: "수달스", homeCode: "돌고래스",
                       awayScore: 3, homeScore: 5,
                       line: "LIVE 7회말 · 1사", rankLine: "2위 · 1.5G",
-                      updatedAt: Date(timeIntervalSince1970: 1_783_600_000), startAt: nil)
+                      updatedAt: Date(timeIntervalSince1970: 1_783_600_000), startAt: nil,
+                      bases: WatchBases(first: true, second: false, third: true))
     }
 }
 
@@ -295,7 +320,8 @@ enum WatchFetcher {
         guard let g = pickGame(games, myId: myId) else {
             return WatchSnapshot(kind: "noGame", myTeamCode: myCode, awayCode: "", homeCode: "",
                                  awayScore: 0, homeScore: 0,
-                                 line: "오늘 경기 없음", rankLine: rank, updatedAt: Date(), startAt: nil)
+                                 line: "오늘 경기 없음", rankLine: rank, updatedAt: Date(),
+                                 startAt: nil, bases: nil)
         }
         let awayCode = WatchTeam.code(fromId: g.awayTeamId)
         let homeCode = WatchTeam.code(fromId: g.homeTeamId)
@@ -322,11 +348,14 @@ enum WatchFetcher {
         // 오늘 예정 경기만 시작 시각 부착(원형 카운트다운용). 라이브/종료/취소는 nil.
         let startAt = g.status == "scheduled"
             ? startDate(dateYMD: effectiveDateString(), time: g.time) : nil
+        // 잔루는 라이브 경기에만 부착(다이아몬드 표시용).
+        let bases = g.status == "live" ? g.runnersOn : nil
 
         return WatchSnapshot(kind: g.status, myTeamCode: myCode,
                              awayCode: awayCode, homeCode: homeCode,
                              awayScore: aScore, homeScore: hScore,
-                             line: line, rankLine: rank, updatedAt: Date(), startAt: startAt)
+                             line: line, rankLine: rank, updatedAt: Date(),
+                             startAt: startAt, bases: bases)
     }
 
     // MARK: - 다음 예정 경기 폴백 (오늘 경기 없을 때만)
@@ -343,6 +372,13 @@ enum WatchFetcher {
         let cur = f.string(from: now)
         let next = cal.date(byAdding: .month, value: 1, to: now).map { f.string(from: $0) } ?? cur
         return [cur, next]
+    }
+
+    /// 시작 1시간 이내로 임박했는지(오늘 경기 한정) — 원형 카운트다운 색상 강조용.
+    static func isCountdownImminent(startAt: Date?, ref: Date = Date()) -> Bool {
+        guard let start = startAt, isCountdownToday(start: start, ref: ref) else { return false }
+        let secs = start.timeIntervalSince(ref)
+        return secs > 0 && secs <= 3600
     }
 
     /// 예정 경기 시작 시각이 (06시 롤오버 기준) 오늘인지 — 오늘이면 카운트다운, 아니면 날짜 표기.
@@ -434,6 +470,32 @@ enum WatchFetcher {
                              awayCode: awayCode, homeCode: homeCode,
                              awayScore: 0, homeScore: 0,
                              line: line, rankLine: rank, updatedAt: Date(),
-                             startAt: startDate(dateYMD: day.date, time: day.time))
+                             startAt: startDate(dateYMD: day.date, time: day.time), bases: nil)
+    }
+}
+
+// MARK: - 잔루 다이아몬드 (라이브 카드 — "1·3루" 글자 대신 시각 표시)
+
+/// 1·2·3루 점유를 야구 다이아몬드로 표시. 점유 시 채움, 비었으면 옅은 아웃라인.
+struct BaseDiamond: View {
+    let bases: WatchBases
+    var size: CGFloat = 14
+    var onColor: Color = Color(red: 1.0, green: 0.42, blue: 0.48)
+
+    private var pip: CGFloat { size * 0.42 }
+    private func base(_ on: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 1.5)
+            .fill(on ? onColor : Color.white.opacity(0.22))
+            .frame(width: pip, height: pip)
+            .rotationEffect(.degrees(45))
+    }
+    var body: some View {
+        ZStack {
+            base(bases.second).offset(y: -size * 0.27)   // 2루(위)
+            base(bases.third).offset(x: -size * 0.27)     // 3루(왼쪽)
+            base(bases.first).offset(x: size * 0.27)      // 1루(오른쪽)
+        }
+        .frame(width: size, height: size)
+        .accessibilityLabel(Text("주자 상황"))
     }
 }

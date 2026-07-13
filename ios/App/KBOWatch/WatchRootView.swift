@@ -78,9 +78,14 @@ struct WatchGameCard: View {
                     Spacer()
                     Text(WatchTeam.short(snap.homeCode)).font(.system(size: 15, weight: .bold))
                 }
-                Text(snap.line)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(snap.isLive ? Color(red: 1.0, green: 0.42, blue: 0.48) : .secondary)
+                HStack(spacing: 5) {
+                    Text(snap.line)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(snap.isLive ? Color(red: 1.0, green: 0.42, blue: 0.48) : .secondary)
+                    if snap.isLive, let b = snap.bases, b.any {
+                        BaseDiamond(bases: b, size: 15)
+                    }
+                }
             }
         }
         .padding(10)
