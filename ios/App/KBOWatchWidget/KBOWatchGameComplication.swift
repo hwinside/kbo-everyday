@@ -59,7 +59,9 @@ struct GameProvider: TimelineProvider {
             // watchOS 컴플리케이션 refresh 예산이 빡빡해(일 수십 회) 라이브만 짧게 잡는다.
             // 단, 예정 시작 시각이 지났는데 API가 아직 scheduled로 남아있으면(반영 지연)
             // 30분까지 기다리지 않도록 짧게 재시도해 '곧 시작'이 오래 남는 것을 방지한다.
-            let startedButStillScheduled = snap.kind == "scheduled" && (snap.startAt.map { $0 <= now } ?? false)
+            // "오늘"(isCountdownToday) 가드로 전날 stale scheduled 캐시가 4분 retry로 도는 것 차단.
+            let startedButStillScheduled = snap.kind == "scheduled"
+                && (snap.startAt.map { $0 <= now && WatchFetcher.isCountdownToday(start: $0, ref: now) } ?? false)
             let interval: TimeInterval = snap.isLive ? 10 * 60 : (startedButStillScheduled ? 4 * 60 : 30 * 60)
             completion(Timeline(entries: [GameEntry(date: now, snap: snap)],
                                 policy: .after(now.addingTimeInterval(interval))))
