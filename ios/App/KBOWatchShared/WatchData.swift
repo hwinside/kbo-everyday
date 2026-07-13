@@ -167,6 +167,7 @@ struct WatchSnapshot: Codable {
     var line: String        // 상태 한 줄 ("LIVE 6회말 · 2사" / "오늘 18:30 · 선발 곽빈" / "경기 종료 · 승")
     var rankLine: String    // "2위 · 1.5G" (순위 미확보 시 "")
     var updatedAt: Date
+    var startAt: Date?      // 예정 경기 시작 시각(KST) — 원형 컴플리케이션 카운트다운용. scheduled 외엔 nil
 
     var isLive: Bool { kind == "live" }
     var hasScore: Bool { kind == "live" || kind == "final" }
@@ -174,7 +175,7 @@ struct WatchSnapshot: Codable {
     static func noTeam() -> WatchSnapshot {
         WatchSnapshot(kind: "noTeam", myTeamCode: "", awayCode: "", homeCode: "",
                       awayScore: 0, homeScore: 0,
-                      line: "크보팬 앱에서 최애팀을 선택하세요", rankLine: "", updatedAt: Date())
+                      line: "크보팬 앱에서 최애팀을 선택하세요", rankLine: "", updatedAt: Date(), startAt: nil)
     }
 
     /// 위젯 갤러리/스냅샷용 익명 더미(실팀 노출 금지 — 폰 위젯 미리보기 폴리시와 동일).
@@ -182,7 +183,7 @@ struct WatchSnapshot: Codable {
         WatchSnapshot(kind: "live", myTeamCode: "", awayCode: "수달스", homeCode: "돌고래스",
                       awayScore: 3, homeScore: 5,
                       line: "LIVE 7회말 · 1사", rankLine: "2위 · 1.5G",
-                      updatedAt: Date(timeIntervalSince1970: 1_783_600_000))
+                      updatedAt: Date(timeIntervalSince1970: 1_783_600_000), startAt: nil)
     }
 }
 
@@ -294,7 +295,7 @@ enum WatchFetcher {
         guard let g = pickGame(games, myId: myId) else {
             return WatchSnapshot(kind: "noGame", myTeamCode: myCode, awayCode: "", homeCode: "",
                                  awayScore: 0, homeScore: 0,
-                                 line: "오늘 경기 없음", rankLine: rank, updatedAt: Date())
+                                 line: "오늘 경기 없음", rankLine: rank, updatedAt: Date(), startAt: nil)
         }
         let awayCode = WatchTeam.code(fromId: g.awayTeamId)
         let homeCode = WatchTeam.code(fromId: g.homeTeamId)
@@ -318,10 +319,14 @@ enum WatchFetcher {
             line = "오늘 \(g.time)"
         }
 
+        // 오늘 예정 경기만 시작 시각 부착(원형 카운트다운용). 라이브/종료/취소는 nil.
+        let startAt = g.status == "scheduled"
+            ? startDate(dateYMD: effectiveDateString(), time: g.time) : nil
+
         return WatchSnapshot(kind: g.status, myTeamCode: myCode,
                              awayCode: awayCode, homeCode: homeCode,
                              awayScore: aScore, homeScore: hScore,
-                             line: line, rankLine: rank, updatedAt: Date())
+                             line: line, rankLine: rank, updatedAt: Date(), startAt: startAt)
     }
 
     // MARK: - 다음 예정 경기 폴백 (오늘 경기 없을 때만)
@@ -338,6 +343,45 @@ enum WatchFetcher {
         let cur = f.string(from: now)
         let next = cal.date(byAdding: .month, value: 1, to: now).map { f.string(from: $0) } ?? cur
         return [cur, next]
+    }
+
+    /// 예정 경기 시작 시각이 (06시 롤오버 기준) 오늘인지 — 오늘이면 카운트다운, 아니면 날짜 표기.
+    static func isCountdownToday(start: Date, ref: Date = Date()) -> Bool {
+        let f = DateFormatter()
+        f.timeZone = kst
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyyMMdd"
+        return f.string(from: start) == effectiveDateString(now: ref)
+    }
+
+    /// 원형 컴플리케이션 아랫줄: 오늘 경기면 시작까지 남은 시간("5:41 후"/"41분 후"),
+    /// 미래 경기면 날짜("7/16"). startAt 없으면 "예정".
+    static func circularScheduleLabel(startAt: Date?, ref: Date = Date()) -> String {
+        guard let start = startAt else { return "예정" }
+        if isCountdownToday(start: start, ref: ref) {
+            let secs = Int(start.timeIntervalSince(ref))
+            if secs <= 0 { return "곧 시작" }
+            let mins = secs / 60
+            let h = mins / 60
+            let m = mins % 60
+            if h > 0 { return "\(h):" + String(format: "%02d", m) + " 후" }
+            return "\(max(1, m))분 후"
+        }
+        let f = DateFormatter()
+        f.timeZone = kst
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "M/d"
+        return f.string(from: start)
+    }
+
+    /// "YYYYMMDD" + "18:30" → 시작 시각 Date(KST). 시간 없으면 nil(카운트다운 불가).
+    static func startDate(dateYMD: String, time: String) -> Date? {
+        guard !time.isEmpty else { return nil }
+        let f = DateFormatter()
+        f.timeZone = kst
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyyMMdd HH:mm"
+        return f.date(from: "\(dateYMD) \(time)")
     }
 
     /// "YYYYMMDD" + "18:30" → "7/15(수) 18:30" (시간 없으면 날짜만).
@@ -389,6 +433,7 @@ enum WatchFetcher {
         return WatchSnapshot(kind: "scheduled", myTeamCode: myCode,
                              awayCode: awayCode, homeCode: homeCode,
                              awayScore: 0, homeScore: 0,
-                             line: line, rankLine: rank, updatedAt: Date())
+                             line: line, rankLine: rank, updatedAt: Date(),
+                             startAt: startDate(dateYMD: day.date, time: day.time))
     }
 }

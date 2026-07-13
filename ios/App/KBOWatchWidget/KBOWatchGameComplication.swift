@@ -40,10 +40,26 @@ struct GameProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<GameEntry>) -> Void) {
         WatchFetcher.fetch { snap in
+            let now = Date()
+            // 오늘 예정 경기: 시작까지 카운트다운(원형)이 촘촘히 갱신되도록 다중 엔트리를 미리 만든다.
+            // fetch 1회로 표시만 순차 갱신 → refresh 예산 소모 0. 시작 시각에 refetch로 라이브 전환.
+            if snap.kind == "scheduled", let start = snap.startAt, start > now,
+               WatchFetcher.isCountdownToday(start: start, ref: now) {
+                var entries: [GameEntry] = []
+                var t = now
+                while t < start && entries.count < 240 {
+                    entries.append(GameEntry(date: t, snap: snap))
+                    // 시작 1시간 전부터 1분 간격, 그 이전은 5분 간격(엔트리 수 억제).
+                    t = t.addingTimeInterval(start.timeIntervalSince(t) <= 3600 ? 60 : 300)
+                }
+                if entries.isEmpty { entries.append(GameEntry(date: now, snap: snap)) }
+                completion(Timeline(entries: entries, policy: .after(start)))
+                return
+            }
             // watchOS 컴플리케이션 refresh 예산이 빡빡해(일 수십 회) 라이브만 짧게 잡는다.
             let interval: TimeInterval = snap.isLive ? 10 * 60 : 30 * 60
-            let entry = GameEntry(date: Date(), snap: snap)
-            completion(Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(interval))))
+            completion(Timeline(entries: [GameEntry(date: now, snap: snap)],
+                                policy: .after(now.addingTimeInterval(interval))))
         }
     }
 }
@@ -111,19 +127,35 @@ struct KBOWatchComplicationView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // 원형 — 팀 축약 + 스코어(경기 없으면 순위).
+    // 원형 상대팀 축약(내 팀 아닌 쪽).
+    private var opponentShort: String {
+        let opp = snap.awayCode == snap.myTeamCode ? snap.homeCode : snap.awayCode
+        return displayName(opp)
+    }
+
+    // 원형 — 스코어(라이브/종료) / 예정경기(vs 상대 + 카운트다운·날짜) / 순위(그 외).
     private var circular: some View {
         ZStack {
             AccessoryWidgetBackground()
             VStack(spacing: 0) {
-                Text(snap.myTeamCode.isEmpty ? "KBO" : displayName(snap.myTeamCode))
-                    .font(.system(size: 10, weight: .heavy))
-                    .lineLimit(1).minimumScaleFactor(0.6)
                 if snap.hasScore {
+                    Text(snap.myTeamCode.isEmpty ? "KBO" : displayName(snap.myTeamCode))
+                        .font(.system(size: 10, weight: .heavy))
+                        .lineLimit(1).minimumScaleFactor(0.6)
                     Text("\(snap.awayScore):\(snap.homeScore)")
                         .font(.system(size: 15, weight: .black)).monospacedDigit()
                         .lineLimit(1).minimumScaleFactor(0.6)
+                } else if snap.kind == "scheduled" {
+                    Text(opponentShort.isEmpty ? "예정" : "vs \(opponentShort)")
+                        .font(.system(size: 11, weight: .heavy))
+                        .lineLimit(1).minimumScaleFactor(0.6)
+                    Text(WatchFetcher.circularScheduleLabel(startAt: snap.startAt, ref: entry.date))
+                        .font(.system(size: 13, weight: .black)).monospacedDigit()
+                        .lineLimit(1).minimumScaleFactor(0.6)
                 } else {
+                    Text(snap.myTeamCode.isEmpty ? "KBO" : displayName(snap.myTeamCode))
+                        .font(.system(size: 10, weight: .heavy))
+                        .lineLimit(1).minimumScaleFactor(0.6)
                     Text(snap.rankLine.isEmpty ? "-" : String(snap.rankLine.prefix(2)))
                         .font(.system(size: 14, weight: .black))
                         .lineLimit(1).minimumScaleFactor(0.6)
