@@ -42,6 +42,17 @@ enum WatchTeam {
         default: return code
         }
     }
+
+    /// /api/team-schedule는 팀 slug를 받는다 (TEAMS.slug와 동일 매핑).
+    static func slug(fromId id: Int) -> String {
+        switch id {
+        case 1: return "lg"; case 2: return "doosan"; case 3: return "kt"
+        case 4: return "ssg"; case 5: return "nc"; case 6: return "kia"
+        case 7: return "lotte"; case 8: return "samsung"; case 9: return "hanwha"
+        case 10: return "kiwoom"
+        default: return ""
+        }
+    }
 }
 
 // MARK: - App Group 스토어 (워치 사이드 — 폰과는 별개 컨테이너, 워치 앱 ↔ 워치 위젯 공유)
@@ -117,6 +128,32 @@ struct WatchRankRow: Codable {
 }
 
 struct WatchStandingsResponse: Codable { var standings: [WatchRankRow] }
+
+// /api/team-schedule 응답 — 오늘 경기 없을 때 "다음 예정 경기" 폴백에만 사용(디코드 전용).
+struct WatchScheduleDay: Decodable {
+    var date: String     // "YYYYMMDD"
+    var status: String   // "scheduled" | "live" | "final" | "cancelled"
+    var home: Bool       // 최애팀이 홈이면 true
+    var time: String     // "18:30"
+    var opponentId: Int
+
+    enum CodingKeys: String, CodingKey { case date, status, home, time, opponent }
+    enum OppKeys: String, CodingKey { case id }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        date = (try? c.decodeIfPresent(String.self, forKey: .date)) ?? ""
+        status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "scheduled"
+        home = (try? c.decodeIfPresent(Bool.self, forKey: .home)) ?? false
+        time = (try? c.decodeIfPresent(String.self, forKey: .time)) ?? ""
+        if let opp = try? c.nestedContainer(keyedBy: OppKeys.self, forKey: .opponent) {
+            opponentId = (try? opp.decodeIfPresent(Int.self, forKey: .id)) ?? 0
+        } else {
+            opponentId = 0
+        }
+    }
+}
+
+struct WatchScheduleResponse: Decodable { var days: [WatchScheduleDay] }
 
 // MARK: - 렌더 스냅샷 (컴플리케이션·워치 앱이 그리는 최종 형태)
 
@@ -220,6 +257,16 @@ enum WatchFetcher {
                 completion(cached); return
             }
             let snap = compose(myCode: myCode, myId: myId, games: games, rankRow: rankRow)
+            // 오늘 최애팀 경기가 없으면 "오늘 경기 없음" 대신 다음 예정 경기를 보여준다
+            // (올스타 브레이크·팀 휴식일 대응). 예정 경기도 없으면 compose의 noGame 유지.
+            if snap.kind == "noGame" {
+                fetchNextGame(myCode: myCode, myId: myId, rank: snap.rankLine) { nextSnap in
+                    let final = nextSnap ?? snap
+                    WatchStore.saveCachedSnapshot(final)
+                    completion(final)
+                }
+                return
+            }
             if gamesOk { WatchStore.saveCachedSnapshot(snap) }
             completion(snap)
         }
@@ -274,6 +321,74 @@ enum WatchFetcher {
         return WatchSnapshot(kind: g.status, myTeamCode: myCode,
                              awayCode: awayCode, homeCode: homeCode,
                              awayScore: aScore, homeScore: hScore,
+                             line: line, rankLine: rank, updatedAt: Date())
+    }
+
+    // MARK: - 다음 예정 경기 폴백 (오늘 경기 없을 때만)
+
+    private static var kst: TimeZone { TimeZone(identifier: "Asia/Seoul") ?? .current }
+
+    /// 이번 달 + 다음 달 "yyyy-MM" (월말에 이달 남은 경기가 없어도 다음 달까지 탐색).
+    static func monthStrings(now: Date = Date()) -> [String] {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = kst
+        let f = DateFormatter()
+        f.timeZone = kst
+        f.dateFormat = "yyyy-MM"
+        let cur = f.string(from: now)
+        let next = cal.date(byAdding: .month, value: 1, to: now).map { f.string(from: $0) } ?? cur
+        return [cur, next]
+    }
+
+    /// "YYYYMMDD" + "18:30" → "7/15(수) 18:30" (시간 없으면 날짜만).
+    static func scheduleLine(dateYMD: String, time: String) -> String {
+        let inFmt = DateFormatter()
+        inFmt.timeZone = kst
+        inFmt.dateFormat = "yyyyMMdd"
+        guard let d = inFmt.date(from: dateYMD) else {
+            return time.isEmpty ? "다음 경기 예정" : time
+        }
+        let outFmt = DateFormatter()
+        outFmt.timeZone = kst
+        outFmt.locale = Locale(identifier: "ko_KR")
+        outFmt.dateFormat = "M/d(E)"
+        let datePart = outFmt.string(from: d)
+        return time.isEmpty ? datePart : "\(datePart) \(time)"
+    }
+
+    /// 최애팀 slug로 team-schedule를 이달→다음달 순서로 조회, 첫 예정 경기를 스냅샷으로.
+    /// 실패/예정 없음이면 nil (호출부가 "오늘 경기 없음" 폴백).
+    static func fetchNextGame(myCode: String, myId: Int, rank: String,
+                              completion: @escaping (WatchSnapshot?) -> Void) {
+        let slug = WatchTeam.slug(fromId: myId)
+        guard !slug.isEmpty else { completion(nil); return }
+        let months = monthStrings()
+        let fromDate = effectiveDateString()   // 이 값 이상(미래)의 scheduled만
+
+        func tryMonth(_ idx: Int) {
+            guard idx < months.count else { completion(nil); return }
+            get("/api/team-schedule?team=\(slug)&month=\(months[idx])") { data in
+                if let data,
+                   let parsed = try? JSONDecoder().decode(WatchScheduleResponse.self, from: data),
+                   let day = parsed.days.first(where: { $0.status == "scheduled" && $0.date >= fromDate }) {
+                    completion(nextSnapshot(myCode: myCode, day: day, rank: rank))
+                } else {
+                    tryMonth(idx + 1)
+                }
+            }
+        }
+        tryMonth(0)
+    }
+
+    /// 다음 예정 경기 → 기존 "scheduled" 렌더 경로 재사용(매치업 + 날짜/시각 라인).
+    static func nextSnapshot(myCode: String, day: WatchScheduleDay, rank: String) -> WatchSnapshot {
+        let oppCode = WatchTeam.code(fromId: day.opponentId)
+        let awayCode = day.home ? oppCode : myCode
+        let homeCode = day.home ? myCode : oppCode
+        let line = scheduleLine(dateYMD: day.date, time: day.time)
+        return WatchSnapshot(kind: "scheduled", myTeamCode: myCode,
+                             awayCode: awayCode, homeCode: homeCode,
+                             awayScore: 0, homeScore: 0,
                              line: line, rankLine: rank, updatedAt: Date())
     }
 }
