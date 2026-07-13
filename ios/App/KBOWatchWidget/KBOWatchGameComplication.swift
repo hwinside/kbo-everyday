@@ -141,18 +141,31 @@ struct KBOWatchComplicationView: View {
         return displayName(opp)
     }
 
+    // 원형 라이브 스코어 한 줄: "LG 3" (팀 + 점수). 누가 몇 점인지 명확하게.
+    private func circularScoreRow(_ team: String, _ score: Int) -> some View {
+        HStack(spacing: 4) {
+            Text(team).font(.system(size: 11, weight: .bold))
+            Text("\(score)").font(.system(size: 14, weight: .black)).monospacedDigit()
+        }
+        .lineLimit(1).minimumScaleFactor(0.55)
+    }
+
     // 원형 — 스코어(라이브/종료) / 예정경기(vs 상대 + 카운트다운·날짜) / 순위(그 외).
     private var circular: some View {
         ZStack {
             AccessoryWidgetBackground()
-            VStack(spacing: 0) {
+            VStack(spacing: 1) {
                 if snap.hasScore {
-                    Text(snap.myTeamCode.isEmpty ? "KBO" : displayName(snap.myTeamCode))
-                        .font(.system(size: 10, weight: .heavy))
-                        .lineLimit(1).minimumScaleFactor(0.6)
-                    Text("\(snap.awayScore):\(snap.homeScore)")
-                        .font(.system(size: 15, weight: .black)).monospacedDigit()
-                        .lineLimit(1).minimumScaleFactor(0.6)
+                    // 팀별로 점수를 라벨 → "LG 3 / KT 2" (my팀 위, 상대 아래). 내 팀 없으면 원정/홈 순.
+                    if snap.myTeamCode.isEmpty {
+                        circularScoreRow(displayName(snap.awayCode), snap.awayScore)
+                        circularScoreRow(displayName(snap.homeCode), snap.homeScore)
+                    } else {
+                        let myAway = snap.awayCode == snap.myTeamCode
+                        circularScoreRow(displayName(snap.myTeamCode), myAway ? snap.awayScore : snap.homeScore)
+                        circularScoreRow(displayName(myAway ? snap.homeCode : snap.awayCode),
+                                         myAway ? snap.homeScore : snap.awayScore)
+                    }
                 } else if snap.kind == "scheduled" {
                     Text(opponentShort.isEmpty ? "예정" : "vs \(opponentShort)")
                         .font(.system(size: 11, weight: .heavy))
