@@ -7522,5 +7522,14 @@
     "backNo": "54",
     "team": "롯데",
     "birthDate": "2006-08-05"
+  },
+  {
+    "name": "김성진",
+    "kboId": "69105",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "36",
+    "team": "LG",
+    "birthDate": "2000-03-17"
   }
 ]

@@ -41,7 +41,7 @@ jobs:
             for (const p of data) {
               if (!p.team && p.teamName) p.team = p.teamName;
               for (const k of Object.keys(p)) {
-                if (!['name','kboId','team','teamId','position','backNo'].includes(k)) delete p[k];
+                if (!['name','kboId','team','teamId','position','backNo','birthDate'].includes(k)) delete p[k];
               }
             }
             fs.writeFileSync(path, JSON.stringify(data, null, 2));
