@@ -56,8 +56,18 @@ function upsertScrapedPlayer(allPlayers, { playerId, name, teamId, teamName, pos
     team: teamName,
     position: position || prev?.position || existing?.position || "야수",
     backNo: existing?.backNo || prev?.backNo || "",
+    // 생년월일은 상세페이지 방문에서만 채워지므로 기존값 보존 (전수 재방문 방지).
+    birthDate: existing?.birthDate ?? prev?.birthDate ?? null,
     _numericId: /^\d+$/.test(playerId) ? playerId : prev?._numericId,
   });
+}
+
+// "2000년 07월 12일" -> "2000-07-12"
+function parseKboBirthday(text) {
+  const m = /(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/.exec(text || "");
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
 async function changeSelectAndWait(page, selector, value, waitMs = 8000) {
@@ -221,22 +231,24 @@ async function main() {
     await changeSelectAndWait(page, teamSel, "", 5000).catch(() => {});
   }
 
-  // ===== BACK NUMBERS (등번호 보강) =====
-  // 기록 페이지(HitterBasic/PitcherBasic)에는 등번호 컬럼이 없어 backNo=""로 들어옴.
-  // 선수 상세 페이지(PitcherDetail/HitterDetail)에서 #lblBackNo 스팬을 긁어 채움.
-  // 이미 등번호가 있는 선수는 skip — 신규/공란만 방문해서 부하 최소화.
-  const needsBackNo = [...allPlayers.values()].filter((p) => {
-    if (p.backNo && String(p.backNo).trim() !== "") return false;
+  // ===== 상세페이지 보강 (등번호 + 생년월일) =====
+  // 기록 페이지(HitterBasic/PitcherBasic)에는 등번호·생년월일이 없음.
+  // 선수 상세 페이지(PitcherDetail/HitterDetail)에서 #lblBackNo·#lblBirthday 스팬을 긁어 채움.
+  // 등번호 또는 생년월일이 비어있는 선수만 방문 — 부하 최소화(생년월일 백필 후엔 신규만).
+  const needsDetail = [...allPlayers.values()].filter((p) => {
+    const missingBackNo = !(p.backNo && String(p.backNo).trim() !== "");
+    const missingBirth = !p.birthDate;
+    if (!missingBackNo && !missingBirth) return false;
     // KBO 숫자형 playerId만 상세 페이지가 존재. 외국인 canonical(FP/AQ)은
-    // 스탯 페이지에서 발견한 숫자 alias(_numericId)로 등번호를 보강한다.
+    // 스탯 페이지에서 발견한 숫자 alias(_numericId)로 보강한다.
     return /^\d+$/.test(p._numericId || p.kboId || "");
   });
-  if (needsBackNo.length > 0) {
-    console.log(`\n🔢 등번호 보강: ${needsBackNo.length}명 개별 상세 페이지 방문`);
+  if (needsDetail.length > 0) {
+    console.log(`\n🔢 상세 보강(등번호·생년월일): ${needsDetail.length}명 개별 페이지 방문`);
     let filled = 0;
     let failed = 0;
-    for (let i = 0; i < needsBackNo.length; i++) {
-      const p = needsBackNo[i];
+    for (let i = 0; i < needsDetail.length; i++) {
+      const p = needsDetail[i];
       // 포지션에 따라 Pitcher/Hitter detail URL 선택 (둘 다 구조 동일, 실패 시 다른 쪽 재시도)
       const detailPlayerId = p._numericId || p.kboId;
       const urls = p.position === "투수"
@@ -249,6 +261,7 @@ async function main() {
             `https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=${detailPlayerId}`,
           ];
       let backNo = "";
+      let birthDate = null;
       for (const url of urls) {
         try {
           await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
@@ -256,20 +269,24 @@ async function main() {
             "#cphContents_cphContents_cphContents_playerProfile_lblBackNo",
             (el) => el.textContent.trim()
           ).catch(() => "");
-          if (backNo) break;
+          const birthTxt = await page.$eval(
+            "#cphContents_cphContents_cphContents_playerProfile_lblBirthday",
+            (el) => el.textContent.trim()
+          ).catch(() => "");
+          birthDate = parseKboBirthday(birthTxt);
+          if (backNo || birthDate) break;
         } catch { /* try next url */ }
       }
-      if (backNo) {
-        allPlayers.get(p.kboId).backNo = backNo;
-        filled++;
-      } else {
-        failed++;
-      }
+      const rec = allPlayers.get(p.kboId);
+      if (backNo && !(rec.backNo && String(rec.backNo).trim() !== "")) rec.backNo = backNo;
+      if (birthDate && !rec.birthDate) rec.birthDate = birthDate;
+      if (backNo || birthDate) filled++;
+      else failed++;
       if ((i + 1) % 20 === 0) {
-        console.log(`  진행 ${i + 1}/${needsBackNo.length} (fill=${filled}, fail=${failed})`);
+        console.log(`  진행 ${i + 1}/${needsDetail.length} (fill=${filled}, fail=${failed})`);
       }
     }
-    console.log(`  ✅ 등번호 보강 완료: 성공 ${filled}명, 실패 ${failed}명`);
+    console.log(`  ✅ 상세 보강 완료: 성공 ${filled}명, 실패 ${failed}명`);
   }
 
   await browser.close();
@@ -292,6 +309,7 @@ async function main() {
       position: p.position,
       backNo: p.backNo || "0",
       team: p.team || p.teamName || p.shortTeam,
+      birthDate: p.birthDate ?? null,
     }))
     .sort((a, b) => a.name.localeCompare(b.name, "ko"));
 

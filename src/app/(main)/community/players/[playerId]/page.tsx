@@ -33,6 +33,7 @@ import PlayerRadar from "@/components/player/PlayerRadar";
 import PlayerNews from "@/components/player/PlayerNews";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
 import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
+import { formatBirthDisplay } from "@/lib/utils/birthdate";
 
 // kboId → player 역매핑 (roster 기반 — 전체 선수 커버)
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
@@ -89,6 +90,8 @@ export default function PlayerBoardPage() {
   const playerName = resolvedPlayer?.name;
   // 동명이인 대응: roster에서 canonical kboId로 직접 찾기
   const rosterPlayer = PLAYERS_ROSTER.find((p) => p.kboId === kboId);
+  // 생년월일 표시 (roster SSOT의 birthDate 기반, 없으면 null → 미표시)
+  const birthText = formatBirthDisplay(rosterPlayer?.birthDate);
   
   const [player, setPlayer] = useState<PlayerData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -358,6 +361,7 @@ export default function PlayerBoardPage() {
           teamBg={teamColor}
           backNo={player.number}
           position={player.position}
+          birthText={birthText}
           stats={buildHeroStats(realStats ?? {}, player.position ?? "", playerRanks)}
           showTopBar={false}
         />
@@ -380,6 +384,9 @@ export default function PlayerBoardPage() {
               <p className="text-base text-text-tertiary">
                 {[getTeamShortName(player.teamId) || player.team, player.position].filter(Boolean).join(" · ") || "선수"}
               </p>
+              {birthText && (
+                <p className="text-sm text-text-tertiary mt-0.5">{birthText}</p>
+              )}
             </div>
 
             <button onClick={async () => {
