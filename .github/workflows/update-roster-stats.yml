@@ -41,7 +41,7 @@ jobs:
             for (const p of data) {
               if (!p.team && p.teamName) p.team = p.teamName;
               for (const k of Object.keys(p)) {
-                if (!['name','kboId','team','teamId','position','backNo'].includes(k)) delete p[k];
+                if (!['name','kboId','team','teamId','position','backNo','birthDate'].includes(k)) delete p[k];
               }
             }
             fs.writeFileSync(path, JSON.stringify(data, null, 2));
@@ -50,6 +50,12 @@ jobs:
 
       - name: Crawl 2026 stats
         run: node scripts/crawl-stats.mjs --season 2026
+
+      # 재발 방지: 크롤된 stats 에는 있으나 roster 에 없는 선수(상무 전역 복귀/콜업)를
+      # KBO 공식 상세에서 자동 온보딩한다. 사진은 다음 스텝(update-player-photos)이
+      # roster 기준으로 자동 다운로드/맵 재생성한다. (2026-07-14 스탯 반영 정지 근본대응)
+      - name: Reconcile roster from stats
+        run: node scripts/reconcile-roster-from-stats.mjs
 
       - name: Update player photos
         run: node scripts/update-player-photos.mjs

@@ -7504,5 +7504,32 @@
     "backNo": "50",
     "team": "NC",
     "birthDate": "1997-06-17"
+  },
+  {
+    "name": "정대선",
+    "kboId": "53568",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "4",
+    "team": "롯데",
+    "birthDate": "2004-11-16"
+  },
+  {
+    "name": "이준서",
+    "kboId": "56554",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "54",
+    "team": "롯데",
+    "birthDate": "2006-08-05"
+  },
+  {
+    "name": "김성진",
+    "kboId": "69105",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "36",
+    "team": "LG",
+    "birthDate": "2000-03-17"
   }
 ]
