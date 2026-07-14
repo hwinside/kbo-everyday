@@ -29,6 +29,8 @@ import {
   extractMediaList,
   extractInstagramVideoUrls,
   extractInstagramImageUrls,
+  extractThreadsImageUrls,
+  extractMlbparkImageUrls,
   inferMediaExt,
   type OgMedia,
 } from "./og-media";
@@ -65,13 +67,15 @@ async function fetchMediaList(sourceUrl: string): Promise<{ media: OgMedia[]; so
   const media = extractMediaList(html, MAX_MEDIA_ITEMS);
   if (media.some((m) => m.type === "video")) return { media, sourceHtml: html };
 
-  // SPA(Threads 등) — embed 페이지에서 한 번 더 시도
+  // SPA(Threads 등) — embed 페이지에서 한 번 더 시도. 영상 우선(움짤콜렉터) → 없으면 사진(짤콜렉터).
   const threadsEmbedUrl = getThreadsEmbedUrl(sourceUrl);
   if (threadsEmbedUrl) {
     const embedHtml = await fetchPageHtml(threadsEmbedUrl);
     if (embedHtml) {
       const embedMedia = extractMediaList(embedHtml, MAX_MEDIA_ITEMS);
       if (embedMedia.some((m) => m.type === "video")) return { media: embedMedia, sourceHtml: html };
+      const thImages = extractThreadsImageUrls(embedHtml, MAX_MEDIA_ITEMS);
+      if (thImages.length > 0) return { media: thImages, sourceHtml: html };
     }
   }
 
@@ -89,7 +93,21 @@ async function fetchMediaList(sourceUrl: string): Promise<{ media: OgMedia[]; so
     }
   }
 
+  // MLBPARK 본문(#contentDetail) 사진 여러 장 — og:image 단일 폴백보다 우선. 서버 렌더라 원문 HTML 그대로 사용.
+  if (isMlbparkUrl(sourceUrl)) {
+    const mlbImages = extractMlbparkImageUrls(html, MAX_MEDIA_ITEMS);
+    if (mlbImages.length > 0) return { media: mlbImages, sourceHtml: html };
+  }
+
   return { media, sourceHtml: html };
+}
+
+function isMlbparkUrl(sourceUrl: string): boolean {
+  try {
+    return new URL(sourceUrl).hostname.toLowerCase().endsWith("mlbpark.donga.com");
+  } catch {
+    return false;
+  }
 }
 
 async function fetchPageHtml(url: string): Promise<string | null> {
@@ -107,9 +125,10 @@ function getThreadsEmbedUrl(sourceUrl: string): string | null {
     const u = new URL(sourceUrl);
     const host = u.hostname.toLowerCase();
     if (!host.endsWith("threads.com") && !host.endsWith("threads.net")) return null;
-    const pathname = u.pathname.replace(/\/+$/, "");
-    if (!/^\/@[^/]+\/post\/[^/]+$/i.test(pathname)) return null;
-    return `${u.origin}${pathname}/embed`;
+    // 공유 URL은 코드 뒤에 한글 슬러그가 붙는 경우가 많음(/@h/post/CODE/kbo-...) — 첫 세그먼트만 캡처.
+    const m = u.pathname.match(/^\/(@[^/]+\/post\/[^/]+)/i);
+    if (!m) return null;
+    return `${u.origin}/${m[1]}/embed`;
   } catch {
     return null;
   }
