@@ -1000,6 +1000,15 @@
   },
   {
     "name": "김성민",
+    "kboId": "67828",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "8",
+    "team": "키움",
+    "birthDate": "1994-04-26"
+  },
+  {
+    "name": "김성민",
     "kboId": "50848",
     "teamId": 4,
     "position": "투수",
@@ -1033,6 +1042,15 @@
     "backNo": "21",
     "team": "키움",
     "birthDate": "1997-11-14"
+  },
+  {
+    "name": "김성진",
+    "kboId": "69105",
+    "teamId": 1,
+    "position": "내야수",
+    "backNo": "36",
+    "team": "LG",
+    "birthDate": "2000-03-17"
   },
   {
     "name": "김세민",
@@ -1719,6 +1737,15 @@
     "birthDate": "2004-08-04"
   },
   {
+    "name": "김현준",
+    "kboId": "51417",
+    "teamId": 8,
+    "position": "외야수",
+    "backNo": "44",
+    "team": "삼성",
+    "birthDate": "2002-10-11"
+  },
+  {
     "name": "김형준",
     "kboId": "68912",
     "teamId": 5,
@@ -2221,6 +2248,15 @@
     "backNo": "46",
     "team": "KT",
     "birthDate": "2006-11-28"
+  },
+  {
+    "name": "박건우",
+    "kboId": "55509",
+    "teamId": 7,
+    "position": "포수",
+    "backNo": "69",
+    "team": "롯데",
+    "birthDate": "2003-02-01"
   },
   {
     "name": "박계범",
@@ -2728,21 +2764,21 @@
   },
   {
     "name": "박준영",
-    "kboId": "56709",
-    "teamId": 9,
-    "position": "투수",
-    "backNo": "68",
-    "team": "한화",
-    "birthDate": "2002-06-03"
-  },
-  {
-    "name": "박준영",
     "kboId": "52731",
     "teamId": 9,
     "position": "투수",
     "backNo": "96",
     "team": "한화",
     "birthDate": "2003-03-02"
+  },
+  {
+    "name": "박준영",
+    "kboId": "56709",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "68",
+    "team": "한화",
+    "birthDate": "2002-06-03"
   },
   {
     "name": "박준우",
@@ -3058,6 +3094,15 @@
     "backNo": "29",
     "team": "KIA",
     "birthDate": "2000-03-18"
+  },
+  {
+    "name": "블레인",
+    "kboId": "FP023",
+    "teamId": 5,
+    "position": "내야수",
+    "backNo": "50",
+    "team": "NC",
+    "birthDate": "1997-06-17"
   },
   {
     "name": "샘 힐리어드",
@@ -5067,6 +5112,15 @@
     "birthDate": "2002-12-18"
   },
   {
+    "name": "이준서",
+    "kboId": "56554",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "54",
+    "team": "롯데",
+    "birthDate": "2006-08-05"
+  },
+  {
     "name": "이준우",
     "kboId": "55301",
     "teamId": 10,
@@ -5796,6 +5850,15 @@
     "birthDate": "2003-01-25"
   },
   {
+    "name": "정대선",
+    "kboId": "53568",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "4",
+    "team": "롯데",
+    "birthDate": "2004-11-16"
+  },
+  {
     "name": "정동윤",
     "kboId": "66858",
     "teamId": 4,
@@ -5812,6 +5875,15 @@
     "backNo": "107",
     "team": "키움",
     "birthDate": "2002-01-14"
+  },
+  {
+    "name": "정민규",
+    "kboId": "51764",
+    "teamId": 9,
+    "position": "야수",
+    "backNo": "2",
+    "team": "한화",
+    "birthDate": "2003-01-10"
   },
   {
     "name": "정보근",
@@ -7468,68 +7540,5 @@
     "backNo": "22",
     "team": "키움",
     "birthDate": "1996-08-02"
-  },
-  {
-    "name": "김현준",
-    "kboId": "51417",
-    "teamId": 8,
-    "position": "외야수",
-    "backNo": "44",
-    "team": "삼성",
-    "birthDate": "2002-10-11"
-  },
-  {
-    "name": "박건우",
-    "kboId": "55509",
-    "teamId": 7,
-    "position": "포수",
-    "backNo": "69",
-    "team": "롯데",
-    "birthDate": "2003-02-01"
-  },
-  {
-    "name": "정민규",
-    "kboId": "51764",
-    "teamId": 9,
-    "position": "야수",
-    "backNo": "2",
-    "team": "한화",
-    "birthDate": "2003-01-10"
-  },
-  {
-    "name": "블레인",
-    "kboId": "FP023",
-    "teamId": 5,
-    "position": "내야수",
-    "backNo": "50",
-    "team": "NC",
-    "birthDate": "1997-06-17"
-  },
-  {
-    "name": "정대선",
-    "kboId": "53568",
-    "teamId": 7,
-    "position": "내야수",
-    "backNo": "4",
-    "team": "롯데",
-    "birthDate": "2004-11-16"
-  },
-  {
-    "name": "이준서",
-    "kboId": "56554",
-    "teamId": 7,
-    "position": "투수",
-    "backNo": "54",
-    "team": "롯데",
-    "birthDate": "2006-08-05"
-  },
-  {
-    "name": "김성진",
-    "kboId": "69105",
-    "teamId": 1,
-    "position": "내야수",
-    "backNo": "36",
-    "team": "LG",
-    "birthDate": "2000-03-17"
   }
 ]
