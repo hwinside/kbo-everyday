@@ -100,6 +100,8 @@ interface PlayerHeroProps {
   teamBg: string;
   backNo?: number | null;
   position?: string | null;
+  /** 생년월일 표시 문자열 (예: "2000.07.17 · 만 25세"). 없으면 미표시 */
+  birthText?: string | null;
   stats?: HeroStat[];
   /** 좌상단 back link href (next/link). 없으면 window.history.back() */
   backHref?: string;
@@ -118,6 +120,7 @@ export default function PlayerHero({
   teamBg,
   backNo,
   position,
+  birthText,
   stats = [],
   backHref,
   showTopBar = true,
@@ -191,6 +194,11 @@ export default function PlayerHero({
             {position && (
               <div className="text-lg font-bold text-white/60 whitespace-nowrap" style={{ letterSpacing: "-0.05em" }}>
                 {position}
+              </div>
+            )}
+            {birthText && (
+              <div className="text-[11px] font-medium text-white/45 whitespace-nowrap" style={{ letterSpacing: "-0.03em" }}>
+                {birthText}
               </div>
             )}
           </div>
