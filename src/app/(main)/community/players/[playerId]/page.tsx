@@ -34,6 +34,8 @@ import PlayerNews from "@/components/player/PlayerNews";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
 import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
 import { formatBirthDisplay } from "@/lib/utils/birthdate";
+import { getPlayerNationality } from "@/lib/utils/player-nationality";
+import CountryFlag from "@/components/player/CountryFlag";
 
 // kboId → player 역매핑 (roster 기반 — 전체 선수 커버)
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
@@ -92,7 +94,9 @@ export default function PlayerBoardPage() {
   const rosterPlayer = PLAYERS_ROSTER.find((p) => p.kboId === kboId);
   // 생년월일 표시 (roster SSOT의 birthDate 기반, 없으면 null → 미표시)
   const birthText = formatBirthDisplay(rosterPlayer?.birthDate);
-  
+  // 외국인·아시아쿼터 선수 국적 (국기+국가명). 내국인은 null → 미표시
+  const nationality = getPlayerNationality(kboId);
+
   const [player, setPlayer] = useState<PlayerData | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
@@ -362,6 +366,7 @@ export default function PlayerBoardPage() {
           backNo={player.number}
           position={player.position}
           birthText={birthText}
+          nationality={nationality}
           stats={buildHeroStats(realStats ?? {}, player.position ?? "", playerRanks)}
           showTopBar={false}
         />
@@ -384,6 +389,13 @@ export default function PlayerBoardPage() {
               <p className="text-base text-text-tertiary">
                 {[getTeamShortName(player.teamId) || player.team, player.position].filter(Boolean).join(" · ") || "선수"}
               </p>
+              {nationality && (
+                <CountryFlag
+                  nationality={nationality}
+                  size={16}
+                  className="mt-0.5 text-sm text-text-tertiary"
+                />
+              )}
               {birthText && (
                 <p className="text-sm text-text-tertiary mt-0.5">{birthText}</p>
               )}
