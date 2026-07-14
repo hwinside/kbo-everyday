@@ -206,11 +206,15 @@ async function processMessage(evt: SlackMessageEvent): Promise<void> {
       : `board=team:${matchedBoardId}, teamId=${teamIdForLog}`;
 
   if (pub.ok) {
+    const kindLabel =
+      pub.kind === "photo"
+        ? `🖼 사진글(짤콜렉터) ${pub.succeeded ?? 0}장`
+        : `🎞 영상(움짤콜렉터) ${pub.succeeded ?? 0}개`;
     await reactAndReply(
       evt.channel,
       evt.ts,
       partialMediaNote ? "warning" : "white_check_mark",
-      `게시 완료 — *${displayName}* (${matchLabel})${partialMediaNote}. posts.id=${pub.postId}${mediaErrorsNote}`,
+      `게시 완료 — ${kindLabel} · *${displayName}* (${matchLabel})${partialMediaNote}. posts.id=${pub.postId}${mediaErrorsNote}`,
     );
     return;
   }

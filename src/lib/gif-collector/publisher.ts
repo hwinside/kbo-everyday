@@ -1,25 +1,37 @@
 /**
- * 움짤콜렉터 발행 워커.
+ * 움짤콜렉터/짤콜렉터 발행 워커.
  *
  * 단일 큐 행을 받아 *최대 N개*의 미디어를 추출/다운로드/Storage 업로드 후 posts 행으로 발행한다.
  * Webhook이 큐 INSERT 직후 즉시 호출하는 동기 흐름.
  *
+ * 영상 우선 분기:
+ *   - 영상이 추출되면 → 움짤콜렉터가 video_urls로 발행.
+ *   - 영상이 없고 사진이 있으면 → 짤콜렉터가 image_urls(사진글, 캐러셀 여러 장)로 발행.
+ *   - 둘 다 없으면 철회.
+ *
  * 흐름:
  *   1. queue row 조회 (status='pending')
- *   2. source_url 에서 미디어 목록 추출 (최대 MAX_MEDIA_ITEMS개)
+ *   2. source_url 에서 미디어 목록 추출 (최대 MAX_MEDIA_ITEMS개, 영상/사진 판별)
  *   3. 각 미디어 다운로드 (UA + Referer, 30MB 캡, 15초 timeout) — best-effort
- *   4. Supabase Storage('photos/gif-collector/{queueId}-N.ext') 업로드 — best-effort
+ *   4. Supabase Storage('photos/{gif-collector|jjal-collector}/{queueId}-N.ext') 업로드 — best-effort
  *   5. 최소 한 건이라도 업로드 성공해야 posts INSERT (video_urls / image_urls 배열)
  *   6. queue UPDATE (status='auto_posted', posted_post_id, posted_at)
  *
  * 실패 시: status='rejected' + reviewed_at. error 메시지는 caller가 슬랙으로 전달.
  *
  * Env:
- *   GIF_COLLECTOR_BOT_USER_ID — `seed-gif-collector-bot.ts` 실행 결과 UUID.
+ *   GIF_COLLECTOR_BOT_USER_ID  — 움짤콜렉터(영상) 봇 UUID (`seed-gif-collector-bot.ts`).
+ *   JJAL_COLLECTOR_BOT_USER_ID — 짤콜렉터(사진) 봇 UUID (`seed-jjal-collector-bot.ts`).
  */
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { extractMediaList, extractInstagramVideoUrls, inferMediaExt, type OgMedia } from "./og-media";
+import {
+  extractMediaList,
+  extractInstagramVideoUrls,
+  extractInstagramImageUrls,
+  inferMediaExt,
+  type OgMedia,
+} from "./og-media";
 import { appendAttribution } from "./attribution";
 import { normalizeQueueTextForPost } from "./text-normalizer";
 import playersRoster from "@/lib/constants/players-roster.json";
@@ -63,13 +75,17 @@ async function fetchMediaList(sourceUrl: string): Promise<{ media: OgMedia[]; so
     }
   }
 
-  // Instagram reel/p/tv — 본문엔 og:image(썸네일)만 있고, /embed/ 페이지 contextJSON에 video_url이 있음
+  // Instagram reel/p/tv — 본문엔 og:image(썸네일)만 있고, /embed/ 페이지 contextJSON에
+  // video_url(영상) 또는 display_url(사진 캐러셀)이 들어있음. 임베드는 한 번만 받아 둘 다 시도.
+  // 영상 우선(움짤콜렉터) → 영상이 없으면 캐러셀 이미지(짤콜렉터).
   const instagramEmbedUrl = getInstagramEmbedUrl(sourceUrl);
   if (instagramEmbedUrl) {
     const embedHtml = await fetchPageHtml(instagramEmbedUrl);
     if (embedHtml) {
       const igVideos = extractInstagramVideoUrls(embedHtml, MAX_MEDIA_ITEMS);
       if (igVideos.length > 0) return { media: igVideos, sourceHtml: html };
+      const igImages = extractInstagramImageUrls(embedHtml, MAX_MEDIA_ITEMS);
+      if (igImages.length > 0) return { media: igImages, sourceHtml: html };
     }
   }
 
@@ -147,6 +163,8 @@ interface QueueRow {
 
 export interface PublishResult {
   ok: boolean;
+  /** 발행 종류: 영상(움짤콜렉터) / 사진(짤콜렉터). */
+  kind?: "video" | "photo";
   postId?: number;
   /** 첫 업로드 URL (단일 미디어 시절과의 호환). */
   publicUrl?: string;
@@ -164,11 +182,6 @@ export interface PublishResult {
 }
 
 export async function publishQueueItem(queueId: number): Promise<PublishResult> {
-  const BOT_USER_ID = process.env.GIF_COLLECTOR_BOT_USER_ID;
-  if (!BOT_USER_ID) {
-    return { ok: false, error: "GIF_COLLECTOR_BOT_USER_ID env not configured" };
-  }
-
   const { data: row, error: getErr } = await supabaseAdmin
     .from("gif_collector_queue")
     .select(
@@ -197,12 +210,31 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     return rejectAndReturn(queueId, "media not found (og:video / og:image 모두 없음)");
   }
 
-  // 움짤콜렉터 — 영상만 발행. 영상을 못 뽑으면 썸네일(og:image) 폴백 없이 철회한다.
+  // 영상 우선 분기: 영상이 있으면 움짤콜렉터가 video_urls로, 영상이 없고 사진이 있으면
+  // 짤콜렉터가 image_urls(사진글)로 발행한다. 둘 다 없을 때만 철회.
   const videoMedia = mediaList.filter((m) => m.type === "video");
-  if (videoMedia.length === 0) {
+  const imageMedia = mediaList.filter((m) => m.type === "image");
+
+  let kind: "video" | "photo";
+  let selectedMedia: OgMedia[];
+  let botUserId: string | undefined;
+  if (videoMedia.length > 0) {
+    kind = "video";
+    selectedMedia = videoMedia;
+    botUserId = process.env.GIF_COLLECTOR_BOT_USER_ID;
+  } else if (imageMedia.length > 0) {
+    kind = "photo";
+    selectedMedia = imageMedia;
+    botUserId = process.env.JJAL_COLLECTOR_BOT_USER_ID;
+  } else {
+    return rejectAndReturn(queueId, "영상·사진 추출 실패 (미디어 없음).");
+  }
+  if (!botUserId) {
     return rejectAndReturn(
       queueId,
-      "영상 추출 실패 — 움짤콜렉터는 영상만 등록합니다 (썸네일/사진 미등록).",
+      kind === "video"
+        ? "GIF_COLLECTOR_BOT_USER_ID env not configured"
+        : "JJAL_COLLECTOR_BOT_USER_ID env not configured",
     );
   }
 
@@ -219,8 +251,8 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     data: NonNullable<Awaited<ReturnType<typeof downloadMedia>>>;
   }> = [];
   const mediaErrors: string[] = [];
-  for (let i = 0; i < videoMedia.length; i++) {
-    const og = videoMedia[i];
+  for (let i = 0; i < selectedMedia.length; i++) {
+    const og = selectedMedia[i];
     let data: Awaited<ReturnType<typeof downloadMedia>>;
     try {
       data = await downloadMedia(og.url, refererOrigin);
@@ -243,7 +275,8 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
   const uploaded: Array<{ og: OgMedia; publicUrl: string; path: string }> = [];
   for (let i = 0; i < downloaded.length; i++) {
     const { og, data } = downloaded[i];
-    const path = `${STORAGE_FOLDER}/${queueId}-${i + 1}.${data.ext}`;
+    const folder = kind === "photo" ? "jjal-collector" : STORAGE_FOLDER;
+    const path = `${folder}/${queueId}-${i + 1}.${data.ext}`;
     const { error: upErr } = await supabaseAdmin.storage.from(BUCKET).upload(path, data.buf, {
       cacheControl: "31536000",
       upsert: true,
@@ -272,9 +305,9 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     authorTeamIdSnapshot = team?.id ?? null;
   }
 
-  // content_type='photo' 고정 — 선수 사진탭/전체 사진탭이 'photo' 필터링하기 때문.
-  // 움짤콜렉터는 영상만 발행 (위 videoMedia 게이트) → 업로드된 미디어는 전부 video_urls.
-  const videoUrls = uploaded.map((u) => u.publicUrl);
+  // content_type='photo' 고정 — 선수 사진탭/전체 사진탭이 'photo'로 필터링하기 때문.
+  // 영상(움짤콜렉터)은 video_urls, 사진(짤콜렉터)은 image_urls에 담는다. 둘 다 content_type='photo'.
+  const mediaUrls = uploaded.map((u) => u.publicUrl);
 
   // 출처 자동 표기 — 운영자가 본문에 출처/URL을 직접 안 적었으면 source_url 기반으로 append.
   // "(출처: 인스타 @handle)\n원문URL" — URL은 LinkPreview가 클릭 카드로 렌더.
@@ -282,7 +315,7 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
   const content = appendAttribution(text.sourceContent, row.source_url, sourceHtml);
 
   const postInsert: Record<string, unknown> = {
-    author_id: BOT_USER_ID,
+    author_id: botUserId,
     board_type: row.matched_board_type,
     board_id: row.matched_board_id,
     content_type: "photo",
@@ -290,7 +323,11 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     content,
     author_team_id_snapshot: authorTeamIdSnapshot,
   };
-  postInsert.video_urls = videoUrls;
+  if (kind === "video") {
+    postInsert.video_urls = mediaUrls;
+  } else {
+    postInsert.image_urls = mediaUrls;
+  }
 
   const { data: post, error: insErr } = await supabaseAdmin
     .from("posts")
@@ -311,7 +348,7 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     .from("gif_collector_queue")
     .update({
       match_status: "auto_posted",
-      original_media_urls: videoMedia.map((m) => m.url),
+      original_media_urls: selectedMedia.map((m) => m.url),
       posted_post_id: post.id,
       posted_at: new Date().toISOString(),
     })
@@ -319,11 +356,12 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
   if (updErr) {
     return {
       ok: false,
+      kind,
       postId: post.id,
       publicUrl: uploaded[0].publicUrl,
       publicUrls: uploaded.map((u) => u.publicUrl),
       partial: true,
-      attempted: videoMedia.length,
+      attempted: selectedMedia.length,
       succeeded: uploaded.length,
       mediaErrors: mediaErrors.length > 0 ? mediaErrors : undefined,
       error: `queue update failed (post created): ${updErr.message}`,
@@ -332,10 +370,11 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
 
   return {
     ok: true,
+    kind,
     postId: post.id,
     publicUrl: uploaded[0].publicUrl,
     publicUrls: uploaded.map((u) => u.publicUrl),
-    attempted: mediaList.length,
+    attempted: selectedMedia.length,
     succeeded: uploaded.length,
     mediaErrors: mediaErrors.length > 0 ? mediaErrors : undefined,
   };

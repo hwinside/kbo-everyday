@@ -113,11 +113,14 @@ export function extractOgMedia(html: string): OgMedia | null {
 
 // JSON 문자열 안에 이스케이프된 URL을 원형으로 복원.
 // contextJSON은 이중 인코딩이라 백슬래시가 여러 개 붙을 수 있어(\/ , \\/ ...) 백슬래시 런을 포괄 처리한다.
+// \uXXXX 유니코드 이스케이프는 일괄 디코드 — &(u0026)·=(u003d)뿐 아니라 %(u0025) 등도 나온다.
+// (실데이터: IG 캐러셀 display_url의 ig_cache_key 값 %(퍼센트)가 raw JSON에선 %로 인코딩됨.)
 function unescapeJsonUrl(raw: string): string {
   return raw
-    .replace(/\\+u0026/gi, "&")
-    .replace(/\\+u003[dD]/g, "=")
-    .replace(/\\+\//g, "/");
+    .replace(/\\+\//g, "/")
+    .replace(/\\+u([0-9a-fA-F]{4})/g, (_, hex: string) =>
+      String.fromCharCode(parseInt(hex, 16)),
+    );
 }
 
 /**
@@ -145,6 +148,32 @@ export function extractInstagramVideoUrls(html: string, max: number): OgMedia[] 
   return out;
 }
 
+/**
+ * Instagram 임베드(/embed/) 페이지 contextJSON 안의 사진(캐러셀) 이미지 URL 추출.
+ *
+ * 사진 전용 게시물(단일/캐러셀)은 video_url 없이 `"display_url":"https:\/\/...jpg..."` 로
+ * 슬라이드별 이미지가 들어있다(GraphSidecar → edge_sidecar_to_children). 커버가 첫 슬라이드와
+ * 동일 URL로 한 번 더 등장하는데 URL dedupe로 자연 흡수된다. 등장 순서대로 최대 max개.
+ *
+ * 영상 전용 함수(extractInstagramVideoUrls)와 대칭 — video_url 대신 display_url,
+ * .mp4 앵커 없이 닫는 따옴표 전까지. Meta가 embed/contextJSON 포맷을 바꾸면 먼저 깨진다.
+ */
+export function extractInstagramImageUrls(html: string, max: number): OgMedia[] {
+  if (max <= 0) return [];
+  const out: OgMedia[] = [];
+  const seen = new Set<string>();
+  const re = /"display_url\\?"\s*:\s*\\?"(https:(?:[^"\\]|\\.)*?)\\?"/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null && out.length < max) {
+    const url = unescapeJsonUrl(m[1]);
+    if (url && !seen.has(url)) {
+      seen.add(url);
+      out.push({ url, type: "image" });
+    }
+  }
+  return out;
+}
+
 export function inferMediaExt(contentType: string, url: string): string {
   const ct = contentType.toLowerCase();
   if (ct.includes("gif")) return "gif";
@@ -152,6 +181,7 @@ export function inferMediaExt(contentType: string, url: string): string {
   if (ct.includes("webm")) return "webm";
   if (ct.includes("jpeg")) return "jpg";
   if (ct.includes("png")) return "png";
-  const m = url.match(/\.(gif|mp4|webm|jpg|jpeg|png)(?:\?|$|#)/i);
+  if (ct.includes("webp")) return "webp";
+  const m = url.match(/\.(gif|mp4|webm|jpg|jpeg|png|webp)(?:\?|$|#)/i);
   return m ? m[1].toLowerCase().replace("jpeg", "jpg") : "bin";
 }
