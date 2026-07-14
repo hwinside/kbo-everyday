@@ -17,6 +17,9 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROSTER_PATH = path.resolve(__dirname, "../src/lib/constants/players-roster.json");
 const FOREIGN_MAP_PATH = path.resolve(__dirname, "../src/lib/constants/foreign-id-map.ts");
+const NATIONALITY_PATH = path.resolve(__dirname, "../src/lib/constants/player-nationality.json");
+const NATIONALITY_TS_PATH = path.resolve(__dirname, "../src/lib/utils/player-nationality.ts");
+const FLAGS_DIR = path.resolve(__dirname, "../public/flags");
 
 // ============================================================================
 // 기대값 (스펙 §3.1)
@@ -150,6 +153,58 @@ for (const { numeric, alpha } of loadForeignIdPairs()) {
       `foreign alias ${numeric}->${alpha}: both numeric and canonical ids exist in roster. ` +
         `Keep ${alpha} as UI canonical and preserve ${numeric} only as an alias.`,
     );
+  }
+}
+
+// ============================================================================
+// Check 5.6: 외국인·아시아쿼터(FP/AQ)는 국적 매핑 필수 (player-nationality.json)
+//   새 외국인 선수 온보딩 시 국적 누락을 CI에서 원천 차단(#642 후속).
+//   사용된 국가코드는 국기 SVG(public/flags)와 한글 국가명(COUNTRY_NAME_KO) 둘 다 있어야 함.
+// ============================================================================
+{
+  let nationality = {};
+  try {
+    nationality = JSON.parse(fs.readFileSync(NATIONALITY_PATH, "utf8"));
+  } catch (e) {
+    fail(`player-nationality.json 읽기/파싱 실패: ${e.message}`);
+  }
+
+  // (1) FP/AQ 로스터 선수는 국적 매핑 필수 — 새 외국인 등장 시 CI 빨간불
+  for (const [kid, i] of kboIdSeen) {
+    if (!/^(FP|AQ)\d+$/.test(kid)) continue;
+    if (!(kid in nationality)) {
+      const p = roster[i];
+      fail(
+        `${p?.name ?? "?"} (${kid}): 외국인/AQ 선수인데 player-nationality.json에 국적이 없습니다. ` +
+          `KBO/구단 공식 기준으로 "${kid}": "<ISO alpha-2>" 를 추가하세요.`,
+      );
+    }
+  }
+
+  // (2) 로스터에 없는 국적 키는 orphan 경고(방출/교체 후 정리 권장, 비차단)
+  for (const kid of Object.keys(nationality)) {
+    if (!kboIdSeen.has(kid)) {
+      warn(`player-nationality.json의 ${kid}는 현재 로스터에 없습니다(orphan).`);
+    }
+  }
+
+  // (3) 사용된 국가코드는 국기 SVG + 한글 국가명 둘 다 필수(깨진 국기/빈 라벨 차단)
+  const flagCodes = new Set(
+    fs.existsSync(FLAGS_DIR)
+      ? fs.readdirSync(FLAGS_DIR).filter((f) => f.endsWith(".svg")).map((f) => f.slice(0, -4).toLowerCase())
+      : [],
+  );
+  const nameKoCodes = new Set(
+    [...fs.readFileSync(NATIONALITY_TS_PATH, "utf8").matchAll(/\b([A-Z]{2}):\s*"/g)].map((m) => m[1]),
+  );
+  for (const code of new Set(Object.values(nationality))) {
+    const lc = String(code).toLowerCase();
+    if (!flagCodes.has(lc)) {
+      fail(`국가코드 ${code}: public/flags/${lc}.svg 국기 파일이 없습니다.`);
+    }
+    if (!nameKoCodes.has(code)) {
+      fail(`국가코드 ${code}: player-nationality.ts COUNTRY_NAME_KO에 한글 국가명이 없습니다.`);
+    }
   }
 }
 
