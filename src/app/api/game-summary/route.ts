@@ -9,7 +9,7 @@ import { hasBaseRunnerContradiction } from "@/lib/game-summary/consistency-check
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 12; // v12: 주자 상황(만루/주자 수/출루 과정) 창작 금지 + 만루홈런 산술 규칙
+const PROMPT_VERSION = 13; // v13: 순위 환각 방지 가드(공식 순위표 기준 규칙 + 조회 실패 fallback) — 기존 캐시 재생성
 
 // ===== Types =====
 

@@ -11,7 +11,7 @@ import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
-const PREVIEW_VERSION = 7; // v7: 부상자 blocklist 차감 (Phase 0 hotfix)
+const PREVIEW_VERSION = 8; // v8: 순위 환각 방지 가드(공식 순위표 기준 규칙 + 조회 실패 fallback) — 기존 캐시 재생성
 
 // Build a set of current roster players (teamShortName:playerName) for filtering, 부상자 제외.
 const currentRosterSet = new Set<string>();
