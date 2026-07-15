@@ -51,6 +51,24 @@ export interface PushPayload {
 }
 
 /**
+ * 안드 위젯 제어 스트림(data-only kind: game_live/game_cancel/game_end) 공통 delivery policy.
+ * 위젯 상태를 만지는 *모든* 발송 경로(매분 warmup tick·경기 시작·득점·종료·취소 clear)가
+ * 반드시 이걸 spread해야 한다 — 한 경로라도 빠지면 그 메시지는 FCM 기본(비collapse·최대 4주
+ * 보관)으로 남아, 절전 복귀 시 옛 LIVE가 game_end *뒤에* 도착해 위젯을 되살릴 수 있다(삼순 #649).
+ *
+ * 단일 stream key: 위젯은 기기당 한 경기 상태만 보관하므로 경기별 키가 아닌 단일 키로 묶어야
+ * 미배달분 전체에서 최신 1건만 남고(신·구 경기 간 순서 역전 차단), collapse key 4개/기기
+ * 한도도 1개로 고정된다.
+ * TTL 분리: live tick은 다음 틱이 곧 덮어쓰므로 90s에 폐기(뒤늦은 배달이 terminal을 덮지 않게),
+ * terminal(종료/취소)은 장시간 오프라인 복귀에도 마지막 상태가 배달되도록 24h — 이후엔 다음
+ * 경기 pregame/live push가 같은 스트림 키로 자연 대체한다.
+ */
+export const WIDGET_STREAM = {
+  live: { collapseKey: "kbo_widget_stream", ttlSeconds: 90 },
+  terminal: { collapseKey: "kbo_widget_stream", ttlSeconds: 24 * 60 * 60 },
+} as const;
+
+/**
  * 대상 유저들에게 FCM 발송.
  * - prefKey 지정 시 notification_prefs로 필터 (row 없음 = 디폴트)
  * - 토큰 500개 chunk + 무효 토큰 정리
