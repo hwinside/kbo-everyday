@@ -4,6 +4,8 @@ import { TEAMS } from "@/lib/constants/teams";
 import { NEWS_CLIPPER_BY_TEAM, NEWS_CLIPPER_IDS } from "@/lib/constants/news-clippers";
 import { buildTeamClipping, kstDateString } from "@/lib/news-clipping";
 import { mapWithConcurrency } from "@/lib/naver-news";
+import { fetchStandings } from "@/lib/crawler/kbo-api";
+import { formatStandingsTable } from "@/lib/ai/standings-guard";
 import type { NewsClippingPayload } from "@/types/news-clipping";
 
 // 팀별 뉴스클리핑 발송 cron — 매일 09:00 KST(UTC 0시, vercel.json).
@@ -33,6 +35,20 @@ function authorized(req: NextRequest): boolean {
 
 function clippingContent(teamName: string): string {
   return `📰 오늘의 ${teamName} 뉴스클리핑`;
+}
+
+/**
+ * 공식 순위표를 1회 조회해 AI 프롬프트용 텍스트로 반환 (팀별 반복 조회 방지).
+ * 순위 조회 실패는 클리핑 발송을 막지 않는다 — null이면 그 회차만 순위 근거 없이 진행.
+ */
+async function loadStandingsText(): Promise<string | null> {
+  try {
+    const standings = await fetchStandings();
+    return standings.length > 0 ? formatStandingsTable(standings) : null;
+  } catch (e) {
+    console.error("[news-clipping] standings fetch failed:", (e as Error).message);
+    return null;
+  }
 }
 
 /** 유저별 최초 수신 클리핑 인트로 (삼순 다듬은 문구 — 하린아빠 채택. 오늘 첫 발송 전원 + 이후 신규 가입 유저 커버) */
@@ -281,10 +297,13 @@ export async function GET(req: NextRequest) {
   const admin = getSupabaseAdmin();
   const clipDate = kstDateString(0);
 
+  // 순위표 1회 조회 → 모든 팀 클리핑 프롬프트에 공통 근거로 주입 (순위 환각 방지)
+  const standingsText = await loadStandingsText();
+
   // 1) 팀별 클리핑 생성 (기사 0개/요약 불가 팀은 null → 미발송)
   const clippings = await mapWithConcurrency(TEAMS, BUILD_CONCURRENCY, async (team) => {
     try {
-      return await buildTeamClipping(team.id, team.shortName, team.name);
+      return await buildTeamClipping(team.id, team.shortName, team.name, standingsText);
     } catch (e) {
       console.error(`[news-clipping] build failed (${team.shortName}):`, (e as Error).message);
       return null;
@@ -361,7 +380,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "clipper account missing" }, { status: 500 });
   }
 
-  const payload = await buildTeamClipping(team.id, team.shortName, team.name);
+  const standingsText = await loadStandingsText();
+  const payload = await buildTeamClipping(team.id, team.shortName, team.name, standingsText);
   if (!payload) {
     return NextResponse.json({ error: "no articles for yesterday" }, { status: 404 });
   }

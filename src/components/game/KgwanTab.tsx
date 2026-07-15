@@ -88,13 +88,14 @@ function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
           setLoading(false);
           return;
         }
-        if (cacheData.preview) {
+        // 구버전(outdated) 캐시는 렌더하지 않고 재생성 — 새 순위 가드 반영
+        if (cacheData.preview && !cacheData.outdated) {
           setPreview(cacheData.preview);
           setLoading(false);
           return;
         }
 
-        // 2) 생성 요청
+        // 2) 캐시 없음 or 구버전 → 생성/재생성 요청
         const genRes = await fetch("/api/game-preview", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -108,11 +109,15 @@ function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
         });
         const genData = await genRes.json();
         if (genData.source === "too_early") {
-          setNotice(genData.message || "경기 12시간 전부터 AI 경기 예측 조회가 가능합니다.");
+          // 재생성 불가면 구버전 캐시라도 노출 (graceful)
+          if (cacheData.preview) setPreview(cacheData.preview);
+          else setNotice(genData.message || "경기 12시간 전부터 AI 경기 예측 조회가 가능합니다.");
           return;
         }
         if (genData.preview) {
           setPreview(genData.preview);
+        } else if (cacheData.preview) {
+          setPreview(cacheData.preview); // 재생성 실패 시 구버전 폴백
         }
       } catch (err) {
         // preview fetch error — silent

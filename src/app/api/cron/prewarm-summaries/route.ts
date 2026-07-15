@@ -4,7 +4,7 @@ import { fetchGames, fetchBoxScore } from "@/lib/crawler/kbo-api";
 import { TEAMS } from "@/lib/constants/teams";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
-const PROMPT_VERSION = 12; // must match game-summary route
+const PROMPT_VERSION = 13; // must match game-summary route (v13: 순위 환각 방지 가드)
 
 // ===== Helpers =====
 

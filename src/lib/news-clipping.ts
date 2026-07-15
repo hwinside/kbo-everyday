@@ -19,6 +19,7 @@ import {
   isPhotoArticle,
   dedupeNewsByTitle,
 } from "@/lib/news-relevance";
+import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -99,16 +100,27 @@ interface GeminiSelection {
   picks: GeminiPick[];
 }
 
-function buildPrompt(teamName: string, yesterday: string, candidates: NewsItem[]): string {
+function buildPrompt(
+  teamName: string,
+  yesterday: string,
+  candidates: NewsItem[],
+  standingsText: string | null,
+): string {
   const list = candidates
     .map((c, i) => `${i + 1}. ${c.title}\n   ${c.description}`)
     .join("\n");
+
+  // 순위표가 있으면 근거+정확성 규칙, 조회 실패면 순위 서술 금지 규칙을 넣는다.
+  // (조회 실패 시에도 규칙을 넣어 근거 없는 순위 환각[3위 팀을 '선두'로 등]을 원천 차단.)
+  const standingsBlock = standingsText
+    ? `\n## 공식 순위표 (오늘 기준 — 순위 관련 서술의 유일한 근거)\n${standingsText}\n${STANDINGS_ACCURACY_RULES}\n`
+    : `\n${STANDINGS_UNAVAILABLE_RULES}\n`;
 
   return `당신은 KBO 프로야구 "${teamName}" 팬을 위한 아침 뉴스클리핑 에디터입니다.
 아래는 어제(${yesterday}) 보도된 ${teamName} 관련 기사 목록입니다 (번호. 제목 / 요약문).
 
 ${list}
-
+${standingsBlock}
 이 중 팬에게 중요한 순서로 최대 ${MAX_PICKS}개를 선정하고, 각 기사를 3줄로 요약하세요.
 
 규칙:
@@ -117,7 +129,7 @@ ${list}
 - 각 줄은 완결된 한 문장, 간결한 뉴스체("~했다")
 - 3줄 구성: ① 무슨 일이 있었는지 ② 구체적인 내용·수치 ③ 팀/팬 관점에서 갖는 의미
 - 링크를 열지 않아도 기사 내용을 파악할 수 있어야 함
-- 제공된 제목/요약문에 있는 사실만 사용 — 추측, 과장, 루머의 확정 표현 금지
+- 기사 내용은 제공된 제목/요약문에 있는 사실만 사용, 순위·승패·게임차 등 순위 정보는 (제공된 경우) 위 공식 순위표를 근거로 — 추측, 과장, 루머의 확정 표현 금지
 - 제목 재작성이나 요약문 복사가 아니라 실질적인 내용 요약이어야 함
 - 제공된 정보만으로 3줄 요약이 불가능한 기사는 선정하지 말 것
 - overview: 어제 ${teamName} 주요 이슈를 팬에게 브리핑하는 한 문장
@@ -164,12 +176,13 @@ async function selectAndSummarize(
   teamName: string,
   yesterday: string,
   candidates: NewsItem[],
+  standingsText: string | null,
 ): Promise<GeminiSelection | null> {
   if (!GEMINI_API_KEY) {
     console.error("[news-clipping] GEMINI_API_KEY missing");
     return null;
   }
-  const prompt = buildPrompt(teamName, yesterday, candidates);
+  const prompt = buildPrompt(teamName, yesterday, candidates, standingsText);
 
   const MAX_ATTEMPTS = 2;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -212,13 +225,14 @@ export async function buildTeamClipping(
   teamId: number,
   teamShort: string,
   teamName: string,
+  standingsText: string | null = null,
 ): Promise<NewsClippingPayload | null> {
   const yesterday = kstDateString(-1);
 
   const candidates = await collectYesterdayCandidates(teamShort, yesterday);
   if (candidates.length === 0) return null;
 
-  const selection = await selectAndSummarize(teamName, yesterday, candidates);
+  const selection = await selectAndSummarize(teamName, yesterday, candidates, standingsText);
   if (!selection) return null;
 
   // 선정된 기사에만 OG 썸네일 부착 (언론사 원문 기준 — /api/news와 동일)
