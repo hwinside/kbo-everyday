@@ -35,6 +35,19 @@ export interface PushPayload {
    * Android엔 무영향. Apple이 무음 푸시를 throttle하므로 best-effort.
    */
   apnsBackground?: boolean;
+  /**
+   * Android FCM collapse key — 같은 키의 미배달 메시지는 최신 1건만 보관/배달한다.
+   * 라이브 위젯처럼 매분 갱신되는 data 푸시에 경기별 키를 주면, 기기가 잠시
+   * 오프라인/딥슬립이었다가 복귀할 때 옛 상태 백로그가 한꺼번에 배달되는 대신
+   * *가장 최신 상태 1건만* 배달된다(위젯 깜빡임·stale 방지). Android 전용.
+   */
+  collapseKey?: string;
+  /**
+   * Android FCM TTL(초). 이 시간 내 배달 못 하면 폐기한다(admin SDK는 ms라 ×1000 변환).
+   * 라이브 스코어처럼 다음 틱이 곧 덮어쓰는 data는 짧은 TTL(예 90s)을 줘서, 오래된
+   * 상태가 뒤늦게 배달돼 최신값(또는 game_end)을 덮어쓰는 걸 막는다. Android 전용.
+   */
+  ttlSeconds?: number;
 }
 
 /**
@@ -140,11 +153,19 @@ async function sendFcmToUsersInner(
       ...(payload.data ?? {}),
       ...(payload.dataOnly ? { title: payload.title, body: payload.body } : {}),
     };
+    // Android 설정 — data-only는 high priority(Doze 우회), collapseKey/ttl은 지정 시만.
+    // 라이브 위젯처럼 매분 갱신되는 푸시에 (경기별 collapseKey + 짧은 ttl)을 주면 옛 상태
+    // 백로그 대신 최신 1건만 배달된다. admin SDK의 ttl은 밀리초 단위.
+    const androidCfg = {
+      ...(payload.dataOnly ? { priority: "high" as const } : {}),
+      ...(payload.collapseKey ? { collapseKey: payload.collapseKey } : {}),
+      ...(payload.ttlSeconds != null ? { ttl: payload.ttlSeconds * 1000 } : {}),
+    };
     const res = await fcm.sendEachForMulticast({
       tokens: chunk,
       ...(payload.dataOnly ? {} : { notification: { title: payload.title, body: payload.body } }),
       ...(Object.keys(dataBlock).length ? { data: dataBlock } : {}),
-      ...(payload.dataOnly ? { android: { priority: "high" as const } } : {}),
+      ...(Object.keys(androidCfg).length ? { android: androidCfg } : {}),
       // iOS 무음 백그라운드 푸시(Layer 2) — 배너 없이 앱을 깨워 LA 토큰 등록. content-available:1
       // + apns-push-type:background + priority 5(무음 필수). Android엔 apns 블록 무영향.
       ...(payload.apnsBackground

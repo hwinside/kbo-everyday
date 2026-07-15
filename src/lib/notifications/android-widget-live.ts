@@ -152,6 +152,10 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
         body: "오늘 경기가 취소됐어요",
         url: `/games/${g.G_ID}`,
         dataOnly: true,
+        // 경기별 collapse + 짧은 TTL — 딥슬립/절전 복귀 시 옛 상태 백로그 대신 최신 1건만
+        // 배달, 오래된 라이브 푸시는 90s 후 자동 폐기(뒤늦게 game_end를 덮어쓰지 않음).
+        collapseKey: `kbo_widget_${g.G_ID}`,
+        ttlSeconds: 90,
         data: {
           kind: "game_cancel",
           w_away: codes.away,
@@ -183,6 +187,10 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
         body: status.replace(/^LIVE\s*/, "") || "경기 진행 중",
         url: `/games/${g.G_ID}`,
         dataOnly: true,
+        // 경기별 collapse + 짧은 TTL — 딥슬립/절전 복귀 시 옛 상태 백로그 대신 최신 1건만
+        // 배달, 오래된 라이브 푸시는 90s 후 자동 폐기(뒤늦게 game_end를 덮어쓰지 않음).
+        collapseKey: `kbo_widget_${g.G_ID}`,
+        ttlSeconds: 90,
         data: {
           kind: "game_live",
           w_away: codes.away,
@@ -209,6 +217,10 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
         body: "곧 경기 시작! 잠금화면에서 실시간 중계를 확인하세요",
         url: `/games/${g.G_ID}`,
         dataOnly: true,
+        // 경기별 collapse + 짧은 TTL — 딥슬립/절전 복귀 시 옛 상태 백로그 대신 최신 1건만
+        // 배달, 오래된 라이브 푸시는 90s 후 자동 폐기(뒤늦게 game_end를 덮어쓰지 않음).
+        collapseKey: `kbo_widget_${g.G_ID}`,
+        ttlSeconds: 90,
         data: {
           kind: "game_live",
           w_away: codes.away,
