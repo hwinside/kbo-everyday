@@ -81,6 +81,7 @@ private func displayName(_ code: String) -> String {
 
 struct KBOWatchComplicationView: View {
     @Environment(\.widgetFamily) private var family
+    @Environment(\.widgetRenderingMode) private var renderingMode
     let entry: GameEntry
 
     var body: some View {
@@ -97,14 +98,30 @@ struct KBOWatchComplicationView: View {
 
     private var snap: WatchSnapshot { entry.snap }
 
+    /// watchOS 10 폴백 판정 — accented(tint) 모드에서 fullColor 강제가 불가하면 로고 생략.
+    /// (watchOS 11+는 widgetAccentedRenderingMode(.fullColor)로 항상 원본 컬러 렌더)
+    private var canShowLogo: Bool {
+        if #available(watchOS 11.0, *) { return true }
+        return renderingMode == .fullColor
+    }
+
     /// 팀 로고 — 워치앱 카드와 동일 teamlogo_* 흰 원형 칩(위젯 타깃 에셋 사본).
     /// 미지의 코드(익명 더미 등)는 미렌더. 삼순 스펙: 직사각형 16pt 좌우 배치.
+    /// tint 대응(삼순 blocker): watchOS 11+ = .fullColor 강제 / watchOS 10 tint = 로고 생략(단색 원 뭉개짐 방지).
     @ViewBuilder private func teamLogo(_ code: String, size: CGFloat = 16) -> some View {
-        if let asset = WatchTeam.logoAsset(code) {
-            Image(asset)
-                .resizable()
-                .scaledToFit()
-                .frame(width: size, height: size)
+        if let asset = WatchTeam.logoAsset(code), canShowLogo {
+            if #available(watchOS 11.0, *) {
+                Image(asset)
+                    .resizable()
+                    .widgetAccentedRenderingMode(.fullColor)
+                    .scaledToFit()
+                    .frame(width: size, height: size)
+            } else {
+                Image(asset)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size, height: size)
+            }
         }
     }
 
@@ -196,11 +213,9 @@ struct KBOWatchComplicationView: View {
                         .lineLimit(1).minimumScaleFactor(0.6)
                 } else {
                     // 비경기(순위) 상태만 최애팀 로고 1개 — 삼순 스펙(양팀 로고는 원형 가독성 훼손).
-                    if let asset = WatchTeam.logoAsset(snap.myTeamCode) {
-                        Image(asset)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 18, height: 18)
+                    // watchOS 10 tint에선 로고 대신 팀명 텍스트 폴백(canShowLogo).
+                    if WatchTeam.logoAsset(snap.myTeamCode) != nil, canShowLogo {
+                        teamLogo(snap.myTeamCode, size: 18)
                     } else {
                         Text(snap.myTeamCode.isEmpty ? "KBO" : displayName(snap.myTeamCode))
                             .font(.system(size: 10, weight: .heavy))
