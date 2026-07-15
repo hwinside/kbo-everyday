@@ -419,6 +419,27 @@ export async function uploadVideos(files: File[]): Promise<string[]> {
   return urls;
 }
 
+/** 댓글 첨부 이미지 업로드 (photos 버킷 — 유저ID/comments/ prefix, RLS 통과) */
+export async function uploadCommentImage(file: File): Promise<string> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("로그인 필요");
+
+  const ext = file.name.split(".").pop() || (file.type === "image/gif" ? "gif" : "jpg");
+  const path = `${user.id}/comments/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+  const { error } = await supabase.storage
+    .from("photos")
+    .upload(path, file, { contentType: file.type });
+
+  if (error) throw error;
+
+  const { data: urlData } = supabase.storage
+    .from("photos")
+    .getPublicUrl(path);
+
+  return urlData.publicUrl;
+}
+
 /** 댓글 수정 (본인만) */
 export async function updateComment(commentId: number, content: string) {
   const { data: { user } } = await supabase.auth.getUser();

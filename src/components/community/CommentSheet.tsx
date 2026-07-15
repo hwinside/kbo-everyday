@@ -4,15 +4,16 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, X, MoreHorizontal, Check, Heart, CornerDownRight, ImagePlay } from "lucide-react";
+import { Send, X, MoreHorizontal, Check, Heart, CornerDownRight, ImagePlay, ImagePlus, Loader2 } from "lucide-react";
 import { getAvatarPath } from "@/lib/constants/avatars";
-import { createComment, updateComment, deleteComment, toggleCommentLike } from "@/lib/supabase/usePosts";
+import { createComment, updateComment, deleteComment, toggleCommentLike, uploadCommentImage } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { supabase } from "@/lib/supabase/client";
 import type { Comment } from "@/lib/supabase/usePosts";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
-import GifPicker, { isGifComment } from "@/components/community/GifPicker";
+import GifPicker from "@/components/community/GifPicker";
+import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/comment-media";
 import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
 
 interface CommentSheetProps {
@@ -82,12 +83,14 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const [savingEdit, setSavingEdit] = useState(false);
   const [replyTo, setReplyTo] = useState<{ id: number; nickname: string } | null>(null);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [cooldown, setCooldown] = useState(false);
   const [cooldownReason, setCooldownReason] = useState("");
   const lastSentRef = useRef(0);
   const sentTimestampsRef = useRef<number[]>([]);
   const recentContentsRef = useRef<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -269,7 +272,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   }, [user]);
 
   const handleSubmit = useCallback(async () => {
-    if (!input.trim() || !postId || submitting || cooldown) return;
+    if (!input.trim() || !postId || submitting || uploadingImage || cooldown) return;
     const trimmed = input.trim();
     const now = Date.now();
 
@@ -336,15 +339,13 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     } finally {
       setSubmitting(false);
     }
-  }, [input, postId, submitting, cooldown, user, onCommentAdded, profile, refetchComments, replyTo]);
+  }, [input, postId, submitting, uploadingImage, cooldown, user, onCommentAdded, profile, refetchComments, replyTo]);
 
-  const handleGifSelect = useCallback(async (gifUrl: string) => {
-    if (!postId || submitting || cooldown) return;
-    if (!user) { setShowLogin(true); return; }
-
+  // GIF·이미지 공용 도배 방지 가드. 통과 시 true(쿨다운 마커 소비), 차단 시 false.
+  const startMediaCooldown = useCallback((marker: string, repeatReason: string) => {
     const now = Date.now();
     const COOLDOWN_MS = 10_000;
-    if (now - lastSentRef.current < COOLDOWN_MS) return;
+    if (now - lastSentRef.current < COOLDOWN_MS) return false;
 
     // 슬라이딩 윈도우: 60초 내 3건 초과 시 1분 뮤트
     const WINDOW_MS = 60_000;
@@ -355,24 +356,30 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       setCooldown(true);
       setCooldownReason("잠시 후 다시 입력해 주세요");
       setTimeout(() => { setCooldown(false); setCooldownReason(""); }, MUTE_MS);
-      return;
+      return false;
     }
 
-    // GIF는 이미지가 달라도 동일 댓글로 간주
-    const GIF_MARKER = "[GIF]";
-    if (recentContentsRef.current.includes(GIF_MARKER)) {
+    if (recentContentsRef.current.includes(marker)) {
       setCooldown(true);
-      setCooldownReason("GIF는 연속으로 보낼 수 없어요");
+      setCooldownReason(repeatReason);
       setTimeout(() => { setCooldown(false); setCooldownReason(""); }, COOLDOWN_MS);
-      return;
+      return false;
     }
 
     lastSentRef.current = now;
     sentTimestampsRef.current.push(now);
-    recentContentsRef.current = [...recentContentsRef.current.slice(-4), GIF_MARKER];
+    recentContentsRef.current = [...recentContentsRef.current.slice(-4), marker];
     setCooldown(true);
     setCooldownReason("");
     setTimeout(() => setCooldown(false), COOLDOWN_MS);
+    return true;
+  }, []);
+
+  const handleGifSelect = useCallback(async (gifUrl: string) => {
+    if (!postId || submitting || uploadingImage || cooldown) return;
+    if (!user) { setShowLogin(true); return; }
+
+    if (!startMediaCooldown("[GIF]", "GIF는 연속으로 보낼 수 없어요")) return;
 
     setShowGifPicker(false);
     setSubmitting(true);
@@ -404,7 +411,55 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     } finally {
       setSubmitting(false);
     }
-  }, [postId, submitting, user, onCommentAdded, profile, refetchComments, replyTo]);
+  }, [postId, submitting, uploadingImage, cooldown, user, onCommentAdded, profile, refetchComments, replyTo, startMediaCooldown]);
+
+  const openImagePicker = useCallback(() => {
+    if (!user) { setShowLogin(true); return; }
+    if (submitting || uploadingImage || cooldown) return;
+    setShowGifPicker(false);
+    fileInputRef.current?.click();
+  }, [user, submitting, uploadingImage, cooldown]);
+
+  const handleImageSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !postId || submitting || uploadingImage || cooldown) return;
+    if (!user) { setShowLogin(true); return; }
+
+    setShowGifPicker(false);
+    setUploadingImage(true);
+    try {
+      const prepared = await prepareCommentImageForUpload(file);
+      if (!startMediaCooldown("[IMAGE]", "이미지는 연속으로 올릴 수 없어요")) return;
+      const imageUrl = await uploadCommentImage(prepared);
+      const result = await createComment(postId, imageUrl, replyTo?.id);
+      setComments((prev) => [
+        ...prev,
+        {
+          id: result.id,
+          post_id: postId,
+          author_id: user.id,
+          content: imageUrl,
+          created_at: new Date().toISOString(),
+          parent_id: replyTo?.id ?? null,
+          like_count: 0,
+          liked_by_me: false,
+          nickname: profile?.nickname ?? user?.user_metadata?.name ?? "나",
+          team_id: profile?.team_id,
+          grade: profile?.grade,
+          avatar_url: profile?.avatar_url ?? undefined,
+        },
+      ]);
+      setReplyTo(null);
+      if (postId) onCommentAdded?.(postId);
+      refetchComments(postId);
+    } catch (err) {
+      console.error("[CommentSheet] image comment failed:", err);
+      alert(err instanceof Error ? err.message : "이미지 업로드에 실패했어요");
+    } finally {
+      setUploadingImage(false);
+    }
+  }, [postId, submitting, uploadingImage, cooldown, user, onCommentAdded, profile, refetchComments, replyTo, startMediaCooldown]);
 
   const startEdit = useCallback((comment: Comment) => {
     setMenuOpenId(null);
@@ -667,11 +722,11 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             </div>
           ) : (
             <>
-              {isGifComment(comment.content) ? (
+              {isImageComment(comment.content) ? (
                 <img
                   src={comment.content.trim()}
-                  alt="GIF"
-                  className="mt-1 rounded-lg max-w-[200px] h-auto"
+                  alt="댓글 이미지"
+                  className="mt-1 rounded-lg max-w-[220px] max-h-[280px] h-auto object-contain"
                   loading="lazy"
                 />
               ) : (
@@ -840,13 +895,31 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
               <div className="flex items-center gap-2">
                 {user ? (
                   <>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      className="hidden"
+                      onChange={handleImageSelect}
+                    />
                     <button
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={openImagePicker}
+                      disabled={submitting || uploadingImage || cooldown}
+                      className="flex items-center justify-center w-9 h-9 rounded-full text-text-tertiary hover:text-text-primary disabled:opacity-50 transition-colors"
+                      aria-label="이미지 업로드"
+                    >
+                      {uploadingImage ? <Loader2 size={20} className="animate-spin" /> : <ImagePlus size={20} />}
+                    </button>
+                    <button
+                      onMouseDown={(e) => e.preventDefault()}
                       onClick={() => {
                         if (blurCollapseTimer.current) { clearTimeout(blurCollapseTimer.current); blurCollapseTimer.current = null; }
                         setExpanded(true);
                         setShowGifPicker((v) => !v);
                       }}
-                      className={`flex items-center justify-center w-9 h-9 rounded-full transition-colors ${showGifPicker ? "bg-accent/20 text-accent" : "text-text-tertiary hover:text-text-primary"}`}
+                      disabled={submitting || uploadingImage || cooldown}
+                      className={`flex items-center justify-center w-9 h-9 rounded-full disabled:opacity-50 transition-colors ${showGifPicker ? "bg-accent/20 text-accent" : "text-text-tertiary hover:text-text-primary"}`}
                       aria-label="GIF"
                     >
                       <ImagePlay size={20} />
@@ -885,7 +958,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                           handleSubmit();
                         }
                       }}
-                      placeholder={cooldown ? (cooldownReason || "잠시 후 다시 입력하세요...") : replyTo ? `${replyTo.nickname}에게 답글...` : "댓글을 입력하세요"}
+                      placeholder={uploadingImage ? "이미지 업로드 중..." : cooldown ? (cooldownReason || "잠시 후 다시 입력하세요...") : replyTo ? `${replyTo.nickname}에게 답글...` : "댓글을 입력하세요"}
                       className="flex-1 bg-bg-tertiary rounded-full px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary outline-none border"
                       style={{ borderColor: teamId ? `${getTeamById(teamId)?.colorPrimary}80` : 'rgba(255,255,255,0.15)' }}
                     />
@@ -901,7 +974,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                 <button
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={handleSubmit}
-                  disabled={!input.trim() || submitting || cooldown || !user}
+                  disabled={!input.trim() || submitting || uploadingImage || cooldown || !user}
                   className="flex items-center justify-center w-9 h-9 rounded-full text-white disabled:opacity-50 transition-opacity"
                   style={{ backgroundColor: teamId ? (() => { const t = getTeamById(teamId); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}
                 >
