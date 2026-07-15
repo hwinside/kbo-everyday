@@ -35,7 +35,38 @@ export interface PushPayload {
    * Android엔 무영향. Apple이 무음 푸시를 throttle하므로 best-effort.
    */
   apnsBackground?: boolean;
+  /**
+   * Android FCM collapse key — 같은 키의 미배달 메시지는 최신 1건만 보관/배달한다.
+   * 라이브 위젯처럼 매분 갱신되는 data 푸시에 경기별 키를 주면, 기기가 잠시
+   * 오프라인/딥슬립이었다가 복귀할 때 옛 상태 백로그가 한꺼번에 배달되는 대신
+   * *가장 최신 상태 1건만* 배달된다(위젯 깜빡임·stale 방지). Android 전용.
+   */
+  collapseKey?: string;
+  /**
+   * Android FCM TTL(초). 이 시간 내 배달 못 하면 폐기한다(admin SDK는 ms라 ×1000 변환).
+   * 라이브 스코어처럼 다음 틱이 곧 덮어쓰는 data는 짧은 TTL(예 90s)을 줘서, 오래된
+   * 상태가 뒤늦게 배달돼 최신값(또는 game_end)을 덮어쓰는 걸 막는다. Android 전용.
+   */
+  ttlSeconds?: number;
 }
+
+/**
+ * 안드 위젯 제어 스트림(data-only kind: game_live/game_cancel/game_end) 공통 delivery policy.
+ * 위젯 상태를 만지는 *모든* 발송 경로(매분 warmup tick·경기 시작·득점·종료·취소 clear)가
+ * 반드시 이걸 spread해야 한다 — 한 경로라도 빠지면 그 메시지는 FCM 기본(비collapse·최대 4주
+ * 보관)으로 남아, 절전 복귀 시 옛 LIVE가 game_end *뒤에* 도착해 위젯을 되살릴 수 있다(삼순 #649).
+ *
+ * 단일 stream key: 위젯은 기기당 한 경기 상태만 보관하므로 경기별 키가 아닌 단일 키로 묶어야
+ * 미배달분 전체에서 최신 1건만 남고(신·구 경기 간 순서 역전 차단), collapse key 4개/기기
+ * 한도도 1개로 고정된다.
+ * TTL 분리: live tick은 다음 틱이 곧 덮어쓰므로 90s에 폐기(뒤늦은 배달이 terminal을 덮지 않게),
+ * terminal(종료/취소)은 장시간 오프라인 복귀에도 마지막 상태가 배달되도록 24h — 이후엔 다음
+ * 경기 pregame/live push가 같은 스트림 키로 자연 대체한다.
+ */
+export const WIDGET_STREAM = {
+  live: { collapseKey: "kbo_widget_stream", ttlSeconds: 90 },
+  terminal: { collapseKey: "kbo_widget_stream", ttlSeconds: 24 * 60 * 60 },
+} as const;
 
 /**
  * 대상 유저들에게 FCM 발송.
@@ -140,11 +171,19 @@ async function sendFcmToUsersInner(
       ...(payload.data ?? {}),
       ...(payload.dataOnly ? { title: payload.title, body: payload.body } : {}),
     };
+    // Android 설정 — data-only는 high priority(Doze 우회), collapseKey/ttl은 지정 시만.
+    // 라이브 위젯처럼 매분 갱신되는 푸시에 (경기별 collapseKey + 짧은 ttl)을 주면 옛 상태
+    // 백로그 대신 최신 1건만 배달된다. admin SDK의 ttl은 밀리초 단위.
+    const androidCfg = {
+      ...(payload.dataOnly ? { priority: "high" as const } : {}),
+      ...(payload.collapseKey ? { collapseKey: payload.collapseKey } : {}),
+      ...(payload.ttlSeconds != null ? { ttl: payload.ttlSeconds * 1000 } : {}),
+    };
     const res = await fcm.sendEachForMulticast({
       tokens: chunk,
       ...(payload.dataOnly ? {} : { notification: { title: payload.title, body: payload.body } }),
       ...(Object.keys(dataBlock).length ? { data: dataBlock } : {}),
-      ...(payload.dataOnly ? { android: { priority: "high" as const } } : {}),
+      ...(Object.keys(androidCfg).length ? { android: androidCfg } : {}),
       // iOS 무음 백그라운드 푸시(Layer 2) — 배너 없이 앱을 깨워 LA 토큰 등록. content-available:1
       // + apns-push-type:background + priority 5(무음 필수). Android엔 apns 블록 무영향.
       ...(payload.apnsBackground

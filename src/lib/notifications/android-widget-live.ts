@@ -1,5 +1,5 @@
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
-import { sendFcmToUsers, type PushPayload } from "@/lib/notifications/fcm";
+import { sendFcmToUsers, WIDGET_STREAM, type PushPayload } from "@/lib/notifications/fcm";
 import { fansOfTeams, teamIdByShortName } from "@/lib/notifications/game-status";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
 import type { KboRawGame } from "@/types/api";
@@ -152,6 +152,8 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
         body: "오늘 경기가 취소됐어요",
         url: `/games/${g.G_ID}`,
         dataOnly: true,
+        // terminal 상태 — 긴 TTL(장시간 오프라인 복귀에도 취소 상태 배달, 삼순 #649 blocker②).
+        ...WIDGET_STREAM.terminal,
         data: {
           kind: "game_cancel",
           w_away: codes.away,
@@ -183,6 +185,8 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
         body: status.replace(/^LIVE\s*/, "") || "경기 진행 중",
         url: `/games/${g.G_ID}`,
         dataOnly: true,
+        // live tick — 딥슬립 복귀 시 백로그 대신 최신 1건만 배달, 90s 후 자동 폐기(다음 틱이 덮어씀).
+        ...WIDGET_STREAM.live,
         data: {
           kind: "game_live",
           w_away: codes.away,
@@ -209,6 +213,8 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
         body: "곧 경기 시작! 잠금화면에서 실시간 중계를 확인하세요",
         url: `/games/${g.G_ID}`,
         dataOnly: true,
+        // pregame도 매분 반복이라 live tick과 동일 정책(다음 틱/라이브 전환이 곧 덮어씀).
+        ...WIDGET_STREAM.live,
         data: {
           kind: "game_live",
           w_away: codes.away,

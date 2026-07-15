@@ -1,5 +1,5 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
-import { sendFcmToUsers } from "@/lib/notifications/fcm";
+import { sendFcmToUsers, WIDGET_STREAM } from "@/lib/notifications/fcm";
 import { teamIdByShortName, fansOfTeams } from "@/lib/notifications/game-status";
 import { isHomerunCoveredRun, resolveHomerunScore, inheritHitRbi } from "@/lib/notifications/score-dedupe";
 import type { KboRawGame } from "@/types/api";
@@ -162,6 +162,8 @@ export async function notifyScoreEvents(
           body: `${ev.inning}회${cardHalf}`,
           url,
           dataOnly: true,
+          // live — 위젯 스트림 공통 정책(90s TTL, 다음 warmup tick이 곧 덮어씀, 삼순 #649 blocker①).
+          ...WIDGET_STREAM.live,
           data: {
             kind: "game_live",
             ...(codes ? { w_away: codes[1], w_home: codes[2] } : {}),
