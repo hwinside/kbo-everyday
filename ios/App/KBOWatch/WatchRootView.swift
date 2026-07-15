@@ -23,12 +23,14 @@ struct WatchRootView: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
-                        WatchGameCard(snap: snap)
+                        // 팀컬러 순위 헤더를 카드 위로 — 갤워치 타일 header(snap) 디자인 패리티.
                         if !snap.rankLine.isEmpty {
-                            Text("\(WatchTeam.short(snap.myTeamCode)) \(snap.rankLine)")
-                                .font(.system(size: 13, weight: .semibold))
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Text("\(WatchTeam.short(snap.myTeamCode)) · \(snap.rankLine)")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(WatchTeam.highlightColor(snap.myTeamCode))
+                                .frame(maxWidth: .infinity, alignment: .center)
                         }
+                        WatchGameCard(snap: snap)
                     }
                 } else {
                     ProgressView()
@@ -66,17 +68,22 @@ struct WatchGameCard: View {
                     .font(.system(size: 14, weight: .semibold))
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                HStack {
-                    Text(WatchTeam.short(snap.awayCode)).font(.system(size: 15, weight: .bold))
-                    Spacer()
+                HStack(spacing: 4) {
+                    // 팀로고 바깥쪽 배치 — 갤워치 타일 matchupRow(`[로고]LG 3:2 KT[로고]`) 패리티.
+                    // 40mm + `두산 10 : 9 롯데` 최악 폭 대비 텍스트만 축소 허용(로고 고정).
+                    teamLogo(snap.awayCode)
+                    teamText(WatchTeam.short(snap.awayCode))
+                    Spacer(minLength: 4)
                     if snap.hasScore {
                         Text("\(snap.awayScore) : \(snap.homeScore)")
                             .font(.system(size: 18, weight: .black)).monospacedDigit()
+                            .lineLimit(1).minimumScaleFactor(0.7)
                     } else {
                         Text("vs").font(.system(size: 14, weight: .semibold)).foregroundStyle(.secondary)
                     }
-                    Spacer()
-                    Text(WatchTeam.short(snap.homeCode)).font(.system(size: 15, weight: .bold))
+                    Spacer(minLength: 4)
+                    teamText(WatchTeam.short(snap.homeCode))
+                    teamLogo(snap.homeCode)
                 }
                 HStack(spacing: 5) {
                     Text(snap.line)
@@ -90,6 +97,23 @@ struct WatchGameCard: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.12)))
+        // 최애팀 컬러 은은한 틴트 — 갤워치 타일 card(cardTint) 디자인 패리티.
+        .background(RoundedRectangle(cornerRadius: 12).fill(WatchTeam.cardTint(snap.myTeamCode)))
+    }
+
+    private func teamText(_ name: String) -> some View {
+        Text(name)
+            .font(.system(size: 15, weight: .bold))
+            .lineLimit(1).minimumScaleFactor(0.7)
+    }
+
+    /// 팀 로고 20pt — 미지의 코드(익명 더미 등)는 미렌더(텍스트만). 갤워치 teamLogo(24dp) 대응.
+    @ViewBuilder private func teamLogo(_ code: String) -> some View {
+        if let asset = WatchTeam.logoAsset(code) {
+            Image(asset)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 20, height: 20)
+        }
     }
 }
