@@ -150,6 +150,23 @@ class WearTilePolicyTest {
         assertNull(WearSnapshot.fromJson("{not json"))
     }
 
+    // --- 카드 팀컬러 틴트 (삼순 조건 — 다크 테마 명도 유지) ---
+
+    @Test
+    fun `card tint is translucent (API30 image bug guard), dark, neutral for unknown team`() {
+        for (id in 1..10) {
+            val c = WearTeam.cardTint(id)
+            // 불투명(0xFF) 금지 — Wear OS 3 렌더러에서 불투명 Box 배경이 Image 자식을 가림
+            assertEquals(0xE6, (c ushr 24))
+            for (shift in intArrayOf(16, 8, 0)) {
+                val ch = (c shr shift) and 0xFF
+                assertTrue("team $id channel too bright: $ch", ch <= 0x48) // 은은한 다크 틴트
+            }
+        }
+        assertEquals(0xE61C1C1F.toInt(), WearTeam.cardTint(0))
+        assertEquals(0xE61C1C1F.toInt(), WearTeam.cardTint(99))
+    }
+
     @Test
     fun `bases any true only when runner on base`() {
         assertFalse(WearBases(false, false, false).any) // 주자 0명 → 다이아몬드 미렌더(#635 패리티)

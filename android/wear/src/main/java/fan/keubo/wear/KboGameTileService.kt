@@ -40,7 +40,7 @@ import kotlin.concurrent.thread
 class KboGameTileService : TileService() {
 
     companion object {
-        private const val RES_VERSION = "1"
+        private const val RES_VERSION = "2" // 팀로고 이미지 리소스 추가로 bump
 
         // 백그라운드 sync single-flight 게이트 — 동시 타일 요청이 스레드를 중복 생성하지 않게
         private val syncInFlight = AtomicBoolean(false)
@@ -105,7 +105,25 @@ class KboGameTileService : TileService() {
         requestParams: RequestBuilders.ResourcesRequest,
     ): ListenableFuture<ResourceBuilders.Resources> {
         return CallbackToFutureAdapter.getFuture { completer ->
-            completer.set(ResourceBuilders.Resources.Builder().setVersion(RES_VERSION).build())
+            val builder = ResourceBuilders.Resources.Builder().setVersion(RES_VERSION)
+            // 팀로고 10종 전부 매핑(96px PNG, 총 ~240KB) — 어느 매치업이 와도 커버
+            for (id in 1..10) {
+                val code = WearTeam.code(id)
+                val res = WearTeam.logoRes(code)
+                if (res != 0) {
+                    builder.addIdToImageMapping(
+                        WearTeam.logoResourceId(code),
+                        ResourceBuilders.ImageResource.Builder()
+                            .setAndroidResourceByResId(
+                                ResourceBuilders.AndroidImageResourceByResId.Builder()
+                                    .setResourceId(res)
+                                    .build(),
+                            )
+                            .build(),
+                    )
+                }
+            }
+            completer.set(builder.build())
             "KboGameTileResources"
         }
     }
@@ -130,17 +148,17 @@ class KboGameTileService : TileService() {
             .build()
     }
 
-    // ── 레이아웃 (원형 화면 — 세로 Column 중앙 정렬) ──
+    // ── 레이아웃 (애플워치 WatchGameCard 패리티 — 헤더 + 라운드 카드) ──
 
     private fun renderRoot(snap: WearSnapshot): LayoutElement {
         val content = when (snap.kind) {
-            "live" -> liveLayout(snap)
-            "final" -> finalLayout(snap)
-            "scheduled" -> scheduledLayout(snap)
-            "cancelled" -> matchupMessageLayout(snap, "경기 취소")
-            "noTeam" -> messageLayout("크보팬 앱에서", "최애팀을 선택하세요")
-            "loading" -> messageLayout("크보팬", "불러오는 중…")
-            else -> messageLayout("오늘 경기 없음", snap.rankLine)
+            "live" -> headerAndCard(snap, liveInner(snap))
+            "final" -> headerAndCard(snap, finalInner(snap))
+            "scheduled" -> headerAndCard(snap, scheduledInner(snap))
+            "cancelled" -> headerAndCard(snap, matchupMessageInner(snap, "경기 취소"))
+            "noTeam" -> card(messageInner("크보팬 앱에서", "최애팀을 선택하세요"))
+            "loading" -> card(messageInner("크보팬", "불러오는 중…"))
+            else -> headerAndCard(snap, messageInner("오늘 경기 없음", ""))
         }
 
         val openApp = ModifiersBuilders.Clickable.Builder()
@@ -178,13 +196,45 @@ class KboGameTileService : TileService() {
         return text(text, 13f, WearTeam.highlightColor(myId), bold = true)
     }
 
-    /** 예정: 헤더 / 매치업 / 카운트다운(오늘, Dynamic) 또는 일시 라인 */
-    private fun scheduledLayout(snap: WearSnapshot): LayoutElement {
-        val col = Column.Builder()
+    /** 헤더 + 라운드 카드 — 애플워치 WatchRootView(타이틀/카드/순위) 구조의 타일 판 */
+    private fun headerAndCard(snap: WearSnapshot, inner: LayoutElement): LayoutElement =
+        Column.Builder()
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
             .addContent(header(snap))
-            .addContent(vspace(4f))
-            .addContent(matchupText(snap, 22f))
-            .addContent(vspace(4f))
+            .addContent(vspace(6f))
+            .addContent(card(inner, WearTeam.cardTint(WearTeam.id(snap.myTeamCode))))
+            .build()
+
+    /**
+     * 라운드 카드 컨테이너 — 애플워치 WatchGameCard(cornerRadius 12) 패리티.
+     * 배경은 최애팀 컬러 은은한 틴트(삼순 조건 — ProtoLayout은 그라데이션 미지원이라 단색 블렌딩).
+     */
+    private fun card(inner: LayoutElement, bg: Int = 0xE61C1C1F.toInt()): LayoutElement = Box.Builder()
+        .setModifiers(
+            ModifiersBuilders.Modifiers.Builder()
+                .setBackground(
+                    ModifiersBuilders.Background.Builder()
+                        .setColor(argb(bg))
+                        .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(16f)).build())
+                        .build(),
+                )
+                .setPadding(
+                    ModifiersBuilders.Padding.Builder()
+                        .setStart(dp(16f)).setEnd(dp(16f))
+                        .setTop(dp(10f)).setBottom(dp(10f))
+                        .build(),
+                )
+                .build(),
+        )
+        .addContent(inner)
+        .build()
+
+    /** 예정: 매치업(vs) / 카운트다운(오늘, Dynamic) 또는 일시 라인 */
+    private fun scheduledInner(snap: WearSnapshot): LayoutElement {
+        val col = Column.Builder()
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .addContent(matchupRow(snap, text("vs", 14f, WearTeam.COLOR_TEXT_SECONDARY, bold = true)))
+            .addContent(vspace(5f))
 
         val start = snap.startAt
         if (start != null && WearFetcher.isCountdownToday(start)) {
@@ -196,22 +246,21 @@ class KboGameTileService : TileService() {
             col.addContent(text(snap.line, 13f, WearTeam.COLOR_TEXT_SECONDARY))
         } else {
             // 미래 경기(다음 경기 폴백 포함): "7/16(수) 18:30"
-            col.addContent(text(snap.line, 16f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+            col.addContent(text(snap.line, 15f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
         }
         return col.build()
     }
 
-    /** 라이브: 헤더 / 팀별 스코어 2줄(내팀 위) / LIVE 라인 + 잔루 다이아몬드 / 지연 배지 */
-    private fun liveLayout(snap: WearSnapshot): LayoutElement {
+    /** 라이브: 매치업(큰 스코어 가운데) / LIVE 라인 + 잔루 다이아몬드 / 지연 배지 */
+    private fun liveInner(snap: WearSnapshot): LayoutElement {
         val col = Column.Builder()
-            .addContent(header(snap))
-            .addContent(vspace(4f))
-            .addContent(scoreRows(snap))
-            .addContent(vspace(4f))
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .addContent(matchupRow(snap, scoreText(snap)))
+            .addContent(vspace(5f))
 
         val liveRow = Row.Builder()
             .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
-            .addContent(text(snap.line, 14f, WearTeam.COLOR_LIVE, bold = true))
+            .addContent(text(snap.line, 13f, WearTeam.COLOR_LIVE, bold = true))
         // 주자 1명 이상일 때만 다이아몬드 — 애플워치 #635(`b.any`) 패리티
         snap.bases?.takeIf { it.any }?.let {
             liveRow.addContent(hspace(6f))
@@ -226,30 +275,29 @@ class KboGameTileService : TileService() {
         return col.build()
     }
 
-    /** 종료: 헤더 / 팀별 스코어 2줄 / "경기 종료 · 승" */
-    private fun finalLayout(snap: WearSnapshot): LayoutElement {
+    /** 종료: 매치업(최종 스코어 가운데) / "경기 종료 · 승" */
+    private fun finalInner(snap: WearSnapshot): LayoutElement {
         return Column.Builder()
-            .addContent(header(snap))
-            .addContent(vspace(4f))
-            .addContent(scoreRows(snap))
-            .addContent(vspace(4f))
-            .addContent(text(snap.line, 14f, WearTeam.COLOR_TEXT_SECONDARY))
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .addContent(matchupRow(snap, scoreText(snap)))
+            .addContent(vspace(5f))
+            .addContent(text(snap.line, 13f, WearTeam.COLOR_TEXT_SECONDARY, bold = true))
             .build()
     }
 
-    private fun matchupMessageLayout(snap: WearSnapshot, message: String): LayoutElement {
+    private fun matchupMessageInner(snap: WearSnapshot, message: String): LayoutElement {
         return Column.Builder()
-            .addContent(header(snap))
-            .addContent(vspace(4f))
-            .addContent(matchupText(snap, 20f))
-            .addContent(vspace(4f))
-            .addContent(text(message, 14f, WearTeam.COLOR_TEXT_SECONDARY))
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .addContent(matchupRow(snap, text("vs", 14f, WearTeam.COLOR_TEXT_SECONDARY, bold = true)))
+            .addContent(vspace(5f))
+            .addContent(text(message, 13f, WearTeam.COLOR_TEXT_SECONDARY, bold = true))
             .build()
     }
 
-    private fun messageLayout(line1: String, line2: String): LayoutElement {
+    private fun messageInner(line1: String, line2: String): LayoutElement {
         val col = Column.Builder()
-            .addContent(text(line1, 16f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .addContent(text(line1, 15f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
         if (line2.isNotEmpty()) {
             col.addContent(vspace(3f))
             col.addContent(text(line2, 13f, WearTeam.COLOR_TEXT_SECONDARY))
@@ -257,35 +305,36 @@ class KboGameTileService : TileService() {
         return col.build()
     }
 
-    /** "LG vs KT" — 원정 vs 홈 순서(웹/폰 위젯 컨벤션) */
-    private fun matchupText(snap: WearSnapshot, size: Float): LayoutElement {
-        val away = WearTeam.short(snap.awayCode)
-        val home = WearTeam.short(snap.homeCode)
-        return text("$away vs $home", size, WearTeam.COLOR_TEXT_PRIMARY, bold = true)
-    }
-
-    /** 팀별 스코어 2줄 — 내팀 위 (#635 원형 스코어 팀별 라벨 패리티) */
-    private fun scoreRows(snap: WearSnapshot): LayoutElement {
-        val myIsAway = snap.myTeamCode.equals(snap.awayCode, ignoreCase = true)
-        val myCode = if (myIsAway) snap.awayCode else snap.homeCode
-        val oppCode = if (myIsAway) snap.homeCode else snap.awayCode
-        val myScore = if (myIsAway) snap.awayScore else snap.homeScore
-        val oppScore = if (myIsAway) snap.homeScore else snap.awayScore
-        val myId = WearTeam.id(snap.myTeamCode)
-
-        fun row(code: String, score: Int, nameColor: Int, bold: Boolean) = Row.Builder()
+    /**
+     * 매치업 한 줄 — 애플워치 WatchGameCard 패리티 + 팀로고(하린아빠 7/16 요청):
+     * `[로고]LG   3 : 2   KT[로고]` (원정 왼쪽 · 홈 오른쪽, 가운데 스코어 또는 "vs").
+     */
+    private fun matchupRow(snap: WearSnapshot, center: LayoutElement): LayoutElement {
+        val row = Row.Builder()
             .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
-            .addContent(text(WearTeam.short(code), 16f, nameColor, bold = bold))
-            .addContent(hspace(6f))
-            .addContent(text(score.toString(), 22f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
-            .build()
+        teamLogo(snap.awayCode)?.let { row.addContent(it); row.addContent(hspace(4f)) }
+        row.addContent(text(WearTeam.short(snap.awayCode), 16f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+            .addContent(hspace(10f))
+            .addContent(center)
+            .addContent(hspace(10f))
+            .addContent(text(WearTeam.short(snap.homeCode), 16f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+        teamLogo(snap.homeCode)?.let { row.addContent(hspace(4f)); row.addContent(it) }
+        return row.build()
+    }
 
-        return Column.Builder()
-            .addContent(row(myCode, myScore, WearTeam.highlightColor(myId), bold = true))
-            .addContent(vspace(2f))
-            .addContent(row(oppCode, oppScore, WearTeam.COLOR_TEXT_SECONDARY, bold = false))
+    /** 팀로고 이미지(24dp) — 미지의 코드(올스타 등)는 null로 텍스트만 렌더 */
+    private fun teamLogo(code: String): LayoutElement? {
+        if (WearTeam.logoRes(code) == 0) return null
+        return LayoutElementBuilders.Image.Builder()
+            .setResourceId(WearTeam.logoResourceId(code))
+            .setWidth(dp(24f))
+            .setHeight(dp(24f))
             .build()
     }
+
+    /** "3 : 2" — 애플워치 18pt black 대응(타일 캔버스에 맞춰 확대) */
+    private fun scoreText(snap: WearSnapshot): LayoutElement =
+        text("${snap.awayScore} : ${snap.homeScore}", 24f, WearTeam.COLOR_TEXT_PRIMARY, bold = true)
 
     /**
      * 잔루 다이아몬드 — 2루(위) / 3루(왼쪽 아래) / 1루(오른쪽 아래).

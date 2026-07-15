@@ -19,6 +19,19 @@ object WearTeam {
         else -> 0
     }
 
+    /** 팀 로고 drawable (폰앱 teamlogo_* 96px 동일 에셋). 미지의 코드는 0(미렌더). */
+    fun logoRes(code: String): Int = when (code.uppercase()) {
+        "LG" -> R.drawable.teamlogo_lg; "OB" -> R.drawable.teamlogo_ob
+        "KT" -> R.drawable.teamlogo_kt; "SK" -> R.drawable.teamlogo_sk
+        "NC" -> R.drawable.teamlogo_nc; "HT" -> R.drawable.teamlogo_ht
+        "LT" -> R.drawable.teamlogo_lt; "SS" -> R.drawable.teamlogo_ss
+        "HH" -> R.drawable.teamlogo_hh; "WO" -> R.drawable.teamlogo_wo
+        else -> 0
+    }
+
+    /** 타일 리소스 매핑 id — "logo_LG" 형식(양팀 이미지 구분) */
+    fun logoResourceId(code: String): String = "logo_${code.uppercase()}"
+
     /** 표시용 짧은 팀명 (GameScoreWidget.SHORT 동일) */
     fun short(code: String): String = when (code.uppercase()) {
         "LG" -> "LG"; "OB" -> "두산"; "KT" -> "KT"; "SK" -> "SSG"; "NC" -> "NC"
@@ -49,6 +62,21 @@ object WearTeam {
         9 -> 0xFFFF6600.toInt()   // 한화
         10 -> 0xFFC97088.toInt()  // 키움
         else -> COLOR_TEXT_PRIMARY
+    }
+
+    /**
+     * 최애팀 컬러 은은한 카드 틴트 — highlightColor를 다크 베이스에 18% 블렌딩
+     * (다크 테마 명도 유지, 삼순 조건: 팀컬러 틴트). 미지의 팀은 중립 카드색.
+     */
+    fun cardTint(fromId: Int): Int {
+        // ⚠️ 알파는 반드시 < 0xFF — Wear OS 3(API 30) 타일 렌더러는 불투명 Box 배경이
+        // Image 자식을 가리는 버그가 있다(불투명=로고 미렌더, 반투명=정상 실측).
+        // 타일 바탕이 순검정이라 E6(90%) 반투명도 시각적으론 동일한 다크 틴트.
+        if (fromId !in 1..10) return 0xE61C1C1F.toInt()
+        val c = highlightColor(fromId)
+        fun ch(shift: Int): Int =
+            (((c shr shift) and 0xFF) * 0.20f + 0x14).toInt().coerceAtMost(0xFF)
+        return (0xE6 shl 24) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
     }
 
     // 크보팬 다크 테마 토큰 (TeamRankWidget 동일)
