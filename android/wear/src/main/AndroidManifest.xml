@@ -17,9 +17,11 @@
             android:name="com.google.android.wearable.standalone"
             android:value="false" />
 
+        <!-- taskAffinity="" — Wear recents 표시 규약 (lint WearRecents) -->
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:taskAffinity="">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -35,6 +37,10 @@
             <intent-filter>
                 <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
             </intent-filter>
+            <!-- 타일 캐러셀 편집기 미리보기 — square/round 두 스크린 셰이프 제공(익명 더미) -->
+            <meta-data
+                android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@drawable/tile_preview" />
         </service>
 
         <!-- 폰 → 워치 최애팀 동기화 수신 (Wearable Data Layer) -->

@@ -20,7 +20,7 @@
 
 - 새 Gradle 모듈 `:wear` — Kotlin, 폰앱(Capacitor 웹뷰)과 독립된 네이티브 모듈
 - 타일 = ProtoLayout (Tiles Material) / 컴플리케이션 = ComplicationDataSourceService / 앱 = Compose for Wear OS
-- 네트워킹: OkHttp + kotlinx.serialization
+- 네트워킹: HttpURLConnection + org.json — 슬라이스 A 스코프(순차 GET 3종)에 외부 의존성 불필요, 워치 모듈 경량 유지 (v2.1 정정: 초안의 OkHttp+kotlinx.serialization은 구현과 불일치했음. 요구 복잡도 증가 시 재검토)
 - 최애팀 동기화: **Wearable Data Layer(DataClient)** — 폰이 최애팀 push, 워치 수신·저장 (애플워치 WCSession 대응물)
   - ⚠️ 폰앱 네이티브(Capacitor Android)에 최애팀 push용 DataClient 코드 소폭 추가 필요 (애플워치 WCSession 폰 네이티브 추가와 동일 수준) — "서버 무변경"이지 "폰앱 완전 무변경"은 아님
 - 재사용: 안드 홈위젯(#551/#552)의 **팀색·로고 map만** 재사용. RemoteViews용 Canvas 텍스트 비트맵 렌더는 Tile에 이식하지 않음 (ProtoLayout 네이티브 텍스트/이미지 요소 사용) — 삼순 조건 4

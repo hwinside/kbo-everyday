@@ -25,55 +25,79 @@ import androidx.wear.tiles.TileBuilders
 import androidx.wear.tiles.TileService
 import com.google.common.util.concurrent.ListenableFuture
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 /**
  * 슬라이스 A 타일 — 최애팀 다음경기·카운트다운·라이브 스코어 (애플워치 #635 패리티).
  *
- * cache-first(삼순 조건 1): onTileRequest는 로컬 스냅샷을 즉시 렌더하고, 필요 시 백그라운드
- * sync 후 requestUpdate로 재렌더한다. 네트워크가 타일 렌더를 블로킹하지 않는다(첫 실행 제외).
+ * cache-first(삼순 조건 1): onTileRequest는 어떤 경로에서도 네트워크를 기다리지 않는다.
+ * 캐시가 있으면 즉시 렌더, 없으면(첫 실행) placeholder를 즉시 반환하고 single-flight
+ * 백그라운드 sync가 끝나면 requestUpdate로 재렌더한다. Tile 10초 제한과 무관해진다.
  * 카운트다운(삼순 조건 2)은 Dynamic Expressions(플랫폼 시계) — 타일 재요청 없이 분단위 갱신.
- * freshness는 OS best-effort 힌트일 뿐 SLA가 아니다.
+ * freshness는 OS best-effort 힌트일 뿐 SLA가 아니다. 정책 수치·판정은 WearTilePolicy.
  */
 class KboGameTileService : TileService() {
 
     companion object {
         private const val RES_VERSION = "1"
 
-        // kind별 캐시 신선도 임계(이보다 오래되면 백그라운드 re-sync)
-        private const val STALE_LIVE_MS = 60_000L
-        private const val STALE_TODAY_MS = 5 * 60_000L
-        private const val STALE_IDLE_MS = 15 * 60_000L
-
-        // live 캐시 5분 초과 → "업데이트 지연" 표시 (삼순 조건 1)
-        private const val LIVE_DELAY_BADGE_MS = 5 * 60_000L
+        // 백그라운드 sync single-flight 게이트 — 동시 타일 요청이 스레드를 중복 생성하지 않게
+        private val syncInFlight = AtomicBoolean(false)
     }
 
     override fun onTileRequest(
         requestParams: RequestBuilders.TileRequest,
     ): ListenableFuture<TileBuilders.Tile> {
         val ctx = applicationContext
-        val cached = WearStore.loadCachedSnapshot(ctx)
 
         return CallbackToFutureAdapter.getFuture { completer ->
-            if (cached != null) {
-                // cache-first: 즉시 렌더 + (stale이면) 백그라운드 sync 후 재요청
-                completer.set(buildTile(cached))
-                if (isStale(ctx, cached)) {
-                    thread(name = "kbo-tile-sync") {
-                        val fresh = WearFetcher.fetch(ctx)
-                        if (fresh != cached) {
-                            getUpdater(ctx).requestUpdate(KboGameTileService::class.java)
-                        }
+            val myTeam = WearStore.loadMyTeam(ctx)
+            // 팀 변경 직후 잔존 캐시 방어(saveMyTeam이 atomic clear하지만 defense-in-depth)
+            val cached = WearStore.loadCachedSnapshot(ctx)
+                ?.takeIf { it.myTeamCode.equals(myTeam, ignoreCase = true) }
+            val now = System.currentTimeMillis()
+
+            when {
+                myTeam.isEmpty() -> completer.set(buildTile(WearSnapshot.noTeam()))
+                cached != null -> {
+                    // cache-first: 즉시 렌더 + (stale이면) 백그라운드 sync 후 재요청
+                    completer.set(buildTile(cached))
+                    if (WearTilePolicy.isStale(cached, WearStore.lastSyncAt(ctx), now)) {
+                        maybeStartSync(ctx)
                     }
                 }
-            } else {
-                // 첫 실행(캐시 없음)만 fetch 완료를 기다린다(8s 타임아웃 내 반환)
-                thread(name = "kbo-tile-first") {
-                    completer.set(buildTile(WearFetcher.fetch(ctx)))
+                else -> {
+                    // 첫 실행(캐시 없음)도 placeholder 즉시 반환 — fetch를 기다리지 않는다
+                    completer.set(buildTile(WearSnapshot.loading(myTeam)))
+                    maybeStartSync(ctx)
                 }
             }
             "KboGameTile"
+        }
+    }
+
+    /**
+     * single-flight 백그라운드 sync. MIN_SYNC_RETRY_MS 스로틀로 실패 시
+     * requestUpdate ↔ onTileRequest 재귀 루프를 차단하고, 캐시가 실제로
+     * 바뀌었을 때만 재렌더를 요청한다.
+     */
+    private fun maybeStartSync(ctx: android.content.Context) {
+        val now = System.currentTimeMillis()
+        if (!WearTilePolicy.canAttemptSync(WearStore.lastSyncAttemptAt(ctx), now)) return
+        if (!syncInFlight.compareAndSet(false, true)) return
+        WearStore.markSyncAttemptNow(ctx)
+        thread(name = "kbo-tile-sync") {
+            try {
+                val before = WearStore.loadCachedSnapshot(ctx)
+                WearFetcher.fetch(ctx)
+                val after = WearStore.loadCachedSnapshot(ctx)
+                if (after != null && after != before) {
+                    getUpdater(ctx).requestUpdate(KboGameTileService::class.java)
+                }
+            } finally {
+                syncInFlight.set(false)
+            }
         }
     }
 
@@ -84,17 +108,6 @@ class KboGameTileService : TileService() {
             completer.set(ResourceBuilders.Resources.Builder().setVersion(RES_VERSION).build())
             "KboGameTileResources"
         }
-    }
-
-    private fun isStale(ctx: android.content.Context, snap: WearSnapshot): Boolean {
-        val age = System.currentTimeMillis() - WearStore.lastSyncAt(ctx)
-        val threshold = when {
-            snap.isLive -> STALE_LIVE_MS
-            snap.kind == "scheduled" && snap.startAt?.let { WearFetcher.isCountdownToday(it) } == true ->
-                STALE_TODAY_MS
-            else -> STALE_IDLE_MS
-        }
-        return age > threshold
     }
 
     // ── 타일 조립 ──
@@ -111,27 +124,10 @@ class KboGameTileService : TileService() {
         return TileBuilders.Tile.Builder()
             .setResourcesVersion(RES_VERSION)
             .setTileTimeline(timeline)
-            .setFreshnessIntervalMillis(freshnessFor(snap))
+            .setFreshnessIntervalMillis(
+                WearTilePolicy.freshnessForMs(snap, System.currentTimeMillis()),
+            )
             .build()
-    }
-
-    /**
-     * freshness 힌트(OS best-effort — SLA 아님, 스펙 v2 §3):
-     * live 5분 / 예정(시작 전) min(30분, 시작까지) / startedButStillScheduled 4분 / 그 외 30분.
-     */
-    private fun freshnessFor(snap: WearSnapshot): Long {
-        val thirtyMin = 30 * 60_000L
-        return when (snap.kind) {
-            "live" -> 5 * 60_000L
-            "scheduled" -> {
-                val start = snap.startAt ?: return thirtyMin
-                if (!WearFetcher.isCountdownToday(start)) return thirtyMin
-                val untilStart = start - System.currentTimeMillis()
-                if (untilStart <= 0) 4 * 60_000L // 시작됐는데 API 아직 scheduled — #635 4분 retry
-                else untilStart.coerceIn(60_000L, thirtyMin)
-            }
-            else -> thirtyMin
-        }
     }
 
     // ── 레이아웃 (원형 화면 — 세로 Column 중앙 정렬) ──
@@ -143,6 +139,7 @@ class KboGameTileService : TileService() {
             "scheduled" -> scheduledLayout(snap)
             "cancelled" -> matchupMessageLayout(snap, "경기 취소")
             "noTeam" -> messageLayout("크보팬 앱에서", "최애팀을 선택하세요")
+            "loading" -> messageLayout("크보팬", "불러오는 중…")
             else -> messageLayout("오늘 경기 없음", snap.rankLine)
         }
 
@@ -215,13 +212,14 @@ class KboGameTileService : TileService() {
         val liveRow = Row.Builder()
             .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
             .addContent(text(snap.line, 14f, WearTeam.COLOR_LIVE, bold = true))
-        snap.bases?.let {
+        // 주자 1명 이상일 때만 다이아몬드 — 애플워치 #635(`b.any`) 패리티
+        snap.bases?.takeIf { it.any }?.let {
             liveRow.addContent(hspace(6f))
             liveRow.addContent(baseDiamond(it))
         }
         col.addContent(liveRow.build())
 
-        if (System.currentTimeMillis() - snap.updatedAt > LIVE_DELAY_BADGE_MS) {
+        if (System.currentTimeMillis() - snap.updatedAt > WearTilePolicy.LIVE_DELAY_BADGE_MS) {
             col.addContent(vspace(2f))
             col.addContent(text("업데이트 지연", 11f, WearTeam.COLOR_TEXT_TERTIARY))
         }
@@ -364,7 +362,7 @@ class KboGameTileService : TileService() {
             )
 
         // 정적 폴백(Dynamic 미지원 렌더러) = 렌더 시점 계산값
-        val staticLabel = staticCountdownLabel(startAtMs)
+        val staticLabel = WearTilePolicy.staticCountdownLabel(startAtMs, System.currentTimeMillis())
 
         return Text.Builder()
             .setText(
@@ -387,16 +385,6 @@ class KboGameTileService : TileService() {
                     .build(),
             )
             .build()
-    }
-
-    /** 렌더 시점 정적 카운트다운 라벨 (Dynamic 폴백용) — 애플워치 라벨 규칙 동일 */
-    private fun staticCountdownLabel(startAtMs: Long): String {
-        val secs = (startAtMs - System.currentTimeMillis()) / 1000
-        if (secs <= 0) return "곧 시작"
-        val mins = (secs / 60).toInt()
-        val h = mins / 60
-        val m = mins % 60
-        return if (h > 0) String.format("%d:%02d 후", h, m) else "${maxOf(1, m)}분 후"
     }
 
     // ── 공용 빌더 ──

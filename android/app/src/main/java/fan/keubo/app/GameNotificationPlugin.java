@@ -193,11 +193,12 @@ public class GameNotificationPlugin extends Plugin {
      * 조용히 무시 — 폰 기능에 영향을 주면 안 된다.
      */
     private void pushMyTeamToWatch(String code) {
-        if (code == null || code.isEmpty()) return;
+        // 빈 코드(최애팀 해제)도 push — 워치가 이전 팀 캐시/스냅샷을 무효화해야 한다
+        if (code == null) code = "";
         try {
             com.google.android.gms.wearable.PutDataMapRequest req =
                     com.google.android.gms.wearable.PutDataMapRequest.create("/kbo/my_team");
-            req.getDataMap().putString("code", code.toUpperCase());
+            req.getDataMap().putString("code", code.toUpperCase(java.util.Locale.ROOT));
             // 동일 팀 재선택에도 change 이벤트가 발생하도록 타임스탬프 동봉
             req.getDataMap().putLong("at", System.currentTimeMillis());
             com.google.android.gms.wearable.Wearable.getDataClient(getContext())

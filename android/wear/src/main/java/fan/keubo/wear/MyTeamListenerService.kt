@@ -20,10 +20,8 @@ class MyTeamListenerService : WearableListenerService() {
             val item = event.dataItem
             if (item.uri.path != "/kbo/my_team") continue
             val code = DataMapItem.fromDataItem(item).dataMap.getString("code") ?: continue
-            if (code.isNotEmpty() && code != WearStore.loadMyTeam(this)) {
-                WearStore.saveMyTeam(this, code)
-                changed = true
-            }
+            // 빈 코드 = 최애팀 해제 — saveMyTeam이 변경 시 이전 팀 캐시까지 atomic 무효화
+            if (WearStore.saveMyTeam(this, code)) changed = true
         }
         if (changed) {
             TileService.getUpdater(this).requestUpdate(KboGameTileService::class.java)

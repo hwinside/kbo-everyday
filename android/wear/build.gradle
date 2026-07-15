@@ -60,4 +60,8 @@ dependencies {
     implementation "com.google.android.gms:play-services-wearable:18.2.0"
     // TileService ListenableFuture 반환용 (guava 없이)
     implementation "androidx.concurrent:concurrent-futures:1.2.0"
+
+    // 유닛테스트 — org.json은 android.jar 스텁 대체(스냅샷 JSON 라운드트립 검증용)
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20240303"
 }

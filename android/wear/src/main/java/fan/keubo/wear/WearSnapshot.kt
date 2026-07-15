@@ -7,6 +7,9 @@ import org.json.JSONObject
  * 타일이 그리는 최종 형태. SharedPreferences에 JSON으로 캐시(cache-first 렌더의 원천).
  */
 data class WearBases(val first: Boolean, val second: Boolean, val third: Boolean) {
+    /** 주자 1명 이상 — 다이아몬드는 이때만 렌더(애플워치 #635 `b.any` 패리티) */
+    val any: Boolean get() = first || second || third
+
     fun toJson(): JSONObject = JSONObject()
         .put("first", first).put("second", second).put("third", third)
 
@@ -59,6 +62,14 @@ data class WearSnapshot(
             kind = "noTeam", myTeamCode = "", awayCode = "", homeCode = "",
             awayScore = 0, homeScore = 0,
             line = "크보팬 앱에서 최애팀을 선택하세요", rankLine = "",
+            updatedAt = System.currentTimeMillis(), startAt = null, bases = null,
+        )
+
+        /** 첫 실행(캐시 없음) placeholder — 네트워크를 기다리지 않고 즉시 렌더 */
+        fun loading(myTeamCode: String): WearSnapshot = WearSnapshot(
+            kind = "loading", myTeamCode = myTeamCode, awayCode = "", homeCode = "",
+            awayScore = 0, homeScore = 0,
+            line = "불러오는 중…", rankLine = "",
             updatedAt = System.currentTimeMillis(), startAt = null, bases = null,
         )
 

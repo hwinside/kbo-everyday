@@ -96,7 +96,11 @@ object WearFetcher {
                 if (ranking <= 0) ranking = i + 1
                 val gb = row.optDouble("gamesBehind", 0.0)
                 if (gb <= 0) return "${ranking}위"
-                val gbText = if (gb == Math.floor(gb)) gb.toInt().toString() else String.format("%.1f", gb)
+                val gbText = if (gb == Math.floor(gb)) {
+                    gb.toInt().toString()
+                } else {
+                    String.format(java.util.Locale.US, "%.1f", gb)
+                }
                 return "${ranking}위 · ${gbText}G"
             }
             ""
