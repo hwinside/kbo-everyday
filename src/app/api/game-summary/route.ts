@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { TEAMS, isAllStarGameId } from "@/lib/constants/teams";
 import { fetchStandings } from "@/lib/crawler/kbo-api";
+import { STANDINGS_ACCURACY_RULES } from "@/lib/ai/standings-guard";
 import { computeSeriesSnapshot, serializeSeriesSnapshot } from "@/lib/series/snapshot";
 import { loserClaimedWin } from "@/lib/game-summary/winner-check";
 import { hasBaseRunnerContradiction } from "@/lib/game-summary/consistency-check";
@@ -76,8 +77,9 @@ async function fetchStandingsContext(awayTeamId: number, homeTeamId: number): Pr
   const awayRank = standings.indexOf(awaySt) + 1;
   const homeRank = standings.indexOf(homeSt) + 1;
 
-  return `${awayShort}: ${awayRank}위 (${awaySt.wins}승 ${awaySt.losses}패, 승률 ${awaySt.winRate.toFixed(3)}${awaySt.gamesBehind > 0 ? `, ${awaySt.gamesBehind}게임차` : ", 선두"})
-${homeShort}: ${homeRank}위 (${homeSt.wins}승 ${homeSt.losses}패, 승률 ${homeSt.winRate.toFixed(3)}${homeSt.gamesBehind > 0 ? `, ${homeSt.gamesBehind}게임차` : ", 선두"})`;
+  // "선두"는 1위에게만 — 2위가 게임차 0(승률차로만 뒤짐)일 수 있어 gamesBehind 기준은 오라벨 유발
+  return `${awayShort}: ${awayRank}위 (${awaySt.wins}승 ${awaySt.losses}패, 승률 ${awaySt.winRate.toFixed(3)}${awayRank === 1 ? ", 선두" : `, ${awaySt.gamesBehind}게임차`})
+${homeShort}: ${homeRank}위 (${homeSt.wins}승 ${homeSt.losses}패, 승률 ${homeSt.winRate.toFixed(3)}${homeRank === 1 ? ", 선두" : `, ${homeSt.gamesBehind}게임차`})`;
 }
 
 // ===== Prompt builder =====
@@ -173,7 +175,7 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
   // 맥락 섹션 — seriesCtx 는 snapshot.ts 가 이미 '## 시리즈 스냅샷' 헤딩 포함해서 바로 append
   let contextSection = "";
   if (seriesCtx) contextSection += `\n${seriesCtx}`;
-  if (standingsCtx) contextSection += `\n## 현재 순위\n${standingsCtx}`;
+  if (standingsCtx) contextSection += `\n## 현재 순위\n${standingsCtx}\n${STANDINGS_ACCURACY_RULES}`;
 
   return `당신은 KBO 프로야구를 20년 넘게 현장에서 취재해온 베테란 스포츠 기자입니다.
 마감 시간에 쫓기며 오늘 직접 본 경기의 기사를 쓰고 있습니다.

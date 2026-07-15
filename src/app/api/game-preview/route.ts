@@ -6,6 +6,7 @@ import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 import { TEAMS, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
 import { INJURY_BLOCKLIST_KEYS } from "@/lib/constants/injury-blocklist";
 import { fetchStandings, fetchGames, fetchBoxScore, type TeamStanding, type BoxScoreResult, type KboGame } from "@/lib/crawler/kbo-api";
+import { STANDINGS_ACCURACY_RULES } from "@/lib/ai/standings-guard";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -747,8 +748,9 @@ async function buildPreviewPrompt(req: PreviewRequest): Promise<string> {
   if (standingsCtx) {
     standingsSection = `
 ## 순위 & 시즌 성적
-${awayShort}: ${standingsCtx.awayRank}위 — ${standingsCtx.awayRecord}${standingsCtx.awayGb > 0 ? ` (${standingsCtx.awayGb}게임차)` : " (선두)"}
-${homeShort}: ${standingsCtx.homeRank}위 — ${standingsCtx.homeRecord}${standingsCtx.homeGb > 0 ? ` (${standingsCtx.homeGb}게임차)` : " (선두)"}`;
+${awayShort}: ${standingsCtx.awayRank}위 — ${standingsCtx.awayRecord}${standingsCtx.awayRank === 1 ? " (선두)" : ` (${standingsCtx.awayGb}게임차)`}
+${homeShort}: ${standingsCtx.homeRank}위 — ${standingsCtx.homeRecord}${standingsCtx.homeRank === 1 ? " (선두)" : ` (${standingsCtx.homeGb}게임차)`}
+${STANDINGS_ACCURACY_RULES}`;
   }
 
   let seriesSection = "";
