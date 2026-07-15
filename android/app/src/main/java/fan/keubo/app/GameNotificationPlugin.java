@@ -23,7 +23,9 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  * 삼성 One UI 잠금화면은 서드파티 위젯을 허용하지 않으므로(시스템 앱 전용), 잠금화면 카드는
  * 위젯이 아니라 *위젯과 동일한 RemoteViews 카드*를 알림 커스텀 뷰로 그려서 표시한다(네이버 방식).
  * 카드 데이터는 GameScoreWidget의 SharedPreferences(kbo_game_widget)를 공유 — 위젯/알림 동일.
- * 잠금화면 노출 위해 IMPORTANCE_DEFAULT + VISIBILITY_PUBLIC. 동일 ID re-notify로 갱신, cancel로 제거.
+ * 잠금화면 노출 위해 IMPORTANCE_DEFAULT + VISIBILITY_PUBLIC. Android 16+/One UI 8.5는
+ * Promoted Ongoing으로 잠금화면 라이브 업데이트 카드 승격을 요청한다.
+ * 동일 ID re-notify로 갱신, cancel로 제거.
  */
 @CapacitorPlugin(name = "GameNotification")
 public class GameNotificationPlugin extends Plugin {
@@ -80,6 +82,7 @@ public class GameNotificationPlugin extends Plugin {
             .setContentText(body)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setRequestPromotedOngoing(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setContentIntent(pi);
 
