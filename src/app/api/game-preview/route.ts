@@ -5,8 +5,8 @@ import batterStats from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 import { TEAMS, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
 import { INJURY_BLOCKLIST_KEYS } from "@/lib/constants/injury-blocklist";
-import { fetchStandings, fetchGames, fetchBoxScore, type TeamStanding, type BoxScoreResult, type KboGame } from "@/lib/crawler/kbo-api";
-import { STANDINGS_ACCURACY_RULES } from "@/lib/ai/standings-guard";
+import { fetchStandings, buildRankMap, fetchGames, fetchBoxScore, type TeamStanding, type BoxScoreResult, type KboGame } from "@/lib/crawler/kbo-api";
+import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -548,8 +548,10 @@ async function getStandingsContext(awayTeamId: number, homeTeamId: number): Prom
 
   if (!awaySt || !homeSt) return null;
 
-  const awayRank = standings.indexOf(awaySt) + 1;
-  const homeRank = standings.indexOf(homeSt) + 1;
+  // 공동순위 보존 — 원본 ranking 우선(buildRankMap), index+1 단순 방식 금지(삼순 조건)
+  const rankMap = buildRankMap(standings);
+  const awayRank = rankMap.get(awaySt.teamId) ?? awaySt.ranking ?? 0;
+  const homeRank = rankMap.get(homeSt.teamId) ?? homeSt.ranking ?? 0;
 
   return {
     awayRank,
@@ -743,7 +745,7 @@ async function buildPreviewPrompt(req: PreviewRequest): Promise<string> {
     h2hSection = `\n## 시즌 상대전적\n${awayShort} ${h2hRecord.awayWins}승 vs ${homeShort} ${h2hRecord.homeWins}승${h2hRecord.draws > 0 ? ` (${h2hRecord.draws}무)` : ""}\n${h2hRecord.results.join(", ")}`;
   }
 
-  // 순위 & 시리즈 섹션 빌드
+  // 순위 & 시리즈 섹션 빌드 — 순위 데이터 없으면 순위 서술 금지 규칙으로 대체(환각 방지)
   let standingsSection = "";
   if (standingsCtx) {
     standingsSection = `
@@ -751,6 +753,9 @@ async function buildPreviewPrompt(req: PreviewRequest): Promise<string> {
 ${awayShort}: ${standingsCtx.awayRank}위 — ${standingsCtx.awayRecord}${standingsCtx.awayRank === 1 ? " (선두)" : ` (${standingsCtx.awayGb}게임차)`}
 ${homeShort}: ${standingsCtx.homeRank}위 — ${standingsCtx.homeRecord}${standingsCtx.homeRank === 1 ? " (선두)" : ` (${standingsCtx.homeGb}게임차)`}
 ${STANDINGS_ACCURACY_RULES}`;
+  } else {
+    standingsSection = `
+${STANDINGS_UNAVAILABLE_RULES}`;
   }
 
   let seriesSection = "";

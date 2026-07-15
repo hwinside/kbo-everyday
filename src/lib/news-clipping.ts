@@ -19,7 +19,7 @@ import {
   isPhotoArticle,
   dedupeNewsByTitle,
 } from "@/lib/news-relevance";
-import { STANDINGS_ACCURACY_RULES } from "@/lib/ai/standings-guard";
+import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -110,11 +110,11 @@ function buildPrompt(
     .map((c, i) => `${i + 1}. ${c.title}\n   ${c.description}`)
     .join("\n");
 
-  // 순위표가 있을 때만 순위 근거 섹션 삽입 — 없으면(fetch 실패) 순위 규칙도 넣지 않는다
-  // (없는 표를 근거로 삼으라는 모순 방지). 순위 환각(3위 팀을 '선두'로 등) 차단 목적.
+  // 순위표가 있으면 근거+정확성 규칙, 조회 실패면 순위 서술 금지 규칙을 넣는다.
+  // (조회 실패 시에도 규칙을 넣어 근거 없는 순위 환각[3위 팀을 '선두'로 등]을 원천 차단.)
   const standingsBlock = standingsText
     ? `\n## 공식 순위표 (오늘 기준 — 순위 관련 서술의 유일한 근거)\n${standingsText}\n${STANDINGS_ACCURACY_RULES}\n`
-    : "";
+    : `\n${STANDINGS_UNAVAILABLE_RULES}\n`;
 
   return `당신은 KBO 프로야구 "${teamName}" 팬을 위한 아침 뉴스클리핑 에디터입니다.
 아래는 어제(${yesterday}) 보도된 ${teamName} 관련 기사 목록입니다 (번호. 제목 / 요약문).

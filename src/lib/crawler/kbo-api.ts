@@ -231,6 +231,32 @@ export interface TeamStanding {
   continuousGameResult?: string;
 }
 
+/**
+ * 순위 산정 — 공동순위(ties) 보존 (4/11 핫픽스 001bf82c 기준):
+ *  - 네이버 API 원본 `ranking`(공동순위 반영)이 있으면 그대로 사용.
+ *  - 없으면(KBO HTML 폴백 등) 승률 내림차순 competition ranking — 동률은 같은 순위(1,2,2,4…).
+ * winRate-sort + index+1 단순 방식은 공동순위를 깨므로 쓰지 않는다(삼순 #406 NO-GO).
+ */
+export function rankStandings(standings: TeamStanding[]): { teamId: number; teamName: string; rank: number }[] {
+  const hasRanking = standings.some((s) => s.ranking != null && s.ranking > 0);
+  if (hasRanking) {
+    return standings
+      .filter((s) => s.teamId)
+      .map((s) => ({ teamId: s.teamId, teamName: s.teamName, rank: s.ranking as number }));
+  }
+  const sorted = [...standings].sort((a, b) => b.winRate - a.winRate);
+  let currentRank = 1;
+  return sorted.map((s, i) => {
+    if (i > 0 && s.winRate !== sorted[i - 1].winRate) currentRank = i + 1;
+    return { teamId: s.teamId, teamName: s.teamName, rank: currentRank };
+  });
+}
+
+/** teamId → 순위 맵 (공동순위 보존). 순위표 렌더/프리뷰/요약의 순위 표기에 공통 사용. */
+export function buildRankMap(standings: TeamStanding[]): Map<number, number> {
+  return new Map(rankStandings(standings).map((r) => [r.teamId, r.rank]));
+}
+
 /** 팀 순위 (HTML 파싱) */
 /** 팀 순위 (네이버 API → KBO HTML 폴백) */
 export async function fetchStandings(): Promise<TeamStanding[]> {
