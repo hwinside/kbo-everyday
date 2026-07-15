@@ -11,17 +11,24 @@ const ALLOWED_COMMENT_IMAGE_TYPES = new Set([
 ]);
 
 const GIPHY_URL_RE = /^https:\/\/media\d*\.giphy\.com\/media\/.+/;
-const STORAGE_PHOTOS_URL_RE = /^https?:\/\/[^/\s]+\/storage\/v1\/object\/public\/photos\/\S+$/;
+// 우리 Supabase 프로젝트의 photos 버킷 public URL만 이미지로 허용 — 타 호스트가 흉내낸 경로는 렌더 금지(원격 콘텐츠/트래킹 리스크, 삼순 리뷰 #647)
+const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/+$/, "");
+const OWN_PHOTOS_URL_PREFIX = SUPABASE_URL ? `${SUPABASE_URL}/storage/v1/object/public/photos/` : "";
 
 /** 댓글 content가 Giphy GIF URL인지 판별 */
 export function isGifComment(content: string): boolean {
   return GIPHY_URL_RE.test(content.trim());
 }
 
-/** 댓글 content가 이미지(GIF 또는 우리 photos 버킷 업로드 사진)인지 판별 — 임의 외부 이미지 URL은 제외(원격 콘텐츠/트래킹 리스크) */
+/** 댓글 content가 우리 photos 버킷에 업로드된 이미지 URL인지 판별 */
+export function isOwnPhotoComment(content: string): boolean {
+  return OWN_PHOTOS_URL_PREFIX !== "" && content.trim().startsWith(OWN_PHOTOS_URL_PREFIX);
+}
+
+/** 댓글 content가 이미지(Giphy GIF 또는 우리 photos 버킷 업로드 사진)인지 판별 — 임의 외부/타호스트 이미지 URL은 제외(원격 콘텐츠/트래킹 리스크) */
 export function isImageComment(content: string): boolean {
   const url = content.trim();
-  return isGifComment(url) || STORAGE_PHOTOS_URL_RE.test(url);
+  return isGifComment(url) || isOwnPhotoComment(url);
 }
 
 /**
