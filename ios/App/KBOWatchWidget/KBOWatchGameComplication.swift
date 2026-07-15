@@ -97,21 +97,38 @@ struct KBOWatchComplicationView: View {
 
     private var snap: WatchSnapshot { entry.snap }
 
-    // 직사각형 — 정보량 최대(1순위). 스코어/매치업 + 상황 + 순위.
+    /// 팀 로고 — 워치앱 카드와 동일 teamlogo_* 흰 원형 칩(위젯 타깃 에셋 사본).
+    /// 미지의 코드(익명 더미 등)는 미렌더. 삼순 스펙: 직사각형 16pt 좌우 배치.
+    @ViewBuilder private func teamLogo(_ code: String, size: CGFloat = 16) -> some View {
+        if let asset = WatchTeam.logoAsset(code) {
+            Image(asset)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+        }
+    }
+
+    // 직사각형 — 정보량 최대(1순위). [로고]매치업[로고] + 상황 + 순위.
     private var rectangular: some View {
         VStack(alignment: .leading, spacing: 1) {
             if snap.hasScore {
                 HStack(spacing: 4) {
+                    teamLogo(snap.awayCode)
                     Text(displayName(snap.awayCode)).font(.system(size: 14, weight: .bold))
                     Text("\(snap.awayScore):\(snap.homeScore)")
                         .font(.system(size: 16, weight: .black)).monospacedDigit()
                     Text(displayName(snap.homeCode)).font(.system(size: 14, weight: .bold))
+                    teamLogo(snap.homeCode)
                 }
                 .lineLimit(1).minimumScaleFactor(0.7)
             } else if snap.kind == "scheduled" || snap.kind == "cancelled" {
-                Text("\(displayName(snap.awayCode)) vs \(displayName(snap.homeCode))")
-                    .font(.system(size: 14, weight: .bold))
-                    .lineLimit(1).minimumScaleFactor(0.7)
+                HStack(spacing: 4) {
+                    teamLogo(snap.awayCode)
+                    Text("\(displayName(snap.awayCode)) vs \(displayName(snap.homeCode))")
+                        .font(.system(size: 14, weight: .bold))
+                    teamLogo(snap.homeCode)
+                }
+                .lineLimit(1).minimumScaleFactor(0.7)
             } else {
                 Text(snap.kind == "noTeam" ? "크보팬" : displayName(snap.myTeamCode))
                     .font(.system(size: 14, weight: .bold))
@@ -178,9 +195,17 @@ struct KBOWatchComplicationView: View {
                                          ? Color(red: 1.0, green: 0.58, blue: 0.0) : Color.primary)
                         .lineLimit(1).minimumScaleFactor(0.6)
                 } else {
-                    Text(snap.myTeamCode.isEmpty ? "KBO" : displayName(snap.myTeamCode))
-                        .font(.system(size: 10, weight: .heavy))
-                        .lineLimit(1).minimumScaleFactor(0.6)
+                    // 비경기(순위) 상태만 최애팀 로고 1개 — 삼순 스펙(양팀 로고는 원형 가독성 훼손).
+                    if let asset = WatchTeam.logoAsset(snap.myTeamCode) {
+                        Image(asset)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 18, height: 18)
+                    } else {
+                        Text(snap.myTeamCode.isEmpty ? "KBO" : displayName(snap.myTeamCode))
+                            .font(.system(size: 10, weight: .heavy))
+                            .lineLimit(1).minimumScaleFactor(0.6)
+                    }
                     Text(snap.rankLine.isEmpty ? "-" : String(snap.rankLine.prefix(2)))
                         .font(.system(size: 14, weight: .black))
                         .lineLimit(1).minimumScaleFactor(0.6)
