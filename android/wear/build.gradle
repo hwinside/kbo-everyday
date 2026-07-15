@@ -1,0 +1,63 @@
+apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+
+// 릴리스 서명 — 폰 모듈(app)과 동일 keystore.properties 패턴(gitignore, 로컬 시크릿).
+// 없으면 release도 서명 없이 빌드되어 깨지지 않는다(Play 업로드만 불가).
+def keystorePropsFile = rootProject.file("keystore.properties")
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystoreProps.load(new FileInputStream(keystorePropsFile))
+}
+
+android {
+    namespace = "fan.keubo.wear"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        // 같은 Play 리스팅(Wear OS 폼팩터 트랙) 배포 = 폰과 동일 applicationId 필수.
+        applicationId "fan.keubo.app"
+        // Wear OS 3(Watch4+) 이상 — 스펙 v2 확정값. 폰 minSdk(24)와 별개.
+        minSdkVersion 30
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        // Play는 앱 내 모든 APK/AAB에 고유 versionCode 요구 — 워치는 1000번대 분리.
+        versionCode 1001
+        versionName "1.0.10"
+    }
+    signingConfigs {
+        if (keystorePropsFile.exists()) {
+            release {
+                storeFile file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt')
+            if (keystorePropsFile.exists()) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    // 타일(ProtoLayout) — 슬라이스 A. 카운트다운은 protolayout-expression(Dynamic Expressions).
+    implementation "androidx.wear.tiles:tiles:1.4.1"
+    implementation "androidx.wear.protolayout:protolayout:1.2.1"
+    implementation "androidx.wear.protolayout:protolayout-material:1.2.1"
+    implementation "androidx.wear.protolayout:protolayout-expression:1.2.1"
+    // 폰 → 워치 최애팀 동기화 (Wearable Data Layer)
+    implementation "com.google.android.gms:play-services-wearable:18.2.0"
+    // TileService ListenableFuture 반환용 (guava 없이)
+    implementation "androidx.concurrent:concurrent-futures:1.2.0"
+}

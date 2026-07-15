@@ -1,0 +1,426 @@
+package fan.keubo.wear
+
+import androidx.concurrent.futures.CallbackToFutureAdapter
+import androidx.wear.protolayout.ActionBuilders
+import androidx.wear.protolayout.ColorBuilders.argb
+import androidx.wear.protolayout.DimensionBuilders.dp
+import androidx.wear.protolayout.DimensionBuilders.sp
+import androidx.wear.protolayout.LayoutElementBuilders
+import androidx.wear.protolayout.LayoutElementBuilders.Box
+import androidx.wear.protolayout.LayoutElementBuilders.Column
+import androidx.wear.protolayout.LayoutElementBuilders.FontStyle
+import androidx.wear.protolayout.LayoutElementBuilders.LayoutElement
+import androidx.wear.protolayout.LayoutElementBuilders.Row
+import androidx.wear.protolayout.LayoutElementBuilders.Spacer
+import androidx.wear.protolayout.LayoutElementBuilders.Text
+import androidx.wear.protolayout.ModifiersBuilders
+import androidx.wear.protolayout.ResourceBuilders
+import androidx.wear.protolayout.TimelineBuilders
+import androidx.wear.protolayout.TypeBuilders
+import androidx.wear.protolayout.expression.DynamicBuilders.DynamicInstant
+import androidx.wear.protolayout.expression.DynamicBuilders.DynamicInt32
+import androidx.wear.protolayout.expression.DynamicBuilders.DynamicString
+import androidx.wear.tiles.RequestBuilders
+import androidx.wear.tiles.TileBuilders
+import androidx.wear.tiles.TileService
+import com.google.common.util.concurrent.ListenableFuture
+import java.time.Instant
+import kotlin.concurrent.thread
+
+/**
+ * 슬라이스 A 타일 — 최애팀 다음경기·카운트다운·라이브 스코어 (애플워치 #635 패리티).
+ *
+ * cache-first(삼순 조건 1): onTileRequest는 로컬 스냅샷을 즉시 렌더하고, 필요 시 백그라운드
+ * sync 후 requestUpdate로 재렌더한다. 네트워크가 타일 렌더를 블로킹하지 않는다(첫 실행 제외).
+ * 카운트다운(삼순 조건 2)은 Dynamic Expressions(플랫폼 시계) — 타일 재요청 없이 분단위 갱신.
+ * freshness는 OS best-effort 힌트일 뿐 SLA가 아니다.
+ */
+class KboGameTileService : TileService() {
+
+    companion object {
+        private const val RES_VERSION = "1"
+
+        // kind별 캐시 신선도 임계(이보다 오래되면 백그라운드 re-sync)
+        private const val STALE_LIVE_MS = 60_000L
+        private const val STALE_TODAY_MS = 5 * 60_000L
+        private const val STALE_IDLE_MS = 15 * 60_000L
+
+        // live 캐시 5분 초과 → "업데이트 지연" 표시 (삼순 조건 1)
+        private const val LIVE_DELAY_BADGE_MS = 5 * 60_000L
+    }
+
+    override fun onTileRequest(
+        requestParams: RequestBuilders.TileRequest,
+    ): ListenableFuture<TileBuilders.Tile> {
+        val ctx = applicationContext
+        val cached = WearStore.loadCachedSnapshot(ctx)
+
+        return CallbackToFutureAdapter.getFuture { completer ->
+            if (cached != null) {
+                // cache-first: 즉시 렌더 + (stale이면) 백그라운드 sync 후 재요청
+                completer.set(buildTile(cached))
+                if (isStale(ctx, cached)) {
+                    thread(name = "kbo-tile-sync") {
+                        val fresh = WearFetcher.fetch(ctx)
+                        if (fresh != cached) {
+                            getUpdater(ctx).requestUpdate(KboGameTileService::class.java)
+                        }
+                    }
+                }
+            } else {
+                // 첫 실행(캐시 없음)만 fetch 완료를 기다린다(8s 타임아웃 내 반환)
+                thread(name = "kbo-tile-first") {
+                    completer.set(buildTile(WearFetcher.fetch(ctx)))
+                }
+            }
+            "KboGameTile"
+        }
+    }
+
+    override fun onTileResourcesRequest(
+        requestParams: RequestBuilders.ResourcesRequest,
+    ): ListenableFuture<ResourceBuilders.Resources> {
+        return CallbackToFutureAdapter.getFuture { completer ->
+            completer.set(ResourceBuilders.Resources.Builder().setVersion(RES_VERSION).build())
+            "KboGameTileResources"
+        }
+    }
+
+    private fun isStale(ctx: android.content.Context, snap: WearSnapshot): Boolean {
+        val age = System.currentTimeMillis() - WearStore.lastSyncAt(ctx)
+        val threshold = when {
+            snap.isLive -> STALE_LIVE_MS
+            snap.kind == "scheduled" && snap.startAt?.let { WearFetcher.isCountdownToday(it) } == true ->
+                STALE_TODAY_MS
+            else -> STALE_IDLE_MS
+        }
+        return age > threshold
+    }
+
+    // ── 타일 조립 ──
+
+    private fun buildTile(snap: WearSnapshot): TileBuilders.Tile {
+        val root = renderRoot(snap)
+        val timeline = TimelineBuilders.Timeline.Builder()
+            .addTimelineEntry(
+                TimelineBuilders.TimelineEntry.Builder()
+                    .setLayout(LayoutElementBuilders.Layout.Builder().setRoot(root).build())
+                    .build(),
+            )
+            .build()
+        return TileBuilders.Tile.Builder()
+            .setResourcesVersion(RES_VERSION)
+            .setTileTimeline(timeline)
+            .setFreshnessIntervalMillis(freshnessFor(snap))
+            .build()
+    }
+
+    /**
+     * freshness 힌트(OS best-effort — SLA 아님, 스펙 v2 §3):
+     * live 5분 / 예정(시작 전) min(30분, 시작까지) / startedButStillScheduled 4분 / 그 외 30분.
+     */
+    private fun freshnessFor(snap: WearSnapshot): Long {
+        val thirtyMin = 30 * 60_000L
+        return when (snap.kind) {
+            "live" -> 5 * 60_000L
+            "scheduled" -> {
+                val start = snap.startAt ?: return thirtyMin
+                if (!WearFetcher.isCountdownToday(start)) return thirtyMin
+                val untilStart = start - System.currentTimeMillis()
+                if (untilStart <= 0) 4 * 60_000L // 시작됐는데 API 아직 scheduled — #635 4분 retry
+                else untilStart.coerceIn(60_000L, thirtyMin)
+            }
+            else -> thirtyMin
+        }
+    }
+
+    // ── 레이아웃 (원형 화면 — 세로 Column 중앙 정렬) ──
+
+    private fun renderRoot(snap: WearSnapshot): LayoutElement {
+        val content = when (snap.kind) {
+            "live" -> liveLayout(snap)
+            "final" -> finalLayout(snap)
+            "scheduled" -> scheduledLayout(snap)
+            "cancelled" -> matchupMessageLayout(snap, "경기 취소")
+            "noTeam" -> messageLayout("크보팬 앱에서", "최애팀을 선택하세요")
+            else -> messageLayout("오늘 경기 없음", snap.rankLine)
+        }
+
+        val openApp = ModifiersBuilders.Clickable.Builder()
+            .setId("open_app")
+            .setOnClick(
+                ActionBuilders.LaunchAction.Builder()
+                    .setAndroidActivity(
+                        ActionBuilders.AndroidActivity.Builder()
+                            .setPackageName("fan.keubo.app")
+                            .setClassName("fan.keubo.wear.MainActivity")
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build()
+
+        return Box.Builder()
+            .setWidth(androidx.wear.protolayout.DimensionBuilders.expand())
+            .setHeight(androidx.wear.protolayout.DimensionBuilders.expand())
+            .setModifiers(
+                ModifiersBuilders.Modifiers.Builder()
+                    .setClickable(openApp)
+                    .setPadding(ModifiersBuilders.Padding.Builder().setAll(dp(8f)).build())
+                    .build(),
+            )
+            .addContent(content)
+            .build()
+    }
+
+    /** 상단 헤더: "LG · 2위 · 1.5G" (팀 하이라이트 컬러 + 순위) */
+    private fun header(snap: WearSnapshot): LayoutElement {
+        val myId = WearTeam.id(snap.myTeamCode)
+        val name = WearTeam.short(snap.myTeamCode)
+        val text = if (snap.rankLine.isEmpty()) name else "$name · ${snap.rankLine}"
+        return text(text, 13f, WearTeam.highlightColor(myId), bold = true)
+    }
+
+    /** 예정: 헤더 / 매치업 / 카운트다운(오늘, Dynamic) 또는 일시 라인 */
+    private fun scheduledLayout(snap: WearSnapshot): LayoutElement {
+        val col = Column.Builder()
+            .addContent(header(snap))
+            .addContent(vspace(4f))
+            .addContent(matchupText(snap, 22f))
+            .addContent(vspace(4f))
+
+        val start = snap.startAt
+        if (start != null && WearFetcher.isCountdownToday(start)) {
+            // 오늘 경기: Dynamic Expressions 카운트다운 (렌더 시점 임박이면 앰버)
+            val color = if (WearFetcher.isImminent(start)) WearTeam.COLOR_AMBER
+            else WearTeam.COLOR_TEXT_PRIMARY
+            col.addContent(countdownText(start, color))
+            col.addContent(vspace(2f))
+            col.addContent(text(snap.line, 13f, WearTeam.COLOR_TEXT_SECONDARY))
+        } else {
+            // 미래 경기(다음 경기 폴백 포함): "7/16(수) 18:30"
+            col.addContent(text(snap.line, 16f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+        }
+        return col.build()
+    }
+
+    /** 라이브: 헤더 / 팀별 스코어 2줄(내팀 위) / LIVE 라인 + 잔루 다이아몬드 / 지연 배지 */
+    private fun liveLayout(snap: WearSnapshot): LayoutElement {
+        val col = Column.Builder()
+            .addContent(header(snap))
+            .addContent(vspace(4f))
+            .addContent(scoreRows(snap))
+            .addContent(vspace(4f))
+
+        val liveRow = Row.Builder()
+            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+            .addContent(text(snap.line, 14f, WearTeam.COLOR_LIVE, bold = true))
+        snap.bases?.let {
+            liveRow.addContent(hspace(6f))
+            liveRow.addContent(baseDiamond(it))
+        }
+        col.addContent(liveRow.build())
+
+        if (System.currentTimeMillis() - snap.updatedAt > LIVE_DELAY_BADGE_MS) {
+            col.addContent(vspace(2f))
+            col.addContent(text("업데이트 지연", 11f, WearTeam.COLOR_TEXT_TERTIARY))
+        }
+        return col.build()
+    }
+
+    /** 종료: 헤더 / 팀별 스코어 2줄 / "경기 종료 · 승" */
+    private fun finalLayout(snap: WearSnapshot): LayoutElement {
+        return Column.Builder()
+            .addContent(header(snap))
+            .addContent(vspace(4f))
+            .addContent(scoreRows(snap))
+            .addContent(vspace(4f))
+            .addContent(text(snap.line, 14f, WearTeam.COLOR_TEXT_SECONDARY))
+            .build()
+    }
+
+    private fun matchupMessageLayout(snap: WearSnapshot, message: String): LayoutElement {
+        return Column.Builder()
+            .addContent(header(snap))
+            .addContent(vspace(4f))
+            .addContent(matchupText(snap, 20f))
+            .addContent(vspace(4f))
+            .addContent(text(message, 14f, WearTeam.COLOR_TEXT_SECONDARY))
+            .build()
+    }
+
+    private fun messageLayout(line1: String, line2: String): LayoutElement {
+        val col = Column.Builder()
+            .addContent(text(line1, 16f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+        if (line2.isNotEmpty()) {
+            col.addContent(vspace(3f))
+            col.addContent(text(line2, 13f, WearTeam.COLOR_TEXT_SECONDARY))
+        }
+        return col.build()
+    }
+
+    /** "LG vs KT" — 원정 vs 홈 순서(웹/폰 위젯 컨벤션) */
+    private fun matchupText(snap: WearSnapshot, size: Float): LayoutElement {
+        val away = WearTeam.short(snap.awayCode)
+        val home = WearTeam.short(snap.homeCode)
+        return text("$away vs $home", size, WearTeam.COLOR_TEXT_PRIMARY, bold = true)
+    }
+
+    /** 팀별 스코어 2줄 — 내팀 위 (#635 원형 스코어 팀별 라벨 패리티) */
+    private fun scoreRows(snap: WearSnapshot): LayoutElement {
+        val myIsAway = snap.myTeamCode.equals(snap.awayCode, ignoreCase = true)
+        val myCode = if (myIsAway) snap.awayCode else snap.homeCode
+        val oppCode = if (myIsAway) snap.homeCode else snap.awayCode
+        val myScore = if (myIsAway) snap.awayScore else snap.homeScore
+        val oppScore = if (myIsAway) snap.homeScore else snap.awayScore
+        val myId = WearTeam.id(snap.myTeamCode)
+
+        fun row(code: String, score: Int, nameColor: Int, bold: Boolean) = Row.Builder()
+            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+            .addContent(text(WearTeam.short(code), 16f, nameColor, bold = bold))
+            .addContent(hspace(6f))
+            .addContent(text(score.toString(), 22f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+            .build()
+
+        return Column.Builder()
+            .addContent(row(myCode, myScore, WearTeam.highlightColor(myId), bold = true))
+            .addContent(vspace(2f))
+            .addContent(row(oppCode, oppScore, WearTeam.COLOR_TEXT_SECONDARY, bold = false))
+            .build()
+    }
+
+    /**
+     * 잔루 다이아몬드 — 2루(위) / 3루(왼쪽 아래) / 1루(오른쪽 아래).
+     * ProtoLayout엔 회전이 없어 사각 픽 삼각 배치로 표현(점유=라이브색, 빈루=옅은 흰색).
+     */
+    private fun baseDiamond(bases: WearBases): LayoutElement {
+        fun pip(on: Boolean): LayoutElement = Box.Builder()
+            .setWidth(dp(6f))
+            .setHeight(dp(6f))
+            .setModifiers(
+                ModifiersBuilders.Modifiers.Builder()
+                    .setBackground(
+                        ModifiersBuilders.Background.Builder()
+                            .setColor(argb(if (on) WearTeam.COLOR_LIVE else 0x38FFFFFF))
+                            .setCorner(
+                                ModifiersBuilders.Corner.Builder().setRadius(dp(1.5f)).build(),
+                            )
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build()
+
+        return Column.Builder()
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .addContent(pip(bases.second))
+            .addContent(vspace(1f))
+            .addContent(
+                Row.Builder()
+                    .addContent(pip(bases.third))
+                    .addContent(hspace(3f))
+                    .addContent(pip(bases.first))
+                    .build(),
+            )
+            .build()
+    }
+
+    /**
+     * 카운트다운 텍스트 — Dynamic Expressions(플랫폼 시계 기반, 타일 재요청 없이 자동 갱신).
+     * 라벨 규칙은 애플워치 circularScheduleLabel(#635) 동일:
+     * 시작 전 1h 이상 "5:41 후" / 1h 미만 "41분 후"(0분은 "1분 후") / 시작 후 "곧 시작".
+     */
+    private fun countdownText(startAtMs: Long, colorArgb: Int): LayoutElement {
+        val startInstant = DynamicInstant.withSecondsPrecision(Instant.ofEpochMilli(startAtMs))
+        val duration = DynamicInstant.platformTimeWithSecondsPrecision().durationUntil(startInstant)
+        val totalSecs = duration.toIntSeconds()
+        val totalMins = duration.toIntMinutes()
+        val hours = totalMins.div(60)
+        val mins = totalMins.rem(60)
+
+        val two = DynamicInt32.IntFormatter.Builder()
+            .setMinIntegerDigits(2).setGroupingUsed(false).build()
+        val plain = DynamicInt32.IntFormatter.Builder()
+            .setMinIntegerDigits(1).setGroupingUsed(false).build()
+
+        // "H:MM 후"
+        val hmm = hours.format(plain)
+            .concat(DynamicString.constant(":"))
+            .concat(mins.format(two))
+            .concat(DynamicString.constant(" 후"))
+        // "M분 후"
+        val minOnly = totalMins.format(plain).concat(DynamicString.constant("분 후"))
+
+        val label = DynamicString.onCondition(totalSecs.lte(0))
+            .use(DynamicString.constant("곧 시작"))
+            .elseUse(
+                DynamicString.onCondition(totalMins.lte(0))
+                    .use(DynamicString.constant("1분 후")) // 0 < 남은 시간 < 1분
+                    .elseUse(
+                        DynamicString.onCondition(hours.lte(0))
+                            .use(minOnly)
+                            .elseUse(hmm),
+                    ),
+            )
+
+        // 정적 폴백(Dynamic 미지원 렌더러) = 렌더 시점 계산값
+        val staticLabel = staticCountdownLabel(startAtMs)
+
+        return Text.Builder()
+            .setText(
+                TypeBuilders.StringProp.Builder(staticLabel)
+                    .setDynamicValue(label)
+                    .build(),
+            )
+            .setLayoutConstraintsForDynamicText(
+                TypeBuilders.StringLayoutConstraint.Builder("88:88 후").build(),
+            )
+            .setFontStyle(
+                FontStyle.Builder()
+                    .setSize(sp(24f))
+                    .setWeight(
+                        LayoutElementBuilders.FontWeightProp.Builder()
+                            .setValue(LayoutElementBuilders.FONT_WEIGHT_BOLD)
+                            .build(),
+                    )
+                    .setColor(argb(colorArgb))
+                    .build(),
+            )
+            .build()
+    }
+
+    /** 렌더 시점 정적 카운트다운 라벨 (Dynamic 폴백용) — 애플워치 라벨 규칙 동일 */
+    private fun staticCountdownLabel(startAtMs: Long): String {
+        val secs = (startAtMs - System.currentTimeMillis()) / 1000
+        if (secs <= 0) return "곧 시작"
+        val mins = (secs / 60).toInt()
+        val h = mins / 60
+        val m = mins % 60
+        return if (h > 0) String.format("%d:%02d 후", h, m) else "${maxOf(1, m)}분 후"
+    }
+
+    // ── 공용 빌더 ──
+
+    private fun text(value: String, size: Float, color: Int, bold: Boolean = false): LayoutElement {
+        val style = FontStyle.Builder()
+            .setSize(sp(size))
+            .setColor(argb(color))
+        if (bold) {
+            style.setWeight(
+                LayoutElementBuilders.FontWeightProp.Builder()
+                    .setValue(LayoutElementBuilders.FONT_WEIGHT_BOLD)
+                    .build(),
+            )
+        }
+        return Text.Builder()
+            .setText(TypeBuilders.StringProp.Builder(value).build())
+            .setFontStyle(style.build())
+            .build()
+    }
+
+    private fun vspace(dpVal: Float): LayoutElement =
+        Spacer.Builder().setHeight(dp(dpVal)).build()
+
+    private fun hspace(dpVal: Float): LayoutElement =
+        Spacer.Builder().setWidth(dp(dpVal)).build()
+}

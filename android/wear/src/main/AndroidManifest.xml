@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Wear OS 전용 APK — 같은 Play 리스팅의 워치 폼팩터 트랙으로 배포 -->
+    <uses-feature android:name="android.hardware.type.watch" android:required="true" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="크보팬"
+        android:theme="@android:style/Theme.DeviceDefault">
+
+        <!-- non-standalone: 로그인/최애팀은 폰앱 의존 (스펙 v2 §6) -->
+        <meta-data
+            android:name="com.google.android.wearable.standalone"
+            android:value="false" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 슬라이스 A: 최애팀 경기 타일 (다음경기·카운트다운·라이브) -->
+        <service
+            android:name=".KboGameTileService"
+            android:exported="true"
+            android:label="크보팬 경기"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+            </intent-filter>
+        </service>
+
+        <!-- 폰 → 워치 최애팀 동기화 수신 (Wearable Data Layer) -->
+        <service
+            android:name=".MyTeamListenerService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/kbo/my_team" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

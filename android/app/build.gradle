@@ -90,6 +90,9 @@ dependencies {
     implementation "com.facebook.android:facebook-android-sdk:18.3.0"
     // 인앱 Google Play 리뷰 요청(AppReviewPlugin) — Play In-App Review API
     implementation "com.google.android.play:review:2.0.2"
+    // 갤럭시워치(Wear OS) 최애팀 동기화 — GameNotificationPlugin.setMyTeam이 Data Layer push.
+    // 워치 미연결 기기에선 no-op(안전).
+    implementation "com.google.android.gms:play-services-wearable:18.2.0"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
