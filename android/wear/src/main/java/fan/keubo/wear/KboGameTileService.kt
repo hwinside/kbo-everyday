@@ -242,7 +242,7 @@ class KboGameTileService : TileService() {
         }
     }
 
-    /** 상태별 하단 상세 행(목업) — LIVE=아웃·주자/투타/최근 플레이, 예정=선발, 종료=다음 경기 */
+    /** 상태별 하단 상세 행(목업) — LIVE=아웃·주자/투타/최근 플레이, 예정=선발. (종료는 행 없음 — 하린아빠 7/17) */
     private fun withDetails(snap: WearSnapshot, main: LayoutElement): LayoutElement {
         val rows = detailRows(snap)
         if (rows.isEmpty()) return main
@@ -294,12 +294,6 @@ class KboGameTileService : TileService() {
             snap.lastPlay?.let { rows.add(rowBox(text(it, 11f, WearTeam.COLOR_TEXT_PRIMARY))) }
         } else if (snap.kind == "scheduled") {
             snap.starters?.let { rows.add(rowBox(text(it, 11f, WearTeam.COLOR_TEXT_PRIMARY))) }
-        } else if (snap.kind == "final" && snap.nextLine != null) {
-            val away = WearTeam.short(snap.nextAwayCode ?: "")
-            val home = WearTeam.short(snap.nextHomeCode ?: "")
-            val venue = snap.nextVenue?.let { " · $it" } ?: ""
-            rows.add(rowBox(text("다음 경기 $away vs $home$venue", 11f, WearTeam.COLOR_TEXT_PRIMARY)))
-            rows.add(rowBox(text(snap.nextLine, 11f, WearTeam.COLOR_TEXT_SECONDARY)))
         }
         return rows
     }

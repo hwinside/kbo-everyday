@@ -86,19 +86,6 @@ object WearFetcher {
             }
         }
 
-        // 종료: 하단 "다음 경기" 컴팩트 카드용 정보 부착(실패 시 본 카드만)
-        if (snap.kind == "final") {
-            nextGameDay(myId)?.let { day ->
-                val oppCode = WearTeam.code(day.oppId)
-                snap = snap.copy(
-                    nextAwayCode = if (day.home) oppCode else myCode,
-                    nextHomeCode = if (day.home) myCode else oppCode,
-                    nextLine = scheduleLine(day.date, day.time),
-                    nextVenue = day.stadium.ifEmpty { null },
-                )
-            }
-        }
-
         WearStore.saveCachedSnapshot(ctx, snap)
         WearStore.markSyncedNow(ctx)
         return snap
@@ -268,36 +255,6 @@ object WearFetcher {
                     updatedAt = System.currentTimeMillis(),
                     startAt = startMillis(date, time), bases = null,
                     venue = stadium.ifEmpty { null },
-                )
-            }
-        }
-        return null
-    }
-
-    /** final 하단 "다음 경기" 카드용 — 첫 미래 scheduled day. */
-    private data class NextDay(val date: String, val time: String, val home: Boolean, val oppId: Int, val stadium: String)
-
-    private fun nextGameDay(myId: Int): NextDay? {
-        val slug = WearTeam.slug(myId)
-        if (slug.isEmpty()) return null
-        val fromDate = effectiveDateString()
-        for (month in monthStrings()) {
-            val raw = get("/api/team-schedule?team=$slug&month=$month") ?: continue
-            val days = try {
-                JSONObject(raw).optJSONArray("days")
-            } catch (_: Exception) {
-                null
-            } ?: continue
-            for (i in 0 until days.length()) {
-                val day = days.optJSONObject(i) ?: continue
-                val date = day.optString("date", "")
-                if (day.optString("status") != "scheduled" || date < fromDate) continue
-                return NextDay(
-                    date = date,
-                    time = day.optString("time", ""),
-                    home = day.optBoolean("home", false),
-                    oppId = day.optJSONObject("opponent")?.optInt("id", 0) ?: 0,
-                    stadium = day.optString("stadium", ""),
                 )
             }
         }

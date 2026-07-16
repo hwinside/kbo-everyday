@@ -251,10 +251,6 @@ struct WatchSnapshot: Codable {
     var batter: String?     // 현재 타자 — live
     var lastPlay: String?   // 최근 플레이 한 줄(문자중계) — live
     var starters: String?   // "선발 곡빈 vs 원태인" — scheduled
-    var nextLine: String?   // 다음 경기 "7/18(금) 18:30" — final 하단 컴팩트 카드
-    var nextAwayCode: String?
-    var nextHomeCode: String?
-    var nextVenue: String?
 
     var isLive: Bool { kind == "live" }
     var hasScore: Bool { kind == "live" || kind == "final" }
@@ -271,9 +267,7 @@ struct WatchSnapshot: Codable {
          awayScore: Int, homeScore: Int, line: String, rankLine: String, updatedAt: Date,
          startAt: Date?, bases: WatchBases?,
          venue: String? = nil, outs: Int? = nil, pitcher: String? = nil, batter: String? = nil,
-         lastPlay: String? = nil, starters: String? = nil,
-         nextLine: String? = nil, nextAwayCode: String? = nil, nextHomeCode: String? = nil,
-         nextVenue: String? = nil) {
+         lastPlay: String? = nil, starters: String? = nil) {
         self.kind = kind
         self.myTeamCode = myTeamCode
         self.awayCode = awayCode
@@ -291,10 +285,6 @@ struct WatchSnapshot: Codable {
         self.batter = batter
         self.lastPlay = lastPlay
         self.starters = starters
-        self.nextLine = nextLine
-        self.nextAwayCode = nextAwayCode
-        self.nextHomeCode = nextHomeCode
-        self.nextVenue = nextVenue
     }
 
     /// 위젯 갤러리/스냅샷용 익명 더미(실팀 노출 금지 — 폰 위젯 미리보기 폴리시와 동일).
@@ -394,21 +384,6 @@ enum WatchFetcher {
                !gid.isEmpty {
                 fetchLastPlay(gameId: gid) { play in
                     snap.lastPlay = play
-                    if gamesOk { WatchStore.saveCachedSnapshot(snap) }
-                    completion(snap)
-                }
-                return
-            }
-            // 종료: 하단 "다음 경기" 컴팩트 카드용 정보 부착(실패 시 본 카드만).
-            if snap.kind == "final" {
-                fetchNextGameDay(myId: myId) { day in
-                    if let day {
-                        let oppCode = WatchTeam.code(fromId: day.opponentId)
-                        snap.nextAwayCode = day.home ? oppCode : myCode
-                        snap.nextHomeCode = day.home ? myCode : oppCode
-                        snap.nextLine = scheduleLine(dateYMD: day.date, time: day.time)
-                        snap.nextVenue = day.stadium.isEmpty ? nil : day.stadium
-                    }
                     if gamesOk { WatchStore.saveCachedSnapshot(snap) }
                     completion(snap)
                 }

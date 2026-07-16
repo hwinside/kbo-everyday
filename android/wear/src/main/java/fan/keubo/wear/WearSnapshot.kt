@@ -44,10 +44,6 @@ data class WearSnapshot(
     val batter: String? = null,    // 현재 타자 — live
     val lastPlay: String? = null,  // 최근 플레이 한 줄 — live
     val starters: String? = null,  // "선발 곡빈 vs 원태인" — scheduled
-    val nextLine: String? = null,  // 다음 경기 "7/18(금) 18:30" — final 하단 카드
-    val nextAwayCode: String? = null,
-    val nextHomeCode: String? = null,
-    val nextVenue: String? = null,
 ) {
     val isLive: Boolean get() = kind == "live"
     val hasScore: Boolean get() = kind == "live" || kind == "final"
@@ -71,10 +67,6 @@ data class WearSnapshot(
         if (batter != null) o.put("batter", batter)
         if (lastPlay != null) o.put("lastPlay", lastPlay)
         if (starters != null) o.put("starters", starters)
-        if (nextLine != null) o.put("nextLine", nextLine)
-        if (nextAwayCode != null) o.put("nextAwayCode", nextAwayCode)
-        if (nextHomeCode != null) o.put("nextHomeCode", nextHomeCode)
-        if (nextVenue != null) o.put("nextVenue", nextVenue)
         return o.toString()
     }
 
@@ -116,10 +108,6 @@ data class WearSnapshot(
                     batter = if (o.has("batter")) o.optString("batter") else null,
                     lastPlay = if (o.has("lastPlay")) o.optString("lastPlay") else null,
                     starters = if (o.has("starters")) o.optString("starters") else null,
-                    nextLine = if (o.has("nextLine")) o.optString("nextLine") else null,
-                    nextAwayCode = if (o.has("nextAwayCode")) o.optString("nextAwayCode") else null,
-                    nextHomeCode = if (o.has("nextHomeCode")) o.optString("nextHomeCode") else null,
-                    nextVenue = if (o.has("nextVenue")) o.optString("nextVenue") else null,
                 )
             } catch (_: Exception) {
                 null

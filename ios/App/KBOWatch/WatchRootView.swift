@@ -2,7 +2,7 @@
 //  WatchRootView.swift
 //  크보팬 워치 앱 홈 — 최애팀 경기 카드 + 상태별 리치 정보(하린아빠 승인 목업).
 //  구조: 순위 헤더 → 메인 경기카드(구장·로고·스코어·상태) → 상태별 하단 카드
-//  (LIVE=아웃·주자·투타·최근 플레이 / 예정=선발 / 종료=다음 경기).
+//  (LIVE=아웃·주자·투타·최근 플레이 / 예정=선발). 종료는 카드만(다음 경기 미표시 — 하린아빠 7/17).
 //  컴플리케이션 안내문은 삼순 NO-GO(화면 1/3 낭비)로 제거.
 //
 
@@ -137,7 +137,7 @@ struct WatchGameCard: View {
     }
 }
 
-// 상태별 하단 카드 — LIVE=아웃·주자/투타/최근 플레이, 예정=선발, 종료=다음 경기.
+// 상태별 하단 카드 — LIVE=아웃·주자/투타/최근 플레이, 예정=선발. (종료는 하단 행 없음)
 struct WatchDetailRows: View {
     let snap: WatchSnapshot
     private let live = Color(red: 1.0, green: 0.42, blue: 0.48)
@@ -195,21 +195,6 @@ struct WatchDetailRows: View {
                     watchMixedText(starters, 12, .medium)
                         .lineLimit(1).minimumScaleFactor(0.7)
                         .frame(maxWidth: .infinity, alignment: .center)
-                }
-            } else if snap.kind == "final", let nextLine = snap.nextLine {
-                // 40mm fold-in 압축(삼순 블로커 3): 3줄 → 2줄(캡션에 구장 병합, 매치업+일시 한 줄)
-                row {
-                    VStack(spacing: 2) {
-                        watchMixedText(snap.nextVenue.map { "다음 경기 · \($0)" } ?? "다음 경기", 10, .semibold)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1).minimumScaleFactor(0.7)
-                        HStack(spacing: 4) {
-                            watchMixedText("\(WatchTeam.short(snap.nextAwayCode ?? "")) vs \(WatchTeam.short(snap.nextHomeCode ?? ""))", 13, .bold)
-                            watchMixedText(nextLine, 12, .semibold).foregroundStyle(.secondary)
-                        }
-                        .lineLimit(1).minimumScaleFactor(0.6)
-                    }
-                    .frame(maxWidth: .infinity)
                 }
             }
         }
