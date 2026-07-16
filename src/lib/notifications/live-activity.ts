@@ -4,7 +4,19 @@ import {
   apnsConfigured,
   getProviderTokenSafe,
   sendLiveActivityPush,
+  sendLiveActivityPushToEnv,
+  type ApnsResult,
 } from "@/lib/notifications/apns";
+import {
+  decideChannelPush,
+  scoreStateOf,
+  fullStateHashOf,
+  p2sChannelEligible,
+  p2sEnvAttempts,
+  startTokenResultFence,
+  type ChannelPushDecision,
+  type ApnsEnvironment,
+} from "@/lib/notifications/live-activity-channel-policy";
 import { teamIdByShortName, fansOfTeams } from "@/lib/notifications/game-status";
 import { sendFcmToUsers } from "@/lib/notifications/fcm";
 import type { KboRawGame } from "@/types/api";
@@ -20,7 +32,7 @@ import type { KboRawGame } from "@/types/api";
 // 렌더가 예산 초과로 간헐 실패(2026-07-07 인시던트, 옛 프레임+스피너)하기 때문.
 export const FULL_CARD_MIN_BUILD = 11;
 
-function buildContentState(
+export function buildLiveActivityContentState(
   g: KboRawGame,
   status: "live" | "final" | "scheduled",
   lastPlay?: string,
@@ -69,14 +81,18 @@ function buildContentState(
     ...(full && status === "live" && lastPlay ? { lastPlay } : {}),
   };
 }
+const buildContentState = buildLiveActivityContentState;
 
-function gameStatus(g: KboRawGame): "live" | "final" | "scheduled" | "other" {
+export function liveActivityGameStatus(
+  g: KboRawGame,
+): "live" | "final" | "scheduled" | "other" {
   if (g.CANCEL_SC_ID !== "0") return "other";
   if (g.GAME_STATE_SC === "3") return "final";
   if (g.GAME_STATE_SC === "2") return "live";
   if (g.GAME_STATE_SC === "1") return "scheduled";
   return "other";
 }
+const gameStatus = liveActivityGameStatus;
 
 // ⚠️ staleDate는 의도적으로 보내지 않는다(하린아빠 요구: "어떤 경우에도 스피너 금지").
 // iOS는 stale-date를 지난 Live Activity에 시스템 스피너("outdated" 인디케이터)를 얹는데,
@@ -141,6 +157,63 @@ export async function pushLiveActivityUpdates(
   const gameById = new Map(games.map((g) => [g.G_ID, g]));
   const nowSec = Math.floor(Date.now() / 1000);
 
+  // ── 채널 구독 기기 제외 (스펙 v4 — 조건부 GO 정정②) ──
+  // 구독 SSOT = live_activity_channel_subscriptions(네이티브 ACK만 기록). 제외 조건 =
+  // "그 env의 현재 active 채널과 일치하는 subscription 존재(NOT EXISTS의 여집합)".
+  // update 토큰 행엔 env가 없으므로 user 단위로 매칭 — 유효 구독이 있으면 그 유저의 카드는
+  // broadcast가 갱신하므로 per-토큰 update를 스킵한다(end는 유지: 잔존 토큰 정리 경로 보존,
+  // 채널 end와 이중 수신해도 멱등).
+  const { data: chanRows } = await supabase
+    .from("live_activity_channels")
+    .select("game_id, environment, channel_id, last_score_state, last_state_hash")
+    .in("game_id", gameIds)
+    .eq("status", "active");
+  const activeChanKeys = new Set<string>();
+  const lastStateByGame = new Map<string, { score: string | null; hash: string | null }>();
+  for (const r of (chanRows ?? []) as {
+    game_id: string; environment: string; channel_id: string;
+    last_score_state: string | null; last_state_hash: string | null;
+  }[]) {
+    activeChanKeys.add(`${r.game_id}|${r.environment}|${r.channel_id}`);
+    // 레거시 priority 판정용 직전 상태 — production 행 기준(채널 broadcast가 지난 틱에 기록).
+    if (r.environment === "production") {
+      lastStateByGame.set(r.game_id, { score: r.last_score_state, hash: r.last_state_hash });
+    }
+  }
+  const subscribed = new Set<string>(); // `${user_id}|${game_id}`
+  if (activeChanKeys.size > 0) {
+    const { data: subRows } = await supabase
+      .from("live_activity_channel_subscriptions")
+      .select("game_id, user_id, environment, channel_id")
+      .in("game_id", gameIds)
+      .not("user_id", "is", null);
+    for (const s of (subRows ?? []) as {
+      game_id: string; user_id: string; environment: string; channel_id: string;
+    }[]) {
+      if (activeChanKeys.has(`${s.game_id}|${s.environment}|${s.channel_id}`)) {
+        subscribed.add(`${s.user_id}|${s.game_id}`);
+      }
+    }
+  }
+
+  // ── 레거시 update priority 10/5 믹스 + 무변화 틱 스킵 (스펙 v4 §서버 5) ──
+  // 판정은 경기 단위(풀 카드 상태 기준). 직전 상태는 채널 행이 지난 틱에 기록한 값 재사용 —
+  // 채널 행이 없으면(전환 전/생성 실패) null → 항상 priority 10 발송 = 기존 동작 그대로.
+  const decisionByGame = new Map<string, ChannelPushDecision>();
+  for (const [gid, st] of stateByGame) {
+    if (st !== "live") continue;
+    const g = gameById.get(gid);
+    if (!g) continue;
+    const cs = buildContentState(g, "live", lastPlayByGame?.get(gid), true);
+    const last = lastStateByGame.get(gid);
+    decisionByGame.set(gid, decideChannelPush({
+      scoreState: scoreStateOf(cs),
+      fullStateHash: fullStateHashOf(cs),
+      lastScoreState: last?.score ?? null,
+      lastStateHash: last?.hash ?? null,
+    }));
+  }
+
   let pushed = 0;
   let ended = 0;
   const invalidTokenIds: { user_id: string; game_id: string }[] = [];
@@ -154,6 +227,11 @@ export async function pushLiveActivityUpdates(
       const isEnd = status === "final" || status === "cancelled";
       // 토글 off 유저: 실시간 update는 건너뛰고, end(카드/토큰 정리)만 진행.
       if (optedOut.has(t.user_id) && !isEnd) return;
+      // 채널 구독 확인 유저: update는 broadcast가 담당 — 스킵(end만 유지).
+      if (!isEnd && subscribed.has(`${t.user_id}|${t.game_id}`)) return;
+      // 무변화 틱: 레거시도 스킵(예산 절약). end는 판정 무관 발송.
+      const decision = isEnd ? null : decisionByGame.get(t.game_id);
+      if (decision && !decision.send) return;
       const res = await sendLiveActivityPush(
         {
           pushToken: t.push_token,
@@ -172,6 +250,8 @@ export async function pushLiveActivityUpdates(
           // collapse-id = 경기 id: update는 최신 1건만 보관(store-and-forward)되고, end가
           // 대기 중 update를 대체(종료 후 stale update 재생 방지).
           collapseId: t.game_id,
+          // 점수/이닝/주자 변화 = 10, 볼카운트/타자만 = 5(예산 미소모). end는 항상 10.
+          priority: decision?.send ? decision.priority : undefined,
         },
         jwt,
       );
@@ -229,11 +309,36 @@ function scheduledStartMs(gDt: string | undefined, gTm: string | undefined): num
   return Date.UTC(y, mo - 1, d, hh - 9, mm);
 }
 
+/** 프리게임 리드(경기 30분 전부터 카드/채널 준비) — pushLiveActivityStarts와 동일 정책. */
+const PREGAME_LEAD_MS = 30 * 60 * 1000;
+
+/**
+ * start 윈도우 판정 — 라이브 또는 [시작 30분 전 ~ 시작 후 90분] 예정 경기.
+ * broadcast 채널 생성(ensureLiveActivityChannels)이 p2s/인앱 start보다 먼저
+ * 준비돼야 하므로 같은 정책을 공유한다.
+ */
+export function liveActivityStartWindow(g: KboRawGame): boolean {
+  const st = gameStatus(g);
+  if (st === "live") return true;
+  if (st !== "scheduled") return false;
+  const ms = scheduledStartMs(g.G_DT, g.G_TM);
+  if (ms === null) return false;
+  const delta = ms - Date.now();
+  return delta <= PREGAME_LEAD_MS && delta > -START_WINDOW_MS;
+}
+
 /**
  * 한 팀 슬롯(away 또는 home)의 팬들에게 push-to-start. myTeamCode = 그 팀 코드(강조용).
  * 반환 failed=true = 인프라 오류(쿼리 실패 / 발송 전부 일시 실패) → 호출부가 선점 해제·재시도.
  * "수신 대상 0명"(legit zero)은 failed=false (선점 유지 — 재시도해도 의미 없음). 삼순 NO-GO ②.
  */
+interface StartTokenMeta {
+  token: string;
+  env: ApnsEnvironment | null;
+  appBuild: number | null;
+  osMajor: number | null;
+}
+
 async function startForTeamSide(params: {
   gameId: string;
   teamId: number | null;
@@ -242,6 +347,10 @@ async function startForTeamSide(params: {
   contentState: Record<string, unknown>;
   alert?: { title: string; body: string };
   jwt: string;
+  /** active broadcast 채널 — key `${env}` (이 경기 것만). 없으면 전원 기존 payload. */
+  channelByEnv: Map<ApnsEnvironment, string>;
+  /** 이 경기의 유효(active 채널 일치) 구독 user — 중복 start 제외(스펙 v4 §서버 4). */
+  subscribedUsers: Set<string>;
 }): Promise<{ sent: number; failed: boolean }> {
   if (params.teamId === null) return { sent: 0, failed: false };
   const fans = await fansOfTeams([params.teamId]);
@@ -249,15 +358,23 @@ async function startForTeamSide(params: {
   if (fans.ids.length === 0) return { sent: 0, failed: false };
 
   // push-to-start 토큰 보유 유저만. .in()은 URL 한도 회피 위해 200개 청크.
-  const tokenByUser = new Map<string, string>();
+  const tokenByUser = new Map<string, StartTokenMeta>();
   for (let i = 0; i < fans.ids.length; i += 200) {
     const { data, error } = await supabase
       .from("live_activity_start_tokens")
-      .select("user_id, push_to_start_token")
+      .select("user_id, push_to_start_token, apns_environment, app_build, os_major")
       .in("user_id", fans.ids.slice(i, i + 200));
     if (error) return { sent: 0, failed: true }; // 토큰 조회 실패 → 재시도
-    for (const r of (data ?? []) as { user_id: string; push_to_start_token: string }[]) {
-      tokenByUser.set(r.user_id, r.push_to_start_token);
+    for (const r of (data ?? []) as {
+      user_id: string; push_to_start_token: string;
+      apns_environment: ApnsEnvironment | null; app_build: number | null; os_major: number | null;
+    }[]) {
+      tokenByUser.set(r.user_id, {
+        token: r.push_to_start_token,
+        env: r.apns_environment,
+        appBuild: r.app_build,
+        osMajor: r.os_major,
+      });
     }
   }
   if (tokenByUser.size === 0) return { sent: 0, failed: false };
@@ -285,9 +402,12 @@ async function startForTeamSide(params: {
     for (const r of (activeRows ?? []) as { user_id: string }[]) alreadyActive.add(r.user_id);
   }
 
-  // 발송 대상 = 토큰 보유 & opt-out 아님 & 이미 활성 카드 없음.
+  // 발송 대상 = 토큰 보유 & opt-out 아님 & 이미 활성 카드 없음 & 유효 채널 구독 아님.
   const eligible = [...tokenByUser.entries()].filter(
-    ([userId]) => !optedOut.has(userId) && !alreadyActive.has(userId),
+    ([userId]) =>
+      !optedOut.has(userId) &&
+      !alreadyActive.has(userId) &&
+      !params.subscribedUsers.has(userId),
   );
   if (eligible.length === 0) return { sent: 0, failed: false };
 
@@ -313,24 +433,60 @@ async function startForTeamSide(params: {
 
   let sent = 0;
   let transientFail = false;
-  const invalid: string[] = [];
+  // 무효 토큰은 (user, 발송한 그 토큰) pair로 보관 — rotation fence용(삼순 재리뷰 blocker②).
+  const invalid: { userId: string; token: string }[] = [];
   const releaseRetry: string[] = []; // 일시 실패 → 선점 해제(다음 cron 재시도)
   await Promise.all(
-    toSend.map(async ([userId, token]) => {
-      const res = await sendLiveActivityPush(
-        {
-          pushToken: token,
-          event: "start",
-          attributesType: "KBOGameAttributes",
-          attributes: { ...params.attributes, myTeamCode: params.myTeamCode },
-          contentState: params.contentState,
-          // staleDate 미전송 — 스피너 원천 차단(파일 상단 주석 참조).
-          alert: params.alert,
-        },
-        params.jwt,
-      );
+    toSend.map(async ([userId, meta]) => {
+      // p2s per-attempt env 쌍 규칙 (스펙 v4): env known = 그 쌍만 / null = prod 쌍 →
+      // BadDeviceToken 시 sandbox 쌍 재시도 → 성공 env 저장·고정. 불변식 = 발송 host env ==
+      // 포함 channelId env (교차 쌍 금지). 채널 payload는 클라가 os_major>=18 && app_build>=16을
+      // *명시 보고*한 토큰만 (iOS17 이하에 input-push-channel이 실리면 start 자체가 실패).
+      const channelCapable = p2sChannelEligible({
+        os_major: meta.osMajor,
+        app_build: meta.appBuild,
+      });
+      const attempts = p2sEnvAttempts(meta.env);
+      let res: ApnsResult = { ok: false, status: 0, invalidToken: false };
+      for (const env of attempts) {
+        const channelId = channelCapable ? params.channelByEnv.get(env) : undefined;
+        res = await sendLiveActivityPushToEnv(
+          {
+            pushToken: meta.token,
+            event: "start",
+            attributesType: "KBOGameAttributes",
+            attributes: {
+              ...params.attributes,
+              myTeamCode: params.myTeamCode,
+              // channel p2s에만 static marker — 클라 ACK 증명용(스펙 v4 blocker②).
+              // 레거시 payload엔 부재 → 클라가 레거시 start를 채널로 오인하지 않음.
+              ...(channelId ? { channelId } : {}),
+            },
+            contentState: params.contentState,
+            // staleDate 미전송 — 스피너 원천 차단(파일 상단 주석 참조).
+            alert: params.alert,
+            ...(channelId ? { inputPushChannel: channelId } : {}),
+          },
+          env,
+          params.jwt,
+        );
+        if (res.ok) {
+          // 성공 env 기록(이후 그 쌍으로 고정) — null이었거나 바뀐 경우만 update.
+          // rotation fence(삼순 재리뷰 blocker②): 발송 중 앱이 토큰을 교체(env null 리셋)
+          // 했으면 affected 0 = no-op — 옛 토큰의 in-flight 결과가 새 토큰 env를 덮지 않는다.
+          if (meta.env !== env) {
+            await supabase
+              .from("live_activity_start_tokens")
+              .update({ apns_environment: env })
+              .match(startTokenResultFence(userId, meta.token));
+          }
+          break;
+        }
+        // BadDeviceToken(반대 env 토큰)일 때만 다음 attempt — 그 외 오류는 즉시 종료.
+        if (res.reason !== "BadDeviceToken") break;
+      }
       if (res.ok) sent += 1;
-      else if (res.invalidToken) invalid.push(userId);
+      else if (res.invalidToken) invalid.push({ userId, token: meta.token });
       else {
         transientFail = true; // 일시 APNs 오류(무효 토큰 아님)
         releaseRetry.push(userId);
@@ -338,15 +494,19 @@ async function startForTeamSide(params: {
     }),
   );
 
-  // 무효 push-to-start 토큰 정리(디바이스당 1개라 user_id로 삭제).
+  // 무효 push-to-start 토큰 정리 — rotation fence: *발송했던 그 토큰*일 때만 삭제.
+  // (발송 중 앱이 새 토큰을 등록했으면 행에는 새 토큰이 있고 affected 0 = 유효 토큰 보존.)
   for (const u of invalid) {
-    await supabase.from("live_activity_start_tokens").delete().eq("user_id", u);
+    await supabase
+      .from("live_activity_start_tokens")
+      .delete()
+      .match(startTokenResultFence(u.userId, u.token));
   }
   // 선점 해제 = 일시 실패분 + 무효 토큰분. 일시 실패분은 다음 cron 재발송(영구 누락 방지).
   // 무효 토큰분도 반드시 해제 — 안 그러면 유저가 새 push-to-start 토큰을 재등록해도
   // (game_id,user_id) PK 충돌로 그 경기 start가 영구 skip된다(삼순 NO-GO). 도달분은 선점
   // 유지 → 다음 cron 충돌 제외 + alreadyActive(update 토큰)로 이중 보호 → 중복 카드 없음.
-  for (const u of [...releaseRetry, ...invalid]) {
+  for (const u of [...releaseRetry, ...invalid.map((i) => i.userId)]) {
     await supabase
       .from("live_activity_started_users")
       .delete()
@@ -367,25 +527,48 @@ export async function pushLiveActivityStarts(
   if (!apnsConfigured()) return { started: 0 };
 
   // 시작 대상 = 라이브 경기 + *경기 30분 전~시작* 윈도우의 예정 경기(미리 잠금화면 표시).
-  const PREGAME_LEAD_MS = 30 * 60 * 1000;
-  const liveGames = games.filter((g) => {
-    if (!g.G_ID) return false;
-    const st = gameStatus(g);
-    if (st === "live") return true;
-    if (st === "scheduled") {
-      const ms = scheduledStartMs(g.G_DT, g.G_TM);
-      if (ms === null) return false;
-      const delta = ms - Date.now(); // 시작까지 남은 시간(양수=아직 전)
-      return delta <= PREGAME_LEAD_MS && delta > -START_WINDOW_MS;
-    }
-    return false;
-  });
+  const liveGames = games.filter((g) => g.G_ID && liveActivityStartWindow(g));
   if (liveGames.length === 0) return { started: 0 };
 
   // jwt를 선점(insert) 전에 확보 — 토큰 발급 실패가 게임 선점을 소진(미발송으로 마킹)하지
   // 않게. 실패 시 아무 게임도 선점 안 하고 다음 cron에서 재시도.
   const jwt = await getProviderTokenSafe();
   if (!jwt) return { error: "apns provider token failed" };
+
+  // active broadcast 채널 + 유효 구독(스펙 v4) — p2s payload 구성·중복 start 제외용.
+  // (live-activity-channels 모듈과의 순환 import를 피해 직접 조회.)
+  const startGameIds = liveGames.map((g) => g.G_ID as string);
+  const channelsByGame = new Map<string, Map<ApnsEnvironment, string>>();
+  const activeChanKeySet = new Set<string>();
+  {
+    const { data } = await supabase
+      .from("live_activity_channels")
+      .select("game_id, environment, channel_id")
+      .in("game_id", startGameIds)
+      .eq("status", "active");
+    for (const r of (data ?? []) as {
+      game_id: string; environment: ApnsEnvironment; channel_id: string;
+    }[]) {
+      if (!channelsByGame.has(r.game_id)) channelsByGame.set(r.game_id, new Map());
+      channelsByGame.get(r.game_id)!.set(r.environment, r.channel_id);
+      activeChanKeySet.add(`${r.game_id}|${r.environment}|${r.channel_id}`);
+    }
+  }
+  const subscribedByGame = new Map<string, Set<string>>();
+  if (activeChanKeySet.size > 0) {
+    const { data } = await supabase
+      .from("live_activity_channel_subscriptions")
+      .select("game_id, user_id, environment, channel_id")
+      .in("game_id", startGameIds)
+      .not("user_id", "is", null);
+    for (const s of (data ?? []) as {
+      game_id: string; user_id: string; environment: string; channel_id: string;
+    }[]) {
+      if (!activeChanKeySet.has(`${s.game_id}|${s.environment}|${s.channel_id}`)) continue;
+      if (!subscribedByGame.has(s.game_id)) subscribedByGame.set(s.game_id, new Set());
+      subscribedByGame.get(s.game_id)!.add(s.user_id);
+    }
+  }
 
   let started = 0;
 
@@ -430,13 +613,15 @@ export async function pushLiveActivityStarts(
     };
 
     // away/home 슬롯을 각자 그 팀 코드로 강조(myTeamCode) — 수신자별 최애팀 반영.
+    const channelByEnv = channelsByGame.get(gameId) ?? new Map<ApnsEnvironment, string>();
+    const subscribedUsers = subscribedByGame.get(gameId) ?? new Set<string>();
     const awaySide = await startForTeamSide({
       gameId, teamId: teamIdByShortName(away), myTeamCode: awayCode,
-      attributes, contentState, alert, jwt,
+      attributes, contentState, alert, jwt, channelByEnv, subscribedUsers,
     });
     const homeSide = await startForTeamSide({
       gameId, teamId: teamIdByShortName(home), myTeamCode: homeCode,
-      attributes, contentState, alert, jwt,
+      attributes, contentState, alert, jwt, channelByEnv, subscribedUsers,
     });
     started += awaySide.sent + homeSide.sent;
     // 일시 실패분은 startForTeamSide에서 유저 단위로 선점 해제됨 → 다음 cron 재시도.
@@ -541,6 +726,34 @@ export async function pushLiveActivitySilentWakes(
   const tokened = new Set(
     ((tokenRes.data ?? []) as { user_id: string; game_id: string }[]).map((r) => `${r.user_id}|${r.game_id}`),
   );
+  // 채널 구독 확인(active 채널 일치) 유저는 update 토큰이 없어도 gap이 아님 — broadcast가
+  // 카드를 갱신하므로 wake 불필요(스펙 v4 §서버 4: gap 계산도 동일 조건으로 제외).
+  {
+    const { data: chanRows } = await supabase
+      .from("live_activity_channels")
+      .select("game_id, environment, channel_id")
+      .in("game_id", wakeGameIds)
+      .eq("status", "active");
+    const activeKeys = new Set(
+      ((chanRows ?? []) as { game_id: string; environment: string; channel_id: string }[]).map(
+        (r) => `${r.game_id}|${r.environment}|${r.channel_id}`,
+      ),
+    );
+    if (activeKeys.size > 0) {
+      const { data: subRows } = await supabase
+        .from("live_activity_channel_subscriptions")
+        .select("game_id, user_id, environment, channel_id")
+        .in("game_id", wakeGameIds)
+        .not("user_id", "is", null);
+      for (const s of (subRows ?? []) as {
+        game_id: string; user_id: string; environment: string; channel_id: string;
+      }[]) {
+        if (activeKeys.has(`${s.game_id}|${s.environment}|${s.channel_id}`)) {
+          tokened.add(`${s.user_id}|${s.game_id}`);
+        }
+      }
+    }
+  }
   // 갭 유저 = (user,game) 토큰 없음. wake는 기기 단위라 user로 중복 제거.
   // 예정 경기 row는 카드 발급(created_at) 후 WAKE_WINDOW_MS 이내만 — 그 뒤는 live 전환 창이 백스톱.
   const scheduledSet = new Set(scheduledGameIds);

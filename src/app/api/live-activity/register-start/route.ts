@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
+import { startTokenEnvPatch } from "@/lib/notifications/live-activity-channel-policy";
 
 // Live Activity W3b — push-to-start 토큰 등록/갱신.
 // 클라가 앱 부팅 시 ActivityKit `pushToStartTokenUpdates`(iOS 17.2+)로 발급받은
@@ -13,10 +14,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { pushToStartToken } = await req.json();
+  // appBuild/osMajor(클라 명시 보고, 빌드 16+) — p2s input-push-channel 게이트 판정용
+  // (os_major>=18 && app_build>=16, 미보고 null = 레거시 payload. 스펙 v4 blocker③).
+  const { pushToStartToken, appBuild, osMajor } = await req.json();
   if (!pushToStartToken || typeof pushToStartToken !== "string") {
     return NextResponse.json({ error: "pushToStartToken required" }, { status: 400 });
   }
+  const appBuildVal = Number.isInteger(appBuild) ? (appBuild as number) : null;
+  const osMajorVal = Number.isInteger(osMajor) ? (osMajor as number) : null;
 
   // W3c 토글: "잠금화면 실시간 중계"를 끈 유저는 토큰을 저장하지 않는다(자동시작도 제외).
   // row 없음/null = 디폴트 on. 명시적으로 false일 때만 skip.
@@ -39,11 +44,24 @@ export async function POST(req: NextRequest) {
     .neq("user_id", verified.user.id);
   if (cleanupErr) return supabaseErrorResponse(cleanupErr);
 
+  // 토큰 교체 감지 — apns_environment는 토큰 귀속이라 교체 시 null 리셋(삼순 #659 blocker③:
+  // sandbox 잔존 env가 새 prod 토큰에 승계되면 per-attempt 규칙이 그 env로만 발송 →
+  // BadDeviceToken → 유효한 새 토큰까지 삭제). 동일 토큰 재등록은 env 유지.
+  const { data: existingRow, error: existErr } = await supabase
+    .from("live_activity_start_tokens")
+    .select("push_to_start_token")
+    .eq("user_id", verified.user.id)
+    .maybeSingle();
+  if (existErr) return supabaseErrorResponse(existErr);
+
   const { error } = await supabase.from("live_activity_start_tokens").upsert(
     {
       user_id: verified.user.id,
       push_to_start_token: pushToStartToken,
+      app_build: appBuildVal,
+      os_major: osMajorVal,
       updated_at: new Date().toISOString(),
+      ...startTokenEnvPatch(existingRow?.push_to_start_token ?? null, pushToStartToken),
     },
     { onConflict: "user_id" },
   );

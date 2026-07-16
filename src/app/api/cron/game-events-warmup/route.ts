@@ -6,6 +6,7 @@ import { notifyTeamRankChanges } from "@/lib/notifications/team-rank";
 import { notifyScoreEvents, notifyInningSummaries } from "@/lib/notifications/game-score";
 import { notifyPlayerHighlights } from "@/lib/notifications/player-highlight";
 import { pushLiveActivityUpdates, pushLiveActivityStarts, pushLiveActivitySilentWakes } from "@/lib/notifications/live-activity";
+import { ensureLiveActivityChannels, pushLiveActivityChannelBroadcasts } from "@/lib/notifications/live-activity-channels";
 import { pushAndroidWidgetLiveUpdates } from "@/lib/notifications/android-widget-live";
 
 /**
@@ -190,8 +191,20 @@ export async function GET(req: NextRequest) {
     console.error("[warmup] relay lastPlay fetch failed:", (e as Error).message);
   }
 
+  // Broadcast 채널 준비 (스펙 v4 §서버 2) — start 윈도우 경기에 env별 채널 생성(멱등).
+  // p2s payload(input-push-channel)·인앱 채널 조회보다 먼저 존재해야 하므로 최우선 실행.
+  let laChannels: { created: number } | { error: string } = { created: 0 };
+  try {
+    laChannels = await ensureLiveActivityChannels(games);
+  } catch (e) {
+    laChannels = { error: (e as Error).message };
+    console.error("[warmup] la channel ensure failed:", (e as Error).message);
+  }
+
   // 잠금화면 Live Activity 백그라운드 갱신 (W3a) — 같은 게임 목록 재사용.
   // APNs 직접 푸시. 미설정(APNS env 없음) 시 no-op. 실패해도 warmup 본연에 영향 없음.
+  // 레거시(per-토큰) 갱신 — 채널 구독 확인 기기는 제외되고 아래 broadcast가 담당한다.
+  // 이 함수가 채널 행의 지난 틱 상태(priority 판정)를 읽으므로 broadcast보다 먼저 실행.
   let liveActivity:
     | { pushed: number; ended: number; cleaned: number }
     | { error: string } = { pushed: 0, ended: 0, cleaned: 0 };
@@ -202,6 +215,18 @@ export async function GET(req: NextRequest) {
   } catch (e) {
     liveActivity = { error: (e as Error).message };
     console.error("[warmup] live activity push failed:", (e as Error).message);
+  }
+
+  // Broadcast 채널 갱신 (스펙 v4 §서버 5·6) — 라이브 = 경기당 1건 update(10/5/스킵),
+  // 종료·취소 = end + backoff 재시도 → 8h 후 채널 DELETE. 구독 기기 전원 커버.
+  let laBroadcast:
+    | { updates: number; skipped: number; ends: number; deleted: number }
+    | { error: string } = { updates: 0, skipped: 0, ends: 0, deleted: 0 };
+  try {
+    laBroadcast = await pushLiveActivityChannelBroadcasts(games, lastPlayByGame);
+  } catch (e) {
+    laBroadcast = { error: (e as Error).message };
+    console.error("[warmup] la broadcast failed:", (e as Error).message);
   }
 
   // 잠금화면 Live Activity 자동 시작 (W3b) — 최애팀 경기 라이브 전환 시 push-to-start.
@@ -237,6 +262,8 @@ export async function GET(req: NextRequest) {
     androidWidget,
     highlightNotify,
     liveActivity,
+    laChannels,
+    laBroadcast,
     liveActivityStart,
     liveActivityWake,
     lastPlays: Object.fromEntries(lastPlayByGame),
