@@ -3,7 +3,7 @@
 //  최애팀 경기 컴플리케이션 — accessoryRectangular(1순위) / Circular / Inline.
 //
 //  TimelineProvider가 /api/games·/api/standings를 직접 fetch해 라이브 스코어·상황과
-//  순위(`2위 · 1.5G`)를 워치페이스에 상시 표시한다. 갤러리 미리보기는 익명 더미
+//  순위(`2위 · 1위와 1.5경기차`)를 워치페이스에 상시 표시한다. 갤러리 미리보기는 익명 더미
 //  (수달스/돌고래스 — 폰 위젯 미리보기 폴리시와 동일).
 //
 
@@ -156,7 +156,7 @@ struct KBOWatchComplicationView: View {
                 Text(snap.rankLine)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(1).minimumScaleFactor(0.75)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

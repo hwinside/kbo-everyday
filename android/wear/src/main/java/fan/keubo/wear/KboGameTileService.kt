@@ -188,7 +188,7 @@ class KboGameTileService : TileService() {
             .build()
     }
 
-    /** 상단 헤더: "LG · 2위 · 1.5G" (팀 하이라이트 컬러 + 순위) */
+    /** 상단 헤더: "LG · 2위 · 1위와 1.5경기차" (팀 하이라이트 컬러 + 순위) */
     private fun header(snap: WearSnapshot): LayoutElement {
         val myId = WearTeam.id(snap.myTeamCode)
         val name = WearTeam.short(snap.myTeamCode)

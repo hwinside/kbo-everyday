@@ -28,6 +28,7 @@ struct WatchRootView: View {
                             Text("\(WatchTeam.short(snap.myTeamCode)) · \(snap.rankLine)")
                                 .font(.system(size: 13, weight: .bold))
                                 .foregroundStyle(WatchTeam.highlightColor(snap.myTeamCode))
+                                .lineLimit(1).minimumScaleFactor(0.7)
                                 .frame(maxWidth: .infinity, alignment: .center)
                         }
                         WatchGameCard(snap: snap)

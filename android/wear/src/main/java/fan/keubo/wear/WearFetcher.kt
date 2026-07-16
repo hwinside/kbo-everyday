@@ -101,7 +101,7 @@ object WearFetcher {
                 } else {
                     String.format(java.util.Locale.US, "%.1f", gb)
                 }
-                return "${ranking}위 · ${gbText}G"
+                return "${ranking}위 · 1위와 ${gbText}경기차"
             }
             ""
         } catch (_: Exception) {

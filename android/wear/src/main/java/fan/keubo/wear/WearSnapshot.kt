@@ -33,7 +33,7 @@ data class WearSnapshot(
     val awayScore: Int,
     val homeScore: Int,
     val line: String,        // 상태 한 줄 ("LIVE 6회말 · 2사" / "오늘 18:30" / "경기 종료 · 승")
-    val rankLine: String,    // "2위 · 1.5G" (미확보 시 "")
+    val rankLine: String,    // "2위 · 1위와 1.5경기차" (미확보 시 "")
     val updatedAt: Long,     // epoch millis — live 캐시 5분 초과 시 "업데이트 지연" 판정
     val startAt: Long?,      // 예정 경기 시작 시각(epoch millis, KST 기준 파싱) — 카운트다운용
     val bases: WearBases?,   // 잔루 — live 외엔 null

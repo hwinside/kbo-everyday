@@ -225,7 +225,7 @@ struct WatchSnapshot: Codable {
     var awayScore: Int
     var homeScore: Int
     var line: String        // 상태 한 줄 ("LIVE 6회말 · 2사" / "오늘 18:30 · 선발 곽빈" / "경기 종료 · 승")
-    var rankLine: String    // "2위 · 1.5G" (순위 미확보 시 "")
+    var rankLine: String    // "2위 · 1위와 1.5경기차" (순위 미확보 시 "")
     var updatedAt: Date
     var startAt: Date?      // 예정 경기 시작 시각(KST) — 원형 컴플리케이션 카운트다운용. scheduled 외엔 nil
     var bases: WatchBases?  // 잔루(1·2·3루) — 라이브 다이아몬드 표시용. live 외엔 nil
@@ -244,7 +244,7 @@ struct WatchSnapshot: Codable {
     static func previewDummy() -> WatchSnapshot {
         WatchSnapshot(kind: "live", myTeamCode: "", awayCode: "수달스", homeCode: "돌고래스",
                       awayScore: 3, homeScore: 5,
-                      line: "LIVE 7회말 · 1사", rankLine: "2위 · 1.5G",
+                      line: "LIVE 7회말 · 1사", rankLine: "2위 · 1위와 1.5경기차",
                       updatedAt: Date(timeIntervalSince1970: 1_783_600_000), startAt: nil,
                       bases: WatchBases(first: true, second: false, third: true))
     }
@@ -341,7 +341,7 @@ enum WatchFetcher {
         let gb = row.gamesBehind
         guard gb > 0 else { return "\(row.ranking)위" }
         let gbText = gb == gb.rounded(.down) ? String(Int(gb)) : String(format: "%.1f", gb)
-        return "\(row.ranking)위 · \(gbText)G"
+        return "\(row.ranking)위 · 1위와 \(gbText)경기차"
     }
 
     /// 더블헤더 대비 선택 우선순위: live > scheduled(첫 경기) > final(마지막) > cancelled.
