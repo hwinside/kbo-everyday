@@ -10,6 +10,8 @@ import {
   p2sEnvAttempts,
   endRetryDelayMinutes,
   startTokenEnvPatch,
+  channelMutationFence,
+  startTokenResultFence,
 } from "../../src/lib/notifications/live-activity-channel-policy";
 
 let pass = 0;
@@ -137,6 +139,46 @@ check("rotation: 동일 토큰 재등록 → env 유지", startTokenEnvPatch("to
 check("rotation: 토큰 교체 → env reset", startTokenEnvPatch("tokA", "tokB"), {
   apns_environment: null,
 });
+
+// ── 동시성 fence 회귀 (삼순 #659 재리뷰 blocker①②) ──
+// fence는 SQL WHERE 조건으로 동작한다 — 여기서는 그 predicate 의미를 행 매칭으로 재현해
+// "in-flight 결과가 교체된 행을 건드리지 않음"을 회귀 고정한다.
+function rowMatches(fence: Record<string, string>, dbRow: Record<string, unknown>): boolean {
+  return Object.entries(fence).every(([k, v]) => dbRow[k] === v);
+}
+
+// 채널 generation: worker A가 old 채널 작업 중 행이 new 채널로 재생성 → A의 mutation은 no-op
+const oldChanRow = { game_id: "20260717KTLG0", environment: "production", channel_id: "chanOLD" };
+const recreatedRow = { game_id: "20260717KTLG0", environment: "production", channel_id: "chanNEW", status: "active" };
+check(
+  "channel fence: stale worker(old) does not touch recreated row(new)",
+  rowMatches(channelMutationFence(oldChanRow), recreatedRow),
+  false,
+);
+check(
+  "channel fence: same generation still matches",
+  rowMatches(channelMutationFence(oldChanRow), { ...recreatedRow, channel_id: "chanOLD" }),
+  true,
+);
+
+// 토큰 rotation: cron이 tokA 발송 중 앱이 tokB 등록(env null 리셋)
+//  → A의 늦은 성공(env 기록)도, A의 BadDeviceToken(행 삭제)도 B 행에 적용되면 안 됨.
+const rowAfterRotation = { user_id: "u1", push_to_start_token: "tokB", apns_environment: null };
+check(
+  "rotation fence: in-flight tokA success does not overwrite tokB env",
+  rowMatches(startTokenResultFence("u1", "tokA"), rowAfterRotation),
+  false,
+);
+check(
+  "rotation fence: in-flight tokA invalid does not delete tokB row",
+  rowMatches(startTokenResultFence("u1", "tokA"), rowAfterRotation),
+  false,
+);
+check(
+  "rotation fence: un-rotated row still matches (정상 반영 경로 보존)",
+  rowMatches(startTokenResultFence("u1", "tokA"), { ...rowAfterRotation, push_to_start_token: "tokA" }),
+  true,
+);
 
 console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);

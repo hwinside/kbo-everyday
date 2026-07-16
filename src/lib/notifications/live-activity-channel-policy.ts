@@ -95,3 +95,30 @@ export function startTokenEnvPatch(
 ): { apns_environment: null } | Record<string, never> {
   return existingToken === newToken ? {} : { apns_environment: null };
 }
+
+// ── 동시성 fence (삼순 #659 재리뷰 blocker①②) ────────────────────────────────
+// APNs I/O는 느리다 — 요청이 나가 있는 동안 DB 행이 교체될 수 있다(채널 재생성 /
+// p2s 토큰 rotation). 결과를 DB에 반영할 때는 "내가 읽었던 그 세대"에만 쓰도록
+// PK 외에 세대 식별자(channel_id / push_to_start_token)를 조건에 포함한다.
+// affected 0행 = 그 사이 교체됨(stale worker) → no-op이 정답.
+
+/** 채널 mutation fence — PK + 내가 작업한 channel_id 세대에만 반영. */
+export function channelMutationFence(row: {
+  game_id: string;
+  environment: string;
+  channel_id: string;
+}): { game_id: string; environment: string; channel_id: string } {
+  return {
+    game_id: row.game_id,
+    environment: row.environment,
+    channel_id: row.channel_id,
+  };
+}
+
+/** p2s 발송 결과 반영 fence — user + 내가 발송한 그 토큰일 때만 env 기록/삭제. */
+export function startTokenResultFence(
+  userId: string,
+  sentToken: string,
+): { user_id: string; push_to_start_token: string } {
+  return { user_id: userId, push_to_start_token: sentToken };
+}

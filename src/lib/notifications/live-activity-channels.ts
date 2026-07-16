@@ -11,6 +11,7 @@ import {
   scoreStateOf,
   fullStateHashOf,
   endRetryDelayMinutes,
+  channelMutationFence,
   CHANNEL_END_RETENTION_MS,
 } from "@/lib/notifications/live-activity-channel-policy";
 import {
@@ -121,19 +122,30 @@ export async function ensureLiveActivityChannels(
         created += 1;
         continue;
       }
-      if (insErr) {
-        await deleteBroadcastChannel(env, channelId, jwt);
-        continue;
+      if (!insErr) {
+        const { data: cas } = await supabase
+          .from("live_activity_channels")
+          .update(row)
+          .eq("game_id", gameId)
+          .eq("environment", env)
+          .eq("status", "deleted")
+          .select("game_id");
+        if (cas && cas.length > 0) {
+          created += 1;
+          continue;
+        }
       }
-      const { data: cas } = await supabase
+      // loser 또는 insert/CAS 응답 오류 — 내 채널을 지우기 전에 canonical 행을 재조회한다
+      // (삼순 재리뷰 blocker①): DB 커밋은 됐는데 응답만 유실된 경우 내 channel_id가
+      // canonical일 수 있고, 그때 지우면 winner 채널을 파괴한다. 내 것이 아닐 때만 DELETE.
+      const { data: canonical } = await supabase
         .from("live_activity_channels")
-        .update(row)
+        .select("channel_id")
         .eq("game_id", gameId)
         .eq("environment", env)
-        .eq("status", "deleted")
-        .select("game_id");
-      if (cas && cas.length > 0) {
-        created += 1;
+        .maybeSingle();
+      if (canonical?.channel_id === channelId) {
+        created += 1; // 내 커밋이 살아있음 — 응답 유실이었을 뿐.
       } else {
         await deleteBroadcastChannel(env, channelId, jwt);
       }
@@ -177,12 +189,14 @@ export async function pushLiveActivityChannelBroadcasts(
   const markDeleted = async (row: ChannelRow) => {
     const ok = await deleteBroadcastChannel(row.environment, row.channel_id, jwt);
     if (!ok) return; // 삭제 실패 → 다음 틱 재시도
-    await supabase
+    // generation fence(삼순 재리뷰 blocker①): 그 사이 같은 PK가 새 채널로 재생성됐으면
+    // affected 0 = stale worker 결과 → no-op (새 채널 행을 deleted 처리하지 않음).
+    const { data: affected } = await supabase
       .from("live_activity_channels")
       .update({ status: "deleted", deleted_at: new Date().toISOString() })
-      .eq("game_id", row.game_id)
-      .eq("environment", row.environment);
-    deleted += 1;
+      .match(channelMutationFence(row))
+      .select("game_id");
+    if (affected && affected.length > 0) deleted += 1;
   };
 
   for (const row of channels) {
@@ -246,8 +260,7 @@ export async function pushLiveActivityChannelBroadcasts(
           attempt_count: nextAttempt,
           next_retry_at: new Date(now + delayMin * 60 * 1000).toISOString(),
         })
-        .eq("game_id", row.game_id)
-        .eq("environment", row.environment);
+        .match(channelMutationFence(row)); // generation fence — 재생성 행 보호
       continue;
     }
 
@@ -284,16 +297,15 @@ export async function pushLiveActivityChannelBroadcasts(
         await supabase
           .from("live_activity_channels")
           .update({ last_score_state: scoreState, last_state_hash: fullHash })
-          .eq("game_id", row.game_id)
-          .eq("environment", row.environment);
+          .match(channelMutationFence(row)); // generation fence — 새 채널에 옛 hash 기록 방지
       } else if (res.reason === "ChannelNotRegistered") {
         // Apple 쪽에 채널이 없음(외부 삭제 등) — active 행을 무효화해 다음 틱
         // ensureLiveActivityChannels의 deleted-CAS 경로가 새 채널로 재생성하게 한다(삼순 blocker②).
+        // generation fence 포함 — 그 사이 재생성된 새 채널 행은 건드리지 않는다.
         await supabase
           .from("live_activity_channels")
           .update({ status: "deleted", deleted_at: new Date().toISOString() })
-          .eq("game_id", row.game_id)
-          .eq("environment", row.environment)
+          .match(channelMutationFence(row))
           .eq("status", "active");
       }
     }

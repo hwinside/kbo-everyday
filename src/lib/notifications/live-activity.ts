@@ -13,6 +13,7 @@ import {
   fullStateHashOf,
   p2sChannelEligible,
   p2sEnvAttempts,
+  startTokenResultFence,
   type ChannelPushDecision,
   type ApnsEnvironment,
 } from "@/lib/notifications/live-activity-channel-policy";
@@ -432,7 +433,8 @@ async function startForTeamSide(params: {
 
   let sent = 0;
   let transientFail = false;
-  const invalid: string[] = [];
+  // 무효 토큰은 (user, 발송한 그 토큰) pair로 보관 — rotation fence용(삼순 재리뷰 blocker②).
+  const invalid: { userId: string; token: string }[] = [];
   const releaseRetry: string[] = []; // 일시 실패 → 선점 해제(다음 cron 재시도)
   await Promise.all(
     toSend.map(async ([userId, meta]) => {
@@ -470,11 +472,13 @@ async function startForTeamSide(params: {
         );
         if (res.ok) {
           // 성공 env 기록(이후 그 쌍으로 고정) — null이었거나 바뀐 경우만 update.
+          // rotation fence(삼순 재리뷰 blocker②): 발송 중 앱이 토큰을 교체(env null 리셋)
+          // 했으면 affected 0 = no-op — 옛 토큰의 in-flight 결과가 새 토큰 env를 덮지 않는다.
           if (meta.env !== env) {
             await supabase
               .from("live_activity_start_tokens")
               .update({ apns_environment: env })
-              .eq("user_id", userId);
+              .match(startTokenResultFence(userId, meta.token));
           }
           break;
         }
@@ -482,7 +486,7 @@ async function startForTeamSide(params: {
         if (res.reason !== "BadDeviceToken") break;
       }
       if (res.ok) sent += 1;
-      else if (res.invalidToken) invalid.push(userId);
+      else if (res.invalidToken) invalid.push({ userId, token: meta.token });
       else {
         transientFail = true; // 일시 APNs 오류(무효 토큰 아님)
         releaseRetry.push(userId);
@@ -490,15 +494,19 @@ async function startForTeamSide(params: {
     }),
   );
 
-  // 무효 push-to-start 토큰 정리(디바이스당 1개라 user_id로 삭제).
+  // 무효 push-to-start 토큰 정리 — rotation fence: *발송했던 그 토큰*일 때만 삭제.
+  // (발송 중 앱이 새 토큰을 등록했으면 행에는 새 토큰이 있고 affected 0 = 유효 토큰 보존.)
   for (const u of invalid) {
-    await supabase.from("live_activity_start_tokens").delete().eq("user_id", u);
+    await supabase
+      .from("live_activity_start_tokens")
+      .delete()
+      .match(startTokenResultFence(u.userId, u.token));
   }
   // 선점 해제 = 일시 실패분 + 무효 토큰분. 일시 실패분은 다음 cron 재발송(영구 누락 방지).
   // 무효 토큰분도 반드시 해제 — 안 그러면 유저가 새 push-to-start 토큰을 재등록해도
   // (game_id,user_id) PK 충돌로 그 경기 start가 영구 skip된다(삼순 NO-GO). 도달분은 선점
   // 유지 → 다음 cron 충돌 제외 + alreadyActive(update 토큰)로 이중 보호 → 중복 카드 없음.
-  for (const u of [...releaseRetry, ...invalid]) {
+  for (const u of [...releaseRetry, ...invalid.map((i) => i.userId)]) {
     await supabase
       .from("live_activity_started_users")
       .delete()
