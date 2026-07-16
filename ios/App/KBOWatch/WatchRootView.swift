@@ -10,13 +10,27 @@ import SwiftUI
 
 struct WatchRootView: View {
     @EnvironmentObject private var session: WatchSessionStore
+    @Environment(\.scenePhase) private var scenePhase
     @State private var snap: WatchSnapshot?
+    // LIVE 화면 체류 중 갱신용(삼순 블로커 2) — 라이브일 때만 refetch
+    private let liveTimer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 10) {
-                watchMixedText("크보팬", 16, .heavy)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(spacing: 4) {
+                // 승인 목업 상단: "크보팬" + 우측 "● MY TEAM" 한 줄(공간 압축 겸용)
+                HStack(alignment: .firstTextBaseline) {
+                    watchMixedText("크보팬", 14, .heavy)
+                    Spacer()
+                    HStack(spacing: 3) {
+                        Circle()
+                            .fill(Color(red: 1.0, green: 0.42, blue: 0.48))
+                            .frame(width: 5, height: 5)
+                        Text("MY TEAM")
+                            .font(watchMontserrat(10, .bold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
                 if let snap {
                     if snap.kind == "noTeam" {
@@ -26,7 +40,7 @@ struct WatchRootView: View {
                     } else {
                         // 팀컬러 순위 헤더를 카드 위로 — 갤워치 타일 header(snap) 디자인 패리티.
                         if !snap.rankLine.isEmpty {
-                            watchMixedText("\(WatchTeam.short(snap.myTeamCode)) · \(snap.rankLine)", 13, .bold)
+                            watchMixedText("\(WatchTeam.short(snap.myTeamCode)) · \(snap.rankLine)", 12, .bold)
                                 .foregroundStyle(WatchTeam.highlightColor(snap.myTeamCode))
                                 .lineLimit(1).minimumScaleFactor(0.7)
                                 .frame(maxWidth: .infinity, alignment: .center)
@@ -44,6 +58,13 @@ struct WatchRootView: View {
         }
         .onAppear(perform: reload)
         .onChange(of: session.myTeamCode) { _, _ in reload() }
+        // 열린 LIVE 화면 실시간 갱신(삼순 블로커 2): 30s 타이머 + 재진입(scenePhase) refetch
+        .onReceive(liveTimer) { _ in
+            if snap?.isLive == true { reload() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { reload() }
+        }
     }
 
     private func reload() {
@@ -67,20 +88,24 @@ struct WatchGameCard: View {
                     watchMixedText(venue, 11, .semibold)
                         .foregroundStyle(.secondary)
                 }
-                HStack(spacing: 4) {
+                HStack(spacing: 3) {
                     // 팀로고 바깥쪽 배치 — 갤워치 타일 matchupRow(`[로고]LG 3:2 KT[로고]`) 패리티.
-                    // 40mm + `두산 10 : 9 롯데` 최악 폭 대비 텍스트만 축소 허용(로고 고정).
+                    // 40mm + `두산 10 : 9 롯데` 최악 폭 대비: 스코어는 절대 잘리지 않게
+                    // layoutPriority 최상위 + monospacedDigit(삼순 블로커 1), 팀명이 먼저 축소.
                     teamLogo(snap.awayCode)
                     teamText(WatchTeam.short(snap.awayCode))
-                    Spacer(minLength: 4)
+                    Spacer(minLength: 2)
                     if snap.hasScore {
                         Text("\(snap.awayScore) : \(snap.homeScore)")
                             .font(watchMontserrat(18, .black))
+                            .monospacedDigit()
                             .lineLimit(1).minimumScaleFactor(0.7)
+                            .layoutPriority(2)
                     } else {
                         Text("vs").font(watchMontserrat(14, .semibold)).foregroundStyle(.secondary)
+                            .layoutPriority(2)
                     }
-                    Spacer(minLength: 4)
+                    Spacer(minLength: 2)
                     teamText(WatchTeam.short(snap.homeCode))
                     teamLogo(snap.homeCode)
                 }
@@ -89,15 +114,16 @@ struct WatchGameCard: View {
                     .lineLimit(1).minimumScaleFactor(0.7)
             }
         }
-        .padding(10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity)
         // 최애팀 컬러 은은한 틴트 — 갤워치 타일 card(cardTint) 디자인 패리티.
         .background(RoundedRectangle(cornerRadius: 12).fill(WatchTeam.cardTint(snap.myTeamCode)))
     }
 
     private func teamText(_ name: String) -> some View {
-        watchMixedText(name, 15, .bold)
-            .lineLimit(1).minimumScaleFactor(0.7)
+        watchMixedText(name, 14, .bold)
+            .lineLimit(1).minimumScaleFactor(0.6)
     }
 
     /// 팀 로고 20pt — 미지의 코드(익명 더미 등)는 미렌더(텍스트만). 갤워치 teamLogo(24dp) 대응.
@@ -117,7 +143,7 @@ struct WatchDetailRows: View {
     private let live = Color(red: 1.0, green: 0.42, blue: 0.48)
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 4) {
             if snap.isLive {
                 // 아웃카운트 도트 + 주자 다이아몬드 한 줄
                 row {
@@ -171,18 +197,17 @@ struct WatchDetailRows: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
             } else if snap.kind == "final", let nextLine = snap.nextLine {
+                // 40mm fold-in 압축(삼순 블로커 3): 3줄 → 2줄(캡션에 구장 병합, 매치업+일시 한 줄)
                 row {
                     VStack(spacing: 2) {
-                        watchMixedText("다음 경기", 10, .semibold).foregroundStyle(.secondary)
+                        watchMixedText(snap.nextVenue.map { "다음 경기 · \($0)" } ?? "다음 경기", 10, .semibold)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1).minimumScaleFactor(0.7)
                         HStack(spacing: 4) {
                             watchMixedText("\(WatchTeam.short(snap.nextAwayCode ?? "")) vs \(WatchTeam.short(snap.nextHomeCode ?? ""))", 13, .bold)
-                            if let v = snap.nextVenue {
-                                watchMixedText("· \(v)", 11, .regular).foregroundStyle(.secondary)
-                            }
+                            watchMixedText(nextLine, 12, .semibold).foregroundStyle(.secondary)
                         }
-                        .lineLimit(1).minimumScaleFactor(0.7)
-                        watchMixedText(nextLine, 12, .semibold)
-                            .lineLimit(1).minimumScaleFactor(0.7)
+                        .lineLimit(1).minimumScaleFactor(0.6)
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -194,7 +219,7 @@ struct WatchDetailRows: View {
     private func row<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content()
             .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .padding(.vertical, 5)
             .frame(maxWidth: .infinity)
             .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
     }

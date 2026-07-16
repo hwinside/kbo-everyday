@@ -188,12 +188,17 @@ class KboGameTileService : TileService() {
             .build()
     }
 
-    /** 상단 헤더: "LG · 2위 · 1위와 1.5경기차" (팀 하이라이트 컬러 + 순위) */
+    /** 상단 헤더: "크보팬 · MY TEAM" 캡션(승인 목업) + "LG · 2위 · 1위와 1.5경기차" (팀 컬러 + 순위) */
     private fun header(snap: WearSnapshot): LayoutElement {
         val myId = WearTeam.id(snap.myTeamCode)
         val name = WearTeam.short(snap.myTeamCode)
-        val text = if (snap.rankLine.isEmpty()) name else "$name · ${snap.rankLine}"
-        return text(text, 13f, WearTeam.highlightColor(myId), bold = true)
+        val rank = if (snap.rankLine.isEmpty()) name else "$name · ${snap.rankLine}"
+        return Column.Builder()
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .addContent(text("크보팬 · MY TEAM", 10f, WearTeam.COLOR_TEXT_SECONDARY, bold = true))
+            .addContent(vspace(2f))
+            .addContent(text(rank, 13f, WearTeam.highlightColor(myId), bold = true))
+            .build()
     }
 
     /** 헤더 + 라운드 카드 — 애플워치 WatchRootView(타이틀/카드/순위) 구조의 타일 판 */
