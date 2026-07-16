@@ -57,6 +57,13 @@ export interface LiveActivityPushInput {
   /** event=start 전용 — 잠금화면 배너 alert(선택). 미지정 시 무음 시작. */
   alert?: { title: string; body: string };
   /**
+   * event=start 전용 (iOS 18+, 스펙 v4) — 생성될 Activity가 이 broadcast 채널을 구독.
+   * ⚠️ iOS 17 이하 기기에 이 키가 실리면 start 자체가 실패 — 호출부가 os_major 게이트 필수.
+   */
+  inputPushChannel?: string;
+  /** update 전용 우선순위 — 5는 예산 미소모(지연 허용). 기본 10. */
+  priority?: "10" | "5";
+  /**
    * APNs collapse id(선택). 같은 값의 이전 푸시를 APNs가 최신 1건으로 덮어씀.
    * update/end에 경기 id를 넘겨 (1) 저장 중인 update를 최신으로만 유지 (2) end가 대기 중
    * update를 대체(종료 후 stale update 재생 방지)하게 한다.
@@ -70,6 +77,8 @@ export interface ApnsResult {
   /** APNs 'Unregistered'/'BadDeviceToken' 등 → 토큰 정리 필요 */
   invalidToken: boolean;
   reason?: string;
+  /** 이 결과를 낸 APNs 환경(호스트 기준) — p2s 성공 env 기록용. */
+  env?: "production" | "sandbox";
 }
 
 // update 푸시 store-and-forward 창(초). expiration:0(즉시 폐기) 대신 짧게 둬, 기기가 잠깐
@@ -101,6 +110,19 @@ export async function sendLiveActivityPush(
   return sendToHost(input, token, other);
 }
 
+/**
+ * 지정 환경 호스트로만 1회 발송(반대 env 폴백 없음) — p2s per-attempt env 쌍 규칙(스펙 v4)용.
+ * 호출부가 `발송 host env == 포함 channelId env` 불변식을 유지하며 attempt를 구성한다.
+ */
+export async function sendLiveActivityPushToEnv(
+  input: LiveActivityPushInput,
+  env: "production" | "sandbox",
+  jwt?: string,
+): Promise<ApnsResult> {
+  const token = jwt ?? (await providerToken());
+  return sendToHost(input, token, env === "production" ? PROD_HOST : SANDBOX_HOST);
+}
+
 async function sendToHost(
   input: LiveActivityPushInput,
   token: string,
@@ -119,10 +141,13 @@ async function sendToHost(
     if (input.attributesType) aps["attributes-type"] = input.attributesType;
     if (input.attributes) aps["attributes"] = input.attributes;
     if (input.alert) aps["alert"] = input.alert;
+    // iOS 18+ 채널 구독 start (호출부 게이트 필수 — iOS17 이하는 start 실패).
+    if (input.inputPushChannel) aps["input-push-channel"] = input.inputPushChannel;
   }
   if (input.staleDate != null) aps["stale-date"] = input.staleDate;
   const body = JSON.stringify({ aps });
 
+  const hostEnv: "production" | "sandbox" = host === PROD_HOST ? "production" : "sandbox";
   return new Promise<ApnsResult>((resolve) => {
     const client = http2.connect(`https://${host}`);
     let settled = false;
@@ -130,7 +155,7 @@ async function sendToHost(
       if (settled) return;
       settled = true;
       client.close();
-      resolve(r);
+      resolve({ ...r, env: hostEnv });
     };
     client.on("error", (e) =>
       done({ ok: false, status: 0, invalidToken: false, reason: e.message }),
@@ -141,10 +166,11 @@ async function sendToHost(
       authorization: `bearer ${token}`,
       "apns-topic": LIVE_ACTIVITY_TOPIC,
       "apns-push-type": "liveactivity",
-      // end도 priority 10 — priority 5는 APNs가 배터리 위해 지연시키는데, expiration 0과
-      // 겹치면 "지연 → 즉시배달 실패 → 폐기"로 '경기 종료' 전환 푸시가 유실됐다(서버는 200
-      // 받아 토큰을 지워버려 영영 재발송 안 됨). end는 경기당 1회뿐이라 빈도 budget 무관.
-      "apns-priority": "10",
+      // end/start는 항상 priority 10 — priority 5는 APNs가 배터리 위해 지연시키는데,
+      // expiration 0과 겹치면 "지연 → 즉시배달 실패 → 폐기"로 '경기 종료' 전환 푸시가
+      // 유실됐다(서버는 200 받아 토큰을 지워버려 영영 재발송 안 됨). update만 호출부가
+      // 5를 지정할 수 있다(볼카운트-only 틱 — iOS 업데이트 예산 미소모, 스펙 v4).
+      "apns-priority": input.event === "update" ? (input.priority ?? "10") : "10",
       // end = 긴 store-and-forward 창(~8h). 종료 시 오프라인이던 기기가 재접속하면 end를 받아
       //       카드가 정리됨(dismissal-date는 종료+15분이라 늦게 받으면 즉시 dismiss). zombie 카드 방지.
       // update = store-and-forward 창(collapse-id로 최신 1건만 보관 → 기기 깨어날 때 갱신).
