@@ -98,12 +98,13 @@ class WearTilePolicyTest {
     // --- staticCountdownLabel: 애플워치 #635 라벨 규칙 ---
 
     @Test
-    fun `countdown label matches apple watch rules`() {
-        assertEquals("5:41 후", WearTilePolicy.staticCountdownLabel(now + (5 * 60 + 41) * 60_000L, now))
-        assertEquals("41분 후", WearTilePolicy.staticCountdownLabel(now + 41 * 60_000L, now))
-        assertEquals("1:00 후", WearTilePolicy.staticCountdownLabel(now + 60 * 60_000L, now))
-        assertEquals("59분 후", WearTilePolicy.staticCountdownLabel(now + 60 * 60_000L - 1_000L, now))
-        assertEquals("1분 후", WearTilePolicy.staticCountdownLabel(now + 30_000L, now)) // 0분은 1분으로
+    fun `countdown label uses sentence form`() {
+        // 하린아빠 7/16 실기기 피드백: "5:27 후" → "5시간 27분 후 시작"
+        assertEquals("5시간 41분 후 시작", WearTilePolicy.staticCountdownLabel(now + (5 * 60 + 41) * 60_000L, now))
+        assertEquals("41분 후 시작", WearTilePolicy.staticCountdownLabel(now + 41 * 60_000L, now))
+        assertEquals("1시간 0분 후 시작", WearTilePolicy.staticCountdownLabel(now + 60 * 60_000L, now))
+        assertEquals("59분 후 시작", WearTilePolicy.staticCountdownLabel(now + 60 * 60_000L - 1_000L, now))
+        assertEquals("1분 후 시작", WearTilePolicy.staticCountdownLabel(now + 30_000L, now)) // 0분은 1분으로
         assertEquals("곧 시작", WearTilePolicy.staticCountdownLabel(now, now))
         assertEquals("곧 시작", WearTilePolicy.staticCountdownLabel(now - 1_000L, now))
     }
