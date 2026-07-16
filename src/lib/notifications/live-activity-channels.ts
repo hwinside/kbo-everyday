@@ -69,7 +69,8 @@ export async function ensureLiveActivityChannels(
   );
   if (targets.length === 0) return { created: 0 };
 
-  const gameIds = targets.map((g) => g.G_ID as string);
+  // dedupe — 같은 gameId 중복 행이 와도 (game, env)당 1회만 시도 (삼순 #659 blocker①).
+  const gameIds = [...new Set(targets.map((g) => g.G_ID as string))];
   const { data: existing, error } = await supabase
     .from("live_activity_channels")
     .select("game_id, environment, status")
@@ -91,29 +92,51 @@ export async function ensureLiveActivityChannels(
       if (have.has(`${gameId}|${env}`)) continue;
       const channelId = await createBroadcastChannel(env, jwt);
       if (!channelId) continue; // 실패 → 다음 틱 재시도 (멱등)
-      // upsert(ON CONFLICT 갱신): deleted 잔존 행이 있으면 새 채널로 재활성화.
-      const { error: upErr } = await supabase.from("live_activity_channels").upsert(
-        {
-          game_id: gameId,
-          environment: env,
-          channel_id: channelId,
-          status: "active",
-          last_score_state: null,
-          last_state_hash: null,
-          attempt_count: 0,
-          next_retry_at: null,
-          created_at: new Date().toISOString(),
-          ending_at: null,
-          deleted_at: null,
-        },
-        { onConflict: "game_id,environment" },
-      );
-      if (upErr) {
-        // 행 기록 실패 → 방금 만든 채널은 고아가 되므로 즉시 삭제 시도(한도 방어).
+      const row = {
+        game_id: gameId,
+        environment: env,
+        channel_id: channelId,
+        status: "active",
+        last_score_state: null,
+        last_state_hash: null,
+        attempt_count: 0,
+        next_retry_at: null,
+        created_at: new Date().toISOString(),
+        ending_at: null,
+        deleted_at: null,
+      };
+      // ── 동시 cron 대비 winner-take-all (삼순 #659 blocker①) ──
+      // upsert(ON CONFLICT 갱신)는 마지막 쓰기가 이겨 loser 채널이 고아로 남고, 그 사이
+      // loser ID를 조회·구독한 클라가 영구 프리즈된다. 대신:
+      //  1) ON CONFLICT DO NOTHING insert — 신규 행이면 내가 winner.
+      //  2) 충돌이면 status='deleted' 행에 한해 CAS 재활성(WHERE status='deleted' — 행 락으로
+      //     직렬화돼 정확히 한 cron만 성공).
+      //  3) 둘 다 실패 = 다른 cron이 이미 active/ending 행 보유 → 내가 loser: 방금 만든
+      //     채널을 즉시 DELETE(고아·한도 방어). DB에 남는 ID는 항상 정확히 1개.
+      const { data: won, error: insErr } = await supabase
+        .from("live_activity_channels")
+        .upsert(row, { onConflict: "game_id,environment", ignoreDuplicates: true })
+        .select("game_id");
+      if (!insErr && won && won.length > 0) {
+        created += 1;
+        continue;
+      }
+      if (insErr) {
         await deleteBroadcastChannel(env, channelId, jwt);
         continue;
       }
-      created += 1;
+      const { data: cas } = await supabase
+        .from("live_activity_channels")
+        .update(row)
+        .eq("game_id", gameId)
+        .eq("environment", env)
+        .eq("status", "deleted")
+        .select("game_id");
+      if (cas && cas.length > 0) {
+        created += 1;
+      } else {
+        await deleteBroadcastChannel(env, channelId, jwt);
+      }
     }
   }
   return { created };
@@ -207,6 +230,12 @@ export async function pushLiveActivityChannelBroadcasts(
         jwt,
       });
       if (res.ok) ends += 1;
+      else if (res.reason === "ChannelNotRegistered") {
+        // 채널이 이미 Apple 쪽에 없음 — 재시도 무의미, 행만 정리(deleteBroadcastChannel도
+        // 이 reason을 멱등 성공 처리하므로 markDeleted가 안전하게 통과).
+        await markDeleted(row);
+        continue;
+      }
       const nextAttempt = row.attempt_count + 1;
       const delayMin = endRetryDelayMinutes(nextAttempt);
       await supabase
@@ -257,6 +286,15 @@ export async function pushLiveActivityChannelBroadcasts(
           .update({ last_score_state: scoreState, last_state_hash: fullHash })
           .eq("game_id", row.game_id)
           .eq("environment", row.environment);
+      } else if (res.reason === "ChannelNotRegistered") {
+        // Apple 쪽에 채널이 없음(외부 삭제 등) — active 행을 무효화해 다음 틱
+        // ensureLiveActivityChannels의 deleted-CAS 경로가 새 채널로 재생성하게 한다(삼순 blocker②).
+        await supabase
+          .from("live_activity_channels")
+          .update({ status: "deleted", deleted_at: new Date().toISOString() })
+          .eq("game_id", row.game_id)
+          .eq("environment", row.environment)
+          .eq("status", "active");
       }
     }
     // scheduled: 카드가 아직 scheduled 프레임(p2s가 실음) — 첫 live 틱부터 broadcast.

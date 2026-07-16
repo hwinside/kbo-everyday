@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
+import { startTokenEnvPatch } from "@/lib/notifications/live-activity-channel-policy";
 
 // Live Activity W3b — push-to-start 토큰 등록/갱신.
 // 클라가 앱 부팅 시 ActivityKit `pushToStartTokenUpdates`(iOS 17.2+)로 발급받은
@@ -43,6 +44,16 @@ export async function POST(req: NextRequest) {
     .neq("user_id", verified.user.id);
   if (cleanupErr) return supabaseErrorResponse(cleanupErr);
 
+  // 토큰 교체 감지 — apns_environment는 토큰 귀속이라 교체 시 null 리셋(삼순 #659 blocker③:
+  // sandbox 잔존 env가 새 prod 토큰에 승계되면 per-attempt 규칙이 그 env로만 발송 →
+  // BadDeviceToken → 유효한 새 토큰까지 삭제). 동일 토큰 재등록은 env 유지.
+  const { data: existingRow, error: existErr } = await supabase
+    .from("live_activity_start_tokens")
+    .select("push_to_start_token")
+    .eq("user_id", verified.user.id)
+    .maybeSingle();
+  if (existErr) return supabaseErrorResponse(existErr);
+
   const { error } = await supabase.from("live_activity_start_tokens").upsert(
     {
       user_id: verified.user.id,
@@ -50,6 +61,7 @@ export async function POST(req: NextRequest) {
       app_build: appBuildVal,
       os_major: osMajorVal,
       updated_at: new Date().toISOString(),
+      ...startTokenEnvPatch(existingRow?.push_to_start_token ?? null, pushToStartToken),
     },
     { onConflict: "user_id" },
   );

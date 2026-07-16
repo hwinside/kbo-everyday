@@ -104,7 +104,20 @@ export async function createBroadcastChannel(
   return typeof id === "string" && id.length > 0 ? id : null;
 }
 
-/** 채널 삭제. 404(이미 없음)도 성공으로 간주(멱등). */
+/** 응답 body에서 APNs reason 추출(JSON 아니면 raw). */
+function apnsReason(body: string, fallback?: string): string {
+  try {
+    return JSON.parse(body).reason ?? body;
+  } catch {
+    return body || fallback || "";
+  }
+}
+
+/**
+ * 채널 삭제 — 멱등. "이미 없음"은 성공으로 간주하는데, Apple은 존재하지 않는 채널을
+ * 404가 아니라 `400 ChannelNotRegistered`로 반환한다(삼순 #659 blocker②) — 둘 다 처리.
+ * (APNs DELETE 성공 후 DB update만 실패한 행이 다음 틱 재시도할 때 영구 ending 방지.)
+ */
 export async function deleteBroadcastChannel(
   env: ApnsEnvironment,
   channelId: string,
@@ -122,6 +135,7 @@ export async function deleteBroadcastChannel(
     },
   });
   if (res.status === 204 || res.status === 200 || res.status === 404) return true;
+  if (res.status === 400 && apnsReason(res.body) === "ChannelNotRegistered") return true;
   console.error(`[apns-broadcast] channel delete failed (${env}):`, res.status, res.body || res.error);
   return false;
 }
@@ -164,11 +178,5 @@ export async function sendBroadcastPush(params: {
     body: JSON.stringify({ aps }),
   });
   if (res.status === 200 || res.status === 202) return { ok: true, status: res.status };
-  let reason = res.body || res.error || "";
-  try {
-    reason = JSON.parse(res.body).reason ?? reason;
-  } catch {
-    /* keep raw */
-  }
-  return { ok: false, status: res.status, reason };
+  return { ok: false, status: res.status, reason: apnsReason(res.body, res.error) };
 }

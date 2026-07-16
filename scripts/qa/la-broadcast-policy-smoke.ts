@@ -9,6 +9,7 @@ import {
   p2sChannelEligible,
   p2sEnvAttempts,
   endRetryDelayMinutes,
+  startTokenEnvPatch,
 } from "../../src/lib/notifications/live-activity-channel-policy";
 
 let pass = 0;
@@ -127,6 +128,15 @@ check("attempt 12 → +60m", endRetryDelayMinutes(12), 60);
   }
   check("12 sends in 8h window", count, 12);
 }
+
+// ── startTokenEnvPatch (토큰 rotation 시 env 귀속 리셋 — 삼순 #659 blocker③) ──
+check("rotation: 신규 등록(기존 없음) → env reset", startTokenEnvPatch(null, "tokA"), {
+  apns_environment: null,
+});
+check("rotation: 동일 토큰 재등록 → env 유지", startTokenEnvPatch("tokA", "tokA"), {});
+check("rotation: 토큰 교체 → env reset", startTokenEnvPatch("tokA", "tokB"), {
+  apns_environment: null,
+});
 
 console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);

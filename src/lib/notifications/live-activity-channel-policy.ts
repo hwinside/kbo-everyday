@@ -82,3 +82,16 @@ export function endRetryDelayMinutes(attemptCount: number): number {
 
 /** 종료 후 end 재시도·채널 유지 창 (이후 DELETE). per-토큰 end 저장창(8h)과 동급. */
 export const CHANNEL_END_RETENTION_MS = 8 * 60 * 60 * 1000;
+
+/**
+ * register-start upsert 시 env 귀속 패치 (삼순 #659 blocker③).
+ * `apns_environment`는 *토큰* 귀속 — 토큰이 교체되면(재설치/디버그↔프로드 전환) 기존 env가
+ * 새 토큰에 승계되면 안 된다(예: sandbox 잔존 → 새 prod 토큰을 sandbox로만 발송 →
+ * BadDeviceToken → 유효 토큰 삭제). 동일 토큰 재등록은 env 유지, 교체면 null로 리셋.
+ */
+export function startTokenEnvPatch(
+  existingToken: string | null,
+  newToken: string,
+): { apns_environment: null } | Record<string, never> {
+  return existingToken === newToken ? {} : { apns_environment: null };
+}
