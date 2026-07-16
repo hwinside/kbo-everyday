@@ -290,8 +290,10 @@ class KboGameTileService : TileService() {
                 }
                 rows.add(rowBox(pb.build()))
             }
-            // 최근 플레이 한 줄
-            snap.lastPlay?.let { rows.add(rowBox(text(it, 10f, WearTeam.COLOR_TEXT_PRIMARY))) }
+            // 최근 플레이 한 줄 — 길면 marquee 드리프트(하린아빠 7/17), 행 폭은 카드 폭에 맞춰 고정
+            snap.lastPlay?.let {
+                rows.add(rowBox(marqueeText(it, 10f, WearTeam.COLOR_TEXT_PRIMARY), expandWidth = true))
+            }
         } else if (snap.kind == "scheduled") {
             // 목업 v2: `선발 소형준 ● 웰스` — 라벨 secondary + 이름 bold + 핑크 도트
             snap.starters?.let { s ->
@@ -337,8 +339,10 @@ class KboGameTileService : TileService() {
         return rows
     }
 
-    /** 공통 상세 행 박스 — 어두운 라운드 박스(목업 하단 행 스타일, 흰 8%) */
-    private fun rowBox(inner: LayoutElement): LayoutElement = Box.Builder()
+    /** 공통 상세 행 박스 — 어두운 라운드 박스(목업 하단 행 스타일, 흰 8%).
+     *  expandWidth = marquee 행 전용: 텍스트가 부모 폭에 constrain돼야 marquee가 발동한다. */
+    private fun rowBox(inner: LayoutElement, expandWidth: Boolean = false): LayoutElement = Box.Builder()
+        .apply { if (expandWidth) setWidth(androidx.wear.protolayout.DimensionBuilders.expand()) }
         .setModifiers(
             ModifiersBuilders.Modifiers.Builder()
                 .setBackground(
@@ -579,6 +583,31 @@ class KboGameTileService : TileService() {
         return Text.Builder()
             .setText(TypeBuilders.StringProp.Builder(value).build())
             .setFontStyle(style.build())
+            .build()
+    }
+
+    /**
+     * 1줄 marquee 텍스트 — 부모 폭 초과 시 자동 드리프트(하린아빠 7/17).
+     * ProtoLayout 네이티브 marquee(애플워치 WatchDriftRow 대응물). 미지원 렌더러는 말줄임 폴백.
+     */
+    @androidx.annotation.OptIn(markerClass = [androidx.wear.protolayout.expression.ProtoLayoutExperimental::class])
+    private fun marqueeText(value: String, size: Float, color: Int, bold: Boolean = false): LayoutElement {
+        val style = FontStyle.Builder()
+            .setSize(sp(size))
+            .setColor(argb(color))
+        if (bold) {
+            style.setWeight(
+                LayoutElementBuilders.FontWeightProp.Builder()
+                    .setValue(LayoutElementBuilders.FONT_WEIGHT_BOLD)
+                    .build(),
+            )
+        }
+        return Text.Builder()
+            .setText(TypeBuilders.StringProp.Builder(value).build())
+            .setFontStyle(style.build())
+            .setMaxLines(1)
+            .setOverflow(LayoutElementBuilders.TEXT_OVERFLOW_MARQUEE)
+            .setMarqueeIterations(-1) // 무한 반복
             .build()
     }
 
