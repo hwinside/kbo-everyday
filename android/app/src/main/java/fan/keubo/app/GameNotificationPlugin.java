@@ -72,6 +72,37 @@ public class GameNotificationPlugin extends Plugin {
             .getString(GameScoreWidget.KEY_GAME_ID, "");
     }
 
+    /** 승격(Live Update) 카드용 텍스트 조합 — 표준 스타일 카드는 push title/body 텍스트만
+     *  보이는데, FCM game_live의 title/body엔 점수/이닝이 없다(구조화 w_*는 위젯 prefs로만
+     *  전달되고 기존 커스텀 카드는 prefs를 직접 그려서 문제가 안 드러났음). 위젯과 동일한
+     *  prefs 스냅샷(Eff)에서 "롯데 1 : 3 삼성 · 8회초" + 최근 플레이 줄을 직접 만든다.
+     *  순수 함수 — ComposeLiveCardTest 유닛테스트 대상.
+     *  @return [title, body]. prefs에 경기 데이터가 없으면 push 원문 폴백 */
+    static String[] composeLiveCard(GameScoreWidget.Eff e, String fallbackTitle, String fallbackBody) {
+        String fb = fallbackBody == null ? "" : fallbackBody;
+        if (e == null || !e.hasGame || e.away.isEmpty() || e.home.isEmpty()) {
+            return new String[] { fallbackTitle == null ? "" : fallbackTitle, fb };
+        }
+        String away = GameScoreWidget.shortName(e.away);
+        String home = GameScoreWidget.shortName(e.home);
+        String st = e.status == null ? "" : e.status;
+        String title;
+        if (st.startsWith("SCHEDULED|")) {
+            // 예정 카드(프리게임 push) — 점수 대신 매치업 + 시작 시각.
+            String[] parts = st.split("\\|", -1);
+            String time = parts.length > 1 ? parts[1] : "";
+            title = away + " vs " + home + (time.isEmpty() ? " · 경기 예정" : " · " + time + " 경기 예정");
+        } else {
+            String suffix = "CANCELLED".equals(st) ? "경기 취소"
+                : st.startsWith("FINAL") ? "경기 종료"
+                : st; // 라이브 = "8회초" 등
+            title = away + " " + e.as + " : " + e.hs + " " + home
+                + (suffix.isEmpty() ? "" : " · " + suffix);
+        }
+        String body = !e.lastPlay.isEmpty() ? e.lastPlay : !fb.isEmpty() ? fb : e.stadium;
+        return new String[] { title, body == null ? "" : body };
+    }
+
     private static void ensureChannel(Context context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
@@ -125,9 +156,12 @@ public class GameNotificationPlugin extends Plugin {
             .setContentIntent(pi);
 
         if (promoted) {
-            // Live Update 분기 — 표준 스타일만 승격 대상(커스텀 뷰 금지). 점수/이닝은 서버가
-            // title/body에 실어 보내므로 BigText로 그대로 노출.
-            b.setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+            // Live Update 분기 — 표준 스타일만 승격 대상(커스텀 뷰 금지). 점수/이닝/최근 플레이는
+            // 위젯 prefs에서 직접 조합(FCM title/body엔 없음 — composeLiveCard 주석 참조).
+            String[] tb = composeLiveCard(GameScoreWidget.readEff(context), title, body);
+            b.setContentTitle(tb[0])
+                .setContentText(tb[1])
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(tb[1]))
                 .setRequestPromotedOngoing(true);
             String gameId = currentGameId(context, path);
             // Unpin(유저 스와이프 해제) 감지 → 같은 경기 자동 재게시 억제. deleteIntent는

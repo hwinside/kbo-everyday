@@ -83,7 +83,8 @@ public class GameScoreWidget extends AppWidgetProvider {
         FULL.put("WO", "키움 히어로즈");
     }
 
-    private static String shortName(String code) {
+    // 승격 라이브 카드(GameNotificationPlugin.composeLiveCard)도 사용 — package-private.
+    static String shortName(String code) {
         if (code == null) return "";
         String s = SHORT.get(code.toUpperCase());
         return s != null ? s : code.toUpperCase();
