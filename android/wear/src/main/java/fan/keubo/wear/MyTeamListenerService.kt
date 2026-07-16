@@ -9,7 +9,7 @@ import com.google.android.gms.wearable.WearableListenerService
 /**
  * 폰 → 워치 최애팀 동기화 수신 — 애플워치 WCSession applicationContext의 안드로이드판.
  * 폰앱 GameNotificationPlugin.setMyTeam이 /kbo/my_team DataItem으로 push한 값을 저장하고
- * 타일을 재렌더한다.
+ * 타일·컴플리케이션을 재렌더한다.
  */
 class MyTeamListenerService : WearableListenerService() {
 
@@ -25,6 +25,8 @@ class MyTeamListenerService : WearableListenerService() {
         }
         if (changed) {
             TileService.getUpdater(this).requestUpdate(KboGameTileService::class.java)
+            // 슬라이스 B: 팀 변경 즉시 컴플리케이션도 재요청(이전 팀 표시 잔존 방지)
+            WearComplicationUpdater.requestUpdateAll(this)
         }
     }
 }

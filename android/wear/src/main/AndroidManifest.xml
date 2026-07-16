@@ -43,6 +43,42 @@
                 android:resource="@drawable/tile_preview" />
         </service>
 
+        <!-- 슬라이스 B: 컴플리케이션 데이터소스 ① 최애팀 경기 (SHORT/LONG_TEXT) -->
+        <service
+            android:name=".KboGameComplicationService"
+            android:exported="true"
+            android:label="크보팬 경기"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data
+                android:name="android.support.wearable.complications.SUPPORTED_TYPES"
+                android:value="SHORT_TEXT,LONG_TEXT" />
+            <!-- OS best-effort 주기 갱신(초) — 라이브 스코어는 이 주기 + 캐시 공유(타일 sync)로 따라옴 -->
+            <meta-data
+                android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS"
+                android:value="600" />
+        </service>
+
+        <!-- 슬라이스 B: 컴플리케이션 데이터소스 ② 최애팀 순위 (SHORT/LONG_TEXT + RANGED_VALUE) -->
+        <service
+            android:name=".KboRankComplicationService"
+            android:exported="true"
+            android:label="크보팬 순위"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data
+                android:name="android.support.wearable.complications.SUPPORTED_TYPES"
+                android:value="SHORT_TEXT,LONG_TEXT,RANGED_VALUE" />
+            <!-- 순위는 일 단위 변동 — 긴 주기로 충분 -->
+            <meta-data
+                android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS"
+                android:value="3600" />
+        </service>
+
         <!-- 폰 → 워치 최애팀 동기화 수신 (Wearable Data Layer) -->
         <service
             android:name=".MyTeamListenerService"
