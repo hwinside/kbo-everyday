@@ -129,13 +129,24 @@ public class GameNotificationPlugin extends Plugin {
             // title/body에 실어 보내므로 BigText로 그대로 노출.
             b.setStyle(new NotificationCompat.BigTextStyle().bigText(body))
                 .setRequestPromotedOngoing(true);
+            String gameId = currentGameId(context, path);
             // Unpin(유저 스와이프 해제) 감지 → 같은 경기 자동 재게시 억제. deleteIntent는
             // 유저 해제 시에만 발화(cancel()로는 미발화)라 non-promoted 경로 행동 불변.
             Intent del = new Intent(context, LiveUpdateDismissReceiver.class);
-            del.putExtra(LiveUpdateDismissReceiver.EXTRA_GAME_ID, currentGameId(context, path));
+            del.putExtra(LiveUpdateDismissReceiver.EXTRA_GAME_ID, gameId);
             b.setDeleteIntent(PendingIntent.getBroadcast(
                 context, 2, del,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
+            // 명시적 "해제" 액션 — Android Live Update 가이드가 배경 스포츠 경기 모니터링
+            // 알림에 유저가 직접 끌 수 있는 액션을 요구(스와이프만으로는 불충분).
+            // 같은 수신자(LiveUpdateDismissReceiver)로 보내 억제 기록+알림 취소를 동일 경로로.
+            Intent unpin = new Intent(context, LiveUpdateDismissReceiver.class);
+            unpin.putExtra(LiveUpdateDismissReceiver.EXTRA_GAME_ID, gameId);
+            PendingIntent unpinPi = PendingIntent.getBroadcast(
+                context, 3, unpin,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            b.addAction(android.R.drawable.ic_menu_close_clear_cancel,
+                context.getString(R.string.live_update_unpin_action), unpinPi);
         } else if (GameScoreWidget.hasGame(context)) {
             // 기존 경로(미지원 OS/opt-out) — 위젯과 동일한 카드 RemoteViews를 알림 커스텀 뷰로.
             // 접힌 뷰(잠금화면 기본) = 점수 한 줄 컴팩트 카드, 펼친 뷰 = 전체 카드.
