@@ -374,8 +374,8 @@ class KboGameTileService : TileService() {
 
     /**
      * 카운트다운 텍스트 — Dynamic Expressions(플랫폼 시계 기반, 타일 재요청 없이 자동 갱신).
-     * 라벨 규칙은 애플워치 circularScheduleLabel(#635) 동일:
-     * 시작 전 1h 이상 "5:41 후" / 1h 미만 "41분 후"(0분은 "1분 후") / 시작 후 "곧 시작".
+     * 라벨 규칙(하린아빠 7/16 실기기 피드백 — 큰 숫자 대신 읽히는 문장 + 폰트 축소):
+     * 시작 전 1h 이상 "5시간 27분 후 시작" / 1h 미만 "27분 후 시작"(0분은 "1분 후 시작") / 시작 후 "곧 시작".
      */
     private fun countdownText(startAtMs: Long, colorArgb: Int): LayoutElement {
         val startInstant = DynamicInstant.withSecondsPrecision(Instant.ofEpochMilli(startAtMs))
@@ -385,28 +385,26 @@ class KboGameTileService : TileService() {
         val hours = totalMins.div(60)
         val mins = totalMins.rem(60)
 
-        val two = DynamicInt32.IntFormatter.Builder()
-            .setMinIntegerDigits(2).setGroupingUsed(false).build()
         val plain = DynamicInt32.IntFormatter.Builder()
             .setMinIntegerDigits(1).setGroupingUsed(false).build()
 
-        // "H:MM 후"
-        val hmm = hours.format(plain)
-            .concat(DynamicString.constant(":"))
-            .concat(mins.format(two))
-            .concat(DynamicString.constant(" 후"))
-        // "M분 후"
-        val minOnly = totalMins.format(plain).concat(DynamicString.constant("분 후"))
+        // "H시간 M분 후 시작"
+        val hourMin = hours.format(plain)
+            .concat(DynamicString.constant("시간 "))
+            .concat(mins.format(plain))
+            .concat(DynamicString.constant("분 후 시작"))
+        // "M분 후 시작"
+        val minOnly = totalMins.format(plain).concat(DynamicString.constant("분 후 시작"))
 
         val label = DynamicString.onCondition(totalSecs.lte(0))
             .use(DynamicString.constant("곧 시작"))
             .elseUse(
                 DynamicString.onCondition(totalMins.lte(0))
-                    .use(DynamicString.constant("1분 후")) // 0 < 남은 시간 < 1분
+                    .use(DynamicString.constant("1분 후 시작")) // 0 < 남은 시간 < 1분
                     .elseUse(
                         DynamicString.onCondition(hours.lte(0))
                             .use(minOnly)
-                            .elseUse(hmm),
+                            .elseUse(hourMin),
                     ),
             )
 
@@ -420,11 +418,11 @@ class KboGameTileService : TileService() {
                     .build(),
             )
             .setLayoutConstraintsForDynamicText(
-                TypeBuilders.StringLayoutConstraint.Builder("88:88 후").build(),
+                TypeBuilders.StringLayoutConstraint.Builder("88시간 88분 후 시작").build(),
             )
             .setFontStyle(
                 FontStyle.Builder()
-                    .setSize(sp(24f))
+                    .setSize(sp(16f)) // 문장형 라벨 — 큰 숫자 대신 축소(하린아빠 7/16)
                     .setWeight(
                         LayoutElementBuilders.FontWeightProp.Builder()
                             .setValue(LayoutElementBuilders.FONT_WEIGHT_BOLD)

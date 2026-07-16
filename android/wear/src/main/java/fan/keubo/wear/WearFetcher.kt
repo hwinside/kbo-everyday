@@ -156,7 +156,11 @@ object WearFetcher {
                 "경기 종료 · $result"
             }
             "cancelled" -> "경기 취소"
-            else -> "오늘 $time"
+            else -> {
+                // 구장 표기(하린아빠 7/16): "오늘 18:30 · 잠실"
+                val stadium = g.optString("stadium", "")
+                if (stadium.isEmpty()) "오늘 $time" else "오늘 $time · $stadium"
+            }
         }
 
         val startAt = if (status == "scheduled") startMillis(effectiveDateString(), time) else null
@@ -203,12 +207,15 @@ object WearFetcher {
                 val oppCode = WearTeam.code(oppId)
                 val home = day.optBoolean("home", false)
                 val time = day.optString("time", "")
+                val stadium = day.optString("stadium", "")
+                val line = scheduleLine(date, time) +
+                    if (stadium.isEmpty()) "" else " · $stadium"
                 return WearSnapshot(
                     kind = "scheduled", myTeamCode = myCode,
                     awayCode = if (home) oppCode else myCode,
                     homeCode = if (home) myCode else oppCode,
                     awayScore = 0, homeScore = 0,
-                    line = scheduleLine(date, time), rankLine = rankLine,
+                    line = line, rankLine = rankLine,
                     updatedAt = System.currentTimeMillis(),
                     startAt = startMillis(date, time), bases = null,
                 )

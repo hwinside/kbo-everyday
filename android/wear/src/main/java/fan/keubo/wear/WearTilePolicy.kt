@@ -58,8 +58,8 @@ object WearTilePolicy {
     }
 
     /**
-     * 렌더 시점 정적 카운트다운 라벨(Dynamic Expressions 폴백) — 애플워치 라벨 규칙(#635) 동일:
-     * 시작 전 1h 이상 "5:41 후" / 1h 미만 "41분 후"(0분은 "1분 후") / 시작 후 "곧 시작".
+     * 렌더 시점 정적 카운트다운 라벨(Dynamic Expressions 폴백) — 하린아빠 7/16 워치 실기기 피드백:
+     * 시작 전 1h 이상 "5시간 27분 후 시작" / 1h 미만 "27분 후 시작"(0분은 "1분 후 시작") / 시작 후 "곧 시작".
      */
     fun staticCountdownLabel(startAtMs: Long, nowMs: Long): String {
         val secs = (startAtMs - nowMs) / 1000
@@ -67,6 +67,6 @@ object WearTilePolicy {
         val mins = (secs / 60).toInt()
         val h = mins / 60
         val m = mins % 60
-        return if (h > 0) String.format(Locale.US, "%d:%02d 후", h, m) else "${maxOf(1, m)}분 후"
+        return if (h > 0) "${h}시간 ${m}분 후 시작" else "${maxOf(1, m)}분 후 시작"
     }
 }
