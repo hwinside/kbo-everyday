@@ -630,6 +630,46 @@ enum WatchFetcher {
     }
 }
 
+// MARK: - 디자인 가이드 폰트 (숫자·영문 = Montserrat / 한글 = 시스템 + 좁은 자간)
+// 잠금 LA 익스텐션과 동일 정책(1.0.7(11) 다이어트 이후 확정판): NotoSansKR VF(10.4MB)는
+// 위젯 익스텐션 30MB 한도 OOM 인시던트(2026-07-07) 원인이라 번들하지 않고,
+// Montserrat-VF(745KB)만 양 워치 타깃에 번들(UIAppFonts). 한글은 시스템 폰트+자간 -0.3.
+
+func watchMontserrat(_ size: CGFloat, _ weight: Font.Weight = .bold) -> Font {
+    Font.custom("Montserrat", size: size).weight(weight)
+}
+
+func watchSystemKR(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+    Font.system(size: size, weight: weight)
+}
+
+/// 한글 자간 — Noto Sans KR 룩과 맞추는 좁은 자간(LA kKoreanTracking과 동일).
+let kWatchKoreanTracking: CGFloat = -0.3
+
+/// 혼합 문자열을 글자 종류별 폰트로 — 라틴 글자/숫자 런=Montserrat, 그 외(한글/기호/공백)=시스템.
+/// LA mixedScriptText 포팅 — "LIVE 7회말 · 1사"·"LG · 2위 · 1위와 1경기차" 등 대응.
+func watchMixedText(_ s: String, _ size: CGFloat, _ weight: Font.Weight) -> Text {
+    var out = Text("")
+    var buf = ""
+    var bufIsLatin = false
+    func isLatin(_ ch: Character) -> Bool { ch.isASCII && (ch.isLetter || ch.isNumber) }
+    func flush() {
+        guard !buf.isEmpty else { return }
+        out = out + (bufIsLatin
+            ? Text(buf).font(watchMontserrat(size, weight))
+            : Text(buf).font(watchSystemKR(size, weight)).tracking(kWatchKoreanTracking))
+        buf = ""
+    }
+    for ch in s {
+        let lat = isLatin(ch)
+        if buf.isEmpty { buf.append(ch); bufIsLatin = lat }
+        else if lat == bufIsLatin { buf.append(ch) }
+        else { flush(); buf.append(ch); bufIsLatin = lat }
+    }
+    flush()
+    return out
+}
+
 // MARK: - 잔루 다이아몬드 (라이브 카드 — "1·3루" 글자 대신 시각 표시)
 
 /// 1·2·3루 점유를 야구 다이아몬드로 표시. 점유 시 채움, 비었으면 옅은 아웃라인.

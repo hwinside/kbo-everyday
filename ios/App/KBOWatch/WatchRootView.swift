@@ -15,21 +15,18 @@ struct WatchRootView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 10) {
-                Text("크보팬")
-                    .font(.system(size: 16, weight: .heavy))
+                watchMixedText("크보팬", 16, .heavy)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if let snap {
                     if snap.kind == "noTeam" {
-                        Text("iPhone 크보팬 앱에서 최애팀을 선택하면 자동으로 동기화돼요.")
-                            .font(.system(size: 12))
+                        watchMixedText("iPhone 크보팬 앱에서 최애팀을 선택하면 자동으로 동기화돼요.", 12, .regular)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         // 팀컬러 순위 헤더를 카드 위로 — 갤워치 타일 header(snap) 디자인 패리티.
                         if !snap.rankLine.isEmpty {
-                            Text("\(WatchTeam.short(snap.myTeamCode)) · \(snap.rankLine)")
-                                .font(.system(size: 13, weight: .bold))
+                            watchMixedText("\(WatchTeam.short(snap.myTeamCode)) · \(snap.rankLine)", 13, .bold)
                                 .foregroundStyle(WatchTeam.highlightColor(snap.myTeamCode))
                                 .lineLimit(1).minimumScaleFactor(0.7)
                                 .frame(maxWidth: .infinity, alignment: .center)
@@ -63,13 +60,11 @@ struct WatchGameCard: View {
     var body: some View {
         VStack(alignment: .center, spacing: 4) {
             if snap.kind == "noGame" {
-                Text(snap.line)
-                    .font(.system(size: 14, weight: .semibold))
+                watchMixedText(snap.line, 14, .semibold)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 if let venue = snap.venue {
-                    Text(venue)
-                        .font(.system(size: 11, weight: .semibold))
+                    watchMixedText(venue, 11, .semibold)
                         .foregroundStyle(.secondary)
                 }
                 HStack(spacing: 4) {
@@ -80,17 +75,16 @@ struct WatchGameCard: View {
                     Spacer(minLength: 4)
                     if snap.hasScore {
                         Text("\(snap.awayScore) : \(snap.homeScore)")
-                            .font(.system(size: 18, weight: .black)).monospacedDigit()
+                            .font(watchMontserrat(18, .black))
                             .lineLimit(1).minimumScaleFactor(0.7)
                     } else {
-                        Text("vs").font(.system(size: 14, weight: .semibold)).foregroundStyle(.secondary)
+                        Text("vs").font(watchMontserrat(14, .semibold)).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 4)
                     teamText(WatchTeam.short(snap.homeCode))
                     teamLogo(snap.homeCode)
                 }
-                Text(snap.line)
-                    .font(.system(size: 12, weight: .semibold))
+                watchMixedText(snap.line, 12, .semibold)
                     .foregroundStyle(snap.isLive ? Color(red: 1.0, green: 0.42, blue: 0.48) : .secondary)
                     .lineLimit(1).minimumScaleFactor(0.7)
             }
@@ -102,8 +96,7 @@ struct WatchGameCard: View {
     }
 
     private func teamText(_ name: String) -> some View {
-        Text(name)
-            .font(.system(size: 15, weight: .bold))
+        watchMixedText(name, 15, .bold)
             .lineLimit(1).minimumScaleFactor(0.7)
     }
 
@@ -129,7 +122,7 @@ struct WatchDetailRows: View {
                 // 아웃카운트 도트 + 주자 다이아몬드 한 줄
                 row {
                     HStack(spacing: 6) {
-                        Text("O").font(.system(size: 13, weight: .heavy))
+                        Text("O").font(watchMontserrat(13, .heavy))
                         HStack(spacing: 4) {
                             ForEach(0..<3, id: \.self) { i in
                                 Circle()
@@ -146,15 +139,15 @@ struct WatchDetailRows: View {
                     row {
                         HStack(spacing: 5) {
                             if let p = snap.pitcher {
-                                Text("투수").font(.system(size: 11)).foregroundStyle(.secondary)
-                                Text(p).font(.system(size: 13, weight: .bold))
+                                watchMixedText("투수", 11, .regular).foregroundStyle(.secondary)
+                                watchMixedText(p, 13, .bold)
                             }
                             if snap.pitcher != nil && snap.batter != nil {
                                 Circle().fill(live).frame(width: 3, height: 3)
                             }
                             if let b = snap.batter {
-                                Text("타자").font(.system(size: 11)).foregroundStyle(.secondary)
-                                Text(b).font(.system(size: 13, weight: .bold))
+                                watchMixedText("타자", 11, .regular).foregroundStyle(.secondary)
+                                watchMixedText(b, 13, .bold)
                             }
                             Spacer(minLength: 0)
                         }
@@ -165,8 +158,7 @@ struct WatchDetailRows: View {
                     row {
                         HStack(alignment: .top, spacing: 5) {
                             Circle().fill(live).frame(width: 5, height: 5).padding(.top, 4)
-                            Text(play)
-                                .font(.system(size: 12, weight: .medium))
+                            watchMixedText(play, 12, .medium)
                                 .lineLimit(2).minimumScaleFactor(0.85)
                             Spacer(minLength: 0)
                         }
@@ -174,25 +166,22 @@ struct WatchDetailRows: View {
                 }
             } else if snap.kind == "scheduled", let starters = snap.starters {
                 row {
-                    Text(starters)
-                        .font(.system(size: 12, weight: .medium))
+                    watchMixedText(starters, 12, .medium)
                         .lineLimit(1).minimumScaleFactor(0.7)
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
             } else if snap.kind == "final", let nextLine = snap.nextLine {
                 row {
                     VStack(spacing: 2) {
-                        Text("다음 경기").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                        watchMixedText("다음 경기", 10, .semibold).foregroundStyle(.secondary)
                         HStack(spacing: 4) {
-                            Text("\(WatchTeam.short(snap.nextAwayCode ?? "")) vs \(WatchTeam.short(snap.nextHomeCode ?? ""))")
-                                .font(.system(size: 13, weight: .bold))
+                            watchMixedText("\(WatchTeam.short(snap.nextAwayCode ?? "")) vs \(WatchTeam.short(snap.nextHomeCode ?? ""))", 13, .bold)
                             if let v = snap.nextVenue {
-                                Text("· \(v)").font(.system(size: 11)).foregroundStyle(.secondary)
+                                watchMixedText("· \(v)", 11, .regular).foregroundStyle(.secondary)
                             }
                         }
                         .lineLimit(1).minimumScaleFactor(0.7)
-                        Text(nextLine)
-                            .font(.system(size: 12, weight: .semibold))
+                        watchMixedText(nextLine, 12, .semibold)
                             .lineLimit(1).minimumScaleFactor(0.7)
                     }
                     .frame(maxWidth: .infinity)

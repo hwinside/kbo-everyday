@@ -122,29 +122,26 @@ struct KBOWatchComplicationView: View {
             if snap.hasScore {
                 HStack(spacing: 4) {
                     teamLogo(snap.awayCode)
-                    Text(displayName(snap.awayCode)).font(.system(size: 14, weight: .bold))
+                    watchMixedText(displayName(snap.awayCode), 14, .bold)
                     Text("\(snap.awayScore):\(snap.homeScore)")
-                        .font(.system(size: 16, weight: .black)).monospacedDigit()
-                    Text(displayName(snap.homeCode)).font(.system(size: 14, weight: .bold))
+                        .font(watchMontserrat(16, .black))
+                    watchMixedText(displayName(snap.homeCode), 14, .bold)
                     teamLogo(snap.homeCode)
                 }
                 .lineLimit(1).minimumScaleFactor(0.7)
             } else if snap.kind == "scheduled" || snap.kind == "cancelled" {
                 HStack(spacing: 4) {
                     teamLogo(snap.awayCode)
-                    Text("\(displayName(snap.awayCode)) vs \(displayName(snap.homeCode))")
-                        .font(.system(size: 14, weight: .bold))
+                    watchMixedText("\(displayName(snap.awayCode)) vs \(displayName(snap.homeCode))", 14, .bold)
                     teamLogo(snap.homeCode)
                 }
                 .lineLimit(1).minimumScaleFactor(0.7)
             } else {
-                Text(snap.kind == "noTeam" ? "크보팬" : displayName(snap.myTeamCode))
-                    .font(.system(size: 14, weight: .bold))
+                watchMixedText(snap.kind == "noTeam" ? "크보팬" : displayName(snap.myTeamCode), 14, .bold)
             }
 
             HStack(spacing: 4) {
-                Text(snap.kind == "noTeam" ? "앱에서 팀 선택" : snap.line)
-                    .font(.system(size: 12, weight: .medium))
+                watchMixedText(snap.kind == "noTeam" ? "앱에서 팀 선택" : snap.line, 12, .medium)
                     .foregroundStyle(snap.isLive ? Color(red: 1.0, green: 0.42, blue: 0.48) : .secondary)
                     .lineLimit(1).minimumScaleFactor(0.75)
                 if snap.isLive, let b = snap.bases, b.any {
@@ -153,8 +150,7 @@ struct KBOWatchComplicationView: View {
             }
 
             if !snap.rankLine.isEmpty {
-                Text(snap.rankLine)
-                    .font(.system(size: 12, weight: .semibold))
+                watchMixedText(snap.rankLine, 12, .semibold)
                     .foregroundStyle(.secondary)
                     .lineLimit(1).minimumScaleFactor(0.75)
             }
@@ -171,8 +167,8 @@ struct KBOWatchComplicationView: View {
     // 원형 라이브 스코어 한 줄: "LG 3" (팀 + 점수). 누가 몇 점인지 명확하게.
     private func circularScoreRow(_ team: String, _ score: Int) -> some View {
         HStack(spacing: 4) {
-            Text(team).font(.system(size: 11, weight: .bold))
-            Text("\(score)").font(.system(size: 14, weight: .black)).monospacedDigit()
+            watchMixedText(team, 11, .bold)
+            Text("\(score)").font(watchMontserrat(14, .black))
         }
         .lineLimit(1).minimumScaleFactor(0.55)
     }
@@ -194,11 +190,9 @@ struct KBOWatchComplicationView: View {
                                          myAway ? snap.homeScore : snap.awayScore)
                     }
                 } else if snap.kind == "scheduled" {
-                    Text(opponentShort.isEmpty ? "예정" : "vs \(opponentShort)")
-                        .font(.system(size: 11, weight: .heavy))
+                    watchMixedText(opponentShort.isEmpty ? "예정" : "vs \(opponentShort)", 11, .heavy)
                         .lineLimit(1).minimumScaleFactor(0.6)
-                    Text(WatchFetcher.circularScheduleLabel(startAt: snap.startAt, ref: entry.date))
-                        .font(.system(size: 13, weight: .black)).monospacedDigit()
+                    watchMixedText(WatchFetcher.circularScheduleLabel(startAt: snap.startAt, ref: entry.date), 13, .black)
                         .foregroundStyle(WatchFetcher.isCountdownImminent(startAt: snap.startAt, ref: entry.date)
                                          ? Color(red: 1.0, green: 0.58, blue: 0.0) : Color.primary)
                         .lineLimit(1).minimumScaleFactor(0.6)
@@ -208,12 +202,10 @@ struct KBOWatchComplicationView: View {
                     if WatchTeam.logoAsset(snap.myTeamCode) != nil, canShowLogo {
                         teamLogo(snap.myTeamCode, size: 18)
                     } else {
-                        Text(snap.myTeamCode.isEmpty ? "KBO" : displayName(snap.myTeamCode))
-                            .font(.system(size: 10, weight: .heavy))
+                        watchMixedText(snap.myTeamCode.isEmpty ? "KBO" : displayName(snap.myTeamCode), 10, .heavy)
                             .lineLimit(1).minimumScaleFactor(0.6)
                     }
-                    Text(snap.rankLine.isEmpty ? "-" : String(snap.rankLine.prefix(2)))
-                        .font(.system(size: 14, weight: .black))
+                    watchMixedText(snap.rankLine.isEmpty ? "-" : String(snap.rankLine.prefix(2)), 14, .black)
                         .lineLimit(1).minimumScaleFactor(0.6)
                 }
             }
@@ -224,13 +216,13 @@ struct KBOWatchComplicationView: View {
     private var inline: some View {
         Group {
             if snap.hasScore {
-                Text("\(displayName(snap.awayCode)) \(snap.awayScore):\(snap.homeScore) \(displayName(snap.homeCode))")
+                watchMixedText("\(displayName(snap.awayCode)) \(snap.awayScore):\(snap.homeScore) \(displayName(snap.homeCode))", 13, .medium)
             } else if snap.kind == "scheduled" {
-                Text("\(snap.line) \(displayName(snap.awayCode)) vs \(displayName(snap.homeCode))")
+                watchMixedText("\(snap.line) \(displayName(snap.awayCode)) vs \(displayName(snap.homeCode))", 13, .medium)
             } else if !snap.rankLine.isEmpty {
-                Text("\(displayName(snap.myTeamCode)) \(snap.rankLine)")
+                watchMixedText("\(displayName(snap.myTeamCode)) \(snap.rankLine)", 13, .medium)
             } else {
-                Text("크보팬")
+                watchMixedText("크보팬", 13, .medium)
             }
         }
     }

@@ -7,8 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		ABCD00000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000001 /* Assets.xcassets */; };
-		ABCD00000000000000000004 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000003 /* Assets.xcassets */; };
 		14E7C38D5BA9CC0CEC7862B3 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F06E9AC42A08D1703EE84F9F /* Foundation.framework */; };
 		159F3DC71D6824E95E816E8B /* WatchRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7126F38454FC2B4048E1334A /* WatchRootView.swift */; };
 		1FB9D552D369B5999B046BE8 /* WatchSyncManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4FEDC2677B7A4BC4CC855E7 /* WatchSyncManager.swift */; };
@@ -16,6 +14,7 @@
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		3ADAA3BF6F65FD5778BD7F42 /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B46A02D327CA9B0549D48B9B /* WatchConnectivity.framework */; };
 		41BA079B59A6DC4FC6B41BD6 /* KBOWatchWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29CED23CA64E9C79C383BE57 /* KBOWatchWidgetBundle.swift */; };
+		42CAF2596D2F02D9F4318986 /* Montserrat-VF.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 36981350D6249C44E1EF71DA /* Montserrat-VF.ttf */; };
 		479C3F312FDA9E300044837B /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 479C3F302FDA9E300044837B /* WidgetKit.framework */; };
 		479C3F332FDA9E300044837B /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 479C3F322FDA9E300044837B /* SwiftUI.framework */; };
 		479C3F442FDA9E310044837B /* LiveActivityExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 479C3F2E2FDA9E300044837B /* LiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -35,9 +34,12 @@
 		A1B2C3D42FE000000000001 /* MetaAppEventsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D42FE000000000002 /* MetaAppEventsPlugin.swift */; };
 		A1B2C3D42FE000000000003 /* FacebookCore in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D42FE000000000004 /* FacebookCore */; };
 		AAEE11D52FE000000000001 /* AppReviewPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAEE11D52FE000000000002 /* AppReviewPlugin.swift */; };
+		ABCD00000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000001 /* Assets.xcassets */; };
+		ABCD00000000000000000004 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000003 /* Assets.xcassets */; };
 		B9C9CA25150B8EEF9F62ACB0 /* WatchData.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4C1D752B8E5F1912873A2F0 /* WatchData.swift */; };
 		BAE5770A86811C4BB4ED5DF5 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5B5C68575F21538F2C5E1B13 /* SwiftUI.framework */; };
 		C09CE651EBDDF7AB323A2D4B /* WatchData.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4C1D752B8E5F1912873A2F0 /* WatchData.swift */; };
+		C20B79F46AA24C912C18C7A7 /* Montserrat-VF.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 36981350D6249C44E1EF71DA /* Montserrat-VF.ttf */; };
 		E13A2991E212C01AC10FBC57 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F06E9AC42A08D1703EE84F9F /* Foundation.framework */; };
 		E144DB38339E72334B4753FC /* KBOWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = AEB8F65459C635243ED9DD36 /* KBOWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		E8629F36D6A7701538AF304F /* KBOWatchWidget.appex in Embed Watch Widget */ = {isa = PBXBuildFile; fileRef = 7363C7ECDC2BD672797D7FB4 /* KBOWatchWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -106,11 +108,10 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		ABCD00000000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		ABCD00000000000000000003 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		198724C510A9660087E15A76 /* KBOWatchGameComplication.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KBOWatchGameComplication.swift; sourceTree = "<group>"; };
 		29CED23CA64E9C79C383BE57 /* KBOWatchWidgetBundle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KBOWatchWidgetBundle.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
+		36981350D6249C44E1EF71DA /* Montserrat-VF.ttf */ = {isa = PBXFileReference; includeInIndex = 1; path = "Montserrat-VF.ttf"; sourceTree = "<group>"; };
 		479C3F2E2FDA9E300044837B /* LiveActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		479C3F302FDA9E300044837B /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		479C3F322FDA9E300044837B /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
@@ -133,6 +134,8 @@
 		A1B2C3D42FE000000000002 /* MetaAppEventsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetaAppEventsPlugin.swift; sourceTree = "<group>"; };
 		A4C1D752B8E5F1912873A2F0 /* WatchData.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchData.swift; sourceTree = "<group>"; };
 		AAEE11D52FE000000000002 /* AppReviewPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppReviewPlugin.swift; sourceTree = "<group>"; };
+		ABCD00000000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		ABCD00000000000000000003 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AEB8F65459C635243ED9DD36 /* KBOWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KBOWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B46A02D327CA9B0549D48B9B /* WatchConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WatchConnectivity.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS26.0.sdk/System/Library/Frameworks/WatchConnectivity.framework; sourceTree = DEVELOPER_DIR; };
 		D4FEDC2677B7A4BC4CC855E7 /* WatchSyncManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchSyncManager.swift; sourceTree = "<group>"; };
@@ -300,6 +303,7 @@
 			isa = PBXGroup;
 			children = (
 				A4C1D752B8E5F1912873A2F0 /* WatchData.swift */,
+				36981350D6249C44E1EF71DA /* Montserrat-VF.ttf */,
 			);
 			name = KBOWatchShared;
 			path = KBOWatchShared;
@@ -450,6 +454,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				ABCD00000000000000000004 /* Assets.xcassets in Resources */,
+				42CAF2596D2F02D9F4318986 /* Montserrat-VF.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -479,6 +484,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				ABCD00000000000000000002 /* Assets.xcassets in Resources */,
+				C20B79F46AA24C912C18C7A7 /* Montserrat-VF.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
