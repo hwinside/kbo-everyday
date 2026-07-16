@@ -98,7 +98,7 @@ struct WatchGameCard: View {
                     Spacer(minLength: 2)
                     if snap.hasScore {
                         Text("\(snap.awayScore) : \(snap.homeScore)")
-                            .font(watchMontserrat(15, .black))
+                            .font(watchMontserrat(18, .black))
                             .monospacedDigit()
                             .lineLimit(1).minimumScaleFactor(0.7)
                             .layoutPriority(2)
@@ -130,13 +130,13 @@ struct WatchGameCard: View {
             .lineLimit(1).minimumScaleFactor(0.6)
     }
 
-    /// 팀 로고 18pt — 미지의 코드(익명 더미 등)는 미렌더(텍스트만). 갤워치 teamLogo(24dp) 대응.
+    /// 팀 로고 20pt — 미지의 코드(익명 더미 등)는 미렌더(텍스트만). 갤워치 teamLogo(24dp) 대응.
     @ViewBuilder private func teamLogo(_ code: String) -> some View {
         if let asset = WatchTeam.logoAsset(code) {
             Image(asset)
                 .resizable()
                 .scaledToFit()
-                .frame(width: 16, height: 16)
+                .frame(width: 20, height: 20)
         }
     }
 }

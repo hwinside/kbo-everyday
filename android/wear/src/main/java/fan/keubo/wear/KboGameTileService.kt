@@ -456,14 +456,14 @@ class KboGameTileService : TileService() {
         if (WearTeam.logoRes(code) == 0) return null
         return LayoutElementBuilders.Image.Builder()
             .setResourceId(WearTeam.logoResourceId(code))
-            .setWidth(dp(20f))
-            .setHeight(dp(20f))
+            .setWidth(dp(24f))
+            .setHeight(dp(24f))
             .build()
     }
 
     /** "3 : 2" — 애플워치 18pt black 대응(타일 캔버스에 맞춰 확대) */
     private fun scoreText(snap: WearSnapshot): LayoutElement =
-        text("${snap.awayScore} : ${snap.homeScore}", 20f, WearTeam.COLOR_TEXT_PRIMARY, bold = true)
+        text("${snap.awayScore} : ${snap.homeScore}", 24f, WearTeam.COLOR_TEXT_PRIMARY, bold = true)
 
     /**
      * 잔루 다이아몬드 — 2루(위) / 3루(왼쪽 아래) / 1루(오른쪽 아래).
