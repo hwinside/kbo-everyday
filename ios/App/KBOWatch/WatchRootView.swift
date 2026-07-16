@@ -226,11 +226,7 @@ struct WatchDetailRows: View {
                             watchMixedText("패", 11, .regular).foregroundStyle(.secondary)
                             watchMixedText(l, 13, .bold)
                         }
-                        if let sv = snap.savePitcher {
-                            Circle().fill(live).frame(width: 3, height: 3)
-                            watchMixedText("세", 11, .regular).foregroundStyle(.secondary)
-                            watchMixedText(sv, 13, .bold)
-                        }
+                        // 세이브는 목업 v2 스코프 외 + 40mm 3인 표기 시 이름 잘림(실렌더 확인) — 승/패만
                     }
                     .lineLimit(1).minimumScaleFactor(0.6)
                     .frame(maxWidth: .infinity)

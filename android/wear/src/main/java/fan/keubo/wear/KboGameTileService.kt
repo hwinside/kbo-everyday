@@ -325,12 +325,7 @@ class KboGameTileService : TileService() {
                 wl.addContent(hspace(4f))
                 wl.addContent(text(it, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
             }
-            snap.savePitcher?.let {
-                wl.addContent(hspace(8f))
-                wl.addContent(text("세", 10f, WearTeam.COLOR_TEXT_SECONDARY))
-                wl.addContent(hspace(4f))
-                wl.addContent(text(it, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
-            }
+            // 세이브는 목업 v2 스코프 외 + 소형 화면 3인 표기 잘림 — 승/패만(필드는 유지)
             rows.add(rowBox(wl.build()))
         }
         return rows
