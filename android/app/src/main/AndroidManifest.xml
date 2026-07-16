@@ -122,6 +122,11 @@
             </intent-filter>
         </activity>
 
+        <!-- Live Update(Promoted Ongoing) 카드 Unpin(유저 해제) 감지 — 같은 경기 자동 재게시 억제. -->
+        <receiver
+            android:name=".LiveUpdateDismissReceiver"
+            android:exported="false" />
+
         <!-- FCM 수신 서비스 — capawesome MessagingService를 확장(앱 꺼져도 라이브 푸시 →
              잠금화면 ongoing notification + 위젯). 플러그인 기본 서비스는 제거하고 이걸로 대체. -->
         <service
@@ -160,4 +165,6 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 16+ Live Update(Promoted Ongoing) 게시 — 없으면 setRequestPromotedOngoing이 무시됨. -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
 </manifest>
