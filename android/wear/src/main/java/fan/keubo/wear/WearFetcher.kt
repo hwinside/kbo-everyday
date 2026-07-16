@@ -79,9 +79,51 @@ object WearFetcher {
             fetchNextGame(myCode, myId, rankLine)?.let { snap = it }
         }
 
+        // 라이브: 문자중계 최근 플레이 한 줄(실패 시 null — 카드 무영향)
+        if (snap.kind == "live") {
+            pickGame(gamesRaw, myId)?.optString("gameId", "")?.takeIf { it.isNotEmpty() }?.let { gid ->
+                snap = snap.copy(lastPlay = fetchLastPlay(gid))
+            }
+        }
+
+        // 종료: 하단 "다음 경기" 컴팩트 카드용 정보 부착(실패 시 본 카드만)
+        if (snap.kind == "final") {
+            nextGameDay(myId)?.let { day ->
+                val oppCode = WearTeam.code(day.oppId)
+                snap = snap.copy(
+                    nextAwayCode = if (day.home) oppCode else myCode,
+                    nextHomeCode = if (day.home) myCode else oppCode,
+                    nextLine = scheduleLine(day.date, day.time),
+                    nextVenue = day.stadium.ifEmpty { null },
+                )
+            }
+        }
+
         WearStore.saveCachedSnapshot(ctx, snap)
         WearStore.markSyncedNow(ctx)
         return snap
+    }
+
+    /** 마지막 non-empty 이닝의 마지막 play → "타자 결과"(40자 캡) — 서버 warmup latestRelayLine 동일 규칙. */
+    private fun fetchLastPlay(gameId: String): String? {
+        val raw = get("/api/game-relay?gameId=$gameId") ?: return null
+        return try {
+            val innings = JSONObject(raw).optJSONArray("innings") ?: return null
+            var name = ""
+            var result = ""
+            for (i in 0 until innings.length()) {
+                val plays = innings.optJSONObject(i)?.optJSONArray("plays") ?: continue
+                if (plays.length() == 0) continue
+                val last = plays.optJSONObject(plays.length() - 1) ?: continue
+                name = last.optString("batterName", "")
+                result = last.optString("result", "")
+            }
+            if (name.isEmpty() || result.isEmpty()) return null
+            val line = "$name $result"
+            if (line.length > 40) line.substring(0, 39) + "…" else line
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun parseRankLine(raw: String?, myId: Int): String {
@@ -144,6 +186,7 @@ object WearFetcher {
         val hScore = g.optInt("homeScore", 0)
         val time = g.optString("time", "")
 
+        val stadium = g.optString("stadium", "")
         val line = when (status) {
             "live" -> {
                 val half = if (g.optBoolean("isTop", true)) "초" else "말"
@@ -156,16 +199,22 @@ object WearFetcher {
                 "경기 종료 · $result"
             }
             "cancelled" -> "경기 취소"
-            else -> {
-                // 구장 표기(하린아빠 7/16): "오늘 18:30 · 잠실"
-                val stadium = g.optString("stadium", "")
-                if (stadium.isEmpty()) "오늘 $time" else "오늘 $time · $stadium"
-            }
+            else -> "오늘 $time"   // 구장은 venue 필드로 카드 상단 표기(목업)
         }
 
         val startAt = if (status == "scheduled") startMillis(effectiveDateString(), time) else null
         val bases = if (status == "live") {
             WearBases.fromJson(g.optJSONObject("runnersOn"))
+        } else null
+
+        // 리치 필드(목업): live=아웃·투타 / scheduled=선발 매치업
+        val outs = if (status == "live") g.optInt("outs", 0) else null
+        val pitcher = if (status == "live") g.optString("currentPitcher", "").ifEmpty { null } else null
+        val batter = if (status == "live") g.optString("currentBatter", "").ifEmpty { null } else null
+        val awayStarter = g.optString("awayStarterName", "")
+        val homeStarter = g.optString("homeStarterName", "")
+        val starters = if (status == "scheduled" && awayStarter.isNotEmpty() && homeStarter.isNotEmpty()) {
+            "선발 $awayStarter vs $homeStarter"
         } else null
 
         return WearSnapshot(
@@ -174,6 +223,8 @@ object WearFetcher {
             awayScore = aScore, homeScore = hScore,
             line = line, rankLine = rankLine,
             updatedAt = System.currentTimeMillis(), startAt = startAt, bases = bases,
+            venue = stadium.ifEmpty { null }, outs = outs, pitcher = pitcher, batter = batter,
+            starters = starters,
         )
     }
 
@@ -208,16 +259,45 @@ object WearFetcher {
                 val home = day.optBoolean("home", false)
                 val time = day.optString("time", "")
                 val stadium = day.optString("stadium", "")
-                val line = scheduleLine(date, time) +
-                    if (stadium.isEmpty()) "" else " · $stadium"
                 return WearSnapshot(
                     kind = "scheduled", myTeamCode = myCode,
                     awayCode = if (home) oppCode else myCode,
                     homeCode = if (home) myCode else oppCode,
                     awayScore = 0, homeScore = 0,
-                    line = line, rankLine = rankLine,
+                    line = scheduleLine(date, time), rankLine = rankLine,
                     updatedAt = System.currentTimeMillis(),
                     startAt = startMillis(date, time), bases = null,
+                    venue = stadium.ifEmpty { null },
+                )
+            }
+        }
+        return null
+    }
+
+    /** final 하단 "다음 경기" 카드용 — 첫 미래 scheduled day. */
+    private data class NextDay(val date: String, val time: String, val home: Boolean, val oppId: Int, val stadium: String)
+
+    private fun nextGameDay(myId: Int): NextDay? {
+        val slug = WearTeam.slug(myId)
+        if (slug.isEmpty()) return null
+        val fromDate = effectiveDateString()
+        for (month in monthStrings()) {
+            val raw = get("/api/team-schedule?team=$slug&month=$month") ?: continue
+            val days = try {
+                JSONObject(raw).optJSONArray("days")
+            } catch (_: Exception) {
+                null
+            } ?: continue
+            for (i in 0 until days.length()) {
+                val day = days.optJSONObject(i) ?: continue
+                val date = day.optString("date", "")
+                if (day.optString("status") != "scheduled" || date < fromDate) continue
+                return NextDay(
+                    date = date,
+                    time = day.optString("time", ""),
+                    home = day.optBoolean("home", false),
+                    oppId = day.optJSONObject("opponent")?.optInt("id", 0) ?: 0,
+                    stadium = day.optString("stadium", ""),
                 )
             }
         }
