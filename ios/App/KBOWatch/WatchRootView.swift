@@ -17,17 +17,18 @@ struct WatchRootView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 4) {
+            // 폰트/간격 축소(하린아빠 7/17) — 40mm에서 LIVE 상태도 한 화면 완결 목표
+            VStack(spacing: 2) {
                 // 승인 목업 상단: "크보팬" + 우측 "● MY TEAM" 한 줄(공간 압축 겸용)
                 HStack(alignment: .firstTextBaseline) {
-                    watchMixedText("크보팬", 14, .heavy)
+                    watchMixedText("크보팬", 11, .heavy)
                     Spacer()
                     HStack(spacing: 3) {
                         Circle()
                             .fill(Color(red: 1.0, green: 0.42, blue: 0.48))
-                            .frame(width: 5, height: 5)
+                            .frame(width: 4, height: 4)
                         Text("MY TEAM")
-                            .font(watchMontserrat(10, .bold))
+                            .font(watchMontserrat(8, .bold))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -40,7 +41,7 @@ struct WatchRootView: View {
                     } else {
                         // 팀컬러 순위 헤더를 카드 위로 — 갤워치 타일 header(snap) 디자인 패리티.
                         if !snap.rankLine.isEmpty {
-                            watchMixedText("\(WatchTeam.short(snap.myTeamCode)) · \(snap.rankLine)", 12, .bold)
+                            watchMixedText("\(WatchTeam.short(snap.myTeamCode)) · \(snap.rankLine)", 10, .bold)
                                 .foregroundStyle(WatchTeam.highlightColor(snap.myTeamCode))
                                 .lineLimit(1).minimumScaleFactor(0.7)
                                 .frame(maxWidth: .infinity, alignment: .center)
@@ -79,13 +80,13 @@ struct WatchGameCard: View {
     let snap: WatchSnapshot
 
     var body: some View {
-        VStack(alignment: .center, spacing: 4) {
+        VStack(alignment: .center, spacing: 2) {
             if snap.kind == "noGame" {
                 watchMixedText(snap.line, 14, .semibold)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 if let venue = snap.venue {
-                    watchMixedText(venue, 11, .semibold)
+                    watchMixedText(venue, 9, .semibold)
                         .foregroundStyle(.secondary)
                 }
                 HStack(spacing: 3) {
@@ -97,12 +98,12 @@ struct WatchGameCard: View {
                     Spacer(minLength: 2)
                     if snap.hasScore {
                         Text("\(snap.awayScore) : \(snap.homeScore)")
-                            .font(watchMontserrat(18, .black))
+                            .font(watchMontserrat(15, .black))
                             .monospacedDigit()
                             .lineLimit(1).minimumScaleFactor(0.7)
                             .layoutPriority(2)
                     } else {
-                        Text("vs").font(watchMontserrat(14, .semibold)).foregroundStyle(.secondary)
+                        Text("vs").font(watchMontserrat(13, .semibold)).foregroundStyle(.secondary)
                             .layoutPriority(2)
                     }
                     Spacer(minLength: 2)
@@ -112,30 +113,30 @@ struct WatchGameCard: View {
                 // 목업 v2: LIVE 카드줄은 "LIVE 7회말"만 — 아웃은 하단 도트 행과 중복이라 제거(컴플리케이션 line은 유지)
                 watchMixedText(snap.isLive
                     ? snap.line.replacingOccurrences(of: #" · \d+사$"#, with: "", options: .regularExpression)
-                    : snap.line, 12, .semibold)
+                    : snap.line, 10, .semibold)
                     .foregroundStyle(snap.isLive ? Color(red: 1.0, green: 0.42, blue: 0.48) : .secondary)
                     .lineLimit(1).minimumScaleFactor(0.7)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity)
         // 최애팀 컬러 은은한 틴트 — 갤워치 타일 card(cardTint) 디자인 패리티.
         .background(RoundedRectangle(cornerRadius: 12).fill(WatchTeam.cardTint(snap.myTeamCode)))
     }
 
     private func teamText(_ name: String) -> some View {
-        watchMixedText(name, 14, .bold)
+        watchMixedText(name, 12, .bold)
             .lineLimit(1).minimumScaleFactor(0.6)
     }
 
-    /// 팀 로고 20pt — 미지의 코드(익명 더미 등)는 미렌더(텍스트만). 갤워치 teamLogo(24dp) 대응.
+    /// 팀 로고 18pt — 미지의 코드(익명 더미 등)는 미렌더(텍스트만). 갤워치 teamLogo(24dp) 대응.
     @ViewBuilder private func teamLogo(_ code: String) -> some View {
         if let asset = WatchTeam.logoAsset(code) {
             Image(asset)
                 .resizable()
                 .scaledToFit()
-                .frame(width: 20, height: 20)
+                .frame(width: 16, height: 16)
         }
     }
 }
@@ -146,37 +147,37 @@ struct WatchDetailRows: View {
     private let live = Color(red: 1.0, green: 0.42, blue: 0.48)
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 2) {
             if snap.isLive {
                 // 아웃카운트 도트 + 주자 다이아몬드 한 줄
                 row {
                     HStack(spacing: 6) {
-                        Text("O").font(watchMontserrat(13, .heavy))
+                        Text("O").font(watchMontserrat(10, .heavy))
                         HStack(spacing: 4) {
                             ForEach(0..<3, id: \.self) { i in
                                 Circle()
                                     .fill(i < (snap.outs ?? 0) ? live : Color.white.opacity(0.22))
-                                    .frame(width: 8, height: 8)
+                                    .frame(width: 6, height: 6)
                             }
                         }
                         Spacer()
                         BaseDiamond(bases: snap.bases ?? WatchBases(first: false, second: false, third: false),
-                                    size: 22)
+                                    size: 16)
                     }
                 }
                 if snap.pitcher != nil || snap.batter != nil {
                     row {
                         HStack(spacing: 5) {
                             if let p = snap.pitcher {
-                                watchMixedText("투수", 11, .regular).foregroundStyle(.secondary)
-                                watchMixedText(p, 13, .bold)
+                                watchMixedText("투수", 9, .regular).foregroundStyle(.secondary)
+                                watchMixedText(p, 11, .bold)
                             }
                             if snap.pitcher != nil && snap.batter != nil {
                                 Circle().fill(live).frame(width: 3, height: 3)
                             }
                             if let b = snap.batter {
-                                watchMixedText("타자", 11, .regular).foregroundStyle(.secondary)
-                                watchMixedText(b, 13, .bold)
+                                watchMixedText("타자", 9, .regular).foregroundStyle(.secondary)
+                                watchMixedText(b, 11, .bold)
                             }
                             Spacer(minLength: 0)
                         }
@@ -186,9 +187,9 @@ struct WatchDetailRows: View {
                 if let play = snap.lastPlay {
                     row {
                         HStack(alignment: .top, spacing: 5) {
-                            Circle().fill(live).frame(width: 5, height: 5).padding(.top, 4)
-                            watchMixedText(play, 12, .medium)
-                                .lineLimit(2).minimumScaleFactor(0.85)
+                            Circle().fill(live).frame(width: 4, height: 4).padding(.top, 4)
+                            watchMixedText(play, 10, .medium)
+                                .lineLimit(1).minimumScaleFactor(0.7)
                             Spacer(minLength: 0)
                         }
                     }
@@ -197,39 +198,48 @@ struct WatchDetailRows: View {
                 // 목업 v2: `선발 소형준 ● 웰스` — 라벨 secondary + 이름 bold + 핑크 도트 구분
                 row {
                     HStack(spacing: 5) {
-                        watchMixedText("선발", 11, .regular).foregroundStyle(.secondary)
+                        watchMixedText("선발", 9, .regular).foregroundStyle(.secondary)
                         let names = starters.hasPrefix("선발 ") ? String(starters.dropFirst(3)) : starters
                         let parts = names.components(separatedBy: " · ")
                         if parts.count == 2 {
-                            watchMixedText(parts[0], 13, .bold)
+                            watchMixedText(parts[0], 11, .bold)
                             Circle().fill(live).frame(width: 3, height: 3)
-                            watchMixedText(parts[1], 13, .bold)
+                            watchMixedText(parts[1], 11, .bold)
                         } else {
-                            watchMixedText(names.replacingOccurrences(of: " vs ", with: " · "), 13, .bold)
+                            watchMixedText(names.replacingOccurrences(of: " vs ", with: " · "), 11, .bold)
                         }
                     }
                     .lineLimit(1).minimumScaleFactor(0.6)
                     .frame(maxWidth: .infinity)
                 }
             } else if snap.kind == "final", snap.winPitcher != nil || snap.losePitcher != nil {
-                // 승/패(+세) 투수 한 줄 — 목업 7/17. 40mm fold-in 보장 위해 단일 행(세이브는 '세' 축약).
+                // 승/패 투수 한 줄 + 세이브 있을 때만 2행째 컴팩트 행(삼순 SSOT — 없으면 생략).
                 row {
                     HStack(spacing: 5) {
                         if let w = snap.winPitcher {
-                            watchMixedText("승", 11, .regular).foregroundStyle(.secondary)
-                            watchMixedText(w, 13, .bold)
+                            watchMixedText("승", 9, .regular).foregroundStyle(.secondary)
+                            watchMixedText(w, 11, .bold)
                         }
                         if snap.winPitcher != nil && snap.losePitcher != nil {
                             Circle().fill(live).frame(width: 3, height: 3)
                         }
                         if let l = snap.losePitcher {
-                            watchMixedText("패", 11, .regular).foregroundStyle(.secondary)
-                            watchMixedText(l, 13, .bold)
+                            watchMixedText("패", 9, .regular).foregroundStyle(.secondary)
+                            watchMixedText(l, 11, .bold)
                         }
-                        // 세이브는 목업 v2 스코프 외 + 40mm 3인 표기 시 이름 잘림(실렌더 확인) — 승/패만
                     }
                     .lineLimit(1).minimumScaleFactor(0.6)
                     .frame(maxWidth: .infinity)
+                }
+                if let s = snap.savePitcher {
+                    row {
+                        HStack(spacing: 5) {
+                            watchMixedText("세이브", 9, .regular).foregroundStyle(.secondary)
+                            watchMixedText(s, 11, .bold)
+                        }
+                        .lineLimit(1).minimumScaleFactor(0.6)
+                        .frame(maxWidth: .infinity)
+                    }
                 }
             }
         }
@@ -238,8 +248,8 @@ struct WatchDetailRows: View {
     /// 공통 행 컨테이너 — 어두운 라운드 박스(목업의 하단 행 스타일).
     private func row<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content()
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 3)
             .frame(maxWidth: .infinity)
             .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
     }
