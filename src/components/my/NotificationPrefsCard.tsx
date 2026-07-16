@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { isNative } from "@/lib/capacitor/platform";
 import { requestNativePushPermission, checkNativePushPermission } from "@/lib/native-push";
 import { endLiveActivity, setLiveActivityEnabledCache } from "@/lib/native-live-activity";
+import { getLiveUpdateState, setLiveUpdateOptIn, type LiveUpdateState } from "@/lib/capacitor/game-notification";
 import { PREF_LABELS, DEFAULT_PREFS, type NotificationPrefs, type PrefKey } from "@/lib/notifications/prefs";
 
 /**
@@ -22,6 +23,8 @@ export default function NotificationPrefsCard() {
   const [loaded, setLoaded] = useState(false);
   // OS 푸시 권한 미허용 여부 — 기존 회원/재설치 유저 커버용 안내 배너 게이트.
   const [permissionDenied, setPermissionDenied] = useState(false);
+  // 잠금화면 라이브 카드(Android 16+) — 디바이스 로컬 opt-in. supported:false면 행 자체를 숨김.
+  const [liveUpdate, setLiveUpdate] = useState<LiveUpdateState>({ supported: false, enabled: false });
   const savingRef = useRef(false);
 
   const authHeader = useCallback(async (): Promise<Record<string, string>> => {
@@ -45,6 +48,23 @@ export default function NotificationPrefsCard() {
     const ok = await requestNativePushPermission();
     if (ok) setPermissionDenied(false);
   }, []);
+
+  // 펼칠 때 잠금화면 라이브 카드 지원 여부 조회(네이티브 안드 16+만 supported:true).
+  useEffect(() => {
+    if (!expanded || !isNative) return;
+    let cancelled = false;
+    void (async () => {
+      const state = await getLiveUpdateState();
+      if (!cancelled) setLiveUpdate(state);
+    })();
+    return () => { cancelled = true; };
+  }, [expanded]);
+
+  const toggleLiveUpdate = useCallback(async () => {
+    const next = !liveUpdate.enabled;
+    setLiveUpdate((s) => ({ ...s, enabled: next }));
+    await setLiveUpdateOptIn(next);
+  }, [liveUpdate.enabled]);
 
   useEffect(() => {
     if (!expanded || loaded) return;
@@ -145,6 +165,21 @@ export default function NotificationPrefsCard() {
               </button>
             </div>
           ))}
+          {liveUpdate.supported && (
+            <div className="flex items-center justify-between py-3">
+              <div>
+                <span className="text-sm text-text-primary">잠금화면 라이브 카드</span>
+                <p className="text-xs text-text-tertiary mt-0.5">경기 진행중 알림을 잠금화면 상단 라이브 카드로 표시 (이 기기)</p>
+              </div>
+              <button
+                onClick={() => void toggleLiveUpdate()}
+                className={`relative w-12 h-7 rounded-full transition-colors ${liveUpdate.enabled ? "bg-accent" : "bg-bg-tertiary"}`}
+                aria-label={`잠금화면 라이브 카드 ${liveUpdate.enabled ? "끄기" : "켜기"}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${liveUpdate.enabled ? "translate-x-5" : "translate-x-0"}`} />
+              </button>
+            </div>
+          )}
         </div>
       )}
     </GlassCard>

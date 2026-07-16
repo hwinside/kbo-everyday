@@ -46,6 +46,14 @@ interface GameNotificationPlugin {
   clearWidget(): Promise<void>;
   setMyTeam(opts: { code: string }): Promise<void>;
   setFavPlayers(opts: { json: string }): Promise<void>;
+  getLiveUpdateState(): Promise<LiveUpdateState>;
+  setLiveUpdateOptIn(opts: { enabled: boolean }): Promise<void>;
+}
+
+/** Android 16+(One UI 8.5) 잠금화면 라이브 카드(Promoted Ongoing) 지원/opt-in 상태. */
+export interface LiveUpdateState {
+  supported: boolean;
+  enabled: boolean;
 }
 
 const GameNotification = registerPlugin<GameNotificationPlugin>("GameNotification");
@@ -111,6 +119,27 @@ export async function setWidgetMyTeam(code: string): Promise<void> {
   if (!isAndroid) return;
   try {
     await GameNotification.setMyTeam({ code });
+  } catch {
+    // silent
+  }
+}
+
+/** 잠금화면 라이브 카드 지원/opt-in 상태 — 미지원(비안드/구버전 OS)이면 supported:false.
+ *  구 네이티브 빌드(플러그인 메서드 부재)에서도 조용히 미지원 처리. */
+export async function getLiveUpdateState(): Promise<LiveUpdateState> {
+  if (!isAndroid) return { supported: false, enabled: false };
+  try {
+    return await GameNotification.getLiveUpdateState();
+  } catch {
+    return { supported: false, enabled: false };
+  }
+}
+
+/** 잠금화면 라이브 카드 명시 opt-in 토글(디바이스 로컬). */
+export async function setLiveUpdateOptIn(enabled: boolean): Promise<void> {
+  if (!isAndroid) return;
+  try {
+    await GameNotification.setLiveUpdateOptIn({ enabled });
   } catch {
     // silent
   }
