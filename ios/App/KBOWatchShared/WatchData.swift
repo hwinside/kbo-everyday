@@ -158,10 +158,14 @@ struct WatchGame: Codable {
     var homeStarterName: String
     var currentPitcher: String
     var currentBatter: String
+    var winPitcher: String
+    var losePitcher: String
+    var savePitcher: String
 
     enum CodingKeys: String, CodingKey {
         case gameId, time, stadium, awayTeamId, homeTeamId, awayScore, homeScore, inning, isTop, status, outs, runnersOn
         case awayStarterName, homeStarterName, currentPitcher, currentBatter
+        case winPitcher, losePitcher, savePitcher
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -181,6 +185,9 @@ struct WatchGame: Codable {
         homeStarterName = (try? c.decodeIfPresent(String.self, forKey: .homeStarterName)) ?? ""
         currentPitcher = (try? c.decodeIfPresent(String.self, forKey: .currentPitcher)) ?? ""
         currentBatter = (try? c.decodeIfPresent(String.self, forKey: .currentBatter)) ?? ""
+        winPitcher = (try? c.decodeIfPresent(String.self, forKey: .winPitcher)) ?? ""
+        losePitcher = (try? c.decodeIfPresent(String.self, forKey: .losePitcher)) ?? ""
+        savePitcher = (try? c.decodeIfPresent(String.self, forKey: .savePitcher)) ?? ""
     }
 }
 
@@ -250,7 +257,10 @@ struct WatchSnapshot: Codable {
     var pitcher: String?    // 현재 투수 — live
     var batter: String?     // 현재 타자 — live
     var lastPlay: String?   // 최근 플레이 한 줄(문자중계) — live
-    var starters: String?   // "선발 곡빈 vs 원태인" — scheduled
+    var starters: String?   // "곡빈 · 원태인"(이름만 — 뷰가 '선발' 라벨+핑크 도트 렌더, 목업 v2) — scheduled
+    var winPitcher: String?  // 승리투수 — final (하린아빠 7/17)
+    var losePitcher: String? // 패전투수 — final
+    var savePitcher: String? // 세이브투수 — final(없으면 nil)
 
     var isLive: Bool { kind == "live" }
     var hasScore: Bool { kind == "live" || kind == "final" }
@@ -267,7 +277,8 @@ struct WatchSnapshot: Codable {
          awayScore: Int, homeScore: Int, line: String, rankLine: String, updatedAt: Date,
          startAt: Date?, bases: WatchBases?,
          venue: String? = nil, outs: Int? = nil, pitcher: String? = nil, batter: String? = nil,
-         lastPlay: String? = nil, starters: String? = nil) {
+         lastPlay: String? = nil, starters: String? = nil,
+         winPitcher: String? = nil, losePitcher: String? = nil, savePitcher: String? = nil) {
         self.kind = kind
         self.myTeamCode = myTeamCode
         self.awayCode = awayCode
@@ -285,6 +296,9 @@ struct WatchSnapshot: Codable {
         self.batter = batter
         self.lastPlay = lastPlay
         self.starters = starters
+        self.winPitcher = winPitcher
+        self.losePitcher = losePitcher
+        self.savePitcher = savePitcher
     }
 
     /// 위젯 갤러리/스냅샷용 익명 더미(실팀 노출 금지 — 폰 위젯 미리보기 폴리시와 동일).
@@ -479,6 +493,10 @@ enum WatchFetcher {
         if g.status == "scheduled", !g.awayStarterName.isEmpty, !g.homeStarterName.isEmpty {
             starters = "선발 \(g.awayStarterName) vs \(g.homeStarterName)"
         }
+        // 종료: 승/패/세이브 투수(목업 7/17) — 빈 문자열은 nil로 행 생략
+        let winP = (g.status == "final" && !g.winPitcher.isEmpty) ? g.winPitcher : nil
+        let loseP = (g.status == "final" && !g.losePitcher.isEmpty) ? g.losePitcher : nil
+        let saveP = (g.status == "final" && !g.savePitcher.isEmpty) ? g.savePitcher : nil
 
         return WatchSnapshot(kind: g.status, myTeamCode: myCode,
                              awayCode: awayCode, homeCode: homeCode,
@@ -486,7 +504,8 @@ enum WatchFetcher {
                              line: line, rankLine: rank, updatedAt: Date(),
                              startAt: startAt, bases: bases,
                              venue: venue, outs: outs, pitcher: pitcher, batter: batter,
-                             starters: starters)
+                             starters: starters,
+                             winPitcher: winP, losePitcher: loseP, savePitcher: saveP)
     }
 
     // MARK: - 다음 예정 경기 폴백 (오늘 경기 없을 때만)

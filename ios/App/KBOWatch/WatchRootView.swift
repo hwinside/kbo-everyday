@@ -2,7 +2,7 @@
 //  WatchRootView.swift
 //  크보팬 워치 앱 홈 — 최애팀 경기 카드 + 상태별 리치 정보(하린아빠 승인 목업).
 //  구조: 순위 헤더 → 메인 경기카드(구장·로고·스코어·상태) → 상태별 하단 카드
-//  (LIVE=아웃·주자·투타·최근 플레이 / 예정=선발). 종료는 카드만(다음 경기 미표시 — 하린아빠 7/17).
+//  (LIVE=아웃·주자·투타·최근 플레이 / 예정=선발 / 종료=승·패·세이브 투수 — 다음 경기 미표시, 하린아빠 7/17).
 //  컴플리케이션 안내문은 삼순 NO-GO(화면 1/3 낭비)로 제거.
 //
 
@@ -109,7 +109,10 @@ struct WatchGameCard: View {
                     teamText(WatchTeam.short(snap.homeCode))
                     teamLogo(snap.homeCode)
                 }
-                watchMixedText(snap.line, 12, .semibold)
+                // 목업 v2: LIVE 카드줄은 "LIVE 7회말"만 — 아웃은 하단 도트 행과 중복이라 제거(컴플리케이션 line은 유지)
+                watchMixedText(snap.isLive
+                    ? snap.line.replacingOccurrences(of: #" · \d+사$"#, with: "", options: .regularExpression)
+                    : snap.line, 12, .semibold)
                     .foregroundStyle(snap.isLive ? Color(red: 1.0, green: 0.42, blue: 0.48) : .secondary)
                     .lineLimit(1).minimumScaleFactor(0.7)
             }
@@ -137,7 +140,7 @@ struct WatchGameCard: View {
     }
 }
 
-// 상태별 하단 카드 — LIVE=아웃·주자/투타/최근 플레이, 예정=선발. (종료는 하단 행 없음)
+// 상태별 하단 카드 — LIVE=아웃·주자/투타/최근 플레이, 예정=선발, 종료=승/패(+세이브) 투수.
 struct WatchDetailRows: View {
     let snap: WatchSnapshot
     private let live = Color(red: 1.0, green: 0.42, blue: 0.48)
@@ -191,10 +194,46 @@ struct WatchDetailRows: View {
                     }
                 }
             } else if snap.kind == "scheduled", let starters = snap.starters {
+                // 목업 v2: `선발 소형준 ● 웰스` — 라벨 secondary + 이름 bold + 핑크 도트 구분
                 row {
-                    watchMixedText(starters, 12, .medium)
-                        .lineLimit(1).minimumScaleFactor(0.7)
-                        .frame(maxWidth: .infinity, alignment: .center)
+                    HStack(spacing: 5) {
+                        watchMixedText("선발", 11, .regular).foregroundStyle(.secondary)
+                        let names = starters.hasPrefix("선발 ") ? String(starters.dropFirst(3)) : starters
+                        let parts = names.components(separatedBy: " · ")
+                        if parts.count == 2 {
+                            watchMixedText(parts[0], 13, .bold)
+                            Circle().fill(live).frame(width: 3, height: 3)
+                            watchMixedText(parts[1], 13, .bold)
+                        } else {
+                            watchMixedText(names.replacingOccurrences(of: " vs ", with: " · "), 13, .bold)
+                        }
+                    }
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                    .frame(maxWidth: .infinity)
+                }
+            } else if snap.kind == "final", snap.winPitcher != nil || snap.losePitcher != nil {
+                // 승/패(+세) 투수 한 줄 — 목업 7/17. 40mm fold-in 보장 위해 단일 행(세이브는 '세' 축약).
+                row {
+                    HStack(spacing: 5) {
+                        if let w = snap.winPitcher {
+                            watchMixedText("승", 11, .regular).foregroundStyle(.secondary)
+                            watchMixedText(w, 13, .bold)
+                        }
+                        if snap.winPitcher != nil && snap.losePitcher != nil {
+                            Circle().fill(live).frame(width: 3, height: 3)
+                        }
+                        if let l = snap.losePitcher {
+                            watchMixedText("패", 11, .regular).foregroundStyle(.secondary)
+                            watchMixedText(l, 13, .bold)
+                        }
+                        if let sv = snap.savePitcher {
+                            Circle().fill(live).frame(width: 3, height: 3)
+                            watchMixedText("세", 11, .regular).foregroundStyle(.secondary)
+                            watchMixedText(sv, 13, .bold)
+                        }
+                    }
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                    .frame(maxWidth: .infinity)
                 }
             }
         }

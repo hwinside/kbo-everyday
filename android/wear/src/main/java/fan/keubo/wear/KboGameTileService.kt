@@ -242,7 +242,7 @@ class KboGameTileService : TileService() {
         }
     }
 
-    /** 상태별 하단 상세 행(목업) — LIVE=아웃·주자/투타/최근 플레이, 예정=선발. (종료는 행 없음 — 하린아빠 7/17) */
+    /** 상태별 하단 상세 행(목업) — LIVE=아웃·주자/투타/최근 플레이, 예정=선발, 종료=승/패(+세이브) 투수. */
     private fun withDetails(snap: WearSnapshot, main: LayoutElement): LayoutElement {
         val rows = detailRows(snap)
         if (rows.isEmpty()) return main
@@ -293,7 +293,45 @@ class KboGameTileService : TileService() {
             // 최근 플레이 한 줄
             snap.lastPlay?.let { rows.add(rowBox(text(it, 11f, WearTeam.COLOR_TEXT_PRIMARY))) }
         } else if (snap.kind == "scheduled") {
-            snap.starters?.let { rows.add(rowBox(text(it, 11f, WearTeam.COLOR_TEXT_PRIMARY))) }
+            // 목업 v2: `선발 소형준 ● 웰스` — 라벨 secondary + 이름 bold + 핑크 도트
+            snap.starters?.let { s ->
+                val names = s.removePrefix("선발 ")   // 구버전 캐시("선발 A vs B") 방어
+                val r = Row.Builder().setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+                r.addContent(text("선발", 10f, WearTeam.COLOR_TEXT_SECONDARY))
+                r.addContent(hspace(5f))
+                val parts = names.split(" · ")
+                if (parts.size == 2) {
+                    r.addContent(text(parts[0], 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+                    r.addContent(hspace(6f))
+                    r.addContent(text("●", 8f, WearTeam.COLOR_LIVE))
+                    r.addContent(hspace(6f))
+                    r.addContent(text(parts[1], 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+                } else {
+                    r.addContent(text(names.replace(" vs ", " · "), 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+                }
+                rows.add(rowBox(r.build()))
+            }
+        } else if (snap.kind == "final" && (snap.winPitcher != null || snap.losePitcher != null)) {
+            // 승/패(+세) 투수 한 줄 — 목업 7/17 (애플워치 동일: 단일 행, 세이브는 '세' 축약)
+            val wl = Row.Builder().setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+            snap.winPitcher?.let {
+                wl.addContent(text("승", 10f, WearTeam.COLOR_TEXT_SECONDARY))
+                wl.addContent(hspace(4f))
+                wl.addContent(text(it, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+            }
+            if (snap.winPitcher != null && snap.losePitcher != null) wl.addContent(hspace(8f))
+            snap.losePitcher?.let {
+                wl.addContent(text("패", 10f, WearTeam.COLOR_TEXT_SECONDARY))
+                wl.addContent(hspace(4f))
+                wl.addContent(text(it, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+            }
+            snap.savePitcher?.let {
+                wl.addContent(hspace(8f))
+                wl.addContent(text("세", 10f, WearTeam.COLOR_TEXT_SECONDARY))
+                wl.addContent(hspace(4f))
+                wl.addContent(text(it, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+            }
+            rows.add(rowBox(wl.build()))
         }
         return rows
     }
@@ -350,9 +388,11 @@ class KboGameTileService : TileService() {
         col.addContent(matchupRow(snap, scoreText(snap)))
             .addContent(vspace(5f))
 
+        // 목업 v2: LIVE 카드줄은 "LIVE 7회말"만 — 아웃은 하단 도트 행과 중복이라 제거
+        val liveLine = snap.line.replace(Regex(" · \\d+사$"), "")
         val liveRow = Row.Builder()
             .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
-            .addContent(text(snap.line, 13f, WearTeam.COLOR_LIVE, bold = true))
+            .addContent(text(liveLine, 13f, WearTeam.COLOR_LIVE, bold = true))
         col.addContent(liveRow.build())
 
         if (System.currentTimeMillis() - snap.updatedAt > WearTilePolicy.LIVE_DELAY_BADGE_MS) {

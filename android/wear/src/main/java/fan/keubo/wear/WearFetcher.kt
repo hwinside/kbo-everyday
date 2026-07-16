@@ -201,8 +201,12 @@ object WearFetcher {
         val awayStarter = g.optString("awayStarterName", "")
         val homeStarter = g.optString("homeStarterName", "")
         val starters = if (status == "scheduled" && awayStarter.isNotEmpty() && homeStarter.isNotEmpty()) {
-            "선발 $awayStarter vs $homeStarter"
+            "$awayStarter · $homeStarter"   // 이름만 — 타일이 '선발' 라벨+핑크 도트 렌더(목업 v2)
         } else null
+        // 종료: 승/패/세이브 투수(목업 7/17) — 빈 문자열은 null로 행 생략
+        val winPitcher = if (status == "final") g.optString("winPitcher", "").ifEmpty { null } else null
+        val losePitcher = if (status == "final") g.optString("losePitcher", "").ifEmpty { null } else null
+        val savePitcher = if (status == "final") g.optString("savePitcher", "").ifEmpty { null } else null
 
         return WearSnapshot(
             kind = status, myTeamCode = myCode,
@@ -212,6 +216,7 @@ object WearFetcher {
             updatedAt = System.currentTimeMillis(), startAt = startAt, bases = bases,
             venue = stadium.ifEmpty { null }, outs = outs, pitcher = pitcher, batter = batter,
             starters = starters,
+            winPitcher = winPitcher, losePitcher = losePitcher, savePitcher = savePitcher,
         )
     }
 

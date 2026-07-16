@@ -44,6 +44,9 @@ data class WearSnapshot(
     val batter: String? = null,    // 현재 타자 — live
     val lastPlay: String? = null,  // 최근 플레이 한 줄 — live
     val starters: String? = null,  // "선발 곡빈 vs 원태인" — scheduled
+    val winPitcher: String? = null,  // 승리투수 — final (하린아빠 7/17)
+    val losePitcher: String? = null, // 패전투수 — final
+    val savePitcher: String? = null, // 세이브투수 — final(없으면 null)
 ) {
     val isLive: Boolean get() = kind == "live"
     val hasScore: Boolean get() = kind == "live" || kind == "final"
@@ -67,6 +70,9 @@ data class WearSnapshot(
         if (batter != null) o.put("batter", batter)
         if (lastPlay != null) o.put("lastPlay", lastPlay)
         if (starters != null) o.put("starters", starters)
+        if (winPitcher != null) o.put("winPitcher", winPitcher)
+        if (losePitcher != null) o.put("losePitcher", losePitcher)
+        if (savePitcher != null) o.put("savePitcher", savePitcher)
         return o.toString()
     }
 
@@ -108,6 +114,9 @@ data class WearSnapshot(
                     batter = if (o.has("batter")) o.optString("batter") else null,
                     lastPlay = if (o.has("lastPlay")) o.optString("lastPlay") else null,
                     starters = if (o.has("starters")) o.optString("starters") else null,
+                    winPitcher = if (o.has("winPitcher")) o.optString("winPitcher") else null,
+                    losePitcher = if (o.has("losePitcher")) o.optString("losePitcher") else null,
+                    savePitcher = if (o.has("savePitcher")) o.optString("savePitcher") else null,
                 )
             } catch (_: Exception) {
                 null
