@@ -33,10 +33,20 @@ data class WearSnapshot(
     val awayScore: Int,
     val homeScore: Int,
     val line: String,        // 상태 한 줄 ("LIVE 6회말 · 2사" / "오늘 18:30" / "경기 종료 · 승")
-    val rankLine: String,    // "2위 · 1.5G" (미확보 시 "")
+    val rankLine: String,    // "2위 · 1위와 1.5경기차" (미확보 시 "")
     val updatedAt: Long,     // epoch millis — live 캐시 5분 초과 시 "업데이트 지연" 판정
     val startAt: Long?,      // 예정 경기 시작 시각(epoch millis, KST 기준 파싱) — 카운트다운용
     val bases: WearBases?,   // 잔루 — live 외엔 null
+    // 리치 필드(하린아빠 승인 목업) — 전부 nullable 기본값: 구버전 캐시 JSON 호환
+    val venue: String? = null,     // 구장("잠실") — 카드 상단
+    val outs: Int? = null,         // 아웃카운트 — live 하단 도트 행
+    val pitcher: String? = null,   // 현재 투수 — live
+    val batter: String? = null,    // 현재 타자 — live
+    val lastPlay: String? = null,  // 최근 플레이 한 줄 — live
+    val starters: String? = null,  // "선발 곡빈 vs 원태인" — scheduled
+    val winPitcher: String? = null,  // 승리투수 — final (하린아빠 7/17)
+    val losePitcher: String? = null, // 패전투수 — final
+    val savePitcher: String? = null, // 세이브투수 — final(없으면 null)
 ) {
     val isLive: Boolean get() = kind == "live"
     val hasScore: Boolean get() = kind == "live" || kind == "final"
@@ -54,6 +64,15 @@ data class WearSnapshot(
             .put("updatedAt", updatedAt)
         if (startAt != null) o.put("startAt", startAt)
         if (bases != null) o.put("bases", bases.toJson())
+        if (venue != null) o.put("venue", venue)
+        if (outs != null) o.put("outs", outs)
+        if (pitcher != null) o.put("pitcher", pitcher)
+        if (batter != null) o.put("batter", batter)
+        if (lastPlay != null) o.put("lastPlay", lastPlay)
+        if (starters != null) o.put("starters", starters)
+        if (winPitcher != null) o.put("winPitcher", winPitcher)
+        if (losePitcher != null) o.put("losePitcher", losePitcher)
+        if (savePitcher != null) o.put("savePitcher", savePitcher)
         return o.toString()
     }
 
@@ -89,6 +108,15 @@ data class WearSnapshot(
                     updatedAt = o.optLong("updatedAt", 0L),
                     startAt = if (o.has("startAt")) o.optLong("startAt") else null,
                     bases = WearBases.fromJson(o.optJSONObject("bases")),
+                    venue = if (o.has("venue")) o.optString("venue") else null,
+                    outs = if (o.has("outs")) o.optInt("outs") else null,
+                    pitcher = if (o.has("pitcher")) o.optString("pitcher") else null,
+                    batter = if (o.has("batter")) o.optString("batter") else null,
+                    lastPlay = if (o.has("lastPlay")) o.optString("lastPlay") else null,
+                    starters = if (o.has("starters")) o.optString("starters") else null,
+                    winPitcher = if (o.has("winPitcher")) o.optString("winPitcher") else null,
+                    losePitcher = if (o.has("losePitcher")) o.optString("losePitcher") else null,
+                    savePitcher = if (o.has("savePitcher")) o.optString("savePitcher") else null,
                 )
             } catch (_: Exception) {
                 null

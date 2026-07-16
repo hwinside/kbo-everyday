@@ -129,7 +129,7 @@ class WearTilePolicyTest {
     fun `snapshot json roundtrip preserves all fields`() {
         val original = WearSnapshot(
             kind = "live", myTeamCode = "LG", awayCode = "LG", homeCode = "KT",
-            awayScore = 3, homeScore = 2, line = "LIVE 7회말 · 1사", rankLine = "2위 · 1.5G",
+            awayScore = 3, homeScore = 2, line = "LIVE 7회말 · 1사", rankLine = "2위 · 1위와 1.5경기차",
             updatedAt = now, startAt = null,
             bases = WearBases(first = true, second = false, third = true),
         )

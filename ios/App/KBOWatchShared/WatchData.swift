@@ -142,7 +142,9 @@ struct WatchBases: Codable {
 }
 
 struct WatchGame: Codable {
+    var gameId: String
     var time: String
+    var stadium: String
     var awayTeamId: Int
     var homeTeamId: Int
     var awayScore: Int?
@@ -152,13 +154,24 @@ struct WatchGame: Codable {
     var status: String   // "scheduled" | "live" | "final" | "cancelled"
     var outs: Int
     var runnersOn: WatchBases?
+    var awayStarterName: String
+    var homeStarterName: String
+    var currentPitcher: String
+    var currentBatter: String
+    var winPitcher: String
+    var losePitcher: String
+    var savePitcher: String
 
     enum CodingKeys: String, CodingKey {
-        case time, awayTeamId, homeTeamId, awayScore, homeScore, inning, isTop, status, outs, runnersOn
+        case gameId, time, stadium, awayTeamId, homeTeamId, awayScore, homeScore, inning, isTop, status, outs, runnersOn
+        case awayStarterName, homeStarterName, currentPitcher, currentBatter
+        case winPitcher, losePitcher, savePitcher
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        gameId = (try? c.decodeIfPresent(String.self, forKey: .gameId)) ?? ""
         time = (try? c.decodeIfPresent(String.self, forKey: .time)) ?? ""
+        stadium = (try? c.decodeIfPresent(String.self, forKey: .stadium)) ?? ""
         awayTeamId = (try? c.decodeIfPresent(Int.self, forKey: .awayTeamId)) ?? 0
         homeTeamId = (try? c.decodeIfPresent(Int.self, forKey: .homeTeamId)) ?? 0
         awayScore = try? c.decodeIfPresent(Int.self, forKey: .awayScore)
@@ -168,6 +181,13 @@ struct WatchGame: Codable {
         status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "scheduled"
         outs = (try? c.decodeIfPresent(Int.self, forKey: .outs)) ?? 0
         runnersOn = try? c.decodeIfPresent(WatchBases.self, forKey: .runnersOn)
+        awayStarterName = (try? c.decodeIfPresent(String.self, forKey: .awayStarterName)) ?? ""
+        homeStarterName = (try? c.decodeIfPresent(String.self, forKey: .homeStarterName)) ?? ""
+        currentPitcher = (try? c.decodeIfPresent(String.self, forKey: .currentPitcher)) ?? ""
+        currentBatter = (try? c.decodeIfPresent(String.self, forKey: .currentBatter)) ?? ""
+        winPitcher = (try? c.decodeIfPresent(String.self, forKey: .winPitcher)) ?? ""
+        losePitcher = (try? c.decodeIfPresent(String.self, forKey: .losePitcher)) ?? ""
+        savePitcher = (try? c.decodeIfPresent(String.self, forKey: .savePitcher)) ?? ""
     }
 }
 
@@ -196,8 +216,9 @@ struct WatchScheduleDay: Decodable {
     var home: Bool       // 최애팀이 홈이면 true
     var time: String     // "18:30"
     var opponentId: Int
+    var stadium: String  // 구장 (미제공 시 "")
 
-    enum CodingKeys: String, CodingKey { case date, status, home, time, opponent }
+    enum CodingKeys: String, CodingKey { case date, status, home, time, opponent, stadium }
     enum OppKeys: String, CodingKey { case id }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -205,6 +226,7 @@ struct WatchScheduleDay: Decodable {
         status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "scheduled"
         home = (try? c.decodeIfPresent(Bool.self, forKey: .home)) ?? false
         time = (try? c.decodeIfPresent(String.self, forKey: .time)) ?? ""
+        stadium = (try? c.decodeIfPresent(String.self, forKey: .stadium)) ?? ""
         if let opp = try? c.nestedContainer(keyedBy: OppKeys.self, forKey: .opponent) {
             opponentId = (try? opp.decodeIfPresent(Int.self, forKey: .id)) ?? 0
         } else {
@@ -225,10 +247,20 @@ struct WatchSnapshot: Codable {
     var awayScore: Int
     var homeScore: Int
     var line: String        // 상태 한 줄 ("LIVE 6회말 · 2사" / "오늘 18:30 · 선발 곽빈" / "경기 종료 · 승")
-    var rankLine: String    // "2위 · 1.5G" (순위 미확보 시 "")
+    var rankLine: String    // "2위 · 1위와 1.5경기차" (순위 미확보 시 "")
     var updatedAt: Date
     var startAt: Date?      // 예정 경기 시작 시각(KST) — 원형 컴플리케이션 카운트다운용. scheduled 외엔 nil
     var bases: WatchBases?  // 잔루(1·2·3루) — 라이브 다이아몬드 표시용. live 외엔 nil
+    // 리치 화면(하린아빠 승인 목업) — 전부 optional: 구버전 캐시 JSON 디코드 호환(keyNotFound 방지)
+    var venue: String?      // 구장("잠실") — 카드 상단
+    var outs: Int?          // 아웃카운트 — live 하단 도트 행
+    var pitcher: String?    // 현재 투수 — live
+    var batter: String?     // 현재 타자 — live
+    var lastPlay: String?   // 최근 플레이 한 줄(문자중계) — live
+    var starters: String?   // "곡빈 · 원태인"(이름만 — 뷰가 '선발' 라벨+핑크 도트 렌더, 목업 v2) — scheduled
+    var winPitcher: String?  // 승리투수 — final (하린아빠 7/17)
+    var losePitcher: String? // 패전투수 — final
+    var savePitcher: String? // 세이브투수 — final(없으면 nil)
 
     var isLive: Bool { kind == "live" }
     var hasScore: Bool { kind == "live" || kind == "final" }
@@ -240,11 +272,40 @@ struct WatchSnapshot: Codable {
                       startAt: nil, bases: nil)
     }
 
+    /// 리치 필드는 기본 nil — 기존 생성자 호출부(컴플리케이션 등) 무변경 유지.
+    init(kind: String, myTeamCode: String, awayCode: String, homeCode: String,
+         awayScore: Int, homeScore: Int, line: String, rankLine: String, updatedAt: Date,
+         startAt: Date?, bases: WatchBases?,
+         venue: String? = nil, outs: Int? = nil, pitcher: String? = nil, batter: String? = nil,
+         lastPlay: String? = nil, starters: String? = nil,
+         winPitcher: String? = nil, losePitcher: String? = nil, savePitcher: String? = nil) {
+        self.kind = kind
+        self.myTeamCode = myTeamCode
+        self.awayCode = awayCode
+        self.homeCode = homeCode
+        self.awayScore = awayScore
+        self.homeScore = homeScore
+        self.line = line
+        self.rankLine = rankLine
+        self.updatedAt = updatedAt
+        self.startAt = startAt
+        self.bases = bases
+        self.venue = venue
+        self.outs = outs
+        self.pitcher = pitcher
+        self.batter = batter
+        self.lastPlay = lastPlay
+        self.starters = starters
+        self.winPitcher = winPitcher
+        self.losePitcher = losePitcher
+        self.savePitcher = savePitcher
+    }
+
     /// 위젯 갤러리/스냅샷용 익명 더미(실팀 노출 금지 — 폰 위젯 미리보기 폴리시와 동일).
     static func previewDummy() -> WatchSnapshot {
         WatchSnapshot(kind: "live", myTeamCode: "", awayCode: "수달스", homeCode: "돌고래스",
                       awayScore: 3, homeScore: 5,
-                      line: "LIVE 7회말 · 1사", rankLine: "2위 · 1.5G",
+                      line: "LIVE 7회말 · 1사", rankLine: "2위 · 1위와 1.5경기차",
                       updatedAt: Date(timeIntervalSince1970: 1_783_600_000), startAt: nil,
                       bases: WatchBases(first: true, second: false, third: true))
     }
@@ -320,14 +381,25 @@ enum WatchFetcher {
             if !gamesOk, let cached = WatchStore.loadCachedSnapshot(), cached.myTeamCode == myCode {
                 completion(cached); return
             }
-            let snap = compose(myCode: myCode, myId: myId, games: games, rankRow: rankRow)
+            var snap = compose(myCode: myCode, myId: myId, games: games, rankRow: rankRow)
             // 오늘 최애팀 경기가 없으면 "오늘 경기 없음" 대신 다음 예정 경기를 보여준다
             // (올스타 브레이크·팀 휴식일 대응). 예정 경기도 없으면 compose의 noGame 유지.
             if snap.kind == "noGame" {
-                fetchNextGame(myCode: myCode, myId: myId, rank: snap.rankLine) { nextSnap in
-                    let final = nextSnap ?? snap
+                fetchNextGameDay(myId: myId) { day in
+                    let final = day.map { nextSnapshot(myCode: myCode, day: $0, rank: snap.rankLine) } ?? snap
                     WatchStore.saveCachedSnapshot(final)
                     completion(final)
+                }
+                return
+            }
+            // 라이브: 문자중계 최근 플레이 한 줄(실패해도 카드 무영향 — nil 유지).
+            if snap.kind == "live",
+               let gid = games.first(where: { ($0.awayTeamId == myId || $0.homeTeamId == myId) && $0.status == "live" })?.gameId,
+               !gid.isEmpty {
+                fetchLastPlay(gameId: gid) { play in
+                    snap.lastPlay = play
+                    if gamesOk { WatchStore.saveCachedSnapshot(snap) }
+                    completion(snap)
                 }
                 return
             }
@@ -336,12 +408,35 @@ enum WatchFetcher {
         }
     }
 
+    // MARK: - 문자중계 최근 플레이 (라이브 카드 한 줄 — 서버 warmup latestRelayLine과 동일 규칙)
+
+    struct WatchRelayPlay: Decodable { var batterName: String?; var result: String? }
+    struct WatchRelayInning: Decodable { var plays: [WatchRelayPlay]? }
+    struct WatchRelayResponse: Decodable { var innings: [WatchRelayInning]? }
+
+    /// 마지막 non-empty 이닝의 마지막 play → "타자 결과"(40자 캡). 실패/빈 응답은 nil.
+    static func fetchLastPlay(gameId: String, completion: @escaping (String?) -> Void) {
+        get("/api/game-relay?gameId=\(gameId)") { data in
+            guard let data,
+                  let parsed = try? JSONDecoder().decode(WatchRelayResponse.self, from: data),
+                  let innings = parsed.innings else { completion(nil); return }
+            var last: WatchRelayPlay?
+            for inn in innings where (inn.plays?.isEmpty == false) {
+                last = inn.plays?.last
+            }
+            guard let p = last, let name = p.batterName, let result = p.result,
+                  !name.isEmpty, !result.isEmpty else { completion(nil); return }
+            let line = "\(name) \(result)"
+            completion(line.count > 40 ? String(line.prefix(39)) + "…" : line)
+        }
+    }
+
     static func rankLine(_ row: WatchRankRow?) -> String {
         guard let row, row.ranking > 0 else { return "" }
         let gb = row.gamesBehind
         guard gb > 0 else { return "\(row.ranking)위" }
         let gbText = gb == gb.rounded(.down) ? String(Int(gb)) : String(format: "%.1f", gb)
-        return "\(row.ranking)위 · \(gbText)G"
+        return "\(row.ranking)위 · 1위와 \(gbText)경기차"
     }
 
     /// 더블헤더 대비 선택 우선순위: live > scheduled(첫 경기) > final(마지막) > cancelled.
@@ -389,11 +484,28 @@ enum WatchFetcher {
         // 잔루는 라이브 경기에만 부착(다이아몬드 표시용).
         let bases = g.status == "live" ? g.runnersOn : nil
 
+        // 리치 필드(목업): 구장 / live=아웃·투타 / scheduled=선발 매치업
+        let venue = g.stadium.isEmpty ? nil : g.stadium
+        let outs = g.status == "live" ? g.outs : nil
+        let pitcher = (g.status == "live" && !g.currentPitcher.isEmpty) ? g.currentPitcher : nil
+        let batter = (g.status == "live" && !g.currentBatter.isEmpty) ? g.currentBatter : nil
+        var starters: String? = nil
+        if g.status == "scheduled", !g.awayStarterName.isEmpty, !g.homeStarterName.isEmpty {
+            starters = "선발 \(g.awayStarterName) vs \(g.homeStarterName)"
+        }
+        // 종료: 승/패/세이브 투수(목업 7/17) — 빈 문자열은 nil로 행 생략
+        let winP = (g.status == "final" && !g.winPitcher.isEmpty) ? g.winPitcher : nil
+        let loseP = (g.status == "final" && !g.losePitcher.isEmpty) ? g.losePitcher : nil
+        let saveP = (g.status == "final" && !g.savePitcher.isEmpty) ? g.savePitcher : nil
+
         return WatchSnapshot(kind: g.status, myTeamCode: myCode,
                              awayCode: awayCode, homeCode: homeCode,
                              awayScore: aScore, homeScore: hScore,
                              line: line, rankLine: rank, updatedAt: Date(),
-                             startAt: startAt, bases: bases)
+                             startAt: startAt, bases: bases,
+                             venue: venue, outs: outs, pitcher: pitcher, batter: batter,
+                             starters: starters,
+                             winPitcher: winP, losePitcher: loseP, savePitcher: saveP)
     }
 
     // MARK: - 다음 예정 경기 폴백 (오늘 경기 없을 때만)
@@ -474,10 +586,9 @@ enum WatchFetcher {
         return time.isEmpty ? datePart : "\(datePart) \(time)"
     }
 
-    /// 최애팀 slug로 team-schedule를 이달→다음달 순서로 조회, 첫 예정 경기를 스냅샷으로.
-    /// 실패/예정 없음이면 nil (호출부가 "오늘 경기 없음" 폴백).
-    static func fetchNextGame(myCode: String, myId: Int, rank: String,
-                              completion: @escaping (WatchSnapshot?) -> Void) {
+    /// 최애팀 slug로 team-schedule를 이달→다음달 순서로 조회, 첫 예정 경기 day를 반환.
+    /// 실패/예정 없음이면 nil (noGame 폴백·final 하단 카드 생략).
+    static func fetchNextGameDay(myId: Int, completion: @escaping (WatchScheduleDay?) -> Void) {
         let slug = WatchTeam.slug(fromId: myId)
         guard !slug.isEmpty else { completion(nil); return }
         let months = monthStrings()
@@ -489,7 +600,7 @@ enum WatchFetcher {
                 if let data,
                    let parsed = try? JSONDecoder().decode(WatchScheduleResponse.self, from: data),
                    let day = parsed.days.first(where: { $0.status == "scheduled" && $0.date >= fromDate }) {
-                    completion(nextSnapshot(myCode: myCode, day: day, rank: rank))
+                    completion(day)
                 } else {
                     tryMonth(idx + 1)
                 }
@@ -508,8 +619,49 @@ enum WatchFetcher {
                              awayCode: awayCode, homeCode: homeCode,
                              awayScore: 0, homeScore: 0,
                              line: line, rankLine: rank, updatedAt: Date(),
-                             startAt: startDate(dateYMD: day.date, time: day.time), bases: nil)
+                             startAt: startDate(dateYMD: day.date, time: day.time), bases: nil,
+                             venue: day.stadium.isEmpty ? nil : day.stadium)
     }
+}
+
+// MARK: - 디자인 가이드 폰트 (숫자·영문 = Montserrat / 한글 = 시스템 + 좁은 자간)
+// 잠금 LA 익스텐션과 동일 정책(1.0.7(11) 다이어트 이후 확정판): NotoSansKR VF(10.4MB)는
+// 위젯 익스텐션 30MB 한도 OOM 인시던트(2026-07-07) 원인이라 번들하지 않고,
+// Montserrat-VF(745KB)만 양 워치 타깃에 번들(UIAppFonts). 한글은 시스템 폰트+자간 -0.3.
+
+func watchMontserrat(_ size: CGFloat, _ weight: Font.Weight = .bold) -> Font {
+    Font.custom("Montserrat", size: size).weight(weight)
+}
+
+func watchSystemKR(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+    Font.system(size: size, weight: weight)
+}
+
+/// 한글 자간 — Noto Sans KR 룩과 맞추는 좁은 자간(LA kKoreanTracking과 동일).
+let kWatchKoreanTracking: CGFloat = -0.3
+
+/// 혼합 문자열을 글자 종류별 폰트로 — 라틴 글자/숫자 런=Montserrat, 그 외(한글/기호/공백)=시스템.
+/// LA mixedScriptText 포팅 — "LIVE 7회말 · 1사"·"LG · 2위 · 1위와 1경기차" 등 대응.
+func watchMixedText(_ s: String, _ size: CGFloat, _ weight: Font.Weight) -> Text {
+    var out = Text("")
+    var buf = ""
+    var bufIsLatin = false
+    func isLatin(_ ch: Character) -> Bool { ch.isASCII && (ch.isLetter || ch.isNumber) }
+    func flush() {
+        guard !buf.isEmpty else { return }
+        out = out + (bufIsLatin
+            ? Text(buf).font(watchMontserrat(size, weight))
+            : Text(buf).font(watchSystemKR(size, weight)).tracking(kWatchKoreanTracking))
+        buf = ""
+    }
+    for ch in s {
+        let lat = isLatin(ch)
+        if buf.isEmpty { buf.append(ch); bufIsLatin = lat }
+        else if lat == bufIsLatin { buf.append(ch) }
+        else { flush(); buf.append(ch); bufIsLatin = lat }
+    }
+    flush()
+    return out
 }
 
 // MARK: - 잔루 다이아몬드 (라이브 카드 — "1·3루" 글자 대신 시각 표시)
