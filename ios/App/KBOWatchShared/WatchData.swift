@@ -54,6 +54,44 @@ enum WatchTeam {
         default: return ""
         }
     }
+
+    /// 팀 로고 에셋 이름 — 갤워치 타일과 동일한 폰앱 teamlogo_* 96px(흰 원형 칩) 사본.
+    /// 워치 앱 타깃 Assets.xcassets에만 존재. 미지의 코드(더미 등)는 nil → 텍스트만 렌더.
+    static func logoAsset(_ code: String) -> String? {
+        id(fromCode: code) == 0 ? nil : "TeamLogo_\(code.uppercased())"
+    }
+
+    /// 다크 서페이스용 팀 하이라이트 RGB — 갤워치 WearTeam.highlightColor·폰 위젯
+    /// TeamRankWidget.HL_BY_ID와 동일값(임의 변경 금지).
+    private static func highlightRGB(_ code: String) -> UInt32? {
+        switch code.uppercased() {
+        case "LG": return 0xC60C30; case "OB": return 0x9BA8D4; case "KT": return 0xE85050
+        case "SK": return 0xCE0E2D; case "NC": return 0x315288; case "HT": return 0xEA0029
+        case "LT": return 0x6BC4E8; case "SS": return 0x074CA1; case "HH": return 0xFF6600
+        case "WO": return 0xC97088
+        default: return nil
+        }
+    }
+
+    static func highlightColor(_ code: String) -> Color {
+        color(fromRGB: highlightRGB(code) ?? 0xF5F5F7)
+    }
+
+    /// 최애팀 컬러 은은한 카드 틴트 — highlightColor를 다크 베이스에 20% 블렌딩
+    /// (갤워치 WearTeam.cardTint와 동일 공식: 채널 × 0.20 + 0x14). 미지의 팀은 기존 중립 카드색.
+    static func cardTint(_ code: String) -> Color {
+        guard let rgb = highlightRGB(code) else { return Color.white.opacity(0.12) }
+        func ch(_ shift: UInt32) -> Double {
+            min(255, Double((rgb >> shift) & 0xFF) * 0.20 + 20) / 255
+        }
+        return Color(red: ch(16), green: ch(8), blue: ch(0))
+    }
+
+    private static func color(fromRGB rgb: UInt32) -> Color {
+        Color(red: Double((rgb >> 16) & 0xFF) / 255,
+              green: Double((rgb >> 8) & 0xFF) / 255,
+              blue: Double(rgb & 0xFF) / 255)
+    }
 }
 
 // MARK: - App Group 스토어 (워치 사이드 — 폰과는 별개 컨테이너, 워치 앱 ↔ 워치 위젯 공유)

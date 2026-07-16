@@ -182,10 +182,32 @@ public class GameNotificationPlugin extends Plugin {
     /** 디바이스 최애팀 코드 기록 (위젯 배경/워터마크 색 결정). */
     @PluginMethod
     public void setMyTeam(PluginCall call) {
-        GameScoreWidget.setMyTeam(getContext(), call.getString("code", ""));
+        String code = call.getString("code", "");
+        GameScoreWidget.setMyTeam(getContext(), code);
         // 순위 위젯은 최애팀 행 하이라이트가 바뀌므로 캐시로 즉시 재렌더
         TeamRankWidget.renderAllFromCache(getContext());
+        pushMyTeamToWatch(code);
         call.resolve();
+    }
+
+    /**
+     * 갤럭시워치(Wear OS) 최애팀 동기화 — 애플워치 WCSession(WatchSyncManager)의 안드로이드판.
+     * Data Layer /kbo/my_team에 최신값 기록(latest-value 시맨틱). 워치 미연결/GMS 이상은
+     * 조용히 무시 — 폰 기능에 영향을 주면 안 된다.
+     */
+    private void pushMyTeamToWatch(String code) {
+        // 빈 코드(최애팀 해제)도 push — 워치가 이전 팀 캐시/스냅샷을 무효화해야 한다
+        if (code == null) code = "";
+        try {
+            com.google.android.gms.wearable.PutDataMapRequest req =
+                    com.google.android.gms.wearable.PutDataMapRequest.create("/kbo/my_team");
+            req.getDataMap().putString("code", code.toUpperCase(java.util.Locale.ROOT));
+            // 동일 팀 재선택에도 change 이벤트가 발생하도록 타임스탬프 동봉
+            req.getDataMap().putLong("at", System.currentTimeMillis());
+            com.google.android.gms.wearable.Wearable.getDataClient(getContext())
+                    .putDataItem(req.asPutDataRequest().setUrgent());
+        } catch (Exception ignored) {
+        }
     }
 
     /** 최애선수 목록 동기화 — 선수 카드 위젯 config(선수 선택 목록)가 읽는다.
