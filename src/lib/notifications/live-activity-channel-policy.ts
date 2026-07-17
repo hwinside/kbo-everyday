@@ -30,6 +30,47 @@ export function decideChannelPush(input: ChannelPushDecisionInput): ChannelPushD
   return { send: false };
 }
 
+/** 레거시 per-토큰 update 발송 판정 입력 (#664 catch-up). */
+export interface LegacyTokenUpdateInput {
+  /** 경기 단위 skip/priority 판정(decideChannelPush 결과). null = 판정 재료 없음. */
+  decision: ChannelPushDecision | null;
+  /** 토큰 등록/갱신 시각(ms). null = updated_at 미기록(레거시 행). */
+  tokenUpdatedAtMs: number | null;
+  /** 직전 상태 기록 시각(ms) — 상태 행 updated_at. null = 상태 행 없음. */
+  lastWriteAtMs: number | null;
+}
+
+export type LegacyTokenUpdateDecision =
+  | { send: true; priority?: "10" | "5" }
+  | { send: false };
+
+/**
+ * 레거시 per-토큰 update 발송 판정 — 늦은 토큰 catch-up 포함 (#664).
+ *
+ * 경기 단위 무변화 스킵(#662)은 "모든 토큰이 직전 발송을 받았다"를 전제하는데, 직전 상태
+ * 기록(lastWriteAtMs) *이후* 등록/갱신된 토큰은 그 발송을 못 받았을 수 있다(늦은 update
+ * 토큰 등록 → 카드가 예정 프레임에 고착, 2026-07-17 재현). 그런 토큰은 스킵/p5 틱이어도
+ * p10 1회 발송해 현재 프레임으로 끌어올린다.
+ *
+ * 반복 p10 방지: 발송 성공 틱이 상태 행 updated_at을 *틱 시작 시각*으로 갱신하므로,
+ * 다음 틱엔 tokenUpdatedAtMs < lastWriteAtMs가 되어 자연 해제된다. 상태 행 기록을
+ * 틱 시작 시각(토큰 fetch 이전)으로 쓰는 이유 = 틱 처리 중(토큰 fetch~upsert 사이)
+ * 등록된 토큰이 기록 시각보다 과거가 되어 catch-up을 영영 놓치는 race 방지 — 그래서
+ * 판정은 >= (경계 포함): 같은 ms 등록도 catch-up으로 본다(여분 p10 최대 1회, 무해).
+ */
+export function decideLegacyTokenUpdate(input: LegacyTokenUpdateInput): LegacyTokenUpdateDecision {
+  const isCatchUp =
+    input.lastWriteAtMs !== null &&
+    input.tokenUpdatedAtMs !== null &&
+    input.tokenUpdatedAtMs >= input.lastWriteAtMs;
+  // 판정 재료 없음(채널/폴백 행 모두 부재) = 기존 매분 발송 동작 그대로(priority 미지정 = 10).
+  if (input.decision === null) return { send: true };
+  if (!input.decision.send) {
+    return isCatchUp ? { send: true, priority: "10" } : { send: false };
+  }
+  return { send: true, priority: isCatchUp ? "10" : input.decision.priority };
+}
+
 /** ContentState → score축 문자열 (점수/이닝/초말/주자/status만). */
 export function scoreStateOf(cs: Record<string, unknown>): string {
   return [

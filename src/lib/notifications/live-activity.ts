@@ -14,6 +14,7 @@ import {
   p2sChannelEligible,
   p2sEnvAttempts,
   startTokenResultFence,
+  decideLegacyTokenUpdate,
   type ChannelPushDecision,
   type ApnsEnvironment,
 } from "@/lib/notifications/live-activity-channel-policy";
@@ -131,6 +132,10 @@ export async function pushLiveActivityUpdates(
   if (stateByGame.size === 0) return { pushed: 0, ended: 0, cleaned: 0 };
 
   const gameIds = [...stateByGame.keys()];
+  // 틱 시작 시각 — 토큰 fetch *이전*에 고정. 이 값이 이번 틱의 상태 행 updated_at으로
+  // 기록된다(발송 완료 후 now()로 쓰면, 토큰 fetch~upsert 사이에 등록된 토큰이 기록
+  // 시각보다 과거가 되어 다음 틱 catch-up 판정에서 영영 빠지는 race — 삼순 #664 리뷰).
+  const tickStartedAtIso = new Date().toISOString();
   const { data: tokens, error } = await supabase
     .from("live_activity_tokens")
     .select("user_id, game_id, push_token, app_build, updated_at")
@@ -261,16 +266,16 @@ export async function pushLiveActivityUpdates(
       // 채널 구독 확인 유저: update는 broadcast가 담당 — 스킵(end만 유지).
       if (!isEnd && subscribed.has(`${t.user_id}|${t.game_id}`)) return;
       // 무변화 틱: 레거시도 스킵(예산 절약). end는 판정 무관 발송.
-      const decision = isEnd ? null : decisionByGame.get(t.game_id);
-      // catch-up: 직전 상태 기록 *이후* 등록/갱신된 토큰은 첫 라이브 p10을 못 받았을 수
-      // 있다(늦은 update 토큰 등록 → 카드가 예정 프레임에 갇힘, 2026-07-17 하린아빠 재현).
-      // 스킵/p5 판정과 무관하게 p10 1회 발송해 현재 프레임으로 끌어올린다. 발송 성공 틱이
-      // 상태 행 updated_at을 갱신하므로 다음 틱부터 자연 해제(반복 p10 없음).
-      const lastWrite = lastWriteAtByGame.get(t.game_id);
-      const isCatchUp =
-        !isEnd && status === "live" && lastWrite !== undefined && t.updated_at !== null &&
-        new Date(t.updated_at).getTime() >= lastWrite;
-      if (decision && !decision.send && !isCatchUp) return;
+      // catch-up(늦은 토큰 p10 1회) 포함 판정은 순수 함수로 — 매트릭스는
+      // qa:la-broadcast 스모크가 고정한다(decideLegacyTokenUpdate 주석 참조).
+      const upd = isEnd
+        ? null
+        : decideLegacyTokenUpdate({
+            decision: decisionByGame.get(t.game_id) ?? null,
+            tokenUpdatedAtMs: t.updated_at !== null ? new Date(t.updated_at).getTime() : null,
+            lastWriteAtMs: lastWriteAtByGame.get(t.game_id) ?? null,
+          });
+      if (upd && !upd.send) return;
       const res = await sendLiveActivityPush(
         {
           pushToken: t.push_token,
@@ -290,8 +295,8 @@ export async function pushLiveActivityUpdates(
           // 대기 중 update를 대체(종료 후 stale update 재생 방지).
           collapseId: t.game_id,
           // 점수/이닝/주자 변화 = 10, 볼카운트/타자만 = 5(예산 미소모). end는 항상 10.
-          // catch-up 토큰은 p5 틱이어도 10으로 승격(예정 프레임 탈출은 즉시 반영 필요).
-          priority: isCatchUp ? "10" : decision?.send ? decision.priority : undefined,
+          // catch-up 토큰은 p5/스킵 틱이어도 10으로 승격(예정 프레임 탈출은 즉시 반영 필요).
+          priority: upd?.send ? upd.priority : undefined,
         },
         jwt,
       );
@@ -312,6 +317,8 @@ export async function pushLiveActivityUpdates(
   // 경기 단위 폴백 상태 기록 — 채널 행 유무와 무관하게, 이번 틱 update 성공 경기의
   // 상태 문자열을 upsert(다음 틱 무변화 스킵/priority 5 판정 재료). 채널이 살아나면
   // 읽기는 채널 행이 우선이라 이 테이블이 stale해져도 무해.
+  // updated_at = *틱 시작 시각*(발송 후 now() 아님) — 틱 처리 중 등록된 토큰이 기록
+  // 시각보다 과거로 밀려 catch-up을 영영 놓치는 race 방지(decideLegacyTokenUpdate 주석).
   for (const gid of sentUpdateGames) {
     const st = stateStringsByGame.get(gid);
     if (!st) continue;
@@ -322,7 +329,7 @@ export async function pushLiveActivityUpdates(
           game_id: gid,
           last_score_state: st.score,
           last_state_hash: st.hash,
-          updated_at: new Date().toISOString(),
+          updated_at: tickStartedAtIso,
         },
         { onConflict: "game_id" },
       );

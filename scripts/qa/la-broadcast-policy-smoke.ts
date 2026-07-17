@@ -12,6 +12,7 @@ import {
   startTokenEnvPatch,
   channelMutationFence,
   startTokenResultFence,
+  decideLegacyTokenUpdate,
 } from "../../src/lib/notifications/live-activity-channel-policy";
 
 let pass = 0;
@@ -179,6 +180,61 @@ check(
   rowMatches(startTokenResultFence("u1", "tokA"), { ...rowAfterRotation, push_to_start_token: "tokA" }),
   true,
 );
+
+// ── decideLegacyTokenUpdate — 늦은 토큰 catch-up (#664) ──
+// 상태 행은 *틱 시작 시각*으로 기록된다(live-activity.ts tickStartedAtIso) — 아래
+// 경계(>=) 테스트들이 그 계약 위에서만 성립한다. 기록을 발송 후 now()로 되돌리면
+// "틱 처리 중 등록된 토큰이 catch-up을 영영 놓치는" race가 부활한다.
+const T = 1_784_260_000_000; // 기준 시각(ms)
+const skipTick = { send: false } as const;
+const p5Tick = { send: true, priority: "5" } as const;
+const p10Tick = { send: true, priority: "10" } as const;
+
+// 스킵 틱: 직전 기록 이후 등록된 토큰만 p10 catch-up, 나머지는 스킵 유지
+check("catch-up: skip tick + late token → p10",
+  decideLegacyTokenUpdate({ decision: skipTick, tokenUpdatedAtMs: T + 1, lastWriteAtMs: T }),
+  { send: true, priority: "10" });
+check("catch-up: skip tick + old token → skip",
+  decideLegacyTokenUpdate({ decision: skipTick, tokenUpdatedAtMs: T - 1, lastWriteAtMs: T }),
+  { send: false });
+// 경계: 같은 ms 등록(틱 시작과 동시) = catch-up 포함(>=). 틱 처리 중 등록 race 방어.
+check("catch-up: boundary token(updated == lastWrite) → p10 (race 방어)",
+  decideLegacyTokenUpdate({ decision: skipTick, tokenUpdatedAtMs: T, lastWriteAtMs: T }),
+  { send: true, priority: "10" });
+
+// p5 틱: 늦은 토큰만 p10 승격, 나머지는 p5 유지
+check("catch-up: p5 tick + late token → p10 승격",
+  decideLegacyTokenUpdate({ decision: p5Tick, tokenUpdatedAtMs: T + 1, lastWriteAtMs: T }),
+  { send: true, priority: "10" });
+check("catch-up: p5 tick + old token → p5 유지",
+  decideLegacyTokenUpdate({ decision: p5Tick, tokenUpdatedAtMs: T - 1, lastWriteAtMs: T }),
+  { send: true, priority: "5" });
+
+// p10 틱: catch-up 여부 무관 p10 (중복 승격 없음)
+check("catch-up: p10 tick + late token → p10 (변화 없음)",
+  decideLegacyTokenUpdate({ decision: p10Tick, tokenUpdatedAtMs: T + 1, lastWriteAtMs: T }),
+  { send: true, priority: "10" });
+
+// 자연 해제: catch-up p10을 받은 다음 틱(상태 행이 그 틱 시작 시각으로 전진)엔 old token
+// → 스킵. 같은 토큰이 매 틱 p10을 반복 수신하지 않는다(과도한 p10 재발송 방지).
+check("catch-up: 해제 — 상태 행 전진 후 같은 토큰은 skip",
+  decideLegacyTokenUpdate({ decision: skipTick, tokenUpdatedAtMs: T + 1, lastWriteAtMs: T + 60_000 }),
+  { send: false });
+// 단, 재등록(register upsert가 동일 토큰도 updated_at 갱신 — route 계약)하면 다시 1회 catch-up
+check("catch-up: 재등록(updated_at 갱신) → 다시 1회 p10",
+  decideLegacyTokenUpdate({ decision: skipTick, tokenUpdatedAtMs: T + 120_000, lastWriteAtMs: T + 60_000 }),
+  { send: true, priority: "10" });
+
+// 판정 재료 부재 폴백
+check("catch-up: 상태 행 없음(lastWrite null) → decision만 따름 (skip)",
+  decideLegacyTokenUpdate({ decision: skipTick, tokenUpdatedAtMs: T, lastWriteAtMs: null }),
+  { send: false });
+check("catch-up: token updated_at 미기록 → catch-up 아님 (skip 유지)",
+  decideLegacyTokenUpdate({ decision: skipTick, tokenUpdatedAtMs: null, lastWriteAtMs: T }),
+  { send: false });
+check("catch-up: decision null(판정 불가) → 기존 매분 발송 동작(p10 폴백)",
+  decideLegacyTokenUpdate({ decision: null, tokenUpdatedAtMs: T - 1, lastWriteAtMs: T }),
+  { send: true });
 
 console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);
