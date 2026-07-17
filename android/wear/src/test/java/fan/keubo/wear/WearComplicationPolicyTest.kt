@@ -39,19 +39,48 @@ class WearComplicationPolicyTest {
     // ── 경기 SHORT_TEXT ──
 
     @Test
-    fun `live short는 이닝 title + away-home 스코어`() {
+    fun `live short는 이닝 title + 내팀 우선 라벨 스코어`() {
         val s = snap("live", line = "LIVE 8회말 · 2사")
         val spec = WearComplicationPolicy.gameShort(s, noonMs)
         assertEquals("8회말", spec.title)
-        assertEquals("1:4", spec.text)
+        assertEquals("삼성 4:1", spec.text) // 내팀 SS(홈) 4점이 앞 + 약어
         assertNull(spec.countdownToMs)
     }
 
     @Test
-    fun `final short는 종료 title + 스코어`() {
+    fun `final short는 종료 title + 내팀 우선 스코어`() {
         val spec = WearComplicationPolicy.gameShort(snap("final"), noonMs)
         assertEquals("종료", spec.title)
-        assertEquals("1:4", spec.text)
+        assertEquals("삼성 4:1", spec.text)
+    }
+
+    // ── myTeamScore 표기 규칙 ──
+
+    @Test
+    fun `myTeamScore는 내팀 점수가 앞 - 원정이어도`() {
+        // 내팀 LG가 원정(away=LG 1, home=SS 6) → "LG 1:6"
+        val s = snap("live", my = "LG", away = "LG", home = "SS", aScore = 1, hScore = 6)
+        assertEquals("LG 1:6", WearComplicationPolicy.myTeamScore(s))
+        // 내팀 LG가 홈(away=KT 6, home=LG 1) → 여전히 내 점수 1이 앞
+        val s2 = snap("live", my = "LG", away = "KT", home = "LG", aScore = 6, hScore = 1)
+        assertEquals("LG 1:6", WearComplicationPolicy.myTeamScore(s2))
+    }
+
+    @Test
+    fun `myTeamScore 7자 초과 시 공백 제거 후 약어 생략 순으로 축약`() {
+        // "KIA 10:4" = 8자 → 공백 제거 "KIA10:4" = 7자 OK
+        val s = snap("live", my = "HT", away = "HT", home = "SS", aScore = 10, hScore = 4)
+        assertEquals("KIA10:4", WearComplicationPolicy.myTeamScore(s))
+        // "KIA 10:12" = 9자, "KIA10:12" = 8자 → 약어 생략, 내 점수 앞 유지 "10:12"
+        val s2 = snap("live", my = "HT", away = "HT", home = "SS", aScore = 10, hScore = 12)
+        assertEquals("10:12", WearComplicationPolicy.myTeamScore(s2))
+    }
+
+    @Test
+    fun `myTeamScore 한글 약어도 7자 이내 유지`() {
+        // "삼성 10:4" = 7자 → 공백 포함 그대로
+        val s = snap("live", aScore = 4, hScore = 10)
+        assertEquals("삼성 10:4", WearComplicationPolicy.myTeamScore(s))
     }
 
     @Test

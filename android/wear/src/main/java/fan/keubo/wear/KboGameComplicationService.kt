@@ -8,7 +8,7 @@ import androidx.wear.watchface.complications.datasource.ComplicationRequest
 
 /**
  * 데이터소스 ① 최애팀 경기 — 다음경기·카운트다운·라이브 스코어 (스펙 §4, 애플워치 #621 패리티).
- * SHORT_TEXT: "8회말 / 1:4", 예정 시 "vs 삼성" + 자동 카운트다운. LONG_TEXT: 매치업 + 상황 줄.
+ * SHORT_TEXT: "8회말 / 삼성 4:1"(내 팀 점수 앞 + 약어), 예정 시 "vs 삼성" + 자동 카운트다운. LONG_TEXT: 매치업 + 상황 줄.
  */
 class KboGameComplicationService : KboComplicationServiceBase() {
 
@@ -30,7 +30,7 @@ class KboGameComplicationService : KboComplicationServiceBase() {
     // 캐러셀 미리보기 — 익명 더미(팀명 없는 스코어/수달스·돌고래스), 위젯 피커 폴리시(#564/#576) 동일
     override fun getPreviewData(type: ComplicationType): ComplicationData? = when (type) {
         ComplicationType.SHORT_TEXT ->
-            ShortTextComplicationData.Builder(plain("3:2"), plain("크보팬 경기 미리보기"))
+            ShortTextComplicationData.Builder(plain("수달 3:2"), plain("크보팬 경기 미리보기"))
                 .setTitle(plain("8회말"))
                 .build()
         ComplicationType.LONG_TEXT ->
