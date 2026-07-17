@@ -57,12 +57,21 @@ export type LegacyTokenUpdateDecision =
  * 틱 시작 시각(토큰 fetch 이전)으로 쓰는 이유 = 틱 처리 중(토큰 fetch~upsert 사이)
  * 등록된 토큰이 기록 시각보다 과거가 되어 catch-up을 영영 놓치는 race 방지 — 그래서
  * 판정은 >= (경계 포함): 같은 ms 등록도 catch-up으로 본다(여분 p10 최대 1회, 무해).
+ *
+ * bootstrap gap (#664 재리뷰 blocker): cursor(lastWriteAtMs)가 null인 동안 채널 행 기반
+ * decision이 skip이면 발송 0 → 성공 틱이 없어 cursor가 영영 안 생기고, 그 사이 등록된
+ * 늦은 토큰은 catch-up 판정 자체가 불가(비교 기준 부재)라 다음 상태 변화까지 계속 굶는다.
+ * → lastWriteAtMs=null은 "bootstrap 미완료"로 보고 skip/p5여도 p10 1회 발송한다.
+ * 성공 시 발송 루프가 cursor를 생성(sentUpdateGames upsert)해 다음 틱부터 자연 해제 —
+ * 과다 발송은 경기당 bootstrap 틱 1회로 유계(cursor 생성 전 = 기존 매분 p10과 동일 동작).
  */
 export function decideLegacyTokenUpdate(input: LegacyTokenUpdateInput): LegacyTokenUpdateDecision {
   const isCatchUp =
-    input.lastWriteAtMs !== null &&
-    input.tokenUpdatedAtMs !== null &&
-    input.tokenUpdatedAtMs >= input.lastWriteAtMs;
+    input.lastWriteAtMs === null
+      // bootstrap 미완료 — 비교 기준(cursor)이 없어 늦은 토큰을 구분할 수 없다. 전 토큰
+      // p10 1회로 현재 프레임 보장 + 성공 틱이 cursor를 만들어 다음 틱부터 정상 판정.
+      ? true
+      : input.tokenUpdatedAtMs !== null && input.tokenUpdatedAtMs >= input.lastWriteAtMs;
   // 판정 재료 없음(채널/폴백 행 모두 부재) = 기존 매분 발송 동작 그대로(priority 미지정 = 10).
   if (input.decision === null) return { send: true };
   if (!input.decision.send) {
