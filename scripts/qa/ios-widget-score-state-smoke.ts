@@ -13,6 +13,7 @@ import {
   widgetTransientFailures,
   shouldRevertWidgetCursor,
   shouldApplyWidgetLiveEvent,
+  shouldPreserveWidgetFence,
   WIDGET_PUSH_MAX_RETRIES,
   WIDGET_RETRY_SENTINEL,
 } from "../../src/lib/notifications/ios-widget-policy";
@@ -68,6 +69,20 @@ check("동일 시각(중복 배달) 거부", shouldApplyWidgetLiveEvent(2000, 20
 check("정순 배달(더 새 이벤트) 적용", shouldApplyWidgetLiveEvent(1000, 2000, false), true);
 check("final → old: 종료 카드에 늦은 live 거부", shouldApplyWidgetLiveEvent(1000, 2000, true), false);
 check("파싱 실패(eventMs 0) + stored 존재 → 거부", shouldApplyWidgetLiveEvent(1000, 0, false), false);
+
+// ── 교차-writer fence 보존 (삼순 재리뷰 blocker① — Swift write() 미러) ───────
+check("same-game + fence 없는 write(JS/LA) → 보존", shouldPreserveWidgetFence("20260718LGKT0", "20260718LGKT0", false), true);
+check("다른 경기 write → 리셋(보존 안 함)", shouldPreserveWidgetFence("20260718LGKT0", "20260719LGKT0", false), false);
+check("markLiveScore(명시 전진) → 자기 값 사용", shouldPreserveWidgetFence("20260718LGKT0", "20260718LGKT0", true), false);
+check("기존 스냅샷 없음 → 보존 대상 없음", shouldPreserveWidgetFence(null, "20260718LGKT0", false), false);
+// 삼순 지정 회귀 시나리오: new push(ev=2000) → same-game JS/LA write(fence 보존) → old push(ev=1000) 거부
+{
+  const storedAfterPush = 2000; // new push 적용
+  const preserved = shouldPreserveWidgetFence("20260718LGKT0", "20260718LGKT0", false)
+    ? storedAfterPush
+    : null; // 보존 안 됐다면 fence 소실(구 버전 버그 재현)
+  check("회귀 시나리오: same-game write 후에도 old push(1000) 거부", shouldApplyWidgetLiveEvent(preserved, 1000, false), false);
+}
 
 console.log(`\nios-widget-score-state-smoke: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);

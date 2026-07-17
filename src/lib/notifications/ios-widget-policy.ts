@@ -74,3 +74,22 @@ export function shouldApplyWidgetLiveEvent(
   if (storedEventMs !== null && incomingEventMs <= storedEventMs) return false;
   return true;
 }
+
+/**
+ * same-game 스냅샷 write 시 fence 승계 판정 — Swift `WidgetSnapshotStore.write` 미러
+ * (삼순 #674 재리뷰 blocker① 계약 고정용, 양쪽 동치 유지).
+ * 같은 경기의 다른 writer(JS 브리지/LA 라이프사이클)는 fence 키 없는 dict로 전체
+ * 교체하므로 보존하지 않으면 삭제되고, 그 뒤 늦은 배달이 stored=nil로 통과해 점수가
+ * 되돌아간다(`new push → same-game write → old push` 회귀). 규칙:
+ * - writer가 fence를 명시 전진(markLiveScore, 새 dict에 키 있음) → 승계 안 함(자기 값)
+ * - 같은 경기 + 키 없는 write → 기존 fence 승계(보존)
+ * - 다른 경기(새 경기 스냅샷) → 승계 안 함(fence 리셋이 정상)
+ */
+export function shouldPreserveWidgetFence(
+  prevGameId: string | null,
+  nextGameId: string,
+  nextWriteHasEventMs: boolean,
+): boolean {
+  if (nextWriteHasEventMs) return false;
+  return prevGameId !== null && prevGameId === nextGameId;
+}

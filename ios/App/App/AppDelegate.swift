@@ -143,7 +143,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             if let gameId = userInfo["gameId"] as? String,
                let asStr = userInfo["w_as"] as? String,
                let hsStr = userInfo["w_hs"] as? String {
-                WidgetSnapshotStore.markLiveScore(
+                // 반환값 = 실제 적용 여부 — no-op(스냅샷 없음/다른 경기/final/역순 거부)이면
+                // .noData로 보고해 silent-push 예산 신뢰를 지킨다(삼순 #674 재리뷰 blocker②).
+                let applied = WidgetSnapshotStore.markLiveScore(
                     gameId: gameId,
                     awayScore: Int(asStr) ?? 0,
                     homeScore: Int(hsStr) ?? 0,
@@ -158,7 +160,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                     lastPlay: userInfo["w_lastplay"] as? String ?? "",
                     eventMs: Double(userInfo["w_ev"] as? String ?? "") ?? 0
                 )
-                completionHandler(.newData)
+                completionHandler(applied ? .newData : .noData)
             } else {
                 completionHandler(.noData)
             }

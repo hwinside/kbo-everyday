@@ -731,13 +731,22 @@ enum WidgetSnapshotStore {
         // 다음 예정 경기(위젯 06:00 자동 전환용)가 이번 쓰기에 없으면, 같은 경기의 기존
         // 스냅샷에서 보존한다. 라이브/종료 갱신이 JS 브리지와 네이티브 LA 라이프사이클 양쪽에서
         // 오므로, next 없는 경로가 덮어써 롤오버 데이터가 유실되는 걸 막는다(같은 gameId 한정).
-        if out["next"] == nil,
-           let data = ud.data(forKey: key),
+        if let data = ud.data(forKey: key),
            let prev = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let prevGameId = prev["gameId"] as? String,
-           (out["gameId"] as? String) == prevGameId,
-           let prevNext = prev["next"] {
-            out["next"] = prevNext
+           (out["gameId"] as? String) == prevGameId {
+            if out["next"] == nil, let prevNext = prev["next"] {
+                out["next"] = prevNext
+            }
+            // 역순 배달 fence 보존 (삼순 #674 재리뷰 blocker①) — 같은 경기의 다른 writer
+            // (JS 브리지 writeWidgetSnapshot / LA 라이프사이클 refresh)는 liveEventMs 키가
+            // 없는 dict로 전체 교체하므로, 여기서 승계하지 않으면 fence가 삭제돼
+            // `new push → same-game write → old push` 순서에서 늦은 배달이 점수를 되돌린다.
+            // 계약: same-game write = fence 보존 / 전진은 markLiveScore만 / 다른 경기 = 리셋.
+            // TS 미러 shouldPreserveWidgetFence(ios-widget-policy.ts)와 동치 유지.
+            if out["liveEventMs"] == nil, let prevEv = prev["liveEventMs"] {
+                out["liveEventMs"] = prevEv
+            }
         }
         // B안(위젯 stale 가드) 지원 — 마지막 기록 시각(epoch초)을 항상 새로 찍는다. 위젯
         // getTimeline이 live 스냅샷이 이 시각+5h를 넘도록 갱신 안 되면 LIVE를 떼고 '업데이트
@@ -755,25 +764,29 @@ enum WidgetSnapshotStore {
     /// 보존하고 라이브 필드만 덮어쓴다(브로드캐스트 push라 per-user myTeamCode를 실을 수 없음).
     /// 스냅샷이 없거나 다른 경기면 no-op(위젯 미표시 유저 — myTeamCode를 날조하지 않는다).
     /// scheduled 스냅샷(경기 전 카드)도 이 경기면 live로 전환. 이미 final이면 skip(종료 우선).
+    /// 반환값 = 실제 적용 여부(삼순 #674 재리뷰 blocker②) — no-op(스냅샷 없음/다른 경기/
+    /// final/역순 거부)이면 false. AppDelegate가 completionHandler(.newData/.noData) 분기에 사용해
+    /// silent-push 예산 보고를 정직하게 유지한다.
+    @discardableResult
     static func markLiveScore(
         gameId: String, awayScore: Int, homeScore: Int,
         inning: Int, isTopInning: Bool, outs: Int,
         onFirst: Bool, onSecond: Bool, onThird: Bool,
         pitcherName: String, batterName: String, lastPlay: String,
         eventMs: Double
-    ) {
+    ) -> Bool {
         guard let ud = UserDefaults(suiteName: appGroupId),
               let data = ud.data(forKey: key),
               let obj = try? JSONSerialization.jsonObject(with: data),
               var dict = obj as? [String: Any],
               (dict["hasGame"] as? Bool) == true,
-              (dict["gameId"] as? String) == gameId else { return }
+              (dict["gameId"] as? String) == gameId else { return false }
         // 이미 종료 처리된 카드는 라이브로 되돌리지 않는다(game_end가 먼저 왔을 수 있음 — final → old 방어).
-        if (dict["isFinal"] as? Bool) == true || (dict["status"] as? String) == "final" { return }
+        if (dict["isFinal"] as? Bool) == true || (dict["status"] as? String) == "final" { return false }
         // 지연/역순 배달 fence(삼순 #674 blocker③) — 저장된 이벤트 시각보다 오래된(≤) push는
         // 무시해 늦은 배달이 최신 점수를 되돌리지 못하게 한다(new → old 방어).
         // 계약은 TS 미러 shouldApplyWidgetLiveEvent(ios-widget-policy.ts)와 동치 — 양쪽 동시 유지.
-        if let stored = dict["liveEventMs"] as? Double, eventMs <= stored { return }
+        if let stored = dict["liveEventMs"] as? Double, eventMs <= stored { return false }
         dict["awayScore"] = awayScore
         dict["homeScore"] = homeScore
         dict["inning"] = inning
@@ -792,7 +805,8 @@ enum WidgetSnapshotStore {
         // fence 기준 저장 — 다음 push가 이보다 오래되면(≤) 거부된다. 스냅샷 JSON에 함께
         // 영속되며 WidgetGameSnapshot Codable에는 없는 키라 렌더엔 무영향(dict 경유만 읽음).
         dict["liveEventMs"] = eventMs
-        write(dict) // 팀코드/myTeamCode/next 보존 + savedAt 갱신 + reloadAllTimelines
+        write(dict) // 팀코드/myTeamCode/next/fence 보존 + savedAt 갱신 + reloadAllTimelines
+        return true
     }
 
     /// 경기 종료 무음 push 수신 시(A안) 홈위젯 스냅샷을 최종 스코어로 종료 처리한다.
