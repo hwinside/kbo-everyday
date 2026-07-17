@@ -151,10 +151,12 @@ class KboGameTileService : TileService() {
     // ── 레이아웃 (애플워치 WatchGameCard 패리티 — 헤더 + 라운드 카드) ──
 
     private fun renderRoot(snap: WearSnapshot): LayoutElement {
+        // 삼순 블로커 1(#661): 시스템 "애니메이션 제거" 설정 시 marquee 대신 말줄임 폴백.
+        val reduceMotion = isReduceMotionEnabled(applicationContext)
         val content = when (snap.kind) {
-            "live" -> withDetails(snap, headerAndCard(snap, liveInner(snap)))
-            "final" -> withDetails(snap, headerAndCard(snap, finalInner(snap)))
-            "scheduled" -> withDetails(snap, headerAndCard(snap, scheduledInner(snap)))
+            "live" -> withDetails(snap, headerAndCard(snap, liveInner(snap)), reduceMotion)
+            "final" -> withDetails(snap, headerAndCard(snap, finalInner(snap)), reduceMotion)
+            "scheduled" -> withDetails(snap, headerAndCard(snap, scheduledInner(snap)), reduceMotion)
             "cancelled" -> headerAndCard(snap, matchupMessageInner(snap, "경기 취소"))
             "noTeam" -> card(messageInner("크보팬 앱에서", "최애팀을 선택하세요"))
             "loading" -> card(messageInner("크보팬", "불러오는 중…"))
@@ -243,8 +245,8 @@ class KboGameTileService : TileService() {
     }
 
     /** 상태별 하단 상세 행(목업) — LIVE=아웃·주자/투타/최근 플레이, 예정=선발, 종료=승/패(+세이브) 투수. */
-    private fun withDetails(snap: WearSnapshot, main: LayoutElement): LayoutElement {
-        val rows = detailRows(snap)
+    private fun withDetails(snap: WearSnapshot, main: LayoutElement, reduceMotion: Boolean): LayoutElement {
+        val rows = detailRows(snap, reduceMotion)
         if (rows.isEmpty()) return main
         val col = Column.Builder()
             .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
@@ -256,7 +258,7 @@ class KboGameTileService : TileService() {
         return col.build()
     }
 
-    private fun detailRows(snap: WearSnapshot): List<LayoutElement> {
+    private fun detailRows(snap: WearSnapshot, reduceMotion: Boolean): List<LayoutElement> {
         val rows = ArrayList<LayoutElement>()
         if (snap.isLive) {
             // 아웃카운트 도트 + 주자 다이아몬드
@@ -274,66 +276,55 @@ class KboGameTileService : TileService() {
                 outsRow.addContent(baseDiamond(it))
             }
             rows.add(rowBox(outsRow.build()))
-            // 투수 · 타자
+            // 투수 · 타자 — 한 줄로 합쳐 marquee(삼순 블로커 2, #661). ProtoLayout marquee는
+            // 단일 Text가 Box(expand)의 유일한 자식일 때만 발동(lastPlay로 검증됨) — 라벨/이름
+            // 다색 Row 조합으론 폭 제약이 안 걸려 개별 라벨 스타일은 포기하고 한 줄로 통일.
             if (snap.pitcher != null || snap.batter != null) {
-                val pb = Row.Builder().setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
-                snap.pitcher?.let {
-                    pb.addContent(text("투수", 10f, WearTeam.COLOR_TEXT_SECONDARY))
-                    pb.addContent(hspace(4f))
-                    pb.addContent(text(it, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
-                }
-                if (snap.pitcher != null && snap.batter != null) pb.addContent(hspace(8f))
-                snap.batter?.let {
-                    pb.addContent(text("타자", 10f, WearTeam.COLOR_TEXT_SECONDARY))
-                    pb.addContent(hspace(4f))
-                    pb.addContent(text(it, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
-                }
-                rows.add(rowBox(pb.build()))
+                val parts = ArrayList<String>()
+                snap.pitcher?.let { parts.add("투수 $it") }
+                snap.batter?.let { parts.add("타자 $it") }
+                rows.add(
+                    rowBox(
+                        marqueeText(parts.joinToString(" · "), 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true, reduceMotion = reduceMotion),
+                        expandWidth = true,
+                    ),
+                )
             }
             // 최근 플레이 한 줄 — 길면 marquee 드리프트(하린아빠 7/17), 행 폭은 카드 폭에 맞춰 고정
             snap.lastPlay?.let {
-                rows.add(rowBox(marqueeText(it, 10f, WearTeam.COLOR_TEXT_PRIMARY), expandWidth = true))
+                rows.add(rowBox(marqueeText(it, 10f, WearTeam.COLOR_TEXT_PRIMARY, reduceMotion = reduceMotion), expandWidth = true))
             }
         } else if (snap.kind == "scheduled") {
-            // 목업 v2: `선발 소형준 ● 웰스` — 라벨 secondary + 이름 bold + 핑크 도트
+            // 목업 v2: `선발 소형준 ● 웰스` — 길면 marquee 드리프트(삼순 블로커 2, #661)
             snap.starters?.let { s ->
                 val names = s.removePrefix("선발 ")   // 구버전 캐시("선발 A vs B") 방어
-                val r = Row.Builder().setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
-                r.addContent(text("선발", 10f, WearTeam.COLOR_TEXT_SECONDARY))
-                r.addContent(hspace(5f))
-                val parts = names.split(" · ")
-                if (parts.size == 2) {
-                    r.addContent(text(parts[0], 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
-                    r.addContent(hspace(6f))
-                    r.addContent(text("●", 8f, WearTeam.COLOR_LIVE))
-                    r.addContent(hspace(6f))
-                    r.addContent(text(parts[1], 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
-                } else {
-                    r.addContent(text(names.replace(" vs ", " · "), 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
-                }
-                rows.add(rowBox(r.build()))
+                val line = "선발 " + names.replace(" · ", " ● ").replace(" vs ", " ● ")
+                rows.add(
+                    rowBox(
+                        marqueeText(line, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true, reduceMotion = reduceMotion),
+                        expandWidth = true,
+                    ),
+                )
             }
         } else if (snap.kind == "final" && (snap.winPitcher != null || snap.losePitcher != null)) {
             // 승/패 투수 한 줄 + 세이브 있을 때만 2행째 컴팩트 행(삼순 SSOT — 없으면 생략, 애플워치 동일)
-            val wl = Row.Builder().setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
-            snap.winPitcher?.let {
-                wl.addContent(text("승", 10f, WearTeam.COLOR_TEXT_SECONDARY))
-                wl.addContent(hspace(4f))
-                wl.addContent(text(it, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
-            }
-            if (snap.winPitcher != null && snap.losePitcher != null) wl.addContent(hspace(8f))
-            snap.losePitcher?.let {
-                wl.addContent(text("패", 10f, WearTeam.COLOR_TEXT_SECONDARY))
-                wl.addContent(hspace(4f))
-                wl.addContent(text(it, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
-            }
-            rows.add(rowBox(wl.build()))
+            // 길면 marquee 드리프트(삼순 블로커 2, #661)
+            val wlParts = ArrayList<String>()
+            snap.winPitcher?.let { wlParts.add("승 $it") }
+            snap.losePitcher?.let { wlParts.add("패 $it") }
+            rows.add(
+                rowBox(
+                    marqueeText(wlParts.joinToString(" · "), 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true, reduceMotion = reduceMotion),
+                    expandWidth = true,
+                ),
+            )
             snap.savePitcher?.let {
-                val sv = Row.Builder().setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
-                sv.addContent(text("세이브", 10f, WearTeam.COLOR_TEXT_SECONDARY))
-                sv.addContent(hspace(4f))
-                sv.addContent(text(it, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
-                rows.add(rowBox(sv.build()))
+                rows.add(
+                    rowBox(
+                        marqueeText("세이브 $it", 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true, reduceMotion = reduceMotion),
+                        expandWidth = true,
+                    ),
+                )
             }
         }
         return rows
@@ -589,9 +580,16 @@ class KboGameTileService : TileService() {
     /**
      * 1줄 marquee 텍스트 — 부모 폭 초과 시 자동 드리프트(하린아빠 7/17).
      * ProtoLayout 네이티브 marquee(애플워치 WatchDriftRow 대응물). 미지원 렌더러는 말줄임 폴백.
+     * reduceMotion(시스템 "애니메이션 제거" 설정, 삼순 블로커 1 #661) 시엔 무한 반복 대신 말줄임.
      */
     @androidx.annotation.OptIn(markerClass = [androidx.wear.protolayout.expression.ProtoLayoutExperimental::class])
-    private fun marqueeText(value: String, size: Float, color: Int, bold: Boolean = false): LayoutElement {
+    private fun marqueeText(
+        value: String,
+        size: Float,
+        color: Int,
+        bold: Boolean = false,
+        reduceMotion: Boolean = false,
+    ): LayoutElement {
         val style = FontStyle.Builder()
             .setSize(sp(size))
             .setColor(argb(color))
@@ -602,13 +600,28 @@ class KboGameTileService : TileService() {
                     .build(),
             )
         }
-        return Text.Builder()
+        val builder = Text.Builder()
             .setText(TypeBuilders.StringProp.Builder(value).build())
             .setFontStyle(style.build())
             .setMaxLines(1)
-            .setOverflow(LayoutElementBuilders.TEXT_OVERFLOW_MARQUEE)
-            .setMarqueeIterations(-1) // 무한 반복
-            .build()
+        return if (reduceMotion) {
+            builder.setOverflow(LayoutElementBuilders.TEXT_OVERFLOW_ELLIPSIZE_END).build()
+        } else {
+            builder.setOverflow(LayoutElementBuilders.TEXT_OVERFLOW_MARQUEE)
+                .setMarqueeIterations(-1) // 무한 반복
+                .build()
+        }
+    }
+
+    /** 시스템 "애니메이션 제거"(동작 줄이기) 여부 — ValueAnimator.areAnimatorsEnabled()와 동일 신호. */
+    private fun isReduceMotionEnabled(ctx: android.content.Context): Boolean = try {
+        android.provider.Settings.Global.getFloat(
+            ctx.contentResolver,
+            android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+            1f,
+        ) == 0f
+    } catch (e: Exception) {
+        false
     }
 
     private fun vspace(dpVal: Float): LayoutElement =

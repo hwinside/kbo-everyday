@@ -262,6 +262,8 @@ struct WatchDriftRow<Content: View>: View {
     var centered = false          // 폭이 충분할 때 가운데 정렬(선발/승패/세이브 행), 넘치면 leading
     @ViewBuilder var content: () -> Content
 
+    // 삼순 블로커 1(#661): 시스템 "동작 줄이기" ON이면 무한 반복 드리프트 대신 말줄임 폴백.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var contentWidth: CGFloat = 0
     @State private var containerWidth: CGFloat = 0
     @State private var atEnd = false
@@ -269,32 +271,39 @@ struct WatchDriftRow<Content: View>: View {
     private var overflow: CGFloat { max(0, contentWidth - containerWidth) }
 
     var body: some View {
-        // 사이징 카피: 컨테이너 폭에 순응(레이아웃 폭·높이 결정), 실제 픽셀은 overlay가 그린다.
-        // fixedSize 카피를 레이아웃에 직접 두면 상위 VStack 폭이 통째로 넓어져 화면이 밀린다.
-        content()
-            .lineLimit(1)
-            .opacity(0)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(WatchWidthReader(width: $containerWidth))
-            .overlay(alignment: (centered && overflow <= 0) ? .center : .leading) {
-                content()
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .background(WatchWidthReader(width: $contentWidth))
-                    .offset(x: atEnd ? -overflow : 0)
-            }
-            .clipped()
-            .onChange(of: overflow) { _, o in
-                guard o > 0, !atEnd else { return }
-                // 레이아웃 안정 후 왕복 드리프트 시작(속도는 초과폭 비례, 끝에서 잠깐 머묾)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                    guard overflow > 0 else { return }
-                    withAnimation(
-                        .easeInOut(duration: max(1.5, Double(overflow) / 14))
-                            .repeatForever(autoreverses: true)
-                    ) { atEnd = true }
+        if reduceMotion {
+            content()
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
+        } else {
+            // 사이징 카피: 컨테이너 폭에 순응(레이아웃 폭·높이 결정), 실제 픽셀은 overlay가 그린다.
+            // fixedSize 카피를 레이아웃에 직접 두면 상위 VStack 폭이 통째로 넓어져 화면이 밀린다.
+            content()
+                .lineLimit(1)
+                .opacity(0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(WatchWidthReader(width: $containerWidth))
+                .overlay(alignment: (centered && overflow <= 0) ? .center : .leading) {
+                    content()
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .background(WatchWidthReader(width: $contentWidth))
+                        .offset(x: atEnd ? -overflow : 0)
                 }
-            }
+                .clipped()
+                .onChange(of: overflow) { _, o in
+                    guard o > 0, !atEnd else { return }
+                    // 레이아웃 안정 후 왕복 드리프트 시작(속도는 초과폭 비례, 끝에서 잠깐 머묾)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        guard overflow > 0 else { return }
+                        withAnimation(
+                            .easeInOut(duration: max(1.5, Double(overflow) / 14))
+                                .repeatForever(autoreverses: true)
+                        ) { atEnd = true }
+                    }
+                }
+        }
     }
 }
 
