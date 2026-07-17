@@ -8,6 +8,7 @@ import {
 } from "@/lib/notifications/apns-broadcast";
 import {
   decideChannelPush,
+  applyChannelHeartbeat,
   scoreStateOf,
   fullStateHashOf,
   endRetryDelayMinutes,
@@ -36,6 +37,8 @@ export interface ChannelRow {
   status: "active" | "ending" | "deleted";
   last_score_state: string | null;
   last_state_hash: string | null;
+  /** 마지막 성공 p10 broadcast 시각 — ≤2분 heartbeat 판정 재료(삼순 ②, 성공 시에만 전진). */
+  last_p10_at: string | null;
   attempt_count: number;
   next_retry_at: string | null;
   created_at: string;
@@ -100,6 +103,7 @@ export async function ensureLiveActivityChannels(
         status: "active",
         last_score_state: null,
         last_state_hash: null,
+        last_p10_at: null,
         attempt_count: 0,
         next_retry_at: null,
         created_at: new Date().toISOString(),
@@ -162,10 +166,10 @@ export async function pushLiveActivityChannelBroadcasts(
   games: KboRawGame[],
   lastPlayByGame?: Map<string, string>,
 ): Promise<
-  | { updates: number; skipped: number; ends: number; deleted: number }
+  | { updates: number; heartbeats: number; skipped: number; ends: number; deleted: number }
   | { error: string }
 > {
-  if (!apnsConfigured()) return { updates: 0, skipped: 0, ends: 0, deleted: 0 };
+  if (!apnsConfigured()) return { updates: 0, heartbeats: 0, skipped: 0, ends: 0, deleted: 0 };
 
   // 오늘 경기 + (경기 목록에 없어진) 잔존 채널까지 전부 관리 대상.
   const { data: rows, error } = await supabase
@@ -174,7 +178,7 @@ export async function pushLiveActivityChannelBroadcasts(
     .neq("status", "deleted");
   if (error) return { error: error.message };
   const channels = (rows ?? []) as ChannelRow[];
-  if (channels.length === 0) return { updates: 0, skipped: 0, ends: 0, deleted: 0 };
+  if (channels.length === 0) return { updates: 0, heartbeats: 0, skipped: 0, ends: 0, deleted: 0 };
 
   const jwt = await getProviderTokenSafe();
   if (!jwt) return { error: "apns provider token failed" };
@@ -182,6 +186,7 @@ export async function pushLiveActivityChannelBroadcasts(
   const gameById = new Map(games.filter((g) => g.G_ID).map((g) => [g.G_ID as string, g]));
   const now = Date.now();
   let updates = 0;
+  let heartbeats = 0;
   let skipped = 0;
   let ends = 0;
   let deleted = 0;
@@ -274,12 +279,20 @@ export async function pushLiveActivityChannelBroadcasts(
       );
       const scoreState = scoreStateOf(cs);
       const fullHash = fullStateHashOf(cs);
-      const decision = decideChannelPush({
+      const baseDecision = decideChannelPush({
         scoreState,
         fullStateHash: fullHash,
         lastScoreState: row.last_score_state,
         lastStateHash: row.last_state_hash,
       });
+      // heartbeat/catch-up(삼순 ②): No-Message-Stored+expiration 0 특성상 accepted 1건을
+      // 단말이 놓치면 다음 변화까지 stale — 마지막 성공 p10 이후 ≥2분이면 무변화/p5
+      // 틱이어도 p10 current-state 재발송. server-attempt SLO(절대 전달 SLA 아님).
+      const lastP10AtMs = row.last_p10_at ? new Date(row.last_p10_at).getTime() : null;
+      const decision = applyChannelHeartbeat(baseDecision, lastP10AtMs, now);
+      const isHeartbeat =
+        decision.send && decision.priority === "10" &&
+        !(baseDecision.send && baseDecision.priority === "10");
       if (!decision.send) {
         skipped += 1;
         continue;
@@ -294,9 +307,16 @@ export async function pushLiveActivityChannelBroadcasts(
       });
       if (res.ok) {
         updates += 1;
+        if (isHeartbeat) heartbeats += 1;
+        const patch: Record<string, unknown> = {
+          last_score_state: scoreState,
+          last_state_hash: fullHash,
+        };
+        // last_p10_at은 *성공한 p10*만 전진(transient 실패/p5는 미전진 — 삼순 ②).
+        if (decision.priority === "10") patch.last_p10_at = new Date(now).toISOString();
         await supabase
           .from("live_activity_channels")
-          .update({ last_score_state: scoreState, last_state_hash: fullHash })
+          .update(patch)
           .match(channelMutationFence(row)); // generation fence — 새 채널에 옛 hash 기록 방지
       } else if (res.reason === "ChannelNotRegistered") {
         // Apple 쪽에 채널이 없음(외부 삭제 등) — active 행을 무효화해 다음 틱
@@ -312,5 +332,5 @@ export async function pushLiveActivityChannelBroadcasts(
     // scheduled: 카드가 아직 scheduled 프레임(p2s가 실음) — 첫 live 틱부터 broadcast.
   }
 
-  return { updates, skipped, ends, deleted };
+  return { updates, heartbeats, skipped, ends, deleted };
 }

@@ -220,8 +220,8 @@ export async function GET(req: NextRequest) {
   // Broadcast 채널 갱신 (스펙 v4 §서버 5·6) — 라이브 = 경기당 1건 update(10/5/스킵),
   // 종료·취소 = end + backoff 재시도 → 8h 후 채널 DELETE. 구독 기기 전원 커버.
   let laBroadcast:
-    | { updates: number; skipped: number; ends: number; deleted: number }
-    | { error: string } = { updates: 0, skipped: 0, ends: 0, deleted: 0 };
+    | { updates: number; heartbeats: number; skipped: number; ends: number; deleted: number }
+    | { error: string } = { updates: 0, heartbeats: 0, skipped: 0, ends: 0, deleted: 0 };
   try {
     laBroadcast = await pushLiveActivityChannelBroadcasts(games, lastPlayByGame);
   } catch (e) {
