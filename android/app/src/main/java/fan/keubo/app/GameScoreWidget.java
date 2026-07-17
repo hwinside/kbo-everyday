@@ -107,26 +107,8 @@ public class GameScoreWidget extends AppWidgetProvider {
         return ctx.getResources().getIdentifier(name, "drawable", ctx.getPackageName());
     }
 
-    /** 팀 대표 컬러(승격 카드 이닝 진행바 세그먼트용) — wear WearTeam.highlightColor와 동일 값. */
-    static int teamAccent(String code) {
-        if (code == null) return 0xFFC9184A;
-        switch (code.toUpperCase()) {
-            case "LG": return 0xFFC60C30;
-            case "OB": return 0xFF9BA8D4;
-            case "KT": return 0xFFE85050;
-            case "SK": return 0xFFCE0E2D;
-            case "NC": return 0xFF315288;
-            case "HT": return 0xFFEA0029;
-            case "LT": return 0xFF6BC4E8;
-            case "SS": return 0xFF074CA1;
-            case "HH": return 0xFFFF6600;
-            case "WO": return 0xFFC97088;
-            default: return 0xFFC9184A;
-        }
-    }
-
-    /** 승격(Live Update) 카드 largeIcon — 주자 다이아몬드(레드) + 아웃카운트 도트(옐로우) 패널.
-     *  diamond = 1·2·3루 점유 비트("101" = 1·3루), outs = "0"~"2".
+    /** 승격(Live Update) 카드 largeIcon — 주자 다이아몬드(옐로우 채움) + 아웃카운트 도트(레드 채움) 패널.
+     *  빈 요소는 테두리만(AOD 흑백 구분). diamond = 1·2·3루 점유 비트("101" = 1·3루), outs = "0"~"2".
      *  표준 템플릿은 자유 그래픽 불가라 아이콘 슬롯에 동적 비트맵으로 주입한다. */
     static Bitmap buildDiamondOutsIcon(String diamond, String outs) {
         int size = 192;

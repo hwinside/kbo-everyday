@@ -103,14 +103,13 @@ public class GameNotificationPlugin extends Plugin {
         return new String[] { title, body == null ? "" : body };
     }
 
-    /** 라이브 상태면 승격 카드를 업그레이드.
-     *  타이틀=스코어, 서브텍스트=구장·이닝, 본문=아웃도트(●레드)·주자·투/타 + 문자중계,
-     *  largeIcon=다이아몬드(옐로우)+아웃 패널. 진행바는 하린아빠 결정(7/18 01:08)으로 제거 —
-     *  바 자리를 문자중계가 대체(이닝은 서브텍스트에 있음). ProgressStyle 트래커가 세그먼트 폭을 잠식해
-     *  바 길이 불균일 발생하던 문제도 자연 해소. 승격 자격은 ProgressStyle 미사용과 무관(필수 요건 아님).
+    /** 라이브 상태면 승격 카드를 리치 구성으로 업그레이드(BigText 승격 카드 최종형).
+     *  타이틀=스코어, 서브텍스트=구장·이닝, 본문 1줄=아웃도트·주자·투/타, 2줄=문자중계,
+     *  largeIcon=주자 다이아몬드(옐로우)+아웃도트(레드) 패널.
+     *  이닝 진행바는 미사용(7/18 하린아빠 결정) — 승격 자격은 스타일과 무관하다.
      *  라이브가 아니면(예정/종료/취소/파싱 실패) 기존 BigText 유지. */
-    private static void applyLiveProgressCard(Context context, NotificationCompat.Builder b,
-                                              GameScoreWidget.Eff e) {
+    private static void applyLiveRichCard(Context context, NotificationCompat.Builder b,
+                                          GameScoreWidget.Eff e) {
         if (e == null || !e.hasGame || e.status == null || e.status.isEmpty()) return;
         if (e.status.startsWith("SCHEDULED|") || e.status.startsWith("FINAL")
             || "CANCELLED".equals(e.status)) return;
@@ -147,11 +146,10 @@ public class GameNotificationPlugin extends Plugin {
         String bodyText = t.toString();
         b.setContentText(bodyText);
         // ⚠️ build()가 먼저 걸어둔 BigTextStyle의 bigText는 composeLiveCard의 한 줄(lastPlay)라,
-        // 재설정 안 하면 접힘 렌더에서 그 한 줄만 보여 첫 줄(아웃·주자·투/타)이 사라짐.
-        // 진행바 제거로 setStyle(ps) 대체가 없어졌으므로 BigText를 두 줄 전문으로 갱신.
+        // 재설정 안 하면 접힘 렌더에서 그 한 줄만 보여 첫 줄(아웃·주자·투/타)이 사라짐 —
+        // 접힘 승격 카드는 bigText 우선이므로 스타일 텍스트도 반드시 동기 갱신.
         b.setStyle(new NotificationCompat.BigTextStyle().bigText(bodyText));
         b.setLargeIcon(GameScoreWidget.buildDiamondOutsIcon(e.diamond, e.outs));
-        // 진행바(ProgressStyle) 제거(하린아빠 01:08) — 바 자리를 문자중계 2줄째가 대체.
     }
 
     /** diamond 비트("101")를 "1·3루" 요약으로. 주자 없으면 빈 문자열. */
@@ -227,7 +225,7 @@ public class GameNotificationPlugin extends Plugin {
                 .setRequestPromotedOngoing(true);
             // 라이브 상태는 승격 카드 본문(헤더=구장·이닝, 아웃·주자·투/타, 문자중계)
             // + largeIcon 다이아몬드/아웃 패널로 구성. 예정/종료/취소는 위 BigText 그대로(no-op).
-            applyLiveProgressCard(context, b, eff);
+            applyLiveRichCard(context, b, eff);
             String gameId = currentGameId(context, path);
             // Unpin(유저 스와이프 해제) 감지 → 같은 경기 자동 재게시 억제. deleteIntent는
             // 유저 해제 시에만 발화(cancel()로는 미발화)라 non-promoted 경로 행동 불변.
