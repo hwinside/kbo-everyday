@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
-import { startTokenEnvPatch } from "@/lib/notifications/live-activity-channel-policy";
+import {
+  startTokenEnvPatch,
+  startTokenChangePatch,
+} from "@/lib/notifications/live-activity-channel-policy";
 
 // Live Activity W3b — push-to-start 토큰 등록/갱신.
 // 클라가 앱 부팅 시 ActivityKit `pushToStartTokenUpdates`(iOS 17.2+)로 발급받은
@@ -65,6 +68,13 @@ export async function POST(req: NextRequest) {
       frequent_pushes: frequentPushesVal,
       updated_at: new Date().toISOString(),
       ...startTokenEnvPatch(existingRow?.push_to_start_token ?? null, pushToStartToken),
+      // 토큰 세대 기록 — 값이 실제로 바뀔 때만(재설치 재발급 판정용, #667).
+      // 동일 토큰 포그라운드 재등록은 updated_at(heartbeat)만 갱신하고 세대는 보존.
+      ...startTokenChangePatch(
+        existingRow?.push_to_start_token ?? null,
+        pushToStartToken,
+        new Date().toISOString(),
+      ),
     },
     { onConflict: "user_id" },
   );

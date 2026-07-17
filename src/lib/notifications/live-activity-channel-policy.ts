@@ -71,6 +71,85 @@ export function decideLegacyTokenUpdate(input: LegacyTokenUpdateInput): LegacyTo
   return { send: true, priority: isCatchUp ? "10" : input.decision.priority };
 }
 
+/** 재설치/토큰 교체 감지 start 재발급 판정 입력 (2026-07-17 재설치 카드 미발급 사고). */
+export interface StartReissueInput {
+  /**
+   * 토큰 *세대* 시각(ms) = token_changed_at — 토큰 값이 실제로 바뀐 시각만.
+   * ⚠️ updated_at(등록 heartbeat — 같은 토큰도 포그라운드마다 갱신, #664 catch-up 용도)을
+   * 쓰면 정상 재등록을 재설치로 오인해 중복 카드가 나간다(삼순 NO-GO 2026-07-17).
+   * null = 세대 미기록(레거시 행) → 보수적(기존 동작).
+   */
+  tokenGenerationMs: number | null;
+  /** 이 경기 기존 발급 기록(started_users) 생성 시각. null = 없음. */
+  claimCreatedAtMs: number | null;
+  /**
+   * 현재 토큰의 device_key(sha256)와 *정확히 일치*하는 유효 채널 구독 존재 여부.
+   * 시각 비교가 아니라 세대 identity 정합 — 이전 설치 구독(다른 device_key)은 차단 안 함.
+   */
+  hasCurrentTokenSubscription: boolean;
+  /** 경기 예정 시작 시각(ms). null = 파싱 불가. */
+  gameStartMs: number | null;
+  nowMs: number;
+  startWindowMs: number;
+}
+
+export type StartReissueDecision =
+  | { eligible: false }
+  | { eligible: true; invalidateStaleClaim: boolean };
+
+/**
+ * p2s start 발송 대상 판정 — 재설치(토큰 교체) 유저 재발급 포함.
+ *
+ * 배경(2026-07-17): 경기 중 재설치 시 기존 카드는 사라지는데, 서버엔 ①기존 발급
+ * 기록(started_users)이 남아 재발송 차단 ②경기 +90분 가드가 게임 단위로 skip.
+ * 규칙:
+ * - 늦은 윈도우(시작+startWindowMs 경과): *경기 시작 이후 세대가 바뀐(=새로 등록된) 토큰만*
+ *   대상 (복구된 cron의 뒷북 대량 발송 방지는 유지 — 재설치/신규 등록만 예외).
+ * - 현재 토큰 device_key와 일치하는 구독 ACK 존재 = 이 설치가 구독 중 → 제외.
+ *   다른 device_key 구독(이전 설치 잔재, 카드 소멸)은 차단하지 않음.
+ * - 발급 기록이 토큰 세대 이후면 = 이 세대가 이미 받음 → 제외. 세대 이전 기록은
+ *   stale → invalidate(삭제) 후 재선점·재발송. 같은 토큰 포그라운드 재등록은 세대가
+ *   그대로라 claim이 stale로 안 보임(중복 카드 없음).
+ * - tokenGenerationMs null(레거시 행)은 보수적: claim 있으면 제외, 늦은 윈도우 제외.
+ * - 한계(서버 관측 범위): 재설치인데 iOS가 *동일한* p2s 토큰을 재발급하면 서버는
+ *   정상 재등록과 구분 불가(install-generation 클라 신호 없이는 불가능, PR 명기).
+ * 반복 방지: 재발송 성공 시 새 claim(created_at=now > tokenGenerationMs)이 생김 → 다음 틱 제외.
+ */
+export function decideStartReissue(i: StartReissueInput): StartReissueDecision {
+  const lateWindow =
+    i.gameStartMs !== null && i.nowMs - i.gameStartMs > i.startWindowMs;
+  if (lateWindow) {
+    if (
+      i.tokenGenerationMs === null ||
+      i.gameStartMs === null ||
+      i.tokenGenerationMs < i.gameStartMs
+    ) {
+      return { eligible: false };
+    }
+  }
+  if (i.hasCurrentTokenSubscription) return { eligible: false };
+  if (i.claimCreatedAtMs !== null) {
+    if (i.tokenGenerationMs === null || i.claimCreatedAtMs >= i.tokenGenerationMs) {
+      return { eligible: false };
+    }
+    return { eligible: true, invalidateStaleClaim: true };
+  }
+  return { eligible: true, invalidateStaleClaim: false };
+}
+
+/**
+ * register-start upsert 시 토큰 세대 기록 패치 — 토큰 값이 실제로 바뀔 때만
+ * token_changed_at 갱신(신규 행 포함: existing null → 세대 시작). 동일 토큰
+ * 재등록(포그라운드 heartbeat)은 세대 보존 — startTokenEnvPatch와 같은 계약.
+ */
+export function startTokenChangePatch(
+  existingToken: string | null,
+  newToken: string,
+  nowIso: string,
+): { token_changed_at: string } | Record<string, never> {
+  return existingToken === newToken ? {} : { token_changed_at: nowIso };
+}
+
 /** ContentState → score축 문자열 (점수/이닝/초말/주자/status만). */
 export function scoreStateOf(cs: Record<string, unknown>): string {
   return [

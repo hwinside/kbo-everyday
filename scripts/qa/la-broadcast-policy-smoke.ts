@@ -13,6 +13,8 @@ import {
   channelMutationFence,
   startTokenResultFence,
   decideLegacyTokenUpdate,
+  decideStartReissue,
+  startTokenChangePatch,
 } from "../../src/lib/notifications/live-activity-channel-policy";
 
 let pass = 0;
@@ -235,6 +237,81 @@ check("catch-up: token updated_at 미기록 → catch-up 아님 (skip 유지)",
 check("catch-up: decision null(판정 불가) → 기존 매분 발송 동작(p10 폴백)",
   decideLegacyTokenUpdate({ decision: null, tokenUpdatedAtMs: T - 1, lastWriteAtMs: T }),
   { send: true });
+
+// ── decideStartReissue — 재설치 재발급 + 늦은 윈도우 per-토큰 게이트 (2026-07-17 사고) ──
+// 기준은 token_changed_at(토큰 *세대*) — updated_at(등록 heartbeat)이 아님(삼순 NO-GO).
+{
+  const GS = 1_000_000_000; // 경기 시작
+  const W = 90 * 60 * 1000; // START_WINDOW_MS
+  const base = { gameStartMs: GS, startWindowMs: W };
+
+  // 윈도우 내 기본 동작(기존 계약 보존)
+  check("reissue: 윈도우 내 + claim/구독 없음 → 발송",
+    decideStartReissue({ ...base, nowMs: GS + 10_000, tokenGenerationMs: GS - 60_000, claimCreatedAtMs: null, hasCurrentTokenSubscription: false }),
+    { eligible: true, invalidateStaleClaim: false });
+  check("reissue: 현 세대의 claim(세대 이후 생성) → 제외(중복 방지)",
+    decideStartReissue({ ...base, nowMs: GS + 10_000, tokenGenerationMs: GS - 60_000, claimCreatedAtMs: GS, hasCurrentTokenSubscription: false }),
+    { eligible: false });
+  check("reissue: 현재 토큰 device_key 일치 구독 → 제외",
+    decideStartReissue({ ...base, nowMs: GS + 10_000, tokenGenerationMs: GS - 60_000, claimCreatedAtMs: null, hasCurrentTokenSubscription: true }),
+    { eligible: false });
+
+  // 삼순 지정 회귀 ①: same-token 포그라운드 재등록(세대 불변, heartbeat만 전진) +
+  // 기존 claim + current-channel ACK → 절대 재발송 아님(중복 카드 방지).
+  // 세대는 GS-60s 그대로, claim은 세대 이후(GS) = 현 세대 수신분.
+  check("reissue: [회귀] same-token 재등록 + 기존 claim + 현 ACK → 제외",
+    decideStartReissue({ ...base, nowMs: GS + 30 * 60 * 1000, tokenGenerationMs: GS - 60_000, claimCreatedAtMs: GS, hasCurrentTokenSubscription: true }),
+    { eligible: false });
+  check("reissue: [회귀] same-token 재등록 + 기존 claim만(ACK 없음) → 제외",
+    decideStartReissue({ ...base, nowMs: GS + 30 * 60 * 1000, tokenGenerationMs: GS - 60_000, claimCreatedAtMs: GS, hasCurrentTokenSubscription: false }),
+    { eligible: false });
+
+  // 삼순 지정 회귀 ②: 실제 토큰 값 교체(새 세대) + 이전 설치 claim/ACK → 재발송.
+  // 이전 구독은 device_key 불일치 = hasCurrentTokenSubscription false로 들어옴.
+  check("reissue: [회귀] 토큰 교체 + 옛 claim/옛 ACK → invalidate + 재발송",
+    decideStartReissue({ ...base, nowMs: GS + 30 * 60 * 1000, tokenGenerationMs: GS + 5_000, claimCreatedAtMs: GS, hasCurrentTokenSubscription: false }),
+    { eligible: true, invalidateStaleClaim: true });
+
+  // 늦은 윈도우(시작+90분 경과): 경기 시작 이후 새 세대 토큰만 — 재설치 사고 재현
+  const late = GS + W + 10 * 60 * 1000;
+  check("reissue: 늦은 윈도우 + 경기 중 재설치(새 세대) → 발송 (사고 재현 fix)",
+    decideStartReissue({ ...base, nowMs: late, tokenGenerationMs: late - 60_000, claimCreatedAtMs: null, hasCurrentTokenSubscription: false }),
+    { eligible: true, invalidateStaleClaim: false });
+  check("reissue: 늦은 윈도우 + 재설치 + stale claim(17:30 발급분) → invalidate+재발송 (하린아빠 케이스)",
+    decideStartReissue({ ...base, nowMs: late, tokenGenerationMs: late - 60_000, claimCreatedAtMs: GS - 30 * 60 * 1000, hasCurrentTokenSubscription: false }),
+    { eligible: true, invalidateStaleClaim: true });
+  check("reissue: 늦은 윈도우 + 경기 전 세대 토큰 → 제외 (뒷북 대량 발송 방지 유지)",
+    decideStartReissue({ ...base, nowMs: late, tokenGenerationMs: GS - 60_000, claimCreatedAtMs: null, hasCurrentTokenSubscription: false }),
+    { eligible: false });
+  check("reissue: 늦은 윈도우 + same-token heartbeat만 있는 유저(세대=경기 전) → 제외 (포그라운드 복귀 ≠ 재설치)",
+    decideStartReissue({ ...base, nowMs: late, tokenGenerationMs: GS - 3 * 60 * 60 * 1000, claimCreatedAtMs: GS - 60_000, hasCurrentTokenSubscription: false }),
+    { eligible: false });
+  check("reissue: 늦은 윈도우 + 세대 미기록(레거시 행) → 제외 (보수적)",
+    decideStartReissue({ ...base, nowMs: late, tokenGenerationMs: null, claimCreatedAtMs: null, hasCurrentTokenSubscription: false }),
+    { eligible: false });
+
+  // 보수적 폴백
+  check("reissue: 세대 미기록 + claim 있음 → 제외 (기존 동작)",
+    decideStartReissue({ ...base, nowMs: GS + 10_000, tokenGenerationMs: null, claimCreatedAtMs: GS, hasCurrentTokenSubscription: false }),
+    { eligible: false });
+  check("reissue: gameStartMs 파싱 불가 → 늦은 윈도우 게이트 없이 기본 규칙",
+    decideStartReissue({ gameStartMs: null, startWindowMs: W, nowMs: GS, tokenGenerationMs: GS - 1, claimCreatedAtMs: null, hasCurrentTokenSubscription: false }),
+    { eligible: true, invalidateStaleClaim: false });
+  // 재발송 후 반복 방지: 새 claim(created_at > 세대) 생성 후 다음 틱 → 제외
+  check("reissue: 재발송 후 새 claim → 다음 틱 제외 (p10 반복 없음)",
+    decideStartReissue({ ...base, nowMs: late, tokenGenerationMs: late - 60_000, claimCreatedAtMs: late - 30_000, hasCurrentTokenSubscription: false }),
+    { eligible: false });
+
+  // startTokenChangePatch — 세대 기록 계약
+  check("changePatch: 동일 토큰 재등록 → 세대 보존(빈 패치)",
+    startTokenChangePatch("tokA", "tokA", "2026-07-17T00:00:00Z"), {});
+  check("changePatch: 토큰 교체 → token_changed_at 갱신",
+    startTokenChangePatch("tokA", "tokB", "2026-07-17T00:00:00Z"),
+    { token_changed_at: "2026-07-17T00:00:00Z" });
+  check("changePatch: 신규 행(existing null) → 세대 시작",
+    startTokenChangePatch(null, "tokB", "2026-07-17T00:00:00Z"),
+    { token_changed_at: "2026-07-17T00:00:00Z" });
+}
 
 console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
 import {
@@ -9,6 +10,7 @@ import {
 } from "@/lib/notifications/apns";
 import {
   decideChannelPush,
+  decideStartReissue,
   scoreStateOf,
   fullStateHashOf,
   p2sChannelEligible,
@@ -416,6 +418,8 @@ interface StartTokenMeta {
   env: ApnsEnvironment | null;
   appBuild: number | null;
   osMajor: number | null;
+  /** 토큰 세대 시각(token_changed_at, ms) — 재설치 재발급 판정용. updated_at(heartbeat)와 별개. */
+  generationMs: number | null;
 }
 
 async function startForTeamSide(params: {
@@ -428,8 +432,10 @@ async function startForTeamSide(params: {
   jwt: string;
   /** active broadcast 채널 — key `${env}` (이 경기 것만). 없으면 전원 기존 payload. */
   channelByEnv: Map<ApnsEnvironment, string>;
-  /** 이 경기의 유효(active 채널 일치) 구독 user — 중복 start 제외(스펙 v4 §서버 4). */
-  subscribedUsers: Set<string>;
+  /** 이 경기의 유효(active 채널 일치) 구독 user → device_key 집합 — 현재 토큰 일치 구독만 중복 start 제외. */
+  subscribedKeysByUser: Map<string, Set<string>>;
+  /** 경기 예정 시작(ms) — 늦은 윈도우 per-토큰 게이트용. null = 파싱 불가. */
+  gameStartMs: number | null;
 }): Promise<{ sent: number; failed: boolean }> {
   if (params.teamId === null) return { sent: 0, failed: false };
   const fans = await fansOfTeams([params.teamId]);
@@ -441,18 +447,21 @@ async function startForTeamSide(params: {
   for (let i = 0; i < fans.ids.length; i += 200) {
     const { data, error } = await supabase
       .from("live_activity_start_tokens")
-      .select("user_id, push_to_start_token, apns_environment, app_build, os_major")
+      .select("user_id, push_to_start_token, apns_environment, app_build, os_major, token_changed_at")
       .in("user_id", fans.ids.slice(i, i + 200));
     if (error) return { sent: 0, failed: true }; // 토큰 조회 실패 → 재시도
     for (const r of (data ?? []) as {
       user_id: string; push_to_start_token: string;
       apns_environment: ApnsEnvironment | null; app_build: number | null; os_major: number | null;
+      token_changed_at: string | null;
     }[]) {
+      const genMs = r.token_changed_at ? Date.parse(r.token_changed_at) : NaN;
       tokenByUser.set(r.user_id, {
         token: r.push_to_start_token,
         env: r.apns_environment,
         appBuild: r.app_build,
         osMajor: r.os_major,
+        generationMs: Number.isFinite(genMs) ? genMs : null,
       });
     }
   }
@@ -463,32 +472,76 @@ async function startForTeamSide(params: {
   const optedOut = new Set<string>();
   // 이미 이 경기 활성 토큰 보유(앱에서 직접 start 또는 원격 시작 후 update 토큰 등록) 제외 — 중복 카드 방지.
   const alreadyActive = new Set<string>();
+  // 기존 발급 기록(started_users) — 재설치 stale claim 판별용(created_at 포함).
+  const claimCreatedAtByUser = new Map<string, number>();
   for (let i = 0; i < candidateIds.length; i += 200) {
     const chunk = candidateIds.slice(i, i + 200);
-    const [{ data: prefRows, error: prefErr }, { data: activeRows, error: activeErr }] =
-      await Promise.all([
-        supabase.from("notification_prefs").select("user_id, live_activity").in("user_id", chunk),
-        supabase
-          .from("live_activity_tokens")
-          .select("user_id")
-          .eq("game_id", params.gameId)
-          .in("user_id", chunk),
-      ]);
-    if (prefErr || activeErr) return { sent: 0, failed: true }; // pref/active 조회 실패 → 재시도
+    const [
+      { data: prefRows, error: prefErr },
+      { data: activeRows, error: activeErr },
+      { data: claimRows, error: claimErr },
+    ] = await Promise.all([
+      supabase.from("notification_prefs").select("user_id, live_activity").in("user_id", chunk),
+      supabase
+        .from("live_activity_tokens")
+        .select("user_id")
+        .eq("game_id", params.gameId)
+        .in("user_id", chunk),
+      supabase
+        .from("live_activity_started_users")
+        .select("user_id, created_at")
+        .eq("game_id", params.gameId)
+        .in("user_id", chunk),
+    ]);
+    if (prefErr || activeErr || claimErr) return { sent: 0, failed: true }; // 조회 실패 → 재시도
     for (const r of (prefRows ?? []) as { user_id: string; live_activity: boolean | null }[]) {
       if (r.live_activity === false) optedOut.add(r.user_id);
     }
     for (const r of (activeRows ?? []) as { user_id: string }[]) alreadyActive.add(r.user_id);
+    for (const r of (claimRows ?? []) as { user_id: string; created_at: string | null }[]) {
+      const ms = r.created_at ? Date.parse(r.created_at) : NaN;
+      claimCreatedAtByUser.set(r.user_id, Number.isFinite(ms) ? ms : Number.MAX_SAFE_INTEGER);
+    }
   }
 
-  // 발송 대상 = 토큰 보유 & opt-out 아님 & 이미 활성 카드 없음 & 유효 채널 구독 아님.
-  const eligible = [...tokenByUser.entries()].filter(
-    ([userId]) =>
-      !optedOut.has(userId) &&
-      !alreadyActive.has(userId) &&
-      !params.subscribedUsers.has(userId),
-  );
+  // 발송 대상 = 토큰 보유 & opt-out 아님 & 이미 활성 카드 없음 & 재발급 정책(decideStartReissue) 통과.
+  // 재설치 등 토큰 교체 감지 시 이전 설치의 claim/구독은 차단 사유에서 제외하고(stale),
+  // 늦은 윈도우(시작+90분 경과)엔 경기 시작 이후 등록 토큰만 발송한다.
+  const nowMs = Date.now();
+  const staleClaimUsers: { userId: string; tokenGenerationMs: number }[] = [];
+  const eligible = [...tokenByUser.entries()].filter(([userId, meta]) => {
+    if (optedOut.has(userId) || alreadyActive.has(userId)) return false;
+    // 구독 identity 정합: 현재 토큰 device_key(sha256)와 정확 일치하는 구독만 차단 사유.
+    // 이전 설치 구독(다른 device_key)은 카드가 이미 소멸됐으므로 차단하지 않는다(삼순 NO-GO).
+    const deviceKey = createHash("sha256").update(meta.token).digest("hex");
+    const d = decideStartReissue({
+      tokenGenerationMs: meta.generationMs,
+      claimCreatedAtMs: claimCreatedAtByUser.get(userId) ?? null,
+      hasCurrentTokenSubscription:
+        params.subscribedKeysByUser.get(userId)?.has(deviceKey) ?? false,
+      gameStartMs: params.gameStartMs,
+      nowMs,
+      startWindowMs: START_WINDOW_MS,
+    });
+    if (!d.eligible) return false;
+    if (d.invalidateStaleClaim && meta.generationMs !== null) {
+      staleClaimUsers.push({ userId, tokenGenerationMs: meta.generationMs });
+    }
+    return true;
+  });
   if (eligible.length === 0) return { sent: 0, failed: false };
+
+  // stale claim 무효화 — *현재 토큰 세대 이전에 생성된 행만* 삭제(fence: lt created_at).
+  // 병렬 틱이 방금 만든 새 claim(created_at >= token_changed_at)은 건드리지 않는다.
+  for (const s of staleClaimUsers) {
+    const { error } = await supabase
+      .from("live_activity_started_users")
+      .delete()
+      .eq("game_id", params.gameId)
+      .eq("user_id", s.userId)
+      .lt("created_at", new Date(s.tokenGenerationMs).toISOString());
+    if (error) return { sent: 0, failed: true }; // 무효화 실패 → 재시도(이번 틱은 재선점 불가)
+  }
 
   // 유저 단위 1회 선점 — (game_id, user_id) insert(ON CONFLICT DO NOTHING). 이미 발송한
   // 유저는 충돌로 제외되고 *새로 선점된 유저만* 반환된다. 게임 단위 선점과 달리 윈도우
@@ -633,19 +686,25 @@ export async function pushLiveActivityStarts(
       activeChanKeySet.add(`${r.game_id}|${r.environment}|${r.channel_id}`);
     }
   }
-  const subscribedByGame = new Map<string, Set<string>>();
+  // 유효 구독 = user → device_key 집합. 재설치 판별(decideStartReissue)은 시각 비교가
+  // 아니라 *현재 토큰의 device_key(sha256) 정확 일치*로 본다 — 이전 설치 구독(다른
+  // device_key)은 카드 소멸 상태라 차단 사유가 아님(삼순 NO-GO: heartbeat 시각 오인 방지).
+  const subscribedByGame = new Map<string, Map<string, Set<string>>>();
   if (activeChanKeySet.size > 0) {
     const { data } = await supabase
       .from("live_activity_channel_subscriptions")
-      .select("game_id, user_id, environment, channel_id")
+      .select("game_id, user_id, environment, channel_id, device_key")
       .in("game_id", startGameIds)
       .not("user_id", "is", null);
     for (const s of (data ?? []) as {
       game_id: string; user_id: string; environment: string; channel_id: string;
+      device_key: string;
     }[]) {
       if (!activeChanKeySet.has(`${s.game_id}|${s.environment}|${s.channel_id}`)) continue;
-      if (!subscribedByGame.has(s.game_id)) subscribedByGame.set(s.game_id, new Set());
-      subscribedByGame.get(s.game_id)!.add(s.user_id);
+      if (!subscribedByGame.has(s.game_id)) subscribedByGame.set(s.game_id, new Map());
+      const m = subscribedByGame.get(s.game_id)!;
+      if (!m.has(s.user_id)) m.set(s.user_id, new Set());
+      m.get(s.user_id)!.add(s.device_key);
     }
   }
 
@@ -656,11 +715,12 @@ export async function pushLiveActivityStarts(
     const codes = gameId.match(/^\d{8}([A-Z]{2})([A-Z]{2})\d$/);
     if (!codes) continue;
 
-    // 늦은 자동시작 가드 — 시작 후 START_WINDOW_MS 지난 경기는 발송 skip. 중복 발송
-    // 차단은 startForTeamSide의 *유저 단위* 선점(live_activity_started_users)이 담당한다.
-    // (게임 단위 선점은 제거 — 윈도우 도중 늦게 등록된 토큰을 영구 누락시켰음.)
+    // 늦은 자동시작 가드 — 게임 단위 skip을 *per-토큰 게이트*로 전환(2026-07-17 재설치 사고).
+    // 시작+START_WINDOW_MS 경과 경기도 루프는 계속 돌되, decideStartReissue가 "경기 시작
+    // 이후 등록/갱신된 토큰"만 통과시킨다 — 복구된 cron의 뒷북 대량 발송 방지는 유지하면서
+    // 경기 중 재설치(토큰 재등록) 유저는 카드를 다시 받는다. 중복 발송 차단은
+    // startForTeamSide의 유저 단위 선점(live_activity_started_users) + stale claim fence가 담당.
     const startedAt = scheduledStartMs(g.G_DT, g.G_TM);
-    if (startedAt !== null && Date.now() - startedAt > START_WINDOW_MS) continue;
 
     const away = g.AWAY_NM ?? "";
     const home = g.HOME_NM ?? "";
@@ -693,14 +753,17 @@ export async function pushLiveActivityStarts(
 
     // away/home 슬롯을 각자 그 팀 코드로 강조(myTeamCode) — 수신자별 최애팀 반영.
     const channelByEnv = channelsByGame.get(gameId) ?? new Map<ApnsEnvironment, string>();
-    const subscribedUsers = subscribedByGame.get(gameId) ?? new Set<string>();
+    const subscribedKeysByUser =
+      subscribedByGame.get(gameId) ?? new Map<string, Set<string>>();
     const awaySide = await startForTeamSide({
       gameId, teamId: teamIdByShortName(away), myTeamCode: awayCode,
-      attributes, contentState, alert, jwt, channelByEnv, subscribedUsers,
+      attributes, contentState, alert, jwt, channelByEnv, subscribedKeysByUser,
+      gameStartMs: startedAt,
     });
     const homeSide = await startForTeamSide({
       gameId, teamId: teamIdByShortName(home), myTeamCode: homeCode,
-      attributes, contentState, alert, jwt, channelByEnv, subscribedUsers,
+      attributes, contentState, alert, jwt, channelByEnv, subscribedKeysByUser,
+      gameStartMs: startedAt,
     });
     started += awaySide.sent + homeSide.sent;
     // 일시 실패분은 startForTeamSide에서 유저 단위로 선점 해제됨 → 다음 cron 재시도.
