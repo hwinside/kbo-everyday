@@ -36,6 +36,16 @@ export interface PushPayload {
    */
   apnsBackground?: boolean;
   /**
+   * APNs collapse-id (apnsBackground 전용) — 같은 id의 미배달 push를 최신 1건으로 합침.
+   * 경기별 위젯 갱신처럼 "최신만 의미 있는" 스트림에 사용(지연 배달 백로그 방지, 삼순 #674 blocker③).
+   */
+  apnsCollapseId?: string;
+  /**
+   * APNs 상대 만료 초 (apnsBackground 전용) — 이 시간 내 미배달 시 폐기(apns-expiration 헤더).
+   * 다음 발송이 공 덮어쓰는 스트림은 짧게(예: 90) 주어 stale 배달을 줄인다.
+   */
+  apnsExpirationSeconds?: number;
+  /**
    * Android FCM collapse key — 같은 키의 미배달 메시지는 최신 1건만 보관/배달한다.
    * 라이브 위젯처럼 매분 갱신되는 data 푸시에 경기별 키를 주면, 기기가 잠시
    * 오프라인/딥슬립이었다가 복귀할 때 옛 상태 백로그가 한꺼번에 배달되는 대신
@@ -88,10 +98,11 @@ export async function sendFcmToUsers(
   payload: PushPayload,
   prefKey?: PrefKey,
   platform?: "ios" | "android",
+  opts?: { minAppBuild?: number },
 ): Promise<SendResult> {
   if (userIds.length === 0) return { sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: true };
   try {
-    return await sendFcmToUsersInner(userIds, payload, prefKey, platform);
+    return await sendFcmToUsersInner(userIds, payload, prefKey, platform, opts);
   } catch (e) {
     // getFcm()의 JSON parse/init 또는 sendEachForMulticast throw 등 —
     // ok:false로 호출자(game-status unclaim)가 재시도하게 함 (삼순 #210 재리뷰 NO-GO)
@@ -105,6 +116,7 @@ async function sendFcmToUsersInner(
   payload: PushPayload,
   prefKey?: PrefKey,
   platform?: "ios" | "android",
+  opts?: { minAppBuild?: number },
 ): Promise<SendResult> {
   const fcm = getFcm();
   if (!fcm) return { sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false }; // env 미설정 = 인프라 실패
@@ -148,6 +160,9 @@ async function sendFcmToUsersInner(
       .in("user_id", slice);
     // platform 지정 시 해당 OS 토큰만(무음 wake 푸시는 iOS 전용).
     if (platform) tokenQuery = tokenQuery.eq("platform", platform);
+    // 앱 빌드 게이트 (삼순 #674 blocker⑤) — 해당 kind를 처리할 수 있는 빌드에만 발송.
+    // app_build null(미보고 = 구버전/웹)은 gte에서 자동 제외(fail-closed).
+    if (opts?.minAppBuild != null) tokenQuery = tokenQuery.gte("app_build", opts.minAppBuild);
     const { data: rows, error: tokenErr } = await tokenQuery;
     if (tokenErr) {
       console.error("[fcm] token query failed:", tokenErr.message);
@@ -189,7 +204,16 @@ async function sendFcmToUsersInner(
       ...(payload.apnsBackground
         ? {
             apns: {
-              headers: { "apns-push-type": "background", "apns-priority": "5" },
+              headers: {
+                "apns-push-type": "background",
+                "apns-priority": "5",
+                // 지연 배달 백로그 방지(삼순 #674 blocker③) — 같은 collapse-id는 최신 1건만,
+                // 짧은 expiration은 미배달 stale을 폐기(다음 발송이 공 덮어쓰는 스트림 전용).
+                ...(payload.apnsCollapseId ? { "apns-collapse-id": payload.apnsCollapseId } : {}),
+                ...(payload.apnsExpirationSeconds != null
+                  ? { "apns-expiration": String(Math.floor(Date.now() / 1000) + payload.apnsExpirationSeconds) }
+                  : {}),
+              },
               payload: { aps: { "content-available": 1 } },
             },
           }

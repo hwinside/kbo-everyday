@@ -133,6 +133,39 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                                           awayScore: Int(asStr) ?? 0,
                                           homeScore: Int(hsStr) ?? 0)
         }
+        // 1.0.9 build 17 — iOS 홈위젯 무음 갱신: 점수 변화 무음 push로 깨어난 순간 위젯
+        // 스냅샷을 갱신한다(현재 위젯이 이 경기 표시 중일 때만, 팀/최애팀/next 보존).
+        // widget_live는 이 핸들러 전용 kind(다른 소비자 없음) — 처리 후 completionHandler를
+        // 명시적으로 1회 호출하고 조기 반환한다(삼순 #674 blocker② — 현 플러그인은 completion을
+        // 호출하지 않으므로 미호출 시 iOS가 silent push를 추가 throttle할 수 있음. 조기 반환이
+        // 이중 호출 가능성도 차단).
+        if let kind = userInfo["kind"] as? String, kind == "widget_live" {
+            if let gameId = userInfo["gameId"] as? String,
+               let asStr = userInfo["w_as"] as? String,
+               let hsStr = userInfo["w_hs"] as? String {
+                // 반환값 = 실제 적용 여부 — no-op(스냅샷 없음/다른 경기/final/역순 거부)이면
+                // .noData로 보고해 silent-push 예산 신뢰를 지킨다(삼순 #674 재리뷰 blocker②).
+                let applied = WidgetSnapshotStore.markLiveScore(
+                    gameId: gameId,
+                    awayScore: Int(asStr) ?? 0,
+                    homeScore: Int(hsStr) ?? 0,
+                    inning: Int(userInfo["w_inning"] as? String ?? "1") ?? 1,
+                    isTopInning: (userInfo["w_istop"] as? String) == "1",
+                    outs: Int(userInfo["w_outs"] as? String ?? "0") ?? 0,
+                    onFirst: (userInfo["w_first"] as? String) == "1",
+                    onSecond: (userInfo["w_second"] as? String) == "1",
+                    onThird: (userInfo["w_third"] as? String) == "1",
+                    pitcherName: userInfo["w_pitcher"] as? String ?? "",
+                    batterName: userInfo["w_batter"] as? String ?? "",
+                    lastPlay: userInfo["w_lastplay"] as? String ?? "",
+                    eventMs: Double(userInfo["w_ev"] as? String ?? "") ?? 0
+                )
+                completionHandler(applied ? .newData : .noData)
+            } else {
+                completionHandler(.noData)
+            }
+            return
+        }
         NotificationCenter.default.post(name: Notification.Name.init("didReceiveRemoteNotification"), object: completionHandler, userInfo: userInfo)
     }
 

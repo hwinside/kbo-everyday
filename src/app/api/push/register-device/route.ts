@@ -11,15 +11,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { fcmToken, platform } = await req.json();
+  const { fcmToken, platform, appBuild } = await req.json();
   if (!fcmToken || (platform !== "ios" && platform !== "android")) {
     return NextResponse.json({ error: "fcmToken and platform(ios|android) required" }, { status: 400 });
   }
+
+  // 앱 빌드 번호(선택) — 빌드 게이트 필터용(예: widget_live는 iOS build 17+만, 삼순 #674
+  // blocker⑤). 미보고/비정상값은 null = 구버전 취급(fail-closed).
+  const buildNum = Number.isFinite(Number(appBuild)) && Number(appBuild) > 0
+    ? Math.trunc(Number(appBuild))
+    : null;
 
   const { error } = await supabase.from("device_push_tokens").upsert({
     user_id: verified.user.id,
     platform,
     fcm_token: fcmToken,
+    app_build: buildNum,
     last_seen: new Date().toISOString(),
   }, { onConflict: "fcm_token" });
 

@@ -8,6 +8,7 @@ import { notifyPlayerHighlights } from "@/lib/notifications/player-highlight";
 import { pushLiveActivityUpdates, pushLiveActivityStarts, pushLiveActivitySilentWakes } from "@/lib/notifications/live-activity";
 import { ensureLiveActivityChannels, pushLiveActivityChannelBroadcasts } from "@/lib/notifications/live-activity-channels";
 import { pushAndroidWidgetLiveUpdates } from "@/lib/notifications/android-widget-live";
+import { pushIosWidgetLiveUpdates } from "@/lib/notifications/ios-widget-live";
 
 /**
  * Warm up the in-memory prevState cache of /api/game-events for every
@@ -239,6 +240,19 @@ export async function GET(req: NextRequest) {
     console.error("[warmup] live activity start failed:", (e as Error).message);
   }
 
+  // iOS 홈 위젯 무음 갱신 (1.0.9 build 17) — 라이브 스코어축 변화 시 iOS 팬 기기를 무음
+  // 푸시로 깨워 홈 위젯 스냅샷을 갱신(AppDelegate markLiveScore → reload). 앱 미실행 상태
+  // 스코어 반영(best-effort, 예산 내 — 잠금 LA만 3분 보장). lastPlay는 위에서 수집한 것 재사용.
+  let iosWidget:
+    | { games: number; sent: number; failed: number; skipped: number; cleaned: number }
+    | { error: string } = { games: 0, sent: 0, failed: 0, skipped: 0, cleaned: 0 };
+  try {
+    iosWidget = await pushIosWidgetLiveUpdates(games, lastPlayByGame);
+  } catch (e) {
+    iosWidget = { error: (e as Error).message };
+    console.error("[warmup] ios widget live update failed:", (e as Error).message);
+  }
+
   // 잠금화면 Live Activity 무음 wake (Layer 2) — 카드는 떴는데 update 토큰이 없는 유저의
   // iOS 기기를 무음 푸시로 깨워 토큰 등록 유도(앱 안 열어도 갱신). FCM 무음이라 APNs와 무관.
   let liveActivityWake:
@@ -266,6 +280,7 @@ export async function GET(req: NextRequest) {
     laBroadcast,
     liveActivityStart,
     liveActivityWake,
+    iosWidget,
     lastPlays: Object.fromEntries(lastPlayByGame),
     results: results.map(r =>
       r.status === "fulfilled"

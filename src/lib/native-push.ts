@@ -20,6 +20,7 @@ const FOREGROUND_SUPPRESSED_KINDS = new Set([
   "game_end",
   "game_cancel",
   "la_wake",
+  "widget_live", // iOS 홈위젯 무음 갱신(build 17+) — 네이티브 전용, JS 배너 금지
 ]);
 
 let foregroundListenerAttached = false;
@@ -119,13 +120,25 @@ export async function registerTokenWithServer(fcmToken: string): Promise<boolean
   const accessToken = session?.access_token;
   if (!accessToken) return false;
 
+  // 앱 빌드 번호 동봉(실패 시 null) — 서버가 빌드 게이트 필터에 사용(widget_live는 17+만,
+  // 삼순 #674 blocker⑤). 원격로드 JS라 구빌드도 다음 앱 실행 시 자연스럽게 재보고된다.
+  let appBuild: number | null = null;
+  try {
+    const { App } = await import("@capacitor/app");
+    const info = await App.getInfo();
+    const b = Number(info?.build);
+    if (Number.isFinite(b) && b > 0) appBuild = Math.trunc(b);
+  } catch {
+    // 판별 실패 = null(구버전 취급) — 등록 자체는 계속
+  }
+
   const res = await fetch("/api/push/register-device", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({ fcmToken, platform }),
+    body: JSON.stringify({ fcmToken, platform, appBuild }),
   });
   return res.ok;
 }
