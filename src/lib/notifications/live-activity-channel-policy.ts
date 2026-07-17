@@ -30,6 +30,40 @@ export function decideChannelPush(input: ChannelPushDecisionInput): ChannelPushD
   return { send: false };
 }
 
+/** 무변화 틱 heartbeat 간격 — No-Message-Stored 미수신 단말 고착 바운드 (삼순 blocker①). */
+export const CHANNEL_HEARTBEAT_MS = 2 * 60 * 1000;
+
+export interface ChannelBroadcastTickInput extends ChannelPushDecisionInput {
+  /** 마지막 broadcast 발송(APNs accepted) 시각 ms. null = 미기록(신규 행/마이그레이션 직후). */
+  lastBroadcastAtMs: number | null;
+  nowMs: number;
+}
+
+export type ChannelBroadcastTickDecision =
+  | { send: true; priority: "10" | "5"; heartbeat: boolean }
+  | { send: false };
+
+/**
+ * 채널 update 틱 판정 = decideChannelPush + heartbeat (삼순 5조건 재판정 blocker①).
+ *
+ * broadcast는 No-Message-Stored(apns-expiration:0)라 APNs accepted여도 그 순간 미수신
+ * 단말(기내석·무전파·재부팅 등)에선 재송신이 없다. 상태 무변화 구간에서 한 번 놓친
+ * 단말은 다음 상태 변화까지 옆 프레임 고착 → 무변화여도 last_broadcast_at 2분 경과 시
+ * 동일 content를 p5로 재방송해 놓친 단말을 현재 프레임으로 회복시킨다(고착 ≤3분).
+ * lastBroadcastAtMs null(발송 기록 부재)은 보수적으로 heartbeat 발송.
+ * 상태 변화 틱은 기존 계약(10/5) 그대로 — heartbeat는 무변화 틱에만 적용된다.
+ */
+export function decideChannelBroadcastTick(
+  i: ChannelBroadcastTickInput,
+): ChannelBroadcastTickDecision {
+  const base = decideChannelPush(i);
+  if (base.send) return { send: true, priority: base.priority, heartbeat: false };
+  if (i.lastBroadcastAtMs === null || i.nowMs - i.lastBroadcastAtMs >= CHANNEL_HEARTBEAT_MS) {
+    return { send: true, priority: "5", heartbeat: true };
+  }
+  return { send: false };
+}
+
 /** 레거시 per-토큰 update 발송 판정 입력 (#664 catch-up). */
 export interface LegacyTokenUpdateInput {
   /** 경기 단위 skip/priority 판정(decideChannelPush 결과). null = 판정 재료 없음. */

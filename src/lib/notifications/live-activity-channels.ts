@@ -7,7 +7,7 @@ import {
   type ApnsEnvironment,
 } from "@/lib/notifications/apns-broadcast";
 import {
-  decideChannelPush,
+  decideChannelBroadcastTick,
   scoreStateOf,
   fullStateHashOf,
   endRetryDelayMinutes,
@@ -36,6 +36,8 @@ export interface ChannelRow {
   status: "active" | "ending" | "deleted";
   last_score_state: string | null;
   last_state_hash: string | null;
+  /** 마지막 broadcast 발송(accepted) 시각 — 무변화 heartbeat 판정용 (삼순 blocker①). */
+  last_broadcast_at: string | null;
   attempt_count: number;
   next_retry_at: string | null;
   created_at: string;
@@ -274,11 +276,16 @@ export async function pushLiveActivityChannelBroadcasts(
       );
       const scoreState = scoreStateOf(cs);
       const fullHash = fullStateHashOf(cs);
-      const decision = decideChannelPush({
+      // heartbeat 포함 판정 — No-Message-Stored 미수신 단말 고착 바운드(삼순 blocker①).
+      const decision = decideChannelBroadcastTick({
         scoreState,
         fullStateHash: fullHash,
         lastScoreState: row.last_score_state,
         lastStateHash: row.last_state_hash,
+        lastBroadcastAtMs: row.last_broadcast_at
+          ? new Date(row.last_broadcast_at).getTime()
+          : null,
+        nowMs: now,
       });
       if (!decision.send) {
         skipped += 1;
@@ -296,7 +303,12 @@ export async function pushLiveActivityChannelBroadcasts(
         updates += 1;
         await supabase
           .from("live_activity_channels")
-          .update({ last_score_state: scoreState, last_state_hash: fullHash })
+          .update({
+            last_score_state: scoreState,
+            last_state_hash: fullHash,
+            // heartbeat 간격 기준점 — 발송 성공(accepted) 틱마다 갱신.
+            last_broadcast_at: new Date(now).toISOString(),
+          })
           .match(channelMutationFence(row)); // generation fence — 새 채널에 옛 hash 기록 방지
       } else if (res.reason === "ChannelNotRegistered") {
         // Apple 쪽에 채널이 없음(외부 삭제 등) — active 행을 무효화해 다음 틱

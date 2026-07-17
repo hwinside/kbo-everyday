@@ -4,6 +4,8 @@
  */
 import {
   decideChannelPush,
+  decideChannelBroadcastTick,
+  CHANNEL_HEARTBEAT_MS,
   scoreStateOf,
   fullStateHashOf,
   p2sChannelEligible,
@@ -344,6 +346,51 @@ check("cursor: 전원 retryable 실패 → 보류",
   shouldAdvanceFallbackCursor(["retryableFailure"]), false);
 check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
   shouldAdvanceFallbackCursor(["invalidToken", "retryableFailure"]), false);
+
+// ── decideChannelBroadcastTick — 무변화 heartbeat (삼순 1.0.9(16) 5조건 재판정 blocker①) ──
+// No-Message-Stored broadcast를 놓친 단말이 다음 상태 변화까지 고착되지 않도록
+// 무변화 틱도 last_broadcast_at 2분 경과 시 동일 content p5 재방송.
+{
+  const N = 10_000_000_000_000;
+  const same = {
+    scoreState: scoreStateOf(baseCs), fullStateHash: fullStateHashOf(baseCs),
+    lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
+  };
+  check("heartbeat: 무변화 + 마지막 발송 1분 전 → skip (기존 계약 유지)",
+    decideChannelBroadcastTick({ ...same, lastBroadcastAtMs: N - 60_000, nowMs: N }),
+    { send: false });
+  check("heartbeat: 무변화 + 마지막 발송 2분 경과 → p5 heartbeat (미수신 단말 catch-up)",
+    decideChannelBroadcastTick({ ...same, lastBroadcastAtMs: N - CHANNEL_HEARTBEAT_MS, nowMs: N }),
+    { send: true, priority: "5", heartbeat: true });
+  check("heartbeat: 무변화 + 발송 기록 없음(null, 마이그레이션 직후) → p5 heartbeat (보수적)",
+    decideChannelBroadcastTick({ ...same, lastBroadcastAtMs: null, nowMs: N }),
+    { send: true, priority: "5", heartbeat: true });
+  check("heartbeat: 점수 변화는 heartbeat 무관 p10 (기존 계약)",
+    decideChannelBroadcastTick({
+      scoreState: scoreStateOf({ ...baseCs, homeScore: 9 }),
+      fullStateHash: fullStateHashOf({ ...baseCs, homeScore: 9 }),
+      lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
+      lastBroadcastAtMs: N - 1_000, nowMs: N,
+    }),
+    { send: true, priority: "10", heartbeat: false });
+  check("heartbeat: 볼카운트만 변화 → p5 (heartbeat 아님, 기존 계약)",
+    decideChannelBroadcastTick({
+      scoreState: scoreStateOf({ ...baseCs, balls: 3 }),
+      fullStateHash: fullStateHashOf({ ...baseCs, balls: 3 }),
+      lastScoreState: scoreStateOf({ ...baseCs, balls: 3 }),
+      lastStateHash: fullStateHashOf(baseCs),
+      lastBroadcastAtMs: N - 1_000, nowMs: N,
+    }),
+    { send: true, priority: "5", heartbeat: false });
+  // missed-delivery catch-up 시퀀스 회귀: heartbeat 발송 → last_broadcast_at 갱신 →
+  // 다음 틱(+1분) skip → 그다음 틱(+2분) 다시 heartbeat — ≤2분 간격 강제 보장.
+  check("heartbeat: [시퀀스] 발송 직후 +1분 틱 → skip",
+    decideChannelBroadcastTick({ ...same, lastBroadcastAtMs: N, nowMs: N + 60_000 }),
+    { send: false });
+  check("heartbeat: [시퀀스] 발송 후 +2분 틱 → 다시 heartbeat (주기 보장)",
+    decideChannelBroadcastTick({ ...same, lastBroadcastAtMs: N, nowMs: N + CHANNEL_HEARTBEAT_MS }),
+    { send: true, priority: "5", heartbeat: true });
+}
 
 console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);
