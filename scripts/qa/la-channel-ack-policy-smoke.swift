@@ -2,10 +2,12 @@
 //  la-channel-ack-policy-smoke.swift
 //  Broadcast 채널 구독 ACK 정책 회귀 스모크 — ios/App/App/ChannelAckPolicy.swift 를 고정한다.
 //
-//  삼순 PR #663 NO-GO 회귀 기준 3건:
+//  삼순 PR #663 NO-GO 회귀 기준 3건 + 재리뷰 1건:
 //   ① GET 5xx/네트워크 실패 → 폐기가 아니라 큐 재시도 → foreground flush에서 ACK 성공
 //   ② 신규/rotation 토큰 register-start 지연(401 unknown token) → 유실 없음(bounded 재시도)
 //   ③ 5xx 반복 재큐잉 중에도 최초 enqueue 시각 보존 → 24h 초과 시 폐기(TTL sliding 금지)
+//   ④ persisted item → flush 시작 → 네트워크 완료 전 강제 종료 → 재시작 후 복구/재시도
+//     (큐 제거는 terminal에서만 — snapshot 직후 선삭제 금지)
 //
 //  실행: npm run qa:la-ack-policy (scripts/qa/la-channel-ack-policy-smoke.sh, macOS/swiftc 필요)
 //
@@ -112,6 +114,43 @@ struct LaChannelAckPolicySmoke {
         var q6 = q5
         q6 = ChannelAckPolicy.merge(queue: q6, gameId: "g2", channelId: "c2", attempts: 0, firstQueuedAt: nil, now: t0)
         check("다른 (gameId, channelId)는 별도 항목", q6.count == 2)
+
+        // ── 회귀④ flush 중 프로세스 종료 → persist 항목 유실 금지 (재리뷰 blocker) ──
+        print("[회귀④ terminal-only 제거 — flush 중 종료에도 항목 복구/재시도]")
+        // persisted item → flush 시작: snapshot은 읽기 전용(선삭제 금지)
+        var store: [[String: Any]] = []   // App Group persist 상태 시뮬레이션
+        store = ChannelAckPolicy.merge(queue: store, gameId: "g", channelId: "c",
+                                       attempts: 0, firstQueuedAt: nil, now: t0)
+        let snapshot = store              // flush 패스 A: snapshot만 뜸 — 제거 없음
+        check("flush 시작(snapshot) 후에도 persist 항목 유지", store.count == 1 && snapshot.count == 1)
+        // 네트워크 완료 전 강제 종료 시뮬: 어떤 disposition도 미적용 상태로 "재시작"
+        check("재시작 후 항목 복구(유실 없음)",
+              (store[0]["gameId"] as? String) == "g" && (store[0]["queuedAt"] as? TimeInterval) == t0)
+        // 재시작 flush: POST 2xx = terminal → 그때에만 제거
+        check("재시작 flush POST 2xx(terminal) → 제거", {
+            let action = ChannelAckPolicy.action(after: ChannelAckPolicy.classifyPost(status: 200), attempts: 0)
+            guard ChannelAckPolicy.disposition(after: action) == .remove else { return false }
+            store = ChannelAckPolicy.remove(queue: store, gameId: "g", channelId: "c")
+            return store.isEmpty
+        }())
+        // disposition 규칙 고정 — terminal만 remove, 재시도는 retain
+        check("POST 재시도(enqueue) → retain(제거 금지)",
+              ChannelAckPolicy.disposition(after: .enqueue) == .retain)
+        check("POST 확정 폐기(discard) → remove(terminal)",
+              ChannelAckPolicy.disposition(after: .discard) == .remove)
+        check("GET mismatch → remove(terminal)",
+              ChannelAckPolicy.disposition(onFetch: .skipMismatch) == .remove)
+        check("GET retryable → retain(제거 금지)",
+              ChannelAckPolicy.disposition(onFetch: .enqueueForRetry) == .retain)
+        check("GET match → nil(POST 결과가 결정)",
+              ChannelAckPolicy.disposition(onFetch: .proceedAck) == nil)
+        check("remove는 해당 키만 제거(다른 항목 보존)", {
+            var q: [[String: Any]] = []
+            q = ChannelAckPolicy.merge(queue: q, gameId: "g1", channelId: "c1", attempts: 0, firstQueuedAt: nil, now: t0)
+            q = ChannelAckPolicy.merge(queue: q, gameId: "g2", channelId: "c2", attempts: 0, firstQueuedAt: nil, now: t0)
+            q = ChannelAckPolicy.remove(queue: q, gameId: "g1", channelId: "c1")
+            return q.count == 1 && (q[0]["gameId"] as? String) == "g2"
+        }())
 
         print("\n\(passed) passed, \(failed) failed")
         exit(failed == 0 ? 0 : 1)

@@ -4,10 +4,12 @@
 //
 //  Broadcast 채널 구독 ACK의 판정/재시도/TTL 정책 (순수 로직, Foundation 전용).
 //  LiveActivityController가 소비하고, scripts/qa/la-channel-ack-policy-smoke.swift 가
-//  회귀를 고정한다 — 삼순 PR #663 NO-GO 3건:
+//  회귀를 고정한다 — 삼순 PR #663 NO-GO 3건 + 재리뷰 1건:
 //   ① GET 일시 실패(network/5xx/파싱)를 "채널 없음" 확정과 구분 — 폐기 아닌 큐 재시도
 //   ② 401(unknown token) = register-start ordering race 가능 — 즉시 폐기 아닌 bounded 재시도
 //   ③ 재큐잉 시 최초 queuedAt 보존 — 24h TTL sliding 금지
+//   ④ persist 큐 항목 제거는 terminal(2xx/확정 폐기/mismatch/TTL)에서만 — flush가
+//     snapshot 직후 선삭제하면 suspend/kill 시 in-flight 항목이 유실된다
 //
 
 import Foundation
@@ -103,8 +105,8 @@ enum ChannelAckPolicy {
     }
 
     /// 같은 (gameId, channelId)는 1개만 유지하되 queuedAt은 min(기존, firstQueuedAt ?? now)
-    /// 보존, attempts는 max 병합(리셋 금지). flush 재큐잉 경로는 firstQueuedAt으로 원래
-    /// 시각을 넘긴다(큐에서 이미 꺼낸 뒤라 기존 항목 병합만으론 보존 불가).
+    /// 보존, attempts는 max 병합(리셋 금지). flush 재시도 경로는 firstQueuedAt으로 원래
+    /// 시각을 명시로 넘겨 보존을 이중 보장한다.
     static func merge(queue: [[String: Any]], gameId: String, channelId: String,
                       attempts: Int, firstQueuedAt: TimeInterval?, now: TimeInterval) -> [[String: Any]] {
         var out = queue
@@ -119,5 +121,40 @@ enum ChannelAckPolicy {
         }
         out.append(["gameId": gameId, "channelId": channelId, "queuedAt": queuedAt, "attempts": mergedAttempts])
         return out
+    }
+
+    // MARK: - persist 큐 제거 시점 (삼순 #663 재리뷰 blocker④)
+
+    /// persist 큐 항목 제거 — terminal 결과 확정 후에만 호출한다. flush가 snapshot 직후
+    /// 큐 전체를 선삭제하면 GET/POST await 중 프로세스 suspend·kill·crash 시 아직 어떤
+    /// 결과도 아닌 항목이 영구 유실된다 — snapshot은 읽기 전용, 제거는 이 함수로만.
+    static func remove(queue: [[String: Any]], gameId: String, channelId: String) -> [[String: Any]] {
+        var out = queue
+        out.removeAll { ($0["gameId"] as? String) == gameId && ($0["channelId"] as? String) == channelId }
+        return out
+    }
+
+    /// 항목 처리 결과 → 큐 조치. remove = terminal 확정 / retain = persist 유지(다음 재시도).
+    enum QueueDisposition: Equatable {
+        case remove
+        case retain
+    }
+
+    /// POST 결과 행동 → 큐 조치: done(2xx)·discard(확정 폐기)만 terminal, enqueue(재시도)는 유지.
+    static func disposition(after action: Action) -> QueueDisposition {
+        switch action {
+        case .done, .discard: return .remove
+        case .enqueue: return .retain
+        }
+    }
+
+    /// GET 재검증 결과 → 큐 조치: mismatch = terminal 제거, retryable = 유지,
+    /// match(proceedAck) = nil(POST 결과가 결정).
+    static func disposition(onFetch action: FetchAction) -> QueueDisposition? {
+        switch action {
+        case .proceedAck: return nil
+        case .skipMismatch: return .remove
+        case .enqueueForRetry: return .retain
+        }
     }
 }

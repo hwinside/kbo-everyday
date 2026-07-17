@@ -198,6 +198,18 @@ final class LiveActivityController {
     private let ackQueueLock = NSLock()
     /// 401(unknown token) 직후 지연 재flush 예약 상태 — 동시 1개만.
     private var delayedAckFlushScheduled = false
+    /// flush single-flight(삼순 #663 재리뷰 blocker④) — 항목을 terminal 확정 전까지 persist에
+    /// 유지하므로, 동시 flush가 같은 항목을 중복 처리하지 않게 process-level로 1개만 실행.
+    /// 실행 중 트리거 유입은 rerun 플래그로 종료 후 1회 재실행(트리거 유실 없음).
+    private var ackFlushRunning = false
+    private var ackFlushRerun = false
+
+    /// ACK 시도 종결 분류 — 큐 제거/유지와 activity 마킹을 결정한다.
+    private enum AckSendResult: Equatable {
+        case terminal       // 2xx 성공 or 확정 폐기 — persist 항목 제거 대상
+        case retained       // 재시도 대기 — persist 큐가 소유(merge로 갱신됨)
+        case persistFailed  // UserDefaults 접근 불가 — activity 마킹 금지(rescan 재시도)
+    }
 
     /// GET /api/live-activity/channel — 양 env 채널 ID 중 *자기 빌드 env*의 active 채널만 선택
     /// (서버는 env를 추정하지 않는다, 스펙 v4 §서버 7). definitive(200/4xx)와
@@ -237,7 +249,7 @@ final class LiveActivityController {
             switch ChannelAckPolicy.onFetch(await fetchActiveChannel(gameId: gameId), marker: channelId) {
             case .proceedAck:
                 settled = await performChannelAck(gameId: gameId, channelId: channelId,
-                                                  attempts: 0, firstQueuedAt: nil)
+                                                  attempts: 0, firstQueuedAt: nil) != .persistFailed
             case .skipMismatch:
                 NSLog("[LiveActivity] channel-ack skipped: marker != active channel (game=\(gameId))")
                 settled = true
@@ -257,15 +269,15 @@ final class LiveActivityController {
     /// 재시도 정책: network/5xx = 큐 재시도, 401(unknown token) = bounded 재시도(삼순 #663
     /// blocker② — register-start(JS·Bearer)와의 완료 순서는 보장 불가, 즉시 폐기하면 최초
     /// 발급/rotation 직후 실제 ACK 유실), 그 외 4xx(409 stale 등) = 확정 폐기.
-    /// 반환 = settled(종결 또는 재시도 책임이 큐로 승계) — persist 실패 시에만 false.
+    /// 반환 = AckSendResult(terminal/retained/persistFailed) — flush는 terminal에서만 항목 제거.
     private func performChannelAck(gameId: String, channelId: String,
-                                   attempts: Int, firstQueuedAt: TimeInterval?) async -> Bool {
+                                   attempts: Int, firstQueuedAt: TimeInterval?) async -> AckSendResult {
         guard let startToken = latestPushToStartToken else {
             // device-auth 인증자가 아직 없음 — persist 직후/다음 포그라운드 flush 때 재시도.
             return enqueueChannelAck(gameId: gameId, channelId: channelId,
-                                     attempts: attempts, firstQueuedAt: firstQueuedAt)
+                                     attempts: attempts, firstQueuedAt: firstQueuedAt) ? .retained : .persistFailed
         }
-        guard let url = URL(string: "https://keubo.fan/api/live-activity/channel-ack") else { return true }
+        guard let url = URL(string: "https://keubo.fan/api/live-activity/channel-ack") else { return .terminal }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -285,19 +297,19 @@ final class LiveActivityController {
         switch ChannelAckPolicy.action(after: post, attempts: attempts) {
         case .done:
             NSLog("[LiveActivity] channel-ack ok (game=\(gameId))")
-            return true
+            return .terminal
         case .enqueue:
             NSLog("[LiveActivity] channel-ack retryable status=\(status.map { "\($0)" } ?? "network") attempts=\(attempts) → queued (game=\(gameId))")
             let nextAttempts = post == .unknownToken ? attempts + 1 : attempts
-            let settled = enqueueChannelAck(gameId: gameId, channelId: channelId,
-                                            attempts: nextAttempts, firstQueuedAt: firstQueuedAt)
+            let persisted = enqueueChannelAck(gameId: gameId, channelId: channelId,
+                                              attempts: nextAttempts, firstQueuedAt: firstQueuedAt)
             // blocker② 보강 — register-start는 보통 수 초 내 완료: 다음 포그라운드까지 기다리지
             // 않고 같은 세션에서 수렴시킨다(bounded: attempts 상한 + TTL).
             if post == .unknownToken { scheduleDelayedAckFlush() }
-            return settled
+            return persisted ? .retained : .persistFailed
         case .discard:
             NSLog("[LiveActivity] channel-ack rejected status=\(status.map { "\($0)" } ?? "-") — discarded (game=\(gameId))")
-            return true
+            return .terminal
         }
     }
 
@@ -320,40 +332,85 @@ final class LiveActivityController {
     }
 
     /// ACK 큐 flush — 부팅/포그라운드/p2s 토큰 persist/지연 예약에서 호출.
-    /// 항목마다 active 채널을 *지금* 재검증(blocker① — 큐잉 당시 판정을 신뢰하지 않음):
-    /// definitive mismatch = 폐기, retryable = 원래 queuedAt·attempts 보존 재큐잉(blocker③),
-    /// TTL(최초 enqueue 기준 24h) 초과분 폐기.
+    /// 재리뷰 blocker④ — persist 큐를 선삭제하지 않는다: snapshot은 읽기 전용, 항목 제거는
+    /// terminal(2xx 성공·확정 폐기·mismatch·TTL 만료) 확정 후 removeAckQueueItem으로만.
+    /// GET/POST await 중 suspend·kill·crash되어도 항목이 persist에 남아 다음 부팅/포그라운드
+    /// flush(startObservers/resync)가 복구한다. 동시 중복 처리는 process-level single-flight로 차단.
     func flushChannelAckQueue() {
         if #unavailable(iOS 18.0) { return }
+        ackQueueLock.lock()
+        if ackFlushRunning {
+            ackFlushRerun = true   // 실행 중 트리거 유입 — 종료 후 1회 재실행(유실 없음)
+            ackQueueLock.unlock()
+            return
+        }
+        ackFlushRunning = true
+        ackQueueLock.unlock()
+        Task {
+            repeat {
+                await processAckQueueOnce()
+                ackQueueLock.lock()
+                let rerun = ackFlushRerun
+                ackFlushRerun = false
+                if !rerun { ackFlushRunning = false }
+                ackQueueLock.unlock()
+                if !rerun { break }
+            } while true
+        }
+    }
+
+    /// 큐 1회 순회 — 항목마다 active 채널을 *지금* 재검증(blocker①)하고, 제거/유지는
+    /// ChannelAckPolicy disposition 규칙(terminal-only 제거)을 따른다. retryable 결과는
+    /// 항목이 persist에 그대로 남아 있고(선삭제 없음) merge가 attempts/queuedAt만 갱신한다.
+    private func processAckQueueOnce() async {
         guard let ud = UserDefaults(suiteName: WidgetSnapshotStore.appGroupId) else { return }
         ackQueueLock.lock()
-        let queue = (ud.array(forKey: Self.ackQueueKey) as? [[String: Any]]) ?? []
-        ud.removeObject(forKey: Self.ackQueueKey)
+        let raw = (ud.array(forKey: Self.ackQueueKey) as? [[String: Any]]) ?? []
+        let queue = raw.filter { ($0["gameId"] is String) && ($0["channelId"] is String) }
+        if queue.count != raw.count {
+            ud.set(queue, forKey: Self.ackQueueKey)   // malformed 항목만 정리(재시도 불능)
+        }
         ackQueueLock.unlock()
         guard !queue.isEmpty else { return }
         let now = Date().timeIntervalSince1970
-        Task {
-            for item in queue {
-                guard let gameId = item["gameId"] as? String,
-                      let channelId = item["channelId"] as? String else { continue }
-                let queuedAt = item["queuedAt"] as? TimeInterval ?? 0
-                let attempts = item["attempts"] as? Int ?? 0
-                if ChannelAckPolicy.isExpired(queuedAt: queuedAt, now: now) {
-                    NSLog("[LiveActivity] channel-ack expired (24h from first enqueue) — discarded (game=\(gameId))")
-                    continue
-                }
-                switch ChannelAckPolicy.onFetch(await fetchActiveChannel(gameId: gameId), marker: channelId) {
-                case .proceedAck:
-                    _ = await performChannelAck(gameId: gameId, channelId: channelId,
-                                                attempts: attempts, firstQueuedAt: queuedAt)
-                case .skipMismatch:
-                    NSLog("[LiveActivity] channel-ack dropped on flush: marker != active channel (game=\(gameId))")
-                case .enqueueForRetry:
-                    enqueueChannelAck(gameId: gameId, channelId: channelId,
-                                      attempts: attempts, firstQueuedAt: queuedAt)
-                }
+        for item in queue {
+            guard let gameId = item["gameId"] as? String,
+                  let channelId = item["channelId"] as? String else { continue }
+            let queuedAt = item["queuedAt"] as? TimeInterval ?? 0
+            let attempts = item["attempts"] as? Int ?? 0
+            if ChannelAckPolicy.isExpired(queuedAt: queuedAt, now: now) {
+                NSLog("[LiveActivity] channel-ack expired (24h from first enqueue) — discarded (game=\(gameId))")
+                removeAckQueueItem(gameId: gameId, channelId: channelId)   // terminal
+                continue
             }
+            let fetchAction = ChannelAckPolicy.onFetch(await fetchActiveChannel(gameId: gameId), marker: channelId)
+            if let disposition = ChannelAckPolicy.disposition(onFetch: fetchAction) {
+                if disposition == .remove {
+                    NSLog("[LiveActivity] channel-ack dropped on flush: marker != active channel (game=\(gameId))")
+                    removeAckQueueItem(gameId: gameId, channelId: channelId)   // terminal(definitive)
+                }
+                // .retain(GET retryable) — persist에 그대로 남음: 다음 flush가 재시도.
+                continue
+            }
+            // proceedAck — POST 결과가 terminal 여부를 결정(ChannelAckPolicy.disposition(after:) 규칙:
+            // done/discard만 remove). performChannelAck가 둘을 .terminal로 접어 반환한다.
+            let result = await performChannelAck(gameId: gameId, channelId: channelId,
+                                                 attempts: attempts, firstQueuedAt: queuedAt)
+            if result == .terminal {
+                removeAckQueueItem(gameId: gameId, channelId: channelId)
+            }
+            // .retained/.persistFailed — 항목 유지(retryable merge가 attempts/queuedAt 갱신).
         }
+    }
+
+    /// persist 큐에서 항목 제거 — terminal 결과 확정 시에만 호출(재리뷰 blocker④ 규칙).
+    private func removeAckQueueItem(gameId: String, channelId: String) {
+        guard let ud = UserDefaults(suiteName: WidgetSnapshotStore.appGroupId) else { return }
+        ackQueueLock.lock()
+        defer { ackQueueLock.unlock() }
+        let queue = (ud.array(forKey: Self.ackQueueKey) as? [[String: Any]]) ?? []
+        ud.set(ChannelAckPolicy.remove(queue: queue, gameId: gameId, channelId: channelId),
+               forKey: Self.ackQueueKey)
     }
 
     /// blocker② 보강 — 401(unknown token) 직후 20초 뒤 1회 재flush 예약(동시 1개).
