@@ -140,17 +140,20 @@ public class GameScoreWidget extends AppWidgetProvider {
                 Integer.parseInt(outs == null || outs.isEmpty() ? "0" : outs), 0), 3);
         } catch (NumberFormatException ignored) { }
 
-        int occupied = 0xFFFF3B30;  // 주자 = 레드 (확정 스펙)
-        int emptyBase = 0xFF4A5162;
-        int outOn = 0xFFFFD60A;     // 아웃 = 옐로우 (확정 스펙)
-        int outOff = 0xFF4A5162;
+        int occupied = 0xFFFFD60A;  // 주자 = 옐로우 (7/18 00:49 색 스와프 확정)
+        int outOn = 0xFFFF3B30;     // 아웃 = 레드
+        int lineColor = 0xFF8A93A6; // 빈 요소 = 테두리만(AOD 흑백에서도 채움/테두리로 구분 — 삼순 조건)
+
+        Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
+        stroke.setStyle(Paint.Style.STROKE);
+        stroke.setStrokeWidth(4f);
+        stroke.setColor(lineColor);
 
         // 베이스 3개 — 다이아몬드형. centers[i] = {1루(right), 2루(top), 3루(left)} 순서로
-        // d.charAt(0..2)=1루·2루·3루 점유 비트와 매칭.
+        // d.charAt(0..2)=1루·2루·3루 점유 비트와 매칭. 점유=채움, 공백=테두리.
         float half = 26f;
         float[][] centers = { {146f, 84f}, {96f, 40f}, {46f, 84f} };
         for (int i = 0; i < 3; i++) {
-            p.setColor(d.charAt(i) == '1' ? occupied : emptyBase);
             float cx = centers[i][0], cy = centers[i][1];
             android.graphics.Path path = new android.graphics.Path();
             path.moveTo(cx, cy - half);
@@ -158,14 +161,23 @@ public class GameScoreWidget extends AppWidgetProvider {
             path.lineTo(cx, cy + half);
             path.lineTo(cx - half, cy);
             path.close();
-            c.drawPath(path, p);
+            if (d.charAt(i) == '1') {
+                p.setColor(occupied);
+                c.drawPath(path, p);
+            } else {
+                c.drawPath(path, stroke);
+            }
         }
-        // 아웃 도트 3개
+        // 아웃 도트 3개 — 아웃=채움, 나머지=테두리.
         float r = 11f, oy = 156f;
         float[] ox = { 62f, 96f, 130f };
         for (int i = 0; i < 3; i++) {
-            p.setColor(i < outCount ? outOn : outOff);
-            c.drawCircle(ox[i], oy, r, p);
+            if (i < outCount) {
+                p.setColor(outOn);
+                c.drawCircle(ox[i], oy, r, p);
+            } else {
+                c.drawCircle(ox[i], oy, r, stroke);
+            }
         }
         return bmp;
     }

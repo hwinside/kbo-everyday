@@ -137,10 +137,13 @@ public class GameNotificationPlugin extends Plugin {
         String bases = baseSummary(e.diamond);
         if (!bases.isEmpty()) t.append(" ").append(bases);
         if (!e.pitcher.isEmpty() && !e.batter.isEmpty()) {
-            t.append(" · 투수 ").append(e.pitcher).append(" vs 타자 ").append(e.batter);
+            // "투/타" 압축 표기 — 좁은 화면 잘림 방지(삼순 권고).
+            t.append(" · 투 ").append(e.pitcher).append(" / 타 ").append(e.batter);
         } else if (!e.batter.isEmpty()) {
-            t.append(" · 타자 ").append(e.batter);
+            t.append(" · 타 ").append(e.batter);
         }
+        // 문자중계 최근 플레이 한 줄 — 승격 카드 본문  2줄째(One UI 접힘 렌더 실측 확인).
+        if (!e.lastPlay.isEmpty()) t.append("\n").append(e.lastPlay);
         b.setContentText(t.toString());
         b.setLargeIcon(GameScoreWidget.buildDiamondOutsIcon(e.diamond, e.outs));
 
