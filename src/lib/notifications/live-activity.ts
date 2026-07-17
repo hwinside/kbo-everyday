@@ -180,6 +180,23 @@ export async function pushLiveActivityUpdates(
       lastStateByGame.set(r.game_id, { score: r.last_score_state, hash: r.last_state_hash });
     }
   }
+  // 채널 행이 없는 경기(Broadcast Capability 미활성/생성 실패)는 경기 단위 폴백 상태를
+  // 읽는다 — 없으면 스킵 판정이 영영 못 돌아 매분 priority 10 발송 = 예산 스로틀 재발
+  // (2026-07-17 핫픽스). 채널 행(production)이 있으면 그쪽이 우선(위에서 이미 set).
+  const gamesNeedingFallback = gameIds.filter(
+    (gid) => stateByGame.get(gid) === "live" && !lastStateByGame.has(gid),
+  );
+  if (gamesNeedingFallback.length > 0) {
+    const { data: fallbackRows } = await supabase
+      .from("live_activity_game_push_state")
+      .select("game_id, last_score_state, last_state_hash")
+      .in("game_id", gamesNeedingFallback);
+    for (const r of (fallbackRows ?? []) as {
+      game_id: string; last_score_state: string | null; last_state_hash: string | null;
+    }[]) {
+      lastStateByGame.set(r.game_id, { score: r.last_score_state, hash: r.last_state_hash });
+    }
+  }
   const subscribed = new Set<string>(); // `${user_id}|${game_id}`
   if (activeChanKeys.size > 0) {
     const { data: subRows } = await supabase
@@ -200,15 +217,20 @@ export async function pushLiveActivityUpdates(
   // 판정은 경기 단위(풀 카드 상태 기준). 직전 상태는 채널 행이 지난 틱에 기록한 값 재사용 —
   // 채널 행이 없으면(전환 전/생성 실패) null → 항상 priority 10 발송 = 기존 동작 그대로.
   const decisionByGame = new Map<string, ChannelPushDecision>();
+  // 이번 틱의 상태 문자열 — 발송 성공 시 경기 단위 폴백 테이블에 기록(다음 틱 스킵 판정용).
+  const stateStringsByGame = new Map<string, { score: string; hash: string }>();
   for (const [gid, st] of stateByGame) {
     if (st !== "live") continue;
     const g = gameById.get(gid);
     if (!g) continue;
     const cs = buildContentState(g, "live", lastPlayByGame?.get(gid), true);
     const last = lastStateByGame.get(gid);
+    const scoreState = scoreStateOf(cs);
+    const fullHash = fullStateHashOf(cs);
+    stateStringsByGame.set(gid, { score: scoreState, hash: fullHash });
     decisionByGame.set(gid, decideChannelPush({
-      scoreState: scoreStateOf(cs),
-      fullStateHash: fullStateHashOf(cs),
+      scoreState,
+      fullStateHash: fullHash,
       lastScoreState: last?.score ?? null,
       lastStateHash: last?.hash ?? null,
     }));
@@ -218,6 +240,9 @@ export async function pushLiveActivityUpdates(
   let ended = 0;
   const invalidTokenIds: { user_id: string; game_id: string }[] = [];
   const endedTokenIds: { user_id: string; game_id: string }[] = [];
+  // 이번 틱에 update가 1건이라도 성공한 경기 — 폴백 상태 기록 대상(전패 경기는 미기록 →
+  // 다음 틱 재발송).
+  const sentUpdateGames = new Set<string>();
 
   await Promise.all(
     (tokens as TokenRow[]).map(async (t) => {
@@ -261,12 +286,44 @@ export async function pushLiveActivityUpdates(
           endedTokenIds.push({ user_id: t.user_id, game_id: t.game_id });
         } else {
           pushed += 1;
+          sentUpdateGames.add(t.game_id);
         }
       } else if (res.invalidToken) {
         invalidTokenIds.push({ user_id: t.user_id, game_id: t.game_id });
       }
     }),
   );
+
+  // 경기 단위 폴백 상태 기록 — 채널 행 유무와 무관하게, 이번 틱 update 성공 경기의
+  // 상태 문자열을 upsert(다음 틱 무변화 스킵/priority 5 판정 재료). 채널이 살아나면
+  // 읽기는 채널 행이 우선이라 이 테이블이 stale해져도 무해.
+  for (const gid of sentUpdateGames) {
+    const st = stateStringsByGame.get(gid);
+    if (!st) continue;
+    await supabase
+      .from("live_activity_game_push_state")
+      .upsert(
+        {
+          game_id: gid,
+          last_score_state: st.score,
+          last_state_hash: st.hash,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "game_id" },
+      );
+  }
+  // 종료/취소 경기의 폴백 행 정리 (game_id는 재사용되지 않으므로 잔존해도 무해하나,
+  // end 창 동안 매 틱 멱등 삭제로 테이블을 작게 유지).
+  const finishedGames = gameIds.filter((gid) => {
+    const st = stateByGame.get(gid);
+    return st === "final" || st === "cancelled";
+  });
+  if (finishedGames.length > 0) {
+    await supabase
+      .from("live_activity_game_push_state")
+      .delete()
+      .in("game_id", finishedGames);
+  }
 
   // 무효 토큰 + 종료/취소 경기 토큰 정리 + started_users close.
   // ⚠️ started_users도 함께 닫는다(삼순 #530 blocker): 안 하면 같은 warmup 틱에서 이 함수가
