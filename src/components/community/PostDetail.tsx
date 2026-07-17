@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, Ban, MoreHorizontal, Check, CornerDownRight, X, ImagePlay } from "lucide-react";
+import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, Ban, MoreHorizontal, Check, CornerDownRight, X, ImagePlay, ImagePlus, Loader2 } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getAvatarPath } from "@/lib/constants/avatars";
-import { usePostDetail, createComment, toggleLike, toggleCommentLike, updatePost, deletePost, updateComment, deleteComment } from "@/lib/supabase/usePosts";
+import { usePostDetail, createComment, toggleLike, toggleCommentLike, updatePost, deletePost, updateComment, deleteComment, uploadCommentImage } from "@/lib/supabase/usePosts";
 import ReportSheet from "@/components/community/ReportSheet";
 import LinkPreview from "@/components/community/LinkPreview";
 import { isShortText, BrandedTextCard, getPostScopeLabel } from "@/components/community/FeedTextCards";
@@ -16,7 +16,8 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import DMButton from "@/components/ui/DMButton";
-import GifPicker, { isGifComment } from "@/components/community/GifPicker";
+import GifPicker from "@/components/community/GifPicker";
+import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/comment-media";
 import LoginSheet from "@/components/auth/LoginSheet";
 import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
 import { useBlockedIds, blockUserById } from "@/lib/supabase/useBlock";
@@ -38,8 +39,10 @@ export default function PostDetail({ postId }: PostDetailProps) {
   const [heartShow, setHeartShow] = useState(false);
   const [replyTo, setReplyTo] = useState<{ id: number; nickname: string } | null>(null);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Keyboard handling — delegated to the global `interactive-widget=
   // resizes-content` viewport (layout.tsx), exactly like GameChat. On focus iOS
@@ -243,6 +246,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
 
   async function handleComment() {
     if (!user) { setShowLogin(true); return; }
+    if (uploadingImage) return;
     if (!comment.trim()) return;
     try {
       const result = await createComment(post!.id, comment.trim(), replyTo?.id);
@@ -270,6 +274,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
 
   async function handleGifSelect(gifUrl: string) {
     if (!user) { setShowLogin(true); return; }
+    if (uploadingImage) return;
     setShowGifPicker(false);
     try {
       const result = await createComment(post!.id, gifUrl, replyTo?.id);
@@ -291,6 +296,49 @@ export default function PostDetail({ postId }: PostDetailProps) {
     } catch (err) {
       console.error("[PostDetail] GIF comment failed:", err);
       alert("GIF 전송에 실패했어요");
+    }
+  }
+
+  function openImagePicker() {
+    if (!user) { setShowLogin(true); return; }
+    if (uploadingImage) return;
+    setShowGifPicker(false);
+    fileInputRef.current?.click();
+  }
+
+  async function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!user) { setShowLogin(true); return; }
+    if (uploadingImage) return;
+
+    setShowGifPicker(false);
+    setUploadingImage(true);
+    try {
+      const prepared = await prepareCommentImageForUpload(file);
+      const imageUrl = await uploadCommentImage(prepared);
+      const result = await createComment(post!.id, imageUrl, replyTo?.id);
+      setComments(prev => [...prev, {
+        id: result.id,
+        post_id: post!.id,
+        author_id: user.id,
+        content: imageUrl,
+        created_at: new Date().toISOString(),
+        parent_id: replyTo?.id ?? null,
+        like_count: 0,
+        liked_by_me: false,
+        nickname: profile?.nickname ?? user?.user_metadata?.name ?? "나",
+        team_id: profile?.team_id,
+        grade: profile?.grade,
+        avatar_url: profile?.avatar_url ?? undefined,
+      }]);
+      setReplyTo(null);
+    } catch (err) {
+      console.error("[PostDetail] image comment failed:", err);
+      alert(err instanceof Error ? err.message : "이미지 업로드에 실패했어요");
+    } finally {
+      setUploadingImage(false);
     }
   }
 
@@ -406,6 +454,21 @@ export default function PostDetail({ postId }: PostDetailProps) {
           )}
         </div>
 
+        {/* 미디어 — 사진 → 글 순서(피드 PhotoFeed와 동일). 인스타식 캐러셀(스와이프+점+더블탭 좋아요).
+            본문 px-5 패딩 밖으로 -mx-5 full-bleed. mb-4로 아래 본문과 간격(위 간격은 작성자행 mb-3). */}
+        {(post.image_urls.length > 0 || (post.video_urls?.length ?? 0) > 0) && (
+          <div className="relative mb-4 -mx-5">
+            <PhotoCarousel
+              slides={[
+                ...post.image_urls.map((url: string) => ({ url, isVideo: false })),
+                ...(post.video_urls ?? []).map((url: string) => ({ url, isVideo: true })),
+              ]}
+              onDoubleTap={handleMediaDoubleTap}
+            />
+            <HeartOverlay show={heartShow} />
+          </div>
+        )}
+
         {postEditing ? (
           <div className="space-y-2 mb-3">
             <textarea
@@ -439,9 +502,12 @@ export default function PostDetail({ postId }: PostDetailProps) {
               return <BrandedTextCard post={post} body={merged} />;
             }
             const attr = parseAttribution(merged);
+            const body = stripUrls(attr ? attr.body : merged);
+            // 사진 → 글 순서로 미디어가 위에 오므로, 캡션 없는 사진 글은 빈 문단을 렌더하지 않음.
+            if (hasMedia && !body && !attr) return null;
             return (
               <p className="readable-body whitespace-pre-line">
-                {stripUrls(attr ? attr.body : merged)}
+                {body}
                 {attr && (
                   <>
                     {`${attr.body ? "\n\n" : ""}(출처: ${attr.handle ? attr.label + " " : ""}`}
@@ -469,21 +535,6 @@ export default function PostDetail({ postId }: PostDetailProps) {
             />
           );
         })()}
-
-        {/* 미디어 — 피드(PhotoFeed)와 동일한 인스타식 캐러셀(한 장씩 스와이프 + 점 인디케이터 + 더블탭 좋아요).
-            본문은 px-5 패딩 안이라 -mx-5로 full-bleed 처리(피드 카드와 동일한 풀블리드 룩). */}
-        {(post.image_urls.length > 0 || (post.video_urls?.length ?? 0) > 0) && (
-          <div className="relative mt-4 -mx-5">
-            <PhotoCarousel
-              slides={[
-                ...post.image_urls.map((url: string) => ({ url, isVideo: false })),
-                ...(post.video_urls ?? []).map((url: string) => ({ url, isVideo: true })),
-              ]}
-              onDoubleTap={handleMediaDoubleTap}
-            />
-            <HeartOverlay show={heartShow} />
-          </div>
-        )}
 
         {/* Actions */}
         <div className="flex items-center gap-4 mt-4 pt-3 border-t border-border">
@@ -623,11 +674,11 @@ export default function PostDetail({ postId }: PostDetailProps) {
                         </div>
                       ) : (
                         <>
-                          {isGifComment(c.content) ? (
+                          {isImageComment(c.content) ? (
                             <img
                               src={c.content.trim()}
-                              alt="GIF"
-                              className="mt-1 rounded-lg max-w-[200px] h-auto"
+                              alt="댓글 이미지"
+                              className="mt-1 rounded-lg max-w-[220px] max-h-[280px] h-auto object-contain"
                               loading="lazy"
                             />
                           ) : (
@@ -720,13 +771,34 @@ export default function PostDetail({ postId }: PostDetailProps) {
           return (
             <>
               {user && (
-                <button
-                  onClick={() => setShowGifPicker((v) => !v)}
-                  className={`flex items-center justify-center w-9 h-9 shrink-0 rounded-full transition-colors ${showGifPicker ? "bg-accent/20 text-accent" : "text-text-tertiary hover:text-text-primary"}`}
-                  aria-label="GIF"
-                >
-                  <ImagePlay size={20} />
-                </button>
+                <>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    className="hidden"
+                    onChange={handleImageSelect}
+                  />
+                  <button
+                    onClick={openImagePicker}
+                    disabled={uploadingImage}
+                    className="flex items-center justify-center w-9 h-9 shrink-0 rounded-full text-text-tertiary hover:text-text-primary disabled:opacity-50 transition-colors"
+                    aria-label="이미지 업로드"
+                  >
+                    {uploadingImage ? <Loader2 size={20} className="animate-spin" /> : <ImagePlus size={20} />}
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (uploadingImage) return;
+                      setShowGifPicker((v) => !v);
+                    }}
+                    disabled={uploadingImage}
+                    className={`flex items-center justify-center w-9 h-9 shrink-0 rounded-full disabled:opacity-50 transition-colors ${showGifPicker ? "bg-accent/20 text-accent" : "text-text-tertiary hover:text-text-primary"}`}
+                    aria-label="GIF"
+                  >
+                    <ImagePlay size={20} />
+                  </button>
+                </>
               )}
               {user ? (
                 <input

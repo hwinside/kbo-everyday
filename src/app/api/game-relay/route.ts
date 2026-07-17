@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { trackFallback } from "@/lib/monitoring/api-fallback-tracker";
+import { isAllStarGameId } from "@/lib/constants/teams";
 
 // Vercel 서버리스에서 캐시 방지 (라이브 데이터는 항상 최신이어야 함)
 export const dynamic = "force-dynamic";
@@ -119,7 +120,10 @@ export interface GameRelayResponse {
 
 function toNaverGameId(kboGameId: string): string {
   const year = kboGameId.slice(0, 4);
-  return kboGameId + year;
+  // 올스타는 네이버가 앞 4자리 연도 대신 9999 prefix로 서비스한다.
+  // 예: KBO 20260711WEEA0 → Naver 99990711WEEA02026 (연도 suffix는 실제 연도 유지).
+  const base = isAllStarGameId(kboGameId) ? `9999${kboGameId.slice(4)}` : kboGameId;
+  return base + year;
 }
 
 function classifyResult(text: string): PlayEvent["type"] {

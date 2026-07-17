@@ -3,6 +3,8 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
+import { isAllStarGame } from "@/lib/constants/teams";
+import { allStarSideOfTeam } from "@/lib/constants/allstar-2026";
 
 /**
  * 팬 분위기 게이지 — 하이브리드 방식
@@ -24,6 +26,15 @@ export function useMoodGauge(
   const presenceRef = useRef<{ home: number; away: number }>({ home: 0, away: 0 });
   const chatRef = useRef<{ home: number; away: number }>({ home: 0, away: 0 });
 
+  // 올스타전: 유저 team_id(정규 10구단)가 나눔/드림(101/102)과 직접 매칭이 안 돼
+  // 게이지가 50:50 고정 → 소속 구단→올스타 사이드 매핑으로 판정. *팬 분위기 계산
+  // 전용* — 유저 team_id/팬방/알림 로직은 불변 (2026-07-11 하린아빠·삼순 GO).
+  const isAllStar = isAllStarGame(awayTeamId, homeTeamId);
+  const effectiveTeamId = useCallback(
+    (tid: number | null | undefined) => (isAllStar ? allStarSideOfTeam(tid) : tid),
+    [isAllStar],
+  );
+
   // ── 1) Presence: 접속자 팀 비율 (fallback) ──
   useEffect(() => {
     const channelName = `mood:${gameId}`;
@@ -42,8 +53,9 @@ export function useMoodGauge(
         // state is Record<string, PresenceState[]>
         for (const key of Object.keys(state)) {
           for (const p of state[key]) {
-            if (p.team_id === homeTeamId) home++;
-            else if (p.team_id === awayTeamId) away++;
+            const tid = effectiveTeamId(p.team_id);
+            if (tid === homeTeamId) home++;
+            else if (tid === awayTeamId) away++;
           }
         }
 
@@ -83,7 +95,7 @@ export function useMoodGauge(
 
     if (data) {
       for (const row of data as Array<{ user_id: string; profiles?: { team_id?: number } }>) {
-        const tid = row.profiles?.team_id;
+        const tid = effectiveTeamId(row.profiles?.team_id);
         if (tid === homeTeamId) home++;
         else if (tid === awayTeamId) away++;
       }
@@ -92,7 +104,7 @@ export function useMoodGauge(
     chatRef.current = { home, away };
     setChatCount(home + away);
     recalc();
-  }, [gameId, homeTeamId, awayTeamId]);
+  }, [gameId, homeTeamId, awayTeamId, effectiveTeamId]);
 
   // 초기 로드 + 30초 폴링
   useEffect(() => {

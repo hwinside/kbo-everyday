@@ -24,6 +24,13 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  * 위젯이 아니라 *위젯과 동일한 RemoteViews 카드*를 알림 커스텀 뷰로 그려서 표시한다(네이버 방식).
  * 카드 데이터는 GameScoreWidget의 SharedPreferences(kbo_game_widget)를 공유 — 위젯/알림 동일.
  * 잠금화면 노출 위해 IMPORTANCE_DEFAULT + VISIBILITY_PUBLIC. 동일 ID re-notify로 갱신, cancel로 제거.
+ *
+ * Android 16+(One UI 8.5) Live Update: 유저가 마이페이지에서 명시 opt-in한 경우에만
+ * 표준 스타일(BigText) 알림 + setRequestPromotedOngoing(true)으로 잠금화면 라이브 카드 승격을
+ * 요청한다. Live Update는 커스텀 뷰(DecoratedCustomViewStyle)를 승격 대상에서 제외하므로
+ * promoted 분기는 RemoteViews 카드를 쓰지 않고, 비대상(미지원 OS/opt-out)은 기존 커스텀
+ * 카드 경로 그대로다. 유저가 카드를 Unpin(스와이프 해제)하면 deleteIntent로 감지해 같은
+ * 경기(gameId)는 자동 재게시하지 않는다.
  */
 @CapacitorPlugin(name = "GameNotification")
 public class GameNotificationPlugin extends Plugin {
@@ -31,6 +38,70 @@ public class GameNotificationPlugin extends Plugin {
     // v3: 커스텀 카드 + 잠금화면 가시성(IMPORTANCE_DEFAULT). 채널 importance는 생성 후 못 올리므로 새 ID.
     private static final String CHANNEL_ID = "game_live_card";
     private static final int NOTIFICATION_ID = 7001;
+
+    // Live Update opt-in/Unpin 상태 — 디바이스 로컬(SharedPreferences).
+    static final String LU_PREFS = "kbo_live_update";
+    static final String LU_KEY_OPT_IN = "opt_in";
+    static final String LU_KEY_SUPPRESSED_GAME = "suppressed_game_id";
+
+    /** Android 16+(API 36)이고 시스템이 이 앱의 promoted 게시를 허용하는지. */
+    static boolean liveUpdateSupported(Context context) {
+        if (Build.VERSION.SDK_INT < 36) return false;
+        NotificationManager mgr = context.getSystemService(NotificationManager.class);
+        return mgr != null && mgr.canPostPromotedNotifications();
+    }
+
+    static boolean liveUpdateOptedIn(Context context) {
+        return context.getSharedPreferences(LU_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(LU_KEY_OPT_IN, false);
+    }
+
+    /** path("/games/{gameId}")에서 gameId 추출 — KboMessagingService와 동일 규칙. */
+    private static String gameIdFromPath(String path) {
+        if (path == null || path.isEmpty()) return "";
+        int slash = path.lastIndexOf('/');
+        return slash >= 0 ? path.substring(slash + 1) : path;
+    }
+
+    /** 현재 카드의 경기 식별자. JS start/update는 path 없이 호출되므로(경기룸 포그라운드)
+     *  위젯 prefs의 gameId로 폴백 — Unpin 억제가 FCM/JS 경로 모두에서 같은 경기를 가리키게. */
+    private static String currentGameId(Context context, String path) {
+        String fromPath = gameIdFromPath(path);
+        if (!fromPath.isEmpty()) return fromPath;
+        return context.getSharedPreferences(GameScoreWidget.PREFS, Context.MODE_PRIVATE)
+            .getString(GameScoreWidget.KEY_GAME_ID, "");
+    }
+
+    /** 승격(Live Update) 카드용 텍스트 조합 — 표준 스타일 카드는 push title/body 텍스트만
+     *  보이는데, FCM game_live의 title/body엔 점수/이닝이 없다(구조화 w_*는 위젯 prefs로만
+     *  전달되고 기존 커스텀 카드는 prefs를 직접 그려서 문제가 안 드러났음). 위젯과 동일한
+     *  prefs 스냅샷(Eff)에서 "롯데 1 : 3 삼성 · 8회초" + 최근 플레이 줄을 직접 만든다.
+     *  순수 함수 — ComposeLiveCardTest 유닛테스트 대상.
+     *  @return [title, body]. prefs에 경기 데이터가 없으면 push 원문 폴백 */
+    static String[] composeLiveCard(GameScoreWidget.Eff e, String fallbackTitle, String fallbackBody) {
+        String fb = fallbackBody == null ? "" : fallbackBody;
+        if (e == null || !e.hasGame || e.away.isEmpty() || e.home.isEmpty()) {
+            return new String[] { fallbackTitle == null ? "" : fallbackTitle, fb };
+        }
+        String away = GameScoreWidget.shortName(e.away);
+        String home = GameScoreWidget.shortName(e.home);
+        String st = e.status == null ? "" : e.status;
+        String title;
+        if (st.startsWith("SCHEDULED|")) {
+            // 예정 카드(프리게임 push) — 점수 대신 매치업 + 시작 시각.
+            String[] parts = st.split("\\|", -1);
+            String time = parts.length > 1 ? parts[1] : "";
+            title = away + " vs " + home + (time.isEmpty() ? " · 경기 예정" : " · " + time + " 경기 예정");
+        } else {
+            String suffix = "CANCELLED".equals(st) ? "경기 취소"
+                : st.startsWith("FINAL") ? "경기 종료"
+                : st; // 라이브 = "8회초" 등
+            title = away + " " + e.as + " : " + e.hs + " " + home
+                + (suffix.isEmpty() ? "" : " · " + suffix);
+        }
+        String body = !e.lastPlay.isEmpty() ? e.lastPlay : !fb.isEmpty() ? fb : e.stadium;
+        return new String[] { title, body == null ? "" : body };
+    }
 
     private static void ensureChannel(Context context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -51,7 +122,8 @@ public class GameNotificationPlugin extends Plugin {
     /** 카드 탭 시 열 앱 내 경로(예: /games/20260612...). MainActivity가 이 extra를 읽어 웹뷰 이동. */
     static final String EXTRA_PATH = "kbo_path";
 
-    private static Notification build(Context context, String title, String body, String path) {
+    private static Notification build(Context context, String title, String body, String path,
+                                      boolean promoted) {
         ensureChannel(context);
         // 카드 탭 → 해당 경기룸 딥링크(②). path가 있으면 MainActivity를 extra와 함께 열고,
         // 없으면(레거시/직접 호출) 기존대로 앱 홈을 연다.
@@ -83,9 +155,35 @@ public class GameNotificationPlugin extends Plugin {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setContentIntent(pi);
 
-        // 위젯과 동일한 카드 RemoteViews를 알림 커스텀 뷰로 — 잠금화면에 리치 카드 표시.
-        // 접힌 뷰(잠금화면 기본) = 점수 한 줄 컴팩트 카드, 펼친 뷰 = 전체 카드.
-        if (GameScoreWidget.hasGame(context)) {
+        if (promoted) {
+            // Live Update 분기 — 표준 스타일만 승격 대상(커스텀 뷰 금지). 점수/이닝/최근 플레이는
+            // 위젯 prefs에서 직접 조합(FCM title/body엔 없음 — composeLiveCard 주석 참조).
+            String[] tb = composeLiveCard(GameScoreWidget.readEff(context), title, body);
+            b.setContentTitle(tb[0])
+                .setContentText(tb[1])
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(tb[1]))
+                .setRequestPromotedOngoing(true);
+            String gameId = currentGameId(context, path);
+            // Unpin(유저 스와이프 해제) 감지 → 같은 경기 자동 재게시 억제. deleteIntent는
+            // 유저 해제 시에만 발화(cancel()로는 미발화)라 non-promoted 경로 행동 불변.
+            Intent del = new Intent(context, LiveUpdateDismissReceiver.class);
+            del.putExtra(LiveUpdateDismissReceiver.EXTRA_GAME_ID, gameId);
+            b.setDeleteIntent(PendingIntent.getBroadcast(
+                context, 2, del,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
+            // 명시적 "해제" 액션 — Android Live Update 가이드가 배경 스포츠 경기 모니터링
+            // 알림에 유저가 직접 끌 수 있는 액션을 요구(스와이프만으로는 불충분).
+            // 같은 수신자(LiveUpdateDismissReceiver)로 보내 억제 기록+알림 취소를 동일 경로로.
+            Intent unpin = new Intent(context, LiveUpdateDismissReceiver.class);
+            unpin.putExtra(LiveUpdateDismissReceiver.EXTRA_GAME_ID, gameId);
+            PendingIntent unpinPi = PendingIntent.getBroadcast(
+                context, 3, unpin,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            b.addAction(android.R.drawable.ic_menu_close_clear_cancel,
+                context.getString(R.string.live_update_unpin_action), unpinPi);
+        } else if (GameScoreWidget.hasGame(context)) {
+            // 기존 경로(미지원 OS/opt-out) — 위젯과 동일한 카드 RemoteViews를 알림 커스텀 뷰로.
+            // 접힌 뷰(잠금화면 기본) = 점수 한 줄 컴팩트 카드, 펼친 뷰 = 전체 카드.
             RemoteViews compact = GameScoreWidget.buildCompactCard(context);
             RemoteViews full = GameScoreWidget.buildNotifFullCard(context);
             full.setOnClickPendingIntent(R.id.widget_root, pi);
@@ -99,9 +197,17 @@ public class GameNotificationPlugin extends Plugin {
     /** ongoing notification 게시/갱신 (동일 ID라 갱신은 re-notify) + 홈 위젯 동기 갱신.
      *  path = 카드 탭 시 열 경기룸 경로(없으면 홈). */
     static void post(Context context, String title, String body, String path) {
+        boolean promoted = liveUpdateSupported(context) && liveUpdateOptedIn(context);
+        if (promoted) {
+            // 유저가 이 경기 카드를 Unpin함 — 같은 경기는 재게시하지 않는다(Live Update 계약).
+            String gameId = currentGameId(context, path);
+            String suppressed = context.getSharedPreferences(LU_PREFS, Context.MODE_PRIVATE)
+                .getString(LU_KEY_SUPPRESSED_GAME, "");
+            if (!gameId.isEmpty() && gameId.equals(suppressed)) return;
+        }
         try {
             NotificationManagerCompat.from(context)
-                .notify(NOTIFICATION_ID, build(context, title, body, path));
+                .notify(NOTIFICATION_ID, build(context, title, body, path, promoted));
         } catch (SecurityException ignored) {
             // POST_NOTIFICATIONS 미허용 — 무시 (권한 UX가 별도 처리)
         }
@@ -179,9 +285,51 @@ public class GameNotificationPlugin extends Plugin {
     /** 디바이스 최애팀 코드 기록 (위젯 배경/워터마크 색 결정). */
     @PluginMethod
     public void setMyTeam(PluginCall call) {
-        GameScoreWidget.setMyTeam(getContext(), call.getString("code", ""));
+        String code = call.getString("code", "");
+        GameScoreWidget.setMyTeam(getContext(), code);
         // 순위 위젯은 최애팀 행 하이라이트가 바뀌므로 캐시로 즉시 재렌더
         TeamRankWidget.renderAllFromCache(getContext());
+        pushMyTeamToWatch(code);
+        call.resolve();
+    }
+
+    /**
+     * 갤럭시워치(Wear OS) 최애팀 동기화 — 애플워치 WCSession(WatchSyncManager)의 안드로이드판.
+     * Data Layer /kbo/my_team에 최신값 기록(latest-value 시맨틱). 워치 미연결/GMS 이상은
+     * 조용히 무시 — 폰 기능에 영향을 주면 안 된다.
+     */
+    private void pushMyTeamToWatch(String code) {
+        // 빈 코드(최애팀 해제)도 push — 워치가 이전 팀 캐시/스냅샷을 무효화해야 한다
+        if (code == null) code = "";
+        try {
+            com.google.android.gms.wearable.PutDataMapRequest req =
+                    com.google.android.gms.wearable.PutDataMapRequest.create("/kbo/my_team");
+            req.getDataMap().putString("code", code.toUpperCase(java.util.Locale.ROOT));
+            // 동일 팀 재선택에도 change 이벤트가 발생하도록 타임스탬프 동봉
+            req.getDataMap().putLong("at", System.currentTimeMillis());
+            com.google.android.gms.wearable.Wearable.getDataClient(getContext())
+                    .putDataItem(req.asPutDataRequest().setUrgent());
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** Live Update 지원/opt-in 상태 — 마이페이지 토글 노출 게이트(미지원 기기엔 토글 숨김). */
+    @PluginMethod
+    public void getLiveUpdateState(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("supported", liveUpdateSupported(getContext()));
+        ret.put("enabled", liveUpdateOptedIn(getContext()));
+        call.resolve(ret);
+    }
+
+    /** Live Update 명시 opt-in 토글. 토글 변경 시 Unpin 억제 상태도 리셋. */
+    @PluginMethod
+    public void setLiveUpdateOptIn(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+        getContext().getSharedPreferences(LU_PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(LU_KEY_OPT_IN, enabled)
+            .remove(LU_KEY_SUPPRESSED_GAME)
+            .apply();
         call.resolve();
     }
 

@@ -8,10 +8,10 @@ const WELCOME_MESSAGE = `안녕하세요, 크보팬 운영팀입니다 ⚾
 이런 것도 해보세요:
 • 최애선수를 5명까지 추가 지정하기
 • 커뮤니티 글 하나 읽고 댓글 남기기
-• 궁금한 점이나 불편한 점이 있으면 이 쪽지에 바로 답장하기
+• 궁금한 점이나 불편한 점이 있으면 마이페이지 > 피드백 보내기로 문의하기
 
 크보팬은 팬들이 같이 만드는 서비스예요.
-써보시면서 아쉬운 점 있으면 편하게 알려주세요 :)`;
+써보시면서 아쉬운 점 있으면 편하게 '피드백 보내기'로 알려주세요 :)`;
 
 export async function POST(request: NextRequest) {
   const systemUserId = process.env.SYSTEM_USER_ID;

@@ -3,6 +3,8 @@
 import Image from "next/image";
 import { ChevronLeft } from "lucide-react";
 import type { ReactNode } from "react";
+import CountryFlag from "@/components/player/CountryFlag";
+import type { Nationality } from "@/lib/utils/player-nationality";
 
 // Hero 이미지: 검수 통과 선수만 노출 (default deny).
 // v2 cutout 품질 이슈로 allowlist 방식 전환 (2026-04-28).
@@ -100,6 +102,10 @@ interface PlayerHeroProps {
   teamBg: string;
   backNo?: number | null;
   position?: string | null;
+  /** 생년월일 표시 문자열 (예: "2000.07.17 · 만 25세"). 없으면 미표시 */
+  birthText?: string | null;
+  /** 외국인 선수 국적 (국기+국가명). 내국인은 null */
+  nationality?: Nationality | null;
   stats?: HeroStat[];
   /** 좌상단 back link href (next/link). 없으면 window.history.back() */
   backHref?: string;
@@ -118,6 +124,8 @@ export default function PlayerHero({
   teamBg,
   backNo,
   position,
+  birthText,
+  nationality,
   stats = [],
   backHref,
   showTopBar = true,
@@ -191,6 +199,18 @@ export default function PlayerHero({
             {position && (
               <div className="text-lg font-bold text-white/60 whitespace-nowrap" style={{ letterSpacing: "-0.05em" }}>
                 {position}
+              </div>
+            )}
+            {nationality && (
+              <CountryFlag
+                nationality={nationality}
+                size={15}
+                className="text-[11px] font-semibold text-white/60"
+              />
+            )}
+            {birthText && (
+              <div className="text-[11px] font-medium text-white/45 whitespace-nowrap" style={{ letterSpacing: "-0.03em" }}>
+                {birthText}
               </div>
             )}
           </div>

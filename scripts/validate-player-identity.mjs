@@ -47,6 +47,9 @@ function resolvePlayer({ name, kboId, playerId, id, team, teamId }) {
     if (direct) return direct;
     const alpha = foreignNumericToAlpha[token];
     if (alpha && byId.has(alpha)) return byId.get(alpha);
+    // An explicit id that doesn't resolve to roster/foreign alias must fail,
+    // not silently fall back to a same-name match at a different id/team.
+    return null;
   }
 
   const cleanName = name?.trim?.();

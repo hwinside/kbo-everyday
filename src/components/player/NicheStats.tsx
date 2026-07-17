@@ -186,7 +186,23 @@ function PitcherStats({ data, teamColor }: { data: PitcherAdvanced; teamColor: s
   );
 }
 
-export default function NicheStats({ playerId, position, teamColor, playerName, season = 2026 }: { playerId: string; position: string; teamColor: string; playerName?: string; season?: number }) {
+type SeasonStats = Record<string, string | number>;
+
+export default function NicheStats({
+  playerId,
+  position,
+  teamColor,
+  playerName,
+  season = 2026,
+  stats,
+}: {
+  playerId: string;
+  position: string;
+  teamColor: string;
+  playerName?: string;
+  season?: number;
+  stats?: SeasonStats;
+}) {
   const isPitcher = position === "투수";
   const [realSaber, setRealSaber] = useState<CalcBatterSaber | CalcPitcherSaber | null>(null);
   const [loading, setLoading] = useState(false);
@@ -201,6 +217,15 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
         ? calcPitcherSaber({ ...stats, so: (stats.so as number) ?? 0 } as Parameters<typeof calcPitcherSaber>[0])
         : calcBatterSaber({ ...stats, so: (stats.so as number) ?? 0 } as Parameters<typeof calcBatterSaber>[0]);
     };
+
+    if (stats) {
+      const merged: Record<string, unknown> = { ...stats };
+      // /api/stats 투수는 h(피안타) 키 사용 — calcPitcherSaber는 hits 기대 (아래 fallback 경로와 동일 리매핑)
+      if (isPitcher && merged.h != null && merged.hits == null) merged.hits = merged.h;
+      setRealSaber(computeSaber(merged));
+      setLoading(false);
+      return;
+    }
 
     // 1차: KBO 개별 선수 상세 크롤링
     fetch(`/api/player-stats?id=${playerId}&pos=${encodeURIComponent(position)}`)
@@ -231,7 +256,7 @@ export default function NicheStats({ playerId, position, teamColor, playerName, 
           });
       })
       .catch(() => setLoading(false));
-  }, [season, playerId, isPitcher, position, playerName]);
+  }, [season, playerId, isPitcher, position, playerName, stats]);
 
   {
     if (loading) return <div className="text-center py-8 text-text-tertiary text-sm">계산 중...</div>;

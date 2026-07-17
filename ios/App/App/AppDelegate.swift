@@ -17,6 +17,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         if #available(iOS 16.1, *) {
             LiveActivityController.shared.startObservers()
         }
+        // 애플워치 최애팀 동기화 — 활성화 완료 시 저장된 my_team을 1회 push.
+        WatchSyncManager.shared.activate()
         return true
     }
 
@@ -119,6 +121,17 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         if #available(iOS 16.1, *) {
             LiveActivityController.shared.rescanActiveActivities()
             LiveActivityController.shared.resyncPushToStartTokenOnForeground()
+        }
+        // A안 — 경기 종료 무음 wake: iOS 홈위젯은 서버 푸시로 직접 갱신되지 않으므로, game_end로
+        // 백그라운드에서 깨어난 이 순간 홈위젯 스냅샷을 최종 스코어로 종료 처리한다(프리즈된 LIVE
+        // 카드 → '경기 종료 + 최종 스코어'). 현재 위젯이 이 경기(gameId)를 표시 중일 때만 반영.
+        if let kind = userInfo["kind"] as? String, kind == "game_end",
+           let gameId = userInfo["gameId"] as? String,
+           let asStr = userInfo["w_as"] as? String,
+           let hsStr = userInfo["w_hs"] as? String {
+            WidgetSnapshotStore.markFinal(gameId: gameId,
+                                          awayScore: Int(asStr) ?? 0,
+                                          homeScore: Int(hsStr) ?? 0)
         }
         NotificationCenter.default.post(name: Notification.Name.init("didReceiveRemoteNotification"), object: completionHandler, userInfo: userInfo)
     }

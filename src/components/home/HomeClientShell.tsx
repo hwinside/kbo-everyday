@@ -11,7 +11,7 @@ import OnboardingFlow from "@/components/onboarding/OnboardingFlow";
 import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
 import LoginSheet from "@/components/auth/LoginSheet";
 import PWAInstallBanner from "@/components/ui/PWAInstallBanner";
-import { TEAMS, getTeamById } from "@/lib/constants/teams";
+import { TEAMS, getTeamById, isAllStarGameId } from "@/lib/constants/teams";
 import { useLiveGame, type LiveGameData } from "@/lib/hooks/useLiveGame";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
@@ -26,6 +26,7 @@ import { writeHomeWidgetSnapshot, type HomeWidgetGame } from "@/lib/native-live-
 import { latestRelayLine } from "@/lib/notifications/relay-line";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
 import MyTeamHero from "@/components/home/MyTeamHero";
+import AllStarGameCard from "@/components/home/AllStarGameCard";
 import TeamCard from "@/components/home/TeamCard";
 import FavoritePlayersSection from "@/components/home/FavoritePlayersSection";
 import TodayGamesSection from "@/components/home/TodayGamesSection";
@@ -102,6 +103,7 @@ type MyTeamHeroGame = HomeGame & {
   currentBatter: string | null;
   currentPitcher: string | null;
   isTop: boolean;
+  dateLabel?: string | null;
 };
 
 type WidgetGame = HomeGame & {
@@ -208,7 +210,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
 
   // 라이브 데이터: 경기시간대만 폴링, 비경기시간은 서버 초기 데이터만 사용
   const gameTime = isGameTimeKST();
-  const { liveGames: polledLiveGames } = useLiveGame(
+  const { games: polledGames, liveGames: polledLiveGames } = useLiveGame(
     undefined,
     gameTime ? 10000 : 0 // 0이면 폴링 안 함
   );
@@ -258,7 +260,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
 
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
   const myTeamGameBase = todayGames.find(g => g.homeTeamId === myTeamId || g.awayTeamId === myTeamId);
-  const allLiveData = polledLiveGames.length > 0 ? polledLiveGames :
+  const allLiveData = polledGames.length > 0 ? polledGames :
     (initialLiveGames as LiveGameData[]);
   const myTeamLive = myTeamGameBase ? allLiveData.find(g => g.gameId === myTeamGameBase.id) : undefined;
   const myTeamGame = useMemo<MyTeamHeroGame | undefined>(() => {
@@ -310,9 +312,12 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       runner1b: false, runner2b: false, runner3b: false,
       currentBatter: null, currentPitcher: null, isTop: true,
     });
+    // 예정 경기엔 날짜 라벨('7월 12일 (일)') 부착 — 오늘 예정 경기는 dateISO가 없으므로 오늘로 폴백(위젯과 동일 규칙).
+    const withDateLabel = (g: MyTeamHeroGame, dateISO?: string): MyTeamHeroGame =>
+      g.status === "scheduled" ? { ...g, dateLabel: formatKoreanDate(dateISO ?? formatKSTDateOffset(0)) } : g;
     if (isOvernight && overnightGame) return coerce(overnightGame);
-    if (myTeamGame) return myTeamGame;
-    if (nextWidgetGame) return coerce(nextWidgetGame);
+    if (myTeamGame) return withDateLabel(myTeamGame);
+    if (nextWidgetGame) return withDateLabel(coerce(nextWidgetGame), nextWidgetGame.dateISO);
     return undefined;
   }, [myTeamGame, nextWidgetGame, overnightGame, isOvernight]);
 
@@ -684,6 +689,14 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         <WhatsNewCard />
       </Suspense>
 
+      {/* 올스타전 크관 연결 경기카드 — 배포 즉시~경기 종료 전까지 팀카드 위 노출 (목업 v2 승인, 2026-07-11) */}
+      {(() => {
+        const allStarGame = todayGames.find((g) => isAllStarGameId(g.id));
+        if (!allStarGame) return null;
+        const allStarLive = allLiveData.find((g) => g.gameId === allStarGame.id);
+        return <AllStarGameCard game={allStarGame} live={allStarLive} />;
+      })()}
+
       {/* 팀 카드 (필수, 토글 없음) — 경기카드(MyTeamHero)를 안에 종속 임베드(④=B) */}
       {myTeam && (
         <TeamCard
@@ -714,7 +727,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
             return sections.communityLatest ? (
               <div key={key} className="mb-3">
                 <Suspense fallback={null}>
-                  <CommunityLatestPosts />
+                  <CommunityLatestPosts myTeamId={myTeamId} />
                 </Suspense>
               </div>
             ) : null;

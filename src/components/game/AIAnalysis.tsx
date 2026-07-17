@@ -79,8 +79,8 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, ga
 
         let preview = cacheData.preview;
 
-        if (!preview) {
-          // 2) 생성 요청
+        if (!preview || cacheData.outdated) {
+          // 2) 캐시 없음 or 구버전(outdated) → 생성/재생성 요청 (새 순위 가드 반영)
           const genRes = await fetch("/api/game-preview", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -94,10 +94,14 @@ export default function AIAnalysis({ isOpen, onClose, awayTeamId, homeTeamId, ga
           });
           const genData = await genRes.json();
           if (genData.source === "too_early") {
-            setNotice(genData.message || "경기 12시간 전부터 AI 경기 예측 조회가 가능합니다.");
-            return;
+            // 재생성 불가면 구버전 preview라도 노출, 없으면 안내
+            if (!preview) {
+              setNotice(genData.message || "경기 12시간 전부터 AI 경기 예측 조회가 가능합니다.");
+              return;
+            }
+          } else if (genData.preview) {
+            preview = genData.preview; // 재생성 성공 시 새 버전으로 교체 (실패 시 구버전 유지)
           }
-          preview = genData.preview;
         }
 
         if (!preview) {

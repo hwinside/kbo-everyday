@@ -6,6 +6,7 @@ import { ThemeProvider, themeScript } from "@/components/ThemeProvider";
 import { AdAttributionMount } from "@/components/AdAttributionMount";
 import { NativePushMount } from "@/components/NativePushMount";
 import { PageViewTracker } from "@/components/PageViewTracker";
+import { ClientErrorMount } from "@/components/ClientErrorMount";
 import { DwellTracker } from "@/components/DwellTracker";
 import { Analytics } from "@vercel/analytics/next";
 
@@ -101,6 +102,7 @@ export default function RootLayout({
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
       <body className="font-sans antialiased bg-bg-primary text-text-primary">
+        <ClientErrorMount />
         <AdAttributionMount />
         <NativePushMount />
         <ThemeProvider>

@@ -60,11 +60,14 @@ final class LiveActivityController {
     private let pendingLock = NSLock()
     private var pendingUpdateTokens: [String: String] = [:]   // gameId → 최신 pushToken
 
-    /// 디바이스 단위 push-to-start 토큰을 관찰(iOS 17.2+). 활성 Activity가 없어도 발급되며,
-    /// 서버는 이 토큰으로 최애팀 경기 시작 시 Activity를 원격 시작한다(W3b). 17.2 미만은 no-op.
+    /// 디바이스 단위 push-to-start 토큰을 관찰. 활성 Activity가 없어도 발급되며,
+    /// 서버는 이 토큰으로 최애팀 경기 시작 시 Activity를 원격 시작한다(W3b).
+    /// ⚠️ iOS 18.0 게이트(기존 17.2) — 위젯 익스텐션의 ActivityConfiguration이 워치 Smart Stack
+    /// 지원과 함께 iOS 18+로 올라가서, 17.x 기기가 토큰을 등록하면 서버 start 푸시가
+    /// 렌더 불가능한 유령 activity를 만든다. 미만 버전은 no-op(서버 잔존 토큰은 400 정리).
     func observePushToStartToken() {
         guard !pushToStartObserved else { return }
-        if #available(iOS 17.2, *) {
+        if #available(iOS 18.0, *) {
             pushToStartObserved = true
             Task {
                 for await tokenData in Activity<KBOGameAttributes>.pushToStartTokenUpdates {
@@ -213,13 +216,18 @@ final class LiveActivityController {
     /// (네이티브가 persist는 했지만 register-start 재등록은 Bearer가 없어 못 함) 다음 포그라운드에
     /// 서버 매핑을 최신화한다. 값 동일해도 upsert라 무해.
     func resyncPushToStartTokenOnForeground() {
+        // iOS 18 미만 — 구버전에서 persist된 토큰을 재등록하지 않는다(위 observePushToStartToken 게이트와 동일 사유).
+        if #unavailable(iOS 18.0) { return }
         guard let token = latestPushToStartToken else { return }
         onPushToStartToken?(token)
     }
 
     /// Live Activity 사용 가능 여부(설정에서 꺼져 있을 수 있음).
+    /// iOS 18 미만은 false — 익스텐션 ActivityConfiguration이 18+ 게이트라(워치 Smart Stack)
+    /// 시작해도 렌더될 UI가 없다. 인앱 start·더미 경로 모두 이 게이트를 지난다.
     var isEnabled: Bool {
-        ActivityAuthorizationInfo().areActivitiesEnabled
+        if #unavailable(iOS 18.0) { return false }
+        return ActivityAuthorizationInfo().areActivitiesEnabled
     }
 
     /// W1 검증용 — 더미 경기 한 건을 잠금화면에 띄운다.
@@ -435,9 +443,39 @@ enum WidgetSnapshotStore {
            let prevNext = prev["next"] {
             out["next"] = prevNext
         }
+        // B안(위젯 stale 가드) 지원 — 마지막 기록 시각(epoch초)을 항상 새로 찍는다. 위젯
+        // getTimeline이 live 스냅샷이 이 시각+5h를 넘도록 갱신 안 되면 LIVE를 떼고 '업데이트
+        // 필요'로 표시한다(앱 미실행 + 무음 wake 유실 대비 백스톱).
+        out["savedAt"] = Date().timeIntervalSince1970
         if let data = try? JSONSerialization.data(withJSONObject: out) {
             ud.set(data, forKey: key)
         }
         WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    /// 경기 종료 무음 push 수신 시(A안) 홈위젯 스냅샷을 최종 스코어로 종료 처리한다.
+    /// 현재 위젯이 이 경기(gameId)를 표시 중이고 아직 종료 전일 때만 갱신 — 다른/다음 경기
+    /// 스냅샷을 덮어쓰지 않는다. next(06:00 롤오버)는 write()가 보존하며 멱등(이미 final이면 skip).
+    static func markFinal(gameId: String, awayScore: Int, homeScore: Int) {
+        guard let ud = UserDefaults(suiteName: appGroupId),
+              let data = ud.data(forKey: key),
+              let obj = try? JSONSerialization.jsonObject(with: data),
+              var dict = obj as? [String: Any],
+              (dict["hasGame"] as? Bool) == true,
+              (dict["gameId"] as? String) == gameId else { return }
+        if (dict["isFinal"] as? Bool) == true || (dict["status"] as? String) == "final" { return }
+        dict["awayScore"] = awayScore
+        dict["homeScore"] = homeScore
+        dict["isFinal"] = true
+        dict["status"] = "final"
+        // 프리즈됐던 라이브 전용 값 정리(종료 카드엔 아웃/주자/투수·타자/문자중계 미표시).
+        dict["outs"] = 0
+        dict["onFirst"] = false
+        dict["onSecond"] = false
+        dict["onThird"] = false
+        dict["pitcherName"] = ""
+        dict["batterName"] = ""
+        dict["lastPlay"] = ""
+        write(dict)
     }
 }

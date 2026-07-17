@@ -19,6 +19,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(OAuthBrowserPlugin.class);
         registerPlugin(AppReviewPlugin.class);
         super.onCreate(savedInstanceState);
+        lockWebViewTextZoom();
         // 잠금화면 카드 탭으로 (콜드 스타트) 진입 시 해당 경기룸으로 바로 이동(②).
         handleCardDeepLink(getIntent());
     }
@@ -29,6 +30,20 @@ public class MainActivity extends BridgeActivity {
         setIntent(intent);
         // 앱이 이미 떠 있는 상태에서 카드 탭(FLAG_ACTIVITY_SINGLE_TOP) → 경기룸으로 이동.
         handleCardDeepLink(intent);
+    }
+
+    /**
+     * 웹뷰 textZoom을 100으로 고정.
+     * 안드 WebView는 시스템 글꼴 크기 배율을 textZoom으로 그대로 적용하는데,
+     * 고정폭 레이아웃(순위표 등)에서 텍스트만 커져 숫자가 겹치는 깨짐이 발생한다.
+     * iOS WKWebView는 원격 웹 콘텐츠에 Dynamic Type을 적용하지 않으므로 100 고정이 플랫폼 패리티.
+     */
+    private void lockWebViewTextZoom() {
+        Bridge bridge = getBridge();
+        if (bridge == null) return;
+        WebView webView = bridge.getWebView();
+        if (webView == null) return;
+        webView.getSettings().setTextZoom(100);
     }
 
     /** GameNotification 카드의 contentIntent extra(kbo_path)가 있으면 웹뷰를 그 경로로 이동. */

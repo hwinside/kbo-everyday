@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { sendFcmToUsers, type PushPayload } from "@/lib/notifications/fcm";
 import type { PrefKey } from "@/lib/notifications/prefs";
+import { NEWS_CLIPPER_IDS, CLIPPER_AUTO_REPLY_TEXT } from "@/lib/constants/news-clippers";
 
 // 푸시 알림 디스패처 (push-notifications-v1 S3).
 // DB 트리거(pg_net)가 INSERT 이벤트를 POST — 대상 결정 → prefs 필터 → FCM 발송.
@@ -66,6 +67,35 @@ async function handleComment(record: Record<string, unknown>): Promise<Dispatch[
   return out;
 }
 
+/** 클리퍼 계정 답장에 대한 자동응답 — 대화방당 24h 1회, 발신은 클리퍼 계정 (하린아빠 지정 문구) */
+async function sendClipperAutoReply(conversationId: string, clipperId: string): Promise<void> {
+  try {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: recent } = await supabase
+      .from("dm_messages")
+      .select("id")
+      .eq("conversation_id", conversationId)
+      .eq("sender_id", clipperId)
+      .eq("payload->>type", "clipper_auto_reply")
+      .gte("created_at", since)
+      .limit(1);
+    if (recent && recent.length > 0) return;
+
+    await supabase.from("dm_messages").insert({
+      conversation_id: conversationId,
+      sender_id: clipperId,
+      content: CLIPPER_AUTO_REPLY_TEXT,
+      payload: { type: "clipper_auto_reply" },
+    });
+    await supabase
+      .from("dm_conversations")
+      .update({ last_message: CLIPPER_AUTO_REPLY_TEXT.slice(0, 100), last_message_at: new Date().toISOString() })
+      .eq("id", conversationId);
+  } catch (e) {
+    console.error("[dispatch] clipper auto-reply failed:", (e as Error).message);
+  }
+}
+
 /** 쪽지 — 대화 상대(수신자). 운영팀 공지 포함(스펙 확정) */
 async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
   const conversationId = record.conversation_id as string;
@@ -83,6 +113,33 @@ async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
 
   const receiver = conv.user1_id === senderId ? conv.user2_id : conv.user1_id;
   if (!receiver || receiver === senderId) return [];
+
+  // 뉴스클리핑 쪽지 — 일반 쪽지 알림과 분리된 전용 문구 + 전용 prefKey (스펙 확정 문구).
+  // payload는 클라 insert로도 채울 수 있으므로 클리퍼 계정 발신일 때만 신뢰 — 아니면 일반
+  // 쪽지로 처리해 위조 payload가 클리핑 문구/prefKey를 타지 못하게 한다 (PR #619 리뷰 blocker 2).
+  const clipping = record.payload as { type?: string; team_name?: string; overview?: string } | null;
+  if (NEWS_CLIPPER_IDS.has(senderId)) {
+    if (clipping?.type === "news_clipping") {
+      return [{
+        userIds: [receiver as string],
+        payload: {
+          title: `📰 오늘의 ${clipping.team_name || "내 팀"} 뉴스클리핑이 쪽지로 도착했습니다`,
+          body: truncate(clipping.overview || "어제의 주요 뉴스를 확인해보세요"),
+          url: `/messages/${conversationId}`,
+        },
+        prefKey: "news_clipping",
+      }];
+    }
+    // 클리퍼의 클리핑 외 메시지(자동응답 등)는 푸시 없음 — 알림 루프 방지 (삼순 기준)
+    return [];
+  }
+
+  // 유저 → 클리퍼 답장: 클리퍼는 수신 불가 계정이라 푸시 대신 1회 자동응답만 (재답장 스팸
+  // 방지 24h 창). CS 릴레이는 운영팀 대화만 폴링하므로 이 답장은 CS 인입함에 안 들어간다.
+  if (NEWS_CLIPPER_IDS.has(receiver as string)) {
+    await sendClipperAutoReply(conversationId, receiver as string);
+    return [];
+  }
 
   const sender = await nickname(senderId);
   return [{

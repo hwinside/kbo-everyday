@@ -31,6 +31,12 @@ export default function MainLayout({
           <Link href="/privacy" className="underline-offset-2 hover:text-text-secondary hover:underline">
             개인정보처리방침
           </Link>
+          <p className="mt-2">
+            비즈니스/파트너쉽 문의:{" "}
+            <a href="mailto:business@keubo.fan" className="underline-offset-2 hover:text-text-secondary hover:underline">
+              business@keubo.fan
+            </a>
+          </p>
         </footer>
       </main>
       <TabBar />

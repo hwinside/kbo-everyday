@@ -17,4 +17,5 @@
     <string name="widget_team_rank_desc">10개 구단 전체 순위표 · 최애팀 하이라이트</string>
     <string name="widget_player_card_label">최애선수 카드</string>
     <string name="widget_player_card_desc">최애선수 오늘 활약과 최근 경기 흐름</string>
+    <string name="live_update_unpin_action">해제</string>
 </resources>

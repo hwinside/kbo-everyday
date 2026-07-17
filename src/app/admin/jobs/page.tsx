@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   AlertTriangle,
   CheckCircle,
@@ -10,7 +10,9 @@ import {
   ChevronDown,
   Bot,
   Play,
+  Database,
 } from "lucide-react";
+import { JOB_DEFS, fmtAge, type JobHealthLevel } from "@/lib/admin/job-health";
 
 interface JobLogRow {
   id: number;
@@ -23,21 +25,55 @@ interface JobLogRow {
   error_message: string | null;
 }
 
-const JOB_INFOS = [
-  { name: "youtube-highlights", label: "유튜브 하이라이트", schedule: "매 4시간", description: "구단별 유튜브 하이라이트 영상 수집" },
-  { name: "videos-rss", label: "영상 수집 (RSS)", schedule: "매 2시간", description: "channel_pool 전체 RSS 수집 (공식+커뮤니티 채널, 선수 태깅)" },
-  { name: "videos-player-shorts", label: "선수 숏츠", schedule: "매 6시간", description: "선수별 YouTube 숏츠 검색 수집" },
-  { name: "stats-update", label: "선수 스탯 업데이트", schedule: "매일 06:00", description: "KBO 타자/투수 스탯 크롤링 → Supabase 저장" },
-  { name: "game-logs-ingest", label: "경기별 로그 적재", schedule: "매일 23:00/00:00/01:00", description: "종료 경기 박스스코어 → player_game_logs 멱등 적재 (경기별 탭/추이)" },
-  { name: "daily-analysis", label: "일일 경기 분석", schedule: "매일 01:00", description: "Gemini 기반 순위/타이틀 변동 분석 리포트" },
-  { name: "retention", label: "리텐션 집계", schedule: "매일 09:30", description: "코호트/활성화/경기일 리텐션 메트릭 집계" },
-  { name: "daily-fallback-report", label: "API 장애 리포트", schedule: "매일 09:00", description: "전일 API 장애 집계 → 텔레그램 전송" },
-  { name: "photos-check", label: "선수 사진 모니터링", schedule: "매주 일 06:00", description: "KBO CDN 선수 사진 존재 여부 확인" },
-  { name: "roster-update", label: "로스터 업데이트", schedule: "매일 05:00", description: "GitHub Actions 크롤링 → 자동 PR+머지" },
-  { name: "hero-shot-batch", label: "히어로샷 자동 배치", schedule: "매주 월 03:00", description: "히어로샷 없는 선수(공식샷 보유) 탐지 → KBO 공식샷 rembg 컷아웃 생성 → 자동 PR+머지 (외부 API 없음)" },
-];
+interface JobHealthRow {
+  name: string;
+  label: string;
+  level: JobHealthLevel;
+  reason: string;
+  latestStatus: string | null;
+  latestAt: string | null;
+  dataGeneratedAt: string | null;
+  dataAgeHours: number | null;
+}
 
-function JobStatusBadge({ status }: { status: string }) {
+function HealthBadge({ level }: { level: JobHealthLevel }) {
+  if (level === "healthy") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#30D158]/15 text-[#30D158]">
+        <CheckCircle className="w-3 h-3" /> 정상
+      </span>
+    );
+  }
+  if (level === "partial") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#FF9F0A]/15 text-[#FF9F0A]">
+        <AlertTriangle className="w-3 h-3" /> 부분실패
+      </span>
+    );
+  }
+  if (level === "stale") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#FF453A]/15 text-[#FF453A]">
+        <AlertTriangle className="w-3 h-3" /> 정체(STALE)
+      </span>
+    );
+  }
+  if (level === "error") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#FF453A]/15 text-[#FF453A]">
+        <XCircle className="w-3 h-3" /> 에러
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-white/5 text-[#636366]">
+      기록 없음
+    </span>
+  );
+}
+
+// 히스토리 테이블(개별 실행 로그) 상태 배지 — 실행 단위라 running 포함.
+function LogStatusBadge({ status }: { status: string }) {
   if (status === "success") {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#30D158]/15 text-[#30D158]">
@@ -69,31 +105,53 @@ function JobStatusBadge({ status }: { status: string }) {
 function JobCard({
   job,
   latestLog,
+  health,
   onRun,
   running,
 }: {
-  job: (typeof JOB_INFOS)[number];
+  job: (typeof JOB_DEFS)[number];
   latestLog: JobLogRow | undefined;
+  health: JobHealthRow | undefined;
   onRun: (jobName: string) => void;
   running: boolean;
 }) {
-  const status = latestLog?.status ?? "unknown";
   const lastRun = latestLog?.started_at;
   const duration = latestLog?.duration_ms;
+  const level = health?.level ?? (latestLog ? "healthy" : "unknown");
+  const isBad = level === "stale" || level === "error";
 
   return (
-    <div className="glass-card p-5 space-y-3">
-      <div className="flex items-start justify-between">
+    <div className={`glass-card p-5 space-y-3 ${isBad ? "ring-1 ring-[#FF453A]/40" : ""}`}>
+      <div className="flex items-start justify-between gap-2">
         <h3 className="font-semibold">{job.label}</h3>
-        {latestLog ? (
-          <JobStatusBadge status={status} />
-        ) : (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-white/5 text-[#636366]">
-            기록 없음
-          </span>
-        )}
+        <HealthBadge level={level} />
       </div>
       <p className="text-xs text-[#8E8E93]">{job.description}</p>
+
+      {/* 문제 사유 */}
+      {isBad && health?.reason && (
+        <p className="text-xs font-medium text-[#FF453A]">⚠ {health.reason}</p>
+      )}
+
+      {/* 데이터 반영 시각 (스탯/로스터 크롤) */}
+      {job.dataFreshness && (
+        <div className="flex items-center gap-1.5 text-xs">
+          <Database className="w-3.5 h-3.5 text-[#636366]" />
+          <span className="text-[#8E8E93]">데이터 반영</span>
+          <span
+            className={
+              health && health.dataAgeHours != null && health.dataAgeHours > 48
+                ? "text-[#FF453A] font-medium"
+                : "text-[#8E8E93]"
+            }
+          >
+            {health?.dataGeneratedAt
+              ? `${new Date(health.dataGeneratedAt).toLocaleDateString("ko-KR")} (${fmtAge(health.dataAgeHours)})`
+              : "-"}
+          </span>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-2 text-xs">
         <div className="flex items-center gap-1.5 text-[#8E8E93]">
           <Clock className="w-3.5 h-3.5" />
@@ -105,9 +163,7 @@ function JobCard({
       </div>
       <div className="pt-2 border-t border-white/8 flex items-center justify-between">
         <span className="text-xs text-[#636366]">
-          {lastRun
-            ? new Date(lastRun).toLocaleString("ko-KR")
-            : "실행 기록 없음"}
+          {lastRun ? `실행 ${new Date(lastRun).toLocaleString("ko-KR")}` : "실행 기록 없음"}
         </span>
         <button
           onClick={() => onRun(job.name)}
@@ -128,19 +184,31 @@ function JobCard({
 
 export default function AdminJobsPage() {
   const [logs, setLogs] = useState<JobLogRow[]>([]);
+  const [health, setHealth] = useState<JobHealthRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [runningJob, setRunningJob] = useState<string | null>(null);
   const [runResult, setRunResult] = useState<{ job: string; ok: boolean; message: string } | null>(null);
 
+  const pin = () => sessionStorage.getItem("admin_pin") || "";
+
+  const loadHealth = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/jobs/health", { headers: { "x-admin-pin": pin() } });
+      if (res.ok) {
+        const json = await res.json();
+        setHealth(json.jobs ?? []);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   useEffect(() => {
-    async function fetchLogs() {
+    async function fetchAll() {
       try {
-        const pin = sessionStorage.getItem("admin_pin") || "";
-        const res = await fetch("/api/admin/jobs", {
-          headers: { "x-admin-pin": pin },
-        });
+        const res = await fetch("/api/admin/jobs", { headers: { "x-admin-pin": pin() } });
         if (!res.ok) throw new Error("fetch failed");
         const json = await res.json();
         setLogs(json.data ?? []);
@@ -150,29 +218,29 @@ export default function AdminJobsPage() {
         setLoading(false);
       }
     }
-    fetchLogs();
-  }, []);
+    fetchAll();
+    loadHealth();
+  }, [loadHealth]);
 
   async function handleRunJob(jobName: string) {
     setRunningJob(jobName);
     setRunResult(null);
     try {
-      const pin = sessionStorage.getItem("admin_pin") || "";
       const res = await fetch("/api/admin/jobs/run", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-admin-pin": pin },
+        headers: { "Content-Type": "application/json", "x-admin-pin": pin() },
         body: JSON.stringify({ job: jobName }),
       });
       const json = await res.json();
-      const label = JOB_INFOS.find((j) => j.name === jobName)?.label ?? jobName;
+      const label = JOB_DEFS.find((j) => j.name === jobName)?.label ?? jobName;
       if (json.ok) {
         setRunResult({ job: jobName, ok: true, message: `${label} 실행 성공` });
-        // Refresh logs
-        const logsRes = await fetch("/api/admin/jobs", { headers: { "x-admin-pin": pin } });
+        const logsRes = await fetch("/api/admin/jobs", { headers: { "x-admin-pin": pin() } });
         if (logsRes.ok) {
           const logsJson = await logsRes.json();
           setLogs(logsJson.data ?? []);
         }
+        loadHealth();
       } else {
         setRunResult({ job: jobName, ok: false, message: json.error || json.data?.error || "실행 실패" });
       }
@@ -183,7 +251,7 @@ export default function AdminJobsPage() {
     }
   }
 
-  // Build a map of latest log per job_name
+  // Build a map of latest log per job_name (소요시간/최근 실행 시각 표시용)
   const latestLogByJob = new Map<string, JobLogRow>();
   for (const log of logs) {
     const existing = latestLogByJob.get(log.job_name);
@@ -191,6 +259,8 @@ export default function AdminJobsPage() {
       latestLogByJob.set(log.job_name, log);
     }
   }
+  const healthByJob = new Map(health.map((h) => [h.name, h]));
+  const problems = health.filter((h) => h.level === "stale" || h.level === "error");
 
   const filteredLogs = logs.filter((log) => {
     if (filter !== "all" && log.job_name !== filter) return false;
@@ -198,7 +268,7 @@ export default function AdminJobsPage() {
     return true;
   });
 
-  const jobLabelMap = new Map(JOB_INFOS.map((j) => [j.name, j.label]));
+  const jobLabelMap = new Map(JOB_DEFS.map((j) => [j.name, j.label]));
 
   if (loading) {
     return (
@@ -211,6 +281,19 @@ export default function AdminJobsPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">크롤러 / 배치 작업</h1>
+
+      {/* 헬스 요약 배너 — 조용히 망가진 잡을 상단에 강제 노출 */}
+      {problems.length > 0 && (
+        <div className="flex items-start gap-3 px-4 py-3 rounded-xl text-sm bg-[#FF453A]/12 text-[#FF453A] ring-1 ring-[#FF453A]/30">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <div>
+            <p className="font-semibold">주의가 필요한 작업 {problems.length}개</p>
+            <p className="mt-0.5 text-xs text-[#FF6961]">
+              {problems.map((p) => `${p.label} — ${p.reason}`).join(" · ")}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Run Result Toast */}
       {runResult && (
@@ -234,11 +317,12 @@ export default function AdminJobsPage() {
 
       {/* Job Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {JOB_INFOS.map((j) => (
+        {JOB_DEFS.map((j) => (
           <JobCard
             key={j.name}
             job={j}
             latestLog={latestLogByJob.get(j.name)}
+            health={healthByJob.get(j.name)}
             onRun={handleRunJob}
             running={runningJob === j.name}
           />
@@ -257,7 +341,7 @@ export default function AdminJobsPage() {
                 className="appearance-none bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 pr-8 text-sm outline-none focus:border-[#6366F1]"
               >
                 <option value="all">전체 작업</option>
-                {JOB_INFOS.map((j) => (
+                {JOB_DEFS.map((j) => (
                   <option key={j.name} value={j.name}>
                     {j.label}
                   </option>
@@ -301,7 +385,7 @@ export default function AdminJobsPage() {
                         {new Date(log.started_at).toLocaleString("ko-KR")}
                       </p>
                     </div>
-                    <JobStatusBadge status={log.status} />
+                    <LogStatusBadge status={log.status} />
                   </div>
 
                   <div className="grid grid-cols-2 gap-3 text-sm">
@@ -342,7 +426,7 @@ export default function AdminJobsPage() {
                         {jobLabelMap.get(log.job_name) ?? log.job_name}
                       </td>
                       <td className="py-2.5">
-                        <JobStatusBadge status={log.status} />
+                        <LogStatusBadge status={log.status} />
                       </td>
                       <td className="py-2.5 text-[#8E8E93]">
                         {new Date(log.started_at).toLocaleString("ko-KR")}

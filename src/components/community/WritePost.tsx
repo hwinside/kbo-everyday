@@ -305,7 +305,7 @@ export default function WritePost({
                       value={block}
                       onChange={(e) => setBlock(e.target.value)}
                       maxLength={10}
-                      className="flex-1 rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+                      className="min-w-0 flex-1 rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary outline-none"
                     />
                     <input
                       type="text"
@@ -313,7 +313,7 @@ export default function WritePost({
                       value={row}
                       onChange={(e) => setRow(e.target.value)}
                       maxLength={10}
-                      className="flex-1 rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+                      className="min-w-0 flex-1 rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary outline-none"
                     />
                     <input
                       type="text"
@@ -321,7 +321,7 @@ export default function WritePost({
                       value={seat}
                       onChange={(e) => setSeat(e.target.value)}
                       maxLength={10}
-                      className="flex-1 rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+                      className="min-w-0 flex-1 rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary outline-none"
                     />
                   </div>
                 </div>

@@ -1,5 +1,5 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
-import { sendFcmToUsers } from "@/lib/notifications/fcm";
+import { sendFcmToUsers, WIDGET_STREAM } from "@/lib/notifications/fcm";
 import { TEAMS } from "@/lib/constants/teams";
 import { fetchStandings } from "@/lib/crawler/kbo-api";
 import type { KboRawGame } from "@/types/api";
@@ -167,6 +167,8 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
           body: "",
           url,
           dataOnly: true,
+          // terminal — 위젯 스트림 공통 정책(단일 collapse key + 긴 TTL, 삼순 #649 blocker①).
+          ...WIDGET_STREAM.terminal,
           data: { kind: "game_end" },
         }, "game_start");
       }
@@ -202,6 +204,8 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
           body: "경기 시작",
           url,
           dataOnly: true,
+          // live — 위젯 스트림 공통 정책(90s TTL, 다음 warmup tick이 곧 덮어씀, 삼순 #649 blocker①).
+          ...WIDGET_STREAM.live,
           data: {
             kind: "game_live",
             ...(codes ? { w_away: codes[1], w_home: codes[2] } : {}),
@@ -286,7 +290,17 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
           title: "",
           body: "",
           dataOnly: true,
-          data: { kind: "game_end" },
+          // iOS 무음 백그라운드 wake(content-available) — iOS 홈위젯은 서버 푸시로 직접
+          // 갱신되지 않아(플랫폼 제약) 앱을 닫으면 마지막 LIVE 스냅샷에 얼어붙는다. game_end로
+          // 앱을 백그라운드에서 깨워 AppDelegate가 홈위젯을 '경기 종료 + 최종 스코어'로 전환
+          // (markFinal)하게 한다. 최종 스코어(w_as/w_hs)+gameId 동봉 — 현재 위젯이 이 경기를
+          // 표시 중일 때만 반영(다른/다음 경기 덮어쓰기 방지). Android는 KboMessagingService가
+          // game_end로 이미 처리하며 apns 블록·추가 필드는 무영향(kind만 사용).
+          apnsBackground: true,
+          // terminal — 위젯 스트림 공통 정책(단일 collapse key + 긴 TTL, 삼순 #649 blocker①).
+          // android 전용 필드라 iOS apns 무음 wake 동작엔 무영향.
+          ...WIDGET_STREAM.terminal,
+          data: { kind: "game_end", gameId, w_as: String(awayScore), w_hs: String(homeScore) },
         });
         clearOk = clearRes.ok;
       }

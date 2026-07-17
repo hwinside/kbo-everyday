@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
+import { readableTextColor } from "@/lib/utils/team";
 import type { NewsMock } from "@/lib/constants/news";
 
 interface NewsCarouselProps {
@@ -118,9 +119,19 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
         >
           {slides.map((item, i) => {
             const team = item.teamId ? getTeamById(item.teamId) : null;
-            const bg = team
+            // 다크: 기존 다크 히어로(흰 글씨) 그대로 유지. 라이트: 옅은 팀틴트 카드 +
+            // 진한 글씨 + 팀색은 상단선·라벨·로고 포인트로만(하린아빠 B안, 흰 테마 톤 통일).
+            // 두 테마 마크업을 dark:hidden / hidden dark:block으로 분리 → 다크 회귀 0 보장.
+            const bgDark = team
               ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 35%, #1a1a1d) 0%, #1a1a1d 100%)`
               : "linear-gradient(135deg, #2a2a3d 0%, #1a1a1d 100%)";
+            // 라이트 카드 포인트색: 팀 원색(흰 카드 위 대비 확보). 무팀 뉴스는 앱 accent.
+            const accent = team?.colorPrimary ?? "var(--accent)";
+            // pill 글자색은 팀색 대비 최대로(밝은 팀색=한화는 흰 글씨 2.94:1이라 어둡게). 삼순 리뷰.
+            const pillText = team ? readableTextColor(team.colorPrimary) : "#FFFFFF";
+            const bgLightCard = team
+              ? `color-mix(in srgb, ${team.colorPrimary} 6%, #FFFFFF)`
+              : "#FFFFFF";
             // 썸네일이 있고 로드 실패하지 않았으면 왼쪽 사진 + 제목 우측. 없으면 현행 그대로.
             const thumbUrl = item.thumbnailUrl ?? ogThumbs[item.id] ?? null;
             const hasThumb = Boolean(thumbUrl) && !failedThumbs.has(item.id);
@@ -136,9 +147,10 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                   item.sourceUrl && window.open(item.sourceUrl, "_blank")
                 }
               >
+                {/* ── 다크: 기존 히어로(팀컬러→#1a1a1d, 흰 글씨) 그대로 ── */}
                 <div
-                  className="relative h-[172px] w-full overflow-hidden"
-                  style={{ background: bg }}
+                  className="relative hidden h-[172px] w-full overflow-hidden dark:block"
+                  style={{ background: bgDark }}
                 >
                   {team && (
                     <div className="absolute right-4 top-4 opacity-20">
@@ -181,6 +193,57 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                     </p>
                   </div>
                 </div>
+
+                {/* ── 라이트: 옅은 팀틴트 카드(진한 글씨·팀색 포인트, 인셋+라운드) ── */}
+                <div className="px-4 dark:hidden">
+                  <div
+                    className="relative h-[172px] w-full overflow-hidden rounded-2xl border border-black/[0.06] shadow-sm"
+                    style={{ background: bgLightCard, borderTopWidth: 3, borderTopColor: accent }}
+                  >
+                    {team && (
+                      <div className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-lg bg-white shadow-sm ring-1 ring-black/[0.04]">
+                        <Image
+                          src={team.logoPath}
+                          alt=""
+                          width={20}
+                          height={20}
+                          unoptimized
+                          className="object-contain"
+                        />
+                      </div>
+                    )}
+                    {hasThumb && (
+                      <div className="absolute left-[14px] top-4 bottom-10 w-[31%] overflow-hidden rounded-xl shadow-[0_2px_8px_rgba(0,0,0,0.12)]">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={thumbUrl as string}
+                          alt=""
+                          referrerPolicy="no-referrer"
+                          onError={() =>
+                            setFailedThumbs((prev) => new Set(prev).add(item.id))
+                          }
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                    )}
+                    <div className={`absolute inset-x-0 bottom-0 pb-9 pr-4 ${hasThumb ? "pl-[47%]" : "px-4"}`}>
+                      {item.label && (
+                        <span
+                          className="inline-block px-2 py-0.5 mb-1 rounded-full text-xs font-semibold"
+                          style={{ background: accent, color: pillText }}
+                        >
+                          {item.label}
+                        </span>
+                      )}
+                      <h3 className="text-[15px] font-semibold leading-[21px] text-text-primary line-clamp-3">
+                        {item.title}
+                      </h3>
+                      <p className="mt-1 text-xs leading-[18px] text-text-tertiary">
+                        {item.source} · {item.timeAgo}
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
             );
           })}
@@ -193,7 +256,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
           <button
             type="button"
             onClick={() => goTo(current - 1)}
-            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-white/25 text-white backdrop-blur-sm transition-opacity hover:bg-white/40"
+            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-black/10 text-neutral-600 dark:bg-white/25 dark:text-white backdrop-blur-sm transition-opacity hover:bg-black/20 dark:hover:bg-white/40"
             aria-label="이전 뉴스"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
@@ -216,7 +279,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
           <button
             type="button"
             onClick={() => goTo(current + 1)}
-            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-white/25 text-white backdrop-blur-sm transition-opacity hover:bg-white/40"
+            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-black/10 text-neutral-600 dark:bg-white/25 dark:text-white backdrop-blur-sm transition-opacity hover:bg-black/20 dark:hover:bg-white/40"
             aria-label="다음 뉴스"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6"/></svg>

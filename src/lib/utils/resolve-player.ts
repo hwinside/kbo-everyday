@@ -125,6 +125,27 @@ export function resolvePlayer(
   return result;
 }
 
+/**
+ * 이름이 로스터에 *정확히 하나*일 때만 resolve. 동명이인(2+)이면 null.
+ * exact 0건이면 suffix 매칭으로 한 번 더 — 역시 유일할 때만 (외국인 중계 표기
+ * "디아즈"/"유토" → 로스터 풀네임 "르윈 디아즈"/"가나쿠보 유토" 구제, 기존
+ * resolvePlayer suffix fallback과 동일 의미론을 유일성 게이트 하에 적용).
+ * 팀으로 동명이인을 분리할 수 없는 경로(예: 올스타전 — 게임 팀이 나눔/드림이라
+ * 선수의 실제 소속으로 좁힐 수 없음) 전용. 오매칭(엉뚱한 동명이인) 방지가 목적.
+ */
+export function resolveUniquePlayerByName(
+  name: string,
+  roster: RosterPlayer[] = DEFAULT_ROSTER,
+): ResolvedPlayer | null {
+  const q = name?.trim();
+  if (!q) return null;
+  const exact = roster.filter((p) => p.name === q);
+  if (exact.length === 1) return toResolved(exact[0]);
+  if (exact.length > 1) return null; // 동명이인 — 특정 불가, 오발송 방지
+  const suffix = roster.filter((p) => p.name.endsWith(q));
+  return suffix.length === 1 ? toResolved(suffix[0]) : null;
+}
+
 function resolveInternal(
   query: PlayerQuery,
   roster: RosterPlayer[]

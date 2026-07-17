@@ -186,6 +186,7 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
         let code = call.getString("code") ?? ""
         guard !code.isEmpty else { call.resolve(); return }
         UserDefaults(suiteName: WidgetSnapshotStore.appGroupId)?.set(code, forKey: "my_team")
+        WatchSyncManager.shared.syncMyTeam(code)
         if #available(iOS 14.0, *) {
             WidgetCenter.shared.reloadAllTimelines()
         }

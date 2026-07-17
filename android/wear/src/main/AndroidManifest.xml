@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Wear OS 전용 APK — 같은 Play 리스팅의 워치 폼팩터 트랙으로 배포 -->
+    <uses-feature android:name="android.hardware.type.watch" android:required="true" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="크보팬"
+        android:theme="@android:style/Theme.DeviceDefault">
+
+        <!-- non-standalone: 로그인/최애팀은 폰앱 의존 (스펙 v2 §6) -->
+        <meta-data
+            android:name="com.google.android.wearable.standalone"
+            android:value="false" />
+
+        <!-- taskAffinity="" — Wear recents 표시 규약 (lint WearRecents) -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:taskAffinity="">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 슬라이스 A: 최애팀 경기 타일 (다음경기·카운트다운·라이브) -->
+        <service
+            android:name=".KboGameTileService"
+            android:exported="true"
+            android:label="크보팬 경기"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+            </intent-filter>
+            <!-- 타일 캐러셀 편집기 미리보기 — square/round 두 스크린 셰이프 제공(익명 더미) -->
+            <meta-data
+                android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@drawable/tile_preview" />
+        </service>
+
+        <!-- 슬라이스 B: 컴플리케이션 데이터소스 ① 최애팀 경기 (SHORT/LONG_TEXT) -->
+        <service
+            android:name=".KboGameComplicationService"
+            android:exported="true"
+            android:label="크보팬 경기"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data
+                android:name="android.support.wearable.complications.SUPPORTED_TYPES"
+                android:value="SHORT_TEXT,LONG_TEXT" />
+            <!-- OS best-effort 주기 갱신(초) — 라이브 스코어는 이 주기 + 캐시 공유(타일 sync)로 따라옴 -->
+            <meta-data
+                android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS"
+                android:value="600" />
+        </service>
+
+        <!-- 슬라이스 B: 컴플리케이션 데이터소스 ② 최애팀 순위 (SHORT/LONG_TEXT + RANGED_VALUE) -->
+        <service
+            android:name=".KboRankComplicationService"
+            android:exported="true"
+            android:label="크보팬 순위"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data
+                android:name="android.support.wearable.complications.SUPPORTED_TYPES"
+                android:value="SHORT_TEXT,LONG_TEXT,RANGED_VALUE" />
+            <!-- 순위는 일 단위 변동 — 긴 주기로 충분 -->
+            <meta-data
+                android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS"
+                android:value="3600" />
+        </service>
+
+        <!-- 폰 → 워치 최애팀 동기화 수신 (Wearable Data Layer) -->
+        <service
+            android:name=".MyTeamListenerService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/kbo/my_team" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

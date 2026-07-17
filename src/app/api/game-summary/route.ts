@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
-import { TEAMS } from "@/lib/constants/teams";
-import { fetchStandings } from "@/lib/crawler/kbo-api";
+import { TEAMS, isAllStarGameId } from "@/lib/constants/teams";
+import { fetchStandings, buildRankMap } from "@/lib/crawler/kbo-api";
+import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
 import { computeSeriesSnapshot, serializeSeriesSnapshot } from "@/lib/series/snapshot";
 import { loserClaimedWin } from "@/lib/game-summary/winner-check";
 import { hasBaseRunnerContradiction } from "@/lib/game-summary/consistency-check";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 12; // v12: 주자 상황(만루/주자 수/출루 과정) 창작 금지 + 만루홈런 산술 규칙
+const PROMPT_VERSION = 13; // v13: 순위 환각 방지 가드(공식 순위표 기준 규칙 + 조회 실패 fallback) — 기존 캐시 재생성
 
 // ===== Types =====
 
@@ -73,11 +74,14 @@ async function fetchStandingsContext(awayTeamId: number, homeTeamId: number): Pr
   const homeSt = standings.find(s => s.teamName === homeShort);
   if (!awaySt || !homeSt) return null;
 
-  const awayRank = standings.indexOf(awaySt) + 1;
-  const homeRank = standings.indexOf(homeSt) + 1;
+  // 공동순위 보존 — 원본 ranking 우선(buildRankMap), index+1 단순 방식 금지(삼순 조건)
+  const rankMap = buildRankMap(standings);
+  const awayRank = rankMap.get(awaySt.teamId) ?? awaySt.ranking ?? 0;
+  const homeRank = rankMap.get(homeSt.teamId) ?? homeSt.ranking ?? 0;
 
-  return `${awayShort}: ${awayRank}위 (${awaySt.wins}승 ${awaySt.losses}패, 승률 ${awaySt.winRate.toFixed(3)}${awaySt.gamesBehind > 0 ? `, ${awaySt.gamesBehind}게임차` : ", 선두"})
-${homeShort}: ${homeRank}위 (${homeSt.wins}승 ${homeSt.losses}패, 승률 ${homeSt.winRate.toFixed(3)}${homeSt.gamesBehind > 0 ? `, ${homeSt.gamesBehind}게임차` : ", 선두"})`;
+  // "선두"는 1위에게만 — 2위가 게임차 0(승률차로만 뒤짐)일 수 있어 gamesBehind 기준은 오라벨 유발
+  return `${awayShort}: ${awayRank}위 (${awaySt.wins}승 ${awaySt.losses}패, 승률 ${awaySt.winRate.toFixed(3)}${awayRank === 1 ? ", 선두" : `, ${awaySt.gamesBehind}게임차`})
+${homeShort}: ${homeRank}위 (${homeSt.wins}승 ${homeSt.losses}패, 승률 ${homeSt.winRate.toFixed(3)}${homeRank === 1 ? ", 선두" : `, ${homeSt.gamesBehind}게임차`})`;
 }
 
 // ===== Prompt builder =====
@@ -173,7 +177,8 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
   // 맥락 섹션 — seriesCtx 는 snapshot.ts 가 이미 '## 시리즈 스냅샷' 헤딩 포함해서 바로 append
   let contextSection = "";
   if (seriesCtx) contextSection += `\n${seriesCtx}`;
-  if (standingsCtx) contextSection += `\n## 현재 순위\n${standingsCtx}`;
+  if (standingsCtx) contextSection += `\n## 현재 순위\n${standingsCtx}\n${STANDINGS_ACCURACY_RULES}`;
+  else contextSection += `\n${STANDINGS_UNAVAILABLE_RULES}`;
 
   return `당신은 KBO 프로야구를 20년 넘게 현장에서 취재해온 베테란 스포츠 기자입니다.
 마감 시간에 쫓기며 오늘 직접 본 경기의 기사를 쓰고 있습니다.
@@ -340,6 +345,8 @@ function normalizeSummary(s: Record<string, unknown>): Record<string, unknown> {
 export async function GET(req: NextRequest) {
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) return NextResponse.json({ error: "gameId required" }, { status: 400 });
+  // 올스타전은 AI 경기 요약 미제공(팀 기반 분석 무의미 — 승부예측/라인업분석 #544와 일관).
+  if (isAllStarGameId(gameId)) return NextResponse.json({ summary: null, source: "allstar" });
 
   const cached = await getCached(gameId);
   if (cached) {
@@ -361,6 +368,8 @@ export async function POST(req: NextRequest) {
   if (!body.gameId || !body.awayTeam || !body.homeTeam) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
+  // 올스타전은 AI 경기 요약 생성 안 함 (#544 AI 비활성화와 일관).
+  if (isAllStarGameId(body.gameId)) return NextResponse.json({ summary: null, source: "allstar" });
 
   // Sanity check
   const allBatters = [...(body.awayBatters || []), ...(body.homeBatters || [])];

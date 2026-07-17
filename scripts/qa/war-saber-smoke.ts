@@ -10,6 +10,8 @@
  *     "25 2/3" != "25" 여야 한다.
  *  2) BABIP 분모의 SF는 실제 SF여야 한다. 잔차(PA-AB-BB-HBP)는 희생번트(SH)까지
  *     섞여 분모가 과대해진다 → 실제 SF를 명시 전달하면 BABIP가 (보통) 올라간다.
+ *  3) OBP/OPS는 PA가 아니라 공식 OBP 분모(AB+BB+HBP+SF)를 써야 한다.
+ *     문성주 2026 실측: H50/AB169/BB16/HBP2/SF2/SLG .361 → OBP .360, OPS .721.
  *
  * 실행: npx tsx scripts/qa/war-saber-smoke.ts  (npm run qa:war-saber)
  */
@@ -40,6 +42,17 @@ const withSf = calcBatterSaber({ ...B, sf: 2 });      // 정확: bd = 80-20-3+2 
 const residual = calcBatterSaber({ ...B });            // 잔차: bd = 80-20-3+8 = 64 (SH 섞임)
 ok("T6 실제 SF 전달 시 BABIP != 잔차 추정", !eq(withSf.BABIP, residual.BABIP), `${withSf.BABIP} vs ${residual.BABIP}`);
 ok("T7 실제 SF(작은 분모) BABIP > 잔차 BABIP", withSf.BABIP > residual.BABIP, `${withSf.BABIP} > ${residual.BABIP}`);
+
+const moon = {
+  avg: "0.296", hits: 50, hr: 1, doubles: 8, triples: 0,
+  ab: 169, pa: 191, runs: 13, rbi: 19, sb: 2, cs: 1,
+  bb: 16, so: 24, hbp: 2, sf: 2,
+};
+const moonComputed = calcBatterSaber(moon);
+const moonOfficial = calcBatterSaber({ ...moon, obp: "0.360", slg: "0.361", ops: "0.721" });
+ok("T8 OBP는 PA가 아니라 AB+BB+HBP+SF 분모 사용", eq(moonComputed.OBP, 0.360), `OBP ${moonComputed.OBP}`);
+ok("T9 문성주 OPS 재계산값 == 공식 OPS", eq(moonComputed.OPS, 0.721), `OPS ${moonComputed.OPS}`);
+ok("T10 공식 OPS가 있으면 세이버 카드 SSOT로 우선 사용", eq(moonOfficial.OPS, 0.721), `OPS ${moonOfficial.OPS}`);
 
 console.log(fail === 0 ? "\nALL PASS" : `\n${fail} FAIL`);
 process.exit(fail === 0 ? 0 : 1);

@@ -12,6 +12,8 @@ import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/l
 import { getTeamById } from "@/lib/constants/teams";
 import { getMyTeamId, setMyTeamId } from "@/lib/store/myteam";
 import { isNative } from "@/lib/capacitor/platform";
+import { setWidgetMyTeam } from "@/lib/capacitor/game-notification";
+import { ID_TO_KBO_CODE } from "@/lib/native-live-activity";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { usePushNotification } from "@/lib/hooks/usePushNotification";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -124,6 +126,9 @@ export default function MyPage() {
 
   const handleTeamChange = async (newTeamId: number) => {
     setMyTeamId(newTeamId);
+    // 위젯/워치 최애팀 즉시 동기화 — 홈 재진입 전에도 네이티브(App Group·WCSession) 반영
+    const newTeamCode = ID_TO_KBO_CODE[newTeamId];
+    if (newTeamCode) void setWidgetMyTeam(newTeamCode);
     setTeamId(newTeamId);
     setShowTeamSelect(false);
     setFavoritePlayers([]);
@@ -242,7 +247,7 @@ export default function MyPage() {
         </motion.div>
       )}
 
-      {/* 알림 종류별 설정 (네이티브 앱 전용 — 컴포넌트 내부 isNative 가드) */}
+      {/* 알림 종류별 설정 (네이티브=전체 토글 / 웹·PWA=뉴스클리핑 토글만 — 컴포넌트 내부 가드) */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.13 }} className="mt-3">
         <NotificationPrefsCard />
       </motion.div>

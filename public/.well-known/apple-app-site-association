@@ -8,6 +8,11 @@
         ],
         "components": [
           {
+            "/": "/api/cs/*",
+            "exclude": true,
+            "comment": "CS 운영 링크(그대로 발송/이관)는 앱이 아니라 브라우저에서 열려야 한다. 순서상 catch-all(/*)보다 먼저 매칭돼 제외된다."
+          },
+          {
             "/": "/*",
             "comment": "Allow keubo.fan Universal Links for the 크보팬 iOS app."
           }

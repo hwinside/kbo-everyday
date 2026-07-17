@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { clsx } from "clsx";
 import Image from "next/image";
-import { getTeamById, isAllStarGame } from "@/lib/constants/teams";
+import { getTeamById, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
 import GameChat from "@/components/game/GameChat";
 import ContextualStatsBox from "@/components/game/ContextualStatsBox";
 import { useRouter } from "next/navigation";
@@ -88,13 +88,14 @@ function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
           setLoading(false);
           return;
         }
-        if (cacheData.preview) {
+        // 구버전(outdated) 캐시는 렌더하지 않고 재생성 — 새 순위 가드 반영
+        if (cacheData.preview && !cacheData.outdated) {
           setPreview(cacheData.preview);
           setLoading(false);
           return;
         }
 
-        // 2) 생성 요청
+        // 2) 캐시 없음 or 구버전 → 생성/재생성 요청
         const genRes = await fetch("/api/game-preview", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -108,11 +109,15 @@ function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
         });
         const genData = await genRes.json();
         if (genData.source === "too_early") {
-          setNotice(genData.message || "경기 12시간 전부터 AI 경기 예측 조회가 가능합니다.");
+          // 재생성 불가면 구버전 캐시라도 노출 (graceful)
+          if (cacheData.preview) setPreview(cacheData.preview);
+          else setNotice(genData.message || "경기 12시간 전부터 AI 경기 예측 조회가 가능합니다.");
           return;
         }
         if (genData.preview) {
           setPreview(genData.preview);
+        } else if (cacheData.preview) {
+          setPreview(cacheData.preview); // 재생성 실패 시 구버전 폴백
         }
       } catch (err) {
         // preview fetch error — silent
@@ -230,7 +235,8 @@ function ScheduledView({ gameId, awayTeamId, homeTeamId, gameDate, gameStartTime
   const [nowMs, setNowMs] = useState(() => Date.now());
   const gameStartAt = useMemo(() => getGameStartAtKst(gameId, gameDate, gameStartTime), [gameId, gameDate, gameStartTime]);
   const chatOpensAt = gameStartAt ? new Date(gameStartAt.getTime() - GAME_CHAT_OPEN_LEAD_MS) : null;
-  const isChatOpen = chatOpensAt ? nowMs >= chatOpensAt.getTime() : false;
+  // 올스타전은 2시간 게이트 없이 즉시 오픈 — 이벤트 특성상 미리 모여 떠들 수 있게 (하린아빠 2026-07-11).
+  const isChatOpen = isAllStarGame(awayTeamId, homeTeamId) || (chatOpensAt ? nowMs >= chatOpensAt.getTime() : false);
 
   useEffect(() => {
     if (isChatOpen) return;
@@ -482,6 +488,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
 }) {
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
+  const isAllStar = isAllStarGameId(gameId);
 
   // LLM 요약 상태
   const [llmSummary, setLlmSummary] = useState<{
@@ -507,7 +514,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
   // LLM 요약 fetch — 캐시는 항상 확인, 생성은 boxScore 있을 때만
   // 30초 타임아웃 + 실패 시 에러 상태 유지 (자동 fallback 복귀 절대 금지)
   useEffect(() => {
-    if (llmSummary) return;
+    if (isAllStar || llmSummary) return;
 
     const TIMEOUT_MS = 30_000;
     const controller = new AbortController();
@@ -653,12 +660,12 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
       clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [hasRealBoxScore, boxScore, gameId, llmSummary, awayTeam, homeTeam, linescore, retryNonce]);
+  }, [isAllStar, hasRealBoxScore, boxScore, gameId, llmSummary, awayTeam, homeTeam, linescore, retryNonce]);
 
   // 최초 생성이 30초를 넘기거나 일시 실패해도 서버 쪽 생성이 뒤늦게 캐시에 저장될 수 있다.
   // 이 경우 사용자에게 에러 카드로 고정하지 않고 잠시 캐시를 자동 확인한다.
   useEffect(() => {
-    if (!llmError || llmSummary || !hasRealBoxScore) {
+    if (isAllStar || !llmError || llmSummary || !hasRealBoxScore) {
       cachePollStartedAtRef.current = null;
       return;
     }
@@ -698,7 +705,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [llmError, llmSummary, hasRealBoxScore, gameId]);
+  }, [isAllStar, llmError, llmSummary, hasRealBoxScore, gameId]);
 
 
   // LLM 요약만 사용 (fallback/숏버전 폐기)
@@ -744,7 +751,11 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
     <div className="flex flex-col h-full">
       {/* AI Summary Cards */}
       <div className="px-4 py-4">
-        {summary ? (
+        {isAllStar ? (
+          <div className="glass-card p-5 text-center">
+            <p className="text-sm text-text-tertiary">올스타전은 AI 경기 요약을 제공하지 않습니다</p>
+          </div>
+        ) : summary ? (
           <div className="glass-card p-5 space-y-4">
             {/* AI 라벨 */}
             <div className="flex items-center gap-1.5">
@@ -921,6 +932,19 @@ function CancelledView() {
   );
 }
 
+/* 올스타전 안내 — 잠금화면/위젯 실시간 중계 미지원 고지(네이티브 미대응). 크관 상단 상시 노출. */
+function AllStarKgwanNotice() {
+  return (
+    <div className="glass-card p-3 mb-3 flex items-start gap-2">
+      <span className="text-base leading-none mt-0.5">ℹ️</span>
+      <p className="text-xs leading-relaxed text-text-secondary">
+        올스타전은 <span className="font-medium text-text-primary">잠금화면·위젯 실시간 중계</span>를 지원하지 않아요.
+        실시간 중계는 이곳 크관에서 확인해 주세요.
+      </p>
+    </div>
+  );
+}
+
 /* ===== Main KgwanTab ===== */
 export default function KgwanTab({
   gameId,
@@ -938,18 +962,42 @@ export default function KgwanTab({
   lineupConfirmed,
   gameRelay,
 }: KgwanTabProps) {
+  // 올스타전은 잠금/위젯 실시간 중계 미지원(네이티브 미대응) → 크관 상단 상시 안내.
+  // 정규경기는 null이라 프래그먼트 출력이 기존과 동일(회귀 없음).
+  const allStarNotice = isAllStarGame(awayTeamId, homeTeamId) ? <AllStarKgwanNotice /> : null;
+
   if (status === "scheduled") {
-    return <ScheduledView gameId={gameId} awayTeamId={awayTeamId} homeTeamId={homeTeamId} gameDate={gameDate} gameStartTime={gameStartTime} starterNames={starterNames} lineupConfirmed={lineupConfirmed} />;
+    return (
+      <>
+        {allStarNotice}
+        <ScheduledView gameId={gameId} awayTeamId={awayTeamId} homeTeamId={homeTeamId} gameDate={gameDate} gameStartTime={gameStartTime} starterNames={starterNames} lineupConfirmed={lineupConfirmed} />
+      </>
+    );
   }
 
   if (status === "live") {
-    return <LiveView gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} gameEvents={gameEvents} gameRelay={gameRelay} />;
+    return (
+      <>
+        {allStarNotice}
+        <LiveView gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} gameEvents={gameEvents} gameRelay={gameRelay} />
+      </>
+    );
   }
 
   if (status === "cancelled") {
-    return <CancelledView />;
+    return (
+      <>
+        {allStarNotice}
+        <CancelledView />
+      </>
+    );
   }
 
   // final
-  return <FinalView gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} boxScore={boxScore} linescore={linescore} />;
+  return (
+    <>
+      {allStarNotice}
+      <FinalView gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} boxScore={boxScore} linescore={linescore} />
+    </>
+  );
 }

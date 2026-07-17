@@ -10,8 +10,11 @@ import { useBlockUser } from "@/lib/supabase/useBlock";
 import { submitDMReport } from "@/lib/supabase/useBlock";
 import { supabase } from "@/lib/supabase/client";
 import { OPERATOR_USER_ID } from "@/lib/constants/operator";
+import { NEWS_CLIPPER_IDS } from "@/lib/constants/news-clippers";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { linkifyText } from "@/lib/linkify";
+import NewsClippingCard from "@/components/dm/NewsClippingCard";
+import { isNewsClippingPayload } from "@/types/news-clipping";
 
 const REPORT_CATEGORIES = [
   { id: "spam", label: "스팸" },
@@ -34,6 +37,7 @@ export default function DMChatPage() {
   const [images, setImages] = useState<{ url: string; name: string }[]>([]);
   const [uploading, setUploading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const lastMsgRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -76,6 +80,8 @@ export default function DMChatPage() {
   // 사진 첨부는 운영팀과의 대화에서만 허용 (유저↔유저 DM은 범위 외).
   // 닉네임 위조 방지를 위해 운영팀 user_id로 판정.
   const isOperatorConv = otherId === OPERATOR_USER_ID;
+  // 뉴스클리퍼 대화 — 자동 발송 전용, 답장 시 자동응답만 옴 (안내 배너 노출)
+  const isClipperConv = otherId != null && NEWS_CLIPPER_IDS.has(otherId);
 
   // UI states
   const [showMenu, setShowMenu] = useState(false);
@@ -87,8 +93,14 @@ export default function DMChatPage() {
   const [reportDone, setReportDone] = useState(false);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+    // 클리퍼 대화방은 최신 클리핑 카드가 세로로 길어 하단 착지 시 다시 올려 봐야 함
+    // → 최신 메시지의 '상단'(인트로/헤더)에 포커스 (하린아빠 제보 7/12)
+    if (isClipperConv && lastMsgRef.current) {
+      lastMsgRef.current.scrollIntoView({ block: "start" });
+    } else {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages.length, isClipperConv]);
 
   // 입력창 내용 길이에 맞춰 세로 자동 확장 (최대 max-h-32 = 128px)
   useEffect(() => {
@@ -135,6 +147,9 @@ export default function DMChatPage() {
   };
 
   const handleSend = async () => {
+    // 상대 미확정(프로필 로드 전/실패)·클리퍼 대화방은 전송 금지 — 초기 렌더 레이스에
+    // 입력창이 잠깐 떠도 실제 전송은 막는다 (PR #622 삼순 가드)
+    if (!otherId || isClipperConv) return;
     // 사진은 운영팀 대화에서만 전송 (유저↔유저는 텍스트만)
     const sendImages = isOperatorConv ? images : [];
     if ((!input.trim() && sendImages.length === 0) || sending || uploading) return;
@@ -184,7 +199,7 @@ export default function DMChatPage() {
             ) : null}
             <h1 className="text-base font-bold text-text-primary truncate">{otherName}</h1>
           </div>
-          <p className="text-[10px] text-text-tertiary">1:1 쪽지</p>
+          <p className="text-[10px] text-text-tertiary">{isClipperConv ? "자동 발송 전용" : "1:1 쪽지"}</p>
         </div>
         <div className="relative">
           <button onClick={() => setShowMenu(!showMenu)} className="p-1.5 rounded-full hover:bg-bg-tertiary transition-colors">
@@ -225,10 +240,14 @@ export default function DMChatPage() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-        {/* Safety Banner */}
+        {/* Safety Banner — 클리퍼 대화는 자동 발송 전용 안내로 대체 */}
         <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-yellow-500/10 text-yellow-500 text-xs">
           <AlertTriangle size={14} className="flex-shrink-0" />
-          <span>쪽지는 개인 간 대화입니다. 금전 거래 시 사기에 주의하세요.</span>
+          <span>
+            {isClipperConv
+              ? "뉴스클리핑 전용 계정입니다. 문의는 '피드백 보내기'를 이용해주세요."
+              : "쪽지는 개인 간 대화입니다. 금전 거래 시 사기에 주의하세요."}
+          </span>
         </div>
 
         {loading ? (
@@ -238,22 +257,29 @@ export default function DMChatPage() {
             첫 쪽지를 보내보세요!
           </div>
         ) : (
-          messages.map((msg) => {
+          messages.map((msg, i) => {
             const isMe = msg.sender_id === user?.id;
+            // 클리핑 카드는 클리퍼/운영팀 발신만 신뢰 — 일반 유저가 payload를 흉내내도 텍스트로 렌더 (PR #619 리뷰 blocker 2)
+            const trustedSender = NEWS_CLIPPER_IDS.has(msg.sender_id) || msg.sender_id === OPERATOR_USER_ID;
+            const clipping = trustedSender && isNewsClippingPayload(msg.payload) ? msg.payload : null;
             return (
               <motion.div
                 key={msg.id}
+                ref={i === messages.length - 1 ? lastMsgRef : undefined}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 className={`flex ${isMe ? "justify-end" : "justify-start"}`}
               >
-                <div className={`max-w-[75%] ${isMe ? "order-2" : ""}`}>
+                <div className={`${clipping ? "max-w-[88%] min-w-[70%]" : "max-w-[75%]"} ${isMe ? "order-2" : ""}`}>
                   {!isMe && (
                     <div className="flex items-center gap-1.5 mb-1">
                       {msg.sender_team_id && <TeamBadge teamId={msg.sender_team_id} size="xs" />}
                       <span className="text-xs font-semibold text-text-secondary">{msg.sender_nickname}</span>
                     </div>
                   )}
+                  {clipping ? (
+                    <NewsClippingCard payload={clipping} />
+                  ) : (
                   <div
                     className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
                       isMe
@@ -285,6 +311,7 @@ export default function DMChatPage() {
                       </div>
                     )}
                   </div>
+                  )}
                   <div className={`text-[10px] text-text-tertiary mt-1 ${isMe ? "text-right" : ""}`}>
                     {new Date(msg.created_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}
                     {isMe && msg.is_read && " ✓"}
@@ -297,8 +324,13 @@ export default function DMChatPage() {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
-      {isBlocked ? (
+      {/* Input — 클리퍼 대화방은 입력창 비활성화 (자동 발송 전용, 하린아빠 확정).
+          상대 확정 전에는 composer 미렌더 — 클리퍼 판정 전 일반 입력창이 잠깐 뜨는 레이스 차단 */}
+      {!otherId ? null : isClipperConv ? (
+        <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe text-center text-sm text-text-tertiary">
+          뉴스클리핑 전용 계정입니다. 문의는 &apos;피드백 보내기&apos;를 이용해주세요.
+        </div>
+      ) : isBlocked ? (
         <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe text-center text-sm text-text-tertiary">
           차단된 사용자에게 쪽지를 보낼 수 없습니다.
         </div>

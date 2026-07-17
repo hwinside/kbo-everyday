@@ -28,11 +28,14 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import CheerSong from "@/components/player/CheerSong";
 import PlayerProfile from "@/components/player/PlayerProfile";
 import PlayerHero, { buildHeroStats, hasHeroImage, type PlayerRanks } from "@/components/player/PlayerHero";
-import { calcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
+import { calcBatterSaber, calcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
 import PlayerRadar from "@/components/player/PlayerRadar";
 import PlayerNews from "@/components/player/PlayerNews";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
 import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
+import { formatBirthDisplay } from "@/lib/utils/birthdate";
+import { getPlayerNationality } from "@/lib/utils/player-nationality";
+import CountryFlag from "@/components/player/CountryFlag";
 
 // kboId → player 역매핑 (roster 기반 — 전체 선수 커버)
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
@@ -61,6 +64,15 @@ function getTeamShortName(teamId: number) {
   return TEAMS.find((t) => t.id === teamId)?.shortName ?? "";
 }
 
+/** 시즌 기록 그리드용 타자 WAR — 세이버메트릭스 카드(NicheStats)와 동일 입력·동일 계산으로 값 일치 보장 */
+function batterWarFromStats(stats: Record<string, string | number>): string | null {
+  const pa = Number(stats.pa);
+  const ab = Number(stats.ab);
+  if (!pa || !ab) return null;
+  const war = calcBatterSaber({ ...stats, so: Number(stats.so) || 0 } as Parameters<typeof calcBatterSaber>[0]).WAR;
+  return isFinite(war) ? war.toFixed(2) : null;
+}
+
 function StatItem({ label, value }: { label: string; value: string | number; color?: string }) {
   return (
     <div className="bg-bg-tertiary rounded-xl p-3 text-center">
@@ -80,7 +92,11 @@ export default function PlayerBoardPage() {
   const playerName = resolvedPlayer?.name;
   // 동명이인 대응: roster에서 canonical kboId로 직접 찾기
   const rosterPlayer = PLAYERS_ROSTER.find((p) => p.kboId === kboId);
-  
+  // 생년월일 표시 (roster SSOT의 birthDate 기반, 없으면 null → 미표시)
+  const birthText = formatBirthDisplay(rosterPlayer?.birthDate);
+  // 외국인·아시아쿼터 선수 국적 (국기+국가명). 내국인은 null → 미표시
+  const nationality = getPlayerNationality(kboId);
+
   const [player, setPlayer] = useState<PlayerData | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
@@ -349,6 +365,8 @@ export default function PlayerBoardPage() {
           teamBg={teamColor}
           backNo={player.number}
           position={player.position}
+          birthText={birthText}
+          nationality={nationality}
           stats={buildHeroStats(realStats ?? {}, player.position ?? "", playerRanks)}
           showTopBar={false}
         />
@@ -371,6 +389,16 @@ export default function PlayerBoardPage() {
               <p className="text-base text-text-tertiary">
                 {[getTeamShortName(player.teamId) || player.team, player.position].filter(Boolean).join(" · ") || "선수"}
               </p>
+              {nationality && (
+                <CountryFlag
+                  nationality={nationality}
+                  size={16}
+                  className="mt-0.5 text-sm text-text-tertiary"
+                />
+              )}
+              {birthText && (
+                <p className="text-sm text-text-tertiary mt-0.5">{birthText}</p>
+              )}
             </div>
 
             <button onClick={async () => {
@@ -512,6 +540,7 @@ export default function PlayerBoardPage() {
                     <StatItem label="도루" value={realStats.sb} color={teamColor} />
                     <StatItem label="OPS" value={realStats.ops ?? "-"} color={teamColor} />
                     <StatItem label="볼넷" value={realStats.bb ?? 0} color={teamColor} />
+                    <StatItem label="WAR" value={batterWarFromStats(realStats) ?? "-"} color={teamColor} />
                   </>
                 )}
               </div>
@@ -532,7 +561,14 @@ export default function PlayerBoardPage() {
             <PlayerHomeAway playerId={kboId} position={player.position} teamColor={teamColor} />
           )}
 
-          <NicheStats playerId={numericKboId} position={player.position} teamColor={teamColor} playerName={player.name} season={statSeason} />
+          <NicheStats
+            playerId={numericKboId}
+            position={player.position}
+            teamColor={teamColor}
+            playerName={player.name}
+            season={statSeason}
+            stats={realStats ?? undefined}
+          />
           
           {/* 관련 기사 */}
           <div className="px-5">
