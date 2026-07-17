@@ -15,6 +15,7 @@ import {
   decideLegacyTokenUpdate,
   decideStartReissue,
   startTokenChangePatch,
+  shouldAdvanceFallbackCursor,
 } from "../../src/lib/notifications/live-activity-channel-policy";
 
 let pass = 0;
@@ -330,6 +331,19 @@ check("catch-up: decision null(판정 불가) → 기존 매분 발송 동작(p1
     startTokenChangePatch(null, "tokB", "2026-07-17T00:00:00Z"),
     { token_changed_at: "2026-07-17T00:00:00Z" });
 }
+// ── shouldAdvanceFallbackCursor — mixed-result 영구 누락 방지 (#665 재리뷰 NO-GO) ──
+check("cursor: 전원 성공 → 전진", shouldAdvanceFallbackCursor(["sent"]), true);
+check("cursor: 다수 성공 → 전진", shouldAdvanceFallbackCursor(["sent", "sent"]), true);
+check("cursor: 1 성공 + 1 invalidToken → 전진 (invalidToken은 terminal)",
+  shouldAdvanceFallbackCursor(["sent", "invalidToken"]), true);
+check("cursor: 1 성공 + 1 retryable 실패 → 보류 (재현 케이스)",
+  shouldAdvanceFallbackCursor(["sent", "retryableFailure"]), false);
+check("cursor: 성공 다수 + retryable 1건 섞임 → 보류",
+  shouldAdvanceFallbackCursor(["sent", "sent", "retryableFailure"]), false);
+check("cursor: 전원 retryable 실패 → 보류",
+  shouldAdvanceFallbackCursor(["retryableFailure"]), false);
+check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
+  shouldAdvanceFallbackCursor(["invalidToken", "retryableFailure"]), false);
 
 console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);

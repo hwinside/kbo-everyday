@@ -159,6 +159,26 @@ export function startTokenChangePatch(
   return existingToken === newToken ? {} : { token_changed_at: nowIso };
 }
 
+/** 경기 단위 폴백 커서(live_activity_game_push_state.updated_at) 전진 판정 입력. */
+export type UpdateAttemptOutcome = "sent" | "invalidToken" | "retryableFailure";
+
+/**
+ * 폴백 커서 전진 여부 (#665 재리뷰 NO-GO — mixed-result 영구 누락).
+ *
+ * 같은 경기에서 토큰 A가 APNs 일시 오류(429/5xx 등, invalidToken=false)로 실패하고
+ * 토큰 B가 성공하면, 커서가 전진해 다음 틱 A의 tokenUpdatedAtMs < lastWriteAtMs가 되어
+ * decideLegacyTokenUpdate가 isCatchUp=false로 판정 — A는 재시도 없이 skip이 굳어져
+ * "경기 예정" 프레임에 영구 고착된다. retryable 실패가 하나라도 있으면 커서를 보류해
+ * 다음 틱도 그 경기의 전 토큰을 catch-up(p10) 대상으로 남긴다(과다 발송은 그 경기 한정,
+ * retryable 실패가 해소될 때까지만).
+ *
+ * invalidToken은 이번 틱에 즉시 정리(live-activity.ts) 대상이라 무시해도 안전 — 다음
+ * 틱엔 그 토큰 행 자체가 없다.
+ */
+export function shouldAdvanceFallbackCursor(outcomes: UpdateAttemptOutcome[]): boolean {
+  return !outcomes.includes("retryableFailure");
+}
+
 /** ContentState → score축 문자열 (점수/이닝/초말/주자/status만). */
 export function scoreStateOf(cs: Record<string, unknown>): string {
   return [
