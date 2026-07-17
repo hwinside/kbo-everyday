@@ -103,6 +103,79 @@ public class GameNotificationPlugin extends Plugin {
         return new String[] { title, body == null ? "" : body };
     }
 
+    /** 라이브 상태면 승격 카드를 ProgressStyle(9이닝 진행바)로 업그레이드.
+     *  타이틀=스코어, 서브텍스트=구장·이닝, 본문=아웃도트(●옐로우)·주자·투타,
+     *  largeIcon=다이아몬드(레드)+아웃 패널, 진행바=이닝 세그먼트 팀컬러+팀로고 트래커.
+     *  라이브가 아니면(예정/종료/취소/파싱 실패) 기존 BigText 유지. */
+    private static void applyLiveProgressCard(Context context, NotificationCompat.Builder b,
+                                              GameScoreWidget.Eff e) {
+        if (e == null || !e.hasGame || e.status == null || e.status.isEmpty()) return;
+        if (e.status.startsWith("SCHEDULED|") || e.status.startsWith("FINAL")
+            || "CANCELLED".equals(e.status)) return;
+        java.util.regex.Matcher m =
+            java.util.regex.Pattern.compile("(\\d+)회(초|말)").matcher(e.status);
+        if (!m.find()) return;
+        int inning;
+        try { inning = Math.min(Math.max(Integer.parseInt(m.group(1)), 1), 15); }
+        catch (NumberFormatException ex) { return; }
+        String inningLabel = m.group(1) + "회" + m.group(2);
+
+        String away = GameScoreWidget.shortName(e.away);
+        String home = GameScoreWidget.shortName(e.home);
+        b.setContentTitle(away + " " + e.as + " : " + e.hs + " " + home);
+        b.setSubText(e.stadium.isEmpty() ? inningLabel : e.stadium + " · " + inningLabel);
+
+        // 본문: ●○○ 1사 1·3루 · 투수 X vs 타자 Y (빈 정보는 생략)
+        int outCount = 0;
+        try {
+            outCount = Math.min(Math.max(
+                Integer.parseInt(e.outs.isEmpty() ? "0" : e.outs), 0), 3);
+        } catch (NumberFormatException ignored) { }
+        StringBuilder t = new StringBuilder();
+        for (int i = 0; i < 3; i++) t.append(i < outCount ? "●" : "○");
+        t.append(" ").append(outCount).append("사");
+        String bases = baseSummary(e.diamond);
+        if (!bases.isEmpty()) t.append(" ").append(bases);
+        if (!e.pitcher.isEmpty() && !e.batter.isEmpty()) {
+            t.append(" · 투수 ").append(e.pitcher).append(" vs 타자 ").append(e.batter);
+        } else if (!e.batter.isEmpty()) {
+            t.append(" · 타자 ").append(e.batter);
+        }
+        b.setContentText(t.toString());
+        b.setLargeIcon(GameScoreWidget.buildDiamondOutsIcon(e.diamond, e.outs));
+
+        // 9이닝 세그먼트(연장이면 확장) — 지난·현재 이닝 팀컬러, 남은 이닝 다크.
+        String accentTeam = !e.myTeam.isEmpty() ? e.myTeam : e.home;
+        int accent = GameScoreWidget.teamAccent(accentTeam);
+        int total = Math.max(inning, 9);
+        java.util.List<NotificationCompat.ProgressStyle.Segment> segs = new java.util.ArrayList<>();
+        for (int i = 1; i <= total; i++) {
+            segs.add(new NotificationCompat.ProgressStyle.Segment(1)
+                .setColor(i <= inning ? accent : 0xFF3A4150));
+        }
+        NotificationCompat.ProgressStyle ps = new NotificationCompat.ProgressStyle()
+            .setStyledByProgress(false)
+            .setProgressSegments(segs)
+            .setProgress(inning);
+        int logoRes = context.getResources().getIdentifier(
+            "teamlogo_" + accentTeam.toLowerCase(), "drawable", context.getPackageName());
+        if (logoRes != 0) {
+            ps.setProgressTrackerIcon(
+                androidx.core.graphics.drawable.IconCompat.createWithResource(context, logoRes));
+        }
+        b.setStyle(ps);
+    }
+
+    /** diamond 비트("101")를 "1·3루" 요약으로. 주자 없으면 빈 문자열. */
+    private static String baseSummary(String diamond) {
+        if (diamond == null || diamond.length() < 3) return "";
+        StringBuilder n = new StringBuilder();
+        if (diamond.charAt(0) == '1') n.append("1");
+        if (diamond.charAt(1) == '1') n.append(n.length() > 0 ? "·2" : "2");
+        if (diamond.charAt(2) == '1') n.append(n.length() > 0 ? "·3" : "3");
+        return n.length() > 0 ? n.append("루").toString() : "";
+    }
+
     private static void ensureChannel(Context context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
@@ -158,11 +231,15 @@ public class GameNotificationPlugin extends Plugin {
         if (promoted) {
             // Live Update 분기 — 표준 스타일만 승격 대상(커스텀 뷰 금지). 점수/이닝/최근 플레이는
             // 위젯 prefs에서 직접 조합(FCM title/body엔 없음 — composeLiveCard 주석 참조).
-            String[] tb = composeLiveCard(GameScoreWidget.readEff(context), title, body);
+            GameScoreWidget.Eff eff = GameScoreWidget.readEff(context);
+            String[] tb = composeLiveCard(eff, title, body);
             b.setContentTitle(tb[0])
                 .setContentText(tb[1])
                 .setStyle(new NotificationCompat.BigTextStyle().bigText(tb[1]))
                 .setRequestPromotedOngoing(true);
+            // 라이브 상태는 ProgressStyle(이닝 진행바) 카드로 업그레이드 —
+            // 예정/종료/취소는 위 BigText 그대로(no-op).
+            applyLiveProgressCard(context, b, eff);
             String gameId = currentGameId(context, path);
             // Unpin(유저 스와이프 해제) 감지 → 같은 경기 자동 재게시 억제. deleteIntent는
             // 유저 해제 시에만 발화(cancel()로는 미발화)라 non-promoted 경로 행동 불변.

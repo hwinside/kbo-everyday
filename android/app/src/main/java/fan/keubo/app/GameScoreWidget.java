@@ -107,6 +107,69 @@ public class GameScoreWidget extends AppWidgetProvider {
         return ctx.getResources().getIdentifier(name, "drawable", ctx.getPackageName());
     }
 
+    /** 팀 대표 컬러(승격 카드 이닝 진행바 세그먼트용) — wear WearTeam.highlightColor와 동일 값. */
+    static int teamAccent(String code) {
+        if (code == null) return 0xFFC9184A;
+        switch (code.toUpperCase()) {
+            case "LG": return 0xFFC60C30;
+            case "OB": return 0xFF9BA8D4;
+            case "KT": return 0xFFE85050;
+            case "SK": return 0xFFCE0E2D;
+            case "NC": return 0xFF315288;
+            case "HT": return 0xFFEA0029;
+            case "LT": return 0xFF6BC4E8;
+            case "SS": return 0xFF074CA1;
+            case "HH": return 0xFFFF6600;
+            case "WO": return 0xFFC97088;
+            default: return 0xFFC9184A;
+        }
+    }
+
+    /** 승격(Live Update) 카드 largeIcon — 주자 다이아몬드(레드) + 아웃카운트 도트(옐로우) 패널.
+     *  diamond = 1·2·3루 점유 비트("101" = 1·3루), outs = "0"~"2".
+     *  표준 템플릿은 자유 그래픽 불가라 아이콘 슬롯에 동적 비트맵으로 주입한다. */
+    static Bitmap buildDiamondOutsIcon(String diamond, String outs) {
+        int size = 192;
+        Bitmap bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(bmp);
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        String d = diamond == null || diamond.length() < 3 ? "000" : diamond;
+        int outCount = 0;
+        try {
+            outCount = Math.min(Math.max(
+                Integer.parseInt(outs == null || outs.isEmpty() ? "0" : outs), 0), 3);
+        } catch (NumberFormatException ignored) { }
+
+        int occupied = 0xFFFF3B30;  // 주자 = 레드 (확정 스펙)
+        int emptyBase = 0xFF4A5162;
+        int outOn = 0xFFFFD60A;     // 아웃 = 옐로우 (확정 스펙)
+        int outOff = 0xFF4A5162;
+
+        // 베이스 3개 — 다이아몬드형. centers[i] = {1루(right), 2루(top), 3루(left)} 순서로
+        // d.charAt(0..2)=1루·2루·3루 점유 비트와 매칭.
+        float half = 26f;
+        float[][] centers = { {146f, 84f}, {96f, 40f}, {46f, 84f} };
+        for (int i = 0; i < 3; i++) {
+            p.setColor(d.charAt(i) == '1' ? occupied : emptyBase);
+            float cx = centers[i][0], cy = centers[i][1];
+            android.graphics.Path path = new android.graphics.Path();
+            path.moveTo(cx, cy - half);
+            path.lineTo(cx + half, cy);
+            path.lineTo(cx, cy + half);
+            path.lineTo(cx - half, cy);
+            path.close();
+            c.drawPath(path, p);
+        }
+        // 아웃 도트 3개
+        float r = 11f, oy = 156f;
+        float[] ox = { 62f, 96f, 130f };
+        for (int i = 0; i < 3; i++) {
+            p.setColor(i < outCount ? outOn : outOff);
+            c.drawCircle(ox[i], oy, r, p);
+        }
+        return bmp;
+    }
+
     @Override
     public void onUpdate(Context context, AppWidgetManager mgr, int[] appWidgetIds) {
         // 카드 탭 → 앱 실행 (딥링크는 알림 카드가 담당, 위젯은 앱 홈)
