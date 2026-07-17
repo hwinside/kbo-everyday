@@ -12,6 +12,8 @@ import androidx.wear.protolayout.LayoutElementBuilders.FontStyle
 import androidx.wear.protolayout.LayoutElementBuilders.LayoutElement
 import androidx.wear.protolayout.LayoutElementBuilders.Row
 import androidx.wear.protolayout.LayoutElementBuilders.Spacer
+import androidx.wear.protolayout.LayoutElementBuilders.Spannable
+import androidx.wear.protolayout.LayoutElementBuilders.SpanText
 import androidx.wear.protolayout.LayoutElementBuilders.Text
 import androidx.wear.protolayout.ModifiersBuilders
 import androidx.wear.protolayout.ResourceBuilders
@@ -276,16 +278,15 @@ class KboGameTileService : TileService() {
                 outsRow.addContent(baseDiamond(it))
             }
             rows.add(rowBox(outsRow.build()))
-            // 투수 · 타자 — 한 줄로 합쳐 marquee(삼순 블로커 2, #661). ProtoLayout marquee는
-            // 단일 Text가 Box(expand)의 유일한 자식일 때만 발동(lastPlay로 검증됨) — 라벨/이름
-            // 다색 Row 조합으론 폭 제약이 안 걸려 개별 라벨 스타일은 포기하고 한 줄로 통일.
+            // 투수 · 타자 — 라벨(secondary)+이름(bold) 위계 유지한 Spannable marquee(삼순 재NO-GO #661).
+            // Spannable.setOverflow/setMarqueeIterations는 Row와 달리 위계 있는 여러 span에도 발동한다.
             if (snap.pitcher != null || snap.batter != null) {
-                val parts = ArrayList<String>()
-                snap.pitcher?.let { parts.add("투수 $it") }
-                snap.batter?.let { parts.add("타자 $it") }
+                val pairs = ArrayList<Pair<String, String>>()
+                snap.pitcher?.let { pairs.add("투수" to it) }
+                snap.batter?.let { pairs.add("타자" to it) }
                 rows.add(
                     rowBox(
-                        marqueeText(parts.joinToString(" · "), 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true, reduceMotion = reduceMotion),
+                        styledMarqueeText(labelNameChunks(pairs), reduceMotion),
                         expandWidth = true,
                     ),
                 )
@@ -295,33 +296,37 @@ class KboGameTileService : TileService() {
                 rows.add(rowBox(marqueeText(it, 10f, WearTeam.COLOR_TEXT_PRIMARY, reduceMotion = reduceMotion), expandWidth = true))
             }
         } else if (snap.kind == "scheduled") {
-            // 목업 v2: `선발 소형준 ● 웰스` — 길면 marquee 드리프트(삼순 블로커 2, #661)
+            // 목업 v2: `선발 소형준 ● 웰스` — 라벨 secondary + 이름 bold + 핑크 도트 위계 유지(삼순 재NO-GO #661)
             snap.starters?.let { s ->
                 val names = s.removePrefix("선발 ")   // 구버전 캐시("선발 A vs B") 방어
-                val line = "선발 " + names.replace(" · ", " ● ").replace(" vs ", " ● ")
-                rows.add(
-                    rowBox(
-                        marqueeText(line, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true, reduceMotion = reduceMotion),
-                        expandWidth = true,
-                    ),
-                )
+                val parts = names.split(" · ")
+                val chunks = ArrayList<SpanChunk>()
+                chunks.add(SpanChunk("선발 ", 10f, WearTeam.COLOR_TEXT_SECONDARY))
+                if (parts.size == 2) {
+                    chunks.add(SpanChunk(parts[0], 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+                    chunks.add(SpanChunk("  ●  ", 8f, WearTeam.COLOR_LIVE))
+                    chunks.add(SpanChunk(parts[1], 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+                } else {
+                    chunks.add(SpanChunk(names.replace(" vs ", " · "), 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+                }
+                rows.add(rowBox(styledMarqueeText(chunks, reduceMotion), expandWidth = true))
             }
         } else if (snap.kind == "final" && (snap.winPitcher != null || snap.losePitcher != null)) {
             // 승/패 투수 한 줄 + 세이브 있을 때만 2행째 컴팩트 행(삼순 SSOT — 없으면 생략, 애플워치 동일)
-            // 길면 marquee 드리프트(삼순 블로커 2, #661)
-            val wlParts = ArrayList<String>()
-            snap.winPitcher?.let { wlParts.add("승 $it") }
-            snap.losePitcher?.let { wlParts.add("패 $it") }
+            // 라벨(secondary)+이름(bold) 위계 유지한 Spannable marquee(삼순 재NO-GO #661)
+            val wlPairs = ArrayList<Pair<String, String>>()
+            snap.winPitcher?.let { wlPairs.add("승" to it) }
+            snap.losePitcher?.let { wlPairs.add("패" to it) }
             rows.add(
                 rowBox(
-                    marqueeText(wlParts.joinToString(" · "), 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true, reduceMotion = reduceMotion),
+                    styledMarqueeText(labelNameChunks(wlPairs), reduceMotion),
                     expandWidth = true,
                 ),
             )
             snap.savePitcher?.let {
                 rows.add(
                     rowBox(
-                        marqueeText("세이브 $it", 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true, reduceMotion = reduceMotion),
+                        styledMarqueeText(labelNameChunks(listOf("세이브" to it)), reduceMotion),
                         expandWidth = true,
                     ),
                 )
@@ -604,6 +609,50 @@ class KboGameTileService : TileService() {
             .setText(TypeBuilders.StringProp.Builder(value).build())
             .setFontStyle(style.build())
             .setMaxLines(1)
+        return if (reduceMotion) {
+            builder.setOverflow(LayoutElementBuilders.TEXT_OVERFLOW_ELLIPSIZE_END).build()
+        } else {
+            builder.setOverflow(LayoutElementBuilders.TEXT_OVERFLOW_MARQUEE)
+                .setMarqueeIterations(-1) // 무한 반복
+                .build()
+        }
+    }
+
+    /** 스타일 있는 marquee 세그먼트 하나(라벨/이름/구분자 등) — [styledMarqueeText]의 입력. */
+    private data class SpanChunk(val text: String, val size: Float, val color: Int, val bold: Boolean = false)
+
+    /** `투수 손아섭` 같은 (라벨, 이름) 쌍들을 공백으로 이어붙인 청크 목록 — 승/패/세이브/투타 공용. */
+    private fun labelNameChunks(pairs: List<Pair<String, String>>): List<SpanChunk> {
+        val chunks = ArrayList<SpanChunk>()
+        pairs.forEachIndexed { idx, (label, name) ->
+            if (idx > 0) chunks.add(SpanChunk("   ", 10f, WearTeam.COLOR_TEXT_SECONDARY))
+            chunks.add(SpanChunk("$label ", 10f, WearTeam.COLOR_TEXT_SECONDARY))
+            chunks.add(SpanChunk(name, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+        }
+        return chunks
+    }
+
+    /**
+     * 라벨(secondary 10sp)+이름(bold 12sp)+구분자 위계를 유지한 1줄 marquee 텍스트
+     * (삼순 재NO-GO #661 — 단일 `Text`로 통일하면 marquee는 되나 v4 SSOT 정보 위계가 사라짐).
+     * `Spannable`은 여러 `SpanText`(각자 다른 FontStyle)를 조합하고도 전체에 하나의
+     * overflow/marquee를 걸 수 있어(단일 Text의 한계 없이) 스타일 유지 + 드리프트 양립 가능.
+     * reduceMotion(시스템 "애니메이션 제거" 설정) 시엔 marquee 대신 말줄임.
+     */
+    @androidx.annotation.OptIn(markerClass = [androidx.wear.protolayout.expression.ProtoLayoutExperimental::class])
+    private fun styledMarqueeText(chunks: List<SpanChunk>, reduceMotion: Boolean): LayoutElement {
+        val builder = Spannable.Builder().setMaxLines(1)
+        chunks.forEach { c ->
+            val style = FontStyle.Builder().setSize(sp(c.size)).setColor(argb(c.color))
+            if (c.bold) {
+                style.setWeight(
+                    LayoutElementBuilders.FontWeightProp.Builder()
+                        .setValue(LayoutElementBuilders.FONT_WEIGHT_BOLD)
+                        .build(),
+                )
+            }
+            builder.addSpan(SpanText.Builder().setText(c.text).setFontStyle(style.build()).build())
+        }
         return if (reduceMotion) {
             builder.setOverflow(LayoutElementBuilders.TEXT_OVERFLOW_ELLIPSIZE_END).build()
         } else {
