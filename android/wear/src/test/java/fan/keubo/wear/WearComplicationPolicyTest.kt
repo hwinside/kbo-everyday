@@ -54,33 +54,73 @@ class WearComplicationPolicyTest {
         assertEquals("삼성 4:1", spec.text)
     }
 
-    // ── myTeamScore 표기 규칙 ──
+    // ── myTeamShort 표기 규칙 ──
 
     @Test
-    fun `myTeamScore는 내팀 점수가 앞 - 원정이어도`() {
+    fun `myTeamShort는 내팀 점수가 앞 - 원정이어도`() {
         // 내팀 LG가 원정(away=LG 1, home=SS 6) → "LG 1:6"
         val s = snap("live", my = "LG", away = "LG", home = "SS", aScore = 1, hScore = 6)
-        assertEquals("LG 1:6", WearComplicationPolicy.myTeamScore(s))
+        assertEquals("LG 1:6", WearComplicationPolicy.myTeamShort(s, "8회말").text)
         // 내팀 LG가 홈(away=KT 6, home=LG 1) → 여전히 내 점수 1이 앞
         val s2 = snap("live", my = "LG", away = "KT", home = "LG", aScore = 6, hScore = 1)
-        assertEquals("LG 1:6", WearComplicationPolicy.myTeamScore(s2))
+        assertEquals("LG 1:6", WearComplicationPolicy.myTeamShort(s2, "8회말").text)
     }
 
     @Test
-    fun `myTeamScore 7자 초과 시 공백 제거 후 약어 생략 순으로 축약`() {
+    fun `myTeamShort 7자 초과 시 공백 제거 - title은 그대로`() {
         // "KIA 10:4" = 8자 → 공백 제거 "KIA10:4" = 7자 OK
         val s = snap("live", my = "HT", away = "HT", home = "SS", aScore = 10, hScore = 4)
-        assertEquals("KIA10:4", WearComplicationPolicy.myTeamScore(s))
-        // "KIA 10:12" = 9자, "KIA10:12" = 8자 → 약어 생략, 내 점수 앞 유지 "10:12"
-        val s2 = snap("live", my = "HT", away = "HT", home = "SS", aScore = 10, hScore = 12)
-        assertEquals("10:12", WearComplicationPolicy.myTeamScore(s2))
+        val spec = WearComplicationPolicy.myTeamShort(s, "8회말")
+        assertEquals("8회말", spec.title)
+        assertEquals("KIA10:4", spec.text)
     }
 
     @Test
-    fun `myTeamScore 한글 약어도 7자 이내 유지`() {
+    fun `myTeamShort 양쪽 두 자릿수 overflow에서도 팀 식별 보존 - KIA 홈과 원정`() {
+        // #666 삼순 블로커: 약어를 버리면 "10:12"로 퇴행 → 약어는 title로 이동해 보존
+        // KIA 원정(away=HT 10, home=SS 12): "KIA10:12" = 8자 초과 → title "8회말·KIA", text "10:12"
+        val away = snap("live", my = "HT", away = "HT", home = "SS", aScore = 10, hScore = 12)
+        val awaySpec = WearComplicationPolicy.myTeamShort(away, "8회말")
+        assertEquals("8회말·KIA", awaySpec.title)
+        assertEquals("10:12", awaySpec.text) // 내 점수 10이 앞
+        // KIA 홈(away=SS 12, home=HT 10): 내 점수 10이 여전히 앞
+        val home = snap("live", my = "HT", away = "SS", home = "HT", aScore = 12, hScore = 10)
+        val homeSpec = WearComplicationPolicy.myTeamShort(home, "8회말")
+        assertEquals("8회말·KIA", homeSpec.title)
+        assertEquals("10:12", homeSpec.text)
+    }
+
+    @Test
+    fun `myTeamShort 양쪽 두 자릿수 overflow에서도 팀 식별 보존 - SSG 홈과 원정`() {
+        // SSG 원정(away=SK 11, home=LG 10): "SSG11:10" = 8자 초과 → title로 이동
+        val away = snap("live", my = "SK", away = "SK", home = "LG", aScore = 11, hScore = 10)
+        val awaySpec = WearComplicationPolicy.myTeamShort(away, "9회초")
+        assertEquals("9회초·SSG", awaySpec.title)
+        assertEquals("11:10", awaySpec.text)
+        // SSG 홈(away=LG 10, home=SK 11): 내 점수 11이 앞
+        val home = snap("live", my = "SK", away = "LG", home = "SK", aScore = 10, hScore = 11)
+        val homeSpec = WearComplicationPolicy.myTeamShort(home, "9회초")
+        assertEquals("9회초·SSG", homeSpec.title)
+        assertEquals("11:10", homeSpec.text)
+    }
+
+    @Test
+    fun `overflow가 gameShort final에서도 title 병기로 전파`() {
+        // final + KIA 10:12 → title "종료·KIA", text "10:12"
+        val s = snap("final", my = "HT", away = "HT", home = "SS", aScore = 10, hScore = 12)
+        val spec = WearComplicationPolicy.gameShort(s, noonMs)
+        assertEquals("종료·KIA", spec.title)
+        assertEquals("10:12", spec.text)
+    }
+
+    @Test
+    fun `myTeamShort 한글 약어도 7자 이내 유지`() {
         // "삼성 10:4" = 7자 → 공백 포함 그대로
         val s = snap("live", aScore = 4, hScore = 10)
-        assertEquals("삼성 10:4", WearComplicationPolicy.myTeamScore(s))
+        assertEquals("삼성 10:4", WearComplicationPolicy.myTeamShort(s, "8회말").text)
+        // 한글 약어 × 양쪽 두 자릿수: "삼성 10:12" = 8자 → 공백 제거 "삼성10:12" = 7자 OK
+        val s2 = snap("live", aScore = 12, hScore = 10)
+        assertEquals("삼성10:12", WearComplicationPolicy.myTeamShort(s2, "8회말").text)
     }
 
     @Test
