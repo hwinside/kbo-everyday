@@ -32,7 +32,9 @@ export function NativePushMount() {
     // 재설치 same-token 감지 갭 보완(삼순 blocker②) — 첫 실행/복귀 시점에 현재 라이브
     // 최애팀 경기 카드를 인앱 start로 직접 보장(p2s claim 상태 무관, 네이티브 dedupe).
     void autoStartMyTeamLiveActivity("boot");
-    const onTeamChanged = () => void autoStartMyTeamLiveActivity("team-changed");
+    // team-changed는 throttle bypass — 부팅/포그라운드 선행 시도(최애팀 미설정이라 no-op)가
+    // 최애팀 설정 직후 60초 스로틀에 걸려 start를 막으면 안 됨(삼순 blocker② 보완②).
+    const onTeamChanged = () => void autoStartMyTeamLiveActivity("team-changed", true);
     const onVisible = () => {
       if (document.visibilityState === "visible") void autoStartMyTeamLiveActivity("foreground");
     };
