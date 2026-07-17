@@ -17,8 +17,10 @@ import {
   p2sEnvAttempts,
   startTokenResultFence,
   decideLegacyTokenUpdate,
+  shouldAdvanceFallbackCursor,
   type ChannelPushDecision,
   type ApnsEnvironment,
+  type UpdateAttemptOutcome,
 } from "@/lib/notifications/live-activity-channel-policy";
 import { teamIdByShortName, fansOfTeams } from "@/lib/notifications/game-status";
 import { sendFcmToUsers } from "@/lib/notifications/fcm";
@@ -256,6 +258,14 @@ export async function pushLiveActivityUpdates(
   // 이번 틱에 update가 1건이라도 성공한 경기 — 폴백 상태 기록 대상(전패 경기는 미기록 →
   // 다음 틱 재발송).
   const sentUpdateGames = new Set<string>();
+  // 경기별 update 대상 발송 결과 — 폴백 커서 전진 판정 재료(#665 재리뷰: mixed-result
+  // 영구 누락 방지, shouldAdvanceFallbackCursor 주석 참조).
+  const updateOutcomesByGame = new Map<string, UpdateAttemptOutcome[]>();
+  function recordUpdateOutcome(gid: string, outcome: UpdateAttemptOutcome) {
+    const arr = updateOutcomesByGame.get(gid);
+    if (arr) arr.push(outcome);
+    else updateOutcomesByGame.set(gid, [outcome]);
+  }
 
   await Promise.all(
     (tokens as TokenRow[]).map(async (t) => {
@@ -309,9 +319,13 @@ export async function pushLiveActivityUpdates(
         } else {
           pushed += 1;
           sentUpdateGames.add(t.game_id);
+          recordUpdateOutcome(t.game_id, "sent");
         }
       } else if (res.invalidToken) {
         invalidTokenIds.push({ user_id: t.user_id, game_id: t.game_id });
+        if (!isEnd) recordUpdateOutcome(t.game_id, "invalidToken");
+      } else if (!isEnd) {
+        recordUpdateOutcome(t.game_id, "retryableFailure");
       }
     }),
   );
@@ -321,7 +335,10 @@ export async function pushLiveActivityUpdates(
   // 읽기는 채널 행이 우선이라 이 테이블이 stale해져도 무해.
   // updated_at = *틱 시작 시각*(발송 후 now() 아님) — 틱 처리 중 등록된 토큰이 기록
   // 시각보다 과거로 밀려 catch-up을 영영 놓치는 race 방지(decideLegacyTokenUpdate 주석).
+  // retryable 실패가 하나라도 있으면 전진 보류(shouldAdvanceFallbackCursor 주석 — #665
+  // 재리뷰: mixed-result에서 실패 토큰만 다음 틱 catch-up 없이 영구 skip되는 것 방지).
   for (const gid of sentUpdateGames) {
+    if (!shouldAdvanceFallbackCursor(updateOutcomesByGame.get(gid) ?? [])) continue;
     const st = stateStringsByGame.get(gid);
     if (!st) continue;
     await supabase

@@ -15,6 +15,7 @@ import {
   decideLegacyTokenUpdate,
   decideStartReissue,
   startTokenChangePatch,
+  shouldAdvanceFallbackCursor,
 } from "../../src/lib/notifications/live-activity-channel-policy";
 
 let pass = 0;
@@ -227,11 +228,29 @@ check("catch-up: 재등록(updated_at 갱신) → 다시 1회 p10",
   decideLegacyTokenUpdate({ decision: skipTick, tokenUpdatedAtMs: T + 120_000, lastWriteAtMs: T + 60_000 }),
   { send: true, priority: "10" });
 
-// 판정 재료 부재 폴백
-check("catch-up: 상태 행 없음(lastWrite null) → decision만 따름 (skip)",
+// bootstrap gap (#664 재리뷰 blocker): cursor(lastWriteAt=null) 미생성 동안 채널 행 기반
+// skip이 이어지면 발송 0 → cursor가 영영 안 생겨 늦은 토큰이 계속 굶는다. null = bootstrap
+// 미완료로 보고 skip/p5여도 p10 1회 — 성공 틱이 cursor를 만들어 다음 틱 해제(위 해제 테스트).
+check("bootstrap: cursor 없음(lastWrite null) + skip tick → p10 1회",
   decideLegacyTokenUpdate({ decision: skipTick, tokenUpdatedAtMs: T, lastWriteAtMs: null }),
+  { send: true, priority: "10" });
+check("bootstrap: cursor 없음 + p5 tick → p10 승격",
+  decideLegacyTokenUpdate({ decision: p5Tick, tokenUpdatedAtMs: T, lastWriteAtMs: null }),
+  { send: true, priority: "10" });
+check("bootstrap: cursor 없음 + token updated_at 미기록 → p10 (비교 기준 부재, 전 토큰 포함)",
+  decideLegacyTokenUpdate({ decision: skipTick, tokenUpdatedAtMs: null, lastWriteAtMs: null }),
+  { send: true, priority: "10" });
+check("bootstrap: cursor 없음 + p10 tick → p10 (변화 없음)",
+  decideLegacyTokenUpdate({ decision: p10Tick, tokenUpdatedAtMs: T, lastWriteAtMs: null }),
+  { send: true, priority: "10" });
+// bootstrap 해제: cursor 생성 후엔 일반 catch-up 매트릭스로 복귀(위 테스트들이 고정) —
+// 대표 케이스로 old token skip 재확인.
+check("bootstrap 해제: cursor 생성 후 old token → skip 복귀",
+  decideLegacyTokenUpdate({ decision: skipTick, tokenUpdatedAtMs: T - 1, lastWriteAtMs: T }),
   { send: false });
-check("catch-up: token updated_at 미기록 → catch-up 아님 (skip 유지)",
+
+// 판정 재료 부재 폴백
+check("catch-up: cursor 있음 + token updated_at 미기록 → catch-up 아님 (skip 유지)",
   decideLegacyTokenUpdate({ decision: skipTick, tokenUpdatedAtMs: null, lastWriteAtMs: T }),
   { send: false });
 check("catch-up: decision null(판정 불가) → 기존 매분 발송 동작(p10 폴백)",
@@ -312,6 +331,19 @@ check("catch-up: decision null(판정 불가) → 기존 매분 발송 동작(p1
     startTokenChangePatch(null, "tokB", "2026-07-17T00:00:00Z"),
     { token_changed_at: "2026-07-17T00:00:00Z" });
 }
+// ── shouldAdvanceFallbackCursor — mixed-result 영구 누락 방지 (#665 재리뷰 NO-GO) ──
+check("cursor: 전원 성공 → 전진", shouldAdvanceFallbackCursor(["sent"]), true);
+check("cursor: 다수 성공 → 전진", shouldAdvanceFallbackCursor(["sent", "sent"]), true);
+check("cursor: 1 성공 + 1 invalidToken → 전진 (invalidToken은 terminal)",
+  shouldAdvanceFallbackCursor(["sent", "invalidToken"]), true);
+check("cursor: 1 성공 + 1 retryable 실패 → 보류 (재현 케이스)",
+  shouldAdvanceFallbackCursor(["sent", "retryableFailure"]), false);
+check("cursor: 성공 다수 + retryable 1건 섞임 → 보류",
+  shouldAdvanceFallbackCursor(["sent", "sent", "retryableFailure"]), false);
+check("cursor: 전원 retryable 실패 → 보류",
+  shouldAdvanceFallbackCursor(["retryableFailure"]), false);
+check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
+  shouldAdvanceFallbackCursor(["invalidToken", "retryableFailure"]), false);
 
 console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);
