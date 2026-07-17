@@ -75,6 +75,7 @@ final class LiveActivityController {
                     let rotated = latestPushToStartToken != nil && latestPushToStartToken != hex
                     latestPushToStartToken = hex   // 조건1·2: App Group 즉시 persist
                     flushPendingUpdateTokens()     // blocker fix: start token 없어서 큐잉된 update token 재등록(유실 금지)
+                    flushChannelAckQueue()         // Slice B: device-auth 인증자 부재로 큐잉된 채널 ACK 재시도
                     onPushToStartToken?(hex)       // 조건2: JS multicast → 포그라운드 register-start 재등록
                     if rotated {
                         NSLog("[LiveActivity] push-to-start token rotated → persisted; JS re-register requested")
@@ -86,6 +87,13 @@ final class LiveActivityController {
 
     /// Activity의 push token 업데이트를 관찰해 콜백으로 흘려보낸다(W3 APNs 등록용).
     private func observePushToken(_ activity: Activity<KBOGameAttributes>, gameId: String) {
+        // Broadcast 채널 activity(attributes.channelId marker 보유)는 per-activity update
+        // 토큰 없이 채널 broadcast로 갱신된다(스펙 v4 §클라 3) — 토큰 관찰/등록을 스킵하고
+        // 구독 ACK(SSOT 기록)로 라우팅한다. marker 부재(레거시 start)는 기존 경로 그대로.
+        if #available(iOS 18.0, *), let channelId = activity.attributes.channelId {
+            ackChannelActivity(gameId: gameId, channelId: channelId, activityId: activity.id)
+            return
+        }
         guard !observedActivityIds.contains(activity.id) else { return }
         observedActivityIds.insert(activity.id)
         Task {
@@ -162,6 +170,122 @@ final class LiveActivityController {
         }
     }
 
+    // MARK: - Broadcast 채널 구독/ACK (스펙 v4 Slice B, 빌드 16+)
+
+    /// APNs env — 컴파일타임 빌드 상수(v4 blocker③: 런타임 entitlement 조회는 불가·불안정).
+    /// Xcode 디버그 빌드 = sandbox / TestFlight·App Store = production.
+    static let apnsEnvironment: String = {
+        #if DEBUG
+        return "sandbox"
+        #else
+        return "production"
+        #endif
+    }()
+
+    /// 같은 activity에 대한 ACK 중복 시도 방지(세션 내). 큐 재시도는 별도 경로.
+    private var ackedActivityIds = Set<String>()
+
+    /// ACK 내구성 큐(스펙 v4 §서버 4) — network/5xx 실패분만 persist 후 재시도. 4xx는 폐기.
+    private static let ackQueueKey = "kbo_channel_ack_queue"
+    private static let ackQueueTTL: TimeInterval = 24 * 60 * 60
+    private let ackQueueLock = NSLock()
+
+    /// GET /api/live-activity/channel — 양 env 채널 ID 중 *자기 빌드 env*의 active 채널만 선택.
+    /// 서버는 env를 추정하지 않는다(스펙 v4 §서버 7). 실패/채널 없음 = nil(레거시 폴백).
+    private func fetchActiveChannelId(gameId: String) async -> String? {
+        guard let url = URL(string: "https://keubo.fan/api/live-activity/channel?gameId=\(gameId)") else { return nil }
+        do {
+            let (data, resp) = try await URLSession.shared.data(from: url)
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200,
+                  let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+            return obj[Self.apnsEnvironment] as? String
+        } catch {
+            return nil
+        }
+    }
+
+    /// 감지한 채널 activity의 구독 ACK — marker가 *현재 active 채널과 일치할 때만* 기록
+    /// (스펙 v4 §서버 4: 지난 경기/폐기 채널 marker는 ACK 금지). activity 단위 1회 시도.
+    @available(iOS 18.0, *)
+    private func ackChannelActivity(gameId: String, channelId: String, activityId: String) {
+        guard !ackedActivityIds.contains(activityId) else { return }
+        ackedActivityIds.insert(activityId)
+        Task {
+            guard await fetchActiveChannelId(gameId: gameId) == channelId else {
+                NSLog("[LiveActivity] channel-ack skipped: marker != active channel (game=\(gameId))")
+                return
+            }
+            await sendChannelAck(gameId: gameId, channelId: channelId)
+        }
+    }
+
+    /// POST /api/live-activity/channel-ack — device-auth(p2s 토큰)로 구독 SSOT 기록.
+    /// 재시도 정책(스펙 v4 정정①): network 오류·5xx만 큐 재시도, 4xx(stale 채널·무효 토큰)는 즉시 폐기.
+    private func sendChannelAck(gameId: String, channelId: String) async {
+        guard let startToken = latestPushToStartToken else {
+            // device-auth 인증자가 아직 없음 — persist 직후/다음 포그라운드 flush 때 재시도.
+            enqueueChannelAck(gameId: gameId, channelId: channelId)
+            return
+        }
+        guard let url = URL(string: "https://keubo.fan/api/live-activity/channel-ack") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "gameId": gameId,
+            "channelId": channelId,
+            "environment": Self.apnsEnvironment,
+            "pushToStartToken": startToken,
+        ])
+        do {
+            let (_, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse else { return }
+            if (200..<300).contains(http.statusCode) {
+                NSLog("[LiveActivity] channel-ack ok (game=\(gameId))")
+            } else if http.statusCode >= 500 {
+                enqueueChannelAck(gameId: gameId, channelId: channelId)
+            } else {
+                // 조건5: 토큰값 미로깅. 4xx = 계약상 폐기(재시도 금지 — 영구 큐 방지).
+                NSLog("[LiveActivity] channel-ack rejected status=\(http.statusCode) — discarded (game=\(gameId))")
+            }
+        } catch {
+            enqueueChannelAck(gameId: gameId, channelId: channelId)
+        }
+    }
+
+    /// ACK 큐 persist(App Group) — 같은 (gameId, channelId) 항목은 1개만 유지(멱등).
+    private func enqueueChannelAck(gameId: String, channelId: String) {
+        guard let ud = UserDefaults(suiteName: WidgetSnapshotStore.appGroupId) else { return }
+        ackQueueLock.lock()
+        defer { ackQueueLock.unlock() }
+        var queue = (ud.array(forKey: Self.ackQueueKey) as? [[String: Any]]) ?? []
+        queue.removeAll { ($0["gameId"] as? String) == gameId && ($0["channelId"] as? String) == channelId }
+        queue.append(["gameId": gameId, "channelId": channelId, "queuedAt": Date().timeIntervalSince1970])
+        ud.set(queue, forKey: Self.ackQueueKey)
+        NSLog("[LiveActivity] channel-ack queued for retry (game=\(gameId), pending=\(queue.count))")
+    }
+
+    /// ACK 큐 flush — 부팅/포그라운드/p2s 토큰 persist 직후 호출. TTL(24h) 초과분은 폐기.
+    /// 큐를 먼저 비우고 재전송 — 실패분은 sendChannelAck가 다시 큐잉한다(4xx는 서버 계약상 폐기).
+    func flushChannelAckQueue() {
+        if #unavailable(iOS 18.0) { return }
+        guard let ud = UserDefaults(suiteName: WidgetSnapshotStore.appGroupId) else { return }
+        ackQueueLock.lock()
+        let queue = (ud.array(forKey: Self.ackQueueKey) as? [[String: Any]]) ?? []
+        ud.removeObject(forKey: Self.ackQueueKey)
+        ackQueueLock.unlock()
+        guard !queue.isEmpty else { return }
+        let cutoff = Date().timeIntervalSince1970 - Self.ackQueueTTL
+        Task {
+            for item in queue {
+                guard let gameId = item["gameId"] as? String,
+                      let channelId = item["channelId"] as? String,
+                      (item["queuedAt"] as? TimeInterval ?? 0) >= cutoff else { continue }
+                await sendChannelAck(gameId: gameId, channelId: channelId)
+            }
+        }
+    }
+
     /// push-to-start 관찰 중복 설치 방지.
     private var activityUpdatesObserved = false
 
@@ -208,6 +332,7 @@ final class LiveActivityController {
     func startObservers() {
         observePushToStartToken()
         observeAllActivities()
+        flushChannelAckQueue()   // Slice B: 이전 세션에서 실패(network/5xx)한 채널 ACK 재시도
     }
 
     /// 조건2 보강 — 앱이 포그라운드로 돌아올 때, App Group에 persist된 현재 push-to-start
@@ -218,6 +343,7 @@ final class LiveActivityController {
     func resyncPushToStartTokenOnForeground() {
         // iOS 18 미만 — 구버전에서 persist된 토큰을 재등록하지 않는다(위 observePushToStartToken 게이트와 동일 사유).
         if #unavailable(iOS 18.0) { return }
+        flushChannelAckQueue()   // Slice B: 포그라운드 복귀마다 대기 중 채널 ACK 재시도
         guard let token = latestPushToStartToken else { return }
         onPushToStartToken?(token)
     }
@@ -328,6 +454,30 @@ final class LiveActivityController {
             homeTeamCode: homeTeamCode,
             myTeamCode: myTeamCode
         )
+
+        // Broadcast 채널 start(스펙 v4 §클라 2) — iOS 18+ && 자기 env active 채널 조회 성공 시
+        // `.channel` 구독으로 시작(per-토큰 예산 없이 broadcast 갱신). attributes에 marker를 실어
+        // 앱 재시작 후 rescan에서도 채널 activity로 식별되게 한다. 조회 실패/채널 없음/생성
+        // 실패 → 아래 기존 `.token` 경로로 폴백(어떤 유저도 지금보다 나빠지지 않음).
+        if #available(iOS 18.0, *), let channelId = await fetchActiveChannelId(gameId: gameId) {
+            var channelAttributes = attributes
+            channelAttributes.channelId = channelId
+            do {
+                let activity = try Activity.request(
+                    attributes: channelAttributes,
+                    content: .init(state: state, staleDate: nil),
+                    pushType: .channel(channelId)
+                )
+                currentActivity = activity
+                ackChannelActivity(gameId: gameId, channelId: channelId, activityId: activity.id)
+                writeWidgetSnapshot(attributes: channelAttributes, state: state)
+                NSLog("[LiveActivity] started game=\(gameId) via channel id=\(activity.id)")
+                return true
+            } catch {
+                NSLog("[LiveActivity] channel start failed → token fallback: \(error.localizedDescription)")
+            }
+        }
+
         do {
             let activity = try Activity.request(
                 attributes: attributes,

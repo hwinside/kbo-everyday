@@ -13,6 +13,10 @@ import Foundation
 import Capacitor
 import WidgetKit
 
+#if canImport(ActivityKit)
+import ActivityKit
+#endif
+
 @objc(LiveActivityPlugin)
 public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "LiveActivityPlugin"
@@ -39,7 +43,18 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
                 self?.notifyListeners("liveActivityPushToken", data: ["gameId": gameId, "token": token], retainUntilConsumed: true)
             }
             LiveActivityController.shared.onPushToStartToken = { [weak self] token in
-                self?.notifyListeners("liveActivityPushToStartToken", data: ["token": token], retainUntilConsumed: true)
+                // Slice B(빌드 16) — 서버 p2s input-push-channel 게이트 판정용 os 메이저 버전과
+                // 진단용 frequentPushes를 register-start에 함께 보고한다(스펙 v4 §클라 1·4).
+                var data: [String: Any] = [
+                    "token": token,
+                    "osMajor": ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
+                ]
+                #if canImport(ActivityKit)
+                if #available(iOS 16.2, *) {
+                    data["frequentPushes"] = ActivityAuthorizationInfo().frequentPushesEnabled
+                }
+                #endif
+                self?.notifyListeners("liveActivityPushToStartToken", data: data, retainUntilConsumed: true)
             }
         }
     }
