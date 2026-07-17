@@ -103,9 +103,11 @@ public class GameNotificationPlugin extends Plugin {
         return new String[] { title, body == null ? "" : body };
     }
 
-    /** 라이브 상태면 승격 카드를 ProgressStyle(9이닝 진행바)로 업그레이드.
-     *  타이틀=스코어, 서브텍스트=구장·이닝, 본문=아웃도트(●옐로우)·주자·투타,
-     *  largeIcon=다이아몬드(레드)+아웃 패널, 진행바=이닝 세그먼트 팀컬러+팀로고 트래커.
+    /** 라이브 상태면 승격 카드를 업그레이드.
+     *  타이틀=스코어, 서브텍스트=구장·이닝, 본문=아웃도트(●레드)·주자·투/타 + 문자중계,
+     *  largeIcon=다이아몬드(옐로우)+아웃 패널. 진행바는 하린아빠 결정(7/18 01:08)으로 제거 —
+     *  바 자리를 문자중계가 대체(이닝은 서브텍스트에 있음). ProgressStyle 트래커가 세그먼트 폭을 잠식해
+     *  바 길이 불균일 발생하던 문제도 자연 해소. 승격 자격은 ProgressStyle 미사용과 무관(필수 요건 아님).
      *  라이브가 아니면(예정/종료/취소/파싱 실패) 기존 BigText 유지. */
     private static void applyLiveProgressCard(Context context, NotificationCompat.Builder b,
                                               GameScoreWidget.Eff e) {
@@ -115,9 +117,6 @@ public class GameNotificationPlugin extends Plugin {
         java.util.regex.Matcher m =
             java.util.regex.Pattern.compile("(\\d+)회(초|말)").matcher(e.status);
         if (!m.find()) return;
-        int inning;
-        try { inning = Math.min(Math.max(Integer.parseInt(m.group(1)), 1), 15); }
-        catch (NumberFormatException ex) { return; }
         String inningLabel = m.group(1) + "회" + m.group(2);
 
         String away = GameScoreWidget.shortName(e.away);
@@ -142,31 +141,17 @@ public class GameNotificationPlugin extends Plugin {
         } else if (!e.batter.isEmpty()) {
             t.append(" · 타 ").append(e.batter);
         }
-        // 문자중계 최근 플레이 한 줄 — 승격 카드 본문  2줄째(One UI 접힘 렌더 실측 확인).
+        // 문자중계 최근 플레이 — 진행바를 때고 그 자리를 본문 마지막 줄로 대체
+        // (하린아빠 01:08 "바를 빼고 바 자리에 문자중계"). One UI 접힘 본문 다중 렌더 실측.
         if (!e.lastPlay.isEmpty()) t.append("\n").append(e.lastPlay);
-        b.setContentText(t.toString());
+        String bodyText = t.toString();
+        b.setContentText(bodyText);
+        // ⚠️ build()가 먼저 걸어둔 BigTextStyle의 bigText는 composeLiveCard의 한 줄(lastPlay)라,
+        // 재설정 안 하면 접힘 렌더에서 그 한 줄만 보여 첫 줄(아웃·주자·투/타)이 사라짐.
+        // 진행바 제거로 setStyle(ps) 대체가 없어졌으므로 BigText를 두 줄 전문으로 갱신.
+        b.setStyle(new NotificationCompat.BigTextStyle().bigText(bodyText));
         b.setLargeIcon(GameScoreWidget.buildDiamondOutsIcon(e.diamond, e.outs));
-
-        // 9이닝 세그먼트(연장이면 확장) — 지난·현재 이닝 팀컬러, 남은 이닝 다크.
-        String accentTeam = !e.myTeam.isEmpty() ? e.myTeam : e.home;
-        int accent = GameScoreWidget.teamAccent(accentTeam);
-        int total = Math.max(inning, 9);
-        java.util.List<NotificationCompat.ProgressStyle.Segment> segs = new java.util.ArrayList<>();
-        for (int i = 1; i <= total; i++) {
-            segs.add(new NotificationCompat.ProgressStyle.Segment(1)
-                .setColor(i <= inning ? accent : 0xFF3A4150));
-        }
-        NotificationCompat.ProgressStyle ps = new NotificationCompat.ProgressStyle()
-            .setStyledByProgress(false)
-            .setProgressSegments(segs)
-            .setProgress(inning);
-        int logoRes = context.getResources().getIdentifier(
-            "teamlogo_" + accentTeam.toLowerCase(), "drawable", context.getPackageName());
-        if (logoRes != 0) {
-            ps.setProgressTrackerIcon(
-                androidx.core.graphics.drawable.IconCompat.createWithResource(context, logoRes));
-        }
-        b.setStyle(ps);
+        // 진행바(ProgressStyle) 제거(하린아빠 01:08) — 바 자리를 문자중계 2줄째가 대체.
     }
 
     /** diamond 비트("101")를 "1·3루" 요약으로. 주자 없으면 빈 문자열. */
@@ -240,8 +225,8 @@ public class GameNotificationPlugin extends Plugin {
                 .setContentText(tb[1])
                 .setStyle(new NotificationCompat.BigTextStyle().bigText(tb[1]))
                 .setRequestPromotedOngoing(true);
-            // 라이브 상태는 ProgressStyle(이닝 진행바) 카드로 업그레이드 —
-            // 예정/종료/취소는 위 BigText 그대로(no-op).
+            // 라이브 상태는 승격 카드 본문(헤더=구장·이닝, 아웃·주자·투/타, 문자중계)
+            // + largeIcon 다이아몬드/아웃 패널로 구성. 예정/종료/취소는 위 BigText 그대로(no-op).
             applyLiveProgressCard(context, b, eff);
             String gameId = currentGameId(context, path);
             // Unpin(유저 스와이프 해제) 감지 → 같은 경기 자동 재게시 억제. deleteIntent는
