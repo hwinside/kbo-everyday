@@ -82,4 +82,11 @@ struct KBOGameAttributes: ActivityAttributes {
     var awayTeamCode: String  // 로고/약어용 코드 (예: "LG")
     var homeTeamCode: String
     var myTeamCode: String     // 최애팀 코드 — 잠금화면 컬러/MY TEAM 강조용 (없으면 "")
+
+    /// Broadcast 채널 marker (스펙 v4 §서버 4) — 이 Activity가 APNs broadcast 채널 구독으로
+    /// 시작됐음을 증명하는 채널 ID. 채널 p2s payload와 인앱 `.channel` start만 채운다.
+    /// 클라는 이 marker가 현재 active 채널과 일치할 때만 channel-ack를 호출하고
+    /// per-activity update 토큰 등록을 스킵한다. 레거시 start(payload에 부재)는 nil.
+    /// 옵셔널+기본 nil — 구빌드 payload/기존 호출과 Codable 하위호환(keyNotFound 방지).
+    var channelId: String? = nil
 }

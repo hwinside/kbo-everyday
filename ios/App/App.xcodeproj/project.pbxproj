@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		08E32B4C8D8F8FA4802047ED /* ChannelAckPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED40A7C93CA6ED4722955952 /* ChannelAckPolicy.swift */; };
 		14E7C38D5BA9CC0CEC7862B3 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F06E9AC42A08D1703EE84F9F /* Foundation.framework */; };
 		159F3DC71D6824E95E816E8B /* WatchRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7126F38454FC2B4048E1334A /* WatchRootView.swift */; };
 		1FB9D552D369B5999B046BE8 /* WatchSyncManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4FEDC2677B7A4BC4CC855E7 /* WatchSyncManager.swift */; };
@@ -139,6 +140,7 @@
 		AEB8F65459C635243ED9DD36 /* KBOWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KBOWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B46A02D327CA9B0549D48B9B /* WatchConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WatchConnectivity.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS26.0.sdk/System/Library/Frameworks/WatchConnectivity.framework; sourceTree = DEVELOPER_DIR; };
 		D4FEDC2677B7A4BC4CC855E7 /* WatchSyncManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchSyncManager.swift; sourceTree = "<group>"; };
+		ED40A7C93CA6ED4722955952 /* ChannelAckPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChannelAckPolicy.swift; sourceTree = "<group>"; };
 		F06E9AC42A08D1703EE84F9F /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		FBA5E7720A1B2C3D4E5F6072 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		FE5559A886229C1AB2118F2F /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS26.0.sdk/System/Library/Frameworks/WidgetKit.framework; sourceTree = DEVELOPER_DIR; };
@@ -295,6 +297,7 @@
 				2FAD9762203C412B000D30F8 /* config.xml */,
 				50B271D01FEDC1A000F3C39B /* public */,
 				D4FEDC2677B7A4BC4CC855E7 /* WatchSyncManager.swift */,
+				ED40A7C93CA6ED4722955952 /* ChannelAckPolicy.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -519,6 +522,7 @@
 				A1B2C3D42FE000000000001 /* MetaAppEventsPlugin.swift in Sources */,
 				AAEE11D52FE000000000001 /* AppReviewPlugin.swift in Sources */,
 				1FB9D552D369B5999B046BE8 /* WatchSyncManager.swift in Sources */,
+				08E32B4C8D8F8FA4802047ED /* ChannelAckPolicy.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

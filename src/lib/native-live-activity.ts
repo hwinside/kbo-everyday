@@ -48,7 +48,13 @@ interface LiveActivityPlugin {
   ): Promise<{ remove: () => Promise<void> }>;
   addListener(
     eventName: "liveActivityPushToStartToken",
-    listenerFunc: (data: { token: string }) => void,
+    listenerFunc: (data: {
+      token: string;
+      /** OS 메이저 버전(빌드 16+) — 서버 p2s input-push-channel 게이트 판정용(스펙 v4). */
+      osMajor?: number;
+      /** ActivityKit frequentPushesEnabled(진단용, 행동 무변화). */
+      frequentPushes?: boolean;
+    }) => void,
   ): Promise<{ remove: () => Promise<void> }>;
 }
 
@@ -231,19 +237,30 @@ async function ensureTokenListener(): Promise<void> {
 let startTokenListenerReady = false;
 // 마지막으로 발급받은 push-to-start 토큰 — 비로그인 부팅 후 로그인(SIGNED_IN) 시 재등록용.
 let lastPushToStartToken: string | null = null;
+// 네이티브가 토큰과 함께 보고한 메타(osMajor/frequentPushes, 빌드 16+) — 재등록에도 동봉.
+let lastPushToStartMeta: { osMajor?: number; frequentPushes?: boolean } = {};
 
 async function registerPushToStartToken(token: string): Promise<void> {
   try {
     const { data: { session } } = await supabase.auth.getSession();
     const accessToken = session?.access_token;
     if (!accessToken) return; // 비로그인 → 등록 불가(로그인 후 재부팅 시 재시도)
+    // appBuild/osMajor(빌드 16+) — 서버 p2s input-push-channel 게이트 판정(os>=18 && build>=16,
+    // 미보고 null = 레거시 payload, 스펙 v4 blocker③). frequentPushes는 진단용 보고.
+    const appBuild = await getAppBuild();
+    const { osMajor, frequentPushes } = lastPushToStartMeta;
     await fetch("/api/live-activity/register-start", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({ pushToStartToken: token }),
+      body: JSON.stringify({
+        pushToStartToken: token,
+        ...(appBuild != null ? { appBuild } : {}),
+        ...(Number.isInteger(osMajor) ? { osMajor } : {}),
+        ...(typeof frequentPushes === "boolean" ? { frequentPushes } : {}),
+      }),
     });
   } catch {
     /* silent — 등록 실패가 앱에 영향 주지 않게 */
@@ -256,8 +273,9 @@ async function registerPushToStartToken(token: string): Promise<void> {
 export async function bootstrapLiveActivityPushToStart(): Promise<void> {
   if (startTokenListenerReady || !isNativeIOS()) return;
   startTokenListenerReady = true;
-  await LiveActivity.addListener("liveActivityPushToStartToken", ({ token }) => {
+  await LiveActivity.addListener("liveActivityPushToStartToken", ({ token, osMajor, frequentPushes }) => {
     lastPushToStartToken = token;
+    lastPushToStartMeta = { osMajor, frequentPushes };
     void registerPushToStartToken(token);
   });
 }
