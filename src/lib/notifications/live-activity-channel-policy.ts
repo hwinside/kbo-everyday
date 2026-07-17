@@ -159,6 +159,74 @@ export function startTokenChangePatch(
   return existingToken === newToken ? {} : { token_changed_at: nowIso };
 }
 
+// ── 팀 설정/변경 이벤트 기반 즉시 start (삼순 5조건 ④) ──
+//
+// #667은 p2s 토큰 *값 교체*로만 재설치를 판정 — iOS가 재설치에도 동일 토큰을 재발급하면
+// 서버 단독으로는 구분 불가했다. 명시적 팀 설정/변경 이벤트(유저 액션) + 웹뷰 스토리지
+// 기반 install 마커(재설치 시 초기화되는 성질, 원격 JS)를 install signal로 삼아
+// 해당 경기의 stale claim/구독을 안전하게 무효화하고 현재 토큰에 즉시 start한다.
+
+/** pending trigger 소비 TTL — 넘으면 버림(한참 뒤 앱 실행에서 뜬금없는 start 방지). */
+export const PENDING_START_TRIGGER_TTL_MS = 2 * 60 * 60 * 1000;
+
+/** 이 시간 안에 만들어진 claim은 "방금 start됨"으로 보고 재발송하지 않는다 —
+ *  팀 저장 연타/이벤트 중복 발화가 ACK·update 토큰 등록 이전 창(수 초~분)에 들어와도
+ *  중복 카드를 만들지 않게 하는 가드(같은 설치 정상 heartbeat 보호). */
+export const EVENT_CLAIM_FRESH_MS = 10 * 60 * 1000;
+
+export interface EventStartInput {
+  /** 클라 install 마커 부재 = 이 설치에서 첫 팀 저장(재설치/신규). 웹뷰 purge 오탐 시
+   *  최악 중복 start 1회(드물음, 수용). 클라 입력이나 오용 피해 = 자기 카드 중복뿐. */
+  clientInstallFresh: boolean;
+  /** live_activity_tokens(user, game) 행 존재 = 현 설치 카드 생존 증거(레거시 경로). */
+  hasUpdateToken: boolean;
+  /** started_users claim 생성 시각(ms). null = 없음. */
+  claimCreatedAtMs: number | null;
+  /** 현재 토큰 device_key 구독의 최신 confirmed_at(ms). null = 없음. */
+  subscriptionConfirmedAtMs: number | null;
+  /** 이벤트 시각(ms) — stale 무효화 fence(이 시각 이전 행만 삭제). */
+  eventMs: number;
+}
+
+export type EventStartDecision =
+  | { proceed: false }
+  | { proceed: true; invalidate: boolean };
+
+/**
+ * 이벤트 기반 즉시 start 판정.
+ * - install fresh: 이전 설치 잔재(claim/구독/update토큰)는 카드가 생존할 수 없다 →
+ *   무조건 무효화 후 start (동일 p2s 토큰 재발급 재설치 커버 — #667 한계 보완).
+ * - 같은 설치(마커 존재): 카드 생존 증거(update 토큰 행 또는 claim 이후 ACK) → skip,
+ *   방금 claim(<10분) → skip(연타 가드) — 중복 카드 방지.
+ * - 그 외(오래된 claim/구독만 남고 생존 증거 없음 = 카드 사망 추정) → 무효화 후 start.
+ */
+export function decideEventStart(i: EventStartInput): EventStartDecision {
+  if (i.clientInstallFresh) {
+    return { proceed: true, invalidate: true };
+  }
+  if (i.hasUpdateToken) return { proceed: false };
+  if (
+    i.subscriptionConfirmedAtMs !== null &&
+    (i.claimCreatedAtMs === null || i.subscriptionConfirmedAtMs >= i.claimCreatedAtMs)
+  ) {
+    // 이 기기(현재 device_key)가 그 claim 이후 ACK = 채널 카드 생존 추정(flip-flop 포함).
+    return { proceed: false };
+  }
+  if (i.claimCreatedAtMs !== null && i.eventMs - i.claimCreatedAtMs < EVENT_CLAIM_FRESH_MS) {
+    // 방금 start됨(ACK/토큰 등록 이전 창) — 연타/중복 이벤트 보호.
+    return { proceed: false };
+  }
+  return {
+    proceed: true,
+    invalidate: i.claimCreatedAtMs !== null || i.subscriptionConfirmedAtMs !== null,
+  };
+}
+
+/** pending trigger 신선도 — register-start 소비 시점에 TTL 판정. */
+export function pendingTriggerFresh(requestedAtMs: number, nowMs: number): boolean {
+  return nowMs - requestedAtMs <= PENDING_START_TRIGGER_TTL_MS;
+}
+
 /** 경기 단위 폴백 커서(live_activity_game_push_state.updated_at) 전진 판정 입력. */
 export type UpdateAttemptOutcome = "sent" | "invalidToken" | "retryableFailure";
 

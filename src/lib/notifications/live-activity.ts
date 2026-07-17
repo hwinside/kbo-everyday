@@ -18,6 +18,7 @@ import {
   startTokenResultFence,
   decideLegacyTokenUpdate,
   shouldAdvanceFallbackCursor,
+  decideEventStart,
   type ChannelPushDecision,
   type ApnsEnvironment,
   type UpdateAttemptOutcome,
@@ -453,19 +454,32 @@ async function startForTeamSide(params: {
   subscribedKeysByUser: Map<string, Set<string>>;
   /** 경기 예정 시작(ms) — 늦은 윈도우 per-토큰 게이트용. null = 파싱 불가. */
   gameStartMs: number | null;
+  /** 단일 유저 한정(triggerLiveActivityStartForUser 이벤트 경로) — 팬 전체 조회를
+   *  생략한다. 호출부가 최애팀 일치를 보장. */
+  onlyUserId?: string;
+  /** 늦은 윈도우 per-토큰 게이트 오버라이드(ms) — 명시적 유저 이벤트(팀 설정/변경)는
+   *  복구된 cron의 뒷북 대량 발송이 아니므로 게이트를 해제(MAX_SAFE_INTEGER)해 경기
+   *  중·후반 재설치/팀변경도 카드를 받게 한다(삼순 5조건 ④). 미지정 = START_WINDOW_MS. */
+  startWindowMs?: number;
 }): Promise<{ sent: number; failed: boolean }> {
   if (params.teamId === null) return { sent: 0, failed: false };
-  const fans = await fansOfTeams([params.teamId]);
-  if (!fans.ok) return { sent: 0, failed: true }; // 팬 조회 실패 → 재시도
-  if (fans.ids.length === 0) return { sent: 0, failed: false };
+  let fanIds: string[];
+  if (params.onlyUserId) {
+    fanIds = [params.onlyUserId];
+  } else {
+    const fans = await fansOfTeams([params.teamId]);
+    if (!fans.ok) return { sent: 0, failed: true }; // 팬 조회 실패 → 재시도
+    fanIds = fans.ids;
+  }
+  if (fanIds.length === 0) return { sent: 0, failed: false };
 
   // push-to-start 토큰 보유 유저만. .in()은 URL 한도 회피 위해 200개 청크.
   const tokenByUser = new Map<string, StartTokenMeta>();
-  for (let i = 0; i < fans.ids.length; i += 200) {
+  for (let i = 0; i < fanIds.length; i += 200) {
     const { data, error } = await supabase
       .from("live_activity_start_tokens")
       .select("user_id, push_to_start_token, apns_environment, app_build, os_major, token_changed_at")
-      .in("user_id", fans.ids.slice(i, i + 200));
+      .in("user_id", fanIds.slice(i, i + 200));
     if (error) return { sent: 0, failed: true }; // 토큰 조회 실패 → 재시도
     for (const r of (data ?? []) as {
       user_id: string; push_to_start_token: string;
@@ -538,7 +552,7 @@ async function startForTeamSide(params: {
         params.subscribedKeysByUser.get(userId)?.has(deviceKey) ?? false,
       gameStartMs: params.gameStartMs,
       nowMs,
-      startWindowMs: START_WINDOW_MS,
+      startWindowMs: params.startWindowMs ?? START_WINDOW_MS,
     });
     if (!d.eligible) return false;
     if (d.invalidateStaleClaim && meta.generationMs !== null) {
@@ -788,6 +802,238 @@ export async function pushLiveActivityStarts(
   }
 
   return { started };
+}
+
+// ── 팀 설정/변경 이벤트 기반 즉시 start (삼순 5조건 ④) ──────────────────────
+// 온보딩(/api/setup)·최애팀 변경을 install signal로 삼아, 현재 live/윈도우 최애팀
+// 경기의 stale claim/구독을 안전하게 무효화하고 현재 p2s 토큰에 즉시 start한다.
+// 동일 p2s 토큰 재발급 재설치(#667 한계)는 웹뷰 스토리지 install 마커(재설치 시
+// 초기화, 원격 JS)로 구분 — 서버/원격 JS 범위로 해결(네이티브 재아카이브 불필요).
+// 토큰 등록↔팀 설정 순서 race는 pending trigger(테이블)로 닫는다 — register-start가
+// 토큰 등록 직후 소비해 즉시 start.
+
+const TRIGGER_KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
+
+/** 오늘 경기 조회(트리거 경로 전용) — warmup cron의 GetKboGameList 호출과 동일 시그니처.
+ *  ⚠️ 외부 API 헤더 정책(Referer 필수)은 우리 통제 밖 — 변경 시 warmup route와 함께
+ *  고칠 것(단일 헬퍼 통합은 warmup 리팩터 트랙으로 보류). */
+async function fetchTodayGamesForTrigger(): Promise<KboRawGame[]> {
+  const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const date = kst.toISOString().slice(0, 10).replace(/-/g, "");
+  const res = await fetch(`${TRIGGER_KBO_MAIN}/GetKboGameList`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+      "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
+    },
+    body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
+    cache: "no-store",
+  }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  return (res?.game ?? []) as KboRawGame[];
+}
+
+export type TriggerStartStatus = "sent" | "pending" | "skipped" | "no_game" | "failed";
+
+/**
+ * 팀 설정/변경 이벤트 직후 호출 — 현재 최애팀의 live/윈도우 경기에 즉시 p2s start.
+ * - 경기 없음(no_game): warmup cron이 윈도우 진입 시 정상 커버(claim 없음) — 추가 조치 불요.
+ * - 토큰 없음(pending): pending trigger 기록 → register-start가 등록 직후 소비(순서 race 봉합).
+ * - 카드 생존 증거/연타(skipped): 중복 카드 방지 — decideEventStart(순수 함수) 판정.
+ * - stale 무효화는 전부 eventMs 이전 행만(fence) — 동시 cron이 방금 만든 행 보존.
+ */
+export async function triggerLiveActivityStartForUser(
+  userId: string,
+  opts: {
+    reason: "setup" | "team_change";
+    clientInstallFresh: boolean;
+    eventMs: number;
+  },
+): Promise<{ status: TriggerStartStatus }> {
+  if (!apnsConfigured()) return { status: "skipped" };
+
+  // 최애팀 — 이벤트 직후 호출이므로 profiles가 SSOT(클라 입력 불신).
+  const { data: prof, error: profErr } = await supabase
+    .from("profiles")
+    .select("team_id")
+    .eq("id", userId)
+    .maybeSingle();
+  if (profErr) return { status: "failed" };
+  const teamId = (prof?.team_id as number | null) ?? null;
+  if (!teamId) return { status: "no_game" };
+
+  const games = await fetchTodayGamesForTrigger();
+  const game = games.find(
+    (g) =>
+      g.G_ID &&
+      liveActivityStartWindow(g) &&
+      g.CANCEL_SC_ID === "0" &&
+      (teamIdByShortName(g.AWAY_NM ?? "") === teamId ||
+        teamIdByShortName(g.HOME_NM ?? "") === teamId),
+  );
+  if (!game) return { status: "no_game" };
+  const gameId = game.G_ID as string;
+  const codes = gameId.match(/^\d{8}([A-Z]{2})([A-Z]{2})\d$/);
+  if (!codes) return { status: "no_game" };
+
+  // p2s 토큰 — 없으면 pending trigger만 남기고 종료(register-start가 등록 직후 소비).
+  const { data: tokenRow, error: tokErr } = await supabase
+    .from("live_activity_start_tokens")
+    .select("push_to_start_token")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (tokErr) return { status: "failed" };
+  if (!tokenRow?.push_to_start_token) {
+    const { error } = await supabase.from("live_activity_pending_start_triggers").upsert(
+      {
+        user_id: userId,
+        reason: opts.reason,
+        client_install_fresh: opts.clientInstallFresh,
+        requested_at: new Date(opts.eventMs).toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+    return error ? { status: "failed" } : { status: "pending" };
+  }
+  const deviceKey = createHash("sha256").update(tokenRow.push_to_start_token).digest("hex");
+
+  // 카드 생존 증거(update 토큰/현재 device_key 구독) + claim 조회 → 순수 판정.
+  const [updTok, claim, subs] = await Promise.all([
+    supabase
+      .from("live_activity_tokens")
+      .select("user_id")
+      .eq("game_id", gameId)
+      .eq("user_id", userId)
+      .limit(1),
+    supabase
+      .from("live_activity_started_users")
+      .select("created_at")
+      .eq("game_id", gameId)
+      .eq("user_id", userId)
+      .maybeSingle(),
+    supabase
+      .from("live_activity_channel_subscriptions")
+      .select("confirmed_at")
+      .eq("game_id", gameId)
+      .eq("user_id", userId)
+      .eq("device_key", deviceKey),
+  ]);
+  if (updTok.error || claim.error || subs.error) return { status: "failed" };
+  const claimMsRaw = claim.data?.created_at ? Date.parse(claim.data.created_at) : NaN;
+  const subMsList = ((subs.data ?? []) as { confirmed_at: string }[])
+    .map((r) => Date.parse(r.confirmed_at))
+    .filter((n) => Number.isFinite(n));
+  const decision = decideEventStart({
+    clientInstallFresh: opts.clientInstallFresh,
+    hasUpdateToken: (updTok.data ?? []).length > 0,
+    claimCreatedAtMs: Number.isFinite(claimMsRaw) ? claimMsRaw : null,
+    subscriptionConfirmedAtMs: subMsList.length > 0 ? Math.max(...subMsList) : null,
+    eventMs: opts.eventMs,
+  });
+  if (!decision.proceed) return { status: "skipped" };
+
+  if (decision.invalidate) {
+    // stale 무효화 — 전부 eventMs 이전 행만(fence). 구독은 *현재 device_key*만 — 다른
+    // 기기/이전 토큰 구독은 이 이벤트의 관할이 아니다.
+    const eventIso = new Date(opts.eventMs).toISOString();
+    const delClaim = await supabase
+      .from("live_activity_started_users")
+      .delete()
+      .eq("game_id", gameId)
+      .eq("user_id", userId)
+      .lt("created_at", eventIso);
+    const delSub = await supabase
+      .from("live_activity_channel_subscriptions")
+      .delete()
+      .eq("game_id", gameId)
+      .eq("user_id", userId)
+      .eq("device_key", deviceKey)
+      .lt("confirmed_at", eventIso);
+    if (delClaim.error || delSub.error) return { status: "failed" };
+    if (opts.clientInstallFresh) {
+      // 재설치 — 이전 설치의 죽은 update 토큰 행도 제거(alreadyActive 오탐 방지).
+      // updated_at null(레거시 행)도 이전 설치 잔재로 본다.
+      const delUpd = await supabase
+        .from("live_activity_tokens")
+        .delete()
+        .eq("game_id", gameId)
+        .eq("user_id", userId)
+        .or(`updated_at.is.null,updated_at.lt.${eventIso}`);
+      if (delUpd.error) return { status: "failed" };
+    }
+  }
+
+  const jwt = await getProviderTokenSafe();
+  if (!jwt) return { status: "failed" };
+
+  // 발송 재료 — pushLiveActivityStarts의 경기 단위 구성과 동일 규칙.
+  const away = game.AWAY_NM ?? "";
+  const home = game.HOME_NM ?? "";
+  const myTeamCode = teamIdByShortName(away) === teamId ? codes[1] : codes[2];
+  const attributes = {
+    gameId,
+    awayTeam: away,
+    homeTeam: home,
+    awayTeamCode: codes[1],
+    homeTeamCode: codes[2],
+  };
+  // start는 항상 scheduled 프레임(2026-07-07 인시던트 픽스) — live는 다음 warmup 틱이 승격.
+  const contentState = buildContentState(game, "scheduled");
+  const isLiveNow = gameStatus(game) === "live";
+  const alert = {
+    title: `⚾ ${away} vs ${home}`,
+    body: isLiveNow
+      ? "실시간 중계가 시작됐어요 — 잠금화면에서 확인하세요"
+      : "곷 경기 시작! 잠금화면에서 실시간 중계를 확인하세요",
+  };
+
+  // active 채널 + (무효화 후 잔존) 유효 구독 — startForTeamSide 입력 규칙 동일.
+  const channelByEnv = new Map<ApnsEnvironment, string>();
+  const activeKey = new Set<string>();
+  {
+    const { data } = await supabase
+      .from("live_activity_channels")
+      .select("environment, channel_id")
+      .eq("game_id", gameId)
+      .eq("status", "active");
+    for (const r of (data ?? []) as { environment: ApnsEnvironment; channel_id: string }[]) {
+      channelByEnv.set(r.environment, r.channel_id);
+      activeKey.add(`${r.environment}|${r.channel_id}`);
+    }
+  }
+  const subscribedKeysByUser = new Map<string, Set<string>>();
+  {
+    const { data } = await supabase
+      .from("live_activity_channel_subscriptions")
+      .select("environment, channel_id, device_key")
+      .eq("game_id", gameId)
+      .eq("user_id", userId);
+    for (const s of (data ?? []) as {
+      environment: string; channel_id: string; device_key: string;
+    }[]) {
+      if (!activeKey.has(`${s.environment}|${s.channel_id}`)) continue;
+      if (!subscribedKeysByUser.has(userId)) subscribedKeysByUser.set(userId, new Set());
+      subscribedKeysByUser.get(userId)!.add(s.device_key);
+    }
+  }
+
+  const side = await startForTeamSide({
+    gameId,
+    teamId,
+    myTeamCode,
+    attributes,
+    contentState,
+    alert,
+    jwt,
+    channelByEnv,
+    subscribedKeysByUser,
+    gameStartMs: scheduledStartMs(game.G_DT, game.G_TM),
+    onlyUserId: userId,
+    // 명시적 유저 이벤트 — 늦은 윈도우 게이트 해제(경기 중·후반 재설치도 카드 수령).
+    startWindowMs: Number.MAX_SAFE_INTEGER,
+  });
+  if (side.sent > 0) return { status: "sent" };
+  return side.failed ? { status: "failed" } : { status: "skipped" };
 }
 
 // ── Layer 2 — 무음 백그라운드 wake 푸시 ──────────────────────────────────────

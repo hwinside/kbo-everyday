@@ -370,6 +370,25 @@ export async function syncIosWidgetMyTeam(code: string): Promise<void> {
   }
 }
 
+/** 최애팀 변경 이벤트를 서버에 알려 현재 live/윈도우 최애팀 경기가 있으면 즉시 잠금화면
+ *  LA를 start시킨다(삼순 5조건 ④). 서버가 profiles를 SSOT로 재조회하므로 팀 값은 안 실음.
+ *  iOS 외엔 no-op(안드는 위젯/FCM 경로). 실패는 무시 — 다음 warmup cron이 윈도우 내 복구. */
+export async function notifyTeamChangedForLiveActivity(): Promise<void> {
+  if (!isNativeIOS()) return;
+  try {
+    const { supabase } = await import("@/lib/supabase/client");
+    const { data: { session } } = await supabase.auth.getSession();
+    const accessToken = session?.access_token;
+    if (!accessToken) return;
+    await fetch("/api/live-activity/team-changed", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch {
+    /* silent — 부가 기능(다음 cron 복구) */
+  }
+}
+
 /** 홈 화면이 가진 최애팀 경기를 홈 위젯에 기록.
  *  라이브 경기가 없을 때 *최애팀 다음 예정 경기*가 위젯에 뜨게 하는 핵심 fallback 경로
  *  (안드로이드/앱 홈 MY TEAM 카드와 동일 컨셉). live/final도 그대로 표현. */

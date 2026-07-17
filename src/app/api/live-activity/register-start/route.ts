@@ -5,7 +5,9 @@ import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import {
   startTokenEnvPatch,
   startTokenChangePatch,
+  pendingTriggerFresh,
 } from "@/lib/notifications/live-activity-channel-policy";
+import { triggerLiveActivityStartForUser } from "@/lib/notifications/live-activity";
 
 // Live Activity W3b — push-to-start 토큰 등록/갱신.
 // 클라가 앱 부팅 시 ActivityKit `pushToStartTokenUpdates`(iOS 17.2+)로 발급받은
@@ -80,5 +82,34 @@ export async function POST(req: NextRequest) {
   );
 
   if (error) return supabaseErrorResponse(error);
+
+  // 팀 설정/변경 이벤트가 토큰 등록보다 먼저 도착해 pending으로 남은 것을 소비 — 순서 race
+  // 봉합(삼순 5조건 ④). 토큰이 방금 등록됐으므로 triggerLiveActivityStartForUser가 즉시
+  // start를 시도한다(fire-and-forget — 실패해도 토큰 등록 응답에 영향 없음).
+  try {
+    const { data: pending } = await supabase
+      .from("live_activity_pending_start_triggers")
+      .select("reason, client_install_fresh, requested_at")
+      .eq("user_id", verified.user.id)
+      .maybeSingle();
+    if (pending) {
+      // 소비(delete) — 재진입해도 중복 start 안 되게 먼저 지우고 판정.
+      await supabase
+        .from("live_activity_pending_start_triggers")
+        .delete()
+        .eq("user_id", verified.user.id);
+      const requestedMs = Date.parse(pending.requested_at as string);
+      if (Number.isFinite(requestedMs) && pendingTriggerFresh(requestedMs, Date.now())) {
+        await triggerLiveActivityStartForUser(verified.user.id, {
+          reason: pending.reason as "setup" | "team_change",
+          clientInstallFresh: Boolean(pending.client_install_fresh),
+          eventMs: requestedMs,
+        });
+      }
+    }
+  } catch {
+    /* pending 소비 실패는 토큰 등록을 깨리지 않는다(다음 cron이 윈도우 내 복구). */
+  }
+
   return NextResponse.json({ success: true });
 }

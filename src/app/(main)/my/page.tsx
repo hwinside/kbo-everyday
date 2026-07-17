@@ -13,7 +13,7 @@ import { getTeamById } from "@/lib/constants/teams";
 import { getMyTeamId, setMyTeamId } from "@/lib/store/myteam";
 import { isNative } from "@/lib/capacitor/platform";
 import { setWidgetMyTeam } from "@/lib/capacitor/game-notification";
-import { ID_TO_KBO_CODE } from "@/lib/native-live-activity";
+import { ID_TO_KBO_CODE, notifyTeamChangedForLiveActivity } from "@/lib/native-live-activity";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { usePushNotification } from "@/lib/hooks/usePushNotification";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -137,6 +137,8 @@ export default function MyPage() {
     if (user) {
       await updateProfile(user.id, { team_id: newTeamId, favorite_players: [] });
       await refreshProfile();
+      // 잠금화면 LA — 변경 후 새 최애팀이 live/윈도우 경기면 즉시 start(삼순 ④).
+      void notifyTeamChangedForLiveActivity();
     }
   };
 

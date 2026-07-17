@@ -16,6 +16,10 @@ import {
   decideStartReissue,
   startTokenChangePatch,
   shouldAdvanceFallbackCursor,
+  decideEventStart,
+  pendingTriggerFresh,
+  PENDING_START_TRIGGER_TTL_MS,
+  EVENT_CLAIM_FRESH_MS,
 } from "../../src/lib/notifications/live-activity-channel-policy";
 
 let pass = 0;
@@ -344,6 +348,51 @@ check("cursor: 전원 retryable 실패 → 보류",
   shouldAdvanceFallbackCursor(["retryableFailure"]), false);
 check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
   shouldAdvanceFallbackCursor(["invalidToken", "retryableFailure"]), false);
+
+// ── decideEventStart — 팀 설정/변경 이벤트 즉시 start (삼순 5조건 ④) ──
+{
+  const t = 20_000_000;
+  // install fresh = 재설치: 잔재 무관 무조건 무효화 후 start(동일 토큰 재발급 커버).
+  check("event: install fresh + 잔재 없음 → start(무효화 X)",
+    decideEventStart({ clientInstallFresh: true, hasUpdateToken: false,
+      claimCreatedAtMs: null, subscriptionConfirmedAtMs: null, eventMs: t }),
+    { proceed: true, invalidate: true });
+  check("event: install fresh + 이전 설치 claim/update토큰 잔재 → 무효화 후 start",
+    decideEventStart({ clientInstallFresh: true, hasUpdateToken: true,
+      claimCreatedAtMs: t - 1000, subscriptionConfirmedAtMs: t - 500, eventMs: t }),
+    { proceed: true, invalidate: true });
+  // 같은 설치(fresh X): 카드 생존 증거 → skip(중복 카드 방지).
+  check("event: update 토큰 존재 → skip(생존 카드)",
+    decideEventStart({ clientInstallFresh: false, hasUpdateToken: true,
+      claimCreatedAtMs: t - 100000, subscriptionConfirmedAtMs: null, eventMs: t }),
+    { proceed: false });
+  check("event: claim 이후 현재 device_key ACK → skip(채널 카드 생존)",
+    decideEventStart({ clientInstallFresh: false, hasUpdateToken: false,
+      claimCreatedAtMs: t - 100000, subscriptionConfirmedAtMs: t - 50000, eventMs: t }),
+    { proceed: false });
+  check("event: 방금 claim(<10분) + 증거 없음 → skip(연타 가드)",
+    decideEventStart({ clientInstallFresh: false, hasUpdateToken: false,
+      claimCreatedAtMs: t - 60_000, subscriptionConfirmedAtMs: null, eventMs: t }),
+    { proceed: false });
+  check("event: 오래된 claim(>10분) + 생존 증거 없음 → 무효화 후 start(카드 사망)",
+    decideEventStart({ clientInstallFresh: false, hasUpdateToken: false,
+      claimCreatedAtMs: t - EVENT_CLAIM_FRESH_MS - 1, subscriptionConfirmedAtMs: null, eventMs: t }),
+    { proceed: true, invalidate: true });
+  check("event: 잔재/이벤트 전혀 없음 → start(무효화 X)",
+    decideEventStart({ clientInstallFresh: false, hasUpdateToken: false,
+      claimCreatedAtMs: null, subscriptionConfirmedAtMs: null, eventMs: t }),
+    { proceed: true, invalidate: false });
+  check("event: 구독이 claim보다 과거(재가입 전 stale) + claim 오래됨 → 무효화 후 start",
+    decideEventStart({ clientInstallFresh: false, hasUpdateToken: false,
+      claimCreatedAtMs: t - EVENT_CLAIM_FRESH_MS - 1, subscriptionConfirmedAtMs: t - EVENT_CLAIM_FRESH_MS - 5000, eventMs: t }),
+    { proceed: true, invalidate: true });
+
+  // pendingTriggerFresh — TTL(2h) 판정
+  check("pending TTL = 2h", PENDING_START_TRIGGER_TTL_MS, 2 * 60 * 60 * 1000);
+  check("pending: 1h 전 → fresh", pendingTriggerFresh(t - 60 * 60 * 1000, t), true);
+  check("pending: 2h 정확 → fresh(경계 포함)", pendingTriggerFresh(t - PENDING_START_TRIGGER_TTL_MS, t), true);
+  check("pending: 2h+1ms → 만료", pendingTriggerFresh(t - PENDING_START_TRIGGER_TTL_MS - 1, t), false);
+}
 
 console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { triggerLiveActivityStartForUser } from "@/lib/notifications/live-activity";
 
 export async function POST(request: NextRequest) {
   try {
@@ -171,6 +172,19 @@ export async function POST(request: NextRequest) {
       await admin
         .from("user_badges")
         .upsert({ user_id: userId, badge_id: "founder" }, { onConflict: "user_id,badge_id" });
+    }
+
+    // 잠금화면 LA — 온보딩 직후 최애팀이 live/윈도우 경기면 즉시 start(삼순 5조건 ④).
+    // 신규 설치 = clientInstallFresh(이전 설치 잔재 무조건 무효화). p2s 토큰이 아직 없으면
+    // pending trigger로 남아 register-start가 등록 직후 소비. fire-and-forget — 응답 불차단.
+    try {
+      await triggerLiveActivityStartForUser(userId, {
+        reason: "setup",
+        clientInstallFresh: true,
+        eventMs: Date.now(),
+      });
+    } catch {
+      /* start 시도 실패는 온보딩 응답을 깨리지 않는다(다음 cron이 복구). */
     }
 
     return NextResponse.json({ ok: true });
