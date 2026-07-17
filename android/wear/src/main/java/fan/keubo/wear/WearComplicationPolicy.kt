@@ -25,30 +25,21 @@ object WearComplicationPolicy {
     private fun matchupScore(s: WearSnapshot): String =
         "${WearTeam.short(s.awayCode)} ${s.awayScore}:${s.homeScore} ${WearTeam.short(s.homeCode)}"
 
-    /** SHORT_TEXT text 필드 권장 한도(자) — 초과해도 팀 식별자는 버리지 않는다(#666 삼순 블로커). */
-    private const val SHORT_TEXT_MAX = 7
-
     /**
-     * SHORT_TEXT 스코어 스펙 — 내 팀 점수를 앞에 + 팀 약어(하린아빠 갤워치 피드백: "6:1"만으로는
-     * 어느 점수가 내 팀인지 알 수 없음). #635 애플워치는 양 팀 각각 라벨, 이쪽은 SHORT_TEXT
-     * 공간 제약에 따른 단일 팀 라벨 축약안. 7자(권장 한도) 초과 시:
-     * ① 공백 제거("KIA10:4") ② 그래도 초과(KIA·SSG × 양쪽 두 자릿수)면 약어를 title로
-     * 이동("8회말·KIA" / "10:12") — 모든 점수 범위에서 내 팀 식별 보존, 내 점수 앞 순서 유지.
+     * 라이브 SHORT_TEXT — 애플워치 #635 원형과 동일하게 팀별 점수를 두 줄로 표시한다.
+     * Wear OS는 title을 윗줄에 렌더하므로 title=내 팀, text=상대 팀으로 둔다.
+     * 두 필드를 모두 스코어에 써야 하므로 이닝은 제외한다.
      */
-    fun myTeamShort(s: WearSnapshot, title: String?): ShortSpec {
+    private fun liveTeamScores(s: WearSnapshot): ShortSpec {
         val myIsAway = s.awayCode.equals(s.myTeamCode, ignoreCase = true)
-        val my = if (myIsAway) s.awayScore else s.homeScore
-        val opp = if (myIsAway) s.homeScore else s.awayScore
-        val bare = "$my:$opp"
-        val abbr = WearTeam.short(s.myTeamCode)
-        if (abbr.isEmpty()) return ShortSpec(title, bare)
-        val spaced = "$abbr $bare"
-        val tight = "$abbr$bare"
-        return when {
-            spaced.length <= SHORT_TEXT_MAX -> ShortSpec(title, spaced)
-            tight.length <= SHORT_TEXT_MAX -> ShortSpec(title, tight)
-            else -> ShortSpec(if (title == null) abbr else "$title·$abbr", bare)
-        }
+        val myCode = if (myIsAway) s.awayCode else s.homeCode
+        val opponentCode = if (myIsAway) s.homeCode else s.awayCode
+        val myScore = if (myIsAway) s.awayScore else s.homeScore
+        val opponentScore = if (myIsAway) s.homeScore else s.awayScore
+        return ShortSpec(
+            title = "${WearTeam.short(myCode)} $myScore",
+            text = "${WearTeam.short(opponentCode)} $opponentScore",
+        )
     }
 
     private fun matchupVs(s: WearSnapshot): String =
@@ -59,17 +50,11 @@ object WearComplicationPolicy {
         return WearTeam.short(opp)
     }
 
-    /** live line "LIVE 8회말 · 2사" → "8회말"(이닝만). 형식 벗어나면 "LIVE" 폴백. */
-    fun liveInningLabel(line: String): String {
-        val inning = line.removePrefix("LIVE").trim().substringBefore("·").trim()
-        return inning.ifEmpty { "LIVE" }
-    }
-
     // ── ① 경기 데이터소스 ──
 
     fun gameShort(s: WearSnapshot, nowMs: Long): ShortSpec = when (s.kind) {
-        "live" -> myTeamShort(s, liveInningLabel(s.line))
-        "final" -> myTeamShort(s, "종료")
+        "live" -> liveTeamScores(s)
+        "final" -> ShortSpec("종료", "${s.awayScore}:${s.homeScore}")
         "cancelled" -> ShortSpec(WearTeam.short(s.myTeamCode), "취소")
         "scheduled" -> {
             val title = "vs ${opponentShort(s)}"

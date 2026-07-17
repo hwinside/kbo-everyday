@@ -39,88 +39,45 @@ class WearComplicationPolicyTest {
     // ── 경기 SHORT_TEXT ──
 
     @Test
-    fun `live short는 이닝 title + 내팀 우선 라벨 스코어`() {
+    fun `live short는 이닝 제외하고 내팀과 상대팀을 각 필드에 표시`() {
         val s = snap("live", line = "LIVE 8회말 · 2사")
         val spec = WearComplicationPolicy.gameShort(s, noonMs)
-        assertEquals("8회말", spec.title)
-        assertEquals("삼성 4:1", spec.text) // 내팀 SS(홈) 4점이 앞 + 약어
+        assertEquals("삼성 4", spec.title)
+        assertEquals("롯데 1", spec.text)
         assertNull(spec.countdownToMs)
     }
 
     @Test
-    fun `final short는 종료 title + 내팀 우선 스코어`() {
+    fun `final short는 기존 종료 title과 원정 홈 스코어 유지`() {
         val spec = WearComplicationPolicy.gameShort(snap("final"), noonMs)
         assertEquals("종료", spec.title)
-        assertEquals("삼성 4:1", spec.text)
-    }
-
-    // ── myTeamShort 표기 규칙 ──
-
-    @Test
-    fun `myTeamShort는 내팀 점수가 앞 - 원정이어도`() {
-        // 내팀 LG가 원정(away=LG 1, home=SS 6) → "LG 1:6"
-        val s = snap("live", my = "LG", away = "LG", home = "SS", aScore = 1, hScore = 6)
-        assertEquals("LG 1:6", WearComplicationPolicy.myTeamShort(s, "8회말").text)
-        // 내팀 LG가 홈(away=KT 6, home=LG 1) → 여전히 내 점수 1이 앞
-        val s2 = snap("live", my = "LG", away = "KT", home = "LG", aScore = 6, hScore = 1)
-        assertEquals("LG 1:6", WearComplicationPolicy.myTeamShort(s2, "8회말").text)
+        assertEquals("1:4", spec.text)
     }
 
     @Test
-    fun `myTeamShort 7자 초과 시 공백 제거 - title은 그대로`() {
-        // "KIA 10:4" = 8자 → 공백 제거 "KIA10:4" = 7자 OK
-        val s = snap("live", my = "HT", away = "HT", home = "SS", aScore = 10, hScore = 4)
-        val spec = WearComplicationPolicy.myTeamShort(s, "8회말")
-        assertEquals("8회말", spec.title)
-        assertEquals("KIA10:4", spec.text)
+    fun `KIA 양쪽 두 자릿수는 홈 원정 모두 내팀 title 상대 text`() {
+        val away = snap("live", my = "HT", away = "HT", home = "KT", aScore = 10, hScore = 12)
+        val awaySpec = WearComplicationPolicy.gameShort(away, noonMs)
+        assertEquals("KIA 10", awaySpec.title)
+        assertEquals("KT 12", awaySpec.text)
+
+        val home = snap("live", my = "HT", away = "KT", home = "HT", aScore = 12, hScore = 10)
+        val homeSpec = WearComplicationPolicy.gameShort(home, noonMs)
+        assertEquals("KIA 10", homeSpec.title)
+        assertEquals("KT 12", homeSpec.text)
     }
 
     @Test
-    fun `myTeamShort 양쪽 두 자릿수 overflow에서도 팀 식별 보존 - KIA 홈과 원정`() {
-        // #666 삼순 블로커: 약어를 버리면 "10:12"로 퇴행 → 약어는 title로 이동해 보존
-        // KIA 원정(away=HT 10, home=SS 12): "KIA10:12" = 8자 초과 → title "8회말·KIA", text "10:12"
-        val away = snap("live", my = "HT", away = "HT", home = "SS", aScore = 10, hScore = 12)
-        val awaySpec = WearComplicationPolicy.myTeamShort(away, "8회말")
-        assertEquals("8회말·KIA", awaySpec.title)
-        assertEquals("10:12", awaySpec.text) // 내 점수 10이 앞
-        // KIA 홈(away=SS 12, home=HT 10): 내 점수 10이 여전히 앞
-        val home = snap("live", my = "HT", away = "SS", home = "HT", aScore = 12, hScore = 10)
-        val homeSpec = WearComplicationPolicy.myTeamShort(home, "8회말")
-        assertEquals("8회말·KIA", homeSpec.title)
-        assertEquals("10:12", homeSpec.text)
-    }
+    fun `SSG 양쪽 두 자릿수는 홈 원정 모두 내팀 title 상대 text`() {
+        val away = snap("live", my = "SK", away = "SK", home = "KT", aScore = 12, hScore = 10)
+        val awaySpec = WearComplicationPolicy.gameShort(away, noonMs)
+        assertEquals("SSG 12", awaySpec.title)
+        assertEquals("KT 10", awaySpec.text)
 
-    @Test
-    fun `myTeamShort 양쪽 두 자릿수 overflow에서도 팀 식별 보존 - SSG 홈과 원정`() {
-        // SSG 원정(away=SK 11, home=LG 10): "SSG11:10" = 8자 초과 → title로 이동
-        val away = snap("live", my = "SK", away = "SK", home = "LG", aScore = 11, hScore = 10)
-        val awaySpec = WearComplicationPolicy.myTeamShort(away, "9회초")
-        assertEquals("9회초·SSG", awaySpec.title)
-        assertEquals("11:10", awaySpec.text)
-        // SSG 홈(away=LG 10, home=SK 11): 내 점수 11이 앞
-        val home = snap("live", my = "SK", away = "LG", home = "SK", aScore = 10, hScore = 11)
-        val homeSpec = WearComplicationPolicy.myTeamShort(home, "9회초")
-        assertEquals("9회초·SSG", homeSpec.title)
-        assertEquals("11:10", homeSpec.text)
-    }
-
-    @Test
-    fun `overflow가 gameShort final에서도 title 병기로 전파`() {
-        // final + KIA 10:12 → title "종료·KIA", text "10:12"
-        val s = snap("final", my = "HT", away = "HT", home = "SS", aScore = 10, hScore = 12)
-        val spec = WearComplicationPolicy.gameShort(s, noonMs)
-        assertEquals("종료·KIA", spec.title)
-        assertEquals("10:12", spec.text)
-    }
-
-    @Test
-    fun `myTeamShort 한글 약어도 7자 이내 유지`() {
-        // "삼성 10:4" = 7자 → 공백 포함 그대로
-        val s = snap("live", aScore = 4, hScore = 10)
-        assertEquals("삼성 10:4", WearComplicationPolicy.myTeamShort(s, "8회말").text)
-        // 한글 약어 × 양쪽 두 자릿수: "삼성 10:12" = 8자 → 공백 제거 "삼성10:12" = 7자 OK
-        val s2 = snap("live", aScore = 12, hScore = 10)
-        assertEquals("삼성10:12", WearComplicationPolicy.myTeamShort(s2, "8회말").text)
+        val home = snap("live", my = "SK", away = "KT", home = "SK", aScore = 10, hScore = 12)
+        val homeSpec = WearComplicationPolicy.gameShort(home, noonMs)
+        assertEquals("SSG 12", homeSpec.title)
+        assertEquals("KT 10", homeSpec.text)
     }
 
     @Test
@@ -187,16 +144,6 @@ class WearComplicationPolicyTest {
         val spec = WearComplicationPolicy.gameLong(s)
         assertEquals("롯데 vs 삼성", spec.title)
         assertEquals("오늘 18:30 · 잠실", spec.text)
-    }
-
-    // ── liveInningLabel 파싱 ──
-
-    @Test
-    fun `liveInningLabel은 이닝만 추출하고 형식 이탈 시 LIVE 폴백`() {
-        assertEquals("8회말", WearComplicationPolicy.liveInningLabel("LIVE 8회말 · 2사"))
-        assertEquals("1회초", WearComplicationPolicy.liveInningLabel("LIVE 1회초 · 0사"))
-        assertEquals("LIVE", WearComplicationPolicy.liveInningLabel("LIVE"))
-        assertEquals("LIVE", WearComplicationPolicy.liveInningLabel(""))
     }
 
     // ── 순위 파싱/게이지 ──
