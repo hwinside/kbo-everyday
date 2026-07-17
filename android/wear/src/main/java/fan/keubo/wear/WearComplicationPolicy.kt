@@ -28,39 +28,7 @@ object WearComplicationPolicy {
     private fun matchupVs(s: WearSnapshot): String =
         "${WearTeam.short(s.awayCode)} vs ${WearTeam.short(s.homeCode)}"
 
-    private fun opponentShort(s: WearSnapshot): String {
-        val opp = if (s.awayCode.equals(s.myTeamCode, ignoreCase = true)) s.homeCode else s.awayCode
-        return WearTeam.short(opp)
-    }
-
-    /** live line "LIVE 8회말 · 2사" → "8회말"(이닝만). 형식 벗어나면 "LIVE" 폴백. */
-    fun liveInningLabel(line: String): String {
-        val inning = line.removePrefix("LIVE").trim().substringBefore("·").trim()
-        return inning.ifEmpty { "LIVE" }
-    }
-
     // ── ① 경기 데이터소스 ──
-
-    fun gameShort(s: WearSnapshot, nowMs: Long): ShortSpec = when (s.kind) {
-        "live" -> ShortSpec(liveInningLabel(s.line), "${s.awayScore}:${s.homeScore}")
-        "final" -> ShortSpec("종료", "${s.awayScore}:${s.homeScore}")
-        "cancelled" -> ShortSpec(WearTeam.short(s.myTeamCode), "취소")
-        "scheduled" -> {
-            val title = "vs ${opponentShort(s)}"
-            val start = s.startAt
-            when {
-                start == null -> ShortSpec(title, "예정")
-                // 오늘(06시 롤오버 기준) 경기: 시작 전엔 자동 카운트다운, 시작 후 API 지연엔 "곧 시작"
-                WearFetcher.isCountdownToday(start, nowMs) ->
-                    if (start > nowMs) ShortSpec(title, "", countdownToMs = start)
-                    else ShortSpec(title, "곧 시작")
-                else -> ShortSpec(title, WearFetcher.futureDateLabel(start))
-            }
-        }
-        "noTeam" -> ShortSpec(null, "팀 선택")
-        "loading" -> ShortSpec(WearTeam.short(s.myTeamCode), "…")
-        else -> ShortSpec(WearTeam.short(s.myTeamCode), "경기없음") // noGame
-    }
 
     fun gameLong(s: WearSnapshot): LongSpec = when (s.kind) {
         // line = "LIVE 8회말 · 2사" / "경기 종료 · 승" — WearFetcher.compose가 이미 합성
