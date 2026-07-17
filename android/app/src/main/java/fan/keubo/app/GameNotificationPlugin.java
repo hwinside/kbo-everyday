@@ -103,6 +103,65 @@ public class GameNotificationPlugin extends Plugin {
         return new String[] { title, body == null ? "" : body };
     }
 
+    /** 라이브 상태면 승격 카드를 리치 구성으로 업그레이드(BigText 승격 카드 최종형).
+     *  타이틀=스코어, 서브텍스트=구장·이닝, 본문 1줄=아웃도트·주자·투/타, 2줄=문자중계,
+     *  largeIcon=주자 다이아몬드(옐로우)+아웃도트(레드) 패널.
+     *  이닝 진행바는 미사용(7/18 하린아빠 결정) — 승격 자격은 스타일과 무관하다.
+     *  라이브가 아니면(예정/종료/취소/파싱 실패) 기존 BigText 유지. */
+    private static void applyLiveRichCard(Context context, NotificationCompat.Builder b,
+                                          GameScoreWidget.Eff e) {
+        if (e == null || !e.hasGame || e.status == null || e.status.isEmpty()) return;
+        if (e.status.startsWith("SCHEDULED|") || e.status.startsWith("FINAL")
+            || "CANCELLED".equals(e.status)) return;
+        java.util.regex.Matcher m =
+            java.util.regex.Pattern.compile("(\\d+)회(초|말)").matcher(e.status);
+        if (!m.find()) return;
+        String inningLabel = m.group(1) + "회" + m.group(2);
+
+        String away = GameScoreWidget.shortName(e.away);
+        String home = GameScoreWidget.shortName(e.home);
+        b.setContentTitle(away + " " + e.as + " : " + e.hs + " " + home);
+        b.setSubText(e.stadium.isEmpty() ? inningLabel : e.stadium + " · " + inningLabel);
+
+        // 본문: ●○○ 1사 1·3루 · 투수 X vs 타자 Y (빈 정보는 생략)
+        int outCount = 0;
+        try {
+            outCount = Math.min(Math.max(
+                Integer.parseInt(e.outs.isEmpty() ? "0" : e.outs), 0), 3);
+        } catch (NumberFormatException ignored) { }
+        StringBuilder t = new StringBuilder();
+        for (int i = 0; i < 3; i++) t.append(i < outCount ? "●" : "○");
+        t.append(" ").append(outCount).append("사");
+        String bases = baseSummary(e.diamond);
+        if (!bases.isEmpty()) t.append(" ").append(bases);
+        if (!e.pitcher.isEmpty() && !e.batter.isEmpty()) {
+            // "투/타" 압축 표기 — 좁은 화면 잘림 방지(삼순 권고).
+            t.append(" · 투 ").append(e.pitcher).append(" / 타 ").append(e.batter);
+        } else if (!e.batter.isEmpty()) {
+            t.append(" · 타 ").append(e.batter);
+        }
+        // 문자중계 최근 플레이 — 진행바를 때고 그 자리를 본문 마지막 줄로 대체
+        // (하린아빠 01:08 "바를 빼고 바 자리에 문자중계"). One UI 접힘 본문 다중 렌더 실측.
+        if (!e.lastPlay.isEmpty()) t.append("\n").append(e.lastPlay);
+        String bodyText = t.toString();
+        b.setContentText(bodyText);
+        // ⚠️ build()가 먼저 걸어둔 BigTextStyle의 bigText는 composeLiveCard의 한 줄(lastPlay)라,
+        // 재설정 안 하면 접힘 렌더에서 그 한 줄만 보여 첫 줄(아웃·주자·투/타)이 사라짐 —
+        // 접힘 승격 카드는 bigText 우선이므로 스타일 텍스트도 반드시 동기 갱신.
+        b.setStyle(new NotificationCompat.BigTextStyle().bigText(bodyText));
+        b.setLargeIcon(GameScoreWidget.buildDiamondOutsIcon(e.diamond, e.outs));
+    }
+
+    /** diamond 비트("101")를 "1·3루" 요약으로. 주자 없으면 빈 문자열. */
+    private static String baseSummary(String diamond) {
+        if (diamond == null || diamond.length() < 3) return "";
+        StringBuilder n = new StringBuilder();
+        if (diamond.charAt(0) == '1') n.append("1");
+        if (diamond.charAt(1) == '1') n.append(n.length() > 0 ? "·2" : "2");
+        if (diamond.charAt(2) == '1') n.append(n.length() > 0 ? "·3" : "3");
+        return n.length() > 0 ? n.append("루").toString() : "";
+    }
+
     private static void ensureChannel(Context context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
@@ -158,11 +217,15 @@ public class GameNotificationPlugin extends Plugin {
         if (promoted) {
             // Live Update 분기 — 표준 스타일만 승격 대상(커스텀 뷰 금지). 점수/이닝/최근 플레이는
             // 위젯 prefs에서 직접 조합(FCM title/body엔 없음 — composeLiveCard 주석 참조).
-            String[] tb = composeLiveCard(GameScoreWidget.readEff(context), title, body);
+            GameScoreWidget.Eff eff = GameScoreWidget.readEff(context);
+            String[] tb = composeLiveCard(eff, title, body);
             b.setContentTitle(tb[0])
                 .setContentText(tb[1])
                 .setStyle(new NotificationCompat.BigTextStyle().bigText(tb[1]))
                 .setRequestPromotedOngoing(true);
+            // 라이브 상태는 승격 카드 본문(헤더=구장·이닝, 아웃·주자·투/타, 문자중계)
+            // + largeIcon 다이아몬드/아웃 패널로 구성. 예정/종료/취소는 위 BigText 그대로(no-op).
+            applyLiveRichCard(context, b, eff);
             String gameId = currentGameId(context, path);
             // Unpin(유저 스와이프 해제) 감지 → 같은 경기 자동 재게시 억제. deleteIntent는
             // 유저 해제 시에만 발화(cancel()로는 미발화)라 non-promoted 경로 행동 불변.
