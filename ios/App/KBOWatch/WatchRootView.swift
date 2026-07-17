@@ -167,78 +167,78 @@ struct WatchDetailRows: View {
                 }
                 if snap.pitcher != nil || snap.batter != nil {
                     row {
-                        HStack(spacing: 5) {
-                            if let p = snap.pitcher {
-                                watchMixedText("투수", 9, .regular).foregroundStyle(.secondary)
-                                watchMixedText(p, 11, .bold)
+                        WatchDriftRow {
+                            HStack(spacing: 5) {
+                                if let p = snap.pitcher {
+                                    watchMixedText("투수", 9, .regular).foregroundStyle(.secondary)
+                                    watchMixedText(p, 11, .bold)
+                                }
+                                if snap.pitcher != nil && snap.batter != nil {
+                                    Circle().fill(live).frame(width: 3, height: 3)
+                                }
+                                if let b = snap.batter {
+                                    watchMixedText("타자", 9, .regular).foregroundStyle(.secondary)
+                                    watchMixedText(b, 11, .bold)
+                                }
                             }
-                            if snap.pitcher != nil && snap.batter != nil {
-                                Circle().fill(live).frame(width: 3, height: 3)
-                            }
-                            if let b = snap.batter {
-                                watchMixedText("타자", 9, .regular).foregroundStyle(.secondary)
-                                watchMixedText(b, 11, .bold)
-                            }
-                            Spacer(minLength: 0)
                         }
-                        .lineLimit(1).minimumScaleFactor(0.7)
                     }
                 }
                 if let play = snap.lastPlay {
                     row {
-                        HStack(alignment: .top, spacing: 5) {
-                            Circle().fill(live).frame(width: 4, height: 4).padding(.top, 4)
-                            watchMixedText(play, 10, .medium)
-                                .lineLimit(1).minimumScaleFactor(0.7)
-                            Spacer(minLength: 0)
+                        HStack(alignment: .center, spacing: 5) {
+                            Circle().fill(live).frame(width: 4, height: 4)
+                            WatchDriftRow {
+                                watchMixedText(play, 10, .medium)
+                            }
                         }
                     }
                 }
             } else if snap.kind == "scheduled", let starters = snap.starters {
                 // 목업 v2: `선발 소형준 ● 웰스` — 라벨 secondary + 이름 bold + 핑크 도트 구분
                 row {
-                    HStack(spacing: 5) {
-                        watchMixedText("선발", 9, .regular).foregroundStyle(.secondary)
-                        let names = starters.hasPrefix("선발 ") ? String(starters.dropFirst(3)) : starters
-                        let parts = names.components(separatedBy: " · ")
-                        if parts.count == 2 {
-                            watchMixedText(parts[0], 11, .bold)
-                            Circle().fill(live).frame(width: 3, height: 3)
-                            watchMixedText(parts[1], 11, .bold)
-                        } else {
-                            watchMixedText(names.replacingOccurrences(of: " vs ", with: " · "), 11, .bold)
+                    WatchDriftRow(centered: true) {
+                        HStack(spacing: 5) {
+                            watchMixedText("선발", 9, .regular).foregroundStyle(.secondary)
+                            let names = starters.hasPrefix("선발 ") ? String(starters.dropFirst(3)) : starters
+                            let parts = names.components(separatedBy: " · ")
+                            if parts.count == 2 {
+                                watchMixedText(parts[0], 11, .bold)
+                                Circle().fill(live).frame(width: 3, height: 3)
+                                watchMixedText(parts[1], 11, .bold)
+                            } else {
+                                watchMixedText(names.replacingOccurrences(of: " vs ", with: " · "), 11, .bold)
+                            }
                         }
                     }
-                    .lineLimit(1).minimumScaleFactor(0.6)
-                    .frame(maxWidth: .infinity)
                 }
             } else if snap.kind == "final", snap.winPitcher != nil || snap.losePitcher != nil {
                 // 승/패 투수 한 줄 + 세이브 있을 때만 2행째 컴팩트 행(삼순 SSOT — 없으면 생략).
                 row {
-                    HStack(spacing: 5) {
-                        if let w = snap.winPitcher {
-                            watchMixedText("승", 9, .regular).foregroundStyle(.secondary)
-                            watchMixedText(w, 11, .bold)
-                        }
-                        if snap.winPitcher != nil && snap.losePitcher != nil {
-                            Circle().fill(live).frame(width: 3, height: 3)
-                        }
-                        if let l = snap.losePitcher {
-                            watchMixedText("패", 9, .regular).foregroundStyle(.secondary)
-                            watchMixedText(l, 11, .bold)
+                    WatchDriftRow(centered: true) {
+                        HStack(spacing: 5) {
+                            if let w = snap.winPitcher {
+                                watchMixedText("승", 9, .regular).foregroundStyle(.secondary)
+                                watchMixedText(w, 11, .bold)
+                            }
+                            if snap.winPitcher != nil && snap.losePitcher != nil {
+                                Circle().fill(live).frame(width: 3, height: 3)
+                            }
+                            if let l = snap.losePitcher {
+                                watchMixedText("패", 9, .regular).foregroundStyle(.secondary)
+                                watchMixedText(l, 11, .bold)
+                            }
                         }
                     }
-                    .lineLimit(1).minimumScaleFactor(0.6)
-                    .frame(maxWidth: .infinity)
                 }
                 if let s = snap.savePitcher {
                     row {
-                        HStack(spacing: 5) {
-                            watchMixedText("세이브", 9, .regular).foregroundStyle(.secondary)
-                            watchMixedText(s, 11, .bold)
+                        WatchDriftRow(centered: true) {
+                            HStack(spacing: 5) {
+                                watchMixedText("세이브", 9, .regular).foregroundStyle(.secondary)
+                                watchMixedText(s, 11, .bold)
+                            }
                         }
-                        .lineLimit(1).minimumScaleFactor(0.6)
-                        .frame(maxWidth: .infinity)
                     }
                 }
             }
@@ -252,5 +252,70 @@ struct WatchDetailRows: View {
             .padding(.vertical, 3)
             .frame(maxWidth: .infinity)
             .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
+    }
+}
+
+/// 폭 초과 시에만 좌우 드리프트(marquee)로 전체 문자열을 노출하는 행 컨테이너 (하린아빠 7/17).
+/// 축소(minimumScaleFactor) 대신 원 폰트 크기를 유지 — 폭이 충분하면 정지 상태.
+/// 갤워치 타일의 ProtoLayout TEXT_OVERFLOW_MARQUEE 대응물(워치OS엔 시스템 marquee가 없어 커스텀).
+struct WatchDriftRow<Content: View>: View {
+    var centered = false          // 폭이 충분할 때 가운데 정렬(선발/승패/세이브 행), 넘치면 leading
+    @ViewBuilder var content: () -> Content
+
+    // 삼순 블로커 1(#661): 시스템 "동작 줄이기" ON이면 무한 반복 드리프트 대신 말줄임 폴백.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var contentWidth: CGFloat = 0
+    @State private var containerWidth: CGFloat = 0
+    @State private var atEnd = false
+
+    private var overflow: CGFloat { max(0, contentWidth - containerWidth) }
+
+    var body: some View {
+        if reduceMotion {
+            content()
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
+        } else {
+            // 사이징 카피: 컨테이너 폭에 순응(레이아웃 폭·높이 결정), 실제 픽셀은 overlay가 그린다.
+            // fixedSize 카피를 레이아웃에 직접 두면 상위 VStack 폭이 통째로 넓어져 화면이 밀린다.
+            content()
+                .lineLimit(1)
+                .opacity(0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(WatchWidthReader(width: $containerWidth))
+                .overlay(alignment: (centered && overflow <= 0) ? .center : .leading) {
+                    content()
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .background(WatchWidthReader(width: $contentWidth))
+                        .offset(x: atEnd ? -overflow : 0)
+                }
+                .clipped()
+                .onChange(of: overflow) { _, o in
+                    guard o > 0, !atEnd else { return }
+                    // 레이아웃 안정 후 왕복 드리프트 시작(속도는 초과폭 비례, 끝에서 잠깐 머묾)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        guard overflow > 0 else { return }
+                        withAnimation(
+                            .easeInOut(duration: max(1.5, Double(overflow) / 14))
+                                .repeatForever(autoreverses: true)
+                        ) { atEnd = true }
+                    }
+                }
+        }
+    }
+}
+
+/// GeometryReader 폭 측정 헬퍼 — 레이아웃에 영향 없는 background 전용.
+private struct WatchWidthReader: View {
+    @Binding var width: CGFloat
+
+    var body: some View {
+        GeometryReader { geo in
+            Color.clear
+                .onAppear { width = geo.size.width }
+                .onChange(of: geo.size.width) { _, w in width = w }
+        }
     }
 }

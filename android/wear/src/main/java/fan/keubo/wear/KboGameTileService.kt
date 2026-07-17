@@ -12,6 +12,8 @@ import androidx.wear.protolayout.LayoutElementBuilders.FontStyle
 import androidx.wear.protolayout.LayoutElementBuilders.LayoutElement
 import androidx.wear.protolayout.LayoutElementBuilders.Row
 import androidx.wear.protolayout.LayoutElementBuilders.Spacer
+import androidx.wear.protolayout.LayoutElementBuilders.Spannable
+import androidx.wear.protolayout.LayoutElementBuilders.SpanText
 import androidx.wear.protolayout.LayoutElementBuilders.Text
 import androidx.wear.protolayout.ModifiersBuilders
 import androidx.wear.protolayout.ResourceBuilders
@@ -151,10 +153,12 @@ class KboGameTileService : TileService() {
     // ── 레이아웃 (애플워치 WatchGameCard 패리티 — 헤더 + 라운드 카드) ──
 
     private fun renderRoot(snap: WearSnapshot): LayoutElement {
+        // 삼순 블로커 1(#661): 시스템 "애니메이션 제거" 설정 시 marquee 대신 말줄임 폴백.
+        val reduceMotion = isReduceMotionEnabled(applicationContext)
         val content = when (snap.kind) {
-            "live" -> withDetails(snap, headerAndCard(snap, liveInner(snap)))
-            "final" -> withDetails(snap, headerAndCard(snap, finalInner(snap)))
-            "scheduled" -> withDetails(snap, headerAndCard(snap, scheduledInner(snap)))
+            "live" -> withDetails(snap, headerAndCard(snap, liveInner(snap)), reduceMotion)
+            "final" -> withDetails(snap, headerAndCard(snap, finalInner(snap)), reduceMotion)
+            "scheduled" -> withDetails(snap, headerAndCard(snap, scheduledInner(snap)), reduceMotion)
             "cancelled" -> headerAndCard(snap, matchupMessageInner(snap, "경기 취소"))
             "noTeam" -> card(messageInner("크보팬 앱에서", "최애팀을 선택하세요"))
             "loading" -> card(messageInner("크보팬", "불러오는 중…"))
@@ -243,8 +247,8 @@ class KboGameTileService : TileService() {
     }
 
     /** 상태별 하단 상세 행(목업) — LIVE=아웃·주자/투타/최근 플레이, 예정=선발, 종료=승/패(+세이브) 투수. */
-    private fun withDetails(snap: WearSnapshot, main: LayoutElement): LayoutElement {
-        val rows = detailRows(snap)
+    private fun withDetails(snap: WearSnapshot, main: LayoutElement, reduceMotion: Boolean): LayoutElement {
+        val rows = detailRows(snap, reduceMotion)
         if (rows.isEmpty()) return main
         val col = Column.Builder()
             .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
@@ -256,7 +260,7 @@ class KboGameTileService : TileService() {
         return col.build()
     }
 
-    private fun detailRows(snap: WearSnapshot): List<LayoutElement> {
+    private fun detailRows(snap: WearSnapshot, reduceMotion: Boolean): List<LayoutElement> {
         val rows = ArrayList<LayoutElement>()
         if (snap.isLive) {
             // 아웃카운트 도트 + 주자 다이아몬드
@@ -274,71 +278,67 @@ class KboGameTileService : TileService() {
                 outsRow.addContent(baseDiamond(it))
             }
             rows.add(rowBox(outsRow.build()))
-            // 투수 · 타자
+            // 투수 · 타자 — 라벨(secondary)+이름(bold) 위계 유지한 Spannable marquee(삼순 재NO-GO #661).
+            // Spannable.setOverflow/setMarqueeIterations는 Row와 달리 위계 있는 여러 span에도 발동한다.
             if (snap.pitcher != null || snap.batter != null) {
-                val pb = Row.Builder().setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
-                snap.pitcher?.let {
-                    pb.addContent(text("투수", 10f, WearTeam.COLOR_TEXT_SECONDARY))
-                    pb.addContent(hspace(4f))
-                    pb.addContent(text(it, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
-                }
-                if (snap.pitcher != null && snap.batter != null) pb.addContent(hspace(8f))
-                snap.batter?.let {
-                    pb.addContent(text("타자", 10f, WearTeam.COLOR_TEXT_SECONDARY))
-                    pb.addContent(hspace(4f))
-                    pb.addContent(text(it, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
-                }
-                rows.add(rowBox(pb.build()))
+                val pairs = ArrayList<Pair<String, String>>()
+                snap.pitcher?.let { pairs.add("투수" to it) }
+                snap.batter?.let { pairs.add("타자" to it) }
+                rows.add(
+                    rowBox(
+                        styledMarqueeText(labelNameChunks(pairs), reduceMotion),
+                        expandWidth = true,
+                    ),
+                )
             }
-            // 최근 플레이 한 줄
-            snap.lastPlay?.let { rows.add(rowBox(text(it, 10f, WearTeam.COLOR_TEXT_PRIMARY))) }
+            // 최근 플레이 한 줄 — 길면 marquee 드리프트(하린아빠 7/17), 행 폭은 카드 폭에 맞춰 고정
+            snap.lastPlay?.let {
+                rows.add(rowBox(marqueeText(it, 10f, WearTeam.COLOR_TEXT_PRIMARY, reduceMotion = reduceMotion), expandWidth = true))
+            }
         } else if (snap.kind == "scheduled") {
-            // 목업 v2: `선발 소형준 ● 웰스` — 라벨 secondary + 이름 bold + 핑크 도트
+            // 목업 v2: `선발 소형준 ● 웰스` — 라벨 secondary + 이름 bold + 핑크 도트 위계 유지(삼순 재NO-GO #661)
             snap.starters?.let { s ->
                 val names = s.removePrefix("선발 ")   // 구버전 캐시("선발 A vs B") 방어
-                val r = Row.Builder().setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
-                r.addContent(text("선발", 10f, WearTeam.COLOR_TEXT_SECONDARY))
-                r.addContent(hspace(5f))
                 val parts = names.split(" · ")
+                val chunks = ArrayList<SpanChunk>()
+                chunks.add(SpanChunk("선발 ", 10f, WearTeam.COLOR_TEXT_SECONDARY))
                 if (parts.size == 2) {
-                    r.addContent(text(parts[0], 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
-                    r.addContent(hspace(6f))
-                    r.addContent(text("●", 8f, WearTeam.COLOR_LIVE))
-                    r.addContent(hspace(6f))
-                    r.addContent(text(parts[1], 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+                    chunks.add(SpanChunk(parts[0], 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+                    chunks.add(SpanChunk("  ●  ", 8f, WearTeam.COLOR_LIVE))
+                    chunks.add(SpanChunk(parts[1], 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
                 } else {
-                    r.addContent(text(names.replace(" vs ", " · "), 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+                    chunks.add(SpanChunk(names.replace(" vs ", " · "), 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
                 }
-                rows.add(rowBox(r.build()))
+                rows.add(rowBox(styledMarqueeText(chunks, reduceMotion), expandWidth = true))
             }
         } else if (snap.kind == "final" && (snap.winPitcher != null || snap.losePitcher != null)) {
             // 승/패 투수 한 줄 + 세이브 있을 때만 2행째 컴팩트 행(삼순 SSOT — 없으면 생략, 애플워치 동일)
-            val wl = Row.Builder().setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
-            snap.winPitcher?.let {
-                wl.addContent(text("승", 10f, WearTeam.COLOR_TEXT_SECONDARY))
-                wl.addContent(hspace(4f))
-                wl.addContent(text(it, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
-            }
-            if (snap.winPitcher != null && snap.losePitcher != null) wl.addContent(hspace(8f))
-            snap.losePitcher?.let {
-                wl.addContent(text("패", 10f, WearTeam.COLOR_TEXT_SECONDARY))
-                wl.addContent(hspace(4f))
-                wl.addContent(text(it, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
-            }
-            rows.add(rowBox(wl.build()))
+            // 라벨(secondary)+이름(bold) 위계 유지한 Spannable marquee(삼순 재NO-GO #661)
+            val wlPairs = ArrayList<Pair<String, String>>()
+            snap.winPitcher?.let { wlPairs.add("승" to it) }
+            snap.losePitcher?.let { wlPairs.add("패" to it) }
+            rows.add(
+                rowBox(
+                    styledMarqueeText(labelNameChunks(wlPairs), reduceMotion),
+                    expandWidth = true,
+                ),
+            )
             snap.savePitcher?.let {
-                val sv = Row.Builder().setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
-                sv.addContent(text("세이브", 10f, WearTeam.COLOR_TEXT_SECONDARY))
-                sv.addContent(hspace(4f))
-                sv.addContent(text(it, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
-                rows.add(rowBox(sv.build()))
+                rows.add(
+                    rowBox(
+                        styledMarqueeText(labelNameChunks(listOf("세이브" to it)), reduceMotion),
+                        expandWidth = true,
+                    ),
+                )
             }
         }
         return rows
     }
 
-    /** 공통 상세 행 박스 — 어두운 라운드 박스(목업 하단 행 스타일, 흰 8%) */
-    private fun rowBox(inner: LayoutElement): LayoutElement = Box.Builder()
+    /** 공통 상세 행 박스 — 어두운 라운드 박스(목업 하단 행 스타일, 흰 8%).
+     *  expandWidth = marquee 행 전용: 텍스트가 부모 폭에 constrain돼야 marquee가 발동한다. */
+    private fun rowBox(inner: LayoutElement, expandWidth: Boolean = false): LayoutElement = Box.Builder()
+        .apply { if (expandWidth) setWidth(androidx.wear.protolayout.DimensionBuilders.expand()) }
         .setModifiers(
             ModifiersBuilders.Modifiers.Builder()
                 .setBackground(
@@ -580,6 +580,97 @@ class KboGameTileService : TileService() {
             .setText(TypeBuilders.StringProp.Builder(value).build())
             .setFontStyle(style.build())
             .build()
+    }
+
+    /**
+     * 1줄 marquee 텍스트 — 부모 폭 초과 시 자동 드리프트(하린아빠 7/17).
+     * ProtoLayout 네이티브 marquee(애플워치 WatchDriftRow 대응물). 미지원 렌더러는 말줄임 폴백.
+     * reduceMotion(시스템 "애니메이션 제거" 설정, 삼순 블로커 1 #661) 시엔 무한 반복 대신 말줄임.
+     */
+    @androidx.annotation.OptIn(markerClass = [androidx.wear.protolayout.expression.ProtoLayoutExperimental::class])
+    private fun marqueeText(
+        value: String,
+        size: Float,
+        color: Int,
+        bold: Boolean = false,
+        reduceMotion: Boolean = false,
+    ): LayoutElement {
+        val style = FontStyle.Builder()
+            .setSize(sp(size))
+            .setColor(argb(color))
+        if (bold) {
+            style.setWeight(
+                LayoutElementBuilders.FontWeightProp.Builder()
+                    .setValue(LayoutElementBuilders.FONT_WEIGHT_BOLD)
+                    .build(),
+            )
+        }
+        val builder = Text.Builder()
+            .setText(TypeBuilders.StringProp.Builder(value).build())
+            .setFontStyle(style.build())
+            .setMaxLines(1)
+        return if (reduceMotion) {
+            builder.setOverflow(LayoutElementBuilders.TEXT_OVERFLOW_ELLIPSIZE_END).build()
+        } else {
+            builder.setOverflow(LayoutElementBuilders.TEXT_OVERFLOW_MARQUEE)
+                .setMarqueeIterations(-1) // 무한 반복
+                .build()
+        }
+    }
+
+    /** 스타일 있는 marquee 세그먼트 하나(라벨/이름/구분자 등) — [styledMarqueeText]의 입력. */
+    private data class SpanChunk(val text: String, val size: Float, val color: Int, val bold: Boolean = false)
+
+    /** `투수 손아섭` 같은 (라벨, 이름) 쌍들을 공백으로 이어붙인 청크 목록 — 승/패/세이브/투타 공용. */
+    private fun labelNameChunks(pairs: List<Pair<String, String>>): List<SpanChunk> {
+        val chunks = ArrayList<SpanChunk>()
+        pairs.forEachIndexed { idx, (label, name) ->
+            if (idx > 0) chunks.add(SpanChunk("   ", 10f, WearTeam.COLOR_TEXT_SECONDARY))
+            chunks.add(SpanChunk("$label ", 10f, WearTeam.COLOR_TEXT_SECONDARY))
+            chunks.add(SpanChunk(name, 12f, WearTeam.COLOR_TEXT_PRIMARY, bold = true))
+        }
+        return chunks
+    }
+
+    /**
+     * 라벨(secondary 10sp)+이름(bold 12sp)+구분자 위계를 유지한 1줄 marquee 텍스트
+     * (삼순 재NO-GO #661 — 단일 `Text`로 통일하면 marquee는 되나 v4 SSOT 정보 위계가 사라짐).
+     * `Spannable`은 여러 `SpanText`(각자 다른 FontStyle)를 조합하고도 전체에 하나의
+     * overflow/marquee를 걸 수 있어(단일 Text의 한계 없이) 스타일 유지 + 드리프트 양립 가능.
+     * reduceMotion(시스템 "애니메이션 제거" 설정) 시엔 marquee 대신 말줄임.
+     */
+    @androidx.annotation.OptIn(markerClass = [androidx.wear.protolayout.expression.ProtoLayoutExperimental::class])
+    private fun styledMarqueeText(chunks: List<SpanChunk>, reduceMotion: Boolean): LayoutElement {
+        val builder = Spannable.Builder().setMaxLines(1)
+        chunks.forEach { c ->
+            val style = FontStyle.Builder().setSize(sp(c.size)).setColor(argb(c.color))
+            if (c.bold) {
+                style.setWeight(
+                    LayoutElementBuilders.FontWeightProp.Builder()
+                        .setValue(LayoutElementBuilders.FONT_WEIGHT_BOLD)
+                        .build(),
+                )
+            }
+            builder.addSpan(SpanText.Builder().setText(c.text).setFontStyle(style.build()).build())
+        }
+        return if (reduceMotion) {
+            builder.setOverflow(LayoutElementBuilders.TEXT_OVERFLOW_ELLIPSIZE_END).build()
+        } else {
+            builder.setOverflow(LayoutElementBuilders.TEXT_OVERFLOW_MARQUEE)
+                .setMarqueeIterations(-1) // 무한 반복
+                .build()
+        }
+    }
+
+    /** 시스템 "애니메이션 제거"(동작 줄이기) 여부 — ValueAnimator.areAnimatorsEnabled()와 동일 신호. */
+    private fun isReduceMotionEnabled(ctx: android.content.Context): Boolean = try {
+        android.provider.Settings.Global.getFloat(
+            ctx.contentResolver,
+            android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+            1f,
+        ) == 0f
+    } catch (e: Exception) {
+        false
     }
 
     private fun vspace(dpVal: Float): LayoutElement =
