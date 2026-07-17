@@ -106,6 +106,7 @@ interface TokenRow {
   game_id: string;
   push_token: string;
   app_build: number | null;
+  updated_at: string | null;
 }
 
 /**
@@ -132,7 +133,7 @@ export async function pushLiveActivityUpdates(
   const gameIds = [...stateByGame.keys()];
   const { data: tokens, error } = await supabase
     .from("live_activity_tokens")
-    .select("user_id, game_id, push_token, app_build")
+    .select("user_id, game_id, push_token, app_build, updated_at")
     .in("game_id", gameIds);
   if (error) return { error: error.message };
   if (!tokens || tokens.length === 0) return { pushed: 0, ended: 0, cleaned: 0 };
@@ -183,18 +184,23 @@ export async function pushLiveActivityUpdates(
   // 채널 행이 없는 경기(Broadcast Capability 미활성/생성 실패)는 경기 단위 폴백 상태를
   // 읽는다 — 없으면 스킵 판정이 영영 못 돌아 매분 priority 10 발송 = 예산 스로틀 재발
   // (2026-07-17 핫픽스). 채널 행(production)이 있으면 그쪽이 우선(위에서 이미 set).
-  const gamesNeedingFallback = gameIds.filter(
-    (gid) => stateByGame.get(gid) === "live" && !lastStateByGame.has(gid),
-  );
-  if (gamesNeedingFallback.length > 0) {
+  // updated_at은 전 live 경기에서 읽는다 — "직전 상태 기록 이후 등록된 토큰" catch-up
+  // 판정 재료(아래 발송 루프 주석 참조).
+  const liveGameIds = gameIds.filter((gid) => stateByGame.get(gid) === "live");
+  const lastWriteAtByGame = new Map<string, number>();
+  if (liveGameIds.length > 0) {
     const { data: fallbackRows } = await supabase
       .from("live_activity_game_push_state")
-      .select("game_id, last_score_state, last_state_hash")
-      .in("game_id", gamesNeedingFallback);
+      .select("game_id, last_score_state, last_state_hash, updated_at")
+      .in("game_id", liveGameIds);
     for (const r of (fallbackRows ?? []) as {
       game_id: string; last_score_state: string | null; last_state_hash: string | null;
+      updated_at: string;
     }[]) {
-      lastStateByGame.set(r.game_id, { score: r.last_score_state, hash: r.last_state_hash });
+      lastWriteAtByGame.set(r.game_id, new Date(r.updated_at).getTime());
+      if (!lastStateByGame.has(r.game_id)) {
+        lastStateByGame.set(r.game_id, { score: r.last_score_state, hash: r.last_state_hash });
+      }
     }
   }
   const subscribed = new Set<string>(); // `${user_id}|${game_id}`
@@ -256,7 +262,15 @@ export async function pushLiveActivityUpdates(
       if (!isEnd && subscribed.has(`${t.user_id}|${t.game_id}`)) return;
       // 무변화 틱: 레거시도 스킵(예산 절약). end는 판정 무관 발송.
       const decision = isEnd ? null : decisionByGame.get(t.game_id);
-      if (decision && !decision.send) return;
+      // catch-up: 직전 상태 기록 *이후* 등록/갱신된 토큰은 첫 라이브 p10을 못 받았을 수
+      // 있다(늦은 update 토큰 등록 → 카드가 예정 프레임에 갇힘, 2026-07-17 하린아빠 재현).
+      // 스킵/p5 판정과 무관하게 p10 1회 발송해 현재 프레임으로 끌어올린다. 발송 성공 틱이
+      // 상태 행 updated_at을 갱신하므로 다음 틱부터 자연 해제(반복 p10 없음).
+      const lastWrite = lastWriteAtByGame.get(t.game_id);
+      const isCatchUp =
+        !isEnd && status === "live" && lastWrite !== undefined && t.updated_at !== null &&
+        new Date(t.updated_at).getTime() >= lastWrite;
+      if (decision && !decision.send && !isCatchUp) return;
       const res = await sendLiveActivityPush(
         {
           pushToken: t.push_token,
@@ -276,7 +290,8 @@ export async function pushLiveActivityUpdates(
           // 대기 중 update를 대체(종료 후 stale update 재생 방지).
           collapseId: t.game_id,
           // 점수/이닝/주자 변화 = 10, 볼카운트/타자만 = 5(예산 미소모). end는 항상 10.
-          priority: decision?.send ? decision.priority : undefined,
+          // catch-up 토큰은 p5 틱이어도 10으로 승격(예정 프레임 탈출은 즉시 반영 필요).
+          priority: isCatchUp ? "10" : decision?.send ? decision.priority : undefined,
         },
         jwt,
       );
