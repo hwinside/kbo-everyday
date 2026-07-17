@@ -133,6 +133,27 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                                           awayScore: Int(asStr) ?? 0,
                                           homeScore: Int(hsStr) ?? 0)
         }
+        // 1.0.9 build 17 — iOS 홈위젯 무음 갱신: 라이브 스코어 변화 무음 push로 깨어난 순간
+        // 위젯 스냅샷을 갱신한다(현재 위젯이 이 경기 표시 중일 때만, 팀/최애팀/next 보존).
+        if let kind = userInfo["kind"] as? String, kind == "widget_live",
+           let gameId = userInfo["gameId"] as? String,
+           let asStr = userInfo["w_as"] as? String,
+           let hsStr = userInfo["w_hs"] as? String {
+            WidgetSnapshotStore.markLiveScore(
+                gameId: gameId,
+                awayScore: Int(asStr) ?? 0,
+                homeScore: Int(hsStr) ?? 0,
+                inning: Int(userInfo["w_inning"] as? String ?? "1") ?? 1,
+                isTopInning: (userInfo["w_istop"] as? String) == "1",
+                outs: Int(userInfo["w_outs"] as? String ?? "0") ?? 0,
+                onFirst: (userInfo["w_first"] as? String) == "1",
+                onSecond: (userInfo["w_second"] as? String) == "1",
+                onThird: (userInfo["w_third"] as? String) == "1",
+                pitcherName: userInfo["w_pitcher"] as? String ?? "",
+                batterName: userInfo["w_batter"] as? String ?? "",
+                lastPlay: userInfo["w_lastplay"] as? String ?? ""
+            )
+        }
         NotificationCenter.default.post(name: Notification.Name.init("didReceiveRemoteNotification"), object: completionHandler, userInfo: userInfo)
     }
 

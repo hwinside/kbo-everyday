@@ -749,6 +749,44 @@ enum WidgetSnapshotStore {
         WidgetCenter.shared.reloadAllTimelines()
     }
 
+    /// 라이브 스코어 무음 push 수신 시(1.0.9 build 17) 홈위젯 스냅샷을 갱신한다.
+    /// iOS 홈위젯은 서버 push로 직접 못 그리므로, 스코어축 변화 시 무음 wake로 이 경로가 돈다.
+    /// 현재 위젯이 *이 경기(gameId)를 표시 중일 때만* 갱신 — 팀/최애팀/next는 기존 스냅샷에서
+    /// 보존하고 라이브 필드만 덮어쓴다(브로드캐스트 push라 per-user myTeamCode를 실을 수 없음).
+    /// 스냅샷이 없거나 다른 경기면 no-op(위젯 미표시 유저 — myTeamCode를 날조하지 않는다).
+    /// scheduled 스냅샷(경기 전 카드)도 이 경기면 live로 전환. 이미 final이면 skip(종료 우선).
+    static func markLiveScore(
+        gameId: String, awayScore: Int, homeScore: Int,
+        inning: Int, isTopInning: Bool, outs: Int,
+        onFirst: Bool, onSecond: Bool, onThird: Bool,
+        pitcherName: String, batterName: String, lastPlay: String
+    ) {
+        guard let ud = UserDefaults(suiteName: appGroupId),
+              let data = ud.data(forKey: key),
+              let obj = try? JSONSerialization.jsonObject(with: data),
+              var dict = obj as? [String: Any],
+              (dict["hasGame"] as? Bool) == true,
+              (dict["gameId"] as? String) == gameId else { return }
+        // 이미 종료 처리된 카드는 라이브로 되돌리지 않는다(game_end가 먼저 왔을 수 있음).
+        if (dict["isFinal"] as? Bool) == true || (dict["status"] as? String) == "final" { return }
+        dict["awayScore"] = awayScore
+        dict["homeScore"] = homeScore
+        dict["inning"] = inning
+        dict["isTopInning"] = isTopInning
+        dict["outs"] = outs
+        dict["onFirst"] = onFirst
+        dict["onSecond"] = onSecond
+        dict["onThird"] = onThird
+        dict["pitcherName"] = pitcherName
+        dict["batterName"] = batterName
+        dict["lastPlay"] = lastPlay
+        dict["isFinal"] = false
+        dict["status"] = "live"
+        // startText(예정 시각)는 live 전환 시 비운다 — 예정 카드 잔재 제거.
+        dict["startText"] = ""
+        write(dict) // 팀코드/myTeamCode/next 보존 + savedAt 갱신 + reloadAllTimelines
+    }
+
     /// 경기 종료 무음 push 수신 시(A안) 홈위젯 스냅샷을 최종 스코어로 종료 처리한다.
     /// 현재 위젯이 이 경기(gameId)를 표시 중이고 아직 종료 전일 때만 갱신 — 다른/다음 경기
     /// 스냅샷을 덮어쓰지 않는다. next(06:00 롤오버)는 write()가 보존하며 멱등(이미 final이면 skip).
