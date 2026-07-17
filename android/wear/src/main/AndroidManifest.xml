@@ -43,7 +43,7 @@
                 android:resource="@drawable/tile_preview" />
         </service>
 
-        <!-- 슬라이스 B: 컴플리케이션 데이터소스 ① 최애팀 경기 (SHORT/LONG_TEXT) -->
+        <!-- 슬라이스 B: 컴플리케이션 데이터소스 ① 최애팀 경기 (LONG_TEXT — 원형 SHORT_TEXT 슬롯은 #666에서 제거) -->
         <service
             android:name=".KboGameComplicationService"
             android:exported="true"
@@ -54,7 +54,7 @@
             </intent-filter>
             <meta-data
                 android:name="android.support.wearable.complications.SUPPORTED_TYPES"
-                android:value="SHORT_TEXT,LONG_TEXT" />
+                android:value="LONG_TEXT" />
             <!-- OS best-effort 주기 갱신(초) — 라이브 스코어는 이 주기 + 캐시 공유(타일 sync)로 따라옴 -->
             <meta-data
                 android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS"
