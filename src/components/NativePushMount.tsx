@@ -4,7 +4,8 @@ import { useEffect } from "react";
 import { isNative } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
 import { syncNativePushToken, listenForTokenRefresh, listenForForegroundNotifications, listenForNotificationTap } from "@/lib/native-push";
-import { bootstrapLiveActivityPushToStart, reregisterPushToStartToken } from "@/lib/native-live-activity";
+import { bootstrapLiveActivityPushToStart, reregisterPushToStartToken, startMyTeamLiveActivityNow } from "@/lib/native-live-activity";
+import { getMyTeamId } from "@/lib/store/myteam";
 import { listenForAndroidBackButton } from "@/lib/native-back-button";
 
 /**
@@ -30,6 +31,14 @@ export function NativePushMount() {
     // W3b — 잠금화면 Live Activity 자동 시작용 push-to-start 토큰 등록(iOS 17.2+, 그 외 no-op).
     void bootstrapLiveActivityPushToStart();
 
+    // 잠금화면 1.0.9 종결 ④ — 최애팀 설정 직후 오늘 경기가 LIVE면 잠금 카드 즉시 시작.
+    // 경기 중 설치/재설치 유저가 서버 p2s 다음 cron(≤1분)을 기다리지 않게 하는 인앱 경로.
+    // 팀 선택(온보딩/마이페이지/커뮤 등)은 전부 setMyTeamId → team-changed 한 지점으로 모인다.
+    const onTeamChanged = () => {
+      void startMyTeamLiveActivityNow(getMyTeamId());
+    };
+    window.addEventListener("team-changed", onTeamChanged);
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       // ⚠️ onAuthStateChange 콜백 안에서 supabase 함수를 직접 호출하면 auth 락
       // 경합으로 이후 모든 쿼리가 pending될 수 있음 (supabase-js 공식 경고).
@@ -38,9 +47,15 @@ export function NativePushMount() {
       if (event === "SIGNED_IN") setTimeout(() => {
         void syncNativePushToken();
         reregisterPushToStartToken(); // W3b — 비로그인 부팅 시 skip된 push-to-start 토큰 등록
+        // ④ 온보딩에서 비로그인 상태로 팀만 고르고 나중에 로그인하는 동선 커버 —
+        // team-changed 시점엔 세션이 없어 skip됐으므로 로그인 시점에 재시도.
+        void startMyTeamLiveActivityNow(getMyTeamId());
       }, 0);
     });
-    return () => subscription.unsubscribe();
+    return () => {
+      window.removeEventListener("team-changed", onTeamChanged);
+      subscription.unsubscribe();
+    };
   }, []);
   return null;
 }

@@ -16,6 +16,8 @@ import {
   decideStartReissue,
   startTokenChangePatch,
   shouldAdvanceFallbackCursor,
+  withBroadcastHeartbeat,
+  installGenerationPatch,
 } from "../../src/lib/notifications/live-activity-channel-policy";
 
 let pass = 0;
@@ -344,6 +346,52 @@ check("cursor: 전원 retryable 실패 → 보류",
   shouldAdvanceFallbackCursor(["retryableFailure"]), false);
 check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
   shouldAdvanceFallbackCursor(["invalidToken", "retryableFailure"]), false);
+
+// ── withBroadcastHeartbeat — broadcast 유실 자가회복 (잠금화면 1.0.9 종결 ②) ──
+// No-Message-Stored broadcast 1회 유실 + 무변화 스킵 조합이 다음 상태 변화까지
+// stale 고착을 만드는 걸 2분 주기 p5 재전송으로 봉인(삼순 NO-GO ② 재현 계약).
+{
+  const T0 = 1_784_290_000_000;
+  check("heartbeat: 변화 틱(p10) → 판정 그대로",
+    withBroadcastHeartbeat({ send: true, priority: "10" }, T0, T0 + 180_000),
+    { send: true, priority: "10" });
+  check("heartbeat: 변화 틱(p5) → 판정 그대로",
+    withBroadcastHeartbeat({ send: true, priority: "5" }, T0, T0 + 180_000),
+    { send: true, priority: "5" });
+  check("heartbeat: 스킵 + 마지막 발송 2분 미만 → 스킵 유지",
+    withBroadcastHeartbeat({ send: false }, T0, T0 + 119_999),
+    { send: false });
+  check("heartbeat: 스킵 + 2분 경과 → p5 재전송 (유실 자가회복)",
+    withBroadcastHeartbeat({ send: false }, T0, T0 + 120_000),
+    { send: true, priority: "5", heartbeat: true });
+  check("heartbeat: 스킵 + 발송 이력 없음(null) → p5 재전송",
+    withBroadcastHeartbeat({ send: false }, null, T0),
+    { send: true, priority: "5", heartbeat: true });
+}
+
+// ── installGenerationPatch — 동일 토큰 재설치 판별 (잠금화면 1.0.9 종결 ④) ──
+// iOS가 재설치에도 동일 p2s 토큰을 재발급하면 startTokenChangePatch로는 세대 불가능
+// (#667 명기 한계) → 클라 localStorage UUID(재설치 시 재생성)가 유일 신호.
+{
+  const NOW = "2026-07-17T14:00:00Z";
+  check("install-gen: 미보고(null) → 패치 없음(저장값 유지)",
+    installGenerationPatch("tokA", "tokA", "genX", null, NOW), {});
+  check("install-gen: 최초 보고(existing null) → 저장만 (롤아웃 대량 bump 방지)",
+    installGenerationPatch("tokA", "tokA", null, "genX", NOW),
+    { install_generation: "genX" });
+  check("install-gen: 동일 토큰 + 동일 gen(포그라운드 재등록) → 저장만",
+    installGenerationPatch("tokA", "tokA", "genX", "genX", NOW),
+    { install_generation: "genX" });
+  check("install-gen: 동일 토큰 + gen 변경 = 재설치 확정 → 세대 bump (핵심 케이스)",
+    installGenerationPatch("tokA", "tokA", "genX", "genY", NOW),
+    { install_generation: "genY", token_changed_at: NOW });
+  check("install-gen: 토큰 변경 + gen 변경 → 저장만 (changePatch가 이미 bump)",
+    installGenerationPatch("tokA", "tokB", "genX", "genY", NOW),
+    { install_generation: "genY" });
+  check("install-gen: 신규 행(existing token null) + 첫 gen → 저장만 (changePatch가 세대 시작)",
+    installGenerationPatch(null, "tokA", null, "genX", NOW),
+    { install_generation: "genX" });
+}
 
 console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);

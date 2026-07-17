@@ -5,6 +5,7 @@ import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import {
   startTokenEnvPatch,
   startTokenChangePatch,
+  installGenerationPatch,
 } from "@/lib/notifications/live-activity-channel-policy";
 
 // Live Activity W3b — push-to-start 토큰 등록/갱신.
@@ -19,7 +20,7 @@ export async function POST(req: NextRequest) {
 
   // appBuild/osMajor(클라 명시 보고, 빌드 16+) — p2s input-push-channel 게이트 판정용
   // (os_major>=18 && app_build>=16, 미보고 null = 레거시 payload. 스펙 v4 blocker③).
-  const { pushToStartToken, appBuild, osMajor, frequentPushes } = await req.json();
+  const { pushToStartToken, appBuild, osMajor, frequentPushes, installGeneration } = await req.json();
   if (!pushToStartToken || typeof pushToStartToken !== "string") {
     return NextResponse.json({ error: "pushToStartToken required" }, { status: 400 });
   }
@@ -27,6 +28,14 @@ export async function POST(req: NextRequest) {
   const osMajorVal = Number.isInteger(osMajor) ? (osMajor as number) : null;
   // frequentPushes(스펙 v4 §클라 4) — 진단용 보고, 발송 행동엔 무영향.
   const frequentPushesVal = typeof frequentPushes === "boolean" ? frequentPushes : null;
+  // installGeneration(잠금화면 1.0.9 종결 ④) — 클라 localStorage UUID. 재설치 시 재생성되므로
+  // 동일 토큰 재발급 재설치도 세대 변화로 감지(installGenerationPatch). 길이 상한은 방어용.
+  const installGenVal =
+    typeof installGeneration === "string" &&
+    installGeneration.length > 0 &&
+    installGeneration.length <= 64
+      ? installGeneration
+      : null;
 
   // W3c 토글: "잠금화면 실시간 중계"를 끈 유저는 토큰을 저장하지 않는다(자동시작도 제외).
   // row 없음/null = 디폴트 on. 명시적으로 false일 때만 skip.
@@ -54,7 +63,7 @@ export async function POST(req: NextRequest) {
   // BadDeviceToken → 유효한 새 토큰까지 삭제). 동일 토큰 재등록은 env 유지.
   const { data: existingRow, error: existErr } = await supabase
     .from("live_activity_start_tokens")
-    .select("push_to_start_token")
+    .select("push_to_start_token, install_generation")
     .eq("user_id", verified.user.id)
     .maybeSingle();
   if (existErr) return supabaseErrorResponse(existErr);
@@ -73,6 +82,15 @@ export async function POST(req: NextRequest) {
       ...startTokenChangePatch(
         existingRow?.push_to_start_token ?? null,
         pushToStartToken,
+        new Date().toISOString(),
+      ),
+      // 동일 토큰 재설치 감지(④) — 토큰 값이 같아도 install generation이 바뀌면 세대 bump.
+      // 토큰 변경 케이스는 위 changePatch가 이미 bump → 여기선 gen 저장만(중복 무해).
+      ...installGenerationPatch(
+        existingRow?.push_to_start_token ?? null,
+        pushToStartToken,
+        existingRow?.install_generation ?? null,
+        installGenVal,
         new Date().toISOString(),
       ),
     },

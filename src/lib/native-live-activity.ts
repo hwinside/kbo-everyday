@@ -1,5 +1,6 @@
 import { registerPlugin, Capacitor } from "@capacitor/core";
 import { supabase } from "@/lib/supabase/client";
+import { getTeamById } from "@/lib/constants/teams";
 
 // Live Activity 네이티브 브리지 (W2) — 잠금화면 라이브 스코어 카드.
 // 경기룸 진입 시 game-live 데이터로 start, 폴링으로 update, 종료 시 end.
@@ -240,6 +241,27 @@ let lastPushToStartToken: string | null = null;
 // 네이티브가 토큰과 함께 보고한 메타(osMajor/frequentPushes, 빌드 16+) — 재등록에도 동봉.
 let lastPushToStartMeta: { osMajor?: number; frequentPushes?: boolean } = {};
 
+// 재설치 판별용 install generation(잠금화면 1.0.9 종결 ④) — localStorage UUID.
+// 재설치 시 WKWebView 스토리지가 초기화돼 재생성되므로, iOS가 동일 p2s 토큰을
+// 재발급해도 서버가 세대 변화를 감지한다(register-start installGenerationPatch).
+// (localStorage eviction 시 오탐 가능 — start 재발급 1회뿐이라 무해.)
+const INSTALL_GEN_KEY = "kbo-install-generation";
+function getInstallGeneration(): string | null {
+  try {
+    let gen = localStorage.getItem(INSTALL_GEN_KEY);
+    if (!gen) {
+      gen =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem(INSTALL_GEN_KEY, gen);
+    }
+    return gen;
+  } catch {
+    return null;
+  }
+}
+
 async function registerPushToStartToken(token: string): Promise<void> {
   try {
     const { data: { session } } = await supabase.auth.getSession();
@@ -249,6 +271,7 @@ async function registerPushToStartToken(token: string): Promise<void> {
     // 미보고 null = 레거시 payload, 스펙 v4 blocker③). frequentPushes는 진단용 보고.
     const appBuild = await getAppBuild();
     const { osMajor, frequentPushes } = lastPushToStartMeta;
+    const installGeneration = getInstallGeneration();
     await fetch("/api/live-activity/register-start", {
       method: "POST",
       headers: {
@@ -260,6 +283,7 @@ async function registerPushToStartToken(token: string): Promise<void> {
         ...(appBuild != null ? { appBuild } : {}),
         ...(Number.isInteger(osMajor) ? { osMajor } : {}),
         ...(typeof frequentPushes === "boolean" ? { frequentPushes } : {}),
+        ...(installGeneration ? { installGeneration } : {}),
       }),
     });
   } catch {
@@ -285,6 +309,57 @@ export async function bootstrapLiveActivityPushToStart(): Promise<void> {
 export function reregisterPushToStartToken(): void {
   if (!isNativeIOS() || !lastPushToStartToken) return;
   void registerPushToStartToken(lastPushToStartToken);
+}
+
+/** 최애팀 설정/로그인 직후 — 오늘 최애팀 경기가 LIVE면 잠금화면 카드를 즉시 시작
+ *  (잠금화면 1.0.9 종결 ④ — 서버 p2s 다음 cron(≤1분)을 기다리지 않는 인앱 즉시 경로).
+ *  BSO/투타는 비워 보내고 — start 직후 update 토큰이 등록돼 다음 warmup 틱 catch-up
+ *  p10(#664)이 ≤60s 내 풀 상태로 채운다. 로그인 세션 없으면 skip(update 토큰 등록
+ *  불가 → stale 카드 방지) — SIGNED_IN 훅이 재시도한다. 종료/예정 경기는 skip(예정은
+ *  서버 p2s 30분전 경로가 ≤1분 커버, 인앱 scheduled start는 미지원 타입). */
+export async function startMyTeamLiveActivityNow(myTeamId: number | null): Promise<void> {
+  if (!isNativeIOS() || !myTeamId) return;
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return; // 비로그인 — SIGNED_IN 시 재호출됨
+    const today = new Date();
+    const yyyymmdd = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
+    const res = await fetch(`/api/games?date=${yyyymmdd}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    type ApiGame = {
+      gameId: string; awayTeamId: number; homeTeamId: number; status: string;
+      awayScore?: number; homeScore?: number; inning?: number; isTop?: boolean; stadium?: string;
+    };
+    const g = ((data.games ?? []) as ApiGame[]).find(
+      (x) => x.status === "live" && (x.awayTeamId === myTeamId || x.homeTeamId === myTeamId),
+    );
+    if (!g) return;
+    await startLiveActivity({
+      gameId: g.gameId,
+      awayTeam: getTeamById(g.awayTeamId)?.shortName ?? "",
+      homeTeam: getTeamById(g.homeTeamId)?.shortName ?? "",
+      awayTeamCode: ID_TO_KBO_CODE[g.awayTeamId] ?? "",
+      homeTeamCode: ID_TO_KBO_CODE[g.homeTeamId] ?? "",
+      myTeamCode: ID_TO_KBO_CODE[myTeamId] ?? "",
+      awayScore: g.awayScore ?? 0,
+      homeScore: g.homeScore ?? 0,
+      inning: g.inning && g.inning > 0 ? g.inning : 1,
+      isTopInning: g.isTop ?? true,
+      balls: 0,
+      strikes: 0,
+      outs: 0,
+      onFirst: false,
+      onSecond: false,
+      onThird: false,
+      pitcherName: "",
+      batterName: "",
+      stadium: g.stadium ?? "",
+      status: "live",
+    });
+  } catch {
+    /* silent — 즉시 시작 실패 시 서버 p2s 경로(≤1분)가 백스톱 */
+  }
 }
 
 // 풀 카드 최소 빌드 — 서버(live-activity.ts FULL_CARD_MIN_BUILD)와 동일 게이트.

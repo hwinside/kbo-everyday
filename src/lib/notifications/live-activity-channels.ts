@@ -8,6 +8,7 @@ import {
 } from "@/lib/notifications/apns-broadcast";
 import {
   decideChannelPush,
+  withBroadcastHeartbeat,
   scoreStateOf,
   fullStateHashOf,
   endRetryDelayMinutes,
@@ -36,6 +37,8 @@ export interface ChannelRow {
   status: "active" | "ending" | "deleted";
   last_score_state: string | null;
   last_state_hash: string | null;
+  /** 마지막 update broadcast 발송 시각 — heartbeat(무변화 재전송) 판정용. */
+  last_broadcast_at: string | null;
   attempt_count: number;
   next_retry_at: string | null;
   created_at: string;
@@ -100,6 +103,7 @@ export async function ensureLiveActivityChannels(
         status: "active",
         last_score_state: null,
         last_state_hash: null,
+        last_broadcast_at: null,
         attempt_count: 0,
         next_retry_at: null,
         created_at: new Date().toISOString(),
@@ -274,12 +278,18 @@ export async function pushLiveActivityChannelBroadcasts(
       );
       const scoreState = scoreStateOf(cs);
       const fullHash = fullStateHashOf(cs);
-      const decision = decideChannelPush({
-        scoreState,
-        fullStateHash: fullHash,
-        lastScoreState: row.last_score_state,
-        lastStateHash: row.last_state_hash,
-      });
+      // heartbeat(②): 무변화 스킵이어도 마지막 발송 2분+ 경과는 p5 재전송 — No-Message-Stored
+      // broadcast 1회 유실 기기가 다음 상태 변화까지 stale 고착하는 걸 자가 회복.
+      const decision = withBroadcastHeartbeat(
+        decideChannelPush({
+          scoreState,
+          fullStateHash: fullHash,
+          lastScoreState: row.last_score_state,
+          lastStateHash: row.last_state_hash,
+        }),
+        row.last_broadcast_at ? new Date(row.last_broadcast_at).getTime() : null,
+        now,
+      );
       if (!decision.send) {
         skipped += 1;
         continue;
@@ -296,7 +306,11 @@ export async function pushLiveActivityChannelBroadcasts(
         updates += 1;
         await supabase
           .from("live_activity_channels")
-          .update({ last_score_state: scoreState, last_state_hash: fullHash })
+          .update({
+            last_score_state: scoreState,
+            last_state_hash: fullHash,
+            last_broadcast_at: new Date(now).toISOString(),
+          })
           .match(channelMutationFence(row)); // generation fence — 새 채널에 옛 hash 기록 방지
       } else if (res.reason === "ChannelNotRegistered") {
         // Apple 쪽에 채널이 없음(외부 삭제 등) — active 행을 무효화해 다음 틱

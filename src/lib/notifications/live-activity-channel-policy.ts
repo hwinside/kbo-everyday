@@ -30,6 +30,26 @@ export function decideChannelPush(input: ChannelPushDecisionInput): ChannelPushD
   return { send: false };
 }
 
+// ── broadcast heartbeat (2026-07-17 잠금화면 1.0.9 종결 ②) ──────────────────
+// broadcast는 No-Message-Stored(apns-expiration:0)라 기기가 순간 unreachable이면 그 1건이
+// 영구 유실된다. 무변화 스킵과 겹치면 다음 상태 변화까지 stale 고착 — 주기 heartbeat
+// 재전송으로 자가 회복한다(contentState가 full snapshot이라 마지막 상태 그대로 복원).
+// p5 = 예산 미소모(채널은 per-디바이스 예산 자체가 없지만 표시 우선순위 정책 일관 유지).
+export const BROADCAST_HEARTBEAT_MS = 2 * 60 * 1000;
+
+export function withBroadcastHeartbeat(
+  decision: ChannelPushDecision,
+  lastBroadcastAtMs: number | null,
+  nowMs: number,
+  heartbeatMs: number = BROADCAST_HEARTBEAT_MS,
+): ChannelPushDecision & { heartbeat?: true } {
+  if (decision.send) return decision;
+  if (lastBroadcastAtMs === null || nowMs - lastBroadcastAtMs >= heartbeatMs) {
+    return { send: true, priority: "5", heartbeat: true };
+  }
+  return decision;
+}
+
 /** 레거시 per-토큰 update 발송 판정 입력 (#664 catch-up). */
 export interface LegacyTokenUpdateInput {
   /** 경기 단위 skip/priority 판정(decideChannelPush 결과). null = 판정 재료 없음. */
@@ -157,6 +177,32 @@ export function startTokenChangePatch(
   nowIso: string,
 ): { token_changed_at: string } | Record<string, never> {
   return existingToken === newToken ? {} : { token_changed_at: nowIso };
+}
+
+/**
+ * register-start install generation 패치 (2026-07-17 잠금화면 1.0.9 종결 ④).
+ * 클라 localStorage UUID — 재설치 시 WKWebView 스토리지가 초기화돼 재생성된다. iOS가
+ * 재설치에도 *동일한* p2s 토큰을 재발급하면 startTokenChangePatch(토큰 값 비교)로는
+ * 세대를 못 가르는데(#667 명기 한계), 이때 generation 변경이 유일한 재설치 신호다.
+ * - 미보고(null) = 구버전 웹 캐시 → 저장값 유지(클리어 금지)
+ * - 최초 보고(existingGen null) = 롤아웃 첫 등록 → 저장만(전 유저 대량 세대 bump 방지)
+ * - 토큰 동일 + gen 변경 = 동일 토큰 재설치 확정 → token_changed_at bump(#667 재발급 경로 재사용)
+ * - 토큰 변경 = startTokenChangePatch가 이미 bump → 여기선 gen 저장만
+ * 멀티디바이스 주의: p2s 토큰은 기기 단위라 "토큰 동일 + gen 상이"는 기기 간에 성립 불가
+ * — 이 패치는 기존 #667 토큰 핑퐁 경계(v1 비범위)를 악화시키지 않는다.
+ */
+export function installGenerationPatch(
+  existingToken: string | null,
+  newToken: string,
+  existingGen: string | null,
+  newGen: string | null,
+  nowIso: string,
+): { install_generation?: string; token_changed_at?: string } {
+  if (!newGen) return {};
+  if (existingToken === newToken && existingGen !== null && existingGen !== newGen) {
+    return { install_generation: newGen, token_changed_at: nowIso };
+  }
+  return { install_generation: newGen };
 }
 
 /** 경기 단위 폴백 커서(live_activity_game_push_state.updated_at) 전진 판정 입력. */
