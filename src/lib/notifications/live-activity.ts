@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
 import {
@@ -417,8 +418,8 @@ interface StartTokenMeta {
   env: ApnsEnvironment | null;
   appBuild: number | null;
   osMajor: number | null;
-  /** 토큰 등록/갱신 시각(ms) — 재설치 재발급 판정용(decideStartReissue). */
-  updatedAtMs: number | null;
+  /** 토큰 세대 시각(token_changed_at, ms) — 재설치 재발급 판정용. updated_at(heartbeat)와 별개. */
+  generationMs: number | null;
 }
 
 async function startForTeamSide(params: {
@@ -431,8 +432,8 @@ async function startForTeamSide(params: {
   jwt: string;
   /** active broadcast 채널 — key `${env}` (이 경기 것만). 없으면 전원 기존 payload. */
   channelByEnv: Map<ApnsEnvironment, string>;
-  /** 이 경기의 유효(active 채널 일치) 구독 user → confirmed_at(ms) — 중복 start 제외 + 재설치 stale 구독 판별. */
-  subscribedAtByUser: Map<string, number>;
+  /** 이 경기의 유효(active 채널 일치) 구독 user → device_key 집합 — 현재 토큰 일치 구독만 중복 start 제외. */
+  subscribedKeysByUser: Map<string, Set<string>>;
   /** 경기 예정 시작(ms) — 늦은 윈도우 per-토큰 게이트용. null = 파싱 불가. */
   gameStartMs: number | null;
 }): Promise<{ sent: number; failed: boolean }> {
@@ -446,21 +447,21 @@ async function startForTeamSide(params: {
   for (let i = 0; i < fans.ids.length; i += 200) {
     const { data, error } = await supabase
       .from("live_activity_start_tokens")
-      .select("user_id, push_to_start_token, apns_environment, app_build, os_major, updated_at")
+      .select("user_id, push_to_start_token, apns_environment, app_build, os_major, token_changed_at")
       .in("user_id", fans.ids.slice(i, i + 200));
     if (error) return { sent: 0, failed: true }; // 토큰 조회 실패 → 재시도
     for (const r of (data ?? []) as {
       user_id: string; push_to_start_token: string;
       apns_environment: ApnsEnvironment | null; app_build: number | null; os_major: number | null;
-      updated_at: string | null;
+      token_changed_at: string | null;
     }[]) {
-      const updMs = r.updated_at ? Date.parse(r.updated_at) : NaN;
+      const genMs = r.token_changed_at ? Date.parse(r.token_changed_at) : NaN;
       tokenByUser.set(r.user_id, {
         token: r.push_to_start_token,
         env: r.apns_environment,
         appBuild: r.app_build,
         osMajor: r.os_major,
-        updatedAtMs: Number.isFinite(updMs) ? updMs : null,
+        generationMs: Number.isFinite(genMs) ? genMs : null,
       });
     }
   }
@@ -507,34 +508,38 @@ async function startForTeamSide(params: {
   // 재설치 등 토큰 교체 감지 시 이전 설치의 claim/구독은 차단 사유에서 제외하고(stale),
   // 늦은 윈도우(시작+90분 경과)엔 경기 시작 이후 등록 토큰만 발송한다.
   const nowMs = Date.now();
-  const staleClaimUsers: { userId: string; tokenUpdatedAtMs: number }[] = [];
+  const staleClaimUsers: { userId: string; tokenGenerationMs: number }[] = [];
   const eligible = [...tokenByUser.entries()].filter(([userId, meta]) => {
     if (optedOut.has(userId) || alreadyActive.has(userId)) return false;
+    // 구독 identity 정합: 현재 토큰 device_key(sha256)와 정확 일치하는 구독만 차단 사유.
+    // 이전 설치 구독(다른 device_key)은 카드가 이미 소멸됐으므로 차단하지 않는다(삼순 NO-GO).
+    const deviceKey = createHash("sha256").update(meta.token).digest("hex");
     const d = decideStartReissue({
-      tokenUpdatedAtMs: meta.updatedAtMs,
+      tokenGenerationMs: meta.generationMs,
       claimCreatedAtMs: claimCreatedAtByUser.get(userId) ?? null,
-      subscriptionConfirmedAtMs: params.subscribedAtByUser.get(userId) ?? null,
+      hasCurrentTokenSubscription:
+        params.subscribedKeysByUser.get(userId)?.has(deviceKey) ?? false,
       gameStartMs: params.gameStartMs,
       nowMs,
       startWindowMs: START_WINDOW_MS,
     });
     if (!d.eligible) return false;
-    if (d.invalidateStaleClaim && meta.updatedAtMs !== null) {
-      staleClaimUsers.push({ userId, tokenUpdatedAtMs: meta.updatedAtMs });
+    if (d.invalidateStaleClaim && meta.generationMs !== null) {
+      staleClaimUsers.push({ userId, tokenGenerationMs: meta.generationMs });
     }
     return true;
   });
   if (eligible.length === 0) return { sent: 0, failed: false };
 
-  // stale claim 무효화 — *현재 토큰 등록 이전에 생성된 행만* 삭제(fence: lt created_at).
-  // 병렬 틱이 방금 만든 새 claim(created_at >= tokenUpdatedAt)은 건드리지 않는다.
+  // stale claim 무효화 — *현재 토큰 세대 이전에 생성된 행만* 삭제(fence: lt created_at).
+  // 병렬 틱이 방금 만든 새 claim(created_at >= token_changed_at)은 건드리지 않는다.
   for (const s of staleClaimUsers) {
     const { error } = await supabase
       .from("live_activity_started_users")
       .delete()
       .eq("game_id", params.gameId)
       .eq("user_id", s.userId)
-      .lt("created_at", new Date(s.tokenUpdatedAtMs).toISOString());
+      .lt("created_at", new Date(s.tokenGenerationMs).toISOString());
     if (error) return { sent: 0, failed: true }; // 무효화 실패 → 재시도(이번 틱은 재선점 불가)
   }
 
@@ -681,25 +686,25 @@ export async function pushLiveActivityStarts(
       activeChanKeySet.add(`${r.game_id}|${r.environment}|${r.channel_id}`);
     }
   }
-  // 유효 구독 = user → confirmed_at(ms). 같은 user 복수 행이면 최신 ACK 기준 —
-  // 재설치 판별(decideStartReissue)은 "현재 토큰 이후 ACK인가"로 보므로 최신값이 정확.
-  const subscribedByGame = new Map<string, Map<string, number>>();
+  // 유효 구독 = user → device_key 집합. 재설치 판별(decideStartReissue)은 시각 비교가
+  // 아니라 *현재 토큰의 device_key(sha256) 정확 일치*로 본다 — 이전 설치 구독(다른
+  // device_key)은 카드 소멸 상태라 차단 사유가 아님(삼순 NO-GO: heartbeat 시각 오인 방지).
+  const subscribedByGame = new Map<string, Map<string, Set<string>>>();
   if (activeChanKeySet.size > 0) {
     const { data } = await supabase
       .from("live_activity_channel_subscriptions")
-      .select("game_id, user_id, environment, channel_id, confirmed_at")
+      .select("game_id, user_id, environment, channel_id, device_key")
       .in("game_id", startGameIds)
       .not("user_id", "is", null);
     for (const s of (data ?? []) as {
       game_id: string; user_id: string; environment: string; channel_id: string;
-      confirmed_at: string | null;
+      device_key: string;
     }[]) {
       if (!activeChanKeySet.has(`${s.game_id}|${s.environment}|${s.channel_id}`)) continue;
       if (!subscribedByGame.has(s.game_id)) subscribedByGame.set(s.game_id, new Map());
       const m = subscribedByGame.get(s.game_id)!;
-      const ms = s.confirmed_at ? Date.parse(s.confirmed_at) : NaN;
-      const v = Number.isFinite(ms) ? ms : Number.MAX_SAFE_INTEGER; // 파싱 불가 = 보수적(차단 유지)
-      m.set(s.user_id, Math.max(m.get(s.user_id) ?? 0, v));
+      if (!m.has(s.user_id)) m.set(s.user_id, new Set());
+      m.get(s.user_id)!.add(s.device_key);
     }
   }
 
@@ -748,15 +753,16 @@ export async function pushLiveActivityStarts(
 
     // away/home 슬롯을 각자 그 팀 코드로 강조(myTeamCode) — 수신자별 최애팀 반영.
     const channelByEnv = channelsByGame.get(gameId) ?? new Map<ApnsEnvironment, string>();
-    const subscribedAtByUser = subscribedByGame.get(gameId) ?? new Map<string, number>();
+    const subscribedKeysByUser =
+      subscribedByGame.get(gameId) ?? new Map<string, Set<string>>();
     const awaySide = await startForTeamSide({
       gameId, teamId: teamIdByShortName(away), myTeamCode: awayCode,
-      attributes, contentState, alert, jwt, channelByEnv, subscribedAtByUser,
+      attributes, contentState, alert, jwt, channelByEnv, subscribedKeysByUser,
       gameStartMs: startedAt,
     });
     const homeSide = await startForTeamSide({
       gameId, teamId: teamIdByShortName(home), myTeamCode: homeCode,
-      attributes, contentState, alert, jwt, channelByEnv, subscribedAtByUser,
+      attributes, contentState, alert, jwt, channelByEnv, subscribedKeysByUser,
       gameStartMs: startedAt,
     });
     started += awaySide.sent + homeSide.sent;
