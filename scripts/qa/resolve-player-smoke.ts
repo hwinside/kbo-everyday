@@ -15,6 +15,19 @@ const cases: [string | { name: string; team?: string }, string | null][] = [
   // 동명이인 (team으로 분리)
   [{ name: "오웬 화이트", team: "한화" }, "오웬 화이트"],
   [{ name: "미치 화이트", team: "SSG" }, "미치 화이트"],
+  // 일본 선수 — 성이 앞(prefix) 짧은 중계 표기 (2026-07-17 스기모토 사진 미표시 CS)
+  [{ name: "스기모토", team: "KT" }, "스기모토 고우키"],
+  ["스기모토", "스기모토 고우키"],
+  [{ name: "가나쿠보", team: "키움" }, "가나쿠보 유토"],
+  [{ name: "교야마", team: "롯데" }, "교야마 마사야"],
+  [{ name: "다무라", team: "두산" }, "다무라 이치로"],
+  [{ name: "다케다", team: "SSG" }, "다케다 쇼타"],
+  [{ name: "도다", team: "NC" }, "도다 나츠키"],
+  // prefix 동명 첫 토큰 ("맷" — 매닝/사우어): team 있으면 분리, 없으면 유일성 게이트로 null
+  [{ name: "맷", team: "삼성" }, "맷 매닝"],
+  ["맷", null],
+  // prefix 토큰 경계 — 부분 문자열은 매칭 금지
+  ["스기", null],
   // 레거시 pN
   ["p1", null],  // unknown — legacy map has p1→67430, but may or may not resolve
   // 실패 케이스

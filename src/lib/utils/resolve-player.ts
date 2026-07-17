@@ -15,7 +15,8 @@
  * 규칙:
  *   - 가능한 한 canonical kboId(로스터 기준)를 반환한다.
  *   - KBO 공식 사이트 스크래핑용 `numericId`도 같이 제공한다 (외국인은 역매핑).
- *   - 이름 매칭은 exact → exact+team → suffix+team → suffix 순서로 fallback.
+ *   - 이름 매칭은 exact → exact+team → partial+team → partial 순서로 fallback.
+ *     (partial = suffix "웰스"←"라클란 웰스" | prefix+토큰경계 "스기모토"←"스기모토 고우키")
  *   - 동명이인은 team을 우선 기준으로 분리한다.
  */
 
@@ -98,6 +99,17 @@ function toResolved(p: RosterPlayer): ResolvedPlayer {
 }
 
 /**
+ * 이름 부분 매칭. 외부 중계/순위 텍스트는 외국인 선수를 짧은 표기로 쓴다 —
+ *   - 서양 선수: 성이 뒤 → suffix ("웰스" ← "라클란 웰스")
+ *   - 일본 선수: 성이 앞 → prefix ("스기모토" ← "스기모토 고우키")
+ * prefix는 토큰 경계(공백)를 강제해 부분 문자열 오매칭을 막는다. 한국 선수는
+ * 이름에 공백이 없어 prefix 경로에 아예 걸리지 않는다 (기존 suffix 의미론 불변).
+ */
+function nameLooseMatch(rosterName: string, q: string): boolean {
+  return rosterName.endsWith(q) || rosterName.startsWith(q + " ");
+}
+
+/**
  * 선수를 찾아 표준화된 {@link ResolvedPlayer}를 반환한다. 매칭 실패 시 `null`.
  *
  * 허용 입력:
@@ -127,9 +139,10 @@ export function resolvePlayer(
 
 /**
  * 이름이 로스터에 *정확히 하나*일 때만 resolve. 동명이인(2+)이면 null.
- * exact 0건이면 suffix 매칭으로 한 번 더 — 역시 유일할 때만 (외국인 중계 표기
- * "디아즈"/"유토" → 로스터 풀네임 "르윈 디아즈"/"가나쿠보 유토" 구제, 기존
- * resolvePlayer suffix fallback과 동일 의미론을 유일성 게이트 하에 적용).
+ * exact 0건이면 부분 매칭(suffix/prefix)으로 한 번 더 — 역시 유일할 때만
+ * (외국인 중계 표기 "디아즈"/"스기모토" → 로스터 풀네임 "르윈 디아즈"/
+ * "스기모토 고우키" 구제, resolvePlayer partial fallback과 동일 의미론을
+ * 유일성 게이트 하에 적용).
  * 팀으로 동명이인을 분리할 수 없는 경로(예: 올스타전 — 게임 팀이 나눔/드림이라
  * 선수의 실제 소속으로 좁힐 수 없음) 전용. 오매칭(엉뚱한 동명이인) 방지가 목적.
  */
@@ -142,8 +155,8 @@ export function resolveUniquePlayerByName(
   const exact = roster.filter((p) => p.name === q);
   if (exact.length === 1) return toResolved(exact[0]);
   if (exact.length > 1) return null; // 동명이인 — 특정 불가, 오발송 방지
-  const suffix = roster.filter((p) => p.name.endsWith(q));
-  return suffix.length === 1 ? toResolved(suffix[0]) : null;
+  const partial = roster.filter((p) => nameLooseMatch(p.name, q));
+  return partial.length === 1 ? toResolved(partial[0]) : null;
 }
 
 function resolveInternal(
@@ -168,11 +181,14 @@ function resolveInternal(
       if (byAlpha) return toResolved(byAlpha);
     }
 
-    // 4. 이름으로 fallback (team 없으면 첫 일치)
+    // 4. 이름으로 fallback — exact/suffix는 기존 first-match 의미론 유지,
+    //    prefix는 유일할 때만 (team 정보가 없어 동명 첫 토큰 "맷" 오매칭 방지)
     const byName =
       roster.find((p) => p.name === q) ||
       roster.find((p) => p.name.endsWith(q));
-    return byName ? toResolved(byName) : null;
+    if (byName) return toResolved(byName);
+    const byPrefix = roster.filter((p) => p.name.startsWith(q + " "));
+    return byPrefix.length === 1 ? toResolved(byPrefix[0]) : null;
   }
 
   // Object query: ID/token 우선 → 이름+팀 → unique name/suffix 순서.
@@ -200,19 +216,19 @@ function resolveInternal(
   );
   if (byExactAndTeam) return toResolved(byExactAndTeam);
 
-  const bySuffixAndTeam = roster.find(
+  const byPartialAndTeam = roster.find(
     (p) =>
-      p.name.endsWith(cleanName) &&
+      nameLooseMatch(p.name, cleanName) &&
       ((numericTeamId !== null && Number(p.teamId) === numericTeamId) ||
         (cleanTeam && p.team === cleanTeam)),
   );
-  if (bySuffixAndTeam) return toResolved(bySuffixAndTeam);
+  if (byPartialAndTeam) return toResolved(byPartialAndTeam);
 
   const exactMatches = roster.filter((p) => p.name === cleanName);
   if (exactMatches.length === 1) return toResolved(exactMatches[0]);
 
-  const suffixMatches = roster.filter((p) => p.name.endsWith(cleanName));
-  if (suffixMatches.length === 1) return toResolved(suffixMatches[0]);
+  const partialMatches = roster.filter((p) => nameLooseMatch(p.name, cleanName));
+  if (partialMatches.length === 1) return toResolved(partialMatches[0]);
 
   return null;
 }
