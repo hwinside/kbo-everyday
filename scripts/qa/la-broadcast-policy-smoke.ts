@@ -13,6 +13,7 @@ import {
   channelMutationFence,
   startTokenResultFence,
   decideLegacyTokenUpdate,
+  decideStartReissue,
 } from "../../src/lib/notifications/live-activity-channel-policy";
 
 let pass = 0;
@@ -235,6 +236,62 @@ check("catch-up: token updated_at 미기록 → catch-up 아님 (skip 유지)",
 check("catch-up: decision null(판정 불가) → 기존 매분 발송 동작(p10 폴백)",
   decideLegacyTokenUpdate({ decision: null, tokenUpdatedAtMs: T - 1, lastWriteAtMs: T }),
   { send: true });
+
+// ── decideStartReissue — 재설치 재발급 + 늦은 윈도우 per-토큰 게이트 (2026-07-17 사고) ──
+{
+  const GS = 1_000_000_000; // 경기 시작
+  const W = 90 * 60 * 1000; // START_WINDOW_MS
+  const base = { gameStartMs: GS, startWindowMs: W };
+
+  // 윈도우 내 기본 동작(기존 계약 보존)
+  check("reissue: 윈도우 내 + claim/구독 없음 → 발송",
+    decideStartReissue({ ...base, nowMs: GS + 10_000, tokenUpdatedAtMs: GS - 60_000, claimCreatedAtMs: null, subscriptionConfirmedAtMs: null }),
+    { eligible: true, invalidateStaleClaim: false });
+  check("reissue: 현재 설치의 claim(토큰 이후 생성) → 제외(중복 방지)",
+    decideStartReissue({ ...base, nowMs: GS + 10_000, tokenUpdatedAtMs: GS - 60_000, claimCreatedAtMs: GS, subscriptionConfirmedAtMs: null }),
+    { eligible: false });
+  check("reissue: 현재 설치 구독 ACK → 제외",
+    decideStartReissue({ ...base, nowMs: GS + 10_000, tokenUpdatedAtMs: GS - 60_000, claimCreatedAtMs: null, subscriptionConfirmedAtMs: GS }),
+    { eligible: false });
+
+  // 재설치(토큰 교체) — 이전 설치 잔재는 차단 사유 아님
+  check("reissue: stale claim(토큰 이전 생성) → invalidate + 재발송",
+    decideStartReissue({ ...base, nowMs: GS + 10_000, tokenUpdatedAtMs: GS + 5_000, claimCreatedAtMs: GS, subscriptionConfirmedAtMs: null }),
+    { eligible: true, invalidateStaleClaim: true });
+  check("reissue: stale 구독(토큰 이전 ACK) → 차단 안 함",
+    decideStartReissue({ ...base, nowMs: GS + 10_000, tokenUpdatedAtMs: GS + 5_000, claimCreatedAtMs: null, subscriptionConfirmedAtMs: GS }),
+    { eligible: true, invalidateStaleClaim: false });
+  check("reissue: stale claim + stale 구독 둘 다 → invalidate + 재발송",
+    decideStartReissue({ ...base, nowMs: GS + 10_000, tokenUpdatedAtMs: GS + 5_000, claimCreatedAtMs: GS, subscriptionConfirmedAtMs: GS - 1 }),
+    { eligible: true, invalidateStaleClaim: true });
+
+  // 늦은 윈도우(시작+90분 경과): 경기 시작 이후 토큰만 — 재설치 사고의 재현 케이스
+  const late = GS + W + 10 * 60 * 1000;
+  check("reissue: 늦은 윈도우 + 경기 중 재설치 토큰 → 발송 (사고 재현 fix)",
+    decideStartReissue({ ...base, nowMs: late, tokenUpdatedAtMs: late - 60_000, claimCreatedAtMs: null, subscriptionConfirmedAtMs: null }),
+    { eligible: true, invalidateStaleClaim: false });
+  check("reissue: 늦은 윈도우 + 재설치 + stale claim(17:30 발급분) → invalidate+재발송 (하린아빠 케이스)",
+    decideStartReissue({ ...base, nowMs: late, tokenUpdatedAtMs: late - 60_000, claimCreatedAtMs: GS - 30 * 60 * 1000, subscriptionConfirmedAtMs: null }),
+    { eligible: true, invalidateStaleClaim: true });
+  check("reissue: 늦은 윈도우 + 경기 전 등록 토큰 → 제외 (뒷북 대량 발송 방지 유지)",
+    decideStartReissue({ ...base, nowMs: late, tokenUpdatedAtMs: GS - 60_000, claimCreatedAtMs: null, subscriptionConfirmedAtMs: null }),
+    { eligible: false });
+  check("reissue: 늦은 윈도우 + updated_at 미기록 토큰 → 제외 (보수적)",
+    decideStartReissue({ ...base, nowMs: late, tokenUpdatedAtMs: null, claimCreatedAtMs: null, subscriptionConfirmedAtMs: null }),
+    { eligible: false });
+
+  // 보수적 폴백
+  check("reissue: updated_at 미기록 + claim 있음 → 제외 (기존 동작)",
+    decideStartReissue({ ...base, nowMs: GS + 10_000, tokenUpdatedAtMs: null, claimCreatedAtMs: GS, subscriptionConfirmedAtMs: null }),
+    { eligible: false });
+  check("reissue: gameStartMs 파싱 불가 → 늦은 윈도우 게이트 없이 기본 규칙",
+    decideStartReissue({ gameStartMs: null, startWindowMs: W, nowMs: GS, tokenUpdatedAtMs: GS - 1, claimCreatedAtMs: null, subscriptionConfirmedAtMs: null }),
+    { eligible: true, invalidateStaleClaim: false });
+  // 재발송 후 반복 방지: 새 claim(created_at > token) 생성 후 다음 틱 → 제외
+  check("reissue: 재발송 후 새 claim → 다음 틱 제외 (p10 반복 없음)",
+    decideStartReissue({ ...base, nowMs: late, tokenUpdatedAtMs: late - 60_000, claimCreatedAtMs: late - 30_000, subscriptionConfirmedAtMs: null }),
+    { eligible: false });
+}
 
 console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);

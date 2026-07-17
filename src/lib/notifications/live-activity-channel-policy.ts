@@ -71,6 +71,66 @@ export function decideLegacyTokenUpdate(input: LegacyTokenUpdateInput): LegacyTo
   return { send: true, priority: isCatchUp ? "10" : input.decision.priority };
 }
 
+/** 재설치/토큰 교체 감지 start 재발급 판정 입력 (2026-07-17 재설치 카드 미발급 사고). */
+export interface StartReissueInput {
+  /** p2s 토큰 등록/갱신 시각(ms). null = updated_at 미기록(보수적으로 기존 동작). */
+  tokenUpdatedAtMs: number | null;
+  /** 이 경기 기존 발급 기록(started_users) 생성 시각. null = 없음. */
+  claimCreatedAtMs: number | null;
+  /** 이 경기 유효 채널 구독 ACK 시각. null = 구독 없음. */
+  subscriptionConfirmedAtMs: number | null;
+  /** 경기 예정 시작 시각(ms). null = 파싱 불가. */
+  gameStartMs: number | null;
+  nowMs: number;
+  startWindowMs: number;
+}
+
+export type StartReissueDecision =
+  | { eligible: false }
+  | { eligible: true; invalidateStaleClaim: boolean };
+
+/**
+ * p2s start 발송 대상 판정 — 재설치(토큰 교체) 유저 재발급 포함.
+ *
+ * 배경(2026-07-17): 경기 중 재설치 시 기존 카드는 사라지는데, 서버엔 ①기존 발급
+ * 기록(started_users)이 남아 재발송 차단 ②경기 +90분 가드가 게임 단위로 skip.
+ * 규칙:
+ * - 늦은 윈도우(시작+startWindowMs 경과): *경기 시작 이후 등록/갱신된 토큰만* 대상
+ *   (복구된 cron의 뒷북 대량 발송 방지는 유지 — 재설치/신규 등록만 예외).
+ * - 구독 ACK가 현재 토큰 이후면 = 이 설치가 구독 중 → 제외. 토큰 이전 ACK는
+ *   이전 설치 잔재(카드 소멸) → 차단하지 않음.
+ * - 발급 기록이 현재 토큰 이후면 = 이 설치가 이미 받음 → 제외. 토큰 이전 기록은
+ *   stale → invalidate(삭제) 후 재선점·재발송.
+ * - tokenUpdatedAtMs null은 보수적: 기존 동작(기록/구독 있으면 제외, 늦은 윈도우 제외).
+ * 반복 방지: 재발송 성공 시 새 claim(created_at=now > tokenUpdatedAt)이 생김 → 다음 틱 제외.
+ */
+export function decideStartReissue(i: StartReissueInput): StartReissueDecision {
+  const lateWindow =
+    i.gameStartMs !== null && i.nowMs - i.gameStartMs > i.startWindowMs;
+  if (lateWindow) {
+    if (
+      i.tokenUpdatedAtMs === null ||
+      i.gameStartMs === null ||
+      i.tokenUpdatedAtMs < i.gameStartMs
+    ) {
+      return { eligible: false };
+    }
+  }
+  if (
+    i.subscriptionConfirmedAtMs !== null &&
+    (i.tokenUpdatedAtMs === null || i.subscriptionConfirmedAtMs >= i.tokenUpdatedAtMs)
+  ) {
+    return { eligible: false };
+  }
+  if (i.claimCreatedAtMs !== null) {
+    if (i.tokenUpdatedAtMs === null || i.claimCreatedAtMs >= i.tokenUpdatedAtMs) {
+      return { eligible: false };
+    }
+    return { eligible: true, invalidateStaleClaim: true };
+  }
+  return { eligible: true, invalidateStaleClaim: false };
+}
+
 /** ContentState → score축 문자열 (점수/이닝/초말/주자/status만). */
 export function scoreStateOf(cs: Record<string, unknown>): string {
   return [
