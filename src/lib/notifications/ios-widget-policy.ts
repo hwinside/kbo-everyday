@@ -12,20 +12,65 @@ export function parseTeamCodes(gameId: string): { away: string; home: string } |
 }
 
 /**
- * 위젯 스코어축 상태 문자열 — 이게 바뀌면 무음 push 발송(무변화 스킵).
- * 스코어/이닝/초말/아웃/주자 유무를 반영(주자 순번은 무관, 유무만). 매 틱 아닌 변화 시에만
- * iOS 백그라운드 push를 쏘기 위한 dedupe 키.
+ * 위젯 무음 push dedupe 키 — *점수만* (삼순 #674 blocker①).
+ * 이닝/아웃/주자를 키에 넣으면 경기당 수십~100회로 예산 초과 → 승인 스코프
+ * "최초 live 1회 + 점수 변화 시"만 발송한다(경기당 ~10-25회). 이닝/아웃/주자
+ * 정보는 발송되는 payload에는 담기되(표시용), 발송 트리거는 되지 않는다.
  */
 export function iosWidgetScoreState(g: KboRawGame): string {
-  const inning = safeInt(g.GAME_INN_NO);
-  return [
-    safeInt(g.T_SCORE_CN),
-    safeInt(g.B_SCORE_CN),
-    inning,
-    g.GAME_TB_SC === "T" ? "T" : "B",
-    Math.min(Math.max(safeInt(g.OUT_CN), 0), 2),
-    safeInt(g.B1_BAT_ORDER_NO) > 0 ? 1 : 0,
-    safeInt(g.B2_BAT_ORDER_NO) > 0 ? 1 : 0,
-    safeInt(g.B3_BAT_ORDER_NO) > 0 ? 1 : 0,
-  ].join("|");
+  return `${safeInt(g.T_SCORE_CN)}|${safeInt(g.B_SCORE_CN)}`;
+}
+
+/** transient 실패 재시도 상한 — 같은 점수 상태에 대해 최대 2회 재시도 후 포기(전진 유지). */
+export const WIDGET_PUSH_MAX_RETRIES = 2;
+/** claim-insert(row 없던 경기)의 revert 목적지 — 다음 틱 claim-update 경로로 재시도(attempts 보존). */
+export const WIDGET_RETRY_SENTINEL = "";
+
+/**
+ * 커서 claim 판정 (삼순 #674 blocker④ — cron 중첩 atomic fence의 1단계).
+ * 실제 claim은 CAS(update ... eq(last_score_state, prev) / insert ignoreDuplicates)로
+ * 수행해 동시 cron 인스턴스 중 하나만 발송한다.
+ */
+export function decideWidgetPushClaim(
+  prevState: string | null,
+  nextState: string,
+): "skip" | "claim-update" | "claim-insert" {
+  if (prevState === null) return "claim-insert"; // 최초 live — 1회 발송
+  if (prevState === nextState) return "skip"; // 점수 무변화
+  return "claim-update";
+}
+
+/** invalid-token 정리분을 제외한 transient 실패 수 — 이게 0이어야 커서 전진 확정. */
+export function widgetTransientFailures(r: { ok: boolean; failed: number; cleaned: number }): number {
+  if (!r.ok) return 1; // 인프라 실패 = 전량 transient
+  return Math.max(0, r.failed - r.cleaned);
+}
+
+/**
+ * transient 실패 시 커서 revert 여부 (삼순 #674 blocker④ — bounded retry).
+ * attempts < max → revert해 다음 틱 같은 점수 재발송. 상한 도달 → 전진 유지(포기,
+ * 다음 점수 변화가 자연 복구). revert도 CAS(eq(last_score_state, next))로 중첩 안전.
+ */
+export function shouldRevertWidgetCursor(
+  attempts: number,
+  maxRetries: number = WIDGET_PUSH_MAX_RETRIES,
+): boolean {
+  return attempts < maxRetries;
+}
+
+/**
+ * 지연/역순 배달 fence — Swift `WidgetSnapshotStore.markLiveScore` 게이트의 TS 미러
+ * (삼순 #674 blocker③ 계약 고정용 — iOS 타깃엔 유닛 인프라가 없어 동일 로직을 여기
+ * 스모크로 잠근다. Swift 쪽과 항상 동치 유지할 것).
+ * - 스냅샷이 이미 final → 적용 안 함 (final → old 순서 방어)
+ * - 저장된 eventMs보다 오래된(≤) 이벤트 → 적용 안 함 (new → old 회귀 방어)
+ */
+export function shouldApplyWidgetLiveEvent(
+  storedEventMs: number | null,
+  incomingEventMs: number,
+  snapshotIsFinal: boolean,
+): boolean {
+  if (snapshotIsFinal) return false;
+  if (storedEventMs !== null && incomingEventMs <= storedEventMs) return false;
+  return true;
 }

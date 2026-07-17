@@ -759,7 +759,8 @@ enum WidgetSnapshotStore {
         gameId: String, awayScore: Int, homeScore: Int,
         inning: Int, isTopInning: Bool, outs: Int,
         onFirst: Bool, onSecond: Bool, onThird: Bool,
-        pitcherName: String, batterName: String, lastPlay: String
+        pitcherName: String, batterName: String, lastPlay: String,
+        eventMs: Double
     ) {
         guard let ud = UserDefaults(suiteName: appGroupId),
               let data = ud.data(forKey: key),
@@ -767,8 +768,12 @@ enum WidgetSnapshotStore {
               var dict = obj as? [String: Any],
               (dict["hasGame"] as? Bool) == true,
               (dict["gameId"] as? String) == gameId else { return }
-        // 이미 종료 처리된 카드는 라이브로 되돌리지 않는다(game_end가 먼저 왔을 수 있음).
+        // 이미 종료 처리된 카드는 라이브로 되돌리지 않는다(game_end가 먼저 왔을 수 있음 — final → old 방어).
         if (dict["isFinal"] as? Bool) == true || (dict["status"] as? String) == "final" { return }
+        // 지연/역순 배달 fence(삼순 #674 blocker③) — 저장된 이벤트 시각보다 오래된(≤) push는
+        // 무시해 늦은 배달이 최신 점수를 되돌리지 못하게 한다(new → old 방어).
+        // 계약은 TS 미러 shouldApplyWidgetLiveEvent(ios-widget-policy.ts)와 동치 — 양쪽 동시 유지.
+        if let stored = dict["liveEventMs"] as? Double, eventMs <= stored { return }
         dict["awayScore"] = awayScore
         dict["homeScore"] = homeScore
         dict["inning"] = inning
@@ -784,6 +789,9 @@ enum WidgetSnapshotStore {
         dict["status"] = "live"
         // startText(예정 시각)는 live 전환 시 비운다 — 예정 카드 잔재 제거.
         dict["startText"] = ""
+        // fence 기준 저장 — 다음 push가 이보다 오래되면(≤) 거부된다. 스냅샷 JSON에 함께
+        // 영속되며 WidgetGameSnapshot Codable에는 없는 키라 렌더엔 무영향(dict 경유만 읽음).
+        dict["liveEventMs"] = eventMs
         write(dict) // 팀코드/myTeamCode/next 보존 + savedAt 갱신 + reloadAllTimelines
     }
 

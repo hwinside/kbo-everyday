@@ -1,11 +1,21 @@
 /**
- * iOS 홈 위젯 무음 갱신 — 스코어축 상태 판정 스모크 (1.0.9 build 17).
- * 실행: npx tsx scripts/qa/ios-widget-score-state-smoke.ts  (npm run qa:ios-widget)
+ * iOS 홈 위젯 무음 갱신 — 정책 스모크 (1.0.9 build 17, 삼순 #674 NO-GO 반영판).
+ * 실행: npm run qa:ios-widget
  *
- * 핵심 계약: 스코어/이닝/아웃/주자 변화 = 다른 상태 문자열(→ 무음 push 발송),
- * 완전 무변화 = 같은 문자열(→ 스킵, iOS 백그라운드 push 예산 절약).
+ * 계약(삼순 blocker①③④):
+ *  ① dedupe 키 = 점수만 — 이닝/아웃/주자 변화는 발송 트리거 아님(예산: 경기당 ~10-25회)
+ *  ③ 지연/역순 배달 fence — new→old, final→old 거부 (Swift markLiveScore와 동치 미러)
+ *  ④ 커서 claim/revert — CAS 판정 + transient 실패 bounded retry(상한 후 전진 유지)
  */
-import { iosWidgetScoreState } from "../../src/lib/notifications/ios-widget-policy";
+import {
+  iosWidgetScoreState,
+  decideWidgetPushClaim,
+  widgetTransientFailures,
+  shouldRevertWidgetCursor,
+  shouldApplyWidgetLiveEvent,
+  WIDGET_PUSH_MAX_RETRIES,
+  WIDGET_RETRY_SENTINEL,
+} from "../../src/lib/notifications/ios-widget-policy";
 import type { KboRawGame } from "../../src/types/api";
 
 let pass = 0;
@@ -25,27 +35,39 @@ const base = {
 
 const s0 = iosWidgetScoreState(base);
 
-// 무변화 → 동일 상태(스킵)
+// ── ① dedupe 키 = 점수만 ──────────────────────────────────────────────
 check("무변화 → 동일", iosWidgetScoreState({ ...base }), s0);
-
-// 스코어 변화 → 다름
 check("원정 득점 → 다름", iosWidgetScoreState({ ...base, T_SCORE_CN: "4" } as KboRawGame) !== s0, true);
 check("홈 득점 → 다름", iosWidgetScoreState({ ...base, B_SCORE_CN: "2" } as KboRawGame) !== s0, true);
+// 발송 상한의 핵심 — 점수 외 축은 전부 *같은* 키(발송 트리거 아님)
+check("이닝 변화 → 동일(발송 안 함)", iosWidgetScoreState({ ...base, GAME_INN_NO: 8 } as KboRawGame), s0);
+check("초말 변화 → 동일(발송 안 함)", iosWidgetScoreState({ ...base, GAME_TB_SC: "B" } as KboRawGame), s0);
+check("아웃 변화 → 동일(발송 안 함)", iosWidgetScoreState({ ...base, OUT_CN: 2 } as KboRawGame), s0);
+check("주자 변화 → 동일(발송 안 함)", iosWidgetScoreState({ ...base, B2_BAT_ORDER_NO: 3 } as KboRawGame), s0);
+check("점수 파싱 실패 → 0 처리", iosWidgetScoreState({ ...base, T_SCORE_CN: undefined } as unknown as KboRawGame), "0|1");
 
-// 이닝/초말 변화 → 다름
-check("이닝 변화 → 다름", iosWidgetScoreState({ ...base, GAME_INN_NO: 8 } as KboRawGame) !== s0, true);
-check("초말 변화 → 다름", iosWidgetScoreState({ ...base, GAME_TB_SC: "B" } as KboRawGame) !== s0, true);
+// ── ④ 커서 claim 판정 ────────────────────────────────────────────────
+check("row 없음 → claim-insert(최초 live 1회)", decideWidgetPushClaim(null, "0|0"), "claim-insert");
+check("같은 점수 → skip", decideWidgetPushClaim("3|1", "3|1"), "skip");
+check("점수 변화 → claim-update", decideWidgetPushClaim("3|1", "4|1"), "claim-update");
+check("retry sentinel → claim-update(재시도 경로)", decideWidgetPushClaim(WIDGET_RETRY_SENTINEL, "3|1"), "claim-update");
 
-// 아웃/주자 변화 → 다름
-check("아웃 변화 → 다름", iosWidgetScoreState({ ...base, OUT_CN: 2 } as KboRawGame) !== s0, true);
-check("2루 주자 → 다름", iosWidgetScoreState({ ...base, B2_BAT_ORDER_NO: 3 } as KboRawGame) !== s0, true);
+// ── ④ transient 실패 판정 + bounded retry ────────────────────────────
+check("전량 성공 → transient 0", widgetTransientFailures({ ok: true, failed: 0, cleaned: 0 }), 0);
+check("invalid 정리분만 → transient 0(전진 확정)", widgetTransientFailures({ ok: true, failed: 3, cleaned: 3 }), 0);
+check("invalid 외 실패 잔존 → transient>0", widgetTransientFailures({ ok: true, failed: 5, cleaned: 3 }), 2);
+check("인프라 실패(ok:false) → transient 취급", widgetTransientFailures({ ok: false, failed: 0, cleaned: 0 }), 1);
+check("attempts 0 → revert(재시도)", shouldRevertWidgetCursor(0), true);
+check("attempts 1 → revert(재시도)", shouldRevertWidgetCursor(1), true);
+check(`attempts ${WIDGET_PUSH_MAX_RETRIES} = 상한 → 전진 유지(포기)`, shouldRevertWidgetCursor(WIDGET_PUSH_MAX_RETRIES), false);
 
-// 아웃 클램프(3→2) — 이닝 종료 전이 안전
-check("아웃 3 클램프 2", iosWidgetScoreState({ ...base, OUT_CN: 3 } as KboRawGame),
-  iosWidgetScoreState({ ...base, OUT_CN: 2 } as KboRawGame));
-
-// 주자 유무만 반영(순번 무관) — 5번 타자든 9번이든 '주자 있음' 동일
-check("주자 순번 무관(있음)", iosWidgetScoreState({ ...base, B1_BAT_ORDER_NO: 9 } as KboRawGame), s0);
+// ── ③ 지연/역순 배달 fence (Swift markLiveScore 미러 — 삼순 지정 순서 테스트) ──
+check("최초 이벤트(stored 없음) → 적용", shouldApplyWidgetLiveEvent(null, 1000, false), true);
+check("new → old: 늦은 옛 push(≤) 거부", shouldApplyWidgetLiveEvent(2000, 1000, false), false);
+check("동일 시각(중복 배달) 거부", shouldApplyWidgetLiveEvent(2000, 2000, false), false);
+check("정순 배달(더 새 이벤트) 적용", shouldApplyWidgetLiveEvent(1000, 2000, false), true);
+check("final → old: 종료 카드에 늦은 live 거부", shouldApplyWidgetLiveEvent(1000, 2000, true), false);
+check("파싱 실패(eventMs 0) + stored 존재 → 거부", shouldApplyWidgetLiveEvent(1000, 0, false), false);
 
 console.log(`\nios-widget-score-state-smoke: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);
