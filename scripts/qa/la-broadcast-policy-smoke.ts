@@ -16,6 +16,8 @@ import {
   decideStartReissue,
   startTokenChangePatch,
   shouldAdvanceFallbackCursor,
+  applyChannelHeartbeat,
+  CHANNEL_HEARTBEAT_INTERVAL_MS,
 } from "../../src/lib/notifications/live-activity-channel-policy";
 
 let pass = 0;
@@ -344,6 +346,30 @@ check("cursor: 전원 retryable 실패 → 보류",
   shouldAdvanceFallbackCursor(["retryableFailure"]), false);
 check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
   shouldAdvanceFallbackCursor(["invalidToken", "retryableFailure"]), false);
+
+// ── applyChannelHeartbeat — 채널 무변화 stale 상한(삼순 5조건 ②, ≤2분 p10 server-attempt SLO) ──
+{
+  const HB = CHANNEL_HEARTBEAT_INTERVAL_MS;
+  const t = 10_000_000;
+  check("hb: interval = 2분", HB, 120_000);
+  check("hb: 자연 p10 → 그대로(성공 시 last_p10_at 전진)",
+    applyChannelHeartbeat({ send: true, priority: "10" }, t - HB * 5, t),
+    { send: true, priority: "10" });
+  check("hb: skip + 최근 p10(1분 전) → skip 유지",
+    applyChannelHeartbeat({ send: false }, t - 60_000, t), { send: false });
+  check("hb: skip + 2분 경과 → p10 heartbeat(놓친 단말 catch-up)",
+    applyChannelHeartbeat({ send: false }, t - HB, t), { send: true, priority: "10" });
+  check("hb: skip + last_p10 null(신규 채널/마이그레이션 backfill) → p10",
+    applyChannelHeartbeat({ send: false }, null, t), { send: true, priority: "10" });
+  check("hb: p5 + 최근 p10 → p5 유지(예산 미소모 경로 보존)",
+    applyChannelHeartbeat({ send: true, priority: "5" }, t - 60_000, t),
+    { send: true, priority: "5" });
+  check("hb: p5 + 2분 경과 → p10 승격(p5는 last_p10_at 미전진이므로)",
+    applyChannelHeartbeat({ send: true, priority: "5" }, t - HB - 1, t),
+    { send: true, priority: "10" });
+  check("hb: 경계 직전(2분-1ms) → 유지(과다 발송 방지)",
+    applyChannelHeartbeat({ send: false }, t - HB + 1, t), { send: false });
+}
 
 console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);

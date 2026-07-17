@@ -30,6 +30,39 @@ export function decideChannelPush(input: ChannelPushDecisionInput): ChannelPushD
   return { send: false };
 }
 
+// ── 채널 broadcast heartbeat/catch-up (삼순 5조건 ②) ──
+//
+// 채널 broadcast는 No-Message-Stored + apns-expiration: 0 — accepted push 1건을 단말이
+// 놓치면(무선 순단·재연결) 무변화 스킵 정책상 다음 상태 변화까지 stale이 3분을 넘을 수
+// 있다. 마지막 *성공* p10 broadcast 이후 CHANNEL_HEARTBEAT_INTERVAL_MS가 지나면 스킵/p5
+// 틱이어도 p10 current-state로 재발송해 stale 상한을 건다.
+//
+// ⚠️ 이것은 **server-attempt SLO**다(온라인·LA 허용·채널 구독 단말 기준 ≤2분 간격 p10
+// 재발송 *시도*). APNs는 최종 전달을 보장하지 않으므로 절대 전달 SLA는 구조적으로 불가.
+// last_p10_at은 APNs 성공 시에만 전진(transient 실패 시 전진 금지) + channelMutationFence
+// 일치 시에만 기록(동시 cron/재생성 채널 보호) — 배선은 live-activity-channels.ts.
+
+export const CHANNEL_HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000;
+
+/**
+ * 무변화 스킵/p5 판정을 heartbeat 기준으로 승격한다.
+ * - 이미 p10 발송 판정이면 그대로(자연 p10이 heartbeat 역할 겸함 — 성공 시 last_p10_at 전진).
+ * - last_p10_at이 null(신규 채널/마이그레이션 backfill)이거나 ≥interval 경과했으면
+ *   스킵/p5여도 p10 current-state 재발송(놓친 단말 catch-up).
+ * - interval 미만이면 원래 판정 유지(p5는 p5로, 스킵은 스킵).
+ */
+export function applyChannelHeartbeat(
+  decision: ChannelPushDecision,
+  lastP10AtMs: number | null,
+  nowMs: number,
+): ChannelPushDecision {
+  if (decision.send && decision.priority === "10") return decision;
+  if (lastP10AtMs === null || nowMs - lastP10AtMs >= CHANNEL_HEARTBEAT_INTERVAL_MS) {
+    return { send: true, priority: "10" };
+  }
+  return decision;
+}
+
 /** 레거시 per-토큰 update 발송 판정 입력 (#664 catch-up). */
 export interface LegacyTokenUpdateInput {
   /** 경기 단위 skip/priority 판정(decideChannelPush 결과). null = 판정 재료 없음. */
