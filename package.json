@@ -13,6 +13,7 @@
     "qa:resolve-player": "tsx scripts/qa/resolve-player-smoke.ts",
     "qa:war-saber": "tsx scripts/qa/war-saber-smoke.ts",
     "qa:la-broadcast": "tsx scripts/qa/la-broadcast-policy-smoke.ts",
+    "qa:la-autostart": "tsx scripts/qa/la-autostart-smoke.ts",
     "qa:la-ack-policy": "bash scripts/qa/la-channel-ack-policy-smoke.sh",
     "qa:news-naver-url": "tsx scripts/qa/news-naver-url-smoke.ts",
     "qa:photo-filter": "tsx scripts/qa/photo-article-filter-smoke.ts",

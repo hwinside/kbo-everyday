@@ -1,5 +1,7 @@
 import { registerPlugin, Capacitor } from "@capacitor/core";
 import { supabase } from "@/lib/supabase/client";
+import { getMyTeamId } from "@/lib/store/myteam";
+import { parseGameIdCodes, pickMyTeamStartableGame } from "@/lib/notifications/la-autostart-policy";
 
 // Live Activity 네이티브 브리지 (W2) — 잠금화면 라이브 스코어 카드.
 // 경기룸 진입 시 game-live 데이터로 start, 폴링으로 update, 종료 시 end.
@@ -19,7 +21,9 @@ export interface LiveActivityState {
   pitcherName: string;
   batterName: string;
   stadium: string;
-  status: "live" | "final";
+  // scheduled = 경기 시작 30분 전 예정 카드(인앱 autostart 복구 경로, 삼순 blocker② 보완①).
+  // 네이티브 parseState가 build12+부터 .scheduled를 파싱하므로 재아카이브 불필요.
+  status: "live" | "final" | "scheduled";
   /** 문자중계 최근 플레이 한 줄(1.0.7+, 옵셔널) — 잠금 카드/홈위젯 large 렌더. */
   lastPlay?: string;
 }
@@ -32,6 +36,11 @@ export interface LiveActivityStartData extends LiveActivityState {
   homeTeamCode: string;
   /** 최애팀 코드(KBO 2자 코드). 강조/컬러용. 미설정/비참여 시 "". */
   myTeamCode: string;
+  /** 예정 카드 시작 시각 "HH:MM" (scheduled 전용, 네이티브 startTime). */
+  startTime?: string;
+  /** 예고 선발(원정/홈) — scheduled 전용. */
+  awayStarter?: string;
+  homeStarter?: string;
 }
 
 interface LiveActivityPlugin {
@@ -422,4 +431,140 @@ export async function writeHomeWidgetSnapshot(
     homeStarter: game.status === "scheduled" ? (game.homeStarter ?? "") : "",
     next,
   });
+}
+
+// ── 재설치/첫 실행 인앱 자동 시작 (삼순 1.0.9(16) 5조건 재판정 blocker②) ──
+// #667 서버 감지는 p2s 토큰 *값이 바뀐* 재설치만 커버한다. iOS가 재설치에도 동일 토큰을
+// 재발급하면 기존 claim/구독이 p2s 재발송을 계속 차단 → 카드가 영영 안 뜬다(서버 단독
+// 구분 불가, #667 명기 한계). 해결 = 첫 실행/로그인/최애팀 설정/포그라운드 복귀 시점에
+// 현재 *라이브 중인 최애팀 경기*를 인앱 start로 직접 보장 — p2s claim 상태와 무관하게
+// 카드가 뜬다. 네이티브 start()가 같은 gameId는 update로 dedupe(중복 카드 없음), build16+
+// && iOS18+ && active 채널이면 `.channel` 구독 시작, 그 외 `.token` 폴백(기존 체인 재사용).
+// 원격 로드 웹 번들이라 배포 즉시 기존 설치 빌드 전체 적용(재아카이브 불필요).
+
+/** /api/game-live 응답의 필요 필드만 (useLiveGame LiveGameData 부분집합). */
+interface AutoStartGame {
+  gameId: string;
+  awayName: string;
+  homeName: string;
+  awayScore: number;
+  homeScore: number;
+  inning: number;
+  isTop: boolean;
+  balls: number;
+  strikes: number;
+  outs: number;
+  runner1b: boolean;
+  runner2b: boolean;
+  runner3b: boolean;
+  currentPitcher: string | null;
+  currentBatter: string | null;
+  stadium: string;
+  isLive: boolean;
+  status: string; // "scheduled" | "live" | "final" | "cancelled"
+  time: string;   // "HH:MM" 시작 시각
+  awayStarterName: string | null;
+  homeStarterName: string | null;
+}
+// 선택/파싱은 순수 판정 모듈(la-autostart-policy.ts)에서 — qa:la-autostart 스모크 대상.
+
+let autoStartInFlight = false;
+let autoStartLastAttemptMs = 0;
+/** 성공한 `${myTeamCode}|${gameId}` — 같은 세션 내 재시작 fetch 생략(네이티브 dedupe의 앞단 절약). */
+let autoStartDoneKey: string | null = null;
+
+/**
+ * 라이브(또는 시작 30분 이내 예정) 최애팀 경기가 있으면 인앱 Live Activity를 시작한다.
+ * 부팅/SIGNED_IN/최애팀 설정(team-changed)/포그라운드 복귀에서 호출.
+ * - `bypassThrottle=true`(team-changed 전용): 60초 스로틀 무시 — 부팅/포그라운드 선행
+ *   시도 실패가 최애팀 설정 직후 start를 막으면 안 된다(삼순 blocker② 보완②).
+ *   in-flight 동시 중복 가드는 유지.
+ * - live면 실데이터 프레임, scheduled면 예정 카드(시작 시각·선발) 프레임으로 start.
+ * - 라이브·임박 예정 경기 없음/비네이티브/토글 off는 no-op(기존 게이트 재사용).
+ */
+export async function autoStartMyTeamLiveActivity(
+  reason: string,
+  bypassThrottle = false,
+): Promise<void> {
+  if (!isNativeIOS()) return;
+  const now = Date.now();
+  if (autoStartInFlight) return;
+  if (!bypassThrottle && now - autoStartLastAttemptMs < 60_000) return;
+  const myTeamId = getMyTeamId();
+  const myTeamCode = myTeamId ? ID_TO_KBO_CODE[myTeamId] ?? "" : "";
+  if (!myTeamCode) return;
+  autoStartInFlight = true;
+  autoStartLastAttemptMs = now;
+  try {
+    const res = await fetch("/api/game-live");
+    if (!res.ok) return;
+    const data = (await res.json()) as { games?: AutoStartGame[] };
+    const picked = pickMyTeamStartableGame(data.games ?? [], myTeamCode, now);
+    if (!picked) return;
+    const { game: g, kind } = picked;
+    const key = `${myTeamCode}|${g.gameId}|${kind}`;
+    if (autoStartDoneKey === key) return;
+    const codes = parseGameIdCodes(g.gameId)!; // pick이 파싱 성공만 반환
+    const started = await startLiveActivity(
+      kind === "live"
+        ? {
+            gameId: g.gameId,
+            awayTeam: g.awayName,
+            homeTeam: g.homeName,
+            awayTeamCode: codes.away,
+            homeTeamCode: codes.home,
+            myTeamCode,
+            awayScore: g.awayScore,
+            homeScore: g.homeScore,
+            inning: g.inning,
+            isTopInning: g.isTop,
+            balls: g.balls,
+            strikes: g.strikes,
+            outs: g.outs,
+            onFirst: g.runner1b,
+            onSecond: g.runner2b,
+            onThird: g.runner3b,
+            pitcherName: g.currentPitcher ?? "",
+            batterName: g.currentBatter ?? "",
+            stadium: g.stadium ?? "",
+            status: "live",
+            // 최근 플레이는 다음 서버 update/경기룸 진입 때 채워짐 — 시작 프레임은 생략.
+            lastPlay: "",
+          }
+        : {
+            // scheduled 예정 카드 — 서버 p2s 30분 전 프레임과 대칭(시작 시각·선발 표시).
+            gameId: g.gameId,
+            awayTeam: g.awayName,
+            homeTeam: g.homeName,
+            awayTeamCode: codes.away,
+            homeTeamCode: codes.home,
+            myTeamCode,
+            awayScore: 0,
+            homeScore: 0,
+            inning: 1,
+            isTopInning: true,
+            balls: 0,
+            strikes: 0,
+            outs: 0,
+            onFirst: false,
+            onSecond: false,
+            onThird: false,
+            pitcherName: "",
+            batterName: "",
+            stadium: g.stadium ?? "",
+            status: "scheduled",
+            startTime: g.time,
+            awayStarter: g.awayStarterName ?? "",
+            homeStarter: g.homeStarterName ?? "",
+          },
+    );
+    if (started) {
+      autoStartDoneKey = key;
+      console.log(`[live-activity] auto-start ok (${reason}, ${kind}) game=${g.gameId}`);
+    }
+  } catch (e) {
+    console.warn("[live-activity] auto-start failed", e);
+  } finally {
+    autoStartInFlight = false;
+  }
 }
