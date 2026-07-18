@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Bell, ChevronDown, ChevronUp } from "lucide-react";
+import { Bell, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -9,6 +9,7 @@ import { isNative } from "@/lib/capacitor/platform";
 import { requestNativePushPermission, checkNativePushPermission } from "@/lib/native-push";
 import { endLiveActivity, setLiveActivityEnabledCache } from "@/lib/native-live-activity";
 import { getLiveUpdateState, setLiveUpdateOptIn, type LiveUpdateState } from "@/lib/capacitor/game-notification";
+import { retriggerLockScreenCard } from "@/lib/notifications/lock-card-retrigger";
 import { PREF_LABELS, DEFAULT_PREFS, type NotificationPrefs, type PrefKey } from "@/lib/notifications/prefs";
 
 /**
@@ -21,6 +22,9 @@ export default function NotificationPrefsCard() {
   const [expanded, setExpanded] = useState(false);
   const [prefs, setPrefs] = useState<NotificationPrefs>(DEFAULT_PREFS);
   const [loaded, setLoaded] = useState(false);
+  // prefs 서버 조회 성공 여부 — loaded는 "시도 종료"라 401/5xx/예외에도 true가 된다.
+  // 재노출 버튼은 서버 값 확인 성공 시에만 노출(fail-closed, 삼순 #680 재리뷰 blocker).
+  const [prefsLoadedOk, setPrefsLoadedOk] = useState(false);
   // OS 푸시 권한 미허용 여부 — 기존 회원/재설치 유저 커버용 안내 배너 게이트.
   const [permissionDenied, setPermissionDenied] = useState(false);
   // 잠금화면 라이브 카드(Android 16+) — 디바이스 로컬 opt-in. supported:false면 행 자체를 숨김.
@@ -60,11 +64,24 @@ export default function NotificationPrefsCard() {
     return () => { cancelled = true; };
   }, [expanded]);
 
-  const toggleLiveUpdate = useCallback(async () => {
-    const next = !liveUpdate.enabled;
-    setLiveUpdate((s) => ({ ...s, enabled: next }));
-    await setLiveUpdateOptIn(next);
+  // simple=true → Live Update(시스템 승격, 상단 우선 표시) opt-in / simple=false → 기존 디자인 카드(opt-out).
+  const setLiveCardStyle = useCallback(async (simple: boolean) => {
+    if (simple === liveUpdate.enabled) return;
+    setLiveUpdate((s) => ({ ...s, enabled: simple }));
+    await setLiveUpdateOptIn(simple);
   }, [liveUpdate.enabled]);
+
+  // 잠금화면 카드 수동 재표시 (건의함 feedback:4369ee5a — 실수로 카드를 지운 유저 복구).
+  // idle → working → done(요청 접수)/none(대상 경기 없음)/failed(설정·권한·네트워크 실패,
+  // 삼순 #680 blocker②) — 4초 후 idle 복귀.
+  const [retrigger, setRetrigger] = useState<"idle" | "working" | "done" | "none" | "failed">("idle");
+  const retriggerCard = useCallback(async () => {
+    if (retrigger === "working") return;
+    setRetrigger("working");
+    const result = await retriggerLockScreenCard();
+    setRetrigger(result === "started" ? "done" : result === "none" ? "none" : "failed");
+    setTimeout(() => setRetrigger("idle"), 4000);
+  }, [retrigger]);
 
   useEffect(() => {
     if (!expanded || loaded) return;
@@ -77,6 +94,7 @@ export default function NotificationPrefsCard() {
           setPrefs(merged);
           // 클라 게이트 캐시를 서버 SSOT로 동기화 (start/update가 이 캐시로 판단).
           setLiveActivityEnabledCache(merged.live_activity !== false);
+          setPrefsLoadedOk(true);
         }
       } catch {
         // 디폴트 유지
@@ -166,18 +184,48 @@ export default function NotificationPrefsCard() {
             </div>
           ))}
           {liveUpdate.supported && (
-            <div className="flex items-center justify-between py-3">
-              <div>
-                <span className="text-sm text-text-primary">잠금화면 라이브 카드</span>
-                <p className="text-xs text-text-tertiary mt-0.5">경기 진행중 알림을 잠금화면 상단 라이브 카드로 표시 (이 기기)</p>
+            <div className="py-3">
+              <span className="text-sm text-text-primary">잠금화면 카드 스타일</span>
+              <p className="text-xs text-text-tertiary mt-0.5">경기 진행중 잠금화면에 표시할 카드 스타일을 선택하세요 (이 기기)</p>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => void setLiveCardStyle(false)}
+                  aria-pressed={!liveUpdate.enabled}
+                  className={`rounded-xl border px-3 py-3 text-left transition-colors ${!liveUpdate.enabled ? "border-accent bg-accent/10" : "border-white/10 bg-bg-tertiary"}`}
+                >
+                  <span className={`text-sm font-medium ${!liveUpdate.enabled ? "text-accent" : "text-text-primary"}`}>디자인 카드</span>
+                  <p className="text-xs text-text-tertiary mt-0.5">팀컬러·그래픽 크보팬 디자인</p>
+                </button>
+                <button
+                  onClick={() => void setLiveCardStyle(true)}
+                  aria-pressed={liveUpdate.enabled}
+                  className={`rounded-xl border px-3 py-3 text-left transition-colors ${liveUpdate.enabled ? "border-accent bg-accent/10" : "border-white/10 bg-bg-tertiary"}`}
+                >
+                  <span className={`text-sm font-medium ${liveUpdate.enabled ? "text-accent" : "text-text-primary"}`}>심플 카드</span>
+                  <p className="text-xs text-text-tertiary mt-0.5">잠금화면 상단 우선 표시 (안드 기본)</p>
+                </button>
               </div>
+            </div>
+          )}
+          {isNative && prefsLoadedOk && prefs.live_activity !== false && (
+            <div className="py-3">
               <button
-                onClick={() => void toggleLiveUpdate()}
-                className={`relative w-12 h-7 rounded-full transition-colors ${liveUpdate.enabled ? "bg-accent" : "bg-bg-tertiary"}`}
-                aria-label={`잠금화면 라이브 카드 ${liveUpdate.enabled ? "끄기" : "켜기"}`}
+                onClick={() => void retriggerCard()}
+                disabled={retrigger === "working"}
+                className="w-full flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-bg-tertiary px-4 py-2.5 text-sm text-text-primary disabled:opacity-60"
               >
-                <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${liveUpdate.enabled ? "translate-x-5" : "translate-x-0"}`} />
+                <RefreshCw size={15} className={retrigger === "working" ? "animate-spin" : ""} />
+                잠금화면 카드 다시 표시
               </button>
+              <p className="text-xs text-text-tertiary mt-1.5 text-center">
+                {retrigger === "done"
+                  ? "✅ 카드 표시를 요청했어요 — 잠금화면을 확인해주세요"
+                  : retrigger === "none"
+                    ? "지금은 표시할 경기가 없어요 (라이브 경기 또는 시작 30분 전부터 가능)"
+                    : retrigger === "failed"
+                      ? "다시 표시하지 못했어요 — 알림 설정·권한 확인 후 재시도해주세요"
+                      : "실수로 카드를 지웠을 때 눌러주세요"}
+              </p>
             </div>
           )}
         </div>

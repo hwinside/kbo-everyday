@@ -39,7 +39,7 @@ export interface WidgetNextGame {
 }
 
 interface GameNotificationPlugin {
-  start(opts: { title: string; body: string }): Promise<void>;
+  start(opts: { title: string; body: string; path?: string }): Promise<void>;
   update(opts: { title: string; body: string }): Promise<void>;
   remove(): Promise<void>;
   updateWidget(opts: WidgetData): Promise<void>;
@@ -58,13 +58,18 @@ export interface LiveUpdateState {
 
 const GameNotification = registerPlugin<GameNotificationPlugin>("GameNotification");
 
-/** ongoing notification 시작 (경기 시작 시). 실패는 silent — 부가 기능. */
-export async function startGameNotification(title: string, body: string): Promise<void> {
-  if (!isAndroid) return;
+/** ongoing notification 시작 (경기 시작 시). 실패는 silent — 부가 기능.
+ *  path = 카드 탭 시 열 경기룸 경로(옵셔널 — 네이티브 start가 path를 딥링크로 사용).
+ *  반환 = 브릿지 호출 성공 여부(구빌드 메서드 부재/브릿지 실패 = false — 재노출 버튼 결과 안내용,
+ *  PR #680 삼순 blocker②). 단 네이티브 post()가 권한 미허용(SecurityException)을 삼키므로
+ *  true = "게시 확정"이 아니라 "요청 접수"로 해석할 것. */
+export async function startGameNotification(title: string, body: string, path?: string): Promise<boolean> {
+  if (!isAndroid) return false;
   try {
-    await GameNotification.start({ title, body });
+    await GameNotification.start({ title, body, ...(path ? { path } : {}) });
+    return true;
   } catch {
-    // silent
+    return false;
   }
 }
 
@@ -125,7 +130,7 @@ export async function setWidgetMyTeam(code: string): Promise<void> {
 }
 
 /** 잠금화면 라이브 카드 지원/opt-in 상태 — 미지원(비안드/구버전 OS)이면 supported:false.
- *  구 네이티브 빌드(플러그인 메서드 부재)에서도 조용히 미지원 처리. */
+ *  구 네이티브 빌드(플러그인 메서드 부재)에서도 조용히 미지원 처리(fail-open — 토글 행 숨김용). */
 export async function getLiveUpdateState(): Promise<LiveUpdateState> {
   if (!isAndroid) return { supported: false, enabled: false };
   try {
@@ -135,13 +140,28 @@ export async function getLiveUpdateState(): Promise<LiveUpdateState> {
   }
 }
 
-/** 잠금화면 라이브 카드 명시 opt-in 토글(디바이스 로컬). */
-export async function setLiveUpdateOptIn(enabled: boolean): Promise<void> {
-  if (!isAndroid) return;
+/** strict 버전 — 수동 재노출 경로 전용(삼순 #680 재리뷰). 브릿지 조회 실패(구빌드 메서드
+ *  부재 포함)를 null로 구분 반환 — suppression 상태 불명인 채 재게시하면 네이티브 post()가
+ *  조용히 suppress해 성공 오안내가 나므로 호출부가 failed 처리한다. */
+export async function getLiveUpdateStateStrict(): Promise<LiveUpdateState | null> {
+  if (!isAndroid) return null;
+  try {
+    return await GameNotification.getLiveUpdateState();
+  } catch {
+    return null;
+  }
+}
+
+/** 잠금화면 라이브 카드 명시 opt-in 토글(디바이스 로컬).
+ *  반환 = 브릿지 호출 성공 여부 — 재노출 경로에서 suppression 리셋 실패를 성공으로
+ *  오안내하지 않기 위함(PR #680 삼순 blocker②). 기존 토글 호출부는 void 소비라 무영향. */
+export async function setLiveUpdateOptIn(enabled: boolean): Promise<boolean> {
+  if (!isAndroid) return false;
   try {
     await GameNotification.setLiveUpdateOptIn({ enabled });
+    return true;
   } catch {
-    // silent
+    return false;
   }
 }
 
