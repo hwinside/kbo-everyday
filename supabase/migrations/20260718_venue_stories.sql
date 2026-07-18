@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS venue_stories (
   width        INT,
   height       INT,
   caption      TEXT,
+  -- 지오펜스: 업로드 시 구장 반경 안에서 GPS 검증됐는지(직관 인증). 중립/올스타 등
+  -- 구장 좌표 미매핑 게임은 검증 없이 허용(false).
+  venue_verified BOOLEAN NOT NULL DEFAULT false,
   report_count INT NOT NULL DEFAULT 0,
   -- active: 노출 / removed: 신고 임계·어드민·본인삭제 대기(cron 이 storage 까지 정리)
   status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'removed')),

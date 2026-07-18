@@ -68,6 +68,9 @@
 	<string>프로필 사진으로 사용할 이미지를 선택하려면 사진 접근 권한이 필요합니다.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>사진을 저장하려면 사진 라이브러리 접근 권한이 필요합니다.</string>
+	<!-- 직관 라이브: 구장 현장 인증(지오펜스)을 위해 업로드 시 위치를 사용. -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>직관 라이브에 현장 사진·영상을 올릴 때 구장 근처인지 확인(직관 인증)하는 데 사용됩니다.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>

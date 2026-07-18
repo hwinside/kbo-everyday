@@ -3,25 +3,41 @@
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Loader2, Video as VideoIcon } from "lucide-react";
+import { X, Loader2, Video as VideoIcon, MapPin } from "lucide-react";
 import { getSafeSession } from "@/lib/supabase/client";
 import { prepareVenueStoryMedia } from "@/lib/venue-stories/upload";
+import { getVenuePosition } from "@/lib/venue-stories/geo";
+import { stadiumByTeamId, haversineMeters } from "@/lib/venue-stories/stadiums";
+import { VENUE_GEOFENCE_RADIUS_M } from "@/lib/venue-stories/types";
 
 interface Props {
   gameId: string;
+  homeTeamId: number;
   isOpen: boolean;
   onClose: () => void;
   onUploaded: () => void;
 }
 
-export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded }: Props) {
+type Phase = "idle" | "geo" | "upload";
+
+export default function VenueStoryComposer({
+  gameId,
+  homeTeamId,
+  isOpen,
+  onClose,
+  onUploaded,
+}: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewType, setPreviewType] = useState<"image" | "video" | null>(null);
   const [caption, setCaption] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const stadium = stadiumByTeamId(homeTeamId);
+  const submitting = phase !== "idle";
+  const radiusKm = Math.round((VENUE_GEOFENCE_RADIUS_M / 1000) * 10) / 10;
 
   const reset = () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -30,7 +46,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setPreviewType(null);
     setCaption("");
     setError(null);
-    setSubmitting(false);
+    setPhase("idle");
   };
 
   const close = () => {
@@ -57,20 +73,42 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
   const submit = async () => {
     if (!file || submitting) return;
-    setSubmitting(true);
     setError(null);
+    let lat: number | null = null;
+    let lng: number | null = null;
+
+    // 지오펜스: 구장 좌표가 있는 경기는 반경 안에서만 허용
+    if (stadium) {
+      setPhase("geo");
+      const pos = await getVenuePosition();
+      if ("error" in pos) {
+        setError(pos.error);
+        setPhase("idle");
+        return;
+      }
+      const dist = haversineMeters(pos.lat, pos.lng, stadium.lat, stadium.lng);
+      if (dist > VENUE_GEOFENCE_RADIUS_M) {
+        setError(`직관 인증 실패 — ${stadium.name} 반경 ${radiusKm}km 안에서만 올릴 수 있어요`);
+        setPhase("idle");
+        return;
+      }
+      lat = pos.lat;
+      lng = pos.lng;
+    }
+
+    setPhase("upload");
     try {
       const prepared = await prepareVenueStoryMedia(file, gameId);
       if ("error" in prepared) {
         setError(prepared.error);
-        setSubmitting(false);
+        setPhase("idle");
         return;
       }
       const session = await getSafeSession();
       const token = session?.access_token;
       if (!token) {
         setError("로그인이 필요해요");
-        setSubmitting(false);
+        setPhase("idle");
         return;
       }
       const res = await fetch("/api/venue-stories", {
@@ -85,19 +123,21 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
           width: prepared.width,
           height: prepared.height,
           caption: caption.trim() || null,
+          lat,
+          lng,
         }),
       });
       const data = await res.json();
       if (data.error) {
         setError(data.error);
-        setSubmitting(false);
+        setPhase("idle");
         return;
       }
       onUploaded();
       close();
     } catch {
       setError("업로드에 실패했어요");
-      setSubmitting(false);
+      setPhase("idle");
     }
   };
 
@@ -128,6 +168,15 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
           </div>
 
           <div className="p-4 flex flex-col gap-3">
+            {stadium && (
+              <div className="flex items-center gap-1.5 text-[12px] text-text-tertiary bg-bg-tertiary/50 rounded-lg px-3 py-2">
+                <MapPin size={13} className="text-red-400 shrink-0" />
+                <span>
+                  {stadium.name} 반경 {radiusKm}km 안(직관 중)일 때만 올릴 수 있어요
+                </span>
+              </div>
+            )}
+
             {!previewUrl ? (
               <button
                 onClick={() => inputRef.current?.click()}
@@ -179,7 +228,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
               className="w-full py-3 rounded-xl bg-brand-primary text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
             >
               {submitting ? <Loader2 size={18} className="animate-spin" /> : null}
-              {submitting ? "올리는 중…" : "올리기"}
+              {phase === "geo" ? "위치 확인 중…" : phase === "upload" ? "올리는 중…" : "올리기"}
             </button>
           </div>
         </motion.div>

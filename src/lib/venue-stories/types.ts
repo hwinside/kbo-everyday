@@ -7,6 +7,7 @@ export const VENUE_STORY_TTL_HOURS = 8; // 업로드 후 만료(경기 종료 �
 export const VENUE_STORY_MAX_PER_USER_PER_GAME = 10; // 게임당 유저 상한(스팸 방지)
 export const VENUE_STORY_REPORT_HIDE_THRESHOLD = 3; // 신고 누적 자동 숨김
 export const VENUE_STORY_IMAGE_HOLD_MS = 5_000; // 사진 스토리 자동 진행 시간
+export const VENUE_GEOFENCE_RADIUS_M = 1_500; // 직관 인증 구장 반경(m)
 
 export type VenueStoryMediaType = "video" | "image";
 
@@ -22,6 +23,7 @@ export interface VenueStory {
   width: number | null;
   height: number | null;
   caption: string | null;
+  venueVerified: boolean;
   createdAt: string;
   author: {
     nickname: string | null;
@@ -40,4 +42,6 @@ export interface CreateVenueStoryBody {
   width?: number | null;
   height?: number | null;
   caption?: string | null;
+  lat?: number | null;
+  lng?: number | null;
 }

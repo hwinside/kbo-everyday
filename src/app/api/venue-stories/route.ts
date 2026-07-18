@@ -6,8 +6,10 @@ import {
   VENUE_STORY_DURATION_TOLERANCE_MS,
   VENUE_STORY_TTL_HOURS,
   VENUE_STORY_MAX_PER_USER_PER_GAME,
+  VENUE_GEOFENCE_RADIUS_M,
   type VenueStory,
 } from "@/lib/venue-stories/types";
+import { stadiumForGame, haversineMeters } from "@/lib/venue-stories/stadiums";
 
 const ALLOWED_BUCKETS = new Set(["videos", "photos"]);
 
@@ -38,7 +40,7 @@ export async function GET(req: NextRequest) {
   const { data: rows, error } = await supabase
     .from("venue_stories")
     .select(
-      "id, game_id, user_id, media_type, media_url, thumb_url, duration_ms, width, height, caption, created_at",
+      "id, game_id, user_id, media_type, media_url, thumb_url, duration_ms, width, height, caption, venue_verified, created_at",
     )
     .eq("game_id", gameId)
     .eq("status", "active")
@@ -83,6 +85,7 @@ export async function GET(req: NextRequest) {
       width: (r.width as number) ?? null,
       height: (r.height as number) ?? null,
       caption: (r.caption as string) ?? null,
+      venueVerified: (r.venue_verified as boolean) ?? false,
       createdAt: r.created_at as string,
       author: {
         nickname: prof?.nickname ?? null,
@@ -120,6 +123,8 @@ export async function POST(req: NextRequest) {
   const height = typeof body.height === "number" ? Math.round(body.height) : null;
   const caption =
     typeof body.caption === "string" ? body.caption.trim().slice(0, 200) : null;
+  const lat = typeof body.lat === "number" ? body.lat : null;
+  const lng = typeof body.lng === "number" ? body.lng : null;
 
   if (!gameId) {
     return NextResponse.json({ error: "gameId 필요" }, { status: 400 });
@@ -150,6 +155,26 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
+  }
+
+  // 지오펜스: gameId 로 구장 좌표를 독립 파싱 → 좌표 있는 경기는 반경 안에서만 허용
+  const stadium = stadiumForGame(gameId);
+  let venueVerified = false;
+  if (stadium) {
+    if (lat == null || lng == null) {
+      return NextResponse.json(
+        { error: "직관 인증(위치)이 필요해요" },
+        { status: 403 },
+      );
+    }
+    const dist = haversineMeters(lat, lng, stadium.lat, stadium.lng);
+    if (dist > VENUE_GEOFENCE_RADIUS_M) {
+      return NextResponse.json(
+        { error: "직관 인증 실패 — 구장 근처에서만 올릴 수 있어요" },
+        { status: 403 },
+      );
+    }
+    venueVerified = true;
   }
 
   // 게임당 유저 상한(스팸 방지)
@@ -186,6 +211,7 @@ export async function POST(req: NextRequest) {
       width,
       height,
       caption,
+      venue_verified: venueVerified,
       expires_at: expiresAt,
     })
     .select("id")
