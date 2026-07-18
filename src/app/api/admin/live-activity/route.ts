@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
+import {
+  activeChannelKeySet,
+  isLiveChannelSubscription,
+  type ActiveChannelRef,
+} from "@/lib/notifications/live-activity-channel-policy";
 import type { KboRawGame } from "@/types/api";
 
 // 어드민 — Live Activity 토큰/카드 종합 현황.
-// 발급된 push-to-start 토큰 수, 떠있는 잠금화면(started_users), update 토큰 등록 수,
-// 갱신 불가 카드(gap = started − tokens)를 경기별로 집계한다.
-// 데이터 소스는 warmup cron이 쓰는 것과 동일한 세 테이블 + KBO 당일 경기 목록.
+// 발급된 push-to-start 토큰 수, 떠있는 잠금화면(started_users), update 토큰·현재
+// active broadcast 채널 구독 수, 갱신 불가 카드를 경기별로 집계한다.
 
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 
@@ -51,6 +55,8 @@ interface SubRow {
   game_id: string;
   user_id: string | null;
   device_key: string;
+  environment: string;
+  channel_id: string;
 }
 
 // Supabase는 요청당 기본 1000행 캡이 있어(무제한 select가 조용히 잘림 — #560 사고)
@@ -87,7 +93,7 @@ async function fetchAllSubRows(): Promise<{ rows: SubRow[]; truncated: boolean }
   for (let page = 0; page < MAX_PAGES; page++) {
     const { data, error } = await supabase
       .from("live_activity_channel_subscriptions")
-      .select("game_id, user_id, device_key")
+      .select("game_id, user_id, device_key, environment, channel_id")
       .order("game_id", { ascending: false })
       .range(page * PAGE, page * PAGE + PAGE - 1);
     if (error) throw new Error(`live_activity_channel_subscriptions: ${error.message}`);
@@ -96,6 +102,17 @@ async function fetchAllSubRows(): Promise<{ rows: SubRow[]; truncated: boolean }
     if (page === MAX_PAGES - 1) truncated = true;
   }
   return { rows, truncated };
+}
+
+// 현재 active broadcast 채널 — 구독 stale ACK 배제용(항상 수십~수백 행만 존재해
+// 페이지네이션 불필요). status='active'만 사용(ending/deleted는 더 이상 갱신 안받음).
+async function fetchActiveChannels(): Promise<ActiveChannelRef[]> {
+  const { data, error } = await supabase
+    .from("live_activity_channels")
+    .select("game_id, environment, channel_id")
+    .eq("status", "active");
+  if (error) throw new Error(`live_activity_channels: ${error.message}`);
+  return (data ?? []) as ActiveChannelRef[];
 }
 
 export async function GET(req: NextRequest) {
@@ -107,19 +124,22 @@ export async function GET(req: NextRequest) {
     const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    const [p2sTotal, p2sFresh24h, p2sFresh7d, startedResult, tokenResult, subResult, gamesResult] = await Promise.all([
+    const [p2sTotal, p2sFresh24h, p2sFresh7d, startedResult, tokenResult, subResult, channels, gamesResult] = await Promise.all([
       supabase.from("live_activity_start_tokens").select("*", { count: "exact", head: true }),
       supabase.from("live_activity_start_tokens").select("*", { count: "exact", head: true }).gte("updated_at", since24h),
       supabase.from("live_activity_start_tokens").select("*", { count: "exact", head: true }).gte("updated_at", since7d),
       fetchAllRows("live_activity_started_users"),
       fetchAllRows("live_activity_tokens"),
       fetchAllSubRows(),
+      fetchActiveChannels(),
       fetchTodayGames(),
     ]);
 
     const startedRows = startedResult.rows;
     const tokenRows = tokenResult.rows;
-    const subRows = subResult.rows;
+    // active 채널 (game_id, environment, channel_id) 정확 일치 구독만 유효(stale ACK 배제).
+    const activeKeys = activeChannelKeySet(channels);
+    const subRows = subResult.rows.filter(r => isLiveChannelSubscription(r, activeKeys));
     const rowsTruncated = startedResult.truncated || tokenResult.truncated || subResult.truncated;
     const { games, ok: kboStatusAvailable } = gamesResult;
 
@@ -133,7 +153,7 @@ export async function GET(req: NextRequest) {
     }
 
     // 경기별 집계: started(push-to-start로 뜬 카드) / tokens(update 토큰) /
-    // updatable(둘 다 있음 = 매분 갱신 수신) / gap(started인데 토큰 없음 = 갱신 불가).
+    // channelUsers(현재 active 채널 ACK) / updatable(started ∩ (tokens ∪ channelUsers)).
     const byGame = new Map<string, { started: Set<string>; tokens: Set<string>; channelUsers: Set<string>; channelDevices: Set<string> }>();
     const entry = (gameId: string) => {
       let e = byGame.get(gameId);
