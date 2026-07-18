@@ -73,3 +73,42 @@ self.addEventListener("fetch", (event) => {
     }
   }
 });
+
+// ---- Web Push (어드민 PWA 알림 — /api/admin/push, 2026-07-18) ----
+self.addEventListener("push", (event) => {
+  if (!event.data) return;
+  let payload = {};
+  try {
+    payload = event.data.json();
+  } catch {
+    payload = { title: "크보팬", body: event.data.text() };
+  }
+  const title = payload.title || "크보팬";
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: payload.body || "",
+      tag: payload.tag || undefined,
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      data: { url: payload.url || "/" },
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || "/";
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clientList) => {
+        // 이미 열린 창이 있으면 재사용해 이동 (iOS 홈화면 웹앱은 단일 창)
+        for (const client of clientList) {
+          if ("focus" in client && "navigate" in client) {
+            return client.focus().then(() => client.navigate(url));
+          }
+        }
+        return self.clients.openWindow(url);
+      })
+  );
+});

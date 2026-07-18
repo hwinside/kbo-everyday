@@ -166,35 +166,32 @@ export function computeStreak(
   games: KboGame[],
   previousStreak: string | null,
 ): string {
-  const teamGames = games.filter(
-    (g) => g.status === "final" && (g.awayTeamId === teamId || g.homeTeamId === teamId),
-  );
+  // 더블헤더 순서 보장 — 같은 날 2경기는 gameId 접미 순번(1/2)이라 사전식 정렬이 곳 경기 순서.
+  const teamGames = games
+    .filter((g) => g.status === "final" && (g.awayTeamId === teamId || g.homeTeamId === teamId))
+    .sort((a, b) => a.gameId.localeCompare(b.gameId));
 
   if (teamGames.length === 0) return previousStreak ?? "-";
 
-  const results: ("W" | "L" | "D")[] = [];
+  // 전일 streak을 시작 상태로 그날 경기를 순서대로 replay — 혼합 더블헤더(승→패 등)에서
+  // 중간의 반대 결과/무승부가 streak을 리셋해야 한다. 종전 filter 합산 방식은
+  // 2연패+[승,패]를 3연패로 오산(삼순 #687 NO-GO 재현) → 순차 계산으로 교체.
+  const prevType: "W" | "L" | null =
+    previousStreak?.includes("연승") ? "W" : previousStreak?.includes("연패") ? "L" : null;
+  let type: "W" | "L" | "D" | null = prevType;
+  let count = prevType ? parseStreakCount(previousStreak) : 0;
+
   for (const g of teamGames) {
     const isAway = g.awayTeamId === teamId;
     const myScore = isAway ? (g.awayScore ?? 0) : (g.homeScore ?? 0);
     const opScore = isAway ? (g.homeScore ?? 0) : (g.awayScore ?? 0);
-    if (myScore > opScore) results.push("W");
-    else if (myScore < opScore) results.push("L");
-    else results.push("D");
+    const r: "W" | "L" | "D" = myScore > opScore ? "W" : myScore < opScore ? "L" : "D";
+    if (r === type && r !== "D") count += 1;
+    else { type = r; count = 1; }
   }
 
-  const lastResult = results[results.length - 1];
-  if (lastResult === "D") return "무";
-
-  const prevCount = parseStreakCount(previousStreak);
-  const prevType = previousStreak?.includes("연승") ? "W" : previousStreak?.includes("연패") ? "L" : null;
-
-  if (prevType === lastResult) {
-    const count = prevCount + results.filter((r) => r === lastResult).length;
-    return lastResult === "W" ? `${count}연승` : `${count}연패`;
-  }
-
-  const count = results.filter((r) => r === lastResult).length;
-  return lastResult === "W" ? `${count}연승` : `${count}연패`;
+  if (type === "D") return "무";
+  return type === "W" ? `${count}연승` : `${count}연패`;
 }
 
 function parseStreakCount(streak: string | null): number {

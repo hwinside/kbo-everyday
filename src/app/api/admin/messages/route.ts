@@ -1,9 +1,9 @@
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
-import { isAdminRequest } from "@/lib/admin/pin";
+import { isAdminAuthedRequest } from "@/lib/admin/pin";
 
-function checkPin(request: NextRequest) {
-  return isAdminRequest(request);
+async function checkPin(request: NextRequest): Promise<boolean> {
+  return isAdminAuthedRequest(request);
 }
 
 // PostgREST caps a single response at 1000 rows and rejects oversized `.in()`
@@ -110,7 +110,7 @@ async function fetchProfilesByIds(admin: SupabaseAdmin, ids: string[]) {
 
 // GET: 운영팀 계정의 대화 목록 + 메시지
 export async function GET(request: NextRequest) {
-  if (!checkPin(request)) {
+  if (!(await checkPin(request))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -259,7 +259,7 @@ export async function GET(request: NextRequest) {
 
 // POST: 운영팀 계정으로 답장 또는 전체발송
 export async function POST(request: NextRequest) {
-  if (!checkPin(request)) {
+  if (!(await checkPin(request))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 

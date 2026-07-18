@@ -1,18 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { PostgrestError } from "@supabase/supabase-js";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
-import { isAdminRequest } from "@/lib/admin/pin";
+import { isAdminAuthedRequest } from "@/lib/admin/pin";
 import { getKSTToday } from "@/lib/utils/date-kst";
 
 type TrafficRow = { day: string; platform: string; pv: number; uv: number };
 
-export async function GET(req: NextRequest) {
-  if (!isAdminRequest(req)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+type TrafficPayload = {
+  since: string;
+  days: number;
+  rows: TrafficRow[];
+  totals: Record<string, { pv: number; uv: number }>;
+  devices: Record<string, number>;
+  dwell: Record<string, { sessions: number; avgMs: number; medianMs: number }>;
+  versions: Record<string, { version: string; devices: number }[]>;
+};
 
-  const daysParam = Number(req.nextUrl.searchParams.get("days") ?? "7");
-  const days = Math.min(Math.max(Number.isFinite(daysParam) ? daysParam : 7, 1), 90);
+async function loadTraffic(days: number): Promise<TrafficPayload> {
   // Calendar arithmetic on the KST date (anchor at 00:00 UTC so toISOString's
   // date stays aligned with the KST day; +09:00 midnight is the prior UTC day).
   const sinceDate = new Date(getKSTToday() + "T00:00:00Z");
@@ -29,11 +34,11 @@ export async function GET(req: NextRequest) {
     supabase.rpc("admin_dwell_by_platform", { p_since: since }),
     supabase.rpc("admin_app_version_share", { p_since: since }),
   ]);
-  if (daily.error) return supabaseErrorResponse(daily.error);
-  if (windowTotals.error) return supabaseErrorResponse(windowTotals.error);
-  if (appDevices.error) return supabaseErrorResponse(appDevices.error);
-  if (dwell.error) return supabaseErrorResponse(dwell.error);
-  if (versions.error) return supabaseErrorResponse(versions.error);
+  if (daily.error) throw daily.error;
+  if (windowTotals.error) throw windowTotals.error;
+  if (appDevices.error) throw appDevices.error;
+  if (dwell.error) throw dwell.error;
+  if (versions.error) throw versions.error;
 
   const rows = (daily.data ?? []) as TrafficRow[];
   const totalsRows = (windowTotals.data ?? []) as Omit<TrafficRow, "day">[];
@@ -81,7 +86,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({
+  return {
     since,
     days,
     rows,
@@ -89,5 +94,50 @@ export async function GET(req: NextRequest) {
     devices,
     dwell: dwellByPlatform,
     versions: versionShare,
-  });
+  };
+}
+
+// Per-instance TTL cache with in-flight coalescing. Each dashboard load (and
+// every 오늘/7일/30일 toggle) fires 5 aggregate RPCs at once; on prod they
+// average 0.4~1.6s each with spikes to 6~8s that trip the 8s statement
+// timeout (the intermittent 500s). 60s staleness is fine for an admin
+// dashboard, and sharing the in-flight promise stops concurrent requests from
+// stampeding the DB. Failed loads are evicted so errors are never cached.
+const CACHE_TTL_MS = 60_000;
+const cache = new Map<number, { at: number; promise: Promise<TrafficPayload> }>();
+
+export async function GET(req: NextRequest) {
+  if (!(await isAdminAuthedRequest(req))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const daysParam = Number(req.nextUrl.searchParams.get("days") ?? "7");
+  const days = Math.min(Math.max(Number.isFinite(daysParam) ? daysParam : 7, 1), 90);
+
+  const now = Date.now();
+  let entry = cache.get(days);
+  if (!entry || now - entry.at > CACHE_TTL_MS) {
+    const fresh = { at: now, promise: loadTraffic(days) };
+    fresh.promise.catch(() => {
+      if (cache.get(days) === fresh) cache.delete(days);
+    });
+    cache.set(days, fresh);
+    entry = fresh;
+  }
+
+  try {
+    const payload = await entry.promise;
+    // Let the browser reuse the response across period toggles/reloads for 60s.
+    // Vary on the auth inputs so a logged-out tab can't read a cached copy:
+    // x-admin-pin today, and Cookie for when the admin session moves to an
+    // HttpOnly cookie (PR #681) — the header carries no PIN then.
+    return NextResponse.json(payload, {
+      headers: {
+        "Cache-Control": "private, max-age=60",
+        Vary: "Cookie, x-admin-pin",
+      },
+    });
+  } catch (e) {
+    return supabaseErrorResponse(e as PostgrestError);
+  }
 }
