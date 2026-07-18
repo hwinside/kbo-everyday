@@ -23,13 +23,18 @@ jobs:
         id: baseline
         run: |
           jlen() { node -e "console.log(JSON.parse(require('fs').readFileSync('$1','utf-8')).length)"; }
+          klen() { node -e "console.log(Object.keys(JSON.parse(require('fs').readFileSync('$1','utf-8'))).length)"; }
           ROSTER=$(jlen src/lib/constants/players-roster.json)
           BATTERS=$(jlen src/lib/constants/stats-2026-batters.json)
           PITCHERS=$(jlen src/lib/constants/stats-2026-pitchers.json)
+          DEFENSE=$(jlen src/lib/constants/stats-2026-defense.json)
+          DEFENSE_RUNS=$(klen src/lib/constants/player-defense-runs.json)
           echo "roster_count=$ROSTER" >> $GITHUB_OUTPUT
           echo "batter_count=$BATTERS" >> $GITHUB_OUTPUT
           echo "pitcher_count=$PITCHERS" >> $GITHUB_OUTPUT
-          echo "Baseline: roster=$ROSTER batters=$BATTERS pitchers=$PITCHERS"
+          echo "defense_count=$DEFENSE" >> $GITHUB_OUTPUT
+          echo "defense_runs_count=$DEFENSE_RUNS" >> $GITHUB_OUTPUT
+          echo "Baseline: roster=$ROSTER batters=$BATTERS pitchers=$PITCHERS defense=$DEFENSE defense_runs=$DEFENSE_RUNS"
 
       - uses: actions/setup-node@v4
         with:
@@ -104,9 +109,13 @@ jobs:
             ROSTER_COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('src/lib/constants/players-roster.json','utf-8')).length)")
             BATTER_COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('src/lib/constants/stats-2026-batters.json','utf-8')).length)")
             PITCHER_COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('src/lib/constants/stats-2026-pitchers.json','utf-8')).length)")
+            DEFENSE_COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('src/lib/constants/stats-2026-defense.json','utf-8')).length)")
+            DEFENSE_RUNS_COUNT=$(node -e "console.log(Object.keys(JSON.parse(require('fs').readFileSync('src/lib/constants/player-defense-runs.json','utf-8'))).length)")
             echo "roster_count=$ROSTER_COUNT" >> $GITHUB_OUTPUT
             echo "batter_count=$BATTER_COUNT" >> $GITHUB_OUTPUT
             echo "pitcher_count=$PITCHER_COUNT" >> $GITHUB_OUTPUT
+            echo "defense_count=$DEFENSE_COUNT" >> $GITHUB_OUTPUT
+            echo "defense_runs_count=$DEFENSE_RUNS_COUNT" >> $GITHUB_OUTPUT
 
             # 생성 데이터 allowlist 검사 — 크롤 단계가 예상 밖 파일(코드/워크플로 등)을
             # 건드렸으면 PR은 생성하되 자동 머지는 보류한다 (#685 삼순 리뷰 Blocker 2)
@@ -227,13 +236,15 @@ jobs:
             exit 1
           fi
 
-          # ③ 데이터 급변 가드 (roster/batters/pitchers 각 |Δ| > 10 보류 — 빈 배열 급락 포함 차단)
+          # ③ 데이터 급변 가드 (roster/batters/pitchers/defense/defense_runs 각 |Δ| > 10 보류 — 빈 배열 급락 포함 차단)
           MAX_DELTA=10
           GUARD_FAIL=""
           for spec in \
             "roster:${{ steps.baseline.outputs.roster_count }}:${{ steps.changes.outputs.roster_count }}" \
             "batters:${{ steps.baseline.outputs.batter_count }}:${{ steps.changes.outputs.batter_count }}" \
-            "pitchers:${{ steps.baseline.outputs.pitcher_count }}:${{ steps.changes.outputs.pitcher_count }}"; do
+            "pitchers:${{ steps.baseline.outputs.pitcher_count }}:${{ steps.changes.outputs.pitcher_count }}" \
+            "defense:${{ steps.baseline.outputs.defense_count }}:${{ steps.changes.outputs.defense_count }}" \
+            "defense_runs:${{ steps.baseline.outputs.defense_runs_count }}:${{ steps.changes.outputs.defense_runs_count }}"; do
             NAME="${spec%%:*}"; REST="${spec#*:}"; BEFORE="${REST%%:*}"; AFTER="${REST#*:}"
             DELTA=$((AFTER - BEFORE))
             if [ "$DELTA" -lt 0 ]; then DELTA=$((-DELTA)); fi
