@@ -203,8 +203,18 @@ function AdminPushToggle() {
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.getSubscription();
       if (sub) {
-        await removeAdminPushSubscription(sub.endpoint);
-        await sub.unsubscribe();
+        // 서버 삭제 실패 = stale row 잔존 → 성공(off) 표시 금지 (삼순 조건부 GO 잔여 P2)
+        const serverOk = await removeAdminPushSubscription(sub.endpoint);
+        if (!serverOk) {
+          setState("on");
+          return;
+        }
+        // 브라우저 unsubscribe 실패 = 구독 유지 → 재접속 시 재동기화로 다시 on될 수 있음 → 성공 표시 금지
+        const unsubOk = await sub.unsubscribe();
+        if (!unsubOk) {
+          setState("on");
+          return;
+        }
       }
       setState("off");
     } catch {
