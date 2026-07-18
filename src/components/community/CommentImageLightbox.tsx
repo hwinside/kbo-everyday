@@ -44,11 +44,13 @@ export default function CommentImageLightbox({ src, onClose }: {
       >
         <X size={26} />
       </button>
+      {/* 이미지 자체 탭은 닫힘 제외(배경 탭/X/Escape만 닫기) — 오버레이 onClick으로 버블링 차단 (삼순 리뷰 #678) */}
       <img
         src={src}
         alt="댓글 이미지"
         className="max-w-full max-h-full object-contain select-none"
         style={{ WebkitTouchCallout: "none" } as React.CSSProperties}
+        onClick={(e) => e.stopPropagation()}
       />
     </div>,
     document.body
