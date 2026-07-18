@@ -2,6 +2,7 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { sendFcmToUsers, WIDGET_STREAM } from "@/lib/notifications/fcm";
 import { TEAMS } from "@/lib/constants/teams";
 import { fetchStandings } from "@/lib/crawler/kbo-api";
+import { decideEndStreakCount, type StreakDir } from "@/lib/notifications/end-streak-policy";
 import type { KboRawGame } from "@/types/api";
 
 // 경기 시작/종료 알림 (push-notifications-v1 S4).
@@ -29,6 +30,11 @@ function scheduledStartMs(gDt: string | undefined, gTm: string | undefined): num
 /** 현재 KST 날짜 "YYYYMMDD" (G_DT와 같은 포맷, 사전식 비교용). */
 function kstDateStr(): string {
   return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10).replace(/-/g, "");
+}
+
+/** 현재 KST 날짜 "YYYY-MM-DD" (daily_standings_snapshot.date 포맷). */
+function kstDateIso(): string {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
 /** 양팀을 최애팀으로 둔 유저 id 목록. ok=false면 조회 실패(재시도 대상) */
@@ -107,6 +113,23 @@ async function fetchTeamStreaks(): Promise<Map<number, { n: number; dir: "승" |
     console.error("[game-status] standings fetch failed:", (e as Error).message);
   }
   return out;
+}
+
+/**
+ * 오늘(KST) 날짜 daily_standings_snapshot의 streak 맵 (01:00 cron이 적재한 "어제까지" 누적).
+ * 조회 실패 또는 행 0(cron 미실행) → null = 호출부가 라이브 방향일치 로직으로 폴백.
+ */
+async function fetchSnapshotStreaks(): Promise<Map<number, string | null> | null> {
+  const { data, error } = await supabase
+    .from("daily_standings_snapshot")
+    .select("team_id, streak")
+    .eq("date", kstDateIso());
+  if (error) {
+    console.error("[game-status] snapshot streak fetch failed:", error.message);
+    return null;
+  }
+  if (!data || data.length === 0) return null;
+  return new Map(data.map((r: { team_id: number; streak: string | null }) => [r.team_id, r.streak]));
 }
 
 /** 도입 직후/과거 경기 보호 — 발송 없이 플래그만 마킹 */
@@ -235,13 +258,31 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
       const awayWon = awayScore > homeScore;
       const scoreLine = `${away} ${awayScore} : ${homeScore} ${home}`;
 
-      // streak은 이번 경기 결과 방향과 일치할 때만 노출 — standings 갱신 지연 시
-      // "승리! · 3연패 중" 같은 모순을 fail-closed로 차단 (삼순 #210 재리뷰)
+      // streak 표기 — 1순위: 오늘 스냅샷(어제까지 누적) + 이번 결과로 직접 계산 — 순위표
+      // 갱신 지연과 무관하게 정확(#cs 2026-07-18 "4연패인데 3연패" fix). 2순위(스냅샷
+      // 부재·더블헤더): 라이브 순위표 방향 일치 시에만 노출(기존 fail-closed 유지, 삼순 #210).
       const streaks = await fetchTeamStreaks();
-      const streakSuffix = (id: number | null, expected: "승" | "패"): string => {
-        const s = id !== null ? streaks.get(id) : undefined;
-        if (!s || s.dir !== expected) return "";
-        return expected === "승" ? ` · ${s.n}연승!🔥` : ` · ${s.n}연패 💦`;
+      const snapshotStreaks = await fetchSnapshotStreaks();
+      // 오늘 팀별 final 경기 수 — 더블헤더 2차전은 스냅샷이 1차전 결과를 모르므로 폴백 판정용.
+      const finalsToday = new Map<number, number>();
+      for (const gg of games) {
+        if (gg.CANCEL_SC_ID !== "0" || gg.GAME_STATE_SC !== "3") continue;
+        for (const nm of [gg.AWAY_NM ?? "", gg.HOME_NM ?? ""]) {
+          const id = teamIdByShortName(nm);
+          if (id !== null) finalsToday.set(id, (finalsToday.get(id) ?? 0) + 1);
+        }
+      }
+      const streakSuffix = (id: number | null, expected: StreakDir): string => {
+        if (id === null) return "";
+        const n = decideEndStreakCount({
+          snapshotStreak: snapshotStreaks?.get(id),
+          hasSnapshot: snapshotStreaks?.has(id) ?? false,
+          result: expected,
+          finalsToday: finalsToday.get(id) ?? 1,
+          liveStreak: streaks.get(id),
+        });
+        if (n === null) return "";
+        return expected === "승" ? ` · ${n}연승!🔥` : ` · ${n}연패 💦`;
       };
       const endCta = "자세한 경기 결과를 크보팬에서 확인해보세요.";
 
