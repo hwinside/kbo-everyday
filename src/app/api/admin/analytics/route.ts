@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAdminRequest } from "@/lib/admin/pin";
+import { isAdminAuthedRequest } from "@/lib/admin/pin";
 import { SignJWT, importPKCS8 } from "jose";
 
-function verifyPin(req: NextRequest): boolean {
-  return isAdminRequest(req);
+async function verifyPin(req: NextRequest): Promise<boolean> {
+  return isAdminAuthedRequest(req);
 }
 
 /**
@@ -90,7 +90,7 @@ type Ga4Rows = {
 const GA4_LAUNCH_DATE = process.env.GA4_LAUNCH_DATE ?? "2026-01-01";
 
 export async function GET(req: NextRequest) {
-  if (!verifyPin(req)) {
+  if (!(await verifyPin(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

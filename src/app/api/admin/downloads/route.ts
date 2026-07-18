@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
-import { isAdminRequest } from "@/lib/admin/pin";
+import { isAdminAuthedRequest } from "@/lib/admin/pin";
 import { getKSTToday } from "@/lib/utils/date-kst";
 
 type Row = { platform: string; date: string; units: number };
 
 export async function GET(req: NextRequest) {
-  if (!isAdminRequest(req)) {
+  if (!(await isAdminAuthedRequest(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

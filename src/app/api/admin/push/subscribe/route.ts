@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
-import { isAdminRequest } from "@/lib/admin/pin";
+import { isAdminAuthedRequest } from "@/lib/admin/pin";
 
 // 어드민 PWA 웹푸시 구독 등록 — PIN 인증 기기만 (2026-07-18).
 // 유저용 /api/push/subscribe와 별도 테이블(admin_push_subscriptions)에 저장한다.
 export async function POST(req: NextRequest) {
-  if (!isAdminRequest(req)) {
+  if (!(await isAdminAuthedRequest(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

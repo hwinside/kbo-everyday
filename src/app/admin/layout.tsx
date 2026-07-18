@@ -26,27 +26,37 @@ import {
 import { useAdminUnreadDMCount } from "@/lib/admin/useAdminUnreadDMCount";
 import { useAdminBatchHealthCount } from "@/lib/admin/useAdminBatchHealthCount";
 
-// PIN 저장을 localStorage(영구)로 승격 — Safari/PWA 세션이 끝나도 로그인 유지 (2026-07-18).
-// 기존 어드민 페이지들은 sessionStorage.getItem("admin_pin")을 읽으므로,
-// 복원 시 sessionStorage에도 시드해 하위 호환을 유지한다.
-function getStoredAdminPin(): string {
-  if (typeof window === "undefined") return "";
-  return localStorage.getItem("admin_pin") || sessionStorage.getItem("admin_pin") || "";
-}
+// 인증 유지 = 서버 발급 HttpOnly 세션 쿠키 (2026-07-18, PR #681 삼순 P0 반영).
+// PIN 원문은 어떤 클라 storage에도 저장하지 않는다. 기존 어드민 페이지들은
+// sessionStorage.getItem("admin_pin")을 읽어 x-admin-pin 헤더로 보내므로(빈값이면
+// fetch 자체를 skip하는 가드도 있음), 비밀이 아닌 센티넬 "session"을 시드해 호환을
+// 유지한다 — 서버는 PIN 검증 실패 시 세션 쿠키로 인증한다(isAdminAuthedRequest).
+const SESSION_SENTINEL = "session";
 
-function storeAdminPin(pin: string) {
-  localStorage.setItem("admin_pin", pin);
-  sessionStorage.setItem("admin_pin", pin);
+function seedSessionSentinel() {
+  sessionStorage.setItem("admin_pin", SESSION_SENTINEL);
 }
 
 async function syncAdminPushSubscription(sub: PushSubscription): Promise<boolean> {
-  const pin = getStoredAdminPin();
-  if (!pin) return false;
   try {
+    // 인증은 HttpOnly 세션 쿠키가 동반된다 (same-origin fetch 기본 포함)
     const res = await fetch("/api/admin/push/subscribe", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin-pin": pin },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ subscription: sub.toJSON() }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function removeAdminPushSubscription(endpoint: string): Promise<boolean> {
+  try {
+    const res = await fetch("/api/admin/push/subscribe", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint }),
     });
     return res.ok;
   } catch {
@@ -83,7 +93,7 @@ function PinGate({ onAuth }: { onAuth: () => void }) {
       body: JSON.stringify({ pin }),
     });
     if (res.ok) {
-      storeAdminPin(pin);
+      seedSessionSentinel();
       onAuth();
     } else {
       setError(true);
@@ -129,13 +139,23 @@ function AdminPushToggle() {
   const [state, setState] = useState<AdminPushState>("off");
 
   useEffect(() => {
-    if (typeof window === "undefined" || !("Notification" in window) || !("serviceWorker" in navigator)) {
+    if (typeof window === "undefined") return;
+    // iOS는 Safari 탭에서 Notification/PushManager 자체가 없을 수 있어 기능 감지보다
+    // 먼저 "홈 화면 앱 아님"을 명시 판별해 설치 안내를 띄운다 (삼순 P2 반영)
+    const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
+    const standalone =
+      window.matchMedia?.("(display-mode: standalone)")?.matches === true ||
+      (navigator as { standalone?: boolean }).standalone === true;
+    if (isIOS && !standalone) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
+      setState("standalone-required");
+      return;
+    }
+    if (!("Notification" in window) || !("serviceWorker" in navigator)) {
       setState("unsupported");
       return;
     }
     if (!("PushManager" in window)) {
-      // iOS Safari 탭에서는 PushManager가 없고, 홈 화면 앱에서만 지원된다
       setState("standalone-required");
       return;
     }
@@ -177,18 +197,36 @@ function AdminPushToggle() {
     }
   };
 
+  const disable = async () => {
+    setState("busy");
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await removeAdminPushSubscription(sub.endpoint);
+        await sub.unsubscribe();
+      }
+      setState("off");
+    } catch {
+      setState("on");
+    }
+  };
+
   if (state === "unsupported") return null;
   if (state === "standalone-required") {
-    return <p className="text-xs text-[#636366]">알림은 홈 화면에 추가한 앱에서 쾜 수 있어요</p>;
+    return <p className="text-xs text-[#636366]">알림은 홈 화면에 추가한 앱에서 켤 수 있어요</p>;
   }
   if (state === "denied") {
     return <p className="text-xs text-[#636366]">알림 권한 거부됨 — 설정에서 허용 필요</p>;
   }
   if (state === "on") {
     return (
-      <p className="flex items-center gap-1.5 text-xs text-[#30D158]">
-        <Bell className="w-3.5 h-3.5" /> 알림 켜짐
-      </p>
+      <button
+        onClick={disable}
+        className="flex items-center gap-1.5 text-xs text-[#30D158] hover:text-white transition-colors"
+      >
+        <Bell className="w-3.5 h-3.5" /> 알림 켜짐 — 끄기
+      </button>
     );
   }
   return (
@@ -304,22 +342,25 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const pin = getStoredAdminPin();
-    if (pin) {
-      // 기존 페이지들의 sessionStorage 읽기 호환 유지
-      sessionStorage.setItem("admin_pin", pin);
-      fetch("/api/admin/auth", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin }),
-      }).then((res) => {
+    // 1) 구버전 탭의 sessionStorage PIN(원문)이 남아있으면 그걸로 재인증해 세션 쿠키로 전환
+    // 2) 아니면 HttpOnly 세션 쿠키만으로 재인증 (PIN 재입력 없음)
+    const legacyPin = sessionStorage.getItem("admin_pin");
+    const body =
+      legacyPin && legacyPin !== SESSION_SENTINEL ? { pin: legacyPin } : {};
+    fetch("/api/admin/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then((res) => {
+        if (res.ok) seedSessionSentinel();
         setAuthed(res.ok);
         setChecking(false);
+      })
+      .catch(() => {
+        setAuthed(false);
+        setChecking(false);
       });
-    } else {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setChecking(false);
-    }
   }, []);
 
   if (checking) {

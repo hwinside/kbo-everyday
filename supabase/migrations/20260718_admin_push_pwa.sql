@@ -20,3 +20,31 @@ create table if not exists admin_alert_state (
 );
 
 alter table admin_alert_state enable row level security;
+
+-- 어드민 세션 (삼순 P0 반영): PIN 원문 클라 저장 금지 → 서버 발급 기기별 세션.
+-- 토큰은 sha256 해시만 저장, 행 delete/revoked_at 마킹 = 해당 기기 즉시 폐기.
+create table if not exists admin_sessions (
+  id uuid primary key default gen_random_uuid(),
+  token_hash text not null unique,
+  user_agent text,
+  created_at timestamptz not null default now(),
+  last_used_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  revoked_at timestamptz
+);
+
+alter table admin_sessions enable row level security;
+
+-- 쪽지 알림 메시지당 1회 claim (삼순 P1 반영): message_id PK로 동시 요청/replay에서도 최초 1회만 발송.
+-- sender_id+created_at은 발신자별 rate limit 조회용.
+create table if not exists admin_dm_notify_claims (
+  message_id uuid primary key,
+  conversation_id uuid not null,
+  sender_id uuid not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_admin_dm_notify_claims_sender_time
+  on admin_dm_notify_claims (sender_id, created_at desc);
+
+alter table admin_dm_notify_claims enable row level security;

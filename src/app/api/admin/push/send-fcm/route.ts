@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
-import { isAdminRequest } from "@/lib/admin/pin";
+import { isAdminAuthedRequest } from "@/lib/admin/pin";
 import { sendFcmToUsers, getFcm } from "@/lib/notifications/fcm";
 
 // 어드민 수동 FCM 푸시 발송 — 공용 헬퍼(src/lib/notifications/fcm.ts) 사용.
 // prefs 필터 없음 (어드민 수동 발송은 전체/지정 대상에 그대로)
 
 export async function POST(req: NextRequest) {
-  if (!isAdminRequest(req)) {
+  if (!(await isAdminAuthedRequest(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   if (!getFcm()) {

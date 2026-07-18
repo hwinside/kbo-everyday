@@ -253,12 +253,16 @@ export function useDMChat(conversationId: string) {
         }
       }
 
-      const { error } = await supabase.from("dm_messages").insert({
-        conversation_id: conversationId,
-        sender_id: user.id,
-        content: trimmed,
-        ...(images.length > 0 ? { image_urls: images } : {}),
-      });
+      const { data: inserted, error } = await supabase
+        .from("dm_messages")
+        .insert({
+          conversation_id: conversationId,
+          sender_id: user.id,
+          content: trimmed,
+          ...(images.length > 0 ? { image_urls: images } : {}),
+        })
+        .select("id")
+        .single();
 
       if (!error) {
         // last_message 업데이트 (사진만 보낸 경우 "[사진]" 표기)
@@ -269,11 +273,14 @@ export function useDMChat(conversationId: string) {
           .eq("id", conversationId);
 
         // 운영팀 대화면 어드민 PWA 알림 트리거 (fire-and-forget — 실패해도 쪽지 발송에 영향 0, 2026-07-18)
+        // messageId를 전달해 서버가 "정확히 그 행"을 검증 + 메시지당 1회 claim (replay 방지)
         if (
           conv &&
+          inserted?.id &&
           user.id !== OPERATOR_USER_ID &&
           (conv.user1_id === OPERATOR_USER_ID || conv.user2_id === OPERATOR_USER_ID)
         ) {
+          const messageId = inserted.id;
           void (async () => {
             try {
               const { data: { session } } = await supabase.auth.getSession();
@@ -283,7 +290,7 @@ export function useDMChat(conversationId: string) {
                   "Content-Type": "application/json",
                   ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
                 },
-                body: JSON.stringify({ conversationId }),
+                body: JSON.stringify({ conversationId, messageId }),
               });
             } catch {
               /* ignore */

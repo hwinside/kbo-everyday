@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
-import { isAdminRequest } from "@/lib/admin/pin";
+import { isAdminAuthedRequest } from "@/lib/admin/pin";
 import statsMeta from "@/lib/constants/stats-2026-meta.json";
 import { JOB_DEFS, computeJobHealth, isProblem, type JobHealth } from "@/lib/admin/job-health";
 
-function verifyPin(req: NextRequest): boolean {
-  return isAdminRequest(req);
+async function verifyPin(req: NextRequest): Promise<boolean> {
+  return isAdminAuthedRequest(req);
 }
 
 // 크롤 산출 데이터(정적 스탯)의 반영 시각 — dataFreshness job(스탯/로스터 크롤)의 신선도 판정용.
@@ -33,7 +33,7 @@ async function fetchLatest(jobName: string): Promise<LatestLog> {
 }
 
 export async function GET(req: NextRequest) {
-  if (!verifyPin(req)) {
+  if (!(await verifyPin(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

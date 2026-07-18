@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { isAdminRequest } from "@/lib/admin/pin";
+import { isAdminAuthedRequest } from "@/lib/admin/pin";
 
 const SAFE_CTA_PATH = /^\/[A-Za-z0-9/_?=&%#.-]*$/;
 // 외부 CTA는 https URL만 허용(앱스토어 등). javascript:/http: 등은 차단.
@@ -61,7 +61,7 @@ async function ensureBridgePost(supabase: AdminClient, row: AnnouncementRow): Pr
 }
 
 export async function GET(req: NextRequest) {
-  if (!isAdminRequest(req)) {
+  if (!(await isAdminAuthedRequest(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!isAdminRequest(req)) {
+  if (!(await isAdminAuthedRequest(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -113,7 +113,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  if (!isAdminRequest(req)) {
+  if (!(await isAdminAuthedRequest(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -146,7 +146,7 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  if (!isAdminRequest(req)) {
+  if (!(await isAdminAuthedRequest(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

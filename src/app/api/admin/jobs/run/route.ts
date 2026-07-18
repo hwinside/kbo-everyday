@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAdminRequest } from "@/lib/admin/pin";
+import { isAdminAuthedRequest } from "@/lib/admin/pin";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 
@@ -33,8 +33,8 @@ const GITHUB_WORKFLOW_JOBS: Record<
 
 const ALL_JOBS = new Set([...Object.keys(JOB_PATHS), ...Object.keys(GITHUB_WORKFLOW_JOBS)]);
 
-function verifyPin(req: NextRequest): boolean {
-  return isAdminRequest(req);
+async function verifyPin(req: NextRequest): Promise<boolean> {
+  return isAdminAuthedRequest(req);
 }
 
 async function triggerGitHubWorkflow(
@@ -65,7 +65,7 @@ async function triggerGitHubWorkflow(
 }
 
 export async function POST(req: NextRequest) {
-  if (!verifyPin(req)) {
+  if (!(await verifyPin(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

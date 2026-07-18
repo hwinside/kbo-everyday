@@ -1,5 +1,5 @@
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { isAdminRequest } from "@/lib/admin/pin";
+import { isAdminAuthedRequest } from "@/lib/admin/pin";
 import { verifyDraftTarget } from "@/lib/cs/verify-draft-target";
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 // CS 회신 초안을 저장하고, 하린아빠가 확인/발송할 1회용 링크를 발급한다.
 // 호출 주체: cs-relay cron(삼식이). x-admin-pin 필요.
 export async function POST(request: NextRequest) {
-  if (!isAdminRequest(request)) {
+  if (!(await isAdminAuthedRequest(request))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const systemUserId = process.env.SYSTEM_USER_ID;

@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { hasAdminPinConfig, verifyAdminPinValue } from "@/lib/admin/pin";
+import {
+  ADMIN_SESSION_COOKIE,
+  ADMIN_SESSION_MAX_AGE_SECONDS,
+  createAdminSession,
+  getAdminSessionTokenFromRequest,
+  verifyAdminSessionToken,
+} from "@/lib/admin/session";
 
 const MAX_BACKOFF_SECONDS = 15 * 60;
 
@@ -15,7 +22,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "ADMIN_PIN not configured" }, { status: 500 });
   }
 
+  // 세션 쿠키만으로도 재인증 가능 (PIN 재입력 없이 앱/탭 재진입, 2026-07-18)
   if (typeof pin !== "string" || !pin) {
+    const sessionToken = getAdminSessionTokenFromRequest(req);
+    if (sessionToken && (await verifyAdminSessionToken(sessionToken))) {
+      return NextResponse.json({ ok: true, via: "session" });
+    }
     return NextResponse.json({ error: "PIN required" }, { status: 400 });
   }
 
@@ -51,7 +63,19 @@ export async function POST(req: NextRequest) {
 
   if (verifyAdminPinValue(pin)) {
     await supabase.from("admin_auth_attempts").delete().eq("ip_address", ip);
-    return NextResponse.json({ ok: true });
+    // 기기별 세션 발급 → HttpOnly 쿠키 (PIN 원문은 클라에 저장되지 않음, 2026-07-18)
+    const token = await createAdminSession(req.headers.get("user-agent"));
+    const res = NextResponse.json({ ok: true, via: "pin", session: Boolean(token) });
+    if (token) {
+      res.cookies.set(ADMIN_SESSION_COOKIE, token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+        path: "/",
+        maxAge: ADMIN_SESSION_MAX_AGE_SECONDS,
+      });
+    }
+    return res;
   }
 
   const failedAttempts = (attemptRow?.failed_attempts ?? 0) + 1;

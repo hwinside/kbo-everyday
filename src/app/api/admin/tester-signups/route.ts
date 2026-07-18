@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { isAdminRequest } from "@/lib/admin/pin";
+import { isAdminAuthedRequest } from "@/lib/admin/pin";
 
 /** 테스터 신청자 목록 (어드민 PIN 인증) */
 export async function GET(req: NextRequest) {
-  if (!isAdminRequest(req)) {
+  if (!(await isAdminAuthedRequest(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
 
 /** 다운로드 쪽지 발송 표시 — '발송됨'이 페이지 재진입 후에도 남도록 dm_sent_at 기록. */
 export async function PATCH(req: NextRequest) {
-  if (!isAdminRequest(req)) {
+  if (!(await isAdminAuthedRequest(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

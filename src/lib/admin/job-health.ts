@@ -95,6 +95,10 @@ export interface AdminAlertDecision {
   label: string;
   reason: string;
   kind: "problem" | "recovered";
+  /** CAS claim용 — 이 전이의 기대 직전 레벨 (null = 직전 행 없음) */
+  prevLevel: string | null;
+  /** CAS claim용 — 이 전이가 쓰려는 새 레벨 */
+  newLevel: JobHealthLevel;
 }
 
 /**
@@ -116,13 +120,37 @@ export function decideAdminAlerts(
     const wasProblem = prevLevel === "error" || prevLevel === "stale";
     if (isProblem(job.level)) {
       if (job.level !== prevLevel) {
-        out.push({ jobName: job.jobName, label: job.label, reason: job.reason, kind: "problem" });
+        out.push({
+          jobName: job.jobName,
+          label: job.label,
+          reason: job.reason,
+          kind: "problem",
+          prevLevel,
+          newLevel: job.level,
+        });
       }
     } else if (wasProblem && job.level !== "unknown") {
-      out.push({ jobName: job.jobName, label: job.label, reason: job.reason, kind: "recovered" });
+      out.push({
+        jobName: job.jobName,
+        label: job.label,
+        reason: job.reason,
+        kind: "recovered",
+        prevLevel,
+        newLevel: job.level,
+      });
     }
   }
   return out;
+}
+
+/**
+ * 알림 전달 결과 → 상태 영속화 판정 (순수 함수, PR #681 삼순 P1 반영).
+ * - "persist": 전달 성공(sent>0) 또는 구독 0개(failed=0, 전달할 대상 없음 — vacuous 성공)
+ * - "revert": 전송 시도가 전부 실패(sent=0 && failed>0) → claim을 되돌려 다음 틱 재시도
+ */
+export function decideAlertPersistence(outcome: { sent: number; failed: number }): "persist" | "revert" {
+  if (outcome.sent === 0 && outcome.failed > 0) return "revert";
+  return "persist";
 }
 
 export function computeJobHealth(def: JobDef, input: JobHealthInput, now: number): JobHealth {
