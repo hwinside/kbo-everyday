@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { checkMoveReadiness } from "@/lib/roster-moves/readiness";
+import { checkMoveReadiness, moveHref } from "@/lib/roster-moves/readiness";
 
 // 팀별 최근 등록/말소 조회. 예: /api/roster-moves?teamId=6&days=30
-// 준비 완료 게이트: 등록(콜업)은 로스터/에셋 준비된 선수만 노출, 말소는 항상 노출하되
-// 준비 안 된 경우 링크만 생략(정보 손실 방지).
+// 노출 계약(2026-07-18 정정): 등록/말소 전부 항상 노출 — 숨김 게이트 없음.
+// readiness(로스터 SSOT+에셋)는 선수 상세 링크 유무만 결정(미준비 = 링크 생략).
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
@@ -31,21 +31,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const moves = (data ?? []).flatMap((m) => {
-    const { ready, canonicalId } = checkMoveReadiness(m.kbo_player_id);
-    // 등록(콜업): 온보딩(로스터+에셋) 전이면 링크가 깨지므로 준비될 때까지 노출 보류.
-    if (m.move_type === "register" && !ready) return [];
-    return [
-      {
-        kboPlayerId: m.kbo_player_id,
-        playerName: m.player_name,
-        moveType: m.move_type as "register" | "deregister",
-        moveDate: m.move_date,
-        // 말소는 준비 안 됐어도 노출하되 링크만 생략.
-        href: canonicalId ? `/community/players/${canonicalId}` : null,
-      },
-    ];
-  });
+  const moves = (data ?? []).map((m) => ({
+    kboPlayerId: m.kbo_player_id,
+    playerName: m.player_name,
+    moveType: m.move_type as "register" | "deregister",
+    moveDate: m.move_date,
+    // 미준비 선수는 링크만 생략(말소 처리와 동일 패턴) — 항목 자체는 항상 노출.
+    href: moveHref(checkMoveReadiness(m.kbo_player_id)),
+  }));
 
   return NextResponse.json({ teamId, days, moves });
 }

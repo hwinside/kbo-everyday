@@ -3,7 +3,7 @@
  * 실행: npx tsx scripts/qa/roster-moves-diff-smoke.ts  (npm run qa:roster-moves)
  */
 import { parseTeamRegister, diffRoster, type RosterEntry } from "../../src/lib/roster-moves/parse";
-import { evaluateReadiness } from "../../src/lib/roster-moves/readiness";
+import { evaluateReadiness, moveHref } from "../../src/lib/roster-moves/readiness";
 
 let pass = 0;
 let fail = 0;
@@ -45,10 +45,14 @@ check(
   diffRoster([A, B], [A, C]),
 );
 
-// ⑥ 준비 완료 게이트 순수 코어
+// ⑥ 준비 완료 판정 순수 코어 (정정된 계약: 노출이 아니라 링크 유무만 결정)
 check("준비됨(로스터+에셋)", evaluateReadiness(true, true), true);
 check("로스터만 있고 에셋 없음", evaluateReadiness(true, false), false);
 check("둘 다 없음", evaluateReadiness(false, false), false);
+
+// ⑥-b 노출 계약(2026-07-18 정정): 등록/말소 전부 항상 노출, 미준비는 링크만 생략
+check("등록 미준비 → 노출 + 링크 생략(null)", moveHref({ ready: false, canonicalId: null }), null);
+check("준비됨 → 선수 상세 링크", moveHref({ ready: true, canonicalId: "51516" }), "/community/players/51516");
 
 // ⑦ 파서: 감독/코치 제외, 선수 섹션만 (playerId 링크 추출)
 const fixture = `
