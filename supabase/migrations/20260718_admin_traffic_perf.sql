@@ -74,8 +74,17 @@ $$;
 REVOKE EXECUTE ON FUNCTION admin_app_device_totals() FROM public, anon, authenticated;
 GRANT EXECUTE ON FUNCTION admin_app_device_totals() TO service_role;
 
--- 2) Covering index for window PV/UV aggregates ------------------------------
--- admin_traffic_daily/_totals only touch (created_at, platform, visitor_id);
--- INCLUDE lets Postgres answer them from the index without heap fetches.
+-- 2) Partial covering index for window PV/UV aggregates ----------------------
+-- admin_traffic_daily/_totals filter `created_at >= since AND NOT
+-- starts_with(path, '/_celeb')` (the celebration-exclusion was added by
+-- 20260625_admin_traffic_collection_fix, so the live functions read `path`).
+-- A plain (created_at) INCLUDE (platform, visitor_id) index can't be
+-- index-only because `path` isn't covered. Instead, fold the immutable
+-- celebration predicate into a PARTIAL index: the planner matches the query's
+-- identical predicate to the index, so `path` never needs a heap fetch and the
+-- scan stays index-only. Prod EXPLAIN (post-VACUUM): 7d daily 1651ms->354ms
+-- (Index Only Scan). starts_with(text,text) is IMMUTABLE, so it's valid in a
+-- partial-index predicate.
 CREATE INDEX IF NOT EXISTS idx_apv_created_covering
-  ON admin_page_views (created_at) INCLUDE (platform, visitor_id);
+  ON admin_page_views (created_at) INCLUDE (platform, visitor_id)
+  WHERE NOT starts_with(path, '/_celeb');

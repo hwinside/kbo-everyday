@@ -128,11 +128,13 @@ export async function GET(req: NextRequest) {
   try {
     const payload = await entry.promise;
     // Let the browser reuse the response across period toggles/reloads for 60s.
-    // Vary on the PIN header so a logged-out tab can't read the cached copy.
+    // Vary on the auth inputs so a logged-out tab can't read a cached copy:
+    // x-admin-pin today, and Cookie for when the admin session moves to an
+    // HttpOnly cookie (PR #681) — the header carries no PIN then.
     return NextResponse.json(payload, {
       headers: {
         "Cache-Control": "private, max-age=60",
-        Vary: "x-admin-pin",
+        Vary: "Cookie, x-admin-pin",
       },
     });
   } catch (e) {
