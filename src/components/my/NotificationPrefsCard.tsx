@@ -68,13 +68,14 @@ export default function NotificationPrefsCard() {
   }, [liveUpdate.enabled]);
 
   // 잠금화면 카드 수동 재표시 (건의함 feedback:4369ee5a — 실수로 카드를 지운 유저 복구).
-  // idle → working → done(카드 재게시됨)/none(대상 경기 없음) — 4초 후 idle 복귀.
-  const [retrigger, setRetrigger] = useState<"idle" | "working" | "done" | "none">("idle");
+  // idle → working → done(요청 접수)/none(대상 경기 없음)/failed(설정·권한·네트워크 실패,
+  // 삼순 #680 blocker②) — 4초 후 idle 복귀.
+  const [retrigger, setRetrigger] = useState<"idle" | "working" | "done" | "none" | "failed">("idle");
   const retriggerCard = useCallback(async () => {
     if (retrigger === "working") return;
     setRetrigger("working");
     const result = await retriggerLockScreenCard();
-    setRetrigger(result === "started" ? "done" : "none");
+    setRetrigger(result === "started" ? "done" : result === "none" ? "none" : "failed");
     setTimeout(() => setRetrigger("idle"), 4000);
   }, [retrigger]);
 
@@ -192,7 +193,7 @@ export default function NotificationPrefsCard() {
               </button>
             </div>
           )}
-          {isNative && prefs.live_activity !== false && (
+          {isNative && loaded && prefs.live_activity !== false && (
             <div className="py-3">
               <button
                 onClick={() => void retriggerCard()}
@@ -204,10 +205,12 @@ export default function NotificationPrefsCard() {
               </button>
               <p className="text-xs text-text-tertiary mt-1.5 text-center">
                 {retrigger === "done"
-                  ? "✅ 카드를 다시 표시했어요"
+                  ? "✅ 카드 표시를 요청했어요 — 잠금화면을 확인해주세요"
                   : retrigger === "none"
                     ? "지금은 표시할 경기가 없어요 (라이브 경기 또는 시작 30분 전부터 가능)"
-                    : "실수로 카드를 지웠을 때 눌러주세요"}
+                    : retrigger === "failed"
+                      ? "다시 표시하지 못했어요 — 알림 설정·권한 확인 후 재시도해주세요"
+                      : "실수로 카드를 지웠을 때 눌러주세요"}
               </p>
             </div>
           )}

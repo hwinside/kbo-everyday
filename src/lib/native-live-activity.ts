@@ -160,7 +160,9 @@ function isNativeIOS(): boolean {
 // 즉시 캐시를 갱신한다.
 let liveActivityPrefCache: boolean | null = null;
 
-async function isLiveActivityEnabled(): Promise<boolean> {
+/** 서버 prefs.live_activity SSOT 확인(세션 캐시). iOS start/update 게이트 외에도
+ *  안드 재노출 경로(lock-card-retrigger)가 실행부 OFF 방어로 재사용(삼순 #680 blocker①). */
+export async function isLiveActivityEnabled(): Promise<boolean> {
   if (liveActivityPrefCache !== null) return liveActivityPrefCache;
   try {
     const { data: { session } } = await supabase.auth.getSession();
@@ -473,37 +475,43 @@ let autoStartLastAttemptMs = 0;
 /** 성공한 `${myTeamCode}|${gameId}` — 같은 세션 내 재시작 fetch 생략(네이티브 dedupe의 앞단 절약). */
 let autoStartDoneKey: string | null = null;
 
+/** 인앱 자동/수동 start 결과 — UI 안내 분리용(삼순 #680 blocker②).
+ *  started = start 성공 또는 이미 같은 대상 성공(dedupe) / none = 대상 경기 없음(최애팀
+ *  미설정 포함) / failed = fetch·start 실패·토글 off·ActivityKit 비활성 / skipped = 비네이티브·
+ *  in-flight·스로틀(재시도 안내 대상). */
+export type AutoStartOutcome = "started" | "none" | "failed" | "skipped";
+
 /**
  * 라이브(또는 시작 30분 이내 예정) 최애팀 경기가 있으면 인앱 Live Activity를 시작한다.
- * 부팅/SIGNED_IN/최애팀 설정(team-changed)/포그라운드 복귀에서 호출.
- * - `bypassThrottle=true`(team-changed 전용): 60초 스로틀 무시 — 부팅/포그라운드 선행
- *   시도 실패가 최애팀 설정 직후 start를 막으면 안 된다(삼순 blocker② 보완②).
+ * 부팅/SIGNED_IN/최애팀 설정(team-changed)/포그라운드 복귀/재노출 버튼에서 호출.
+ * - `bypassThrottle=true`(team-changed·manual-retrigger): 60초 스로틀 무시 — 부팅/포그라운드
+ *   선행 시도 실패가 명시 요청 직후 start를 막으면 안 된다(삼순 blocker② 보완②).
  *   in-flight 동시 중복 가드는 유지.
  * - live면 실데이터 프레임, scheduled면 예정 카드(시작 시각·선발) 프레임으로 start.
- * - 라이브·임박 예정 경기 없음/비네이티브/토글 off는 no-op(기존 게이트 재사용).
+ * - 기존 호출부(부팅/포그라운드 등)는 반환값을 소비하지 않음 — outcome은 재노출 UI 전용.
  */
 export async function autoStartMyTeamLiveActivity(
   reason: string,
   bypassThrottle = false,
-): Promise<boolean> {
-  if (!isNativeIOS()) return false;
+): Promise<AutoStartOutcome> {
+  if (!isNativeIOS()) return "skipped";
   const now = Date.now();
-  if (autoStartInFlight) return false;
-  if (!bypassThrottle && now - autoStartLastAttemptMs < 60_000) return false;
+  if (autoStartInFlight) return "skipped";
+  if (!bypassThrottle && now - autoStartLastAttemptMs < 60_000) return "skipped";
   const myTeamId = getMyTeamId();
   const myTeamCode = myTeamId ? ID_TO_KBO_CODE[myTeamId] ?? "" : "";
-  if (!myTeamCode) return false;
+  if (!myTeamCode) return "none";
   autoStartInFlight = true;
   autoStartLastAttemptMs = now;
   try {
     const res = await fetch("/api/game-live");
-    if (!res.ok) return false;
+    if (!res.ok) return "failed";
     const data = (await res.json()) as { games?: AutoStartGame[] };
     const picked = pickMyTeamStartableGame(data.games ?? [], myTeamCode, now);
-    if (!picked) return false;
+    if (!picked) return "none";
     const { game: g, kind } = picked;
     const key = `${myTeamCode}|${g.gameId}|${kind}`;
-    if (autoStartDoneKey === key) return true;
+    if (autoStartDoneKey === key) return "started";
     const codes = parseGameIdCodes(g.gameId)!; // pick이 파싱 성공만 반환
     const started = await startLiveActivity(
       kind === "live"
@@ -561,11 +569,13 @@ export async function autoStartMyTeamLiveActivity(
     if (started) {
       autoStartDoneKey = key;
       console.log(`[live-activity] auto-start ok (${reason}, ${kind}) game=${g.gameId}`);
+      return "started";
     }
-    return started;
+    // startLiveActivity false = 토글 off/ActivityKit 비활성/네이티브 start 실패 — 재시도 안내 대상.
+    return "failed";
   } catch (e) {
     console.warn("[live-activity] auto-start failed", e);
-    return false;
+    return "failed";
   } finally {
     autoStartInFlight = false;
   }
@@ -573,13 +583,13 @@ export async function autoStartMyTeamLiveActivity(
 
 /**
  * 마이페이지 "잠금화면 카드 다시 표시" 수동 트리거 (건의함 feedback:4369ee5a).
- * autostart와 달리 1) 스로틀/세션 done-key를 건너뛰고(명시 요청이라 항상 재시도 —
- * 유저가 카드를 지운 뒤 done-key가 남아 skip되면 버튼이 무의미) 2) 성공 여부를 반환해
- * UI 토스트가 결과를 안내할 수 있게 한다. 네이티브 start는 살아있는 같은 gameId 카드를
- * update로 dedupe하므로 중복 카드 없음.
+ * autostart와 달리 스로틀/세션 done-key를 건너뛴다(명시 요청이라 항상 재시도 — 유저가
+ * 카드를 지운 뒤 done-key가 남아 skip되면 버튼이 무의미). outcome을 그대로 반환해
+ * UI가 성공/대상없음/실패를 구분 안내한다(삼순 blocker②). 네이티브 start는 살아있는
+ * 같은 gameId 카드를 update로 dedupe하므로 중복 카드 없음.
  */
-export async function retriggerMyTeamLiveActivity(): Promise<boolean> {
-  if (!isNativeIOS()) return false;
+export async function retriggerMyTeamLiveActivity(): Promise<AutoStartOutcome> {
+  if (!isNativeIOS()) return "skipped";
   autoStartDoneKey = null; // 명시 재표시 요청 — 세션 dedupe 리셋
   return autoStartMyTeamLiveActivity("manual-retrigger", true);
 }
