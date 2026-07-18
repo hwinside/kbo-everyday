@@ -2,6 +2,7 @@
 
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { trackFallback } from "@/lib/monitoring/api-fallback-tracker";
+import { parseTeamRegister, type RosterEntry } from "@/lib/roster-moves/parse";
 import { decodeBroadcast, type BroadcastChannel } from "@/lib/broadcast-channels";
 import { ALLSTAR_CODE_TO_ID, allstarTeamIdByName } from "@/lib/constants/teams";
 
@@ -604,4 +605,66 @@ export async function fetchBatterStats(): Promise<PlayerBattingStat[]> {
   }
 
   return stats;
+}
+
+/* ===== 선수 등록 현황 (1군 로스터 스냅샷) ===== */
+// 2026-07-18: 팀별 선수 등록/말소 내역 기능. Register.aspx는 ASP.NET WebForms —
+// 최초 GET으로 폼 토큰(__VIEWSTATE 등)을 얻고, 구단 탭 전환은 hfSearchTeam을 바꿔
+// btnCalendarSelect postback으로 요청한다(실측 확인: 동일 __VIEWSTATE로 10개 구단 순회 가능).
+const REGISTER_URL = `${KBO_BASE}/Player/Register.aspx`;
+const REGISTER_POSTBACK_TARGET = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$btnCalendarSelect";
+const REGISTER_TEAM_FIELD = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$hfSearchTeam";
+const REGISTER_DATE_FIELD = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$hfSearchDate";
+const REGISTER_DATE_HIDDEN_ID = "cphContents_cphContents_cphContents_hfSearchDate";
+
+export interface TeamRosterSnapshot {
+  teamId: number;
+  teamCode: string;
+  entries: RosterEntry[];
+}
+
+export interface RegisterRosters {
+  /** KBO 기준 등록명단 일자 (YYYYMMDD). */
+  date: string;
+  teams: TeamRosterSnapshot[];
+}
+
+function extractRegisterHidden(html: string, id: string): string {
+  const m = html.match(new RegExp(`id="${id}" value="([^"]*)"`));
+  return m ? m[1] : "";
+}
+
+/** 10개 구단 1군 등록명단 스냅샷을 GET 1 + 구단별 POST 10회로 수집. */
+export async function fetchRegisterRosters(): Promise<RegisterRosters> {
+  const initRes = await fetch(REGISTER_URL, { headers: { ...KBO_HTML_HEADERS, Referer: REGISTER_URL } });
+  const initHtml = await initRes.text();
+  const viewState = extractRegisterHidden(initHtml, "__VIEWSTATE");
+  const viewStateGen = extractRegisterHidden(initHtml, "__VIEWSTATEGENERATOR");
+  const eventValidation = extractRegisterHidden(initHtml, "__EVENTVALIDATION");
+  const date = extractRegisterHidden(initHtml, REGISTER_DATE_HIDDEN_ID);
+
+  const teams: TeamRosterSnapshot[] = [];
+  for (const [code, teamId] of Object.entries(TEAM_CODE_MAP)) {
+    const body = new URLSearchParams({
+      __EVENTTARGET: REGISTER_POSTBACK_TARGET,
+      __EVENTARGUMENT: "",
+      __VIEWSTATE: viewState,
+      __VIEWSTATEGENERATOR: viewStateGen,
+      __EVENTVALIDATION: eventValidation,
+      [REGISTER_TEAM_FIELD]: code,
+      [REGISTER_DATE_FIELD]: date,
+    });
+    const res = await fetch(REGISTER_URL, {
+      method: "POST",
+      headers: {
+        ...KBO_HTML_HEADERS,
+        Referer: REGISTER_URL,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: body.toString(),
+    });
+    const html = await res.text();
+    teams.push({ teamId, teamCode: code, entries: parseTeamRegister(html) });
+  }
+  return { date, teams };
 }

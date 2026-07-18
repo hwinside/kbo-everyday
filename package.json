@@ -41,7 +41,8 @@
     "qa:ios-app-keyboard": "node scripts/qa/browserstack-ios-app-keyboard.mjs",
     "validate:player-identity": "node scripts/validate-player-identity.mjs",
     "qa:native-ios-naver-smoke-preflight": "node scripts/qa/native-ios-naver-smoke-preflight.mjs",
-    "qa:full-entry": "tsx scripts/qa/full-entry-smoke.ts"
+    "qa:full-entry": "tsx scripts/qa/full-entry-smoke.ts",
+    "qa:roster-moves": "tsx scripts/qa/roster-moves-diff-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

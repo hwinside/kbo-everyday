@@ -8,6 +8,7 @@ import TeamSwitcher from "@/components/team/TeamSwitcher";
 import TeamMenu from "@/components/team/TeamMenu";
 import NextGameBanner from "@/components/team/NextGameBanner";
 import TeamNextTicketCard from "@/components/team/TeamNextTicketCard";
+import TeamRosterMovesCard from "@/components/team/TeamRosterMovesCard";
 import { STADIUMS } from "@/lib/constants/stadiums";
 
 interface StandingData {
@@ -72,6 +73,7 @@ export default function TeamHubPage() {
       <TeamMenu team={team} />
       <NextGameBanner team={team} />
       <TeamNextTicketCard team={team} />
+      <TeamRosterMovesCard team={team} />
     </div>
   );
 }
