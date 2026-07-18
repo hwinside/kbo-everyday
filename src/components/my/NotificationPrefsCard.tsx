@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Bell, ChevronDown, ChevronUp } from "lucide-react";
+import { Bell, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -9,6 +9,7 @@ import { isNative } from "@/lib/capacitor/platform";
 import { requestNativePushPermission, checkNativePushPermission } from "@/lib/native-push";
 import { endLiveActivity, setLiveActivityEnabledCache } from "@/lib/native-live-activity";
 import { getLiveUpdateState, setLiveUpdateOptIn, type LiveUpdateState } from "@/lib/capacitor/game-notification";
+import { retriggerLockScreenCard } from "@/lib/notifications/lock-card-retrigger";
 import { PREF_LABELS, DEFAULT_PREFS, type NotificationPrefs, type PrefKey } from "@/lib/notifications/prefs";
 
 /**
@@ -65,6 +66,17 @@ export default function NotificationPrefsCard() {
     setLiveUpdate((s) => ({ ...s, enabled: next }));
     await setLiveUpdateOptIn(next);
   }, [liveUpdate.enabled]);
+
+  // 잠금화면 카드 수동 재표시 (건의함 feedback:4369ee5a — 실수로 카드를 지운 유저 복구).
+  // idle → working → done(카드 재게시됨)/none(대상 경기 없음) — 4초 후 idle 복귀.
+  const [retrigger, setRetrigger] = useState<"idle" | "working" | "done" | "none">("idle");
+  const retriggerCard = useCallback(async () => {
+    if (retrigger === "working") return;
+    setRetrigger("working");
+    const result = await retriggerLockScreenCard();
+    setRetrigger(result === "started" ? "done" : "none");
+    setTimeout(() => setRetrigger("idle"), 4000);
+  }, [retrigger]);
 
   useEffect(() => {
     if (!expanded || loaded) return;
@@ -178,6 +190,25 @@ export default function NotificationPrefsCard() {
               >
                 <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${liveUpdate.enabled ? "translate-x-5" : "translate-x-0"}`} />
               </button>
+            </div>
+          )}
+          {isNative && prefs.live_activity !== false && (
+            <div className="py-3">
+              <button
+                onClick={() => void retriggerCard()}
+                disabled={retrigger === "working"}
+                className="w-full flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-bg-tertiary px-4 py-2.5 text-sm text-text-primary disabled:opacity-60"
+              >
+                <RefreshCw size={15} className={retrigger === "working" ? "animate-spin" : ""} />
+                잠금화면 카드 다시 표시
+              </button>
+              <p className="text-xs text-text-tertiary mt-1.5 text-center">
+                {retrigger === "done"
+                  ? "✅ 카드를 다시 표시했어요"
+                  : retrigger === "none"
+                    ? "지금은 표시할 경기가 없어요 (라이브 경기 또는 시작 30분 전부터 가능)"
+                    : "실수로 카드를 지웠을 때 눌러주세요"}
+              </p>
             </div>
           )}
         </div>

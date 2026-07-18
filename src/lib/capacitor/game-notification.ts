@@ -39,7 +39,7 @@ export interface WidgetNextGame {
 }
 
 interface GameNotificationPlugin {
-  start(opts: { title: string; body: string }): Promise<void>;
+  start(opts: { title: string; body: string; path?: string }): Promise<void>;
   update(opts: { title: string; body: string }): Promise<void>;
   remove(): Promise<void>;
   updateWidget(opts: WidgetData): Promise<void>;
@@ -58,11 +58,12 @@ export interface LiveUpdateState {
 
 const GameNotification = registerPlugin<GameNotificationPlugin>("GameNotification");
 
-/** ongoing notification 시작 (경기 시작 시). 실패는 silent — 부가 기능. */
-export async function startGameNotification(title: string, body: string): Promise<void> {
+/** ongoing notification 시작 (경기 시작 시). 실패는 silent — 부가 기능.
+ *  path = 카드 탭 시 열 경기룸 경로(옵셔널 — 네이티브 start가 path를 딥링크로 사용). */
+export async function startGameNotification(title: string, body: string, path?: string): Promise<void> {
   if (!isAndroid) return;
   try {
-    await GameNotification.start({ title, body });
+    await GameNotification.start({ title, body, ...(path ? { path } : {}) });
   } catch {
     // silent
   }

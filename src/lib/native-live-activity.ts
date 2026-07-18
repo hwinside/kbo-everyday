@@ -485,25 +485,25 @@ let autoStartDoneKey: string | null = null;
 export async function autoStartMyTeamLiveActivity(
   reason: string,
   bypassThrottle = false,
-): Promise<void> {
-  if (!isNativeIOS()) return;
+): Promise<boolean> {
+  if (!isNativeIOS()) return false;
   const now = Date.now();
-  if (autoStartInFlight) return;
-  if (!bypassThrottle && now - autoStartLastAttemptMs < 60_000) return;
+  if (autoStartInFlight) return false;
+  if (!bypassThrottle && now - autoStartLastAttemptMs < 60_000) return false;
   const myTeamId = getMyTeamId();
   const myTeamCode = myTeamId ? ID_TO_KBO_CODE[myTeamId] ?? "" : "";
-  if (!myTeamCode) return;
+  if (!myTeamCode) return false;
   autoStartInFlight = true;
   autoStartLastAttemptMs = now;
   try {
     const res = await fetch("/api/game-live");
-    if (!res.ok) return;
+    if (!res.ok) return false;
     const data = (await res.json()) as { games?: AutoStartGame[] };
     const picked = pickMyTeamStartableGame(data.games ?? [], myTeamCode, now);
-    if (!picked) return;
+    if (!picked) return false;
     const { game: g, kind } = picked;
     const key = `${myTeamCode}|${g.gameId}|${kind}`;
-    if (autoStartDoneKey === key) return;
+    if (autoStartDoneKey === key) return true;
     const codes = parseGameIdCodes(g.gameId)!; // pick이 파싱 성공만 반환
     const started = await startLiveActivity(
       kind === "live"
@@ -562,9 +562,24 @@ export async function autoStartMyTeamLiveActivity(
       autoStartDoneKey = key;
       console.log(`[live-activity] auto-start ok (${reason}, ${kind}) game=${g.gameId}`);
     }
+    return started;
   } catch (e) {
     console.warn("[live-activity] auto-start failed", e);
+    return false;
   } finally {
     autoStartInFlight = false;
   }
+}
+
+/**
+ * 마이페이지 "잠금화면 카드 다시 표시" 수동 트리거 (건의함 feedback:4369ee5a).
+ * autostart와 달리 1) 스로틀/세션 done-key를 건너뛰고(명시 요청이라 항상 재시도 —
+ * 유저가 카드를 지운 뒤 done-key가 남아 skip되면 버튼이 무의미) 2) 성공 여부를 반환해
+ * UI 토스트가 결과를 안내할 수 있게 한다. 네이티브 start는 살아있는 같은 gameId 카드를
+ * update로 dedupe하므로 중복 카드 없음.
+ */
+export async function retriggerMyTeamLiveActivity(): Promise<boolean> {
+  if (!isNativeIOS()) return false;
+  autoStartDoneKey = null; // 명시 재표시 요청 — 세션 dedupe 리셋
+  return autoStartMyTeamLiveActivity("manual-retrigger", true);
 }
