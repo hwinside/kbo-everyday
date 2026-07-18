@@ -106,7 +106,7 @@ check("retrigger: [지정 회귀] prefs 조회 실패(토큰없음/non-OK/예외
   retriggerAllowedByPref("failed"), false);
 check("retrigger: [지정 회귀] LiveUpdate 브릿지 조회 실패(null) → failed(start 0회)",
   decideAndroidSuppressionStep(null), "failed");
-check("retrigger: 승격 opt-in → suppression 리셋 경로", 
+check("retrigger: 승격 opt-in → suppression 리셋 경로",
   decideAndroidSuppressionStep({ supported: true, enabled: true }), "reset");
 check("retrigger: 승격 미지원(구빌드/OS<16) → 재게시만",
   decideAndroidSuppressionStep({ supported: false, enabled: false }), "post");
