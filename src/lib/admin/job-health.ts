@@ -82,6 +82,83 @@ export function isProblem(level: JobHealthLevel): boolean {
   return level === "error" || level === "stale";
 }
 
+/** admin-alerts cron 전이 판정용 스냅샷 (2026-07-18) */
+export interface JobLevelSnapshot {
+  jobName: string;
+  label: string;
+  level: JobHealthLevel;
+  reason: string;
+}
+
+export interface AdminAlertDecision {
+  jobName: string;
+  label: string;
+  reason: string;
+  kind: "problem" | "recovered";
+  /** CAS claim용 — 이 전이의 기대 직전 레벨 (null = 직전 행 없음) */
+  prevLevel: string | null;
+  /** CAS claim용 — 이 전이가 쓰려는 새 레벨 */
+  newLevel: JobHealthLevel;
+}
+
+/**
+ * 어드민 알림 전이 판정 (순수 함수, admin-alerts cron 전용).
+ *
+ * 직전 상태(prev: job_name→level) 대비 "전이 시에만" 알림을 만든다:
+ * - problem(error/stale) 진입: 직전 레벨과 다를 때만 (error↔stale 변화도 재알림 — 상황이 바뀐 것)
+ * - 복구: 직전이 problem이었고 지금 healthy/partial일 때 1회
+ * - unknown은 판정 불가(회색)라 경고도 복구도 만들지 않음
+ * - 같은 레벨 유지 = 무알림 (30분 주기 반복 알림 방지)
+ */
+export function decideAdminAlerts(
+  prev: Map<string, string>,
+  current: JobLevelSnapshot[],
+): AdminAlertDecision[] {
+  const out: AdminAlertDecision[] = [];
+  for (const job of current) {
+    const prevLevel = prev.get(job.jobName) ?? null;
+    const wasProblem = prevLevel === "error" || prevLevel === "stale";
+    if (isProblem(job.level)) {
+      if (job.level !== prevLevel) {
+        out.push({
+          jobName: job.jobName,
+          label: job.label,
+          reason: job.reason,
+          kind: "problem",
+          prevLevel,
+          newLevel: job.level,
+        });
+      }
+    } else if (wasProblem && job.level !== "unknown") {
+      out.push({
+        jobName: job.jobName,
+        label: job.label,
+        reason: job.reason,
+        kind: "recovered",
+        prevLevel,
+        newLevel: job.level,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * 알림 전달 결과 → 상태 영속화 판정 (순수 함수, PR #681 삼순 P1 반영).
+ * - "persist": 전달 성공(sent>0) 또는 구독 0개(failed=0, 전달할 대상 없음 — vacuous 성공)
+ * - "revert": 전송 시도가 전부 실패(sent=0 && failed>0) → claim을 되돌려 다음 틱 재시도
+ */
+export function decideAlertPersistence(outcome: {
+  sent: number;
+  failed: number;
+  queryError?: boolean;
+}): "persist" | "revert" {
+  // 구독 조회 DB 오류 = 전달 결과 미지 → revert (삼순 2차 P1: {0,0} 둘갑 차단)
+  if (outcome.queryError) return "revert";
+  if (outcome.sent === 0 && outcome.failed > 0) return "revert";
+  return "persist";
+}
+
 export function computeJobHealth(def: JobDef, input: JobHealthInput, now: number): JobHealth {
   const runAgeHours = ageHours(input.latestAt, now);
   const dataAgeHours = def.dataFreshness ? ageHours(input.dataGeneratedAt, now) : null;

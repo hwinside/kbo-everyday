@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { isAdminRequest } from "@/lib/admin/pin";
+import { isAdminAuthedRequest } from "@/lib/admin/pin";
 
 const BUCKET = "photos";
 const MAX_SIZE = 5 * 1024 * 1024; // 5MB (스크린샷 여유)
@@ -13,7 +13,7 @@ const EXT_BY_TYPE: Record<string, string> = {
 
 /** 새소식 본문 인라인 이미지 업로드 — 어드민 PIN 인증 + service role로 RLS 우회 */
 export async function POST(req: NextRequest) {
-  if (!isAdminRequest(req)) {
+  if (!(await isAdminAuthedRequest(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
