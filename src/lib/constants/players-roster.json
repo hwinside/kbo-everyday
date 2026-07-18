@@ -3204,6 +3204,15 @@
     "birthDate": "2004-07-28"
   },
   {
+    "name": "세베리노",
+    "kboId": "56236",
+    "teamId": 2,
+    "position": "야수",
+    "backNo": "36",
+    "team": "두산",
+    "birthDate": "1999-10-03"
+  },
+  {
     "name": "소이현",
     "kboId": "67962",
     "teamId": 5,
@@ -3591,6 +3600,15 @@
     "birthDate": "1991-11-18"
   },
   {
+    "name": "아빌라",
+    "kboId": "56801",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "33",
+    "team": "SSG",
+    "birthDate": "1997-01-14"
+  },
+  {
     "name": "안민겸",
     "kboId": "56222",
     "teamId": 2,
@@ -3877,6 +3895,15 @@
     "backNo": "123",
     "team": "롯데",
     "birthDate": "2003-10-07"
+  },
+  {
+    "name": "엄준현",
+    "kboId": "55631",
+    "teamId": 6,
+    "position": "야수",
+    "backNo": "6",
+    "team": "KIA",
+    "birthDate": "2006-04-20"
   },
   {
     "name": "엘빈 로드리게스",
