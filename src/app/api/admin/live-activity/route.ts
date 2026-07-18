@@ -47,6 +47,12 @@ interface CardRow {
   user_id: string;
 }
 
+interface SubRow {
+  game_id: string;
+  user_id: string | null;
+  device_key: string;
+}
+
 // Supabase는 요청당 기본 1000행 캡이 있어(무제한 select가 조용히 잘림 — #560 사고)
 // 반드시 range 페이지네이션으로 전량을 모은다. game_id 내림차순(오늘 날짜가 접두라
 // 최신이 먼저 옴)으로 정렬해서, 상한에 걸려도 과거 잔존행부터 잘리고 오늘 활성
@@ -70,6 +76,28 @@ async function fetchAllRows(table: string): Promise<{ rows: CardRow[]; truncated
   return { rows, truncated };
 }
 
+// 채널 구독(SSOT: 네이티브 ACK만 기록) — build17+ 채널 카드는 update 토큰 없이
+// broadcast로 갱신을 받으므로(#663이 채널 activity의 update 토큰 등록을 스킵)
+// 갱신 수신 판정에 합산해야 '갱신 불가'가 과대계상되지 않는다.
+async function fetchAllSubRows(): Promise<{ rows: SubRow[]; truncated: boolean }> {
+  const PAGE = 1000;
+  const MAX_PAGES = 30;
+  const rows: SubRow[] = [];
+  let truncated = false;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const { data, error } = await supabase
+      .from("live_activity_channel_subscriptions")
+      .select("game_id, user_id, device_key")
+      .order("game_id", { ascending: false })
+      .range(page * PAGE, page * PAGE + PAGE - 1);
+    if (error) throw new Error(`live_activity_channel_subscriptions: ${error.message}`);
+    rows.push(...((data ?? []) as SubRow[]));
+    if (!data || data.length < PAGE) break;
+    if (page === MAX_PAGES - 1) truncated = true;
+  }
+  return { rows, truncated };
+}
+
 export async function GET(req: NextRequest) {
   if (!(await isAdminAuthedRequest(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -79,18 +107,20 @@ export async function GET(req: NextRequest) {
     const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    const [p2sTotal, p2sFresh24h, p2sFresh7d, startedResult, tokenResult, gamesResult] = await Promise.all([
+    const [p2sTotal, p2sFresh24h, p2sFresh7d, startedResult, tokenResult, subResult, gamesResult] = await Promise.all([
       supabase.from("live_activity_start_tokens").select("*", { count: "exact", head: true }),
       supabase.from("live_activity_start_tokens").select("*", { count: "exact", head: true }).gte("updated_at", since24h),
       supabase.from("live_activity_start_tokens").select("*", { count: "exact", head: true }).gte("updated_at", since7d),
       fetchAllRows("live_activity_started_users"),
       fetchAllRows("live_activity_tokens"),
+      fetchAllSubRows(),
       fetchTodayGames(),
     ]);
 
     const startedRows = startedResult.rows;
     const tokenRows = tokenResult.rows;
-    const rowsTruncated = startedResult.truncated || tokenResult.truncated;
+    const subRows = subResult.rows;
+    const rowsTruncated = startedResult.truncated || tokenResult.truncated || subResult.truncated;
     const { games, ok: kboStatusAvailable } = gamesResult;
 
     const gameMeta = new Map<string, { label: string; status: string }>();
@@ -104,17 +134,24 @@ export async function GET(req: NextRequest) {
 
     // 경기별 집계: started(push-to-start로 뜬 카드) / tokens(update 토큰) /
     // updatable(둘 다 있음 = 매분 갱신 수신) / gap(started인데 토큰 없음 = 갱신 불가).
-    const byGame = new Map<string, { started: Set<string>; tokens: Set<string> }>();
+    const byGame = new Map<string, { started: Set<string>; tokens: Set<string>; channelUsers: Set<string>; channelDevices: Set<string> }>();
     const entry = (gameId: string) => {
       let e = byGame.get(gameId);
       if (!e) {
-        e = { started: new Set(), tokens: new Set() };
+        e = { started: new Set(), tokens: new Set(), channelUsers: new Set(), channelDevices: new Set() };
         byGame.set(gameId, e);
       }
       return e;
     };
     for (const r of startedRows) entry(r.game_id).started.add(r.user_id);
     for (const r of tokenRows) entry(r.game_id).tokens.add(r.user_id);
+    for (const r of subRows) {
+      const e = entry(r.game_id);
+      e.channelDevices.add(r.device_key);
+      // user_id는 nullable — null이면 유저 매핑 불가라 갱신 수신 판정에서 제외
+      // (보수적 집계 = 과소계상 쪽으로만 오차).
+      if (r.user_id) e.channelUsers.add(r.user_id);
+    }
 
     const todayStr = getKSTDateStr();
     const gamesOut = [...byGame.entries()]
@@ -124,7 +161,8 @@ export async function GET(req: NextRequest) {
         const isStale = !meta && gameDate < todayStr;
         const started = e.started.size;
         const tokens = e.tokens.size;
-        const updatable = [...e.started].filter(u => e.tokens.has(u)).length;
+        const channelSubs = e.channelDevices.size;
+        const updatable = [...e.started].filter(u => e.tokens.has(u) || e.channelUsers.has(u)).length;
         const gap = started - updatable;
         return {
           gameId,
@@ -133,6 +171,7 @@ export async function GET(req: NextRequest) {
           status: meta?.status ?? (isStale ? "stale" : "unknown"),
           started,
           tokens,
+          channelSubs,
           updatable,
           gap,
           isStale,
@@ -164,6 +203,7 @@ export async function GET(req: NextRequest) {
         updatable,
         gap: cards - updatable,
         updateTokens: active.reduce((s, g) => s + g.tokens, 0),
+        channelSubs: active.reduce((s, g) => s + g.channelSubs, 0),
         residualRows: residualGames.reduce((s, g) => s + g.started + g.tokens, 0),
         residualGameCount: residualGames.length,
         kboStatusAvailable,
