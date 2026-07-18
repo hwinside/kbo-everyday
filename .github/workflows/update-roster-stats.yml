@@ -18,13 +18,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 자동 머지 가드용 기준값: 크롤 *이전*(= main 현재) 로스터 인원 수
-      - name: Baseline roster count (main)
+      # 자동 머지 급변 가드용 기준값: 크롤 *이전*(= main 현재) roster/batters/pitchers 인원 수
+      - name: Baseline counts (main)
         id: baseline
         run: |
-          COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('src/lib/constants/players-roster.json','utf-8')).length)")
-          echo "roster_count=$COUNT" >> $GITHUB_OUTPUT
-          echo "Baseline roster count: $COUNT"
+          jlen() { node -e "console.log(JSON.parse(require('fs').readFileSync('$1','utf-8')).length)"; }
+          ROSTER=$(jlen src/lib/constants/players-roster.json)
+          BATTERS=$(jlen src/lib/constants/stats-2026-batters.json)
+          PITCHERS=$(jlen src/lib/constants/stats-2026-pitchers.json)
+          echo "roster_count=$ROSTER" >> $GITHUB_OUTPUT
+          echo "batter_count=$BATTERS" >> $GITHUB_OUTPUT
+          echo "pitcher_count=$PITCHERS" >> $GITHUB_OUTPUT
+          echo "Baseline: roster=$ROSTER batters=$BATTERS pitchers=$PITCHERS"
 
       - uses: actions/setup-node@v4
         with:
@@ -80,11 +85,19 @@ jobs:
         continue-on-error: true
         run: node scripts/validate-player-identity.mjs
 
+      # GITHUB_TOKEN이 만든 PR은 pull_request validate-roster 워크플로를 발화시키지 않으므로
+      # foreign-photo 검증도 원본 워크플로 안에서 직접 실행해 자동 머지 게이트에 포함한다.
+      - name: Validate foreign photo coverage
+        id: validate_photo
+        continue-on-error: true
+        run: npm run qa:foreign-photo
+
       - name: Check for changes
         id: changes
         run: |
-          git diff --stat
-          if git diff --quiet && git diff --cached --quiet; then
+          git add -A
+          git status --short
+          if git diff --cached --quiet; then
             echo "changed=false" >> $GITHUB_OUTPUT
           else
             echo "changed=true" >> $GITHUB_OUTPUT
@@ -94,6 +107,26 @@ jobs:
             echo "roster_count=$ROSTER_COUNT" >> $GITHUB_OUTPUT
             echo "batter_count=$BATTER_COUNT" >> $GITHUB_OUTPUT
             echo "pitcher_count=$PITCHER_COUNT" >> $GITHUB_OUTPUT
+
+            # 생성 데이터 allowlist 검사 — 크롤 단계가 예상 밖 파일(코드/워크플로 등)을
+            # 건드렸으면 PR은 생성하되 자동 머지는 보류한다 (#685 삼순 리뷰 Blocker 2)
+            ALLOWLIST_RE='^(public/players/[^/]+\.(jpg|jpeg|png|webp)|src/lib/constants/(players-roster\.json|player-photos\.ts|player-defense-runs\.json|stats-2026-(batters|pitchers|defense|meta)\.json))$'
+            CHANGED_FILES=$(git diff --cached --name-only)
+            OFF_ALLOWLIST=$(echo "$CHANGED_FILES" | grep -Ev "$ALLOWLIST_RE" || true)
+            if [ -n "$OFF_ALLOWLIST" ]; then
+              echo "off_allowlist=true" >> $GITHUB_OUTPUT
+              echo "⚠️ allowlist 밖 변경 파일:"
+              echo "$OFF_ALLOWLIST"
+              {
+                echo "## ⚠️ 생성 allowlist 밖 파일 변경 감지"
+                echo ""
+                echo '```'
+                echo "$OFF_ALLOWLIST"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "off_allowlist=false" >> $GITHUB_OUTPUT
+            fi
           fi
 
       - name: Create PR
@@ -130,6 +163,7 @@ jobs:
           검증 결과:
           - Roster SSOT: ${{ steps.validate_roster.outcome }}
           - Player identity: ${{ steps.validate_identity.outcome }}
+          - Foreign photo: ${{ steps.validate_photo.outcome }}
 
           매일 새벽 5시(KST) 자동 크롤링 결과입니다.
           검증(roster SSOT + player identity)과 Vercel 빌드가 전부 PASS면 자동 머지됩니다.
@@ -144,7 +178,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Report validation failure after PR creation
-        if: steps.changes.outputs.changed == 'true' && (steps.validate_roster.outcome == 'failure' || steps.validate_identity.outcome == 'failure')
+        if: steps.changes.outputs.changed == 'true' && (steps.validate_roster.outcome == 'failure' || steps.validate_identity.outcome == 'failure' || steps.validate_photo.outcome == 'failure')
         run: |
           {
             echo "## ❌ 자동 업데이트 검증 실패"
@@ -152,6 +186,7 @@ jobs:
             echo "PR: ${{ steps.pr.outputs.pr_url }}"
             echo "Roster SSOT: ${{ steps.validate_roster.outcome }}"
             echo "Player identity: ${{ steps.validate_identity.outcome }}"
+            echo "Foreign photo: ${{ steps.validate_photo.outcome }}"
             echo ""
             echo "PR은 생성했으므로 누락 선수/매핑 보강 후 수동 검토하세요."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -167,31 +202,52 @@ jobs:
 
           # 운영 원칙 개정 (2026-07-18, 하린아빠 지시):
           # 2026-05-17 #94 사고로 무조건 auto-merge를 제거했으나, 이후 안전망이 생김 —
-          #   ① validate-roster / validate-player-identity (위 스텝, failure면 이전 스텝이 exit 1이라 여기 도달 안 함)
-          #   ② Vercel 빌드 SUCCESS 명시 확인 (아래 loop)
-          #   ③ 로스터 대량 변화 가드 (Δ > MAX_ROSTER_DELTA면 크롤 오류 의심 → 보류)
-          # 셋이 전부 통과할 때만 자동 머지. 하나라도 실패면 PR open + run failure로 남겨
+          #   ① validate-roster / validate-player-identity / foreign-photo (위 스텝, failure면 이전 스텝이 exit 1이라 여기 도달 안 함)
+          #   ② 생성 데이터 allowlist (예상 밖 코드/워크플로 파일 변경 시 보류)
+          #   ③ 데이터 급변 가드 (roster/batters/pitchers 각 Δ > MAX_DELTA면 크롤 오류 의심 → 보류)
+          #   ④ Vercel 빌드 SUCCESS 명시 확인 (아래 loop)
+          # 전부 통과할 때만 자동 머지. 하나라도 실패면 PR open + run failure로 남겨
           # 어드민 크롤러 헬스(STALE) 알림 경로로 드러나게 한다.
 
-          # 방어적 재확인 (이전 스텝이 게이트하지만 이중 안전핀)
-          if [ "${{ steps.validate_roster.outcome }}" != "success" ] || [ "${{ steps.validate_identity.outcome }}" != "success" ]; then
+          # ① 방어적 재확인 (이전 스텝이 게이트하지만 이중 안전핀)
+          if [ "${{ steps.validate_roster.outcome }}" != "success" ] || [ "${{ steps.validate_identity.outcome }}" != "success" ] || [ "${{ steps.validate_photo.outcome }}" != "success" ]; then
             echo "❌ 검증 outcome 비정상 — 자동 머지 보류: $PR_URL"
             exit 1
           fi
 
-          # 로스터 대량 변화 가드
-          MAX_ROSTER_DELTA=30
-          BEFORE="${{ steps.baseline.outputs.roster_count }}"
-          AFTER="${{ steps.changes.outputs.roster_count }}"
-          DELTA=$((AFTER - BEFORE))
-          [ "$DELTA" -lt 0 ] && DELTA=$((-DELTA))
-          echo "roster delta: ${BEFORE} → ${AFTER} (Δ${DELTA}, guard ${MAX_ROSTER_DELTA})"
-          if [ "$DELTA" -gt "$MAX_ROSTER_DELTA" ]; then
+          # ② 생성 데이터 allowlist 가드
+          if [ "${{ steps.changes.outputs.off_allowlist }}" = "true" ]; then
             {
-              echo "## ⚠️ 로스터 대량 변화 — 자동 머지 보류"
+              echo "## ⚠️ allowlist 밖 파일 변경 — 자동 머지 보류"
               echo ""
               echo "PR: $PR_URL"
-              echo "Roster: ${BEFORE}명 → ${AFTER}명 (Δ${DELTA} > ${MAX_ROSTER_DELTA})"
+              echo "크롤 단계가 생성 데이터 외 파일을 건드렸습니다 — 수동 검토 후 머지하세요."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "❌ allowlist 밖 파일 변경 — 자동 머지 보류: $PR_URL"
+            exit 1
+          fi
+
+          # ③ 데이터 급변 가드 (roster/batters/pitchers 각 |Δ| > 10 보류 — 빈 배열 급락 포함 차단)
+          MAX_DELTA=10
+          GUARD_FAIL=""
+          for spec in \
+            "roster:${{ steps.baseline.outputs.roster_count }}:${{ steps.changes.outputs.roster_count }}" \
+            "batters:${{ steps.baseline.outputs.batter_count }}:${{ steps.changes.outputs.batter_count }}" \
+            "pitchers:${{ steps.baseline.outputs.pitcher_count }}:${{ steps.changes.outputs.pitcher_count }}"; do
+            NAME="${spec%%:*}"; REST="${spec#*:}"; BEFORE="${REST%%:*}"; AFTER="${REST#*:}"
+            DELTA=$((AFTER - BEFORE))
+            if [ "$DELTA" -lt 0 ]; then DELTA=$((-DELTA)); fi
+            echo "$NAME: ${BEFORE} → ${AFTER} (Δ${DELTA}, guard ${MAX_DELTA})"
+            if [ "$DELTA" -gt "$MAX_DELTA" ]; then
+              GUARD_FAIL="$GUARD_FAIL ${NAME}(${BEFORE}→${AFTER},Δ${DELTA})"
+            fi
+          done
+          if [ -n "$GUARD_FAIL" ]; then
+            {
+              echo "## ⚠️ 데이터 급변 감지 — 자동 머지 보류"
+              echo ""
+              echo "PR: $PR_URL"
+              echo "초과 항목:${GUARD_FAIL} (허용 Δ${MAX_DELTA})"
               echo "크롤 오류 가능성 — 수동 검토 후 머지하세요."
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
@@ -226,14 +282,17 @@ jobs:
 
             if [ "$HAS_VERCEL" = "true" ] && [ "$VERCEL_STATE" = "SUCCESS" ]; then
               echo "✅ Vercel build SUCCESS — 자동 머지 진행: $PR_URL"
-              gh pr merge "$PR_URL" --squash --delete-branch
+              # errexit 대비: merge 명령 실패를 잡아야 아래 MERGED state 재검증이 실행된다
+              if ! gh pr merge "$PR_URL" --squash --delete-branch; then
+                echo "⚠️ gh pr merge 명령 비정상 종료 — state 재확인"
+              fi
               MERGE_STATE=$(gh pr view "$PR_URL" --json state --jq .state)
               if [ "$MERGE_STATE" = "MERGED" ]; then
                 {
                   echo "## ✅ 자동 업데이트 머지 완료"
                   echo ""
                   echo "PR: $PR_URL"
-                  echo "검증 PASS · Vercel SUCCESS · Δroster=${DELTA}"
+                  echo "검증 PASS(roster/identity/photo) · allowlist OK · 급변 가드 OK · Vercel SUCCESS"
                 } >> "$GITHUB_STEP_SUMMARY"
                 exit 0
               else
