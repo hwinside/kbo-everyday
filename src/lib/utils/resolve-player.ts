@@ -83,6 +83,13 @@ export interface ResolveOptions {
   context?: string;
 }
 
+/* 외부 표기 변형 alias — 라이브/스탯 피드가 로스터 등록명과 다른 로마자 표기를 쓰는 케이스.
+ * (예: 戸田 → 피드 "토다" vs 로스터 "도다 나츠키" — suffix/prefix 어느 쪽에도 안 걸림)
+ * 오매칭 방지를 위해 팀 가드 필수: 쿼리의 team/teamId가 대상 선수의 로스터 팀과 일치할 때만 적용. */
+const NAME_ALIASES: Record<string, string> = {
+  토다: "AQ006", // NC 도다 나츠키 — KBO 라이브 피드 표기 (2026-07-18 PR #679 리뷰)
+};
+
 const DEFAULT_ROSTER = playersRoster as RosterPlayer[];
 
 function toResolved(p: RosterPlayer): ResolvedPlayer {
@@ -223,6 +230,19 @@ function resolveInternal(
         (cleanTeam && p.team === cleanTeam)),
   );
   if (byPartialAndTeam) return toResolved(byPartialAndTeam);
+
+  // 표기 변형 alias — 팀 가드 일치 시에만 적용(팀 정보 없는 쿼리엔 미적용 → 오매칭 방지)
+  const aliasId = NAME_ALIASES[cleanName];
+  if (aliasId) {
+    const target = roster.find((p) => p.kboId === aliasId);
+    if (
+      target &&
+      ((numericTeamId !== null && Number(target.teamId) === numericTeamId) ||
+        (cleanTeam && target.team === cleanTeam))
+    ) {
+      return toResolved(target);
+    }
+  }
 
   const exactMatches = roster.filter((p) => p.name === cleanName);
   if (exactMatches.length === 1) return toResolved(exactMatches[0]);
