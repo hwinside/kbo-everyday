@@ -130,13 +130,25 @@ export async function setWidgetMyTeam(code: string): Promise<void> {
 }
 
 /** 잠금화면 라이브 카드 지원/opt-in 상태 — 미지원(비안드/구버전 OS)이면 supported:false.
- *  구 네이티브 빌드(플러그인 메서드 부재)에서도 조용히 미지원 처리. */
+ *  구 네이티브 빌드(플러그인 메서드 부재)에서도 조용히 미지원 처리(fail-open — 토글 행 숨김용). */
 export async function getLiveUpdateState(): Promise<LiveUpdateState> {
   if (!isAndroid) return { supported: false, enabled: false };
   try {
     return await GameNotification.getLiveUpdateState();
   } catch {
     return { supported: false, enabled: false };
+  }
+}
+
+/** strict 버전 — 수동 재노출 경로 전용(삼순 #680 재리뷰). 브릿지 조회 실패(구빌드 메서드
+ *  부재 포함)를 null로 구분 반환 — suppression 상태 불명인 채 재게시하면 네이티브 post()가
+ *  조용히 suppress해 성공 오안내가 나므로 호출부가 failed 처리한다. */
+export async function getLiveUpdateStateStrict(): Promise<LiveUpdateState | null> {
+  if (!isAndroid) return null;
+  try {
+    return await GameNotification.getLiveUpdateState();
+  } catch {
+    return null;
   }
 }
 

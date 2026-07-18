@@ -8,20 +8,28 @@
 //   정상 갱신을 이어받는다.
 // 양 플랫폼 모두 웹(원격 로드) 전용 변경 — 네이티브 재빌드 불필요.
 // 결과는 started/none/failed 3분리(삼순 #680 blocker②) — 실패를 성공/경기없음으로 오안내 금지.
+// prefs는 strict 조회(fail-closed, 삼순 재리뷰 blocker) — 자동 시작 경로의 fail-open과 달리
+// 토큰 없음/non-OK/예외를 전부 failed로 닫아 "서버 OFF → 재생성 금지" 계약을 실패 경로에서도 보장.
 
+import { supabase } from "@/lib/supabase/client";
 import { isAndroid, isIOS } from "@/lib/capacitor/platform";
 import { getMyTeamId } from "@/lib/store/myteam";
 import {
   ID_TO_KBO_CODE,
-  isLiveActivityEnabled,
   retriggerMyTeamLiveActivity,
+  setLiveActivityEnabledCache,
 } from "@/lib/native-live-activity";
 import {
-  getLiveUpdateState,
+  getLiveUpdateStateStrict,
   setLiveUpdateOptIn,
   startGameNotification,
 } from "@/lib/capacitor/game-notification";
-import { pickMyTeamStartableGame } from "@/lib/notifications/la-autostart-policy";
+import {
+  decideAndroidSuppressionStep,
+  pickMyTeamStartableGame,
+  retriggerAllowedByPref,
+  type StrictPrefResult,
+} from "@/lib/notifications/la-autostart-policy";
 
 /** /api/game-live 응답의 재게시에 필요한 필드만 (AutoStartCandidateGame 상위집합). */
 interface LiveGameLite {
@@ -38,23 +46,41 @@ interface LiveGameLite {
 }
 
 /** started = 재표시 요청 성공 / none = 대상 경기 없음(라이브·시작 30분 내 예정 부재) /
- *  failed = prefs OFF·네트워크·브릿지·권한 등 실패 — UI가 재시도 안내로 구분. */
+ *  failed = prefs OFF·조회 실패·네트워크·브릿지·권한 등 — UI가 재시도 안내로 구분. */
 export type RetriggerResult = "started" | "none" | "failed";
+
+/** 서버 prefs.live_activity strict 조회 — 수동 재노출 전용(삼순 #680 재리뷰 blocker).
+ *  자동 시작 경로(isLiveActivityEnabled)의 fail-open 캐시와 달리 토큰 없음/non-OK/예외를
+ *  전부 "failed"로 닫는다. 성공 조회 시 클라 게이트 캐시를 정확값으로 동기화(iOS start
+ *  내부 게이트와 일관). */
+export async function fetchLiveActivityPrefStrict(): Promise<StrictPrefResult> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) return "failed";
+    const res = await fetch("/api/push/prefs", { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return "failed";
+    const { prefs } = await res.json();
+    const enabled = prefs?.live_activity !== false;
+    setLiveActivityEnabledCache(enabled);
+    return enabled ? "enabled" : "disabled";
+  } catch {
+    return "failed";
+  }
+}
 
 /** 잠금화면 카드 수동 재노출. 비네이티브는 failed(버튼이 네이티브 전용이라 실제론 미도달). */
 export async function retriggerLockScreenCard(): Promise<RetriggerResult> {
+  // strict OFF 방어(iOS/Android 공통 진입부, fail-closed) — UI 게이트 레이스/우회 호출에도
+  // 서버 OFF 유저 재생성 금지. disabled/조회 실패 모두 failed(문구가 설정·권한 확인 안내).
+  if (!retriggerAllowedByPref(await fetchLiveActivityPrefStrict())) return "failed";
   if (isIOS) {
-    // iOS 실행부 OFF 방어는 startLiveActivity 내부 isLiveActivityEnabled 게이트가 수행
-    // (off → started:false → failed 매핑).
     const outcome = await retriggerMyTeamLiveActivity();
     if (outcome === "started") return "started";
     if (outcome === "none") return "none";
     return "failed"; // failed | skipped(in-flight 등) — 재시도 안내
   }
   if (!isAndroid) return "failed";
-  // 실행부 OFF 방어(삼순 blocker①) — UI 게이트와 별개로 서버 prefs SSOT를 직접 재확인.
-  // prefs 로드 레이스/우회 호출에도 "설정 OFF → 재생성 금지" 계약 보장.
-  if (!(await isLiveActivityEnabled())) return "failed";
   const myTeamId = getMyTeamId();
   const myTeamCode = myTeamId ? ID_TO_KBO_CODE[myTeamId] ?? "" : "";
   if (!myTeamCode) return "none";
@@ -69,11 +95,14 @@ export async function retriggerLockScreenCard(): Promise<RetriggerResult> {
   }
   const picked = pickMyTeamStartableGame(games, myTeamCode, Date.now());
   if (!picked) return "none";
-  // 승격 카드 opt-in 유저: 스와이프 Unpin 억제(suppressed_game_id)를 리셋 — opt-in 값은
-  // 현재 상태(true) 그대로 재기록. 리셋 실패 시 재게시해도 네이티브 post()가 suppress하므로
-  // failed로 정직 안내. opt-out 유저는 일반 상단 알림 경로라 억제 자체가 없음.
-  const lu = await getLiveUpdateState();
-  if (lu.supported && lu.enabled) {
+  // 승격 카드 상태 strict 조회 — 브릿지 실패(null)는 suppression 상태 불명이라 failed
+  // (모른 채 재게시하면 네이티브 post()가 조용히 suppress → 성공 오안내). opt-in이면
+  // 스와이프 Unpin 억제(suppressed_game_id) 리셋 — opt-in 값은 현재 상태(true) 그대로
+  // 재기록. 리셋 실패도 같은 이유로 failed. 미지원/opt-out은 일반 상단 알림 경로라
+  // 억제 개념 없음 → 재게시만.
+  const step = decideAndroidSuppressionStep(await getLiveUpdateStateStrict());
+  if (step === "failed") return "failed";
+  if (step === "reset") {
     const reset = await setLiveUpdateOptIn(true);
     if (!reset) return "failed";
   }

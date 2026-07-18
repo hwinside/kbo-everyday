@@ -160,9 +160,7 @@ function isNativeIOS(): boolean {
 // 즉시 캐시를 갱신한다.
 let liveActivityPrefCache: boolean | null = null;
 
-/** 서버 prefs.live_activity SSOT 확인(세션 캐시). iOS start/update 게이트 외에도
- *  안드 재노출 경로(lock-card-retrigger)가 실행부 OFF 방어로 재사용(삼순 #680 blocker①). */
-export async function isLiveActivityEnabled(): Promise<boolean> {
+async function isLiveActivityEnabled(): Promise<boolean> {
   if (liveActivityPrefCache !== null) return liveActivityPrefCache;
   try {
     const { data: { session } } = await supabase.auth.getSession();

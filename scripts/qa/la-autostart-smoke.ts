@@ -4,6 +4,8 @@ import {
   pickMyTeamLiveGame,
   pickMyTeamStartableGame,
   gameStartMs,
+  retriggerAllowedByPref,
+  decideAndroidSuppressionStep,
   SCHEDULED_START_WINDOW_MS,
 } from "../../src/lib/notifications/la-autostart-policy";
 
@@ -96,6 +98,20 @@ check("startable: [사고 재현①] 경기 20분 전 재설치 첫 실행 → s
 check("startable: [사고 재현②] 라이브 중 재설치 → 라이브 복구",
   pickMyTeamStartableGame([games[1]], "OB", START + 30 * 60 * 1000),
   { game: games[1], kind: "live" });
+
+// ── 수동 재노출(잠금화면 카드 다시 표시) 게이트 — PR #680 삼순 재리뷰 blocker(fail-closed) ──
+check("retrigger: strict pref enabled → 진행 허용", retriggerAllowedByPref("enabled"), true);
+check("retrigger: strict pref disabled → 차단", retriggerAllowedByPref("disabled"), false);
+check("retrigger: [지정 회귀] prefs 조회 실패(토큰없음/non-OK/예외) → 차단(start 0회)",
+  retriggerAllowedByPref("failed"), false);
+check("retrigger: [지정 회귀] LiveUpdate 브릿지 조회 실패(null) → failed(start 0회)",
+  decideAndroidSuppressionStep(null), "failed");
+check("retrigger: 승격 opt-in → suppression 리셋 경로", 
+  decideAndroidSuppressionStep({ supported: true, enabled: true }), "reset");
+check("retrigger: 승격 미지원(구빌드/OS<16) → 재게시만",
+  decideAndroidSuppressionStep({ supported: false, enabled: false }), "post");
+check("retrigger: 지원하나 opt-out → 재게시만(억제 개념 없음)",
+  decideAndroidSuppressionStep({ supported: true, enabled: false }), "post");
 
 console.log(`\nla-autostart-smoke: ${pass} PASS / ${fail} FAIL`);
 if (fail > 0) process.exit(1);

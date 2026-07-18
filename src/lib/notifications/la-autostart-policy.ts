@@ -69,6 +69,29 @@ export function pickMyTeamStartableGame<T extends AutoStartCandidateGame>(
   return scheduled ? { game: scheduled, kind: "scheduled" } : null;
 }
 
+// ── 수동 재노출(잠금화면 카드 다시 표시) 게이트 판정 (PR #680 삼순 재리뷰 blocker) ──
+// 자동 시작 경로의 fail-open(조회 실패=ON)과 달리, 유저 명시 버튼은 조회 실패를
+// 전부 닫는다(fail-closed) — 서버 OFF 유저 재생성 금지 계약.
+
+/** 서버 prefs.live_activity strict 조회 결과 — 토큰 없음/non-OK/예외 = failed. */
+export type StrictPrefResult = "enabled" | "disabled" | "failed";
+
+/** 수동 재노출 진행 허용 판정 — enabled만 통과(disabled/failed = 차단, fail-closed). */
+export function retriggerAllowedByPref(pref: StrictPrefResult): boolean {
+  return pref === "enabled";
+}
+
+/** 안드 잠금화면 카드 재게시 전 suppression 단계 판정.
+ *  null(브릿지 조회 실패·구빌드 메서드 부재) = failed — suppression 상태 불명인 채 재게시하면
+ *  네이티브 post()가 조용히 suppress해 "요청 성공" 오안내 가능(삼순 blocker② 계약).
+ *  승격 opt-in = reset(억제 리셋 후 재게시) / 미지원·opt-out = post(억제 개념 없음, 재게시만). */
+export function decideAndroidSuppressionStep(
+  lu: { supported: boolean; enabled: boolean } | null,
+): "failed" | "reset" | "post" {
+  if (lu === null) return "failed";
+  return lu.supported && lu.enabled ? "reset" : "post";
+}
+
 /**
  * 오늘 경기 목록에서 *라이브 중인 최애팀 경기* 선택. 없으면 null.
  * (하위호환 — 기존 호출부/스모크 유지. 신규 경로는 pickMyTeamStartableGame 사용.)

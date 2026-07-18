@@ -22,6 +22,9 @@ export default function NotificationPrefsCard() {
   const [expanded, setExpanded] = useState(false);
   const [prefs, setPrefs] = useState<NotificationPrefs>(DEFAULT_PREFS);
   const [loaded, setLoaded] = useState(false);
+  // prefs 서버 조회 성공 여부 — loaded는 "시도 종료"라 401/5xx/예외에도 true가 된다.
+  // 재노출 버튼은 서버 값 확인 성공 시에만 노출(fail-closed, 삼순 #680 재리뷰 blocker).
+  const [prefsLoadedOk, setPrefsLoadedOk] = useState(false);
   // OS 푸시 권한 미허용 여부 — 기존 회원/재설치 유저 커버용 안내 배너 게이트.
   const [permissionDenied, setPermissionDenied] = useState(false);
   // 잠금화면 라이브 카드(Android 16+) — 디바이스 로컬 opt-in. supported:false면 행 자체를 숨김.
@@ -90,6 +93,7 @@ export default function NotificationPrefsCard() {
           setPrefs(merged);
           // 클라 게이트 캐시를 서버 SSOT로 동기화 (start/update가 이 캐시로 판단).
           setLiveActivityEnabledCache(merged.live_activity !== false);
+          setPrefsLoadedOk(true);
         }
       } catch {
         // 디폴트 유지
@@ -193,7 +197,7 @@ export default function NotificationPrefsCard() {
               </button>
             </div>
           )}
-          {isNative && loaded && prefs.live_activity !== false && (
+          {isNative && prefsLoadedOk && prefs.live_activity !== false && (
             <div className="py-3">
               <button
                 onClick={() => void retriggerCard()}
