@@ -408,6 +408,15 @@ public class GameNotificationPlugin extends Plugin {
         call.resolve();
     }
 
+    /** 잠금카드 게이트 상태 조회 — 이 메서드의 존재 자체가 게이트 탑재 빌드(vc14+) capability
+     *  신호(JS가 프로브 — 구빌드는 메서드 부재 reject → 마스터 토글 비활성+업데이트 안내). */
+    @PluginMethod
+    public void getLockCardGateState(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("enabled", lockCardEnabled(getContext()));
+        call.resolve(ret);
+    }
+
     /** 잠금화면 카드 마스터 게이트 동기화 — 서버 prefs.live_activity를 JS가 미러링.
      *  off 전환 시 현재 게시된 카드도 즉시 제거(다음 FCM부터는 post() 게이트가 차단). */
     @PluginMethod

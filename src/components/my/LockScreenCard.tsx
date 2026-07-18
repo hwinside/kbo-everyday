@@ -6,8 +6,18 @@ import GlassCard from "@/components/ui/GlassCard";
 import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { isNative } from "@/lib/capacitor/platform";
+import { isAndroid } from "@/lib/capacitor/platform";
 import { endLiveActivity, setLiveActivityEnabledCache } from "@/lib/native-live-activity";
-import { getLiveUpdateState, setLiveUpdateOptIn, syncAndroidLockCardGate, type LiveUpdateState } from "@/lib/capacitor/game-notification";
+import {
+  getLiveUpdateState,
+  setLiveUpdateOptIn,
+  syncAndroidLockCardGate,
+  captureLockCardGateGeneration,
+  applyAndroidLockCardGateFromLoad,
+  getAndroidLockCardGateState,
+  type LiveUpdateState,
+} from "@/lib/capacitor/game-notification";
+import { decideLockCardMasterControl, type LockCardMasterControl } from "@/lib/capacitor/lock-card-gate-fence";
 import { retriggerLockScreenCard } from "@/lib/notifications/lock-card-retrigger";
 import { PREF_LABELS } from "@/lib/notifications/prefs";
 
@@ -32,6 +42,10 @@ export default function LockScreenCard() {
   const [prefsLoadedOk, setPrefsLoadedOk] = useState(false);
   // 잠금화면 라이브 카드 스타일(Android 16+) — 디바이스 로컬 opt-in. supported:false면 숨김.
   const [liveUpdate, setLiveUpdate] = useState<LiveUpdateState>({ supported: false, enabled: false });
+  // 마스터 토글 컨트롤 가능 여부 — 안드 구빌드(vc13↓)는 setLockCardEnabled가 silent no-op이라
+  // OFF해도 카드가 계속 뜨는 거짓 토글이 됨(삼순 #686 blocker②) → capability 프로브로 판정해
+  // 비활성+업데이트 안내. "unknown"(프로브 전)도 fail-closed 비활성. iOS는 빌드 무관 enabled.
+  const [masterControl, setMasterControl] = useState<LockCardMasterControl | "unknown">("unknown");
   const savingRef = useRef(false);
 
   const authHeader = useCallback(async (): Promise<Record<string, string>> => {
@@ -40,7 +54,7 @@ export default function LockScreenCard() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   }, []);
 
-  // 펼칠 때 카드 스타일 지원 여부 조회(네이티브 안드 16+만 supported:true).
+  // 펼칠 때 카드 스타일 지원 여부 + 마스터 컨트롤 capability 프로브(안드만 — iOS는 즉시 enabled).
   useEffect(() => {
     if (!expanded || !isNative) return;
     let cancelled = false;
@@ -48,23 +62,37 @@ export default function LockScreenCard() {
       const state = await getLiveUpdateState();
       if (!cancelled) setLiveUpdate(state);
     })();
+    void (async () => {
+      const gate = isAndroid ? await getAndroidLockCardGateState() : null;
+      if (cancelled) return;
+      setMasterControl(decideLockCardMasterControl({
+        isAndroidNative: isAndroid,
+        nativeGateSupported: gate ? gate.supported : null,
+      }));
+    })();
     return () => { cancelled = true; };
   }, [expanded]);
 
   // 펼칠 때 서버 pref 조회 — 성공 시 클라 게이트 캐시(iOS)+안드 네이티브 게이트를
   // 서버 SSOT로 동기화(타 기기 변경/재설치 복원).
+  // fence(삼순 blocker①): GET 시작 전 generation 칐처 → 그 사이 명시 토글이 있었으면
+  // 과거 서버값을 UI/캐시/네이티브 어디에도 쓰지 않고 폐기(토글 후승 금지).
   useEffect(() => {
     if (!expanded || loaded) return;
     (async () => {
       try {
+        const gen = captureLockCardGateGeneration();
         const res = await fetch("/api/push/prefs", { headers: await authHeader() });
         if (res.ok) {
           const { prefs: saved } = await res.json();
           const on = saved?.live_activity !== false;
-          setEnabled(on);
-          setLiveActivityEnabledCache(on);
-          void syncAndroidLockCardGate(on);
-          setPrefsLoadedOk(true);
+          const applied = await applyAndroidLockCardGateFromLoad(on, gen);
+          if (applied) {
+            setEnabled(on);
+            setLiveActivityEnabledCache(on);
+            setPrefsLoadedOk(true);
+          }
+          // applied=false — 칐처 이후 명시 토글 발생(stale GET) → 사용자 최신 상태 유지.
         }
       } catch {
         // 디폴트 유지
@@ -148,12 +176,21 @@ export default function LockScreenCard() {
             </div>
             <button
               onClick={() => void toggle()}
-              className={`relative w-12 h-7 rounded-full transition-colors ${enabled ? "bg-accent" : "bg-bg-tertiary"}`}
+              disabled={!prefsLoadedOk || masterControl !== "enabled"}
+              className={`relative w-12 h-7 rounded-full transition-colors disabled:opacity-40 ${enabled ? "bg-accent" : "bg-bg-tertiary"}`}
               aria-label={`잠금화면 실시간 중계 ${enabled ? "끄기" : "켜기"}`}
             >
               <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${enabled ? "translate-x-5" : "translate-x-0"}`} />
             </button>
           </div>
+          {/* 구빌드 안드(vc13↓) — 네이티브 게이트 미탑재라 마스터 OFF가 실제로 동작하지 않음 →
+              비활성+업데이트 안내(삼순 blocker②). 카드 스타일·다시 표시는 구빌드에서도 동작하므로
+              이 안내/게이트에 묶지 않는다(분리 게이트). */}
+          {masterControl === "needs-update" && (
+            <p className="text-xs text-text-tertiary py-2">
+              ℹ️ 켜기/끄기는 앱 최신 버전부터 지원돼요 — 스토어에서 앱을 업데이트해주세요
+            </p>
+          )}
           {/* 마스터 토글 off면 스타일 선택도 숨김 — 꺼진 기능의 옵션 노출 방지. */}
           {liveUpdate.supported && enabled && (
             <div className="py-3">
