@@ -1,21 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { fetchRegisterRosters } from "@/lib/crawler/kbo-api";
+import { fetchRegisterRosters, RosterCollectionError } from "@/lib/crawler/kbo-api";
 import { planTeamMoves, type RosterEntry } from "@/lib/roster-moves/parse";
 import { checkPublishReadiness } from "@/lib/roster-moves/readiness";
-import { notifyPendingMoves, type PendingMove } from "@/lib/roster-moves/pending-alert";
+import {
+  notifyPendingMoves,
+  notifyCollectionFailure,
+  type PendingMove,
+} from "@/lib/roster-moves/pending-alert";
 
 // 팀별 선수 등록/말소 스냅샷 cron (일 2회, KST 오전/저녁 — vercel.json).
 //
-// 실행 흐름 (2026-07-18 삼순 P0/P1 반영):
-// ① 팀별: 직전 "일자" 스냅샷 대비 diff → 오늘 스냅샷/무브를 **원자적 교체**
-//    (upsert 후 stale row 삭제 — 같은 날 2회차 실행이 오전 잔존 row를 남기던 P1 중복 말소 제거).
+// 실행 흐름 (2026-07-18 삼순 P0/P1 2차 반영):
+// ⓪ 수집: KBO 공식 등록명단을 10구단 전부 수집(HTTP status/토큰/날짜/인원수 sanity 검증).
+//    한 팀이라도 실패하면 예외 → DB 미변경 + 5xx + 운영 알림(silent success 제거).
+// ① 팀별: 직전 "일자" 스냅샷 대비 diff → 오늘 스냅샷/무브를 **단일 RPC 트랜잭션**으로 원자 교체
+//    (advisory lock으로 동시 2회 실행 경합 차단, 함수 내 트랜잭션으로 부분 상태 제거).
 //    등록 무브는 pending으로 생성(공개 게이트), 말소는 즉시 published.
-// ② 승격: pending 등록 전건 readiness 재검사(roster+photo+hero+상세페이지 prod 200)
-//    → 통과 시 published 승격. 미통과는 응답 pending 목록 + 슬랙 알림(silent omission 금지).
+// ② 승격: pending 등록 전건 readiness 재검사(canonical resolve + 프로필 JPG/히어로 WEBP 실측 200
+//    + 서버 신호 상세 존재) → 통과 시 published 승격. 미통과는 응답 pending 목록 + 슬랙 알림.
+// 모든 DB 호출은 { error } 확인 → 실패 시 5xx fail-closed(스냅샷/무브 불변).
 // 직전 일자 스냅샷이 없으면 baseline만 기록하고 이벤트 0(첫 실행 대량 오탐 방지).
 export const dynamic = "force-dynamic";
-export const maxDuration = 120; // GET 1 + 구단별 POST 10 + 구단별 저장 + pending 승격 검사(소수 건 HTTP)
+export const maxDuration = 120; // GET 1 + 구단별 POST 10 + RPC 10 + pending 승격 검사(소수 건 HTTP)
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 
@@ -34,23 +41,30 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // ⓪ 수집 — 실패(HTTP/토큰/날짜/인원수)는 DB를 건드리기 전에 fail-closed.
+  let date: string;
+  let teams: { teamId: number; teamCode: string; entries: RosterEntry[] }[];
+  try {
+    const result = await fetchRegisterRosters();
+    date = result.date;
+    teams = result.teams;
+  } catch (e) {
+    const msg = e instanceof RosterCollectionError ? e.message : String(e);
+    await notifyCollectionFailure(msg);
+    console.error(`[roster-moves] 수집 실패 — 스냅샷 불변, 5xx fail-closed: ${msg}`);
+    return NextResponse.json({ ok: false, stage: "collect", error: msg }, { status: 502 });
+  }
+
   const admin = getSupabaseAdmin();
-  const { date, teams } = await fetchRegisterRosters();
   const snapshotDate = toIsoDate(date);
 
   let totalMoves = 0;
   const perTeam: { teamId: number; entries: number; moves: number; baseline: boolean }[] = [];
 
   for (const team of teams) {
-    if (team.entries.length === 0) {
-      // 파싱 실패/빈 응답 — 스냅샷을 비우면 다음 실행에서 전원 말소 오탐. 이번 회차 스킵.
-      perTeam.push({ teamId: team.teamId, entries: 0, moves: 0, baseline: false });
-      continue;
-    }
-
     // 직전 "일자" 스냅샷(오늘 이전 최신 1일) 조회 — diff 기준점.
     // 같은 날 2회차 실행도 동일 기준(전일)으로 오늘 이벤트 집합을 전체 재계산한다.
-    const { data: prevDateRow } = await admin
+    const { data: prevDateRow, error: prevDateErr } = await admin
       .from("roster_snapshots")
       .select("snapshot_date")
       .eq("team_id", team.teamId)
@@ -58,14 +72,20 @@ export async function GET(req: NextRequest) {
       .order("snapshot_date", { ascending: false })
       .limit(1)
       .maybeSingle();
+    if (prevDateErr) {
+      return failClosed("read-prev-date", team.teamId, prevDateErr.message);
+    }
 
     let prev: RosterEntry[] | null = null;
     if (prevDateRow) {
-      const { data: prevRows } = await admin
+      const { data: prevRows, error: prevRowsErr } = await admin
         .from("roster_snapshots")
         .select("kbo_player_id, player_name, back_no, position")
         .eq("team_id", team.teamId)
         .eq("snapshot_date", prevDateRow.snapshot_date);
+      if (prevRowsErr) {
+        return failClosed("read-prev-rows", team.teamId, prevRowsErr.message);
+      }
       prev = (prevRows ?? []).map((r) => ({
         kboId: r.kbo_player_id,
         name: r.player_name,
@@ -75,69 +95,27 @@ export async function GET(req: NextRequest) {
     }
 
     const planned = planTeamMoves(prev, team.entries);
-    const currIds = new Set(team.entries.map((e) => e.kboId));
 
-    // ── 오늘 스냅샷 원자적 교체: upsert 먼저(빈 스냅샷 창 방지) → stale row 삭제.
-    // 같은 날 오전 [A,B] → 저녁 [A]이면 B row를 지워, 다음 날 diff가 B를 재말소(P1 중복)하지 않게 한다.
-    const { data: todaySnapRows } = await admin
-      .from("roster_snapshots")
-      .select("kbo_player_id")
-      .eq("team_id", team.teamId)
-      .eq("snapshot_date", snapshotDate);
-    const snapshotRows = team.entries.map((e) => ({
-      snapshot_date: snapshotDate,
-      team_id: team.teamId,
-      kbo_player_id: e.kboId,
-      player_name: e.name,
-      back_no: e.backNo,
-      position: e.position,
-    }));
-    await admin
-      .from("roster_snapshots")
-      .upsert(snapshotRows, { onConflict: "snapshot_date,team_id,kbo_player_id" });
-    const staleSnapIds = (todaySnapRows ?? [])
-      .map((r) => r.kbo_player_id)
-      .filter((id) => !currIds.has(id));
-    if (staleSnapIds.length > 0) {
-      await admin
-        .from("roster_snapshots")
-        .delete()
-        .eq("team_id", team.teamId)
-        .eq("snapshot_date", snapshotDate)
-        .in("kbo_player_id", staleSnapIds);
-    }
-
-    // ── 오늘 무브 원자적 교체: 계획 집합 upsert(기존 row status 보존) → 집합 밖 row 삭제.
-    // ignoreDuplicates=ON CONFLICT DO NOTHING — 오전에 published 승격된 등록이 저녁 재계산으로
-    // pending으로 강등되지 않는다. 삭제는 당일 왕복(등록 후 당일 말소) 등 재계산 집합에서
-    // 빠진 이벤트 제거 — 일 단위 계약상 순변동만 남긴다.
-    const { data: todayMoveRows } = await admin
-      .from("roster_moves")
-      .select("id, kbo_player_id, move_type")
-      .eq("team_id", team.teamId)
-      .eq("move_date", snapshotDate);
-    if (planned.length > 0) {
-      const moveRows = planned.map((m) => ({
-        team_id: team.teamId,
-        kbo_player_id: m.kboPlayerId,
-        player_name: m.playerName,
-        move_type: m.moveType,
-        move_date: snapshotDate,
+    // ── 오늘 스냅샷+무브 원자 교체: 단일 RPC 트랜잭션(advisory lock).
+    // 마이그레이션 미적용/함수 미존재/제약 위반은 모두 error로 돌아와 여기서 5xx fail-closed.
+    const { error: rpcErr } = await admin.rpc("replace_team_roster_day", {
+      p_team_id: team.teamId,
+      p_snapshot_date: snapshotDate,
+      p_entries: team.entries.map((e) => ({
+        kboId: e.kboId,
+        name: e.name,
+        backNo: e.backNo,
+        position: e.position,
+      })),
+      p_moves: planned.map((m) => ({
+        kboPlayerId: m.kboPlayerId,
+        playerName: m.playerName,
+        moveType: m.moveType,
         status: m.status,
-      }));
-      await admin
-        .from("roster_moves")
-        .upsert(moveRows, {
-          onConflict: "team_id,kbo_player_id,move_type,move_date",
-          ignoreDuplicates: true,
-        });
-    }
-    const plannedKeys = new Set(planned.map((m) => `${m.kboPlayerId}|${m.moveType}`));
-    const staleMoveIds = (todayMoveRows ?? [])
-      .filter((r) => !plannedKeys.has(`${r.kbo_player_id}|${r.move_type}`))
-      .map((r) => r.id);
-    if (staleMoveIds.length > 0) {
-      await admin.from("roster_moves").delete().in("id", staleMoveIds);
+      })),
+    });
+    if (rpcErr) {
+      return failClosed("replace-team-roster-day", team.teamId, rpcErr.message);
     }
 
     totalMoves += planned.length;
@@ -151,18 +129,27 @@ export async function GET(req: NextRequest) {
 
   // ── 승격 단계: pending 등록 전건 재검사 → 전체 통과 시 published.
   // 미통과 건은 응답 + 슬랙으로 반드시 표면화(silent omission 금지 — 삼순 P0).
-  const { data: pendingRows } = await admin
+  const { data: pendingRows, error: pendingErr } = await admin
     .from("roster_moves")
     .select("id, team_id, kbo_player_id, player_name, move_date")
     .eq("status", "pending")
     .order("move_date", { ascending: true });
+  if (pendingErr) {
+    return failClosed("read-pending", 0, pendingErr.message);
+  }
 
   let promoted = 0;
   const pending: PendingMove[] = [];
   for (const row of pendingRows ?? []) {
     const readiness = await checkPublishReadiness(row.kbo_player_id);
     if (readiness.ready) {
-      await admin.from("roster_moves").update({ status: "published" }).eq("id", row.id);
+      const { error: updErr } = await admin
+        .from("roster_moves")
+        .update({ status: "published" })
+        .eq("id", row.id);
+      if (updErr) {
+        return failClosed("promote-update", row.team_id, updErr.message);
+      }
       promoted++;
     } else {
       pending.push({
@@ -192,4 +179,10 @@ export async function GET(req: NextRequest) {
     pendingAlert,
     perTeam,
   });
+}
+
+/** DB 오류 시 5xx fail-closed 응답 — 스냅샷/무브는 RPC 트랜잭션 롤백으로 불변. */
+function failClosed(stage: string, teamId: number, message: string): NextResponse {
+  console.error(`[roster-moves] DB 실패 stage=${stage} team=${teamId}: ${message} — 5xx fail-closed`);
+  return NextResponse.json({ ok: false, stage, teamId, error: message }, { status: 500 });
 }

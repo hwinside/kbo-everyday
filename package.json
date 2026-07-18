@@ -42,7 +42,8 @@
     "validate:player-identity": "node scripts/validate-player-identity.mjs",
     "qa:native-ios-naver-smoke-preflight": "node scripts/qa/native-ios-naver-smoke-preflight.mjs",
     "qa:full-entry": "tsx scripts/qa/full-entry-smoke.ts",
-    "qa:roster-moves": "tsx scripts/qa/roster-moves-diff-smoke.ts"
+    "qa:roster-moves": "tsx scripts/qa/roster-moves-diff-smoke.ts",
+    "qa:roster-moves:db": "node scripts/qa/roster-moves-db-integration.mjs"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

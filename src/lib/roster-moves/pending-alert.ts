@@ -21,9 +21,11 @@ export interface PendingMove {
 
 const MISSING_LABEL: Record<string, string> = {
   roster: "로스터 SSOT",
-  photo: "프로필 사진",
-  hero: "히어로컷",
-  "live-page": "선수 상세 페이지",
+  photo: "프로필 사진(매핑)",
+  hero: "히어로컷(allowlist)",
+  "profile-asset": "프로필 JPG(prod 실측)",
+  "hero-asset": "히어로 WEBP(prod 실측)",
+  "player-page": "선수 상세(서버 신호)",
 };
 
 export function formatPendingMessage(pending: PendingMove[]): string {
@@ -46,6 +48,29 @@ export function formatPendingMessage(pending: PendingMove[]): string {
 }
 
 export type PendingNotifyStatus = "no-pending" | "no-webhook" | "sent" | "webhook-error";
+
+/**
+ * KBO 수집 실패 운영 알림(삼순 P1 — silent success 제거). 기존 ROSTER_GAP_SLACK_WEBHOOK 재사용.
+ * throw 없이 status만 반환한다(알림 실패가 cron 5xx 결정을 가리지 않도록).
+ */
+export async function notifyCollectionFailure(
+  reason: string,
+): Promise<{ status: PendingNotifyStatus }> {
+  if (!WEBHOOK_URL) return { status: "no-webhook" };
+  const text =
+    `🚨 *로스터 변동 수집 실패* — KBO 등록명단 수집이 실패해 이번 회차 스냅샷을 갱신하지 않았습니다(기존 스냅샷 불변).\n` +
+    `사유: ${reason}\n_KBO 403/마크업 변경 가능성 — 확인 필요._`;
+  try {
+    const res = await fetch(WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    return { status: res.ok ? "sent" : "webhook-error" };
+  } catch {
+    return { status: "webhook-error" };
+  }
+}
 
 /**
  * pending 통보. webhook 미설정/pending 없음/전송 실패 모두 throw 없이 status 반환

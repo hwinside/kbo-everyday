@@ -20,8 +20,12 @@ import {
   moveHref,
   publishedRegisterHref,
   filterVisibleMoves,
+  checkPublishReadiness,
+  type AssetProbe,
+  type ProbeResult,
 } from "../../src/lib/roster-moves/readiness";
 import { formatPendingMessage } from "../../src/lib/roster-moves/pending-alert";
+import { validateRosterCollection } from "../../src/lib/roster-moves/collection";
 
 let pass = 0;
 let fail = 0;
@@ -81,14 +85,14 @@ check(
   ["준비등록", "말소"],
 );
 check(
-  "published 등록 href 보장 (canonical)",
+  "published 등록 href = canonical 링크",
   publishedRegisterHref("51516"),
   "/community/players/51516",
 );
 check(
-  "published 등록 href 보장 (해석 실패 fallback도 non-null)",
+  "published 등록 href: canonical resolve 실패므로 raw-ID fallback 없이 null (삼순 P0 2차)",
   publishedRegisterHref("99999999"),
-  "/community/players/99999999",
+  null,
 );
 check("말소 미준비 → 링크 생략(null)", moveHref({ canonicalId: null }), null);
 check("말소 준비됨 → 상세 링크", moveHref({ canonicalId: "51516" }), "/community/players/51516");
@@ -191,6 +195,17 @@ class ModelStore {
   check("status 보존: published 유지 + 중복 row 없음", b.map((m) => m.status), ["published"]);
 }
 
+// ═══ ⑥-수집 sanity 검증 (삼순 P1 — 수집 실패 표면화) ═══
+
+function mkTeams(counts: number[]): { teamId: number; entries: { length: number } }[] {
+  return counts.map((n, i) => ({ teamId: i + 1, entries: { length: n } }));
+}
+check("수집 sanity: 10구단 정상(각 30명) → null", validateRosterCollection("20260718", mkTeams(Array(10).fill(30))), null);
+check("수집 sanity: 날짜 형식 이상 → error", validateRosterCollection("2026-07-18", mkTeams(Array(10).fill(30))) !== null, true);
+check("수집 sanity: 9구단 → error", validateRosterCollection("20260718", mkTeams(Array(9).fill(30))) !== null, true);
+check("수집 sanity: 한 팀 0명(파싱 실패) → error", validateRosterCollection("20260718", mkTeams([30, 0, 30, 30, 30, 30, 30, 30, 30, 30])) !== null, true);
+check("수집 sanity: 한 팀 범위 초과(100명) → error", validateRosterCollection("20260718", mkTeams([100, 30, 30, 30, 30, 30, 30, 30, 30, 30])) !== null, true);
+
 // ═══ ⑥ 파서: 감독/코치 제외, 선수 섹션만 (playerId 링크 추출) ═══
 
 const fixture = `
@@ -204,5 +219,47 @@ check("파서 감독제외·선수만", parseTeamRegister(fixture), [
   { kboId: "51516", name: "김진욱", backNo: "15", position: "투수" },
 ]);
 
-console.log(`\nroster-moves smoke: ${pass} passed, ${fail} failed`);
-process.exit(fail === 0 ? 0 : 1);
+// ═══ ⑦ 승격 게이트 실측(HTTP) — checkPublishReadiness 프로브 주입 (삼순 P0 2차: readiness 실검증화) ═══
+// 51516(김진욱)은 로스터·프로필·히어로 allowlist를 모두 만족 → 에셋 HTTP 결과만으로 ready 분기를 검증.
+function fakeProbe(over: { profile?: ProbeResult; hero?: ProbeResult; page?: ProbeResult } = {}): AssetProbe {
+  return async (url: string) => {
+    if (url.includes("/players-hero/")) return over.hero ?? { status: 200, contentType: "image/webp" };
+    if (url.includes("/api/widget/player-card")) return over.page ?? { status: 200, contentType: "application/json" };
+    if (url.includes("/players/")) return over.profile ?? { status: 200, contentType: "image/jpeg" };
+    return { status: 0, contentType: null };
+  };
+}
+
+async function asyncChecks() {
+  check(
+    "publish: 4요소 전부 통과 → published(ready) + canonical",
+
+    await checkPublishReadiness("51516", fakeProbe()),
+    { ready: true, canonicalId: "51516", missing: [] },
+  );
+  check(
+    "publish: 히어로 WEBP 404 → 미승격 + missing hero-asset",
+    await checkPublishReadiness("51516", fakeProbe({ hero: { status: 404, contentType: "text/html" } })),
+    { ready: false, canonicalId: null, missing: ["hero-asset"] },
+  );
+  check(
+    "publish: 프로필 JPG content-type 비이미지 → missing profile-asset",
+    await checkPublishReadiness("51516", fakeProbe({ profile: { status: 200, contentType: "text/html" } })),
+    { ready: false, canonicalId: null, missing: ["profile-asset"] },
+  );
+  check(
+    "publish: 서버 신호(widget) 404 → 미존재 선수 차단 + missing player-page",
+    await checkPublishReadiness("51516", fakeProbe({ page: { status: 404, contentType: "application/json" } })),
+    { ready: false, canonicalId: null, missing: ["player-page"] },
+  );
+  check(
+    "publish: 미존재 ID(99999999)는 동기 단계에서 차단(HTTP 미호출) + missing에 roster 포함",
+    await checkPublishReadiness("99999999", fakeProbe()),
+    { ready: false, canonicalId: null, missing: ["roster", "photo", "hero"] },
+  );
+}
+
+asyncChecks().then(() => {
+  console.log(`\nroster-moves smoke: ${pass} passed, ${fail} failed`);
+  process.exit(fail === 0 ? 0 : 1);
+});

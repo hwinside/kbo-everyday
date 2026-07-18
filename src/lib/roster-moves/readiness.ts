@@ -1,5 +1,5 @@
 /**
- * 로스터 변동 항목 "준비 완료" 판정 (2026-07-18 하린아빠 스펙 + 삼순 P0 반영).
+ * 로스터 변동 항목 "준비 완료" 판정 (2026-07-18 하린아빠 스펙 + 삼순 P0 2차 반영).
  *
  * 계약(삼순 P0 정정): "에셋 준비 → 공개" 순서 보장.
  * - 등록(register): readiness **전체 통과 후에만** published로 승격되어 노출된다.
@@ -7,15 +7,20 @@
  * - 말소(deregister): 항상 노출(즉시 published), readiness는 링크 유무만 결정.
  *
  * readiness 체크 항목:
- *   ① roster SSOT 존재 (resolvePlayer 매칭 — 외국인 숫자→canonical 변환 포함)
- *   ② 프로필 사진 존재 (getPlayerPhotoByKboId)
- *   ③ 히어로컷 존재 (hero-approved-kboids.json allowlist — PlayerHero와 동일 기준.
- *      사진만 보던 기존 판정은 이준서/정대선/정은원/김성민 등 히어로 미생성 선수를 ready로 오판)
- *   ④ 선수 상세 페이지 prod 200 (승격 시점 실측 HTTP — checkPublishReadiness 전용)
+ *   ① canonical identity resolve 성공 (resolvePlayer — 외국인 숫자→FP/AQ canonical 변환 포함).
+ *      resolve 실패면 어떤 경우에도 published 불가(raw-ID 링크 생성 금지).
+ *   ② 프로필 사진 매핑 존재 (getPlayerPhotoByKboId — 동기 SSOT)
+ *   ③ 히어로컷 allowlist 존재 (hero-approved-kboids.json — PlayerHero와 동일 기준)
+ *   그리고 승격(publish) 게이트는 아래 ①~③에 더해 **실측 HTTP**까지 요구한다:
+ *   ④ prod 프로필 JPG 실측 HTTP 200 + image/* content-type
+ *   ⑤ prod 히어로 WEBP 실측 HTTP 200 + image/* content-type
+ *   ⑥ 선수 상세 존재를 **서버 신호**로 확인 — /api/widget/player-card?id=canonical 이
+ *      미존재 선수엔 404를 반환한다(실측: 99999999=404). 클라 상세페이지 GET은 미존재도
+ *      200 shell이라 게이트로 못 쓴다(삼순 P0). 서버 API 404/200으로 실존을 구분한다.
  *
- * ①~③은 동기(빌드 시 번들된 SSOT), ④는 비동기(HTTP)라 분리:
- *   - checkMoveReadiness: ①~③ — API 조회 시 말소 링크 판정용
- *   - checkPublishReadiness: ①~③+④ — cron pending→published 승격 판정용
+ * ①~③은 동기(빌드 시 번들된 SSOT), ④~⑥은 비동기(HTTP)라 분리:
+ *   - checkMoveReadiness: ①~③ — API 조회 시 말소 링크 판정용(동기)
+ *   - checkPublishReadiness: ①~③ + ④~⑥ — cron pending→published 승격 판정용(비동기, 실측)
  */
 
 import { resolvePlayer } from "@/lib/utils/resolve-player";
@@ -27,6 +32,15 @@ const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
 // prod 공개 도메인 (widget/player-card와 동일 패턴 — VERCEL_URL은 배포 보호에 막힘).
 const PUBLIC_BASE = process.env.NEXT_PUBLIC_APP_URL || "https://keubo.fan";
 
+/** readiness 미충족 항목 — pending 추적/알림용 (silent omission 금지). */
+export type MissingCheck =
+  | "roster"
+  | "photo"
+  | "hero"
+  | "profile-asset"
+  | "hero-asset"
+  | "player-page";
+
 /** 준비 완료 판정 순수 코어 — 로스터 && 프로필 사진 && 히어로컷. 스모크 테스트 대상. */
 export function evaluateReadiness(inRoster: boolean, hasPhoto: boolean, hasHero: boolean): boolean {
   return inRoster && hasPhoto && hasHero;
@@ -36,56 +50,85 @@ export interface MoveReadiness {
   ready: boolean;
   /** 준비된 경우 선수 상세 링크에 쓸 canonical kboId. 아니면 null. */
   canonicalId: string | null;
-  /** 미충족 체크 목록 — pending 추적/알림용 (silent omission 금지). */
-  missing: ("roster" | "photo" | "hero" | "live-page")[];
+  missing: MissingCheck[];
 }
 
 /**
  * KBO playerId 기준 동기 readiness 판정 (①roster ②photo ③hero).
  * ready면 링크용 canonical kboId를, 아니면 null을 반환한다.
+ * 프로필 사진의 실제 경로(prod 실측용)도 함께 돌려준다.
  */
-export function checkMoveReadiness(kboPlayerId: string): MoveReadiness {
+export function checkMoveReadiness(kboPlayerId: string): MoveReadiness & { photoPath: string | null } {
   const resolved = resolvePlayer(kboPlayerId);
-  const canonical = resolved?.kboId ?? kboPlayerId;
   const inRoster = resolved !== null;
-  const hasPhoto = getPlayerPhotoByKboId(kboPlayerId) !== null;
+  const canonical = resolved?.kboId ?? null;
+  const photoPath = getPlayerPhotoByKboId(kboPlayerId);
+  const hasPhoto = photoPath !== null;
   // 히어로 allowlist는 canonical kboId 기준(외국인 FP/AQ 포함). 숫자 ID fallback도 확인.
   const hasHero =
-    HERO_APPROVED.has(canonical) ||
+    (canonical ? HERO_APPROVED.has(canonical) : false) ||
     (resolved?.numericId ? HERO_APPROVED.has(resolved.numericId) : false);
-  const missing: MoveReadiness["missing"] = [];
+  const missing: MissingCheck[] = [];
   if (!inRoster) missing.push("roster");
   if (!hasPhoto) missing.push("photo");
   if (!hasHero) missing.push("hero");
-  const ready = evaluateReadiness(inRoster, hasPhoto, hasHero);
-  return { ready, canonicalId: ready ? canonical : null, missing };
+  // canonical resolve가 실패하면(①) ready는 무조건 false — raw-ID 링크 생성 금지.
+  const ready = inRoster && hasPhoto && hasHero && canonical !== null;
+  return { ready, canonicalId: ready ? canonical : null, missing, photoPath };
 }
 
-/** 선수 상세 페이지 prod 실측 200 검증 (승격 게이트 ④). fetch 실패 = false. */
-export async function verifyPlayerPageLive(canonicalId: string): Promise<boolean> {
+/** HTTP 프로브 결과 — 실측 검증용(테스트 주입 가능). */
+export interface ProbeResult {
+  status: number;
+  contentType: string | null;
+}
+export type AssetProbe = (url: string) => Promise<ProbeResult>;
+
+/** 기본 프로브 — GET 후 status/content-type만 읽는다(no-store). 실패=상태 0. */
+export const defaultProbe: AssetProbe = async (url) => {
   try {
-    const res = await fetch(`${PUBLIC_BASE}/community/players/${canonicalId}`, {
-      method: "GET",
-      cache: "no-store",
-    });
-    return res.status === 200;
+    const res = await fetch(url, { method: "GET", cache: "no-store" });
+    return { status: res.status, contentType: res.headers.get("content-type") };
   } catch {
-    return false;
+    return { status: 0, contentType: null };
   }
+};
+
+function isImage(ct: string | null): boolean {
+  return ct !== null && ct.toLowerCase().startsWith("image/");
 }
 
 /**
- * pending → published 승격 판정 (①~③ 동기 + ④ prod 상세 페이지 200).
- * ④는 ①~③ 통과 시에만 호출(미준비 선수에 불필요한 HTTP 낭비 금지).
+ * pending → published 승격 판정 (①~③ 동기 + ④⑤⑥ 실측 HTTP).
+ * ④~⑥은 ①~③ 통과 시에만 호출(미준비 선수에 불필요한 HTTP 낭비 금지).
+ * probe는 테스트에서 주입 가능(기본은 실 fetch).
  */
-export async function checkPublishReadiness(kboPlayerId: string): Promise<MoveReadiness> {
+export async function checkPublishReadiness(
+  kboPlayerId: string,
+  probe: AssetProbe = defaultProbe,
+): Promise<MoveReadiness> {
   const sync = checkMoveReadiness(kboPlayerId);
-  if (!sync.ready || !sync.canonicalId) return sync;
-  const live = await verifyPlayerPageLive(sync.canonicalId);
-  if (!live) {
-    return { ready: false, canonicalId: null, missing: ["live-page"] };
+  if (!sync.ready || !sync.canonicalId || !sync.photoPath) {
+    return { ready: sync.ready, canonicalId: sync.canonicalId, missing: sync.missing };
   }
-  return sync;
+  const canonical = sync.canonicalId;
+
+  const [profile, hero, page] = await Promise.all([
+    probe(`${PUBLIC_BASE}${sync.photoPath}`),
+    probe(`${PUBLIC_BASE}/players-hero/${canonical}.webp`),
+    // 서버 신호: 미존재 선수는 404, 실존 선수는 200 (클라 상세페이지는 미존재도 200 shell이라 부적합).
+    probe(`${PUBLIC_BASE}/api/widget/player-card?id=${encodeURIComponent(canonical)}`),
+  ]);
+
+  const missing: MissingCheck[] = [];
+  if (!(profile.status === 200 && isImage(profile.contentType))) missing.push("profile-asset");
+  if (!(hero.status === 200 && isImage(hero.contentType))) missing.push("hero-asset");
+  if (page.status !== 200) missing.push("player-page");
+
+  if (missing.length > 0) {
+    return { ready: false, canonicalId: null, missing };
+  }
+  return { ready: true, canonicalId: canonical, missing: [] };
 }
 
 /**
@@ -97,13 +140,14 @@ export function moveHref(readiness: Pick<MoveReadiness, "canonicalId">): string 
 }
 
 /**
- * published 등록 항목 href — **항상 non-null 보장** (삼순 P0: href=null 등록 반환 금지).
- * published = 승격 시점에 readiness 전체 통과가 검증된 상태. 조회 시점 재해석은
- * canonical 우선, 만일의 해석 실패 시에도 raw kboId 링크로 계약을 지킨다.
+ * published 등록 항목 href — canonical id로만 생성한다(삼순 P0 2차: raw-ID fallback 제거).
+ * published = 승격 시점에 canonical resolve + 에셋 실측이 통과된 상태이므로 정상 resolve가
+ * 계약상 보장된다. 만일 조회 시점 resolve가 실패하면(비정상) 링크를 생성하지 않고 null을 반환
+ * — UI는 링크 없는 텍스트로 렌더한다(비정상 raw-ID 링크로 유저를 미존재 페이지에 보내지 않는다).
  */
-export function publishedRegisterHref(kboPlayerId: string): string {
+export function publishedRegisterHref(kboPlayerId: string): string | null {
   const resolved = resolvePlayer(kboPlayerId);
-  return `/community/players/${resolved?.kboId ?? kboPlayerId}`;
+  return resolved?.kboId ? `/community/players/${resolved.kboId}` : null;
 }
 
 /**
