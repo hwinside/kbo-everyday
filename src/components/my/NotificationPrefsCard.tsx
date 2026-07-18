@@ -60,10 +60,11 @@ export default function NotificationPrefsCard() {
     return () => { cancelled = true; };
   }, [expanded]);
 
-  const toggleLiveUpdate = useCallback(async () => {
-    const next = !liveUpdate.enabled;
-    setLiveUpdate((s) => ({ ...s, enabled: next }));
-    await setLiveUpdateOptIn(next);
+  // simple=true → Live Update(시스템 승격, 상단 우선 표시) opt-in / simple=false → 기존 디자인 카드(opt-out).
+  const setLiveCardStyle = useCallback(async (simple: boolean) => {
+    if (simple === liveUpdate.enabled) return;
+    setLiveUpdate((s) => ({ ...s, enabled: simple }));
+    await setLiveUpdateOptIn(simple);
   }, [liveUpdate.enabled]);
 
   useEffect(() => {
@@ -166,18 +167,27 @@ export default function NotificationPrefsCard() {
             </div>
           ))}
           {liveUpdate.supported && (
-            <div className="flex items-center justify-between py-3">
-              <div>
-                <span className="text-sm text-text-primary">잠금화면 라이브 카드</span>
-                <p className="text-xs text-text-tertiary mt-0.5">경기 진행중 알림을 잠금화면 상단 라이브 카드로 표시 (이 기기)</p>
+            <div className="py-3">
+              <span className="text-sm text-text-primary">잠금화면 카드 스타일</span>
+              <p className="text-xs text-text-tertiary mt-0.5">경기 진행중 잠금화면에 표시할 카드 스타일을 선택하세요 (이 기기)</p>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => void setLiveCardStyle(false)}
+                  aria-pressed={!liveUpdate.enabled}
+                  className={`rounded-xl border px-3 py-3 text-left transition-colors ${!liveUpdate.enabled ? "border-accent bg-accent/10" : "border-white/10 bg-bg-tertiary"}`}
+                >
+                  <span className={`text-sm font-medium ${!liveUpdate.enabled ? "text-accent" : "text-text-primary"}`}>디자인 카드</span>
+                  <p className="text-xs text-text-tertiary mt-0.5">팀컬러·그래픽 크보팬 디자인</p>
+                </button>
+                <button
+                  onClick={() => void setLiveCardStyle(true)}
+                  aria-pressed={liveUpdate.enabled}
+                  className={`rounded-xl border px-3 py-3 text-left transition-colors ${liveUpdate.enabled ? "border-accent bg-accent/10" : "border-white/10 bg-bg-tertiary"}`}
+                >
+                  <span className={`text-sm font-medium ${liveUpdate.enabled ? "text-accent" : "text-text-primary"}`}>심플 카드</span>
+                  <p className="text-xs text-text-tertiary mt-0.5">잠금화면 상단 우선 표시 (안드 기본)</p>
+                </button>
               </div>
-              <button
-                onClick={() => void toggleLiveUpdate()}
-                className={`relative w-12 h-7 rounded-full transition-colors ${liveUpdate.enabled ? "bg-accent" : "bg-bg-tertiary"}`}
-                aria-label={`잠금화면 라이브 카드 ${liveUpdate.enabled ? "끄기" : "켜기"}`}
-              >
-                <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${liveUpdate.enabled ? "translate-x-5" : "translate-x-0"}`} />
-              </button>
             </div>
           )}
         </div>
