@@ -18,6 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 자동 머지 가드용 기준값: 크롤 *이전*(= main 현재) 로스터 인원 수
+      - name: Baseline roster count (main)
+        id: baseline
+        run: |
+          COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('src/lib/constants/players-roster.json','utf-8')).length)")
+          echo "roster_count=$COUNT" >> $GITHUB_OUTPUT
+          echo "Baseline roster count: $COUNT"
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -124,7 +132,8 @@ jobs:
           - Player identity: ${{ steps.validate_identity.outcome }}
 
           매일 새벽 5시(KST) 자동 크롤링 결과입니다.
-          검증이 failure여도 PR은 생성합니다. 실패 상태를 확인하고 누락 선수/매핑을 보강한 뒤 머지하세요." \
+          검증(roster SSOT + player identity)과 Vercel 빌드가 전부 PASS면 자동 머지됩니다.
+          검증이 failure면 PR은 open으로 남습니다 — 실패 상태를 확인하고 누락 선수/매핑을 보강한 뒤 수동 머지하세요." \
             --base main \
             --head "$BRANCH")
 
@@ -148,7 +157,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit 1
 
-      - name: Wait for Vercel build and report
+      - name: Wait for Vercel build and auto-merge
         if: steps.changes.outputs.changed == 'true'
         run: |
           PR_URL="${{ steps.pr.outputs.pr_url }}"
@@ -156,9 +165,38 @@ jobs:
             echo "No PR URL captured"; exit 0
           fi
 
-          # 운영 원칙 (2026-05-17 사고 이후): roster/stats/photos PR도 자동 머지하지 않는다.
-          # 이 step은 PR 생성 후 *Vercel 빌드 결과만 검증*하고 로그/summary에 남긴다.
-          # merge는 별도 승인 후 수동 트리거에서 처리한다.
+          # 운영 원칙 개정 (2026-07-18, 하린아빠 지시):
+          # 2026-05-17 #94 사고로 무조건 auto-merge를 제거했으나, 이후 안전망이 생김 —
+          #   ① validate-roster / validate-player-identity (위 스텝, failure면 이전 스텝이 exit 1이라 여기 도달 안 함)
+          #   ② Vercel 빌드 SUCCESS 명시 확인 (아래 loop)
+          #   ③ 로스터 대량 변화 가드 (Δ > MAX_ROSTER_DELTA면 크롤 오류 의심 → 보류)
+          # 셋이 전부 통과할 때만 자동 머지. 하나라도 실패면 PR open + run failure로 남겨
+          # 어드민 크롤러 헬스(STALE) 알림 경로로 드러나게 한다.
+
+          # 방어적 재확인 (이전 스텝이 게이트하지만 이중 안전핀)
+          if [ "${{ steps.validate_roster.outcome }}" != "success" ] || [ "${{ steps.validate_identity.outcome }}" != "success" ]; then
+            echo "❌ 검증 outcome 비정상 — 자동 머지 보류: $PR_URL"
+            exit 1
+          fi
+
+          # 로스터 대량 변화 가드
+          MAX_ROSTER_DELTA=30
+          BEFORE="${{ steps.baseline.outputs.roster_count }}"
+          AFTER="${{ steps.changes.outputs.roster_count }}"
+          DELTA=$((AFTER - BEFORE))
+          [ "$DELTA" -lt 0 ] && DELTA=$((-DELTA))
+          echo "roster delta: ${BEFORE} → ${AFTER} (Δ${DELTA}, guard ${MAX_ROSTER_DELTA})"
+          if [ "$DELTA" -gt "$MAX_ROSTER_DELTA" ]; then
+            {
+              echo "## ⚠️ 로스터 대량 변화 — 자동 머지 보류"
+              echo ""
+              echo "PR: $PR_URL"
+              echo "Roster: ${BEFORE}명 → ${AFTER}명 (Δ${DELTA} > ${MAX_ROSTER_DELTA})"
+              echo "크롤 오류 가능성 — 수동 검토 후 머지하세요."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
           #
           # race 방지: `Vercel` context가 등록되고 SUCCESS인지 *명시 확인*한다.
           # `Vercel Preview Comments`만 올라온 상태는 본 빌드 완료로 간주하지 않는다.
@@ -187,15 +225,25 @@ jobs:
             fi
 
             if [ "$HAS_VERCEL" = "true" ] && [ "$VERCEL_STATE" = "SUCCESS" ]; then
-              echo "✅ Vercel build SUCCESS — PR 수동 머지 대기 상태로 종료합니다: $PR_URL"
-              {
-                echo "## ✅ 자동 업데이트 준비 완료"
-                echo ""
-                echo "PR: $PR_URL"
-                echo "Vercel: SUCCESS — 수동 머지 가능"
-                echo "States: \`$ALL_STATES\`"
-              } >> "$GITHUB_STEP_SUMMARY"
-              exit 0
+              echo "✅ Vercel build SUCCESS — 자동 머지 진행: $PR_URL"
+              gh pr merge "$PR_URL" --squash --delete-branch
+              MERGE_STATE=$(gh pr view "$PR_URL" --json state --jq .state)
+              if [ "$MERGE_STATE" = "MERGED" ]; then
+                {
+                  echo "## ✅ 자동 업데이트 머지 완료"
+                  echo ""
+                  echo "PR: $PR_URL"
+                  echo "검증 PASS · Vercel SUCCESS · Δroster=${DELTA}"
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              else
+                {
+                  echo "## ❌ 자동 머지 실패 — 수동 확인 필요"
+                  echo ""
+                  echo "PR: $PR_URL (state=$MERGE_STATE)"
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 1
+              fi
             fi
 
             sleep $SLEEP_SECONDS
