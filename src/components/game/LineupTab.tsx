@@ -55,8 +55,10 @@ function PitcherCard({
   /** 올스타전: 선수 원소속 팀명 병기 */
   subLabel?: { text: string; color: string };
 }) {
-  return (
-    <div className="text-center flex flex-col items-center">
+  // 선발투수도 타순 선수처럼 카드 클릭 시 선수 상세로 이동 (이름 있을 때만 링크).
+  const href = name ? resolvePlayerHref({ name, kboId, teamId }) : null;
+  const inner = (
+    <>
       <div className="text-base text-text-tertiary mb-2">{label}</div>
       <PlayerAvatar
         name={name}
@@ -78,7 +80,14 @@ function PitcherCard({
       <div className="text-sm text-text-secondary mt-1 tabular-nums">
         ERA {era}
       </div>
-    </div>
+    </>
+  );
+  return href ? (
+    <Link href={href} className="text-center flex flex-col items-center hover:opacity-80">
+      {inner}
+    </Link>
+  ) : (
+    <div className="text-center flex flex-col items-center">{inner}</div>
   );
 }
 
