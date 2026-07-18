@@ -1,5 +1,7 @@
 {
-  "regions": ["icn1"],
+  "regions": [
+    "icn1"
+  ],
   "ignoreCommand": "test -n \"$VERCEL_GIT_PREVIOUS_SHA\" && git cat-file -e \"$VERCEL_GIT_PREVIOUS_SHA\" 2>/dev/null && git diff --quiet \"$VERCEL_GIT_PREVIOUS_SHA\" \"${VERCEL_GIT_COMMIT_SHA:-HEAD}\" -- . ':(exclude)ios' ':(exclude)android' ':(exclude)docs'",
   "buildCommand": "npm run build",
   "framework": "nextjs",
@@ -7,24 +9,73 @@
     {
       "source": "/sw.js",
       "headers": [
-        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
-        { "key": "Service-Worker-Allowed", "value": "/" }
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        },
+        {
+          "key": "Service-Worker-Allowed",
+          "value": "/"
+        }
       ]
     }
   ],
   "crons": [
-    { "path": "/api/cron/highlights", "schedule": "0 */4 * * *" },
-    { "path": "/api/cron/videos", "schedule": "15 */2 * * *" },
-    { "path": "/api/cron/videos-shorts", "schedule": "30 */6 * * *" },
-    { "path": "/api/cron/stats", "schedule": "0 21 * * *" },
-    { "path": "/api/cron/photos", "schedule": "0 21 * * 0" },
-    { "path": "/api/cron/daily-fallback-report", "schedule": "0 0 * * *" },
-    { "path": "/api/cron/daily-analysis", "schedule": "0 16 * * *" },
-    { "path": "/api/cron/retention", "schedule": "30 0 * * *" },
-    { "path": "/api/cron/prewarm-summaries", "schedule": "15 8,9,10,11,12,13,14 * * *" },
-    { "path": "/api/cron/game-events-warmup", "schedule": "* 5-14 * * *" },
-    { "path": "/api/cron/game-logs", "schedule": "0 14,15,16 * * *" },
-    { "path": "/api/cron/sync-app-downloads", "schedule": "30 19 * * *" },
-    { "path": "/api/cron/news-clipping", "schedule": "0 0 * * *" }
+    {
+      "path": "/api/cron/highlights",
+      "schedule": "0 */4 * * *"
+    },
+    {
+      "path": "/api/cron/videos",
+      "schedule": "15 */2 * * *"
+    },
+    {
+      "path": "/api/cron/videos-shorts",
+      "schedule": "30 */6 * * *"
+    },
+    {
+      "path": "/api/cron/stats",
+      "schedule": "0 21 * * *"
+    },
+    {
+      "path": "/api/cron/photos",
+      "schedule": "0 21 * * 0"
+    },
+    {
+      "path": "/api/cron/daily-fallback-report",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/daily-analysis",
+      "schedule": "0 16 * * *"
+    },
+    {
+      "path": "/api/cron/retention",
+      "schedule": "30 0 * * *"
+    },
+    {
+      "path": "/api/cron/prewarm-summaries",
+      "schedule": "15 8,9,10,11,12,13,14 * * *"
+    },
+    {
+      "path": "/api/cron/game-events-warmup",
+      "schedule": "* 5-14 * * *"
+    },
+    {
+      "path": "/api/cron/game-logs",
+      "schedule": "0 14,15,16 * * *"
+    },
+    {
+      "path": "/api/cron/sync-app-downloads",
+      "schedule": "30 19 * * *"
+    },
+    {
+      "path": "/api/cron/news-clipping",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/admin-alerts",
+      "schedule": "*/30 * * * *"
+    }
   ]
 }

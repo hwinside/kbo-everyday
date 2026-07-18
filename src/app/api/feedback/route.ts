@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
+import { sendAdminPush } from "@/lib/admin/push";
 
 const VALID_TYPES = ["bug", "data", "feature", "content", "other", "android_test"];
 
@@ -46,6 +47,18 @@ export async function POST(req: NextRequest) {
   });
 
   if (error) return supabaseErrorResponse(error);
+
+  // 어드민 PWA 알림 (best-effort — 실패해도 건의 접수에는 영향 없음, 2026-07-18)
+  try {
+    await sendAdminPush({
+      title: "새 건의 도착",
+      body: `[${type}] ${title.trim().slice(0, 80)}`,
+      url: "/admin/feedback",
+      tag: "admin-feedback",
+    });
+  } catch {
+    /* ignore */
+  }
 
   return NextResponse.json({ success: true });
 }

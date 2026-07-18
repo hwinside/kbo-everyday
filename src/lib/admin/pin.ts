@@ -48,6 +48,15 @@ export function getAdminPinFromRequest(request: Request): string {
   return bearerMatch?.[1]?.trim() || "";
 }
 
-export function isAdminRequest(request: Request): boolean {
-  return verifyAdminPinValue(getAdminPinFromRequest(request));
+/**
+ * 어드민 요청 인증 (2026-07-18 세션 쿠키 도입으로 async 전환).
+ * 1) x-admin-pin 헤더(서버-서버/스크립트용, 기존 경로 유지) → 2) admin_session HttpOnly 쿠키.
+ * ⚠️ Promise를 반환하므로 호출부에서 반드시 await 필요 — 동기 isAdminRequest는 오용(미await=항상 truthy) 방지를 위해 제거했다.
+ */
+export async function isAdminAuthedRequest(request: Request): Promise<boolean> {
+  if (verifyAdminPinValue(getAdminPinFromRequest(request))) return true;
+  const { verifyAdminSessionToken, getAdminSessionTokenFromRequest } = await import("./session");
+  const token = getAdminSessionTokenFromRequest(request);
+  if (!token) return false;
+  return verifyAdminSessionToken(token);
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { isAdminRequest } from "@/lib/admin/pin";
+import { isAdminAuthedRequest } from "@/lib/admin/pin";
 
 const BUCKET = "photos";
 const MAX_SIZE = 5 * 1024 * 1024; // 5MB
@@ -13,7 +13,7 @@ const EXT_BY_TYPE: Record<string, string> = {
 
 // 운영팀 쪽지 이미지 업로드 — admin PIN 인증 후 photos 버킷 dm/ 경로에 저장하고 공개 URL 반환
 export async function POST(req: NextRequest) {
-  if (!isAdminRequest(req)) {
+  if (!(await isAdminAuthedRequest(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

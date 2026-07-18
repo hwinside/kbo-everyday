@@ -14,6 +14,7 @@ import {
   Menu,
   X,
   Lock,
+  Bell,
   TrendingUp,
   Sparkles,
   Smartphone,
@@ -24,6 +25,44 @@ import {
 } from "lucide-react";
 import { useAdminUnreadDMCount } from "@/lib/admin/useAdminUnreadDMCount";
 import { useAdminBatchHealthCount } from "@/lib/admin/useAdminBatchHealthCount";
+
+// 인증 유지 = 서버 발급 HttpOnly 세션 쿠키 (2026-07-18, PR #681 삼순 P0 반영).
+// PIN 원문은 어떤 클라 storage에도 저장하지 않는다. 기존 어드민 페이지들은
+// sessionStorage.getItem("admin_pin")을 읽어 x-admin-pin 헤더로 보내므로(빈값이면
+// fetch 자체를 skip하는 가드도 있음), 비밀이 아닌 센티넬 "session"을 시드해 호환을
+// 유지한다 — 서버는 PIN 검증 실패 시 세션 쿠키로 인증한다(isAdminAuthedRequest).
+const SESSION_SENTINEL = "session";
+
+function seedSessionSentinel() {
+  sessionStorage.setItem("admin_pin", SESSION_SENTINEL);
+}
+
+async function syncAdminPushSubscription(sub: PushSubscription): Promise<boolean> {
+  try {
+    // 인증은 HttpOnly 세션 쿠키가 동반된다 (same-origin fetch 기본 포함)
+    const res = await fetch("/api/admin/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subscription: sub.toJSON() }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function removeAdminPushSubscription(endpoint: string): Promise<boolean> {
+  try {
+    const res = await fetch("/api/admin/push/subscribe", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 const NAV_ITEMS = [
   { href: "/admin", label: "개요", icon: LayoutDashboard },
@@ -54,7 +93,7 @@ function PinGate({ onAuth }: { onAuth: () => void }) {
       body: JSON.stringify({ pin }),
     });
     if (res.ok) {
-      sessionStorage.setItem("admin_pin", pin);
+      seedSessionSentinel();
       onAuth();
     } else {
       setError(true);
@@ -89,6 +128,125 @@ function PinGate({ onAuth }: { onAuth: () => void }) {
         </button>
       </form>
     </div>
+  );
+}
+
+// 어드민 PWA 웹푸시 토글 (2026-07-18) — iOS 16.4+는 홈 화면 추가 앱에서만 PushManager 지원.
+// 사용자 제스처(버튼 탭)로만 권한 요청 가능하므로 자동 프롬프트는 하지 않는다.
+type AdminPushState = "unsupported" | "standalone-required" | "off" | "on" | "denied" | "busy";
+
+function AdminPushToggle() {
+  const [state, setState] = useState<AdminPushState>("off");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    // iOS는 Safari 탭에서 Notification/PushManager 자체가 없을 수 있어 기능 감지보다
+    // 먼저 "홈 화면 앱 아님"을 명시 판별해 설치 안내를 띄운다 (삼순 P2 반영)
+    const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
+    const standalone =
+      window.matchMedia?.("(display-mode: standalone)")?.matches === true ||
+      (navigator as { standalone?: boolean }).standalone === true;
+    if (isIOS && !standalone) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setState("standalone-required");
+      return;
+    }
+    if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+      setState("unsupported");
+      return;
+    }
+    if (!("PushManager" in window)) {
+      setState("standalone-required");
+      return;
+    }
+    if (Notification.permission === "denied") {
+      setState("denied");
+      return;
+    }
+    navigator.serviceWorker.ready
+      .then(async (reg) => {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub && Notification.permission === "granted") {
+          setState("on");
+          // 서버 재동기화 (엔드포인트 회전 대비, best-effort)
+          void syncAdminPushSubscription(sub);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const enable = async () => {
+    setState("busy");
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") {
+        setState(perm === "denied" ? "denied" : "off");
+        return;
+      }
+      const reg = await navigator.serviceWorker.ready;
+      const sub =
+        (await reg.pushManager.getSubscription()) ||
+        (await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+        }));
+      const ok = await syncAdminPushSubscription(sub);
+      setState(ok ? "on" : "off");
+    } catch {
+      setState("off");
+    }
+  };
+
+  const disable = async () => {
+    setState("busy");
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        // 서버 삭제 실패 = stale row 잔존 → 성공(off) 표시 금지 (삼순 조건부 GO 잔여 P2)
+        const serverOk = await removeAdminPushSubscription(sub.endpoint);
+        if (!serverOk) {
+          setState("on");
+          return;
+        }
+        // 브라우저 unsubscribe 실패 = 구독 유지 → 재접속 시 재동기화로 다시 on될 수 있음 → 성공 표시 금지
+        const unsubOk = await sub.unsubscribe();
+        if (!unsubOk) {
+          setState("on");
+          return;
+        }
+      }
+      setState("off");
+    } catch {
+      setState("on");
+    }
+  };
+
+  if (state === "unsupported") return null;
+  if (state === "standalone-required") {
+    return <p className="text-xs text-[#636366]">알림은 홈 화면에 추가한 앱에서 켤 수 있어요</p>;
+  }
+  if (state === "denied") {
+    return <p className="text-xs text-[#636366]">알림 권한 거부됨 — 설정에서 허용 필요</p>;
+  }
+  if (state === "on") {
+    return (
+      <button
+        onClick={disable}
+        className="flex items-center gap-1.5 text-xs text-[#30D158] hover:text-white transition-colors"
+      >
+        <Bell className="w-3.5 h-3.5" /> 알림 켜짐 — 끄기
+      </button>
+    );
+  }
+  return (
+    <button
+      onClick={enable}
+      disabled={state === "busy"}
+      className="flex items-center gap-1.5 text-xs text-[#8E8E93] hover:text-white transition-colors disabled:opacity-50"
+    >
+      <Bell className="w-3.5 h-3.5" /> {state === "busy" ? "설정 중..." : "알림 켜기"}
+    </button>
   );
 }
 
@@ -153,7 +311,8 @@ function Sidebar({ mobile, onClose, unreadDM, batchProblems }: { mobile?: boolea
             );
           })}
         </nav>
-        <div className="p-4 border-t border-white/8">
+        <div className="p-4 border-t border-white/8 space-y-2">
+          <AdminPushToggle />
           <p className="text-xs text-[#636366]">크보팬 v0.9</p>
         </div>
       </div>
@@ -168,21 +327,50 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
   const unreadDM = useAdminUnreadDMCount(30000, authed);
   const batchProblems = useAdminBatchHealthCount(60000, authed);
 
+  // PWA: /admin을 홈 화면 앱("크보팬 어드민")으로 추가할 수 있게 manifest를 교체 (2026-07-18).
+  // 어드민 이탈 시 원복해 일반 페이지의 "크보팬" 매니페스트에 영향을 주지 않는다.
   useEffect(() => {
-    const pin = sessionStorage.getItem("admin_pin");
-    if (pin) {
-      fetch("/api/admin/auth", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin }),
-      }).then((res) => {
+    const link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+    const prevHref = link?.getAttribute("href") ?? null;
+    link?.setAttribute("href", "/admin-manifest.json");
+
+    let titleMeta = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-title"]');
+    const created = !titleMeta;
+    const prevTitle = titleMeta?.content ?? null;
+    if (!titleMeta) {
+      titleMeta = document.createElement("meta");
+      titleMeta.name = "apple-mobile-web-app-title";
+      document.head.appendChild(titleMeta);
+    }
+    titleMeta.content = "크보팬 어드민";
+
+    return () => {
+      if (link && prevHref) link.setAttribute("href", prevHref);
+      if (created) titleMeta?.remove();
+      else if (titleMeta && prevTitle) titleMeta.content = prevTitle;
+    };
+  }, []);
+
+  useEffect(() => {
+    // 1) 구버전 탭의 sessionStorage PIN(원문)이 남아있으면 그걸로 재인증해 세션 쿠키로 전환
+    // 2) 아니면 HttpOnly 세션 쿠키만으로 재인증 (PIN 재입력 없음)
+    const legacyPin = sessionStorage.getItem("admin_pin");
+    const body =
+      legacyPin && legacyPin !== SESSION_SENTINEL ? { pin: legacyPin } : {};
+    fetch("/api/admin/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then((res) => {
+        if (res.ok) seedSessionSentinel();
         setAuthed(res.ok);
         setChecking(false);
+      })
+      .catch(() => {
+        setAuthed(false);
+        setChecking(false);
       });
-    } else {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setChecking(false);
-    }
   }, []);
 
   if (checking) {

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
-import { isAdminRequest } from "@/lib/admin/pin";
+import { isAdminAuthedRequest } from "@/lib/admin/pin";
 import { getKSTToday } from "@/lib/utils/date-kst";
 
 type TrafficRow = { day: string; platform: string; pv: number; uv: number };
@@ -107,7 +107,7 @@ const CACHE_TTL_MS = 60_000;
 const cache = new Map<number, { at: number; promise: Promise<TrafficPayload> }>();
 
 export async function GET(req: NextRequest) {
-  if (!isAdminRequest(req)) {
+  if (!(await isAdminAuthedRequest(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

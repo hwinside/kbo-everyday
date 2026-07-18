@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAdminRequest } from "@/lib/admin/pin";
+import { isAdminAuthedRequest } from "@/lib/admin/pin";
 import { checkAnomalies } from "@/lib/admin/anomaly";
 
-function verifyPin(req: NextRequest): boolean {
-  return isAdminRequest(req);
+async function verifyPin(req: NextRequest): Promise<boolean> {
+  return isAdminAuthedRequest(req);
 }
 
 export async function POST(req: NextRequest) {
-  if (!verifyPin(req)) {
+  if (!(await verifyPin(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
