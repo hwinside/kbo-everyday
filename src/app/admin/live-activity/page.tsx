@@ -213,10 +213,10 @@ export default function LiveActivityMonitorPage() {
         <div className="mt-6 text-xs text-gray-500 space-y-1 bg-gray-900/40 rounded-lg p-4">
           <div>• <span className="text-gray-300">카드</span> = 서버 push-to-start로 잠금화면에 뜬 Live Activity (started_users). 경기룸 방문으로 포그라운드에서 뜬 카드는 update 토큰에만 잡힌다.</div>
           <div>• <span className="text-gray-300">갱신 불가(gap)</span> = 카드는 떴는데 update 토큰 미등록·채널 미구독 → 점수 갱신·종료 정리를 못 받는 상태. 발급/종료 후 20분 창의 무음 wake가 자동 구제하고, 그래도 남으면 앱 오픈 시 등록된다.</div>
-          <div>• <span className="text-gray-300">채널 구독</span> = build17+(iOS18) 기기가 broadcast 채널에 붙었다고 네이티브가 ACK한 기기 수. update 토큰 없이도 갱신을 받으므로 갱신 수신 판정에 합산된다(익명 ACK는 유저 매핑 불가라 제외 = 보수적 집계).</div>
+          <div>• <span className="text-gray-300">채널 구독</span> = build17+(iOS18) 기기가 현재 active broadcast 채널에 붙었다고 네이티브가 ACK한 기기 수. 채널 재생성 전 stale ACK는 제외하며, 익명 ACK는 유저 매핑 불가라 갱신 수신에서 제외한다.</div>
           <div>• <span className="text-gray-300">과거 잔존</span> = 오늘 경기 목록에 없는 지난 game_id의 발급 기록 행. iOS가 카드를 ~8시간 내 자동 만료시키므로 실제 좀비 카드가 아니라 서버 기록 잔재{s ? ` (현재 ${s.residualRows}행 / ${s.residualGameCount}경기)` : ""}.</div>
           <div>• <span className="text-gray-300">미상(활성 fallback)</span> = 오늘 game_id인데 KBO 일정 조회 실패나 목록 누락으로 상태를 확정 못한 경우. 요약에는 활성으로 포함해 집계 누락을 막는다.</div>
-          <div>• <span className="text-gray-300">자동발급 카드 중 갱신 수신</span>은 push-to-start로 뜬 카드가 update 토큰까지 등록된 경우만 센다. 경기룸 방문 등 포그라운드에서만 뜬 LA는 여기 안 잡히고 전체 갱신 토큰 수치에만 포함된다.</div>
+          <div>• <span className="text-gray-300">자동발급 카드 중 갱신 수신</span> = push-to-start 카드 중 update 토큰 보유 또는 현재 active 채널 구독이 확인된 카드(중복 제거). 경기룸 방문으로만 뜬 LA는 전체 update 토큰 수치에만 포함된다.</div>
           <div>• 종료/취소 경기는 end 푸시 후 update 토큰이 정상 삭제된다. 종료 경기에 토큰이 남아 있으면 <span className="text-orange-400">end 미처리 의심</span>으로 표시.</div>
         </div>
 
