@@ -81,3 +81,29 @@ export function diffRoster(prev: RosterEntry[] | null, curr: RosterEntry[]): Ros
   }
   return moves;
 }
+
+export type MoveStatus = "pending" | "published";
+
+export interface PlannedMove extends RosterMove {
+  status: MoveStatus;
+}
+
+/**
+ * 하루 기준 무브 계획 (2026-07-18 삼순 P0/P1 반영).
+ *
+ * 기준점은 항상 **직전 일자 스냅샷**(prevDay) — 같은 날 N번째 실행도 동일 기준으로
+ * 오늘의 이벤트 집합을 전체 재계산한다. 호출측(cron)은 이 결과로 오늘의 스냅샷과
+ * 무브를 **원자적으로 교체**(upsert 후 stale 삭제)해야 한다:
+ *   - 오전 [A,B] → 저녁 [A]: 오늘 스냅샷에서 B 제거 → 다음 날 중복 말소 방지 (P1)
+ *   - 당일 등록 후 당일 말소(왕복): 저녁 재계산 집합에 없으므로 오전 등록 이벤트 제거
+ *     — 일 단위 계약(하린아빠 "1일 기준" 스펙)상 순변동 0이 정답
+ * status 정책(P0 공개 게이트): 등록은 pending으로 생성(승격은 readiness 통과 후),
+ * 말소는 즉시 published. 이미 저장된 동일 동일키 row의 status는 upsert
+ * ignoreDuplicates로 보존된다(published → pending 강등 금지).
+ */
+export function planTeamMoves(prevDay: RosterEntry[] | null, curr: RosterEntry[]): PlannedMove[] {
+  return diffRoster(prevDay, curr).map((m) => ({
+    ...m,
+    status: m.moveType === "register" ? ("pending" as const) : ("published" as const),
+  }));
+}

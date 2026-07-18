@@ -25,6 +25,10 @@ CREATE TABLE IF NOT EXISTS roster_moves (
   player_name TEXT NOT NULL,
   move_type TEXT NOT NULL CHECK (move_type IN ('register', 'deregister')),
   move_date DATE NOT NULL,
+  -- 공개 게이트(2026-07-18 삼순 P0 반영): 준비 → 공개 순서 보장.
+  -- 등록(register)은 'pending'으로 생성 → cron 승격 단계가 readiness(로스터 SSOT+프로필+히어로+상세페이지)
+  -- 전체 통과를 확인한 뒤에만 'published'. 말소(deregister)는 준비 개념이 없어 즉시 'published'.
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'published')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (team_id, kbo_player_id, move_type, move_date)
 );
@@ -34,9 +38,10 @@ CREATE INDEX IF NOT EXISTS idx_roster_moves_team_date
 -- 스냅샷은 diff 계산용 내부 데이터 — RLS on + 정책 0개 = 일반 클라 접근 거부(service_role만).
 ALTER TABLE roster_snapshots ENABLE ROW LEVEL SECURITY;
 
--- 변동 이벤트는 공개 정보 — anon/authenticated 읽기 허용, 쓰기는 service_role(RLS 우회)만.
+-- 변동 이벤트는 공개 정보 — 단 published만 노출(pending 등록은 준비 미완료라 RLS 레벨에서도 차단).
+-- anon/authenticated 읽기 허용, 쓰기는 service_role(RLS 우회)만.
 ALTER TABLE roster_moves ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Public read access for roster moves" ON roster_moves;
 CREATE POLICY "Public read access for roster moves"
   ON roster_moves FOR SELECT
-  USING (true);
+  USING (status = 'published');
