@@ -51,6 +51,7 @@ const MANUAL_PHOTO_URL_BY_KBO_ID = {
   FP021: 'https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2026/56305.jpg', // 케스턴 히우라 (KBO 공식 헤드샷, numericId 56305)
   FP022: 'https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2026/56146.jpg', // 약셀 리오스 (KBO 공식 헤드샷, numericId 56146)
   FP023: 'https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2026/56950.jpg', // 블레인 (NC, KBO 공식 헤드샷, numericId 56950)
+  FP024: 'https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2026/56459.jpg', // 페덱 (삼성, KBO 공식 헤드샷, numericId 56459)
   '56503': 'https://images.khan.co.kr/article/2026/06/18/news-p.v1.20260618.b07b6d574eeb4bd087689717c178a254_P1.jpg', // 이이무라 쇼타 (롯데 아시아쿼터, 공식 영입발표 사진 — KBO 공홈은 94x118 초저해상도뿐)
 };
 
