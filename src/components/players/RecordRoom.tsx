@@ -6,7 +6,7 @@ import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import MiniWeeklyTrend from "@/components/players/MiniWeeklyTrend";
 import GlassCard from "@/components/ui/GlassCard";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
-import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
+import { getCanonicalPlayerHref, resolvePlayerIdentity } from "@/lib/utils/resolve-player";
 import { TEAMS } from "@/lib/constants/teams";
 import { getFavoritePlayers } from "@/lib/store/favorites";
 import { STAT_DEFS, type StatType } from "@/lib/stats/title-defs";
@@ -55,6 +55,7 @@ const saberDisclaimer = (statName: string) =>
  * RecordRoom saber minG(타자 10/투수 5), 수비율 FPCT_MIN_INN(100이닝). 누적 수비는 자격 없음. */
 const RATE_KEYS = new Set(["avg", "obp", "ops", "era", "whip"]);
 function qualNote(view: View, activeStat: string, isDefense: boolean): string | null {
+  if (activeStat === "backno") return null; // 등번호순 = 자격 게이트 없음
   if (isDefense) return activeStat === "fpct" ? "수비 100이닝 이상" : null;
   if (SABER_DEFS[activeStat]) return view === "pitcher" ? "5경기 이상" : "10경기 이상";
   // 비율 스탯 실제 게이트 = KBO 공식 규정이닝/규정타석(qualifiedRate 플래그). 12이닝/30타석은 과거시즌 폴백값.
@@ -90,6 +91,7 @@ type UnqualGate = {
   note: string;
 };
 function buildUnqualGate(view: View, activeStat: string, isDefense: boolean, scoped: Row[], league: Row[]): UnqualGate | null {
+  if (activeStat === "backno") return null; // 등번호순 = 전원 본 목록 노출(미달 섹션 없음)
   if (isDefense) {
     if (activeStat !== "fpct") return null; // 누적 수비 = 자격 기준 없음
     return {
@@ -147,6 +149,19 @@ type Row = Record<string, unknown> & {
 function teamIdFromText(team?: string): number | null {
   if (!team) return null;
   return TEAMS.find((t) => t.shortName === team || t.name === team)?.id ?? null;
+}
+
+/* 등번호 — 스탯 행엔 backNo가 없어서 로스터 SSOT(resolvePlayerIdentity)로 조회. 미등록이면 null.
+ * 로스터 JSON은 resolve-player 경유로 이미 번들에 포함돼 있어 추가 비용 없음. */
+function rosterBackNo(p: Row): string | null {
+  const id = p.kboId ?? p.playerId;
+  const resolved = resolvePlayerIdentity({
+    name: p.name,
+    kboId: id != null ? String(id) : null,
+    teamId: typeof p.teamId === "number" ? p.teamId : null,
+    team: typeof p.team === "string" ? p.team : null,
+  });
+  return resolved?.backNo ? String(resolved.backNo) : null;
 }
 
 /* 자체 타격 세이버메트릭 (예측 WAR·wOBA·wRC+·ISO·BABIP 공통 소스; 타격+주루+포지션, 수비 미반영) */
@@ -234,7 +249,9 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
       .catch(() => setRowsByType((prev) => ({ ...prev, [view]: [] })));
   }, [view, rowsByType]);
 
-  const chips = isDefense ? DEFENSE_STATS : view === "batter" ? BATTER_STATS : PITCHER_STATS;
+  const baseChips = isDefense ? DEFENSE_STATS : view === "batter" ? BATTER_STATS : PITCHER_STATS;
+  // 등번호순 정렬은 팀 스코프 전용(리그 전체에선 무의미) — CS 요청(2026-07-16)
+  const chips = scopeTeamId != null ? ["backno", ...baseChips] : baseChips;
   const def = STAT_DEFS[activeStat];
 
   const ranked = useMemo(() => {
@@ -243,6 +260,17 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
       scopeTeamId != null
         ? rows.filter((p) => (p.teamId ?? teamIdFromText(p.team)) === scopeTeamId)
         : rows;
+
+    if (activeStat === "backno") {
+      // 등번호순 — 자격 게이트 없이 스코프 내 전원 오름차순(미등록은 마지막, 동번호는 이름순)
+      const withNo = scoped.map((p) => ({ ...p, __backNo: rosterBackNo(p) }));
+      const numOf = (s: string | null) => {
+        const n = s != null ? Number(s) : NaN;
+        return Number.isNaN(n) ? Infinity : n;
+      };
+      withNo.sort((a, b) => numOf(a.__backNo) - numOf(b.__backNo) || a.name.localeCompare(b.name, "ko"));
+      return withNo.map((p, i) => ({ ...p, rank: i + 1 })) as (RankedRow & Row)[];
+    }
 
     if (isDefense) {
       // 수비: 선택 스탯 내림차순. 수비율(rate)은 최소 이닝 자격 적용.
@@ -304,7 +332,8 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
   function switchView(t: View) {
     if (t === view) return;
     setView(t);
-    setActiveStat(t === "defense" ? "fpct" : "war"); // 수비 기본=수비율, 그 외=예상 WAR
+    // 수비 기본=수비율, 그 외=예상 WAR. 등번호순은 뷰 전환에도 유지(로스터 브라우징 연속성)
+    if (activeStat !== "backno") setActiveStat(t === "defense" ? "fpct" : "war");
   }
 
   const getValue = (p: Row): number => {
@@ -340,6 +369,19 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
       {/* 스탯 칩 (선택 시 정렬 기준) */}
       <div className="mb-4 flex gap-1.5 overflow-x-auto hide-scrollbar pb-1">
         {chips.map((key) => {
+          if (key === "backno") {
+            return (
+              <button
+                key={key}
+                onClick={() => setActiveStat(key)}
+                className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                  activeStat === key ? "bg-accent text-white" : "bg-bg-secondary/60 text-text-tertiary"
+                }`}
+              >
+                🔢 등번호
+              </button>
+            );
+          }
           if (isDefense) {
             const d = DEF_DEFS[key];
             if (!d) return null;
@@ -419,6 +461,7 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
           <div className="space-y-2">
           {ranked.map((p, i) => {
             const teamId = (typeof p.teamId === "number" ? p.teamId : null) ?? teamIdFromText(p.team) ?? 0;
+            const backNo = scopeTeamId != null ? ((p as Row & { __backNo?: string | null }).__backNo ?? rosterBackNo(p)) : null;
             const isFav = favIds.has(String(p.kboId ?? "")) || favIds.has(String(p.playerId ?? ""));
             const teamColor = TEAMS.find((t) => t.id === teamId)?.colorPrimary || "#FF6B35";
             const rank = p.rank || i + 1;
@@ -436,13 +479,15 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
                 <GlassCard pressable className="p-3 flex items-center gap-3" style={cardStyle}>
                   <span
                     className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold flex-shrink-0 ${
-                      rank === 1
-                        ? "bg-yellow-500/20 text-yellow-400"
-                        : rank === 2
-                          ? "bg-gray-400/20 text-gray-300"
-                          : rank === 3
-                            ? "bg-amber-700/20 text-amber-600"
-                            : "bg-bg-tertiary text-text-tertiary"
+                      activeStat === "backno"
+                        ? "bg-bg-tertiary text-text-tertiary" // 등번호순 = 순위 개념 아님 → 메달 색 없이 중립 배지
+                        : rank === 1
+                          ? "bg-yellow-500/20 text-yellow-400"
+                          : rank === 2
+                            ? "bg-gray-400/20 text-gray-300"
+                            : rank === 3
+                              ? "bg-amber-700/20 text-amber-600"
+                              : "bg-bg-tertiary text-text-tertiary"
                     }`}
                   >
                     {rank}
@@ -456,11 +501,16 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
                   <div className="flex-1 min-w-0">
                     <span className="text-sm font-semibold text-text-primary">{p.name}</span>
                     <span className="ml-1.5 text-xs text-text-tertiary">{p.team}</span>
+                    {backNo != null && activeStat !== "backno" ? (
+                      <span className="ml-1.5 text-xs text-text-tertiary">No.{backNo}</span>
+                    ) : null}
                     {isDefense && p.position ? (
                       <span className="ml-1.5 text-xs text-text-tertiary">· {String(p.position)}</span>
                     ) : null}
                   </div>
-                  <span className="text-lg font-bold tabular-nums text-text-primary">{fmt(getValue(p))}</span>
+                  <span className="text-lg font-bold tabular-nums text-text-primary">
+                    {activeStat === "backno" ? (backNo ?? "—") : fmt(getValue(p))}
+                  </span>
                 </GlassCard>
               </Link>
             );
@@ -494,6 +544,7 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
                   <div className="space-y-2">
                     {unqualified.map((p, i) => {
                       const teamId = (typeof p.teamId === "number" ? p.teamId : null) ?? teamIdFromText(p.team) ?? 0;
+                      const backNo = scopeTeamId != null ? rosterBackNo(p) : null;
                       const href =
                         getCanonicalPlayerHref({ name: p.name, kboId: p.kboId, playerId: p.playerId, teamId }) ??
                         `/community/players/${p.kboId || p.playerId || p.name}`;
@@ -513,6 +564,9 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
                               <div className="truncate">
                                 <span className="text-sm font-semibold text-text-primary">{p.name}</span>
                                 <span className="ml-1.5 text-xs text-text-tertiary">{p.team}</span>
+                                {backNo != null ? (
+                                  <span className="ml-1.5 text-xs text-text-tertiary">No.{backNo}</span>
+                                ) : null}
                               </div>
                               <span className="text-[11px] text-text-tertiary tabular-nums">{unqualProgress(p)}</span>
                             </div>
