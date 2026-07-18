@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { startJob, finishJob } from "@/lib/admin/job-logger";
 import { fetchStandings, fetchGames, fetchBoxScore, type BoxScoreResult } from "@/lib/crawler/kbo-api";
 import { TEAMS } from "@/lib/constants/teams";
+import { evaluateLiveReadiness } from "@/lib/analysis/daily-analysis-live-policy";
 import {
   computeStandingsDelta,
   computeTitlesDelta,
@@ -436,19 +437,34 @@ function sanitizeCopy(copy: string): string {
  */
 export type DailyAnalysisMode = "scheduled" | "live";
 
+export interface DailyAnalysisOptions {
+  // catch-up(자정 넘긴 경기) 대응: 분석 대상 경기일/저장일을 명시 오버라이드.
+  // 생략 시 기존 동작: saveDate=오늘, gameDate=(live 오늘 / scheduled 어제).
+  gameDate?: string;
+  saveDate?: string;
+}
+
 export interface DailyAnalysisOutcome {
   status: number;
   body: Record<string, unknown>;
 }
 
-export async function runDailyAnalysis(mode: DailyAnalysisMode): Promise<DailyAnalysisOutcome> {
+export async function runDailyAnalysis(
+  mode: DailyAnalysisMode,
+  options?: DailyAnalysisOptions,
+): Promise<DailyAnalysisOutcome> {
   const logId = await startJob(mode === "live" ? "daily-analysis-live" : "daily-analysis");
   const supabase = supabaseAdmin;
 
   try {
-    const todayISO = getKSTDate();
-    // baseline/게임일 = live면 오늘, scheduled면 어제. (yesterdayISO 이름은 하위 로직 호환 유지)
-    const yesterdayISO = mode === "live" ? todayISO : getKSTDate(-1);
+    // saveDate = daily_analysis 저장일(표시일), gameDate = 분석 대상 경기일.
+    // 기존 변수명(todayISO/yesterdayISO) 유지: todayISO=saveDate, yesterdayISO=gameDate.
+    const saveDate = options?.saveDate ?? getKSTDate();
+    const gameDate = options?.gameDate ?? (mode === "live" ? saveDate : getKSTDate(-1));
+    const todayISO = saveDate;
+    const yesterdayISO = gameDate;
+    // catch-up(gameDate < saveDate)은 scheduled와 동일 의미(saveDate-1 반영)라 마커가 불필요.
+    const isSameDayLive = mode === "live" && gameDate === saveDate;
     const yesterdayKbo = toKboDate(yesterdayISO);
 
     // 1. Fetch current data in parallel
@@ -515,6 +531,28 @@ export async function runDailyAnalysis(mode: DailyAnalysisMode): Promise<DailyAn
       team: e.team,
       value: e.value,
     }));
+
+    // 5b. [live] readiness gate — 원천(순위표/타이틀)이 gameDate finals를 실제로 반영했는지 확인.
+    //     경기 API final 직후에도 Naver 순위/KBO 타이틀이 아직 stale일 수 있어, 즉시 마커를
+    //     찍으면 stale 분석이 멱등성으로 고착된다. 미반영이면 마커 없이 반환(다음 10분 tick 재시도).
+    if (mode === "live") {
+      const gameFinalGames = games.filter((g) => g.status === "final");
+      const readiness = evaluateLiveReadiness({
+        baselineStandings: (yesterdayStandings ?? []) as StandingsSnapshot[],
+        currentStandings: standings,
+        todayFinalGames: gameFinalGames,
+        baselineStats: (yesterdayStats ?? []) as StatsSnapshotRow[],
+        currentStats: todayStatsSnapshots,
+      });
+      if (!readiness.ready) {
+        const msg = `라이브: 원천 미반영(${readiness.reason}) — 마커 없이 다음 tick 재시도`;
+        await finishJob(logId, "success", msg);
+        return {
+          status: 200,
+          body: { ok: true, skipped: "not_ready", reason: readiness.reason, laggingTeams: readiness.laggingTeams },
+        };
+      }
+    }
 
     // 6. Save today's snapshots
     //    live 모드는 스냅샷을 쓰지 않는다 — date=오늘 스냅샷은 '오늘 경기 전 누적' baseline이라
@@ -643,7 +681,9 @@ export async function runDailyAnalysis(mode: DailyAnalysisMode): Promise<DailyAn
     // 11. Save analysis results
     //    live 모드: 배지를 '오늘 경기 기준'으로 전환(lastUpdated=오늘) + 멱등성 마커(sameDayLive).
     //    scheduled 모드: liveMeta 비어 있어 기존 동작 동일.
-    const liveMeta = mode === "live" ? { lastUpdated: todayISO, sameDayLive: true } : {};
+    //    isSameDayLive만 마커 부여(배지 '오늘 경기 기준'). catch-up(gameDate=어제)은 saveDate-1
+    //    관례로 이미 올바른 배지라 liveMeta 불필요(scheduled와 동일 출력).
+    const liveMeta = isSameDayLive ? { lastUpdated: gameDate, sameDayLive: true } : {};
     const analysisRows = [
       {
         date: todayISO,

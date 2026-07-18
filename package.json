@@ -29,6 +29,7 @@
     "qa:push-score-events": "tsx scripts/qa/push-score-events-smoke.ts",
     "qa:end-streak": "tsx scripts/qa/end-streak-smoke.ts",
     "qa:team-rank": "tsx scripts/qa/team-rank-smoke.ts",
+    "qa:daily-live": "tsx scripts/qa/daily-analysis-live-smoke.ts",
     "qa:contextual-split-inline": "tsx scripts/qa/contextual-stats-split-inline-smoke.ts",
     "qa:celebration-hit-overcount": "tsx scripts/qa/celebration-hit-overcount-smoke.ts",
     "qa:celebration-client-dedupe": "tsx scripts/qa/celebration-client-dedupe-smoke.ts",
