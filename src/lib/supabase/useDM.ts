@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { useBlockedIds } from "./useBlock";
+import { OPERATOR_USER_ID } from "@/lib/constants/operator";
 
 export interface DMConversation {
   id: string;
@@ -266,6 +267,29 @@ export function useDMChat(conversationId: string) {
           .from("dm_conversations")
           .update({ last_message: preview, last_message_at: new Date().toISOString() })
           .eq("id", conversationId);
+
+        // 운영팀 대화면 어드민 PWA 알림 트리거 (fire-and-forget — 실패해도 쪽지 발송에 영향 0, 2026-07-18)
+        if (
+          conv &&
+          user.id !== OPERATOR_USER_ID &&
+          (conv.user1_id === OPERATOR_USER_ID || conv.user2_id === OPERATOR_USER_ID)
+        ) {
+          void (async () => {
+            try {
+              const { data: { session } } = await supabase.auth.getSession();
+              await fetch("/api/dm/notify-admin", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+                },
+                body: JSON.stringify({ conversationId }),
+              });
+            } catch {
+              /* ignore */
+            }
+          })();
+        }
       }
 
       return !error;

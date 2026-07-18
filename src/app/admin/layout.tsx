@@ -14,6 +14,7 @@ import {
   Menu,
   X,
   Lock,
+  Bell,
   TrendingUp,
   Sparkles,
   Smartphone,
@@ -24,6 +25,34 @@ import {
 } from "lucide-react";
 import { useAdminUnreadDMCount } from "@/lib/admin/useAdminUnreadDMCount";
 import { useAdminBatchHealthCount } from "@/lib/admin/useAdminBatchHealthCount";
+
+// PIN 저장을 localStorage(영구)로 승격 — Safari/PWA 세션이 끝나도 로그인 유지 (2026-07-18).
+// 기존 어드민 페이지들은 sessionStorage.getItem("admin_pin")을 읽으므로,
+// 복원 시 sessionStorage에도 시드해 하위 호환을 유지한다.
+function getStoredAdminPin(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem("admin_pin") || sessionStorage.getItem("admin_pin") || "";
+}
+
+function storeAdminPin(pin: string) {
+  localStorage.setItem("admin_pin", pin);
+  sessionStorage.setItem("admin_pin", pin);
+}
+
+async function syncAdminPushSubscription(sub: PushSubscription): Promise<boolean> {
+  const pin = getStoredAdminPin();
+  if (!pin) return false;
+  try {
+    const res = await fetch("/api/admin/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-admin-pin": pin },
+      body: JSON.stringify({ subscription: sub.toJSON() }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 const NAV_ITEMS = [
   { href: "/admin", label: "개요", icon: LayoutDashboard },
@@ -54,7 +83,7 @@ function PinGate({ onAuth }: { onAuth: () => void }) {
       body: JSON.stringify({ pin }),
     });
     if (res.ok) {
-      sessionStorage.setItem("admin_pin", pin);
+      storeAdminPin(pin);
       onAuth();
     } else {
       setError(true);
@@ -89,6 +118,87 @@ function PinGate({ onAuth }: { onAuth: () => void }) {
         </button>
       </form>
     </div>
+  );
+}
+
+// 어드민 PWA 웹푸시 토글 (2026-07-18) — iOS 16.4+는 홈 화면 추가 앱에서만 PushManager 지원.
+// 사용자 제스처(버튼 탭)로만 권한 요청 가능하므로 자동 프롬프트는 하지 않는다.
+type AdminPushState = "unsupported" | "standalone-required" | "off" | "on" | "denied" | "busy";
+
+function AdminPushToggle() {
+  const [state, setState] = useState<AdminPushState>("off");
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window) || !("serviceWorker" in navigator)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setState("unsupported");
+      return;
+    }
+    if (!("PushManager" in window)) {
+      // iOS Safari 탭에서는 PushManager가 없고, 홈 화면 앱에서만 지원된다
+      setState("standalone-required");
+      return;
+    }
+    if (Notification.permission === "denied") {
+      setState("denied");
+      return;
+    }
+    navigator.serviceWorker.ready
+      .then(async (reg) => {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub && Notification.permission === "granted") {
+          setState("on");
+          // 서버 재동기화 (엔드포인트 회전 대비, best-effort)
+          void syncAdminPushSubscription(sub);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const enable = async () => {
+    setState("busy");
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") {
+        setState(perm === "denied" ? "denied" : "off");
+        return;
+      }
+      const reg = await navigator.serviceWorker.ready;
+      const sub =
+        (await reg.pushManager.getSubscription()) ||
+        (await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+        }));
+      const ok = await syncAdminPushSubscription(sub);
+      setState(ok ? "on" : "off");
+    } catch {
+      setState("off");
+    }
+  };
+
+  if (state === "unsupported") return null;
+  if (state === "standalone-required") {
+    return <p className="text-xs text-[#636366]">알림은 홈 화면에 추가한 앱에서 쾜 수 있어요</p>;
+  }
+  if (state === "denied") {
+    return <p className="text-xs text-[#636366]">알림 권한 거부됨 — 설정에서 허용 필요</p>;
+  }
+  if (state === "on") {
+    return (
+      <p className="flex items-center gap-1.5 text-xs text-[#30D158]">
+        <Bell className="w-3.5 h-3.5" /> 알림 켜짐
+      </p>
+    );
+  }
+  return (
+    <button
+      onClick={enable}
+      disabled={state === "busy"}
+      className="flex items-center gap-1.5 text-xs text-[#8E8E93] hover:text-white transition-colors disabled:opacity-50"
+    >
+      <Bell className="w-3.5 h-3.5" /> {state === "busy" ? "설정 중..." : "알림 켜기"}
+    </button>
   );
 }
 
@@ -153,7 +263,8 @@ function Sidebar({ mobile, onClose, unreadDM, batchProblems }: { mobile?: boolea
             );
           })}
         </nav>
-        <div className="p-4 border-t border-white/8">
+        <div className="p-4 border-t border-white/8 space-y-2">
+          <AdminPushToggle />
           <p className="text-xs text-[#636366]">크보팬 v0.9</p>
         </div>
       </div>
@@ -168,9 +279,35 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
   const unreadDM = useAdminUnreadDMCount(30000, authed);
   const batchProblems = useAdminBatchHealthCount(60000, authed);
 
+  // PWA: /admin을 홈 화면 앱("크보팬 어드민")으로 추가할 수 있게 manifest를 교체 (2026-07-18).
+  // 어드민 이탈 시 원복해 일반 페이지의 "크보팬" 매니페스트에 영향을 주지 않는다.
   useEffect(() => {
-    const pin = sessionStorage.getItem("admin_pin");
+    const link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+    const prevHref = link?.getAttribute("href") ?? null;
+    link?.setAttribute("href", "/admin-manifest.json");
+
+    let titleMeta = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-title"]');
+    const created = !titleMeta;
+    const prevTitle = titleMeta?.content ?? null;
+    if (!titleMeta) {
+      titleMeta = document.createElement("meta");
+      titleMeta.name = "apple-mobile-web-app-title";
+      document.head.appendChild(titleMeta);
+    }
+    titleMeta.content = "크보팬 어드민";
+
+    return () => {
+      if (link && prevHref) link.setAttribute("href", prevHref);
+      if (created) titleMeta?.remove();
+      else if (titleMeta && prevTitle) titleMeta.content = prevTitle;
+    };
+  }, []);
+
+  useEffect(() => {
+    const pin = getStoredAdminPin();
     if (pin) {
+      // 기존 페이지들의 sessionStorage 읽기 호환 유지
+      sessionStorage.setItem("admin_pin", pin);
       fetch("/api/admin/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

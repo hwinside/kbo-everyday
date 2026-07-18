@@ -82,6 +82,49 @@ export function isProblem(level: JobHealthLevel): boolean {
   return level === "error" || level === "stale";
 }
 
+/** admin-alerts cron 전이 판정용 스냅샷 (2026-07-18) */
+export interface JobLevelSnapshot {
+  jobName: string;
+  label: string;
+  level: JobHealthLevel;
+  reason: string;
+}
+
+export interface AdminAlertDecision {
+  jobName: string;
+  label: string;
+  reason: string;
+  kind: "problem" | "recovered";
+}
+
+/**
+ * 어드민 알림 전이 판정 (순수 함수, admin-alerts cron 전용).
+ *
+ * 직전 상태(prev: job_name→level) 대비 "전이 시에만" 알림을 만든다:
+ * - problem(error/stale) 진입: 직전 레벨과 다를 때만 (error↔stale 변화도 재알림 — 상황이 바뀐 것)
+ * - 복구: 직전이 problem이었고 지금 healthy/partial일 때 1회
+ * - unknown은 판정 불가(회색)라 경고도 복구도 만들지 않음
+ * - 같은 레벨 유지 = 무알림 (30분 주기 반복 알림 방지)
+ */
+export function decideAdminAlerts(
+  prev: Map<string, string>,
+  current: JobLevelSnapshot[],
+): AdminAlertDecision[] {
+  const out: AdminAlertDecision[] = [];
+  for (const job of current) {
+    const prevLevel = prev.get(job.jobName) ?? null;
+    const wasProblem = prevLevel === "error" || prevLevel === "stale";
+    if (isProblem(job.level)) {
+      if (job.level !== prevLevel) {
+        out.push({ jobName: job.jobName, label: job.label, reason: job.reason, kind: "problem" });
+      }
+    } else if (wasProblem && job.level !== "unknown") {
+      out.push({ jobName: job.jobName, label: job.label, reason: job.reason, kind: "recovered" });
+    }
+  }
+  return out;
+}
+
 export function computeJobHealth(def: JobDef, input: JobHealthInput, now: number): JobHealth {
   const runAgeHours = ageHours(input.latestAt, now);
   const dataAgeHours = def.dataFreshness ? ageHours(input.dataGeneratedAt, now) : null;
