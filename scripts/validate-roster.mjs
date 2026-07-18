@@ -209,6 +209,27 @@ for (const { numeric, alpha } of loadForeignIdPairs()) {
 }
 
 // ============================================================================
+// Check 5.7: 신규 외국인 숫자-id 온보딩 중 국적 미등록(A안) — warn만(비차단).
+//   reconcile이 숨긴 건 foreign-nationality-pending.json에 쌓으며, 사람이 player-nationality.json에
+//   국적을 넣으면 다음 reconcile 실행에 자동 소멸한다. FP/AQ 강제(5.6)와 달리 숫자 외인은
+//   페이지·사진이 이미 정상이라 CI를 막지 않고 국기만 미표시(graceful) → warn으로만 가시화.
+// ============================================================================
+{
+  const PENDING_PATH = path.resolve(__dirname, "../src/lib/constants/foreign-nationality-pending.json");
+  let pending = {};
+  try { pending = JSON.parse(fs.readFileSync(PENDING_PATH, "utf8")); } catch { /* 없으면 skip */ }
+  let nationality = {};
+  try { nationality = JSON.parse(fs.readFileSync(NATIONALITY_PATH, "utf8")); } catch { /* 5.6에서 이미 fail */ }
+  for (const [kid, info] of Object.entries(pending)) {
+    if (kid in nationality) continue; // 이미 국적 등록됨(다음 reconcile이 pending에서 제거)
+    warn(
+      `신규 외국인 국적 미등록: ${info?.name ?? "?"} (${kid}, ${info?.team ?? "?"}) — ` +
+        `player-nationality.json에 "${kid}": "<ISO alpha-2>" 추가 시 국기 표시(페이지·사진은 이미 정상).`,
+    );
+  }
+}
+
+// ============================================================================
 // Check 6: team counts ≥ MIN_PER_TEAM
 // ============================================================================
 const byTeam = {};
