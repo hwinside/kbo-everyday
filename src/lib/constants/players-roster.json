@@ -7567,5 +7567,14 @@
     "backNo": "22",
     "team": "키움",
     "birthDate": "1996-08-02"
+  },
+  {
+    "name": "페덱",
+    "kboId": "FP024",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "59",
+    "team": "삼성",
+    "birthDate": "1996-01-08"
   }
 ]
