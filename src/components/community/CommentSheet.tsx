@@ -13,6 +13,7 @@ import { supabase } from "@/lib/supabase/client";
 import type { Comment } from "@/lib/supabase/usePosts";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import GifPicker from "@/components/community/GifPicker";
+import CommentImageLightbox from "@/components/community/CommentImageLightbox";
 import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/comment-media";
 import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
 
@@ -86,6 +87,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const [uploadingImage, setUploadingImage] = useState(false);
   const [cooldown, setCooldown] = useState(false);
   const [cooldownReason, setCooldownReason] = useState("");
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const lastSentRef = useRef(0);
   const sentTimestampsRef = useRef<number[]>([]);
   const recentContentsRef = useRef<string[]>([]);
@@ -723,12 +725,19 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
           ) : (
             <>
               {isImageComment(comment.content) ? (
-                <img
-                  src={comment.content.trim()}
-                  alt="댓글 이미지"
-                  className="mt-1 rounded-lg max-w-[220px] max-h-[280px] h-auto object-contain"
-                  loading="lazy"
-                />
+                <button
+                  type="button"
+                  onClick={() => setLightboxSrc(comment.content.trim())}
+                  className="block cursor-zoom-in"
+                  aria-label="댓글 이미지 확대"
+                >
+                  <img
+                    src={comment.content.trim()}
+                    alt="댓글 이미지"
+                    className="mt-1 rounded-lg max-w-[220px] max-h-[280px] h-auto object-contain"
+                    loading="lazy"
+                  />
+                </button>
               ) : (
                 <p className="readable-body mt-0.5 break-words">
                   {comment.content}
@@ -988,5 +997,6 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     document.body
   )}
   {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
+  <CommentImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
   </>);
 }

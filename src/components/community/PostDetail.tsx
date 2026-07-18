@@ -17,6 +17,7 @@ import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import DMButton from "@/components/ui/DMButton";
 import GifPicker from "@/components/community/GifPicker";
+import CommentImageLightbox from "@/components/community/CommentImageLightbox";
 import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/comment-media";
 import LoginSheet from "@/components/auth/LoginSheet";
 import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
@@ -102,6 +103,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
   // 댓글 메뉴/편집 상태
   const [cmtMenuOpenId, setCmtMenuOpenId] = useState<number | null>(null);
   const [cmtEditingId, setCmtEditingId] = useState<number | null>(null);
+  const [cmtLightboxSrc, setCmtLightboxSrc] = useState<string | null>(null);
   const [cmtEditInput, setCmtEditInput] = useState("");
   const [cmtSaving, setCmtSaving] = useState(false);
 
@@ -675,12 +677,19 @@ export default function PostDetail({ postId }: PostDetailProps) {
                       ) : (
                         <>
                           {isImageComment(c.content) ? (
-                            <img
-                              src={c.content.trim()}
-                              alt="댓글 이미지"
-                              className="mt-1 rounded-lg max-w-[220px] max-h-[280px] h-auto object-contain"
-                              loading="lazy"
-                            />
+                            <button
+                              type="button"
+                              onClick={() => setCmtLightboxSrc(c.content.trim())}
+                              className="block cursor-zoom-in"
+                              aria-label="댓글 이미지 확대"
+                            >
+                              <img
+                                src={c.content.trim()}
+                                alt="댓글 이미지"
+                                className="mt-1 rounded-lg max-w-[220px] max-h-[280px] h-auto object-contain"
+                                loading="lazy"
+                              />
+                            </button>
                           ) : (
                             <p className="readable-body mt-0.5 break-words">{c.content}</p>
                           )}
@@ -846,6 +855,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
         }
         onClose={() => setShareOpen(false)}
       />
+      <CommentImageLightbox src={cmtLightboxSrc} onClose={() => setCmtLightboxSrc(null)} />
     </div>
   );
 }
