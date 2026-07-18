@@ -57,9 +57,13 @@ export async function GET(req: NextRequest) {
 
   const admin = getSupabaseAdmin();
   const snapshotDate = toIsoDate(date);
+  // stale run 역순 커밋 차단(삼순 P0/P1 3차): 이번 run의 KBO 수집 완료 시각을 모든 팀 RPC에 같이 넘긴다.
+  // 나중에 수집(=더 최신)한 run이 항상 이기도록, RPC가 저장된 capture보다 오래된 쓰기를 거부한다.
+  const capturedAt = new Date().toISOString();
 
   let totalMoves = 0;
-  const perTeam: { teamId: number; entries: number; moves: number; baseline: boolean }[] = [];
+  let staleSkipped = 0;
+  const perTeam: { teamId: number; entries: number; moves: number; baseline: boolean; applied: boolean }[] = [];
 
   for (const team of teams) {
     // 직전 "일자" 스냅샷(오늘 이전 최신 1일) 조회 — diff 기준점.
@@ -96,9 +100,9 @@ export async function GET(req: NextRequest) {
 
     const planned = planTeamMoves(prev, team.entries);
 
-    // ── 오늘 스냅샷+무브 원자 교체: 단일 RPC 트랜잭션(advisory lock).
+    // ── 오늘 스냅샷+무브 원자 교체: 단일 RPC 트랜잭션(advisory lock + captured_at 워터마크).
     // 마이그레이션 미적용/함수 미존재/제약 위반은 모두 error로 돌아와 여기서 5xx fail-closed.
-    const { error: rpcErr } = await admin.rpc("replace_team_roster_day", {
+    const { data: rpcData, error: rpcErr } = await admin.rpc("replace_team_roster_day", {
       p_team_id: team.teamId,
       p_snapshot_date: snapshotDate,
       p_entries: team.entries.map((e) => ({
@@ -113,17 +117,28 @@ export async function GET(req: NextRequest) {
         moveType: m.moveType,
         status: m.status,
       })),
+      p_captured_at: capturedAt,
     });
     if (rpcErr) {
       return failClosed("replace-team-roster-day", team.teamId, rpcErr.message);
     }
 
-    totalMoves += planned.length;
+    // applied=false = 이미 더 최신 run이 썼다(stale 역순 커밋 거부). 오류 아니므로 5xx 아니고 카운트에서 제외.
+    const applied = (rpcData as { applied?: boolean } | null)?.applied !== false;
+    if (!applied) {
+      staleSkipped++;
+      console.warn(
+        `[roster-moves] team=${team.teamId} stale capture 거부(이미 더 최신 run이 쓴 스냅샷 존재) — 이번 쓰기 no-op`,
+      );
+    } else {
+      totalMoves += planned.length;
+    }
     perTeam.push({
       teamId: team.teamId,
       entries: team.entries.length,
-      moves: planned.length,
+      moves: applied ? planned.length : 0,
       baseline: prev === null,
+      applied,
     });
   }
 
@@ -142,10 +157,12 @@ export async function GET(req: NextRequest) {
   const pending: PendingMove[] = [];
   for (const row of pendingRows ?? []) {
     const readiness = await checkPublishReadiness(row.kbo_player_id);
-    if (readiness.ready) {
+    if (readiness.ready && readiness.canonicalId) {
+      // published 등록 링크 불변식(삼순 P0 3차): 승격 시 검증한 canonical id를 함께 저장한다
+      // → 조회 시점에 raw id 재resolve 없이 href를 항상 non-null로 생성한다.
       const { error: updErr } = await admin
         .from("roster_moves")
-        .update({ status: "published" })
+        .update({ status: "published", canonical_id: readiness.canonicalId })
         .eq("id", row.id);
       if (updErr) {
         return failClosed("promote-update", row.team_id, updErr.message);
@@ -174,6 +191,7 @@ export async function GET(req: NextRequest) {
     ok: true,
     snapshotDate,
     totalMoves,
+    staleSkipped,
     promoted,
     pending,
     pendingAlert,

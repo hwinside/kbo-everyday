@@ -63,8 +63,13 @@ export default function TeamRosterMovesCard({ team }: Props) {
   // 내역 없으면(또는 로딩/실패) 카드 자체를 숨긴다 — 빈 카드 노출 금지.
   if (!moves || moves.length === 0) return null;
 
+  // 링크 없는 published 등록 렌더 경로 제거(삼순 P0 3차): 등록은 예외 없이 클릭 가능해야 하므로
+  // href 없는 등록은 렌더하지 않는다(API가 이미 fail-closed로 미반환 — UI 방어 심도). 말소는 링크 생략 허용.
+  const renderable = moves.filter((m) => m.moveType !== "register" || Boolean(m.href));
+  if (renderable.length === 0) return null;
+
   const bgColor = getTeamBgColor(team);
-  const groups = groupByDate(moves);
+  const groups = groupByDate(renderable);
 
   return (
     <motion.div

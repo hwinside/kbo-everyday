@@ -84,13 +84,19 @@ check(
   filterVisibleMoves(gateRows).map((r) => r.name),
   ["준비등록", "말소"],
 );
+// published 등록 href 불변식(삼순 P0 3차): 입력은 승격 시 저장된 canonical_id.
 check(
-  "published 등록 href = canonical 링크",
+  "published 등록 href = 저장된 canonical 링크(non-null 불변식)",
   publishedRegisterHref("51516"),
   "/community/players/51516",
 );
 check(
-  "published 등록 href: canonical resolve 실패므로 raw-ID fallback 없이 null (삼순 P0 2차)",
+  "published 등록 href: canonical_id 미저장(null) → null(API fail-closed 신호)",
+  publishedRegisterHref(null),
+  null,
+);
+check(
+  "published 등록 href: 저장 canonical이 SSOT에서 resolve 불일치 → null(fail-closed, raw-ID 링크 금지)",
   publishedRegisterHref("99999999"),
   null,
 );

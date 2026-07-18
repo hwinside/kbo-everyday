@@ -49,6 +49,49 @@ export function formatPendingMessage(pending: PendingMove[]): string {
 
 export type PendingNotifyStatus = "no-pending" | "no-webhook" | "sent" | "webhook-error";
 
+/** published 등록 링크 불변식 위반(fail-closed) 항목 — 조회 시 사용자 미노출 + 운영 알림용. */
+export interface RegisterAnomaly {
+  playerName: string;
+  teamId: number;
+  moveDate: string;
+  kboPlayerId: string;
+  /** 저장된 canonical_id(없거나 resolve 불일치라 href를 만들 수 없었던 값). */
+  canonicalId: string | null;
+}
+
+/**
+ * published 등록 링크 불변식 위반 운영 알림 (삼순 P0 3차 — fail-closed 표면화).
+ * status='published' 등록인데 저장된 canonical_id가 없거나(미저장) resolve 불일치라 클릭 가능한
+ * href를 만들 수 없는 row는 사용자에게 렌더하지 않고(API 미반환) 이 알림으로 운영에 표면화한다.
+ * throw 없이 status만 반환한다(알림 실패가 API 응답을 가리지 않도록).
+ */
+export async function notifyRegisterAnomaly(
+  anomalies: RegisterAnomaly[],
+): Promise<{ status: PendingNotifyStatus }> {
+  if (anomalies.length === 0) return { status: "no-pending" };
+  if (!WEBHOOK_URL) return { status: "no-webhook" };
+  const lines = anomalies
+    .map((a) => {
+      const team = getTeamById(a.teamId)?.shortName ?? String(a.teamId);
+      return `• ${a.playerName} (${team}, ${a.moveDate} 등록) — kboPlayerId=${a.kboPlayerId}, canonical=${a.canonicalId ?? "null"}`;
+    })
+    .join("\n");
+  const text =
+    `🚨 *published 등록 링크 불변식 위반 ${anomalies.length}건* — 저장된 canonical id가 없거나 resolve 불일치라 ` +
+    `클릭 가능한 링크를 만들 수 없어 사용자 노출을 차단(fail-closed)했습니다.\n` +
+    `${lines}\n_승격(publish) 로직/roster SSOT 확인 필요 — 링크 없는 published 등록은 계약 위반._`;
+  try {
+    const res = await fetch(WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    return { status: res.ok ? "sent" : "webhook-error" };
+  } catch {
+    return { status: "webhook-error" };
+  }
+}
+
 /**
  * KBO 수집 실패 운영 알림(삼순 P1 — silent success 제거). 기존 ROSTER_GAP_SLACK_WEBHOOK 재사용.
  * throw 없이 status만 반환한다(알림 실패가 cron 5xx 결정을 가리지 않도록).

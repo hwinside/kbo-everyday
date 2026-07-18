@@ -140,14 +140,23 @@ export function moveHref(readiness: Pick<MoveReadiness, "canonicalId">): string 
 }
 
 /**
- * published 등록 항목 href — canonical id로만 생성한다(삼순 P0 2차: raw-ID fallback 제거).
- * published = 승격 시점에 canonical resolve + 에셋 실측이 통과된 상태이므로 정상 resolve가
- * 계약상 보장된다. 만일 조회 시점 resolve가 실패하면(비정상) 링크를 생성하지 않고 null을 반환
- * — UI는 링크 없는 텍스트로 렌더한다(비정상 raw-ID 링크로 유저를 미존재 페이지에 보내지 않는다).
+ * published 등록 링크 불변식 (삼순 P0 3차: raw id 재resolve 의존 제거).
+ *
+ * 입력은 승격(publish) 시점에 검증되어 roster_moves.canonical_id에 저장된 canonical kboId다.
+ * 조회 시점에 raw kboId를 다시 resolve하지 않는다 — 롤백/roster SSOT 변경으로 resolve가 달라져
+ * status=published인데 href=null이 되는 계약 위반을 제거한다.
+ *
+ * - storedCanonicalId가 있고(저장됨) 여전히 자기 자신으로 resolve되면 → non-null href.
+ * - null(미저장=비정상) 또는 resolve 불일치(canonical이 SSOT에서 사라짐 등)면 → null.
+ *   호출측(API)은 이 null을 fail-closed 신호로 써서 사용자에게 렌더하지 않고 운영 알림한다
+ *   (링크 없는 published 등록 렌더 경로 완전 제거).
  */
-export function publishedRegisterHref(kboPlayerId: string): string | null {
-  const resolved = resolvePlayer(kboPlayerId);
-  return resolved?.kboId ? `/community/players/${resolved.kboId}` : null;
+export function publishedRegisterHref(storedCanonicalId: string | null): string | null {
+  if (!storedCanonicalId) return null;
+  // 저장된 canonical이 여전히 자기 자신으로 resolve될 때만 유효(불일치 = 비정상 → null).
+  const resolved = resolvePlayer(storedCanonicalId);
+  if (resolved?.kboId !== storedCanonicalId) return null;
+  return `/community/players/${storedCanonicalId}`;
 }
 
 /**
