@@ -270,13 +270,16 @@ function Sidebar({ mobile, onClose, unreadDM, batchProblems }: { mobile?: boolea
         } flex flex-col min-h-screen border-r border-white/8`}
         style={{ background: "#101012" }}
       >
-        <div className="flex items-center justify-between p-5 border-b border-white/8">
+        <div
+          className="flex items-center justify-between p-5 border-b border-white/8"
+          style={mobile ? { paddingTop: "calc(env(safe-area-inset-top) + 1.25rem)" } : undefined}
+        >
           <div className="flex items-center gap-2">
             <img src="/logo.png" alt="크보팬" style={{height: "28px", objectFit: "contain"}} />
             <h2 className="font-bold text-lg">어드민</h2>
           </div>
           {mobile && (
-            <button onClick={onClose} className="p-1 text-[#8E8E93]">
+            <button onClick={onClose} aria-label="메뉴 닫기" className="flex h-9 w-9 items-center justify-center rounded-lg text-[#8E8E93] active:bg-white/10">
               <X className="w-5 h-5" />
             </button>
           )}
@@ -370,9 +373,18 @@ export default function AdminShell({ children }: { children: ReactNode }) {
       <Sidebar unreadDM={unreadDM} batchProblems={batchProblems} />
       {mobileOpen && <Sidebar mobile onClose={() => setMobileOpen(false)} unreadDM={unreadDM} batchProblems={batchProblems} />}
       <main className="flex-1 min-w-0">
-        <header className="sticky top-0 z-40 flex items-center gap-4 px-6 py-4 border-b border-white/8 backdrop-blur-xl bg-[#0A0A0B]/80 lg:hidden">
-          <button onClick={() => setMobileOpen(true)} className="p-2 -ml-2">
-            <Menu className="w-5 h-5" />
+        {/* PWA standalone(black-translucent 상태바)에서 헤더가 상태바 밑까지 올라와 햄버거가
+            시계/배터리와 겹쳐 탭이 안 먹던 문제 → safe-area-inset-top 만큼 내림다 (2026-07-19). */}
+        <header
+          className="sticky top-0 z-40 flex items-center gap-4 px-4 py-3 border-b border-white/8 backdrop-blur-xl bg-[#0A0A0B]/80 lg:hidden"
+          style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
+        >
+          <button
+            onClick={() => setMobileOpen(true)}
+            aria-label="메뉴 열기"
+            className="flex h-10 w-10 items-center justify-center rounded-lg -ml-1 active:bg-white/10"
+          >
+            <Menu className="w-6 h-6" />
           </button>
           <div className="flex items-center gap-2">
             <img src="/logo.png" alt="크보팬" style={{height: "24px", objectFit: "contain"}} />
