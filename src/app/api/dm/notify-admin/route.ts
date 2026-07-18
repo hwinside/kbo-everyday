@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import { sendAdminPush } from "@/lib/admin/push";
+import { normalizeMessageId } from "@/lib/admin/dm-notify";
 
 /**
  * 유저 → 운영팀 쪽지 발송 직후 클라이언트가 호출하는 어드민 PWA 알림 트리거 (2026-07-18).
@@ -28,13 +29,10 @@ export async function POST(req: NextRequest) {
   const systemUserId = process.env.SYSTEM_USER_ID;
   if (!systemUserId) return NextResponse.json({ ok: false });
 
-  const { conversationId, messageId } = await req.json();
-  if (
-    !conversationId ||
-    typeof conversationId !== "string" ||
-    !messageId ||
-    typeof messageId !== "string"
-  ) {
+  const { conversationId, messageId: rawMessageId } = await req.json();
+  // dm_messages.id는 BIGSERIAL(정수) — number 또는 정수 문자열로 정규화
+  const messageId = normalizeMessageId(rawMessageId);
+  if (!conversationId || typeof conversationId !== "string" || messageId === null) {
     return NextResponse.json({ error: "conversationId, messageId required" }, { status: 400 });
   }
 

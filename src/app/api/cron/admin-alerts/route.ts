@@ -127,7 +127,7 @@ export async function GET(req: NextRequest) {
     if (!won) continue;
     claimed++;
 
-    let outcome = { sent: 0, failed: 0 };
+    let outcome: { sent: number; failed: number; queryError?: boolean } = { sent: 0, failed: 0 };
     try {
       outcome = await sendAdminPush({
         title: alert.kind === "problem" ? "⚠️ 크롤러/배치 이상" : "✅ 크롤러/배치 복구",
@@ -142,9 +142,10 @@ export async function GET(req: NextRequest) {
       outcome = { sent: 0, failed: 1 };
     }
     sentTotal += outcome.sent;
+    if (outcome.queryError) writeErrors.push(`push-query:${alert.jobName}`);
 
     if (decideAlertPersistence(outcome) === "revert") {
-      // 전송 전패 → claim 되돌려 다음 틱 재시도. revert 실패는 5xx로 노출.
+      // 전송 전패 또는 구독 조회 오류 → claim 되돌려 다음 틱 재시도. revert 실패는 5xx로 노출.
       reverted++;
       if (alert.prevLevel === null) {
         const { error } = await supabase

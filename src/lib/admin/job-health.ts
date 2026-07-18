@@ -148,7 +148,13 @@ export function decideAdminAlerts(
  * - "persist": 전달 성공(sent>0) 또는 구독 0개(failed=0, 전달할 대상 없음 — vacuous 성공)
  * - "revert": 전송 시도가 전부 실패(sent=0 && failed>0) → claim을 되돌려 다음 틱 재시도
  */
-export function decideAlertPersistence(outcome: { sent: number; failed: number }): "persist" | "revert" {
+export function decideAlertPersistence(outcome: {
+  sent: number;
+  failed: number;
+  queryError?: boolean;
+}): "persist" | "revert" {
+  // 구독 조회 DB 오류 = 전달 결과 미지 → revert (삼순 2차 P1: {0,0} 둘갑 차단)
+  if (outcome.queryError) return "revert";
   if (outcome.sent === 0 && outcome.failed > 0) return "revert";
   return "persist";
 }

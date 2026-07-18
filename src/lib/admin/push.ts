@@ -23,18 +23,25 @@ interface SubscriptionRow {
   subscription: webpush.PushSubscription;
 }
 
-export async function sendAdminPush(
-  payload: AdminPushPayload,
-): Promise<{ sent: number; failed: number }> {
+export interface AdminPushResult {
+  sent: number;
+  failed: number;
+  /** 구독 조회 DB 오류 — "실제 구독 0개"와 구분(2차 리뷰 P1). true면 전달 결과 미지 = 호출측 fail-closed 처리 */
+  queryError?: boolean;
+}
+
+export async function sendAdminPush(payload: AdminPushPayload): Promise<AdminPushResult> {
   const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
   const privateKey = process.env.VAPID_PRIVATE_KEY;
   if (!publicKey || !privateKey) return { sent: 0, failed: 0 };
 
   webpush.setVapidDetails("mailto:harinclaw@gmail.com", publicKey, privateKey);
 
-  const { data: subs } = await supabase
+  const { data: subs, error: queryError } = await supabase
     .from("admin_push_subscriptions")
     .select("endpoint,subscription");
+  // 조회 오류를 "구독 0개"와 구분 — 호출측(크론)이 revert+5xx 할 수 있게 surface
+  if (queryError) return { sent: 0, failed: 0, queryError: true };
   if (!subs || subs.length === 0) return { sent: 0, failed: 0 };
 
   const body = JSON.stringify(payload);

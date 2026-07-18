@@ -36,9 +36,10 @@ create table if not exists admin_sessions (
 alter table admin_sessions enable row level security;
 
 -- 쪽지 알림 메시지당 1회 claim (삼순 P1 반영): message_id PK로 동시 요청/replay에서도 최초 1회만 발송.
+-- message_id는 dm_messages(id) BIGSERIAL과 일치하게 bigint (2차 리뷰 P0 정합).
 -- sender_id+created_at은 발신자별 rate limit 조회용.
 create table if not exists admin_dm_notify_claims (
-  message_id uuid primary key,
+  message_id bigint primary key,
   conversation_id uuid not null,
   sender_id uuid not null,
   created_at timestamptz not null default now()

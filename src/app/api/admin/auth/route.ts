@@ -64,17 +64,19 @@ export async function POST(req: NextRequest) {
   if (verifyAdminPinValue(pin)) {
     await supabase.from("admin_auth_attempts").delete().eq("ip_address", ip);
     // 기기별 세션 발급 → HttpOnly 쿠키 (PIN 원문은 클라에 저장되지 않음, 2026-07-18)
+    // 세션 생성 실패 = fail closed 5xx (2차 리뷰 추가: ok:true로 200 주면 UI가 인증 완료로 오인)
     const token = await createAdminSession(req.headers.get("user-agent"));
-    const res = NextResponse.json({ ok: true, via: "pin", session: Boolean(token) });
-    if (token) {
-      res.cookies.set(ADMIN_SESSION_COOKIE, token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "strict",
-        path: "/",
-        maxAge: ADMIN_SESSION_MAX_AGE_SECONDS,
-      });
+    if (!token) {
+      return NextResponse.json({ error: "Failed to create session" }, { status: 500 });
     }
+    const res = NextResponse.json({ ok: true, via: "pin" });
+    res.cookies.set(ADMIN_SESSION_COOKIE, token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      path: "/",
+      maxAge: ADMIN_SESSION_MAX_AGE_SECONDS,
+    });
     return res;
   }
 

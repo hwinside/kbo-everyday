@@ -27,3 +27,17 @@ export async function POST(req: NextRequest) {
   if (error) return supabaseErrorResponse(error);
   return NextResponse.json({ success: true });
 }
+
+// 알림 끄기 — 서버측 구독 행 삭제 (2026-07-18 2차 리뷰 P2: 클라 DELETE 호출에 맞는 실구현)
+export async function DELETE(req: NextRequest) {
+  if (!(await isAdminAuthedRequest(req))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const { endpoint } = await req.json().catch(() => ({}));
+  if (!endpoint || typeof endpoint !== "string") {
+    return NextResponse.json({ error: "endpoint required" }, { status: 400 });
+  }
+  const { error } = await supabase.from("admin_push_subscriptions").delete().eq("endpoint", endpoint);
+  if (error) return supabaseErrorResponse(error);
+  return NextResponse.json({ success: true });
+}

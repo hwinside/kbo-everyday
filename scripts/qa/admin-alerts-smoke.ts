@@ -12,6 +12,7 @@ import {
   type AdminAlertDecision,
   type JobLevelSnapshot,
 } from "../../src/lib/admin/job-health";
+import { normalizeMessageId } from "../../src/lib/admin/dm-notify";
 
 let pass = 0;
 let fail = 0;
@@ -90,11 +91,38 @@ function checkPersist(name: string, outcome: { sent: number; failed: number }, w
   }
 }
 
-console.log("\nalert persistence (전달 실패 = revert → 다음 틱 재시도)");
+console.log("\nalert persistence (전달 실패/구독조회 오류 = revert → 다음 틱 재시도)");
 checkPersist("전달 성공(sent 1) = persist", { sent: 1, failed: 0 }, "persist");
 checkPersist("부분 성공(sent 1, failed 1) = persist", { sent: 1, failed: 1 }, "persist");
-checkPersist("구독 0개(sent 0, failed 0) = persist (vacuous)", { sent: 0, failed: 0 }, "persist");
+checkPersist("실제 구독 0개(sent 0, failed 0) = persist (vacuous)", { sent: 0, failed: 0 }, "persist");
 checkPersist("전송 전패(sent 0, failed 2) = revert", { sent: 0, failed: 2 }, "revert");
+// 2차 P1: 구독 조회 DB 오류를 "구독 0개"와 구분 — queryError면 revert
+checkPersist("구독조회 DB오류(queryError, 0/0) = revert", { sent: 0, failed: 0, queryError: true }, "revert");
+
+// ---- normalizeMessageId: BIGSERIAL(number) 정합 (2차 P0) ----
+function checkMsgId(name: string, input: unknown, want: number | null) {
+  const got = normalizeMessageId(input);
+  if (got === want) {
+    pass++;
+    console.log(`  ✅ ${name}`);
+  } else {
+    fail++;
+    console.log(`  ❌ ${name} — expected ${want} got ${got}`);
+  }
+}
+
+console.log("\nnormalizeMessageId (dm_messages.id = BIGSERIAL number 정합)");
+checkMsgId("양의 정수 number", 12345, 12345);
+checkMsgId("insert 반환 정수 문자열도 허용", "12345", 12345);
+checkMsgId("거대 정수 문자열(15자리)", "999999999999999", 999999999999999);
+checkMsgId("0 = 거부", 0, null);
+checkMsgId("음수 = 거부", -5, null);
+checkMsgId("소수 = 거부", 12.5, null);
+checkMsgId("UUID 문자열 = 거부 (구 contract 회귀 방지)", "a1b2c3d4-0000-0000-0000-000000000000", null);
+checkMsgId("빈 문자열 = 거부", "", null);
+checkMsgId("null = 거부", null, null);
+checkMsgId("undefined = 거부", undefined, null);
+checkMsgId("비정규 문자열(앞 0) = 거부", "012", null);
 
 // ---- CAS 동시 실행 시뮬레이션 ----
 // cron 라우트의 claim SQL 의미론과 동일한 in-memory CAS:
