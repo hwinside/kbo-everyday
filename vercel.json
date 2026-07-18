@@ -21,6 +21,7 @@
     }
   ],
   "crons": [
+
     {
       "path": "/api/cron/report-blind-notify",
       "schedule": "*/5 * * * *"
@@ -96,6 +97,10 @@
     {
       "path": "/api/cron/discover-channels",
       "schedule": "0 0 * * 0"
+    },
+    {
+      "path": "/api/cron/venue-stories-cleanup",
+      "schedule": "20 */2 * * *"
     }
   ]
 }
