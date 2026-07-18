@@ -4,6 +4,8 @@
  * 배경: #cs 2026-07-18 "4연패인데 3연패로 발송" — 라이브 순위표 갱신 지연 off-by-one.
  */
 import { decideEndStreakCount, parseSnapshotStreak } from "../../src/lib/notifications/end-streak-policy";
+import { computeStreak } from "../../src/lib/analysis/daily-delta";
+import type { KboGame } from "../../src/lib/crawler/kbo-api";
 
 let pass = 0;
 let fail = 0;
@@ -63,6 +65,47 @@ eq("더블헤더(finalsToday=2): 스냅샷 있어도 라이브 폴백", decideEn
 eq("더블헤더 + 라이브 방향 불일치 → 미표시", decideEndStreakCount({
   snapshotStreak: "3연패", hasSnapshot: true, result: "승", finalsToday: 2, liveStreak: { n: 3, dir: "패" },
 }), null);
+
+// ===== computeStreak (스냅샷 생성부) — 혼합 더블헤더 순차 계산 회귀 (삼순 #687 NO-GO) =====
+
+/** 최소 필드 경기 fixture — teamId 1 기준 결과로 점수 구성 */
+function G(gameId: string, result: "승" | "패" | "무", status: KboGame["status"] = "final"): KboGame {
+  const my = result === "승" ? 5 : result === "패" ? 2 : 3;
+  const op = result === "승" ? 2 : result === "패" ? 5 : 3;
+  return {
+    gameId, date: "20260717", time: "18:30", stadium: "", awayTeamId: 1, homeTeamId: 3,
+    awayName: "LG", homeName: "KT", awayScore: my, homeScore: op, inning: 9, isTop: false,
+    status, awayStarterName: "", homeStarterName: "",
+  } as unknown as KboGame;
+}
+
+console.log("[computeStreak — 더블헤더 순차 replay]");
+eq("🔴 삼순 재현: 직전 2연패 + DH[승,패] → 1연패 (종전 3연패 오산)",
+  computeStreak(1, [G("20260717LGKT1", "승"), G("20260717LGKT2", "패")], "2연패"), "1연패");
+eq("직전 2연패 + DH[패,승] → 1연승",
+  computeStreak(1, [G("20260717LGKT1", "패"), G("20260717LGKT2", "승")], "2연패"), "1연승");
+eq("직전 2연패 + DH[패,패] → 4연패",
+  computeStreak(1, [G("20260717LGKT1", "패"), G("20260717LGKT2", "패")], "2연패"), "4연패");
+eq("직전 2연승 + DH[승,승] → 4연승",
+  computeStreak(1, [G("20260717LGKT1", "승"), G("20260717LGKT2", "승")], "2연승"), "4연승");
+eq("단일경기 기존 동작 유지: 3연패 + [패] → 4연패",
+  computeStreak(1, [G("20260717LGKT0", "패")], "3연패"), "4연패");
+eq("단일경기: 3연패 + [승] → 1연승",
+  computeStreak(1, [G("20260717LGKT0", "승")], "3연패"), "1연승");
+eq("무승부 종결: 2연패 + [무] → 무",
+  computeStreak(1, [G("20260717LGKT0", "무")], "2연패"), "무");
+eq("무 다음 경기: 무 + [패] → 1연패",
+  computeStreak(1, [G("20260717LGKT0", "패")], "무"), "1연패");
+eq("DH[무,패]: 무가 연패 리셋 → 1연패 (종전 3연패 오산)",
+  computeStreak(1, [G("20260717LGKT1", "무"), G("20260717LGKT2", "패")], "2연패"), "1연패");
+eq("경기 없음 → 이전 streak 유지",
+  computeStreak(1, [], "2연패"), "2연패");
+eq("입력 순서 무관 — gameId 정렬로 1차전 먼저: [2차전승, 1차전패] → 1연승",
+  computeStreak(1, [G("20260717LGKT2", "승"), G("20260717LGKT1", "패")], "2연패"), "1연승");
+eq("prev null + [패] → 1연패",
+  computeStreak(1, [G("20260717LGKT0", "패")], null), "1연패");
+eq("final 아닌 경기 무시: live 경기만 있으면 prev 유지",
+  computeStreak(1, [G("20260717LGKT0", "패", "live")], "2연패"), "2연패");
 
 console.log(`\n${pass + fail} cases — pass ${pass}, fail ${fail}`);
 if (fail > 0) process.exit(1);
