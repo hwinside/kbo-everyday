@@ -43,6 +43,9 @@ public class GameNotificationPlugin extends Plugin {
     static final String LU_PREFS = "kbo_live_update";
     static final String LU_KEY_OPT_IN = "opt_in";
     static final String LU_KEY_SUPPRESSED_GAME = "suppressed_game_id";
+    // 잠금화면 카드 마스터 게이트 — 서버 prefs.live_activity의 디바이스 미러(JS가 동기화).
+    // 디폴트 on(키 부재 = 기존 동작 유지). off면 post()가 카드를 게시하지 않는다(홈위젯 무관).
+    static final String LU_KEY_LOCK_CARD_ENABLED = "lock_card_enabled";
 
     /** Android 16+(API 36)이고 시스템이 이 앱의 promoted 게시를 허용하는지. */
     static boolean liveUpdateSupported(Context context) {
@@ -54,6 +57,12 @@ public class GameNotificationPlugin extends Plugin {
     static boolean liveUpdateOptedIn(Context context) {
         return context.getSharedPreferences(LU_PREFS, Context.MODE_PRIVATE)
             .getBoolean(LU_KEY_OPT_IN, false);
+    }
+
+    /** "잠금화면 실시간 중계"(live_activity) 토글의 안드 게이트 — off면 카드 미게시. */
+    static boolean lockCardEnabled(Context context) {
+        return context.getSharedPreferences(LU_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(LU_KEY_LOCK_CARD_ENABLED, true);
     }
 
     /** path("/games/{gameId}")에서 gameId 추출 — KboMessagingService와 동일 규칙. */
@@ -260,6 +269,9 @@ public class GameNotificationPlugin extends Plugin {
     /** ongoing notification 게시/갱신 (동일 ID라 갱신은 re-notify) + 홈 위젯 동기 갱신.
      *  path = 카드 탭 시 열 경기룸 경로(없으면 홈). */
     static void post(Context context, String title, String body, String path) {
+        // 마스터 토글 off — FCM(KboMessagingService)/JS(start·update) 모든 경로에서 카드 미게시.
+        // 홈위젯 prefs 기록은 호출부에서 이미 끝났으므로 위젯은 정상 갱신된다.
+        if (!lockCardEnabled(context)) return;
         boolean promoted = liveUpdateSupported(context) && liveUpdateOptedIn(context);
         if (promoted) {
             // 유저가 이 경기 카드를 Unpin함 — 같은 경기는 재게시하지 않는다(Live Update 계약).
@@ -393,6 +405,18 @@ public class GameNotificationPlugin extends Plugin {
             .putBoolean(LU_KEY_OPT_IN, enabled)
             .remove(LU_KEY_SUPPRESSED_GAME)
             .apply();
+        call.resolve();
+    }
+
+    /** 잠금화면 카드 마스터 게이트 동기화 — 서버 prefs.live_activity를 JS가 미러링.
+     *  off 전환 시 현재 게시된 카드도 즉시 제거(다음 FCM부터는 post() 게이트가 차단). */
+    @PluginMethod
+    public void setLockCardEnabled(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", true));
+        getContext().getSharedPreferences(LU_PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(LU_KEY_LOCK_CARD_ENABLED, enabled)
+            .apply();
+        if (!enabled) clear(getContext());
         call.resolve();
     }
 

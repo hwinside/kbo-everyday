@@ -8,7 +8,7 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { isNative } from "@/lib/capacitor/platform";
 import { requestNativePushPermission, checkNativePushPermission } from "@/lib/native-push";
 import { endLiveActivity, setLiveActivityEnabledCache } from "@/lib/native-live-activity";
-import { getLiveUpdateState, setLiveUpdateOptIn, type LiveUpdateState } from "@/lib/capacitor/game-notification";
+import { getLiveUpdateState, setLiveUpdateOptIn, syncAndroidLockCardGate, type LiveUpdateState } from "@/lib/capacitor/game-notification";
 import { retriggerLockScreenCard } from "@/lib/notifications/lock-card-retrigger";
 import { PREF_LABELS, DEFAULT_PREFS, type NotificationPrefs, type PrefKey } from "@/lib/notifications/prefs";
 
@@ -94,6 +94,8 @@ export default function NotificationPrefsCard() {
           setPrefs(merged);
           // 클라 게이트 캐시를 서버 SSOT로 동기화 (start/update가 이 캐시로 판단).
           setLiveActivityEnabledCache(merged.live_activity !== false);
+          // 안드 네이티브 잠금카드 게이트도 서버 SSOT로 미러(타 기기 변경/재설치 복원).
+          void syncAndroidLockCardGate(merged.live_activity !== false);
           setPrefsLoadedOk(true);
         }
       } catch {
@@ -112,6 +114,8 @@ export default function NotificationPrefsCard() {
     // W3c: "잠금화면 실시간 중계" 토글은 클라 게이트 캐시도 즉시 갱신 + off면 현재 활성 카드 종료.
     if (key === "live_activity") {
       setLiveActivityEnabledCache(next);
+      // 안드: 네이티브 게이트 미러 — off면 네이티브가 현재 카드 제거 + 이후 FCM 카드 미게시.
+      void syncAndroidLockCardGate(next);
       if (!next) void endLiveActivity();
     }
     try {
@@ -122,11 +126,17 @@ export default function NotificationPrefsCard() {
       });
       if (!res.ok) {
         setPrefs((p) => ({ ...p, [key]: !next })); // 실패 시 롤백
-        if (key === "live_activity") setLiveActivityEnabledCache(!next);
+        if (key === "live_activity") {
+          setLiveActivityEnabledCache(!next);
+          void syncAndroidLockCardGate(!next);
+        }
       }
     } catch {
       setPrefs((p) => ({ ...p, [key]: !next }));
-      if (key === "live_activity") setLiveActivityEnabledCache(!next);
+      if (key === "live_activity") {
+        setLiveActivityEnabledCache(!next);
+        void syncAndroidLockCardGate(!next);
+      }
     } finally {
       savingRef.current = false;
     }
@@ -183,7 +193,8 @@ export default function NotificationPrefsCard() {
               </button>
             </div>
           ))}
-          {liveUpdate.supported && (
+          {/* 마스터 토글(live_activity) off면 스타일 선택도 숨김 — 꺼진 기능의 옵션 노출 방지. */}
+          {liveUpdate.supported && prefs.live_activity !== false && (
             <div className="py-3">
               <span className="text-sm text-text-primary">잠금화면 카드 스타일</span>
               <p className="text-xs text-text-tertiary mt-0.5">경기 진행중 잠금화면에 표시할 카드 스타일을 선택하세요 (이 기기)</p>

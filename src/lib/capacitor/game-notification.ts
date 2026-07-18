@@ -3,6 +3,7 @@
 import { registerPlugin } from "@capacitor/core";
 import { isAndroid, isIOS } from "./platform";
 import { syncIosWidgetFavPlayers, syncIosWidgetMyTeam } from "../native-live-activity";
+import { supabase } from "../supabase/client";
 
 // 잠금화면 실시간 스코어 = ongoing notification (안드로이드 전용, A4).
 // 네이티브 GameNotificationPlugin(@CapacitorPlugin name="GameNotification")과 페어.
@@ -48,6 +49,7 @@ interface GameNotificationPlugin {
   setFavPlayers(opts: { json: string }): Promise<void>;
   getLiveUpdateState(): Promise<LiveUpdateState>;
   setLiveUpdateOptIn(opts: { enabled: boolean }): Promise<void>;
+  setLockCardEnabled(opts: { enabled: boolean }): Promise<void>;
 }
 
 /** Android 16+(One UI 8.5) 잠금화면 라이브 카드(Promoted Ongoing) 지원/opt-in 상태. */
@@ -126,6 +128,37 @@ export async function setWidgetMyTeam(code: string): Promise<void> {
     await GameNotification.setMyTeam({ code });
   } catch {
     // silent
+  }
+}
+
+/** 잠금화면 카드 마스터 게이트(서버 prefs.live_activity의 디바이스 미러) 동기화 — 안드 전용.
+ *  off면 네이티브가 현재 카드를 즉시 제거하고 이후 FCM game_live 수신 시에도 카드를 게시하지
+ *  않는다(홈위젯은 영향 없음 — game_live가 홈위젯과 잠금카드 겸용이라 서버 발송은 유지).
+ *  구 네이티브 빌드(메서드 부재)는 조용히 무시 — vc14+부터 유효. */
+export async function syncAndroidLockCardGate(enabled: boolean): Promise<void> {
+  if (!isAndroid) return;
+  try {
+    await GameNotification.setLockCardEnabled({ enabled });
+  } catch {
+    // silent — 구빌드/브릿지 실패(카드는 기존 동작 유지)
+  }
+}
+
+/** 부팅/로그인 시 서버 live_activity pref → 네이티브 잠금카드 게이트 동기화(안드 전용).
+ *  다른 기기에서 꺼둔 유저/재설치(네이티브 디폴트 on) 복원용. 확정 응답일 때만 반영 —
+ *  비로그인/네트워크 실패 시 기존 네이티브 값 유지(임의 on 덮어쓰기 금지). */
+export async function bootstrapAndroidLockCardGate(): Promise<void> {
+  if (!isAndroid) return;
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) return;
+    const res = await fetch("/api/push/prefs", { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return;
+    const { prefs } = await res.json();
+    await syncAndroidLockCardGate(prefs?.live_activity !== false);
+  } catch {
+    // silent — 다음 부팅/마이페이지 진입 시 재동기화
   }
 }
 

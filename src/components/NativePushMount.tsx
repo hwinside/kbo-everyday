@@ -5,6 +5,7 @@ import { isNative } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
 import { syncNativePushToken, listenForTokenRefresh, listenForForegroundNotifications, listenForNotificationTap } from "@/lib/native-push";
 import { bootstrapLiveActivityPushToStart, reregisterPushToStartToken, autoStartMyTeamLiveActivity } from "@/lib/native-live-activity";
+import { bootstrapAndroidLockCardGate } from "@/lib/capacitor/game-notification";
 import { listenForAndroidBackButton } from "@/lib/native-back-button";
 
 /**
@@ -29,6 +30,8 @@ export function NativePushMount() {
     void listenForNotificationTap();
     // W3b — 잠금화면 Live Activity 자동 시작용 push-to-start 토큰 등록(iOS 17.2+, 그 외 no-op).
     void bootstrapLiveActivityPushToStart();
+    // 안드 잠금카드 게이트 — 서버 live_activity pref를 네이티브에 미러(타 기기서 꺼둔 유저/재설치 복원).
+    void bootstrapAndroidLockCardGate();
     // 재설치 same-token 감지 갭 보완(삼순 blocker②) — 첫 실행/복귀 시점에 현재 라이브
     // 최애팀 경기 카드를 인앱 start로 직접 보장(p2s claim 상태 무관, 네이티브 dedupe).
     void autoStartMyTeamLiveActivity("boot");
@@ -52,6 +55,8 @@ export function NativePushMount() {
         // 재설치 후 로그인 직후 — 프로필 myTeam 동기화 되면 team-changed가 따로 잡지만,
         // 이미 localStorage에 있던 경우(계정 유지 재로그인)는 여기서 보장.
         void autoStartMyTeamLiveActivity("signed-in");
+        // 로그인 직후 — 계정 pref로 안드 잠금카드 게이트 재동기화(기기 공유/재로그인).
+        void bootstrapAndroidLockCardGate();
       }, 0);
     });
     return () => {
