@@ -41,7 +41,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // ⓪ 수집 — 실패(HTTP/토큰/날짜/인원수)는 DB를 건드리기 전에 fail-closed.
+  // ── run ordering 워터마크는 수집 *시작 전*에 고정한다 (삼순 P0/P1 4차).
+  //   fetchRegisterRosters는 GET 1 + 팀별 POST 10회를 순차 실행해 수 초~수십 초 걸린다.
+  //   이 타임스탬프를 수집 *완료 후*에 찍으면, 먼저 시작했지만 늦게 끝난 run A의 값이 나중에
+  //   시작해 먼저 끝난 run B보다 커져(늦게 완료=더 큰 값) B를 덮는다(later-started run이 져야
+  //   하는데 이김). 시작 시각으로 고정하면 RPC 워터마크 비교가 "나중에 시작한 run이 항상 이긴다"를
+  //   보장한다(수집 소요와 무관).
+  const runStartedAt = new Date().toISOString();
+
+  // ⓪ 수집 — 실패(HTTP/토큰/날짜/인원수/적용일 freshness)는 DB를 건드리기 전에 fail-closed.
   let date: string;
   let teams: { teamId: number; teamCode: string; entries: RosterEntry[] }[];
   try {
@@ -57,9 +65,9 @@ export async function GET(req: NextRequest) {
 
   const admin = getSupabaseAdmin();
   const snapshotDate = toIsoDate(date);
-  // stale run 역순 커밋 차단(삼순 P0/P1 3차): 이번 run의 KBO 수집 완료 시각을 모든 팀 RPC에 같이 넘긴다.
-  // 나중에 수집(=더 최신)한 run이 항상 이기도록, RPC가 저장된 capture보다 오래된 쓰기를 거부한다.
-  const capturedAt = new Date().toISOString();
+  // stale run 역순 커밋 차단(삼순 P0/P1 3차+4차): 수집 시작 전에 고정한 runStartedAt을 모든 팀 RPC에
+  // 워터마크로 넘긴다. RPC는 저장된 값보다 오래되거나 같은 쓰기를 거부한다 → 나중에 시작한 run이 항상 이긴다.
+  const capturedAt = runStartedAt;
 
   let totalMoves = 0;
   let staleSkipped = 0;

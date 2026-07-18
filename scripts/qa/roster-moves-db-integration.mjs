@@ -13,6 +13,8 @@
  *   ③ write 실패(배치 내 PK 충돌) → 함수 전체 롤백 → 직전 상태 불변(fail-closed)
  *   ④ stale run 역순 커밋(삼순 P0/P1 3차): 서로 다른 payload를 강제 역순 완료 → 최신 capture가 이기고
  *      오래된 capture 쓰기는 거부(applied=false) → 최신 B 잔존, 오래된 A가 덮지 못함
+ *   ⑤ route ordering 실증(삼순 P0/P1 4차): 느린 A(먼저 시작·늦게 완료)/빠른 B(나중 시작·먼저 완료)를
+ *      수동 timestamp가 아니라 실제 시작시각(new Date())으로 고정해 재현 → 나중에 시작한 B가 항상 이김
  *
  * 실행: node scripts/qa/roster-moves-db-integration.mjs
  * 정리: 테스트 team_id(90019)의 모든 행을 시작/종료 시 삭제(실팀 1~10과 미충돌).
@@ -30,7 +32,10 @@ const anon = createClient(SUPABASE_URL, ANON_KEY, clientOpts);
 const T = 90019; // 테스트 전용 team_id (실팀 1~10과 미충돌)
 const D0 = "2019-01-01";
 const D1 = "2019-01-02";
-const D2 = "2019-03-01"; // 역순 경합 시나리오 전용 날짜
+const D2 = "2019-03-01"; // 역순 경합(수동 timestamp) 시나리오 전용 날짜
+const D3 = "2019-05-01"; // route ordering(실제 시작시각) 시나리오 전용 날짜
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const A = { kboId: "9000001", name: "테스트가", backNo: "1", position: "투수" };
 const B = { kboId: "9000002", name: "테스트나", backNo: "2", position: "포수" };
@@ -166,6 +171,40 @@ async function main() {
     const moves = await moveRows(D2);
     const deregs = moves.filter((m) => m.kbo_player_id === B.kboId && m.move_type === "deregister");
     check("④ B 말소 이벤트 잔존(오래된 A가 최신 무브를 삭제하지 못함)", deregs.length === 1, moves);
+  }
+
+  // ── 시나리오 ⑤: route ordering 실증 (삼순 P0/P1 4차) — 수동 timestamp가 아닌 실제 시작시각.
+  //    route.ts는 runStartedAt을 수집(GET 1 + POST 10) *시작 전*에 고정한다. 이를 그대로 미러링:
+  //    run A가 먼저 시작(runStartedAt 먼저 new Date()) → 느린 수집 → 늦게 완료(나중에 DB 커밋).
+  //    run B가 나중 시작(runStartedAt 나중 new Date()) → 빠른 수집 → 먼저 완료(먼저 DB 커밋).
+  //    완료 순서와 무관하게 나중에 시작한 B가 이겨야 한다(A는 stale로 거부). runStartedAt을 수집 전에
+  //    고정하지 않았다면(수집 후 timestamp) 늦게 완료한 A의 값이 더 커져 B를 덮었을 것.
+  {
+    const bDereg = { kboPlayerId: B.kboId, playerName: B.name, moveType: "deregister", status: "published" };
+
+    // 시작 시각을 실제 순서대로 고정: A 먼저, (간격 보장) B 나중. 수동 문자열 지정이 아니라 new Date() 기준.
+    const runStartedA = new Date().toISOString(); // 느린 A: 먼저 시작
+    await sleep(10);
+    const runStartedB = new Date().toISOString(); // 빠른 B: 나중 시작
+    check("⑤ 시작시각 고정 순서 검증(A < B, 나중 시작 B가 더 큼)", runStartedA < runStartedB, { runStartedA, runStartedB });
+
+    // 완료는 역순: 빠른 B(나중 시작)가 먼저 DB 커밋 → [A] + B 말소.
+    const { data: bData, error: bErr } = await rpc(D3, [A], [bDereg], runStartedB);
+    check("⑤ 나중 시작 run B 적용(applied=true)", !bErr && bData?.applied === true, { bErr: bErr?.message, bData });
+
+    // 느린 A(먼저 시작)가 늦게 DB 커밋 → [A,B] + 무브 없음 → runStartedB보다 오래된 runStartedA → 거부.
+    const { data: aData, error: aErr } = await rpc(D3, [A, B], [], runStartedA);
+    check(
+      "⑤ 먼저 시작한 A 거부(applied=false, stale_capture) — 늦게 완료해도 짐",
+      !aErr && aData?.applied === false && aData?.reason === "stale_capture",
+      { aErr: aErr?.message, aData },
+    );
+
+    // 최종: 나중에 시작한 B가 이긴다 — 스냅샷 {A}, B 말소 1건 잔존.
+    check("⑤ 최종 스냅샷 = {A} (나중 시작 B 잔존)", JSON.stringify(await snapshotIds(D3)) === JSON.stringify([A.kboId]));
+    const moves5 = await moveRows(D3);
+    const deregs5 = moves5.filter((m) => m.kbo_player_id === B.kboId && m.move_type === "deregister");
+    check("⑤ B 말소 이벤트 잔존(먼저 시작 A가 최신 무브를 지우지 못함)", deregs5.length === 1, moves5);
   }
 
   await cleanup();

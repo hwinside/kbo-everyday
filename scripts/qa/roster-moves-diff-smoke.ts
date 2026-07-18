@@ -206,11 +206,21 @@ class ModelStore {
 function mkTeams(counts: number[]): { teamId: number; entries: { length: number } }[] {
   return counts.map((n, i) => ({ teamId: i + 1, entries: { length: n } }));
 }
-check("수집 sanity: 10구단 정상(각 30명) → null", validateRosterCollection("20260718", mkTeams(Array(10).fill(30))), null);
-check("수집 sanity: 날짜 형식 이상 → error", validateRosterCollection("2026-07-18", mkTeams(Array(10).fill(30))) !== null, true);
-check("수집 sanity: 9구단 → error", validateRosterCollection("20260718", mkTeams(Array(9).fill(30))) !== null, true);
-check("수집 sanity: 한 팀 0명(파싱 실패) → error", validateRosterCollection("20260718", mkTeams([30, 0, 30, 30, 30, 30, 30, 30, 30, 30])) !== null, true);
-check("수집 sanity: 한 팀 범위 초과(100명) → error", validateRosterCollection("20260718", mkTeams([100, 30, 30, 30, 30, 30, 30, 30, 30, 30])) !== null, true);
+// freshness 기준을 고정해 테스트를 결정적으로 만든다(실행일에 따라 결과가 변하면 안 됨).
+const REF_0718 = new Date("2026-07-18T12:00:00Z"); // KST 2026-07-18 21:00 → 실행일 20260718
+const REF_0719 = new Date("2026-07-19T12:00:00Z"); // KST 2026-07-19 21:00 → 실행일 20260719
+check("수집 sanity: 10구단 정상(각 30명) → null", validateRosterCollection("20260718", mkTeams(Array(10).fill(30)), REF_0718), null);
+check("수집 sanity: 날짜 형식 이상 → error", validateRosterCollection("2026-07-18", mkTeams(Array(10).fill(30)), REF_0718) !== null, true);
+check("수집 sanity: 9구단 → error", validateRosterCollection("20260718", mkTeams(Array(9).fill(30)), REF_0718) !== null, true);
+check("수집 sanity: 한 팀 0명(파싱 실패) → error", validateRosterCollection("20260718", mkTeams([30, 0, 30, 30, 30, 30, 30, 30, 30, 30]), REF_0718) !== null, true);
+check("수집 sanity: 한 팀 범위 초과(100명) → error", validateRosterCollection("20260718", mkTeams([100, 30, 30, 30, 30, 30, 30, 30, 30, 30]), REF_0718) !== null, true);
+
+// ═══ ⑥-freshness: 형식은 맞지만 stale/미래인 적용일 거부 (삼순 P1 4차) ═══
+// KBO가 캐시/마크업 오류로 유효 형식의 과거 날짜를 줘도 그 stale 날짜로 최신 스냅샷을 덮지 않게 한다.
+check("freshness: 당일(20260718@실행일20260718) → null(통과)", validateRosterCollection("20260718", mkTeams(Array(10).fill(30)), REF_0718), null);
+check("freshness: 어제(20260717@실행일20260718, 허용 -1일) → null(통과)", validateRosterCollection("20260717", mkTeams(Array(10).fill(30)), REF_0718), null);
+check("freshness: stale(20260717@실행일20260719, 2일 과거) → error(불변+502)", validateRosterCollection("20260717", mkTeams(Array(10).fill(30)), REF_0719) !== null, true);
+check("freshness: 미래(20260720@실행일20260718) → error(불변+502)", validateRosterCollection("20260720", mkTeams(Array(10).fill(30)), REF_0718) !== null, true);
 
 // ═══ ⑥ 파서: 감독/코치 제외, 선수 섹션만 (playerId 링크 추출) ═══
 
