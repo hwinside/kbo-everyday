@@ -84,6 +84,10 @@
     {
       "path": "/api/cron/admin-alerts",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/discover-channels",
+      "schedule": "0 0 * * 0"
     }
   ]
 }
