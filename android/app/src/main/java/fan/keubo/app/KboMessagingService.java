@@ -24,6 +24,7 @@ public class KboMessagingService extends MessagingService {
     public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
         super.onMessageReceived(remoteMessage);
         final long recvMs = System.currentTimeMillis();
+        final long recvElapsed = android.os.SystemClock.elapsedRealtime(); // handler_to_dispatch 기준(단조)
 
         Map<String, String> data = remoteMessage.getData();
         if (data == null) {
@@ -65,7 +66,8 @@ public class KboMessagingService extends MessagingService {
                 gameId,
                 data.get("w_lastplay"),
                 parseTs(data.get("w_ts")));
-            GameScoreWidget.recordLatency(this, parseTs(data.get("w_ts")), recvMs);
+            GameScoreWidget.recordDeliveryLatency(this, parseTs(data.get("w_ts")), recvMs,
+                android.os.SystemClock.elapsedRealtime() - recvElapsed);
             // 그 다음 잠금화면 알림 카드 게시(prefs 기반 RemoteViews).
             GameNotificationPlugin.post(
                 this,
@@ -107,7 +109,8 @@ public class KboMessagingService extends MessagingService {
                 gameId,
                 "",
                 parseTs(data.get("w_ts")));
-            GameScoreWidget.recordLatency(this, parseTs(data.get("w_ts")), recvMs);
+            GameScoreWidget.recordDeliveryLatency(this, parseTs(data.get("w_ts")), recvMs,
+                android.os.SystemClock.elapsedRealtime() - recvElapsed);
             // 잠금화면 진행중 알림 제거(post 아님) — 취소 시 잠금화면은 비운다.
             GameNotificationPlugin.clear(this);
         } else if ("game_end".equals(kind)) {
@@ -116,8 +119,18 @@ public class KboMessagingService extends MessagingService {
             // 경기로 자동 롤오버(readEff). 통째 clear하면 hasGame=false라 롤오버가 무력화됨.
             GameNotificationPlugin.clear(this);
             long seqEnd = parseTs(data.get("w_ts"));
-            GameScoreWidget.markFinal(this, seqEnd);
-            GameScoreWidget.recordLatency(this, seqEnd, recvMs);
+            // game_end 페이로드는 gameId를 data에 직접 실음(game-status.ts) — url 폴백.
+            String endGameId = data.get("gameId");
+            if (endGameId == null) {
+                String endPath = data.get("url");
+                if (endPath != null) {
+                    int endSlash = endPath.lastIndexOf('/');
+                    endGameId = endSlash >= 0 ? endPath.substring(endSlash + 1) : endPath;
+                }
+            }
+            GameScoreWidget.markFinal(this, endGameId, seqEnd);
+            GameScoreWidget.recordDeliveryLatency(this, seqEnd, recvMs,
+                android.os.SystemClock.elapsedRealtime() - recvElapsed);
             // 순위 위젯 — 경기 종료 직후 순위가 갱신되므로 최신 순위 재조회(위젯 미배치면 no-op).
             TeamRankWidget.fetchAndRefresh(this);
             // 선수 카드 위젯 — 종료 직후 오늘 경기 라인/최근 3경기 갱신(미배치면 no-op).

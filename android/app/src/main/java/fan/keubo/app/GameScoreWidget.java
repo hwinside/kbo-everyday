@@ -742,11 +742,20 @@ public class GameScoreWidget extends AppWidgetProvider {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         String prevGameId = p.getString(KEY_GAME_ID, "");
         boolean gameChanged = !TextUtils.isEmpty(gameId) && !gameId.equals(prevGameId);
-        // 삼순 견고화 — stale 역전/중복 가드: 같은 경기에서 이보다 오래된(또는 같은) seq는 버린다.
-        // seq<0(JS 포그라운드 경로 등)은 가드 비활성. 경기 바뀌면(gameChanged) 무조건 적용(새 경기 seq 리셋).
+        // 삼순 딥리뷰 — ApplyResult 상태머신으로 판정(seq/내용/terminal 종합).
         long prevSeq = p.getLong(KEY_LAST_SEQ, -1L);
-        if (WidgetUpdatePolicy.isStaleOrDuplicate(seq, prevSeq, gameChanged)) {
-            return; // 순서 역전/중복 FCM — no-op
+        // 동일 payload no-op 판정용 실효 last_play (FCM=주어진 값, JS=기존 보존값)
+        String effLastPlay = (lastPlay != null)
+            ? lastPlay
+            : (gameChanged ? "" : p.getString(KEY_LAST_PLAY, ""));
+        String sig = buildSignature(away, home, as, hs, status, pitcher, pteam,
+            batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId, effLastPlay);
+        WidgetUpdatePolicy.ApplyResult result = WidgetUpdatePolicy.decide(
+            seq, prevSeq, gameChanged, sig, p.getString(KEY_SIG, ""),
+            WidgetUpdatePolicy.isTerminalStatus(status));
+        if (result == WidgetUpdatePolicy.ApplyResult.STALE
+            || result == WidgetUpdatePolicy.ApplyResult.INVALID) {
+            return; // 순서 역전/모호 동률 — 어떤 UI 부수효과도 금지
         }
         SharedPreferences.Editor e = p.edit();
         e.putBoolean(KEY_HAS_GAME, true);
@@ -771,10 +780,6 @@ public class GameScoreWidget extends AppWidgetProvider {
         //  - JS 경로(lastPlay==null) = 기본 보존. 단 *실제* 경기 전환(gameChanged)일 때만 "" clear
         //  - 빈 gameId(경기룸이 gameId 미전달)는 "모름"으로 보고 gameChanged=false → 보존
         //    (경기룸 진입/10초 폴링이 FCM 중계를 지우지 않게). hasNext와 독립.
-        // 동일 payload no-op 판정용 실효 last_play (FCM=주어진 값, JS=기존 보존값)
-        String effLastPlay = (lastPlay != null)
-            ? lastPlay
-            : (gameChanged ? "" : p.getString(KEY_LAST_PLAY, ""));
         if (lastPlay != null) {
             e.putString(KEY_LAST_PLAY, lastPlay);
         } else if (gameChanged) {
@@ -793,14 +798,11 @@ public class GameScoreWidget extends AppWidgetProvider {
             // 다른 경기로 바뀌면(FCM 라이브 등) 이전 경기의 stale next 제거 → 오탐 롤오버 방지.
             e.putBoolean(KEY_NEXT_HAS, false);
         }
-        // 동일 payload no-op: 렌더되는 필드 시그니처가 이전과 같고 같은 경기면 RemoteViews 재빌드 스킵.
-        String sig = buildSignature(away, home, as, hs, status, pitcher, pteam,
-            batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId, effLastPlay);
-        boolean doRefresh = WidgetUpdatePolicy.shouldRefresh(sig, p.getString(KEY_SIG, ""), gameChanged);
         e.putString(KEY_SIG, sig);
         if (seq >= 0) e.putLong(KEY_LAST_SEQ, seq);
         e.apply();
-        if (doRefresh) refresh(ctx); // 동일 payload면 갱신 생략(깜빡임/비용 0)
+        // NO_CHANGE(동일 payload)면 seq만 전진, RemoteViews 재빌드 금지. APPLIED만 재렌더.
+        if (result == WidgetUpdatePolicy.ApplyResult.APPLIED) refresh(ctx);
     }
 
     /** 렌더 결과에 영향을 주는 필드만 묶은 시그니처(동일 payload no-op 판정용).
@@ -818,20 +820,27 @@ public class GameScoreWidget extends AppWidgetProvider {
     private static String nz(String s) { return s == null ? "" : s; }
 
     /**
-     * 수신→핸들 지연 계측(삼순 vc14) — 서버 send-time(sendMs)과 기기 수신(recvMs) 차.
-     * phase-1은 로컬(logcat + prefs 마지막값) 계측만 — 집계 beacon은 phase-2(별도 엔드포인트).
-     * sendMs<=0(w_ts 미전달 = 구버 서버)이면 no-op.
+     * 지연 계측(삼순 vc14 딥리뷰 — 명칭 분리):
+     *  delivery_ms          = 기기 수신(recvMs) − 서버 send-time(sourceTsMs)  [서버→기기 배달]
+     *  handler_to_dispatch_ms = 핸들러 시작→updateAppWidget IPC dispatch (SystemClock.elapsedRealtime 기준)
+     *  source_to_dispatch_ms  = 둘의 합
+     * ⚠️ updateAppWidget/notify 반환은 IPC dispatch 완료이지 실제 픽셀 렌더 완료가 아니므로
+     * 'render latency'라 부르지 않는다. phase-1은 로컬(logcat + prefs delivery 마지막값), 집계 beacon은 phase-2.
+     * sourceTsMs<=0(w_ts 미전달 = 구버 서버)이면 no-op.
      */
-    static void recordLatency(Context ctx, long sendMs, long recvMs) {
-        if (sendMs <= 0) return;
-        long latency = recvMs - sendMs;
-        if (latency < 0) latency = 0; // 음수(기기 시계 스큐)는 0으로 클램프
+    static void recordDeliveryLatency(Context ctx, long sourceTsMs, long recvMs, long handlerToDispatchMs) {
+        if (sourceTsMs <= 0) return;
+        long deliveryMs = Math.max(0L, recvMs - sourceTsMs); // 음수(기기 시계 스큐)는 0 클램프
+        long h2d = Math.max(0L, handlerToDispatchMs);
+        long sourceToDispatchMs = deliveryMs + h2d;
         try {
             ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putLong(KEY_LAST_LATENCY, latency).apply();
+                .edit().putLong(KEY_LAST_LATENCY, deliveryMs).apply();
         } catch (Exception ignore) {
         }
-        android.util.Log.i("kbo-widget", "fcm recv→handle latency=" + latency + "ms");
+        android.util.Log.i("kbo-widget",
+            "delivery_ms=" + deliveryMs + " handler_to_dispatch_ms=" + h2d
+                + " source_to_dispatch_ms=" + sourceToDispatchMs);
     }
 
     /** 빈 상태로 전환 (경기 종료/이탈). 최애팀 값은 유지. */
@@ -845,17 +854,25 @@ public class GameScoreWidget extends AppWidgetProvider {
      *  이렇게 해야 앱 미실행 상태에서도 readEff의 06:00 롤오버가 다음 예정 경기로 전환된다.
      *  잠금화면 진행중 알림은 별도로 GameNotificationPlugin.clear()가 내린다(game_end 경로). */
     static void markFinal(Context ctx) {
-        markFinal(ctx, -1L);
+        markFinal(ctx, null, -1L);
     }
 
-    /** game_end 경로 — seq 기록으로 늦게 도착하는 저-seq live가 FINAL을 되돌리지 못하게 방어.
-     *  (game_end는 live 뒤에 발송되므로 seq가 더 큼 → 이후 writeInternal 가드가 저-seq live를 무시.) */
-    static void markFinal(Context ctx, long seq) {
+    /** game_end 경로(삼순 딥리뷰 — live/cancel과 동일 게이트): incoming gameId 일치 + sourceTs(seq) 통과 강제.
+     *  ① gameId 불일치(다른/이전 경기 종료 신호) → 최신 카드 오종료 방지. ② 저-seq(늦게 도착한 옷 종료) → 무시.
+     *  ③ 이미 FINAL이면 중복 no-op. game_end는 live 뒤에 발송되어 seq가 더 큼 → 이후 가드가 저-seq live 무시. */
+    static void markFinal(Context ctx, String gameId, long seq) {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         if (!p.getBoolean(KEY_HAS_GAME, false)) return;
+        String prevGameId = p.getString(KEY_GAME_ID, "");
+        if (gameId != null && !gameId.isEmpty() && !prevGameId.isEmpty() && !gameId.equals(prevGameId)) {
+            return; // 다른 경기 종료 신호 — 현재 카드 오종료 방지
+        }
+        long prevSeq = p.getLong(KEY_LAST_SEQ, -1L);
+        if (seq >= 0 && seq < prevSeq) return; // 순서 역전(옷 종료) 무시
+        if ("FINAL".equals(p.getString(KEY_STATUS, ""))) return; // 이미 종료 — 중복 no-op
         SharedPreferences.Editor e = p.edit().putString(KEY_STATUS, "FINAL");
         if (seq >= 0) e.putLong(KEY_LAST_SEQ, seq);
-        // FINAL 반영을 위해 시그니처도 무효화(다음 live가 재렌더되게) — status만 바뀜니 sig 불일치화.
+        // status만 바뀌니 sig 불일치화(다음 live가 정상 재렌더되게).
         e.remove(KEY_SIG);
         e.apply();
         refresh(ctx);
