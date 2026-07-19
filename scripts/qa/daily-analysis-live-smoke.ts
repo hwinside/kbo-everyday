@@ -14,6 +14,8 @@ import {
   isAlreadyReflected,
   runLiveAnalysisWithClaim,
   shouldReleaseAfterRun,
+  interpretClaimRpc,
+  assertLookupOk,
   type ReadinessStandingRow,
   type ReadinessCurrentStanding,
   type ReadinessTitleRow,
@@ -170,6 +172,44 @@ check(
   }),
   { ready: false, reason: "titles incomplete: avg 0/1 rows", laggingTeams: [] },
 );
+// (e) [삼순 e559951e 재리뷰] baselineStats=[] → 기존엔 타이틀 체크 자체를 건너뛰어 ready=true였던 구멍 → not ready
+check(
+  "P0③ baselineStats=[] → not ready(fail-closed)",
+  evaluateLiveReadiness({
+    baselineStandings,
+    currentStandings: full({ 1: [51, 45, 5], 2: [48, 48, 5] }),
+    todayFinalGames,
+    baselineStats: [],
+    currentStats: statsMoved,
+  }),
+  { ready: false, reason: "baseline titles empty", laggingTeams: [] },
+);
+// (f) [삼순 e559951e 재리뷰] baseline 자체가 부분 카테고리(avg 누락) → 기대 카테고리 기준 not ready
+check(
+  "P0③ baseline 부분 카테고리(expected 기준) → not ready",
+  evaluateLiveReadiness({
+    baselineStandings,
+    currentStandings: full({ 1: [51, 45, 5], 2: [48, 48, 5] }),
+    todayFinalGames,
+    baselineStats: [{ category: "hr", rank: 1, player_name: "A", value: 30 }],
+    currentStats: [{ category: "hr", rank: 1, player_name: "A", value: 31 }],
+    expectedTitleCategories: ["hr", "avg"],
+  }),
+  { ready: false, reason: "baseline titles incomplete: avg missing", laggingTeams: [] },
+);
+// (g) expectedTitleCategories 모두 충족 + settle → ready (core 실제 경로 모방)
+check(
+  "P0③ expected 카테고리 완전 충족 → ready",
+  evaluateLiveReadiness({
+    baselineStandings,
+    currentStandings: full({ 1: [51, 45, 5], 2: [48, 48, 5] }),
+    todayFinalGames,
+    baselineStats,
+    currentStats: statsMoved,
+    expectedTitleCategories: ["hr", "avg"],
+  }),
+  { ready: true, reason: "ready", laggingTeams: [] },
+);
 
 // ===== P0① 실제 cron 시간대 회귀 (자정 catch-up 구간이 vercel.json cron에 실제로 있는지) =====
 // cron hour 필드 → UTC 시간 집합 (A-B 범위 / 단일 H / 쉼표 복수 지원).
@@ -298,21 +338,36 @@ async function main() {
     ok("예외 → 재던짐", threw === true);
   }
 
-  // P0② claim RPC 오류(마이그레이션 누락/권한) → contention(false)과 구분되어 throw → run/release 미호출·전파(route가 5xx로 종료). error를 false로 삼키면 200 skip으로 숨어 영구 미실행 놀침.
+  // P0② 실제 route 해석 로직(interpretClaimRpc/assertLookupOk) 검증 — mock이 아닌 route가 쓰는 순수함수 그대로.
+  //   조회/claim 오류는 throw(5xx), 정상 contention(data!==true)만 false, error 없는 data===true만 성공.
+  ok("P0② interpretClaimRpc: data=true → true", interpretClaimRpc({ data: true, error: null }) === true);
+  ok("P0② interpretClaimRpc: data=false(contention) → false", interpretClaimRpc({ data: false, error: null }) === false);
+  {
+    let threw = false;
+    try { interpretClaimRpc({ data: null, error: { message: "relation does not exist" } }); } catch { threw = true; }
+    ok("P0② interpretClaimRpc: RPC error → throw(5xx, false로 숨김 ❌)", threw === true);
+  }
+  ok("P0② assertLookupOk: error 없으면 통과", (() => { assertLookupOk({ error: null }, "x"); return true; })());
+  {
+    let threw = false;
+    try { assertLookupOk({ error: { message: "permission denied" } }, "existing analysis"); } catch { threw = true; }
+    ok("P0② assertLookupOk: 조회 error → throw(5xx, 미반영 축약 ❌)", threw === true);
+  }
+  // interpretClaimRpc가 throw하면 runLiveAnalysisWithClaim을 통해 run/release 미호출·전파(route가 catch→5xx)
   {
     let ran = false;
     let released = false;
     let threw = false;
     try {
       await runLiveAnalysisWithClaim({
-        claim: async () => { throw new Error("claim rpc failed: relation does not exist"); },
+        claim: async () => interpretClaimRpc({ data: null, error: { message: "relation does not exist" } }),
         release: async () => { released = true; },
         run: async () => { ran = true; return { status: 200, body: { ok: true } }; },
       });
     } catch {
       threw = true;
     }
-    ok("P0② claim RPC 오류 → 전파(5xx로 종료)", threw === true);
+    ok("P0② claim RPC 오류 → 전파(route 5xx)", threw === true);
     ok("P0② claim RPC 오류 → run 미호출", ran === false);
     ok("P0② claim RPC 오류 → release 미호출", released === false);
   }

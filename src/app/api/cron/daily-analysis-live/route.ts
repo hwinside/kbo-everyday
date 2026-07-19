@@ -6,6 +6,8 @@ import {
   resolveLiveTarget,
   isAlreadyReflected,
   runLiveAnalysisWithClaim,
+  interpretClaimRpc,
+  assertLookupOk,
   type SlateState,
 } from "@/lib/analysis/daily-analysis-live-policy";
 
@@ -75,34 +77,49 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // 3) 멱등성 — saveDate 행이 이미 gameDate를 반영했으면 skip (claim 획득 전 값싼 게이트)
-  const { data: existing } = await supabaseAdmin
-    .from("daily_analysis")
-    .select("delta_json")
-    .eq("date", target.saveDate)
-    .eq("type", "standings")
-    .maybeSingle();
+  // 3) 멱등성 — saveDate 행이 이미 gameDate를 반영했으면 skip (claim 획득 전 값싼 게이트).
+  //    조회 오류를 미반영으로 축약하면 중복 생성 위험 → fail-closed(5xx). 다음 tick 재시도.
+  let existing: { delta_json: unknown } | null;
+  try {
+    const lookup = await supabaseAdmin
+      .from("daily_analysis")
+      .select("delta_json")
+      .eq("date", target.saveDate)
+      .eq("type", "standings")
+      .maybeSingle();
+    assertLookupOk(lookup, "existing analysis");
+    existing = lookup.data;
+  } catch (e) {
+    return NextResponse.json({ ok: false, error: (e as Error).message, ...target }, { status: 500 });
+  }
   const meta = existing?.delta_json as { sameDayLive?: boolean; lastUpdated?: string } | null;
   if (isAlreadyReflected(target.gameDate, target.saveDate, meta)) {
     return NextResponse.json({ ok: true, skipped: "already reflected", ...target });
   }
 
   // 4) 원자적 claim(saveDate 기준) → 생성(live, core가 readiness gate) → not-ready/실패면 해제.
-  const { status, body } = await runLiveAnalysisWithClaim({
-    claim: async () => {
-      const { data, error } = await supabaseAdmin.rpc("claim_daily_analysis_live", {
-        p_date: target.saveDate,
-        p_lease_seconds: CLAIM_LEASE_SECONDS,
-      });
-      return data === true && !error;
-    },
-    release: async () => {
-      await supabaseAdmin.from("daily_analysis_live_claims").delete().eq("analysis_date", target.saveDate);
-    },
-    run: () => runDailyAnalysis("live", { gameDate: target.gameDate, saveDate: target.saveDate }),
-  });
+  //    claim RPC 오류(마이그 누락/권한)는 interpretClaimRpc가 throw → contention(data!==true, 200)과 분리해
+  //    5xx로 종료(관제 노출). run() 예외도 claim 해제 후 5xx, run() 500은 shouldReleaseAfterRun이 해제.
+  let outcome: { status: number; body: Record<string, unknown> };
+  try {
+    outcome = await runLiveAnalysisWithClaim({
+      claim: async () =>
+        interpretClaimRpc(
+          await supabaseAdmin.rpc("claim_daily_analysis_live", {
+            p_date: target.saveDate,
+            p_lease_seconds: CLAIM_LEASE_SECONDS,
+          }),
+        ),
+      release: async () => {
+        await supabaseAdmin.from("daily_analysis_live_claims").delete().eq("analysis_date", target.saveDate);
+      },
+      run: () => runDailyAnalysis("live", { gameDate: target.gameDate, saveDate: target.saveDate }),
+    });
+  } catch (e) {
+    return NextResponse.json({ ok: false, error: (e as Error).message, ...target }, { status: 500 });
+  }
 
-  return NextResponse.json({ ...target, ...body }, { status });
+  return NextResponse.json({ ...target, ...outcome.body }, { status: outcome.status });
 }
 
 export const dynamic = "force-dynamic";

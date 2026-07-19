@@ -476,10 +476,21 @@ export async function runDailyAnalysis(
     ]);
 
     // 2. Fetch yesterday's snapshots
-    const [{ data: yesterdayStandings }, { data: yesterdayStats }] = await Promise.all([
+    const [
+      { data: yesterdayStandings, error: yStandingsErr },
+      { data: yesterdayStats, error: yStatsErr },
+    ] = await Promise.all([
       supabase.from("daily_standings_snapshot").select("*").eq("date", yesterdayISO),
       supabase.from("daily_stats_snapshot").select("*").eq("date", yesterdayISO),
     ]);
+    // [live] baseline 스냅샷 조회 실패를 무시하면 불완전 baseline으로 false-ready → sameDayLive 마커
+    //   고착 위험. fail-closed(5xx) → shouldReleaseAfterRun이 claim 해제 → 다음 tick 재시도.
+    //   (scheduled는 스냅샷 없어도 first-run 경로로 안전 처리하므로 기존 동작 유지)
+    if (mode === "live" && (yStandingsErr || yStatsErr)) {
+      const emsg = yStandingsErr?.message ?? yStatsErr?.message ?? "snapshot fetch error";
+      await finishJob(logId, "error", "라이브: baseline 스냅샷 조회 실패 — fail-closed", emsg);
+      return { status: 500, body: { error: `baseline snapshot fetch failed: ${emsg}` } };
+    }
 
     // 3. Build team name map
     const teamNames = new Map(TEAMS.map((t) => [t.id, t.shortName]));
@@ -543,6 +554,8 @@ export async function runDailyAnalysis(
         todayFinalGames: gameFinalGames,
         baselineStats: (yesterdayStats ?? []) as StatsSnapshotRow[],
         currentStats: todayStatsSnapshots,
+        // 타이틀 권위 카테고리(타/투 9종) — baseline이 이 중 하나라도 빠지면 부분 원천 → not ready
+        expectedTitleCategories: ["avg", "hr", "rbi", "sb", "era", "wins", "k", "saves", "whip"],
       });
       if (!readiness.ready) {
         const msg = `라이브: 원천 미반영(${readiness.reason}) — 마커 없이 다음 tick 재시도`;

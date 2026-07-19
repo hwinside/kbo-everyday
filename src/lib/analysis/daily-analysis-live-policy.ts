@@ -52,6 +52,9 @@ export function evaluateLiveReadiness(params: {
   baselineStats: ReadinessTitleRow[];
   currentStats: ReadinessTitleRow[];
   expectedTeamCount?: number;
+  // 기대 타이틀 카테고리 권위 집합(core가 전달). baseline이 이 중 하나라도 빠지면
+  // baseline 자체가 부분 응답이므로 fail-closed. 미지정 시 baseline 보유 카테고리로 폴백.
+  expectedTitleCategories?: string[];
 }): LiveReadinessResult {
   const { baselineStandings, currentStandings, todayFinalGames, baselineStats, currentStats } = params;
   const expectedTeamCount = params.expectedTeamCount ?? 10;
@@ -104,28 +107,36 @@ export function evaluateLiveReadiness(params: {
     return { ready: false, reason: `standings not settled: teams ${sorted.join(",")}`, laggingTeams: sorted };
   }
 
-  // 타이틀 completeness + settle.
-  if (baselineStats.length > 0) {
-    const catCounts = (rows: ReadinessTitleRow[]) => {
-      const m = new Map<string, number>();
-      for (const r of rows) m.set(r.category, (m.get(r.category) ?? 0) + 1);
-      return m;
-    };
-    // completeness: 현재 원천이 baseline의 각 카테고리 행 수를 못 채우면(빈 배열/부분 응답) not ready.
-    const baseCat = catCounts(baselineStats);
-    const curCat = catCounts(currentStats);
-    for (const [cat, n] of baseCat) {
-      const cur = curCat.get(cat) ?? 0;
-      if (cur < n) {
-        return { ready: false, reason: `titles incomplete: ${cat} ${cur}/${n} rows`, laggingTeams: [] };
-      }
+  // 타이틀 completeness + settle (모두 fail-closed).
+  //   baseline이 비었거나(스냅샷 누락/부분) 기대 카테고리를 못 채우면 원천 신뢰 불가 → not ready
+  //   (01:00 scheduled 백스톱이 보정). 현재 원천도 각 카테고리 행 수를 채워야(빈/부분 응답 배제).
+  if (baselineStats.length === 0) {
+    return { ready: false, reason: "baseline titles empty", laggingTeams: [] };
+  }
+  const catCounts = (rows: ReadinessTitleRow[]) => {
+    const m = new Map<string, number>();
+    for (const r of rows) m.set(r.category, (m.get(r.category) ?? 0) + 1);
+    return m;
+  };
+  const baseCat = catCounts(baselineStats);
+  const curCat = catCounts(currentStats);
+  // 기대 카테고리: core가 전달한 권위 집합(baseline 부분 카테고리 감지). 미지정 시 baseline 보유 카테고리.
+  const expectedCats = params.expectedTitleCategories ?? [...baseCat.keys()];
+  for (const cat of expectedCats) {
+    const b = baseCat.get(cat) ?? 0;
+    if (b === 0) {
+      return { ready: false, reason: `baseline titles incomplete: ${cat} missing`, laggingTeams: [] };
     }
-    // settle: 현재 원천이 baseline과 완전 동일하면 아직 미반영으로 간주(별도 안전장치).
-    const norm = (rows: ReadinessTitleRow[]) =>
-      rows.map((r) => `${r.category}|${r.rank}|${r.player_name}|${r.value}`).sort().join("\n");
-    if (norm(currentStats) === norm(baselineStats)) {
-      return { ready: false, reason: "titles not settled (identical to baseline)", laggingTeams: [] };
+    const c = curCat.get(cat) ?? 0;
+    if (c < b) {
+      return { ready: false, reason: `titles incomplete: ${cat} ${c}/${b} rows`, laggingTeams: [] };
     }
+  }
+  // settle: 현재 원천이 baseline과 완전 동일하면 아직 미반영으로 간주(별도 안전장치).
+  const norm = (rows: ReadinessTitleRow[]) =>
+    rows.map((r) => `${r.category}|${r.rank}|${r.player_name}|${r.value}`).sort().join("\n");
+  if (norm(currentStats) === norm(baselineStats)) {
+    return { ready: false, reason: "titles not settled (identical to baseline)", laggingTeams: [] };
   }
 
   return { ready: true, reason: "ready", laggingTeams: [] };
@@ -192,6 +203,21 @@ export function isAlreadyReflected(
   }
   // catch-up: saveDate 행이 존재하면(scheduled 또는 이전 catch-up) 이미 gameDate 반영.
   return true;
+}
+
+// ===== 3b) route DB/RPC 결과 해석 (fail-closed) =====
+// 조회/claim 오류(마이그 누락/권한)를 미반영/contention으로 축약하면 200 skip으로 숨어 영구
+// 미실행을 관제에서 놓친다. route가 이 순수 함수를 그대로 사용해 error 분기를 스모크가 실제 검증.
+
+/** claim RPC 결과 해석: 오류는 throw(route가 5xx). 정상 contention(data!==true)만 false. */
+export function interpretClaimRpc(result: { data: unknown; error: { message: string } | null }): boolean {
+  if (result.error) throw new Error(`claim rpc failed: ${result.error.message}`);
+  return result.data === true;
+}
+
+/** 조회 결과 오류면 throw(route가 5xx). 미반영으로 축약 금지. */
+export function assertLookupOk(result: { error: { message: string } | null }, label: string): void {
+  if (result.error) throw new Error(`${label} lookup failed: ${result.error.message}`);
 }
 
 // ===== 4) 원자적 claim 오케스트레이션 (P0②: 멱등성 race) =====
