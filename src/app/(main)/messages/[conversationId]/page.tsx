@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, type ChangeEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Send, EllipsisVertical, AlertTriangle, ShieldBan, Flag, X, ImagePlus, Loader2 } from "lucide-react";
+import { ChevronLeft, Send, EllipsisVertical, AlertTriangle, ShieldBan, Flag, X, ImagePlus, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDMChat } from "@/lib/supabase/useDM";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -187,11 +187,15 @@ export default function DMChatPage() {
   }, [user, otherId, conversationId, reportCategory, reportDetail]);
 
   return (
-    <div className="flex flex-col h-screen bg-bg-primary">
-      {/* Header */}
-      <div className="flex items-center gap-3 px-5 pt-safe pb-3 border-b border-border bg-bg-secondary">
-        <button onClick={() => router.back()} className="p-1">
-          <ArrowLeft size={24} className="text-text-primary" />
+    <div className="fixed inset-0 z-[60] flex flex-col bg-bg-primary">
+      {/* Header — 기본 디자인 가이드(마이/명전) 앱바 정렬. fixed 오버레이라 탭바/푸터를 덮어 이중 스크롤 제거 */}
+      <header className="flex items-center gap-3 px-5 pt-safe pb-3 border-b border-border bg-bg-primary">
+        <button
+          onClick={() => router.back()}
+          className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"
+          aria-label="뒤로"
+        >
+          <ChevronLeft size={24} />
         </button>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
@@ -200,7 +204,7 @@ export default function DMChatPage() {
             ) : otherTeamId ? (
               <TeamBadge teamId={otherTeamId} size="xs" />
             ) : null}
-            <h1 className="text-base font-bold text-text-primary truncate">{otherName}</h1>
+            <h1 className="text-lg font-semibold leading-[26px] text-text-primary truncate">{otherName}</h1>
           </div>
           <p className="text-[10px] text-text-tertiary">{isNoReplyConv ? "자동 발송 전용" : "1:1 쪽지"}</p>
         </div>
@@ -239,7 +243,7 @@ export default function DMChatPage() {
             )}
           </AnimatePresence>
         </div>
-      </div>
+      </header>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
