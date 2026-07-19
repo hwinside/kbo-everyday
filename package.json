@@ -24,6 +24,7 @@
     "qa:news-clip-title": "tsx scripts/qa/news-clipping-title-signal-smoke.ts",
     "qa:urgent-notice": "tsx scripts/qa/urgent-notice-smoke.ts",
     "qa:ticket-open": "tsx scripts/qa/ticket-open-smoke.ts",
+    "qa:watch-telemetry": "tsx scripts/qa/watch-telemetry-smoke.ts",
     "qa:gif-collector-matching": "tsx scripts/qa/gif-collector-matching-smoke.ts",
     "qa:gif-collector-slack-parser": "tsx scripts/qa/gif-collector-slack-parser-smoke.ts",
     "qa:gif-collector-inbox-resolver": "tsx scripts/qa/gif-collector-inbox-resolver-smoke.ts",
