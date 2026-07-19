@@ -157,6 +157,7 @@ export function isQuotaSignal(info: { status?: number; reason?: string; message?
   return (
     m.includes("quotaexceeded") ||
     m.includes("quota exceeded") ||
+    m.includes("exceeded your quota") ||
     m.includes("dailylimitexceeded") ||
     m.includes("daily limit") ||
     m.includes("ratelimitexceeded") ||

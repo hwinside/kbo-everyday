@@ -141,7 +141,7 @@ ok("reason=dailyLimitExceeded → quota", isQuotaSignal({ status: 403, reason: "
 ok("reason=rateLimitExceeded → quota", isQuotaSignal({ status: 403, reason: "rateLimitExceeded" }) === true);
 ok("reason=userRateLimitExceeded → quota", isQuotaSignal({ reason: "userRateLimitExceeded" }) === true);
 ok("403 forbidden(단순 키 오류, reason/문구 없음) → quota 아님", isQuotaSignal({ status: 403, reason: "forbidden" }) === false);
-ok("문구만 'quotaExceeded' → quota", isQuotaSignal({ message: "The request cannot be completed because you have exceeded your quotaExceeded." }) === true);
+ok("정확 원문 'exceeded your quota' → quota", isQuotaSignal({ message: "The request cannot be completed because you have exceeded your quota." }) === true);
 ok("문구 'daily limit' → quota", isQuotaSignal({ message: "Daily Limit Exceeded" }) === true);
 ok("무관 에러 → quota 아님", isQuotaSignal({ status: 500, message: "internal error" }) === false);
 
