@@ -18,8 +18,10 @@ import {
   isTeamBaseballRelevant,
   isPhotoArticle,
   dedupeNewsByTitle,
+  hasClippingTitleSignal,
 } from "@/lib/news-relevance";
 import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
+import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -61,11 +63,22 @@ function isOtherTeamTitle(title: string, teamShort: string): boolean {
   return false;
 }
 
-/** 어제(KST) 보도된 팀 관련 기사 후보 수집 — 뉴스카드와 동일 가드 + 사진기사 제외 */
-async function collectYesterdayCandidates(teamShort: string, yesterday: string): Promise<NewsItem[]> {
+// 팀별 로스터 선수명 — 클리핑 positive 제목 게이트용. 3자 미만 이름은 substring
+// 오탐(예: "김건"→"김건희", "최정"→"최정상")을 유발하므로 제외한다. 2자 이름 선수
+// 기사는 제목에 팀명/야구 키워드가 대개 함께 붙어 나머지 두 경로로 커버된다.
+function rosterTitleNames(teamId: number): string[] {
+  return (PLAYERS_ROSTER as { name: string; teamId: number }[])
+    .filter((p) => p.teamId === teamId && p.name.replace(/\s/g, "").length >= 3)
+    .map((p) => p.name);
+}
+
+/** 어제(KST) 보도된 팀 관련 기사 후보 수집 — 뉴스카드와 동일 가드 + 사진기사 제외 + 클리핑 제목 게이트 */
+async function collectYesterdayCandidates(teamShort: string, teamId: number, yesterday: string): Promise<NewsItem[]> {
   const fullName = TEAM_SEARCH[teamShort] || teamShort;
   const mascot = fullName.split(/\s+/).pop() || null;
   const query = `프로야구 ${fullName}`;
+  const teamTokens = [teamShort, ...fullName.split(/\s+/)];
+  const rosterNames = rosterTitleNames(teamId);
 
   // 하루치 커버리지 확보 — display 최대(100) × 2페이지. 어제보다 오래된 기사가
   // 나오기 시작하면(date desc 정렬) 그 페이지에서 수집 종료.
@@ -84,7 +97,11 @@ async function collectYesterdayCandidates(teamShort: string, yesterday: string):
     if (pubDateToKstDate(item.pubDate) !== yesterday) return false;
     if (isPhotoArticle(item.title)) return false;
     if (isOtherTeamTitle(item.title, teamShort)) return false;
-    return isTeamBaseballRelevant(item.title, item.description, mascot);
+    if (!isTeamBaseballRelevant(item.title, item.description, mascot)) return false;
+    // 클리핑 전용 positive 제목 게이트 — 제목에 팀/선수/야구 신호가 전혀 없는
+    // off-topic 기사(본문만 팀 스침, 예: 여자골프 기사 속 'LG 트윈스 김진성')를
+    // 원천 차단해 제목·사진과 요약이 어긋난 카드 방지.
+    return hasClippingTitleSignal(item.title, teamTokens, rosterNames);
   });
 
   return dedupeNewsByTitle(candidates).slice(0, MAX_CANDIDATES);
@@ -229,7 +246,7 @@ export async function buildTeamClipping(
 ): Promise<NewsClippingPayload | null> {
   const yesterday = kstDateString(-1);
 
-  const candidates = await collectYesterdayCandidates(teamShort, yesterday);
+  const candidates = await collectYesterdayCandidates(teamShort, teamId, yesterday);
   if (candidates.length === 0) return null;
 
   const selection = await selectAndSummarize(teamName, yesterday, candidates, standingsText);

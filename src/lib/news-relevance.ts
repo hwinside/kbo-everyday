@@ -150,3 +150,28 @@ export function isTeamBaseballRelevant(
   if (!mascot) return hasBaseballSignal(`${title} ${description}`);
   return `${title} ${description}`.includes(mascot);
 }
+
+// 뉴스클리핑 전용 positive 제목 게이트 — 팀 뉴스탭보다 높은 정밀도 기준.
+//
+// isTeamBaseballRelevant 는 제목/본문 어디든 마스코트가 있으면 통과시킨다. 그래서
+// 여자 골프·연예·정치 등 *다른 토픽* 기사가 본문에 소속 선수(예: 'LG 트윈스 김진성')를
+// 스쳐 언급하면 후보에 들고, Gemini가 억지 요약을 만들어 제목·사진(골프)과 요약(야구)이
+// 어긋난 카드가 나온다(2026-07-19 하린아빠 제보 — '여자 골프' 기사에 김진성 야구 요약).
+//
+// 클리핑은 팬에게 매일 발송하는 큐레이션이라 뉴스탭보다 recall을 조금 내주고 정밀도를
+// 택한다: 제목에 (1)야구 키워드 (2)팀 식별자 (3)소속 선수명 중 하나라도 있어야 선정.
+// 골프 헤드라인은 셋 다 없어 원천 컷되고, "고승민 1루·손호영 2루"처럼 선수명만 쓴 정상
+// 팀 기사는 로스터 매칭으로 유지된다. (isOtherTeamTitle·isTeamBaseballRelevant 게이트
+// *다음*에 추가로 적용하는 최종 관문.)
+//
+// rosterNames 는 substring 오탐 방지를 위해 3자 이상 이름만 넘길 것(호출부에서 필터).
+// "김건"이 "김건희"에, "최정"이 "최정상"에 잘못 매칭되는 것을 사전 차단한다.
+export function hasClippingTitleSignal(
+  title: string,
+  teamTokens: string[],
+  rosterNames: string[]
+): boolean {
+  if (BASEBALL_KEYWORDS.some((kw) => title.includes(kw))) return true;
+  if (teamTokens.some((t) => t && title.includes(t))) return true;
+  return rosterNames.some((n) => n && title.includes(n));
+}
