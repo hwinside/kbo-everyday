@@ -219,19 +219,14 @@ body {
   background: var(--news-bg-dark) !important;
 }
 
-/* ===== Scrollbar ===== */
+/* ===== Scrollbar: hidden app-wide for a native-app feel ===== */
+* {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge */
+}
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--text-tertiary);
-  border-radius: 2px;
+  width: 0;
+  height: 0;
 }
 
 /* ===== No scrollbar for horizontal scroll containers ===== */
