@@ -173,10 +173,7 @@ export function hasClippingTitleSignal(
   rosterNames: string[]
 ): boolean {
   if (BASEBALL_KEYWORDS.some((kw) => title.includes(kw))) return true;
-  // 팀 식별자는 case-insensitive — Latin 약칭이 소문자로 쓰인 own-team 헤드라인
-  // (예: "nc, 끝내기 승리")도 유지한다. 한글 토큰은 toLowerCase 가 no-op.
-  const lowerTitle = title.toLowerCase();
-  if (teamTokens.some((t) => t && lowerTitle.includes(t.toLowerCase()))) return true;
+  if (teamTokens.some((t) => titleHasTeamToken(title, t))) return true;
   return rosterNames.some((n) => n && titleHasNameToken(title, n));
 }
 
@@ -187,15 +184,53 @@ function isHangulSyllable(ch: string | undefined): boolean {
   return code >= 0xac00 && code <= 0xd7a3;
 }
 
-// 제목에서 이름을 토큰 경계로 매칭 — 앞뒤 문자가 한글 음절이 아니어야 한다.
-// "최정,"·"최정 부상"·"…최정"=true, "최정상"(단어 일부)·"김건희"(2자 substring 오탐)=false.
+const ASCII_ALNUM_RE = /[A-Za-z0-9]/;
+
+// 이름 뒤에 붙어도 토큰 경계로 인정하는 한국어 조사(선수명 헤드라인은 이름 바로 뒤에
+// 조사가 붙는 게 정상 — "김진성이"·"오스틴의"·"고승민은"). '은/는/이/가/을/를/의/도…'로
+// 시작하면 경계로 본다. 조사가 아닌 한글이 이어지면("최정상"·"김건희") 단어 일부로 보고 컷.
+// 단음절 조사 뒤에 다른 글자가 이어져도("이에서"류) 앞 조사만으로 경계 성립이라 무방.
+const TRAILING_JOSA = [
+  "은", "는", "이", "가", "을", "를", "의", "에", "와", "과", "도", "만", "께", "로",
+  "으로", "에게", "한테", "에서", "부터", "까지", "보다", "처럼", "조차", "마저", "라도", "밖에",
+];
+
+// 제목에서 선수명을 토큰 경계로 매칭 — 앞 글자는 한글 음절이 아니고, 뒤는
+// (a)한글 음절이 아니거나 (b)한국어 조사로 시작해야 한다.
+// "최정,"·"최정 부상"·"…최정"·"김진성이"·"오스틴의"=true, "최정상"·"김건희"=false.
+// 2자 이름뿐 아니라 3자+ 선수명의 조사 결합("김진성이 지킨")도 유지된다(삼순 NO-GO #1).
 function titleHasNameToken(title: string, name: string): boolean {
   for (let from = 0; ; ) {
     const idx = title.indexOf(name, from);
     if (idx === -1) return false;
-    if (!isHangulSyllable(title[idx - 1]) && !isHangulSyllable(title[idx + name.length])) {
-      return true;
-    }
+    const prev = title[idx - 1];
+    const after = title.slice(idx + name.length);
+    const nextCh = after[0];
+    const leftOk = !isHangulSyllable(prev);
+    const rightOk =
+      !isHangulSyllable(nextCh) || TRAILING_JOSA.some((j) => after.startsWith(j));
+    if (leftOk && rightOk) return true;
+    from = idx + 1;
+  }
+}
+
+// 제목에서 팀 식별자 토큰을 매칭 — case-insensitive 이되 Latin 약칭은 ASCII 영숫자
+// 경계로만 인정한다. 소문자 own-team 헤드라인("프로야구 kt,"·"nc, 끝내기")은 유지하고,
+// 일반 영단어에 약칭이 substring으로 박힌 것(algorithm→LG, concert/encore→NC,
+// Nokia→KIA)은 컷한다(삼순 NO-GO #2). 한글 식별자(트윈스 등)는 한글 경계 오탐이
+// 사실상 없어 그대로 substring 매칭한다.
+function titleHasTeamToken(title: string, token: string): boolean {
+  if (!token) return false;
+  const isLatin = ASCII_ALNUM_RE.test(token);
+  if (!isLatin) return title.includes(token);
+  const needle = token.toLowerCase();
+  const hay = title.toLowerCase();
+  for (let from = 0; ; ) {
+    const idx = hay.indexOf(needle, from);
+    if (idx === -1) return false;
+    const prev = hay[idx - 1];
+    const next = hay[idx + needle.length];
+    if (!ASCII_ALNUM_RE.test(prev ?? "") && !ASCII_ALNUM_RE.test(next ?? "")) return true;
     from = idx + 1;
   }
 }

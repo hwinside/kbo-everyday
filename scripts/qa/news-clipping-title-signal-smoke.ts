@@ -167,5 +167,66 @@ for (const c of TWO_CHAR_CASES) {
   );
 }
 
+// ============================================================================
+// 삼순 2차 NO-GO 반영 (2026-07-19) — 선수명 뒤 조사 경계 허용 + Latin 약칭 ASCII 경계
+// ============================================================================
+
+// --- NO-GO #1: 선수명 뒤 한국어 조사가 붙어도 유지(팀/야구 토큰 없는 제목) ---
+// 이전 구현은 이름 다음 글자가 한글이면 전부 탈락시켜 '김진성이 지킨'·'오스틴의'도 false였다.
+ok(
+  "LG '김진성이 지킨 승리' 유지 (이름+조사 '이')",
+  hasClippingTitleSignal("김진성이 지킨 승리, 불펜의 힘", LG_TOKENS, LG_ROSTER) === true
+);
+ok(
+  "LG '오스틴의 25호포' 유지 (이름+조사 '의')",
+  hasClippingTitleSignal("오스틴의 25호포로 다시 앞서간 LG", LG_TOKENS, LG_ROSTER) === true
+);
+ok(
+  "롯데 '고승민은 1루·손호영은 2루' 유지 (이름+조사 '은')",
+  hasClippingTitleSignal("고승민은 1루·손호영은 2루 선발", tokensFor("롯데"), rosterFor(7)) === true
+);
+ok(
+  "SSG '최정이 터트린 그랜드슬램' 유지 (2자+조사 '이')",
+  hasClippingTitleSignal("최정이 터트린 그랜드슬램", SSG_TOKENS, SSG_ROSTER) === true
+);
+// 조사가 아닌 한글이 이어지면 여전히 컷(단어 일부) — '최정상'·'김건희' 재확인
+ok(
+  "'최정상'(단어 일부) 여전히 컷 (조사 아닌 한글 연속)",
+  hasClippingTitleSignal("K-뷰티, 글로벌 최정상 브랜드로 우뚝", SSG_TOKENS, SSG_ROSTER) === false
+);
+
+// --- NO-GO #2: Latin 약칭 ASCII 경계 (일반 영단어 오탐 차단) ---
+// 이전 구현은 소문자 substring이라 algorithm→LG, concert/encore→NC, Nokia→KIA 오탐.
+ok(
+  "'algorithm' 영단어가 LG 신호로 오탐 안 됨",
+  hasClippingTitleSignal("New algorithm boosts recommendation accuracy", LG_TOKENS, LG_ROSTER) === false
+);
+ok(
+  "'concert' 영단어가 NC 신호로 오탐 안 됨",
+  hasClippingTitleSignal("Sold-out concert draws record crowd", tokensFor("NC"), rosterFor(5)) === false
+);
+ok(
+  "'encore' 영단어가 NC 신호로 오탐 안 됨",
+  hasClippingTitleSignal("Fans demand an encore performance", tokensFor("NC"), rosterFor(5)) === false
+);
+ok(
+  "'Nokia' 영단어가 KIA 신호로 오탐 안 됨",
+  hasClippingTitleSignal("Nokia unveils new 5G equipment lineup", tokensFor("KIA"), rosterFor(6)) === false
+);
+// own-team Latin 약칭은 경계에서 유지(case-insensitive + ASCII 경계)
+ok(
+  "'프로야구 kt,' own-team 유지 (소문자+ASCII 경계)",
+  hasClippingTitleSignal("프로야구 kt, 위즈 대역전 승리", tokensFor("KT"), rosterFor(3)) === true
+);
+ok(
+  "'KIA, 대역전 승리' own-team 유지 (대문자+ASCII 경계)",
+  hasClippingTitleSignal("KIA, 안방서 위닝시리즈 완성", tokensFor("KIA"), rosterFor(6)) === true
+);
+// 한글 마스코트는 그대로 substring 유지(한글 경계 오탐 사실상 없음)
+ok(
+  "한글 마스코트 '타이거즈' 유지",
+  hasClippingTitleSignal("타이거즈, 과감한 주루플레이", tokensFor("KIA"), rosterFor(6)) === true
+);
+
 console.log(fail === 0 ? "\nALL PASS" : `\n${fail} FAIL`);
 process.exit(fail === 0 ? 0 : 1);
