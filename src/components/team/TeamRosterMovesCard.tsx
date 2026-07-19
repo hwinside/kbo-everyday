@@ -52,7 +52,7 @@ type LoadState =
 // 기본 노출 개수 — 처음엔 가장 최근 N개만 보여주고 '전체보기'로 시즌 전체를 펼친다
 // (2026-07-19 하린아빠 스펙). 조회는 시즌 전체(365일)로 하되 접힘 상태에서 3개로 한정.
 const PREVIEW_COUNT = 3;
-const SEASON_DAYS = 365;
+
 
 export default function TeamRosterMovesCard({ team }: Props) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
@@ -60,7 +60,7 @@ export default function TeamRosterMovesCard({ team }: Props) {
 
   useEffect(() => {
     let aborted = false;
-    fetch(`/api/roster-moves?teamId=${team.id}&days=${SEASON_DAYS}`)
+    fetch(`/api/roster-moves?teamId=${team.id}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();

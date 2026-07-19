@@ -8,7 +8,10 @@ import {
 } from "@/lib/roster-moves/readiness";
 import { notifyRegisterAnomaly, type RegisterAnomaly } from "@/lib/roster-moves/pending-alert";
 
-// 팀별 최근 등록/말소 조회. 예: /api/roster-moves?teamId=6&days=30
+// 팀별 시즌 등록/말소 조회. 예: /api/roster-moves?teamId=6
+// 조회 하한은 rolling window가 아니라 명시적 시즌 시작일(삼순 P0: rolling 365 → 시즌 키).
+// 2026 KBO 정규시즌 개막 = 2026-03-28. 시즌이 바뀌면 이 상수(또는 시즌 키 매핑)를 갱신한다.
+const SEASON_START = "2026-03-28";
 // 노출 계약(2026-07-18 삼순 P0 반영):
 // - 등록(register): published만 반환 — 준비(로스터+사진+히어로+상세페이지) 완료 전 미노출.
 //   반환되는 등록 항목은 예외 없이 클릭 가능(href 항상 non-null).
@@ -18,15 +21,13 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const teamId = Number(searchParams.get("teamId"));
-  // days 상한 366 — 카드 '전체보기'가 시즌 전체 등록·말소를 조회하기 위해 90→366 상향(2026-07-19).
-  const days = Math.min(Math.max(Number(searchParams.get("days")) || 30, 1), 366);
   if (!teamId) {
     return NextResponse.json({ error: "teamId required" }, { status: 400 });
   }
 
-  const since = new Date();
-  since.setDate(since.getDate() - days);
-  const sinceStr = since.toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
+  // rolling window 제거(삼순 P0): 항상 시즌 시작일부터 조회 → "시즌 전체 현황" 계약이
+  // 날짜 경과와 무관하게 성립한다(rolling 365는 개막 초반 이력이 시즌 중 잘려나감).
+  const sinceStr = SEASON_START;
 
   const admin = getSupabaseAdmin();
   const { data, error } = await admin
@@ -98,5 +99,5 @@ export async function GET(req: NextRequest) {
     await notifyRegisterAnomaly(anomalies);
   }
 
-  return NextResponse.json({ teamId, days, moves });
+  return NextResponse.json({ teamId, seasonStart: SEASON_START, moves });
 }
