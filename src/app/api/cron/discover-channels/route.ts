@@ -2,8 +2,8 @@
  * 자동 채널 발굴 크론 — 정상 수집 중인 active 채널의 숏츠 제목을 분석해 유사 신규 채널을 발굴·활성화.
  *
  * 스케줄: vercel.json crons — 주 1회(일요일 00:00 UTC = 09:00 KST).
- *   (선수 검색 8,000/day + RSS fallback + duration backfill로 매일 +800 headroom이 없어 주 1회 권고.
- *    공유 quota ledger/cap이 생기면 그때 일 1회 검토.)
+ *   (선수 검색·RSS fallback·duration backfill과 공유 quota ledger/cap을 사용하되,
+ *    후보 품질/운영 안정성 확인 전까지 주 1회 유지.)
  *
  * 흐름:
  *  1. 동시실행 lock claim (실패 시 skip = fail-closed)
@@ -28,6 +28,11 @@ import {
   fetchVideoDurations,
 } from "@/lib/video/youtube-api";
 import {
+  reserveQuota,
+  YT_UNITS_SEARCH,
+  YT_UNITS_VIDEOS_LIST,
+} from "@/lib/video/youtube-quota";
+import {
   buildDiscoveryQueries,
   decideMode,
   evaluateChannelCandidate,
@@ -49,7 +54,6 @@ const MAX_QUERIES = Math.min(
 );
 const MAX_ACTIVATIONS = resolveMaxActivations(process.env.DISCOVER_MAX_ACTIVATIONS);
 const MAX_VERIFY = parseInt(process.env.DISCOVER_MAX_VERIFY || "15", 10);
-const SEARCH_COST = 100;
 const LOCK_STALE_MIN = 15;
 
 export const maxDuration = 60;
@@ -127,17 +131,24 @@ async function searchChannels(query: string): Promise<SearchResult> {
 }
 
 /** 채널 최근 영상(RSS 우선, 실패 시 Data API). duration 별도 배치 조회. */
-async function fetchRecentVideos(channelId: string): Promise<RecentVideo[] | null> {
+async function fetchRecentVideos(
+  channelId: string,
+  reserveApiQuota: (units: number) => Promise<boolean>,
+): Promise<RecentVideo[] | null> {
   let entries;
   try {
     entries = await fetchChannelRss(channelId);
   } catch {
+    // playlistItems.list = 1 unit. 공유 cap 부족이면 API fallback 자체를 생략한다.
+    if (!(await reserveApiQuota(YT_UNITS_VIDEOS_LIST))) return null;
     entries = await fetchChannelUploadsViaApi(channelId, 15);
   }
   if (entries === null) return null; // 조회 실패 → unverified(fail-closed)
   if (entries.length === 0) return [];
 
   const top = entries.slice(0, 10);
+  // videos.list = 1 unit. duration 미검증 후보는 활성화하지 않는다(fail-closed).
+  if (!(await reserveApiQuota(YT_UNITS_VIDEOS_LIST))) return null;
   const durations = await fetchVideoDurations(top.map((e) => e.video_id));
   return top.map((e) => ({
     title: e.title,
@@ -221,8 +232,24 @@ export async function GET(req: NextRequest) {
     const candMap = new Map<string, SearchChannelHit & { seen: number }>();
     let quotaUsed = 0;
     let quotaDegraded = false;
+    let ledgerErr: string | undefined;
     let searchErrorCount = 0; // 비-quota 검색 오류도 run을 not-clean으로 만든다(삼순 2번)
+
+    // search/playlist/duration 모든 Data API 호출 직전에 공유 원장을 예약한다.
+    // RPC 장애는 기존 런타임 quota 판별에 맡기되 run을 warning으로 남긴다.
+    const reserveApiQuota = async (units: number): Promise<boolean> => {
+      const reservation = await reserveQuota(supabaseAdmin, units);
+      if (reservation.ledgerError && !ledgerErr) ledgerErr = reservation.ledgerError;
+      if (!reservation.allowed) {
+        quotaDegraded = true;
+        return false;
+      }
+      quotaUsed += units;
+      return true;
+    };
+
     for (const q of queries) {
+      if (!(await reserveApiQuota(YT_UNITS_SEARCH))) break;
       const r = await searchChannels(q);
       if (r.quota) {
         quotaDegraded = true;
@@ -234,7 +261,6 @@ export async function GET(req: NextRequest) {
         await new Promise((rs) => setTimeout(rs, 120));
         continue;
       }
-      quotaUsed += SEARCH_COST;
       for (const h of r.hits) {
         if (existingIds.has(h.channel_id)) continue;
         const cur = candMap.get(h.channel_id);
@@ -254,10 +280,15 @@ export async function GET(req: NextRequest) {
 
     const scored: ScoredCandidate[] = [];
     const unverified: Array<SearchChannelHit & { seen: number }> = [];
-    for (const c of toVerify) {
-      const recent = await fetchRecentVideos(c.channel_id);
+    for (let i = 0; i < toVerify.length; i++) {
+      const c = toVerify[i];
+      const recent = await fetchRecentVideos(c.channel_id, reserveApiQuota);
       if (recent === null) {
         unverified.push(c);
+        if (quotaDegraded) {
+          unverified.push(...toVerify.slice(i + 1));
+          break;
+        }
         continue;
       }
       const evaluation = evaluateChannelCandidate(recent);
@@ -272,7 +303,7 @@ export async function GET(req: NextRequest) {
 
     // not-clean = quota degrade 또는 비-quota 검색 오류. 이런 run은 활성화도·clean
     // shadow 승격 카운트도 오염시키지 않는다(삼순 2번). DB degraded 컬럼에 이 broad 의미로 저장.
-    const notClean = quotaDegraded || searchErrorCount > 0;
+    const notClean = quotaDegraded || searchErrorCount > 0 || !!ledgerErr;
 
     // 6. mode 결정 — 완료된 non-degraded shadow 2회 전까지 shadow (오류 시 fail-closed)
     const { count: cleanShadow, error: cntErr } = await supabaseAdmin
@@ -325,7 +356,9 @@ export async function GET(req: NextRequest) {
         channel_name: u.channel_name,
         seen_count: u.seen,
         decision: "unverified",
-        reason: "최근 영상 조회 실패(RSS/API)",
+        reason: quotaDegraded
+          ? "공유 quota cap 부족 — 최근 영상 검증 생략"
+          : "최근 영상 조회 실패(RSS/API)",
         kbo_count: null,
         kbo_considered: null,
         short_count: null,
@@ -334,11 +367,11 @@ export async function GET(req: NextRequest) {
     }
 
     const passCount = scored.filter((s) => s.evaluation.pass).length;
-    const degradeNote = quotaDegraded
-      ? " DEGRADE=quota"
-      : searchErrorCount > 0
-        ? ` DEGRADE=search-err(${searchErrorCount})`
-        : "";
+    const degradeParts: string[] = [];
+    if (quotaDegraded) degradeParts.push("quota");
+    if (searchErrorCount > 0) degradeParts.push(`search-err(${searchErrorCount})`);
+    if (ledgerErr) degradeParts.push(`LEDGER_ERR=${ledgerErr.slice(0, 60)}`);
+    const degradeNote = degradeParts.length ? ` DEGRADE=${degradeParts.join(",")}` : "";
     const summary =
       `mode=${mode} queries=${queries.length} candidates=${candidatesFound} ` +
       `verified=${scored.length} pass=${passCount} activated=${activated}` +
@@ -391,6 +424,7 @@ export async function GET(req: NextRequest) {
       activatedAttempted: activated,
       degraded: notClean,
       quotaDegraded,
+      ledgerError: ledgerErr ?? null,
       searchErrors: searchErrorCount,
       quotaEstimate: quotaUsed,
     });
