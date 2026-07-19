@@ -42,18 +42,29 @@ function groupByDate(moves: Move[]): { date: string; items: Move[] }[] {
   return groups;
 }
 
+/** 로딩 / 실패(비정상 응답·fetch reject) / 준비완료(정상 빈 포함)를 분리 표현.
+ * 실패와 "정상 0건"을 구분 못 하던 문제(삼순 NO-GO) 방지 — 무효 상태를 표현 불가로 만든다. */
+type LoadState =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "ready"; moves: Move[] };
+
 export default function TeamRosterMovesCard({ team }: Props) {
-  const [moves, setMoves] = useState<Move[] | null>(null);
+  const [state, setState] = useState<LoadState>({ status: "loading" });
 
   useEffect(() => {
     let aborted = false;
     fetch(`/api/roster-moves?teamId=${team.id}&days=30`)
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
       .then((d) => {
-        if (!aborted) setMoves(Array.isArray(d?.moves) ? d.moves : []);
+        if (!aborted)
+          setState({ status: "ready", moves: Array.isArray(d?.moves) ? d.moves : [] });
       })
       .catch(() => {
-        if (!aborted) setMoves([]);
+        if (!aborted) setState({ status: "error" });
       });
     return () => {
       aborted = true;
@@ -65,7 +76,10 @@ export default function TeamRosterMovesCard({ team }: Props) {
   const bgColor = getTeamBgColor(team);
   // 링크 없는 published 등록은 렌더 제외(삼순 P0 3차 불변식 유지 — href 없는 등록 미노출).
   // 말소는 링크 생략 허용(링크 없는 텍스트 렌더 OK).
-  const renderable = (moves ?? []).filter((m) => m.moveType !== "register" || Boolean(m.href));
+  const renderable =
+    state.status === "ready"
+      ? state.moves.filter((m) => m.moveType !== "register" || Boolean(m.href))
+      : [];
   const groups = groupByDate(renderable);
 
   return (
@@ -79,10 +93,12 @@ export default function TeamRosterMovesCard({ team }: Props) {
       }}
     >
       <p className="text-xs text-text-tertiary mb-3">최근 등록·말소</p>
-      {moves === null ? (
+      {state.status === "loading" ? (
         <p className="text-xs text-text-tertiary">불러오는 중…</p>
+      ) : state.status === "error" ? (
+        <p className="text-xs text-text-tertiary">등록·말소 내역을 불러오지 못했어요.</p>
       ) : renderable.length === 0 ? (
-        <p className="text-xs text-text-tertiary">최근 30일간 등록·말소 소식이 없어요.</p>
+        <p className="text-xs text-text-tertiary">등록·말소 내역이 없어요.</p>
       ) : (
         <div className="flex flex-col gap-3">
         {groups.map((g) => (
