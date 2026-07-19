@@ -6282,6 +6282,15 @@
     "birthDate": "2006-05-15"
   },
   {
+    "name": "조요한",
+    "kboId": "51809",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "98",
+    "team": "SSG",
+    "birthDate": "2000-01-06"
+  },
+  {
     "name": "조원태",
     "kboId": "52149",
     "teamId": 1,
