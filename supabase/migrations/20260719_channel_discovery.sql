@@ -79,3 +79,95 @@ create policy "cdc_service_all" on channel_discovery_candidates for all
 create policy "cdl_service_all" on channel_discovery_lock for all
   using (auth.role() = 'service_role')
   with check (auth.role() = 'service_role');
+
+-- 4. 원자적 커밋 RPC (삼순 재리뷰 blocker 1: pool 반영 + 후보로그 + run 마감이 진짜 원자적)
+--    단일 트랜잭션(plpgsql 함수)으로 run insert + channel_pool 활성화 + 후보로그 insert 를
+--    all-or-nothing 커밋. 어느 단계가 실패해도 전부 롤백 → 채널만 active인데 감사로그/run이
+--    없는 부분 커밋 상태가 남지 않는다. degraded run은 호출부가 p_activations=[] 로 넘겨
+--    channel_pool 변경 0을 보장(blocker 2 하드 게이트).
+create or replace function commit_channel_discovery(
+  p_mode text,
+  p_queries text[],
+  p_candidates_found int,
+  p_verified int,
+  p_quota_used int,
+  p_degraded boolean,
+  p_activated int,
+  p_summary text,
+  p_activations jsonb,   -- [{channel_id, channel_name}]  (active·non-degraded 일 때만 non-empty)
+  p_candidates jsonb     -- [{channel_id, channel_name, seen_count, decision, reason,
+                         --   kbo_count, kbo_considered, short_count, recent_upload_at}]
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_run_id bigint;
+  v_act jsonb;
+  v_cand jsonb;
+begin
+  if p_mode not in ('shadow', 'active') then
+    raise exception 'invalid mode: %', p_mode using errcode = '22023';
+  end if;
+  -- degraded run 은 절대 channel_pool 을 건드리지 않는다(하드 게이트)
+  if p_degraded and jsonb_array_length(coalesce(p_activations, '[]'::jsonb)) > 0 then
+    raise exception 'degraded run must not activate channels' using errcode = '22023';
+  end if;
+  if p_mode = 'shadow' and jsonb_array_length(coalesce(p_activations, '[]'::jsonb)) > 0 then
+    raise exception 'shadow run must not activate channels' using errcode = '22023';
+  end if;
+
+  -- 1) run 을 success 로 바로 기록(전체 트랜잭션이 커밋될 때만 존재)
+  insert into channel_discovery_runs(
+    mode, status, queries, candidates_found, verified, quota_used, degraded, activated, summary
+  ) values (
+    p_mode, 'success', p_queries, p_candidates_found, p_verified, p_quota_used, p_degraded, p_activated, p_summary
+  ) returning id into v_run_id;
+
+  -- 2) channel_pool 활성화 (active·non-degraded 에서만 non-empty)
+  for v_act in select * from jsonb_array_elements(coalesce(p_activations, '[]'::jsonb))
+  loop
+    insert into channel_pool(channel_id, channel_name, tier, is_active, team_affinity)
+    values (
+      v_act->>'channel_id',
+      coalesce(v_act->>'channel_name', v_act->>'channel_id'),
+      3, true, null
+    )
+    on conflict (channel_id) do update
+      set channel_name = excluded.channel_name, is_active = true;
+  end loop;
+
+  -- 3) 후보 판정 로그 (run_id FK)
+  for v_cand in select * from jsonb_array_elements(coalesce(p_candidates, '[]'::jsonb))
+  loop
+    insert into channel_discovery_candidates(
+      run_id, channel_id, channel_name, seen_count, decision, reason,
+      kbo_count, kbo_considered, short_count, recent_upload_at
+    ) values (
+      v_run_id,
+      v_cand->>'channel_id',
+      v_cand->>'channel_name',
+      coalesce((v_cand->>'seen_count')::int, 1),
+      v_cand->>'decision',
+      v_cand->>'reason',
+      (v_cand->>'kbo_count')::int,
+      (v_cand->>'kbo_considered')::int,
+      (v_cand->>'short_count')::int,
+      (v_cand->>'recent_upload_at')::timestamptz
+    );
+  end loop;
+
+  return v_run_id;
+end;
+$$;
+
+comment on function commit_channel_discovery is
+  '채널 발굴 결과 원자적 커밋 — run+channel_pool+후보로그 단일 트랜잭션. service_role 전용.';
+
+-- SECURITY DEFINER 함수는 RLS로 막히지 않으므로 명시적으로 권한 회수/부여
+revoke all on function commit_channel_discovery(text, text[], int, int, int, boolean, int, text, jsonb, jsonb) from public;
+revoke all on function commit_channel_discovery(text, text[], int, int, int, boolean, int, text, jsonb, jsonb) from anon;
+revoke all on function commit_channel_discovery(text, text[], int, int, int, boolean, int, text, jsonb, jsonb) from authenticated;
+grant execute on function commit_channel_discovery(text, text[], int, int, int, boolean, int, text, jsonb, jsonb) to service_role;

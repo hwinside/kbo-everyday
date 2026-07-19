@@ -203,6 +203,14 @@ export function decideMode(cleanShadowCount: number): "shadow" | "active" {
 /** 실행당 최대 활성화 하드 상한 (삼순 4번: env가 무엇이든 5 초과 불가) */
 export const MAX_ACTIVATIONS_CAP = 5;
 
+/**
+ * 활성화 허용 하드 게이트(삼순 재리뷰 2번): active 모드 그리고 not-clean이 아닐 때만.
+ * not-clean = quota degrade 또는 비-quota 검색 오류. degraded/error run은 channel_pool 변경 0.
+ */
+export function shouldActivate(mode: "shadow" | "active", notClean: boolean): boolean {
+  return mode === "active" && !notClean;
+}
+
 /** DISCOVER_MAX_ACTIVATIONS env → 1~5로 clamp (양수 아니면 5) */
 export function resolveMaxActivations(raw: string | undefined): number {
   const n = parseInt(raw ?? "", 10);

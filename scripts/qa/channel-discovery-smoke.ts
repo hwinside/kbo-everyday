@@ -21,6 +21,7 @@ import {
   isQuotaSignal,
   resolveMaxActivations,
   MAX_ACTIVATIONS_CAP,
+  shouldActivate,
   type RecentVideo,
   type ScoredCandidate,
 } from "@/lib/video/channel-discovery";
@@ -199,6 +200,21 @@ ok(
     resolveMaxActivations("999"),
   ).length === 5,
 );
+
+// ── shouldActivate 하드 게이트 (삼순 재리뷰 2번: degraded/error run은 pool 변경 0) ──
+ok("activate: active + clean → 허용", shouldActivate("active", false) === true);
+ok("activate: active + not-clean(degraded) → 차단", shouldActivate("active", true) === false);
+ok("activate: shadow + clean → 차단(로그만)", shouldActivate("shadow", false) === false);
+ok("activate: shadow + not-clean → 차단", shouldActivate("shadow", true) === false);
+// 하드 게이트와 pickActivations 결합: not-clean이면 활성화 목록이 비어야 함(pool 변경 0)
+function gatedActivations(mode: "shadow" | "active", notClean: boolean, cands: ScoredCandidate[]) {
+  return shouldActivate(mode, notClean) ? pickActivations(cands, 5) : [];
+}
+const passPool = [sc("p1", 3, true), sc("p2", 5, true)];
+ok("gated: active+quota degrade → 활성화 0", gatedActivations("active", true, passPool).length === 0);
+ok("gated: active+search-err(not-clean) → 활성화 0", gatedActivations("active", true, passPool).length === 0);
+ok("gated: active+clean → 활성화 2", gatedActivations("active", false, passPool).length === 2);
+ok("gated: shadow → not-clean 무관 활성화 0", gatedActivations("shadow", false, passPool).length === 0);
 
 console.log(`\n${fail === 0 ? "🟢 ALL PASS" : `🔴 ${fail} FAILED`}`);
 process.exit(fail === 0 ? 0 : 1);

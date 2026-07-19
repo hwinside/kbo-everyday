@@ -220,15 +220,17 @@ export async function GET(req: NextRequest) {
     // 4. 검색 → 후보 수집 (quota fail-closed)
     const candMap = new Map<string, SearchChannelHit & { seen: number }>();
     let quotaUsed = 0;
-    let degraded = false;
+    let quotaDegraded = false;
+    let searchErrorCount = 0; // 비-quota 검색 오류도 run을 not-clean으로 만든다(삼순 2번)
     for (const q of queries) {
       const r = await searchChannels(q);
       if (r.quota) {
-        degraded = true;
+        quotaDegraded = true;
         break; // fail-closed: 이후 검색 중단
       }
       if (r.error) {
-        // 비-quota 단건 오류는 스킵하고 다음 쿼리 진행
+        // 비-quota 단건 오류: 스킵하되 run을 not-clean으로 표시(승격/활성화 카운트 오염 차단)
+        searchErrorCount += 1;
         await new Promise((rs) => setTimeout(rs, 120));
         continue;
       }
@@ -268,6 +270,10 @@ export async function GET(req: NextRequest) {
       await new Promise((rs) => setTimeout(rs, 60));
     }
 
+    // not-clean = quota degrade 또는 비-quota 검색 오류. 이런 run은 활성화도·clean
+    // shadow 승격 카운트도 오염시키지 않는다(삼순 2번). DB degraded 컬럼에 이 broad 의미로 저장.
+    const notClean = quotaDegraded || searchErrorCount > 0;
+
     // 6. mode 결정 — 완료된 non-degraded shadow 2회 전까지 shadow (오류 시 fail-closed)
     const { count: cleanShadow, error: cntErr } = await supabaseAdmin
       .from("channel_discovery_runs")
@@ -278,63 +284,35 @@ export async function GET(req: NextRequest) {
     if (cntErr) throw new Error(`prior runs: ${cntErr.message}`);
     const mode = decideMode(cleanShadow ?? 0);
 
-    // run 로그 선삽입(status=running, 후보 로그 FK)
-    const { data: runRow, error: runErr } = await supabaseAdmin
-      .from("channel_discovery_runs")
-      .insert({
-        mode,
-        status: "running",
-        queries,
-        candidates_found: candidatesFound,
-        verified: scored.length,
-        quota_used: quotaUsed,
-        degraded,
-      })
-      .select("id")
-      .single();
-    if (runErr || !runRow) throw new Error(`run insert: ${runErr?.message ?? "no row"}`);
-    runId = runRow.id as number;
+    // 활성화 대상: active 모드 그리고 not-clean이 아닐 때만(하드 게이트 — degraded/error run은
+    // channel_pool 변경 0). 이후 커밋 RPC가 pool 반영+후보로그+run 마감을 원자적으로 처리.
+    const activations =
+      mode === "active" && !notClean ? pickActivations(scored, MAX_ACTIVATIONS) : [];
+    const activateIds = new Set(activations.map((a) => a.channelId));
+    const activated = activations.length;
 
-    // active 모드: channel_pool 활성화를 먼저 반영(성공해야 'activated' 로그 기록 — 원자성)
-    const activations = pickActivations(scored, MAX_ACTIVATIONS);
-    const activateIds = new Set<string>();
-    let activated = 0;
-    if (mode === "active" && activations.length > 0) {
-      const rows = activations.map((a) => ({
-        channel_id: a.channelId,
-        channel_name: a.channelName || a.channelId,
-        tier: 3,
-        is_active: true,
-        team_affinity: null as string[] | null,
-      }));
-      const { error: upErr } = await supabaseAdmin
-        .from("channel_pool")
-        .upsert(rows, { onConflict: "channel_id" });
-      if (upErr) throw new Error(`channel_pool upsert: ${upErr.message}`);
-      for (const a of activations) activateIds.add(a.channelId);
-      activated = rows.length;
-    }
-
-    // 후보별 판정 로그 (pool 반영 이후라 activated 결정이 실제 반영과 일치)
+    // 후보별 판정 로그 (run_id는 RPC가 설정 — 여기서는 미포함)
     const candLogs: Array<Record<string, unknown>> = scored.map((s) => {
       let decision: string;
+      let reason: string = s.evaluation.reason;
       if (mode === "shadow") {
         decision = s.evaluation.pass ? "shadow_pass" : "shadow_fail";
       } else if (activateIds.has(s.channelId)) {
         decision = "activated";
       } else {
-        decision = "rejected"; // 게이트 탈락 또는 활성 한도(5) 초과
+        decision = "rejected"; // 게이트 탈락 / 한도 초과 / degraded run 활성화 생략
+        if (s.evaluation.pass) {
+          reason = notClean
+            ? `degraded/error run — 활성화 생략: ${s.evaluation.reason}`
+            : `한도 초과(top ${MAX_ACTIVATIONS} 밖): ${s.evaluation.reason}`;
+        }
       }
       return {
-        run_id: runId,
         channel_id: s.channelId,
         channel_name: s.channelName,
         seen_count: s.seenCount,
         decision,
-        reason:
-          decision === "rejected" && s.evaluation.pass
-            ? `한도 초과(top ${MAX_ACTIVATIONS} 밖): ${s.evaluation.reason}`
-            : s.evaluation.reason,
+        reason,
         kbo_count: s.evaluation.kboCount,
         kbo_considered: s.evaluation.considered,
         short_count: s.evaluation.shortCount,
@@ -343,7 +321,6 @@ export async function GET(req: NextRequest) {
     });
     for (const u of unverified) {
       candLogs.push({
-        run_id: runId,
         channel_id: u.channel_id,
         channel_name: u.channel_name,
         seen_count: u.seen,
@@ -355,47 +332,61 @@ export async function GET(req: NextRequest) {
         recent_upload_at: null,
       });
     }
-    if (candLogs.length > 0) {
-      const { error: logErr } = await supabaseAdmin
-        .from("channel_discovery_candidates")
-        .insert(candLogs);
-      if (logErr) throw new Error(`candidate logs: ${logErr.message}`);
-    }
 
-    // run 마감 (성공) — 모든 DB 반영 성공 후에만 success 로 승격
     const passCount = scored.filter((s) => s.evaluation.pass).length;
+    const degradeNote = quotaDegraded
+      ? " DEGRADE=quota"
+      : searchErrorCount > 0
+        ? ` DEGRADE=search-err(${searchErrorCount})`
+        : "";
     const summary =
       `mode=${mode} queries=${queries.length} candidates=${candidatesFound} ` +
-      `verified=${scored.length} pass=${passCount} activated=${activated} ` +
-      `quota≈${quotaUsed}${degraded ? " DEGRADE=quota" : ""}`;
-    const { error: finErr } = await supabaseAdmin
-      .from("channel_discovery_runs")
-      .update({ activated, summary, status: "success" })
-      .eq("id", runId);
-    if (finErr) throw new Error(`run finalize: ${finErr.message}`);
+      `verified=${scored.length} pass=${passCount} activated=${activated}` +
+      ` quota≈${quotaUsed}${degradeNote}`;
 
-    await finishJob(logId, degraded ? "warning" : "success", summary);
+    // 원자적 커밋 — run insert + channel_pool 활성화 + 후보로그를 단일 트랜잭션으로(삼순 1번).
+    // 실패하면 전부 롤백 → 채널만 active인데 run/감사로그 없는 부분 커밋 상태 불가.
+    const { data: commitData, error: commitErr } = await supabaseAdmin.rpc(
+      "commit_channel_discovery",
+      {
+        p_mode: mode,
+        p_queries: queries,
+        p_candidates_found: candidatesFound,
+        p_verified: scored.length,
+        p_quota_used: quotaUsed,
+        p_degraded: notClean,
+        p_activated: activated,
+        p_summary: summary,
+        p_activations: activations.map((a) => ({
+          channel_id: a.channelId,
+          channel_name: a.channelName || a.channelId,
+        })),
+        p_candidates: candLogs,
+      },
+    );
+    if (commitErr) throw new Error(`commit: ${commitErr.message}`);
+    runId = (typeof commitData === "number" ? commitData : Number(commitData)) || null;
+
+    await finishJob(logId, notClean ? "warning" : "success", summary);
 
     return NextResponse.json({
       ok: true,
+      runId,
       mode,
       queries,
       candidatesFound,
       verified: scored.length,
       pass: passCount,
       activated,
-      degraded,
+      degraded: notClean,
+      quotaDegraded,
+      searchErrors: searchErrorCount,
       quotaEstimate: quotaUsed,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // run 을 error 로 마킹 → shadow 승격 카운트에서 제외 (미완료 실행이 승격 오염 방지)
-    if (runId) {
-      await supabaseAdmin
-        .from("channel_discovery_runs")
-        .update({ status: "error", summary: msg.slice(0, 300) })
-        .eq("id", runId);
-    }
+    // 원자적 커밋 RPC 전에 실패했으면 run이 아예 없음(오팔 없음). 커밋 이후 실패만
+    // runId가 설정되는데, 그 때는 이미 전체 트랜잭션이 커밋된 상태라 버려둑(finishJob만 기록).
     await finishJob(logId, "error", undefined, msg.slice(0, 900));
     return NextResponse.json({ error: msg }, { status: 500 });
   } finally {
