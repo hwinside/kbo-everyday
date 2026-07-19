@@ -50,7 +50,7 @@ const PLAYER_POSITIONS = new Set(["투수", "포수", "내야수", "외야수"])
 
 interface ParsedMove { kboId: string; name: string; backNo: string; position: string; }
 interface ExcludedMove { kboId: string; name: string; position: string; section: "register" | "deregister"; }
-interface MoveTablesResult { reg: ParsedMove[]; der: ParsedMove[]; excluded: ExcludedMove[]; }
+interface MoveTablesResult { reg: ParsedMove[]; der: ParsedMove[]; excluded: ExcludedMove[]; sectionFound: boolean; headerCount: number; }
 
 interface RawEvent {
   date: string; teamId: number; teamCode: string;
@@ -73,7 +73,7 @@ export function parseMoveTables(html: string): MoveTablesResult {
 
   // (A) "등/말소 현황" 섹션만 슬라이스 — 상단 "선수등록명단" role 표(감독/코치 포함)는 물리적으로 배제.
   const histIdx = html.indexOf("등/말소 현황");
-  if (histIdx < 0) return { reg, der, excluded };
+  if (histIdx < 0) return { reg, der, excluded, sectionFound: false, headerCount: 0 };
   let endIdx = html.indexOf('id="cphContents_cphContents_cphContents_hfSearchTeam"', histIdx);
   if (endIdx < 0) endIdx = html.length;
   const section = html.slice(histIdx, endIdx);
@@ -81,11 +81,13 @@ export function parseMoveTables(html: string): MoveTablesResult {
   // (B) h5.bul_sub("등록"/"말소") 헤더 텍스트로 각 표를 매칭 — tbs 인덱스 추측 금지.
   const headerRe = /<h5 class="bul_sub"[^>]*>([^<]+)<\/h5>/g;
   let h: RegExpExecArray | null;
+  let headerCount = 0;
   while ((h = headerRe.exec(section)) !== null) {
     const label = h[1].trim();
     const moveType: "register" | "deregister" | null =
       label === "등록" ? "register" : label === "말소" ? "deregister" : null;
     if (!moveType) continue;
+    headerCount++;
 
     // 이 헤더 다음 첫 tNData 표.
     const tblRe = /<table class="tNData"[^>]*>([\s\S]*?)<\/table>/g;
@@ -117,7 +119,7 @@ export function parseMoveTables(html: string): MoveTablesResult {
       (moveType === "register" ? reg : der).push(entry);
     }
   }
-  return { reg, der, excluded };
+  return { reg, der, excluded, sectionFound: true, headerCount };
 }
 
 async function getTokens() {
@@ -133,32 +135,77 @@ function dateRange(startISO: string, endISO: string): string[] {
   return out;
 }
 
-async function scanAll(onExcluded: (e: ExcludedMove & { date: string; teamCode: string }) => void): Promise<RawEvent[]> {
+/**
+ * fail-closed 수집(삼순 P0-1): 각 날짜×팀 셀마다 (a)HTTP 200 (b)반환 hfSearchDate==요청일
+ * (c)반환 hfSearchTeam==요청팀 (d)"등/말소 현황" 섹션 렌더+등록·말소 헤더 2개 모두 존재를
+ * 검증한다. 하나라도 어긋나면 토큰 갱신 후 재시도하고, 재시도 소진 시 **throw**(빈 결과로
+ * 확정 금지). 마지막에 coverage(성공 셀 수)==기대치(날짜×팀) 아니면 throw → partial scan 차단.
+ */
+async function scanAll(onExcluded: (e: ExcludedMove & { date: string; teamCode: string }) => void): Promise<{ events: RawEvent[]; cells: number; expected: number }> {
   const dates = dateRange(SEASON_START, BACKFILL_END);
+  const expected = dates.length * TEAMS.length;
   let tok = await getTokens();
   const events: RawEvent[] = [];
+  let cells = 0;
+  const MAX_ATTEMPTS = 5;
   for (let di = 0; di < dates.length; di++) {
     const date = dates[di];
     if (di > 0 && di % 10 === 0) tok = await getTokens();
     for (const team of TEAMS) {
-      for (let attempt = 0; attempt < 3; attempt++) {
+      let ok = false;
+      let lastErr = "";
+      for (let attempt = 0; attempt < MAX_ATTEMPTS && !ok; attempt++) {
         try {
           const body = new URLSearchParams({ __EVENTTARGET: TARGET, __EVENTARGUMENT: "", __VIEWSTATE: tok.vs, __VIEWSTATEGENERATOR: tok.vg, __EVENTVALIDATION: tok.ev, [TEAMF]: team, [DATEF]: date });
           const res = await fetch(PAGE, { method: "POST", headers: { ...H, "Content-Type": "application/x-www-form-urlencoded" }, body: body.toString() });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const html = await res.text();
-          if (grab(html, "cphContents_cphContents_cphContents_hfSearchDate") !== date) { tok = await getTokens(); continue; }
-          const { reg, der, excluded } = parseMoveTables(html);
-          for (const p of reg) events.push({ date, teamId: TEAM_CODE_MAP[team], teamCode: team, ...p, moveType: "register" });
-          for (const p of der) events.push({ date, teamId: TEAM_CODE_MAP[team], teamCode: team, ...p, moveType: "deregister" });
-          for (const x of excluded) onExcluded({ ...x, date, teamCode: team });
-          break;
-        } catch (e) { if (attempt === 2) throw e; await sleep(500); tok = await getTokens(); }
+          const retDate = grab(html, "cphContents_cphContents_cphContents_hfSearchDate");
+          const retTeam = grab(html, "cphContents_cphContents_cphContents_hfSearchTeam");
+          if (retDate !== date) throw new Error(`date mismatch got=${retDate} want=${date}`);
+          if (retTeam !== team) throw new Error(`team mismatch got=${retTeam} want=${team}`);
+          const parsed = parseMoveTables(html);
+          if (!parsed.sectionFound || parsed.headerCount < 2) throw new Error(`section incomplete (found=${parsed.sectionFound} headers=${parsed.headerCount})`);
+          for (const p of parsed.reg) events.push({ date, teamId: TEAM_CODE_MAP[team], teamCode: team, ...p, moveType: "register" });
+          for (const p of parsed.der) events.push({ date, teamId: TEAM_CODE_MAP[team], teamCode: team, ...p, moveType: "deregister" });
+          for (const x of parsed.excluded) onExcluded({ ...x, date, teamCode: team });
+          ok = true;
+          cells++;
+        } catch (e) {
+          lastErr = e instanceof Error ? e.message : String(e);
+          await sleep(600);
+          tok = await getTokens();
+        }
       }
+      if (!ok) throw new Error(`[scan fail-closed] ${date} ${team} ${MAX_ATTEMPTS}회 재시도 소진: ${lastErr}`);
       await sleep(120);
     }
+    if (di % 10 === 0) console.error(`  ...${date} (events ${events.length}, cells ${cells}/${expected})`);
   }
-  return events;
+  if (cells !== expected) throw new Error(`[coverage] ${cells}/${expected} 셀만 성공 — partial scan, 미완`);
+  return { events, cells, expected };
+}
+
+/**
+ * 하드 검증 게이트(삼순 P0-2): 위반이 하나라도 있으면 throw → readiness/commit 전 종료.
+ * 출력만 하던 리포트와 달리 이 함수가 실제로 커밋을 막는다. cache 입력도 이 게이트를 통과해야 한다.
+ */
+function assertClean(events: RawEvent[], cells: number, expected: number): void {
+  const coach = events.filter((e) => e.position === "코치").length;
+  const blank = events.filter((e) => !e.position || !e.position.trim()).length;
+  const nonPlayer = events.filter((e) => !PLAYER_POSITIONS.has(e.position)).length;
+  const seen = new Map<string, number>();
+  for (const e of events) { const k = `${e.teamId}|${e.kboId}|${e.moveType}|${e.date}`; seen.set(k, (seen.get(k) || 0) + 1); }
+  const dup = [...seen.values()].filter((n) => n > 1).length;
+  const early = events.filter((e) => e.date === "20260328" || e.date === "20260329").length;
+  const errs: string[] = [];
+  if (coach) errs.push(`코치 ${coach}`);
+  if (blank) errs.push(`포지션공백 ${blank}`);
+  if (nonPlayer) errs.push(`비선수 ${nonPlayer}`);
+  if (dup) errs.push(`중복키 ${dup}`);
+  if (early) errs.push(`개막이전(3/28~29) ${early}`);
+  if (cells !== expected) errs.push(`coverage ${cells}/${expected}`);
+  if (errs.length) throw new Error(`[VALIDATION FAILED] ${errs.join(" / ")} — readiness/commit 차단(fail-closed)`);
 }
 
 interface Row { team_id: number; kbo_player_id: string; player_name: string; move_type: string; move_date: string; status: string; canonical_id: string | null; }
@@ -259,20 +306,33 @@ async function main() {
   const withReadiness = commit || process.argv.includes("--readiness");
   const cacheFlagIdx = process.argv.indexOf("--cache");
   const cachePath = cacheFlagIdx >= 0 ? process.argv[cacheFlagIdx + 1] : null;
+  const outFlagIdx = process.argv.indexOf("--out");
+  const outName = outFlagIdx >= 0 ? process.argv[outFlagIdx + 1] : "backfill-raw.clean.json";
 
+  const dates = dateRange(SEASON_START, BACKFILL_END);
+  const expected = dates.length * TEAMS.length;
   const excludedAll: (ExcludedMove & { date: string; teamCode: string })[] = [];
   let events: RawEvent[];
+  let cells: number;
   if (cachePath) {
-    events = JSON.parse(fs.readFileSync(cachePath, "utf8"));
-    console.error(`[cache] loaded ${events.length} raw events from ${cachePath} (재수집 생략)`);
+    // cache도 동일 게이트 강제(삼순 P0-2): coverage 증빙 없는 bare 배열은 거부 → 전체 스캔 산출물만 허용.
+    const raw = JSON.parse(fs.readFileSync(cachePath, "utf8"));
+    if (Array.isArray(raw) || typeof raw.cells !== "number" || !Array.isArray(raw.events)) {
+      throw new Error(`[cache] coverage 증빙 없는 입력 — {cells,expected,events} 형식의 완전 스캔 산출물(.clean.json)만 허용`);
+    }
+    events = raw.events; cells = raw.cells;
+    console.error(`[cache] loaded ${events.length} events (coverage ${cells}/${expected}) from ${cachePath}`);
   } else {
-    console.error("scanning KBO Register.aspx (3/28~7/17 × 10 teams, 등/말소 섹션만)...");
-    events = await scanAll((x) => excludedAll.push(x));
-    const outPath = new URL("../backfill-raw.clean.json", import.meta.url);
-    fs.writeFileSync(outPath, JSON.stringify(events, null, 2));
-    console.error(`[scan] wrote ${events.length} clean events → backfill-raw.clean.json`);
+    console.error("scanning KBO Register.aspx (3/28~7/17 × 10 teams, 등/말소 섹션만, fail-closed)...");
+    const r = await scanAll((x) => excludedAll.push(x));
+    events = r.events; cells = r.cells;
+    const outPath = new URL(`../${outName}`, import.meta.url);
+    fs.writeFileSync(outPath, JSON.stringify({ cells, expected, events }, null, 2));
+    console.error(`[scan] wrote ${events.length} clean events (coverage ${cells}/${expected}) → ${outName}`);
   }
 
+  // ★ 하드 게이트 — 위반 시 여기서 throw(readiness/insert 도달 전 종료).
+  assertClean(events, cells, expected);
   printValidationReport(events, excludedAll);
 
   if (withReadiness) {
