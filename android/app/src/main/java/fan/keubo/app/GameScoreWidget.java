@@ -633,8 +633,9 @@ public class GameScoreWidget extends AppWidgetProvider {
         if (awayLogo != 0) v.setImageViewResource(R.id.ncc_away_logo, awayLogo);
         if (homeLogo != 0) v.setImageViewResource(R.id.ncc_home_logo, homeLogo);
         // 약어 — SystemUI(알림)도 런처처럼 커스텀 fontFamily를 무시하므로 홈위젯과 동일 비트맵 렌더.
-        v.setImageViewBitmap(R.id.ncc_away_name, textBitmap(context, shortName(away), 14f, 0xFFE8B0BC));
-        v.setImageViewBitmap(R.id.ncc_home_name, textBitmap(context, shortName(home), 14f, 0xFFE8B0BC));
+        // 약어 17f — 큰 스코어(32f) 대비 팀 약어 가독성 상향(하린아빠 2026-07-20 "적당히 키워").
+        v.setImageViewBitmap(R.id.ncc_away_name, textBitmap(context, shortName(away), 17f, 0xFFE8B0BC));
+        v.setImageViewBitmap(R.id.ncc_home_name, textBitmap(context, shortName(home), 17f, 0xFFE8B0BC));
 
         String status = e.status;
         boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
