@@ -188,7 +188,7 @@ export default function LockScreenCard() {
               이 안내/게이트에 묶지 않는다(분리 게이트). */}
           {masterControl === "needs-update" && (
             <p className="text-xs text-text-tertiary py-2">
-              ℹ️ 켜기/끄기는 앱 최신 버전부터 지원돼요 — 스토어에서 앱을 업데이트해주세요
+              ℹ️ 잠금화면 카드는 최애팀 경기 중 자동으로 표시돼요. 켜기/끄기 설정만 다음 앱 업데이트부터 지원됩니다
             </p>
           )}
           {/* 마스터 토글 off면 스타일 선택도 숨김 — 꺼진 기능의 옵션 노출 방지. */}
