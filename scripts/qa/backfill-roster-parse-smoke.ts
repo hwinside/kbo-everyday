@@ -11,7 +11,7 @@
 import fs from "fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseMoveTables } from "../backfill-roster-moves";
+import { parseMoveTables, assertRunMode } from "../backfill-roster-moves";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FX = path.join(__dirname, "fixtures", "backfill-roster");
@@ -73,6 +73,34 @@ const names = (arr: { name: string }[]) => arr.map((x) => x.name);
     const coachLeak = r.reg.concat(r.der).filter((e) => e.position === "코치" || e.position === "감독");
     check(`${f} no coach/manager in reg+der`, coachLeak.length, 0);
   }
+}
+
+// 6) 정상 fixture는 유효 표 2개(등록+말소) → validTables===2 (셀 성공 기준).
+{
+  for (const f of ["register-deregister-players.html", "coach-only.html", "blank-position-mixed.html", "empty-moves.html"]) {
+    const r = parseMoveTables(read(f));
+    check(`${f} validTables===2 (유효 표 2개)`, r.validTables, 2);
+  }
+}
+
+// 7) [FAULT-INJECTION P0-1] 표가 깨진 HTML(tNData 클래스 변경)은 유효 표 미확보 → validTables<2.
+//    삼순 재현: 헤더만 남고 표 파싱이 깨진 HTML도 이전엕 headers==2로 셀 성공 확정되던 버그 차단.
+{
+  const broken = read("register-deregister-players.html").replace(/class="tNData"/g, 'class="tXData"');
+  const r = parseMoveTables(broken);
+  check("broken tNData → validTables<2 (셀 실패 간주)", r.validTables < 2, true);
+  check("broken tNData → reg/der 빈(실변동을 0건으로 확정 금지)", r.reg.length + r.der.length, 0);
+}
+
+// 8) [FAULT-INJECTION P0-2] --commit과 --cache 동시 사용은 assertRunMode가 throw(삽입 fresh 스캔 강제).
+{
+  let threw = false;
+  try { assertRunMode(true, "backfill-raw.clean1.json"); } catch { threw = true; }
+  check("assertRunMode(commit+cache) throws", threw, true);
+  // 정상 조합은 통과.
+  let ok = true;
+  try { assertRunMode(true, null); assertRunMode(false, "x.json"); } catch { ok = false; }
+  check("assertRunMode(commit-only / cache-only) ok", ok, true);
 }
 
 console.log(`\n${pass} pass, ${fail} fail`);

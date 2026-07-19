@@ -50,7 +50,7 @@ const PLAYER_POSITIONS = new Set(["투수", "포수", "내야수", "외야수"])
 
 interface ParsedMove { kboId: string; name: string; backNo: string; position: string; }
 interface ExcludedMove { kboId: string; name: string; position: string; section: "register" | "deregister"; }
-interface MoveTablesResult { reg: ParsedMove[]; der: ParsedMove[]; excluded: ExcludedMove[]; sectionFound: boolean; headerCount: number; }
+interface MoveTablesResult { reg: ParsedMove[]; der: ParsedMove[]; excluded: ExcludedMove[]; sectionFound: boolean; validTables: number; }
 
 interface RawEvent {
   date: string; teamId: number; teamCode: string;
@@ -73,7 +73,7 @@ export function parseMoveTables(html: string): MoveTablesResult {
 
   // (A) "등/말소 현황" 섹션만 슬라이스 — 상단 "선수등록명단" role 표(감독/코치 포함)는 물리적으로 배제.
   const histIdx = html.indexOf("등/말소 현황");
-  if (histIdx < 0) return { reg, der, excluded, sectionFound: false, headerCount: 0 };
+  if (histIdx < 0) return { reg, der, excluded, sectionFound: false, validTables: 0 };
   let endIdx = html.indexOf('id="cphContents_cphContents_cphContents_hfSearchTeam"', histIdx);
   if (endIdx < 0) endIdx = html.length;
   const section = html.slice(histIdx, endIdx);
@@ -81,19 +81,18 @@ export function parseMoveTables(html: string): MoveTablesResult {
   // (B) h5.bul_sub("등록"/"말소") 헤더 텍스트로 각 표를 매칭 — tbs 인덱스 추측 금지.
   const headerRe = /<h5 class="bul_sub"[^>]*>([^<]+)<\/h5>/g;
   let h: RegExpExecArray | null;
-  let headerCount = 0;
+  let validTables = 0;
   while ((h = headerRe.exec(section)) !== null) {
     const label = h[1].trim();
     const moveType: "register" | "deregister" | null =
       label === "등록" ? "register" : label === "말소" ? "deregister" : null;
     if (!moveType) continue;
-    headerCount++;
 
     // 이 헤더 다음 첫 tNData 표.
     const tblRe = /<table class="tNData"[^>]*>([\s\S]*?)<\/table>/g;
     tblRe.lastIndex = h.index;
     const t = tblRe.exec(section);
-    if (!t) continue;
+    if (!t) continue; // 표 미존재/tNData 클래스 변경 = 무효 표(validTables 미증가 — 삼순 P0-1)
 
     // "선수명" 헤더 표인지 + "포지션" 컬럼 위치 확인(가드).
     const thead = (t[1].match(/<thead>([\s\S]*?)<\/thead>/) || [])[1] || "";
@@ -102,7 +101,11 @@ export function parseMoveTables(html: string): MoveTablesResult {
     const posCol = ths.indexOf("포지션");
     if (posCol < 0) continue;
 
-    const body = (t[1].match(/<tbody>([\s\S]*?)<\/tbody>/) || [])[1] || "";
+    // 본문(tbody) 필수 — 없으면 깨진 표. 공식 empty도 "선수가 없습니다" placeholder 행이 tbody 안에 있다.
+    const bodyMatch = t[1].match(/<tbody>([\s\S]*?)<\/tbody>/);
+    if (!bodyMatch) continue; // 본문 없음 = 무효
+    const body = bodyMatch[1];
+    validTables++; // 여기까지 = 유효한 등록/말소 표 1개 확보(빈 placeholder 포함)
     for (const trm of body.matchAll(/<tr>([\s\S]*?)<\/tr>/g)) {
       const tds = [...trm[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((m) => m[1]);
       if (tds.length <= posCol) continue; // placeholder("선수가 없습니다" colspan) 행 스킵
@@ -119,7 +122,17 @@ export function parseMoveTables(html: string): MoveTablesResult {
       (moveType === "register" ? reg : der).push(entry);
     }
   }
-  return { reg, der, excluded, sectionFound: true, headerCount };
+  return { reg, der, excluded, sectionFound: true, validTables };
+}
+
+/**
+ * 실행 모드 가드(삼순 P0-2): --commit과 --cache 동시 사용 금지.
+ * 삽입(commit)은 항상 fresh fail-closed 스캔만 거치게 해 cache coverage 숫자 위조로 인서트 우회하는 경로를 차단.
+ */
+export function assertRunMode(commit: boolean, cachePath: string | null): void {
+  if (commit && cachePath) {
+    throw new Error("[run mode] --commit과 --cache 동시 사용 금지 — 삽입은 항상 fresh fail-closed 스캔만(cache coverage 위조 우회 차단)");
+  }
 }
 
 async function getTokens() {
@@ -165,7 +178,8 @@ async function scanAll(onExcluded: (e: ExcludedMove & { date: string; teamCode: 
           if (retDate !== date) throw new Error(`date mismatch got=${retDate} want=${date}`);
           if (retTeam !== team) throw new Error(`team mismatch got=${retTeam} want=${team}`);
           const parsed = parseMoveTables(html);
-          if (!parsed.sectionFound || parsed.headerCount < 2) throw new Error(`section incomplete (found=${parsed.sectionFound} headers=${parsed.headerCount})`);
+          // 유효 표 2개(등록+말소) 모두 파싱 성공해야 셀 성공 — 표 깨짐(validTables<2)은 빈결과 확정 금지(삼순 P0-1).
+          if (!parsed.sectionFound || parsed.validTables < 2) throw new Error(`section incomplete (found=${parsed.sectionFound} validTables=${parsed.validTables})`);
           for (const p of parsed.reg) events.push({ date, teamId: TEAM_CODE_MAP[team], teamCode: team, ...p, moveType: "register" });
           for (const p of parsed.der) events.push({ date, teamId: TEAM_CODE_MAP[team], teamCode: team, ...p, moveType: "deregister" });
           for (const x of parsed.excluded) onExcluded({ ...x, date, teamCode: team });
@@ -306,6 +320,8 @@ async function main() {
   const withReadiness = commit || process.argv.includes("--readiness");
   const cacheFlagIdx = process.argv.indexOf("--cache");
   const cachePath = cacheFlagIdx >= 0 ? process.argv[cacheFlagIdx + 1] : null;
+  // 삽입은 항상 fresh 스캔만(삼순 P0-2) — --commit과 --cache 동시 사용 거부.
+  assertRunMode(commit, cachePath);
   const outFlagIdx = process.argv.indexOf("--out");
   const outName = outFlagIdx >= 0 ? process.argv[outFlagIdx + 1] : "backfill-raw.clean.json";
 
