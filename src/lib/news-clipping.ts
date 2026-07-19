@@ -51,24 +51,29 @@ function pubDateToKstDate(pubDate: string): string | null {
  * Gemini가 안 따르는 케이스가 실측돼 코드 레벨 사전 필터로 차단. "LG, 한화 꺾고…"처럼
  * 내 팀이 함께 등장하는 맞대결 기사는 유지된다.
  */
-function isOtherTeamTitle(title: string, teamShort: string): boolean {
+// Latin 팀 식별자(LG·KT·NC·SSG·KIA)가 소문자로 표기된 헤드라인(예: "프로야구 kt,
+// 로건과 정식 계약")을 놓치지 않도록 case-insensitive 비교. 한글 식별자는 lower-case가
+// no-op이라 영향 없다(2026-07-18 NC 클리핑에 소문자 'kt' 타팀 기사 통과 — 삼순 NO-GO).
+export function isOtherTeamTitle(title: string, teamShort: string): boolean {
+  const lowerTitle = title.toLowerCase();
   const fullName = TEAM_SEARCH[teamShort] || teamShort;
   const targetTokens = [teamShort, ...fullName.split(/\s+/)];
-  if (targetTokens.some((t) => t && title.includes(t))) return false;
+  if (targetTokens.some((t) => t && lowerTitle.includes(t.toLowerCase()))) return false;
   for (const [short, full] of Object.entries(TEAM_SEARCH)) {
     if (short === teamShort) continue;
     const mascot = full.split(/\s+/).pop() || "";
-    if (title.includes(short) || (mascot && title.includes(mascot))) return true;
+    if (lowerTitle.includes(short.toLowerCase()) || (mascot && lowerTitle.includes(mascot.toLowerCase()))) return true;
   }
   return false;
 }
 
-// 팀별 로스터 선수명 — 클리핑 positive 제목 게이트용. 3자 미만 이름은 substring
-// 오탐(예: "김건"→"김건희", "최정"→"최정상")을 유발하므로 제외한다. 2자 이름 선수
-// 기사는 제목에 팀명/야구 키워드가 대개 함께 붙어 나머지 두 경로로 커버된다.
+// 팀별 로스터 선수명 — 클리핑 positive 제목 게이트용. 2자 이름(최정·곽빈 등)도
+// 포함한다: substring 오탐("최정"→"최정상", "김건"→"김건희")은 hasClippingTitleSignal
+// 의 토큰 경계 매칭으로 차단되므로 이름을 버리지 않고 recall을 살린다(2026-07-18
+// SSG '최정 부상' 등 팀 핵심 이슈가 2자 제외로 누락 — 삼순 NO-GO).
 function rosterTitleNames(teamId: number): string[] {
   return (PLAYERS_ROSTER as { name: string; teamId: number }[])
-    .filter((p) => p.teamId === teamId && p.name.replace(/\s/g, "").length >= 3)
+    .filter((p) => p.teamId === teamId)
     .map((p) => p.name);
 }
 

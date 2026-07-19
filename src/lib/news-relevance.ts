@@ -164,14 +164,38 @@ export function isTeamBaseballRelevant(
 // 팀 기사는 로스터 매칭으로 유지된다. (isOtherTeamTitle·isTeamBaseballRelevant 게이트
 // *다음*에 추가로 적용하는 최종 관문.)
 //
-// rosterNames 는 substring 오탐 방지를 위해 3자 이상 이름만 넘길 것(호출부에서 필터).
-// "김건"이 "김건희"에, "최정"이 "최정상"에 잘못 매칭되는 것을 사전 차단한다.
+// rosterNames 는 2자 이름(최정·곽빈 등)도 포함한다 — 아래 titleHasNameToken 이 토큰
+// 경계로 매칭해 "김건"→"김건희", "최정"→"최정상" substring 오탐을 차단하므로 recall을
+// 위해 이름을 버리지 않는다(2026-07-18 SSG '최정 부상' 등 팀 핵심 이슈 누락 — 삼순 NO-GO).
 export function hasClippingTitleSignal(
   title: string,
   teamTokens: string[],
   rosterNames: string[]
 ): boolean {
   if (BASEBALL_KEYWORDS.some((kw) => title.includes(kw))) return true;
-  if (teamTokens.some((t) => t && title.includes(t))) return true;
-  return rosterNames.some((n) => n && title.includes(n));
+  // 팀 식별자는 case-insensitive — Latin 약칭이 소문자로 쓰인 own-team 헤드라인
+  // (예: "nc, 끝내기 승리")도 유지한다. 한글 토큰은 toLowerCase 가 no-op.
+  const lowerTitle = title.toLowerCase();
+  if (teamTokens.some((t) => t && lowerTitle.includes(t.toLowerCase()))) return true;
+  return rosterNames.some((n) => n && titleHasNameToken(title, n));
+}
+
+// 완성형 한글 음절 여부 — 이름 토큰 경계 판정용.
+function isHangulSyllable(ch: string | undefined): boolean {
+  if (!ch) return false;
+  const code = ch.charCodeAt(0);
+  return code >= 0xac00 && code <= 0xd7a3;
+}
+
+// 제목에서 이름을 토큰 경계로 매칭 — 앞뒤 문자가 한글 음절이 아니어야 한다.
+// "최정,"·"최정 부상"·"…최정"=true, "최정상"(단어 일부)·"김건희"(2자 substring 오탐)=false.
+function titleHasNameToken(title: string, name: string): boolean {
+  for (let from = 0; ; ) {
+    const idx = title.indexOf(name, from);
+    if (idx === -1) return false;
+    if (!isHangulSyllable(title[idx - 1]) && !isHangulSyllable(title[idx + name.length])) {
+      return true;
+    }
+    from = idx + 1;
+  }
 }
