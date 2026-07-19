@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { sendFcmToUsers, type PushPayload } from "@/lib/notifications/fcm";
 import type { PrefKey } from "@/lib/notifications/prefs";
-import { NEWS_CLIPPER_IDS, CLIPPER_AUTO_REPLY_TEXT } from "@/lib/constants/news-clippers";
+import { NEWS_CLIPPER_IDS } from "@/lib/constants/news-clippers";
+import { URGENT_NOTICE_USER_ID } from "@/lib/constants/urgent-notice";
+import { isNoReplySender, noReplyAutoReplyText } from "@/lib/constants/no-reply-senders";
 
 // 푸시 알림 디스패처 (push-notifications-v1 S3).
 // DB 트리거(pg_net)가 INSERT 이벤트를 POST — 대상 결정 → prefs 필터 → FCM 발송.
@@ -67,32 +69,35 @@ async function handleComment(record: Record<string, unknown>): Promise<Dispatch[
   return out;
 }
 
-/** 클리퍼 계정 답장에 대한 자동응답 — 대화방당 24h 1회, 발신은 클리퍼 계정 (하린아빠 지정 문구) */
-async function sendClipperAutoReply(conversationId: string, clipperId: string): Promise<void> {
+/** 회신 불가 계정(클리퍼/긴급공지) 답장에 대한 자동응답 — 대화방당 24h 1회, 발신은 그 계정 (계정별 문구) */
+async function sendNoReplyAutoReply(conversationId: string, accountId: string): Promise<void> {
+  const text = noReplyAutoReplyText(accountId);
+  // 계정별 dedup 타입 — 클리퍼 기존 동작 보존("clipper_auto_reply")
+  const replyType = accountId === URGENT_NOTICE_USER_ID ? "urgent_notice_auto_reply" : "clipper_auto_reply";
   try {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data: recent } = await supabase
       .from("dm_messages")
       .select("id")
       .eq("conversation_id", conversationId)
-      .eq("sender_id", clipperId)
-      .eq("payload->>type", "clipper_auto_reply")
+      .eq("sender_id", accountId)
+      .eq("payload->>type", replyType)
       .gte("created_at", since)
       .limit(1);
     if (recent && recent.length > 0) return;
 
     await supabase.from("dm_messages").insert({
       conversation_id: conversationId,
-      sender_id: clipperId,
-      content: CLIPPER_AUTO_REPLY_TEXT,
-      payload: { type: "clipper_auto_reply" },
+      sender_id: accountId,
+      content: text,
+      payload: { type: replyType },
     });
     await supabase
       .from("dm_conversations")
-      .update({ last_message: CLIPPER_AUTO_REPLY_TEXT.slice(0, 100), last_message_at: new Date().toISOString() })
+      .update({ last_message: text.slice(0, 100), last_message_at: new Date().toISOString() })
       .eq("id", conversationId);
   } catch (e) {
-    console.error("[dispatch] clipper auto-reply failed:", (e as Error).message);
+    console.error("[dispatch] no-reply auto-reply failed:", (e as Error).message);
   }
 }
 
@@ -134,10 +139,24 @@ async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
     return [];
   }
 
-  // 유저 → 클리퍼 답장: 클리퍼는 수신 불가 계정이라 푸시 대신 1회 자동응답만 (재답장 스팸
-  // 방지 24h 창). CS 릴레이는 운영팀 대화만 폴링하므로 이 답장은 CS 인입함에 안 들어간다.
-  if (NEWS_CLIPPER_IDS.has(receiver as string)) {
-    await sendClipperAutoReply(conversationId, receiver as string);
+  // 긴급공지 발송 — 회신 불가 시스템 계정. 공지 쪽지는 📢 전용 푸시로 알린다.
+  // (prefKey "dm": 유저가 쪽지 알림을 꺼둔 경우 푸시만 생략되고 쪽지 자체는 정상 도착)
+  if (senderId === URGENT_NOTICE_USER_ID) {
+    return [{
+      userIds: [receiver as string],
+      payload: {
+        title: "📢 크보팬 공지",
+        body: content.trim() ? truncate(content) : "새로운 공지가 도착했습니다",
+        url: `/messages/${conversationId}`,
+      },
+      prefKey: "dm",
+    }];
+  }
+
+  // 유저 → 회신 불가 계정(클리퍼/긴급공지) 답장: 수신 불가 계정이라 푸시 대신 1회 자동응답만
+  // (재답장 스팸 방지 24h 창). CS 릴레이는 운영팀 대화만 폴링하므로 CS 인입함에 안 들어간다.
+  if (isNoReplySender(receiver as string)) {
+    await sendNoReplyAutoReply(conversationId, receiver as string);
     return [];
   }
 
