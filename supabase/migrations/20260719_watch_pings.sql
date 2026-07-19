@@ -63,7 +63,10 @@ as $$
   order by ping_date, platform;
 $$;
 
-revoke all on function record_watch_ping(text, text) from public;
-revoke all on function admin_watch_activity(date) from public;
+-- ⚠️ Supabase는 public 스키마 함수에 anon·authenticated EXECUTE를 기본 부여하므로 REVOKE FROM public만으론
+--    role별 grant가 안 지워진다(삼순 3차 P0). anon/authenticated 명시 revoke 필수 — 미지정 시 일반 클라가
+--    record_watch_ping으로 지표 오염 + admin_watch_activity로 어드민 인증 우회 조회 가능.
+revoke all on function record_watch_ping(text, text) from public, anon, authenticated;
+revoke all on function admin_watch_activity(date) from public, anon, authenticated;
 grant execute on function record_watch_ping(text, text) to service_role;
 grant execute on function admin_watch_activity(date) to service_role;
