@@ -12,12 +12,16 @@ const BATCH = 50;
 
 // 신고 자동 블라인드 안내 쪽지 outbox 소비 워커.
 // 트리거(auto_blind_on_report)가 블라인드 전환 순간 report_blind_notices 에 적재한 건을
-// 읽어 작성자에게 운영팀 쪽지를 1회 발송한다. 실패는 attempts++ 후 다음 틱 재시도(durable).
+// 읽어 작성자에게 운영팀 쪽지를 발송한다.
+//  · 겹친 크론 실행 → claim_report_blind_notices RPC 가 행을 원자적으로 lease(중복 처리 방지)
+//  · 발송 성공 후 crash → dm_messages.dedup_key 로 재발송이 멱등(중복 쪽지 방지)
+//  · 실패 → claim 해제(다음 틱 재시도), attempts>=MAX 는 자연 제외
+
+// 인증: CRON_SECRET Bearer 만 허용한다. 위조 가능한 x-vercel-cron 헤더 폴백은 쓰지 않는다.
+// (Vercel Cron 은 Authorization: Bearer $CRON_SECRET 헤더를 붙이도록 구성한다.)
 function authorized(req: NextRequest): boolean {
-  if (CRON_SECRET && req.headers.get("authorization") === `Bearer ${CRON_SECRET}`) return true;
-  // Vercel Cron 은 이 헤더를 붙인다.
-  if (req.headers.get("x-vercel-cron")) return true;
-  return false;
+  if (!CRON_SECRET) return false; // fail-closed: 시크릿 미설정 시 전부 차단
+  return req.headers.get("authorization") === `Bearer ${CRON_SECRET}`;
 }
 
 export async function GET(req: NextRequest) {
@@ -32,26 +36,25 @@ export async function GET(req: NextRequest) {
 
   const admin = getSupabaseAdmin();
 
-  const { data: pending, error } = await admin
-    .from("report_blind_notices")
-    .select("id, target_type, target_id, author_id, attempts")
-    .is("notified_at", null)
-    .lt("attempts", MAX_ATTEMPTS)
-    .order("blinded_at", { ascending: true })
-    .limit(BATCH);
+  // 원자적 claim(lease). 겹친 크론이 동시에 돌아도 같은 행을 두 번 집지 않는다.
+  const { data: claimed, error } = await admin.rpc("claim_report_blind_notices", {
+    p_limit: BATCH,
+    p_max_attempts: MAX_ATTEMPTS,
+  });
 
   if (error) {
-    return NextResponse.json({ ok: false, reason: "query_failed", error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: false, reason: "claim_failed", error: error.message }, { status: 500 });
   }
 
   let sent = 0;
   let skipped = 0;
   let failed = 0;
 
-  for (const row of pending ?? []) {
+  for (const row of (claimed ?? []) as Array<Record<string, unknown>>) {
     const id = row.id as number;
     const authorId = row.author_id as string | null;
-    const attempts = (row.attempts as number) ?? 0;
+    const targetType = row.target_type as string;
+    const targetId = row.target_id as number;
 
     // 작성자 없음(탈퇴/미상) 또는 시스템 계정 → 발송 불가/불필요. 완료 처리해 재시도 루프에서 제외.
     if (!authorId || authorId === systemUserId) {
@@ -63,10 +66,12 @@ export async function GET(req: NextRequest) {
       continue;
     }
 
-    const notice = buildBlindNotice(blindTargetLabel(row.target_type as string));
+    const notice = buildBlindNotice(blindTargetLabel(targetType));
+    // 멱등키: 대상당 1건 → 발송 성공 후 crash 로 재진입해도 dm_messages UNIQUE 로 중복 차단
+    const dedupKey = `report-blind:${targetType}:${targetId}`;
     let result: { ok: boolean; reason?: string };
     try {
-      const r = await sendOpsMessageToUser(admin, systemUserId, authorId, notice);
+      const r = await sendOpsMessageToUser(admin, systemUserId, authorId, notice, dedupKey);
       result = r.ok ? { ok: true } : { ok: false, reason: r.reason };
     } catch (e) {
       result = { ok: false, reason: e instanceof Error ? e.message : "exception" };
@@ -75,18 +80,18 @@ export async function GET(req: NextRequest) {
     if (result.ok) {
       await admin
         .from("report_blind_notices")
-        .update({ notified_at: new Date().toISOString(), attempts: attempts + 1, last_error: null })
+        .update({ notified_at: new Date().toISOString(), last_error: null })
         .eq("id", id);
       sent++;
     } else {
-      // 실패 → attempts 증가, notified_at 은 NULL 유지(다음 틱 재시도)
+      // 실패 → claim 해제(다음 틱 재시도), attempts 는 claim RPC 가 이미 증가시킴
       await admin
         .from("report_blind_notices")
-        .update({ attempts: attempts + 1, last_error: result.reason ?? "send_failed" })
+        .update({ claimed_at: null, last_error: result.reason ?? "send_failed" })
         .eq("id", id);
       failed++;
     }
   }
 
-  return NextResponse.json({ ok: true, processed: (pending ?? []).length, sent, skipped, failed });
+  return NextResponse.json({ ok: true, processed: (claimed ?? []).length, sent, skipped, failed });
 }

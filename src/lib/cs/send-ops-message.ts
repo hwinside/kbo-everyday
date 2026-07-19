@@ -16,6 +16,7 @@ export async function sendOpsMessageToUser(
   systemUserId: string,
   userId: string,
   content: string,
+  dedupKey?: string,
 ): Promise<SendOpsResult> {
   const text = content.replace(/\r\n/g, "\n").trimEnd();
   if (!text.trim()) return { ok: false, reason: "empty_content" };
@@ -43,10 +44,22 @@ export async function sendOpsMessageToUser(
     conversationId = created.id;
   }
 
-  const { error: msgError } = await admin
-    .from("dm_messages")
-    .insert({ conversation_id: conversationId, sender_id: systemUserId, content: text });
-  if (msgError) return { ok: false, reason: "send_failed" };
+  const messageRow: Record<string, unknown> = {
+    conversation_id: conversationId,
+    sender_id: systemUserId,
+    content: text,
+  };
+  // dedupKey 지정 시 dm_messages.dedup_key 로 멱등 발송(같은 키 재발송 = UNIQUE 위반 → 이미 발송됨).
+  if (dedupKey) messageRow.dedup_key = dedupKey;
+
+  const { error: msgError } = await admin.from("dm_messages").insert(messageRow);
+  if (msgError) {
+    // 멱등: 같은 dedup_key 로 이미 발송된 건이면 성공으로 간주(발송 성공 후 crash → 재발송 방지).
+    if (dedupKey && msgError.code === "23505") {
+      return { ok: true, conversationId };
+    }
+    return { ok: false, reason: "send_failed" };
+  }
 
   await admin
     .from("dm_conversations")

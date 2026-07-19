@@ -1,23 +1,27 @@
 /**
- * 신고 자동 블라인드 + outbox DB 실통합 테스트 (삼순 NO-GO 반영 검증).
+ * 신고 자동 블라인드 + outbox DB 실통합 테스트 (삼순 2차 NO-GO 반영 검증).
  *
- * ⚠️ 실행 전제: 마이그레이션 `supabase/migrations/20260720_report_blind_notice.sql`가
- *    대상 프로젝트에 **선적용**되어 있어야 한다(report_blind_notices 테이블 + 확장된
- *    auto_blind_on_report 트리거). 미적용 상태에서는 실행하지 않는다.
+ * ⚠️ 실행 전제: 마이그레이션 20260720_report_blind_notice.sql + 20260720_report_blind_notice_v2.sql
+ *    가 대상 프로젝트에 **선적용**되어 있어야 한다(report_blind_notices/claim RPC/dm dedup_key +
+ *    race-free · block-제외 트리거). 미적용 상태에서는 실행하지 않는다.
  *
- * 인메모리 스모크(report-blind-smoke.ts)가 재현 못 하는 실 DB 경로를 검증:
+ * ⚠️ 실사용자 무영향: 이 테스트는 자체 생성한 throwaway 계정(auth.users + profiles)만 쓴다.
+ *    실제 유저에게 쪽지가 가지 않으며(발송 경로는 상태머신 시뮬레이션으로만 검증), 시작·종료 시
+ *    생성 계정/행을 전부 삭제한다(auth.users 삭제 → profiles CASCADE).
+ *
+ * 검증 경로(인메모리 스모크가 못 하는 실 DB):
  *   ① 임계값 미만(2건) → 블라인드 안 됨 + outbox 없음
- *   ② 3번째 신고 → 신고 insert 와 같은 트랜잭션(트리거)에서 블라인드 전환
- *      (chat: deleted_at + content 마스킹) + outbox 1건 적재(author_id/notified_at NULL)
- *   ③ 4번째 신고 → 멱등(outbox 여전히 1건, 블라인드 유지) — 동시 전환 1회 보장의 관측 결과
- *   ④ 댓글 경로: 3건 → is_hidden + outbox (기존 자동숨김 동작 유지 + outbox 추가)
- *   ⑤ outbox 재시도 상태머신: 미발송 조회 → 실패 시 attempts++ 유지(재시도) →
- *      attempts>=MAX 제외 → 발송 성공(notified_at) 제외
+ *   ② 3번째 직접 신고 → 신고 insert 와 같은 트랜잭션(트리거)에서 블라인드 전환 + outbox 1건
+ *   ③(멱등) 4번째 → outbox 여전히 1건, deleted_at 불변
+ *   ④ 댓글 경로: 3건 → is_hidden + outbox
+ *   ⑤ block 스코프 제외: 2 직접 + 1 block(reason='block') → 블라인드 안 됨(직접 2명뿐)
+ *   ⑥ claim lease: pending → claim 1건 반환(attempts++·claimed_at), 즉시 재claim 0건(lease),
+ *      claim 해제 후 재claim 가능, notified_at/attempts>=MAX 제외
  *
  * 실행: node scripts/qa/report-blind-db-integration.mjs
- * 정리: 테스트가 생성한 chat/comment/reports/outbox 행만 시작·종료 시 삭제(실데이터 무손상).
  */
 import "./_env.mjs";
+import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -40,19 +44,6 @@ function check(name, cond, extra) {
   }
 }
 
-async function cleanup(chatIds, commentIds) {
-  for (const id of chatIds) {
-    await admin.from("reports").delete().eq("target_type", "chat").eq("target_id", id);
-    await admin.from("report_blind_notices").delete().eq("target_type", "chat").eq("target_id", id);
-    await admin.from("chat_messages").delete().eq("id", id);
-  }
-  for (const id of commentIds) {
-    await admin.from("reports").delete().eq("target_type", "comment").eq("target_id", id);
-    await admin.from("report_blind_notices").delete().eq("target_type", "comment").eq("target_id", id);
-    await admin.from("comments").delete().eq("id", id);
-  }
-}
-
 async function report(type, id, reporterId, reason = "abuse") {
   const { error } = await admin
     .from("reports")
@@ -60,22 +51,36 @@ async function report(type, id, reporterId, reason = "abuse") {
   if (error) throw new Error(`report insert failed: ${error.message}`);
 }
 
-async function run() {
-  // 리포터/작성자용 실제 profile id 확보(FK 충족). 시스템계정 제외.
-  const { data: profs, error: pErr } = await admin
+// ── throwaway 계정 생성/삭제 (실사용자 무영향) ────────────────────────────
+async function createTestUser(tag) {
+  const email = `qa+report-blind-${tag}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@keubo.test`;
+  const { data, error } = await admin.auth.admin.createUser({
+    email,
+    password: randomUUID(),
+    email_confirm: true,
+  });
+  if (error || !data?.user) throw new Error(`createUser failed: ${error?.message}`);
+  const id = data.user.id;
+  // profiles 는 트리거로 자동 생성될 수 있어 upsert(없으면 삽입, 있으면 유지).
+  const { error: pErr } = await admin
     .from("profiles")
-    .select("id")
-    .eq("is_bot", false)
-    .neq("id", "7b58d68e-e212-40aa-a96d-5018cb82cc81")
-    .limit(6);
-  if (pErr || !profs || profs.length < 5) throw new Error("need >=5 real profiles for test");
-  const [author, r1, r2, r3, r4] = profs.map((p) => p.id);
+    .upsert({ id, nickname: `qa-${tag}`, team_id: 1, is_bot: false }, { onConflict: "id" });
+  if (pErr) throw new Error(`profile upsert failed: ${pErr.message}`);
+  return id;
+}
 
+async function run() {
+  const users = {};
   const chatIds = [];
   const commentIds = [];
 
   try {
-    // ── 테스트 chat 메시지 생성 ──
+    for (const tag of ["author", "r1", "r2", "r3", "r4"]) {
+      users[tag] = await createTestUser(tag);
+    }
+    const { author, r1, r2, r3, r4 } = users;
+
+    // ── 테스트 chat 메시지 ──
     const { data: msg, error: mErr } = await admin
       .from("chat_messages")
       .insert({ room_id: ROOM, user_id: author, content: "테스트용 신고대상 메시지" })
@@ -99,7 +104,7 @@ async function run() {
       check("① 2건: outbox 없음", (count ?? 0) === 0, { count });
     }
 
-    // ② 3번째 신고 → 블라인드 전환 + outbox 적재
+    // ② 3번째 직접 신고 → 블라인드 전환 + outbox 적재
     await report("chat", chatId, r3);
     {
       const { data: m } = await admin
@@ -158,36 +163,100 @@ async function run() {
       check("④ 댓글 3건: outbox 1건 + author", (ob?.length ?? 0) === 1 && ob?.[0]?.author_id === author);
     }
 
-    // ⑤ outbox 재시도 상태머신 (chat outbox 행으로 검증)
-    const pending = () =>
-      admin
+    // ⑤ block 스코프 제외: 2 직접 + 1 block → 직접 2명뿐 → 블라인드 안 됨
+    const { data: msg2, error: m2Err } = await admin
+      .from("chat_messages")
+      .insert({ room_id: ROOM, user_id: author, content: "차단 자동신고 스코프 테스트" })
+      .select("id")
+      .single();
+    if (m2Err || !msg2) throw new Error(`chat insert2 failed: ${m2Err?.message}`);
+    const chatId2 = msg2.id;
+    chatIds.push(chatId2);
+    await report("chat", chatId2, r1); // 직접 1
+    await report("chat", chatId2, r2); // 직접 2
+    await report("chat", chatId2, r3, "block"); // 차단 자동 (제외 대상)
+    {
+      const { data: m } = await admin.from("chat_messages").select("deleted_at").eq("id", chatId2).single();
+      const { count } = await admin
         .from("report_blind_notices")
-        .select("id")
-        .is("notified_at", null)
-        .lt("attempts", MAX_ATTEMPTS)
+        .select("id", { count: "exact", head: true })
+        .eq("target_type", "chat")
+        .eq("target_id", chatId2);
+      check("⑤ 직접2+block1: 블라인드 안 됨(block 제외)", m?.deleted_at == null, { deleted_at: m?.deleted_at });
+      check("⑤ 직접2+block1: outbox 없음", (count ?? 0) === 0, { count });
+      // 직접 3번째 → 블라인드 전환(block 미포함 3)
+      await report("chat", chatId2, r4);
+      const { data: m2 } = await admin.from("chat_messages").select("deleted_at").eq("id", chatId2).single();
+      check("⑤ 직접3(block 무관): 블라인드됨", m2?.deleted_at != null);
+    }
+
+    // ⑥ claim lease 상태머신 (chat outbox 행으로 검증)
+    // 이전 상태 초기화(테스트 재현성) — claimed_at/attempts 리셋
+    await admin
+      .from("report_blind_notices")
+      .update({ claimed_at: null, attempts: 0, notified_at: null })
+      .eq("target_type", "chat")
+      .eq("target_id", chatId);
+    {
+      // 1차 claim → 1건 반환, attempts=1, claimed_at 세팅
+      const { data: c1, error: e1 } = await admin.rpc("claim_report_blind_notices", {
+        p_limit: 50,
+        p_max_attempts: MAX_ATTEMPTS,
+      });
+      if (e1) throw new Error(`claim rpc failed: ${e1.message}`);
+      const mine1 = (c1 ?? []).filter((r) => r.target_type === "chat" && r.target_id === chatId);
+      check("⑥ 1차 claim: 대상 1건 반환", mine1.length === 1, { len: mine1.length });
+      check("⑥ 1차 claim: attempts=1", mine1[0]?.attempts === 1, { a: mine1[0]?.attempts });
+      check("⑥ 1차 claim: claimed_at 세팅", mine1[0]?.claimed_at != null);
+
+      // 2차 즉시 claim → lease 로 같은 행 제외
+      const { data: c2 } = await admin.rpc("claim_report_blind_notices", { p_limit: 50, p_max_attempts: MAX_ATTEMPTS });
+      const mine2 = (c2 ?? []).filter((r) => r.target_type === "chat" && r.target_id === chatId);
+      check("⑥ 2차 즉시 claim: lease 로 제외(0건)", mine2.length === 0, { len: mine2.length });
+
+      // claim 해제(발송 실패 시뮬) → 재claim 가능
+      await admin.from("report_blind_notices").update({ claimed_at: null }).eq("target_type", "chat").eq("target_id", chatId);
+      const { data: c3 } = await admin.rpc("claim_report_blind_notices", { p_limit: 50, p_max_attempts: MAX_ATTEMPTS });
+      const mine3 = (c3 ?? []).filter((r) => r.target_type === "chat" && r.target_id === chatId);
+      check("⑥ 해제 후 재claim 가능(1건)", mine3.length === 1, { len: mine3.length });
+      check("⑥ 재claim attempts 증가(=2)", mine3[0]?.attempts === 2, { a: mine3[0]?.attempts });
+
+      // attempts>=MAX → claim 제외
+      await admin
+        .from("report_blind_notices")
+        .update({ attempts: MAX_ATTEMPTS, claimed_at: null })
         .eq("target_type", "chat")
         .eq("target_id", chatId);
-    {
-      let { data } = await pending();
-      check("⑤ 미발송+attempts<MAX 는 pending", (data?.length ?? 0) === 1);
+      const { data: c4 } = await admin.rpc("claim_report_blind_notices", { p_limit: 50, p_max_attempts: MAX_ATTEMPTS });
+      const mine4 = (c4 ?? []).filter((r) => r.target_type === "chat" && r.target_id === chatId);
+      check("⑥ attempts>=MAX: claim 제외", mine4.length === 0, { len: mine4.length });
 
-      // 실패 시뮬: attempts++ → 여전히 pending(재시도 유지)
-      await admin.from("report_blind_notices").update({ attempts: 3, last_error: "send_failed" }).eq("target_type", "chat").eq("target_id", chatId);
-      ({ data } = await pending());
-      check("⑤ 실패 attempts=3 여전히 pending(재시도)", (data?.length ?? 0) === 1);
-
-      // attempts>=MAX → pending 제외
-      await admin.from("report_blind_notices").update({ attempts: MAX_ATTEMPTS }).eq("target_type", "chat").eq("target_id", chatId);
-      ({ data } = await pending());
-      check("⑤ attempts>=MAX pending 제외", (data?.length ?? 0) === 0);
-
-      // 발송 성공 시뮬: notified_at 세팅 → pending 제외
-      await admin.from("report_blind_notices").update({ attempts: 4, notified_at: new Date().toISOString() }).eq("target_type", "chat").eq("target_id", chatId);
-      ({ data } = await pending());
-      check("⑤ notified_at 세팅 후 pending 제외", (data?.length ?? 0) === 0);
+      // notified_at 세팅 → claim 제외
+      await admin
+        .from("report_blind_notices")
+        .update({ attempts: 1, claimed_at: null, notified_at: new Date().toISOString() })
+        .eq("target_type", "chat")
+        .eq("target_id", chatId);
+      const { data: c5 } = await admin.rpc("claim_report_blind_notices", { p_limit: 50, p_max_attempts: MAX_ATTEMPTS });
+      const mine5 = (c5 ?? []).filter((r) => r.target_type === "chat" && r.target_id === chatId);
+      check("⑥ notified_at 세팅: claim 제외", mine5.length === 0, { len: mine5.length });
     }
   } finally {
-    await cleanup(chatIds, commentIds);
+    // 생성 행 정리
+    for (const id of chatIds) {
+      await admin.from("reports").delete().eq("target_type", "chat").eq("target_id", id);
+      await admin.from("report_blind_notices").delete().eq("target_type", "chat").eq("target_id", id);
+      await admin.from("chat_messages").delete().eq("id", id);
+    }
+    for (const id of commentIds) {
+      await admin.from("reports").delete().eq("target_type", "comment").eq("target_id", id);
+      await admin.from("report_blind_notices").delete().eq("target_type", "comment").eq("target_id", id);
+      await admin.from("comments").delete().eq("id", id);
+    }
+    // throwaway 계정 삭제(profiles CASCADE)
+    for (const id of Object.values(users)) {
+      await admin.auth.admin.deleteUser(id).catch(() => {});
+    }
   }
 }
 
@@ -196,7 +265,7 @@ run()
     console.log(`\nreport-blind DB integration: ${pass} passed, ${fail} failed`);
     process.exit(fail === 0 ? 0 : 1);
   })
-  .catch(async (e) => {
+  .catch((e) => {
     console.error("FATAL", e);
     process.exit(1);
   });
