@@ -219,30 +219,12 @@ body {
   background: var(--news-bg-dark) !important;
 }
 
-/* ===== Scrollbar ===== */
-::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--text-tertiary);
-  border-radius: 2px;
-}
-
-/* Hide the page-level (document) scrollbar for a native-app feel.
-   Inner overflow containers keep their thin bar via the rules above. */
-html,
-body {
+/* ===== Scrollbar: hidden app-wide for a native-app feel ===== */
+* {
   scrollbar-width: none; /* Firefox */
   -ms-overflow-style: none; /* legacy Edge */
 }
-html::-webkit-scrollbar,
-body::-webkit-scrollbar {
+::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
