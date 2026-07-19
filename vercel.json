@@ -51,7 +51,7 @@
     },
     {
       "path": "/api/cron/daily-analysis-live",
-      "schedule": "*/10 7-14 * * *"
+      "schedule": "*/10 7-15 * * *"
     },
     {
       "path": "/api/cron/retention",

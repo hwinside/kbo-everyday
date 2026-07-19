@@ -37,10 +37,13 @@ export interface LiveReadinessResult {
 }
 
 /**
- * live 분석을 지금 확정해도 되는지 판정(순수).
- * - 순위표: 팀별 (baseline 누적 경기수 + 오늘 finals) ≤ 현재 누적 경기수여야 함
- * - sanity: 현재 순위표가 expectedTeamCount(기본 10) 미만이면 부분 응답으로 보고 not ready
- * - 타이틀: 현재 원천이 baseline과 완전 동일하면(= 오늘 미반영) not ready
+ * live 분석을 지금 확정해도 되는지 판정(순수). 모든 게이트 fail-closed(불확실하면 not ready).
+ * - sanity: 현재 순위표 고유 팀 수가 expectedTeamCount(기본 10) 미만이면 부분 응답 → not ready
+ * - baseline 완전성: baseline 고유 팀 수가 expectedTeamCount 미만이면(누락 팀 0 대체로 false-ready 방지) not ready
+ * - 순위표: 팀별 (baseline 누적 경기수 + 오늘 finals) === 현재 누적 경기수 정확 일치
+ *   (current<expected=미반영 / current>expected=혼합·과반영 → 둘 다 not ready)
+ * - 타이틀 completeness: 현재 원천이 baseline 카테고리/행을 다 커버해야(빈 배열/부분 응답 배제)
+ * - 타이틀 settle: 현재 원천이 baseline과 완전 동일하면(= 오늘 미반영) not ready
  */
 export function evaluateLiveReadiness(params: {
   baselineStandings: ReadinessStandingRow[];
@@ -53,11 +56,23 @@ export function evaluateLiveReadiness(params: {
   const { baselineStandings, currentStandings, todayFinalGames, baselineStats, currentStats } = params;
   const expectedTeamCount = params.expectedTeamCount ?? 10;
 
-  // sanity: 순위표 원천이 부분 응답이면(팀 수 부족) 판정 보류.
-  if (currentStandings.length < expectedTeamCount) {
+  // sanity: 순위표 원천이 부분 응답이면(고유 팀 수 부족) 판정 보류.
+  const currentTeamIds = new Set(currentStandings.map((s) => s.teamId));
+  if (currentTeamIds.size < expectedTeamCount) {
     return {
       ready: false,
-      reason: `standings partial response: ${currentStandings.length}/${expectedTeamCount} teams`,
+      reason: `standings partial response: ${currentTeamIds.size}/${expectedTeamCount} teams`,
+      laggingTeams: [],
+    };
+  }
+
+  // baseline 완전성 — 누락 팀 baseline을 0으로 대체하면 그 팀이 항상 통과(false-ready)하므로
+  //   baseline도 완전(고유 팀 수 = expected)해야 함. 스냅샷 부분 저장/혼합 날짜 방어.
+  const baselineTeamIds = new Set(baselineStandings.map((s) => s.team_id));
+  if (baselineTeamIds.size < expectedTeamCount) {
+    return {
+      ready: false,
+      reason: `baseline incomplete: ${baselineTeamIds.size}/${expectedTeamCount} teams`,
       laggingTeams: [],
     };
   }
@@ -75,19 +90,37 @@ export function evaluateLiveReadiness(params: {
     }
   }
 
+  // 팀별 경기수: baseline + 오늘 finals === 현재 누적 (정확 일치 fail-closed).
   const laggingTeams: number[] = [];
   for (const [teamId, finals] of finalsByTeam) {
-    const expected = (baseGames.get(teamId) ?? 0) + finals;
+    const base = baseGames.get(teamId);
     const current = curGames.get(teamId);
-    if (current === undefined || current < expected) laggingTeams.push(teamId);
+    if (base === undefined || current === undefined || current !== base + finals) {
+      laggingTeams.push(teamId);
+    }
   }
   if (laggingTeams.length > 0) {
     const sorted = laggingTeams.sort((a, b) => a - b);
     return { ready: false, reason: `standings not settled: teams ${sorted.join(",")}`, laggingTeams: sorted };
   }
 
-  // 타이틀 settle — 현재 원천이 baseline과 완전 동일하면 아직 미반영으로 간주(별도 안전장치).
+  // 타이틀 completeness + settle.
   if (baselineStats.length > 0) {
+    const catCounts = (rows: ReadinessTitleRow[]) => {
+      const m = new Map<string, number>();
+      for (const r of rows) m.set(r.category, (m.get(r.category) ?? 0) + 1);
+      return m;
+    };
+    // completeness: 현재 원천이 baseline의 각 카테고리 행 수를 못 채우면(빈 배열/부분 응답) not ready.
+    const baseCat = catCounts(baselineStats);
+    const curCat = catCounts(currentStats);
+    for (const [cat, n] of baseCat) {
+      const cur = curCat.get(cat) ?? 0;
+      if (cur < n) {
+        return { ready: false, reason: `titles incomplete: ${cat} ${cur}/${n} rows`, laggingTeams: [] };
+      }
+    }
+    // settle: 현재 원천이 baseline과 완전 동일하면 아직 미반영으로 간주(별도 안전장치).
     const norm = (rows: ReadinessTitleRow[]) =>
       rows.map((r) => `${r.category}|${r.rank}|${r.player_name}|${r.value}`).sort().join("\n");
     if (norm(currentStats) === norm(baselineStats)) {

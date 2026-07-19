@@ -5,6 +5,9 @@
  * 커버: P0① readiness gate(+10팀 sanity·타이틀 settle) / P0② catch-up 타깃 해석 + 멱등성 +
  *       원자적 claim(stale→retry→ready→1회 저장 회귀 포함).
  */
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 import {
   evaluateLiveReadiness,
   resolveLiveTarget,
@@ -118,6 +121,86 @@ check(
   { ready: true, reason: "ready", laggingTeams: [] },
 );
 
+// ===== P0③ 불완전/혼합 원천 false-ready 방지 (삼순 재리뷰 3건 재현) =====
+// (a) baseline 1·2팀 누락 → 누락 팀 0 대체로 false-ready 되던 것 → not ready
+check(
+  "P0③ baseline 불완전(8팀) → not ready",
+  evaluateLiveReadiness({
+    baselineStandings: baselineStandings.slice(0, 8),
+    currentStandings: full({ 1: [51, 45, 5], 2: [48, 48, 5] }),
+    todayFinalGames,
+    baselineStats,
+    currentStats: statsMoved,
+  }),
+  { ready: false, reason: "baseline incomplete: 8/10 teams", laggingTeams: [] },
+);
+// (b) currentStats=[] (빈 타이틀 원천) → baseline과 "다르다"고 통과하던 것 → not ready(incomplete)
+check(
+  "P0③ 빈 타이틀 원천 → not ready",
+  evaluateLiveReadiness({
+    baselineStandings,
+    currentStandings: full({ 1: [51, 45, 5], 2: [48, 48, 5] }),
+    todayFinalGames,
+    baselineStats,
+    currentStats: [],
+  }),
+  { ready: false, reason: "titles incomplete: hr 0/1 rows", laggingTeams: [] },
+);
+// (c) 현재 경기수 expected+1(혼합·과반영) → current>=expected로 통과하던 것 → not ready(정확일치)
+check(
+  "P0③ 경기수 expected+1 과반영 → not ready",
+  evaluateLiveReadiness({
+    baselineStandings,
+    currentStandings: full({ 1: [52, 45, 5], 2: [48, 48, 5] }),
+    todayFinalGames,
+    baselineStats,
+    currentStats: statsMoved,
+  }),
+  { ready: false, reason: "standings not settled: teams 1", laggingTeams: [1] },
+);
+// (d) 타이틀 카테고리 1개만 반영(hr만, avg 누락) → not ready(incomplete)
+check(
+  "P0③ 타이틀 카테고리 부분 반영 → not ready",
+  evaluateLiveReadiness({
+    baselineStandings,
+    currentStandings: full({ 1: [51, 45, 5], 2: [48, 48, 5] }),
+    todayFinalGames,
+    baselineStats,
+    currentStats: [{ category: "hr", rank: 1, player_name: "A", value: 31 }],
+  }),
+  { ready: false, reason: "titles incomplete: avg 0/1 rows", laggingTeams: [] },
+);
+
+// ===== P0① 실제 cron 시간대 회귀 (자정 catch-up 구간이 vercel.json cron에 실제로 있는지) =====
+// cron hour 필드 → UTC 시간 집합 (A-B 범위 / 단일 H / 쉼표 복수 지원).
+function cronUtcHours(schedule: string): number[] {
+  const hourField = schedule.trim().split(/\s+/)[1];
+  const out: number[] = [];
+  for (const part of hourField.split(",")) {
+    if (part === "*") { for (let h = 0; h < 24; h++) out.push(h); }
+    else if (part.includes("-")) { const [a, b] = part.split("-").map(Number); for (let h = a; h <= b; h++) out.push(h); }
+    else out.push(Number(part));
+  }
+  return out;
+}
+const toKst = (utc: number) => (utc + 9) % 24;
+{
+  const vercelPath = join(dirname(fileURLToPath(import.meta.url)), "../../vercel.json");
+  const vercel = JSON.parse(readFileSync(vercelPath, "utf8")) as { crons: { path: string; schedule: string }[] };
+  const liveCron = vercel.crons.find((c) => c.path === "/api/cron/daily-analysis-live");
+  const schedCron = vercel.crons.find((c) => c.path === "/api/cron/daily-analysis");
+  ok("P0① cron: live 크론 존재", !!liveCron);
+  ok("P0① cron: scheduled 백스톱 크론 존재", !!schedCron);
+  if (liveCron && schedCron) {
+    const liveKst = new Set(cronUtcHours(liveCron.schedule).map(toKst));
+    ok("P0① cron: live가 자정 catch-up(KST 0시) 구간 포함", liveKst.has(0));
+    ok("P0① cron: live가 저녁(KST 16~23시) 구간 포함", [16, 17, 18, 19, 20, 21, 22, 23].every((h) => liveKst.has(h)));
+    // scheduled 백스톱은 KST 1시(UTC 16). live는 KST 1시를 침범하면 안 됨(백스톱과 레이스).
+    ok("P0① cron: scheduled 백스톱 KST 1시(UTC 16)", toKst(cronUtcHours(schedCron.schedule)[0]) === 1);
+    ok("P0① cron: live 마지막 tick(KST 0:50)이 scheduled(KST 1:00) 이전", !liveKst.has(1));
+  }
+}
+
 // ===== P0② 타깃 해석(catch-up) =====
 const terminal = (finals: number): SlateState => ({ hasGames: true, allTerminal: true, finalCount: finals });
 const inProgress: SlateState = { hasGames: true, allTerminal: false, finalCount: 1 };
@@ -213,6 +296,25 @@ async function main() {
     }
     ok("예외 → release 호출", released === true);
     ok("예외 → 재던짐", threw === true);
+  }
+
+  // P0② claim RPC 오류(마이그레이션 누락/권한) → contention(false)과 구분되어 throw → run/release 미호출·전파(route가 5xx로 종료). error를 false로 삼키면 200 skip으로 숨어 영구 미실행 놀침.
+  {
+    let ran = false;
+    let released = false;
+    let threw = false;
+    try {
+      await runLiveAnalysisWithClaim({
+        claim: async () => { throw new Error("claim rpc failed: relation does not exist"); },
+        release: async () => { released = true; },
+        run: async () => { ran = true; return { status: 200, body: { ok: true } }; },
+      });
+    } catch {
+      threw = true;
+    }
+    ok("P0② claim RPC 오류 → 전파(5xx로 종료)", threw === true);
+    ok("P0② claim RPC 오류 → run 미호출", ran === false);
+    ok("P0② claim RPC 오류 → release 미호출", released === false);
   }
 
   console.log(`\ndaily-analysis-live smoke: ${pass} passed, ${fail} failed`);
