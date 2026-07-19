@@ -3,6 +3,13 @@
 import { registerPlugin } from "@capacitor/core";
 import { isAndroid, isIOS } from "./platform";
 import { syncIosWidgetFavPlayers, syncIosWidgetMyTeam } from "../native-live-activity";
+import { supabase } from "../supabase/client";
+import {
+  createLockCardGateFence,
+  advanceLockCardGateFence,
+  captureLockCardGateFence,
+  shouldApplyLockCardLoad,
+} from "./lock-card-gate-fence";
 
 // 잠금화면 실시간 스코어 = ongoing notification (안드로이드 전용, A4).
 // 네이티브 GameNotificationPlugin(@CapacitorPlugin name="GameNotification")과 페어.
@@ -48,6 +55,8 @@ interface GameNotificationPlugin {
   setFavPlayers(opts: { json: string }): Promise<void>;
   getLiveUpdateState(): Promise<LiveUpdateState>;
   setLiveUpdateOptIn(opts: { enabled: boolean }): Promise<void>;
+  setLockCardEnabled(opts: { enabled: boolean }): Promise<void>;
+  getLockCardGateState(): Promise<{ enabled: boolean }>;
 }
 
 /** Android 16+(One UI 8.5) 잠금화면 라이브 카드(Promoted Ongoing) 지원/opt-in 상태. */
@@ -126,6 +135,85 @@ export async function setWidgetMyTeam(code: string): Promise<void> {
     await GameNotification.setMyTeam({ code });
   } catch {
     // silent
+  }
+}
+
+// 잠금카드 게이트 fence — load/bootstrap 결과가 명시 토글을 후승하지 못하게 막는
+// 공유 generation(삼순 #686 재리뷰 blocker①). 모든 경로(토글·부팅·카드 로드)가 이 인스턴스를 공유.
+const lockCardGateFence = createLockCardGateFence();
+
+/** load/bootstrap GET 시작 전 호출 — 응답 적용 시 applyAndroidLockCardGateFromLoad에 전달. */
+export function captureLockCardGateGeneration(): number {
+  return captureLockCardGateFence(lockCardGateFence);
+}
+
+/** 잠금화면 카드 마스터 게이트(서버 prefs.live_activity의 디바이스 미러) 동기화 — *명시 토글 전용*.
+ *  fence를 전진시켜 진행 중인 모든 load/bootstrap 결과를 무효화한다(iOS 캐시 보호 포함 —
+ *  advance는 플랫폼 무관). off면 네이티브가 현재 카드를 즉시 제거하고 이후 FCM game_live
+ *  수신 시에도 카드를 게시하지 않는다(홈위젯은 영향 없음 — game_live가 홈위젯과 잠금카드
+ *  겸용이라 서버 발송은 유지). 구 네이티브 빌드(메서드 부재)는 조용히 무시 — vc14+부터 유효. */
+export async function syncAndroidLockCardGate(enabled: boolean): Promise<void> {
+  advanceLockCardGateFence(lockCardGateFence);
+  if (!isAndroid) return;
+  try {
+    await GameNotification.setLockCardEnabled({ enabled });
+  } catch {
+    // silent — 구빌드/브릿지 실패(카드는 기존 동작 유지)
+  }
+}
+
+/** load/bootstrap 결과 적용 — 칐처 이후 명시 토글이 있었으면 폐기(false 반환, 네이티브 미쓰기).
+ *  적용되어도 fence는 전진하지 않는다(명시 토글만 전진). 반환값으로 소비자(UI/iOS 캐시)도
+ *  동일 판정을 공유한다. */
+export async function applyAndroidLockCardGateFromLoad(
+  enabled: boolean,
+  capturedGeneration: number,
+): Promise<boolean> {
+  if (!shouldApplyLockCardLoad(lockCardGateFence, capturedGeneration)) return false;
+  if (!isAndroid) return true;
+  try {
+    await GameNotification.setLockCardEnabled({ enabled });
+  } catch {
+    // silent — 구빌드/브릿지 실패(카드는 기존 동작 유지)
+  }
+  return true;
+}
+
+/** 안드 네이티브 잠금카드 게이트 capability/상태 프로브 — 메서드 부재(vc13 이하)는
+ *  supported:false. 마스터 토글 활성/업데이트 안내 판정용(삼순 #686 재리뷰 blocker②).
+ *  조회 전용이라 부작용 없음. */
+export interface AndroidLockCardGateState {
+  supported: boolean;
+  enabled: boolean;
+}
+
+export async function getAndroidLockCardGateState(): Promise<AndroidLockCardGateState> {
+  if (!isAndroid) return { supported: false, enabled: true };
+  try {
+    const r = await GameNotification.getLockCardGateState();
+    return { supported: true, enabled: r?.enabled !== false };
+  } catch {
+    return { supported: false, enabled: true }; // 메서드 부재 = 구빌드
+  }
+}
+
+/** 부팅/로그인 시 서버 live_activity pref → 네이티브 잠금카드 게이트 동기화(안드 전용).
+ *  다른 기기에서 꺼둔 유저/재설치(네이티브 디폴트 on) 복원용. 확정 응답일 때만 반영 —
+ *  비로그인/네트워크 실패 시 기존 네이티브 값 유지(임의 on 덮어쓰기 금지).
+ *  fence: GET 시작 전 칐처 → 그 사이 명시 토글이 있었으면 과거 값 폐기(삼순 blocker①). */
+export async function bootstrapAndroidLockCardGate(): Promise<void> {
+  if (!isAndroid) return;
+  try {
+    const gen = captureLockCardGateGeneration();
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) return;
+    const res = await fetch("/api/push/prefs", { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return;
+    const { prefs } = await res.json();
+    await applyAndroidLockCardGateFromLoad(prefs?.live_activity !== false, gen);
+  } catch {
+    // silent — 다음 부팅/마이페이지 진입 시 재동기화
   }
 }
 
