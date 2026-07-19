@@ -22,6 +22,7 @@
     "qa:news-dedup": "tsx scripts/qa/news-dedup-title-smoke.ts",
     "qa:news-roundup": "tsx scripts/qa/news-roundup-filter-smoke.ts",
     "qa:ticket-open": "tsx scripts/qa/ticket-open-smoke.ts",
+    "qa:watch-telemetry": "tsx scripts/qa/watch-telemetry-smoke.ts",
     "qa:gif-collector-matching": "tsx scripts/qa/gif-collector-matching-smoke.ts",
     "qa:gif-collector-slack-parser": "tsx scripts/qa/gif-collector-slack-parser-smoke.ts",
     "qa:gif-collector-inbox-resolver": "tsx scripts/qa/gif-collector-inbox-resolver-smoke.ts",
