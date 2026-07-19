@@ -11,6 +11,7 @@ import { submitDMReport } from "@/lib/supabase/useBlock";
 import { supabase } from "@/lib/supabase/client";
 import { OPERATOR_USER_ID } from "@/lib/constants/operator";
 import { NEWS_CLIPPER_IDS } from "@/lib/constants/news-clippers";
+import { isNoReplySender, noReplyBannerLabel } from "@/lib/constants/no-reply-senders";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { linkifyText } from "@/lib/linkify";
 import NewsClippingCard from "@/components/dm/NewsClippingCard";
@@ -82,6 +83,8 @@ export default function DMChatPage() {
   const isOperatorConv = otherId === OPERATOR_USER_ID;
   // 뉴스클리퍼 대화 — 자동 발송 전용, 답장 시 자동응답만 옴 (안내 배너 노출)
   const isClipperConv = otherId != null && NEWS_CLIPPER_IDS.has(otherId);
+  // 회신 불가(자동 발송 전용) 계정 — 클리퍼 + 긴급공지. 입력창 비활성 + 안내 배너.
+  const isNoReplyConv = isNoReplySender(otherId);
 
   // UI states
   const [showMenu, setShowMenu] = useState(false);
@@ -149,7 +152,7 @@ export default function DMChatPage() {
   const handleSend = async () => {
     // 상대 미확정(프로필 로드 전/실패)·클리퍼 대화방은 전송 금지 — 초기 렌더 레이스에
     // 입력창이 잠깐 떠도 실제 전송은 막는다 (PR #622 삼순 가드)
-    if (!otherId || isClipperConv) return;
+    if (!otherId || isNoReplyConv) return;
     // 사진은 운영팀 대화에서만 전송 (유저↔유저는 텍스트만)
     const sendImages = isOperatorConv ? images : [];
     if ((!input.trim() && sendImages.length === 0) || sending || uploading) return;
@@ -199,7 +202,7 @@ export default function DMChatPage() {
             ) : null}
             <h1 className="text-base font-bold text-text-primary truncate">{otherName}</h1>
           </div>
-          <p className="text-[10px] text-text-tertiary">{isClipperConv ? "자동 발송 전용" : "1:1 쪽지"}</p>
+          <p className="text-[10px] text-text-tertiary">{isNoReplyConv ? "자동 발송 전용" : "1:1 쪽지"}</p>
         </div>
         <div className="relative">
           <button onClick={() => setShowMenu(!showMenu)} className="p-1.5 rounded-full hover:bg-bg-tertiary transition-colors">
@@ -244,8 +247,8 @@ export default function DMChatPage() {
         <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-yellow-500/10 text-yellow-500 text-xs">
           <AlertTriangle size={14} className="flex-shrink-0" />
           <span>
-            {isClipperConv
-              ? "뉴스클리핑 전용 계정입니다. 문의는 '피드백 보내기'를 이용해주세요."
+            {isNoReplyConv
+              ? noReplyBannerLabel(otherId)
               : "쪽지는 개인 간 대화입니다. 금전 거래 시 사기에 주의하세요."}
           </span>
         </div>
@@ -324,11 +327,11 @@ export default function DMChatPage() {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input — 클리퍼 대화방은 입력창 비활성화 (자동 발송 전용, 하린아빠 확정).
-          상대 확정 전에는 composer 미렌더 — 클리퍼 판정 전 일반 입력창이 잠깐 뜨는 레이스 차단 */}
-      {!otherId ? null : isClipperConv ? (
+      {/* Input — 회신 불가 계정(클리퍼/긴급공지)은 입력창 비활성화 (자동 발송 전용, 하린아빠 확정).
+          상대 확정 전에는 composer 미렌더 — 회신불가 판정 전 일반 입력창이 잠깐 뜨는 레이스 차단 */}
+      {!otherId ? null : isNoReplyConv ? (
         <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe text-center text-sm text-text-tertiary">
-          뉴스클리핑 전용 계정입니다. 문의는 &apos;피드백 보내기&apos;를 이용해주세요.
+          {noReplyBannerLabel(otherId)}
         </div>
       ) : isBlocked ? (
         <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe text-center text-sm text-text-tertiary">
