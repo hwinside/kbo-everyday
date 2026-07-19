@@ -92,9 +92,9 @@ class WearStoreTest {
         assertEquals("G1", WearStore.lastPushGid(p))
         val syncedAt = WearStore.lastSyncAt(p)
         val cached = WearStore.loadCachedSnapshot(p)!!
-        // 방금 push(syncedAt) → 45초 이내는 fresh, 45초 초과는 stale(폴백 pull 발동)
-        assertFalse(WearTilePolicy.isStale(cached, syncedAt, syncedAt + 45_000L))
-        assertTrue(WearTilePolicy.isStale(cached, syncedAt, syncedAt + 45_001L))
+        // 방금 push(syncedAt) → 20초 이내는 fresh, 20초 초과는 stale(폴백 pull 발동)
+        assertFalse(WearTilePolicy.isStale(cached, syncedAt, syncedAt + 20_000L))
+        assertTrue(WearTilePolicy.isStale(cached, syncedAt, syncedAt + 20_001L))
     }
 
     @Test

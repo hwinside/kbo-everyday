@@ -11,9 +11,9 @@ object WearTilePolicy {
     // kind별 캐시 신선도 임계(이보다 오래되면 백그라운드 re-sync).
     // ⚠️ 이 pull 경로는 폰 단절 시 *폴백*이다. 라이브 20~40초 실시간 갱신의 주경로는
     // 폰 KboMessagingService → Data Layer(/kbo/game_state) → GameStateListenerService push
-    // bridge(WearPushPolicy)다. STALE_LIVE_MS는 그 push가 끊겼을 때 tile 재요청 시 재sync를
-    // 트리거하는 폴백 임계(freshness 60초보다 짧아 60초 tile 요청이 확실히 재sync를 부른다).
-    const val STALE_LIVE_MS = 45_000L
+    // bridge(WearPushPolicy)다. STALE_LIVE_MS(20초)는 그 push가 끊겼을 때 tile 재요청(freshness 30초)
+    // 시 재sync를 트리거하는 폴백 임계.
+    const val STALE_LIVE_MS = 20_000L
     const val STALE_TODAY_MS = 5 * 60_000L
     const val STALE_IDLE_MS = 15 * 60_000L
 
@@ -21,9 +21,9 @@ object WearTilePolicy {
     const val LIVE_DELAY_BADGE_MS = 5 * 60_000L
 
     // 백그라운드 sync 최소 재시도 간격 — requestUpdate ↔ onTileRequest 루프 방지.
-    // 원복(30초): push bridge가 주경로라 pull을 20초로 조일 필요가 없고, 이 상수를 공유하는
-    // KboComplicationServiceBase의 네트워크 sync까지 20초로 낮추면 배터리에 불리하다(삼순 2차).
-    const val MIN_SYNC_RETRY_MS = 30_000L
+    // renderer inter-update 하한 20초 선례(삼순 정정). push bridge가 주경로라 실 pull sync는 폰 단절
+    // 시에만 발생하므로 이 임계가 20초여도 상시 20초 폴링이 아니다(배터리 영향 미미).
+    const val MIN_SYNC_RETRY_MS = 20_000L
 
     /** 캐시가 백그라운드 re-sync 대상일 만큼 오래됐는지. */
     fun isStale(snap: WearSnapshot, lastSyncAtMs: Long, nowMs: Long): Boolean {
@@ -47,8 +47,8 @@ object WearTilePolicy {
 
     /**
      * freshness 힌트(OS best-effort — SLA 아님, 스펙 v2 §3):
-     * live 60초(AndroidX Tiles setFreshnessIntervalMillis 계약: 1분 미만은 권장 안 함/시스템 throttle 가능 —
-     *   20~40초 실시간 목표는 freshness가 아니라 push bridge(/kbo/game_state)로 달성, 이 pull은 폰 단절 폴백) /
+     * live 30초(fallback — setFreshnessIntervalMillis에 60초 하한 없음, renderer inter-update 20초 선례.
+     *   20~40초 실시간은 push bridge(/kbo/game_state)가 주경로로 달성, 이 pull은 폰 단절 폴백) /
      * loading 1분 / 예정(시작 전) min(30분, 시작까지) /
      * startedButStillScheduled 4분(#635 retry) / 그 외 30분.
      * ⚠️ Wear OS는 짧은 freshness를 저전력/앰비언트에서 늘릴 수 있어 SLA가 아니라 "목표"다.
@@ -56,7 +56,7 @@ object WearTilePolicy {
     fun freshnessForMs(snap: WearSnapshot, nowMs: Long): Long {
         val thirtyMin = 30 * 60_000L
         return when (snap.kind) {
-            "live" -> 60_000L
+            "live" -> 30_000L
             "loading" -> 60_000L
             "scheduled" -> {
                 val start = snap.startAt ?: return thirtyMin

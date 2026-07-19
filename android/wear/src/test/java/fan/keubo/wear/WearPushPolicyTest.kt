@@ -38,12 +38,14 @@ class WearPushPolicyTest {
         away: String = "LG", home: String = "KT",
         awayScore: Int = 3, homeScore: Int = 2,
         kind: String = "live", line: String = "LIVE 7회말 · 2사",
+        gameId: String? = null, sourceAt: Long? = null,
     ) = WearSnapshot(
         kind = kind, myTeamCode = "LG", awayCode = away, homeCode = home,
         awayScore = awayScore, homeScore = homeScore, line = line, rankLine = "2위",
         updatedAt = now - 30_000L, startAt = null,
         bases = WearBases(first = true, second = false, third = true),
         venue = "잠실", outs = 2, pitcher = "손아섭", batter = "오지환",
+        gameId = gameId, sourceAt = sourceAt,
     )
 
     private fun eval(
@@ -186,6 +188,62 @@ class WearPushPolicyTest {
         assertEquals(true, b?.second)
     }
 
+    // ── gameId / sourceAt(seq) 게이트 (삼순 추가) ──
+
+    @Test
+    fun `built live snapshot carries gameId and sourceAt`() {
+        val d = eval(push(gid = "G7", ts = 12345L)) as WearPushPolicy.Decision.Render
+        assertEquals("G7", d.snapshot.gameId)
+        assertEquals(12345L, d.snapshot.sourceAt)
+    }
+
+    @Test
+    fun `lower sourceAt vs cached dropped even without lastPushTs`() {
+        // 순서 기준을 cached.sourceAt에서도 잎는다(lastPushTs=0이어도 역전 차단)
+        val cached = cachedLive(gameId = "G1", sourceAt = now)
+        val d = eval(push(gid = "G1", ts = now - 5_000), cached = cached, lastPushTs = 0L, lastPushGid = "")
+        assertEquals("stale-ts", (d as WearPushPolicy.Decision.Drop).reason)
+    }
+
+    @Test
+    fun `final minimal does not flip different game`() {
+        // 같은 gameId에서만 end 적용 — cached=G1 live인데 game_end gid=G2이면 flip 금지
+        val cached = cachedLive(gameId = "G1", awayScore = 5, homeScore = 3)
+        val d = eval(
+            push(kind = "final", gid = "G2", away = "", home = "", status = ""),
+            cached = cached, lastPushGid = "G1",
+        )
+        assertEquals("unbuildable", (d as WearPushPolicy.Decision.Drop).reason)
+    }
+
+    @Test
+    fun `final minimal flips same game`() {
+        val cached = cachedLive(gameId = "G1", awayScore = 5, homeScore = 3)
+        val d = eval(
+            push(kind = "final", gid = "G1", away = "", home = "", status = ""),
+            cached = cached, lastPushGid = "G1",
+        ) as WearPushPolicy.Decision.Render
+        assertEquals("final", d.snapshot.kind)
+        assertEquals("경기 종료 · 승", d.snapshot.line)
+    }
+
+    @Test
+    fun `gameId and sourceAt survive json round trip`() {
+        val s = cachedLive(gameId = "G9", sourceAt = 777L)
+        val back = WearSnapshot.fromJson(s.toJson())!!
+        assertEquals("G9", back.gameId)
+        assertEquals(777L, back.sourceAt)
+    }
+
+    @Test
+    fun `legacy json without gameId parses to null`() {
+        // 구버전 캐시(gameId/sourceAt 없음) 호환
+        val legacy = """{"kind":"live","myTeamCode":"LG","awayCode":"LG","homeCode":"KT","awayScore":3,"homeScore":2,"line":"LIVE 7회말","rankLine":"2위","updatedAt":1000}"""
+        val back = WearSnapshot.fromJson(legacy)!!
+        assertNull(back.gameId)
+        assertNull(back.sourceAt)
+    }
+
     // ── content signature: updatedAt 제외(blocker 2) ──
 
     @Test
@@ -196,5 +254,13 @@ class WearPushPolicyTest {
         // 점수가 바뀌면 시그니처도 달라짐
         val c = cachedLive(awayScore = 4).copy(updatedAt = 1L)
         assertTrue(a.contentSignature() != c.contentSignature())
+    }
+
+    @Test
+    fun `content signature ignores gameId and sourceAt`() {
+        // gameId/sourceAt는 순서/식별 메타 — 이것만 달라도 duplicate no-op(재렌더 안 함)
+        val a = cachedLive(gameId = "G1", sourceAt = 1L)
+        val b = cachedLive(gameId = "G2", sourceAt = 999L)
+        assertEquals(a.contentSignature(), b.contentSignature())
     }
 }

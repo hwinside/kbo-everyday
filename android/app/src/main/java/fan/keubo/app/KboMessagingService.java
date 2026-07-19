@@ -143,7 +143,8 @@ public class KboMessagingService extends MessagingService {
             com.google.android.gms.wearable.DataMap m = req.getDataMap();
             m.putString("kind", kind);
             m.putString("gid", gameId == null ? "" : gameId);
-            m.putLong("ts", System.currentTimeMillis());
+            // 순서 기준 ts = 서버 원천 w_source_at(있으면, FCM 재정렬에도 강건) 우선, 없으면 폰 수신 시각.
+            m.putLong("ts", parseSourceAt(data.get("w_source_at")));
             putIf(m, "w_away", data.get("w_away"));
             putIf(m, "w_home", data.get("w_home"));
             putIf(m, "w_as", data.get("w_as"));
@@ -194,5 +195,16 @@ public class KboMessagingService extends MessagingService {
         if (value != null && !value.isEmpty()) {
             m.putString(key, value);
         }
+    }
+
+    /** 서버 w_source_at(epoch millis 문자열) 파싱 — 없거나 불왕하면 폰 수신 시각 fallback. */
+    private static long parseSourceAt(String raw) {
+        if (raw != null && !raw.isEmpty()) {
+            try {
+                return Long.parseLong(raw.trim());
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return System.currentTimeMillis();
     }
 }

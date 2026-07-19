@@ -73,12 +73,17 @@ object WearPushPolicy {
             if (team != away && team != home) return Decision.Drop("wrong-team")
         }
 
-        val sameGame = push.gid.isNotEmpty() && push.gid == lastPushGid
+        // same-game 판별: 캐시 스냅샷의 gameId 우선(그 경기의 스냅샷인지), 없으면 직전 수락 gid 백업.
+        val cachedGid = cached?.gameId ?: ""
+        val sameGame = push.gid.isNotEmpty() &&
+            (push.gid == cachedGid || push.gid == lastPushGid)
 
-        // out-of-order: 같은 경기에서 ts 역전이면 drop(더 오래된/재전송 push가 최신 상태를 덮어쓰지 못하게).
-        if (sameGame && push.ts < lastPushTs) return Decision.Drop("stale-ts")
+        // out-of-order: 같은 경기에서 sourceAt(=ts) 역전이면 drop(더 오래된/재전송 push가
+        // 최신 상태를 덮어쓰지 못하게). 비교 기준은 마지막 수락(Render+NoOp) sourceAt.
+        val lastAt = maxOf(lastPushTs, cached?.sourceAt ?: 0L)
+        if (sameGame && push.ts < lastAt) return Decision.Drop("stale-ts")
 
-        // terminal 고착: 같은 경기가 이미 종료/취소로 캐시됐는데 live가 오면 drop(역전 방지).
+        // terminal 고착: 같은 경기(gameId 일치)가 이미 종료/취소로 캐시됐는데 live가 오면 drop.
         if (sameGame && cached != null && (cached.kind == "final" || cached.kind == "cancelled") &&
             push.kind == "live"
         ) {
@@ -118,6 +123,7 @@ object WearPushPolicy {
                     pitcher = push.pitcher?.ifEmpty { null },
                     batter = push.batter?.ifEmpty { null },
                     lastPlay = push.lastPlay?.ifEmpty { null },
+                    gameId = push.gid.ifEmpty { null }, sourceAt = push.ts,
                 )
             }
             "cancelled" -> WearSnapshot(
@@ -127,6 +133,7 @@ object WearPushPolicy {
                 line = "경기 취소", rankLine = cached?.rankLine ?: "",
                 updatedAt = nowMs, startAt = null, bases = null,
                 venue = push.stadium?.ifEmpty { null },
+                gameId = push.gid.ifEmpty { null }, sourceAt = push.ts,
             )
             "final" -> {
                 val aw = push.away.uppercase()
@@ -142,18 +149,22 @@ object WearPushPolicy {
                         rankLine = cached?.rankLine ?: "",
                         updatedAt = nowMs, startAt = null, bases = null,
                         venue = push.stadium?.ifEmpty { null },
+                        gameId = push.gid.ifEmpty { null }, sourceAt = push.ts,
                     )
                 } else {
-                    // 최소 payload → 같은 경기 캐시를 종료로 flip. 단 live/final 캐시만(예정/다음경기
-                    // 카드를 0:0 종료로 오변환하지 않게 — wrong-team보다 우선하는 안전가드).
+                    // 최소 payload → 같은 경기 캐시를 종료로 flip. 단 (1)live/final 캐시이고
+                    // (2)push.gid가 있으면 cached.gameId와 일치해야 함(예정/다른 경기 카드를 0:0 종료로
+                    // 오변환하지 않게 — 삼순 '같은 gameId에서만 end 적용' 게이트).
                     val base = cached ?: return null
                     if (base.kind != "live" && base.kind != "final") return null
                     if (base.awayCode.isEmpty() || base.homeCode.isEmpty()) return null
+                    if (push.gid.isNotEmpty() && base.gameId != null && base.gameId != push.gid) return null
                     base.copy(
                         kind = "final",
                         line = "경기 종료 · ${finalResult(myTeam, base.awayCode, base.awayScore, base.homeScore)}",
                         updatedAt = nowMs, bases = null,
                         outs = null, pitcher = null, batter = null, lastPlay = null,
+                        sourceAt = push.ts,
                     )
                 }
             }

@@ -47,6 +47,9 @@ data class WearSnapshot(
     val winPitcher: String? = null,  // 승리투수 — final (하린아빠 7/17)
     val losePitcher: String? = null, // 패전투수 — final
     val savePitcher: String? = null, // 세이브투수 — final(없으면 null)
+    // push bridge 순서/식별 메타 (구버전 JSON 호환 — 렌더 무관, contentSignature 제외):
+    val gameId: String? = null,   // 어느 경기의 스냅샷인지 — terminal/cancel을 같은 경기에만 적용(삼순 게이트)
+    val sourceAt: Long? = null,   // 원천/수신 순서(서버 w_source_at 우선, 없으면 폰 push ts) — out-of-order drop 기준
 ) {
     val isLive: Boolean get() = kind == "live"
     val hasScore: Boolean get() = kind == "live" || kind == "final"
@@ -93,6 +96,8 @@ data class WearSnapshot(
         if (winPitcher != null) o.put("winPitcher", winPitcher)
         if (losePitcher != null) o.put("losePitcher", losePitcher)
         if (savePitcher != null) o.put("savePitcher", savePitcher)
+        if (gameId != null) o.put("gameId", gameId)
+        if (sourceAt != null) o.put("sourceAt", sourceAt)
         return o.toString()
     }
 
@@ -137,6 +142,8 @@ data class WearSnapshot(
                     winPitcher = if (o.has("winPitcher")) o.optString("winPitcher") else null,
                     losePitcher = if (o.has("losePitcher")) o.optString("losePitcher") else null,
                     savePitcher = if (o.has("savePitcher")) o.optString("savePitcher") else null,
+                    gameId = if (o.has("gameId")) o.optString("gameId") else null,
+                    sourceAt = if (o.has("sourceAt")) o.optLong("sourceAt") else null,
                 )
             } catch (_: Exception) {
                 null
