@@ -34,6 +34,7 @@ import {
   fetchChannelUploadsViaApi,
   fetchVideoDurations,
 } from "@/lib/video/youtube-api";
+import { reserveQuota } from "@/lib/video/youtube-quota";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const BACKFILL_LIMIT = 500; // max videos to backfill per run
@@ -178,8 +179,17 @@ export async function GET(req: NextRequest) {
   let fallbackNoUploads = 0;
   let fallbackFailed = 0;
   let fallbackQuotaUsed = 0;
+  let fallbackLedgerSkipped = 0;
+  let ledgerErr: string | undefined; // 원장 RPC 장애(백스톱 진행하되 warning 노출)
   const fallbackTargets = rssFailedChannels.slice(0, FALLBACK_CAP);
   for (const ch of fallbackTargets) {
+    // 공유 원장 예약(playlistItems.list = 1 unit). 잔여 없으면 fallback 중단.
+    const reservation = await reserveQuota(supabaseAdmin, 1);
+    if (reservation.ledgerError && !ledgerErr) ledgerErr = reservation.ledgerError;
+    if (!reservation.allowed) {
+      fallbackLedgerSkipped = fallbackTargets.length - fallbackQuotaUsed;
+      break;
+    }
     fallbackQuotaUsed++;
     const entries = await fetchChannelUploadsViaApi(ch.channel_id);
     if (entries === null) {
@@ -221,6 +231,7 @@ export async function GET(req: NextRequest) {
   // ── Duration backfill: fetch from YouTube API for NULL-duration videos ──
   let backfilled = 0;
   let backfillApiCalls = 0;
+  let backfillLedgerSkipped = false;
   try {
     const cutoff = new Date(Date.now() - BACKFILL_WINDOW_DAYS * 86_400_000).toISOString();
     const { data: nullRows } = await supabaseAdmin
@@ -233,6 +244,13 @@ export async function GET(req: NextRequest) {
     if (nullRows && nullRows.length > 0) {
       const ids = nullRows.map((r: { video_id: string }) => r.video_id);
       backfillApiCalls = Math.ceil(ids.length / 50);
+      // 공유 원장 예약(videos.list = 1 unit/call). 잔여 부족이면 backfill 생략.
+      const reservation = await reserveQuota(supabaseAdmin, backfillApiCalls);
+      if (reservation.ledgerError && !ledgerErr) ledgerErr = reservation.ledgerError;
+      if (!reservation.allowed) {
+        backfillLedgerSkipped = true;
+        throw new Error("quota ledger cap — backfill skipped");
+      }
       const durations = await fetchVideoDurations(ids);
 
       // Build lookup for source_type
@@ -278,20 +296,33 @@ export async function GET(req: NextRequest) {
     // Duration backfill is best-effort — don't fail the cron
   }
 
+  // fallback/backfill quota는 reserveQuota가 이미 원장에 반영함(이중 기록 방지로 record 생략).
   const errorCount = Object.keys(errors).length;
   const okCount = Object.keys(results).length;
   // Partial-success is "warning", not "error". The anomaly detector
   // (lib/admin/anomaly.ts) only triggers on consecutive "error" runs, so a
   // handful of dead channels no longer false-alarms when the bulk succeeded.
+  // ledger skip/장애는 성공으로 숨지 않고 warning으로 들어올린다(삼순 3번).
+  const ledgerDegraded = fallbackLedgerSkipped > 0 || backfillLedgerSkipped || !!ledgerErr;
   const status: "success" | "warning" | "error" =
-    errorCount === 0 ? "success" : okCount > 0 ? "warning" : "error";
+    errorCount > 0 && okCount === 0
+      ? "error"
+      : errorCount > 0 || ledgerDegraded
+        ? "warning"
+        : "success";
   const summary =
     `channels=${channels.length} upserted=${totalUpserted} ` +
     `ok=${okCount} err=${errorCount} ` +
     `fallback=recovered:${fallbackRecovered}/no_uploads:${fallbackNoUploads}/failed:${fallbackFailed}` +
-    `(quota=${fallbackQuotaUsed}) ` +
-    `backfilled=${backfilled} apiCalls=${backfillApiCalls}`;
-  const errorMessage = errorCount > 0 ? JSON.stringify(errors).slice(0, 900) : undefined;
+    `(quota=${fallbackQuotaUsed}${fallbackLedgerSkipped > 0 ? `,ledgerSkip:${fallbackLedgerSkipped}` : ""}) ` +
+    `backfilled=${backfilled}${backfillLedgerSkipped ? "(ledger-skip)" : ""} apiCalls=${backfillApiCalls}` +
+    `${ledgerErr ? ` LEDGER_ERR=${ledgerErr.slice(0, 60)}` : ""}`;
+  const errorMessage =
+    errorCount > 0
+      ? JSON.stringify(errors).slice(0, 900)
+      : ledgerErr
+        ? `quota ledger unavailable (${ledgerErr.slice(0, 120)}) — ran without shared cap, warning`
+        : undefined;
 
   await finishJob(logId, status, summary, errorMessage);
 

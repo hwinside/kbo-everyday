@@ -35,6 +35,14 @@ import {
   hasNonBaseballSignal,
   isPlayerShortRelevant,
 } from "@/lib/video/shorts-relevance";
+import {
+  reserveQuota,
+  quotaJobStatus,
+  isQuotaSignal,
+  quotaInfoFromError,
+  YouTubeApiError,
+  extractYouTubeError,
+} from "@/lib/video/youtube-quota";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
@@ -92,7 +100,11 @@ async function searchPlayerShorts(query: string): Promise<
 
   const res = await fetch(url);
   const data = await res.json();
-  if (data.error) throw new Error(data.error.message);
+  if (data.error || !res.ok) {
+    // status·reason 을 실어 던져 구조화된 quota 시그널 판별이 가능하게 한다(삼순 #709 3번).
+    const { message, reason } = extractYouTubeError(res.status, data);
+    throw new YouTubeApiError(message, { status: res.status, reason });
+  }
   return (data.items || []).map((it: YouTubeSearchApiItem) => ({
     video_id: it.id.videoId,
     title: decodeHtml(it.snippet.title),
@@ -189,19 +201,20 @@ export async function GET(req: NextRequest) {
   let queriedCount = 0;
   let quotaTripped = false; // runtime degrade (YouTube API가 quotaExceeded 반환 시)
 
-  /** YouTube API quota 계열 에러 감지 */
-  function isQuotaError(msg: string): boolean {
-    const m = msg.toLowerCase();
-    return (
-      m.includes("quotaexceeded") ||
-      m.includes("quota exceeded") ||
-      m.includes("dailylimitexceeded") ||
-      m.includes("usagelimits")
-    );
-  }
+  let ledgerSkipped = 0; // 공유 원장 잔여부족으로 건너뛴 검색
+  let ledgerErr: string | undefined; // 원장 RPC 장애(백스톱으로 진행했지만 warning으로 노출)
 
   for (const p of toQuery) {
     if (quotaTripped) break; // degrade: 이후 쿼리 전부 skip
+    // 공유 quota 원장 예약 — 잔여가 없으면 doomed 호출 자체를 건너뛴다
+    // (여러 YT 크론이 프로젝트 quota를 공유하므로 이 잡만의 budget으론 부족).
+    const reservation = await reserveQuota(supabaseAdmin, SEARCH_COST);
+    if (reservation.ledgerError && !ledgerErr) ledgerErr = reservation.ledgerError;
+    if (!reservation.allowed) {
+      quotaTripped = true; // 남은 quota 0 → 이후 전부 skip
+      ledgerSkipped = toQuery.length - queriedCount;
+      break;
+    }
     try {
       const query = `${p.name} ${p.team}`;
       const items = await searchPlayerShorts(query);
@@ -244,21 +257,28 @@ export async function GET(req: NextRequest) {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       errors[`${p.team}/${p.name}`] = msg;
-      if (isQuotaError(msg)) {
+      // 구조화된 quota 시그널(HTTP status·reason·대표 문구) 공용 판별(삼순 #709 3번).
+      if (isQuotaSignal(quotaInfoFromError(err))) {
         quotaTripped = true; // degrade 발동 — 다음 호출 skip
       }
     }
   }
 
   const errorCount = Object.keys(errors).length;
-  const skippedCount = quotaTripped
-    ? toQuery.length - queriedCount - (errorCount === 0 ? 0 : 1)
-    : 0;
+  // 원장 스킵이면 실패 없이 전량 skip, 런타임 403이면 마지막 1건이 quota 에러(실 에러 아님)
+  const realErrors = quotaTripped && ledgerSkipped === 0
+    ? Math.max(0, errorCount - 1)
+    : errorCount;
+  const skippedCount = ledgerSkipped > 0
+    ? ledgerSkipped
+    : quotaTripped
+      ? toQuery.length - queriedCount - (errorCount === 0 ? 0 : 1)
+      : 0;
 
-  // degrade 시에도 실패가 아니라 'success + warning' 으로 기록
-  // (삼순이 가드레일: quota 부족은 실패보다 축소/skip + 경고가 맞음)
-  const realErrors = quotaTripped ? errorCount - 1 : errorCount;
-  const status: "success" | "error" = realErrors === 0 ? "success" : "error";
+  // quota degrade는 실패가 아니라 warning(축소/skip). 성공 오표기 교정(2026-07-19 삼순 지적):
+  //   status를 quotaJobStatus로 통일 — hardError>0=error, degrade/원장장애=warning, else success.
+  //   원장 RPC 장애(ledgerErr)도 무음 성공으로 숨지 않게 warning으로 들어올린다(삼순 3번).
+  const status = quotaJobStatus({ hardErrors: realErrors, degraded: quotaTripped || !!ledgerErr });
 
   const summaryParts = [
     `upserted=${totalUpserted}`,
@@ -267,20 +287,27 @@ export async function GET(req: NextRequest) {
     `errors=${realErrors}`,
     `quota≈${queriedCount * SEARCH_COST}`,
   ];
-  if (quotaTripped) summaryParts.push(`DEGRADE=quota skipped=${Math.max(0, skippedCount)}`);
+  if (quotaTripped) {
+    const cause = ledgerSkipped > 0 ? "ledger-cap" : "runtime-403";
+    summaryParts.push(`DEGRADE=quota(${cause}) skipped=${Math.max(0, skippedCount)}`);
+  }
+  // LEDGER_ERR 는 join 이전에 push 해야 summary 에 실제로 포함된다(삼순 비차단 nit: 순서 교정).
+  if (ledgerErr) summaryParts.push(`LEDGER_ERR=${ledgerErr.slice(0, 60)}`);
   const summary = summaryParts.join(" ");
 
   const errorMessage =
     realErrors > 0
       ? JSON.stringify(errors).slice(0, 900)
       : quotaTripped
-        ? "quota degrade: remaining players skipped, job_runs warning only"
-        : undefined;
+        ? `quota degrade(${ledgerSkipped > 0 ? "shared ledger cap" : "runtime 403"}): ${Math.max(0, skippedCount)} players skipped — warning, not error`
+        : ledgerErr
+          ? `quota ledger unavailable (${ledgerErr.slice(0, 120)}) — ran without shared cap, warning`
+          : undefined;
 
   await finishJob(logId, status, summary, errorMessage);
 
   return NextResponse.json({
-    ok: realErrors === 0,
+    ok: status !== "error",
     status,
     totalUpserted,
     queriedCount,
@@ -288,6 +315,8 @@ export async function GET(req: NextRequest) {
     playersBudgetCap: toQuery.length,
     quotaEstimate: queriedCount * SEARCH_COST,
     degraded: quotaTripped,
+    degradeCause: quotaTripped ? (ledgerSkipped > 0 ? "ledger-cap" : "runtime-403") : null,
+    ledgerError: ledgerErr ?? null,
     skippedOnDegrade: Math.max(0, skippedCount),
     errors,
   });
