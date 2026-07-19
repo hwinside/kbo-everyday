@@ -9,15 +9,18 @@ import java.util.Locale
 object WearTilePolicy {
 
     // kind별 캐시 신선도 임계(이보다 오래되면 백그라운드 re-sync)
-    const val STALE_LIVE_MS = 60_000L
+    // live는 20~40초 실시간 목표(삼순 의견) — 라이브 틱마다 백그라운드 sync가 붙게 20초로 조인다.
+    const val STALE_LIVE_MS = 20_000L
     const val STALE_TODAY_MS = 5 * 60_000L
     const val STALE_IDLE_MS = 15 * 60_000L
 
     // live 캐시 5분 초과 → "업데이트 지연" 표시 (삼순 조건 1)
     const val LIVE_DELAY_BADGE_MS = 5 * 60_000L
 
-    // 백그라운드 sync 최소 재시도 간격 — requestUpdate ↔ onTileRequest 루프 방지
-    const val MIN_SYNC_RETRY_MS = 30_000L
+    // 백그라운드 sync 최소 재시도 간격 — requestUpdate ↔ onTileRequest 루프 방지.
+    // live freshness(30초)/stale(20초)와 맞물려 20~40초 목표를 막지 않도록 20초로 낮춘다
+    // (idle은 stale 15분이라 이 스로틀에 걸릴 일이 거의 없어 배터리 영향 없음).
+    const val MIN_SYNC_RETRY_MS = 20_000L
 
     /** 캐시가 백그라운드 re-sync 대상일 만큼 오래됐는지. */
     fun isStale(snap: WearSnapshot, lastSyncAtMs: Long, nowMs: Long): Boolean {
@@ -38,13 +41,15 @@ object WearTilePolicy {
 
     /**
      * freshness 힌트(OS best-effort — SLA 아님, 스펙 v2 §3):
-     * live 5분 / loading 1분 / 예정(시작 전) min(30분, 시작까지) /
+     * live 30초(삼순 20~40초 목표 — OS가 이 주기로 타일 재요청 → stale sync 발동) /
+     * loading 1분 / 예정(시작 전) min(30분, 시작까지) /
      * startedButStillScheduled 4분(#635 retry) / 그 외 30분.
+     * ⚠️ Wear OS는 짧은 freshness를 저전력/앰비언트에서 늘릴 수 있어 SLA가 아니라 "목표"다.
      */
     fun freshnessForMs(snap: WearSnapshot, nowMs: Long): Long {
         val thirtyMin = 30 * 60_000L
         return when (snap.kind) {
-            "live" -> 5 * 60_000L
+            "live" -> 30_000L
             "loading" -> 60_000L
             "scheduled" -> {
                 val start = snap.startAt ?: return thirtyMin
