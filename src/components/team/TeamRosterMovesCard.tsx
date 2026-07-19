@@ -60,15 +60,12 @@ export default function TeamRosterMovesCard({ team }: Props) {
     };
   }, [team.id]);
 
-  // 내역 없으면(또는 로딩/실패) 카드 자체를 숨긴다 — 빈 카드 노출 금지.
-  if (!moves || moves.length === 0) return null;
-
-  // 링크 없는 published 등록 렌더 경로 제거(삼순 P0 3차): 등록은 예외 없이 클릭 가능해야 하므로
-  // href 없는 등록은 렌더하지 않는다(API가 이미 fail-closed로 미반환 — UI 방어 심도). 말소는 링크 생략 허용.
-  const renderable = moves.filter((m) => m.moveType !== "register" || Boolean(m.href));
-  if (renderable.length === 0) return null;
-
+  // 등록/말소 내역이 없어도 카드는 항상 노출한다 (2026-07-19 하린아빠 지시:
+  // 유저가 궁금할 때 언제든 찾아볼 수 있는 고정 위치). 빈/로딩 상태는 안내 문구로 대체.
   const bgColor = getTeamBgColor(team);
+  // 링크 없는 published 등록은 렌더 제외(삼순 P0 3차 불변식 유지 — href 없는 등록 미노출).
+  // 말소는 링크 생략 허용(링크 없는 텍스트 렌더 OK).
+  const renderable = (moves ?? []).filter((m) => m.moveType !== "register" || Boolean(m.href));
   const groups = groupByDate(renderable);
 
   return (
@@ -82,7 +79,12 @@ export default function TeamRosterMovesCard({ team }: Props) {
       }}
     >
       <p className="text-xs text-text-tertiary mb-3">최근 등록·말소</p>
-      <div className="flex flex-col gap-3">
+      {moves === null ? (
+        <p className="text-xs text-text-tertiary">불러오는 중…</p>
+      ) : renderable.length === 0 ? (
+        <p className="text-xs text-text-tertiary">최근 30일간 등록·말소 소식이 없어요.</p>
+      ) : (
+        <div className="flex flex-col gap-3">
         {groups.map((g) => (
           <div key={g.date}>
             <p className="mb-1.5 text-[11px] font-semibold text-text-secondary">
@@ -121,7 +123,8 @@ export default function TeamRosterMovesCard({ team }: Props) {
             </ul>
           </div>
         ))}
-      </div>
+        </div>
+      )}
     </motion.div>
   );
 }
