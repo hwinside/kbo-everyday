@@ -27,20 +27,24 @@ if (!NOTICE_KEY) { console.error("NOTICE_KEY env 필요 (activate로 심은 키)
 
 async function androidUserIds(): Promise<string[]> {
   const set = new Set<string>();
-  let from = 0;
   const page = 1000;
+  let cursor: string | null = null;
+  // 삼순 #3: offset 대신 keyset cursor(user_id > cursor) — 동시 token insert/delete에도
+  // 페이지 경계 누락 없음(이미 지나간 커서 이전은 재조회 안 함). distinct user만 필요해
+  // 같은 user_id의 여러 토큰은 Set으로 흡수, 다음 페이지는 마지막 user_id 초과분만.
   for (;;) {
-    // 삼순 NO-GO #4: 안정 정렬(user_id) — 페이지네이션 중 row 누락/중복 방지
-    const { data, error } = await admin
+    let q = admin
       .from("device_push_tokens").select("user_id")
       .eq("platform", "android")
       .order("user_id", { ascending: true })
-      .range(from, from + page - 1);
+      .limit(page);
+    if (cursor) q = q.gt("user_id", cursor);
+    const { data, error } = await q;
     if (error) throw new Error("token query: " + error.message);
     if (!data || data.length === 0) break;
     for (const r of data) set.add((r as { user_id: string }).user_id);
+    cursor = (data[data.length - 1] as { user_id: string }).user_id;
     if (data.length < page) break;
-    from += page;
   }
   return [...set].sort();
 }

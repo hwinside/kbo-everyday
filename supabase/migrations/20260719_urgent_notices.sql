@@ -56,7 +56,7 @@ as $$ select 'cea40688-d0ff-49bd-a101-4b7cf9339b0e'::uuid $$;
 create or replace function send_urgent_notice(
   p_notice_key text,
   p_user_id uuid,
-  p_platform text default null
+  p_platform text
 ) returns text
 language plpgsql
 security definer
@@ -76,17 +76,24 @@ begin
     return 'skipped';
   end if;
 
-  -- SSOT 조회 + active/target 게이트 (동일 트랜잭션, deactivate 즉시 반영)
+  -- SSOT 조회 + active/target 게이트 — 삼순 #1: `FOR SHARE`로 notice 행을 잠그어
+  -- deactivate의 UPDATE(row exclusive)과 직렬화한다. 잠금 순서 불변식:
+  --   (a) RPC가 FOR SHARE 먼저 → deactivate UPDATE는 RPC commit까지 대기(그 1건은 발송되나
+  --       deactivate '반환 후' 신규 RPC는 이미 active=false를 읽음)
+  --   (b) deactivate가 먼저 commit → RPC FOR SHARE는 최신 커밋된 active=false 읽음 → inactive.
+  -- ∴ deactivate 반환 시점 이후 시작하는 모든 발송은 0건(kill switch 보장).
   select message, target_platform, active
     into v_message, v_target, v_active
-    from urgent_notices where notice_key = p_notice_key;
+    from urgent_notices where notice_key = p_notice_key
+    for share;
   if not found or not v_active then
     insert into urgent_notice_send_log (notice_key, user_id, result, detail)
     values (p_notice_key, p_user_id, 'inactive', 'notice missing or inactive');
     return 'inactive';
   end if;
-  -- platform 게이트: notice target이 'all'이 아니면 호출 platform과 일치해야 발송
-  if v_target <> 'all' and p_platform is not null and p_platform <> v_target then
+  -- platform 게이트(삼순 #3 fail-closed): notice target이 'all'이 아니면 호출 platform과
+  -- 정확히 일치해야 발송. p_platform은 필수이며 NULL/불일치는 IS DISTINCT FROM으로 차단.
+  if v_target <> 'all' and p_platform is distinct from v_target then
     insert into urgent_notice_send_log (notice_key, user_id, result, detail)
     values (p_notice_key, p_user_id, 'platform_skip', coalesce(p_platform, 'null'));
     return 'platform_skip';
@@ -130,3 +137,21 @@ $$;
 -- 삼순 P0: SECURITY DEFINER 함수의 기본 PUBLIC 실행권한 회수 → service_role만 호출.
 revoke execute on function send_urgent_notice(text, uuid, text) from public, anon, authenticated;
 grant execute on function send_urgent_notice(text, uuid, text) to service_role;
+
+-- 삼순 #2: RPC 트랜잭션 rollback과 무관하게 실패를 영구 기록하는 별도 함수(자기 트랜잭션).
+-- send.ts의 RPC 오류 catch에서 호출 — send_urgent_notice가 raise해 롤백도도 이 insert는 살아남는다.
+create or replace function log_urgent_notice_error(
+  p_notice_key text,
+  p_user_id uuid,
+  p_detail text
+) returns void
+language sql
+security definer
+set search_path = public, pg_temp
+as $$
+  insert into urgent_notice_send_log (notice_key, user_id, result, detail)
+  values (p_notice_key, p_user_id, 'error', left(coalesce(p_detail, ''), 500));
+$$;
+
+revoke execute on function log_urgent_notice_error(text, uuid, text) from public, anon, authenticated;
+grant execute on function log_urgent_notice_error(text, uuid, text) to service_role;

@@ -36,14 +36,26 @@ export async function sendNoticeToUser(
   admin: SupabaseClient,
   userId: string,
   notice: ActiveNotice,
-  platform?: string,
+  platform: string,
 ): Promise<SendNoticeResult> {
   if (userId === URGENT_NOTICE_USER_ID) return "skipped";
   const { data, error } = await admin.rpc("send_urgent_notice", {
     p_notice_key: notice.notice_key,
     p_user_id: userId,
-    p_platform: platform ?? null,
+    p_platform: platform,
   });
-  if (error) throw new Error("send_urgent_notice rpc: " + error.message);
+  if (error) {
+    // 삼순 #2: RPC 트랜잭션 rollback(claim/log 포함)과 무관하게 실패를 별도 트랜잭션으로 영구 기록
+    try {
+      await admin.rpc("log_urgent_notice_error", {
+        p_notice_key: notice.notice_key,
+        p_user_id: userId,
+        p_detail: error.message,
+      });
+    } catch (logErr) {
+      console.error("[urgent-notice] error-log failed:", (logErr as Error).message);
+    }
+    throw new Error("send_urgent_notice rpc: " + error.message);
+  }
   return (data as SendNoticeResult) ?? "skipped";
 }

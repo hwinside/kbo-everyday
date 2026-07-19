@@ -57,8 +57,9 @@ function rpcGate(
   alreadyClaimed: boolean,
 ): "sent" | "skipped" | "inactive" | "platform_skip" {
   if (!notice || !notice.active) return "inactive";           // #1 active 게이트(deactivate 즉시)
-  if (notice.target !== "all" && callerPlatform !== null && callerPlatform !== notice.target) {
-    return "platform_skip";                                    // #4 target 불일치
+  // #3 fail-closed: `IS DISTINCT FROM` — null/불일치 모두 차단(target='all'만 예외)
+  if (notice.target !== "all" && callerPlatform !== notice.target) {
+    return "platform_skip";                                    // #3/#4 target 불일치
   }
   if (alreadyClaimed) return "skipped";                       // #2 unique claim 멱등
   return "sent";
@@ -72,6 +73,31 @@ check("rpc: ios caller vs android target → platform_skip", rpcGate(androidActi
 check("rpc: all target accepts ios caller", rpcGate({ active: true, target: "all" }, "ios", false) === "sent");
 check("rpc: already claimed → skipped(멱등)", rpcGate(androidActive, "android", true) === "skipped");
 check("rpc: deactivate mid-batch → 남은 대상 inactive", rpcGate({ active: false, target: "android" }, "android", false) === "inactive");
+// #3 fail-closed: platform NULL은 android target 통과 못함(IS DISTINCT FROM)
+check("rpc: null platform vs android → platform_skip", rpcGate(androidActive, null, false) === "platform_skip");
+check("rpc: null platform vs all target → sent", rpcGate({ active: true, target: "all" }, null, false) === "sent");
+
+// --- keyset cursor 순회 안정성 (삼순 #3) ---
+// user_id > cursor 페이지네이션이 distinct user를 중복/누락 없이 모으는지 순수 재현.
+function keysetDistinct(rows: string[], page: number): string[] {
+  const sorted = [...rows].sort();
+  const set = new Set<string>();
+  let cursor: string | null = null;
+  for (;;) {
+    const slice = sorted.filter((u) => cursor === null || u > cursor).slice(0, page);
+    if (slice.length === 0) break;
+    for (const u of slice) set.add(u);
+    cursor = slice[slice.length - 1];
+    if (slice.length < page) break;
+  }
+  return [...set].sort();
+}
+// 같은 user_id 여러 토큰(경계 걸침) + 페이지 분할 → distinct 3명 정확
+const tokenRows = ["aaa", "aaa", "bbb", "ccc", "ccc", "ccc"];
+const ks = keysetDistinct(tokenRows, 2);
+check("keyset: distinct count", ks.length === 3);
+check("keyset: no dup, sorted", ks.join(",") === "aaa,bbb,ccc");
+check("keyset: page=1 same result", keysetDistinct(tokenRows, 1).join(",") === "aaa,bbb,ccc");
 
 console.log(`\nurgent-notice smoke: ${pass}/${pass + fail} passed`);
 if (fail > 0) process.exit(1);
