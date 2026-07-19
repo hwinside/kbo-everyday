@@ -7,7 +7,8 @@
 -- 넘기면 이 RPC가 서버측에서 IP 해시(원본 미저장) + 일자·플랫폼별 upsert 증가한다.
 -- ⚠️ 이 마이그레이션은 PR 머지 전 prod에 선적용해야 한다(미들웨어가 record_watch_ping에 의존).
 
-create extension if not exists pgcrypto;
+-- Supabase는 pgcrypto를 extensions 스키마에 설치한다(public 아님). digest()는 반드시 extensions.digest로 명시.
+create extension if not exists pgcrypto with schema extensions;
 
 -- 일자(KST)·플랫폼·해시IP 단위 집계 — distinct ip_hash ≈ 대략의 워치 대수, sum(hits) = 호출량.
 create table if not exists watch_pings (
@@ -36,8 +37,9 @@ declare
   plat text;
 begin
   plat := case when p_platform in ('wear', 'apple') then p_platform else 'unknown' end;
+  -- ⚠️ extensions.digest 명시 — 함수 search_path=public이라 스키마 미지정 시 'function digest does not exist' (삼순 2차 P0).
   h := encode(
-    digest(coalesce(nullif(p_ip, ''), 'unknown') || '::kbo-watch-ping', 'sha256'),
+    extensions.digest(coalesce(nullif(p_ip, ''), 'unknown') || '::kbo-watch-ping', 'sha256'),
     'hex'
   );
   insert into watch_pings (ping_date, platform, ip_hash, hits)
