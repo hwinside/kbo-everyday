@@ -650,7 +650,9 @@ public class GameScoreWidget extends AppWidgetProvider {
         } else {
             v.setViewVisibility(R.id.ncc_score, View.VISIBLE);
             v.setViewVisibility(R.id.ncc_score_scheduled, View.GONE);
-            v.setImageViewBitmap(R.id.ncc_score, textBitmap(context, e.as + " : " + e.hs, 20f, 0xFFF5F5F7));
+            // 24f — 잠금 접힌 카드 스코어 가독성(하린아빠 2026-07-19 "스코어 숫자 너무 작아").
+            // 레이아웃도 wrap_content로 바꿔 좁은 카드에서 축소되지 않게 함(notif_card_compact.xml).
+            v.setImageViewBitmap(R.id.ncc_score, textBitmap(context, e.as + " : " + e.hs, 24f, 0xFFF5F5F7));
         }
 
         // 상태 pill — 홈위젯과 동일 문구: 예정=시각, 종료="경기 종료", 취소="경기 취소", 라이브="● N회초".

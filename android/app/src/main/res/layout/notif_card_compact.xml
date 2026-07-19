@@ -29,19 +29,34 @@
             android:scaleType="fitCenter"
             android:src="@drawable/teamlogo_sk"
             android:contentDescription="@null" />
-        <ImageView
-            android:id="@+id/ncc_away_name"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
-            android:adjustViewBounds="true"
-            android:contentDescription="@null" />
-
-        <!-- 가운데: 점수(라이브/종료) or 경기 예정·취소 문구 — 비트맵이라 wrap 컨테이너로 중앙 정렬 -->
+        <!-- away 약어: weight=1 flex로 감싸 슬랙을 흡수 → 좁은 잠금 알림에서 눌리는 쪽은
+             약어(로고로 팀 식별 가능)이고, 가운데 점수는 원본 크기를 유지한다.
+             gravity=start → 약어가 로고 옆에 붙고 슬랙(여백)은 점수 쪽으로 생긴다. -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:orientation="horizontal"
+            android:gravity="start|center_vertical">
+            <ImageView
+                android:id="@+id/ncc_away_name"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:adjustViewBounds="true"
+                android:contentDescription="@null" />
+        </LinearLayout>
+
+        <!-- 가운데: 점수(라이브/종료) or 경기 예정·취소 문구.
+             wrap_content(weight 없음)라 항상 원본 비트맵 크기로 렌더 — 좁은 알림 폭에서
+             flex(약어)가 먼저 양보하므로 점수가 축소·클립되지 않는다.
+             (기존: 점수가 weight=1 flex라 폭이 좁으면 adjustViewBounds가 점수를 통째로
+              축소해 약어보다 작게 보이던 버그. 2026-07-19 하린아빠 제보.) -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:layout_marginEnd="6dp"
             android:orientation="horizontal"
             android:gravity="center">
             <ImageView
@@ -59,13 +74,22 @@
                 android:contentDescription="@null" />
         </LinearLayout>
 
-        <ImageView
-            android:id="@+id/ncc_home_name"
-            android:layout_width="wrap_content"
+        <!-- home 약어: away와 대칭 flex. gravity=end → 약어가 home 로고 옆에 붙고
+             슬랙(여백)은 점수 쪽으로 생겨 점수가 가운데 정렬을 유지한다. -->
+        <LinearLayout
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="6dp"
-            android:adjustViewBounds="true"
-            android:contentDescription="@null" />
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:gravity="end|center_vertical">
+            <ImageView
+                android:id="@+id/ncc_home_name"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:adjustViewBounds="true"
+                android:contentDescription="@null" />
+        </LinearLayout>
         <ImageView
             android:id="@+id/ncc_home_logo"
             android:layout_width="26dp"
