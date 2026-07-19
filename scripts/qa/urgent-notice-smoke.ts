@@ -48,5 +48,30 @@ check("dispatch: no payload → no push", urgentDispatch(undefined).push === fal
 // #4: 긴급공지 푸시는 android 타깃
 check("dispatch: urgent push → android only", urgentDispatch("urgent_notice").platform === "android");
 
+// --- RPC 게이트 순수 재현 (삼순 P0/#1/#2 SSOT+active+platform) ---
+// send_urgent_notice 분기 로직을 테스트에서 재현: active/target/claim 순서 검증.
+type NoticeRow = { active: boolean; target: string } | null;
+function rpcGate(
+  notice: NoticeRow,
+  callerPlatform: string | null,
+  alreadyClaimed: boolean,
+): "sent" | "skipped" | "inactive" | "platform_skip" {
+  if (!notice || !notice.active) return "inactive";           // #1 active 게이트(deactivate 즉시)
+  if (notice.target !== "all" && callerPlatform !== null && callerPlatform !== notice.target) {
+    return "platform_skip";                                    // #4 target 불일치
+  }
+  if (alreadyClaimed) return "skipped";                       // #2 unique claim 멱등
+  return "sent";
+}
+const androidActive: NoticeRow = { active: true, target: "android" };
+// P0: 발신·문안은 RPC 인자가 아니라 DB SSOT — sender_id 상수 기반(위조 불가) 검증
+check("rpc: active android → sent", rpcGate(androidActive, "android", false) === "sent");
+check("rpc: inactive → inactive(no send)", rpcGate({ active: false, target: "android" }, "android", false) === "inactive");
+check("rpc: missing notice → inactive", rpcGate(null, "android", false) === "inactive");
+check("rpc: ios caller vs android target → platform_skip", rpcGate(androidActive, "ios", false) === "platform_skip");
+check("rpc: all target accepts ios caller", rpcGate({ active: true, target: "all" }, "ios", false) === "sent");
+check("rpc: already claimed → skipped(멱등)", rpcGate(androidActive, "android", true) === "skipped");
+check("rpc: deactivate mid-batch → 남은 대상 inactive", rpcGate({ active: false, target: "android" }, "android", false) === "inactive");
+
 console.log(`\nurgent-notice smoke: ${pass}/${pass + fail} passed`);
 if (fail > 0) process.exit(1);

@@ -19,6 +19,7 @@ const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession:
 
 const NOTICE_KEY = (process.env.NOTICE_KEY ?? "").trim();
 const TARGET = (process.env.TARGET ?? "android").trim();
+const CONFIRM = process.env.CONFIRM === "activate";
 const MESSAGE = (process.env.MESSAGE_FILE
   ? readFileSync(process.env.MESSAGE_FILE, "utf8")
   : process.env.MESSAGE ?? "").trim();
@@ -28,6 +29,13 @@ if (!["android", "ios", "all"].includes(TARGET)) { console.error("TARGET는 andr
 if (!MESSAGE) { console.error("MESSAGE_FILE 또는 MESSAGE env 필요"); process.exit(1); }
 
 async function main() {
+  console.log(`--- 활성화 대상 ---\nnotice_key=${NOTICE_KEY} target=${TARGET} (${MESSAGE.length}자)`);
+  console.log(`--- 문안 미리보기 ---\n${MESSAGE}\n-----------------`);
+  if (!CONFIRM) {
+    console.log("DRY-RUN (미적용). 실제 활성화려면 CONFIRM=activate 를 지정하세요.");
+    console.log("⚠️ 활성화 즉시 신규 안드 가입자에게 자동발송이 시작됩니다.");
+    return;
+  }
   const { error } = await admin.from("urgent_notices").upsert(
     { notice_key: NOTICE_KEY, message: MESSAGE, target_platform: TARGET, active: true, deactivated_at: null },
     { onConflict: "notice_key" },

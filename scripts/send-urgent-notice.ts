@@ -30,15 +30,19 @@ async function androidUserIds(): Promise<string[]> {
   let from = 0;
   const page = 1000;
   for (;;) {
+    // 삼순 NO-GO #4: 안정 정렬(user_id) — 페이지네이션 중 row 누락/중복 방지
     const { data, error } = await admin
-      .from("device_push_tokens").select("user_id").eq("platform", "android").range(from, from + page - 1);
+      .from("device_push_tokens").select("user_id")
+      .eq("platform", "android")
+      .order("user_id", { ascending: true })
+      .range(from, from + page - 1);
     if (error) throw new Error("token query: " + error.message);
     if (!data || data.length === 0) break;
     for (const r of data) set.add((r as { user_id: string }).user_id);
     if (data.length < page) break;
     from += page;
   }
-  return [...set];
+  return [...set].sort();
 }
 
 async function main() {
@@ -50,6 +54,11 @@ async function main() {
   if (nErr) { console.error("notice 조회 실패:", nErr.message); process.exit(1); }
   if (!notice) { console.error(`notice 없음 — 먼저 activate-urgent-notice.ts 실행 (key=${NOTICE_KEY})`); process.exit(1); }
   if (!notice.active) { console.error("notice가 비활성(active=false) — 발송 중단"); process.exit(1); }
+  // 삼순 NO-GO #4: batch는 android 대상이라 notice target이 android/all이 아니면 fail-closed
+  if (notice.target_platform !== "android" && notice.target_platform !== "all") {
+    console.error(`target_platform=${notice.target_platform} — 이 배치는 android 대상 전용(android|all만 허용)`);
+    process.exit(1);
+  }
 
   const targets = await androidUserIds();
   console.log(`대상(안드 앱 유저): ${targets.length}명 / notice_key=${NOTICE_KEY} / target=${notice.target_platform}`);
@@ -62,7 +71,8 @@ async function main() {
   let sent = 0, skipped = 0, failed = 0;
   for (const userId of targets) {
     try {
-      const r = await sendNoticeToUser(admin, userId, { notice_key: notice.notice_key, message: notice.message });
+      // batch는 android 대상 — RPC target 게이트에 platform 전달(#4)
+      const r = await sendNoticeToUser(admin, userId, { notice_key: notice.notice_key, message: notice.message }, "android");
       if (r === "sent") { sent++; if (sent % 200 === 0) console.log(`  ...${sent} sent`); }
       else skipped++;
     } catch (e) {

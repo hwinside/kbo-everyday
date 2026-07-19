@@ -1,6 +1,5 @@
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
-import { getActiveNotices, sendNoticeToUser } from "@/lib/urgent-notice/send";
 
 const WELCOME_MESSAGE = `안녕하세요, 크보팬 운영팀입니다 ⚾
 
@@ -28,13 +27,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false }, { status: 401 });
   }
 
-  // 클라이언트 플랫폼(가입 기기) — 신규 안드 가입자 긴급공지 자동발송에 사용. 바디 없으면 undefined.
-  let platform: string | undefined;
-  try {
-    const body = await request.json();
-    if (body && typeof body.platform === "string") platform = body.platform;
-  } catch { /* 바디 선택 */ }
-
   try {
     const admin = getSupabaseAdmin();
 
@@ -56,16 +48,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, skipped: true, reason: "existing_user" });
     }
 
-    // 신규 안드로이드 가입자 — 활성 긴급공지 즉시 발송(심사 승인 시 active=false로 중단).
-    // 환영 DM과 독립 — 실패해도 가입 흐름을 막지 않는다. 멱등(notice_key 기준).
-    if (platform === "android") {
-      try {
-        const notices = await getActiveNotices(admin, "android");
-        for (const n of notices) await sendNoticeToUser(admin, user.id, n);
-      } catch (e) {
-        console.error("welcome-dm urgent-notice failed:", (e as Error).message);
-      }
-    }
+    // 신규 안드 가입자 긴급공지 자동발송은 /api/push/register-device(서버 검증 platform)로 이관
+    // (삼순 NO-GO #3 — 클라 body.platform 미신뢰, 토큰 등록 성공 시점에 발송).
 
     // 정렬해서 저장 (user1 < user2)
     const [u1, u2] = [systemUserId, user.id].sort();
