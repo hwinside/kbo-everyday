@@ -7,6 +7,7 @@ import { updateProfile } from "@/lib/supabase/auth";
 import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
+import { platform } from "@/lib/capacitor/platform";
 
 interface RawGameData {
   gameId: string;
@@ -76,7 +77,11 @@ export function useHomeInit(options?: UseHomeInitOptions) {
             if (session?.access_token) {
               await fetch("/api/welcome-dm", {
                 method: "POST",
-                headers: { Authorization: `Bearer ${session.access_token}` },
+                headers: {
+                  Authorization: `Bearer ${session.access_token}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ platform }),
               });
             }
           } catch { /* 환영 DM 실패해도 무시 */ }
