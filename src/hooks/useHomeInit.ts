@@ -19,6 +19,10 @@ interface RawGameData {
   status: "scheduled" | "live" | "final" | "cancelled";
   inning?: string;
   isTop?: boolean;
+  awayStarterName?: string | null;
+  homeStarterName?: string | null;
+  winPitcher?: string | null;
+  losePitcher?: string | null;
   broadcastChannels?: BroadcastChannel[];
 }
 
@@ -45,6 +49,8 @@ interface UseHomeInitOptions {
   /** 서버에서 prefetch한 경기 데이터 — 있으면 /api/games 재호출 스킵 */
   initialGames?: HomeGame[];
   initialIsPreseason?: boolean;
+  /** Pull-to-refresh 트리거. >0으로 바뀌면 서버 prop으로 고정된 오늘 경기를 클라이언트에서 재페치한다. */
+  refreshNonce?: number;
 }
 
 export function useHomeInit(options?: UseHomeInitOptions) {
@@ -86,9 +92,11 @@ export function useHomeInit(options?: UseHomeInitOptions) {
   }, [user, profile]);
 
   // 오늘의 경기 (API + 시범경기 fallback)
-  // initialGames가 서버에서 전달되었으면 클라이언트 재호출 스킵
+  // initialGames가 서버에서 전달되었으면 초기 mount 시에만 클라이언트 재호출 스킵.
+  // 단 pull-to-refresh(refreshNonce>0) 때는 서버 prop이 상태로 동기화 안 되므로 다시 페치한다.
   useEffect(() => {
-    if (options?.initialGames && options.initialGames.length > 0) return;
+    const nonce = options?.refreshNonce ?? 0;
+    if (nonce === 0 && options?.initialGames && options.initialGames.length > 0) return;
 
     const today = new Date();
     const dateStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
@@ -107,6 +115,11 @@ export function useHomeInit(options?: UseHomeInitOptions) {
           awayScore: g.awayScore ?? 0,
           status: g.status,
           inning: g.status === "live" ? `${g.inning}회${g.isTop ? "초" : "말"}` : null,
+          // 예고선발(예정)·승·패투수(종료) 보존 — HomeClientShell.mapApiGame과 동일. pull 재페치 시 카드 필드/위젯 snapshot 유지.
+          awayStarterName: g.awayStarterName ?? null,
+          homeStarterName: g.homeStarterName ?? null,
+          winPitcher: g.winPitcher ?? null,
+          losePitcher: g.losePitcher ?? null,
           broadcastChannels: g.broadcastChannels,
         }));
         if (games.length > 0) {
@@ -132,7 +145,8 @@ export function useHomeInit(options?: UseHomeInitOptions) {
         }
       })
       .catch(() => {});
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options?.refreshNonce]);
 
   // team-changed 이벤트 리스닝 (마이페이지에서 구단 변경 시 즉시 반영)
   useEffect(() => {

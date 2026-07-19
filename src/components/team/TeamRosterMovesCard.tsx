@@ -42,34 +42,54 @@ function groupByDate(moves: Move[]): { date: string; items: Move[] }[] {
   return groups;
 }
 
+/** 로딩 / 실패(비정상 응답·fetch reject) / 준비완료(정상 빈 포함)를 분리 표현.
+ * 실패와 "정상 0건"을 구분 못 하던 문제(삼순 NO-GO) 방지 — 무효 상태를 표현 불가로 만든다. */
+type LoadState =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "ready"; moves: Move[] };
+
+// 기본 노출 개수 — 처음엔 가장 최근 N개만 보여주고 '전체보기'로 시즌 전체를 펼친다
+// (2026-07-19 하린아빠 스펙). 조회는 시즌 전체(365일)로 하되 접힘 상태에서 3개로 한정.
+const PREVIEW_COUNT = 3;
+
+
 export default function TeamRosterMovesCard({ team }: Props) {
-  const [moves, setMoves] = useState<Move[] | null>(null);
+  const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     let aborted = false;
-    fetch(`/api/roster-moves?teamId=${team.id}&days=30`)
-      .then((r) => (r.ok ? r.json() : null))
+    fetch(`/api/roster-moves?teamId=${team.id}`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
       .then((d) => {
-        if (!aborted) setMoves(Array.isArray(d?.moves) ? d.moves : []);
+        if (!aborted)
+          setState({ status: "ready", moves: Array.isArray(d?.moves) ? d.moves : [] });
       })
       .catch(() => {
-        if (!aborted) setMoves([]);
+        if (!aborted) setState({ status: "error" });
       });
     return () => {
       aborted = true;
     };
   }, [team.id]);
 
-  // 내역 없으면(또는 로딩/실패) 카드 자체를 숨긴다 — 빈 카드 노출 금지.
-  if (!moves || moves.length === 0) return null;
-
-  // 링크 없는 published 등록 렌더 경로 제거(삼순 P0 3차): 등록은 예외 없이 클릭 가능해야 하므로
-  // href 없는 등록은 렌더하지 않는다(API가 이미 fail-closed로 미반환 — UI 방어 심도). 말소는 링크 생략 허용.
-  const renderable = moves.filter((m) => m.moveType !== "register" || Boolean(m.href));
-  if (renderable.length === 0) return null;
-
+  // 등록/말소 내역이 없어도 카드는 항상 노출한다 (2026-07-19 하린아빠 지시:
+  // 유저가 궁금할 때 언제든 찾아볼 수 있는 고정 위치). 빈/로딩 상태는 안내 문구로 대체.
   const bgColor = getTeamBgColor(team);
-  const groups = groupByDate(renderable);
+  // 링크 없는 published 등록은 렌더 제외(삼순 P0 3차 불변식 유지 — href 없는 등록 미노출).
+  // 말소는 링크 생략 허용(링크 없는 텍스트 렌더 OK).
+  const renderable =
+    state.status === "ready"
+      ? state.moves.filter((m) => m.moveType !== "register" || Boolean(m.href))
+      : [];
+  // 접힘 상태 = 가장 최근 PREVIEW_COUNT개(move_date 내림차순)만, 전체보기 = 시즌 전체.
+  const visible = expanded ? renderable : renderable.slice(0, PREVIEW_COUNT);
+  const groups = groupByDate(visible);
+  const hasMore = renderable.length > PREVIEW_COUNT;
 
   return (
     <motion.div
@@ -82,7 +102,14 @@ export default function TeamRosterMovesCard({ team }: Props) {
       }}
     >
       <p className="text-xs text-text-tertiary mb-3">최근 등록·말소</p>
-      <div className="flex flex-col gap-3">
+      {state.status === "loading" ? (
+        <p className="text-xs text-text-tertiary">불러오는 중…</p>
+      ) : state.status === "error" ? (
+        <p className="text-xs text-text-tertiary">등록·말소 내역을 불러오지 못했어요.</p>
+      ) : renderable.length === 0 ? (
+        <p className="text-xs text-text-tertiary">등록·말소 내역이 없어요.</p>
+      ) : (
+        <div className="flex flex-col gap-3">
         {groups.map((g) => (
           <div key={g.date}>
             <p className="mb-1.5 text-[11px] font-semibold text-text-secondary">
@@ -121,7 +148,18 @@ export default function TeamRosterMovesCard({ team }: Props) {
             </ul>
           </div>
         ))}
-      </div>
+        {hasMore && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="mt-0.5 self-start text-xs font-semibold active:opacity-70"
+            style={{ color: bgColor }}
+          >
+            {expanded ? "접기" : `전체보기 (${renderable.length})`}
+          </button>
+        )}
+        </div>
+      )}
     </motion.div>
   );
 }

@@ -98,6 +98,8 @@ interface TeamCardData {
 interface TeamCardProps {
   team: TeamData;
   gameSlot?: ReactNode;
+  /** Pull-to-refresh 트리거. 값이 바뀌면 순위/주간기록/순위권 선수를 재페치한다. */
+  refreshNonce?: number;
 }
 
 
@@ -174,7 +176,7 @@ function MiniStatChart({ title, values, fmt, higherIsBetter, accent, rank }: {
   );
 }
 
-export default function TeamCard({ team, gameSlot }: TeamCardProps) {
+export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardProps) {
   const [data, setData] = useState<TeamCardData | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [topPlayers, setTopPlayers] = useState<TopPlayer[]>([]);
@@ -188,7 +190,7 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
       .then((d: TeamCardData | null) => { if (!cancelled) { setData(d && !("error" in d) ? d : null); setLoaded(true); } })
       .catch(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
-  }, [team.slug]);
+  }, [team.slug, refreshNonce]);
 
   // 주간 타율/방어율 리그 순위 — team-records(전 구단) 정렬로 산출
   useEffect(() => {
@@ -205,7 +207,7 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
       })
       .catch(() => { /* 순위 실패해도 카드 정상 */ });
     return () => { cancelled = true; };
-  }, [team.id]);
+  }, [team.id, refreshNonce]);
 
   // 순위권 선수 — 공식 랭킹 소스(/api/stats + rankByStat). 리더보드와 동일.
   useEffect(() => {
@@ -222,7 +224,7 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
       })
       .catch(() => { /* 순위권 실패해도 카드 나머지는 정상 */ });
     return () => { cancelled = true; };
-  }, [team.shortName]);
+  }, [team.shortName, refreshNonce]);
 
   if (loaded && !data?.standing && !data?.nextGame && !data?.recentForm?.length) return null;
 

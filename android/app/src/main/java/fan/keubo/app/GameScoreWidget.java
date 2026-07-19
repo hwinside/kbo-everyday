@@ -561,15 +561,21 @@ public class GameScoreWidget extends AppWidgetProvider {
 
     /** 혼합 텍스트(숫자/영문=Montserrat, 한글=Noto)를 한 비트맵으로 렌더. spSize는 dp 환산. */
     private static Bitmap textBitmap(Context ctx, String text, float spSize, int color) {
+        return textBitmap(ctx, text, spSize, color, false);
+    }
+
+    /** bold 오버로드 — setFakeBoldText는 글리프 두께만 키우고 폰트 실높이는 무변화라
+     *  접힌 카드 높이 캡을 넘기지 않고 스코어 존재감을 키운다(2026-07-18 실측). */
+    private static Bitmap textBitmap(Context ctx, String text, float spSize, int color, boolean bold) {
         if (text == null) text = "";
         float density = ctx.getResources().getDisplayMetrics().density;
         float px = spSize * density;
         Paint pm = new Paint(Paint.ANTI_ALIAS_FLAG);
         pm.setTypeface(mont(ctx)); pm.setTextSize(px); pm.setColor(color);
-        pm.setLetterSpacing(-0.02f); pm.setSubpixelText(true);
+        pm.setLetterSpacing(-0.02f); pm.setSubpixelText(true); pm.setFakeBoldText(bold);
         Paint pn = new Paint(Paint.ANTI_ALIAS_FLAG);
         pn.setTypeface(noto(ctx)); pn.setTextSize(px); pn.setColor(color);
-        pn.setLetterSpacing(-0.04f); pn.setSubpixelText(true);
+        pn.setLetterSpacing(-0.04f); pn.setSubpixelText(true); pn.setFakeBoldText(bold);
 
         // 한글/비한글 런으로 분할
         List<String> runs = new ArrayList<>();
@@ -627,8 +633,9 @@ public class GameScoreWidget extends AppWidgetProvider {
         if (awayLogo != 0) v.setImageViewResource(R.id.ncc_away_logo, awayLogo);
         if (homeLogo != 0) v.setImageViewResource(R.id.ncc_home_logo, homeLogo);
         // 약어 — SystemUI(알림)도 런처처럼 커스텀 fontFamily를 무시하므로 홈위젯과 동일 비트맵 렌더.
-        v.setImageViewBitmap(R.id.ncc_away_name, textBitmap(context, shortName(away), 14f, 0xFFE8B0BC));
-        v.setImageViewBitmap(R.id.ncc_home_name, textBitmap(context, shortName(home), 14f, 0xFFE8B0BC));
+        // 약어 17f — 큰 스코어(32f) 대비 팀 약어 가독성 상향(하린아빠 2026-07-20 "적당히 키워").
+        v.setImageViewBitmap(R.id.ncc_away_name, textBitmap(context, shortName(away), 17f, 0xFFE8B0BC));
+        v.setImageViewBitmap(R.id.ncc_home_name, textBitmap(context, shortName(home), 17f, 0xFFE8B0BC));
 
         String status = e.status;
         boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
@@ -650,26 +657,29 @@ public class GameScoreWidget extends AppWidgetProvider {
         } else {
             v.setViewVisibility(R.id.ncc_score, View.VISIBLE);
             v.setViewVisibility(R.id.ncc_score_scheduled, View.GONE);
-            v.setImageViewBitmap(R.id.ncc_score, textBitmap(context, e.as + " : " + e.hs, 20f, 0xFFF5F5F7));
+            // 32f bold·순백 — 접힌 카드 스코어 최대화(하린아빠 2026-07-19 "숫자 더 크게").
+            // 문자중계 2행을 접힌 뷰에서 제거(아래)해 단일 행이 되므로 로고(26dp) 높이 캡에
+            // 묶이지 않고 32f까지 키움(삼순 권고). wrap_content라 좁은 폭에서도 축소 안 됨.
+            v.setImageViewBitmap(R.id.ncc_score,
+                textBitmap(context, e.as + " : " + e.hs, 32f, 0xFFFFFFFF, true));
         }
 
-        // 상태 pill — 홈위젯과 동일 문구: 예정=시각, 종료="경기 종료", 취소="경기 취소", 라이브="● N회초".
+        // 상태 pill — 라이브는 "● LIVE N회말"을 최대한 줄여 스코어에 폭을 양보(하린아빠
+        // 2026-07-19 "LIVE 2회말 최대한 줄이고"). 빨간 pill 배경 자체가 라이브 신호라
+        // "● LIVE " 접두를 떼고 이닝만("2회말") 표기. 예정/종료/취소는 기존 문구 유지.
         if (status.isEmpty() || "SCHEDULED|".equals(status)) {
             v.setViewVisibility(R.id.ncc_status, View.GONE);
         } else {
             v.setViewVisibility(R.id.ncc_status, View.VISIBLE);
-            String pill = isCancelled ? "경기 취소" : isScheduled ? schedTime : isFinal ? "경기 종료" : "● " + status;
+            String liveInning = status.replaceFirst("^(?:●\\s*)?LIVE\\s*", "").trim();
+            String pill = isCancelled ? "경기 취소" : isScheduled ? schedTime
+                : isFinal ? "경기 종료" : liveInning;
             v.setImageViewBitmap(R.id.ncc_status_img, textBitmap(context, pill, 11f, 0xFFFF6B7A));
         }
 
-        // 문자중계 최근 플레이 — 홈위젯과 동일(라이브 + 텍스트 있을 때만). 점(●)은 XML ViewFlipper pulse.
-        boolean isLiveStatus = !isScheduled && !isFinal && !isCancelled && !status.isEmpty();
-        if (isLiveStatus && !TextUtils.isEmpty(e.lastPlay)) {
-            v.setViewVisibility(R.id.ncc_relay_row, View.VISIBLE);
-            v.setTextViewText(R.id.ncc_relay_text, e.lastPlay);
-        } else {
-            v.setViewVisibility(R.id.ncc_relay_row, View.GONE);
-        }
+        // 문자중계 2행은 접힌 카드에서 제거(하린아빠 "아랫줄 비어보임" + 삼순 권고 2026-07-19) —
+        // 접힌 뷰는 스코어 최대화 우선, 최근 플레이는 펼친 카드(notif_card_full)에서 유지.
+        // notif_card_compact.xml에서 ncc_relay_row 삭제됨 → 여기서도 참조 제거.
         return v;
     }
 

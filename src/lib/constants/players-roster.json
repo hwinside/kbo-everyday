@@ -6282,6 +6282,15 @@
     "birthDate": "2006-05-15"
   },
   {
+    "name": "조요한",
+    "kboId": "51809",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "98",
+    "team": "SSG",
+    "birthDate": "2000-01-06"
+  },
+  {
     "name": "조원태",
     "kboId": "52149",
     "teamId": 1,
@@ -6966,6 +6975,15 @@
     "birthDate": "1995-07-03"
   },
   {
+    "name": "페덱",
+    "kboId": "FP024",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "59",
+    "team": "삼성",
+    "birthDate": "1996-01-08"
+  },
+  {
     "name": "하동준",
     "kboId": "56797",
     "teamId": 9,
@@ -7567,14 +7585,5 @@
     "backNo": "22",
     "team": "키움",
     "birthDate": "1996-08-02"
-  },
-  {
-    "name": "페덱",
-    "kboId": "FP024",
-    "teamId": 8,
-    "position": "투수",
-    "backNo": "59",
-    "team": "삼성",
-    "birthDate": "1996-01-08"
   }
 ]

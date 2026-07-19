@@ -242,29 +242,24 @@ struct KBOLiveActivityWidget: Widget {
                     }
                 }
             } compactLeading: {
-                // 로고 + 약어(라틴=Montserrat) + 점수(Montserrat) — B안.
+                // 간소화(2026-07-19 유저 건의: DI가 너무 커 배터리 잔량 가림). 로고 + 점수만.
+                // 팀 약어 텍스트·이닝은 제거 — 팀은 로고로 식별하고, 이닝은 확장뷰/잠금카드에서 본다.
                 // 경기 전(scheduled)엔 점수(0)를 숨긴다 — 시작도 안 한 경기에 0:0 노출 방지.
-                HStack(spacing: 2) {
+                HStack(spacing: 3) {
                     TeamLogo(code: context.attributes.awayTeamCode, size: 18)
-                    teamShortText(context.attributes.awayTeamCode, 11, .semibold).lineLimit(1)
                     if !context.state.isScheduled {
                         Text("\(context.state.awayScore)")
                             .font(montserrat(14, .bold)).monospacedDigit()
                     }
                 }
             } compactTrailing: {
-                // 노치 바로 우측에 N회초/말(센터 인접) + 점수 + 약어 + 로고.
-                HStack(spacing: 2) {
-                    if !context.state.isFinal && !context.state.isScheduled && !context.state.inningText.isEmpty {
-                        inningRun(context.state.inningText, 10, .semibold)
-                            .foregroundStyle(.white.opacity(0.85))
-                            .lineLimit(1)
-                    }
+                // 배터리 인접 영역 — 점수 + 로고만으로 폭을 최소화해 잔량이 가리지 않게 한다
+                // (약어·이닝 제거). 이전엔 이닝+점수+약어+로고 4요소라 우측이 배터리까지 밀었음.
+                HStack(spacing: 3) {
                     if !context.state.isScheduled {
                         Text("\(context.state.homeScore)")
                             .font(montserrat(14, .bold)).monospacedDigit()
                     }
-                    teamShortText(context.attributes.homeTeamCode, 11, .semibold).lineLimit(1)
                     TeamLogo(code: context.attributes.homeTeamCode, size: 18)
                 }
             } minimal: {

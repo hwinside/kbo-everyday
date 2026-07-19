@@ -327,7 +327,7 @@ function PostRow({ post }: { post: Post }) {
  * 전체 통합피드(자유+팀+선수) 최신 HOME_LATEST_COUNT개를 세로 compact 리스트로 노출.
  * 신규 API·테이블 없이 useUnifiedFeed를 재사용한다.
  */
-export default function CommunityLatestPosts({ myTeamId }: { myTeamId: number | null }) {
+export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { myTeamId: number | null; refreshNonce?: number }) {
   const { posts, loading, reload } = useUnifiedFeed({ kind: "all" }, HOME_LATEST_COUNT);
   const { user } = useAuth();
   const [writeMode, setWriteMode] = useState<WriteFlowMode>(null);
@@ -335,6 +335,13 @@ export default function CommunityLatestPosts({ myTeamId }: { myTeamId: number | 
   const didFocusRef = useRef(false);
 
   const showList = !loading && posts.length > 0;
+
+  // Pull-to-refresh: refreshNonce가 증가하면 통합피드를 실제로 재조회(reload). 초기 mount(0)엔 미호출.
+  useEffect(() => {
+    if (refreshNonce > 0) reload();
+    // reload identity 변동으로인 중복 호출 방지 — nonce 변경 시에만 1회.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshNonce]);
 
   // 홈 최신글에서 글을 열고 뒤로 나온 경우에 한해, 홈 최상단 대신 이 섹션으로 스크롤 복귀.
   // router.back() 직후엔 뉴스/숏츠 등 상단 섹션이 뒤늦게 로드되며 위치가 아래로 밀리므로,

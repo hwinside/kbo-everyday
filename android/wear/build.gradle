@@ -52,10 +52,10 @@ android {
 
 dependencies {
     // 타일(ProtoLayout) — 슬라이스 A. 카운트다운은 protolayout-expression(Dynamic Expressions).
-    implementation "androidx.wear.tiles:tiles:1.4.1"
-    implementation "androidx.wear.protolayout:protolayout:1.2.1"
-    implementation "androidx.wear.protolayout:protolayout-material:1.2.1"
-    implementation "androidx.wear.protolayout:protolayout-expression:1.2.1"
+    implementation "androidx.wear.tiles:tiles:1.6.1"
+    implementation "androidx.wear.protolayout:protolayout:1.4.1"
+    implementation "androidx.wear.protolayout:protolayout-material:1.4.1"
+    implementation "androidx.wear.protolayout:protolayout-expression:1.4.1"
     // 컴플리케이션 데이터소스 — 슬라이스 B (KboGame/KboRankComplicationService)
     implementation "androidx.wear.watchface:watchface-complications-data-source:1.2.1"
     // 폰 → 워치 최애팀 동기화 (Wearable Data Layer)
