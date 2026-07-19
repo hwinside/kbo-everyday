@@ -22,6 +22,14 @@ type TrafficResp = {
   dwell: Record<string, { sessions: number; avgMs: number; medianMs: number }>;
   versions: Record<string, { version: string; devices: number }[]>;
 };
+type WatchStat = { todayDevices: number; peakDevices: number; totalHits: number };
+type WatchResp = {
+  since: string;
+  days: number;
+  rows: { day: string; platform: string; devices: number; hits: number }[];
+  wear: WatchStat;
+  apple: WatchStat;
+};
 
 // Display order + labels + colors for known platforms. Unknown (pre-tagging
 // rows) is shown last and muted so it never reads as real "web" traffic.
@@ -71,6 +79,7 @@ export default function TrafficPage() {
   const [resp, setResp] = useState<TrafficResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [watch, setWatch] = useState<WatchResp | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,6 +99,20 @@ export default function TrafficPage() {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
+  }, [days]);
+
+  // 워치(갤워치 Wear OS + 애플워치) 앱 사용 계측 — 미들웨어가 UA로 적재한 일자·플랫폼버 집계.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/admin/watch-activity?days=${days}`, { headers: { "x-admin-pin": getPin() } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: WatchResp | null) => {
+        if (!cancelled) setWatch(d);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -228,6 +251,47 @@ export default function TrafficPage() {
             <p className="text-2xl font-bold mt-1 text-[#3DDC84]">{loading ? "—" : fmt(aosDevices)}</p>
           </div>
         </div>
+      </div>
+
+      {/* 워치(갤워치 Wear OS + 애플워치) 앱 사용 — 미들웨어가 UA(kbo-everyday-wear/watch)로 계측.
+          devices = distinct 해시IP(대략의 워치 대수), hits = 워치 API 호출량. */}
+      <div className="glass-card p-4">
+        <div className="flex items-baseline justify-between flex-wrap gap-1 mb-3">
+          <h2 className="text-sm font-semibold">⌚ 워치 활성 (Wear OS · 애플워치)</h2>
+          <p className="text-xs text-[#8E8E93]">API 호출 기준 · 대수는 IP 기반 근사치</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {[
+            { label: "갤워치 (Wear OS)", color: "#3DDC84", s: watch?.wear },
+            { label: "애플워치", color: "#0A84FF", s: watch?.apple },
+          ].map((w) => (
+            <div key={w.label}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: w.color }} />
+                <span className="text-sm font-medium">{w.label}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <p className="text-xs text-[#8E8E93]">오늘(≈)</p>
+                  <p className="text-xl font-bold mt-1" style={{ color: w.color }}>
+                    {watch ? fmt(w.s?.todayDevices ?? 0) : "—"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-[#8E8E93]">기간 최대(≈)</p>
+                  <p className="text-xl font-bold mt-1">{watch ? fmt(w.s?.peakDevices ?? 0) : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-[#8E8E93]">총 호출</p>
+                  <p className="text-xl font-bold mt-1">{watch ? fmt(w.s?.totalHits ?? 0) : "—"}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        {watch && watch.rows.length === 0 && (
+          <p className="text-xs text-[#8E8E93] mt-3">아직 워치 접속 기록 없음 (배포 후부터 집계)</p>
+        )}
       </div>
 
       {/* App version share per native app (active distinct devices). Forward-
