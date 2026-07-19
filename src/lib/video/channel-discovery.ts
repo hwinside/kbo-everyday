@@ -191,9 +191,54 @@ export function evaluateChannelCandidate(
   return { pass, considered, kboCount, shortCount, recentUploadAt, withinRecent, reason };
 }
 
-/** 첫 2회 실행은 shadow(로그만), 이후 active */
-export function decideMode(priorRunCount: number): "shadow" | "active" {
-  return priorRunCount < 2 ? "shadow" : "active";
+/**
+ * 완료된 non-degraded shadow 회수가 2 미만이면 shadow, 이상이면 active.
+ * 호출부가 status='success' && degraded=false 인 shadow run만 세서 전달해야 한다
+ * (삼순 3번: 오류/degraded run이 유효한 shadow 2회를 건너뛰고 조기 active되는 것 방지).
+ */
+export function decideMode(cleanShadowCount: number): "shadow" | "active" {
+  return cleanShadowCount < 2 ? "shadow" : "active";
+}
+
+/** 실행당 최대 활성화 하드 상한 (삼순 4번: env가 무엇이든 5 초과 불가) */
+export const MAX_ACTIVATIONS_CAP = 5;
+
+/** DISCOVER_MAX_ACTIVATIONS env → 1~5로 clamp (양수 아니면 5) */
+export function resolveMaxActivations(raw: string | undefined): number {
+  const n = parseInt(raw ?? "", 10);
+  if (!Number.isFinite(n) || n <= 0) return MAX_ACTIVATIONS_CAP;
+  return Math.min(n, MAX_ACTIVATIONS_CAP);
+}
+
+// YouTube Data API quota/rate 계열 errors[].reason
+const QUOTA_REASONS = new Set([
+  "quotaexceeded",
+  "dailylimitexceeded",
+  "ratelimitexceeded",
+  "userratelimitexceeded",
+  "usagelimits",
+]);
+
+/**
+ * quota/rate 하드 게이트 판정(삼순 4번). message 문자열만 보지 않고
+ * HTTP status + errors[].reason 까지 본다 — "exceeded your quota" 변형·
+ * 구조화 reason(quotaExceeded 등)·403/429를 모두 잡아 fail-closed 로 검색을 멈춘다.
+ */
+export function isQuotaSignal(input: {
+  status?: number;
+  reasons?: Array<string | undefined | null>;
+  message?: string | null;
+}): boolean {
+  if (input.status === 403 || input.status === 429) return true;
+  if (
+    (input.reasons ?? []).some(
+      (r) => r != null && QUOTA_REASONS.has(String(r).toLowerCase()),
+    )
+  ) {
+    return true;
+  }
+  const m = (input.message ?? "").toLowerCase();
+  return /quota|exceeded your|rate ?limit|usagelimits|daily ?limit/.test(m);
 }
 
 export interface ScoredCandidate {

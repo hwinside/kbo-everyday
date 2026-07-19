@@ -10,6 +10,9 @@ create table if not exists channel_discovery_runs (
   id bigserial primary key,
   ran_at timestamptz not null default now(),
   mode text not null check (mode in ('shadow', 'active')),
+  -- 'running' → 'success'|'error'. shadow 승격 카운트는 status='success' && degraded=false 인
+  -- 완료된 shadow run만 포함(삼순 3번 반영: 오류/degraded run이 승격 카운트를 오염시키지 않게).
+  status text not null default 'running' check (status in ('running', 'success', 'error')),
   queries text[] not null default '{}',
   candidates_found int not null default 0,
   verified int not null default 0,
@@ -19,7 +22,11 @@ create table if not exists channel_discovery_runs (
   summary text
 );
 
-comment on table channel_discovery_runs is '자동 채널 발굴 크론 실행 로그 (첫 2회 shadow, 이후 active)';
+comment on table channel_discovery_runs is '자동 채널 발굴 크론 실행 로그 (완료된 non-degraded shadow 2회 후 active)';
+
+create index if not exists idx_cdr_shadow_promo
+  on channel_discovery_runs(mode, status, degraded)
+  where mode = 'shadow';
 
 -- 2. 후보별 판정 로그 (오탐 추적/재평가용)
 create table if not exists channel_discovery_candidates (
