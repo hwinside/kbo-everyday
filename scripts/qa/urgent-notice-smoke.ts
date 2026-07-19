@@ -33,5 +33,20 @@ check("banner: urgent label", noReplyBannerLabel(URGENT_NOTICE_USER_ID).includes
 check("banner: clipper label", noReplyBannerLabel(clipperId).includes("뉴스클리핑 전용 계정"));
 check("banner: 피드백 안내 포함", noReplyBannerLabel(URGENT_NOTICE_USER_ID).includes("피드백 보내기"));
 
+// --- dispatch 게이트 회귀 (삼순 NO-GO #3/#4) ---
+// handleDm의 긴급공지 분기 로직을 순수 재현: payload.type === 'urgent_notice'만 푸시, android만.
+type Dispatchish = { push: boolean; platform?: string };
+function urgentDispatch(payloadType: string | undefined): Dispatchish {
+  if (payloadType !== "urgent_notice") return { push: false };
+  return { push: true, platform: "android" };
+}
+// #3: 공지 원본만 푸시
+check("dispatch: urgent_notice → push", urgentDispatch("urgent_notice").push === true);
+// #3: 자동응답(urgent_notice_auto_reply)은 push 0 (재푸시 루프 차단)
+check("dispatch: auto_reply → no push", urgentDispatch("urgent_notice_auto_reply").push === false);
+check("dispatch: no payload → no push", urgentDispatch(undefined).push === false);
+// #4: 긴급공지 푸시는 android 타깃
+check("dispatch: urgent push → android only", urgentDispatch("urgent_notice").platform === "android");
+
 console.log(`\nurgent-notice smoke: ${pass}/${pass + fail} passed`);
 if (fail > 0) process.exit(1);

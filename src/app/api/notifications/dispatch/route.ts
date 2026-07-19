@@ -19,6 +19,7 @@ interface Dispatch {
   userIds: string[];
   payload: PushPayload;
   prefKey: PrefKey;
+  platform?: "ios" | "android"; // 지정 시 해당 OS 토큰에만 발송 (긴급공지 = android 타겟)
 }
 
 async function nickname(userId: string): Promise<string> {
@@ -139,9 +140,16 @@ async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
     return [];
   }
 
-  // 긴급공지 발송 — 회신 불가 시스템 계정. 공지 쪽지는 📢 전용 푸시로 알린다.
-  // (prefKey "dm": 유저가 쪽지 알림을 꺼둔 경우 푸시만 생략되고 쪽지 자체는 정상 도착)
+  // 긴급공지 발송 — 회신 불가 시스템 계정. 공지 쪽지만 📢 전용 푸시로 알린다.
+  // ⚠️ 자동응답(urgent_notice_auto_reply)이 다시 이 분기를 타지 않도록 payload.type으로 게이트
+  // (삼순 NO-GO #3: 자동응답 insert→webhook 재호출이 '📢 공지' 푸시를 또 만드는 루프 차단).
+  // 대상은 android 토큰으로만 발송 (삼순 NO-GO #4: iOS 토큰 누출 차단).
   if (senderId === URGENT_NOTICE_USER_ID) {
+    const noticePayload = record.payload as { type?: string } | null;
+    if (noticePayload?.type !== "urgent_notice") {
+      // 긴급공지 계정의 공지 외 메시지(자동응답 등)는 푸시 없음 — 알림 루프 방지
+      return [];
+    }
     return [{
       userIds: [receiver as string],
       payload: {
@@ -150,6 +158,7 @@ async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
         url: `/messages/${conversationId}`,
       },
       prefKey: "dm",
+      platform: "android",
     }];
   }
 
@@ -239,7 +248,7 @@ export async function POST(req: NextRequest) {
 
   let sent = 0;
   for (const d of dispatches) {
-    const res = await sendFcmToUsers(d.userIds, d.payload, d.prefKey);
+    const res = await sendFcmToUsers(d.userIds, d.payload, d.prefKey, d.platform);
     sent += res.sent;
   }
   return NextResponse.json({ ok: true, dispatches: dispatches.length, sent });

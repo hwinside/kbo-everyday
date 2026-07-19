@@ -22,19 +22,10 @@ export async function getActiveNotices(
   return (data ?? []) as ActiveNotice[];
 }
 
-async function ensureConversation(admin: SupabaseClient, userId: string): Promise<string> {
-  const [u1, u2] = [URGENT_NOTICE_USER_ID, userId].sort();
-  const { data: existing } = await admin
-    .from("dm_conversations").select("id").eq("user1_id", u1).eq("user2_id", u2).maybeSingle();
-  if (existing) return existing.id as string;
-  const { data: created, error } = await admin
-    .from("dm_conversations").insert({ user1_id: u1, user2_id: u2 }).select("id").single();
-  if (error || !created) throw new Error(`conv create ${userId}: ${error?.message}`);
-  return created.id as string;
-}
-
 /**
- * 한 유저에게 공지 1건 발송 (idempotent — 같은 notice_key가 이미 있으면 skip).
+ * 한 유저에게 공지 1건 발송 (원자적 멱등).
+ * DB RPC send_urgent_notice — (notice_key,user_id) unique claim→dm insert→conv 갱신을 한
+ * 트랜잭션으로 처리(삼순 NO-GO #2). 경합/재실행 중복 원천 차단, 오류는 throw(fail-closed).
  * dm_messages INSERT → dispatch 웹훅이 📢 푸시. 발신 = 긴급공지 계정.
  */
 export async function sendNoticeToUser(
@@ -43,28 +34,12 @@ export async function sendNoticeToUser(
   notice: ActiveNotice,
 ): Promise<"sent" | "skipped"> {
   if (userId === URGENT_NOTICE_USER_ID) return "skipped";
-  const convId = await ensureConversation(admin, userId);
-
-  const { data: dup } = await admin
-    .from("dm_messages")
-    .select("id")
-    .eq("conversation_id", convId)
-    .eq("sender_id", URGENT_NOTICE_USER_ID)
-    .eq("payload->>notice_key", notice.notice_key)
-    .limit(1);
-  if (dup && dup.length > 0) return "skipped";
-
-  const { error: msgErr } = await admin.from("dm_messages").insert({
-    conversation_id: convId,
-    sender_id: URGENT_NOTICE_USER_ID,
-    content: notice.message,
-    payload: { type: "urgent_notice", notice_key: notice.notice_key },
+  const { data, error } = await admin.rpc("send_urgent_notice", {
+    p_notice_key: notice.notice_key,
+    p_user_id: userId,
+    p_sender_id: URGENT_NOTICE_USER_ID,
+    p_message: notice.message,
   });
-  if (msgErr) throw new Error("msg insert: " + msgErr.message);
-
-  await admin
-    .from("dm_conversations")
-    .update({ last_message: notice.message.slice(0, 100), last_message_at: new Date().toISOString() })
-    .eq("id", convId);
-  return "sent";
+  if (error) throw new Error("send_urgent_notice rpc: " + error.message);
+  return data === "sent" ? "sent" : "skipped";
 }

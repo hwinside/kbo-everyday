@@ -71,5 +71,7 @@ async function main() {
     }
   }
   console.log(`\n완료: 발송 ${sent} / 스킵 ${skipped} / 실패 ${failed} / 대상 ${targets.length}`);
+  // 삼순 NO-GO #2: 실패가 있으면 non-zero 종료(재실행은 멱등해서 안전 — 이미 발송된 건 skip)
+  if (failed > 0) process.exit(1);
 }
 main().catch((e) => { console.error(e); process.exit(1); });
