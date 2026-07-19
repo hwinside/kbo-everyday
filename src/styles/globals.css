@@ -234,6 +234,19 @@ body {
   border-radius: 2px;
 }
 
+/* Hide the page-level (document) scrollbar for a native-app feel.
+   Inner overflow containers keep their thin bar via the rules above. */
+html,
+body {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge */
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 /* ===== No scrollbar for horizontal scroll containers ===== */
 .hide-scrollbar {
   -ms-overflow-style: none;
