@@ -145,15 +145,48 @@ class WearPushPolicyTest {
     }
 
     @Test
-    fun `final minimal flips cached live to final`() {
-        // game_end 최소 payload(팀 없음) → 캐시 live를 종료로 flip
+    fun `final minimal without cached gameId dropped`() {
+        // 삼순 gate 1: gid 없는 최소 end + gameId 없는 캐시 → 검증 불가 → drop(옆/다른 경기 오종료 방지)
         val d = eval(
-            push(kind = "final", away = "", home = "", status = ""),
+            push(kind = "final", gid = "", away = "", home = "", status = ""),
             cached = cachedLive(awayScore = 5, homeScore = 3),
+        )
+        assertEquals("unbuildable", (d as WearPushPolicy.Decision.Drop).reason)
+    }
+
+    @Test
+    fun `final minimal with gidless push dropped even if cached has gameId`() {
+        // game_end가 gid 없이 오면(최소 payload) 캐시 gameId가 있어도 drop — 풍부한 end/cancel 대기
+        val d = eval(
+            push(kind = "final", gid = "", away = "", home = "", status = ""),
+            cached = cachedLive(gameId = "G1", awayScore = 5, homeScore = 3), lastPushGid = "G1",
+        )
+        assertEquals("unbuildable", (d as WearPushPolicy.Decision.Drop).reason)
+    }
+
+    // ── same-ts tie (terminal > live, 삼순 gate 2) ──
+
+    @Test
+    fun `same ts different live content dropped as tie`() {
+        // 동일 sourceAt(ts)의 다른 live content는 seq 부재로 역전 위험 → drop
+        val cached = cachedLive(gameId = "G1", awayScore = 3, homeScore = 2, sourceAt = now)
+        val d = eval(
+            push(gid = "G1", ts = now, awayScore = 4, homeScore = 2),
+            cached = cached, lastPushGid = "G1",
+        )
+        assertEquals("stale-ts-tie", (d as WearPushPolicy.Decision.Drop).reason)
+    }
+
+    @Test
+    fun `same ts terminal wins tie over cached live`() {
+        // terminal(final)은 동일 ts에서도 수립 — terminal > live
+        val cached = cachedLive(gameId = "G1", awayScore = 5, homeScore = 3, sourceAt = now)
+        val d = eval(
+            push(kind = "final", gid = "G1", ts = now, away = "LG", home = "KT", awayScore = 5, homeScore = 3),
+            cached = cached, lastPushGid = "G1",
         ) as WearPushPolicy.Decision.Render
         assertEquals("final", d.snapshot.kind)
         assertEquals("경기 종료 · 승", d.snapshot.line)
-        assertNull(d.snapshot.bases)
     }
 
     @Test

@@ -97,12 +97,17 @@ object WearPushPolicy {
         if (cached != null && candidate.contentSignature() == cached.contentSignature()) {
             return Decision.NoOp
         }
+        // same-ts tie(삼순): 동일 sourceAt의 *다른 content* live는 역전 위험(seq 부재) → drop.
+        // terminal(final/cancelled)은 동일 ts에서도 수립(terminal > live 우선순위).
+        if (sameGame && cached != null && push.ts == lastAt && candidate.kind == "live") {
+            return Decision.Drop("stale-ts-tie")
+        }
         return Decision.Render(candidate)
     }
 
     /**
      * push → WearSnapshot 합성(WearFetcher.compose의 push 판). 실패 시 null(서비스가 drop).
-     * final은 w_* 없이 gameId만 오므로(게임엔드) 같은 경기 캐시를 종료 상태로 flip.
+     * final은 파물박에 팀이 있으면 직접 합성, 없으면(최소 end) gid 일치 캐시만 종료로 flip(삼순 gate 1).
      */
     fun buildSnapshot(myTeam: String, push: PushState, cached: WearSnapshot?, nowMs: Long): WearSnapshot? {
         return when (push.kind) {
@@ -158,7 +163,8 @@ object WearPushPolicy {
                     val base = cached ?: return null
                     if (base.kind != "live" && base.kind != "final") return null
                     if (base.awayCode.isEmpty() || base.homeCode.isEmpty()) return null
-                    if (push.gid.isNotEmpty() && base.gameId != null && base.gameId != push.gid) return null
+                    // gid 없는/불일치 최소 end는 drop(옆/다른 경기 오종료 방지) — 풍부한 cancel/end로 수렴.
+                    if (push.gid.isEmpty() || base.gameId == null || base.gameId != push.gid) return null
                     base.copy(
                         kind = "final",
                         line = "경기 종료 · ${finalResult(myTeam, base.awayCode, base.awayScore, base.homeScore)}",
