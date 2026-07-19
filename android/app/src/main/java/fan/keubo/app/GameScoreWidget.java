@@ -561,15 +561,21 @@ public class GameScoreWidget extends AppWidgetProvider {
 
     /** 혼합 텍스트(숫자/영문=Montserrat, 한글=Noto)를 한 비트맵으로 렌더. spSize는 dp 환산. */
     private static Bitmap textBitmap(Context ctx, String text, float spSize, int color) {
+        return textBitmap(ctx, text, spSize, color, false);
+    }
+
+    /** bold 오버로드 — setFakeBoldText는 글리프 두께만 키우고 폰트 실높이는 무변화라
+     *  접힌 카드 높이 캡을 넘기지 않고 스코어 존재감을 키운다(2026-07-18 실측). */
+    private static Bitmap textBitmap(Context ctx, String text, float spSize, int color, boolean bold) {
         if (text == null) text = "";
         float density = ctx.getResources().getDisplayMetrics().density;
         float px = spSize * density;
         Paint pm = new Paint(Paint.ANTI_ALIAS_FLAG);
         pm.setTypeface(mont(ctx)); pm.setTextSize(px); pm.setColor(color);
-        pm.setLetterSpacing(-0.02f); pm.setSubpixelText(true);
+        pm.setLetterSpacing(-0.02f); pm.setSubpixelText(true); pm.setFakeBoldText(bold);
         Paint pn = new Paint(Paint.ANTI_ALIAS_FLAG);
         pn.setTypeface(noto(ctx)); pn.setTextSize(px); pn.setColor(color);
-        pn.setLetterSpacing(-0.04f); pn.setSubpixelText(true);
+        pn.setLetterSpacing(-0.04f); pn.setSubpixelText(true); pn.setFakeBoldText(bold);
 
         // 한글/비한글 런으로 분할
         List<String> runs = new ArrayList<>();
@@ -650,17 +656,23 @@ public class GameScoreWidget extends AppWidgetProvider {
         } else {
             v.setViewVisibility(R.id.ncc_score, View.VISIBLE);
             v.setViewVisibility(R.id.ncc_score_scheduled, View.GONE);
-            // 24f — 잠금 접힌 카드 스코어 가독성(하린아빠 2026-07-19 "스코어 숫자 너무 작아").
-            // 레이아웃도 wrap_content로 바꿔 좁은 카드에서 축소되지 않게 함(notif_card_compact.xml).
-            v.setImageViewBitmap(R.id.ncc_score, textBitmap(context, e.as + " : " + e.hs, 24f, 0xFFF5F5F7));
+            // 26f bold·순백 — 접힌 카드 스코어를 최대한 크고 진하게(하린아빠 2026-07-19
+            // "숫자 폰트 크기를 더 크게 확보"). 레이아웃도 wrap_content라 좁은 카드에서 축소 안 됨
+            // (notif_card_compact.xml). bold는 높이 무변화라 접힘 높이 캡 재클리핑 방지.
+            v.setImageViewBitmap(R.id.ncc_score,
+                textBitmap(context, e.as + " : " + e.hs, 26f, 0xFFFFFFFF, true));
         }
 
-        // 상태 pill — 홈위젯과 동일 문구: 예정=시각, 종료="경기 종료", 취소="경기 취소", 라이브="● N회초".
+        // 상태 pill — 라이브는 "● LIVE N회말"을 최대한 줄여 스코어에 폭을 양보(하린아빠
+        // 2026-07-19 "LIVE 2회말 최대한 줄이고"). 빨간 pill 배경 자체가 라이브 신호라
+        // "● LIVE " 접두를 떼고 이닝만("2회말") 표기. 예정/종료/취소는 기존 문구 유지.
         if (status.isEmpty() || "SCHEDULED|".equals(status)) {
             v.setViewVisibility(R.id.ncc_status, View.GONE);
         } else {
             v.setViewVisibility(R.id.ncc_status, View.VISIBLE);
-            String pill = isCancelled ? "경기 취소" : isScheduled ? schedTime : isFinal ? "경기 종료" : "● " + status;
+            String liveInning = status.replaceFirst("^(?:●\\s*)?LIVE\\s*", "").trim();
+            String pill = isCancelled ? "경기 취소" : isScheduled ? schedTime
+                : isFinal ? "경기 종료" : liveInning;
             v.setImageViewBitmap(R.id.ncc_status_img, textBitmap(context, pill, 11f, 0xFFFF6B7A));
         }
 
