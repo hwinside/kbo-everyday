@@ -26,6 +26,7 @@ import {
   newQuotaCounter,
   countSearch,
   countVideoList,
+  withQuotaRecording,
   isQuotaSignal,
   quotaInfoFromError,
   extractYouTubeError,
@@ -87,6 +88,50 @@ ok("units 상수: search=100, videos=1", YT_UNITS_SEARCH === 100 && YT_UNITS_VID
   countSearch(undefined);
   countVideoList(undefined);
   ok("counter undefined 무해", true);
+}
+
+// ── withQuotaRecording: 모든 종료 경로에서 정확히 1회 durable 기록(삼순 #709 3번) ──
+async function testWithQuotaRecording() {
+  // (a) 정상 종료: search+videoList → record 1회 101
+  const calls: number[] = [];
+  const rec = async (u: number) => { calls.push(u); };
+  await withQuotaRecording(rec, async (c) => { countSearch(c); countVideoList(c); return "ok"; });
+  ok("withQuotaRecording 정상 → record 1회 101", calls.length === 1 && calls[0] === 101);
+
+  // (b) fetch/json fault: countSearch 후 throw → record 1회 100 + 예외 전파(undercount 방지)
+  const calls2: number[] = [];
+  let threw2 = false;
+  try {
+    await withQuotaRecording(async (u) => { calls2.push(u); }, async (c) => {
+      countSearch(c); // search 100 이미 소비
+      throw new Error("fetch/json fault");
+    });
+  } catch { threw2 = true; }
+  ok("withQuotaRecording fetch/json fault → record 1회 100 + rethrow", calls2.length === 1 && calls2[0] === 100 && threw2);
+
+  // (c) details 후 예외: search+videoList(101) 후 throw → record 1회 101 + 예외 전파
+  const calls3: number[] = [];
+  let threw3 = false;
+  try {
+    await withQuotaRecording(async (u) => { calls3.push(u); }, async (c) => {
+      countSearch(c); countVideoList(c); // 101 소비
+      throw new Error("post-details fault");
+    });
+  } catch { threw3 = true; }
+  ok("withQuotaRecording details 후 예외 → record 1회 101 + rethrow", calls3.length === 1 && calls3[0] === 101 && threw3);
+
+  // (d) units=0(시도 없음) → record 미호출
+  const calls4: number[] = [];
+  await withQuotaRecording(async (u) => { calls4.push(u); }, async () => "no-op");
+  ok("withQuotaRecording units=0 → record 미호출", calls4.length === 0);
+
+  // (e) 조기 return(data.error fallback 모사)도 record 1회
+  const calls5: number[] = [];
+  const r5 = await withQuotaRecording(async (u) => { calls5.push(u); }, async (c) => {
+    countSearch(c);
+    return "fallback"; // 조기 return
+  });
+  ok("withQuotaRecording 조기 return → record 1회 100", calls5.length === 1 && calls5[0] === 100 && r5 === "fallback");
 }
 
 // ── isQuotaSignal / YouTubeApiError: 구조화 판별(삼순 #709 3번) ───────
@@ -160,6 +205,8 @@ function fakeSb(resp: RpcResp) {
 
   const zero = await recordQuota(fakeSb({ data: null, error: null }), 0);
   ok("recordQuota units<=0 무시 → recorded=false", zero.recorded === false && zero.error === undefined);
+
+  await testWithQuotaRecording();
 
   console.log(`\n${fail === 0 ? "🟢 ALL PASS" : `🔴 ${fail} FAILED`}`);
   process.exit(fail === 0 ? 0 : 1);

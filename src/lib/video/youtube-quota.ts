@@ -88,6 +88,24 @@ export function countVideoList(c: QuotaCounter | undefined): void {
   c.units += YT_UNITS_VIDEOS_LIST;
 }
 
+/**
+ * counter 를 생성해 fn 에 넘기고, **모든 종료 경로(성공·조기 return·예외)** 에서
+ * 실제 시도한 units 를 finally 로 정확히 1회 durable 기록한다(삼순 #709 3번).
+ * fetch/res.json() 가 throw 해 fn 이 중단되어도 이미 소비된 search(100) 를 undercount 하지 않는다.
+ * `record` 콜백은 throw 하지 않아야 한다(원본 예외 마스킹 방지). units=0이면 기록 생략.
+ */
+export async function withQuotaRecording<T>(
+  record: (units: number) => Promise<unknown>,
+  fn: (counter: QuotaCounter) => Promise<T>,
+): Promise<T> {
+  const counter = newQuotaCounter();
+  try {
+    return await fn(counter);
+  } finally {
+    if (counter.units > 0) await record(counter.units);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────
 //  구조화된 YouTube API quota 시그널 감지 (공용)
 // ─────────────────────────────────────────────────────────────────────

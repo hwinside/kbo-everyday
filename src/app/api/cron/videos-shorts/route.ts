@@ -291,9 +291,9 @@ export async function GET(req: NextRequest) {
     const cause = ledgerSkipped > 0 ? "ledger-cap" : "runtime-403";
     summaryParts.push(`DEGRADE=quota(${cause}) skipped=${Math.max(0, skippedCount)}`);
   }
-  const summary = summaryParts.join(" ");
-
+  // LEDGER_ERR 는 join 이전에 push 해야 summary 에 실제로 포함된다(삼순 비차단 nit: 순서 교정).
   if (ledgerErr) summaryParts.push(`LEDGER_ERR=${ledgerErr.slice(0, 60)}`);
+  const summary = summaryParts.join(" ");
 
   const errorMessage =
     realErrors > 0
