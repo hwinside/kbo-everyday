@@ -16,6 +16,10 @@
 --      트리거로 봉인(선점으로 23505 성공 위조 방지). service role(크론)만 세팅 가능.
 --   ⑦ dead-letter 상태 — attempts 소진 시 dead_lettered_at 마킹(영구 미발송을 관제 대상으로
 --      노출, requeue = dead_lettered_at/attempts 리셋). claimable 에서 dead-letter 제외.
+--
+-- [4차 반영]
+--   ⑧ 마지막 attempt claim 뒤 crash — lease 만료된 exhausted 행을 reconcile 전용으로
+--      다시 claim. DM 존재 시 완료, 미존재 시 dead-letter 로 수렴해 limbo 를 제거.
 
 -- ── ⑦ dead-letter 컬럼 ────────────────────────────────────────────────────
 ALTER TABLE report_blind_notices ADD COLUMN IF NOT EXISTS claimed_at      TIMESTAMPTZ;
@@ -31,33 +35,82 @@ CREATE INDEX IF NOT EXISTS idx_report_blind_notices_claimable
 -- 미발송 + dead-letter 아님 + attempts 미만 + (미claim 또는 lease 만료)인 행만 SKIP LOCKED 로
 -- 잠가 claimed_at/attempts 를 올리고 반환. 겹친 크론이 동시에 돌아도 같은 행을 두 번 안 집는다.
 -- SECURITY DEFINER + 고정 search_path + 입력 clamp + service_role 전용 EXECUTE.
-CREATE OR REPLACE FUNCTION claim_report_blind_notices(
+DROP FUNCTION IF EXISTS claim_report_blind_notices(INT, INT, INTERVAL);
+
+CREATE FUNCTION claim_report_blind_notices(
   p_limit        INT      DEFAULT 50,
   p_max_attempts INT      DEFAULT 10,
   p_lease        INTERVAL DEFAULT interval '5 minutes'
 )
-RETURNS SETOF report_blind_notices
+RETURNS TABLE (
+  id                 BIGINT,
+  target_type        TEXT,
+  target_id          BIGINT,
+  author_id          UUID,
+  blinded_at         TIMESTAMPTZ,
+  notified_at        TIMESTAMPTZ,
+  attempts           INT,
+  last_error         TEXT,
+  claimed_at         TIMESTAMPTZ,
+  dead_lettered_at   TIMESTAMPTZ,
+  reconcile_only     BOOLEAN
+)
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  UPDATE report_blind_notices n
-     SET claimed_at = now(),
-         attempts   = n.attempts + 1
-    FROM (
-      SELECT id
-        FROM report_blind_notices
-       WHERE notified_at    IS NULL
-         AND dead_lettered_at IS NULL
-         AND attempts < least(greatest(coalesce(p_max_attempts, 10), 1), 100)
-         AND (claimed_at IS NULL
-              OR claimed_at < now() - least(greatest(coalesce(p_lease, interval '5 minutes'), interval '30 seconds'), interval '1 hour'))
-       ORDER BY blinded_at ASC
-       LIMIT least(greatest(coalesce(p_limit, 50), 1), 200)
-       FOR UPDATE SKIP LOCKED
-    ) c
-   WHERE n.id = c.id
-   RETURNING n.*;
+  WITH params AS (
+    SELECT
+      least(greatest(coalesce(p_limit, 50), 1), 200) AS claim_limit,
+      least(greatest(coalesce(p_max_attempts, 10), 1), 100) AS max_attempts,
+      least(
+        greatest(coalesce(p_lease, interval '5 minutes'), interval '30 seconds'),
+        interval '1 hour'
+      ) AS lease
+  ), candidates AS (
+    SELECT n.id, n.attempts >= p.max_attempts AS reconcile_only
+      FROM report_blind_notices n
+      CROSS JOIN params p
+     WHERE n.notified_at IS NULL
+       AND n.dead_lettered_at IS NULL
+       AND (
+         n.attempts < p.max_attempts
+         OR (
+           n.attempts >= p.max_attempts
+           AND (n.claimed_at IS NULL OR n.claimed_at < now() - p.lease)
+         )
+       )
+       AND (
+         n.claimed_at IS NULL
+         OR n.claimed_at < now() - p.lease
+       )
+     ORDER BY n.blinded_at ASC
+     LIMIT (SELECT claim_limit FROM params)
+     FOR UPDATE OF n SKIP LOCKED
+  ), claimed AS (
+    UPDATE report_blind_notices n
+       SET claimed_at = now(),
+           attempts = CASE
+             WHEN c.reconcile_only THEN n.attempts
+             ELSE n.attempts + 1
+           END
+      FROM candidates c
+     WHERE n.id = c.id
+     RETURNING n.*, c.reconcile_only
+  )
+  SELECT
+    c.id,
+    c.target_type,
+    c.target_id,
+    c.author_id,
+    c.blinded_at,
+    c.notified_at,
+    c.attempts,
+    c.last_error,
+    c.claimed_at,
+    c.dead_lettered_at,
+    c.reconcile_only
+  FROM claimed c;
 $$;
 
 REVOKE ALL ON FUNCTION claim_report_blind_notices(INT, INT, INTERVAL) FROM PUBLIC, anon, authenticated;
@@ -80,6 +133,24 @@ $$;
 
 REVOKE ALL ON FUNCTION dead_letter_report_blind_notice(BIGINT, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION dead_letter_report_blind_notice(BIGINT, TEXT) TO service_role;
+
+-- 운영자가 dead-letter 원인을 해소한 뒤 재처리 큐로 되돌리는 명시적 복구 경로.
+CREATE OR REPLACE FUNCTION requeue_report_blind_notice(p_id BIGINT)
+RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  UPDATE report_blind_notices
+     SET dead_lettered_at = NULL,
+         claimed_at       = NULL,
+         attempts         = 0,
+         last_error       = 'requeued'
+   WHERE id = p_id AND notified_at IS NULL;
+$$;
+
+REVOKE ALL ON FUNCTION requeue_report_blind_notice(BIGINT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION requeue_report_blind_notice(BIGINT) TO service_role;
 
 -- ── ② DM 멱등키 (발송 성공 후 crash → 다음 틱 재발송 시 중복 차단) ─────────
 -- 같은 안내 쪽지는 dedup_key 로 dm_messages 에 한 번만 들어간다. 재발송 insert 는
