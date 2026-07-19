@@ -51,14 +51,31 @@ const baselineStandings: ReadinessStandingRow[] = Array.from({ length: 10 }, (_,
   draws: 5,
 })); // 각 100
 const todayFinalGames = [{ awayTeamId: 1, homeTeamId: 2 }];
-const baselineStats: ReadinessTitleRow[] = [
-  { category: "hr", rank: 1, player_name: "A", value: 30 },
-  { category: "avg", rank: 1, player_name: "B", value: 0.35 },
-];
-const statsMoved: ReadinessTitleRow[] = [
-  { category: "hr", rank: 1, player_name: "A", value: 31 },
-  { category: "avg", rank: 1, player_name: "B", value: 0.35 },
-];
+
+// prod 타이틀 계약: 9종 각 10 유효·고유 행(빈 선수명 0). 스모크 fixture도 이 계약을 모방한다.
+const TITLE_CATS = ["avg", "hr", "rbi", "sb", "era", "wins", "k", "saves", "whip"];
+function titlesFor(
+  cats: string[],
+  opts?: { rows?: number; bump?: number; blank?: boolean },
+): ReadinessTitleRow[] {
+  const rows: ReadinessTitleRow[] = [];
+  const n = opts?.rows ?? 10;
+  const bump = opts?.bump ?? 0;
+  for (const cat of cats) {
+    for (let rank = 1; rank <= n; rank++) {
+      rows.push({
+        category: cat,
+        rank,
+        player_name: opts?.blank ? "" : `${cat}-P${rank}`,
+        value: rank + bump,
+      });
+    }
+  }
+  return rows;
+}
+// baseline = 9종×10 완전 snapshot / moved = 값 이동(≠baseline)하되 10 유효·고유 행 유지.
+const baselineStats: ReadinessTitleRow[] = titlesFor(TITLE_CATS);
+const statsMoved: ReadinessTitleRow[] = titlesFor(TITLE_CATS, { bump: 100 });
 const full = (over: Partial<Record<number, [number, number, number]>>): ReadinessCurrentStanding[] =>
   Array.from({ length: 10 }, (_, i) => {
     const id = i + 1;
@@ -146,7 +163,7 @@ check(
     baselineStats,
     currentStats: [],
   }),
-  { ready: false, reason: "titles incomplete: hr 0/1 rows", laggingTeams: [] },
+  { ready: false, reason: "titles incomplete: avg 0/10 valid unique rows", laggingTeams: [] },
 );
 // (c) 현재 경기수 expected+1(혼합·과반영) → current>=expected로 통과하던 것 → not ready(정확일치)
 check(
@@ -170,7 +187,7 @@ check(
     baselineStats,
     currentStats: [{ category: "hr", rank: 1, player_name: "A", value: 31 }],
   }),
-  { ready: false, reason: "titles incomplete: avg 0/1 rows", laggingTeams: [] },
+  { ready: false, reason: "titles incomplete: avg 0/10 valid unique rows", laggingTeams: [] },
 );
 // (e) [삼순 e559951e 재리뷰] baselineStats=[] → 기존엔 타이틀 체크 자체를 건너뛰어 ready=true였던 구멍 → not ready
 check(
@@ -185,17 +202,18 @@ check(
   { ready: false, reason: "baseline titles empty", laggingTeams: [] },
 );
 // (f) [삼순 e559951e 재리뷰] baseline 자체가 부분 카테고리(avg 누락) → 기대 카테고리 기준 not ready
+//   hr은 10 유효행으로 채워 행수 게이트를 통과시켜도 avg가 0행이라 기대 카테고리에서 걸린다.
 check(
   "P0③ baseline 부분 카테고리(expected 기준) → not ready",
   evaluateLiveReadiness({
     baselineStandings,
     currentStandings: full({ 1: [51, 45, 5], 2: [48, 48, 5] }),
     todayFinalGames,
-    baselineStats: [{ category: "hr", rank: 1, player_name: "A", value: 30 }],
-    currentStats: [{ category: "hr", rank: 1, player_name: "A", value: 31 }],
+    baselineStats: titlesFor(["hr"]),
+    currentStats: titlesFor(["hr"], { bump: 1 }),
     expectedTitleCategories: ["hr", "avg"],
   }),
-  { ready: false, reason: "baseline titles incomplete: avg missing", laggingTeams: [] },
+  { ready: false, reason: "baseline titles incomplete: avg 0/10 valid unique rows", laggingTeams: [] },
 );
 // (g) expectedTitleCategories 모두 충족 + settle → ready (core 실제 경로 모방)
 check(
@@ -204,11 +222,83 @@ check(
     baselineStandings,
     currentStandings: full({ 1: [51, 45, 5], 2: [48, 48, 5] }),
     todayFinalGames,
-    baselineStats,
-    currentStats: statsMoved,
+    baselineStats: titlesFor(["hr", "avg"]),
+    currentStats: titlesFor(["hr", "avg"], { bump: 1 }),
     expectedTitleCategories: ["hr", "avg"],
   }),
   { ready: true, reason: "ready", laggingTeams: [] },
+);
+
+// ===== [삼순 f9f5e5bf 재리뷰] 타이틀 행 단위 완전성 fail-open 차단 (9종×1행 / 9종×10 blank / 중복 행) =====
+const settledStandings = full({ 1: [51, 45, 5], 2: [48, 48, 5] });
+// (1) current가 카테고리당 1행뿐인 부분 snapshot → 임계 10 미달로 not ready
+check(
+  "행완전성: current 9종×1행 부분 snapshot → not ready",
+  evaluateLiveReadiness({
+    baselineStandings,
+    currentStandings: settledStandings,
+    todayFinalGames,
+    baselineStats,
+    currentStats: titlesFor(TITLE_CATS, { rows: 1, bump: 5 }),
+  }),
+  { ready: false, reason: "titles incomplete: avg 1/10 valid unique rows", laggingTeams: [] },
+);
+// (1b) baseline이 카테고리당 1행 → baseline 쪽도 fail-closed
+check(
+  "행완전성: baseline 9종×1행 부분 snapshot → not ready",
+  evaluateLiveReadiness({
+    baselineStandings,
+    currentStandings: settledStandings,
+    todayFinalGames,
+    baselineStats: titlesFor(TITLE_CATS, { rows: 1 }),
+    currentStats: statsMoved,
+  }),
+  { ready: false, reason: "baseline titles incomplete: avg 1/10 valid unique rows", laggingTeams: [] },
+);
+// (2) current가 9종×10행이나 전부 player_name=""(구조적 빈 응답) → 유효행 0으로 not ready
+check(
+  "행완전성: current 9종×10 blank 선수명 → not ready",
+  evaluateLiveReadiness({
+    baselineStandings,
+    currentStandings: settledStandings,
+    todayFinalGames,
+    baselineStats,
+    currentStats: titlesFor(TITLE_CATS, { blank: true }),
+  }),
+  { ready: false, reason: "titles incomplete: avg 0/10 valid unique rows", laggingTeams: [] },
+);
+// (3) current avg가 10행이나 rank1 완전 복제 포함(고유 9) → 중복 행 fault not ready
+{
+  const dupCurrent = titlesFor(TITLE_CATS, { bump: 3 });
+  // avg rank10 행을 rank1 완전 복제로 교체 → avg는 10행이나 고유 9행
+const avgIdx10 = dupCurrent.findIndex((r) => r.category === "avg" && r.rank === 10);
+  const avgRow1 = dupCurrent.find((r) => r.category === "avg" && r.rank === 1)!;
+  dupCurrent[avgIdx10] = { ...avgRow1 };
+  check(
+    "행완전성: current avg 중복 행 fault(고유 9) → not ready",
+    evaluateLiveReadiness({
+      baselineStandings,
+      currentStandings: settledStandings,
+      todayFinalGames,
+      baselineStats,
+      currentStats: dupCurrent,
+    }),
+    { ready: false, reason: "titles incomplete: avg 9/10 valid unique rows", laggingTeams: [] },
+  );
+}
+// (4) rank/value 비유효(NaN) 행은 유효행에서 제외되어 임계 미달
+check(
+  "행완전성: current value NaN 행 제외 → not ready",
+  evaluateLiveReadiness({
+    baselineStandings,
+    currentStandings: settledStandings,
+    todayFinalGames,
+    baselineStats,
+    currentStats: titlesFor(TITLE_CATS, { bump: 2 }).map((r) =>
+      r.category === "avg" && r.rank === 10 ? { ...r, value: Number.NaN } : r,
+    ),
+  }),
+  { ready: false, reason: "titles incomplete: avg 9/10 valid unique rows", laggingTeams: [] },
 );
 
 // ===== P0① 실제 cron 시간대 회귀 (자정 catch-up 구간이 vercel.json cron에 실제로 있는지) =====

@@ -55,6 +55,9 @@ export function evaluateLiveReadiness(params: {
   // 기대 타이틀 카테고리 권위 집합(core가 전달). baseline이 이 중 하나라도 빠지면
   // baseline 자체가 부분 응답이므로 fail-closed. 미지정 시 baseline 보유 카테고리로 폴백.
   expectedTitleCategories?: string[];
+  // 카테고리당 기대 '유효·고유' 행 수(core가 전달, 기본 10). baseline/current 어느 쪽이든
+  // 이 수를 못 채우면(부분 snapshot·빈 선수명·중복 행) fail-closed → stale 마커 고착 방지.
+  expectedTitleRowsPerCategory?: number;
 }): LiveReadinessResult {
   const { baselineStandings, currentStandings, todayFinalGames, baselineStats, currentStats } = params;
   const expectedTeamCount = params.expectedTeamCount ?? 10;
@@ -108,28 +111,44 @@ export function evaluateLiveReadiness(params: {
   }
 
   // 타이틀 completeness + settle (모두 fail-closed).
-  //   baseline이 비었거나(스냅샷 누락/부분) 기대 카테고리를 못 채우면 원천 신뢰 불가 → not ready
-  //   (01:00 scheduled 백스톱이 보정). 현재 원천도 각 카테고리 행 수를 채워야(빈/부분 응답 배제).
+  //   행 수만 상대 비교(c >= b)하면 부분 snapshot(카테고리당 1행)이 임계치를 1로 낮추거나,
+  //   KBO 마크업 드리프트가 만든 '빈 선수명 10행'/중복 행이 유효로 통과해 stale 마커가 고착된다.
+  //   → baseline/current 모두 기대 9종 각 expectedRows(기본 10) '유효·고유' 행을 절대 강제.
+  //     유효 = player_name 비어있지 않음 + rank/value finite. 고유 = 완전 동일 행 중복 제외.
+  //   (baseline이 못 채우면 01:00 scheduled 백스톱이 보정)
   if (baselineStats.length === 0) {
     return { ready: false, reason: "baseline titles empty", laggingTeams: [] };
   }
-  const catCounts = (rows: ReadinessTitleRow[]) => {
-    const m = new Map<string, number>();
-    for (const r of rows) m.set(r.category, (m.get(r.category) ?? 0) + 1);
-    return m;
-  };
-  const baseCat = catCounts(baselineStats);
-  const curCat = catCounts(currentStats);
+  const expectedRows = params.expectedTitleRowsPerCategory ?? 10;
   // 기대 카테고리: core가 전달한 권위 집합(baseline 부분 카테고리 감지). 미지정 시 baseline 보유 카테고리.
-  const expectedCats = params.expectedTitleCategories ?? [...baseCat.keys()];
-  for (const cat of expectedCats) {
-    const b = baseCat.get(cat) ?? 0;
-    if (b === 0) {
-      return { ready: false, reason: `baseline titles incomplete: ${cat} missing`, laggingTeams: [] };
+  const expectedCats =
+    params.expectedTitleCategories ?? [...new Set(baselineStats.map((r) => r.category))];
+  const validUniqueRowCount = (rows: ReadinessTitleRow[], category: string): number => {
+    const seen = new Set<string>();
+    for (const r of rows) {
+      if (r.category !== category) continue;
+      if (typeof r.player_name !== "string" || r.player_name.trim() === "") continue;
+      if (!Number.isFinite(r.rank) || !Number.isFinite(r.value)) continue;
+      seen.add(`${r.rank}|${r.player_name.trim()}|${r.value}`);
     }
-    const c = curCat.get(cat) ?? 0;
-    if (c < b) {
-      return { ready: false, reason: `titles incomplete: ${cat} ${c}/${b} rows`, laggingTeams: [] };
+    return seen.size;
+  };
+  for (const cat of expectedCats) {
+    const b = validUniqueRowCount(baselineStats, cat);
+    if (b < expectedRows) {
+      return {
+        ready: false,
+        reason: `baseline titles incomplete: ${cat} ${b}/${expectedRows} valid unique rows`,
+        laggingTeams: [],
+      };
+    }
+    const c = validUniqueRowCount(currentStats, cat);
+    if (c < expectedRows) {
+      return {
+        ready: false,
+        reason: `titles incomplete: ${cat} ${c}/${expectedRows} valid unique rows`,
+        laggingTeams: [],
+      };
     }
   }
   // settle: 현재 원천이 baseline과 완전 동일하면 아직 미반영으로 간주(별도 안전장치).

@@ -63,7 +63,12 @@ export async function GET(req: NextRequest) {
     todaySlate = toSlate(todayGames);
     yesterdaySlate = toSlate(yesterdayGames);
   } catch (e) {
-    return NextResponse.json({ ok: false, skipped: "games fetch failed", error: (e as Error).message });
+    // 경기 조회 실패를 200으로 숨기면 크론이 계속 조용히 동다 실패를 못 드러낸다.
+    // 다음 10분 tick이 재시도하되, 5xx로 돌려 운영 관제에 실패가 드러나게 한다.
+    return NextResponse.json(
+      { ok: false, skipped: "games fetch failed", error: (e as Error).message },
+      { status: 500 },
+    );
   }
 
   // 2) 처리할 {gameDate, saveDate} 해석(정상 당일 / 자정 이후 catch-up)

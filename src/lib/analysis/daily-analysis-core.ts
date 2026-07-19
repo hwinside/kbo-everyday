@@ -556,6 +556,9 @@ export async function runDailyAnalysis(
         currentStats: todayStatsSnapshots,
         // 타이틀 권위 카테고리(타/투 9종) — baseline이 이 중 하나라도 빠지면 부분 원천 → not ready
         expectedTitleCategories: ["avg", "hr", "rbi", "sb", "era", "wins", "k", "saves", "whip"],
+        // 카테고리당 기대 유효·고유 행 수(prod snapshot 실측: 매일 9종 각 정확히 10행, 빈 선수명 0).
+        // baseline/current가 각 10 유효·고유 행을 못 채우면(부분 snapshot·빈 선수명·중복) not ready.
+        expectedTitleRowsPerCategory: 10,
       });
       if (!readiness.ready) {
         const msg = `라이브: 원천 미반영(${readiness.reason}) — 마커 없이 다음 tick 재시도`;
