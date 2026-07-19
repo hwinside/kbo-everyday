@@ -336,6 +336,13 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
 
   const showList = !loading && posts.length > 0;
 
+  // Pull-to-refresh: refreshNonce가 증가하면 통합피드를 실제로 재조회(reload). 초기 mount(0)엔 미호출.
+  useEffect(() => {
+    if (refreshNonce > 0) reload();
+    // reload identity 변동으로인 중복 호출 방지 — nonce 변경 시에만 1회.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshNonce]);
+
   // 홈 최신글에서 글을 열고 뒤로 나온 경우에 한해, 홈 최상단 대신 이 섹션으로 스크롤 복귀.
   // router.back() 직후엔 뉴스/숏츠 등 상단 섹션이 뒤늦게 로드되며 위치가 아래로 밀리므로,
   // 유저가 직접 스크롤(휠/터치/키)하기 전까지 짧은 창(≤1s) 동안 섹션을 뷰포트 상단에 재고정한다.
@@ -372,7 +379,7 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
       window.removeEventListener("touchstart", cancel);
       window.removeEventListener("keydown", cancel);
     };
-  }, [showList, refreshNonce]);
+  }, [showList]);
 
   // 로딩 중이거나 글이 없으면 섹션 자체를 숨김(빈 박스 방지) — 뉴스 섹션과 동일 패턴.
   if (loading || posts.length === 0) return null;

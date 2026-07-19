@@ -19,6 +19,10 @@ interface RawGameData {
   status: "scheduled" | "live" | "final" | "cancelled";
   inning?: string;
   isTop?: boolean;
+  awayStarterName?: string | null;
+  homeStarterName?: string | null;
+  winPitcher?: string | null;
+  losePitcher?: string | null;
   broadcastChannels?: BroadcastChannel[];
 }
 
@@ -111,6 +115,11 @@ export function useHomeInit(options?: UseHomeInitOptions) {
           awayScore: g.awayScore ?? 0,
           status: g.status,
           inning: g.status === "live" ? `${g.inning}회${g.isTop ? "초" : "말"}` : null,
+          // 예고선발(예정)·승·패투수(종료) 보존 — HomeClientShell.mapApiGame과 동일. pull 재페치 시 카드 필드/위젯 snapshot 유지.
+          awayStarterName: g.awayStarterName ?? null,
+          homeStarterName: g.homeStarterName ?? null,
+          winPitcher: g.winPitcher ?? null,
+          losePitcher: g.losePitcher ?? null,
           broadcastChannels: g.broadcastChannels,
         }));
         if (games.length > 0) {
