@@ -78,5 +78,3 @@ begin
   return 'sent';
 end;
 $$;
-
-alter table urgent_notice_deliveries enable row level security;
