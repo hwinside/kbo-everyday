@@ -219,7 +219,7 @@ function titleHasNameToken(title: string, name: string): boolean {
 // 일반 영단어에 약칭이 substring으로 박힌 것(algorithm→LG, concert/encore→NC,
 // Nokia→KIA)은 컷한다(삼순 NO-GO #2). 한글 식별자(트윈스 등)는 한글 경계 오탐이
 // 사실상 없어 그대로 substring 매칭한다.
-function titleHasTeamToken(title: string, token: string): boolean {
+export function titleHasTeamToken(title: string, token: string): boolean {
   if (!token) return false;
   const isLatin = ASCII_ALNUM_RE.test(token);
   if (!isLatin) return title.includes(token);

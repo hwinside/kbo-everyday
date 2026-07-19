@@ -19,6 +19,7 @@ import {
   isPhotoArticle,
   dedupeNewsByTitle,
   hasClippingTitleSignal,
+  titleHasTeamToken,
 } from "@/lib/news-relevance";
 import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
@@ -51,18 +52,21 @@ function pubDateToKstDate(pubDate: string): string | null {
  * Gemini가 안 따르는 케이스가 실측돼 코드 레벨 사전 필터로 차단. "LG, 한화 꺾고…"처럼
  * 내 팀이 함께 등장하는 맞대결 기사는 유지된다.
  */
-// Latin 팀 식별자(LG·KT·NC·SSG·KIA)가 소문자로 표기된 헤드라인(예: "프로야구 kt,
-// 로건과 정식 계약")을 놓치지 않도록 case-insensitive 비교. 한글 식별자는 lower-case가
-// no-op이라 영향 없다(2026-07-18 NC 클리핑에 소문자 'kt' 타팀 기사 통과 — 삼순 NO-GO).
+// 팀 식별자 매칭은 hasClippingTitleSignal과 동일한 titleHasTeamToken(공유 helper)로
+// 판정한다: Latin 약칭은 case-insensitive + ASCII 영숫자 경계, 한글 식별자는
+// substring. 단순 lower-case includes를 쓰면 일반 영단어 속 약칭(algorithm→lg,
+// encore→nc)이 target/other 양쪽을 오판정해 ①target 오판정으로 실제 타팀 검사를
+// 건너뛰거나 ②other 오판정으로 정상 기사를 타팀으로 높리는 양방향 버그가
+// 난다(2026-07-18 소문자 'kt' 타팀 통과 + 2026-07-19 algorithm/encore 오판정 — 삼순 NO-GO).
+// hasClippingTitleSignal과 같은 규칙을 공유해 Latin 경계 판정이 두 게이트에서 일치한다.
 export function isOtherTeamTitle(title: string, teamShort: string): boolean {
-  const lowerTitle = title.toLowerCase();
   const fullName = TEAM_SEARCH[teamShort] || teamShort;
   const targetTokens = [teamShort, ...fullName.split(/\s+/)];
-  if (targetTokens.some((t) => t && lowerTitle.includes(t.toLowerCase()))) return false;
+  if (targetTokens.some((t) => titleHasTeamToken(title, t))) return false;
   for (const [short, full] of Object.entries(TEAM_SEARCH)) {
     if (short === teamShort) continue;
     const mascot = full.split(/\s+/).pop() || "";
-    if (lowerTitle.includes(short.toLowerCase()) || (mascot && lowerTitle.includes(mascot.toLowerCase()))) return true;
+    if (titleHasTeamToken(title, short) || (mascot && titleHasTeamToken(title, mascot))) return true;
   }
   return false;
 }

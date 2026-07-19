@@ -228,5 +228,37 @@ ok(
   hasClippingTitleSignal("타이거즈, 과감한 주루플레이", tokensFor("KIA"), rosterFor(6)) === true
 );
 
+// ============================================================================
+// 삼순 3차 NO-GO 반영 (2026-07-19) — isOtherTeamTitle도 titleHasTeamToken 공유
+// (positive gate만 경계 매칭하고 isOtherTeamTitle은 substring이면 Latin 오판정 잔존)
+// ============================================================================
+
+// 축1 target substring 우회 차단: LG 대상 '프로야구 kt, algorithm...' — algorithm 속 'lg'를
+// own-team으로 오인해 실제 타팀 kt 검사를 건너뛰면 안 됨 → 타팀(true)로 잡혀야 함.
+ok(
+  "LG 대상 '프로야구 kt, algorithm 분석' → 타팀 true (target substring 우회 차단)",
+  isOtherTeamTitle("프로야구 kt, algorithm 기반 투구 분석", "LG") === true
+);
+// 축2 other substring false-drop 차단: LG 대상 '오스틴, encore...' — encore 속 'nc'를
+// 타팀으로 오인하면 안 됨 → 타팀 아님(false), 오스틴(LG 선수)은 own-team.
+ok(
+  "LG 대상 '오스틴, encore 요청 받은 홌런쇼' → 타팀 false (other substring 오판정 차단)",
+  isOtherTeamTitle("오스틴, encore 요청 받은 홌런쇼", "LG") === false
+);
+// 축3 기존 정상: 소문자 exact 'kt' 타팀 차단 / exact 'nc,' own-team 유지
+ok(
+  "NC 대상 소문자 exact 'kt' 타팀 차단 (기존 유지)",
+  isOtherTeamTitle("프로야구 kt, 좌완 투수 로건과 정식 계약", "NC") === true
+);
+ok(
+  "NC 대상 exact 'nc,' own-team 유지 (기존 유지)",
+  isOtherTeamTitle("nc, 9회말 끝내기 승리", "NC") === false
+);
+// 한글 마스코트 타팀 판정도 그대로(substring) — LG 대상 '기아 타이거즈' 타팀 true
+ok(
+  "LG 대상 한글 마스코트 '타이거즈' → 타팀 true (한글 substring 유지)",
+  isOtherTeamTitle("타이거즈, 안방서 위닝시리즈", "LG") === true
+);
+
 console.log(fail === 0 ? "\nALL PASS" : `\n${fail} FAIL`);
 process.exit(fail === 0 ? 0 : 1);
