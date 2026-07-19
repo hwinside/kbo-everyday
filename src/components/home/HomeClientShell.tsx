@@ -180,6 +180,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   // 자정~06:00 동안 노출할 전날 경기(종료). 야구 '하루'=06시 경계.
   const [overnightGame, setOvernightGame] = useState<WidgetGame | null>(null);
   const lastRefreshAtRef = useRef(0);
+  // Pull-to-refresh 트리거. 증가하면 클라이언트 페치 섹션(팀카드/커뮤니티/숏츠/최애선수/오늘경기)이 재조회한다.
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   const {
     user, profile,
@@ -189,7 +191,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     welcomeToast,
     todayGames, isPreseason,
     handleOnboardingComplete, handlePlayerSelect,
-  } = useHomeInit({ initialGames, initialIsPreseason });
+  } = useHomeInit({ initialGames, initialIsPreseason, refreshNonce });
 
   // 홈 섹션 표시 여부 (마이페이지 토글, 기기 로컬)
   const sections = useHomeSectionsPref();
@@ -218,19 +220,30 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   const liveGames = polledLiveGames.length > 0 ? polledLiveGames :
     initialLiveGames.filter(g => g.isLive);
 
-  // Pull-to-refresh: 홈 데이터 갱신 (router.refresh로 서버 컴포넌트 revalidate + 뉴스 refetch)
+  // Pull-to-refresh: 홈 데이터 갱신.
+  // 홈의 실제 카드(팀카드 순위/주간기록/순위그래프, 커뮤니티/숏츠/최애선수, 오늘경기)는
+  // 각 컴포넌트 내부 useEffect로 클라이언트 페치하며 mount 시 1회만 돈다.
+  // router.refresh()만으로는 그 클라이언트 상태가 갱신되지 않아 "내려도 새로고침 안 됨" 체감.
+  // → refreshNonce를 증가시켜 각 섹션 페치 effect를 재실행시킨다.
   const handleRefresh = useCallback(async () => {
     lastRefreshAtRef.current = Date.now();
-    // 1) Next.js server component revalidation (games + live data)
+    // 1) 서버 컴포넌트 revalidation (오늘 경기/라이브 서버 prop)
     router.refresh();
-    // 2) Client-side news refetch
-    if (myTeamId !== null) {
+    // 2) 클라이언트 페치 섹션 재조회 트리거
+    setRefreshNonce((n) => n + 1);
+    // 3) 뉴스 refetch + 스피너가 눈에 보이도록 최소 노출 시간 확보
+    const newsRefetch = (async () => {
+      if (myTeamId === null) return;
       try {
         const { fetchHomeNews } = await import("@/hooks/useHomeNews");
         const news = await fetchHomeNews(myTeamId);
         setRealNews(news);
       } catch { /* news refresh 실패해도 무시 */ }
-    }
+    })();
+    await Promise.all([
+      newsRefetch,
+      new Promise((res) => setTimeout(res, 500)),
+    ]);
   }, [router, myTeamId]);
 
   useEffect(() => {
@@ -702,6 +715,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         <TeamCard
           team={myTeam}
           gameSlot={embeddedGame ? <MyTeamHero myTeam={myTeam} myTeamGame={embeddedGame} embedded /> : undefined}
+          refreshNonce={refreshNonce}
         />
       )}
 
@@ -727,21 +741,21 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
             return sections.communityLatest ? (
               <div key={key} className="mb-3">
                 <Suspense fallback={null}>
-                  <CommunityLatestPosts myTeamId={myTeamId} />
+                  <CommunityLatestPosts myTeamId={myTeamId} refreshNonce={refreshNonce} />
                 </Suspense>
               </div>
             ) : null;
           case "favPlayers":
             return sections.favPlayers ? (
               <div key={key} className="mb-3">
-                <FavoritePlayersSection favPlayers={favPlayers} />
+                <FavoritePlayersSection favPlayers={favPlayers} refreshNonce={refreshNonce} />
               </div>
             ) : null;
           case "shorts":
             return sections.shorts ? (
               <div key={key} className="mb-3">
                 <Suspense fallback={<SectionSkeleton height={250} />}>
-                  <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} />
+                  <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} refreshNonce={refreshNonce} />
                 </Suspense>
               </div>
             ) : null;
