@@ -6,8 +6,8 @@ import { buildBlindNotice, blindTargetLabel } from "@/lib/moderation/report-blin
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const CRON_SECRET = process.env.CRON_SECRET || "";
-const MAX_ATTEMPTS = 10; // 발송 실패 재시도 상한(무한 루프 방지)
+const CRON_SECRET = process.env["CRON_SECRET"] || "";
+const MAX_ATTEMPTS = 10; // 발송 실패 재시도 상한(초과 시 dead-letter)
 const BATCH = 50;
 
 // 신고 자동 블라인드 안내 쪽지 outbox 소비 워커.
@@ -15,7 +15,8 @@ const BATCH = 50;
 // 읽어 작성자에게 운영팀 쪽지를 발송한다.
 //  · 겹친 크론 실행 → claim_report_blind_notices RPC 가 행을 원자적으로 lease(중복 처리 방지)
 //  · 발송 성공 후 crash → dm_messages.dedup_key 로 재발송이 멱등(중복 쪽지 방지)
-//  · 실패 → claim 해제(다음 틱 재시도), attempts>=MAX 는 자연 제외
+//  · 실패 → claim 해제(다음 틱 재시도). attempts 상한 도달 시 dead-letter 확정(관제 노출).
+//  · 실패/오류가 하나라도 있으면 HTTP 5xx 로 반환 → Vercel Cron 실패로 기록되어 관제됨.
 
 // 인증: CRON_SECRET Bearer 만 허용한다. 위조 가능한 x-vercel-cron 헤더 폴백은 쓰지 않는다.
 // (Vercel Cron 은 Authorization: Bearer $CRON_SECRET 헤더를 붙이도록 구성한다.)
@@ -49,19 +50,23 @@ export async function GET(req: NextRequest) {
   let sent = 0;
   let skipped = 0;
   let failed = 0;
+  let deadLettered = 0;
+  let updateErrors = 0;
 
   for (const row of (claimed ?? []) as Array<Record<string, unknown>>) {
     const id = row.id as number;
     const authorId = row.author_id as string | null;
     const targetType = row.target_type as string;
     const targetId = row.target_id as number;
+    const attempts = (row.attempts as number) ?? 0; // claim RPC 가 이미 +1 한 값
 
     // 작성자 없음(탈퇴/미상) 또는 시스템 계정 → 발송 불가/불필요. 완료 처리해 재시도 루프에서 제외.
     if (!authorId || authorId === systemUserId) {
-      await admin
+      const { error: uErr } = await admin
         .from("report_blind_notices")
         .update({ notified_at: new Date().toISOString(), last_error: authorId ? "author_is_system" : "no_author" })
         .eq("id", id);
+      if (uErr) updateErrors++;
       skipped++;
       continue;
     }
@@ -78,20 +83,35 @@ export async function GET(req: NextRequest) {
     }
 
     if (result.ok) {
-      await admin
+      const { error: uErr } = await admin
         .from("report_blind_notices")
         .update({ notified_at: new Date().toISOString(), last_error: null })
         .eq("id", id);
+      if (uErr) updateErrors++;
       sent++;
+    } else if (attempts >= MAX_ATTEMPTS) {
+      // 재시도 상한 도달 → dead-letter 확정(다음 claim 에서 영구 제외되므로 여기서 명시 마킹).
+      // 관제: dead_lettered_at + last_error 로 조회 가능, requeue = dead_lettered_at/attempts 리셋.
+      const { error: dErr } = await admin.rpc("dead_letter_report_blind_notice", {
+        p_id: id,
+        p_error: result.reason ?? "send_failed",
+      });
+      if (dErr) updateErrors++;
+      deadLettered++;
+      failed++;
     } else {
-      // 실패 → claim 해제(다음 틱 재시도), attempts 는 claim RPC 가 이미 증가시킴
-      await admin
+      // 실패 → claim 해제(다음 틱 재시도). attempts 는 claim RPC 가 이미 증가시킴.
+      const { error: uErr } = await admin
         .from("report_blind_notices")
         .update({ claimed_at: null, last_error: result.reason ?? "send_failed" })
         .eq("id", id);
+      if (uErr) updateErrors++;
       failed++;
     }
   }
 
-  return NextResponse.json({ ok: true, processed: (claimed ?? []).length, sent, skipped, failed });
+  const body = { ok: failed === 0 && updateErrors === 0, processed: (claimed ?? []).length, sent, skipped, failed, deadLettered, updateErrors };
+  // 실패/오류/데드레터가 있으면 5xx 로 노출 → Vercel Cron 실패 기록(관제). 정상 처리만 200.
+  const status = failed > 0 || updateErrors > 0 ? 500 : 200;
+  return NextResponse.json(body, { status });
 }

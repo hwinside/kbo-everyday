@@ -55,8 +55,20 @@ export async function sendOpsMessageToUser(
   const { error: msgError } = await admin.from("dm_messages").insert(messageRow);
   if (msgError) {
     // 멱등: 같은 dedup_key 로 이미 발송된 건이면 성공으로 간주(발송 성공 후 crash → 재발송 방지).
+    // ⚠️ dedup_key 는 DB 트리거(guard_dm_message_dedup_key)로 service role 만 세팅 가능해
+    //    일반 유저 선점 위조가 불가하지만, belt-and-suspenders 로 기존 행이 진짜 운영팀
+    //    발신(sender=systemUserId)이고 같은 대화방인지 검증한 후에만 성공 처리한다.
     if (dedupKey && msgError.code === "23505") {
-      return { ok: true, conversationId };
+      const { data: dup } = await admin
+        .from("dm_messages")
+        .select("sender_id, conversation_id")
+        .eq("dedup_key", dedupKey)
+        .maybeSingle();
+      if (dup && dup.sender_id === systemUserId && dup.conversation_id === conversationId) {
+        return { ok: true, conversationId };
+      }
+      // 기존 행이 운영팀 발신이 아니면(이론상 불가) 위조 의심 → 실패로 처리해 재시도/관제.
+      return { ok: false, reason: "dedup_key_conflict_foreign" };
     }
     return { ok: false, reason: "send_failed" };
   }
