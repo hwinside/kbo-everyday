@@ -116,6 +116,34 @@ const names = (arr: { name: string }[]) => arr.map((x) => x.name);
   check("둘째표 파손 → 말소 비어있음", r.der.length, 0);
 }
 
+// 7d) [FAULT-INJECTION P0-1d: 빈유효표+실제표] 등록 표 앞에 동일 스키마 유효 빈 표를 삽입 → scope에 유효표 2개.
+//     삼순 지적: 이전엕 첫 표만 보고 validTables=2로 통과하며 실제 등록을 조용히 유실 → 이젠 셀 실패(유실 방지).
+{
+  const html = read("register-deregister-players.html");
+  const hist = html.indexOf("등/말소 현황");
+  const i1 = html.indexOf('class="tNData"', hist); // 등록 표 시작
+  // 동일 스키마(선수명/포지션)의 유효 "빈" 표(placeholder tbody) — 등록 표 앞에 삽입.
+  const emptyValid = '<table class="tNData"><thead><tr><th>등번호</th><th>선수명</th><th>포지션</th><th>투타유형</th><th>생년월일</th><th>체격</th></tr></thead><tbody><tr><td colspan="6">당일 1군 등록된 선수가 없습니다.</td></tr></tbody></table>';
+  const tblOpen = html.lastIndexOf("<table", i1); // 등록 표를 여는 <table 경계 앞에 삽입(태그 쪼개기 아님)
+  const injected = html.slice(0, tblOpen) + emptyValid + html.slice(tblOpen);
+  const r = parseMoveTables(injected);
+  check("빈유효표+실제표 → validTables<2 (scope 유효표 2개=무효)", r.validTables < 2, true);
+  check("빈유효표+실제표 → 등록 조용히 유실 안됨(셀 실패로 차단)", r.reg.length, 0);
+}
+
+// 7e) [FAULT-INJECTION P0-1e: 중간 비인식 h5] 등록 헤더와 실제 등록 표 사이에 비인식 <h5>안내</h5> 삽입
+//     → 등록 scope가 안내 h5 직전에서 잘려 등록 표 없음 → validTables<2("다음 h5 직전" 경계 성립).
+{
+  const html = read("register-deregister-players.html");
+  const hist = html.indexOf("등/말소 현황");
+  const i1 = html.indexOf('class="tNData"', hist);
+  const tblOpen = html.lastIndexOf("<table", i1); // 등록 표를 여는 <table 위치
+  const injected = html.slice(0, tblOpen) + '<h5 class="bul_sub">안내</h5>' + html.slice(tblOpen);
+  const r = parseMoveTables(injected);
+  check("중간 비인식 h5 → validTables<2 (scope 경계 안내 h5 직전에서 잘림)", r.validTables < 2, true);
+  check("중간 비인식 h5 → 등록 비어있음", r.reg.length, 0);
+}
+
 // 8) [FAULT-INJECTION P0-2] --commit과 --cache 동시 사용은 assertRunMode가 throw(삽입 fresh 스캔 강제).
 {
   let threw = false;

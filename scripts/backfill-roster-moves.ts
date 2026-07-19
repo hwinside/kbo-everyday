@@ -78,44 +78,49 @@ export function parseMoveTables(html: string): MoveTablesResult {
   if (endIdx < 0) endIdx = html.length;
   const section = html.slice(histIdx, endIdx);
 
-  // (B) 등록/말소 h5.bul_sub 헤더를 전부 수집하고, 각 헤더의 표 탐색 범위를 "다음 h5 직전까지"로 제한한다.
-  //     (삼순 P0: 비대칭 표 파손 시 등록 헤더가 뒤의 말소 표를 가로채 중복 적재하던 fail-open 차단.)
-  const headerRe = /<h5 class="bul_sub"[^>]*>([^<]+)<\/h5>/g;
-  const headers: { moveType: "register" | "deregister"; bodyStart: number; matchStart: number }[] = [];
-  let h: RegExpExecArray | null;
-  while ((h = headerRe.exec(section)) !== null) {
-    const label = h[1].trim();
-    const mt: "register" | "deregister" | null =
-      label === "등록" ? "register" : label === "말소" ? "deregister" : null;
-    if (mt) headers.push({ moveType: mt, bodyStart: h.index + h[0].length, matchStart: h.index });
+  // (B) 섹션 내 "모든" h5를 종류 무관하게 수집(삼순 P0: 인식하지 않는 안내 h5도 scope 경계로 사용).
+  //     인식(등록/말소) 헤더의 표 탐색 범위 = 그 헤더 ~ "바로 다음 h5" 직전(가로채기/경계 누수 차단).
+  const allH5: { text: string; matchStart: number; bodyStart: number }[] = [];
+  const h5Re = /<h5[^>]*>([\s\S]*?)<\/h5>/g;
+  let m: RegExpExecArray | null;
+  while ((m = h5Re.exec(section)) !== null) {
+    const text = m[1].replace(/<[^>]+>/g, "").trim();
+    allH5.push({ text, matchStart: m.index, bodyStart: m.index + m[0].length });
   }
 
-  // (C) register·deregister 각각 "정확히 1개" 유효 표(표 매칭 + 선수명/포지션 스키마 + 본문 tbody)를 요구한다.
+  // (C) register·deregister 각각 "정확히 1개" 유효 표를 요구한다.
+  //     scope 안의 "모든" 후보 tNData 표를 검사(첫 표만 보지 않음) → 유효 표(선수명/포지션 스키마+본문 tbody)가
+  //     정확히 1개일 때만 파싱. 0개(파손/누락) 또는 2개+(빈유효표+실제표 등)는 무효 → 셀 실패(scanAll throw).
   let regValid = 0;
   let derValid = 0;
-  for (let hi = 0; hi < headers.length; hi++) {
-    const cur = headers[hi];
-    const moveType = cur.moveType;
-    const limit = hi + 1 < headers.length ? headers[hi + 1].matchStart : section.length;
-    const scope = section.slice(cur.bodyStart, limit); // 이 헤더 ~ 다음 헤더 직전까지만(가로채기 불가)
-    const t = scope.match(/<table class="tNData"[^>]*>([\s\S]*?)<\/table>/);
-    if (!t) continue; // 이 헤더 범위에 표 없음(파손/누락) = 무효
+  for (let i = 0; i < allH5.length; i++) {
+    const cur = allH5[i];
+    const moveType: "register" | "deregister" | null =
+      cur.text === "등록" ? "register" : cur.text === "말소" ? "deregister" : null;
+    if (!moveType) continue; // 비인식 h5는 처리하지 않는다(단 위에서 scope 경계로는 이미 사용됨).
+    const limit = i + 1 < allH5.length ? allH5[i + 1].matchStart : section.length;
+    const scope = section.slice(cur.bodyStart, limit); // 이 헤더 ~ 바로 다음 h5(종류 무관) 직전까지만.
 
-    // "선수명" 헤더 표인지 + "포지션" 컬럼 위치 확인(가드).
-    const thead = (t[1].match(/<thead>([\s\S]*?)<\/thead>/) || [])[1] || "";
-    const ths = [...thead.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((m) => m[1].trim());
-    if (ths[1] !== "선수명") continue; // 스키마 불일치 = 무효
-    const posCol = ths.indexOf("포지션");
-    if (posCol < 0) continue; // 포지션 컬럼 없음 = 무효
+    // scope 내 모든 tNData 표 중 유효 표(스키마+tbody)만 수집.
+    const validInScope: { body: string; posCol: number }[] = [];
+    for (const tm of scope.matchAll(/<table class="tNData"[^>]*>([\s\S]*?)<\/table>/g)) {
+      const inner = tm[1];
+      const thead = (inner.match(/<thead>([\s\S]*?)<\/thead>/) || [])[1] || "";
+      const ths = [...thead.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((x) => x[1].trim());
+      if (ths[1] !== "선수명") continue; // 스키마 불일치 = 무효
+      const posCol = ths.indexOf("포지션");
+      if (posCol < 0) continue; // 포지션 컬럼 없음 = 무효
+      const bodyMatch = inner.match(/<tbody>([\s\S]*?)<\/tbody>/);
+      if (!bodyMatch) continue; // 본문 없음 = 무효
+      validInScope.push({ body: bodyMatch[1], posCol });
+    }
+    if (validInScope.length !== 1) continue; // 정확히 1개 아니면 무효(0=파손/누락, 2+=중복) → 셀 실패로 이어짐
 
-    // 본문(tbody) 필수 — 없으면 깨진 표. 공식 empty도 "선수가 없습니다" placeholder 행이 tbody 안에 있다.
-    const bodyMatch = t[1].match(/<tbody>([\s\S]*?)<\/tbody>/);
-    if (!bodyMatch) continue; // 본문 없음 = 무효
-    const body = bodyMatch[1];
-    if (moveType === "register") regValid++; else derValid++; // 유효 표 타입별 카운트
-
+    if (moveType === "register") regValid++; else derValid++;
+    const { body, posCol } = validInScope[0];
+    const bucket = moveType === "register" ? reg : der;
     for (const trm of body.matchAll(/<tr>([\s\S]*?)<\/tr>/g)) {
-      const tds = [...trm[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((m) => m[1]);
+      const tds = [...trm[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((x) => x[1]);
       if (tds.length <= posCol) continue; // placeholder("선수가 없습니다" colspan) 행 스킵
       const a = tds[1].match(/playerId=(\d+)[^>]*>([^<]+)<\/a>/);
       if (!a) continue; // 링크 없는 공지/비고 행 스킵
@@ -127,7 +132,7 @@ export function parseMoveTables(html: string): MoveTablesResult {
         excluded.push({ kboId: entry.kboId, name: entry.name, position, section: moveType });
         continue;
       }
-      (moveType === "register" ? reg : der).push(entry);
+      bucket.push(entry);
     }
   }
 
