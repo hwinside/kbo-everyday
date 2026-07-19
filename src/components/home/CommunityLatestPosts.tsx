@@ -327,7 +327,7 @@ function PostRow({ post }: { post: Post }) {
  * 전체 통합피드(자유+팀+선수) 최신 HOME_LATEST_COUNT개를 세로 compact 리스트로 노출.
  * 신규 API·테이블 없이 useUnifiedFeed를 재사용한다.
  */
-export default function CommunityLatestPosts({ myTeamId }: { myTeamId: number | null }) {
+export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { myTeamId: number | null; refreshNonce?: number }) {
   const { posts, loading, reload } = useUnifiedFeed({ kind: "all" }, HOME_LATEST_COUNT);
   const { user } = useAuth();
   const [writeMode, setWriteMode] = useState<WriteFlowMode>(null);
@@ -372,7 +372,7 @@ export default function CommunityLatestPosts({ myTeamId }: { myTeamId: number | 
       window.removeEventListener("touchstart", cancel);
       window.removeEventListener("keydown", cancel);
     };
-  }, [showList]);
+  }, [showList, refreshNonce]);
 
   // 로딩 중이거나 글이 없으면 섹션 자체를 숨김(빈 박스 방지) — 뉴스 섹션과 동일 패턴.
   if (loading || posts.length === 0) return null;

@@ -42,9 +42,11 @@ interface ShortsFeedItem {
 
 interface HomeHighlightsProps {
   team: string | null;
+  /** Pull-to-refresh 트리거. 값이 바뀌면 숏츠 피드를 재페치한다. */
+  refreshNonce?: number;
 }
 
-export default function HomeHighlights({ team }: HomeHighlightsProps) {
+export default function HomeHighlights({ team, refreshNonce = 0 }: HomeHighlightsProps) {
   const [reelIndex, setReelIndex] = useState<number | null>(null);
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -98,7 +100,7 @@ export default function HomeHighlights({ team }: HomeHighlightsProps) {
         setVideos(items.slice(0, 30));
         setLoading(false);
       }).catch(() => setLoading(false));
-  }, [team]);
+  }, [team, refreshNonce]);
 
   if (loading || videos.length === 0 || !shortsVisible) return null;
 
