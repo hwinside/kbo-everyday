@@ -23,6 +23,7 @@ public class KboMessagingService extends MessagingService {
     @Override
     public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
         super.onMessageReceived(remoteMessage);
+        final long recvMs = System.currentTimeMillis();
 
         Map<String, String> data = remoteMessage.getData();
         if (data == null) {
@@ -62,7 +63,9 @@ public class KboMessagingService extends MessagingService {
                 data.get("w_astarter"),
                 data.get("w_hstarter"),
                 gameId,
-                data.get("w_lastplay"));
+                data.get("w_lastplay"),
+                parseTs(data.get("w_ts")));
+            GameScoreWidget.recordLatency(this, parseTs(data.get("w_ts")), recvMs);
             // 그 다음 잠금화면 알림 카드 게시(prefs 기반 RemoteViews).
             GameNotificationPlugin.post(
                 this,
@@ -102,7 +105,9 @@ public class KboMessagingService extends MessagingService {
                 data.get("w_astarter"),
                 data.get("w_hstarter"),
                 gameId,
-                "");
+                "",
+                parseTs(data.get("w_ts")));
+            GameScoreWidget.recordLatency(this, parseTs(data.get("w_ts")), recvMs);
             // 잠금화면 진행중 알림 제거(post 아님) — 취소 시 잠금화면은 비운다.
             GameNotificationPlugin.clear(this);
         } else if ("game_end".equals(kind)) {
@@ -110,11 +115,23 @@ public class KboMessagingService extends MessagingService {
             // (스코어·gameId·next 보존) → 앱 미실행 상태에서도 다음날 06:00에 다음 예정
             // 경기로 자동 롤오버(readEff). 통째 clear하면 hasGame=false라 롤오버가 무력화됨.
             GameNotificationPlugin.clear(this);
-            GameScoreWidget.markFinal(this);
+            long seqEnd = parseTs(data.get("w_ts"));
+            GameScoreWidget.markFinal(this, seqEnd);
+            GameScoreWidget.recordLatency(this, seqEnd, recvMs);
             // 순위 위젯 — 경기 종료 직후 순위가 갱신되므로 최신 순위 재조회(위젯 미배치면 no-op).
             TeamRankWidget.fetchAndRefresh(this);
             // 선수 카드 위젯 — 종료 직후 오늘 경기 라인/최근 3경기 갱신(미배치면 no-op).
             PlayerCardWidget.fetchAndRefresh(this);
+        }
+    }
+
+    /** w_ts(서버 send-time ms) 파싱 — null/비정상은 -1(seq 가드 비활성, 구버 서버 호환). */
+    private static long parseTs(String s) {
+        if (s == null || s.isEmpty()) return -1L;
+        try {
+            return Long.parseLong(s.trim());
+        } catch (NumberFormatException e) {
+            return -1L;
         }
     }
 }
