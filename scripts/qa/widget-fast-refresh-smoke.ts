@@ -1,7 +1,7 @@
 // QA 스모크 — 안드 위젯 fast-refresh(warmup 함수 내부 루프)의 변화 감지 dedupe 판정 검증.
 // android-widget-live는 트랜지티브로 supabase 싱글톤을 로드하므로 env 더미 선주입(프로덕션 무변경).
 import "./_smoke-env";
-import { shouldSkipWidgetPush } from "../../src/lib/notifications/android-widget-live";
+import { shouldSkipWidgetPush, widgetStateSignature } from "../../src/lib/notifications/android-widget-live";
 
 let pass = 0;
 let fail = 0;
@@ -30,6 +30,19 @@ const newRelay = JSON.stringify({ kind: "game_live", w_as: "1", w_hs: "0", w_sta
 check("real: 동일 상태 → skip", shouldSkipWidgetPush(base, sameState, true), true);
 check("real: 득점 변화 → push", shouldSkipWidgetPush(base, scored, true), false);
 check("real: 아웃/중계 변화 → push", shouldSkipWidgetPush(base, newRelay, true), false);
+
+// 순서 메타(w_source_at) 제외 canonical 시그니처 — 삼순: 매 사이클 sourceAt가 바뜘도 무변화 skip 유지
+function checkEq(name: string, got: string, want: string) {
+  if (got === want) { pass++; }
+  else { fail++; console.error(`✗ ${name}: got ${got}, want ${want}`); }
+}
+const d1 = { kind: "game_live", w_as: "1", w_hs: "0", w_status: "LIVE 4회초", w_source_at: "1000" };
+const d2 = { kind: "game_live", w_as: "1", w_hs: "0", w_status: "LIVE 4회초", w_source_at: "9999" };
+const d3 = { kind: "game_live", w_as: "2", w_hs: "0", w_status: "LIVE 4회초", w_source_at: "1001" };
+checkEq("sig: w_source_at 만 달라도 동일(순서 메타 제외)", widgetStateSignature(d1), widgetStateSignature(d2));
+check("sig: sourceAt만 다른 두 사이클 → skip 유지", shouldSkipWidgetPush(widgetStateSignature(d1), widgetStateSignature(d2), true), true);
+check("sig: 득점 변화는 sourceAt 무관하게 push", shouldSkipWidgetPush(widgetStateSignature(d1), widgetStateSignature(d3), true), false);
+if (widgetStateSignature(d1).includes("w_source_at")) { fail++; console.error("✗ sig should not contain w_source_at"); } else { pass++; }
 
 console.log(`\nwidget-fast-refresh smoke: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

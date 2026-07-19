@@ -58,6 +58,22 @@ export function shouldSkipWidgetPush(prevSig: string | undefined, currentSig: st
   return dedupe === true && prevSig !== undefined && prevSig === currentSig;
 }
 
+// dedupe에 포함하면 안 되는 순서/시간 메타 — 매 사이클 값이 바뀌면 무변화 skip이 깨진다(삼순).
+const WIDGET_SIG_OMIT = new Set(["w_source_at"]);
+
+/**
+ * canonical 상태 시그니처 — 순서 메타(w_source_at)를 제외한 경기 필드만으로 계산.
+ * 워치 push bridge out-of-order 방어용 w_source_at를 payload에 싣으되, dedupe는 이 canonical로
+ * 판정해야 매 사이클 무변화 skip이 유지된다(JSON.stringify 전체를 쓰면 sourceAt로 깨짐).
+ */
+export function widgetStateSignature(data: Record<string, unknown>): string {
+  const canonical: Record<string, unknown> = {};
+  for (const k of Object.keys(data).sort()) {
+    if (!WIDGET_SIG_OMIT.has(k)) canonical[k] = data[k];
+  }
+  return JSON.stringify(canonical);
+}
+
 /**
  * Android 홈 위젯/잠금 알림 카드 신선화 + 경기 전 미리 표시.
  * warmup cron은 경기 시간대 매분 KBO 원천 데이터를 읽으므로:
@@ -214,6 +230,8 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
           w_diamond: diamond(g),
           w_stadium: g.S_NM ?? "",
           w_lastplay: lastPlayByGame.get(g.G_ID) ?? "",
+          // 워치 push bridge(#719) 순서 기준 — FCM 재정렬에도 강건. dedupe canonical에서는 제외.
+          w_source_at: String(Date.now()),
         },
       };
     } else {
@@ -241,12 +259,13 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
           w_outs: "",
           w_diamond: "000",
           w_stadium: g.S_NM ?? "",
+          w_source_at: String(Date.now()),
         },
       };
     }
 
-    // fast-refresh 추가 사이클 — 상태(payload.data) 미변경이면 재발사 생략(배터리 보호).
-    const sig = JSON.stringify(payload.data);
+    // fast-refresh 추가 사이클 — canonical 상태(w_source_at 제외) 미변경이면 재발사 생략(배터리 보호).
+    const sig = widgetStateSignature(payload.data as Record<string, unknown>);
     if (shouldSkipWidgetPush(lastWidgetSig.get(g.G_ID as string), sig, dedupe)) {
       skipped += fans.ids.length;
       continue;
