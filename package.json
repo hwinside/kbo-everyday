@@ -50,7 +50,8 @@
     "qa:admin-alerts": "tsx scripts/qa/admin-alerts-smoke.ts",
     "qa:roster-moves": "tsx scripts/qa/roster-moves-diff-smoke.ts",
     "qa:backfill-roster-parse": "tsx scripts/qa/backfill-roster-parse-smoke.ts",
-    "qa:roster-moves:db": "node scripts/qa/roster-moves-db-integration.mjs"
+    "qa:roster-moves:db": "node scripts/qa/roster-moves-db-integration.mjs",
+    "qa:widget-fast": "tsx scripts/qa/widget-fast-refresh-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

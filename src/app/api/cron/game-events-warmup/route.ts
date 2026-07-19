@@ -24,10 +24,32 @@ import { pushIosWidgetLiveUpdates } from "@/lib/notifications/ios-widget-live";
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 
+// 함수 내부 fast-refresh 루프가 추가 사이클을 돌 수 있게 실행시간 상한을 늘린다(Vercel).
+// news-clipping(300s) 선례. wall-clock 가드로 다음 크론 틱(60s)과 겹침 방지.
+export const maxDuration = 60;
+
 function getKSTDateStr(): string {
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
   return kst.toISOString().slice(0, 10).replace(/-/g, "");
+}
+
+// KBO 라이브 스코어보드 원천 — fast-refresh 루프가 매 사이클 신선한 games를 다시 읽도록 추출.
+// (2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청을 IE 에러 페이지로 막음.)
+async function fetchKboLiveGames(date: string): Promise<KboRawGame[]> {
+  const liveRes = await fetch(`${KBO_MAIN}/GetKboGameList`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+      "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
+    },
+    body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
+    cache: "no-store",
+  })
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
+  return (liveRes?.game || []) as KboRawGame[];
 }
 
 // 잠금화면 Live Activity "중계 한 줄" 소스 — /api/game-relay 응답에서 최근 플레이 1줄 추출.
@@ -58,20 +80,7 @@ export async function GET(req: NextRequest) {
   }
 
   const date = getKSTDateStr();
-
-  // 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청을 IE 에러 페이지로 막음.
-  const liveRes = await fetch(`${KBO_MAIN}/GetKboGameList`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
-      "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
-    },
-    body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
-    cache: "no-store",
-  }).then(r => (r.ok ? r.json() : null)).catch(() => null);
-
-  const games: KboRawGame[] = liveRes?.game || [];
+  const games: KboRawGame[] = await fetchKboLiveGames(date);
   const liveGameIds = games
     .filter(g => g.GAME_STATE_SC === "2" && g.G_ID)
     .map(g => g.G_ID as string);
@@ -265,6 +274,30 @@ export async function GET(req: NextRequest) {
     console.error("[warmup] live activity wake failed:", (e as Error).message);
   }
 
+  // 안드 홈위젯 fast-refresh (맥미니 의존 0, Vercel 함수 내부 루프) — 라이브 중계 위젯
+  // 지연을 ~60초(1분 크론) → ~20초로 단축. 추가 사이클은 *안드 위젯만* 재발사하고
+  // (득점/랭크/LA 등 알림 서브시스템은 위에서 1회만 — 중복 알림 방지), dedupe로
+  // 상태가 바뀜 경기만 발사해 배터리/FCM 쿼터 부담을 막는다. maxDuration(60s) 안에서
+  // wall-clock 가드로 안전 종료(다음 크론 틱과 겹침 방지).
+  const fastRefresh: Array<{ atMs: number; result: unknown }> = [];
+  if (liveGameIds.length > 0) {
+    const loopStart = Date.now();
+    for (const targetMs of [20_000, 40_000]) {
+      const waitMs = targetMs - (Date.now() - loopStart);
+      if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+      if (Date.now() - loopStart > 46_000) break; // maxDuration 60s 여유
+      try {
+        const freshGames = await fetchKboLiveGames(date);
+        const hasLive = freshGames.some((g) => g.G_ID && g.GAME_STATE_SC === "2");
+        if (!hasLive) break; // 모든 경기 종료 → 루프 종료
+        const w = await pushAndroidWidgetLiveUpdates(freshGames, baseUrl, { dedupeAgainstLast: true });
+        fastRefresh.push({ atMs: Date.now() - loopStart, result: w });
+      } catch (e) {
+        fastRefresh.push({ atMs: Date.now() - loopStart, result: { error: (e as Error).message } });
+      }
+    }
+  }
+
   return NextResponse.json({
     date,
     polled: liveGameIds.length,
@@ -281,6 +314,7 @@ export async function GET(req: NextRequest) {
     liveActivityStart,
     liveActivityWake,
     iosWidget,
+    fastRefresh,
     lastPlays: Object.fromEntries(lastPlayByGame),
     results: results.map(r =>
       r.status === "fulfilled"

@@ -47,6 +47,17 @@ const START_WINDOW_MS = 90 * 60 * 1000;
 //  push-only 기기는 다음 pregame push로 복구). 지연 후 늦은 취소도 커버.
 const CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
 
+// fast-refresh(warmup 함수 내부 루프)용 변화 감지 — 라이브 위젯을 sub-minute로
+// 갱신할 때 상태가 안 바뀌 경기는 추가 푸시를 건너뛰어 배터리/쿼터 부담을 막는다.
+// 모듈 레벨 in-memory 캐시라 같은 서버리스 인스턴스의 사이클 간(그리고 warm 재사용
+// 시 분 간)만 유효 — cold start면 비어서 무조건 발사(현행 동작 보존). 직전 payload.data 시그니처와 비교.
+const lastWidgetSig = new Map<string, string>();
+
+/** dedupe 판정(순수) — dedupe=true이고 직전 시그니처와 동일하면 skip. cycle 0(dedupe=false)은 항상 발사. */
+export function shouldSkipWidgetPush(prevSig: string | undefined, currentSig: string, dedupe: boolean): boolean {
+  return dedupe === true && prevSig !== undefined && prevSig === currentSig;
+}
+
 /**
  * Android 홈 위젯/잠금 알림 카드 신선화 + 경기 전 미리 표시.
  * warmup cron은 경기 시간대 매분 KBO 원천 데이터를 읽으므로:
@@ -54,13 +65,14 @@ const CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
  *  - 예정(GAME_STATE_SC="1")이고 시작 30분 전 이내: '경기 예정' 매치업 카드를 미리 띄운다(iOS 패리티).
  * 네이티브 알림은 setOnlyAlertOnce라 같은 카드를 매분 갱신해도 재알림 없이 조용히 갱신된다.
  */
-export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl: string): Promise<{
+export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl: string, opts?: { dedupeAgainstLast?: boolean }): Promise<{
   games: number;
   sent: number;
   failed: number;
   cleaned: number;
   skipped: number;
 }> {
+  const dedupe = opts?.dedupeAgainstLast === true;
   let pushed = 0;
   let sent = 0;
   let failed = 0;
@@ -233,6 +245,13 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
       };
     }
 
+    // fast-refresh 추가 사이클 — 상태(payload.data) 미변경이면 재발사 생략(배터리 보호).
+    const sig = JSON.stringify(payload.data);
+    if (shouldSkipWidgetPush(lastWidgetSig.get(g.G_ID as string), sig, dedupe)) {
+      skipped += fans.ids.length;
+      continue;
+    }
+    lastWidgetSig.set(g.G_ID as string, sig);
     const res = await sendFcmToUsers(fans.ids, payload, "game_start");
     sent += res.sent;
     failed += res.failed;
