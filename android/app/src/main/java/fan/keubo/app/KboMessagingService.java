@@ -71,6 +71,8 @@ public class KboMessagingService extends MessagingService {
                 path == null ? "" : path);
             // 선수 카드 위젯 — 라이브 틱 편승 재조회(55초 스로틀, 미배치면 no-op)
             PlayerCardWidget.onLiveTick(this);
+            // 갤럭시워치 push bridge — 같은 game_live FCM으로 워치 타일/컴플리케이션 20~40초 실시간 갱신.
+            pushGameStateToWatch("live", data, gameId);
         } else if ("game_cancel".equals(kind)) {
             // 경기 취소 — 홈위젯은 "경기 취소"(CANCELLED)로 갱신하되, 잠금화면 진행중 알림은
             // post하지 않고 내린다(정책: 잠금화면은 정리, 홈위젯은 유지). game_live처럼 post()를
@@ -105,6 +107,8 @@ public class KboMessagingService extends MessagingService {
                 "");
             // 잠금화면 진행중 알림 제거(post 아님) — 취소 시 잠금화면은 비운다.
             GameNotificationPlugin.clear(this);
+            // 갤럭시워치 push bridge — 취소 상태 즉시 수렴.
+            pushGameStateToWatch("cancelled", data, gameId);
         } else if ("game_end".equals(kind)) {
             // 잠금화면 진행중 알림은 내리되, 홈 위젯은 비우지 않고 종료 상태로 남긴다
             // (스코어·gameId·next 보존) → 앱 미실행 상태에서도 다음날 06:00에 다음 예정
@@ -115,6 +119,80 @@ public class KboMessagingService extends MessagingService {
             TeamRankWidget.fetchAndRefresh(this);
             // 선수 카드 위젯 — 종료 직후 오늘 경기 라인/최근 3경기 갱신(미배치면 no-op).
             PlayerCardWidget.fetchAndRefresh(this);
+            // 갤럭시워치 push bridge — game_end FCM은 최소 payload라, 위젯 prefs의 현재 경기
+            // (팀/점수/gameId)를 읽어 종료 상태로 수렴시킨다(워치가 라이브 캐시가 없어도 종료 표시).
+            pushGameEndToWatch();
+        }
+    }
+
+    /**
+     * 폰 → 갤럭시워치 경기 상태 push(주경로) — /kbo/game_state DataItem(urgent, latest-value).
+     * game_live/game_cancel의 w_* data를 그대로 실어 워치 GameStateListenerService가 게이트 후
+     * 타일/컴플리케이션을 재렌더한다. 워치 미연결/GMS 이상은 조용히 무시(폰 기능 무영향).
+     * ts는 항상 현재 시각 — 같은 경기 out-of-order 역전 차단 + DataItem 변경 감지 보장.
+     */
+    private void pushGameStateToWatch(String kind, Map<String, String> data, String gameId) {
+        String status = data.get("w_status");
+        // 경기 전(SCHEDULED)은 워치가 카운트다운/pull로 처리 — 라이브 스냅샷으로 오합성 방지.
+        if ("live".equals(kind) && status != null && status.startsWith("SCHEDULED")) {
+            return;
+        }
+        try {
+            com.google.android.gms.wearable.PutDataMapRequest req =
+                    com.google.android.gms.wearable.PutDataMapRequest.create("/kbo/game_state");
+            com.google.android.gms.wearable.DataMap m = req.getDataMap();
+            m.putString("kind", kind);
+            m.putString("gid", gameId == null ? "" : gameId);
+            m.putLong("ts", System.currentTimeMillis());
+            putIf(m, "w_away", data.get("w_away"));
+            putIf(m, "w_home", data.get("w_home"));
+            putIf(m, "w_as", data.get("w_as"));
+            putIf(m, "w_hs", data.get("w_hs"));
+            putIf(m, "w_status", status);
+            putIf(m, "w_outs", data.get("w_outs"));
+            putIf(m, "w_diamond", data.get("w_diamond"));
+            putIf(m, "w_stadium", data.get("w_stadium"));
+            putIf(m, "w_pitcher", data.get("w_pitcher"));
+            putIf(m, "w_batter", data.get("w_batter"));
+            putIf(m, "w_lastplay", data.get("w_lastplay"));
+            com.google.android.gms.wearable.Wearable.getDataClient(this)
+                    .putDataItem(req.asPutDataRequest().setUrgent());
+        } catch (Exception ignored) {
+        }
+    }
+
+    /**
+     * game_end 전용 워치 push — game_end FCM엔 w_ 필드·gameId가 없어, GameScoreWidget prefs의
+     * 현재 경기(gameId·팀·점수·구장)를 읽어 종료 스냅샷으로 수렴시킨다. 경기 없음이면 no-op.
+     */
+    private void pushGameEndToWatch() {
+        try {
+            android.content.SharedPreferences p = getSharedPreferences(
+                    GameScoreWidget.PREFS, android.content.Context.MODE_PRIVATE);
+            if (!p.getBoolean(GameScoreWidget.KEY_HAS_GAME, false)) return;
+            String away = p.getString(GameScoreWidget.KEY_AWAY, "");
+            String home = p.getString(GameScoreWidget.KEY_HOME, "");
+            if (away.isEmpty() || home.isEmpty()) return;
+            com.google.android.gms.wearable.PutDataMapRequest req =
+                    com.google.android.gms.wearable.PutDataMapRequest.create("/kbo/game_state");
+            com.google.android.gms.wearable.DataMap m = req.getDataMap();
+            m.putString("kind", "final");
+            m.putString("gid", p.getString(GameScoreWidget.KEY_GAME_ID, ""));
+            m.putLong("ts", System.currentTimeMillis());
+            m.putString("w_away", away);
+            m.putString("w_home", home);
+            m.putString("w_as", p.getString(GameScoreWidget.KEY_AS, "0"));
+            m.putString("w_hs", p.getString(GameScoreWidget.KEY_HS, "0"));
+            putIf(m, "w_stadium", p.getString(GameScoreWidget.KEY_STADIUM, ""));
+            com.google.android.gms.wearable.Wearable.getDataClient(this)
+                    .putDataItem(req.asPutDataRequest().setUrgent());
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static void putIf(com.google.android.gms.wearable.DataMap m, String key, String value) {
+        if (value != null && !value.isEmpty()) {
+            m.putString(key, value);
         }
     }
 }

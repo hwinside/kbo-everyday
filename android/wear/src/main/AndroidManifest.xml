@@ -88,5 +88,15 @@
                 <data android:scheme="wear" android:host="*" android:pathPrefix="/kbo/my_team" />
             </intent-filter>
         </service>
+
+        <!-- 폰 → 워치 경기 상태 push 수신(주경로) — game_live/cancel/end → 라이브 20~40초 갱신 -->
+        <service
+            android:name=".GameStateListenerService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/kbo/game_state" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

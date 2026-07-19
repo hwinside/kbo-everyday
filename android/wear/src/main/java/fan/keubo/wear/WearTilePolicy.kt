@@ -8,9 +8,12 @@ import java.util.Locale
  */
 object WearTilePolicy {
 
-    // kind별 캐시 신선도 임계(이보다 오래되면 백그라운드 re-sync)
-    // live는 20~40초 실시간 목표(삼순 의견) — 라이브 틱마다 백그라운드 sync가 붙게 20초로 조인다.
-    const val STALE_LIVE_MS = 20_000L
+    // kind별 캐시 신선도 임계(이보다 오래되면 백그라운드 re-sync).
+    // ⚠️ 이 pull 경로는 폰 단절 시 *폴백*이다. 라이브 20~40초 실시간 갱신의 주경로는
+    // 폰 KboMessagingService → Data Layer(/kbo/game_state) → GameStateListenerService push
+    // bridge(WearPushPolicy)다. STALE_LIVE_MS는 그 push가 끊겼을 때 tile 재요청 시 재sync를
+    // 트리거하는 폴백 임계(freshness 60초보다 짧아 60초 tile 요청이 확실히 재sync를 부른다).
+    const val STALE_LIVE_MS = 45_000L
     const val STALE_TODAY_MS = 5 * 60_000L
     const val STALE_IDLE_MS = 15 * 60_000L
 
@@ -18,9 +21,9 @@ object WearTilePolicy {
     const val LIVE_DELAY_BADGE_MS = 5 * 60_000L
 
     // 백그라운드 sync 최소 재시도 간격 — requestUpdate ↔ onTileRequest 루프 방지.
-    // live freshness(30초)/stale(20초)와 맞물려 20~40초 목표를 막지 않도록 20초로 낮춘다
-    // (idle은 stale 15분이라 이 스로틀에 걸릴 일이 거의 없어 배터리 영향 없음).
-    const val MIN_SYNC_RETRY_MS = 20_000L
+    // 원복(30초): push bridge가 주경로라 pull을 20초로 조일 필요가 없고, 이 상수를 공유하는
+    // KboComplicationServiceBase의 네트워크 sync까지 20초로 낮추면 배터리에 불리하다(삼순 2차).
+    const val MIN_SYNC_RETRY_MS = 30_000L
 
     /** 캐시가 백그라운드 re-sync 대상일 만큼 오래됐는지. */
     fun isStale(snap: WearSnapshot, lastSyncAtMs: Long, nowMs: Long): Boolean {
@@ -39,9 +42,13 @@ object WearTilePolicy {
     fun canAttemptSync(lastAttemptAtMs: Long, nowMs: Long): Boolean =
         nowMs - lastAttemptAtMs >= MIN_SYNC_RETRY_MS
 
+    // push bridge가 최근 캐시를 갱신했으면(수락 시 lastSyncAt 갱신 — WearStore.savePushSnapshot/savePushMeta)
+    // freshness/stale이 자연히 fresh로 잡혀 폴백 pull이 생략된다(삼순: "Data Layer snapshot 신선하면 pull 생략").
+
     /**
      * freshness 힌트(OS best-effort — SLA 아님, 스펙 v2 §3):
-     * live 30초(삼순 20~40초 목표 — OS가 이 주기로 타일 재요청 → stale sync 발동) /
+     * live 60초(AndroidX Tiles setFreshnessIntervalMillis 계약: 1분 미만은 권장 안 함/시스템 throttle 가능 —
+     *   20~40초 실시간 목표는 freshness가 아니라 push bridge(/kbo/game_state)로 달성, 이 pull은 폰 단절 폴백) /
      * loading 1분 / 예정(시작 전) min(30분, 시작까지) /
      * startedButStillScheduled 4분(#635 retry) / 그 외 30분.
      * ⚠️ Wear OS는 짧은 freshness를 저전력/앰비언트에서 늘릴 수 있어 SLA가 아니라 "목표"다.
@@ -49,7 +56,7 @@ object WearTilePolicy {
     fun freshnessForMs(snap: WearSnapshot, nowMs: Long): Long {
         val thirtyMin = 30 * 60_000L
         return when (snap.kind) {
-            "live" -> 30_000L
+            "live" -> 60_000L
             "loading" -> 60_000L
             "scheduled" -> {
                 val start = snap.startAt ?: return thirtyMin
