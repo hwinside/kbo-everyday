@@ -49,12 +49,18 @@ type LoadState =
   | { status: "error" }
   | { status: "ready"; moves: Move[] };
 
+// 기본 노출 개수 — 처음엔 가장 최근 N개만 보여주고 '전체보기'로 시즌 전체를 펼친다
+// (2026-07-19 하린아빠 스펙). 조회는 시즌 전체(365일)로 하되 접힘 상태에서 3개로 한정.
+const PREVIEW_COUNT = 3;
+const SEASON_DAYS = 365;
+
 export default function TeamRosterMovesCard({ team }: Props) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     let aborted = false;
-    fetch(`/api/roster-moves?teamId=${team.id}&days=30`)
+    fetch(`/api/roster-moves?teamId=${team.id}&days=${SEASON_DAYS}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
@@ -80,7 +86,10 @@ export default function TeamRosterMovesCard({ team }: Props) {
     state.status === "ready"
       ? state.moves.filter((m) => m.moveType !== "register" || Boolean(m.href))
       : [];
-  const groups = groupByDate(renderable);
+  // 접힘 상태 = 가장 최근 PREVIEW_COUNT개(move_date 내림차순)만, 전체보기 = 시즌 전체.
+  const visible = expanded ? renderable : renderable.slice(0, PREVIEW_COUNT);
+  const groups = groupByDate(visible);
+  const hasMore = renderable.length > PREVIEW_COUNT;
 
   return (
     <motion.div
@@ -139,6 +148,16 @@ export default function TeamRosterMovesCard({ team }: Props) {
             </ul>
           </div>
         ))}
+        {hasMore && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="mt-0.5 self-start text-xs font-semibold active:opacity-70"
+            style={{ color: bgColor }}
+          >
+            {expanded ? "접기" : `전체보기 (${renderable.length})`}
+          </button>
+        )}
         </div>
       )}
     </motion.div>

@@ -18,7 +18,8 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const teamId = Number(searchParams.get("teamId"));
-  const days = Math.min(Math.max(Number(searchParams.get("days")) || 30, 1), 90);
+  // days 상한 366 — 카드 '전체보기'가 시즌 전체 등록·말소를 조회하기 위해 90→366 상향(2026-07-19).
+  const days = Math.min(Math.max(Number(searchParams.get("days")) || 30, 1), 366);
   if (!teamId) {
     return NextResponse.json({ error: "teamId required" }, { status: 400 });
   }
