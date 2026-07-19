@@ -304,3 +304,43 @@ export function startTokenResultFence(
 ): { user_id: string; push_to_start_token: string } {
   return { user_id: userId, push_to_start_token: sentToken };
 }
+
+// ── 어드민 대시보드 집계 (갱신 수신/불가) ─────────────────────────────
+// 채널 구독은 broadcast로 갱신을 받으므로 update 토큰과 합쳐 '갱신 수신'으로 세야
+// 하지만, 채널 재생성/정리 후 남은 stale ACK 행을 그대로 세면 이미 갱신을 못 받는
+// 카드를 '수신'으로 오인한다(삼순 NO-GO). 따라서 *현재 active 채널의
+// (environment, channel_id)와 정확히 일치*하는 구독만 인정한다 — 실제 발송·wake
+// 경로가 채널을 매칭하는 방식과 동일.
+
+export interface ActiveChannelRef {
+  game_id: string;
+  environment: string;
+  channel_id: string;
+}
+
+export interface SubscriptionRef {
+  game_id: string;
+  environment: string;
+  channel_id: string;
+  user_id: string | null;
+  device_key: string;
+}
+
+/** active 채널 (game_id|environment|channel_id) 키 집합. */
+export function activeChannelKeySet(channels: ActiveChannelRef[]): Set<string> {
+  const s = new Set<string>();
+  for (const c of channels) s.add(`${c.game_id}|${c.environment}|${c.channel_id}`);
+  return s;
+}
+
+/**
+ * 유효 채널 구독만 통과 — active 채널의 (game_id, environment, channel_id) 정확
+ * 일치 행만 인정. stale ACK(채널 재생성으로 옛 channel_id를 든 행, 또는 채널이
+ * 이미 정리돼 active가 없는 경기의 행)는 제외.
+ */
+export function isLiveChannelSubscription(
+  sub: SubscriptionRef,
+  activeKeys: Set<string>,
+): boolean {
+  return activeKeys.has(`${sub.game_id}|${sub.environment}|${sub.channel_id}`);
+}

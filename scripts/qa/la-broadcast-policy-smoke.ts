@@ -18,6 +18,8 @@ import {
   shouldAdvanceFallbackCursor,
   applyChannelHeartbeat,
   CHANNEL_HEARTBEAT_INTERVAL_MS,
+  activeChannelKeySet,
+  isLiveChannelSubscription,
 } from "../../src/lib/notifications/live-activity-channel-policy";
 
 let pass = 0;
@@ -166,6 +168,30 @@ check(
   rowMatches(channelMutationFence(oldChanRow), { ...recreatedRow, channel_id: "chanOLD" }),
   true,
 );
+
+// 대시보드 갱신 수신 집계: 현재 active 채널 세대와 정확히 일치하는 ACK만 인정.
+// 채널 재생성 뒤 남은 old ACK가 수신 가능으로 오집계되는 #688 NO-GO 회귀를 봉인한다.
+{
+  const activeKeys = activeChannelKeySet([
+    { game_id: "20260718KTLG0", environment: "production", channel_id: "chanNEW" },
+    { game_id: "20260718KTLG0", environment: "sandbox", channel_id: "chanSB" },
+  ]);
+  const baseSub = {
+    game_id: "20260718KTLG0",
+    environment: "production",
+    channel_id: "chanNEW",
+    user_id: "u1",
+    device_key: "device1",
+  };
+  check("dashboard ACK: current active generation → included",
+    isLiveChannelSubscription(baseSub, activeKeys), true);
+  check("dashboard ACK: recreated channel old ACK → excluded",
+    isLiveChannelSubscription({ ...baseSub, channel_id: "chanOLD" }, activeKeys), false);
+  check("dashboard ACK: same channel id but wrong environment → excluded",
+    isLiveChannelSubscription({ ...baseSub, environment: "sandbox" }, activeKeys), false);
+  check("dashboard ACK: no active channel for game → excluded",
+    isLiveChannelSubscription({ ...baseSub, game_id: "20260718OBNC0" }, activeKeys), false);
+}
 
 // 토큰 rotation: cron이 tokA 발송 중 앱이 tokB 등록(env null 리셋)
 //  → A의 늦은 성공(env 기록)도, A의 BadDeviceToken(행 삭제)도 B 행에 적용되면 안 됨.
