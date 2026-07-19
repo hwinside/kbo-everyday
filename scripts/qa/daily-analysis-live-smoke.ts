@@ -163,7 +163,7 @@ check(
     baselineStats,
     currentStats: [],
   }),
-  { ready: false, reason: "titles incomplete: avg 0/10 valid unique rows", laggingTeams: [] },
+  { ready: false, reason: "titles invalid: avg 0/10 rows", laggingTeams: [] },
 );
 // (c) 현재 경기수 expected+1(혼합·과반영) → current>=expected로 통과하던 것 → not ready(정확일치)
 check(
@@ -187,7 +187,7 @@ check(
     baselineStats,
     currentStats: [{ category: "hr", rank: 1, player_name: "A", value: 31 }],
   }),
-  { ready: false, reason: "titles incomplete: avg 0/10 valid unique rows", laggingTeams: [] },
+  { ready: false, reason: "titles invalid: avg 0/10 rows", laggingTeams: [] },
 );
 // (e) [삼순 e559951e 재리뷰] baselineStats=[] → 기존엔 타이틀 체크 자체를 건너뛰어 ready=true였던 구멍 → not ready
 check(
@@ -213,7 +213,7 @@ check(
     currentStats: titlesFor(["hr"], { bump: 1 }),
     expectedTitleCategories: ["hr", "avg"],
   }),
-  { ready: false, reason: "baseline titles incomplete: avg 0/10 valid unique rows", laggingTeams: [] },
+  { ready: false, reason: "baseline titles invalid: avg 0/10 rows", laggingTeams: [] },
 );
 // (g) expectedTitleCategories 모두 충족 + settle → ready (core 실제 경로 모방)
 check(
@@ -241,7 +241,7 @@ check(
     baselineStats,
     currentStats: titlesFor(TITLE_CATS, { rows: 1, bump: 5 }),
   }),
-  { ready: false, reason: "titles incomplete: avg 1/10 valid unique rows", laggingTeams: [] },
+  { ready: false, reason: "titles invalid: avg 1/10 rows", laggingTeams: [] },
 );
 // (1b) baseline이 카테고리당 1행 → baseline 쪽도 fail-closed
 check(
@@ -253,7 +253,7 @@ check(
     baselineStats: titlesFor(TITLE_CATS, { rows: 1 }),
     currentStats: statsMoved,
   }),
-  { ready: false, reason: "baseline titles incomplete: avg 1/10 valid unique rows", laggingTeams: [] },
+  { ready: false, reason: "baseline titles invalid: avg 1/10 rows", laggingTeams: [] },
 );
 // (2) current가 9종×10행이나 전부 player_name=""(구조적 빈 응답) → 유효행 0으로 not ready
 check(
@@ -265,7 +265,7 @@ check(
     baselineStats,
     currentStats: titlesFor(TITLE_CATS, { blank: true }),
   }),
-  { ready: false, reason: "titles incomplete: avg 0/10 valid unique rows", laggingTeams: [] },
+  { ready: false, reason: "titles invalid: avg 0/10 valid rows", laggingTeams: [] },
 );
 // (3) current avg가 10행이나 rank1 완전 복제 포함(고유 9) → 중복 행 fault not ready
 {
@@ -283,7 +283,7 @@ const avgIdx10 = dupCurrent.findIndex((r) => r.category === "avg" && r.rank === 
       baselineStats,
       currentStats: dupCurrent,
     }),
-    { ready: false, reason: "titles incomplete: avg 9/10 valid unique rows", laggingTeams: [] },
+    { ready: false, reason: "titles invalid: avg 9/10 unique players", laggingTeams: [] },
   );
 }
 // (4) rank/value 비유효(NaN) 행은 유효행에서 제외되어 임계 미달
@@ -298,8 +298,76 @@ check(
       r.category === "avg" && r.rank === 10 ? { ...r, value: Number.NaN } : r,
     ),
   }),
-  { ready: false, reason: "titles incomplete: avg 9/10 valid unique rows", laggingTeams: [] },
+  { ready: false, reason: "titles invalid: avg 9/10 valid rows", laggingTeams: [] },
 );
+
+// ===== [삼순 486d7e14 재리뷰] 정확히 10명 + 선수 정체성 고유성 =====
+check(
+  "정확행수: baseline avg 11행 → not ready",
+  evaluateLiveReadiness({
+    baselineStandings,
+    currentStandings: settledStandings,
+    todayFinalGames,
+    baselineStats: titlesFor(TITLE_CATS, { rows: 11 }),
+    currentStats: statsMoved,
+  }),
+  { ready: false, reason: "baseline titles invalid: avg 11/10 rows", laggingTeams: [] },
+);
+check(
+  "정확행수: current avg 11행 → not ready",
+  evaluateLiveReadiness({
+    baselineStandings,
+    currentStandings: settledStandings,
+    todayFinalGames,
+    baselineStats,
+    currentStats: titlesFor(TITLE_CATS, { rows: 11, bump: 1 }),
+  }),
+  { ready: false, reason: "titles invalid: avg 11/10 rows", laggingTeams: [] },
+);
+{
+  const repeatedPlayer = titlesFor(TITLE_CATS, { bump: 1 }).map((r) =>
+    r.category === "avg" ? { ...r, player_name: "동일선수" } : r,
+  );
+  check(
+    "선수고유성: current avg 동일 선수 10행(rank/value 상이) → not ready",
+    evaluateLiveReadiness({
+      baselineStandings,
+      currentStandings: settledStandings,
+      todayFinalGames,
+      baselineStats,
+      currentStats: repeatedPlayer,
+    }),
+    { ready: false, reason: "titles invalid: avg 1/10 unique players", laggingTeams: [] },
+  );
+  check(
+    "선수고유성: baseline avg 동일 선수 10행(rank/value 상이) → not ready",
+    evaluateLiveReadiness({
+      baselineStandings,
+      currentStandings: settledStandings,
+      todayFinalGames,
+      baselineStats: repeatedPlayer,
+      currentStats: statsMoved,
+    }),
+    { ready: false, reason: "baseline titles invalid: avg 1/10 unique players", laggingTeams: [] },
+  );
+}
+{
+  const baselineWithStaleExtra = [
+    ...baselineStats,
+    { category: "avg", rank: 11, player_name: "stale-player", value: -1 },
+  ];
+  check(
+    "stale extra: baseline 정상 10명+stale 1행 / current unchanged 10명 → not ready",
+    evaluateLiveReadiness({
+      baselineStandings,
+      currentStandings: settledStandings,
+      todayFinalGames,
+      baselineStats: baselineWithStaleExtra,
+      currentStats: baselineStats,
+    }),
+    { ready: false, reason: "baseline titles invalid: avg 11/10 rows", laggingTeams: [] },
+  );
+}
 
 // ===== P0① 실제 cron 시간대 회귀 (자정 catch-up 구간이 vercel.json cron에 실제로 있는지) =====
 // cron hour 필드 → UTC 시간 집합 (A-B 범위 / 단일 H / 쉼표 복수 지원).

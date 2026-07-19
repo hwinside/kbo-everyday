@@ -113,8 +113,9 @@ export function evaluateLiveReadiness(params: {
   // 타이틀 completeness + settle (모두 fail-closed).
   //   행 수만 상대 비교(c >= b)하면 부분 snapshot(카테고리당 1행)이 임계치를 1로 낮추거나,
   //   KBO 마크업 드리프트가 만든 '빈 선수명 10행'/중복 행이 유효로 통과해 stale 마커가 고착된다.
-  //   → baseline/current 모두 기대 9종 각 expectedRows(기본 10) '유효·고유' 행을 절대 강제.
-  //     유효 = player_name 비어있지 않음 + rank/value finite. 고유 = 완전 동일 행 중복 제외.
+  //   → baseline/current 모두 기대 9종 각 expectedRows(기본 10) '유효·고유 선수'를 정확히 강제.
+  //     유효 = player_name 비어있지 않음 + rank/value finite.
+  //     고유 = 카테고리 내 trim(player_name) 기준(같은 선수의 rank/value만 바꿔 중복하는 것도 차단).
   //   (baseline이 못 채우면 01:00 scheduled 백스톱이 보정)
   if (baselineStats.length === 0) {
     return { ready: false, reason: "baseline titles empty", laggingTeams: [] };
@@ -123,30 +124,63 @@ export function evaluateLiveReadiness(params: {
   // 기대 카테고리: core가 전달한 권위 집합(baseline 부분 카테고리 감지). 미지정 시 baseline 보유 카테고리.
   const expectedCats =
     params.expectedTitleCategories ?? [...new Set(baselineStats.map((r) => r.category))];
-  const validUniqueRowCount = (rows: ReadinessTitleRow[], category: string): number => {
-    const seen = new Set<string>();
-    for (const r of rows) {
-      if (r.category !== category) continue;
-      if (typeof r.player_name !== "string" || r.player_name.trim() === "") continue;
-      if (!Number.isFinite(r.rank) || !Number.isFinite(r.value)) continue;
-      seen.add(`${r.rank}|${r.player_name.trim()}|${r.value}`);
-    }
-    return seen.size;
+  const inspectCategory = (rows: ReadinessTitleRow[], category: string) => {
+    const categoryRows = rows.filter((r) => r.category === category);
+    const validRows = categoryRows.filter(
+      (r) =>
+        typeof r.player_name === "string" &&
+        r.player_name.trim() !== "" &&
+        Number.isFinite(r.rank) &&
+        Number.isFinite(r.value),
+    );
+    return {
+      rows: categoryRows.length,
+      validRows: validRows.length,
+      uniquePlayers: new Set(validRows.map((r) => r.player_name.trim())).size,
+    };
   };
   for (const cat of expectedCats) {
-    const b = validUniqueRowCount(baselineStats, cat);
-    if (b < expectedRows) {
+    const baseline = inspectCategory(baselineStats, cat);
+    if (baseline.rows !== expectedRows) {
       return {
         ready: false,
-        reason: `baseline titles incomplete: ${cat} ${b}/${expectedRows} valid unique rows`,
+        reason: `baseline titles invalid: ${cat} ${baseline.rows}/${expectedRows} rows`,
         laggingTeams: [],
       };
     }
-    const c = validUniqueRowCount(currentStats, cat);
-    if (c < expectedRows) {
+    if (baseline.validRows !== expectedRows) {
       return {
         ready: false,
-        reason: `titles incomplete: ${cat} ${c}/${expectedRows} valid unique rows`,
+        reason: `baseline titles invalid: ${cat} ${baseline.validRows}/${expectedRows} valid rows`,
+        laggingTeams: [],
+      };
+    }
+    if (baseline.uniquePlayers !== expectedRows) {
+      return {
+        ready: false,
+        reason: `baseline titles invalid: ${cat} ${baseline.uniquePlayers}/${expectedRows} unique players`,
+        laggingTeams: [],
+      };
+    }
+    const current = inspectCategory(currentStats, cat);
+    if (current.rows !== expectedRows) {
+      return {
+        ready: false,
+        reason: `titles invalid: ${cat} ${current.rows}/${expectedRows} rows`,
+        laggingTeams: [],
+      };
+    }
+    if (current.validRows !== expectedRows) {
+      return {
+        ready: false,
+        reason: `titles invalid: ${cat} ${current.validRows}/${expectedRows} valid rows`,
+        laggingTeams: [],
+      };
+    }
+    if (current.uniquePlayers !== expectedRows) {
+      return {
+        ready: false,
+        reason: `titles invalid: ${cat} ${current.uniquePlayers}/${expectedRows} unique players`,
         laggingTeams: [],
       };
     }
