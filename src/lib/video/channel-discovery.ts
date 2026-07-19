@@ -12,6 +12,7 @@
 
 import { hasNonBaseballSignal } from "./shorts-relevance";
 import { TEAM_MASCOTS, BASEBALL_KEYWORDS } from "@/lib/news-relevance";
+import { isQuotaSignal, quotaInfoFromError } from "./youtube-quota";
 
 /** 10개 구단 팀 약어(검색어/제목 매칭 vocabulary) */
 export const TEAM_SHORTS = [
@@ -211,42 +212,25 @@ export function shouldActivate(mode: "shadow" | "active", notClean: boolean): bo
   return mode === "active" && !notClean;
 }
 
+/** playlist/duration/search 실패를 run-level fail-closed 상태로 분류한다. */
+export function classifyDiscoveryApiError(err: unknown): "quota" | "error" {
+  return isQuotaSignal(quotaInfoFromError(err)) ? "quota" : "error";
+}
+
+/** 검색뿐 아니라 후보 검증 중 후반 API 실패도 활성화·clean shadow를 차단한다. */
+export function isDiscoveryRunNotClean(input: {
+  quotaDegraded: boolean;
+  apiErrorCount: number;
+  ledgerError?: string;
+}): boolean {
+  return input.quotaDegraded || input.apiErrorCount > 0 || !!input.ledgerError;
+}
+
 /** DISCOVER_MAX_ACTIVATIONS env → 1~5로 clamp (양수 아니면 5) */
 export function resolveMaxActivations(raw: string | undefined): number {
   const n = parseInt(raw ?? "", 10);
   if (!Number.isFinite(n) || n <= 0) return MAX_ACTIVATIONS_CAP;
   return Math.min(n, MAX_ACTIVATIONS_CAP);
-}
-
-// YouTube Data API quota/rate 계열 errors[].reason
-const QUOTA_REASONS = new Set([
-  "quotaexceeded",
-  "dailylimitexceeded",
-  "ratelimitexceeded",
-  "userratelimitexceeded",
-  "usagelimits",
-]);
-
-/**
- * quota/rate 하드 게이트 판정(삼순 4번). message 문자열만 보지 않고
- * HTTP status + errors[].reason 까지 본다 — "exceeded your quota" 변형·
- * 구조화 reason(quotaExceeded 등)·403/429를 모두 잡아 fail-closed 로 검색을 멈춘다.
- */
-export function isQuotaSignal(input: {
-  status?: number;
-  reasons?: Array<string | undefined | null>;
-  message?: string | null;
-}): boolean {
-  if (input.status === 403 || input.status === 429) return true;
-  if (
-    (input.reasons ?? []).some(
-      (r) => r != null && QUOTA_REASONS.has(String(r).toLowerCase()),
-    )
-  ) {
-    return true;
-  }
-  const m = (input.message ?? "").toLowerCase();
-  return /quota|exceeded your|rate ?limit|usagelimits|daily ?limit/.test(m);
 }
 
 export interface ScoredCandidate {

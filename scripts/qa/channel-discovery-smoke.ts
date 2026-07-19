@@ -18,13 +18,19 @@ import {
   evaluateChannelCandidate,
   decideMode,
   pickActivations,
-  isQuotaSignal,
+  classifyDiscoveryApiError,
+  isDiscoveryRunNotClean,
   resolveMaxActivations,
   MAX_ACTIVATIONS_CAP,
   shouldActivate,
   type RecentVideo,
   type ScoredCandidate,
 } from "@/lib/video/channel-discovery";
+import { isQuotaSignal, YouTubeApiError } from "@/lib/video/youtube-quota";
+import {
+  fetchChannelUploadsViaApi,
+  fetchVideoDurations,
+} from "@/lib/video/youtube-api";
 
 let fail = 0;
 function ok(name: string, cond: boolean) {
@@ -169,20 +175,19 @@ ok("탈락 후보(c) 제외", !picked.some((p) => p.channelId === "c"));
 ok("한도 밖(가장 낮은 g) 제외", !picked.some((p) => p.channelId === "g"));
 
 // ── isQuotaSignal (삼순 4번: HTTP status + reason + message 변형) ─────────────
-ok("quota: HTTP 403", isQuotaSignal({ status: 403 }));
 ok("quota: HTTP 429", isQuotaSignal({ status: 429 }));
-ok("quota: reason quotaExceeded", isQuotaSignal({ status: 200, reasons: ["quotaExceeded"] }));
-ok("quota: reason dailyLimitExceeded", isQuotaSignal({ reasons: ["dailyLimitExceeded"] }));
-ok("quota: reason userRateLimitExceeded", isQuotaSignal({ reasons: ["userRateLimitExceeded"] }));
+ok("non-quota: plain HTTP 403", !isQuotaSignal({ status: 403 }));
+ok("quota: reason quotaExceeded", isQuotaSignal({ status: 403, reason: "quotaExceeded" }));
+ok("quota: reason dailyLimitExceeded", isQuotaSignal({ reason: "dailyLimitExceeded" }));
+ok("quota: reason userRateLimitExceeded", isQuotaSignal({ reason: "userRateLimitExceeded" }));
 ok(
   "quota: message 변형 'exceeded your quota'",
   isQuotaSignal({ status: 200, message: "The request cannot be completed because you have exceeded your quota." }),
 );
 ok("quota: message 'rate limit'", isQuotaSignal({ message: "User rate limit exceeded" }));
-ok("non-quota: 400 badRequest", !isQuotaSignal({ status: 400, reasons: ["badRequest"], message: "invalid parameter" }));
-ok("non-quota: 200 정상", !isQuotaSignal({ status: 200, reasons: [], message: undefined }));
+ok("non-quota: 400 badRequest", !isQuotaSignal({ status: 400, reason: "badRequest", message: "invalid parameter" }));
+ok("non-quota: 200 정상", !isQuotaSignal({ status: 200, message: undefined }));
 ok("non-quota: 404", !isQuotaSignal({ status: 404, message: "not found" }));
-ok("quota: reasons에 null 섞여도 안전", isQuotaSignal({ reasons: [null, undefined, "quotaExceeded"] }));
 
 // ── resolveMaxActivations (삼순 4번: 최대 5 하드 clamp) ─────────────────
 ok("clamp: 미설정 → 5", resolveMaxActivations(undefined) === 5);
@@ -216,5 +221,96 @@ ok("gated: active+search-err(not-clean) → 활성화 0", gatedActivations("acti
 ok("gated: active+clean → 활성화 2", gatedActivations("active", false, passPool).length === 2);
 ok("gated: shadow → not-clean 무관 활성화 0", gatedActivations("shadow", false, passPool).length === 0);
 
-console.log(`\n${fail === 0 ? "🟢 ALL PASS" : `🔴 ${fail} FAILED`}`);
-process.exit(fail === 0 ? 0 : 1);
+// ── 실제 helper 실패 전파 → run 전체 fail-closed (삼순 최종 NO-GO) ──────────
+const quota403 = new YouTubeApiError("quota exceeded", {
+  status: 403,
+  reason: "quotaExceeded",
+});
+const plain403 = new YouTubeApiError("YouTube API error (HTTP 403)", { status: 403 });
+ok("분류: structured quota 403 → quota", classifyDiscoveryApiError(quota403) === "quota");
+ok("분류: plain 403 → non-quota error", classifyDiscoveryApiError(plain403) === "error");
+ok("분류: network failure → non-quota error", classifyDiscoveryApiError(new Error("fetch failed")) === "error");
+
+async function runFailurePropagationTests() {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.YOUTUBE_API_KEY;
+  process.env.YOUTUBE_API_KEY = "smoke-test-key";
+  try {
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ error: { message: "Forbidden" } }), {
+        status: 403,
+        headers: { "content-type": "application/json" },
+      });
+    let duration403: unknown;
+    try {
+      await fetchVideoDurations(["video-1"], { throwOnError: true });
+    } catch (err) {
+      duration403 = err;
+    }
+    ok(
+      "fault injection: duration plain 403가 빈 Map으로 삼켜지지 않음",
+      duration403 instanceof YouTubeApiError && classifyDiscoveryApiError(duration403) === "error",
+    );
+
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            message: "The request cannot be completed because you have exceeded your quota.",
+            errors: [{ reason: "quotaExceeded" }],
+          },
+        }),
+        { status: 403, headers: { "content-type": "application/json" } },
+      );
+    let playlistQuota: unknown;
+    try {
+      await fetchChannelUploadsViaApi("UC_smoke", 15, { throwOnError: true });
+    } catch (err) {
+      playlistQuota = err;
+    }
+    ok(
+      "fault injection: playlist structured 403가 null로 삼켜지지 않음",
+      playlistQuota instanceof YouTubeApiError && classifyDiscoveryApiError(playlistQuota) === "quota",
+    );
+
+    globalThis.fetch = async () => {
+      throw new Error("fetch failed");
+    };
+    let playlistNetwork: unknown;
+    try {
+      await fetchChannelUploadsViaApi("UC_smoke", 15, { throwOnError: true });
+    } catch (err) {
+      playlistNetwork = err;
+    }
+    ok(
+      "fault injection: playlist network failure가 null로 삼켜지지 않음",
+      playlistNetwork instanceof Error && playlistNetwork.message === "fetch failed",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) delete process.env.YOUTUBE_API_KEY;
+    else process.env.YOUTUBE_API_KEY = originalApiKey;
+  }
+
+  const late403NotClean = isDiscoveryRunNotClean({
+    quotaDegraded: false,
+    apiErrorCount: 1,
+  });
+  ok("late playlist/duration 403 → run not-clean", late403NotClean);
+  ok(
+    "active에서 앞선 pass 후보가 있어도 late 403 → 활성화 0",
+    gatedActivations("active", late403NotClean, passPool).length === 0,
+  );
+  ok(
+    "실패한 shadow는 clean count 대상 아님(degraded=true)",
+    isDiscoveryRunNotClean({ quotaDegraded: false, apiErrorCount: 1 }),
+  );
+
+  console.log(`\n${fail === 0 ? "🟢 ALL PASS" : `🔴 ${fail} FAILED`}`);
+  process.exit(fail === 0 ? 0 : 1);
+}
+
+void runFailurePropagationTests().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

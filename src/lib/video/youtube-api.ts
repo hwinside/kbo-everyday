@@ -4,6 +4,26 @@
  */
 
 import type { RssVideoEntry } from "./rss-parser";
+import { extractYouTubeError, YouTubeApiError } from "./youtube-quota";
+
+interface YouTubeFetchOptions {
+  /** Discovery처럼 실패를 run-level fail-closed로 처리해야 하는 호출부에서 사용. */
+  throwOnError?: boolean;
+}
+
+async function throwApiError(res: Response): Promise<never> {
+  let data: unknown;
+  try {
+    data = await res.json();
+  } catch {
+    data = undefined;
+  }
+  const detail = extractYouTubeError(res.status, data);
+  throw new YouTubeApiError(detail.message, {
+    status: res.status,
+    reason: detail.reason,
+  });
+}
 
 function getApiKey(): string | null {
   return process.env.YOUTUBE_API_KEY || null;
@@ -27,6 +47,7 @@ export function parseIsoDuration(iso: string): number {
  */
 export async function fetchVideoDurations(
   videoIds: string[],
+  options: YouTubeFetchOptions = {},
 ): Promise<Map<string, number>> {
   const result = new Map<string, number>();
   const apiKey = getApiKey();
@@ -38,8 +59,11 @@ export async function fetchVideoDurations(
       const res = await fetch(
         `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${batch.join(",")}&key=${apiKey}`,
       );
-      if (res.status === 403) break;
-      if (!res.ok) continue;
+      if (!res.ok) {
+        if (options.throwOnError) await throwApiError(res);
+        if (res.status === 403) break;
+        continue;
+      }
       const data = await res.json();
       for (const item of data.items || []) {
         const dur = parseIsoDuration(
@@ -47,7 +71,8 @@ export async function fetchVideoDurations(
         );
         result.set(item.id, dur);
       }
-    } catch {
+    } catch (err) {
+      if (options.throwOnError) throw err;
       // network error — skip batch
     }
   }
@@ -66,12 +91,14 @@ export async function fetchVideoDurations(
  * Returns:
  *   - `RssVideoEntry[]` on success (possibly empty if channel has no uploads)
  *   - `null` on failure (network, 403, non-2xx other than 404)
+ *   - with `throwOnError`, failures preserve status/reason and are thrown
  *   A 404 is treated as "no items" so transient/dead playlists don't keep the
  *   channel in the error bucket.
  */
 export async function fetchChannelUploadsViaApi(
   channelId: string,
   maxResults = 15,
+  options: YouTubeFetchOptions = {},
 ): Promise<RssVideoEntry[] | null> {
   const apiKey = getApiKey();
   if (!apiKey) return null;
@@ -86,9 +113,11 @@ export async function fetchChannelUploadsViaApi(
       `?part=snippet,contentDetails&playlistId=${playlistId}` +
       `&maxResults=${limit}&key=${apiKey}`;
     const res = await fetch(url);
-    if (res.status === 403) return null;
     if (res.status === 404) return [];
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (options.throwOnError) await throwApiError(res);
+      return null;
+    }
     const data = await res.json();
     const items = (data.items ?? []) as Array<{
       snippet?: {
@@ -123,7 +152,8 @@ export async function fetchChannelUploadsViaApi(
       });
     }
     return out;
-  } catch {
+  } catch (err) {
+    if (options.throwOnError) throw err;
     return null;
   }
 }

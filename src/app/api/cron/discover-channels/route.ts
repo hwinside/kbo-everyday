@@ -28,15 +28,19 @@ import {
   fetchVideoDurations,
 } from "@/lib/video/youtube-api";
 import {
+  extractYouTubeError,
+  isQuotaSignal,
+  quotaInfoFromError,
   reserveQuota,
   YT_UNITS_SEARCH,
   YT_UNITS_VIDEOS_LIST,
 } from "@/lib/video/youtube-quota";
 import {
   buildDiscoveryQueries,
+  classifyDiscoveryApiError,
   decideMode,
   evaluateChannelCandidate,
-  isQuotaSignal,
+  isDiscoveryRunNotClean,
   pickActivations,
   resolveMaxActivations,
   type RecentVideo,
@@ -98,24 +102,27 @@ async function searchChannels(query: string): Promise<SearchResult> {
     error?: { message?: string; errors?: Array<{ reason?: string }> };
     items?: Array<{ snippet?: { channelId?: string; channelTitle?: string } }>;
   } | null = null;
+  let parseFailed = false;
   try {
     data = await res.json();
   } catch {
-    data = null;
+    parseFailed = true;
   }
 
-  const reasons = (data?.error?.errors ?? []).map((e) => e.reason);
-  const message = data?.error?.message;
+  const detail = extractYouTubeError(res.status, data);
 
   // quota/rate → 하드 게이트(HTTP status + errors[].reason + message 변형)
-  if (isQuotaSignal({ status: res.status, reasons, message })) {
-    return { hits: [], quota: true, error: message ?? `search ${res.status}` };
+  if (isQuotaSignal({ status: res.status, reason: detail.reason, message: detail.message })) {
+    return { hits: [], quota: true, error: detail.message };
   }
   if (data?.error) {
-    return { hits: [], quota: false, error: message ?? `search error ${res.status}` };
+    return { hits: [], quota: false, error: detail.message };
   }
   if (!res.ok) {
     return { hits: [], quota: false, error: `search http ${res.status}` };
+  }
+  if (parseFailed) {
+    return { hits: [], quota: false, error: "search response JSON parse failed" };
   }
 
   const hits: SearchChannelHit[] = [];
@@ -141,15 +148,17 @@ async function fetchRecentVideos(
   } catch {
     // playlistItems.list = 1 unit. 공유 cap 부족이면 API fallback 자체를 생략한다.
     if (!(await reserveApiQuota(YT_UNITS_VIDEOS_LIST))) return null;
-    entries = await fetchChannelUploadsViaApi(channelId, 15);
+    entries = await fetchChannelUploadsViaApi(channelId, 15, { throwOnError: true });
   }
-  if (entries === null) return null; // 조회 실패 → unverified(fail-closed)
+  if (entries === null) throw new Error(`uploads unavailable: ${channelId}`);
   if (entries.length === 0) return [];
 
   const top = entries.slice(0, 10);
   // videos.list = 1 unit. duration 미검증 후보는 활성화하지 않는다(fail-closed).
   if (!(await reserveApiQuota(YT_UNITS_VIDEOS_LIST))) return null;
-  const durations = await fetchVideoDurations(top.map((e) => e.video_id));
+  const durations = await fetchVideoDurations(top.map((e) => e.video_id), {
+    throwOnError: true,
+  });
   return top.map((e) => ({
     title: e.title,
     publishedAt: e.published_at,
@@ -233,7 +242,7 @@ export async function GET(req: NextRequest) {
     let quotaUsed = 0;
     let quotaDegraded = false;
     let ledgerErr: string | undefined;
-    let searchErrorCount = 0; // 비-quota 검색 오류도 run을 not-clean으로 만든다(삼순 2번)
+    let apiErrorCount = 0; // 검색·playlist·duration 비-quota 오류는 run 전체를 not-clean으로 만든다.
 
     // search/playlist/duration 모든 Data API 호출 직전에 공유 원장을 예약한다.
     // RPC 장애는 기존 런타임 quota 판별에 맡기되 run을 warning으로 남긴다.
@@ -257,7 +266,7 @@ export async function GET(req: NextRequest) {
       }
       if (r.error) {
         // 비-quota 단건 오류: 스킵하되 run을 not-clean으로 표시(승격/활성화 카운트 오염 차단)
-        searchErrorCount += 1;
+        apiErrorCount += 1;
         await new Promise((rs) => setTimeout(rs, 120));
         continue;
       }
@@ -282,7 +291,18 @@ export async function GET(req: NextRequest) {
     const unverified: Array<SearchChannelHit & { seen: number }> = [];
     for (let i = 0; i < toVerify.length; i++) {
       const c = toVerify[i];
-      const recent = await fetchRecentVideos(c.channel_id, reserveApiQuota);
+      let recent: RecentVideo[] | null;
+      try {
+        recent = await fetchRecentVideos(c.channel_id, reserveApiQuota);
+      } catch (err) {
+        const failure = classifyDiscoveryApiError(err);
+        if (failure === "quota") quotaDegraded = true;
+        else apiErrorCount += 1;
+        console.warn(
+          `[discover-channels] verify ${c.channel_id} ${failure}: ${quotaInfoFromError(err).message}`,
+        );
+        recent = null;
+      }
       if (recent === null) {
         unverified.push(c);
         if (quotaDegraded) {
@@ -301,9 +321,13 @@ export async function GET(req: NextRequest) {
       await new Promise((rs) => setTimeout(rs, 60));
     }
 
-    // not-clean = quota degrade 또는 비-quota 검색 오류. 이런 run은 활성화도·clean
+    // not-clean = quota degrade 또는 검색/playlist/duration 오류. 이런 run은 활성화도·clean
     // shadow 승격 카운트도 오염시키지 않는다(삼순 2번). DB degraded 컬럼에 이 broad 의미로 저장.
-    const notClean = quotaDegraded || searchErrorCount > 0 || !!ledgerErr;
+    const notClean = isDiscoveryRunNotClean({
+      quotaDegraded,
+      apiErrorCount,
+      ledgerError: ledgerErr,
+    });
 
     // 6. mode 결정 — 완료된 non-degraded shadow 2회 전까지 shadow (오류 시 fail-closed)
     const { count: cleanShadow, error: cntErr } = await supabaseAdmin
@@ -369,7 +393,7 @@ export async function GET(req: NextRequest) {
     const passCount = scored.filter((s) => s.evaluation.pass).length;
     const degradeParts: string[] = [];
     if (quotaDegraded) degradeParts.push("quota");
-    if (searchErrorCount > 0) degradeParts.push(`search-err(${searchErrorCount})`);
+    if (apiErrorCount > 0) degradeParts.push(`api-err(${apiErrorCount})`);
     if (ledgerErr) degradeParts.push(`LEDGER_ERR=${ledgerErr.slice(0, 60)}`);
     const degradeNote = degradeParts.length ? ` DEGRADE=${degradeParts.join(",")}` : "";
     const summary =
@@ -425,7 +449,8 @@ export async function GET(req: NextRequest) {
       degraded: notClean,
       quotaDegraded,
       ledgerError: ledgerErr ?? null,
-      searchErrors: searchErrorCount,
+      apiErrors: apiErrorCount,
+      searchErrors: apiErrorCount, // 기존 응답 키 호환(이제 후보 검증 API 오류까지 포함)
       quotaEstimate: quotaUsed,
     });
   } catch (err) {
