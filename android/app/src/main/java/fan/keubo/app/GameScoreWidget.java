@@ -656,11 +656,11 @@ public class GameScoreWidget extends AppWidgetProvider {
         } else {
             v.setViewVisibility(R.id.ncc_score, View.VISIBLE);
             v.setViewVisibility(R.id.ncc_score_scheduled, View.GONE);
-            // 26f bold·순백 — 접힌 카드 스코어를 최대한 크고 진하게(하린아빠 2026-07-19
-            // "숫자 폰트 크기를 더 크게 확보"). 레이아웃도 wrap_content라 좁은 카드에서 축소 안 됨
-            // (notif_card_compact.xml). bold는 높이 무변화라 접힘 높이 캡 재클리핑 방지.
+            // 32f bold·순백 — 접힌 카드 스코어 최대화(하린아빠 2026-07-19 "숫자 더 크게").
+            // 문자중계 2행을 접힌 뷰에서 제거(아래)해 단일 행이 되므로 로고(26dp) 높이 캡에
+            // 묶이지 않고 32f까지 키움(삼순 권고). wrap_content라 좁은 폭에서도 축소 안 됨.
             v.setImageViewBitmap(R.id.ncc_score,
-                textBitmap(context, e.as + " : " + e.hs, 26f, 0xFFFFFFFF, true));
+                textBitmap(context, e.as + " : " + e.hs, 32f, 0xFFFFFFFF, true));
         }
 
         // 상태 pill — 라이브는 "● LIVE N회말"을 최대한 줄여 스코어에 폭을 양보(하린아빠
@@ -676,14 +676,9 @@ public class GameScoreWidget extends AppWidgetProvider {
             v.setImageViewBitmap(R.id.ncc_status_img, textBitmap(context, pill, 11f, 0xFFFF6B7A));
         }
 
-        // 문자중계 최근 플레이 — 홈위젯과 동일(라이브 + 텍스트 있을 때만). 점(●)은 XML ViewFlipper pulse.
-        boolean isLiveStatus = !isScheduled && !isFinal && !isCancelled && !status.isEmpty();
-        if (isLiveStatus && !TextUtils.isEmpty(e.lastPlay)) {
-            v.setViewVisibility(R.id.ncc_relay_row, View.VISIBLE);
-            v.setTextViewText(R.id.ncc_relay_text, e.lastPlay);
-        } else {
-            v.setViewVisibility(R.id.ncc_relay_row, View.GONE);
-        }
+        // 문자중계 2행은 접힌 카드에서 제거(하린아빠 "아랫줄 비어보임" + 삼순 권고 2026-07-19) —
+        // 접힌 뷰는 스코어 최대화 우선, 최근 플레이는 펼친 카드(notif_card_full)에서 유지.
+        // notif_card_compact.xml에서 ncc_relay_row 삭제됨 → 여기서도 참조 제거.
         return v;
     }
 

@@ -103,9 +103,9 @@
             android:id="@+id/ncc_status"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="10dp"
-            android:paddingStart="9dp"
-            android:paddingEnd="9dp"
+            android:layout_marginStart="8dp"
+            android:paddingStart="7dp"
+            android:paddingEnd="7dp"
             android:paddingTop="3dp"
             android:paddingBottom="3dp"
             android:background="@drawable/widget_status_pill"
@@ -118,44 +118,5 @@
                 android:adjustViewBounds="true"
                 android:contentDescription="@null" />
         </LinearLayout>
-    </LinearLayout>
-
-
-    <!-- 문자중계 최근 플레이 한 줄 — 홈위젯 relay row와 동일 스펙(그레이 틱커 바 + 라이브 점).
-         라이브 + 텍스트 있을 때만 buildCompactCard가 visibility 제어. -->
-    <LinearLayout
-        android:id="@+id/ncc_relay_row"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:paddingLeft="9dp"
-        android:paddingRight="9dp"
-        android:paddingTop="3dp"
-        android:paddingBottom="3dp"
-        android:background="@drawable/widget_relay_bg"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:visibility="gone">
-        <!-- 접힌 뷰는 static 라이브 점 — One UI 접힌 알림 행에서 ViewFlipper 애니메이션 배제
-             (펼친 뷰/홈위젯은 ViewFlipper pulse 유지) -->
-        <ImageView
-            android:id="@+id/ncc_relay_dot"
-            android:layout_width="6dp"
-            android:layout_height="6dp"
-            android:layout_marginEnd="7dp"
-            android:src="@drawable/relay_dot_on"
-            android:contentDescription="@null" />
-        <TextView
-            android:id="@+id/ncc_relay_text"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:fontFamily="@font/notosanskr"
-            android:letterSpacing="-0.04"
-            android:textColor="#EAEAEC"
-            android:textSize="11sp"
-            android:maxLines="1"
-            android:ellipsize="end"
-            android:text="" />
     </LinearLayout>
 </LinearLayout>
