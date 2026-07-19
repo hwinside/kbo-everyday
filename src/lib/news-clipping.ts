@@ -18,8 +18,11 @@ import {
   isTeamBaseballRelevant,
   isPhotoArticle,
   dedupeNewsByTitle,
+  hasClippingTitleSignal,
+  titleHasTeamToken,
 } from "@/lib/news-relevance";
 import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
+import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -49,23 +52,42 @@ function pubDateToKstDate(pubDate: string): string | null {
  * Gemini가 안 따르는 케이스가 실측돼 코드 레벨 사전 필터로 차단. "LG, 한화 꺾고…"처럼
  * 내 팀이 함께 등장하는 맞대결 기사는 유지된다.
  */
-function isOtherTeamTitle(title: string, teamShort: string): boolean {
+// 팀 식별자 매칭은 hasClippingTitleSignal과 동일한 titleHasTeamToken(공유 helper)로
+// 판정한다: Latin 약칭은 case-insensitive + ASCII 영숫자 경계, 한글 식별자는
+// substring. 단순 lower-case includes를 쓰면 일반 영단어 속 약칭(algorithm→lg,
+// encore→nc)이 target/other 양쪽을 오판정해 ①target 오판정으로 실제 타팀 검사를
+// 건너뛰거나 ②other 오판정으로 정상 기사를 타팀으로 높리는 양방향 버그가
+// 난다(2026-07-18 소문자 'kt' 타팀 통과 + 2026-07-19 algorithm/encore 오판정 — 삼순 NO-GO).
+// hasClippingTitleSignal과 같은 규칙을 공유해 Latin 경계 판정이 두 게이트에서 일치한다.
+export function isOtherTeamTitle(title: string, teamShort: string): boolean {
   const fullName = TEAM_SEARCH[teamShort] || teamShort;
   const targetTokens = [teamShort, ...fullName.split(/\s+/)];
-  if (targetTokens.some((t) => t && title.includes(t))) return false;
+  if (targetTokens.some((t) => titleHasTeamToken(title, t))) return false;
   for (const [short, full] of Object.entries(TEAM_SEARCH)) {
     if (short === teamShort) continue;
     const mascot = full.split(/\s+/).pop() || "";
-    if (title.includes(short) || (mascot && title.includes(mascot))) return true;
+    if (titleHasTeamToken(title, short) || (mascot && titleHasTeamToken(title, mascot))) return true;
   }
   return false;
 }
 
-/** 어제(KST) 보도된 팀 관련 기사 후보 수집 — 뉴스카드와 동일 가드 + 사진기사 제외 */
-async function collectYesterdayCandidates(teamShort: string, yesterday: string): Promise<NewsItem[]> {
+// 팀별 로스터 선수명 — 클리핑 positive 제목 게이트용. 2자 이름(최정·곽빈 등)도
+// 포함한다: substring 오탐("최정"→"최정상", "김건"→"김건희")은 hasClippingTitleSignal
+// 의 토큰 경계 매칭으로 차단되므로 이름을 버리지 않고 recall을 살린다(2026-07-18
+// SSG '최정 부상' 등 팀 핵심 이슈가 2자 제외로 누락 — 삼순 NO-GO).
+function rosterTitleNames(teamId: number): string[] {
+  return (PLAYERS_ROSTER as { name: string; teamId: number }[])
+    .filter((p) => p.teamId === teamId)
+    .map((p) => p.name);
+}
+
+/** 어제(KST) 보도된 팀 관련 기사 후보 수집 — 뉴스카드와 동일 가드 + 사진기사 제외 + 클리핑 제목 게이트 */
+async function collectYesterdayCandidates(teamShort: string, teamId: number, yesterday: string): Promise<NewsItem[]> {
   const fullName = TEAM_SEARCH[teamShort] || teamShort;
   const mascot = fullName.split(/\s+/).pop() || null;
   const query = `프로야구 ${fullName}`;
+  const teamTokens = [teamShort, ...fullName.split(/\s+/)];
+  const rosterNames = rosterTitleNames(teamId);
 
   // 하루치 커버리지 확보 — display 최대(100) × 2페이지. 어제보다 오래된 기사가
   // 나오기 시작하면(date desc 정렬) 그 페이지에서 수집 종료.
@@ -84,7 +106,11 @@ async function collectYesterdayCandidates(teamShort: string, yesterday: string):
     if (pubDateToKstDate(item.pubDate) !== yesterday) return false;
     if (isPhotoArticle(item.title)) return false;
     if (isOtherTeamTitle(item.title, teamShort)) return false;
-    return isTeamBaseballRelevant(item.title, item.description, mascot);
+    if (!isTeamBaseballRelevant(item.title, item.description, mascot)) return false;
+    // 클리핑 전용 positive 제목 게이트 — 제목에 팀/선수/야구 신호가 전혀 없는
+    // off-topic 기사(본문만 팀 스침, 예: 여자골프 기사 속 'LG 트윈스 김진성')를
+    // 원천 차단해 제목·사진과 요약이 어긋난 카드 방지.
+    return hasClippingTitleSignal(item.title, teamTokens, rosterNames);
   });
 
   return dedupeNewsByTitle(candidates).slice(0, MAX_CANDIDATES);
@@ -229,7 +255,7 @@ export async function buildTeamClipping(
 ): Promise<NewsClippingPayload | null> {
   const yesterday = kstDateString(-1);
 
-  const candidates = await collectYesterdayCandidates(teamShort, yesterday);
+  const candidates = await collectYesterdayCandidates(teamShort, teamId, yesterday);
   if (candidates.length === 0) return null;
 
   const selection = await selectAndSummarize(teamName, yesterday, candidates, standingsText);
