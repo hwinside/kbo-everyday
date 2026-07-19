@@ -45,6 +45,7 @@
     "qa:full-entry": "tsx scripts/qa/full-entry-smoke.ts",
     "qa:admin-alerts": "tsx scripts/qa/admin-alerts-smoke.ts",
     "qa:roster-moves": "tsx scripts/qa/roster-moves-diff-smoke.ts",
+    "qa:backfill-roster-parse": "tsx scripts/qa/backfill-roster-parse-smoke.ts",
     "qa:roster-moves:db": "node scripts/qa/roster-moves-db-integration.mjs"
   },
   "dependencies": {
