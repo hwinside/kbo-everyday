@@ -80,25 +80,32 @@ create policy "cdl_service_all" on channel_discovery_lock for all
   using (auth.role() = 'service_role')
   with check (auth.role() = 'service_role');
 
--- 4. 원자적 커밋 RPC (삼순 재리뷰 blocker 1: pool 반영 + 후보로그 + run 마감이 진짜 원자적)
---    단일 트랜잭션(plpgsql 함수)으로 run insert + channel_pool 활성화 + 후보로그 insert 를
---    all-or-nothing 커밋. 어느 단계가 실패해도 전부 롤백 → 채널만 active인데 감사로그/run이
---    없는 부분 커밋 상태가 남지 않는다. degraded run은 호출부가 p_activations=[] 로 넘겨
---    channel_pool 변경 0을 보장(blocker 2 하드 게이트).
-create or replace function commit_channel_discovery(
+-- 4. 원자적 커밋 RPC (삼순 blocker 1: pool 반영 + 후보로그 + run 마감 진짜 원자적)
+--    단일 트랜잭션(plpgsql 함수)으로 channel_pool 활성화 + run insert + 후보로그 insert 를
+--    all-or-nothing 커밋. 어느 단계가 실패해도 전부 롤백.
+--
+-- 삼순 3차 NO-GO(1) 반영 — TOCTOU 방지:
+--   발굴 스냅샷(existingIds) 이후 운영자가 채널을 channel_pool 에 비활성화 로 넣거나
+--   다른 경로로 행이 생기면, 기존 ON CONFLICT DO UPDATE SET is_active=true 가 그 죽은
+--   채널을 조용히 재활성화했다. → DO NOTHING 으로 바꿔 스냅샷 이후 존재하는 행은
+--   절대 건드리지 않고(is_active 유지), 실제 insert 된 신규 채널만 activated 로 재산정.
+--   conflict 로 스킵된 'activated' 후보로그는 'rejected'(conflict_skip) 로 강등.
+-- degraded/shadow run 은 호출부가 p_activations=[] 로 넘겨 channel_pool 변경 0(blocker 2 하드 게이트).
+drop function if exists commit_channel_discovery(text, text[], int, int, int, boolean, int, text, jsonb, jsonb);
+create function commit_channel_discovery(
   p_mode text,
   p_queries text[],
   p_candidates_found int,
   p_verified int,
   p_quota_used int,
   p_degraded boolean,
-  p_activated int,
+  p_activated int,       -- 시도 활성화 수(참고). 실 저장값은 아래서 재산정한 actual.
   p_summary text,
   p_activations jsonb,   -- [{channel_id, channel_name}]  (active·non-degraded 일 때만 non-empty)
   p_candidates jsonb     -- [{channel_id, channel_name, seen_count, decision, reason,
                          --   kbo_count, kbo_considered, short_count, recent_upload_at}]
 )
-returns bigint
+returns table(run_id bigint, activated int)
 language plpgsql
 security definer
 set search_path = public
@@ -107,6 +114,12 @@ declare
   v_run_id bigint;
   v_act jsonb;
   v_cand jsonb;
+  v_cid text;
+  v_inserted int;
+  v_activated_actual int := 0;
+  v_conflict_ids text[] := '{}';
+  v_decision text;
+  v_reason text;
 begin
   if p_mode not in ('shadow', 'active') then
     raise exception 'invalid mode: %', p_mode using errcode = '22023';
@@ -119,39 +132,48 @@ begin
     raise exception 'shadow run must not activate channels' using errcode = '22023';
   end if;
 
-  -- 1) run 을 success 로 바로 기록(전체 트랜잭션이 커밋될 때만 존재)
+  -- 1) channel_pool 활성화 — DO NOTHING 으로 스냅샷 이후 생긴 행(운영자 비활성화 포함)은
+  --    절대 재활성화하지 않는다(TOCTOU 방지). 실제 insert 된 신규 채널만 activated 로 산정.
+  for v_act in select * from jsonb_array_elements(coalesce(p_activations, '[]'::jsonb))
+  loop
+    v_cid := v_act->>'channel_id';
+    insert into channel_pool(channel_id, channel_name, tier, is_active, team_affinity)
+    values (v_cid, coalesce(v_act->>'channel_name', v_cid), 3, true, null)
+    on conflict (channel_id) do nothing;
+    get diagnostics v_inserted = row_count;
+    if v_inserted = 1 then
+      v_activated_actual := v_activated_actual + 1;
+    else
+      -- 스냅샷 이후 이미 존재(신규 아님) → 재활성화 금지, 감사로그 강등 대상
+      v_conflict_ids := array_append(v_conflict_ids, v_cid);
+    end if;
+  end loop;
+
+  -- 2) run 을 실제 활성화 수(actual)로 기록
   insert into channel_discovery_runs(
     mode, status, queries, candidates_found, verified, quota_used, degraded, activated, summary
   ) values (
-    p_mode, 'success', p_queries, p_candidates_found, p_verified, p_quota_used, p_degraded, p_activated, p_summary
+    p_mode, 'success', p_queries, p_candidates_found, p_verified, p_quota_used, p_degraded,
+    v_activated_actual, p_summary
   ) returning id into v_run_id;
 
-  -- 2) channel_pool 활성화 (active·non-degraded 에서만 non-empty)
-  for v_act in select * from jsonb_array_elements(coalesce(p_activations, '[]'::jsonb))
-  loop
-    insert into channel_pool(channel_id, channel_name, tier, is_active, team_affinity)
-    values (
-      v_act->>'channel_id',
-      coalesce(v_act->>'channel_name', v_act->>'channel_id'),
-      3, true, null
-    )
-    on conflict (channel_id) do update
-      set channel_name = excluded.channel_name, is_active = true;
-  end loop;
-
-  -- 3) 후보 판정 로그 (run_id FK)
+  -- 3) 후보 판정 로그 (run_id FK). conflict 로 스킵된 'activated' 후보는 'rejected'로 강등.
   for v_cand in select * from jsonb_array_elements(coalesce(p_candidates, '[]'::jsonb))
   loop
+    v_cid := v_cand->>'channel_id';
+    v_decision := v_cand->>'decision';
+    v_reason := v_cand->>'reason';
+    if v_decision = 'activated' and v_cid = any(v_conflict_ids) then
+      v_decision := 'rejected';
+      v_reason := 'conflict_skip: 스냅샷 이후 이미 channel_pool 에 존재(운영자 비활성화 가능) — 재활성화 안 함';
+    end if;
     insert into channel_discovery_candidates(
       run_id, channel_id, channel_name, seen_count, decision, reason,
       kbo_count, kbo_considered, short_count, recent_upload_at
     ) values (
-      v_run_id,
-      v_cand->>'channel_id',
-      v_cand->>'channel_name',
+      v_run_id, v_cid, v_cand->>'channel_name',
       coalesce((v_cand->>'seen_count')::int, 1),
-      v_cand->>'decision',
-      v_cand->>'reason',
+      v_decision, v_reason,
       (v_cand->>'kbo_count')::int,
       (v_cand->>'kbo_considered')::int,
       (v_cand->>'short_count')::int,
@@ -159,12 +181,12 @@ begin
     );
   end loop;
 
-  return v_run_id;
+  return query select v_run_id, v_activated_actual;
 end;
 $$;
 
 comment on function commit_channel_discovery is
-  '채널 발굴 결과 원자적 커밋 — run+channel_pool+후보로그 단일 트랜잭션. service_role 전용.';
+  '채널 발굴 결과 원자적 커밋 — channel_pool(DO NOTHING·TOCTOU 방지)+run(actual activated)+후보로그 단일 트랜잭션. service_role 전용.';
 
 -- SECURITY DEFINER 함수는 RLS로 막히지 않으므로 명시적으로 권한 회수/부여
 revoke all on function commit_channel_discovery(text, text[], int, int, int, boolean, int, text, jsonb, jsonb) from public;

@@ -365,7 +365,17 @@ export async function GET(req: NextRequest) {
       },
     );
     if (commitErr) throw new Error(`commit: ${commitErr.message}`);
-    runId = (typeof commitData === "number" ? commitData : Number(commitData)) || null;
+    // RPC 반환 = {run_id, activated(actual)} — TOCTOU conflict 로 스킵된 건 제외한 실제 활성화 수.
+    const commitRow = Array.isArray(commitData) ? commitData[0] : commitData;
+    runId = commitRow?.run_id != null ? Number(commitRow.run_id) : null;
+    const activatedActual =
+      commitRow?.activated != null ? Number(commitRow.activated) : activated;
+    // 시도 대비 실제가 적으면(스냅샷 이후 pool 에 이미 존재) 관측을 위해 경고 로그.
+    if (activatedActual < activated) {
+      console.warn(
+        `[discover-channels] activated ${activated}→${activatedActual} (conflict skip ${activated - activatedActual}건: 스냅샷 이후 channel_pool 존재/운영자 비활성화)`,
+      );
+    }
 
     await finishJob(logId, notClean ? "warning" : "success", summary);
 
@@ -377,7 +387,8 @@ export async function GET(req: NextRequest) {
       candidatesFound,
       verified: scored.length,
       pass: passCount,
-      activated,
+      activated: activatedActual,
+      activatedAttempted: activated,
       degraded: notClean,
       quotaDegraded,
       searchErrors: searchErrorCount,
