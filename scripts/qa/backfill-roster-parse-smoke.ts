@@ -83,13 +83,37 @@ const names = (arr: { name: string }[]) => arr.map((x) => x.name);
   }
 }
 
-// 7) [FAULT-INJECTION P0-1] 표가 깨진 HTML(tNData 클래스 변경)은 유효 표 미확보 → validTables<2.
-//    삼순 재현: 헤더만 남고 표 파싱이 깨진 HTML도 이전엕 headers==2로 셀 성공 확정되던 버그 차단.
+// 7) [FAULT-INJECTION P0-1a] 모든 표 파손(tNData→tXData) → 유효 표 0 → validTables<2, reg/der 빈.
 {
   const broken = read("register-deregister-players.html").replace(/class="tNData"/g, 'class="tXData"');
   const r = parseMoveTables(broken);
-  check("broken tNData → validTables<2 (셀 실패 간주)", r.validTables < 2, true);
-  check("broken tNData → reg/der 빈(실변동을 0건으로 확정 금지)", r.reg.length + r.der.length, 0);
+  check("all-broken tNData → validTables<2", r.validTables < 2, true);
+  check("all-broken tNData → reg/der 빈", r.reg.length + r.der.length, 0);
+}
+
+// 7b) [FAULT-INJECTION P0-1b: 비대칭 파손] 등/말소 섹션 첫 표(등록)만 파손 → 등록 헤더가
+//     뒤 말소 표를 가로채면 안 됨(범위 제한). validTables<2 + 등록 비어있고 말소선수 중복유입 0.
+{
+  const html = read("register-deregister-players.html");
+  const hist = html.indexOf("등/말소 현황");
+  const i1 = html.indexOf('class="tNData"', hist);
+  const brokenFirst = html.slice(0, i1) + 'class="tXData"' + html.slice(i1 + 'class="tNData"'.length);
+  const r = parseMoveTables(brokenFirst);
+  check("첫표(등록) 파손 → validTables<2 (셀 실패)", r.validTables < 2, true);
+  check("첫표 파손 → 등록 비어있음(말소표 가로채기 없음)", r.reg.length, 0);
+  check("첫표 파손 → 말소선수가 등록에 중복유입 0", r.reg.filter((e) => r.der.some((d) => d.kboId === e.kboId)).length, 0);
+}
+
+// 7c) [FAULT-INJECTION P0-1c: 비대칭 파손] 둘째 표(말소)만 파손 → 말소 범위에 표 없음 → validTables<2.
+{
+  const html = read("register-deregister-players.html");
+  const hist = html.indexOf("등/말소 현황");
+  const i1 = html.indexOf('class="tNData"', hist);
+  const i2 = html.indexOf('class="tNData"', i1 + 1);
+  const brokenSecond = html.slice(0, i2) + 'class="tXData"' + html.slice(i2 + 'class="tNData"'.length);
+  const r = parseMoveTables(brokenSecond);
+  check("둘째표(말소) 파손 → validTables<2 (셀 실패)", r.validTables < 2, true);
+  check("둘째표 파손 → 말소 비어있음", r.der.length, 0);
 }
 
 // 8) [FAULT-INJECTION P0-2] --commit과 --cache 동시 사용은 assertRunMode가 throw(삽입 fresh 스캔 강제).

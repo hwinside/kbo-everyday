@@ -78,34 +78,42 @@ export function parseMoveTables(html: string): MoveTablesResult {
   if (endIdx < 0) endIdx = html.length;
   const section = html.slice(histIdx, endIdx);
 
-  // (B) h5.bul_sub("등록"/"말소") 헤더 텍스트로 각 표를 매칭 — tbs 인덱스 추측 금지.
+  // (B) 등록/말소 h5.bul_sub 헤더를 전부 수집하고, 각 헤더의 표 탐색 범위를 "다음 h5 직전까지"로 제한한다.
+  //     (삼순 P0: 비대칭 표 파손 시 등록 헤더가 뒤의 말소 표를 가로채 중복 적재하던 fail-open 차단.)
   const headerRe = /<h5 class="bul_sub"[^>]*>([^<]+)<\/h5>/g;
+  const headers: { moveType: "register" | "deregister"; bodyStart: number; matchStart: number }[] = [];
   let h: RegExpExecArray | null;
-  let validTables = 0;
   while ((h = headerRe.exec(section)) !== null) {
     const label = h[1].trim();
-    const moveType: "register" | "deregister" | null =
+    const mt: "register" | "deregister" | null =
       label === "등록" ? "register" : label === "말소" ? "deregister" : null;
-    if (!moveType) continue;
+    if (mt) headers.push({ moveType: mt, bodyStart: h.index + h[0].length, matchStart: h.index });
+  }
 
-    // 이 헤더 다음 첫 tNData 표.
-    const tblRe = /<table class="tNData"[^>]*>([\s\S]*?)<\/table>/g;
-    tblRe.lastIndex = h.index;
-    const t = tblRe.exec(section);
-    if (!t) continue; // 표 미존재/tNData 클래스 변경 = 무효 표(validTables 미증가 — 삼순 P0-1)
+  // (C) register·deregister 각각 "정확히 1개" 유효 표(표 매칭 + 선수명/포지션 스키마 + 본문 tbody)를 요구한다.
+  let regValid = 0;
+  let derValid = 0;
+  for (let hi = 0; hi < headers.length; hi++) {
+    const cur = headers[hi];
+    const moveType = cur.moveType;
+    const limit = hi + 1 < headers.length ? headers[hi + 1].matchStart : section.length;
+    const scope = section.slice(cur.bodyStart, limit); // 이 헤더 ~ 다음 헤더 직전까지만(가로채기 불가)
+    const t = scope.match(/<table class="tNData"[^>]*>([\s\S]*?)<\/table>/);
+    if (!t) continue; // 이 헤더 범위에 표 없음(파손/누락) = 무효
 
     // "선수명" 헤더 표인지 + "포지션" 컬럼 위치 확인(가드).
     const thead = (t[1].match(/<thead>([\s\S]*?)<\/thead>/) || [])[1] || "";
     const ths = [...thead.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((m) => m[1].trim());
-    if (ths[1] !== "선수명") continue;
+    if (ths[1] !== "선수명") continue; // 스키마 불일치 = 무효
     const posCol = ths.indexOf("포지션");
-    if (posCol < 0) continue;
+    if (posCol < 0) continue; // 포지션 컬럼 없음 = 무효
 
     // 본문(tbody) 필수 — 없으면 깨진 표. 공식 empty도 "선수가 없습니다" placeholder 행이 tbody 안에 있다.
     const bodyMatch = t[1].match(/<tbody>([\s\S]*?)<\/tbody>/);
     if (!bodyMatch) continue; // 본문 없음 = 무효
     const body = bodyMatch[1];
-    validTables++; // 여기까지 = 유효한 등록/말소 표 1개 확보(빈 placeholder 포함)
+    if (moveType === "register") regValid++; else derValid++; // 유효 표 타입별 카운트
+
     for (const trm of body.matchAll(/<tr>([\s\S]*?)<\/tr>/g)) {
       const tds = [...trm[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((m) => m[1]);
       if (tds.length <= posCol) continue; // placeholder("선수가 없습니다" colspan) 행 스킵
@@ -122,6 +130,9 @@ export function parseMoveTables(html: string): MoveTablesResult {
       (moveType === "register" ? reg : der).push(entry);
     }
   }
+
+  // register·deregister 각각 정확히 1개 유효 표여야 완전(2). 하나라도 0 또는 2+면 validTables<2 → scanAll throw.
+  const validTables = (regValid === 1 ? 1 : 0) + (derValid === 1 ? 1 : 0);
   return { reg, der, excluded, sectionFound: true, validTables };
 }
 
