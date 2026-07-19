@@ -72,4 +72,49 @@ class WearStoreTest {
         val guard = cached.takeIf { it.myTeamCode.equals(WearStore.loadMyTeam(p), ignoreCase = true) }
         assertNull(guard)
     }
+
+    // ── push bridge 마커(디스커넥트 fallback 억제 + 팀변경 무효화) ──
+
+    private fun liveSnap(team: String) = WearSnapshot(
+        kind = "live", myTeamCode = team, awayCode = team, homeCode = "KT",
+        awayScore = 3, homeScore = 2, line = "LIVE 7회말 · 2사", rankLine = "2위",
+        updatedAt = 1_000L, startAt = null, bases = null,
+    )
+
+    @Test
+    fun `push snapshot marks synced so fallback pull is suppressed`() {
+        // 삼순 조건: Data Layer snapshot이 신선하면 direct pull 생략 →
+        // savePushSnapshot이 last_sync_at=now로 갱신해 isStale=false(방금 push는 최신).
+        val p = FakeSharedPreferences()
+        WearStore.saveMyTeam(p, "LG")
+        WearStore.savePushSnapshot(p, liveSnap("LG"), ts = 100L, gid = "G1")
+        assertEquals(100L, WearStore.lastPushTs(p))
+        assertEquals("G1", WearStore.lastPushGid(p))
+        val syncedAt = WearStore.lastSyncAt(p)
+        val cached = WearStore.loadCachedSnapshot(p)!!
+        // 방금 push(syncedAt) → 20초 이내는 fresh, 20초 초과는 stale(폴백 pull 발동)
+        assertFalse(WearTilePolicy.isStale(cached, syncedAt, syncedAt + 20_000L))
+        assertTrue(WearTilePolicy.isStale(cached, syncedAt, syncedAt + 20_001L))
+    }
+
+    @Test
+    fun `push meta advances ts without changing snapshot`() {
+        val p = FakeSharedPreferences()
+        WearStore.saveMyTeam(p, "LG")
+        WearStore.savePushSnapshot(p, liveSnap("LG"), ts = 100L, gid = "G1")
+        WearStore.savePushMeta(p, ts = 200L, gid = "G1")
+        assertEquals(200L, WearStore.lastPushTs(p))
+        // 스냅샷은 그대로(NoOp)
+        assertEquals("LIVE 7회말 · 2사", WearStore.loadCachedSnapshot(p)!!.line)
+    }
+
+    @Test
+    fun `team change clears push markers`() {
+        val p = FakeSharedPreferences()
+        WearStore.saveMyTeam(p, "LG")
+        WearStore.savePushSnapshot(p, liveSnap("LG"), ts = 100L, gid = "G1")
+        WearStore.saveMyTeam(p, "SS")
+        assertEquals(0L, WearStore.lastPushTs(p))
+        assertEquals("", WearStore.lastPushGid(p))
+    }
 }

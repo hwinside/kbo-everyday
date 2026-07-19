@@ -217,6 +217,8 @@ object WearFetcher {
             venue = stadium.ifEmpty { null }, outs = outs, pitcher = pitcher, batter = batter,
             starters = starters,
             winPitcher = winPitcher, losePitcher = losePitcher, savePitcher = savePitcher,
+            // pull 캐시에도 gameId 저장(삼순) → push bridge terminal이 gid 일치할 때만 수립하도록.
+            gameId = g.optString("gameId", "").ifEmpty { null },
         )
     }
 
