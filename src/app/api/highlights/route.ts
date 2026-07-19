@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { TEAMS } from "@/lib/constants/teams";
+import { recordQuota } from "@/lib/video/youtube-quota";
 import type { YouTubeSearchItem, HighlightVideo } from "@/types/api";
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
@@ -176,6 +177,12 @@ export async function GET(req: NextRequest) {
   ];
 
   const results = await Promise.all(searches);
+  // 공유 quota 원장에 소비 기록(best-effort, 비차단) — 각 searchYouTube = search 100 + details 1.
+  // 유저 대면 라우트라 reserve로 요청을 막지 않고, 사후 소비만 원장에 반영해
+  // 공유 cap이 실제 Google 사용량과 어긋나지 않게 한다(삼순 2번).
+  if (YOUTUBE_API_KEY) {
+    void recordQuota(supabaseAdmin, searches.length * 101);
+  }
   const seen = new Set<string>();
   const merged: (HighlightVideo & { _label: string })[] = [];
 

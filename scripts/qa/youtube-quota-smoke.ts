@@ -14,6 +14,8 @@ import {
   quotaJobStatus,
   reserveQuota,
   recordQuota,
+  resolveQuotaCap,
+  YT_QUOTA_DAILY_DEFAULT,
 } from "@/lib/video/youtube-quota";
 
 let fail = 0;
@@ -21,6 +23,15 @@ function ok(name: string, cond: boolean) {
   console.log(`${cond ? "✅" : "❌"} ${name}`);
   if (!cond) fail++;
 }
+
+// ── resolveQuotaCap: 비정상 env fail-closed(삼순 3번) ─────────────
+ok("cap: 정상값 '8000' → 8000", resolveQuotaCap("8000") === 8000);
+ok("cap: 미설정 → 기본", resolveQuotaCap(undefined) === YT_QUOTA_DAILY_DEFAULT);
+ok("cap: 'abc' → 기본(fail-closed)", resolveQuotaCap("abc") === YT_QUOTA_DAILY_DEFAULT);
+ok("cap: '0' → 기본", resolveQuotaCap("0") === YT_QUOTA_DAILY_DEFAULT);
+ok("cap: '-500' → 기본", resolveQuotaCap("-500") === YT_QUOTA_DAILY_DEFAULT);
+ok("cap: 과대 '99999999' → 기본", resolveQuotaCap("99999999") === YT_QUOTA_DAILY_DEFAULT);
+ok("cap: 소수 '8000.7' → floor 8000", resolveQuotaCap("8000.7") === 8000);
 
 // ── getQuotaDate: Pacific 경계 ──────────────────────────────────────
 // 2026-07-19 15:00 KST = 2026-07-18 23:00 PDT → Pacific 날짜 07-18

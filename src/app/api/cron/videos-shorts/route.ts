@@ -202,12 +202,14 @@ export async function GET(req: NextRequest) {
   }
 
   let ledgerSkipped = 0; // 공유 원장 잔여부족으로 건너뛴 검색
+  let ledgerErr: string | undefined; // 원장 RPC 장애(백스톱으로 진행했지만 warning으로 노출)
 
   for (const p of toQuery) {
     if (quotaTripped) break; // degrade: 이후 쿼리 전부 skip
     // 공유 quota 원장 예약 — 잔여가 없으면 doomed 호출 자체를 건너뛴다
     // (여러 YT 크론이 프로젝트 quota를 공유하므로 이 잡만의 budget으론 부족).
     const reservation = await reserveQuota(supabaseAdmin, SEARCH_COST);
+    if (reservation.ledgerError && !ledgerErr) ledgerErr = reservation.ledgerError;
     if (!reservation.allowed) {
       quotaTripped = true; // 남은 quota 0 → 이후 전부 skip
       ledgerSkipped = toQuery.length - queriedCount;
@@ -273,8 +275,9 @@ export async function GET(req: NextRequest) {
       : 0;
 
   // quota degrade는 실패가 아니라 warning(축소/skip). 성공 오표기 교정(2026-07-19 삼순 지적):
-  //   status를 quotaJobStatus로 통일 — hardError>0=error, degrade=warning, else success.
-  const status = quotaJobStatus({ hardErrors: realErrors, degraded: quotaTripped });
+  //   status를 quotaJobStatus로 통일 — hardError>0=error, degrade/원장장애=warning, else success.
+  //   원장 RPC 장애(ledgerErr)도 무음 성공으로 숨지 않게 warning으로 들어올린다(삼순 3번).
+  const status = quotaJobStatus({ hardErrors: realErrors, degraded: quotaTripped || !!ledgerErr });
 
   const summaryParts = [
     `upserted=${totalUpserted}`,
@@ -289,12 +292,16 @@ export async function GET(req: NextRequest) {
   }
   const summary = summaryParts.join(" ");
 
+  if (ledgerErr) summaryParts.push(`LEDGER_ERR=${ledgerErr.slice(0, 60)}`);
+
   const errorMessage =
     realErrors > 0
       ? JSON.stringify(errors).slice(0, 900)
       : quotaTripped
         ? `quota degrade(${ledgerSkipped > 0 ? "shared ledger cap" : "runtime 403"}): ${Math.max(0, skippedCount)} players skipped — warning, not error`
-        : undefined;
+        : ledgerErr
+          ? `quota ledger unavailable (${ledgerErr.slice(0, 120)}) — ran without shared cap, warning`
+          : undefined;
 
   await finishJob(logId, status, summary, errorMessage);
 
@@ -308,6 +315,7 @@ export async function GET(req: NextRequest) {
     quotaEstimate: queriedCount * SEARCH_COST,
     degraded: quotaTripped,
     degradeCause: quotaTripped ? (ledgerSkipped > 0 ? "ledger-cap" : "runtime-403") : null,
+    ledgerError: ledgerErr ?? null,
     skippedOnDegrade: Math.max(0, skippedCount),
     errors,
   });

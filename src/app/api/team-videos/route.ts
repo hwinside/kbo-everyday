@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { TEAMS } from "@/lib/constants/teams";
+import { recordQuota } from "@/lib/video/youtube-quota";
 import type { YouTubeSearchItem } from "@/types/api";
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
@@ -107,6 +108,8 @@ export async function GET(req: NextRequest) {
 
     const rawItems: YouTubeSearchItem[] = data.items || [];
     const detailMap = await fetchVideoDetails(rawItems.map((item) => item.id.videoId).filter(Boolean));
+    // 공유 quota 원장에 소비 기록(best-effort): search 100 + details 1 (삼순 2번).
+    void recordQuota(supabaseAdmin, 101);
 
     const items: TeamVideoItem[] = rawItems
       .filter((item) => {

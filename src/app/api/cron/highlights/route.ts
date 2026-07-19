@@ -98,6 +98,7 @@ export async function GET(req: NextRequest) {
   let errorCount = 0;
   let rssCount = 0;
   let apiCount = 0;
+  let ledgerErr: string | undefined; // 원장 RPC 장애(백스톱 진행하되 warning 노출)
 
   try {
     // 1) RSS: 구단 공식 채널 (quota 0)
@@ -123,6 +124,7 @@ export async function GET(req: NextRequest) {
     if (YOUTUBE_API_KEY) {
       for (const [team, query] of Object.entries(API_QUERIES)) {
         const reservation = await reserveQuota(supabase, 100);
+        if (reservation.ledgerError && !ledgerErr) ledgerErr = reservation.ledgerError;
         if (!reservation.allowed) {
           results[team] = -2; // quota 원장 cap → skip (에러 아님)
           continue;
@@ -153,11 +155,13 @@ export async function GET(req: NextRequest) {
     const apiErrors = errorCount - rssErrors;
     const apiSkipped = Object.entries(results)
       .filter(([team, count]) => team in API_QUERIES && count === -2).length;
-    // quota degrade(_ALL 실패 또는 원장 skip)는 warning, RSS 실패만 error
+    // quota degrade(_ALL 실패 또는 원장 skip/장애)는 warning, RSS 실패만 error(삼순 3번)
     const status: "success" | "warning" | "error" =
-      rssErrors > 0 ? "error" : apiErrors > 0 || apiSkipped > 0 ? "warning" : "success";
+      rssErrors > 0 ? "error" : apiErrors > 0 || apiSkipped > 0 || ledgerErr ? "warning" : "success";
     const warnings =
-      apiErrors > 0 ? ` (API ${apiErrors}건 실패-quota)` : apiSkipped > 0 ? ` (API ${apiSkipped}건 skip-quota원장)` : "";
+      apiErrors > 0 ? ` (API ${apiErrors}건 실패-quota)`
+        : apiSkipped > 0 ? ` (API ${apiSkipped}건 skip-quota원장)`
+        : ledgerErr ? ` (quota 원장 장애-공유cap 미적용)` : "";
     await finishJob(
       logId,
       status,

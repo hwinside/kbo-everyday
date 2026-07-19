@@ -15,8 +15,17 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-/** 공유 quota 상한. Google 기본 10,000에서 유저 대면 라우트용 마진을 뺀 값. env로 조절. */
-export const YT_QUOTA_DAILY_CAP = Number(process.env.YT_QUOTA_DAILY_CAP ?? 9500);
+/**
+ * 공유 quota 상한. Google 기본 10,000에서 유저 대면 라우트용 마진을 뺀 값. env로 조절.
+ * 비정상값(NaN/≤0/과대)은 fail-closed — 기본 9500으로 폴백(삼순 3번 검증).
+ */
+export const YT_QUOTA_DAILY_DEFAULT = 9500;
+export function resolveQuotaCap(raw: string | undefined): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || n > 10_000_000) return YT_QUOTA_DAILY_DEFAULT;
+  return Math.floor(n);
+}
+export const YT_QUOTA_DAILY_CAP = resolveQuotaCap(process.env.YT_QUOTA_DAILY_CAP);
 
 /**
  * Google YouTube quota는 Pacific(America/Los_Angeles) 자정에 리셋되므로
