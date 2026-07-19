@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { TEAMS } from "@/lib/constants/teams";
-import { recordQuota } from "@/lib/video/youtube-quota";
+import {
+  recordQuota,
+  newQuotaCounter,
+  countSearch,
+  countVideoList,
+  type QuotaCounter,
+} from "@/lib/video/youtube-quota";
 import type { YouTubeSearchItem, HighlightVideo } from "@/types/api";
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
@@ -57,12 +63,13 @@ function isActualShort(title: string, durationSeconds: number): boolean {
   );
 }
 
-async function fetchVideoDetails(videoIds: string[]) {
+async function fetchVideoDetails(videoIds: string[], counter?: QuotaCounter) {
   if (!YOUTUBE_API_KEY || videoIds.length === 0) {
     return new Map<string, { durationSeconds: number; channelId: string }>();
   }
 
   try {
+    countVideoList(counter); // videos.list 실제 시도(1 unit)
     const res = await fetch(
       `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet&id=${videoIds.join(",")}&key=${YOUTUBE_API_KEY}`
     );
@@ -82,9 +89,10 @@ async function fetchVideoDetails(videoIds: string[]) {
   }
 }
 
-async function searchYouTube(query: string, maxResults: number, excludeChannelId?: string): Promise<HighlightVideo[]> {
+async function searchYouTube(query: string, maxResults: number, excludeChannelId?: string, counter?: QuotaCounter): Promise<HighlightVideo[]> {
   if (!YOUTUBE_API_KEY) return [];
   try {
+    countSearch(counter); // search.list 실제 시도(100 units)
     const res = await fetch(
       `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&maxResults=${maxResults}&order=date&videoDuration=short&videoEmbeddable=true&key=${YOUTUBE_API_KEY}`
     );
@@ -92,7 +100,7 @@ async function searchYouTube(query: string, maxResults: number, excludeChannelId
     if (data.error) return [];
 
     const rawItems: YouTubeSearchItem[] = data.items || [];
-    const detailMap = await fetchVideoDetails(rawItems.map((item) => item.id.videoId).filter(Boolean));
+    const detailMap = await fetchVideoDetails(rawItems.map((item) => item.id.videoId).filter(Boolean), counter);
 
     return rawItems
       .filter((item) => {
@@ -165,23 +173,29 @@ export async function GET(req: NextRequest) {
   const teamQuery = team === "_ALL" ? "프로야구 하이라이트" : `${teamFullName} 하이라이트`;
   const teamMaxResults = playerNames.length > 0 ? 10 : 30;
 
+  // 실제 시도한 search.list/videos.list 호출만 units 로 누적(삼순 #709 2번:
+  // 고정 추정 searches.length*101 대신 실제 시도별 기록 — 실패/미시도 호출은 제외).
+  const quota = newQuotaCounter();
   const searches = [
-    searchYouTube(teamQuery, teamMaxResults, officialChannelId).then(items =>
+    searchYouTube(teamQuery, teamMaxResults, officialChannelId, quota).then(items =>
       items.map(v => ({ ...v, _label: team }))
     ),
     ...playerNames.map(name =>
-      searchYouTube(`${name} 하이라이트`, 5, officialChannelId).then(items =>
+      searchYouTube(`${name} 하이라이트`, 5, officialChannelId, quota).then(items =>
         items.map(v => ({ ...v, _label: name }))
       )
     ),
   ];
 
   const results = await Promise.all(searches);
-  // 공유 quota 원장에 소비 기록(best-effort, 비차단) — 각 searchYouTube = search 100 + details 1.
-  // 유저 대면 라우트라 reserve로 요청을 막지 않고, 사후 소비만 원장에 반영해
-  // 공유 cap이 실제 Google 사용량과 어긋나지 않게 한다(삼순 2번).
-  if (YOUTUBE_API_KEY) {
-    void recordQuota(supabaseAdmin, searches.length * 101);
+  // 공유 quota 원장에 소비 기록 — 유저 대면 라우트라 reserve로 요청을 막지 않고
+  // 사후 소비만 원장에 반영해 공유 cap이 실제 Google 사용량과 어긋나지 않게 한다.
+  // await 로 durable 하게 완료 보장 + RPC 오류 노출(fire-and-forget 금지, 삼순 #709 2번).
+  if (YOUTUBE_API_KEY && quota.units > 0) {
+    const rec = await recordQuota(supabaseAdmin, quota.units);
+    if (rec.error) {
+      console.warn(`[highlights] quota 원장 기록 실패(units=${quota.units}): ${rec.error}`);
+    }
   }
   const seen = new Set<string>();
   const merged: (HighlightVideo & { _label: string })[] = [];

@@ -33,8 +33,16 @@ begin
 end;
 $$;
 
--- 원자적 예약: used + p_units <= p_cap 이면 증가 후 allowed=true(소비 기록 겸함),
+-- 프로젝트 절대 quota 상한(하드 리밋). TS resolveQuotaCap 과 동일값(10,000).
+-- 어떤 호출부·env가 이보다 큰 cap 을 넘겨도 서버에서 강제로 clamp 한다
+-- (삼순 #709 2번: 10M 허용이 한도 우회로 이어져 절대 yield 안 하는 상태 방지).
+-- quota 증량 승인 시 이 상수 + TS 상수를 함께 올린다.
+create or replace function _yt_quota_hard_max()
+returns int language sql immutable as $$ select 10000 $$;
+
+-- 원자적 예약: used + p_units <= 유효 cap 이면 증가 후 allowed=true(소비 기록 겸함),
 -- 아니면 미증가 + allowed=false. row lock(for update)으로 동시 크론 경쟁 방지.
+-- 유효 cap = least(p_cap, 하드리밋) — env·호출부가 넘긴 cap 도 절대 한도 초과 불가.
 -- SECURITY DEFINER 이므로 입력을 서버에서 강하게 검증(음수 units/비정상 cap/date 우회 차단).
 create or replace function reserve_youtube_quota(p_date text, p_units int, p_cap int)
 returns table(allowed boolean, used_after int, remaining int)
@@ -44,14 +52,17 @@ set search_path = public
 as $$
 declare
   v_used int;
+  v_cap int;
 begin
   perform _assert_quota_date(p_date);
   if p_units is null or p_units <= 0 then
     raise exception 'p_units must be > 0, got %', p_units using errcode = '22023';
   end if;
-  if p_cap is null or p_cap <= 0 or p_cap > 10000000 then
-    raise exception 'p_cap out of range (1..10000000), got %', p_cap using errcode = '22023';
+  if p_cap is null or p_cap <= 0 then
+    raise exception 'p_cap must be > 0, got %', p_cap using errcode = '22023';
   end if;
+  -- 하드 리밋 강제: 요청 cap 이 절대 한도를 넘어도 한도로 clamp.
+  v_cap := least(p_cap, _yt_quota_hard_max());
 
   insert into youtube_quota_ledger(quota_date, used)
     values (p_date, 0)
@@ -62,13 +73,13 @@ begin
     where quota_date = p_date
     for update;
 
-  if v_used + p_units <= p_cap then
+  if v_used + p_units <= v_cap then
     update youtube_quota_ledger
       set used = used + p_units, updated_at = now()
       where quota_date = p_date;
-    return query select true, v_used + p_units, p_cap - (v_used + p_units);
+    return query select true, v_used + p_units, v_cap - (v_used + p_units);
   else
-    return query select false, v_used, greatest(p_cap - v_used, 0);
+    return query select false, v_used, greatest(v_cap - v_used, 0);
   end if;
 end;
 $$;
@@ -121,3 +132,7 @@ grant execute on function record_youtube_quota(text, int) to service_role;
 revoke all on function _assert_quota_date(text) from public;
 revoke all on function _assert_quota_date(text) from anon;
 revoke all on function _assert_quota_date(text) from authenticated;
+
+revoke all on function _yt_quota_hard_max() from public;
+revoke all on function _yt_quota_hard_max() from anon;
+revoke all on function _yt_quota_hard_max() from authenticated;

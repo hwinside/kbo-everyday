@@ -35,7 +35,14 @@ import {
   hasNonBaseballSignal,
   isPlayerShortRelevant,
 } from "@/lib/video/shorts-relevance";
-import { reserveQuota, quotaJobStatus } from "@/lib/video/youtube-quota";
+import {
+  reserveQuota,
+  quotaJobStatus,
+  isQuotaSignal,
+  quotaInfoFromError,
+  YouTubeApiError,
+  extractYouTubeError,
+} from "@/lib/video/youtube-quota";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
@@ -93,7 +100,11 @@ async function searchPlayerShorts(query: string): Promise<
 
   const res = await fetch(url);
   const data = await res.json();
-  if (data.error) throw new Error(data.error.message);
+  if (data.error || !res.ok) {
+    // status·reason 을 실어 던져 구조화된 quota 시그널 판별이 가능하게 한다(삼순 #709 3번).
+    const { message, reason } = extractYouTubeError(res.status, data);
+    throw new YouTubeApiError(message, { status: res.status, reason });
+  }
   return (data.items || []).map((it: YouTubeSearchApiItem) => ({
     video_id: it.id.videoId,
     title: decodeHtml(it.snippet.title),
@@ -190,17 +201,6 @@ export async function GET(req: NextRequest) {
   let queriedCount = 0;
   let quotaTripped = false; // runtime degrade (YouTube API가 quotaExceeded 반환 시)
 
-  /** YouTube API quota 계열 에러 감지 */
-  function isQuotaError(msg: string): boolean {
-    const m = msg.toLowerCase();
-    return (
-      m.includes("quotaexceeded") ||
-      m.includes("quota exceeded") ||
-      m.includes("dailylimitexceeded") ||
-      m.includes("usagelimits")
-    );
-  }
-
   let ledgerSkipped = 0; // 공유 원장 잔여부족으로 건너뛴 검색
   let ledgerErr: string | undefined; // 원장 RPC 장애(백스톱으로 진행했지만 warning으로 노출)
 
@@ -257,7 +257,8 @@ export async function GET(req: NextRequest) {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       errors[`${p.team}/${p.name}`] = msg;
-      if (isQuotaError(msg)) {
+      // 구조화된 quota 시그널(HTTP status·reason·대표 문구) 공용 판별(삼순 #709 3번).
+      if (isQuotaSignal(quotaInfoFromError(err))) {
         quotaTripped = true; // degrade 발동 — 다음 호출 skip
       }
     }
