@@ -35,6 +35,7 @@ import {
   hasNonBaseballSignal,
   isPlayerShortRelevant,
 } from "@/lib/video/shorts-relevance";
+import { reserveQuota, quotaJobStatus } from "@/lib/video/youtube-quota";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
@@ -200,8 +201,18 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  let ledgerSkipped = 0; // 공유 원장 잔여부족으로 건너뛴 검색
+
   for (const p of toQuery) {
     if (quotaTripped) break; // degrade: 이후 쿼리 전부 skip
+    // 공유 quota 원장 예약 — 잔여가 없으면 doomed 호출 자체를 건너뛴다
+    // (여러 YT 크론이 프로젝트 quota를 공유하므로 이 잡만의 budget으론 부족).
+    const reservation = await reserveQuota(supabaseAdmin, SEARCH_COST);
+    if (!reservation.allowed) {
+      quotaTripped = true; // 남은 quota 0 → 이후 전부 skip
+      ledgerSkipped = toQuery.length - queriedCount;
+      break;
+    }
     try {
       const query = `${p.name} ${p.team}`;
       const items = await searchPlayerShorts(query);
@@ -251,14 +262,19 @@ export async function GET(req: NextRequest) {
   }
 
   const errorCount = Object.keys(errors).length;
-  const skippedCount = quotaTripped
-    ? toQuery.length - queriedCount - (errorCount === 0 ? 0 : 1)
-    : 0;
+  // 원장 스킵이면 실패 없이 전량 skip, 런타임 403이면 마지막 1건이 quota 에러(실 에러 아님)
+  const realErrors = quotaTripped && ledgerSkipped === 0
+    ? Math.max(0, errorCount - 1)
+    : errorCount;
+  const skippedCount = ledgerSkipped > 0
+    ? ledgerSkipped
+    : quotaTripped
+      ? toQuery.length - queriedCount - (errorCount === 0 ? 0 : 1)
+      : 0;
 
-  // degrade 시에도 실패가 아니라 'success + warning' 으로 기록
-  // (삼순이 가드레일: quota 부족은 실패보다 축소/skip + 경고가 맞음)
-  const realErrors = quotaTripped ? errorCount - 1 : errorCount;
-  const status: "success" | "error" = realErrors === 0 ? "success" : "error";
+  // quota degrade는 실패가 아니라 warning(축소/skip). 성공 오표기 교정(2026-07-19 삼순 지적):
+  //   status를 quotaJobStatus로 통일 — hardError>0=error, degrade=warning, else success.
+  const status = quotaJobStatus({ hardErrors: realErrors, degraded: quotaTripped });
 
   const summaryParts = [
     `upserted=${totalUpserted}`,
@@ -267,20 +283,23 @@ export async function GET(req: NextRequest) {
     `errors=${realErrors}`,
     `quota≈${queriedCount * SEARCH_COST}`,
   ];
-  if (quotaTripped) summaryParts.push(`DEGRADE=quota skipped=${Math.max(0, skippedCount)}`);
+  if (quotaTripped) {
+    const cause = ledgerSkipped > 0 ? "ledger-cap" : "runtime-403";
+    summaryParts.push(`DEGRADE=quota(${cause}) skipped=${Math.max(0, skippedCount)}`);
+  }
   const summary = summaryParts.join(" ");
 
   const errorMessage =
     realErrors > 0
       ? JSON.stringify(errors).slice(0, 900)
       : quotaTripped
-        ? "quota degrade: remaining players skipped, job_runs warning only"
+        ? `quota degrade(${ledgerSkipped > 0 ? "shared ledger cap" : "runtime 403"}): ${Math.max(0, skippedCount)} players skipped — warning, not error`
         : undefined;
 
   await finishJob(logId, status, summary, errorMessage);
 
   return NextResponse.json({
-    ok: realErrors === 0,
+    ok: status !== "error",
     status,
     totalUpserted,
     queriedCount,
@@ -288,6 +307,7 @@ export async function GET(req: NextRequest) {
     playersBudgetCap: toQuery.length,
     quotaEstimate: queriedCount * SEARCH_COST,
     degraded: quotaTripped,
+    degradeCause: quotaTripped ? (ledgerSkipped > 0 ? "ledger-cap" : "runtime-403") : null,
     skippedOnDegrade: Math.max(0, skippedCount),
     errors,
   });

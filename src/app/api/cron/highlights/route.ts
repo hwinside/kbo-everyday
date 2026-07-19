@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import type { YouTubeSearchItem, HighlightRow } from "@/types/api";
 import { startJob, finishJob } from "@/lib/admin/job-logger";
+import { reserveQuota } from "@/lib/video/youtube-quota";
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
 const CRON_SECRET = process.env.CRON_SECRET || "";
@@ -118,9 +119,14 @@ export async function GET(req: NextRequest) {
       await new Promise((r) => setTimeout(r, 200));
     }
 
-    // 2) API: 범용 검색 (quota 100/query)
+    // 2) API: 범용 검색 (quota 100/query) — 공유 원장으로 예약(잔여 없으면 skip)
     if (YOUTUBE_API_KEY) {
       for (const [team, query] of Object.entries(API_QUERIES)) {
+        const reservation = await reserveQuota(supabase, 100);
+        if (!reservation.allowed) {
+          results[team] = -2; // quota 원장 cap → skip (에러 아님)
+          continue;
+        }
         try {
           const videos = await fetchYouTube(query);
           if (videos.length > 0) {
@@ -141,12 +147,17 @@ export async function GET(req: NextRequest) {
 
     const totalVideos = Object.values(results).filter((n) => n > 0).reduce((a, b) => a + b, 0);
     const totalTeams = Object.keys(TEAM_CHANNELS).length + Object.keys(API_QUERIES).length;
-    // RSS 실패는 에러, API(_ALL) 실패는 경고 (quota 소진 허용)
+    // RSS 실패는 에러, API(_ALL) 실패/skip은 경고 (quota 소진 허용)
     const rssErrors = Object.entries(results)
       .filter(([team, count]) => team in TEAM_CHANNELS && count === -1).length;
     const apiErrors = errorCount - rssErrors;
-    const status = rssErrors > 0 ? "error" : "success";
-    const warnings = apiErrors > 0 ? ` (API ${apiErrors}건 실패-quota)` : "";
+    const apiSkipped = Object.entries(results)
+      .filter(([team, count]) => team in API_QUERIES && count === -2).length;
+    // quota degrade(_ALL 실패 또는 원장 skip)는 warning, RSS 실패만 error
+    const status: "success" | "warning" | "error" =
+      rssErrors > 0 ? "error" : apiErrors > 0 || apiSkipped > 0 ? "warning" : "success";
+    const warnings =
+      apiErrors > 0 ? ` (API ${apiErrors}건 실패-quota)` : apiSkipped > 0 ? ` (API ${apiSkipped}건 skip-quota원장)` : "";
     await finishJob(
       logId,
       status,
