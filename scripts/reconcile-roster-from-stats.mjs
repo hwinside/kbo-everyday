@@ -12,7 +12,16 @@
  * roster 에 자동 추가한다. 사진은 후속 update-player-photos 스텝이 roster 기준으로
  * 자동 재생성/다운로드하므로 여기서는 roster 만 온보딩한다.
  *
- * 외국인 canonical(FP/AQ)은 foreign-id-map 경유라 여기서 건드리지 않는다.
+ * 2026-07-18 확장(로스터 변동 정정 스펙 — "에셋을 미리 준비하고 모든 선수 노출"):
+ * stats 기반 후보에 더해 KBO 공식 등록명단(Player/Register.aspx)도 후보 소스로 쓴다.
+ * 콜업 직후 선수는 아직 stats 에 안 잡혀도 등록명단엔 있으므로, 새벽 크롤이 선수 상세
+ * 링크용 에셋(로스터 SSOT→사진)을 능동적으로 준비해 둔다. 파서는 PR #684의
+ * src/lib/roster-moves/parse.ts 를 tsx tsImport 로 그대로 재사용(복제 금지, 실측 확인).
+ * 등록명단 fetch/파싱 실패는 경고만 남기고 기존 stats 경로만으로 정상 완주한다
+ * (기존 기능 침범 금지 — 하위호환 유지).
+ *
+ * 외국인 canonical(FP/AQ)은 foreign-id-map 경유라 여기서 건드리지 않는다
+ * (등록명단의 외국인 숫자 alias는 skip+로그만).
  * roster/identity 검증은 그대로 게이트로 남아 최종 안전망 역할을 한다.
  *
  * Usage: node scripts/reconcile-roster-from-stats.mjs [--dry-run] [--verbose]
@@ -35,6 +44,12 @@ const verbose = argv.includes("--verbose");
 // team(한글 약칭) → teamId (roster SSOT 실측 기준)
 const TEAM_TO_ID = {
   LG: 1, 두산: 2, KT: 3, SSG: 4, NC: 5, KIA: 6, 롯데: 7, 삼성: 8, 한화: 9, 키움: 10,
+};
+const ID_TO_TEAM = Object.fromEntries(Object.entries(TEAM_TO_ID).map(([t, id]) => [id, t]));
+
+// KBO 팀 코드 → teamId (kbo-api.ts TEAM_CODE_MAP과 동일 기준)
+const KBO_CODE_TO_ID = {
+  LG: 1, OB: 2, KT: 3, SK: 4, NC: 5, HT: 6, LT: 7, SS: 8, HH: 9, WO: 10,
 };
 
 const KBO_HITTER = "https://www.koreabaseball.com/Record/Player/HitterDetail/Basic.aspx?playerId=";
@@ -95,9 +110,65 @@ async function fetchPlayerDetail(playerId, isPitcher) {
       backNo: extractLabel(html, "lblBackNo"),
       birthDate: parseKboBirthday(extractLabel(html, "lblBirthday")),
       position: parsePosition(extractLabel(html, "lblPosition"), isPitcher),
+      // 입단 정보 — 외국인 신규 영입은 "자유선발"로 표기된다(실측: 세베리노/아빌라/페덱/디아즈).
+      draft: extractLabel(html, "lblDraft"),
     };
   }
   return null;
+}
+
+/* ===== (2026-07-18) KBO 공식 등록명단(Register.aspx) 후보 소스 =====
+ * HTTP postback 계약(GET 1 + hfSearchTeam postback 10회)은 src/lib/crawler/kbo-api.ts
+ * fetchRegisterRosters 와 동일 실측 기준. TS 모듈은 앱 의존(@ alias·모니터링)을
+ * 끌고 와 plain node 로 못 불러오므로 HTTP 흐름만 여기 미러링하고,
+ * HTML 파서는 parse.ts 를 tsx tsImport 로 그대로 재사용한다(복제 금지 — 실측 확인).
+ */
+const REGISTER_URL = "https://www.koreabaseball.com/Player/Register.aspx";
+const REGISTER_POSTBACK_TARGET = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$btnCalendarSelect";
+const REGISTER_TEAM_FIELD = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$hfSearchTeam";
+const REGISTER_DATE_FIELD = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$hfSearchDate";
+
+function extractRegisterHidden(html, id) {
+  const m = html.match(new RegExp(`id="${id}" value="([^"]*)"`));
+  return m ? m[1] : "";
+}
+
+/** 10개 구단 1군 등록명단 → flat 선수 목록 [{kboId,name,backNo,position,teamId,team}] */
+async function fetchRegisterEntries() {
+  const { tsImport } = await import("tsx/esm/api");
+  const { parseTeamRegister } = await tsImport("../src/lib/roster-moves/parse.ts", import.meta.url);
+
+  const initRes = await fetch(REGISTER_URL, { headers: { ...KBO_HEADERS, Referer: REGISTER_URL } });
+  if (!initRes.ok) throw new Error(`Register.aspx GET HTTP ${initRes.status}`);
+  const initHtml = await initRes.text();
+  const viewState = extractRegisterHidden(initHtml, "__VIEWSTATE");
+  const eventValidation = extractRegisterHidden(initHtml, "__EVENTVALIDATION");
+  if (!viewState || !eventValidation) throw new Error("Register.aspx 폼 토큰 추출 실패");
+  const viewStateGen = extractRegisterHidden(initHtml, "__VIEWSTATEGENERATOR");
+  const date = extractRegisterHidden(initHtml, "cphContents_cphContents_cphContents_hfSearchDate");
+
+  const entries = [];
+  for (const [code, teamId] of Object.entries(KBO_CODE_TO_ID)) {
+    const body = new URLSearchParams({
+      __EVENTTARGET: REGISTER_POSTBACK_TARGET,
+      __EVENTARGUMENT: "",
+      __VIEWSTATE: viewState,
+      __VIEWSTATEGENERATOR: viewStateGen,
+      __EVENTVALIDATION: eventValidation,
+      [REGISTER_TEAM_FIELD]: code,
+      [REGISTER_DATE_FIELD]: date,
+    });
+    const res = await fetch(REGISTER_URL, {
+      method: "POST",
+      headers: { ...KBO_HEADERS, Referer: REGISTER_URL, "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+    if (!res.ok) throw new Error(`Register.aspx ${code} POST HTTP ${res.status}`);
+    const html = await res.text();
+    const team = ID_TO_TEAM[teamId];
+    for (const e of parseTeamRegister(html)) entries.push({ ...e, teamId, team });
+  }
+  return entries;
 }
 
 async function main() {
@@ -138,12 +209,33 @@ async function main() {
     missing.push({ kboId: id, ...info });
   }
 
+  // (2026-07-18) 등록명단 기반 후보 추가 — 콜업 직후 stats 미반영 선수도 능동 온보딩.
+  // 수집 실패는 경고 후 skip — 기존 stats 경로만으로 정상 완주(하위호환, 기존 기능 침범 금지).
+  try {
+    const entries = await fetchRegisterEntries();
+    const before = missing.length;
+    for (const e of entries) {
+      if (!/^\d+$/.test(e.kboId)) continue;
+      if (foreignNumericToAlpha[e.kboId]) {
+        // 외국인 canonical(FP/AQ)은 foreign-id-map 경유 — 여기서 건드리지 않음(skip+로그만)
+        if (verbose) console.log(`  · 등록명단 외국인 alias skip: ${e.name}(${e.kboId})`);
+        continue;
+      }
+      if (statPlayers.has(e.kboId)) continue; // stats 경로에서 이미 판정됨
+      if (resolves(e.kboId, e.name, e.team)) continue;
+      missing.push({ kboId: e.kboId, name: e.name, team: e.team, isPitcher: e.position === "투수", source: "register" });
+    }
+    console.log(`📋 등록명단 ${entries.length}명 수집 → 신규 온보딩 후보 ${missing.length - before}명`);
+  } catch (err) {
+    console.warn(`⚠️ 등록명단 수집 실패 — stats 경로만으로 진행: ${err?.message ?? err}`);
+  }
+
   if (missing.length === 0) {
-    console.log("✅ reconcile: stats 의 모든 선수가 roster 로 resolve 됨 — 온보딩 불필요");
+    console.log("✅ reconcile: stats/등록명단의 모든 선수가 roster 로 resolve 됨 — 온보딩 불필요");
     return;
   }
 
-  console.log(`🔧 reconcile: roster 미등록 stats 선수 ${missing.length}명 발견 → KBO 상세 보강 시도`);
+  console.log(`🔧 reconcile: roster 미등록 선수 ${missing.length}명 발견(stats+등록명단) → KBO 상세 보강 시도`);
   const onboarded = [];
   const failed = [];
   for (const m of missing) {
@@ -151,6 +243,13 @@ async function main() {
     if (!teamId) { failed.push({ ...m, reason: `unknown team ${m.team}` }); continue; }
     const detail = await fetchPlayerDetail(m.kboId, m.isPitcher);
     if (!detail) { failed.push({ ...m, reason: "KBO 상세 fetch 실패" }); continue; }
+    // 등록명단 신규 외국인은 skip+로그만 — canonical(FP/AQ)은 foreign-id-map 경유가 계약.
+    // 판별: KBO 입단 표기 "자유선발"(외국인 영입 전용 표기, 실측). 오판 시에도 stats 경로가
+    // 나중에 동일 선수를 다시 온보딩하므로(기존 동작) 안전하게 보수적으로 skip한다.
+    if (m.source === "register" && /자유선발/.test(detail.draft || "")) {
+      console.log(`  · 등록명단 신규 외국인 추정 skip: ${m.name}(${m.kboId}, ${m.team}) — foreign-id-map 등록 필요 (입단: ${detail.draft})`);
+      continue;
+    }
     const entry = {
       name: detail.name || m.name,
       kboId: m.kboId,
@@ -169,7 +268,7 @@ async function main() {
   }
 
   if (onboarded.length === 0) {
-    console.log("reconcile: 온보딩 가능한 선수 없음 (fetch 실패만 존재)");
+    console.log("reconcile: 온보딩 가능한 선수 없음 (fetch 실패/외국인 skip만 존재)");
     if (failed.length > 0) process.exitCode = 0; // 게이트는 validator 가 담당 — 여기선 실패시 조용히 넘김
     return;
   }

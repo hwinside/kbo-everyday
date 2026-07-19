@@ -748,6 +748,7 @@ export const PLAYER_PHOTO_MAP: Record<string, string> = {
   "테일러": "56966",
   "톨허스트": "55130",
   "트렌턴 브룩스": "FP018",
+  "페덱": "FP024",
   "하동준": "56797",
   "하영민": "64350",
   "하재훈": "69813",
@@ -909,7 +910,7 @@ export const PLAYER_PHOTO_ID_SET = new Set([
   "AQ002", "AQ003", "AQ004", "AQ005", "AQ006", "AQ007", "AQ008", "AQ009", "AQ010", "AQ011",
   "FP001", "FP002", "FP003", "FP004", "FP005", "FP006", "FP007", "FP008", "FP009", "FP010",
   "FP011", "FP012", "FP013", "FP014", "FP015", "FP016", "FP017", "FP018", "FP019", "FP020",
-  "FP021", "FP022", "FP023", "TR001",
+  "FP021", "FP022", "FP023", "FP024", "TR001",
 ]);
 // === GENERATED:PHOTO_ID_SET:END ===
 

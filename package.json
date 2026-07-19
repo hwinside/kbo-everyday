@@ -14,12 +14,14 @@
     "qa:war-saber": "tsx scripts/qa/war-saber-smoke.ts",
     "qa:la-broadcast": "tsx scripts/qa/la-broadcast-policy-smoke.ts",
     "qa:la-autostart": "tsx scripts/qa/la-autostart-smoke.ts",
+    "qa:lock-gate": "tsx scripts/qa/lock-card-gate-smoke.ts",
     "qa:ios-widget": "tsx scripts/qa/ios-widget-score-state-smoke.ts",
     "qa:la-ack-policy": "bash scripts/qa/la-channel-ack-policy-smoke.sh",
     "qa:news-naver-url": "tsx scripts/qa/news-naver-url-smoke.ts",
     "qa:photo-filter": "tsx scripts/qa/photo-article-filter-smoke.ts",
     "qa:news-dedup": "tsx scripts/qa/news-dedup-title-smoke.ts",
     "qa:news-roundup": "tsx scripts/qa/news-roundup-filter-smoke.ts",
+    "qa:news-clip-title": "tsx scripts/qa/news-clipping-title-signal-smoke.ts",
     "qa:ticket-open": "tsx scripts/qa/ticket-open-smoke.ts",
     "qa:gif-collector-matching": "tsx scripts/qa/gif-collector-matching-smoke.ts",
     "qa:gif-collector-slack-parser": "tsx scripts/qa/gif-collector-slack-parser-smoke.ts",
@@ -44,7 +46,9 @@
     "validate:player-identity": "node scripts/validate-player-identity.mjs",
     "qa:native-ios-naver-smoke-preflight": "node scripts/qa/native-ios-naver-smoke-preflight.mjs",
     "qa:full-entry": "tsx scripts/qa/full-entry-smoke.ts",
-    "qa:admin-alerts": "tsx scripts/qa/admin-alerts-smoke.ts"
+    "qa:admin-alerts": "tsx scripts/qa/admin-alerts-smoke.ts",
+    "qa:roster-moves": "tsx scripts/qa/roster-moves-diff-smoke.ts",
+    "qa:roster-moves:db": "node scripts/qa/roster-moves-db-integration.mjs"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
