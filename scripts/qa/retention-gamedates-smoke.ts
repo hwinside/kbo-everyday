@@ -36,6 +36,10 @@ function fakeSupabase(tables: Record<string, Row[]>): SupabaseClient {
           filters.push((r) => new Date(String(r[col])).getTime() <= new Date(v).getTime());
           return builder;
         },
+        lt: (col: string, v: string) => {
+          filters.push((r) => new Date(String(r[col])).getTime() < new Date(v).getTime());
+          return builder;
+        },
         not: (col: string) => {
           filters.push((r) => r[col] != null);
           return builder;
@@ -200,6 +204,17 @@ async function main() {
     });
     const rows = await computeVisitDistribution(sb, "2026-07-21");
     check("same-day activity counted (regular run)", rows.find((r) => r.metric_key === "1")?.value, 1);
+  }
+  {
+    // 삼순 3차 재현: 마지막 1초 fractional timestamp 포함 + 익일 00:00 exclusive 제외
+    const sb = fakeSupabase({
+      posts: [{ author_id: "userD", created_at: "2026-07-19T23:59:59.500+09:00" }],
+      likes: [{ user_id: "userE", created_at: "2026-07-20T00:00:00+09:00" }],
+    });
+    const rows = await computeVisitDistribution(sb, "2026-07-19");
+    const b1 = rows.find((r) => r.metric_key === "1");
+    check("fractional last-second included (23:59:59.500)", b1?.value, 1);
+    check("next-day 00:00 exclusive", b1?.total, 1);
   }
 
   // ── ⑤ isBackfill (funnel 제외 계약) ───────────────
