@@ -23,6 +23,11 @@ import {
   type LiveClaimOutcome,
 } from "../../src/lib/analysis/daily-analysis-live-policy";
 import { parseTitleEntries } from "../../src/lib/analysis/daily-analysis-title-parser";
+import {
+  computeTitlesDelta,
+  titleCategoriesForNarrative,
+  type StatsSnapshotRow,
+} from "../../src/lib/analysis/daily-delta";
 
 let pass = 0;
 let fail = 0;
@@ -88,6 +93,50 @@ const missingWhipEntries = parseTitleEntries({
   lowerIsBetter: true,
 });
 check("title parser: WHIP 결측/비수치 행은 0으로 만들지 않고 배제", missingWhipEntries.length, 0);
+
+// ===== parser transition baseline guard =====
+const titleRows = (
+  category: string,
+  names: string[],
+  values: number[],
+): StatsSnapshotRow[] => names.map((player_name, index) => ({
+  date: "2026-07-19",
+  category,
+  rank: index + 1,
+  player_name,
+  team: `T${index + 1}`,
+  value: values[index],
+}));
+
+const sbNames = Array.from({ length: 10 }, (_, index) => `SB${index + 1}`);
+const sbTransitionDelta = computeTitlesDelta(
+  titleRows("sb", sbNames, [34, 27, 24, 23, 21, 20, 19, 18, 17, 16]),
+  titleRows("sb", sbNames, [90, 88, 84, 83, 81, 80, 79, 78, 77, 76]),
+);
+check("transition guard: 누적 SB 감소 baseline 비교 억제", sbTransitionDelta.categories[0]?.baselineSuppressed, true);
+check("transition guard: SB 허위 1위 교체 차단", sbTransitionDelta.categories[0]?.leaderChanged, false);
+ok(
+  "transition guard: SB 허위 rank/value 변화 0",
+  sbTransitionDelta.categories[0]?.top5.every((row) => row.rankChange === 0 && row.valueChange === 0) === true,
+);
+
+const oldWhipNames = ["OLD1", "OLD2", "OLD3", "OLD4", "OLD5", "OLD6", "OLD7", "SHARED", "OLD9", "OLD10"];
+const newWhipNames = ["NEW1", "NEW2", "NEW3", "NEW4", "NEW5", "NEW6", "NEW7", "SHARED", "NEW9", "NEW10"];
+const whipTransitionDelta = computeTitlesDelta(
+  titleRows("whip", newWhipNames, [1.01, 1.09, 1.10, 1.13, 1.17, 1.18, 1.19, 1.20, 1.21, 1.22]),
+  titleRows("whip", oldWhipNames, [1.27, 1.27, 1.28, 1.33, 1.34, 1.37, 1.43, 1.44, 1.45, 1.52]),
+);
+check("transition guard: WHIP 저중첩 baseline 비교 억제", whipTransitionDelta.categories[0]?.baselineSuppressed, true);
+check("transition guard: WHIP 허위 1위 교체 차단", whipTransitionDelta.categories[0]?.leaderChanged, false);
+check("transition guard: 억제 카테고리는 LLM narrative 입력 제외", titleCategoriesForNarrative(whipTransitionDelta).length, 0);
+
+const stableNames = Array.from({ length: 10 }, (_, index) => `HR${index + 1}`);
+const normalDelta = computeTitlesDelta(
+  titleRows("hr", stableNames, [30, 28, 27, 25, 24, 23, 22, 21, 20, 19]),
+  titleRows("hr", stableNames, [29, 28, 27, 25, 24, 23, 22, 21, 20, 19]),
+);
+check("transition guard: 정상 누적 baseline은 유지", normalDelta.categories[0]?.baselineSuppressed, false);
+check("transition guard: 정상 카테고리는 narrative 입력 유지", titleCategoriesForNarrative(normalDelta).length, 1);
 
 // ===== P0① readiness =====
 // baseline: 10팀 전부 100경기(오늘 경기 전), 오늘 팀1 vs 팀2 final 1경기

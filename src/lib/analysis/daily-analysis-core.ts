@@ -10,6 +10,7 @@ import {
 import {
   computeStandingsDelta,
   computeTitlesDelta,
+  titleCategoriesForNarrative,
   computeStreak,
   extractGameEvents,
   extractHighlights,
@@ -201,7 +202,7 @@ function buildTitlePrompt(
     (e) => `${e.awayTeam} ${e.awayScore}:${e.homeScore} ${e.homeTeam}`,
   ).join("\n");
 
-  const catData = delta.categories
+  const catData = titleCategoriesForNarrative(delta)
     .filter((c) => cats.includes(c.category))
     .map((c) => {
       const name = catNames[c.category] || c.category;
