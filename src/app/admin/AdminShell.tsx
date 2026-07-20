@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useCallback, type ReactNode } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import PullToRefresh from "@/components/PullToRefresh";
 import {
   LayoutDashboard,
   Users,
@@ -327,8 +328,21 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   const [authed, setAuthed] = useState(false);
   const [checking, setChecking] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const router = useRouter();
   const unreadDM = useAdminUnreadDMCount(30000, authed);
   const batchProblems = useAdminBatchHealthCount(60000, authed);
+
+  // 당겨서 새로고침(#713 홈 확장) — 어드민 페이지는 각자 client fetch(useEffect mount 1회)라
+  // router.refresh()(서버 컴포넌트 revalidate)만으로는 클라 상태가 안 바뀐다.
+  // → 콘텐츠 래퍼 key를 bump해 페이지 subtree를 remount, 모든 페이지의 fetch effect를 재실행한다
+  //   (페이지별 nonce 배선 없이 전 어드민 페이지 범용 갱신).
+  const handleRefresh = useCallback(async () => {
+    router.refresh();
+    setRefreshNonce((n) => n + 1);
+    // 스피너가 눈에 보이도록 최소 노출 시간 확보
+    await new Promise((res) => setTimeout(res, 500));
+  }, [router]);
 
   // PWA manifest·앱 이름은 server layout(layout.tsx metadata)에서 SSR HTML로 주입한다.
   // — iOS Safari가 "홈 화면에 추가"할 때 페이지 로드 시점의 HTML manifest만 읽기 때문에
@@ -391,7 +405,9 @@ export default function AdminShell({ children }: { children: ReactNode }) {
             <h1 className="font-bold">어드민</h1>
           </div>
         </header>
-        <div className="p-4 lg:p-8 max-w-[1600px]">{children}</div>
+        <PullToRefresh onRefresh={handleRefresh}>
+          <div key={refreshNonce} className="p-4 lg:p-8 max-w-[1600px]">{children}</div>
+        </PullToRefresh>
       </main>
     </div>
   );
