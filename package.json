@@ -12,6 +12,7 @@
     "qa:ui:comment-crud": "node scripts/qa/ui-smoke-comment-crud.mjs",
     "qa:resolve-player": "tsx scripts/qa/resolve-player-smoke.ts",
     "qa:war-saber": "tsx scripts/qa/war-saber-smoke.ts",
+    "qa:rank-selfheal": "tsx scripts/qa/rank-history-selfheal-smoke.ts",
     "qa:la-broadcast": "tsx scripts/qa/la-broadcast-policy-smoke.ts",
     "qa:la-autostart": "tsx scripts/qa/la-autostart-smoke.ts",
     "qa:lock-gate": "tsx scripts/qa/lock-card-gate-smoke.ts",
