@@ -8,7 +8,7 @@ import TeamLogo from "@/components/ui/TeamLogo";
 import { getTeamById, type TeamData } from "@/lib/constants/teams";
 import { getTeamColor } from "@/lib/utils/team";
 import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
-import { computeRosterMovesDisplay } from "@/lib/roster-moves/readiness";
+import { computeRosterMovesDisplay, teamHomeHref } from "@/lib/roster-moves/readiness";
 
 type FormResult = "W" | "L" | "D";
 
@@ -408,38 +408,55 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
             ) : currentRosterMoves.status === "error" ? (
               <p className="text-[12px] text-text-tertiary">등록·말소 내역을 불러오지 못했어요.</p>
             ) : currentRosterMoves.moves.length === 0 ? (
-              <p className="text-[12px] text-text-tertiary">최근 7일 변동이 없어요.</p>
+              <Link href={teamHomeHref(team.slug)} className="block text-[12px] text-text-tertiary">
+                최근 7일 변동이 없어요.
+              </Link>
             ) : (
               <ul className="flex flex-col gap-1.5">
                 {computeRosterMovesDisplay(currentRosterMoves.moves).visible.map((move, index) => {
                   const isRegister = move.moveType === "register";
                   const label = isRegister ? "등록" : "말소";
                   const labelColor = isRegister ? "#34D399" : "#F87171";
-                  const content = (
-                    <div className="flex items-center gap-2 py-0.5">
-                      <span className="w-8 flex-shrink-0 text-[11px] text-text-tertiary">{shortMoveDate(move.moveDate)}</span>
-                      <span
-                        className="flex-shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
-                        style={{ color: labelColor, backgroundColor: `${labelColor}1f` }}
-                      >
-                        {label}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-text-primary">
-                        {move.playerName}
-                      </span>
-                      <ChevronRight size={14} className="flex-shrink-0 text-text-tertiary" />
-                    </div>
-                  );
                   return (
-                    <li key={`${move.moveType}-${move.kboPlayerId}-${move.moveDate}-${index}`}>
-                      <Link href={`/teams/${team.slug}`}>{content}</Link>
+                    <li
+                      key={`${move.moveType}-${move.kboPlayerId}-${move.moveDate}-${index}`}
+                      className="relative"
+                    >
+                      {/* 행 배경(날짜·상태·chevron 영역) → 팀홈. absolute 형제라 중첩 anchor 없음 */}
+                      <Link
+                        href={teamHomeHref(team.slug)}
+                        aria-label={`${team.name} 팀 페이지`}
+                        className="absolute inset-0 z-0"
+                      />
+                      <div className="pointer-events-none relative z-10 flex items-center gap-2 py-0.5">
+                        <span className="w-8 flex-shrink-0 text-[11px] text-text-tertiary">{shortMoveDate(move.moveDate)}</span>
+                        <span
+                          className="flex-shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
+                          style={{ color: labelColor, backgroundColor: `${labelColor}1f` }}
+                        >
+                          {label}
+                        </span>
+                        {move.href ? (
+                          <Link
+                            href={move.href}
+                            className="pointer-events-auto min-w-0 flex-1 truncate text-[12.5px] font-semibold text-text-primary"
+                          >
+                            {move.playerName}
+                          </Link>
+                        ) : (
+                          <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-text-primary">
+                            {move.playerName}
+                          </span>
+                        )}
+                        <ChevronRight size={14} className="flex-shrink-0 text-text-tertiary" />
+                      </div>
                     </li>
                   );
                 })}
                 {computeRosterMovesDisplay(currentRosterMoves.moves).overflowCount > 0 && (
                   <li>
                     <Link
-                      href={`/teams/${team.slug}`}
+                      href={teamHomeHref(team.slug)}
                       className="flex items-center justify-between py-0.5 text-[12px] text-text-secondary"
                     >
                       <span>외 {computeRosterMovesDisplay(currentRosterMoves.moves).overflowCount}건 더보기</span>

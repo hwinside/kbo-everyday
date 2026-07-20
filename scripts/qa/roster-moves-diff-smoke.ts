@@ -21,6 +21,7 @@ import {
   publishedRegisterHref,
   filterVisibleMoves,
   computeRosterMovesDisplay,
+  rosterMovesCardTargets,
   checkPublishReadiness,
   type AssetProbe,
   type ProbeResult,
@@ -293,6 +294,23 @@ check(
   "display: 9건 → visible 3 / overflow 6 (외 6건)",
   computeRosterMovesDisplay(mk(9)),
   { visible: [{ id: 0 }, { id: 1 }, { id: 2 }], overflowCount: 6 },
+);
+
+// ═══ ⑨ 행 클릭 목적지 분리 (삼순 #726 NO-GO 2차: 중첩 anchor 없이 4클릭 분리) ═══
+check(
+  "클릭: 해결 선수 → 행배경/외N건/0건=팀홈, 선수명=선수상세",
+  rosterMovesCardTargets("kia", { href: "/community/players/50000" }),
+  { rowHref: "/teams/kia", nameHref: "/community/players/50000", overflowHref: "/teams/kia", emptyHref: "/teams/kia" },
+);
+check(
+  "클릭: 미해결 선수(href null) → 선수명 링크 없음(텍스트), 나머지 팀홈",
+  rosterMovesCardTargets("doosan", { href: null }),
+  { rowHref: "/teams/doosan", nameHref: null, overflowHref: "/teams/doosan", emptyHref: "/teams/doosan" },
+);
+check(
+  "클릭: 0건 상태(move 없음) → 영역 전체 팀홈",
+  rosterMovesCardTargets("lg", null),
+  { rowHref: "/teams/lg", nameHref: null, overflowHref: "/teams/lg", emptyHref: "/teams/lg" },
 );
 
 asyncChecks().then(() => {

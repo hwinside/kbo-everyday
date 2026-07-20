@@ -181,3 +181,21 @@ export function computeRosterMovesDisplay<T>(
   const n = Math.max(0, limit);
   return { visible: moves.slice(0, n), overflowCount: Math.max(0, moves.length - n) };
 }
+
+/**
+ * 홈 팀카드 로스터 변동 행 클릭 계약(삼순 #726 NO-GO 2차): 중첩 anchor 없이 목적지 분리.
+ *   - 행 배경/날짜/상태/chevron·외 N건·정상 0건 영역 → 팀홈(teamHomeHref)
+ *   - 선수명 → 선수상세(move.href). 미해결(null)이면 링크 없이 텍스트.
+ * 순수 함수(4클릭 회귀 단일 SSOT).
+ */
+export function teamHomeHref(teamSlug: string): string {
+  return `/teams/${teamSlug}`;
+}
+
+export function rosterMovesCardTargets(
+  teamSlug: string,
+  move: { href: string | null } | null,
+): { rowHref: string; nameHref: string | null; overflowHref: string; emptyHref: string } {
+  const home = teamHomeHref(teamSlug);
+  return { rowHref: home, nameHref: move ? move.href : null, overflowHref: home, emptyHref: home };
+}
