@@ -106,6 +106,8 @@ interface TeamCardData {
   rankHistory?: { date: string; rank: number }[];
   weeklyBatting?: { week: string; avg: number }[];
   weeklyPitching?: { week: string; era: number }[];
+  weeklyBattingRank?: number | null;
+  weeklyPitchingRank?: number | null;
   communityNewPosts?: number;
 }
 
@@ -206,35 +208,22 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
   const [data, setData] = useState<TeamCardData | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [topPlayers, setTopPlayers] = useState<TopPlayer[]>([]);
-  const [teamRank, setTeamRank] = useState<{ batting: number | null; era: number | null }>({ batting: null, era: null });
+  // 괄호 순위 = team-card API가 그래프와 같은 최신 주차·10구단 competition ranking으로 반환(timebase 일치).
+  // 이전 /api/team-records 시즌 누적 순위 fetch는 제거(주간 그래프↔시즌 순위 불일치 사고).
   const [rosterMoves, setRosterMoves] = useState<RosterMovesState>({ status: "loading", teamId: team.id });
   const accent = getTeamColor(team.id);
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/team-card?team=${team.slug}`)
+    // cache: no-store — 응답이 `cache-control: public`이라 웹봰 HTTP 캐시가 오래된 그래프를
+    // 물고 있다(당겨서 새로고침해도 fetch URL이 동일해 캐시 적중). 항상 서버
+    // 최신(순위변동/주간그래프)를 반영하도록 클라 캐시를 우회(CDN s-maxage=300이 origin 보호).
+    fetch(`/api/team-card?team=${team.slug}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((d: TeamCardData | null) => { if (!cancelled) { setData(d && !("error" in d) ? d : null); setLoaded(true); } })
       .catch(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
   }, [team.slug, refreshNonce]);
-
-  // 주간 타율/방어율 리그 순위 — team-records(전 구단) 정렬로 산출
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/team-records?season=2026`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: { batting?: { teamId: number; avg: string }[]; pitching?: { teamId: number; era: string }[] } | null) => {
-        if (cancelled || !d) return;
-        const bat = [...(d.batting ?? [])].sort((a, b) => parseFloat(b.avg) - parseFloat(a.avg));
-        const pit = [...(d.pitching ?? [])].sort((a, b) => parseFloat(a.era) - parseFloat(b.era));
-        const bi = bat.findIndex((t) => t.teamId === team.id);
-        const pi = pit.findIndex((t) => t.teamId === team.id);
-        setTeamRank({ batting: bi >= 0 ? bi + 1 : null, era: pi >= 0 ? pi + 1 : null });
-      })
-      .catch(() => { /* 순위 실패해도 카드 정상 */ });
-    return () => { cancelled = true; };
-  }, [team.id, refreshNonce]);
 
   // 순위권 선수 — 공식 랭킹 소스(/api/stats + rankByStat). 리더보드와 동일.
   useEffect(() => {
@@ -355,8 +344,8 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                 </Link>
                 {/* 우: 타율 / 방어율 — 클릭 → 팀 기록 페이지 */}
                 <Link href={`/teams/${team.slug}/records`} className="flex h-[136px] flex-1 flex-col gap-2">
-                  <MiniStatChart title="주간 팀 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} fmt={(v) => v.toFixed(3).replace(/^0\./, ".")} higherIsBetter accent={accent} rank={teamRank.batting} />
-                  <MiniStatChart title="주간 팀 방어율" values={(data?.weeklyPitching ?? []).map((w) => w.era)} fmt={(v) => v.toFixed(2)} higherIsBetter={false} accent={accent} rank={teamRank.era} />
+                  <MiniStatChart title="주간 팀 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} fmt={(v) => v.toFixed(3).replace(/^0\./, ".")} higherIsBetter accent={accent} rank={data?.weeklyBattingRank ?? null} />
+                  <MiniStatChart title="주간 팀 방어율" values={(data?.weeklyPitching ?? []).map((w) => w.era)} fmt={(v) => v.toFixed(2)} higherIsBetter={false} accent={accent} rank={data?.weeklyPitchingRank ?? null} />
                 </Link>
               </div>
             </div>
