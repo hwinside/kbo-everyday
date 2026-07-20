@@ -10,6 +10,11 @@ import {
   computeGamedayRetention,
   computeVisitDistribution,
 } from "@/lib/retention/compute";
+import {
+  buildDateRange,
+  collectGameDates,
+  resolveTargetDate,
+} from "@/lib/retention/gamedates";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 
@@ -23,36 +28,31 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // 2026-07-21: `?date=YYYY-MM-DD`로 과거 소급(backfill) 지원 — 7/19~ 타임아웃 결손분 복구 경로.
+  // 검증(형식·실존일·미래 금지·60일 이내) 실패 시 400 fail-close. 미지정 시 기존과 동일하게 오늘.
+  const resolved = resolveTargetDate(req.nextUrl.searchParams.get("date"), getKSTToday());
+  if (!resolved.ok) {
+    return NextResponse.json({ error: resolved.error }, { status: 400 });
+  }
+  const targetDate = resolved.date;
+
   const logId = await startJob("retention");
-  const targetDate = getKSTToday();
 
   try {
     // 1) 경기일 목록 수집 (최근 60일) — 61회 순차 fetch가 전체 실행시간을 크게 잡아먹어
-    // 배치 10개씩 병렬로 전환 (2026-07-21, 결과 동일·순서 보장·실패 날짜는 기존처럼 skip)
-    const allDates: string[] = [];
-    for (let i = 60; i >= 0; i--) {
-      allDates.push(
-        new Date(
-          new Date(targetDate + "T00:00:00+09:00").getTime() - i * 86400000,
-        ).toISOString().slice(0, 10),
+    // 배치 10개씩 병렬로 전환 (2026-07-21, 결과 동일·순서 보장).
+    // 실패 날짜는 bounded retry 후에도 남으면 전체 실패(fail-close) —
+    // 불완전 gameDates로 gameday 지표를 upsert하면 기존 정상 데이터를 오염시키기 때문.
+    const allDates = buildDateRange(targetDate);
+    const { gameDates, failedDates } = await collectGameDates(allDates, async (d) => {
+      const games = await fetchGames(d.replace(/-/g, ""));
+      return games.length > 0;
+    });
+    if (failedDates.length > 0) {
+      throw new Error(
+        `game date fetch failed after retries: ${failedDates.join(", ")} — aborting to avoid upserting incomplete gameday metrics`,
       );
     }
-    const gameDateFlags: boolean[] = new Array(allDates.length).fill(false);
-    const BATCH = 10;
-    for (let start = 0; start < allDates.length; start += BATCH) {
-      const batch = allDates.slice(start, start + BATCH);
-      await Promise.all(
-        batch.map(async (d, idx) => {
-          try {
-            const games = await fetchGames(d.replace(/-/g, ""));
-            if (games.length > 0) gameDateFlags[start + idx] = true;
-          } catch {
-            // skip dates where API fails
-          }
-        }),
-      );
-    }
-    const gameDates: string[] = allDates.filter((_, i) => gameDateFlags[i]);
 
     // 2) 3축 집계
     const [cohortRows, dailyCohortRows, funnelRows, gamedayRows, visitDistRows] = await Promise.all([
