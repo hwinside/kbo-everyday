@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchStandings, fetchGames } from "@/lib/crawler/kbo-api";
 import { getMonthGames } from "@/lib/crawler/season-games-cache";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { fetchAllRows } from "@/lib/db/paginate";
 import { TEAMS } from "@/lib/constants/teams";
 
 // GET /api/team-card?team=<slug>
@@ -145,11 +146,20 @@ export async function GET(req: NextRequest) {
     let weeklyBatting: { week: string; avg: number }[] = [];
     let weeklyPitching: { week: string; era: number }[] = [];
     try {
-      const { data } = await supabaseAdmin
-        .from("player_game_logs")
-        .select("game_date, ab, h, ip_outs, er")
-        .eq("team_id", team.id)
-        .order("game_date", { ascending: true });
+      // Supabase 기본 max-rows(1000) 상한을 넘는 시즌 전체 로그를 range 페이지네이션으로 전량 수집.
+      // (limit 없이 오름차순이면 오래된 1000행만 반환돼 최근 주차가 잘림 — 그래프 정지 버그.)
+      const data = await fetchAllRows<{ game_date: string; ab: number; h: number; ip_outs: number; er: number }>(
+        async (from, to) => {
+          const { data: page, error } = await supabaseAdmin
+            .from("player_game_logs")
+            .select("game_date, ab, h, ip_outs, er")
+            .eq("team_id", team.id)
+            .order("game_date", { ascending: true })
+            .range(from, to);
+          if (error) throw error;
+          return page ?? [];
+        },
+      );
       if (Array.isArray(data)) {
         const wk = new Map<string, { ab: number; h: number; outs: number; er: number }>();
         for (const r of data) {
