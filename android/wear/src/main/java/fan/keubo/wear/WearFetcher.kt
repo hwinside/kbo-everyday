@@ -56,6 +56,10 @@ object WearFetcher {
         if (myCode.isEmpty()) return WearSnapshot.noTeam()
         val myId = WearTeam.id(myCode)
 
+        // 삼순 #723 pull CAS — 네트워크 시작 전 push watermark 측정. 커밋 시 이 값이 바뀌었으면
+        // (= pull 진행 중 push가 커밋됨) pull 결과를 버린다(늦은 pull이 terminal을 live로 덮는 것 방지).
+        val pushTsBefore = WearStore.lastPushTs(ctx)
+
         val gamesRaw = get("/api/games?date=${effectiveDateString()}")
         val standingsRaw = get("/api/standings")
 
@@ -86,8 +90,8 @@ object WearFetcher {
             }
         }
 
-        WearStore.saveCachedSnapshot(ctx, snap)
-        WearStore.markSyncedNow(ctx)
+        // CAS 커밋: pull 진행 중 push가 없었을 때만 저장(push가 끊어들었으면 그게 더 fresh라 pull 폐기).
+        WearStore.commitPullSnapshot(ctx, snap, pushTsBefore)
         return snap
     }
 

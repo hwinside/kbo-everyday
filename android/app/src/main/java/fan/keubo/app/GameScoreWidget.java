@@ -864,21 +864,33 @@ public class GameScoreWidget extends AppWidgetProvider {
      *  ③ 이미 FINAL이면 중복 no-op. game_end는 live 뒤에 발송되어 seq가 더 큼 → 이후 가드가 저-seq live 무시. */
     static WidgetUpdatePolicy.ApplyResult markFinal(Context ctx, String gameId, long seq) {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        if (!p.getBoolean(KEY_HAS_GAME, false)) return WidgetUpdatePolicy.ApplyResult.NO_CHANGE;
+        boolean hasGame = p.getBoolean(KEY_HAS_GAME, false);
         String prevGameId = p.getString(KEY_GAME_ID, "");
-        if (gameId != null && !gameId.isEmpty() && !prevGameId.isEmpty() && !gameId.equals(prevGameId)) {
-            return WidgetUpdatePolicy.ApplyResult.STALE; // 다른 경기 종료 신호 — 현재 카드 오종료 방지
-        }
         long prevSeq = p.getLong(KEY_LAST_SEQ, -1L);
-        if (seq >= 0 && seq < prevSeq) return WidgetUpdatePolicy.ApplyResult.STALE; // 순서 역전(옷 종료) 무시
-        if ("FINAL".equals(p.getString(KEY_STATUS, ""))) return WidgetUpdatePolicy.ApplyResult.NO_CHANGE; // 이미 종료
-        SharedPreferences.Editor e = p.edit().putString(KEY_STATUS, "FINAL");
-        if (seq >= 0) e.putLong(KEY_LAST_SEQ, seq);
-        // status만 바뀌니 sig 불일치화(다음 live가 정상 재렌더되게).
-        e.remove(KEY_SIG);
-        e.apply();
-        refresh(ctx);
-        return WidgetUpdatePolicy.ApplyResult.APPLIED;
+        // gameId 매칭: 상대가 비었거나 둘 다 있고 일치해야 같은 경기(fail-closed 판정은 봉투/evaluate).
+        boolean gameMatches = (gameId == null || gameId.isEmpty() || prevGameId.isEmpty()
+            || gameId.equals(prevGameId));
+        boolean alreadyFinal = "FINAL".equals(p.getString(KEY_STATUS, ""));
+        // 삼순 #723 — 순수 판정(WidgetUpdatePolicy.decideTerminal): terminal retry watermark 포함.
+        switch (WidgetUpdatePolicy.decideTerminal(hasGame, gameMatches, alreadyFinal, seq, prevSeq)) {
+            case NOOP:
+                return WidgetUpdatePolicy.ApplyResult.NO_CHANGE;
+            case STALE:
+                return WidgetUpdatePolicy.ApplyResult.STALE;
+            case RETRY_ADVANCE_SEQ:
+                // 이미 FINAL이지만 더 큰 seq(종료 재전송) → watermark만 전진(후속 저-seq live 차단).
+                p.edit().putLong(KEY_LAST_SEQ, seq).apply();
+                return WidgetUpdatePolicy.ApplyResult.NO_CHANGE;
+            case APPLY:
+            default:
+                SharedPreferences.Editor e = p.edit().putString(KEY_STATUS, "FINAL");
+                if (seq >= 0) e.putLong(KEY_LAST_SEQ, seq);
+                // status만 바뀌니 sig 불일치화(다음 live가 정상 재렌더되게).
+                e.remove(KEY_SIG);
+                e.apply();
+                refresh(ctx);
+                return WidgetUpdatePolicy.ApplyResult.APPLIED;
+        }
     }
 
     /** 디바이스 최애팀 코드 기록(앱이 알 때). 위젯 배경/워터마크/헤더 색 결정. */

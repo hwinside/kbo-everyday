@@ -19,6 +19,10 @@ object WearStore {
     private const val K_LAST_PUSH_TS = "last_push_ts"
     private const val K_LAST_PUSH_GID = "last_push_gid"
 
+    // push 커밋과 pull 커밋의 read-modify-write를 직렬화(삼순 #723 pull CAS).
+    // GameStateListenerService(push)와 WearFetcher(pull background thread)가 동시 접근.
+    private val pushLock = Any()
+
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -96,12 +100,14 @@ object WearStore {
         savePushSnapshot(prefs(ctx), snap, ts, gid)
 
     fun savePushSnapshot(p: SharedPreferences, snap: WearSnapshot, ts: Long, gid: String) {
-        p.edit()
-            .putString(K_SNAPSHOT, snap.toJson())
-            .putLong(K_LAST_PUSH_TS, ts)
-            .putString(K_LAST_PUSH_GID, gid)
-            .putLong(K_LAST_SYNC, System.currentTimeMillis())
-            .apply()
+        synchronized(pushLock) {
+            p.edit()
+                .putString(K_SNAPSHOT, snap.toJson())
+                .putLong(K_LAST_PUSH_TS, ts)
+                .putString(K_LAST_PUSH_GID, gid)
+                .putLong(K_LAST_SYNC, System.currentTimeMillis())
+                .apply()
+        }
     }
 
     /**
@@ -111,10 +117,40 @@ object WearStore {
     fun savePushMeta(ctx: Context, ts: Long, gid: String) = savePushMeta(prefs(ctx), ts, gid)
 
     fun savePushMeta(p: SharedPreferences, ts: Long, gid: String) {
-        p.edit()
-            .putLong(K_LAST_PUSH_TS, ts)
-            .putString(K_LAST_PUSH_GID, gid)
-            .putLong(K_LAST_SYNC, System.currentTimeMillis())
-            .apply()
+        synchronized(pushLock) {
+            val now = System.currentTimeMillis()
+            val e = p.edit()
+                .putLong(K_LAST_PUSH_TS, ts)
+                .putString(K_LAST_PUSH_GID, gid)
+                .putLong(K_LAST_SYNC, now)
+            // 삼순 #723 — NoOp lastSeenAt: 내용 동일(재렌더 생략)이지만 상태가 현행임을 확인했으니
+            // 캐시 스냅샷의 updatedAt도 갱신한다 → 5분 뒤 가짜 '업데이트 지연' 배지 방지(updatedAt은
+            // contentSignature 제외라 재렌더 트리거 안 됨).
+            val cached = WearSnapshot.fromJson(p.getString(K_SNAPSHOT, null))
+            if (cached != null) {
+                e.putString(K_SNAPSHOT, cached.copy(updatedAt = now).toJson())
+            }
+            e.apply()
+        }
+    }
+
+    /**
+     * pull(fallback fetch) 커밋 — CAS(삼순 #723): pull 시작 시점에 측정한 expectedPushTs와
+     * 현재 lastPushTs가 다르면(= pull 진행 중 push가 커밋됨) push가 더 fresh/권위 → pull 폐기.
+     * `pull-start → final push → 늦은 pull 완료`가 terminal을 stale live로 덮는 것을 차단.
+     * push가 없었으면(폰 미연결 등) expectedPushTs 일치 → 정상 커밋. 커밋 여부 반환.
+     */
+    fun commitPullSnapshot(ctx: Context, snap: WearSnapshot, expectedPushTs: Long): Boolean =
+        commitPullSnapshot(prefs(ctx), snap, expectedPushTs)
+
+    fun commitPullSnapshot(p: SharedPreferences, snap: WearSnapshot, expectedPushTs: Long): Boolean {
+        synchronized(pushLock) {
+            if (p.getLong(K_LAST_PUSH_TS, 0L) != expectedPushTs) return false
+            p.edit()
+                .putString(K_SNAPSHOT, snap.toJson())
+                .putLong(K_LAST_SYNC, System.currentTimeMillis())
+                .apply()
+            return true
+        }
     }
 }

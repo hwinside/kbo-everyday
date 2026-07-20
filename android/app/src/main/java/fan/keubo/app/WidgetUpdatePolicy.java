@@ -62,6 +62,28 @@ final class WidgetUpdatePolicy {
         return sameSig ? ApplyResult.NO_CHANGE : ApplyResult.APPLIED;
     }
 
+    /**
+     * 종료(terminal=game_end) 적용 판정 — markFinal의 순수 버전(삼순 #723 terminal retry watermark).
+     *  APPLY             = 처음 종료 → FINAL 전환 + seq 저장
+     *  RETRY_ADVANCE_SEQ = 이미 FINAL이지만 더 큰 seq(종료 재전송) → watermark만 전진(후속 저-seq live 차단)
+     *  STALE             = 다른 경기/저-seq 종료 → 무시
+     *  NOOP              = 경기 없음 또는 이미 FINAL·seq 미전진
+     */
+    enum TerminalResult { APPLY, RETRY_ADVANCE_SEQ, STALE, NOOP }
+
+    static TerminalResult decideTerminal(boolean hasGame, boolean gameMatches,
+                                         boolean alreadyFinal, long seq, long prevSeq) {
+        if (!hasGame) return TerminalResult.NOOP;
+        if (!gameMatches) return TerminalResult.STALE;                 // 다른 경기 종료 신호
+        if (seq >= 0 && seq < prevSeq) return TerminalResult.STALE;    // 순서 역전(옷 종료)
+        if (alreadyFinal) {
+            return (seq >= 0 && seq > prevSeq)
+                ? TerminalResult.RETRY_ADVANCE_SEQ                    // 종료 재전송 → watermark 전진
+                : TerminalResult.NOOP;
+        }
+        return TerminalResult.APPLY;
+    }
+
     /** 상태 문자열이 종료/취소(terminal)인지 — 동일 ts 동률 우선순위 판정용. */
     static boolean isTerminalStatus(String status) {
         if (status == null) return false;

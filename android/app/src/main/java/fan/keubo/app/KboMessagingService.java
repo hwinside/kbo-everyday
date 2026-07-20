@@ -88,8 +88,8 @@ public class KboMessagingService extends MessagingService {
                 TeamRankWidget.fetchAndRefresh(this);
                 // 선수 카드 위젯 — 종료 직후 오늘 경기 라인/최근 3경기 갱신(미배치면 no-op)
                 PlayerCardWidget.fetchAndRefresh(this);
-                // 갤럭시워치 — 종료 상태 수렴(위젯 prefs의 현재 경기/팀/점수를 읽어 push)
-                pushGameEndToWatch();
+                // 갤럭시워치 — 종료 상태 수렴(위젯 prefs의 현재 경기/팀/점수를 읽어 push). ts는 봉투 orderTs(clock 통일).
+                pushGameEndToWatch(env.orderTs);
             }
         }
     }
@@ -137,7 +137,7 @@ public class KboMessagingService extends MessagingService {
      * game_end 전용 워치 push — game_end FCM엔 w_ 필드가 없어, GameScoreWidget prefs의
      * 현재 경기(gameId·팀·점수·구장)를 읽어 종료 스냅샷으로 수렴시킨다. 경기 없음이면 no-op.
      */
-    private void pushGameEndToWatch() {
+    private void pushGameEndToWatch(long orderTs) {
         try {
             android.content.SharedPreferences p = getSharedPreferences(
                     GameScoreWidget.PREFS, android.content.Context.MODE_PRIVATE);
@@ -150,7 +150,9 @@ public class KboMessagingService extends MessagingService {
             com.google.android.gms.wearable.DataMap m = req.getDataMap();
             m.putString("kind", "final");
             m.putString("gid", p.getString(GameScoreWidget.KEY_GAME_ID, ""));
-            m.putLong("ts", System.currentTimeMillis());
+            // 삼순 #723 — 폰 currentTimeMillis 대신 봉투 orderTs(w_source_at→w_ts→수신) 사용:
+            // live/cancel과 동일 clock domain이라 워치 evaluate의 전역 watermark가 정상 end를 stale drop 안 함.
+            m.putLong("ts", orderTs);
             m.putString("w_away", away);
             m.putString("w_home", home);
             m.putString("w_as", p.getString(GameScoreWidget.KEY_AS, "0"));

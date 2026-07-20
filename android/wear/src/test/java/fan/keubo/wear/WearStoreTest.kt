@@ -117,4 +117,54 @@ class WearStoreTest {
         assertEquals(0L, WearStore.lastPushTs(p))
         assertEquals("", WearStore.lastPushGid(p))
     }
+
+    // ── 삼순 #723 재리뷰 P0 — ① pull CAS + ④ NoOp lastSeenAt ──
+
+    private fun finalSnap(team: String) = WearSnapshot(
+        kind = "final", myTeamCode = team, awayCode = team, homeCode = "KT",
+        awayScore = 5, homeScore = 2, line = "경기 종료 · 승", rankLine = "2위",
+        updatedAt = 2_000L, startAt = null, bases = null, gameId = "G1", sourceAt = 200L,
+    )
+
+    @Test
+    fun `pull commit is dropped when a push arrived during the pull (CAS)`() {
+        // 시나리오: pull 시작(lastPushTs=100 측정) → final push 커밋(lastPushTs=200) → 늦은 pull 완료
+        val p = FakeSharedPreferences()
+        WearStore.saveMyTeam(p, "LG")
+        WearStore.savePushSnapshot(p, liveSnap("LG"), ts = 100L, gid = "G1")
+        val pushTsBefore = WearStore.lastPushTs(p) // 100 — pull 시작 시점
+        // pull 진행 중 final push 도착·커밋
+        WearStore.savePushSnapshot(p, finalSnap("LG"), ts = 200L, gid = "G1")
+        // 늦은 pull이 stale live로 덮으려 시도 → CAS가 막음
+        val committed = WearStore.commitPullSnapshot(p, liveSnap("LG"), pushTsBefore)
+        assertFalse(committed)
+        // 캐시는 final 유지(terminal이 live로 부활 안 함)
+        assertEquals("final", WearStore.loadCachedSnapshot(p)!!.kind)
+    }
+
+    @Test
+    fun `pull commit succeeds when no push arrived during the pull`() {
+        val p = FakeSharedPreferences()
+        WearStore.saveMyTeam(p, "LG")
+        WearStore.savePushSnapshot(p, liveSnap("LG"), ts = 100L, gid = "G1")
+        val pushTsBefore = WearStore.lastPushTs(p) // 100
+        val next = liveSnap("LG").copy(line = "LIVE 8회초", sourceAt = 150L)
+        val committed = WearStore.commitPullSnapshot(p, next, pushTsBefore)
+        assertTrue(committed)
+        assertEquals("LIVE 8회초", WearStore.loadCachedSnapshot(p)!!.line)
+    }
+
+    @Test
+    fun `push meta (NoOp) advances snapshot updatedAt to prevent false stale badge`() {
+        // 삼순 #723 — NoOp lastSeenAt: 내용 동일이어도 updatedAt을 갱신해 5분 뒤 가짜 '지연' 배지 방지
+        val p = FakeSharedPreferences()
+        WearStore.saveMyTeam(p, "LG")
+        WearStore.savePushSnapshot(p, liveSnap("LG"), ts = 100L, gid = "G1")
+        val before = WearStore.loadCachedSnapshot(p)!!.updatedAt
+        WearStore.savePushMeta(p, ts = 200L, gid = "G1")
+        val after = WearStore.loadCachedSnapshot(p)!!.updatedAt
+        assertTrue("updatedAt must advance on NoOp", after > before)
+        // 내용(line)은 그대로 — 재렌더 트리거 아님
+        assertEquals("LIVE 7회말 · 2사", WearStore.loadCachedSnapshot(p)!!.line)
+    }
 }
